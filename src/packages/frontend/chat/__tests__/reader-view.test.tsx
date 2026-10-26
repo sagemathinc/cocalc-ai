@@ -462,22 +462,34 @@ test("search: a hit in an archived item shows archived items to open it", () => 
   expect(screen.getByRole("article")).toHaveTextContent("second question");
 });
 
-test("Keys, or ?, shows the keyboard shortcuts", async () => {
+test("About explains the reader, and its Keys tab lists the shortcuts", async () => {
   setup(thread, 4, { autoFocus: true });
   const keys = user();
-  await keys.click(screen.getByRole("button", { name: "Keys" }));
-  const dialog = await screen.findByRole("dialog");
-  expect(dialog).toHaveTextContent("Reader keyboard shortcuts");
-  expect(dialog).toHaveTextContent("Next unread message");
-  expect(dialog).toHaveTextContent("Mark the open message unread");
+  await keys.click(screen.getByRole("button", { name: "About" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "About the reader",
+  });
+  expect(dialog).toHaveTextContent("Show archived");
+  expect(dialog).toHaveTextContent("Archive all");
+  // Without priorities there are no For you and Low priority views.
+  expect(dialog).not.toHaveTextContent("Low priority");
+  await keys.click(within(dialog).getByRole("tab", { name: "Keys" }));
+  expect(
+    within(dialog).getByRole("table", { name: "Keyboard shortcuts" }),
+  ).toHaveTextContent("Mark the open message unread");
 });
 
-test("? shows them too", async () => {
+test("? opens About on its Keys tab", async () => {
   setup(thread, 4, { autoFocus: true });
   await user().keyboard("?");
-  expect(await screen.findByRole("dialog")).toHaveTextContent(
-    "Reader keyboard shortcuts",
+  const dialog = await screen.findByRole("dialog", {
+    name: "About the reader",
+  });
+  expect(within(dialog).getByRole("tab", { name: "Keys" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
+  expect(dialog).toHaveTextContent("Next unread message");
 });
 
 test("the unread status says what it is", () => {
@@ -686,7 +698,7 @@ test("items show their subject; high ones are marked for you, and the open one i
   );
 });
 
-describe("views: for you, all, filed", () => {
+describe("views: for you, all, low priority", () => {
   beforeEach(() => localStorage.removeItem("cocalc-chat-reader-view"));
   const info = (item: { id: string }) =>
     ({
@@ -717,8 +729,8 @@ describe("views: for you, all, filed", () => {
     expect(subjects()).toEqual([expect.stringContaining("About p3")]);
     expect(screen.getByText("For you (1)")).toBeTruthy();
     expect(screen.getByText("1 unread")).toBeTruthy();
-    // Filed: the low ones, with their own count.
-    fireEvent.click(screen.getByText("Filed (2)"));
+    // Low priority: the low ones, with their own count.
+    fireEvent.click(screen.getByText("Low priority (2)"));
     expect(subjects()).toEqual([
       expect.stringContaining("About p2"),
       expect.stringContaining("About p1"),
@@ -768,11 +780,11 @@ describe("views: for you, all, filed", () => {
         itemInfo={info}
       />,
     );
-    fireEvent.click(screen.getByText(/^Filed/));
+    fireEvent.click(screen.getByText(/^Low priority/));
     expect(screen.getByText("Everything here is archived")).toBeTruthy();
   });
 
-  test("the Filed count includes archived unread items while they are shown", () => {
+  test("the Low priority count includes archived unread items while they are shown", () => {
     render(
       <ChatReaderView
         actions={
@@ -790,17 +802,31 @@ describe("views: for you, all, filed", () => {
         itemInfo={info}
       />,
     );
-    expect(screen.getByText("Filed (1)")).toBeTruthy();
+    expect(screen.getByText("Low priority (1)")).toBeTruthy();
     fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
-    expect(screen.getByText("Filed (2)")).toBeTruthy();
+    expect(screen.getByText("Low priority (2)")).toBeTruthy();
   });
 
   test("nothing for you says where the rest is", () => {
     show(((item) => ({ subject: item.id, priority: "low" })) as any);
     expect(
-      screen.getByText("Nothing for you here: the rest is filed"),
+      screen.getByText("Nothing for you here: the rest is low priority"),
     ).toBeTruthy();
     expect(screen.getByText("No unread messages")).toBeTruthy();
+  });
+
+  test("About explains the views and where priority comes from", () => {
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "About" }));
+    const dialog = screen.getByRole("dialog", { name: "About the reader" });
+    for (const text of [
+      "For you",
+      "Low priority",
+      "Starred",
+      "cocalc agent turn --priority",
+    ]) {
+      expect(dialog).toHaveTextContent(text);
+    }
   });
 });
 
