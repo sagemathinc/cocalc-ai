@@ -271,6 +271,15 @@ export default function PublicApp({
     productDependentRoute &&
     config === undefined &&
     (configChanged || customizeState.pending);
+  // Home's layout depends on the product (hero image, sections). When cached
+  // scripts run before /customize returns, rendering the unresolved variant
+  // first shifts the whole page once the configuration arrives, so wait for
+  // it; the crawler fallback stays hidden meanwhile. A failed request ends
+  // the wait with the unresolved variant.
+  const waitingForHomeConfig =
+    initialRoute.section === "home" &&
+    config === undefined &&
+    (configChanged || customizeState.pending);
   const product = currentConfig?.cocalc_product;
   const knownProduct =
     product === "plus" || product === "launchpad" || product === "rocket";
@@ -288,7 +297,7 @@ export default function PublicApp({
       )}
       <PublicRouteErrorBoundary route={initialRoute}>
         <Suspense fallback={null}>
-          {!waitingForFeatureConfig && (
+          {!waitingForFeatureConfig && !waitingForHomeConfig && (
             <PublicRouteBody
               config={currentConfig}
               initialRoute={initialRoute}

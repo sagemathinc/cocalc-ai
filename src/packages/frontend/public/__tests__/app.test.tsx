@@ -3073,6 +3073,41 @@ describe("feature configuration loading", () => {
     authBootstrap.mockRestore();
   });
 
+  it("renders Home only once customize has returned, so the page does not shift", async () => {
+    const customize = deferred<Response>();
+    global.fetch = jest.fn(() => customize.promise) as typeof fetch;
+    render(<PublicApp initialRoute={{ section: "home" }} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(global.fetch).toHaveBeenCalledWith("/customize");
+    // Not the unresolved variant first (no image, other headline).
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+
+    await act(async () => {
+      customize.resolve(customizeResponse("launchpad"));
+    });
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Build and use software with AI.",
+      }),
+    ).not.toBeNull();
+  });
+
+  it("renders the unresolved Home when customize fails", async () => {
+    global.fetch = jest.fn(async () => {
+      throw new Error("offline");
+    }) as typeof fetch;
+    render(<PublicApp initialRoute={{ section: "home" }} />);
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Build and use software.",
+      }),
+    ).not.toBeNull();
+  });
+
   it("waits for Plus customize even if auth bootstrap resolves first", async () => {
     const customize = deferred<Response>();
     global.fetch = jest.fn(() => customize.promise) as typeof fetch;

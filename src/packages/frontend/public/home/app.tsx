@@ -58,6 +58,7 @@ const HOME_CSS = `
 .cocalc-home-item-link { display:inline-block; margin-top:16px; font-weight:600; }
 .cocalc-home-outcomes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
 .cocalc-home-card { padding:26px; border:1px solid ${PUBLIC_COLORS.border}; border-radius:8px; background:${PUBLIC_COLORS.surface}; min-width:0; }
+.cocalc-home-outcomes .cocalc-home-card:last-child:nth-child(odd) { grid-column:1 / -1; }
 .cocalc-home-directory { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:32px; }
 .cocalc-home-directory ul { list-style:none; padding:0; margin:0; }
 .cocalc-home-directory li { margin:10px 0; }
