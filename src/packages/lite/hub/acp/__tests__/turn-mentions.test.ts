@@ -67,3 +67,54 @@ it("fails closed on unavailable authority without name or account fallback", asy
   ).rejects.toThrow("access denied");
   expect(getMentionIdentity).toHaveBeenCalledTimes(1);
 });
+
+describe("an agent on another site", () => {
+  const external: AgentMentionReference = {
+    ...ref,
+    name: "ops0",
+    target: {
+      kind: "external",
+      account_id: "00000000-0000-4000-8000-000000000004",
+      agent_id: "00000000-0000-4000-8000-000000000005",
+      installation_id: "00000000-0000-4000-8000-000000000006",
+    },
+  };
+  const externalRequest = {
+    ...request,
+    chat: {
+      ...request.chat!,
+      user_message_content: serializeAgentMention(external),
+    },
+  };
+
+  it("is bound when it is a member of the person's own networks", async () => {
+    const getMentionMember = jest.fn(async () => ({
+      label: "ops0 on alpha",
+      available: true,
+    }));
+    expect(
+      await resolveHumanTurnMentions(externalRequest, {
+        getMentionIdentity,
+        getMentionMember,
+      }),
+    ).toEqual([external]);
+    expect(getMentionMember).toHaveBeenCalledWith({
+      account_id: "Q",
+      project_id: "source",
+      target: external.target,
+    });
+    expect(getMentionIdentity).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when it is in none of them, or cannot be checked", async () => {
+    await expect(
+      resolveHumanTurnMentions(externalRequest, {
+        getMentionIdentity,
+        getMentionMember: jest.fn(async () => null),
+      }),
+    ).rejects.toThrow("@ops0 is unavailable");
+    await expect(
+      resolveHumanTurnMentions(externalRequest, { getMentionIdentity }),
+    ).rejects.toThrow("@ops0 is unavailable");
+  });
+});

@@ -99,7 +99,13 @@ function directory({ paused = false, active = true } = {}) {
   };
 }
 
-function Composer({ send }: { send: () => void }) {
+function Composer({
+  send,
+  mention = reference,
+}: {
+  send: () => void;
+  mention?: AgentMentionReference;
+}) {
   const input = useRef<HTMLTextAreaElement>(null);
   const flow = useAgentMentions({
     projectId: source.project_id,
@@ -108,7 +114,7 @@ function Composer({ send }: { send: () => void }) {
     runnable: true,
     restoreFocus: () => input.current?.focus(),
   });
-  const draft = `Ask ${serializeAgentMention(reference)} to review.`;
+  const draft = `Ask ${serializeAgentMention(mention)} to review.`;
   return (
     <>
       <textarea ref={input} defaultValue={draft} aria-label="Draft" />
@@ -160,4 +166,64 @@ test("account-wide pause fails closed without opening approval", async () => {
   );
   expect(screen.queryByText("Cancel network approval")).toBeNull();
   expect(send).not.toHaveBeenCalled();
+});
+
+describe("an agent on another site", () => {
+  const remote = {
+    kind: "external" as const,
+    account_id: "77777777-7777-4777-8777-777777777777",
+    agent_id: "88888888-8888-4888-8888-888888888888",
+    installation_id: "99999999-9999-4999-8999-999999999999",
+  };
+  const mention: AgentMentionReference = {
+    version: 1,
+    naming_account_id: account,
+    target: remote,
+    name: "ops0",
+  };
+  const networks = (state: string, withRemote = true) => ({
+    ...directory(),
+    networks: [
+      {
+        agent_network_id: "66666666-6666-4666-8666-666666666666",
+        state,
+        members: [
+          { kind: "registered", endpoint: source },
+          ...(withRemote
+            ? [{ kind: "external", source: remote, label: "ops0 on alpha" }]
+            : []),
+        ],
+      },
+    ],
+  });
+
+  test("sends when an active network has both, without an identity lookup", async () => {
+    api.listAgentNetworks.mockResolvedValue(networks("active"));
+    const send = jest.fn();
+    const user = userEvent.setup();
+    render(<Composer send={send} mention={mention} />);
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(api.getIdentity).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["paused", networks("paused"), /paused or closed/],
+    ["absent", networks("active", false), /not in an Agent Network/],
+  ])(
+    "a %s network keeps the draft and offers no approval",
+    async (_label, value, message) => {
+      api.listAgentNetworks.mockResolvedValue(value);
+      const send = jest.fn();
+      const user = userEvent.setup();
+      render(<Composer send={send} mention={mention} />);
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      const alerts = await screen.findAllByRole("alert");
+      expect(
+        alerts.some((alert) => message.test(alert.textContent ?? "")),
+      ).toBe(true);
+      expect(screen.queryByText("Cancel network approval")).toBeNull();
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
 });

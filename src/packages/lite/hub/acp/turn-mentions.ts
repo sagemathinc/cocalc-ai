@@ -9,11 +9,15 @@ import {
 import {
   agentMentionReferenceMap,
   extractAgentMentions,
+  isExternalMentionTarget,
 } from "@cocalc/util/agent-mentions";
+
+type MentionApi = Pick<AgentApi, "getMentionIdentity"> &
+  Partial<Pick<AgentApi, "getMentionMember">>;
 
 export async function resolveHumanTurnMentions(
   request: AcpRequest,
-  api: Pick<AgentApi, "getMentionIdentity">,
+  api: MentionApi,
 ) {
   // Never bind history, model-authored content, or an old turn's map.
   if (request.chat?.agent_message) return [];
@@ -32,7 +36,7 @@ export async function resolveHumanTurnMentions(
 export async function resolveHumanAgentMentions(
   text: string,
   { account_id, project_id }: { account_id?: string; project_id: string },
-  api: Pick<AgentApi, "getMentionIdentity">,
+  api: MentionApi,
 ) {
   const references = Object.values(
     agentMentionReferenceMap(extractAgentMentions(text)),
@@ -40,17 +44,30 @@ export async function resolveHumanAgentMentions(
   if (references.length > 32)
     throw new Error("Too many bound agent references");
   for (const reference of references) {
+    const target = reference.target;
+    if (isExternalMentionTarget(target)) {
+      // An agent on another site: it must be a member of one of the
+      // submitting human's own Agent Networks.
+      const member = await api.getMentionMember?.({
+        account_id,
+        project_id,
+        target: { ...target },
+      });
+      if (!member)
+        throw new Error(`Agent reference @${reference.name} is unavailable`);
+      continue;
+    }
     // Validate copied references under the submitting human, not the naming
     // account embedded in the markup. Exact owner routing starts no target.
     const identity = await api.getMentionIdentity({
       account_id,
       project_id,
-      target: reference.target,
+      target,
     });
     if (
       identity.disabled_at ||
-      identity.agent_id !== reference.target.agent_id ||
-      identity.project_id !== reference.target.project_id
+      identity.agent_id !== target.agent_id ||
+      identity.project_id !== target.project_id
     ) {
       throw new Error(`Agent reference @${reference.name} is unavailable`);
     }

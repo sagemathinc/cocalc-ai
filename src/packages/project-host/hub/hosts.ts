@@ -37,6 +37,8 @@ export function wireHostsApi(): void {
     forwardHost("agent.issueIdentity", [opts]);
   hubApi.agent.getMentionIdentity = (opts) =>
     forwardHost("agent.getMentionIdentity", [opts]);
+  hubApi.agent.getMentionMember = (opts) =>
+    forwardHost("agent.getMentionMember", [opts]);
   hubApi.agent.endIdentityRun = (opts) =>
     forwardHost("agent.endIdentityRun", [opts]);
   hubApi.agent.resolvePaymentSelection = (opts) =>

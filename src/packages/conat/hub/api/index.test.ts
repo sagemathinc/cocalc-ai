@@ -234,6 +234,7 @@ describe("hub API argument transforms", () => {
       "agent.endCocalcConnectorTurn",
       "agent.endIdentityRun",
       "agent.getMentionIdentity",
+      "agent.getMentionMember",
       "agent.issueIdentity",
       "agent.renewCocalcConnectorTurn",
       "agent.reportRpcTurnFailure",

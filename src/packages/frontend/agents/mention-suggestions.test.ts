@@ -1,4 +1,7 @@
-import { agentMentionSuggestions } from "./mention-suggestions";
+import {
+  agentMentionSuggestions,
+  externalAgentMentionSuggestions,
+} from "./mention-suggestions";
 import type { NamedAgent, AgentNetwork } from "@cocalc/conat/agents/personal";
 const agents = Array.from(
   { length: 12 },
@@ -59,4 +62,79 @@ it("does not treat the selected network or a paused network as permission", () =
       ({ connected }) => !connected,
     ),
   ).toBe(true);
+});
+
+describe("agents on other sites", () => {
+  const remote = (id: string, label: string, removed = false) => ({
+    kind: "external" as const,
+    member_id: id,
+    source: {
+      kind: "external" as const,
+      account_id: "acct",
+      agent_id: id,
+      installation_id: `install-${id}`,
+    },
+    label,
+    available: true,
+    added_at: "",
+    ...(removed ? { removed_at: "gone" } : {}),
+  });
+  const withRemote = (
+    id: string,
+    state: string,
+    members: any[],
+    withSource = true,
+  ): AgentNetwork =>
+    ({
+      agent_network_id: id,
+      account_id: "owner",
+      title: id,
+      state,
+      members: [
+        ...(withSource
+          ? [{ kind: "registered", endpoint: agents[0].endpoint }]
+          : []),
+        ...members,
+      ],
+    }) as AgentNetwork;
+
+  test("lists each external member once, by its handle, connected first", () => {
+    const ops0 = remote("ops0", "ops0 on alpha.cocalc.ai (ops project)");
+    const result = externalAgentMentionSuggestions({
+      networks: [
+        withRemote("a", "active", [ops0]),
+        withRemote("b", "active", [ops0], false),
+        withRemote("c", "active", [remote("far", "far away")], false),
+        withRemote("d", "active", [remote("old", "old one", true)]),
+        withRemote("e", "active", [remote("nameless", "!!!")]),
+      ],
+      sourceEndpoint: agents[0].endpoint,
+      query: "",
+    });
+    // Unconnected ones wait for a search; removed and unnamed ones never show.
+    expect(result.rows.map(({ handle }) => handle)).toEqual(["ops0"]);
+    expect(result.rows[0]).toMatchObject({
+      connected: true,
+      account_id: "owner",
+    });
+    expect(result.hasMore).toBe(true);
+    const all = externalAgentMentionSuggestions({
+      networks: [
+        withRemote("a", "active", [ops0]),
+        withRemote("c", "active", [remote("far", "far away")], false),
+      ],
+      sourceEndpoint: agents[0].endpoint,
+      query: "far",
+    });
+    expect(all.rows).toMatchObject([{ handle: "far", connected: false }]);
+  });
+
+  test("a paused shared network is said to be paused, not connected", () => {
+    const result = externalAgentMentionSuggestions({
+      networks: [withRemote("a", "paused", [remote("ops0", "ops0")])],
+      sourceEndpoint: agents[0].endpoint,
+      query: "ops",
+    });
+    expect(result.rows).toMatchObject([{ connected: false, paused: true }]);
+  });
 });
