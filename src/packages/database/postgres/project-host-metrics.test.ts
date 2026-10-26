@@ -127,6 +127,34 @@ describe("project host metrics history", () => {
     );
   });
 
+  it("expects no pressure telemetry from a host stopped on purpose", async () => {
+    const parked = uuid();
+    const preempted = uuid();
+    for (const [host_id, desired] of [
+      [parked, "stopped"],
+      [preempted, "running"],
+    ]) {
+      await getPool().query(
+        `INSERT INTO project_hosts
+           (id, name, bay_id, status, metadata, created, updated)
+         VALUES ($1, $2, 'bay-0', 'off', $3::jsonb, NOW(), NOW())`,
+        [
+          host_id,
+          `host-${host_id.slice(0, 8)}`,
+          JSON.stringify({ desired_state: desired }),
+        ],
+      );
+      await getPool().query(
+        "INSERT INTO projects (project_id, title, host_id, provisioned, deleted) VALUES ($1, 'pressure test', $2, true, false)",
+        [uuid(), host_id],
+      );
+    }
+    const windows = await getProjectHostStoragePressureWindows({
+      bay_id: "bay-0",
+    });
+    expect(windows.map((window) => window.host_id)).toEqual([preempted]);
+  });
+
   it("stores at most one sample per minute and loads history with growth", async () => {
     const host_id = uuid();
     await insertProjectHost(host_id);

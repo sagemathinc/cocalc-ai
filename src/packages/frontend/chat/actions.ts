@@ -90,6 +90,7 @@ import {
 } from "./utils";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import {
+  chatReaderStarsKey,
   chatReaderStateKey,
   openProjectReadState,
   type ProjectReadStateStore,
@@ -439,6 +440,17 @@ function readerStateFrom(
   return state;
 }
 
+function readerStarsFrom(
+  store: ProjectReadStateStore,
+  path: string,
+  threadId: string,
+): string[] {
+  const entry = store.get(chatReaderStarsKey(path, threadId));
+  return entry?.kind === "chat-reader-stars" && Array.isArray(entry.s)
+    ? entry.s.filter((id): id is string => typeof id === "string")
+    : [];
+}
+
 export function collectThreadMessages({
   messages,
   threadId,
@@ -569,6 +581,10 @@ export class ChatActions extends Actions<ChatState> {
   // Reader changes made before the read-state store opened: applied, in
   // order, to what it holds once it opens.
   private pendingReaderUpdates = new Map<string, ReaderChange[]>();
+  private pendingReaderStars = new Map<
+    string,
+    ((starred: string[]) => string[])[]
+  >();
   private pendingThreadReads: Map<
     string,
     { count: number; messageId: string; at: Date }
@@ -777,6 +793,7 @@ export class ChatActions extends Actions<ChatState> {
     this.projectReadStateInit = undefined;
     this.pendingThreadReads.clear();
     this.pendingReaderUpdates.clear();
+    this.pendingReaderStars.clear();
   };
 
   private flushPendingThreadReads = (
@@ -788,6 +805,13 @@ export class ChatActions extends Actions<ChatState> {
     for (const [threadId, changes] of pendingReader) {
       for (const change of changes) {
         this.applyReaderChange(store, path, threadId, change);
+      }
+    }
+    const pendingStars = [...this.pendingReaderStars];
+    this.pendingReaderStars.clear();
+    for (const [threadId, changes] of pendingStars) {
+      for (const change of changes) {
+        this.applyReaderStars(store, path, threadId, change);
       }
     }
     if (this.pendingThreadReads.size === 0) {
@@ -2510,9 +2534,12 @@ export class ChatActions extends Actions<ChatState> {
       !Object.keys(state.r ?? {}).length
     )
       return;
-    this.updateReaderState(threadKey, (current) => ({
-      state: current.a ? { a: current.a } : {},
-    }));
+    // Only the read and unread exceptions go: archives (one by one, or all
+    // at once) stay.
+    this.updateReaderState(threadKey, (current) => {
+      const { r: _read, u: _unread, ...kept } = current;
+      return { state: kept };
+    });
   };
 
   /** The reader view's state for a thread: {} until there is any. */
@@ -2580,6 +2607,56 @@ export class ChatActions extends Actions<ChatState> {
       return true;
     }
     this.applyReaderChange(store, path, threadId, change);
+    this.touchReadStateVersion();
+    return true;
+  };
+
+  /** A thread's starred reader items (their ids), oldest first. */
+  getReaderStars = (threadKey: string): string[] => {
+    const threadId = this.normalizeThreadId(threadKey);
+    const path = this.store?.get("path");
+    if (!threadId || !path) return [];
+    const store = this.ensureProjectReadState();
+    const pending = this.pendingReaderStars.get(threadId) ?? [];
+    return pending.reduce(
+      (current, change) => change(current),
+      store ? readerStarsFrom(store, path, threadId) : [],
+    );
+  };
+
+  private applyReaderStars = (
+    store: ProjectReadStateStore,
+    path: string,
+    threadId: string,
+    change: (starred: string[]) => string[],
+  ): void => {
+    store.set(chatReaderStarsKey(path, threadId), {
+      kind: "chat-reader-stars",
+      t: new Date(),
+      s: change(readerStarsFrom(store, path, threadId)),
+    });
+  };
+
+  /**
+   * Star or unstar a thread's reader item. Before the read state opens, the
+   * change waits and is applied to what it holds then.
+   */
+  updateReaderStars = (
+    threadKey: string,
+    change: (starred: string[]) => string[],
+  ): boolean => {
+    const threadId = this.normalizeThreadId(threadKey);
+    const path = this.store?.get("path");
+    if (!threadId || !path) return false;
+    const store = this.ensureProjectReadState();
+    if (store == null) {
+      this.pendingReaderStars.set(threadId, [
+        ...(this.pendingReaderStars.get(threadId) ?? []),
+        change,
+      ]);
+    } else {
+      this.applyReaderStars(store, path, threadId, change);
+    }
     this.touchReadStateVersion();
     return true;
   };

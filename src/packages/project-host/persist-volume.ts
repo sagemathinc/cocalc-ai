@@ -65,6 +65,7 @@ import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
   assertBtrfsBackgroundMutationAllowed,
   forgetSubvolumePaths,
+  noteBtrfsMutation,
 } from "@cocalc/file-server/btrfs/operation-cache";
 import { noteQgroupLimit } from "@cocalc/file-server/btrfs/qgroup-scan";
 import { setPrepareProjectStore } from "@cocalc/conat/persist/context";
@@ -738,6 +739,7 @@ export async function capturePersistVolume({
     }
     // (again: the lock may have taken a while)
     assertAllowed();
+    noteBtrfsMutation();
     // removed by the persist server when it starts, if left over
     captured =
       stagingPath ??

@@ -512,6 +512,7 @@ describe("project recovery capacity accounting", () => {
       host_maintenance_blocks: [],
       by_host_class: [],
       oldest_debt: [],
+      parked_hosts: [],
     };
     const slot = await recordProjectRecoveryCoverageSlot({ health, checkedAt });
     await recordProjectRecoveryCoverageSlot({
@@ -652,6 +653,42 @@ describe("project recovery capacity accounting", () => {
         }),
       ]),
     );
+  });
+
+  it("lists debt on hosts stopped on purpose apart from live debt", async () => {
+    const parked_host = uuid();
+    const preempted_host = uuid();
+    const bay_id = getConfiguredBayId();
+    await getPool().query(
+      `INSERT INTO project_hosts (id, name, status, bay_id, metadata)
+       VALUES ($1, 'parked host', 'off', $3, '{"desired_state":"stopped"}'),
+              ($2, 'preempted host', 'off', $3, '{"desired_state":"running"}')`,
+      [parked_host, preempted_host, bay_id],
+    );
+    const edited = new Date(Date.now() - 3 * 24 * 60 * 60_000);
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, owning_bay_id, host_id, provisioned, last_edited)
+       VALUES ($1, 'parked recovery', $4, $3, true, $6),
+              ($2, 'preempted recovery', $4, $5, true, $6)`,
+      [uuid(), uuid(), parked_host, bay_id, preempted_host, edited],
+    );
+    const health = await getProjectRecoveryHealth();
+    expect(health.parked_hosts).toEqual([
+      expect.objectContaining({
+        host_id: parked_host,
+        host_status: "off",
+        projects: 1,
+        overdue_backups: 1,
+      }),
+    ]);
+    expect(health.parked_hosts[0].oldest_delay_seconds).toBeGreaterThan(0);
+    const debtHosts = new Set(health.by_host_class.map((g) => g.host_id));
+    expect(debtHosts.has(parked_host)).toBe(false);
+    expect(debtHosts.has(preempted_host)).toBe(true);
+    expect(
+      health.oldest_debt.some((debt) => debt.host_id === parked_host),
+    ).toBe(false);
   });
 
   it("counts legacy local projects but excludes projects owned by another bay", async () => {

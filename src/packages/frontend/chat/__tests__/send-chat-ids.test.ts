@@ -4,7 +4,12 @@ import { CHAT_THREAD_META_ROW_DATE, threadConfigRecordKey } from "@cocalc/chat";
 import { from_str } from "@cocalc/sync/editor/immer-db/doc";
 import * as readStateModule from "@cocalc/conat/project/read-state";
 import { ChatActions } from "../actions";
-import { markItemRead, readerItems } from "../reader-model";
+import {
+  markItemRead,
+  markItemUnread,
+  readerItems,
+  withItemStarred,
+} from "../reader-model";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -2242,6 +2247,10 @@ describe("reading a whole thread in the log", () => {
     expect(change({ r: { x: "x" }, u: ["y"], a: { p2: "p2" } }, 5)).toEqual({
       state: { a: { p2: "p2" } },
     });
+    // Archive all too, with what was moved back out of it.
+    expect(change({ u: ["y"], aw: 7, ax: ["p1"] }, 5)).toEqual({
+      state: { aw: 7, ax: ["p1"] },
+    });
     // Nothing to clear: nothing is written.
     actions.isProjectReadStateReady = jest.fn(() => true);
     actions.updateReaderState.mockClear();
@@ -2253,6 +2262,106 @@ describe("reading a whole thread in the log", () => {
     actions.getReaderState = jest.fn(() => ({}));
     actions.clearReaderReadExceptions("thread-1");
     expect(actions.updateReaderState).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reader stars", () => {
+  // The project's read state, as a key-value store.
+  const openStore = (actions: any) => {
+    const entries = new Map<string, any>();
+    const store: any = {
+      entries,
+      set: jest.fn((key: string, value: any) => entries.set(key, value)),
+      get: jest.fn((key: string) => entries.get(key)),
+      getChatThread: jest.fn(() => undefined),
+      isClosed: () => false,
+    };
+    actions.projectReadStateKey = "proj-1:00000000-1000-4000-8000-000000000001";
+    actions.projectReadState = store;
+    actions.getThreadReadCount = jest.fn(() => 0);
+    return store;
+  };
+  const items = readerItems([
+    { message_id: "p1", sender_id: "u" },
+    { message_id: "p2", sender_id: "u" },
+  ] as any);
+
+  it("are kept apart from the reader state, and survive reading the thread in the log", () => {
+    const actions = makeActions();
+    const store = openStore(actions);
+    expect(actions.getReaderStars("thread-1")).toEqual([]);
+    actions.updateReaderStars("thread-1", (starred: string[]) =>
+      withItemStarred(starred, items[0], true),
+    );
+    expect(store.set).toHaveBeenLastCalledWith(
+      "chat-reader-stars:thread-1:x.chat",
+      expect.objectContaining({ kind: "chat-reader-stars", s: ["p1"] }),
+    );
+    actions.updateReaderState("thread-1", (state: any) => ({
+      state: markItemUnread(items[1], state),
+    }));
+    expect(actions.getReaderState("thread-1").u).toEqual(["p2"]);
+    // Read in the log: the reader's read and unread marks go, stars stay.
+    actions.clearReaderReadExceptions("thread-1");
+    expect(actions.getReaderState("thread-1").u).toBeUndefined();
+    expect(actions.getReaderStars("thread-1")).toEqual(["p1"]);
+  });
+
+  it("survive a client that predates them rewriting the reader state", () => {
+    const actions = makeActions();
+    const store = openStore(actions);
+    actions.updateReaderStars("thread-1", (starred: string[]) =>
+      withItemStarred(starred, items[1], true),
+    );
+    // An older client saves its whole reader entry, knowing nothing of stars.
+    store.set("chat-reader:thread-1:x.chat", {
+      kind: "chat-reader",
+      t: new Date(),
+      a: { p1: "p1" },
+    });
+    expect(actions.getReaderStars("thread-1")).toEqual(["p2"]);
+    expect(actions.getReaderState("thread-1")).toEqual({ a: { p1: "p1" } });
+  });
+
+  it("made before the read state opens are applied to what it holds", async () => {
+    const actions = makeActions();
+    let resolveClient!: (client: unknown) => void;
+    (webapp_client.conat_client as any).projectConat = jest.fn(
+      () => new Promise((resolve) => (resolveClient = resolve)),
+    );
+    // Starred earlier, on another device.
+    const store: any = {
+      set: jest.fn(),
+      get: jest.fn((key: string) =>
+        key === "chat-reader-stars:thread-1:x.chat"
+          ? { kind: "chat-reader-stars", t: new Date(1), s: ["old"] }
+          : undefined,
+      ),
+      getChatThread: jest.fn(() => undefined),
+      onChange: () => () => {},
+      markChatThreadRead: jest.fn(),
+      isClosed: () => false,
+      close: jest.fn(),
+    };
+    const open = jest
+      .spyOn(readStateModule, "openProjectReadState")
+      .mockResolvedValue(store);
+    try {
+      actions.updateReaderStars("thread-1", (starred: string[]) =>
+        withItemStarred(starred, items[0], true),
+      );
+      expect(store.set).not.toHaveBeenCalled();
+      expect(actions.getReaderStars("thread-1")).toEqual(["p1"]);
+      resolveClient({});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(open).toHaveBeenCalled();
+      expect(store.set).toHaveBeenCalledWith(
+        "chat-reader-stars:thread-1:x.chat",
+        expect.objectContaining({ s: ["old", "p1"] }),
+      );
+    } finally {
+      open.mockRestore();
+    }
   });
 });
 

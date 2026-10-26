@@ -2,7 +2,7 @@ import { type Subvolume } from "./subvolume";
 import { btrfs } from "./util";
 import getLogger from "@cocalc/backend/logger";
 import { join } from "path";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { type SnapshotCounts, updateRollingSnapshots } from "./snapshots";
 import { ConatError } from "@cocalc/conat/core/client";
@@ -15,11 +15,18 @@ import { btrfsQuotasDisabled } from "./config";
 import { assertValidSnapshotName } from "@cocalc/util/snapshot-name";
 import { isISODate } from "@cocalc/util/misc";
 import {
+  beginReadonlySnapshotRead,
+  endReadonlySnapshotRead,
   invalidateBtrfsQgroupShowRaw,
+  knownReadonlySnapshot,
+  rememberReadonlySnapshot,
   withBtrfsMutationLock,
 } from "./operation-cache";
 
 const logger = getLogger("file-server:btrfs:subvolume-snapshots");
+
+// BTRFS_FIRST_FREE_OBJECTID: the root directory of every subvolume.
+const BTRFS_SUBVOLUME_ROOT_INO = 256;
 
 const DEFAULT_CLEANUP_QUOTA_RELIEF_BYTES = 1024 ** 3;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
@@ -285,6 +292,23 @@ export class SubvolumeSnapshots {
         });
         continue;
       }
+      let identity: string | undefined;
+      try {
+        // A btrfs subvolume root is inode 256 on its own st_dev; anything
+        // else (a plain directory, a symlink) is not a snapshot.
+        const st = await lstat(path);
+        if (!st.isDirectory() || st.ino !== BTRFS_SUBVOLUME_ROOT_INO) continue;
+        identity = `${st.dev}:${st.ino}:${st.ctimeMs}`;
+        if (knownReadonlySnapshot(path, identity)) {
+          snapshots.push(name);
+          continue;
+        }
+      } catch (err: any) {
+        if (err?.code === "ENOENT") continue;
+        // Unable to stat it: decide below as before, without the cache.
+      }
+      const token =
+        identity == null ? undefined : beginReadonlySnapshotRead(path);
       try {
         // Only keep readonly btrfs subvolumes (actual snapshots).
         let flags: string | undefined;
@@ -297,6 +321,9 @@ export class SubvolumeSnapshots {
         const ro = flags?.toLowerCase() ?? "";
         if (ro.includes("readonly") || ro.startsWith("yes") || ro === "true") {
           snapshots.push(name);
+          if (identity != null && token != null) {
+            rememberReadonlySnapshot(path, identity, token);
+          }
         }
       } catch (err) {
         if (process.env.DEBUG_SNAPTEST) {
@@ -306,6 +333,8 @@ export class SubvolumeSnapshots {
           path,
           err: `${err}`,
         });
+      } finally {
+        if (token != null) endReadonlySnapshotRead(path, token);
       }
     }
     snapshots.sort();

@@ -50,6 +50,8 @@ const DEFAULT_RECOVERY_MS = 60_000;
 // In recovery, scheduled snapshots (short btrfs metadata operations) are
 // admitted at this pace instead of waiting for the next starvation override.
 const DEFAULT_RECOVERY_SNAPSHOT_INTERVAL_MS = 20_000;
+// ... divided by this while the 60 s average is below the recovery threshold.
+const RECOVERY_QUIET_PACE_FACTOR = 4;
 // Consecutive samples, at least MIN_STATE_SAMPLE_MS apart, that every
 // escalation (to contended, back to contended from recovery, to emergency)
 // needs: a single stall burst (a SQLite checkpoint, a btrfs commit) must not
@@ -525,6 +527,15 @@ export function createStorageAdmissionController(
   const recoveryHealthy = (full: number, lifecycleActive: number) =>
     full < recoveryFullAvg10 &&
     (!recoveryRequiresQuietLifecycle || lifecycleActive === 0);
+  // Start-to-start spacing of snapshots admitted in recovery. Once the last
+  // minute's stall is below the recovery threshold too, the burst that caused
+  // recovery is over: pace four times faster (still one at a time).
+  const recoverySnapshotPaceMs = () => {
+    const avg60 = effectiveIoFullAvg60(lastInputs);
+    return avg60 != null && !lastInputs.error && avg60 < recoveryFullAvg10
+      ? recoverySnapshotIntervalMs / RECOVERY_QUIET_PACE_FACTOR
+      : recoverySnapshotIntervalMs;
+  };
 
   const transition = (
     next: HostStoragePressureState,
@@ -718,7 +729,7 @@ export function createStorageAdmissionController(
               lastRecoverySnapshotAt == null ||
                 lastRecoverySnapshotAt > lastInputs.sampled_at_ms
                 ? lastInputs.sampled_at_ms
-                : lastRecoverySnapshotAt + recoverySnapshotIntervalMs,
+                : lastRecoverySnapshotAt + recoverySnapshotPaceMs(),
             ),
           }
         : {}),
@@ -831,7 +842,7 @@ export function createStorageAdmissionController(
       allow_recovery_pace &&
       (lastRecoverySnapshotAt == null ||
         elapsedMs(lastRecoverySnapshotAt, decidedAtMs) >=
-          recoverySnapshotIntervalMs);
+          recoverySnapshotPaceMs());
     const starvationOverride =
       mode === "enforce" &&
       background &&
