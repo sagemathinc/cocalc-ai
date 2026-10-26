@@ -3,16 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Alert,
-  Button,
-  Space,
-  Spin,
-  Table,
-  Tag,
-  Tooltip,
-  Typography,
-} from "antd";
+import { Alert, Button, Space, Spin, Table, Tag, Typography } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
@@ -55,8 +46,9 @@ function probeCell(row: ProjectBackupShardAdminRepoInfo) {
       </Space>
     );
   }
+  // The error is shown inline, so it is readable without a pointer.
   return (
-    <Tooltip title={probe.error ?? ""}>
+    <Space vertical size={0}>
       <Space size={4}>
         <Tag color="red">{probe.error_kind ?? "failed"}</Tag>
         <span>
@@ -64,7 +56,12 @@ function probeCell(row: ProjectBackupShardAdminRepoInfo) {
           {probe.failing_since ? <TimeAgo date={probe.failing_since} /> : "-"}
         </span>
       </Space>
-    </Tooltip>
+      {probe.error ? (
+        <Typography.Text type="secondary" style={{ fontSize: "small" }}>
+          {probe.error}
+        </Typography.Text>
+      ) : null}
+    </Space>
   );
 }
 
