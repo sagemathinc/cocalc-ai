@@ -197,6 +197,13 @@ export async function sendOffSessionRefusalNotice(
   }
 }
 
+// The renewal worker tells the customer about a refused membership renewal
+// itself, naming the subscription and the date it is canceled
+// (subscription-renewal-worker.ts), so the generic notice is not sent for it.
+function sendsGenericNotice(path: string): boolean {
+  return isOffSessionPurpose(path) && path !== SUBSCRIPTION_RENEWAL;
+}
+
 function cardCountry(card): string {
   return `${card?.country ?? ""}`.trim().toUpperCase();
 }
@@ -295,7 +302,7 @@ export async function assertBusinessTaxIdForPurchase({
       reason: status.reason,
       amount,
     });
-    if (offSession) await sendOffSessionRefusalNotice(account_id);
+    if (sendsGenericNotice(path)) await sendOffSessionRefusalNotice(account_id);
     throw new BusinessTaxIdRequiredError(status);
   }
   if (!status.required && !status.country && offSession) {
@@ -327,7 +334,8 @@ export async function assertBusinessTaxIdForPurchase({
         reason: "card-country",
         amount,
       });
-      await sendOffSessionRefusalNotice(account_id);
+      if (sendsGenericNotice(path))
+        await sendOffSessionRefusalNotice(account_id);
       throw new BusinessTaxIdRequiredError(refused);
     }
   }

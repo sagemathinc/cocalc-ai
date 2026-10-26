@@ -15,7 +15,21 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 type Queryable = Pick<PoolClient, "query">;
 
 export const RENEWAL_ATTEMPT_LEASE_MS = 2 * 60 * 1000;
-const RENEWAL_ATTEMPT_RETRY_MS = 60 * 1000;
+// A failed attempt is retried after RENEWAL_ATTEMPT_RETRY_MS, doubling with
+// each further failure up to RENEWAL_ATTEMPT_MAX_RETRY_MS, so an attempt that
+// keeps failing is not retried every minute.
+export const RENEWAL_ATTEMPT_RETRY_MS = 60 * 1000;
+export const RENEWAL_ATTEMPT_MAX_RETRY_MS = 6 * 60 * 60 * 1000;
+
+// The delay before retrying an attempt that has now been tried attempt_count
+// times.
+export function renewalRetryDelayMs(attempt_count: number): number {
+  const failures = Math.max(0, Math.floor(attempt_count) - 1);
+  return Math.min(
+    RENEWAL_ATTEMPT_MAX_RETRY_MS,
+    RENEWAL_ATTEMPT_RETRY_MS * 2 ** Math.min(failures, 30),
+  );
+}
 // When automatic payment needs the customer (declined card, or the bank
 // requires authentication), the open payment stays payable and membership
 // benefits continue for this long after the paid-through boundary.
@@ -72,6 +86,7 @@ export async function scheduleSubscriptionRenewalAttempt({
        balance_applied=NULL,
        funding_version=1,
        last_error=NULL,
+       business_tax_id_notified_at=NULL,
        completed_at=NULL,
        updated_at=NOW()
      WHERE subscription_renewal_attempts.state='canceled'
@@ -212,24 +227,49 @@ export async function cancelOpenSubscriptionRenewalAttempts({
   return rowCount ?? 0;
 }
 
+// The SQL condition under which this bay's renewal worker may claim renewal
+// attempt `a`: its account is not banned, deleted or billing-frozen, and,
+// without the billing authority, the account and its funding authority belong
+// to this bay. Shared by the claim and the renewal health alert, so the alert
+// counts exactly what the claim can take. If `bay` is set, pass this bay's id
+// as that query parameter.
+export async function renewalAttemptClaimableSql(
+  bayParam: string,
+): Promise<{ sql: string; bay?: string }> {
+  const { billingAccountsTable } = await import("./billing-account");
+  const { isBillingAuthorityEnabled } =
+    await import("./billing-authority/config");
+  const accountTable = billingAccountsTable();
+  const legacyHome = isBillingAuthorityEnabled()
+    ? ""
+    : `EXISTS (SELECT 1 FROM accounts owner WHERE owner.account_id=a.account_id
+            AND COALESCE(NULLIF(BTRIM(owner.home_bay_id),''),${bayParam})=${bayParam})
+          AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
+            WHERE f.payer_account_id=a.account_id AND (f.state <> 'active' OR f.home_bay_id <> ${bayParam}))
+          AND `;
+  return {
+    sql: `(${legacyHome}NOT EXISTS (
+            SELECT 1 FROM ${accountTable} AS account
+             WHERE account.account_id=a.account_id
+               AND (account.banned IS TRUE OR account.deleted IS TRUE)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM billing_authority_account_fences AS fence
+             WHERE fence.account_id=a.account_id AND fence.frozen
+          ))`,
+    bay: legacyHome ? getConfiguredBayId() : undefined,
+  };
+}
+
 export async function claimDueSubscriptionRenewalAttempts({
   limit,
 }: {
   limit: number;
 }): Promise<SubscriptionRenewalAttempt[]> {
-  const { billingAccountsTable } = await import("./billing-account");
-  const { isBillingAuthorityEnabled } =
-    await import("./billing-authority/config");
-  const accountTable = billingAccountsTable();
-  const legacyHomePredicate = isBillingAuthorityEnabled()
-    ? ""
-    : `AND EXISTS (SELECT 1 FROM accounts owner WHERE owner.account_id=a.account_id
-            AND COALESCE(NULLIF(BTRIM(owner.home_bay_id),''),$3)=$3)
-          AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
-            WHERE f.payer_account_id=a.account_id AND (f.state <> 'active' OR f.home_bay_id <> $3))`;
+  const claimable = await renewalAttemptClaimableSql("$3");
   const queryParams: (number | string)[] = [limit, RENEWAL_ATTEMPT_LEASE_MS];
-  if (legacyHomePredicate) {
-    queryParams.push(getConfiguredBayId());
+  if (claimable.bay != null) {
+    queryParams.push(claimable.bay);
   }
   const { rows } = await getPool().query<SubscriptionRenewalAttempt>(
     `WITH candidates AS (
@@ -242,20 +282,15 @@ export async function claimDueSubscriptionRenewalAttempts({
           AND s.status='active'
           AND s.current_period_end=a.period_end
         WHERE a.state IN ('scheduled','processing')
-          ${legacyHomePredicate}
           AND a.not_before <= NOW()
           AND a.next_attempt_at <= NOW()
           AND (a.lease_expires_at IS NULL OR a.lease_expires_at <= NOW())
-          AND NOT EXISTS (
-            SELECT 1 FROM ${accountTable} AS account
-             WHERE account.account_id=a.account_id
-               AND (account.banned IS TRUE OR account.deleted IS TRUE)
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM billing_authority_account_fences AS fence
-             WHERE fence.account_id=a.account_id AND fence.frozen
-          )
-        ORDER BY a.not_before, a.subscription_id
+          AND ${claimable.sql}
+        -- Least recently due first. A failed attempt's next_attempt_at moves
+        -- forward on every retry, so it goes behind every attempt that has
+        -- been due longer instead of being claimed by every pass ahead of
+        -- them (head-of-line starvation).
+        ORDER BY a.next_attempt_at, a.not_before, a.subscription_id
         LIMIT $1
         FOR UPDATE OF a SKIP LOCKED
      )
@@ -402,15 +437,28 @@ export async function releaseSubscriptionRenewalAttempt({
   attempt_id: string;
   error: unknown;
 }): Promise<void> {
+  // Exponential backoff by the number of tries so far (see
+  // renewalRetryDelayMs).
   await getPool().query(
     `UPDATE subscription_renewal_attempts
         SET lease_expires_at=NULL,
-            next_attempt_at=NOW() + ($2 * INTERVAL '1 millisecond'),
+            next_attempt_at=NOW() + (
+              LEAST(
+                $4::double precision,
+                $2::double precision *
+                  POWER(2, LEAST(GREATEST(attempt_count - 1, 0), 30))
+              ) * INTERVAL '1 millisecond'
+            ),
             last_error=$3,
             updated_at=NOW()
       WHERE id=$1
         AND state='processing'`,
-    [attempt_id, RENEWAL_ATTEMPT_RETRY_MS, `${error}`],
+    [
+      attempt_id,
+      RENEWAL_ATTEMPT_RETRY_MS,
+      `${error}`,
+      RENEWAL_ATTEMPT_MAX_RETRY_MS,
+    ],
   );
 }
 
@@ -442,6 +490,64 @@ export async function deferSubscriptionRenewalAttemptForCustomer({
     return { deferred: false, needsNotice: false };
   }
   return { deferred: true, needsNotice: !!rows[0].needs_notice };
+}
+
+// last_error of a renewal waiting because the EU/UK business tax ID check
+// refused it (see deferSubscriptionRenewalAttemptForBusinessTaxId).
+export const BUSINESS_TAX_ID_REFUSAL_PREFIX = "business_tax_id_required: ";
+
+// A renewal the business tax ID check refused waits for the customer (to add
+// a valid VAT ID) and is rechecked every RENEWAL_CUSTOMER_ACTION_RECHECK_MS.
+// It is kept apart from the card/bank action state (customer_action_*), so a
+// later declined card on the same renewal still gets its own notice. No
+// Stripe payment exists yet (the check refuses before anything is created),
+// so the account credit set aside for this renewal is released; the next try
+// works the split out again.
+export async function deferSubscriptionRenewalAttemptForBusinessTaxId({
+  attempt_id,
+  error,
+}: {
+  attempt_id: string;
+  error: unknown;
+}): Promise<{ deferred: boolean; needsNotice: boolean }> {
+  const { rows } = await getPool().query<{ needs_notice: boolean }>(
+    `UPDATE subscription_renewal_attempts
+        SET state='scheduled',
+            lease_expires_at=NULL,
+            next_attempt_at=NOW() + ($2 * INTERVAL '1 millisecond'),
+            balance_applied=CASE
+              WHEN payment_intent_id IS NULL AND stripe_invoice_id IS NULL
+                THEN NULL
+              ELSE balance_applied
+            END,
+            last_error=$3,
+            updated_at=NOW()
+      WHERE id=$1
+        AND state='processing'
+      RETURNING business_tax_id_notified_at IS NULL AS needs_notice`,
+    [
+      attempt_id,
+      RENEWAL_CUSTOMER_ACTION_RECHECK_MS,
+      `${BUSINESS_TAX_ID_REFUSAL_PREFIX}${error}`,
+    ],
+  );
+  return {
+    deferred: rows.length > 0,
+    needsNotice: rows[0]?.needs_notice === true,
+  };
+}
+
+export async function markSubscriptionRenewalBusinessTaxIdNotified({
+  attempt_id,
+}: {
+  attempt_id: string;
+}): Promise<void> {
+  await getPool().query(
+    `UPDATE subscription_renewal_attempts
+        SET business_tax_id_notified_at=NOW(), updated_at=NOW()
+      WHERE id=$1 AND business_tax_id_notified_at IS NULL`,
+    [attempt_id],
+  );
 }
 
 export async function markSubscriptionRenewalCustomerNotified({
