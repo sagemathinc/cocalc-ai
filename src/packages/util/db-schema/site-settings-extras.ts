@@ -2425,7 +2425,7 @@ export const EXTRAS: SettingsExtras = {
   },
   project_hosts_cloudflare_tunnel_api_token: {
     name: "Project Hosts: Cloudflare Tunnel - API Token",
-    desc: 'Cloudflare API token with permissions for Cloudflare Tunnel and DNS (Account:Cloudflare Tunnel:Edit, Zone:DNS:Edit). Hosts on direct ingress (the `cloudflare-proxy` public route, which project content origins require) also need Zone:Config Rules:Edit on the site\'s zone: each one gets an "SSL: Full" configuration rule there, and moving a host to that route fails without it.',
+    desc: 'Cloudflare API token with permissions for Cloudflare Tunnel and DNS (Account:Cloudflare Tunnel:Edit, Zone:DNS:Edit). Hosts on direct ingress (the `cloudflare-proxy` public route, which project content origins require) also need Zone:Config Rules:Edit on the site\'s zone so CoCalc can maintain the zone-wide "SSL: Full" configuration rule; moving a host to that route fails without it.',
     default: "",
     password: true,
     to_val: to_trimmed_str,
