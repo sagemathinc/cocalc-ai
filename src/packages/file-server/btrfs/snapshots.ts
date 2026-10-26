@@ -33,6 +33,9 @@ export interface RollingSnapshotUpdateResult {
   /** Expired snapshots kept because beforePrune declined; a later update
    * deletes them. */
   pruneDeferred?: number;
+  /** No snapshot was created: making room under the limit needed a prune
+   * that beforePrune declined, so the whole update waits. */
+  createDeferred?: boolean;
 }
 
 export type RollingSnapshotStage =

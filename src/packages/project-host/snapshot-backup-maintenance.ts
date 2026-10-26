@@ -1547,7 +1547,13 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               disabled = updated?.disabled ?? false;
               skippedReason = updated?.skipped_reason;
               stageDurations = updated?.stage_durations_ms ?? {};
-              if (updated?.prune_deferred) {
+              if (updated?.skipped_reason === "snapshot_prune_deferred") {
+                // The whole update waited to make room under the limit; a
+                // deferred attempt is retried in about a minute, and the
+                // gate's bound keeps counting from the first deferral. The
+                // background retry can't help (it never applies the limit)
+                // and would restart that bound, so don't use it here.
+              } else if (updated?.prune_deferred) {
                 // Retried within the bound even if this project isn't due
                 // again for a day (snapshot-prune-gate.ts).
                 notePendingPrune(project_id, {

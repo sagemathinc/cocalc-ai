@@ -3249,6 +3249,36 @@ describe("deferred snapshot prunes", () => {
     expect(pruneDeferredSnapshotsMock).toHaveBeenCalledTimes(2);
   });
 
+  it("retries a create deferred for room under the limit in a minute, without the background retry", async () => {
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: null,
+      created_snapshot_at: null,
+      changed: null,
+      disabled: false,
+      skipped_reason: "snapshot_prune_deferred",
+      prune_deferred: true,
+      stage_durations_ms: { prune_deferred_ms: 0 },
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    const before = Date.now();
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    const gate = await import("./snapshot-prune-gate");
+    // the rolling-only retry can't free the slot and would reset the bound
+    expect(gate.getSnapshotPruneGateStats().pending_projects).toBe(0);
+    const report = reportProjectMaintenanceMock.mock.calls
+      .map(([value]) => value)
+      .filter((value) => value.kind === "snapshot")
+      .at(-1); // the attempt's own report, after the queued one
+    expect(report).toMatchObject({
+      outcome: "deferred",
+      reason: "snapshot_prune_deferred",
+    });
+    const retry = Date.parse(report.retry_at);
+    expect(retry - before).toBeGreaterThan(30_000);
+    expect(retry - before).toBeLessThan(5 * 60_000);
+  });
+
   it("keeps the retry pending while storage admission refuses it", async () => {
     await deferOnce();
     admitStorageOperationMock.mockImplementation(() => ({

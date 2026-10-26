@@ -3346,6 +3346,15 @@ export async function runScheduledSnapshotMaintenance({
         // project_maintenance_attempts.stage_durations_ms.
         stageDurations.prune_deferred_ms = pruneDecision?.deferredForMs ?? 0;
       }
+      if (update.createDeferred) {
+        // Making room under the limit had to wait for the gate, so no
+        // snapshot was attempted; the scheduler retries the update.
+        return {
+          skipped_reason: "snapshot_prune_deferred",
+          prune_deferred: true,
+          stage_durations_ms: stageDurations,
+        };
+      }
       const confirmationStarted = Date.now();
       const snapshots = (await vol.snapshots.readdir())
         .filter(isISODate)
@@ -3373,6 +3382,12 @@ export async function runScheduledSnapshotMaintenance({
       disabled: false,
       skipped_reason:
         result?.skipped_reason ?? "project_volume_lifecycle_changed",
+      ...(result && "prune_deferred" in result
+        ? {
+            prune_deferred: result.prune_deferred,
+            stage_durations_ms: result.stage_durations_ms,
+          }
+        : {}),
     };
   }
   return result;

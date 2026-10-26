@@ -354,18 +354,55 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
       expect(result.pruneDeferred).toBeUndefined();
     });
 
-    it("never goes more than one over: the next update makes room first", async () => {
+    it("while still busy, the next update neither deletes nor creates; once allowed it makes room and creates", async () => {
       const { snapshots, names } = atLimit();
-      const beforePrune = jest.fn(() => false);
+      let busy = true;
+      const beforePrune = jest.fn(() => !busy);
       await snapshots.update({ daily: 5 }, { limit: 2, beforePrune });
       expect(names).toHaveLength(3);
-      jest.spyOn(Date, "now").mockReturnValue(Date.now() + 2 * day);
+      const afterFirst = [...names];
+      const now = Date.now();
+      jest.spyOn(Date, "now").mockReturnValue(now + 2 * day);
       try {
-        await snapshots.update({ daily: 5 }, { limit: 2, beforePrune });
+        const waiting = await snapshots.update(
+          { daily: 5 },
+          { limit: 2, beforePrune },
+        );
+        expect(waiting).toMatchObject({
+          createDeferred: true,
+          createdName: null,
+        });
+        expect(waiting.pruneDeferred).toBeGreaterThan(0);
+        expect(names).toEqual(afterFirst);
+        expect(snapshots.create).toHaveBeenCalledTimes(1);
+        expect(snapshots.delete).not.toHaveBeenCalled();
+
+        busy = false;
+        const done = await snapshots.update(
+          { daily: 5 },
+          { limit: 2, beforePrune },
+        );
+        expect(done.createDeferred).toBeUndefined();
+        expect(done.createdName).not.toBeNull();
+        expect(snapshots.create).toHaveBeenCalledTimes(2);
+        expect(names).toHaveLength(2);
       } finally {
         jest.restoreAllMocks();
       }
-      expect(names).toHaveLength(3);
+    });
+
+    it("a limit reduction with several victims waits the same way", async () => {
+      const { snapshots, names } = atLimit();
+      names.push(new Date(Date.now() - 0.5 * day).toISOString());
+      const beforePrune = jest.fn(() => false);
+      const result = await snapshots.update(
+        { daily: 5 },
+        { limit: 1, beforePrune },
+      );
+      expect(beforePrune).toHaveBeenCalledWith(names.slice(0, 2));
+      expect(result).toMatchObject({ createDeferred: true, pruneDeferred: 2 });
+      expect(snapshots.delete).not.toHaveBeenCalled();
+      expect(snapshots.create).not.toHaveBeenCalled();
     });
   });
 

@@ -511,8 +511,7 @@ export class SubvolumeSnapshots {
     const countBeyondLimit = async () =>
       Math.max(0, (await this.readdir()).length - normalizedLimit);
     // Delete the oldest automatic snapshots beyond the limit; with
-    // beforePrune, ask first, and keep them (at most one over the limit,
-    // the replacement slot) if it declines.
+    // beforePrune, ask first, and keep them if it declines.
     const pruneToLimit = async (ask: boolean): Promise<number> => {
       let deferred = 0;
       await timed("prune", async () => {
@@ -546,9 +545,19 @@ export class SubvolumeSnapshots {
       });
       return deferred;
     };
-    // Make room first: a deferral leaves at most one extra snapshot, which
-    // must go before the next one can be created.
-    await pruneToLimit(false);
+    // Make room first. After a deferral this is the extra snapshot, and
+    // deleting it is a prune like any other: if the gate declines, the
+    // update waits (no create either), within the gate's bound.
+    const madeRoomDeferred = await pruneToLimit(true);
+    if (madeRoomDeferred > 0) {
+      return {
+        changed: null,
+        createdName: null,
+        disabled: false,
+        pruneDeferred: madeRoomDeferred,
+        createDeferred: true,
+      };
+    }
     const result = await updateRollingSnapshots({
       snapshots: this,
       counts,

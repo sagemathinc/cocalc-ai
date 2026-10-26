@@ -878,6 +878,7 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
                   'project_volume_unavailable', 'project_volume_archiving',
                   'project_volume_lifecycle_changed',
                   'backup_capacity_busy', 'snapshot_not_created',
+                  'snapshot_prune_deferred',
                   'backup_not_created', 'replacement_capacity_blocked',
                   'snapshot_maintenance_disabled',
                   'legacy_restore_active', 'memory_pressure',
