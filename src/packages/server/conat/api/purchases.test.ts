@@ -110,6 +110,8 @@ const getConfiguredBayIdMock = jest.fn();
 const searchRelatedClusterAccountsMock = jest.fn();
 const getNonAdminUserSearchRequestMock = jest.fn();
 const searchClusterAccountsMock = jest.fn();
+const requireDangerousSessionAuthMock = jest.fn();
+const adminRefundPurchaseMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
@@ -127,6 +129,15 @@ jest.mock("@cocalc/server/purchases/admin-membership-package", () => ({
     adminCreateMembershipPackagePurchaseMock(...args),
   adminGetMembershipPackageQuote: (...args: any[]) =>
     adminGetMembershipPackageQuoteMock(...args),
+}));
+
+jest.mock("./dangerous-session-auth", () => ({
+  requireDangerousSessionAuth: (...args: any[]) =>
+    requireDangerousSessionAuthMock(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/admin-refund", () => ({
+  adminRefundPurchase: (...args: any[]) => adminRefundPurchaseMock(...args),
 }));
 
 jest.mock("@cocalc/database", () => ({
@@ -4225,6 +4236,80 @@ describe("purchases.adminResetMembershipUsageWindows", () => {
       window: "5h",
       reset_by: "admin-1",
       reason: "support reset",
+    });
+  });
+});
+
+describe("purchases.adminCreateRefund", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { adminCreateRefund } = await import("./purchases");
+    await expect(
+      adminCreateRefund({
+        account_id: "viewer-1",
+        session_hash: "fresh-session-1",
+        purchase_id: 12,
+        reason: "requested_by_customer",
+        commit: true,
+      }),
+    ).rejects.toThrow("must be an admin");
+    expect(requireDangerousSessionAuthMock).not.toHaveBeenCalled();
+    expect(adminRefundPurchaseMock).not.toHaveBeenCalled();
+  });
+
+  it("requires recent second-factor auth without impersonation", async () => {
+    isAdminMock.mockResolvedValue(true);
+    requireDangerousSessionAuthMock.mockRejectedValue(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
+
+    const { adminCreateRefund } = await import("./purchases");
+    await expect(
+      adminCreateRefund({
+        account_id: "admin-1",
+        browser_id: "browser-1",
+        purchase_id: 12,
+        reason: "requested_by_customer",
+        commit: true,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+      allow_actor_impersonation: false,
+    });
+    expect(adminRefundPurchaseMock).not.toHaveBeenCalled();
+  });
+
+  it("previews unless commit is exactly true", async () => {
+    isAdminMock.mockResolvedValue(true);
+    requireDangerousSessionAuthMock.mockResolvedValue({});
+    adminRefundPurchaseMock.mockResolvedValue({ commit: false });
+
+    const { adminCreateRefund } = await import("./purchases");
+    await adminCreateRefund({
+      account_id: "admin-1",
+      session_hash: "fresh-session-1",
+      purchase_id: 12,
+      reason: "requested_by_customer",
+      notes: "duplicate charge",
+      commit: "yes" as any,
+    });
+    expect(adminRefundPurchaseMock).toHaveBeenCalledWith({
+      admin_account_id: "admin-1",
+      purchase_id: 12,
+      reason: "requested_by_customer",
+      notes: "duplicate charge",
+      commit: false,
     });
   });
 });

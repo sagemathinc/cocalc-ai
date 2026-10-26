@@ -90,8 +90,7 @@ export default function useUpload(
         if (item?.type.startsWith("image/")) {
           const file = item.getAsFile();
           if (file != null) {
-            const blob = file.slice(0, -1, item.type);
-            const uploadFile = new File([blob], pastedBlobFilename(item.type), {
+            const uploadFile = new File([file], pastedBlobFilename(item.type), {
               type: item.type,
             });
             (uploadFile as any)._slateUploadGeneration =

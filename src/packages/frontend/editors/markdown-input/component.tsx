@@ -1188,9 +1188,8 @@ export function MarkdownInput(props: Props) {
         e.preventDefault();
         const file = item.getAsFile();
         if (file != null) {
-          const blob = file.slice(0, -1, item.type);
           dropzone_ref.current?.addFile(
-            new File([blob], `paste-${Math.random()}`, { type: item.type }),
+            new File([file], `paste-${Math.random()}`, { type: item.type }),
           );
         }
         return;

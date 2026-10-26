@@ -1378,6 +1378,33 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     });
 
   adminPurchase
+    .command("refund <purchase-id>")
+    .description(
+      "preview or create a refund through CoCalc's refund flow (card payments are refunded through Stripe; a membership refund also cancels its subscription)",
+    )
+    .requiredOption(
+      "--reason <reason>",
+      "duplicate, fraudulent, requested_by_customer, or other",
+    )
+    .option("--notes <text>", "note on the refund (the customer sees it)", "")
+    .option("--commit", "create the refund", false)
+    .action(async (purchaseId: string, opts: any, command: Command) => {
+      await withContext(command, "admin purchase refund", async (ctx) => {
+        const purchase_id = Number(purchaseId);
+        if (!Number.isSafeInteger(purchase_id) || purchase_id <= 0) {
+          throw new Error("<purchase-id> must be a positive integer");
+        }
+        return await ctx.hub.purchases.adminCreateRefund({
+          account_id: ctx.accountId,
+          purchase_id,
+          reason: `${opts.reason ?? ""}`.trim(),
+          notes: `${opts.notes ?? ""}`,
+          commit: !!opts.commit,
+        });
+      });
+    });
+
+  adminPurchase
     .command("membership-package <user>")
     .description(
       "preview or create a custom-price membership package for an account",
