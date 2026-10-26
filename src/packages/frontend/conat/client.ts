@@ -1,6 +1,7 @@
 import { redux } from "@cocalc/frontend/app-framework";
 import type { WebappClient } from "@cocalc/frontend/client/client";
 import { withTimeout } from "@cocalc/util/async-utils";
+import { recordUxLatencyEvent } from "@cocalc/frontend/monitoring/ux-latency";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
   type ConatSyncTable,
@@ -177,6 +178,17 @@ const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [1_000, 3_000, 7_000] as const;
 const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
 const PROJECT_HOST_BAY_MISMATCH_RETRY_MS = 60_000;
 const PROJECT_HOST_BROWSER_SESSION_SETTLE_MS = 100;
+// A host, or a proxy in front of it, can accept the bootstrap request and never
+// answer. fetch has no timeout of its own, and a pending bootstrap blocks every
+// later reconnect to that host, so bound it.
+const PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_TIMEOUT_MS = 15_000;
+// Upper bound for one connect attempt (token, browser session, connect()):
+// a stuck attempt is dropped so it cannot block the next one.
+const ROUTED_HOST_CONNECT_ATTEMPT_TIMEOUT_MS = 30_000;
+// A host still not connected this long is reported (once) as stuck.
+const ROUTED_HOST_STUCK_REPORT_MS = 60_000;
+// Recoveries faster than this are routine and not reported.
+const ROUTED_HOST_RECOVERY_REPORT_MIN_MS = 5_000;
 // A restarted project host is usually back within 2-5 s (the host agent
 // respawns it on its next poll), so retry often at first: a single 5 s wait
 // after just missing it doubled the outage.
@@ -279,6 +291,12 @@ type RoutedHubClientState = {
   // when the current run of failed reconnects started
   reconnectFailingSince?: number;
   lastConnectError?: unknown;
+  // when this client last stopped being connected (or was created)
+  disconnectedSince?: number;
+  // the step a connect attempt is in, for the stuck report
+  connectStage?: "browser-session" | "socket";
+  stuckTimer?: ReturnType<typeof setTimeout>;
+  stuckReported?: boolean;
 };
 
 type ProjectHostTokenState = {
@@ -1945,6 +1963,10 @@ export class ConatClient extends EventEmitter {
       clearTimeout(current.reconnectTimer);
       delete current.reconnectTimer;
     }
+    if (current.stuckTimer != null) {
+      clearTimeout(current.stuckTimer);
+      delete current.stuckTimer;
+    }
     syncdocDiagnosticLog("project-host client close", {
       routing_key,
       host_id,
@@ -2248,17 +2270,40 @@ export class ConatClient extends EventEmitter {
           address,
         },
       );
-      const response = await fetch(url, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const abort = new AbortController();
+      const abortTimer = setTimeout(
+        () => abort.abort(),
+        PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_TIMEOUT_MS,
+      );
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: abort.signal,
+        });
+      } catch (err) {
+        if (abort.signal.aborted) {
+          throw new Error(
+            `project-host browser session bootstrap timed out after ${
+              PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_TIMEOUT_MS / 1000
+            } seconds`,
+          );
+        }
+        throw err;
+      } finally {
+        clearTimeout(abortTimer);
+      }
       if (!response.ok) {
         this.invalidateProjectHostToken(host_id);
         this.invalidateProjectHostBrowserSession(routing_key);
-        const message = await response.text().catch(() => "");
+        const message = `${await withTimeout(
+          response.text(),
+          PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_TIMEOUT_MS,
+        ).catch(() => "")}`;
         logProjectHostRoutingDiagnostic(
           "browser-session-bootstrap-http-error",
           {
@@ -2327,7 +2372,12 @@ export class ConatClient extends EventEmitter {
   }): Promise<boolean> => {
     const { host_id } = state;
     if (state.connectInFlight) {
-      return await state.connectInFlight;
+      return await this.awaitRoutedHostConnectAttempt({
+        routing_key,
+        state,
+        project_id,
+        attempt: state.connectInFlight,
+      });
     }
     const connectAttempt = (async (): Promise<boolean> => {
       if (this.permanentlyDisconnected) {
@@ -2346,6 +2396,7 @@ export class ConatClient extends EventEmitter {
       );
       try {
         this.throwIfProjectHostAuthCooldownActive(host_id);
+        state.connectStage = "browser-session";
         await this.ensureProjectHostBrowserSession({
           host_id,
           routing_key,
@@ -2373,6 +2424,7 @@ export class ConatClient extends EventEmitter {
             err,
           );
         }
+        this.noteRoutedHostConnectFailed(state);
         this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
         return false;
       }
@@ -2410,6 +2462,7 @@ export class ConatClient extends EventEmitter {
           host_session_id: state.host_session_id,
           connected: !!state.client.conn?.connected,
         });
+        state.connectStage = "socket";
         const socket: any = state.client.conn;
         if (typeof socket?.connect === "function") {
           socket.connect();
@@ -2444,10 +2497,77 @@ export class ConatClient extends EventEmitter {
       }
     });
     state.connectInFlight = connectAttempt;
-    return await connectAttempt;
+    return await this.awaitRoutedHostConnectAttempt({
+      routing_key,
+      state,
+      project_id,
+      attempt: connectAttempt,
+    });
   };
 
-  private runRoutedHostReconnect = async ({
+  // Wait for a connect attempt, but no longer than its budget: an attempt that
+  // never settles is dropped and a new one is scheduled, so it cannot leave the
+  // host disconnected until the page is reloaded.
+  private awaitRoutedHostConnectAttempt = async ({
+    routing_key,
+    state,
+    project_id,
+    attempt,
+  }: {
+    routing_key: string;
+    state: RoutedHubClientState;
+    project_id?: string;
+    attempt: Promise<boolean>;
+  }): Promise<boolean> => {
+    try {
+      return await withTimeout(attempt, ROUTED_HOST_CONNECT_ATTEMPT_TIMEOUT_MS);
+    } catch (err) {
+      if (state.connectInFlight === attempt) {
+        delete state.connectInFlight;
+      }
+      if (state.connectStage === "browser-session") {
+        // The next attempt must start a new bootstrap, not join the stuck one.
+        this.invalidateProjectHostBrowserSession(routing_key);
+      }
+      state.lastConnectError = err;
+      console.warn(
+        `routed host connect attempt for ${state.host_id} did not finish within ${ROUTED_HOST_CONNECT_ATTEMPT_TIMEOUT_MS} ms; retrying`,
+        { host_id: state.host_id, stage: state.connectStage },
+      );
+      if (
+        !this.permanentlyDisconnected &&
+        this.isCurrentRoutedHostState(routing_key, state)
+      ) {
+        this.noteRoutedHostConnectFailed(state);
+        this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
+      }
+      return false;
+    }
+  };
+
+  private runRoutedHostReconnect = async (opts: {
+    routing_key: string;
+    state: RoutedHubClientState;
+    project_id?: string;
+  }): Promise<void> => {
+    try {
+      await this.runRoutedHostReconnectOnce(opts);
+    } catch (err) {
+      // An unexpected error must not end the reconnect loop for this host.
+      const { routing_key, state, project_id } = opts;
+      state.lastConnectError = err;
+      console.warn(`routed host reconnect for ${state.host_id} failed`, err);
+      if (
+        !this.permanentlyDisconnected &&
+        this.isCurrentRoutedHostState(routing_key, state) &&
+        !state.client.conn?.connected
+      ) {
+        this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
+      }
+    }
+  };
+
+  private runRoutedHostReconnectOnce = async ({
     routing_key,
     state,
     project_id,
@@ -2858,6 +2978,7 @@ export class ConatClient extends EventEmitter {
       public_directory_share_id,
       project_ids: new Set<string>(),
       reconnectAttempts: 0,
+      disconnectedSince: Date.now(),
       client: connectToConat({
         address,
         inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
@@ -2894,6 +3015,7 @@ export class ConatClient extends EventEmitter {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
       }
+      this.noteRoutedHostConnected(state);
       this.reconnectCoordinator.requestResourceReconnects({
         includeBackground: true,
         reason: "routed_host_connected",
@@ -2941,6 +3063,7 @@ export class ConatClient extends EventEmitter {
         public_directory_share_id: state.public_directory_share_id,
       });
       this.emit("project-host-disconnected", host_id);
+      this.noteRoutedHostDisconnected(state);
       this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
     });
     state.client.conn.on("connect_error", (err) => {
@@ -2971,6 +3094,7 @@ export class ConatClient extends EventEmitter {
           this.invalidateProjectHostToken(host_id);
         }
       }
+      this.noteRoutedHostConnectFailed(state);
       this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
     });
     this.registerTrackedProjectForHost(host_id, state, project_id);
@@ -2980,8 +3104,73 @@ export class ConatClient extends EventEmitter {
       }
     }
     this.routedHubClients[routing_key] = state;
+    this.noteRoutedHostDisconnected(state);
     void this.connectRoutedHost({ routing_key, state, project_id });
     return state.client;
+  };
+
+  // Telemetry for how often, and how long, a project host stays unreachable:
+  // one "stuck" event if it is still not connected after
+  // ROUTED_HOST_STUCK_REPORT_MS, and a "recovered" event with the duration
+  // when it connects again after more than a routine blip.
+  // A connect attempt failed (or never finished) while the host is not
+  // connected. Tell the UI, so a host that never connected in this tab shows
+  // the same "unavailable / reconnecting" state as one that dropped, instead
+  // of nothing.
+  private noteRoutedHostConnectFailed = (state: RoutedHubClientState) => {
+    if (state.client.conn?.connected) return;
+    this.emit("project-host-disconnected", state.host_id);
+    this.noteRoutedHostDisconnected(state);
+  };
+
+  private noteRoutedHostDisconnected = (state: RoutedHubClientState) => {
+    state.disconnectedSince ??= Date.now();
+    if (state.stuckTimer != null || state.stuckReported) return;
+    state.stuckTimer = setTimeout(() => {
+      delete state.stuckTimer;
+      if (state.client.conn?.connected || state.disconnectedSince == null) {
+        return;
+      }
+      state.stuckReported = true;
+      recordUxLatencyEvent({
+        event_type: "project_host_connection",
+        metric: "stuck",
+        duration_ms: Date.now() - state.disconnectedSince,
+        host_id: state.host_id,
+        segment: state.connectStage,
+        details: {
+          reconnect_attempts: state.reconnectAttempts,
+          last_error:
+            `${(state.lastConnectError as any)?.message ?? state.lastConnectError ?? ""}`.slice(
+              0,
+              200,
+            ),
+          online:
+            typeof navigator === "undefined" ? undefined : navigator.onLine,
+        },
+      });
+    }, ROUTED_HOST_STUCK_REPORT_MS);
+  };
+
+  private noteRoutedHostConnected = (state: RoutedHubClientState) => {
+    if (state.stuckTimer != null) {
+      clearTimeout(state.stuckTimer);
+      delete state.stuckTimer;
+    }
+    const since = state.disconnectedSince;
+    const wasStuck = !!state.stuckReported;
+    delete state.disconnectedSince;
+    delete state.stuckReported;
+    if (since == null) return;
+    const duration_ms = Date.now() - since;
+    if (!wasStuck && duration_ms < ROUTED_HOST_RECOVERY_REPORT_MIN_MS) return;
+    recordUxLatencyEvent({
+      event_type: "project_host_connection",
+      metric: "recovered",
+      duration_ms,
+      host_id: state.host_id,
+      details: { was_stuck: wasStuck },
+    });
   };
 
   private ensureRoutedHubClientConnected = async ({
