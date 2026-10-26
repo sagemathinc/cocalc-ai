@@ -447,25 +447,21 @@ async function scrubBrokenProjectCodexAuthArtifacts(
   }
 }
 
-// Credentials Codex needs in its environment. The host's process list shows
-// every process's argv to all host users, so these go to podman by name only
-// (`-e NAME` without a value), and podman reads the value from its own
-// environment, which only the same uid can read.
-const PODMAN_ENV_BY_NAME = new Set([
-  "OPENAI_API_KEY",
-  "COCALC_BEARER_TOKEN",
-  "COCALC_AGENT_TOKEN",
-]);
+// Environment variables that hold a credential, or the path to one. This is
+// the one list for both passing env to podman and redacting it from logs.
+const CREDENTIAL_ENV_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PROXY)/i;
 
 // Adds `-e` options for env to args and returns the environment to spawn
-// podman with.
+// podman with. Every host user can read a process's argv, so credentials go
+// by name only (`-e NAME` without a value): podman reads the value from its
+// own environment, which only the same uid can read.
 export function pushPodmanEnv(
   args: string[],
   env: Record<string, string>,
 ): NodeJS.ProcessEnv {
   const spawnEnv = podmanEnv();
   for (const key in env) {
-    if (PODMAN_ENV_BY_NAME.has(key)) {
+    if (CREDENTIAL_ENV_NAME.test(key)) {
       args.push("-e", key);
       spawnEnv[key] = env[key];
     } else {
@@ -483,7 +479,7 @@ function redactPodmanArgs(args: string[]): string {
     const j = raw.indexOf("=");
     if (j === -1) continue;
     const key = raw.slice(0, j);
-    if (/(KEY|TOKEN|SECRET|PASSWORD|PROXY)/i.test(key)) {
+    if (CREDENTIAL_ENV_NAME.test(key)) {
       redacted[i + 1] = `${key}=***`;
     }
   }
