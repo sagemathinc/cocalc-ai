@@ -7,6 +7,11 @@
 // (util/public-home-experiment.ts). Nothing is stored in the browser: the
 // version is chosen per page view and travels only in the sign-up link.
 
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  hasCategoryConsent,
+  onConsentChange,
+} from "@cocalc/frontend/cookie-consent";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   isPublicHomeVariantId,
@@ -58,28 +63,29 @@ export function publicHomeVariantFromSearch(
   return isPublicHomeVariantId(variant) ? variant : undefined;
 }
 
-/** Add one to the aggregate count for this version and event. Best effort:
- * failures are ignored and never affect the page. */
+/** Whether this visitor may be counted. The counts are first-party usage
+ * metrics, so on sites with the cookie banner they need the "Usage metrics"
+ * consent; without the banner there is no consent to ask for. */
+export function publicHomeExperimentAllowed(
+  cookieBannerEnabled: boolean,
+): boolean {
+  return !cookieBannerEnabled || hasCategoryConsent("usage");
+}
+
+/** Add one to the aggregate count for this version and event (sign-ups are
+ * counted by the server when the account is created). Best effort: failures
+ * are ignored and never affect the page. The request carries no cookies. */
 export function sendPublicHomeExperimentEvent(
   variant: string,
-  event: PublicHomeExperimentEvent,
+  event: Exclude<PublicHomeExperimentEvent, "signup">,
 ): void {
   if (typeof window === "undefined") return;
-  const url = joinUrlPath(appBasePath, "home-experiment");
-  const body = JSON.stringify({ variant, event });
   try {
-    if (
-      typeof navigator !== "undefined" &&
-      typeof navigator.sendBeacon === "function" &&
-      navigator.sendBeacon(url, new Blob([body], { type: "application/json" }))
-    ) {
-      return;
-    }
     void window
-      .fetch(url, {
+      .fetch(joinUrlPath(appBasePath, "home-experiment"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body,
+        body: JSON.stringify({ variant, event }),
         keepalive: true,
         credentials: "omit",
       })
@@ -87,4 +93,40 @@ export function sendPublicHomeExperimentEvent(
   } catch {
     // never let counting affect the page
   }
+}
+
+/** For the sign-up forms: when the page was reached from a Home version,
+ * count the visit (now, or once the visitor consents), and return a getter
+ * for the version to send with the sign-up, which the server counts when the
+ * account exists. Consent is tracked as state, so links built during render
+ * (single sign-on) pick the version up as soon as the visitor consents. The
+ * getter returns undefined unless the visitor may be counted. */
+export function usePublicHomeSignupVariant(
+  cookieBannerEnabled: boolean,
+  enabled = true,
+): () => string | undefined {
+  const variant = useMemo(
+    () => (enabled ? publicHomeVariantFromSearch() : undefined),
+    [enabled],
+  );
+  const [allowed, setAllowed] = useState(() =>
+    publicHomeExperimentAllowed(cookieBannerEnabled),
+  );
+  useEffect(() => {
+    setAllowed(publicHomeExperimentAllowed(cookieBannerEnabled));
+    if (!cookieBannerEnabled) return;
+    return onConsentChange(() =>
+      setAllowed(publicHomeExperimentAllowed(cookieBannerEnabled)),
+    );
+  }, [cookieBannerEnabled]);
+  const sentCta = useRef(false);
+  useEffect(() => {
+    if (!variant || !allowed || sentCta.current) return;
+    sentCta.current = true;
+    sendPublicHomeExperimentEvent(variant, "cta");
+  }, [variant, allowed]);
+  return useCallback(
+    () => (variant && allowed ? variant : undefined),
+    [variant, allowed],
+  );
 }

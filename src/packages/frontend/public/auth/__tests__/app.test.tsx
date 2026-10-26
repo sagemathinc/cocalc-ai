@@ -35,6 +35,8 @@ jest.mock("@cocalc/frontend/cookie-consent", () => ({
   enableForceConsent: jest.fn(() => jest.fn()),
   requireEssentialConsent: jest.fn(() => true),
   useEssentialConsent: jest.fn(() => true),
+  hasCategoryConsent: jest.fn(() => false),
+  onConsentChange: jest.fn(() => () => {}),
 }));
 
 const mockedApi = jest.mocked(api);

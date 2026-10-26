@@ -8,6 +8,7 @@
 // SSO is intentionally limited to admin-configured Google OIDC and SAML
 // providers. Legacy DB-only Passport strategy loading is not supported.
 
+import { isPublicHomeVariantId } from "@cocalc/util/public-home-experiment";
 import Cookies from "cookies";
 import dot from "dot-object";
 import type { NextFunction, Request, Response } from "express";
@@ -165,6 +166,8 @@ interface GoogleOidcState {
   marketingConsent?: boolean;
   registrationToken?: string;
   onboardingIntent?: ProjectOnboardingIntent;
+  // Home page experiment version: counted at account creation, not stored.
+  homeVariant?: string;
 }
 
 const GOOGLE_OIDC_BROWSER_STATE_COOKIE = `${base_path}google_oidc_state`;
@@ -948,6 +951,9 @@ export class PassportManager {
             onboardingIntent: normalizeProjectOnboardingIntent(
               req.query.onboarding_intent,
             ),
+            homeVariant: isPublicHomeVariantId(req.query.home_variant)
+              ? req.query.home_variant
+              : undefined,
           };
           await stateCache.saveAsync(state, JSON.stringify(savedState));
           new Cookies(req, res).set(
@@ -1069,6 +1075,7 @@ export class PassportManager {
           marketing_consent: savedState.marketingConsent,
           registration_token: savedState.registrationToken,
           onboarding_intent: savedState.onboardingIntent,
+          home_variant: savedState.homeVariant,
           req,
           res,
           site_url: this.site_url,

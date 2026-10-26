@@ -49,8 +49,10 @@ import {
 } from "@cocalc/util/public-home-content";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { builtinPolicyPath } from "../common";
+import { onConsentChange } from "@cocalc/frontend/cookie-consent";
 import {
   choosePublicHomeVariant,
+  publicHomeExperimentAllowed,
   sendPublicHomeExperimentEvent,
 } from "../home-experiment";
 import { withPublicHomeVariant } from "@cocalc/util/public-home-experiment";
@@ -840,18 +842,27 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       }),
     [config?.public_home_experiment, authenticated, random],
   );
+  // Count the view once, when the visitor may be counted: at once, or when
+  // they give usage consent on a site with the cookie banner.
+  const cookieBannerEnabled = !!config?.cookie_banner_enabled;
   const countedView = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!choice.counted || countedView.current === choice.variant) return;
-    countedView.current = choice.variant;
-    sendPublicHomeExperimentEvent(choice.variant, "view");
-  }, [choice]);
+    if (!choice.counted) return;
+    const count = () => {
+      if (countedView.current === choice.variant) return;
+      if (!publicHomeExperimentAllowed(cookieBannerEnabled)) return;
+      countedView.current = choice.variant;
+      sendPublicHomeExperimentEvent(choice.variant, "view");
+    };
+    count();
+    return cookieBannerEnabled ? onConsentChange(count) : undefined;
+  }, [choice, cookieBannerEnabled]);
   const signUpPath = choice.counted
     ? withPublicHomeVariant("auth/sign-up", choice.variant)
     : "auth/sign-up";
 
   return (
-    <PublicPage active="home" config={marketingConfig}>
+    <PublicPage active="home" config={marketingConfig} signUpPath={signUpPath}>
       <style>{HOME_PAGE_CSS}</style>
       <div
         className="cocalc-public-home"

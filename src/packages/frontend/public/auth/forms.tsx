@@ -58,10 +58,7 @@ import {
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { prefetchSignedInShell } from "./prefetch-signed-in";
-import {
-  publicHomeVariantFromSearch,
-  sendPublicHomeExperimentEvent,
-} from "../home-experiment";
+import { usePublicHomeSignupVariant } from "../home-experiment";
 
 const STACK_STYLE: CSSProperties = {
   display: "flex",
@@ -891,6 +888,10 @@ export function PublicEmailFirstForm({
 }) {
   const [requiresToken, setRequiresToken] = useState<boolean>();
   const onboardingIntent = useMemo(onboardingIntentFromBrowser, []);
+  const homeVariant = usePublicHomeSignupVariant(
+    cookieBannerEnabled,
+    view === "sign-up",
+  );
   const [registrationToken, setRegistrationToken] = useState(
     new URL(window.location.href).searchParams.get("registrationToken") ?? "",
   );
@@ -1087,6 +1088,7 @@ export function PublicEmailFirstForm({
         body: {
           email: normalizedEmailAddress(email),
           onboarding_intent: onboardingIntent,
+          home_variant: homeVariant(),
           ...(view === "sign-up" && registrationToken.trim()
             ? { registration_token: registrationToken.trim() }
             : {}),
@@ -1227,6 +1229,7 @@ export function PublicEmailFirstForm({
                       ? registrationToken.trim() || undefined
                       : undefined,
                   onboarding_intent: onboardingIntent,
+                  home_variant: homeVariant(),
                 })}
               >
                 Continue with {googleStrategy.display}
@@ -1261,6 +1264,7 @@ export function PublicEmailFirstForm({
                   target: resolveAuthRedirectPath(redirectToPath),
                   terms: policiesVisible ? true : undefined,
                   onboarding_intent: onboardingIntent,
+                  home_variant: homeVariant(),
                 })}
                 style={LINK_STYLE}
               >
@@ -2230,12 +2234,9 @@ export function PublicSignUpForm({
     () => new URL(window.location.href).searchParams.get("bootstrap") === "1",
     [],
   );
-  // Reached from a version of Home in the Home page experiment: count the
-  // visit, and the sign-up if it completes (aggregate counts only).
-  const homeVariant = useMemo(() => publicHomeVariantFromSearch(), []);
-  useEffect(() => {
-    if (homeVariant) sendPublicHomeExperimentEvent(homeVariant, "cta");
-  }, [homeVariant]);
+  // Reached from a version of Home in the Home page experiment
+  // (util/public-home-experiment.ts): aggregate counts only.
+  const homeVariant = usePublicHomeSignupVariant(cookieBannerEnabled);
 
   useEffect(() => {
     if (requiresToken !== undefined) {
@@ -2344,6 +2345,7 @@ export function PublicSignUpForm({
           terms: true,
           marketing_consent: false,
           onboardingIntent,
+          homeVariant: homeVariant(),
           email,
           password,
           displayName,
@@ -2376,7 +2378,6 @@ export function PublicSignUpForm({
         throw new Error("Sign up failed. Please try again.");
       }
       setStoredControlPlaneOrigin(result?.home_bay_url);
-      if (homeVariant) sendPublicHomeExperimentEvent(homeVariant, "signup");
       if (requiresContinuousVerification) {
         setPendingVerificationEmail(email.trim().toLowerCase());
         onVerificationPendingChange?.(true);
@@ -2472,6 +2473,7 @@ export function PublicSignUpForm({
               terms: policiesVisible ? true : undefined,
               marketing_consent: false,
               onboarding_intent: onboardingIntent,
+              home_variant: homeVariant(),
               registration_token: registrationToken.trim(),
             })}
           >

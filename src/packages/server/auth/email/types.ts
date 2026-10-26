@@ -62,6 +62,9 @@ export interface StartEmailAuthChallengeOptions {
   terms_version?: string;
   continuation_target?: string;
   onboarding_intent?: ProjectOnboardingIntent;
+  // The Home page experiment version the sign-up came from: counted when the
+  // account is created, never stored on it (util/public-home-experiment.ts).
+  home_variant?: string;
   expected_account_id?: string;
   code_only?: boolean;
 }

@@ -65,7 +65,13 @@ export default function initPublicHomeExperiment(router: Router): void {
         }),
       );
     } catch (err) {
-      logger.warn("home experiment report failed", { err: `${err}` });
+      const message = `${(err as Error)?.message ?? err}`;
+      if (/single-bay/.test(message)) {
+        // A multi-bay site: no partial numbers, say why instead.
+        res.status(409).json({ error: message });
+        return;
+      }
+      logger.warn("home experiment report failed", { err: message });
       res.status(500).json({ error: "report failed" });
     }
   });

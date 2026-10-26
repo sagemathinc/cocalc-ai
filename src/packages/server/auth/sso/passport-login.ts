@@ -83,6 +83,7 @@ import {
   normalizeDisplayName,
 } from "@cocalc/util/accounts/display-name";
 import { initializeAccountProfileImage } from "@cocalc/server/accounts/initialize-profile-image";
+import { countPublicHomeExperimentSignup } from "@cocalc/server/public-home-experiment";
 
 interface SsoAccountCreationContext {
   tokenInfo?: any;
@@ -711,6 +712,7 @@ export class PassportLogin {
         : undefined,
       signup_reason: opts.onboarding_intent,
     });
+    void countPublicHomeExperimentSignup(opts.home_variant);
     await this.database.create_passport({
       account_id: created.account_id,
       strategy: opts.strategyName,

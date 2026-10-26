@@ -16,6 +16,12 @@ import {
   suggestedWeights,
 } from "./public-home-experiment";
 
+const mockMultiBay = jest.fn(() => false);
+jest.mock("@cocalc/server/cluster-config", () => ({
+  ...jest.requireActual("@cocalc/server/cluster-config"),
+  isMultiBayCluster: () => mockMultiBay(),
+}));
+
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
@@ -54,7 +60,7 @@ describeDb("public Home experiment counts", () => {
         variant,
         event,
         now: () => now,
-        known,
+        running: known,
       });
     }
   }
@@ -67,14 +73,30 @@ describeDb("public Home experiment counts", () => {
       await recordPublicHomeExperimentEvent({
         variant: "nope",
         event: "view",
-        known,
+        running: known,
       }),
     ).toBe(false);
     expect(
       await recordPublicHomeExperimentEvent({
         variant: "math",
         event: "purchase",
-        known,
+        running: known,
+      }),
+    ).toBe(false);
+    // A version that isn't running now, or the experiment being off,
+    // counts nothing.
+    expect(
+      await recordPublicHomeExperimentEvent({
+        variant: "math",
+        event: "signup",
+        running: ["default", "project"],
+      }),
+    ).toBe(false);
+    expect(
+      await recordPublicHomeExperimentEvent({
+        variant: "math",
+        event: "signup",
+        running: [],
       }),
     ).toBe(false);
     const { rows } = await getPool().query(
@@ -134,6 +156,19 @@ describeDb("public Home experiment counts", () => {
   });
 });
 
+describeDb("public Home experiment report on a multi-bay site", () => {
+  it("refuses rather than report one bay's counts as the whole", async () => {
+    mockMultiBay.mockReturnValue(true);
+    try {
+      await expect(
+        getPublicHomeExperimentReport({ setting: "default, math" }),
+      ).rejects.toThrow(/single-bay/);
+    } finally {
+      mockMultiBay.mockReturnValue(false);
+    }
+  });
+});
+
 describe("Thompson sampling helpers", () => {
   it("gives equal arms about equal chances, and favors the better one", () => {
     const equal = probabilityBest(
@@ -167,7 +202,14 @@ describe("Thompson sampling helpers", () => {
   });
 
   it("keeps every weight above the floor", () => {
-    expect(suggestedWeights([1, 0, 0], 0.1)).toEqual([0.83, 0.08, 0.08]);
+    expect(suggestedWeights([1, 0, 0], 0.1)).toEqual([0.8, 0.1, 0.1]);
+    expect(suggestedWeights([0.9, 0.05, 0.05, 0], 0.1)).toEqual([
+      0.7, 0.1, 0.1, 0.1,
+    ]);
+    expect(suggestedWeights([0.5, 0.5], 0.1)).toEqual([0.5, 0.5]);
+    expect(suggestedWeights([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0.1)).toEqual(
+      Array(11).fill(0.09),
+    );
     expect(suggestedWeights([])).toEqual([]);
   });
 });

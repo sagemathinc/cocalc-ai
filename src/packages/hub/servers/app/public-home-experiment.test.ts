@@ -82,6 +82,21 @@ describe("the public Home experiment endpoints", () => {
     ).toBeLessThanOrEqual(60);
   });
 
+  it("refuses the report on a multi-bay site with the reason", async () => {
+    jest.mocked(getAccount).mockResolvedValue("a" as any);
+    jest.mocked(userIsInGroup).mockResolvedValue(true);
+    jest
+      .mocked(getPublicHomeExperimentReport)
+      .mockRejectedValue(
+        Error(
+          "the Home experiment report covers single-bay sites only; summing counts across bays is not implemented yet",
+        ),
+      );
+    const res = await fetch(`${base}/home-experiment/report`);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/single-bay/);
+  });
+
   it("shows the report only to admins", async () => {
     jest.mocked(getAccount).mockResolvedValue(undefined as any);
     expect((await fetch(`${base}/home-experiment/report`)).status).toBe(404);

@@ -401,11 +401,14 @@ interface PublicPageProps {
   hideTitleVisually?: boolean;
   sider?: ReactNode;
   siderLabel?: string;
+  /** The top navigation's sign-up link, if not the plain one. */
+  signUpPath?: string;
   title?: ReactNode;
 }
 
 export function PublicPage({
   active,
+  signUpPath,
   beforeTitle,
   children,
   config,
@@ -468,7 +471,7 @@ export function PublicPage({
                 zIndex: token.zIndexPopupBase,
               }}
             >
-              <PublicTopNav active={active} />
+              <PublicTopNav active={active} signUpPath={signUpPath} />
             </Header>
             <Layout
               className="cocalc-public-main-band"

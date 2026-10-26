@@ -8,40 +8,53 @@
 // Nothing here identifies a visitor or an account: each event only adds one
 // to a (day, version, event) total.
 
+import { getLogger } from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { isMultiBayCluster } from "@cocalc/server/cluster-config";
 import {
   isPublicHomeExperimentEvent,
   isPublicHomeVariantId,
   parsePublicHomeExperimentArms,
-  PUBLIC_HOME_VARIANTS,
   type PublicHomeExperimentArm,
   type PublicHomeExperimentEvent,
 } from "@cocalc/util/public-home-experiment";
 
 type Queryable = { query: (sql: string, params?: any[]) => Promise<any> };
 
+const logger = getLogger("server:public-home-experiment");
+
 function utcDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-/** Add one to today's count for a version and event. Unknown versions and
- * events are ignored (returns false). */
+/** The versions the experiment runs now (empty while it is off). */
+export async function runningPublicHomeVariants(): Promise<string[]> {
+  const setting = (await getServerSettings()).public_home_experiment;
+  return parsePublicHomeExperimentArms(setting).map((arm) => arm.id);
+}
+
+/** Add one to today's count for a version and event. Only versions the
+ * experiment runs now are counted, so direct, stale or preview links to a
+ * version that is off count nothing; unknown events are ignored too. Returns
+ * whether it counted. */
 export async function recordPublicHomeExperimentEvent({
   variant,
   event,
   db = getPool(),
   now = Date.now,
-  known = PUBLIC_HOME_VARIANTS,
+  running,
 }: {
   variant: unknown;
   event: unknown;
   db?: Queryable;
   now?: () => number;
-  known?: readonly string[];
+  running?: readonly string[];
 }): Promise<boolean> {
-  if (!isPublicHomeVariantId(variant, known)) return false;
   if (!isPublicHomeExperimentEvent(event)) return false;
+  const active = running ?? (await runningPublicHomeVariants());
+  if (!isPublicHomeVariantId(variant, active)) return false;
   await db.query(
     `INSERT INTO public_home_experiment_counts(day, variant, event, count)
      VALUES($1::DATE, $2, $3, 1)
@@ -50,6 +63,22 @@ export async function recordPublicHomeExperimentEvent({
     [utcDay(now()), variant, event],
   );
   return true;
+}
+
+/** Count a sign-up that came from a Home version. The account creation paths
+ * call this after the account exists (the version is never stored on it).
+ * Best effort: never throws. */
+export async function countPublicHomeExperimentSignup(
+  variant: unknown,
+): Promise<void> {
+  if (variant == null || variant === "") return;
+  try {
+    await recordPublicHomeExperimentEvent({ variant, event: "signup" });
+  } catch (err) {
+    logger.warn("counting a home experiment sign-up failed", {
+      err: `${err}`.slice(0, 200),
+    });
+  }
 }
 
 export interface PublicHomeExperimentArmReport {
@@ -70,6 +99,8 @@ export interface PublicHomeExperimentArmReport {
 }
 
 export interface PublicHomeExperimentReport {
+  /** The bay whose counts these are: the only one, see below. */
+  bay_id: string;
   setting: string;
   running: boolean;
   start_day: string;
@@ -94,6 +125,14 @@ export async function getPublicHomeExperimentReport({
   setting?: string;
   random?: () => number;
 } = {}): Promise<PublicHomeExperimentReport> {
+  // The counts are kept on the bay that served each request. Summing them
+  // across bays is not implemented yet, and a report from one bay of several
+  // would look complete while it is not, so refuse instead.
+  if (isMultiBayCluster()) {
+    throw new Error(
+      "the Home experiment report covers single-bay sites only; summing counts across bays is not implemented yet",
+    );
+  }
   const span = Math.min(Math.max(Math.floor(days), 1), 366);
   const end = utcDay(now());
   const start = utcDay(now() - (span - 1) * 86_400_000);
@@ -133,6 +172,7 @@ export async function getPublicHomeExperimentReport({
     random,
   );
   return {
+    bay_id: getConfiguredBayId(),
     setting: value,
     running: running.length > 0,
     start_day: start,
@@ -170,13 +210,30 @@ export function probabilityBest(
   return wins.map((w) => w / draws);
 }
 
-/** Weights proportional to p_best, raised to a floor so that no version
- * stops being measured, normalized to sum to 1 (rounded to 2 places). */
+/** Weights proportional to p_best, except that every version keeps at least
+ * `floor` of the traffic, so that none stops being measured. The floored
+ * versions get exactly the floor and the rest share what remains in
+ * proportion to p_best. With more than 1/floor versions no floor fits, and
+ * every version gets an equal share instead. Rounded to 2 places. */
 export function suggestedWeights(p: number[], floor = FLOOR): number[] {
-  if (p.length === 0) return [];
-  const floored = p.map((x) => Math.max(x, floor));
-  const sum = floored.reduce((a, b) => a + b, 0);
-  return floored.map((x) => Math.round((x / sum) * 100) / 100);
+  const n = p.length;
+  if (n === 0) return [];
+  if (floor * n >= 1) return p.map(() => Math.round((1 / n) * 100) / 100);
+  const floored = new Set<number>();
+  for (;;) {
+    const free = p.map((_, i) => i).filter((i) => !floored.has(i));
+    const mass = 1 - floor * floored.size;
+    const total = free.reduce((sum, i) => sum + Math.max(p[i], 0), 0);
+    const share = (i: number) =>
+      total > 0 ? (mass * Math.max(p[i], 0)) / total : mass / free.length;
+    const below = free.filter((i) => share(i) < floor);
+    if (below.length === 0) {
+      return p.map(
+        (_, i) => Math.round((floored.has(i) ? floor : share(i)) * 100) / 100,
+      );
+    }
+    for (const i of below) floored.add(i);
+  }
 }
 
 // Beta(a, b) from two Gamma draws (Marsaglia and Tsang, a, b >= 1 here).
