@@ -459,7 +459,7 @@ const PODMAN_ENV_BY_NAME = new Set([
 
 // Adds `-e` options for env to args and returns the environment to spawn
 // podman with.
-export function pushPodmanExecEnv(
+export function pushPodmanEnv(
   args: string[],
   env: Record<string, string>,
 ): NodeJS.ProcessEnv {
@@ -1551,10 +1551,12 @@ async function podman(
     timeoutMs = PODMAN_TIMEOUT_MS,
     label,
     launcher,
+    env = podmanEnv(),
   }: {
     timeoutMs?: number;
     label?: string;
     launcher?: ReturnType<typeof projectPoolPodmanLauncher>;
+    env?: NodeJS.ProcessEnv;
   } = {},
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -1564,7 +1566,7 @@ async function podman(
       {
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
-        env: podmanEnv(),
+        env,
       },
       (err, stdout, stderr) => {
         if (!err) {
@@ -1962,9 +1964,7 @@ async function ensureContainer({
   }
   env.COCALC_API_URL = resolveProjectRuntimeApiUrl(env.COCALC_API_URL);
   applyProjectRuntimeCliEnv(env, accountId);
-  for (const key in env) {
-    args.push("-e", `${key}=${env[key]}`);
-  }
+  const spawnEnv = pushPodmanEnv(args, env);
 
   args.push(mountArg({ source: home, target: PROJECT_RUNTIME_HOME }));
   // Best effort: the project home mount may already provide this path.
@@ -2086,6 +2086,7 @@ async function ensureContainer({
   await podman(args, {
     label: "container run",
     launcher: projectPoolPodmanLauncher(projectId),
+    env: spawnEnv,
   });
   try {
     await verifyProjectContainerInPool({ project_id: projectId, name });
@@ -2256,7 +2257,7 @@ export async function spawnCodexInProjectContainer({
     // is enabled. The proxy itself only permits authenticated OpenAI tunnels.
     codexArgs = ["--config", RESPECT_SYSTEM_PROXY_CONFIG, ...codexArgs];
   }
-  const spawnEnv = pushPodmanExecEnv(execArgs, execEnv);
+  const spawnEnv = pushPodmanEnv(execArgs, execEnv);
   execArgs.push(info.name, info.codexPath, ...codexArgs);
   logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
   const launcher = projectPoolPodmanLauncher(projectId);
@@ -2578,7 +2579,7 @@ async function spawnCodexAppServerInProjectRuntime({
     await removeIsolatedCodexHome(isolatedCodexHomeHostPath);
     throw err;
   }
-  const spawnEnv = pushPodmanExecEnv(execArgs, execEnv);
+  const spawnEnv = pushPodmanEnv(execArgs, execEnv);
   const codexArgs: string[] = [];
   const providerArgs = siteFundedTurn
     ? getManagedOpenAiProviderArgs(authRuntime, {

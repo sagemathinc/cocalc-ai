@@ -1297,7 +1297,7 @@ describe("initCodexProjectRunner", () => {
       .mount.mockResolvedValue(path.join(tmp, "rootfs"));
     jest
       .requireMock("@cocalc/project-runner/run/env")
-      .getEnvironment.mockResolvedValue({});
+      .getEnvironment.mockResolvedValue({ OPENAI_API_KEY: "project-env-key" });
     jest
       .requireMock("@cocalc/backend/podman")
       .mountArg.mockImplementation(
@@ -1342,6 +1342,12 @@ describe("initCodexProjectRunner", () => {
       "-c",
       "PATH=/usr/bin:/bin exec sleep infinity",
     ]);
+    // podman run gets the key by name, not on the host's argv.
+    expect(runCall![1]).toEqual(
+      expect.arrayContaining(["-e", "OPENAI_API_KEY"]),
+    );
+    expect(runCall![1].join(" ")).not.toContain("project-env-key");
+    expect(runCall![2].env.OPENAI_API_KEY).toBe("project-env-key");
 
     proc.emit("close", 0, null);
   });
@@ -2793,11 +2799,11 @@ describe("getBuiltinClaudeSkillMount", () => {
   });
 });
 
-describe("pushPodmanExecEnv", () => {
+describe("pushPodmanEnv", () => {
   it("passes credentials to podman by name, never on argv", async () => {
-    const { pushPodmanExecEnv } = await import("./codex/codex-project");
+    const { pushPodmanEnv } = await import("./codex/codex-project");
     const args = ["exec"];
-    const env = pushPodmanExecEnv(args, {
+    const env = pushPodmanEnv(args, {
       FOO: "bar",
       OPENAI_API_KEY: "sk-secret",
       COCALC_BEARER_TOKEN: "bearer-secret",
