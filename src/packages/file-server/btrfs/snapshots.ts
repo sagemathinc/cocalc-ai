@@ -166,7 +166,9 @@ export async function updateRollingSnapshots({
     snapshotNames,
   });
   let deleteError: any = undefined;
-  if (toDelete.length > 0 && opts?.beforePrune) {
+  // After a failed create, prune as before: the error is thrown below, so a
+  // deferral could not be reported and would be lost.
+  if (toDelete.length > 0 && opts?.beforePrune && !createError) {
     let allowed = true;
     try {
       allowed = await opts.beforePrune(toDelete);
@@ -175,7 +177,6 @@ export async function updateRollingSnapshots({
       logger.warn("rolling snapshot prune gate failed; pruning", { err });
     }
     if (!allowed) {
-      if (createError) throw createError;
       return {
         changed,
         createdName,

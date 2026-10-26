@@ -263,6 +263,37 @@ describe("the rolling snapshot prune gate", () => {
     }
   });
 
+  it("prunes as before when the create failed, and still reports the failure", async () => {
+    const { updateRollingSnapshots } = await import("./snapshots");
+    const snapshots = {
+      ...fixture(),
+      // changed, newest snapshot 9 days old: a create is due; the 10-day-old
+      // one is expired either way
+      hasUnsavedChanges: jest.fn(async () => true),
+      readdir: jest.fn(async () => [
+        new Date(now - 10 * day).toISOString(),
+        new Date(now - 9 * day).toISOString(),
+      ]),
+      create: jest.fn(async () => {
+        throw new Error("create failed");
+      }),
+    };
+    const beforePrune = jest.fn(() => false);
+    await expect(
+      updateRollingSnapshots({
+        snapshots: snapshots as any,
+        counts: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+        opts: { beforePrune },
+      }),
+    ).rejects.toThrow("create failed");
+    expect(snapshots.create).toHaveBeenCalled();
+    // not deferred, so nothing can be lost: the expired snapshot is deleted
+    expect(beforePrune).not.toHaveBeenCalled();
+    expect(snapshots.delete).toHaveBeenCalledWith(
+      new Date(now - 10 * day).toISOString(),
+    );
+  });
+
   it("doesn't ask when there is nothing to delete, and never passes the gate to create", async () => {
     const { updateRollingSnapshots } = await import("./snapshots");
     const snapshots = {
