@@ -3228,12 +3228,15 @@ describe("deferred snapshot prunes", () => {
     expect(pruneDeferredSnapshotsMock).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the retry when the prune couldn't run (lifecycle took the volume)", async () => {
+  it.each([
+    "project_volume_lifecycle_changed",
+    "project_volume_archiving",
+    "project_volume_unavailable",
+    "project_volume_invalid",
+  ])("keeps the retry when the prune couldn't run (%s)", async (reason) => {
     await deferOnce();
     pruneDeferredSnapshotsMock.mockRejectedValueOnce(
-      new Error(
-        "deferred snapshot prune not applied: project_volume_lifecycle_changed",
-      ),
+      new Error(`deferred snapshot prune not applied: ${reason}`),
     );
     expect(await retry()).toEqual({ pruned: [], waiting: 1 });
     // and runs on a later pass

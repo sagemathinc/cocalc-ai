@@ -3396,19 +3396,21 @@ export async function pruneDeferredSnapshots(
   project_id: string,
   { counts }: { counts: Partial<SnapshotCounts> },
 ): Promise<void> {
-  // Returns only when retention was applied, or there is no volume left to
-  // apply it to; throws when it couldn't run now, so the retry stays pending.
+  // Returns only when retention was applied; throws when it couldn't run now
+  // (the retry stays pending). Only the bay's assignment check, not a missing
+  // volume here, decides that a project is gone.
   const generation = currentProjectVolumeLifecycleGeneration(project_id);
   const outcome = await withCurrentProjectVolumeLifecycleLock(
     project_id,
     generation,
-    async (): Promise<"pruned" | "gone" | "busy"> => {
+    async (): Promise<string> => {
       const vol = await getVolumeUnchecked(project_id);
-      if (!(await exists(vol.path)) || !(await isBtrfsSubvolume(vol.path))) {
-        return "gone";
-      }
+      if (!(await exists(vol.path))) return "project_volume_unavailable";
+      if (!(await isBtrfsSubvolume(vol.path))) return "project_volume_invalid";
       // read-only while archiving (or restoring): try again later
-      if (await isSubvolumeReadonly(vol.path)) return "busy";
+      if (await isSubvolumeReadonly(vol.path)) {
+        return "project_volume_archiving";
+      }
       const deleted = await pruneRollingSnapshots({
         snapshots: vol.snapshots,
         counts,
@@ -3417,12 +3419,8 @@ export async function pruneDeferredSnapshots(
       return "pruned";
     },
   );
-  if (outcome === "gone") {
-    logger.info("dropping deferred snapshot prune: no volume", { project_id });
-    return;
-  }
   if (outcome !== "pruned") {
-    // "busy", or undefined when a lifecycle operation took the volume first
+    // undefined when a lifecycle operation took the volume first
     throw new Error(
       `deferred snapshot prune not applied: ${outcome ?? "project_volume_lifecycle_changed"}`,
     );
