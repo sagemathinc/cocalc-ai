@@ -6,6 +6,8 @@ import {
   getPublicCompareSections,
   PUBLIC_COMPARE_COCALC_AI_COLLABORATION_BULLET,
   PUBLIC_COMPARE_COLLABORATION_BULLET,
+  PUBLIC_COMPARE_HISTORY_SECTIONS,
+  PUBLIC_COMPARE_HISTORY_TITLE,
 } from "@cocalc/util/public-compare-content";
 import { PUBLIC_PRODUCT_AVAILABILITY } from "@cocalc/util/public-product-availability";
 import PublicFeaturesApp from "../app";
@@ -53,8 +55,10 @@ describe("Compare page", () => {
     (_site, config) => {
       renderCompare(config);
 
+      // the fit lists; cocalc.ai's history sections are checked below
       for (const section of getPublicCompareSections(config)) {
-        if (section.bullets == null) continue;
+        if (section.bullets == null || !section.title.startsWith("Choose "))
+          continue;
         const card = screen
           .getByRole("heading", { level: 4, name: section.title })
           .closest("article");
@@ -127,5 +131,56 @@ describe("Compare page ways to run CoCalc", () => {
     expect(
       screen.getByText("Hosted, local, single-VM, and private deployment."),
     ).not.toBeNull();
+  });
+});
+
+describe("Compare page history and backups", () => {
+  it("shows the three ways to keep history and how it scales on cocalc.ai", () => {
+    renderCompare(COCALC_AI);
+    const [history, scale] = PUBLIC_COMPARE_HISTORY_SECTIONS;
+    const section = screen.getByRole("region", {
+      name: "CoCalc.ai history and backups",
+    });
+    expect(
+      within(section)
+        .getAllByRole("heading", { level: 4 })
+        .map((heading) => heading.textContent),
+    ).toEqual([...history.cards!.map(({ title }) => title), scale.title]);
+    for (const card of history.cards!) {
+      expect(within(section).getByText(card.body)).not.toBeNull();
+    }
+    expect(
+      within(section)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(scale.bullets);
+    expect(
+      within(section)
+        .getByRole("link", { name: "How recovery works" })
+        .getAttribute("href"),
+    ).toMatch(/docs\/research\/recover-work$/);
+  });
+
+  it("is shown on cocalc.ai before /customize returns the product", () => {
+    // jsdom's host is not cocalc.ai; on cocalc.ai the page's host decides
+    // until the configuration arrives (isCocalcAiLaunchpadSite)
+    renderCompare({ dns: "cocalc.ai", site_name: "CoCalc" });
+    expect(
+      screen.getByRole("heading", { name: PUBLIC_COMPARE_HISTORY_TITLE }),
+    ).not.toBeNull();
+  });
+
+  it.each([
+    ["a Rocket site", ROCKET],
+    ["CoCalc Plus", PLUS],
+    [
+      "a customer Launchpad site",
+      { cocalc_product: "launchpad", dns: "cocalc.example.edu" },
+    ],
+  ])("is not shown on %s", (_site, config) => {
+    renderCompare(config);
+    expect(
+      screen.queryByRole("heading", { name: PUBLIC_COMPARE_HISTORY_TITLE }),
+    ).toBeNull();
   });
 });
