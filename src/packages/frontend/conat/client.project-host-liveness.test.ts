@@ -79,6 +79,9 @@ function setup() {
       connect: jest.fn(),
       close: jest.fn(),
       request: jest.fn(),
+      disconnect: jest.fn(() => {
+        routed.conn.connected = false;
+      }),
       info: undefined as any,
     };
     created.push(routed);
@@ -402,5 +405,34 @@ describe("routed project-host connection liveness", () => {
     expect(recordUxLatencyEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ metric: "stuck" }),
     );
+  });
+
+  it("reconnects a transport connection that never signs in", async () => {
+    setFetch(okFetch);
+    const { client, routed, signIn, addHost } = setup();
+    addHost();
+    await jest.advanceTimersByTimeAsync(1_000);
+    const r = routed();
+    expect(r.connect).toHaveBeenCalledTimes(1);
+    // transport up, but the host never signs us in
+    r.conn.connected = true;
+    r.eventHandlers.connected?.();
+    await jest.advanceTimersByTimeAsync(19_000);
+    expect(r.disconnect).not.toHaveBeenCalled();
+
+    // after the sign-in deadline the connection is torn down and a new
+    // connect attempt is made
+    await jest.advanceTimersByTimeAsync(3_000);
+    expect(r.disconnect).toHaveBeenCalled();
+    expect(r.connect.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(`${client.routedHubClients["host-1"].lastConnectError}`).toMatch(
+      /not signed in/,
+    );
+
+    // a successful sign-in on the next connection stops the cycle
+    signIn(r);
+    const calls = r.connect.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(r.connect.mock.calls.length).toBe(calls);
   });
 });

@@ -185,6 +185,9 @@ const PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_TIMEOUT_MS = 15_000;
 // Upper bound for one connect attempt (token, browser session, connect()):
 // a stuck attempt is dropped so it cannot block the next one.
 const ROUTED_HOST_CONNECT_ATTEMPT_TIMEOUT_MS = 30_000;
+// A transport connection must sign in within this long; otherwise it is torn
+// down and reconnected (a connection that never signs in is not usable).
+const ROUTED_HOST_SIGN_IN_TIMEOUT_MS = 20_000;
 // A host still not connected this long is reported (once) as stuck.
 const ROUTED_HOST_STUCK_REPORT_MS = 60_000;
 // Recoveries faster than this are routine and not reported.
@@ -300,6 +303,7 @@ type RoutedHubClientState = {
   // signed in on the current connection (client.info is not cleared on
   // disconnect, so it cannot tell)
   signedIn?: boolean;
+  signInTimer?: ReturnType<typeof setTimeout>;
 };
 
 type ProjectHostTokenState = {
@@ -1970,6 +1974,7 @@ export class ConatClient extends EventEmitter {
       clearTimeout(current.stuckTimer);
       delete current.stuckTimer;
     }
+    this.clearRoutedHostSignInTimer(current);
     syncdocDiagnosticLog("project-host client close", {
       routing_key,
       host_id,
@@ -3031,6 +3036,7 @@ export class ConatClient extends EventEmitter {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
       }
+      this.armRoutedHostSignInTimer(routing_key, state);
       this.reconnectCoordinator.requestResourceReconnects({
         includeBackground: true,
         reason: "routed_host_connected",
@@ -3052,6 +3058,7 @@ export class ConatClient extends EventEmitter {
       });
       if (!error) {
         state.signedIn = true;
+        this.clearRoutedHostSignInTimer(state);
         this.noteRoutedHostConnected(state);
         this.emit("project-host-connected", host_id);
         return;
@@ -3080,6 +3087,7 @@ export class ConatClient extends EventEmitter {
         public_directory_share_id: state.public_directory_share_id,
       });
       state.signedIn = false;
+      this.clearRoutedHostSignInTimer(state);
       this.emit("project-host-disconnected", host_id);
       this.noteRoutedHostDisconnected(state);
       this.scheduleRoutedHostReconnect({ routing_key, state, project_id });
@@ -3133,6 +3141,46 @@ export class ConatClient extends EventEmitter {
   // one "stuck" event if it is still not connected after
   // ROUTED_HOST_STUCK_REPORT_MS, and a "recovered" event with the duration
   // when it connects again after more than a routine blip.
+  private clearRoutedHostSignInTimer = (state: RoutedHubClientState) => {
+    if (state.signInTimer != null) {
+      clearTimeout(state.signInTimer);
+      delete state.signInTimer;
+    }
+  };
+
+  // A transport connection that does not sign in within
+  // ROUTED_HOST_SIGN_IN_TIMEOUT_MS is torn down and reconnected, so an
+  // unauthenticated connection cannot stand in for a working one forever.
+  private armRoutedHostSignInTimer = (
+    routing_key: string,
+    state: RoutedHubClientState,
+  ) => {
+    this.clearRoutedHostSignInTimer(state);
+    state.signInTimer = setTimeout(() => {
+      delete state.signInTimer;
+      if (
+        this.permanentlyDisconnected ||
+        !this.isCurrentRoutedHostState(routing_key, state) ||
+        !state.client.conn?.connected ||
+        state.signedIn
+      ) {
+        return;
+      }
+      state.lastConnectError = new Error(
+        `connected but not signed in within ${ROUTED_HOST_SIGN_IN_TIMEOUT_MS / 1000} seconds`,
+      );
+      console.warn(
+        `routed host ${state.host_id} connected but did not sign in; reconnecting`,
+      );
+      this.noteRoutedHostConnectFailed(state);
+      void this.forceReconnectRoutedHost({
+        routing_key,
+        state,
+        reason: "routed_host_sign_in_timeout",
+      });
+    }, ROUTED_HOST_SIGN_IN_TIMEOUT_MS);
+  };
+
   // Signed in to the host, not merely a transport connection.
   private isRoutedHostReady = (state: RoutedHubClientState): boolean => {
     return !!state.signedIn && !!state.client.conn?.connected;
