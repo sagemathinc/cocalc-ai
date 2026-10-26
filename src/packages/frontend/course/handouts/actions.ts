@@ -14,6 +14,7 @@ import { redux } from "../../app-framework";
 import { uuid } from "@cocalc/util/misc";
 import type { SyncDBRecordHandout } from "../types";
 import {
+  addDeadline,
   addEachPath,
   ensureCourseFolder,
   waitForCourseData,
@@ -49,9 +50,12 @@ export class HandoutsActions {
   // Add one or more handouts to the course, each defined by a directory in the
   // course project. A previously deleted handout is undeleted. Throws, with a
   // message for the user, when a handout could not be added.
-  addHandout = async (path: string | string[]): Promise<void> => {
+  addHandout = async (
+    path: string | string[],
+    deadline: number = addDeadline(),
+  ): Promise<void> => {
     if (typeof path != "string") {
-      await addEachPath(path, this.addHandout);
+      await addEachPath(path, this.addHandout, deadline);
       return;
     }
     path = projectRelativeCoursePath(path);
@@ -67,11 +71,15 @@ export class HandoutsActions {
     const target_path = path; // folder where we copy the handout to
     try {
       // Ensure the path actually exists in the instructor project.
-      await waitForCourseData({ syncdb: this.course_actions.syncdb });
+      await waitForCourseData({
+        syncdb: this.course_actions.syncdb,
+        deadline,
+      });
       await ensureCourseFolder({
         project_id: this.get_store().get("course_project_id"),
         path,
         itemName: "handout",
+        deadline,
       });
     } catch (err) {
       this.course_actions.set_error(`error creating handout: ${err}`);

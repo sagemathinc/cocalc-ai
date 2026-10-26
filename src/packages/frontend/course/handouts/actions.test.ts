@@ -137,4 +137,18 @@ describe("addHandout", () => {
     ]);
     expect(ensureFolder).not.toHaveBeenCalled();
   });
+
+  it("bounds every stage by one deadline for the whole add", async () => {
+    const { actions } = setup();
+    const deadline = Date.now() + 5000;
+    await actions.addHandout(["Handout1", "Handout2"], deadline);
+    expect(waitForData.mock.calls.map(([x]) => x.deadline)).toEqual([
+      deadline,
+      deadline,
+    ]);
+    expect(ensureFolder.mock.calls.map(([x]) => x.deadline)).toEqual([
+      deadline,
+      deadline,
+    ]);
+  });
 });

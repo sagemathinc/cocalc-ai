@@ -88,6 +88,7 @@ import {
 } from "../copy-lro";
 import { projectRelativeCoursePath } from "./paths";
 import {
+  addDeadline,
   addEachPath,
   ensureCourseFolder,
   waitForCourseData,
@@ -169,12 +170,15 @@ export class AssignmentsActions {
       .get(0);
   };
 
-  addAssignment = async (path: string | string[]): Promise<void> => {
+  addAssignment = async (
+    path: string | string[],
+    deadline: number = addDeadline(),
+  ): Promise<void> => {
     // Add one or more assignment to the course, which is defined by giving a directory in the project.
     // Where we collect homework that students have done (in teacher project).
     // If the assignment was previously deleted, this undeletes it.
     if (typeof path != "string") {
-      await addEachPath(path, this.addAssignment);
+      await addEachPath(path, this.addAssignment, deadline);
       return;
     }
     path = this.project_relative_path(path);
@@ -197,11 +201,15 @@ export class AssignmentsActions {
 
     try {
       // Ensure the path actually exists.
-      await waitForCourseData({ syncdb: this.course_actions.syncdb });
+      await waitForCourseData({
+        syncdb: this.course_actions.syncdb,
+        deadline,
+      });
       await ensureCourseFolder({
         project_id: this.get_store().get("course_project_id"),
         path,
         itemName: "assignment",
+        deadline,
       });
     } catch (err) {
       this.course_actions.set_error(`error creating assignment: ${err}`);

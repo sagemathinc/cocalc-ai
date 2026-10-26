@@ -64,6 +64,20 @@ describe("ensureCourseFolder", () => {
     },
   );
 
+  it("stops waiting at the deadline even if the timeout is longer", async () => {
+    execMock = jest.fn(never);
+    const started = Date.now();
+    await expect(
+      ensureCourseFolder({
+        project_id: "p",
+        path: "h",
+        itemName: "handout",
+        deadline: Date.now() + 20,
+      }),
+    ).rejects.toThrow("the course project did not answer");
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it("fails when exec reports that the project was not started", async () => {
     execMock = jest.fn(async () => ({
       exit_code: 1,
@@ -90,6 +104,17 @@ describe("waitForCourseData", () => {
         timeoutMs: 10,
       }),
     ).rejects.toThrow("the course file has not finished loading");
+  });
+
+  it("stops waiting at the deadline", async () => {
+    const started = Date.now();
+    await expect(
+      waitForCourseData({
+        syncdb: { get_state: () => "init", wait_until_ready: never },
+        deadline: Date.now() + 20,
+      }),
+    ).rejects.toThrow("the course file has not finished loading");
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it("fails when there is no open course file", async () => {
@@ -122,19 +147,44 @@ describe("addEachPath", () => {
     expect(tried).toEqual(["a"]);
   });
 
-  it("bounds the whole batch", async () => {
+  it("does not start a folder after the deadline", async () => {
     const tried: string[] = [];
+    const deadline = Date.now() + 20;
     await expect(
       addEachPath(
         ["a", "b", "c"],
         async (path) => {
           tried.push(path);
-          await new Promise((done) => setTimeout(done, 20));
+          // finishes (synchronously) only after the deadline has passed
+          while (Date.now() <= deadline) {
+            // busy wait
+          }
         },
-        10,
+        deadline,
       ),
-    ).rejects.toThrow("not added (took too long): b, c");
+    ).rejects.toThrow('"b" was not added in time.\nnot added: c');
     expect(tried).toEqual(["a"]);
+  });
+
+  it("bounds a folder that is still being added at the deadline", async () => {
+    const started = Date.now();
+    await expect(
+      addEachPath(["a", "b"], never, Date.now() + 30),
+    ).rejects.toThrow('"a" was not added in time.\nnot added: b');
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("passes the batch deadline to each add", async () => {
+    const deadlines: number[] = [];
+    const deadline = Date.now() + 5000;
+    await addEachPath(
+      ["a", "b"],
+      async (_path, d) => {
+        deadlines.push(d);
+      },
+      deadline,
+    );
+    expect(deadlines).toEqual([deadline, deadline]);
   });
 });
 
