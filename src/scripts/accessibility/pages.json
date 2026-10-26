@@ -11,6 +11,42 @@
       "settleMs": 1000
     },
     {
+      "id": "landing-math",
+      "title": "Landing page, version \"math\" (Home experiment preview)",
+      "path": "/?home=math",
+      "authentication": "none",
+      "minimumScore": 1,
+      "readySelector": ".hv-math",
+      "settleMs": 1000
+    },
+    {
+      "id": "landing-project",
+      "title": "Landing page, version \"project\" (Home experiment preview)",
+      "path": "/?home=project",
+      "authentication": "none",
+      "minimumScore": 1,
+      "readySelector": ".hp",
+      "settleMs": 1000
+    },
+    {
+      "id": "landing-teaching",
+      "title": "Landing page, version \"teaching\" (Home experiment preview)",
+      "path": "/?home=teaching",
+      "authentication": "none",
+      "minimumScore": 1,
+      "readySelector": ".ht",
+      "settleMs": 1000
+    },
+    {
+      "id": "landing-demo",
+      "title": "Landing page, version \"demo\" (Home experiment preview)",
+      "path": "/?home=demo",
+      "authentication": "none",
+      "minimumScore": 1,
+      "readySelector": ".hd",
+      "settleMs": 1000
+    },
+    {
       "id": "about",
       "title": "About",
       "path": "/about",

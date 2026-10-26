@@ -80,6 +80,7 @@ export type SiteSettingsKeys =
   | "support_video_call"
   | "cookie_banner_enabled"
   | "cookie_banner_text"
+  | "public_home_experiment"
   | "openai_enabled"
   | "agent_openai_codex_enabled"
   | "codex_notification_toast_enabled"
@@ -822,6 +823,16 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Cookie Banner"],
     group: "Branding & UI",
     subgroup: "Legal",
+  },
+  public_home_experiment: {
+    name: "Home page experiment",
+    desc: "Versions of the public Home page to show anonymous visitors at random, as comma-separated id:weight entries, e.g. 'default:2, math:1'. At least two known versions turn it on; empty keeps it off. Only aggregate daily counts per version are kept (views, sign-up page visits from that version, sign-ups); nothing is stored in the browser or on accounts.",
+    default: "",
+    clearable: true,
+    to_val: to_trimmed_str,
+    tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Landing",
   },
   // ============== END THEMING ============
 

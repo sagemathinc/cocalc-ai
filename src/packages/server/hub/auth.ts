@@ -8,6 +8,7 @@
 // SSO is intentionally limited to admin-configured Google OIDC and SAML
 // providers. Legacy DB-only Passport strategy loading is not supported.
 
+import { isPublicHomeVariantId } from "@cocalc/util/public-home-experiment";
 import Cookies from "cookies";
 import dot from "dot-object";
 import type { NextFunction, Request, Response } from "express";
@@ -98,6 +99,8 @@ import {
 } from "@cocalc/server/auth/auth-sessions";
 import {
   directSamlConfig,
+  directSamlRelayState,
+  homeVariantFromSamlRelayState,
   passportProfileFromSamlProfile,
 } from "@cocalc/server/auth/sso/direct-saml";
 import {
@@ -165,6 +168,8 @@ interface GoogleOidcState {
   marketingConsent?: boolean;
   registrationToken?: string;
   onboardingIntent?: ProjectOnboardingIntent;
+  // Home page experiment version: counted at account creation, not stored.
+  homeVariant?: string;
 }
 
 const GOOGLE_OIDC_BROWSER_STATE_COOKIE = `${base_path}google_oidc_state`;
@@ -619,7 +624,11 @@ export class PassportManager {
   private getHandleReturn(opts: HandleReturnOpts) {
     const { Linit, name, type, update_on_login, cookie_ttl_s, login_info } =
       opts;
-    return async (req, res: express.Response) => {
+    return async (
+      req,
+      res: express.Response,
+      extra: { home_variant?: string } = {},
+    ) => {
       if (req.user == null) {
         throw Error("req.user == null -- that shouldn't happen");
       }
@@ -687,6 +696,7 @@ export class PassportManager {
         req,
         res,
         site_url: this.site_url,
+        home_variant: extra.home_variant,
       };
 
       const dotInstance =
@@ -948,6 +958,9 @@ export class PassportManager {
             onboardingIntent: normalizeProjectOnboardingIntent(
               req.query.onboarding_intent,
             ),
+            homeVariant: isPublicHomeVariantId(req.query.home_variant)
+              ? req.query.home_variant
+              : undefined,
           };
           await stateCache.saveAsync(state, JSON.stringify(savedState));
           new Cookies(req, res).set(
@@ -1069,6 +1082,7 @@ export class PassportManager {
           marketing_consent: savedState.marketingConsent,
           registration_token: savedState.registrationToken,
           onboarding_intent: savedState.onboardingIntent,
+          home_variant: savedState.homeVariant,
           req,
           res,
           site_url: this.site_url,
@@ -1297,11 +1311,12 @@ export class PassportManager {
       this.router.get(
         strategyUrl,
         this.handle_get_api_key,
-        async (_req, res) => {
+        async (req, res) => {
           try {
             res.redirect(
               await this.getDirectSaml(name).getAuthorizeUrlAsync(
-                "",
+                // the Home experiment version, counted at account creation
+                directSamlRelayState(req.query),
                 undefined,
                 {},
               ),
@@ -1342,7 +1357,9 @@ export class PassportManager {
               throw new Error("SAML response did not include a profile.");
             }
             (req as any).user = passportProfileFromSamlProfile(result.profile);
-            await handleReturn(req, res);
+            await handleReturn(req, res, {
+              home_variant: homeVariantFromSamlRelayState(req.body?.RelayState),
+            });
           } catch (err) {
             if (err.name !== "PassportLoginError") {
               logger.warn(`Direct SAML sign-in failed for '${name}': ${err}`);

@@ -9,6 +9,8 @@ import {
   directSamlCallbackUrl,
   directSamlConfig,
   directSamlMetadataIssuer,
+  directSamlRelayState,
+  homeVariantFromSamlRelayState,
   passportProfileFromSamlProfile,
 } from "./direct-saml";
 
@@ -120,5 +122,24 @@ describe("passportProfileFromSamlProfile", () => {
         nameIDFormat: "persistent",
       }),
     ).toThrow("stable user id");
+  });
+});
+
+describe("the Home experiment version through SAML RelayState", () => {
+  it("sends a known version and nothing else", () => {
+    expect(directSamlRelayState({ home_variant: "default" })).toBe("default");
+    expect(directSamlRelayState({ home_variant: "not-a-version" })).toBe("");
+    expect(directSamlRelayState({ home_variant: ["default"] })).toBe("");
+    expect(directSamlRelayState({})).toBe("");
+  });
+
+  it("reads back only a known version", () => {
+    expect(homeVariantFromSamlRelayState("default")).toBe("default");
+    // IdP-initiated sign-ins may put a URL or anything else here.
+    expect(
+      homeVariantFromSamlRelayState("https://example.edu/app"),
+    ).toBeUndefined();
+    expect(homeVariantFromSamlRelayState("")).toBeUndefined();
+    expect(homeVariantFromSamlRelayState(undefined)).toBeUndefined();
   });
 });

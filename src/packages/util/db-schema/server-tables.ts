@@ -62,6 +62,7 @@ import "./email-counter";
 import "./external-credentials";
 import "./global-config";
 import "./growth-analytics";
+import "./public-home-experiment-counts";
 import "./hub-servers";
 import "./instances"; // probably deprecated
 import "./membership-allocation-facts";

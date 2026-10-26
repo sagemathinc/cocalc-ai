@@ -115,6 +115,11 @@ jest.mock("@cocalc/server/auth/home-bay-retry-token", () => ({
   issueHomeBayRetryToken: (...args) => mockIssueHomeBayRetryToken(...args),
 }));
 
+const mockCountHomeSignup = jest.fn();
+jest.mock("@cocalc/server/public-home-experiment", () => ({
+  countPublicHomeExperimentSignup: (...args) => mockCountHomeSignup(...args),
+}));
+
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({
@@ -682,6 +687,54 @@ describe("/api/v2/auth/sign-up", () => {
       res,
       "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
     );
+  });
+
+  it("counts a sign-up from a Home version once the account exists, without storing the version", async () => {
+    mockGetRequiresRegistrationToken.mockResolvedValue(false);
+    mockCountHomeSignup.mockReset();
+    mockCreateClusterAccount.mockResolvedValue({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      home_bay_id: "bay-0",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+        homeVariant: "math",
+      },
+    });
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+    expect(mockCountHomeSignup).toHaveBeenCalledWith("math");
+    expect(JSON.stringify(mockCreateClusterAccount.mock.calls)).not.toContain(
+      "math",
+    );
+  });
+
+  it("counts no sign-up when account creation fails", async () => {
+    mockGetRequiresRegistrationToken.mockResolvedValue(false);
+    mockCountHomeSignup.mockReset();
+    mockCreateClusterAccount.mockRejectedValue(new Error("email taken"));
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+        homeVariant: "math",
+      },
+    });
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+    expect(mockCountHomeSignup).not.toHaveBeenCalled();
   });
 
   it("sends only a verification email for public password signup", async () => {
