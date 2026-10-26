@@ -435,4 +435,28 @@ describe("routed project-host connection liveness", () => {
     await jest.advanceTimersByTimeAsync(60_000);
     expect(r.connect.mock.calls.length).toBe(calls);
   });
+
+  it("does not report a host as connected again before it signs in again", async () => {
+    setFetch(okFetch);
+    const { client, routed, signIn, addHost } = setup();
+    addHost();
+    await jest.advanceTimersByTimeAsync(1_000);
+    const r = routed();
+    signIn(r);
+    expect(client.isProjectHostConnected("host-1")).toBe(true);
+
+    // the connection drops; client.info from the old sign-in is kept
+    r.conn.connected = false;
+    r.eventHandlers.disconnected?.();
+    expect(client.isProjectHostConnected("host-1")).toBe(false);
+
+    // transport-only reconnect: still not connected (a remounted page must
+    // keep showing the host as unavailable) until the host signs us in
+    r.conn.connected = true;
+    r.eventHandlers.connected?.();
+    expect(r.info?.user).toBeDefined();
+    expect(client.isProjectHostConnected("host-1")).toBe(false);
+    signIn(r);
+    expect(client.isProjectHostConnected("host-1")).toBe(true);
+  });
 });

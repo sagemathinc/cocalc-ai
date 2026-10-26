@@ -1264,12 +1264,9 @@ export class ConatClient extends EventEmitter {
   public isProjectHostConnected = (host_id?: string): boolean => {
     if (!host_id) return false;
     const state = this.findRoutedHubClientForHost(host_id);
-    const error = `${state?.client?.info?.user?.error ?? ""}`.trim();
-    return !!(
-      state?.client?.conn?.connected &&
-      state.client.info?.user &&
-      !error
-    );
+    // Signed in on the current connection: client.info is kept across a
+    // disconnect, so it would report a transport-only reconnect as connected.
+    return state != null && this.isRoutedHostReady(state);
   };
 
   private getHostRoutingInfo(host_id: string): HostRoutingInfo | undefined {
