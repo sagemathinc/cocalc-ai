@@ -24,8 +24,21 @@ import {
 import {
   listProjectBackupIds,
   runScheduledBackupMaintenance,
+  pruneDeferredSnapshots,
   runScheduledSnapshotMaintenance,
+  snapshotPruneBusy,
 } from "./file-server";
+import {
+  clearPendingPrune,
+  dropPendingPruneRetry,
+  clearLimitRetry,
+  limitRetryAt,
+  noteLimitRetry,
+  notePendingPrune,
+  type PendingPrune,
+  startDeferredPruneLoop,
+  stopDeferredPruneLoop,
+} from "./snapshot-prune-gate";
 import {
   admitStorageOperation,
   getStorageAdmissionStatus,
@@ -780,6 +793,10 @@ function snapshotDueAt(
   row: HostProjectMaintenanceSchedule,
   schedule: SnapshotSchedule,
 ): number | undefined {
+  // A deferred snapshot-limit prune makes the project due again for a full
+  // update, even if its newest snapshot already covers every change.
+  const limitRetry = limitRetryAt(row.project_id);
+  if (limitRetry != null) return limitRetry;
   const changedAt = parseTimestampMs(row.last_changed ?? row.last_edited);
   if (changedAt == null) return undefined;
   const reconciledChangeAt = parseTimestampMs(
@@ -1516,6 +1533,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           let changed: boolean | null = null;
           let disabled = false;
           let skippedReason: string | undefined;
+          // The snapshot limit couldn't be applied (the gate declined): the
+          // whole update is retried in about a minute, within the gate's
+          // bound, whether or not a snapshot was just created.
+          let limitPruneDeferred = false;
           const result = await runScheduledStorageOperation({
             hostId,
             project_id,
@@ -1538,6 +1559,29 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               disabled = updated?.disabled ?? false;
               skippedReason = updated?.skipped_reason;
               stageDurations = updated?.stage_durations_ms ?? {};
+              limitPruneDeferred = updated?.limit_prune_deferred === true;
+              if (limitPruneDeferred) {
+                // Only a full update applies the limit, and the retried
+                // update reruns rolling retention too. Drop any older
+                // rolling-only retry: run on a quiet host it would delete
+                // nothing yet restart the gate's bound.
+                dropPendingPruneRetry(project_id);
+              } else if (updated?.prune_deferred) {
+                // the update ran and applied the limit; only rolling
+                // retention waits
+                clearLimitRetry(project_id);
+                // Retried within the bound even if this project isn't due
+                // again for a day (snapshot-prune-gate.ts).
+                notePendingPrune(project_id, {
+                  counts: scheduleToCounts(schedule),
+                  validate: () => validateAssignment(row, "snapshot"),
+                });
+              } else if (updated != null && !updated.skipped_reason) {
+                // This scan applied the current retention: an older retry
+                // must not run later with stale counts. A skipped scan
+                // (lifecycle, archiving, ...) applied nothing: keep it.
+                clearPendingPrune(project_id);
+              }
             },
           });
           const changedAt = parseTimestampMs(
@@ -1569,15 +1613,18 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             nextSnapshotDueAt > Date.now();
           const outcome = !result.ran
             ? "deferred"
-            : disabled
+            : limitPruneDeferred
               ? "deferred"
-              : confirmedRecoveryPoint
-                ? "succeeded"
-                : changed === false || intervalWaiting
-                  ? "skipped"
-                  : "deferred";
+              : disabled
+                ? "deferred"
+                : confirmedRecoveryPoint
+                  ? "succeeded"
+                  : changed === false || intervalWaiting
+                    ? "skipped"
+                    : "deferred";
           const reason =
             result.reason ??
+            (limitPruneDeferred ? "snapshot_prune_deferred" : undefined) ??
             skippedReason ??
             (disabled
               ? "snapshot_maintenance_disabled"
@@ -1606,6 +1653,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             !result.ran &&
             result.admissionDeferred === true &&
             result.mutated !== true;
+          if (limitPruneDeferred) {
+            noteLimitRetry(
+              project_id,
+              nextRetry ? Date.parse(nextRetry) : Date.now() + 60_000,
+            );
+          }
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           if (intervalWaiting && nextSnapshotDueAt != null) {
             onFutureDue?.(project_id, nextSnapshotDueAt);
@@ -1631,15 +1684,18 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               reason === "no_content_change"
                 ? row.snapshot_schedule_revision
                 : null,
-            due_at: result.ran
-              ? reason === "no_content_change"
-                ? null
-                : nextSnapshotDueAt == null
+            // a limit deferral stays due, so the retry runs the update
+            due_at: limitPruneDeferred
+              ? new Date().toISOString()
+              : result.ran
+                ? reason === "no_content_change"
                   ? null
-                  : new Date(nextSnapshotDueAt).toISOString()
-              : dueAt == null
-                ? null
-                : new Date(dueAt).toISOString(),
+                  : nextSnapshotDueAt == null
+                    ? null
+                    : new Date(nextSnapshotDueAt).toISOString()
+                : dueAt == null
+                  ? null
+                  : new Date(dueAt).toISOString(),
             attempt_due_at:
               dueAt == null ? null : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
@@ -1946,6 +2002,52 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
   });
 }
 
+/** One deferred prune, as scheduled storage work: admission, the maintenance
+ * cgroup, the background mutation context, and the scheduled snapshot's
+ * assignment check, except for content. Deleting expired snapshots doesn't
+ * depend on the content (the bay confirms owner, then schedule, then content,
+ * so change_generation_changed means owner and schedule still hold).
+ * - a changed owner or schedule drops the retry; the next scheduled snapshot
+ *   applies the current retention;
+ * - an admission refusal or an unverifiable assignment throws, so the retry
+ *   stays pending with its bound. */
+export async function retryDeferredSnapshotPrune({
+  hostId,
+  project_id,
+  pending,
+  run = runScheduledStorageOperation,
+  prune = pruneDeferredSnapshots,
+}: {
+  hostId: string;
+  project_id: string;
+  pending: PendingPrune;
+  run?: typeof runScheduledStorageOperation;
+  prune?: typeof pruneDeferredSnapshots;
+}): Promise<void> {
+  const result = await run({
+    hostId,
+    project_id,
+    operation_kind: "scheduled_snapshot",
+    validate: async () => {
+      const reason = await pending.validate();
+      return reason === "change_generation_changed" ? undefined : reason;
+    },
+    // Only rolling retention: the assignment check covers the snapshot
+    // schedule, not the limit, so the limit is left to the next scheduled
+    // snapshot (which makes room under the current limit before creating).
+    run: () => prune(project_id, { counts: pending.counts }),
+  });
+  if (result.ran) return;
+  if (result.admissionDeferred || result.reason === "assignment_unverified") {
+    throw new Error(`not run yet: ${result.reason ?? "unknown"}`);
+  }
+  logger.info("dropping deferred snapshot prune", {
+    hostId,
+    project_id,
+    reason: result.reason,
+  });
+}
+
 export function startProjectSnapshotBackupMaintenance({
   hostId,
 }: {
@@ -1966,6 +2068,16 @@ export function startProjectSnapshotBackupMaintenance({
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS,
     DEFAULT_INITIAL_DELAY_MS + initialDelayJitterMs(hostId),
   );
+  // Snapshots whose prune was deferred (snapshot-prune-gate.ts) are pruned
+  // here as scheduled storage work: storage admission, the maintenance cgroup
+  // and the background mutation context, like the snapshot itself.
+  if (!shadow) {
+    startDeferredPruneLoop({
+      prune: (project_id, pending) =>
+        retryDeferredSnapshotPrune({ hostId, project_id, pending }),
+      busy: snapshotPruneBusy,
+    });
+  }
   let closed = false;
   const changedProjects = new Set<string>();
   const futureDue = new Map<string, number>();
@@ -2134,6 +2246,7 @@ export function startProjectSnapshotBackupMaintenance({
   let repeatingTimer: ReturnType<typeof setInterval> | undefined;
   return () => {
     closed = true;
+    stopDeferredPruneLoop();
     unsubscribeChanges();
     unsubscribeProvisioned();
     clearTimeout(changedTimer);

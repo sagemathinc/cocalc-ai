@@ -207,6 +207,11 @@ export async function withBackupParallelLimit<T>({
   });
 }
 
+/** Backups holding a slot right now (reading a snapshot and uploading it). */
+export function backupsInFlight(): number {
+  return backupInFlight;
+}
+
 export function resetBackupQueueForTest(): void {
   backupInFlight = 0;
   backupWaiters.splice(0, backupWaiters.length);

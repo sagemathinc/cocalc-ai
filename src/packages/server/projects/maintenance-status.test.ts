@@ -427,6 +427,28 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     ]);
   });
 
+  it("keeps the deferred-prune marker of a snapshot attempt", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+    await recordProjectMaintenanceStatus({
+      host_id: "host-1",
+      project_id: "project-1",
+      kind: "snapshot",
+      observed_at: new Date().toISOString(),
+      outcome: "succeeded",
+      latest_snapshot_at: new Date().toISOString(),
+      stage_durations_ms: { create: 80, prune_deferred_ms: 240_000.5 },
+    });
+    const attempt = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_attempts"),
+    );
+    expect(attempt?.[1][10]).toEqual({
+      create: 80,
+      prune_deferred_ms: 240_000,
+    });
+  });
+
   it("does not record an attempt from a stale project host", async () => {
     const { recordProjectMaintenanceStatus } =
       await import("./maintenance-status");

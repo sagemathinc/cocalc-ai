@@ -30,6 +30,16 @@ export interface RollingSnapshotUpdateResult {
   changed: boolean | null;
   createdName: string | null;
   disabled: boolean;
+  /** Expired snapshots kept because beforePrune declined; a later update
+   * deletes them. */
+  pruneDeferred?: number;
+  /** No snapshot was created: making room under the limit needed a prune
+   * that beforePrune declined, so the whole update waits. */
+  createDeferred?: boolean;
+  /** Snapshots kept over the project's limit because beforePrune declined
+   * the limit prune (before or after creating). Only a full update applies
+   * the limit, so the caller must retry the update, not a rolling prune. */
+  limitPruneDeferred?: number;
 }
 
 export type RollingSnapshotStage =
@@ -55,6 +65,11 @@ export async function updateRollingSnapshots({
     beforeCreate?: () => Promise<void>;
     afterCreate?: (created: unknown) => Promise<void>;
     onStage?: RollingSnapshotStageObserver;
+    /** Asked before expired snapshots are deleted. Deleting is only space
+     * reclamation, so a caller may decline (return false) when it would
+     * compete with more urgent I/O; the snapshots stay until a later update
+     * is allowed to delete them. */
+    beforePrune?: (names: string[]) => boolean | Promise<boolean>;
     [key: string]: unknown;
   };
 }): Promise<RollingSnapshotUpdateResult> {
@@ -133,6 +148,7 @@ export async function updateRollingSnapshots({
           beforeCreate,
           afterCreate,
           onStage: _onStage,
+          beforePrune: _beforePrune,
           ...createOpts
         } = opts ?? {};
         await beforeCreate?.();
@@ -151,11 +167,31 @@ export async function updateRollingSnapshots({
   }
 
   // delete extra snapshots
-  const toDelete = [
-    ...snapshotsToDelete({ counts, snapshots: snapshotNames }),
-    ...tempRusticSnapshotsToDelete(allSnapshotNames),
-  ];
+  const toDelete = expiredSnapshotNames({
+    counts,
+    allSnapshotNames,
+    snapshotNames,
+  });
   let deleteError: any = undefined;
+  // After a failed create, prune as before: the error is thrown below, so a
+  // deferral could not be reported and would be lost.
+  if (toDelete.length > 0 && opts?.beforePrune && !createError) {
+    let allowed = true;
+    try {
+      allowed = await opts.beforePrune(toDelete);
+    } catch (err) {
+      // A failing gate must not stop retention for good.
+      logger.warn("rolling snapshot prune gate failed; pruning", { err });
+    }
+    if (!allowed) {
+      return {
+        changed,
+        createdName,
+        disabled: false,
+        pruneDeferred: toDelete.length,
+      };
+    }
+  }
   await timed("prune", async () => {
     for (const name of toDelete) {
       try {
@@ -179,6 +215,56 @@ export async function updateRollingSnapshots({
     throw deleteError;
   }
   return { changed, createdName, disabled: false };
+}
+
+/** The rolling snapshots retention no longer keeps, plus stale temporary
+ * rustic snapshots. */
+function expiredSnapshotNames({
+  counts,
+  allSnapshotNames,
+  snapshotNames = allSnapshotNames.filter(isISODate).sort(),
+}: {
+  counts: Partial<SnapshotCounts>;
+  allSnapshotNames: string[];
+  snapshotNames?: string[];
+}): string[] {
+  return [
+    ...snapshotsToDelete({ counts, snapshots: snapshotNames }),
+    ...tempRusticSnapshotsToDelete(allSnapshotNames),
+  ];
+}
+
+/** Delete only the expired rolling snapshots (no new snapshot), for a prune
+ * that was deferred by beforePrune. The snapshot limit is not enforced here:
+ * the next update does that under the current limit. Returns how many were
+ * deleted; throws the last delete error after trying all of them. */
+export async function pruneRollingSnapshots({
+  snapshots,
+  counts,
+}: {
+  snapshots: Pick<SubvolumeSnapshots, "readdir" | "delete">;
+  counts?: Partial<SnapshotCounts>;
+}): Promise<number> {
+  if (btrfsRollingSnapshotsDisabled()) return 0;
+  const toDelete = expiredSnapshotNames({
+    counts: { ...DEFAULT_SNAPSHOT_COUNTS, ...counts },
+    allSnapshotNames: await snapshots.readdir(),
+  });
+  let deleted = 0;
+  let deleteError: unknown = undefined;
+  const remove = async (name: string) => {
+    try {
+      await snapshots.delete(name);
+      deleted += 1;
+      return true;
+    } catch (err) {
+      deleteError = err;
+      return false;
+    }
+  };
+  for (const name of toDelete) await remove(name);
+  if (deleteError) throw deleteError;
+  return deleted;
 }
 
 export function snapshotsToDelete({

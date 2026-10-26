@@ -85,7 +85,10 @@ import {
   isBtrfsSubvolume,
 } from "@cocalc/file-server/btrfs/subvolume";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
-import { RollingSnapshotRetentionSkipped } from "@cocalc/file-server/btrfs/snapshots";
+import {
+  pruneRollingSnapshots,
+  RollingSnapshotRetentionSkipped,
+} from "@cocalc/file-server/btrfs/snapshots";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
@@ -260,7 +263,9 @@ import {
   type ProjectQuotaBreakdown,
 } from "./project-quota-group";
 import { setSnapshotPreparer } from "@cocalc/file-server/btrfs/snapshot-preparer";
-import { withBackupParallelLimit } from "./backup-queue";
+import { backupsInFlight, withBackupParallelLimit } from "./backup-queue";
+import { decideSnapshotPrune } from "./snapshot-prune-gate";
+import { getStorageAdmissionStatus } from "./storage-admission";
 import { createSharedWorkLimit } from "./shared-work-limit";
 export { getBackupExecutionStatus } from "./backup-queue";
 import {
@@ -3300,6 +3305,8 @@ export async function runScheduledSnapshotMaintenance({
   changed: boolean | null;
   disabled: boolean;
   skipped_reason?: string;
+  prune_deferred?: boolean;
+  limit_prune_deferred?: boolean;
   stage_durations_ms?: Record<string, number>;
 }> {
   const generation = currentProjectVolumeLifecycleGeneration(project_id);
@@ -3318,13 +3325,37 @@ export async function runScheduledSnapshotMaintenance({
         return { skipped_reason: "project_volume_archiving" };
       }
       const stageDurations = stage_durations_ms ?? {};
+      let pruneDecision: ReturnType<typeof decideSnapshotPrune> | undefined;
       const update = await vol.snapshots.update(counts, {
         limit,
         quotaMode: "async",
         onStage: (stage: string, durationMs: number) => {
           stageDurations[stage] = (stageDurations[stage] ?? 0) + durationMs;
         },
+        // Expired snapshots wait while a backup or a project start/stop runs
+        // on this host (bounded; see snapshot-prune-gate.ts).
+        beforePrune: () => {
+          pruneDecision = decideSnapshotPrune({
+            projectId: project_id,
+            ...snapshotPruneBusy(),
+          });
+          return pruneDecision.allow;
+        },
       });
+      if (update.pruneDeferred || update.limitPruneDeferred) {
+        // Reported with the attempt, so deferrals show in
+        // project_maintenance_attempts.stage_durations_ms.
+        stageDurations.prune_deferred_ms = pruneDecision?.deferredForMs ?? 0;
+      }
+      if (update.createDeferred) {
+        // Making room under the limit had to wait for the gate, so no
+        // snapshot was attempted; the scheduler retries the update.
+        return {
+          skipped_reason: "snapshot_prune_deferred",
+          limit_prune_deferred: true,
+          stage_durations_ms: stageDurations,
+        };
+      }
       const confirmationStarted = Date.now();
       const snapshots = (await vol.snapshots.readdir())
         .filter(isISODate)
@@ -3338,6 +3369,10 @@ export async function runScheduledSnapshotMaintenance({
         created_snapshot_at: update.createdName,
         changed: update.changed,
         disabled: update.disabled,
+        // The caller retries (snapshot-backup-maintenance.ts): a rolling
+        // prune in the background, a limit prune as a full update.
+        prune_deferred: (update.pruneDeferred ?? 0) > 0,
+        limit_prune_deferred: (update.limitPruneDeferred ?? 0) > 0,
         stage_durations_ms: stageDurations,
       };
     },
@@ -3350,9 +3385,64 @@ export async function runScheduledSnapshotMaintenance({
       disabled: false,
       skipped_reason:
         result?.skipped_reason ?? "project_volume_lifecycle_changed",
+      ...(result && "limit_prune_deferred" in result
+        ? {
+            limit_prune_deferred: result.limit_prune_deferred,
+            stage_durations_ms: result.stage_durations_ms,
+          }
+        : {}),
     };
   }
   return result;
+}
+
+/** What the snapshot prune gate waits for on this host. */
+export function snapshotPruneBusy(): {
+  backupsInFlight: number;
+  lifecycleActive: number;
+} {
+  return {
+    backupsInFlight: backupsInFlight(),
+    lifecycleActive: getStorageAdmissionStatus()?.lifecycle_active ?? 0,
+  };
+}
+
+// Deletes the expired snapshots of a project whose prune was deferred, under
+// the same lifecycle lock and volume checks as the scheduled snapshot. The
+// caller runs it as scheduled storage work (snapshot-backup-maintenance.ts).
+export async function pruneDeferredSnapshots(
+  project_id: string,
+  { counts }: { counts: Partial<SnapshotCounts> },
+): Promise<void> {
+  // Returns only when retention was applied; throws when it couldn't run now
+  // (the retry stays pending). Only the bay's assignment check, not a missing
+  // volume here, decides that a project is gone.
+  const generation = currentProjectVolumeLifecycleGeneration(project_id);
+  const outcome = await withCurrentProjectVolumeLifecycleLock(
+    project_id,
+    generation,
+    async (): Promise<string> => {
+      const vol = await getVolumeUnchecked(project_id);
+      if (!(await exists(vol.path))) return "project_volume_unavailable";
+      if (!(await isBtrfsSubvolume(vol.path))) return "project_volume_invalid";
+      // read-only while archiving (or restoring): try again later
+      if (await isSubvolumeReadonly(vol.path)) {
+        return "project_volume_archiving";
+      }
+      const deleted = await pruneRollingSnapshots({
+        snapshots: vol.snapshots,
+        counts,
+      });
+      logger.info("pruned deferred snapshots", { project_id, deleted });
+      return "pruned";
+    },
+  );
+  if (outcome !== "pruned") {
+    // undefined when a lifecycle operation took the volume first
+    throw new Error(
+      `deferred snapshot prune not applied: ${outcome ?? "project_volume_lifecycle_changed"}`,
+    );
+  }
 }
 
 async function allSnapshotUsage({
