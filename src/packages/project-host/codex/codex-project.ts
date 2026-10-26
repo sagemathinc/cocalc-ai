@@ -447,6 +447,34 @@ async function scrubBrokenProjectCodexAuthArtifacts(
   }
 }
 
+// Credentials Codex needs in its environment. The host's process list shows
+// every process's argv to all host users, so these go to podman by name only
+// (`-e NAME` without a value), and podman reads the value from its own
+// environment, which only the same uid can read.
+const PODMAN_ENV_BY_NAME = new Set([
+  "OPENAI_API_KEY",
+  "COCALC_BEARER_TOKEN",
+  "COCALC_AGENT_TOKEN",
+]);
+
+// Adds `-e` options for env to args and returns the environment to spawn
+// podman with.
+export function pushPodmanExecEnv(
+  args: string[],
+  env: Record<string, string>,
+): NodeJS.ProcessEnv {
+  const spawnEnv = podmanEnv();
+  for (const key in env) {
+    if (PODMAN_ENV_BY_NAME.has(key)) {
+      args.push("-e", key);
+      spawnEnv[key] = env[key];
+    } else {
+      args.push("-e", `${key}=${env[key]}`);
+    }
+  }
+  return spawnEnv;
+}
+
 function redactPodmanArgs(args: string[]): string {
   const redacted = [...args];
   for (let i = 0; i < redacted.length - 1; i++) {
@@ -2228,9 +2256,7 @@ export async function spawnCodexInProjectContainer({
     // is enabled. The proxy itself only permits authenticated OpenAI tunnels.
     codexArgs = ["--config", RESPECT_SYSTEM_PROXY_CONFIG, ...codexArgs];
   }
-  for (const key in execEnv) {
-    execArgs.push("-e", `${key}=${execEnv[key]}`);
-  }
+  const spawnEnv = pushPodmanExecEnv(execArgs, execEnv);
   execArgs.push(info.name, info.codexPath, ...codexArgs);
   logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
   const launcher = projectPoolPodmanLauncher(projectId);
@@ -2238,7 +2264,7 @@ export async function spawnCodexInProjectContainer({
   try {
     proc = spawn(launcher.command, [...launcher.argsPrefix, ...execArgs], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: podmanEnv(),
+      env: spawnEnv,
     });
   } catch (err) {
     restrictedEgress?.close();
@@ -2552,9 +2578,7 @@ async function spawnCodexAppServerInProjectRuntime({
     await removeIsolatedCodexHome(isolatedCodexHomeHostPath);
     throw err;
   }
-  for (const key in execEnv) {
-    execArgs.push("-e", `${key}=${execEnv[key]}`);
-  }
+  const spawnEnv = pushPodmanExecEnv(execArgs, execEnv);
   const codexArgs: string[] = [];
   const providerArgs = siteFundedTurn
     ? getManagedOpenAiProviderArgs(authRuntime, {
@@ -2612,7 +2636,7 @@ async function spawnCodexAppServerInProjectRuntime({
   try {
     proc = spawn(launcher.command, [...launcher.argsPrefix, ...execArgs], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: podmanEnv(),
+      env: spawnEnv,
     });
   } catch (err) {
     restrictedEgress?.close();

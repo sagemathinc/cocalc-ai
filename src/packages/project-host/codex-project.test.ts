@@ -386,8 +386,16 @@ describe("initCodexProjectRunner", () => {
       expect(args).toContain('web_search="disabled"');
       expect(args).toContain('model_provider="cocalc-openai-api-key"');
       expect(args).toContain("model_context_window=128000");
-      expect(args).toContain("OPENAI_API_KEY=site-funded-proxy-token");
-      expect(args).not.toContain("OPENAI_API_KEY=real-site-key");
+      // The proxy token reaches podman through its environment: the host's
+      // process list shows argv to every host user.
+      expect(args).toEqual(expect.arrayContaining(["-e", "OPENAI_API_KEY"]));
+      expect(args.join(" ")).not.toContain("site-funded-proxy-token");
+      expect(args.join(" ")).not.toContain("real-site-key");
+      expect(spawnMock.mock.calls[0][2].env).toEqual({
+        XDG_RUNTIME_DIR: "/tmp/cocalc-podman-runtime",
+        CONTAINERS_CGROUP_MANAGER: "cgroupfs",
+        OPENAI_API_KEY: "site-funded-proxy-token",
+      });
       expect(spawned.runtimeEnv?.OPENAI_API_KEY).toBeUndefined();
       // Codex's shell never records the token, and an old snapshot that did
       // is gone before the app-server starts.
@@ -1048,7 +1056,9 @@ describe("initCodexProjectRunner", () => {
         "stdio://",
       ]),
     );
-    expect(args).not.toContain("OPENAI_API_KEY=secret-key");
+    expect(args).not.toContain("OPENAI_API_KEY");
+    expect(args.join(" ")).not.toContain("secret-key");
+    expect(options.env.OPENAI_API_KEY).toBeUndefined();
     expect(args).not.toContain('web_search="disabled"');
     expect(args).toContain("COCALC_AGENT_MENTION_REFERENCES_FILE=");
     expect(args.join(" ")).not.toContain("/stale/previous-turn.json");
@@ -2780,5 +2790,39 @@ describe("getBuiltinClaudeSkillMount", () => {
     await expect(
       getBuiltinClaudeSkillMount(projectHome, packagedSkills),
     ).resolves.toEqual([]);
+  });
+});
+
+describe("pushPodmanExecEnv", () => {
+  it("passes credentials to podman by name, never on argv", async () => {
+    const { pushPodmanExecEnv } = await import("./codex/codex-project");
+    const args = ["exec"];
+    const env = pushPodmanExecEnv(args, {
+      FOO: "bar",
+      OPENAI_API_KEY: "sk-secret",
+      COCALC_BEARER_TOKEN: "bearer-secret",
+      COCALC_AGENT_TOKEN: "agent-secret",
+      COCALC_BEARER_TOKEN_FILE: "/home/user/token",
+    });
+    expect(args).toEqual([
+      "exec",
+      "-e",
+      "FOO=bar",
+      "-e",
+      "OPENAI_API_KEY",
+      "-e",
+      "COCALC_BEARER_TOKEN",
+      "-e",
+      "COCALC_AGENT_TOKEN",
+      "-e",
+      "COCALC_BEARER_TOKEN_FILE=/home/user/token",
+    ]);
+    expect(env).toEqual({
+      XDG_RUNTIME_DIR: "/tmp/cocalc-podman-runtime",
+      CONTAINERS_CGROUP_MANAGER: "cgroupfs",
+      OPENAI_API_KEY: "sk-secret",
+      COCALC_BEARER_TOKEN: "bearer-secret",
+      COCALC_AGENT_TOKEN: "agent-secret",
+    });
   });
 });
