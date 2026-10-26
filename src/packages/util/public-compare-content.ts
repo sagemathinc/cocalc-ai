@@ -96,18 +96,22 @@ function isCocalcAi(config?: PublicCompareConfig): boolean {
 // The Compare record's sections for this site. CoCalc Plus is for one person
 // and has no collaborators, so it drops the collaboration bullet. The
 // operating-boundary bullet names only the products the public pages show.
-// cocalc.ai adds its history and backup sections.
+// cocalc.ai adds its history and backup sections. The browser passes
+// `cocalcAi` from isCocalcAiLaunchpadSite, which decides by the page's host
+// until /customize arrives, so cocalc.ai doesn't render the page without them
+// first (or for good, if /customize fails).
 export function getPublicCompareSections(
   config?: PublicCompareConfig,
+  { cocalcAi = isCocalcAi(config) }: { cocalcAi?: boolean } = {},
 ): PublicFeatureSection[] {
   const sections = getPublicFeaturePage("compare")?.sections ?? [];
   const collaboration: string[] =
     config?.cocalc_product === "plus"
       ? []
-      : isCocalcAi(config)
+      : cocalcAi
         ? [PUBLIC_COMPARE_COCALC_AI_COLLABORATION_BULLET]
         : [PUBLIC_COMPARE_COLLABORATION_BULLET];
-  const history = isCocalcAi(config) ? PUBLIC_COMPARE_HISTORY_SECTIONS : [];
+  const history = cocalcAi ? PUBLIC_COMPARE_HISTORY_SECTIONS : [];
   return [...sections, ...history].map((section) =>
     section.bullets == null
       ? section

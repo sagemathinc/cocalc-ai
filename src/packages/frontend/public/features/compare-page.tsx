@@ -27,6 +27,7 @@ import {
   PUBLIC_PRODUCTS_PAGE_LINK,
 } from "@cocalc/util/public-products-content";
 import { builtinPolicyPath, type PublicConfig } from "../common";
+import { isCocalcAiLaunchpadSite } from "@cocalc/frontend/public/config";
 import {
   LinkButton,
   featureAppPath,
@@ -462,7 +463,9 @@ export default function CompareFeaturePage({
     subject: "CoCalc fit evaluation",
     title: "Talk with CoCalc about fit",
   });
-  const sections = getPublicCompareSections(config);
+  const sections = getPublicCompareSections(config, {
+    cocalcAi: isCocalcAiLaunchpadSite(config),
+  });
   const sandboxChoices = sections.filter(({ title }) =>
     title.startsWith("Choose "),
   );

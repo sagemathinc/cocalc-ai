@@ -161,9 +161,22 @@ describe("Compare page history and backups", () => {
     ).toMatch(/docs\/research\/recover-work$/);
   });
 
+  it("is shown on cocalc.ai before /customize returns the product", () => {
+    // jsdom's host is not cocalc.ai; on cocalc.ai the page's host decides
+    // until the configuration arrives (isCocalcAiLaunchpadSite)
+    renderCompare({ dns: "cocalc.ai", site_name: "CoCalc" });
+    expect(
+      screen.getByRole("heading", { name: PUBLIC_COMPARE_HISTORY_TITLE }),
+    ).not.toBeNull();
+  });
+
   it.each([
     ["a Rocket site", ROCKET],
     ["CoCalc Plus", PLUS],
+    [
+      "a customer Launchpad site",
+      { cocalc_product: "launchpad", dns: "cocalc.example.edu" },
+    ],
   ])("is not shown on %s", (_site, config) => {
     renderCompare(config);
     expect(
