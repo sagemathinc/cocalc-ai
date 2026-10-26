@@ -26,6 +26,7 @@ describeDb("network-bound external agents", () => {
     "agent_external_identities",
     "agent_external_installations",
     "agent_external_inbox",
+    "agent_external_inbox_attachments",
   ];
 
   function enrollment(): {
@@ -360,5 +361,139 @@ describeDb("network-bound external agents", () => {
         sender,
       ),
     ).toBeNull();
+  });
+
+  function file(name: string, text: string) {
+    const data = new TextEncoder().encode(text);
+    return {
+      name,
+      size: data.byteLength,
+      sha256: createHash("sha256").update(data).digest("hex"),
+      data,
+    };
+  }
+
+  async function sent(attachments?: ReturnType<typeof file>[]) {
+    const { options } = enrollment();
+    const installation = await store.enroll(account, "human-session", options);
+    const source = {
+      kind: "registered" as const,
+      account_id: account,
+      project_id: randomUUID(),
+      agent_id: randomUUID(),
+      run_id: randomUUID(),
+    };
+    const input = {
+      account_id: account,
+      installation_id: installation.installation_id,
+      attempt_id: randomUUID(),
+      agent_network_id: network,
+      network_generation: generation,
+      source,
+      body: "Report attached.",
+      ...(attachments ? { attachments } : {}),
+    };
+    return { installation, source, input };
+  }
+
+  test("attachments are kept with the message and read back by the installation", async () => {
+    const files = [
+      file("report.md", "# Report\n"),
+      file("data.csv", "a,b\n1,2\n"),
+    ];
+    const { installation, input } = await sent(files);
+    const message = await store.enqueue(input);
+    expect(message.attachments).toEqual(
+      files.map(({ name, size, sha256 }) => ({ name, size, sha256 })),
+    );
+    expect(await store.inbox(account, installation.installation_id)).toEqual([
+      message,
+    ]);
+    const second = await store.attachment(
+      account,
+      installation.installation_id,
+      message.message_id,
+      1,
+    );
+    expect(second).toMatchObject({ name: "data.csv", index: 1, count: 2 });
+    expect(new TextDecoder().decode(second.data)).toBe("a,b\n1,2\n");
+    // A retry is the same message; changed files are a conflict.
+    expect(await store.enqueue(input)).toEqual(message);
+    await expect(
+      store.enqueue({ ...input, attachments: [files[0]] }),
+    ).rejects.toThrow("external_inbox_idempotency_conflict");
+    // Still readable once the message is read.
+    await store.acknowledge(
+      account,
+      installation.installation_id,
+      message.message_id,
+    );
+    await expect(
+      store.attachment(
+        account,
+        installation.installation_id,
+        message.message_id,
+        0,
+      ),
+    ).resolves.toMatchObject({ name: "report.md" });
+    await expect(
+      store.attachment(
+        account,
+        installation.installation_id,
+        message.message_id,
+        2,
+      ),
+    ).rejects.toThrow("external_inbox_attachment_not_found");
+    // Another installation of the account cannot read them.
+    const other = await sent();
+    await expect(
+      store.attachment(
+        account,
+        other.installation.installation_id,
+        message.message_id,
+        0,
+      ),
+    ).rejects.toThrow("external_inbox_attachment_not_found");
+  });
+
+  test("content must match the manifest", async () => {
+    const bad = { ...file("x.txt", "hello"), sha256: "0".repeat(64) };
+    const { input } = await sent([bad]);
+    await expect(store.enqueue(input)).rejects.toThrow(
+      "external_inbox_attachment_mismatch",
+    );
+  });
+
+  test("an inbox holds a bounded amount of attachments", async () => {
+    const { input } = await sent([file("a.txt", "x")]);
+    await store.enqueue(input);
+    // As if it already held 256 MiB: one row that says so (the size check
+    // is set aside just for this).
+    await db.query(
+      "ALTER TABLE agent_external_inbox_attachments DROP CONSTRAINT agent_external_inbox_attachments_size_check",
+    );
+    try {
+      await db.query(
+        "UPDATE agent_external_inbox_attachments SET size=$2 WHERE installation_id=$1",
+        [input.installation_id, 256 * 1024 * 1024],
+      );
+      await expect(
+        store.enqueue({ ...input, attempt_id: randomUUID() }),
+      ).rejects.toThrow("external_inbox_attachment_capacity");
+      // Without files, messages still arrive.
+      await expect(
+        store.enqueue({
+          ...input,
+          attempt_id: randomUUID(),
+          attachments: undefined,
+        }),
+      ).resolves.toMatchObject({ body: "Report attached." });
+    } finally {
+      await db.query("DELETE FROM agent_external_inbox_attachments");
+      await db.query(
+        `ALTER TABLE agent_external_inbox_attachments ADD CONSTRAINT agent_external_inbox_attachments_size_check
+         CHECK (size BETWEEN 0 AND 33554432 AND octet_length(data)=size)`,
+      );
+    }
   });
 });

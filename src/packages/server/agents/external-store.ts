@@ -4,9 +4,16 @@ import {
   validateExternalAgentApproval,
   validateExternalAgentLabel,
   type ExternalAgentDelivery,
+  type ExternalAgentInboxAttachment,
   type ExternalAgentInboxMessage,
   type ExternalAgentInstallation,
 } from "@cocalc/conat/agents/external";
+import {
+  AGENT_ATTACHMENT_PROJECT_BYTES,
+  validateAttachmentPayload,
+  type AgentSnapshot,
+  type AgentSnapshotMetadata,
+} from "@cocalc/conat/agents/attachments";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import {
   agentRpcSourceKey,
@@ -366,6 +373,7 @@ export class ExternalAgentStore {
     source: AgentRpcSource;
     source_account_id?: string;
     body: string;
+    attachments?: AgentSnapshot[];
   }): Promise<ExternalAgentInboxMessage> {
     requireUuid(opts.attempt_id, "attempt_id");
     // Optional while bays upgrade: an older sender's bay does not send it,
@@ -373,6 +381,25 @@ export class ExternalAgentStore {
     if (opts.source_account_id != null)
       requireUuid(opts.source_account_id, "source_account_id");
     const source_account_id = opts.source_account_id?.toLowerCase() ?? null;
+    const attachments = opts.attachments ?? [];
+    const manifest = attachments.map(({ name, size, sha256 }) => ({
+      name,
+      size,
+      sha256,
+    }));
+    if (attachments.length) {
+      // The same limits as for any network member, and the content must be
+      // what the manifest says.
+      validateAttachmentPayload(
+        { kind: "snapshots", files: manifest },
+        attachments,
+      );
+      for (const file of attachments)
+        if (
+          createHash("sha256").update(file.data).digest("hex") !== file.sha256
+        )
+          throw new Error("external_inbox_attachment_mismatch");
+    }
     requireUuid(opts.agent_network_id, "agent_network_id");
     requireUuid(opts.network_generation, "network_generation");
     if (
@@ -407,7 +434,13 @@ export class ExternalAgentStore {
           agentRpcSourceKey(existing.source) !== agentRpcSourceKey(opts.source)
         )
           throw new Error("external_inbox_idempotency_conflict");
-        return this.publicInbox(existing);
+        const stored = await this.manifests(db, [existing.message_id]);
+        if (
+          JSON.stringify(stored.get(existing.message_id) ?? []) !==
+          JSON.stringify(manifest)
+        )
+          throw new Error("external_inbox_idempotency_conflict");
+        return this.publicInbox(existing, stored.get(existing.message_id));
       }
       const pending = (
         await db.query(
@@ -417,6 +450,20 @@ export class ExternalAgentStore {
         )
       ).rows[0];
       if (+pending.count >= 1000) throw new Error("external_inbox_capacity");
+      if (attachments.length) {
+        // Files are kept until their messages expire: bound what one inbox
+        // holds, as a project's received attachments are.
+        const held = (
+          await db.query(
+            `SELECT COALESCE(SUM(size),0) AS bytes FROM agent_external_inbox_attachments
+             WHERE account_id=$1 AND installation_id=$2 AND expires_at>now()`,
+            [opts.account_id, opts.installation_id],
+          )
+        ).rows[0];
+        const adding = manifest.reduce((sum, file) => sum + file.size, 0);
+        if (+held.bytes + adding > AGENT_ATTACHMENT_PROJECT_BYTES)
+          throw new Error("external_inbox_attachment_capacity");
+      }
       const row = (
         await db.query(
           `INSERT INTO agent_external_inbox
@@ -436,15 +483,65 @@ export class ExternalAgentStore {
           ],
         )
       ).rows[0];
+      for (const [idx, file] of attachments.entries())
+        await db.query(
+          `INSERT INTO agent_external_inbox_attachments
+           (message_id,idx,account_id,installation_id,name,size,sha256,data,expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            row.message_id,
+            idx,
+            opts.account_id,
+            opts.installation_id,
+            file.name,
+            file.size,
+            file.sha256,
+            Buffer.from(
+              file.data.buffer,
+              file.data.byteOffset,
+              file.data.byteLength,
+            ),
+            row.expires_at,
+          ],
+        );
       await db.query(
         "DELETE FROM agent_external_inbox WHERE account_id=$1 AND expires_at<=now()",
         [opts.account_id],
       );
-      return this.publicInbox(row);
+      await db.query(
+        "DELETE FROM agent_external_inbox_attachments WHERE account_id=$1 AND expires_at<=now()",
+        [opts.account_id],
+      );
+      return this.publicInbox(row, attachments.length ? manifest : undefined);
     });
   }
 
-  private publicInbox(row: any): ExternalAgentInboxMessage {
+  /** The attachment manifests of these messages, in order. */
+  private async manifests(
+    db: PersonalAuthorityDb,
+    message_ids: string[],
+  ): Promise<Map<string, AgentSnapshotMetadata[]>> {
+    const byMessage = new Map<string, AgentSnapshotMetadata[]>();
+    if (!message_ids.length) return byMessage;
+    const rows = (
+      await db.query(
+        `SELECT message_id,name,size,sha256 FROM agent_external_inbox_attachments
+         WHERE message_id = ANY($1::uuid[]) ORDER BY message_id,idx`,
+        [message_ids],
+      )
+    ).rows;
+    for (const row of rows) {
+      const list = byMessage.get(row.message_id) ?? [];
+      list.push({ name: row.name, size: +row.size, sha256: row.sha256 });
+      byMessage.set(row.message_id, list);
+    }
+    return byMessage;
+  }
+
+  private publicInbox(
+    row: any,
+    attachments?: AgentSnapshotMetadata[],
+  ): ExternalAgentInboxMessage {
     return {
       message_id: row.message_id,
       attempt_id: row.attempt_id,
@@ -453,6 +550,7 @@ export class ExternalAgentStore {
       body: row.body,
       created_at: new Date(row.created_at).toISOString(),
       expires_at: new Date(row.expires_at).toISOString(),
+      ...(attachments?.length ? { attachments } : {}),
     };
   }
 
@@ -470,7 +568,7 @@ export class ExternalAgentStore {
     const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
     return this.locked(account, async (db, controls) => {
       await this.active(db, account, installation, controls);
-      return (
+      const rows = (
         await db.query(
           `SELECT * FROM agent_external_inbox
            WHERE account_id=$1 AND installation_id=$2 AND expires_at>now()
@@ -478,10 +576,16 @@ export class ExternalAgentStore {
            ORDER BY created_at,message_id LIMIT $3`,
           [account, installation, bounded, includeAcknowledged],
         )
-      ).rows.map((row) =>
-        includeAcknowledged
+      ).rows;
+      const manifests = await this.manifests(
+        db,
+        rows.map((row) => row.message_id),
+      );
+      return rows.map((row) => {
+        const message = this.publicInbox(row, manifests.get(row.message_id));
+        return includeAcknowledged
           ? {
-              ...this.publicInbox(row),
+              ...message,
               state:
                 row.state === "acknowledged"
                   ? ("acknowledged" as const)
@@ -494,8 +598,41 @@ export class ExternalAgentStore {
                   }
                 : {}),
             }
-          : this.publicInbox(row),
-      );
+          : message;
+      });
+    });
+  }
+
+  /** One file of one of this installation's messages (read or not). */
+  async attachment(
+    account: string,
+    installation: string,
+    message_id: string,
+    index: number,
+  ): Promise<ExternalAgentInboxAttachment> {
+    requireUuid(message_id, "message_id");
+    return this.locked(account, async (db, controls) => {
+      await this.active(db, account, installation, controls);
+      const rows = (
+        await db.query(
+          `SELECT idx,name,size,sha256,data FROM agent_external_inbox_attachments
+           WHERE account_id=$1 AND installation_id=$2 AND message_id=$3 AND expires_at>now()
+           ORDER BY idx`,
+          [account, installation, message_id],
+        )
+      ).rows;
+      const row = rows.find((row) => +row.idx === index);
+      if (!row) throw new Error("external_inbox_attachment_not_found");
+      const data: Buffer = row.data;
+      return {
+        message_id,
+        index,
+        count: rows.length,
+        name: row.name,
+        size: +row.size,
+        sha256: row.sha256,
+        data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+      };
     });
   }
 

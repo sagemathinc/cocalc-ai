@@ -1,7 +1,8 @@
-// Messages to an external network member: the sender, and only the sender,
-// can ask whether it was read.
+// Messages to an external network member: its inbox holds the files sent
+// with a message, and the sender, and only the sender, can ask whether it was
+// read.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 const sourceProject = randomUUID();
 const sourceAgent = randomUUID();
@@ -16,6 +17,7 @@ const externalAgent = randomUUID();
 const checkNetwork = jest.fn();
 const enqueue = jest.fn();
 const inspect = jest.fn();
+const attachment = jest.fn();
 
 jest.mock("./store", () => ({
   agentStore: () => ({
@@ -45,6 +47,7 @@ jest.mock("./external", () => ({
   inspectExternalAgentMessage: (...args: unknown[]) => inspect(...args),
   externalStore: () => ({
     activeInstallation: async () => ({ agent_id: externalAgent }),
+    attachment: (...args: unknown[]) => attachment(...args),
   }),
 }));
 jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
@@ -66,8 +69,9 @@ jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({}),
 }));
 
-import { acceptAgentRpc } from "./rpc";
+import { acceptAgentRpc, acceptExternalAgentRpc } from "./rpc";
 import { agentMessagingSubject } from "@cocalc/conat/agents/protocol";
+import { externalAgentSubject } from "@cocalc/conat/agents/external";
 
 const source = { project_id: sourceProject, agent_id: sourceAgent };
 const target = {
@@ -77,6 +81,16 @@ const target = {
   installation_id: installation,
 };
 const subject = agentMessagingSubject(sourceAgent, runId);
+
+function file(name: string, text: string) {
+  const data = new TextEncoder().encode(text);
+  return {
+    name,
+    size: data.byteLength,
+    sha256: createHash("sha256").update(data).digest("hex"),
+    data,
+  };
+}
 
 function attempt() {
   return {
@@ -90,6 +104,7 @@ function attempt() {
 beforeEach(() => {
   enqueue.mockReset().mockResolvedValue({ message_id: randomUUID() });
   inspect.mockReset();
+  attachment.mockReset();
   checkNetwork.mockReset().mockResolvedValue({
     agent_network_id: network,
     network_title: "Ops",
@@ -169,15 +184,83 @@ test("a message records who sent it, so only that account can inspect it", async
   );
 });
 
-test("attachments to an external member stay unavailable", async () => {
-  expect(
-    await acceptAgentRpc(subject, {
-      ...attempt(),
-      action: "prepare-attachments",
-      body: "hello",
-      snapshot_manifest: [{ name: "a.txt", size: 1, sha256: "0".repeat(64) }],
+test("files go to the external inbox with the message", async () => {
+  const files = [file("report.md", "# Report\n"), file("log.txt", "ok\n")];
+  const manifest = files.map(({ name, size, sha256 }) => ({
+    name,
+    size,
+    sha256,
+  }));
+  const request = {
+    ...attempt(),
+    body: "Bug report attached.",
+    snapshot_manifest: manifest,
+  };
+  const prepared: any = await acceptAgentRpc(subject, {
+    ...request,
+    action: "prepare-attachments",
+  });
+  expect(prepared).toMatchObject({ outcome: "prepared" });
+  expect(prepared.expires_at).toBeGreaterThan(Date.now());
+  const sent = await acceptAgentRpc(subject, {
+    ...request,
+    attachment_reservation: prepared.reservation_id,
+    action: "send",
+    snapshot_payload: files,
+  });
+  expect(sent).toMatchObject({ outcome: "accepted", chat_effect: "saved" });
+  expect(enqueue).toHaveBeenCalledWith(
+    expect.objectContaining({
+      account_id: targetAccount,
+      installation_id: installation,
+      body: "Bug report attached.",
+      attachments: files,
     }),
-  ).toMatchObject({ outcome: "rejected", chat_effect: "none" });
+  );
+});
+
+test("project paths cannot go to an external member: it has no project", async () => {
+  const outcome = await acceptAgentRpc(subject, {
+    ...attempt(),
+    action: "send",
+    body: "See this file.",
+    file_references: [{ kind: "project-file", path: "/home/user/a.md" }],
+  });
+  expect(outcome).toMatchObject({
+    outcome: "rejected",
+    code: "attachment_unavailable",
+    chat_effect: "none",
+  });
+  expect(enqueue).not.toHaveBeenCalled();
+});
+
+test("the external member reads a message's files with its own credential", async () => {
+  const message_id = randomUUID();
+  attachment.mockResolvedValueOnce({ name: "report.md", index: 0, count: 1 });
+  const external = externalAgentSubject(targetAccount, installation);
+  expect(
+    await acceptExternalAgentRpc(external, {
+      version: 3,
+      action: "inbox-attachment",
+      message_id,
+      index: 0,
+    }),
+  ).toMatchObject({ name: "report.md" });
+  expect(attachment).toHaveBeenCalledWith(
+    targetAccount,
+    installation,
+    message_id,
+    0,
+  );
+  // A native agent has no external inbox.
+  await expect(
+    acceptAgentRpc(subject, {
+      version: 3,
+      action: "inbox-attachment",
+      message_id,
+      index: 0,
+    }),
+  ).rejects.toThrow(/do not have an external inbox/);
 });
 
 test("every inspection that finds nothing gets the same answer, so probing learns nothing", async () => {

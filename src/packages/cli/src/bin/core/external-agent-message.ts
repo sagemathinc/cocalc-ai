@@ -135,10 +135,32 @@ export async function sendExternalAgentMessage(
           typeof message?.body !== "string" ||
           typeof message?.created_at !== "string" ||
           typeof message?.expires_at !== "string" ||
-          !message?.source
+          !message?.source ||
+          (message.attachments !== undefined &&
+            (!Array.isArray(message.attachments) ||
+              message.attachments.length > 16 ||
+              message.attachments.some(
+                (file) =>
+                  typeof file?.name !== "string" ||
+                  !Number.isSafeInteger(file?.size) ||
+                  typeof file?.sha256 !== "string",
+              )))
         )
           throw new Error("invalid external inbox message");
       }
+    } else if (request.action === "inbox-attachment") {
+      if (
+        result?.message_id !== request.message_id ||
+        result?.index !== request.index ||
+        !Number.isInteger(result?.count) ||
+        result.count < 1 ||
+        result.count > 16 ||
+        typeof result?.name !== "string" ||
+        !Number.isSafeInteger(result?.size) ||
+        typeof result?.sha256 !== "string" ||
+        !(result?.data instanceof Uint8Array)
+      )
+        throw new Error("invalid external inbox attachment");
     } else if (request.action === "ack-inbox") {
       if (
         result?.acknowledged !== true ||

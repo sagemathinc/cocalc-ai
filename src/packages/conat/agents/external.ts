@@ -1,3 +1,4 @@
+import type { AgentSnapshot, AgentSnapshotMetadata } from "./attachments";
 import { requireUuid } from "./protocol";
 
 export const EXTERNAL_AGENT_TOKEN_PREFIX = "cocalc_external_agent_v1.";
@@ -47,6 +48,16 @@ export interface ExternalAgentInboxMessage {
   /** Listed with include_acknowledged only: whether it was acknowledged. */
   state?: "pending" | "acknowledged";
   acknowledged_at?: string;
+  /** The files sent with it, in order; fetch each with inbox-attachment. */
+  attachments?: AgentSnapshotMetadata[];
+}
+
+/** One attachment of an inbox message, with its content. */
+export interface ExternalAgentInboxAttachment extends AgentSnapshot {
+  message_id: string;
+  index: number;
+  /** How many attachments the message has. */
+  count: number;
 }
 
 /** What became of a message sent to an external inbox (for its sender). */
@@ -108,6 +119,8 @@ export interface ExternalAgentEnqueueOptions {
    * inspected. */
   source_account_id?: string;
   body: string;
+  /** Files sent with it (at most 16 and 32 MiB, as to any network member). */
+  attachments?: AgentSnapshot[];
 }
 
 export function externalAgentSubject(

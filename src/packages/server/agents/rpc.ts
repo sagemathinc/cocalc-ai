@@ -998,6 +998,35 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
       throw new Error("this delivery report already started a turn");
   };
 
+/** How long an external inbox's attachment preparation is valid. */
+const EXTERNAL_ATTACHMENT_PREPARATION_MS = 10 * 60 * 1000;
+
+/**
+ * An external inbox holds files with the message itself, so preparation
+ * reserves nothing: it checks the manifest and hands back an id the send
+ * repeats. The inbox enforces its limits when the message arrives.
+ */
+function prepareExternalAttachments(
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+): import("@cocalc/conat/agents/rpc").AgentRpcPreparation {
+  if (request.file_references !== undefined || !request.snapshot_manifest)
+    return rpcOutcome(request, "rejected", {
+      code: "attachment_unavailable",
+      chat_effect: "none",
+      reason:
+        "An external network member has no project: send copies of the files",
+    });
+  return {
+    version: 3,
+    attempt_id: request.attempt_id,
+    agent_network_id: request.agent_network_id,
+    target: request.target,
+    outcome: "prepared",
+    reservation_id: randomUUID(),
+    expires_at: Date.now() + EXTERNAL_ATTACHMENT_PREPARATION_MS,
+  };
+}
+
 /**
  * For the sender: whether the external member has read its message. Only a
  * current member of the network, asking about its own message (the same
@@ -1087,36 +1116,44 @@ function externalTargetRequest(
     }
   >,
 ) {
-  if (request.action === "send")
-    return submitExternalInbox(account_id, source, run_id, request);
-  if (request.action === "inspect")
-    return inspectExternalInbox(account_id, source, run_id, request);
-  return rpcOutcome(request, "rejected", {
-    chat_effect: "none",
-    reason:
-      request.action === "withdraw"
-        ? "A message in an external inbox cannot be withdrawn: no turn starts there"
-        : "External inbox attachments are not available",
-  });
+  switch (request.action) {
+    case "send":
+      return submitExternalInbox(account_id, source, run_id, request);
+    case "prepare-attachments":
+      return prepareExternalAttachments(request);
+    case "cancel-attachments":
+      // Nothing was reserved.
+      return rpcOutcome(request, "rejected", {
+        chat_effect: "none",
+        reason: "Attachment preparation canceled; no message was sent",
+      });
+    case "inspect":
+      return inspectExternalInbox(account_id, source, run_id, request);
+    default:
+      return rpcOutcome(request, "rejected", {
+        chat_effect: "none",
+        reason:
+          "A message in an external inbox cannot be withdrawn: no turn starts there",
+      });
+  }
 }
 
 async function submitExternalInbox(
   account_id: string,
   source: AgentRpcSource,
   run_id: string | undefined,
-  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend & {
+    snapshot_payload?: import("@cocalc/conat/agents/attachments").AgentSnapshot[];
+  },
 ) {
   if (!isExternalAgentSource(request.target))
     throw new Error("external inbox target required");
-  if (
-    request.file_references !== undefined ||
-    request.snapshot_manifest !== undefined ||
-    request.attachment_reservation !== undefined
-  )
+  if (request.file_references !== undefined)
     return rpcOutcome(request, "rejected", {
       code: "attachment_unavailable",
       chat_effect: "none",
-      reason: "External inbox attachments are not available",
+      reason:
+        "An external network member has no project: send copies of the files",
     });
   const checked = await networkProof(
     account_id,
@@ -1152,6 +1189,9 @@ async function submitExternalInbox(
       // The sender's authenticated account: only it may inspect later.
       source_account_id: account_id,
       body: request.body,
+      ...(request.snapshot_payload?.length
+        ? { attachments: request.snapshot_payload }
+        : {}),
     });
     const outcome = rpcOutcome(request, "accepted", {
       chat_effect: "saved",
@@ -1229,7 +1269,11 @@ export async function acceptAgentRpc(
           authorization,
         ),
     );
-  if (request.action === "inbox" || request.action === "ack-inbox")
+  if (
+    request.action === "inbox" ||
+    request.action === "ack-inbox" ||
+    request.action === "inbox-attachment"
+  )
     throw new Error("native agents do not have an external inbox");
   if (isExternalAgentSource(request.target))
     return externalTargetRequest(run.account_id, source, run_id, request);
@@ -1342,6 +1386,13 @@ export async function acceptExternalAgentRpc(
       account_id,
       installation_id,
       request.message_id,
+    );
+  if (request.action === "inbox-attachment")
+    return externalStore().attachment(
+      account_id,
+      installation_id,
+      request.message_id,
+      request.index,
     );
   if (isExternalAgentSource(request.target))
     return externalTargetRequest(account_id, source, undefined, request);
