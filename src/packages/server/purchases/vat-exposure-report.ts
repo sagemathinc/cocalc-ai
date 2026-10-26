@@ -32,6 +32,7 @@ import { billingAccountsTable } from "./billing-account";
 import { decideBusinessTaxIdForPurchase } from "./stripe/business-tax-id-gate";
 import { predictRenewalFunding } from "./stripe/create-subscription-payment";
 import { searchStripeCustomerIdByAccountMetadata } from "./stripe/util";
+import { renewalAttemptClaimableSql } from "./subscription-renewal-attempts";
 
 // At most this long checking subscriptions per call (the call returns a cursor
 // for the rest). With the per-customer cap below, a call stays under the 30 s
@@ -50,9 +51,14 @@ interface Candidate {
   current_period_end: Date;
   amount: string;
   stripe_customer_id: string | null;
-  // The open renewal attempt's funding state, if there is one.
+  // The open renewal attempt's id and funding state, if there is one.
+  attempt_id: string | null;
   payment_intent_id: string | null;
   balance_applied: string | null;
+  // subscriptions.payment
+  payment: { status?: string; renewal_attempt_id?: string | null } | null;
+  // Whether this bay's renewal worker may renew it at all.
+  claimable: boolean;
 }
 
 // Stops waiting after ms; the read itself may still finish in the background.
@@ -103,7 +109,12 @@ async function checkCandidate(
   const funding = await predictRenewalFunding({
     account_id: candidate.account_id,
     amount: candidate.amount,
-    attempt: candidate,
+    attempt: {
+      id: candidate.attempt_id,
+      payment_intent_id: candidate.payment_intent_id,
+      balance_applied: candidate.balance_applied,
+    },
+    subscriptionPayment: candidate.payment,
   });
   const { refusal } = await decideBusinessTaxIdForPurchase({
     stripe,
@@ -144,22 +155,26 @@ export async function vatExposureReportPage({
   }
   const deadline = Date.now() + Math.min(page_ms, VAT_EXPOSURE_PAGE_MS);
   // Active personal memberships, the ones the renewal worker renews.
+  // The renewal worker's own eligibility condition, for this account.
+  const claimable = await renewalAttemptClaimableSql("$3", "s.account_id");
   const { rows: candidates } = await getPool().query<Candidate>(
     `SELECT s.id AS subscription_id, s.account_id, s.current_period_end,
-            COALESCE(a.amount, s.cost)::text AS amount, b.stripe_customer_id,
-            a.payment_intent_id, a.balance_applied::text AS balance_applied
+            COALESCE(att.amount, s.cost)::text AS amount, b.stripe_customer_id,
+            att.id AS attempt_id, att.payment_intent_id,
+            att.balance_applied::text AS balance_applied, s.payment,
+            ${claimable.sql} AS claimable
        FROM subscriptions s
        LEFT JOIN ${billingAccountsTable()} b ON b.account_id=s.account_id
-       LEFT JOIN subscription_renewal_attempts a
-         ON a.subscription_id=s.id
-        AND a.period_end=s.current_period_end
-        AND a.state IN ('scheduled','processing')
+       LEFT JOIN subscription_renewal_attempts att
+         ON att.subscription_id=s.id
+        AND att.period_end=s.current_period_end
+        AND att.state IN ('scheduled','processing')
       WHERE s.metadata->>'type'='membership'
         AND s.status='active'
         AND s.id > $1
       ORDER BY s.id
       LIMIT $2`,
-    [after, PAGE_ROWS],
+    [after, PAGE_ROWS, ...(claimable.bay != null ? [claimable.bay] : [])],
   );
   stripe ??= await getConn();
   const affected: VatExposureRow[] = [];
@@ -167,12 +182,19 @@ export async function vatExposureReportPage({
   const stripe_errors: VatExposureReportPage["stripe_errors"] = [];
   let checked = 0;
   let no_stripe_customer = 0;
+  let not_claimable = 0;
   let last: number | null = null;
   let lastCall = 0;
   for (const candidate of candidates) {
     if (checked > 0 && Date.now() >= deadline) break;
     last = candidate.subscription_id;
     checked += 1;
+    if (!candidate.claimable) {
+      // Banned, deleted or billing-frozen, or (without the billing
+      // authority) owned by another bay: this bay never renews it.
+      not_claimable += 1;
+      continue;
+    }
     const wait = lastCall + customer_interval_ms - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     lastCall = Date.now();
@@ -202,6 +224,7 @@ export async function vatExposureReportPage({
   return {
     checked,
     no_stripe_customer,
+    not_claimable,
     affected,
     paid_without_check,
     stripe_errors,

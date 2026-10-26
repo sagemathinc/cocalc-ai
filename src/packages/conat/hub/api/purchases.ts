@@ -77,10 +77,15 @@ export interface VatExposureReportPage {
   // Checked, but with no Stripe customer, stored or recoverable (a renewal
   // would create one without an address or cards, which the check accepts).
   no_stripe_customer: number;
+  // Checked, but this bay's renewal worker never renews them (banned, deleted
+  // or billing-frozen accounts, or without the billing authority, another
+  // bay's), so the check never runs. Not looked up in Stripe.
+  not_claimable: number;
   // Would be refused when the renewal is charged through Stripe.
   affected: VatExposureRow[];
   // Would be refused if checked, but right now the renewal would not run the
-  // check: a Stripe payment is already bound to it ("open-payment"), or it
+  // check: a Stripe payment is already bound to it, or the subscription has an
+  // active payment that the renewal adopts or waits on ("open-payment"), or it
   // would be paid without a card payment ("below-minimum", or "balance":
   // covered by the account balance, which can change).
   paid_without_check: (VatExposureRow & {

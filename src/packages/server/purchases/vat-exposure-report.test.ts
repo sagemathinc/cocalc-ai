@@ -238,6 +238,15 @@ describe("VAT exposure report", () => {
       );
       expect(rowCount).toBe(1);
     }
+    // an active (legacy) payment on the subscription that the attempt is not
+    // bound to: the renewal adopts it or waits on it, no check
+    const legacy = await membership("cus_de", 10);
+    await getPool().query(
+      `UPDATE subscriptions
+          SET payment=jsonb_build_object('status','active','payment_intent_id','pi_legacy')
+        WHERE id=$1`,
+      [legacy.subscription_id],
+    );
     const stripe = fakeStripe({
       cus_de: { address: { country: "DE" }, tax_ids: { data: [] } },
     });
@@ -252,7 +261,48 @@ describe("VAT exposure report", () => {
     ]);
     expect(
       page.paid_without_check.map((row) => [row.subscription_id, row.funding]),
-    ).toEqual([[bound.subscription_id, "open-payment"]]);
+    ).toEqual([
+      [bound.subscription_id, "open-payment"],
+      [legacy.subscription_id, "open-payment"],
+    ]);
+  });
+
+  it("counts memberships this bay never renews without looking them up", async () => {
+    await getPool().query("DELETE FROM subscriptions");
+    const banned = await membership("cus_banned");
+    const foreign = await membership("cus_foreign");
+    const renewed = await membership("cus_de");
+    await getPool().query(
+      "UPDATE accounts SET banned=true WHERE account_id=$1",
+      [banned.account_id],
+    );
+    await getPool().query(
+      "UPDATE accounts SET home_bay_id='another-bay' WHERE account_id=$1",
+      [foreign.account_id],
+    );
+    const looked: string[] = [];
+    const stripe = fakeStripe({
+      cus_banned: { address: { country: "DE" }, tax_ids: { data: [] } },
+      cus_foreign: { address: { country: "DE" }, tax_ids: { data: [] } },
+      cus_de: { address: { country: "DE" }, tax_ids: { data: [] } },
+    });
+    const retrieve = stripe.customers.retrieve;
+    stripe.customers.retrieve = async (id: string) => {
+      looked.push(id);
+      return retrieve(id);
+    };
+
+    const page = await vatExposureReportPage({
+      stripe,
+      customer_interval_ms: 0,
+    });
+
+    expect(page.checked).toBe(3);
+    expect(page.not_claimable).toBe(2);
+    expect(page.affected.map((row) => row.subscription_id)).toEqual([
+      renewed.subscription_id,
+    ]);
+    expect(new Set(looked)).toEqual(new Set(["cus_de"]));
   });
 
   it("skips canceled subscriptions and continues from a cursor", async () => {

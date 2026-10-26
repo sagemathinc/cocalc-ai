@@ -27,6 +27,7 @@ const emptyPage = (
 ): VatExposureReportPage => ({
   checked: 1,
   no_stripe_customer: 0,
+  not_claimable: 0,
   affected: [],
   paid_without_check: [],
   stripe_errors: [],
@@ -38,6 +39,7 @@ test("vat-exposure reads every page and adds up the totals", async () => {
     0: {
       checked: 2,
       no_stripe_customer: 1,
+      not_claimable: 1,
       affected: [row(1)],
       paid_without_check: [{ ...row(5), funding: "balance" }],
       stripe_errors: [],
@@ -46,6 +48,7 @@ test("vat-exposure reads every page and adds up the totals", async () => {
     2: {
       checked: 2,
       no_stripe_customer: 0,
+      not_claimable: 0,
       affected: [row(4)],
       paid_without_check: [],
       stripe_errors: [
@@ -65,6 +68,7 @@ test("vat-exposure reads every page and adds up the totals", async () => {
   assert.deepEqual(calls, [0, 2]);
   assert.equal(report.checked, 4);
   assert.equal(report.no_stripe_customer, 1);
+  assert.equal(report.not_claimable, 1);
   assert.equal(report.affected_count, 2);
   assert.equal(report.paid_without_check_count, 1);
   assert.equal(report.stripe_error_count, 1);

@@ -14,6 +14,7 @@ import type {
 export interface VatExposureReport {
   checked: number;
   no_stripe_customer: number;
+  not_claimable: number;
   affected_count: number;
   affected: VatExposureRow[];
   paid_without_check_count: number;
@@ -38,6 +39,7 @@ export async function collectVatExposureReport({
   const report: VatExposureReport = {
     checked: 0,
     no_stripe_customer: 0,
+    not_claimable: 0,
     affected_count: 0,
     affected: [],
     paid_without_check_count: 0,
@@ -52,6 +54,7 @@ export async function collectVatExposureReport({
     const result = await page(after);
     report.checked += result.checked;
     report.no_stripe_customer += result.no_stripe_customer;
+    report.not_claimable += result.not_claimable ?? 0;
     report.affected.push(...result.affected);
     report.paid_without_check.push(...(result.paid_without_check ?? []));
     report.stripe_errors.push(...result.stripe_errors);
@@ -91,6 +94,7 @@ export function formatVatExposureReport(report: VatExposureReport): string {
     `Would be refused if checked, but the next renewal skips the check (open payment, balance or below minimum): ${report.paid_without_check_count}`,
     `Stripe errors: ${report.stripe_error_count}`,
     `Without a Stripe customer (not refused): ${report.no_stripe_customer}`,
+    `Not renewed by this bay (banned, deleted, billing frozen or another bay's): ${report.not_claimable}`,
   ];
   if (report.incomplete) {
     lines.push(

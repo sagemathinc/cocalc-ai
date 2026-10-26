@@ -103,9 +103,11 @@ export async function hasOpenPaygPurchases({
 }
 
 // How a renewal of this amount would be paid if it ran now, read only. With a
-// Stripe payment already bound to the open attempt ("open-payment"),
-// createSubscriptionPayment reuses it, so the business tax ID check does not
-// run again. Below the minimum, or covered by the spendable balance (with
+// Stripe payment already bound to the open attempt, or an active payment on
+// the subscription that is not the attempt's (adopted if it is the matching
+// legacy renewal payment, otherwise the renewal stops until it is settled),
+// createSubscriptionPayment does not create a payment, so the business tax ID
+// check does not run ("open-payment"). Below the minimum, or covered by the spendable balance (with
 // balance-funded renewals on, and no funding split saved on the attempt), it
 // is paid without a card payment, so the check does not run either. Otherwise
 // ("card") it is charged through Stripe. This mirrors createSubscriptionPayment
@@ -114,16 +116,29 @@ export async function predictRenewalFunding({
   account_id,
   amount,
   attempt,
+  subscriptionPayment,
 }: {
   account_id: string;
   amount: MoneyValue;
   // The open renewal attempt, if any.
   attempt?: {
+    id?: string | null;
     payment_intent_id?: string | null;
     balance_applied?: MoneyValue | null;
   };
+  // subscriptions.payment
+  subscriptionPayment?: {
+    status?: string;
+    renewal_attempt_id?: string | null;
+  } | null;
 }): Promise<"open-payment" | "below-minimum" | "balance" | "card"> {
   if (attempt?.payment_intent_id) {
+    return "open-payment";
+  }
+  if (
+    subscriptionPayment?.status == "active" &&
+    subscriptionPayment.renewal_attempt_id !== (attempt?.id ?? undefined)
+  ) {
     return "open-payment";
   }
   const amountValue = toDecimal(amount);

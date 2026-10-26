@@ -232,9 +232,10 @@ export async function cancelOpenSubscriptionRenewalAttempts({
 // without the billing authority, the account and its funding authority belong
 // to this bay. Shared by the claim and the renewal health alert, so the alert
 // counts exactly what the claim can take. If `bay` is set, pass this bay's id
-// as that query parameter.
+// as that query parameter. `accountColumn` is the renewing account's column.
 export async function renewalAttemptClaimableSql(
   bayParam: string,
+  accountColumn = "a.account_id",
 ): Promise<{ sql: string; bay?: string }> {
   const { billingAccountsTable } = await import("./billing-account");
   const { isBillingAuthorityEnabled } =
@@ -242,20 +243,20 @@ export async function renewalAttemptClaimableSql(
   const accountTable = billingAccountsTable();
   const legacyHome = isBillingAuthorityEnabled()
     ? ""
-    : `EXISTS (SELECT 1 FROM accounts owner WHERE owner.account_id=a.account_id
+    : `EXISTS (SELECT 1 FROM accounts owner WHERE owner.account_id=${accountColumn}
             AND COALESCE(NULLIF(BTRIM(owner.home_bay_id),''),${bayParam})=${bayParam})
           AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
-            WHERE f.payer_account_id=a.account_id AND (f.state <> 'active' OR f.home_bay_id <> ${bayParam}))
+            WHERE f.payer_account_id=${accountColumn} AND (f.state <> 'active' OR f.home_bay_id <> ${bayParam}))
           AND `;
   return {
     sql: `(${legacyHome}NOT EXISTS (
             SELECT 1 FROM ${accountTable} AS account
-             WHERE account.account_id=a.account_id
+             WHERE account.account_id=${accountColumn}
                AND (account.banned IS TRUE OR account.deleted IS TRUE)
           )
           AND NOT EXISTS (
             SELECT 1 FROM billing_authority_account_fences AS fence
-             WHERE fence.account_id=a.account_id AND fence.frozen
+             WHERE fence.account_id=${accountColumn} AND fence.frozen
           ))`,
     bay: legacyHome ? getConfiguredBayId() : undefined,
   };
