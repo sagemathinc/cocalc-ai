@@ -3077,6 +3077,9 @@ describe("feature configuration loading", () => {
   it("renders Home only once customize has returned, so the page does not shift", async () => {
     const customize = deferred<Response>();
     global.fetch = jest.fn(() => customize.promise) as typeof fetch;
+    authBootstrap.mockResolvedValue({ signed_in: false } as Awaited<
+      ReturnType<typeof authApi.getControlPlaneAuthBootstrap>
+    >);
     render(<PublicApp initialRoute={{ section: "home" }} />);
     await act(async () => {
       await Promise.resolve();
@@ -3132,6 +3135,7 @@ describe("feature configuration loading", () => {
     global.fetch = jest.fn(async () => {
       throw new Error("offline");
     }) as typeof fetch;
+    authBootstrap.mockRejectedValue(new Error("offline"));
     render(<PublicApp initialRoute={{ section: "home" }} />);
     expect(
       await screen.findByRole("heading", {
@@ -3139,6 +3143,36 @@ describe("feature configuration loading", () => {
         name: "Build and use software.",
       }),
     ).not.toBeNull();
+  });
+
+  it("waits for the auth bootstrap before Home, so agents are never offered first when AI is disabled", async () => {
+    const auth =
+      deferred<
+        Awaited<ReturnType<typeof authApi.getControlPlaneAuthBootstrap>>
+      >();
+    authBootstrap.mockReturnValue(auth.promise);
+    global.fetch = jest.fn(async () =>
+      customizeResponse("launchpad"),
+    ) as typeof fetch;
+    render(<PublicApp initialRoute={{ section: "home" }} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(global.fetch).toHaveBeenCalledWith("/customize", expect.anything());
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open your agents" })).toBeNull();
+
+    await act(async () => {
+      auth.resolve({ signed_in: true, openai_disabled: true } as any);
+    });
+    const hero = await screen.findByRole("region", { name: /hero$/ });
+    expect(
+      within(hero).getByRole("link", { name: "Open projects" }),
+    ).toHaveAttribute("href", "/projects");
+    expect(screen.queryByRole("link", { name: "Open your agents" })).toBeNull();
   });
 
   it("waits for Plus customize even if auth bootstrap resolves first", async () => {

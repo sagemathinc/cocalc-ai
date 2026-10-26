@@ -14,7 +14,10 @@ import {
 } from "@cocalc/frontend/cookie-consent";
 import { linkFirstPartyAnalyticsAccount } from "@cocalc/frontend/cookie-consent/analytics";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { fetchCustomize } from "@cocalc/frontend/customize/fetch-customize";
+import {
+  CUSTOMIZE_REQUEST_TIMEOUT_MS,
+  fetchCustomize,
+} from "@cocalc/frontend/customize/fetch-customize";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 import { getSiteName, type PublicConfig, PublicSectionShell } from "./common";
@@ -177,6 +180,11 @@ export default function PublicApp({
     sourceConfig: config,
     pending: config === undefined,
   });
+  // Whether the auth bootstrap is still out: Home waits for it too, since a
+  // signed-in account's AI preference changes what Home offers.
+  const [authPending, setAuthPending] = useState(
+    initialRoute.section !== "docs",
+  );
 
   useEffect(() => {
     authOverride.current = undefined;
@@ -232,9 +240,16 @@ export default function PublicApp({
 
   useEffect(() => {
     if (initialRoute.section === "docs") {
+      setAuthPending(false);
       return;
     }
     let cancelled = false;
+    setAuthPending(true);
+    // Bounded like customize: a hung request must not keep Home blank. A late
+    // answer still applies.
+    const timer = setTimeout(() => {
+      if (!cancelled) setAuthPending(false);
+    }, CUSTOMIZE_REQUEST_TIMEOUT_MS);
     void (async () => {
       try {
         const bootstrap = await getControlPlaneAuthBootstrap();
@@ -255,10 +270,14 @@ export default function PublicApp({
       } catch {
         // Public pages can render without auth bootstrap; this only corrects
         // stale customize state after sign-in/sign-up.
+      } finally {
+        clearTimeout(timer);
+        if (!cancelled) setAuthPending(false);
       }
     })();
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [config, initialRoute.section]);
 
@@ -278,11 +297,13 @@ export default function PublicApp({
   // scripts run before /customize returns, rendering the unresolved variant
   // first shifts the whole page once the configuration arrives, so wait for
   // it; the crawler fallback stays hidden meanwhile. A failed request ends
-  // the wait with the unresolved variant.
+  // the wait with the unresolved variant. The auth bootstrap is waited for
+  // as well, so a signed-in account with AI disabled is never offered agents
+  // first.
   const waitingForHomeConfig =
     initialRoute.section === "home" &&
     config === undefined &&
-    (configChanged || customizeState.pending);
+    (configChanged || customizeState.pending || authPending);
   const product = currentConfig?.cocalc_product;
   const knownProduct =
     product === "plus" || product === "launchpad" || product === "rocket";
