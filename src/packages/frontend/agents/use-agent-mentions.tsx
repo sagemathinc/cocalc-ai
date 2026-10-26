@@ -105,18 +105,24 @@ export function useAgentMentions({
       throw new Error(
         "Your agent communication is paused. Resume it in Agents before sending.",
       );
+    const isTarget = (member: AgentNetwork["members"][number]) =>
+      member.kind === "external" &&
+      !member.removed_at &&
+      externalMemberKey(member.source) === externalMemberKey(target);
     const shared = (network: AgentNetwork) =>
       network.members.some(
         (member) =>
           member.kind === "registered" &&
           !member.removed_at &&
           sameEndpoint(member.endpoint, source),
-      ) &&
-      network.members.some(
-        (member) =>
-          member.kind === "external" &&
-          !member.removed_at &&
-          externalMemberKey(member.source) === externalMemberKey(target),
+      ) && network.members.some(isTarget);
+    // A revoked or expired installation can stay a member.
+    const members = networks.networks.flatMap((network) =>
+      network.members.filter(isTarget),
+    );
+    if (members.length && !members.some((member) => member.available))
+      throw new Error(
+        `@${reference.name} is unavailable. Remove or replace its reference before sending.`,
       );
     if (
       networks.networks.some(

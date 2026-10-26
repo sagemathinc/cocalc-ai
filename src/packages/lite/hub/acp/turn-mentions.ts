@@ -53,7 +53,8 @@ export async function resolveHumanAgentMentions(
         project_id,
         target: { ...target },
       });
-      if (!member)
+      // A revoked or expired installation can stay a member: unavailable.
+      if (!member?.available)
         throw new Error(`Agent reference @${reference.name} is unavailable`);
       continue;
     }

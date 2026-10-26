@@ -116,5 +116,15 @@ describe("an agent on another site", () => {
     await expect(
       resolveHumanTurnMentions(externalRequest, { getMentionIdentity }),
     ).rejects.toThrow("@ops0 is unavailable");
+    // Still a member, but its installation was revoked or expired.
+    await expect(
+      resolveHumanTurnMentions(externalRequest, {
+        getMentionIdentity,
+        getMentionMember: jest.fn(async () => ({
+          label: "ops0 on alpha",
+          available: false,
+        })),
+      }),
+    ).rejects.toThrow("@ops0 is unavailable");
   });
 });

@@ -181,7 +181,7 @@ describe("an agent on another site", () => {
     target: remote,
     name: "ops0",
   };
-  const networks = (state: string, withRemote = true) => ({
+  const networks = (state: string, withRemote = true, available = true) => ({
     ...directory(),
     networks: [
       {
@@ -190,7 +190,14 @@ describe("an agent on another site", () => {
         members: [
           { kind: "registered", endpoint: source },
           ...(withRemote
-            ? [{ kind: "external", source: remote, label: "ops0 on alpha" }]
+            ? [
+                {
+                  kind: "external",
+                  source: remote,
+                  label: "ops0 on alpha",
+                  available,
+                },
+              ]
             : []),
         ],
       },
@@ -210,6 +217,7 @@ describe("an agent on another site", () => {
   test.each([
     ["paused", networks("paused"), /paused or closed/],
     ["absent", networks("active", false), /not in an Agent Network/],
+    ["revoked", networks("active", true, false), /@ops0 is unavailable/],
   ])(
     "a %s network keeps the draft and offers no approval",
     async (_label, value, message) => {
