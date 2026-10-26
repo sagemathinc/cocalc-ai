@@ -30,7 +30,6 @@ import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-ro
 import { createInterBayComputersHandler } from "@cocalc/conat/inter-bay/computers";
 import { computersAtThisBay } from "@cocalc/server/computers/routing";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
-import { list as listOperations } from "@cocalc/server/conat/api/lro";
 import { repairScheduledCollectionExpiryLocal } from "@cocalc/server/lro/scheduled-collection-expiry-repair";
 import {
   createProjectOnOwningBay,
@@ -176,6 +175,7 @@ import {
 } from "@cocalc/server/cluster-config";
 import {
   listBayRegistryLocal,
+  assertRegistersOwnBay,
   registerBayPresenceLocal,
   startBayRegistrationHeartbeat,
 } from "@cocalc/server/bay-registry";
@@ -266,6 +266,14 @@ import {
   recordSiteFundedCodexUsageEvent,
   reserveSiteFundedCodexTurn,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
+import {
+  getSiteFundedFunnel,
+  recordSiteFundedAdmissionLocal,
+} from "@cocalc/server/ai/site-funded-admissions";
+import {
+  getSiteFundedProviderKeyForReservation,
+  manageSiteFundedProviderKeys,
+} from "@cocalc/server/ai/site-funded-provider-keys";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { getAccountIdFromRememberMe as getLocalAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
@@ -449,62 +457,22 @@ import {
   handleProjectSecretsValidateCourseTarget,
 } from "@cocalc/server/inter-bay/project-secrets";
 import {
-  HOST_DANGEROUS_INTERNAL_AUTH,
-  annotateHostAvailabilityEvent,
-  deleteHost,
-  deleteHostRootfsImage,
-  backupHostProjects,
-  drainHost,
-  forceDeprovisionHost,
-  gcDeletedHostRootfsImages,
-  setHostExamConfig,
-  createHostExamRun,
-  rotateHostExamToken,
-  openHostExamRun,
-  updateHostExamDeadline,
-  increaseHostExamCapacity,
-  stopAndEraseHostExamRun,
   getBackupConfigLocal,
-  getHostRuntimeDeploymentStatus,
   getAccountEffectiveLimitsLocal,
   getProjectOwnerEffectiveLimitsLocal,
   getProjectStartMetadataLocal,
   recordAcpAdmissionDenialLocal,
   recordServiceAdmissionDenialLocal,
   recordServiceAdmissionNearLimitLocal,
-  reconcileHostRuntimeDeployments,
-  reconcileHostSoftware,
-  setHostPublicRouteMode,
-  relocateHost,
-  setHostMaintenanceNotice,
-  refreshHostCloudState,
-  removeSelfHostConnector,
-  restartHost,
-  rollbackHostRuntimeDeployments,
-  rolloutHostManagedComponents,
-  startHost,
-  stopHost,
-  upgradeHostSoftware,
-  listHostProjects,
-  pullHostRootfsImage,
-  addHostSshAuthorizedKey,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   markProjectChanged as markProjectChangedLocal,
   recordProjectBackupIndexLocal,
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
-  removeHostAccess,
-  setHostOwnerSpendLimits,
-  setHostAccess,
-  setHostDeletionProtection,
-  setHostProjectRamLimit,
-  setHostPoolAccess,
-  setHostRuntimeDeployments,
   getProjectBackupIndexesLocal,
   syncProjectBackupIndexesLocal,
   deleteProjectBackupIndexLocal,
-  removeHostSshAuthorizedKey,
 } from "@cocalc/server/conat/api/hosts";
 import {
   getProjectBackupShardAdminStatus,
@@ -758,7 +726,8 @@ async function startBayRegistryService(): Promise<void> {
   }
   const client = getInterBayFabricServiceClient();
   const impl: InterBayBayRegistryApi = {
-    register: async (opts) => await registerBayPresenceLocal(opts),
+    register: async (opts) =>
+      await registerBayPresenceLocal(assertRegistersOwnBay(opts)),
     list: async (opts) => await listBayRegistryLocal(opts),
   };
   services.push(
@@ -933,17 +902,35 @@ async function startBayOpsService(): Promise<void> {
         outcome,
       });
     },
-    getSiteFundedCodexStatus: async ({ reconcile, accountId }) => {
+    getSiteFundedCodexStatus: async ({ reconcile, accountId, funnel }) => {
       assertSiteFundedCodexSeedAuthority();
       const pools = await getSiteFundedCodexPoolStatus();
       return {
         pools,
+        funnel: funnel ? await getSiteFundedFunnel() : undefined,
         accountReservations: accountId
           ? await getSiteFundedCodexAccountReservationStatus({ accountId })
           : undefined,
         reconciliation: reconcile
           ? await reconcileSiteFundedCodexCosts(pools)
           : undefined,
+      };
+    },
+    recordSiteFundedAdmission: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      await recordSiteFundedAdmissionLocal(opts);
+    },
+    manageSiteFundedProviderKeys: async ({ provider, action }) => {
+      assertSiteFundedCodexSeedAuthority();
+      return await manageSiteFundedProviderKeys(provider, action);
+    },
+    getSiteFundedProviderKey: async ({ reservationId, hostId }) => {
+      assertSiteFundedCodexSeedAuthority();
+      return {
+        apiKey: await getSiteFundedProviderKeyForReservation({
+          reservationId,
+          hostId,
+        }),
       };
     },
     downloadCommercialQuoteInternal: async ({ token }) => {
@@ -2276,6 +2263,10 @@ async function startAccountLocalService(): Promise<void> {
       await publicDirectoryShares.disableForBannedActor(opts),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShares.authorizeRead(opts),
+    publicDirectoryShareGetViews: async (opts) =>
+      await publicDirectoryShares.getViews(opts),
+    publicDirectoryShareGetViewAggregates: async (opts) =>
+      await publicDirectoryShares.getViewAggregates(opts),
     publicDirectoryShareListDirectory: async (opts) =>
       await publicDirectoryShares.listDirectory(opts),
     publicDirectoryShareCopyToProject: async (opts) =>
@@ -2726,13 +2717,6 @@ async function startHostConnectionService(): Promise<void> {
     getApiRelayHostUrl: resolveLocalApiRelayHostUrl,
     updateApiRelayUsage: updateLocalProjectApiRelayUsage,
     updateApiRelayAccountUsage: updateLocalApiRelayAccountUsage,
-    listHostOperations: async ({ account_id, host_id, include_completed }) =>
-      await listOperations({
-        account_id,
-        scope_type: "host",
-        scope_id: host_id,
-        include_completed,
-      }),
     get: async (opts) => {
       const connection = await resolveHostConnectionLocal(opts);
       if (!connection) {
@@ -2746,294 +2730,6 @@ async function startHostConnectionService(): Promise<void> {
         // The source bay has already authenticated and authorized the user
         // before issuing this cluster-internal request.
         trusted_admin_view: true,
-      }),
-    setHostAccess: async (opts) => await setHostAccess(opts),
-    removeHostAccess: async (opts) => await removeHostAccess(opts),
-    setHostProjectRamLimit: async (opts) => await setHostProjectRamLimit(opts),
-    setHostOwnerSpendLimits: async (opts) =>
-      await setHostOwnerSpendLimits(opts),
-    setHostPoolAccess: async (opts) => await setHostPoolAccess(opts),
-    setHostDeletionProtection: async (opts) =>
-      await setHostDeletionProtection(opts),
-    annotateHostAvailabilityEvent: async (opts) =>
-      await annotateHostAvailabilityEvent(opts),
-    getHostRuntimeDeploymentStatus: async ({ account_id, id }) =>
-      await getHostRuntimeDeploymentStatus({
-        account_id,
-        id,
-      }),
-    startHost: async ({ account_id, browser_id, session_hash, id }) =>
-      await startHost({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-      }),
-    stopHost: async ({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-      skip_backups,
-    }) =>
-      await stopHost({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        skip_backups,
-      }),
-    restartHost: async ({ account_id, browser_id, session_hash, id, mode }) =>
-      await restartHost({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        mode,
-      }),
-    backupHostProjects: async ({ account_id, id, parallel }) =>
-      await backupHostProjects({
-        account_id,
-        id,
-        parallel,
-      }),
-    drainHost: async ({
-      account_id,
-      id,
-      dest_host_id,
-      force,
-      allow_offline,
-      parallel,
-    }) =>
-      await drainHost({
-        account_id,
-        id,
-        dest_host_id,
-        force,
-        allow_offline,
-        parallel,
-      }),
-    refreshHostCloudState: async ({ account_id, id }) =>
-      await refreshHostCloudState({
-        account_id,
-        id,
-      }),
-    upgradeHostSoftware: async ({
-      account_id,
-      id,
-      targets,
-      base_url,
-      align_runtime_stack,
-      record_runtime_deployments,
-    }) =>
-      await upgradeHostSoftware({
-        account_id,
-        id,
-        targets,
-        base_url,
-        align_runtime_stack,
-        record_runtime_deployments,
-      }),
-    reconcileHostSoftware: async ({ account_id, id, force_bootstrap }) =>
-      await reconcileHostSoftware({
-        account_id,
-        id,
-        force_bootstrap,
-      }),
-    setHostPublicRouteMode: async (opts) => await setHostPublicRouteMode(opts),
-    relocateHost: async (opts) => await relocateHost(opts),
-    setHostMaintenanceNotice: async (opts) =>
-      await setHostMaintenanceNotice(opts),
-    reconcileHostRuntimeDeployments: async ({
-      account_id,
-      id,
-      components,
-      reason,
-    }) =>
-      await reconcileHostRuntimeDeployments({
-        account_id,
-        id,
-        components,
-        reason,
-      }),
-    rollbackHostRuntimeDeployments: async ({
-      account_id,
-      id,
-      target_type,
-      target,
-      version,
-      last_known_good,
-      reason,
-    }) =>
-      await rollbackHostRuntimeDeployments({
-        account_id,
-        id,
-        target_type,
-        target,
-        version,
-        last_known_good,
-        reason,
-      }),
-    rolloutHostManagedComponents: async ({
-      account_id,
-      id,
-      components,
-      desired_version,
-      record_runtime_deployments,
-      base_url,
-      reason,
-    }) =>
-      await rolloutHostManagedComponents({
-        account_id,
-        id,
-        components,
-        desired_version,
-        record_runtime_deployments,
-        base_url,
-        reason,
-      }),
-    deleteHost: async ({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-      skip_backups,
-    }) =>
-      await deleteHost({
-        account_id,
-        browser_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        skip_backups,
-      }),
-    forceDeprovisionHost: async ({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-    }) =>
-      await forceDeprovisionHost({
-        account_id,
-        browser_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-      }),
-    removeSelfHostConnector: async ({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-    }) =>
-      await removeSelfHostConnector({
-        account_id,
-        browser_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-      }),
-    pullHostRootfsImage: async ({ account_id, session_hash, id, image }) =>
-      await pullHostRootfsImage({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        image,
-      }),
-    deleteHostRootfsImage: async ({ account_id, session_hash, id, image }) =>
-      await deleteHostRootfsImage({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        image,
-      }),
-    gcDeletedHostRootfsImages: async ({ account_id, session_hash, id }) =>
-      await gcDeletedHostRootfsImages({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-      }),
-    setHostExamConfig: async (opts) =>
-      await setHostExamConfig({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    createHostExamRun: async (opts) =>
-      await createHostExamRun({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    rotateHostExamToken: async (opts) =>
-      await rotateHostExamToken({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    openHostExamRun: async (opts) =>
-      await openHostExamRun({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    updateHostExamDeadline: async (opts) =>
-      await updateHostExamDeadline({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    increaseHostExamCapacity: async (opts) =>
-      await increaseHostExamCapacity({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    stopAndEraseHostExamRun: async (opts) =>
-      await stopAndEraseHostExamRun({
-        ...opts,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-      }),
-    addHostSshAuthorizedKey: async ({
-      account_id,
-      session_hash,
-      id,
-      public_key,
-      user,
-    }) =>
-      await addHostSshAuthorizedKey({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        public_key,
-        user,
-      }),
-    removeHostSshAuthorizedKey: async ({
-      account_id,
-      session_hash,
-      id,
-      public_key,
-    }) =>
-      await removeHostSshAuthorizedKey({
-        account_id,
-        session_hash,
-        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
-        id,
-        public_key,
-      }),
-    setHostRuntimeDeployments: async ({
-      account_id,
-      scope_type,
-      id,
-      deployments,
-      replace,
-      align_runtime_stack,
-    }) =>
-      await setHostRuntimeDeployments({
-        account_id,
-        scope_type,
-        id,
-        deployments,
-        replace,
-        align_runtime_stack,
       }),
     getProjectStartMetadata: async ({ host_id, project_id }) => {
       const metadata = await getProjectStartMetadataLocal({
@@ -3162,26 +2858,6 @@ async function startHostConnectionService(): Promise<void> {
       await syncProjectBackupIndexesLocal({ host_id, project_id, backup_ids }),
     deleteProjectBackupIndex: async ({ host_id, project_id, backup_id }) =>
       await deleteProjectBackupIndexLocal({ host_id, project_id, backup_id }),
-    listHostProjects: async ({
-      account_id,
-      id,
-      limit,
-      cursor,
-      risk_only,
-      free_only,
-      state_filter,
-      project_state,
-    }) =>
-      await listHostProjects({
-        account_id,
-        id,
-        limit,
-        cursor,
-        risk_only,
-        free_only,
-        state_filter,
-        project_state,
-      }),
     ensureHostOwnerSshTrust: async ({ account_id, host_id, host }) =>
       await ensureHostOwnerSshTrustOnBay({
         account_id,

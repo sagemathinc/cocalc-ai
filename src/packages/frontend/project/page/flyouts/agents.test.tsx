@@ -7,7 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { AgentsPanel } from "./agents";
+import { AgentsFlyout, AgentsPanel } from "./agents";
 
 const mockOpenFile = jest.fn();
 const mockCreateFile = jest.fn();
@@ -225,7 +225,9 @@ jest.mock("@cocalc/frontend/chat/register", () => ({
 
 jest.mock("@cocalc/frontend/chat/side-chat", () => ({
   __esModule: true,
-  default: () => <div data-testid="agents-inline-chat" />,
+  default: ({ isVisible }: { isVisible?: boolean }) => (
+    <div data-testid="agents-inline-chat" data-visible={String(isVisible)} />
+  ),
 }));
 
 jest.mock("@cocalc/frontend/chat/codex", () => ({
@@ -359,6 +361,7 @@ jest.mock("@cocalc/frontend/project/new/navigator-state", () => ({
 
 jest.mock("@cocalc/frontend/project/context", () => ({
   useProjectContext: () => ({
+    agentAIEnabled: true,
     active_project_tab: mockActiveProjectTab,
     workspaces: {
       current: mockWorkspaceCurrent,
@@ -508,6 +511,31 @@ describe("AgentsPanel session cards", () => {
       expect(screen.getByTestId("agents-inline-chat")).toBeTruthy(),
     );
     expect(mockChatActions.setSelectedThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("tells the inline chat when a retained flyout is hidden", async () => {
+    const { rerender } = render(
+      <AgentsFlyout project_id="project-1" wrap={(content) => content} />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-card-session-1")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("agent-session-card-session-1"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("agents-inline-chat").getAttribute("data-visible"),
+      ).toBe("true"),
+    );
+    rerender(
+      <AgentsFlyout
+        project_id="project-1"
+        wrap={(content) => content}
+        isVisible={false}
+      />,
+    );
+    expect(
+      screen.getByTestId("agents-inline-chat").getAttribute("data-visible"),
+    ).toBe("false");
   });
 
   it("recreates the inline chat after its syncdb closes", async () => {

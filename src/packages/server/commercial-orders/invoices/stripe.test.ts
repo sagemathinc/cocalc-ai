@@ -2239,3 +2239,32 @@ describe("commercial Stripe invoices", () => {
     expect(mockEnqueueCommercialStripeEvent).not.toHaveBeenCalled();
   });
 });
+
+describe("commercialInvoiceVatWarnings", () => {
+  it("warns about an EU or UK invoice whose memo names no VAT ID", () => {
+    const { commercialInvoiceVatWarnings } = require("./stripe");
+    expect(
+      commercialInvoiceVatWarnings({
+        billing_address: { country: "ES" },
+        memo: "1,000 seats",
+      }),
+    ).toEqual([expect.stringContaining("names no VAT ID")]);
+    expect(
+      commercialInvoiceVatWarnings({ billing_address: { country: "GB" } }),
+    ).toHaveLength(1);
+  });
+
+  it("does not warn when the memo names the VAT ID, or outside the EU and UK", () => {
+    const { commercialInvoiceVatWarnings } = require("./stripe");
+    expect(
+      commercialInvoiceVatWarnings({
+        billing_address: { country: "ES" },
+        memo: "Customer VAT ID: ESQ1518001A. Reverse charge.",
+      }),
+    ).toEqual([]);
+    expect(
+      commercialInvoiceVatWarnings({ billing_address: { country: "US" } }),
+    ).toEqual([]);
+    expect(commercialInvoiceVatWarnings({})).toEqual([]);
+  });
+});

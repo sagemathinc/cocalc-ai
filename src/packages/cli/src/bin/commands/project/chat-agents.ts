@@ -9,16 +9,24 @@ import { constants } from "node:fs";
 import { open, writeFile } from "node:fs/promises";
 import { sendIdentityMessage } from "../../core/agent-message";
 import { sendExternalAgentMessage } from "../../core/external-agent-message";
-import { resolveBroadcastTargets } from "../../core/agent-destination";
+import {
+  resolveAgentName,
+  resolveBroadcastTargets,
+} from "../../core/agent-destination";
 import {
   createAgentFromCopy,
   listNamedAgentsSummary,
   removeNamedAgent,
 } from "../../core/agent-create";
 import { akv } from "@cocalc/conat/sync/akv";
-import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
+import { externalAgentHandle } from "@cocalc/conat/agents/external";
+import {
+  AGENT_TURN_STATUS_TTL_MS,
+  agentTurnStatusText,
+} from "@cocalc/conat/agents/agent-status";
 import { AGENT_MEMORY_LIMITS } from "@cocalc/conat/agents/memory";
-import { CHAT_DRAFT_STORE } from "@cocalc/chat";
+import { CHAT_DRAFT_STORE, isTurnPriority } from "@cocalc/chat";
+import { chatTarget } from "./chat-card";
 import {
   agentRpcInspectSummary,
   agentRpcWithdrawSummary,
@@ -244,13 +252,41 @@ export function registerAgentCommands(
       destinations(opts, cmd, `${prefix} rpc destinations`, true),
     );
   agent
+    .command("status")
+    .argument("[name]", "a peer's @name (default: every peer)")
+    .option(
+      "--network <title-or-id>",
+      "the Agent Network, if the name is in several",
+    )
+    .description(
+      "what your peers are doing: busy (since when) or idle, waiting turns, and how each one's last turn ended, with why if it failed; to be woken when that changes: sensor watch agent",
+    )
+    .action(async (name: string | undefined, opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      const directory = (await sendIdentityMessage(
+        { version: 3, action: "destinations" },
+        globals.api,
+      )) as AgentNetworkDiscovery;
+      emitSuccess(
+        { globals },
+        `${prefix} status`,
+        agentStatusReport(directory, Date.now(), name, opts.network),
+      );
+    });
+  agent
     .command("inbox")
     .requiredOption(
       "--external-agent <profile>",
       "enrolled external-agent profile",
     )
     .option("--limit <count>", "maximum messages to return", "50")
-    .description("list pending messages for an external network member")
+    .option(
+      "--include-acknowledged",
+      "also list acknowledged messages (until they expire), each with its state",
+    )
+    .description(
+      "list pending messages for an external network member, with their full text (data is a list of {message_id, created_at, source, body, ...}); read them here before ack-inbox, which hides a message from this list",
+    )
     .action(async (opts, cmd) => {
       const globals = globalsFrom(cmd);
       const limit = Number(opts.limit);
@@ -261,6 +297,7 @@ export function registerAgentCommands(
           version: 3,
           action: "inbox",
           limit,
+          ...(opts.includeAcknowledged ? { include_acknowledged: true } : {}),
         }),
       );
     });
@@ -270,7 +307,9 @@ export function registerAgentCommands(
       "--external-agent <profile>",
       "enrolled external-agent profile",
     )
-    .description("acknowledge one external-agent inbox message")
+    .description(
+      "acknowledge (mark read) one external-agent inbox message; it returns the message, and agent inbox lists it again only with --include-acknowledged",
+    )
     .action(async (message_id, opts, cmd) => {
       const globals = globalsFrom(cmd);
       emitSuccess(
@@ -325,16 +364,46 @@ export function registerAgentCommands(
     .option("--external-agent <profile>", "use an enrolled external agent")
     .requiredOption("--agent-network <uuid>", "exact Agent Network")
     .requiredOption("--to-agent <uuid>", "target from the original outcome")
-    .requiredOption("--target-project <uuid>", "target project")
-    .description("inspect an exact attempt without retrying or starting work")
+    .option("--target-project <uuid>", "target project (a project agent)")
+    .option(
+      "--target-account <uuid>",
+      "an external member's account (with --target-installation)",
+    )
+    .option(
+      "--target-installation <uuid>",
+      "an external member's installation (with --target-account)",
+    )
+    .description(
+      "inspect an exact attempt without retrying or starting work; for an external member, whether it has read the message",
+    )
     .action(async (attempt_id, opts, cmd) => {
       const globals = globalsFrom(cmd);
+      const external =
+        opts.targetAccount !== undefined ||
+        opts.targetInstallation !== undefined;
+      if (
+        external
+          ? opts.targetProject !== undefined ||
+            !opts.targetAccount ||
+            !opts.targetInstallation
+          : !opts.targetProject
+      )
+        throw new Error(
+          "give --target-project, or --target-account and --target-installation for an external member",
+        );
       const request = {
         version: 3 as const,
         action: "inspect" as const,
         attempt_id,
         agent_network_id: opts.agentNetwork,
-        target: { project_id: opts.targetProject, agent_id: opts.toAgent },
+        target: external
+          ? {
+              kind: "external" as const,
+              account_id: opts.targetAccount,
+              agent_id: opts.toAgent,
+              installation_id: opts.targetInstallation,
+            }
+          : { project_id: opts.targetProject, agent_id: opts.toAgent },
       };
       const outcome = (
         opts.externalAgent
@@ -374,6 +443,72 @@ export function registerAgentCommands(
         summary: agentRpcWithdrawSummary(outcome),
       });
     });
+  agent
+    .command("turn")
+    .description(
+      "say what the current turn is and whether it is for the person reading: a subject line and a priority (high, normal, low), shown in the chat's reader",
+    )
+    .option("--subject <text>", "one line saying what this turn did or asks")
+    .option(
+      "--priority <level>",
+      "high: it needs the person (a decision, an approval, results they asked for); normal; low: FYI, for the record",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .option("--path <path>", "chat path (default: $COCALC_CODEX_CHAT_PATH)")
+    .option(
+      "--thread-id <id>",
+      "chat thread (default: $COCALC_CODEX_THREAD_ID)",
+    )
+    .option(
+      "--message-date <date>",
+      "the turn's message timestamp (default: $COCALC_CODEX_MESSAGE_DATE)",
+    )
+    .addHelpText(
+      "after",
+      `
+Run it during a turn, as often as you like: the last call wins, and the
+subject can be revised at the end when you know what happened. An empty
+--subject "" clears it. Without a subject the reader shows the first line
+of your reply; without a priority, a turn a person started is normal and one
+started by an agent message, a sensor or a schedule is low. An open question
+to the person always shows as high.
+
+  cocalc agent turn --subject "Fixed the shallow-clone cache bug" --priority high
+  cocalc agent turn --priority low`,
+    )
+    .action(async (opts, cmd) =>
+      deps.withContext(
+        cmd,
+        `${prefix} turn`,
+        async (ctx) => {
+          if (opts.subject === undefined && opts.priority === undefined)
+            throw new Error("give --subject, --priority or both");
+          if (
+            opts.priority !== undefined &&
+            !isTurnPriority(`${opts.priority}`.toLowerCase())
+          )
+            throw new Error("--priority must be high, normal or low");
+          const chat = chatTarget(opts);
+          if (!chat)
+            throw new Error(
+              "no current turn: run this during an agent turn, or pass --path, --thread-id and --message-date",
+            );
+          return await deps.projectChatTurnMetaData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: chat.path,
+            threadId: chat.threadId,
+            messageDate: chat.messageDate,
+            subject: opts.subject,
+            priority:
+              opts.priority === undefined
+                ? undefined
+                : `${opts.priority}`.toLowerCase(),
+          });
+        },
+        { projectOnly: { projectIdentifier: opts.project } },
+      ),
+    );
   agent
     .command("whoami")
     .description(
@@ -852,7 +987,13 @@ export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
     ...(you ? { you } : {}),
     peers: directory.peers.map(({ member, same_project, networks }) => ({
       kind: member.kind,
-      name: member.kind === "registered" ? member.name : member.label,
+      // What `agent send` takes. An external agent's label is free text: its
+      // handle, or its member id if the label has no name in it.
+      name:
+        member.kind === "registered"
+          ? member.name
+          : (externalAgentHandle(member.label) ?? member.member_id),
+      ...(member.kind === "external" ? { label: member.label } : {}),
       ...(member.kind === "registered" && member.project_title
         ? { project: member.project_title }
         : {}),
@@ -905,5 +1046,98 @@ export async function watchSentTurn(
     summary:
       "You will get one [Sensor wake] turn when its turn ends; you can end your turn now.",
     sensor_id: set?.sensor?.sensor_id,
+  };
+}
+
+const ago = (ms: number, now: number): string => {
+  const minutes = Math.max(0, Math.round((now - ms) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
+};
+
+const ENDED: Record<string, string> = {
+  completed: "completed",
+  failed: "failed",
+  canceled: "was canceled",
+  "never-started": "never started",
+};
+
+/**
+ * What each peer (or the one named) is doing, from the status its host
+ * reports to peers: `agent status`. External agents report no turns.
+ */
+export function agentStatusReport(
+  directory: AgentNetworkDiscovery,
+  now: number,
+  name?: string,
+  network?: string,
+) {
+  let peers = directory.peers;
+  if (name) {
+    const { target } = resolveAgentName(name, directory, [], network);
+    peers = peers.filter(({ member }) =>
+      member.kind === "registered"
+        ? member.endpoint.agent_id === (target as any).agent_id &&
+          member.endpoint.project_id === (target as any).project_id
+        : false,
+    );
+    if (!peers.length)
+      throw new Error(
+        `@${name.replace(/^@/, "")} is an external agent: its turns are not reported`,
+      );
+  }
+  return {
+    agents: peers
+      .filter(({ member }) => member.kind === "registered")
+      .map(({ member, same_project, networks }) => {
+        if (member.kind !== "registered") throw new Error("unreachable");
+        const status = member.status;
+        const fresh =
+          status != null && now - status.at <= AGENT_TURN_STATUS_TTL_MS;
+        const last = fresh ? status!.last : undefined;
+        return {
+          name: member.name,
+          ...(member.project_title ? { project: member.project_title } : {}),
+          ...(typeof same_project === "boolean" ? { same_project } : {}),
+          networks: networks.map(({ title }) => title),
+          // A phrase for people: busy, N waiting, idle, unavailable until ...
+          state: fresh
+            ? (agentTurnStatusText(status, now, (ms) =>
+                new Date(ms).toISOString(),
+              ) ?? "idle")
+            : "unknown (no report in the last day)",
+          ...(fresh
+            ? {
+                running: status!.running,
+                queued: status!.queued,
+                ...(status!.running_since
+                  ? {
+                      busy_since: new Date(status!.running_since).toISOString(),
+                      busy_for: ago(status!.running_since, now).replace(
+                        / ago$/,
+                        "",
+                      ),
+                    }
+                  : {}),
+                ...(status!.unavailable
+                  ? { unavailable: status!.unavailable }
+                  : {}),
+              }
+            : {}),
+          ...(last
+            ? {
+                last_turn: {
+                  ended: ENDED[last.state] ?? last.state,
+                  ...(last.kind ? { kind: last.kind } : {}),
+                  ...(last.detail ? { detail: last.detail } : {}),
+                  at: new Date(last.at).toISOString(),
+                  ago: ago(last.at, now),
+                },
+              }
+            : {}),
+        };
+      }),
   };
 }

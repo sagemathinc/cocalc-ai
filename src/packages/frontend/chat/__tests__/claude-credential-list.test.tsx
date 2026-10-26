@@ -105,3 +105,32 @@ test("an unknown selection stays visible", () => {
   );
   expect(screen.getByText("Selected connection unavailable")).toBeTruthy();
 });
+
+test("offers included Claude when the membership includes it", async () => {
+  const onChange = jest.fn();
+  const { rerender } = render(
+    <ClaudeCredentialList
+      credentials={[]}
+      value="project-secret"
+      loaded
+      onChange={onChange}
+    />,
+  );
+  expect(screen.queryByText("CoCalc Membership (Claude Haiku 5.5)")).toBeNull();
+  rerender(
+    <ClaudeCredentialList
+      credentials={[]}
+      value="project-secret"
+      loaded
+      membership
+      onChange={onChange}
+    />,
+  );
+  expect(
+    screen.getByText("Included in your CoCalc membership's AI allowance"),
+  ).toBeTruthy();
+  await userEvent.click(
+    screen.getByText("CoCalc Membership (Claude Haiku 5.5)"),
+  );
+  expect(onChange).toHaveBeenCalledWith("site-funded");
+});

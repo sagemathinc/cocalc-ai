@@ -33,6 +33,7 @@ import { getProjectHostAuthPublicKey } from "./auth-public-key";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { conatPassword } from "@cocalc/backend/data";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
+import { projectContentEpoch } from "./content-origin-access";
 import callHub from "@cocalc/conat/hub/call-hub";
 import type {
   AuthorizePublicDirectoryShareReadResponse,
@@ -129,7 +130,54 @@ export type AuthorizedAccountContext = {
   actor: "account";
   revalidate_collaborator?: boolean;
   scoped_api_key_exp_s?: number;
+  // A request on a project app origin (content-app-origin.ts): the content
+  // epoch its session was issued under.
+  app_epoch?: number;
 };
+
+const APP_ORIGIN_AUTH = Symbol("cocalc-project-app-origin-auth");
+
+export interface AppOriginRequestAuth {
+  account_id: string;
+  issued_at_s: number;
+  exp_s: number;
+  project_id: string;
+  epoch: number;
+}
+
+// Set only by the app origin handler, on a request it authorized with an app
+// session: the proxy then uses that and nothing else (no host token, cookie
+// or Authorization header).
+export function setAppOriginRequestAuth(
+  req: IncomingMessage,
+  auth: AppOriginRequestAuth,
+): void {
+  (req as any)[APP_ORIGIN_AUTH] = auth;
+}
+
+// Whether the app origin handler authorized this request.
+export function isAppOriginRequest(req: IncomingMessage): boolean {
+  return (req as any)[APP_ORIGIN_AUTH] != null;
+}
+
+function appOriginContext(
+  req: IncomingMessage,
+  project_id: string,
+): AuthorizedAccountContext | undefined {
+  const auth: AppOriginRequestAuth | undefined = (req as any)[APP_ORIGIN_AUTH];
+  if (auth == null) return;
+  if (auth.project_id !== project_id) {
+    throw new HttpAuthError(403, "permission denied");
+  }
+  return {
+    account_id: auth.account_id,
+    issued_at_s: auth.issued_at_s,
+    restricted_exp_s: auth.exp_s,
+    actor: "account",
+    revalidate_collaborator: true,
+    app_epoch: auth.epoch,
+  };
+}
 
 function setAuthContext(
   req: IncomingMessage,
@@ -490,6 +538,7 @@ export function createProjectHostHttpProxyAuth({
     project_id?: string;
     actor: "account";
     revalidate_collaborator: boolean;
+    app_epoch?: number;
   }>();
 
   const verifyClaimsAndGetAccountId = (claims: {
@@ -751,7 +800,12 @@ export function createProjectHostHttpProxyAuth({
       const isProjectFileRequest =
         classifyProjectRoute(req, project_id) === "file";
       const isExplicitDownload = url.searchParams.has("download");
-      if (isProjectFileRequest && !isExplicitDownload) {
+      // A file opened as a page (a new tab): the session cookie was just set
+      // first-party, so drop the token from the address bar and history.
+      // Embedded previews keep loading without a redirect.
+      const isTopLevelPage =
+        `${req.headers["sec-fetch-dest"] ?? ""}`.toLowerCase() === "document";
+      if (isProjectFileRequest && !isExplicitDownload && !isTopLevelPage) {
         stripQueryToken(req);
         return false;
       }
@@ -827,6 +881,11 @@ export function createProjectHostHttpProxyAuth({
     res: ServerResponse,
     project_id: string,
   ) => {
+    const app = appOriginContext(req, project_id);
+    if (app) {
+      setAuthContext(req, app);
+      return;
+    }
     stripLegacyPublicAppRequestMetadata(req);
     const scoped = authorizeScopedHttpProxy(req, host_id, project_id);
     if (scoped) {
@@ -958,6 +1017,11 @@ export function createProjectHostHttpProxyAuth({
     req: IncomingMessage,
     project_id: string,
   ): Promise<AuthorizedAccountContext> => {
+    const app = appOriginContext(req, project_id);
+    if (app) {
+      setAuthContext(req, app);
+      return app;
+    }
     stripLegacyPublicAppRequestMetadata(req);
     const scoped = authorizeScopedHttpProxy(req, host_id, project_id);
     if (scoped) {
@@ -1074,6 +1138,7 @@ export function createProjectHostHttpProxyAuth({
       project_id: req.url?.split("/")[1],
       actor: context.actor,
       revalidate_collaborator: context.revalidate_collaborator === true,
+      app_epoch: context.app_epoch,
     };
     trackedUpgradeSockets.add(entry);
     const remove = () => trackedUpgradeSockets.delete(entry);
@@ -1113,6 +1178,13 @@ export function createProjectHostHttpProxyAuth({
             403,
             "permission denied: account is not a collaborator on this project",
           );
+        }
+        if (
+          entry.app_epoch != null &&
+          entry.project_id &&
+          projectContentEpoch(entry.project_id) > entry.app_epoch
+        ) {
+          throw new HttpAuthError(403, "app links were revoked");
         }
       } catch {
         kicked += 1;

@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
 
@@ -21,6 +21,12 @@ let currentThread = {
 let currentThreads = [currentThread];
 let currentThreadMetadata: any;
 let latestThreadPanelProps: any;
+let mockNarrow = false;
+
+jest.mock("../use-chat-viewport", () => ({
+  ...jest.requireActual("../use-chat-viewport"),
+  useNarrowChatViewport: () => mockNarrow,
+}));
 
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
@@ -157,11 +163,14 @@ describe("ChatPanel selected thread read tracking", () => {
     currentThreads = [currentThread];
     currentThreadMetadata = undefined;
     latestThreadPanelProps = undefined;
+    mockNarrow = false;
+    localStorage.clear();
   });
 
   function renderPanel() {
     const actions = {
       markThreadRead: jest.fn(),
+      clearReaderReadExceptions: jest.fn(),
       scrollToIndex: jest.fn(),
       getCodexConfig: jest.fn(),
       getThreadMetadata: jest.fn(() => currentThreadMetadata),
@@ -315,5 +324,113 @@ describe("ChatPanel selected thread read tracking", () => {
     expect(actions.markThreadRead).toHaveBeenCalledTimes(2);
     expect(actions.markThreadRead).toHaveBeenNthCalledWith(1, "thread-1", 2);
     expect(actions.markThreadRead).toHaveBeenNthCalledWith(2, "thread-1", 2);
+  });
+
+  it("does not mark the whole thread read while it is shown in the reader", () => {
+    localStorage.setItem(
+      "cocalc-chat-reader-mode",
+      JSON.stringify({ "project-1:chat/test.chat": true }),
+    );
+    const { actions } = renderPanel();
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    // Opened in the reader: the composer keeps the focus.
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(false);
+    expect(actions.markThreadRead).not.toHaveBeenCalled();
+    // Back to the log: it marks it read, as before.
+    act(() => latestThreadPanelProps.onReaderModeChange(false));
+    expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 2);
+  });
+
+  it("on a phone, the reader has its own button in the header", () => {
+    mockNarrow = true;
+    renderPanel();
+    const button = screen.getByRole("button", { name: "Reader" });
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(false);
+    fireEvent.click(button);
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    // Turned on by the person: the reader takes the keys.
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "Back to the chat log" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("reading the whole thread in the log clears the reader's read exceptions", () => {
+    const { actions } = renderPanel();
+    expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 2);
+    expect(actions.clearReaderReadExceptions).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("a panel reused for a chat in reader mode never marks its thread read", () => {
+    localStorage.clear();
+    const { actions, rerender } = renderPanel();
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
+    // Another chat, which the person reads in the reader.
+    localStorage.setItem(
+      "cocalc-chat-reader-mode",
+      JSON.stringify({ "project-1:chat/other.chat": true }),
+    );
+    currentThread = { ...currentThread, key: "thread-9", messageCount: 5 };
+    currentThreads = [currentThread];
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/other.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
+    expect(actions.markThreadRead).not.toHaveBeenCalledWith("thread-9", 5);
+  });
+
+  it("a chat that opens in the reader does not take the focus, also when switched to", () => {
+    localStorage.setItem(
+      "cocalc-chat-reader-mode",
+      JSON.stringify({ "project-1:chat/other.chat": true }),
+    );
+    const { actions, rerender } = renderPanel();
+    expect(latestThreadPanelProps.readerMode).toBe(false);
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/other.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(false);
+    // Turned on by the person: it does.
+    act(() => latestThreadPanelProps.onReaderModeChange(false));
+    act(() => latestThreadPanelProps.onReaderModeChange(true));
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(true);
+  });
+
+  it("leaving a chat forgets that the reader was turned on there", () => {
+    const { actions, rerender } = renderPanel();
+    act(() => latestThreadPanelProps.onReaderModeChange(true));
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(true);
+    const at = (path: string) => (
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path={path}
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />
+    );
+    rerender(at("chat/other.chat"));
+    rerender(at("chat/test.chat"));
+    // Still in the reader there, but coming back does not take the focus.
+    expect(latestThreadPanelProps.readerMode).toBe(true);
+    expect(latestThreadPanelProps.readerAutoFocus).toBe(false);
   });
 });

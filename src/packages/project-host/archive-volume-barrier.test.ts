@@ -83,6 +83,68 @@ describe("archive volume barrier", () => {
     });
   });
 
+  it("freezes and releases the project's persist volume with its home", async () => {
+    process.env.COCALC_SYNC_PROJECTS =
+      "/mnt/project-[project_id]/.local/share/cocalc/persist";
+    const id = "11111111-2222-4333-8444-555555555555";
+    const home = `/mnt/project-${id}`;
+    const persist = `${home}-persist`;
+    const readonly = new Map([
+      [home, false],
+      [persist, false],
+    ]);
+    btrfsMock = jest.fn(async ({ args }) => {
+      if (args[0] === "property" && args[1] === "get") {
+        return { stdout: `ro=${readonly.get(args[3])}\n` };
+      }
+      if (args[0] === "property" && args[1] === "set") {
+        readonly.set(args[3], args[5] === "true");
+      }
+      return { stdout: "" };
+    });
+    existsMock = jest.fn(
+      async (path: string) => path === home || path === persist,
+    );
+    const vol = {
+      name: `project-${id}`,
+      path: home,
+      filesystem: { opts: { mount: "/mnt" } },
+      snapshots: { readdir: jest.fn(async () => []), delete: jest.fn() },
+    } as any;
+
+    await freezeVolumeForArchiveBackup(vol);
+    expect(readonly).toEqual(
+      new Map([
+        [home, true],
+        [persist, true],
+      ]),
+    );
+    await expect(releaseArchiveVolumeFreeze(vol)).resolves.toBe("released");
+    expect(readonly.get(persist)).toBe(false);
+
+    await freezeVolumeForArchiveBackup(vol);
+    await expect(
+      releaseArchiveVolumeFreezeIfGenerationMatches({
+        volume: vol,
+        expectedGeneration: 42,
+      }),
+    ).resolves.toBe("released");
+    expect(readonly).toEqual(
+      new Map([
+        [home, false],
+        [persist, false],
+      ]),
+    );
+    // the home is frozen first: the persist server makes no volume ready
+    // while it is (persist-volume.ts)
+    const sets = btrfsMock.mock.calls
+      .map(([{ args }]) => args)
+      .filter((args) => args[0] === "property" && args[1] === "set");
+    expect(sets[0][3]).toBe(home);
+    expect(sets[1][3]).toBe(persist);
+    delete process.env.COCALC_SYNC_PROJECTS;
+  });
+
   it("lists staged archive volumes and tolerates a missing staging root", async () => {
     await expect(listStagedArchiveVolumeNames("/mnt")).resolves.toEqual([]);
 

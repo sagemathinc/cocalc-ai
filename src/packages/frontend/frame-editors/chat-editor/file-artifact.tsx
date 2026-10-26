@@ -29,6 +29,7 @@ import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-ho
 import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
 import { LocalCommentButton } from "@cocalc/frontend/chat/contextual-reply";
 import { isBoardPath, useBoardFrameUrl } from "./board-artifact-frame";
+import { useFileChanges } from "./use-file-changes";
 
 const BINARY_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "pdf"]);
 const NotebookArtifact = lazyWithRetry(
@@ -39,6 +40,24 @@ const BoardArtifact = lazyWithRetry(
   () => import("./board-artifact"),
   "board artifact",
 );
+const CalendarArtifact = lazyWithRetry(
+  () => import("./calendar-artifact"),
+  "calendar artifact",
+);
+const TodoArtifact = lazyWithRetry(
+  () => import("./todo-artifact"),
+  "todo artifact",
+);
+
+/** A calendar in the cocalc-calendar format, shown as an agenda. */
+export function isCalendarPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".cal.json");
+}
+
+/** An agent's todo list in the cocalc-todo format, shown as a checklist. */
+export function isTodoPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".todo.json");
+}
 
 const TEXT_EXTENSIONS = new Set([
   "md",
@@ -193,6 +212,30 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
         />
       </Suspense>
     );
+  if (isCalendarPath(path))
+    return (
+      <Suspense fallback={<div role="status">Loading calendar...</div>}>
+        <CalendarArtifact
+          key={path}
+          path={path}
+          historical={props.historical}
+          onToolbarActions={props.onToolbarActions}
+          fontSize={props.fontSize}
+        />
+      </Suspense>
+    );
+  if (isTodoPath(path))
+    return (
+      <Suspense fallback={<div role="status">Loading todo list...</div>}>
+        <TodoArtifact
+          key={path}
+          path={path}
+          historical={props.historical}
+          onToolbarActions={props.onToolbarActions}
+          fontSize={props.fontSize}
+        />
+      </Suspense>
+    );
   if (
     props.projectId &&
     props.artifact.file?.path.toLowerCase().endsWith(".ipynb")
@@ -282,6 +325,8 @@ function SavedFileArtifact({
     setSelection(undefined);
   }, [path]);
   const supported = fileArtifactPreviewSupported(path);
+  // Follow the file: a change on disk shows without Refresh.
+  useFileChanges(path, () => setRefresh((n) => n + 1), supported || binary);
   const feedbackTooLarge =
     loaded?.path === path &&
     new TextEncoder().encode(loaded.content).length > ARTIFACT_TEXT_LIMIT;

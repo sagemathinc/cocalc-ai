@@ -85,6 +85,9 @@ export interface AgentRpcOutcome extends AgentRpcAttempt {
   operation?: { id: string; disposition: "queued" | "running" | "steered" };
   /** inspect: what became of the turn it started, if the recipient knows. */
   turn?: import("./rpc-turn").AgentRpcTurnState;
+  /** inspect, for an external member: whether it read the message (no turn
+   * starts there). */
+  inbox?: import("./external").ExternalAgentDelivery;
 }
 
 export interface AgentRpcBroadcast {
@@ -172,7 +175,13 @@ export type AgentRpcRequest =
   /** Take back a message whose turn has not started (queued or held). */
   | (AgentRpcAttempt & { action: "withdraw" })
   | { version: 3; action: "destinations" }
-  | { version: 3; action: "inbox"; limit?: number }
+  | {
+      version: 3;
+      action: "inbox";
+      limit?: number;
+      /** Acknowledged messages too, until they expire. */
+      include_acknowledged?: boolean;
+    }
   | { version: 3; action: "ack-inbox"; message_id: string }
   | AgentRpcBroadcast
   | ({
@@ -280,7 +289,12 @@ export function validateAgentRpcRequest(
         throw new Error("message must contain 1 to 32768 UTF-8 bytes");
     }
   } else if (value.action === "inbox") {
-    keys.push("limit");
+    keys.push("limit", "include_acknowledged");
+    if (
+      value.include_acknowledged !== undefined &&
+      typeof value.include_acknowledged !== "boolean"
+    )
+      throw new Error("include_acknowledged must be a boolean");
     if (
       value.limit !== undefined &&
       (!Number.isInteger(value.limit) || value.limit < 1 || value.limit > 100)
@@ -364,7 +378,10 @@ export function rpcOutcome(
   attempt: AgentRpcAttempt,
   outcome: AgentRpcOutcome["outcome"],
   extra: Partial<
-    Pick<AgentRpcOutcome, "reason" | "code" | "chat_effect" | "operation">
+    Pick<
+      AgentRpcOutcome,
+      "reason" | "code" | "chat_effect" | "operation" | "inbox"
+    >
   > = {},
 ): AgentRpcOutcome {
   return {
@@ -403,6 +420,15 @@ export function validateAgentRpcOutcome(
   )
     throw new Error("Recipient acknowledgment is invalid or mismatched");
   if (value.turn !== undefined) validateAgentRpcTurnState(value.turn);
+  if (
+    value.inbox !== undefined &&
+    (!["pending", "acknowledged"].includes(value.inbox?.state) ||
+      typeof value.inbox.created_at !== "string" ||
+      typeof value.inbox.expires_at !== "string" ||
+      (value.inbox.acknowledged_at !== undefined &&
+        typeof value.inbox.acknowledged_at !== "string"))
+  )
+    throw new Error("Recipient acknowledgment is invalid or mismatched");
 }
 
 export function validateAgentRpcBroadcastOutcome(

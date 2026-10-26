@@ -7,7 +7,8 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayInfos } from "@cocalc/server/bay-registry";
-import { listHosts, stopHost } from "@cocalc/server/conat/api/hosts";
+import { listHosts } from "@cocalc/server/conat/api/hosts";
+import { runHostActionAsSystem } from "@cocalc/server/conat/api/system-host-actions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
   executeBillingAuthorityCommand,
@@ -108,7 +109,8 @@ async function stopOwnedDedicatedHosts({
     ) {
       continue;
     }
-    await stopHost({
+    // As the system: no user session here, and the host may be on any bay.
+    await runHostActionAsSystem("hosts.stopHost", {
       account_id: actor,
       id,
     });

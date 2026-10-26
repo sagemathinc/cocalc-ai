@@ -1,11 +1,13 @@
 import type { Client } from "@cocalc/conat/core/client";
 import type { AcpRequest, AcpSteerRequest } from "@cocalc/conat/ai/acp/types";
+import { SENSOR_WAKE_CLAIM_LEASE_MS } from "@cocalc/conat/agents/sensors";
 import { acquireChatSyncDB } from "@cocalc/chat/server";
 import {
   acpTestInternals,
   configureAcpDetachedWorkerRunning,
   disposeAcpAgents,
   disposeAllChatWritersForTests,
+  setAttachmentBlobReader,
 } from "../index";
 import {
   closeAcpDatabase,
@@ -27,6 +29,7 @@ import {
   decodeAcpSteerRequest,
   enqueueAcpSteer,
   getAcpSteer,
+  markAcpSteerHandled,
   listPendingAcpSteers,
   markAcpSteerError,
 } from "../../sqlite/acp-steers";
@@ -1938,5 +1941,208 @@ it("does not let another account or thread control a queued turn", async () => {
   expect(getAcpJobByOpId(job.op_id)).toMatchObject({
     state: "error",
     request_json,
+  });
+});
+
+describe("a sensor wake joining a running turn", () => {
+  const config: AcpRequest["config"] = { model: "gpt-6-astra", sessionId };
+  const phases: { phase?: string; durable?: string }[] = [];
+  let originalAuthorizeSensor: any;
+
+  function wakeRequest(): AcpSteerRequest {
+    const prompt = "[Sensor wake] CI finished";
+    const request = turnRequest({ ...config });
+    request.prompt = prompt;
+    request.chat!.send_mode = "immediate";
+    request.chat!.parent_message_id = "sensor-wake";
+    request.chat!.message_id = "sensor-wake-reply";
+    request.chat!.user_message_content = prompt;
+    request.chat!.sensor_wake = {
+      version: 1,
+      sensor_id: "sensor-1",
+      project_id: projectId,
+      agent_id: "agent-1",
+      script_hash: "hash",
+      run_id: "run-1",
+      permit: "permit",
+    };
+    rows.push({
+      event: "chat",
+      thread_id: record.thread_id,
+      message_id: "sensor-wake",
+      sender_id: accountId,
+      date: "2026-09-05T13:56:15.277Z",
+    });
+    return { ...request, session_id: sessionId, chat: request.chat! };
+  }
+
+  function durableState(request: AcpSteerRequest) {
+    return getAcpSteer({
+      project_id: projectId,
+      path: request.chat.path,
+      user_message_id: request.chat.parent_message_id!,
+    })?.state;
+  }
+
+  beforeEach(() => {
+    phases.length = 0;
+    originalAuthorizeSensor = hubApi.agent.authorizeSensorExecution;
+    startRunningTurn(turnRequest(config));
+    mockLiveRuntime(config).running.clear();
+    // Another worker runs the turn: the wake is handed to it.
+    jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+      {
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        session_id: sessionId,
+        owner_instance_id: "other-worker",
+      } as any,
+    ]);
+  });
+
+  afterEach(() => {
+    hubApi.agent.authorizeSensorExecution = originalAuthorizeSensor;
+  });
+
+  function recordPhases(request: AcpSteerRequest) {
+    hubApi.agent.authorizeSensorExecution = jest.fn(async ({ delivery }) => {
+      // What the other worker could see when each phase happened.
+      phases.push({ phase: delivery.phase, durable: durableState(request) });
+    }) as any;
+  }
+
+  it("releases its claim before the handoff, so the other worker can claim it", async () => {
+    const request = wakeRequest();
+    recordPhases(request);
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(request),
+    ).resolves.toMatchObject({ pending: true });
+    // Claimed, then released while no durable steer existed yet.
+    expect(phases).toEqual([
+      { phase: "claim", durable: undefined },
+      { phase: "release", durable: undefined },
+    ]);
+    expect(durableState(request)).toBe("pending");
+  });
+
+  it("never consumes the claim for a durable steer handled earlier", async () => {
+    const request = wakeRequest();
+    // An earlier attempt handed it off, and the other worker handled it
+    // (for example as a fallback turn of its own, which consumes the permit).
+    const row = enqueueAcpSteer({ request });
+    const claim = claimAcpSteer({ id: row.id })!;
+    markAcpSteerHandled({ id: row.id, claim_token: claim });
+    recordPhases(request);
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(request),
+    ).resolves.toMatchObject({ pending: true });
+    // Not even claimed: the fallback turn that handling queued owns the
+    // permit, and could start while a claim was held.
+    expect(phases).toEqual([]);
+  });
+
+  describe("in the turn this worker runs", () => {
+    beforeEach(() => {
+      mockLiveRuntime(config);
+      mockSteer.mockClear();
+      jest.mocked(listRunningAcpTurnLeases).mockReturnValue([]);
+    });
+
+    it("injects it within the claim's lease, then consumes the claim", async () => {
+      const request = wakeRequest();
+      recordPhases(request);
+      await acpTestInternals.handleAcpSteerRequest(request);
+      expect(mockSteer).toHaveBeenCalled();
+      expect(phases.map(({ phase }) => phase)).toEqual([
+        "claim",
+        "consume-claim",
+      ]);
+    });
+
+    it("releases it, never injected, once the claim's lease has ended", async () => {
+      const request = wakeRequest();
+      const now = jest.spyOn(Date, "now");
+      try {
+        hubApi.agent.authorizeSensorExecution = jest.fn(
+          async ({ delivery }) => {
+            phases.push({ phase: delivery.phase });
+            // The attempt stalls past its lease right after claiming (the
+            // sensor may be approved again meanwhile).
+            if (delivery.phase === "claim")
+              now.mockReturnValue(Date.now() + SENSOR_WAKE_CLAIM_LEASE_MS + 1);
+          },
+        ) as any;
+        // Then it falls back to a turn of its own, which may not start here
+        // (no Codex credential in this environment): not what this checks.
+        await acpTestInternals
+          .handleAcpSteerRequest(request)
+          .catch(() => undefined);
+      } finally {
+        now.mockRestore();
+      }
+      expect(mockSteer).not.toHaveBeenCalled();
+      expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
+    });
+
+    it("releases it when the durable steer's claim is lost before the steer", async () => {
+      const request = wakeRequest();
+      enqueueAcpSteer({ request });
+      hubApi.agent.authorizeSensorExecution = jest.fn(async ({ delivery }) => {
+        phases.push({ phase: delivery.phase });
+        // Another worker takes the durable steer over right after the claim.
+        if (delivery.phase === "claim")
+          getAcpDatabase()
+            .prepare("UPDATE acp_steers SET claim_token = 'another-worker'")
+            .run();
+      }) as any;
+      await acpTestInternals.processPendingAcpSteersOnce();
+      expect(mockSteer).not.toHaveBeenCalled();
+      // Not injected, so not left claimed: its own turn can still run it.
+      expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
+    });
+
+    it("never steers once the lease ends while an image is materialized", async () => {
+      const request = wakeRequest();
+      request.prompt = request.chat.user_message_content =
+        "[Sensor wake] see ![](/blobs/a.png?uuid=11111111-1111-4111-8111-111111111111)";
+      // Only a harness agent (Claude) materializes images before steering.
+      mockLiveRuntime(config).running.clear();
+      const harnessSteer = jest.fn(async () => ({ state: "steered" }));
+      const unregister = acpTestInternals.registerInterruptAgentForTests(
+        "lease-harness",
+        projectId,
+        { steer: harnessSteer } as any,
+        true,
+      );
+      const now = jest.spyOn(Date, "now");
+      setAttachmentBlobReader(async () => {
+        // A slow read: the lease ends before the steer would be sent.
+        now.mockReturnValue(Date.now() + SENSOR_WAKE_CLAIM_LEASE_MS + 1);
+        return Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
+      });
+      recordPhases(request);
+      try {
+        await acpTestInternals.handleAcpSteerRequest(request).catch(() => {});
+      } finally {
+        now.mockRestore();
+        setAttachmentBlobReader(undefined);
+        unregister();
+      }
+      expect(harnessSteer).not.toHaveBeenCalled();
+      // No steer was started, so nothing was injected: released.
+      expect(phases.map(({ phase }) => phase)).toEqual(["claim", "release"]);
+    });
+  });
+
+  it("does not claim a wake whose durable steer is still pending", async () => {
+    const request = wakeRequest();
+    enqueueAcpSteer({ request });
+    recordPhases(request);
+    await expect(
+      acpTestInternals.handleAcpSteerRequest(request),
+    ).resolves.toMatchObject({ pending: true });
+    expect(phases).toEqual([]);
+    expect(durableState(request)).toBe("pending");
   });
 });

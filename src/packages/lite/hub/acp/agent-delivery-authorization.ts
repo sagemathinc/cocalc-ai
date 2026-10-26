@@ -42,6 +42,12 @@ async function assertSenderStillProjectMember(
   }
 }
 
+/**
+ * phase, for a sensor wake joining a running turn: "claim" reserves its
+ * one-time permit (every check, atomically) before it is injected; then
+ * "consume-claim" once it was, or "release" if it could not join (its own
+ * turn consumes it then). Absent: consume, as a turn executes.
+ */
 export async function authorizeAgentDeliveryExecution(
   request: AcpRequest,
   api: Pick<
@@ -50,6 +56,7 @@ export async function authorizeAgentDeliveryExecution(
     | "authorizeSensorExecution"
     | "authorizeRpcReportExecution"
   >,
+  { phase }: { phase?: "claim" | "consume-claim" | "release" } = {},
 ): Promise<void> {
   const chat = request.chat;
   if (chat?.sensor_wake) {
@@ -75,10 +82,14 @@ export async function authorizeAgentDeliveryExecution(
         prompt_sha256: createHash("sha256").update(content).digest("hex"),
         path: chat.path,
         thread_id: `${chat.thread_id ?? ""}`,
+        ...(phase ? { phase } : {}),
       },
     });
     // Consumed: nothing downstream (writers, leases, logs) needs the secret.
-    chat.sensor_wake = { ...chat.sensor_wake, permit: REDACTED };
+    // Kept while the wake may still need it: claimed, or released for its
+    // own turn.
+    if (phase == null || phase === "consume-claim")
+      chat.sensor_wake = { ...chat.sensor_wake, permit: REDACTED };
     return;
   }
   if (chat?.agent_rpc_report) {

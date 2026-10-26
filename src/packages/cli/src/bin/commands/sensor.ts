@@ -15,13 +15,24 @@ import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { Command } from "commander";
+import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
+import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import {
   parseSensorWake,
+  SENSOR_WATCH_AGENT_UNTIL,
   sensorExitPaths,
   sensorInterpreterArgv,
   validateSensorSpec,
+  type SensorWatch,
+  type SensorWatchAgentUntil,
+  type SensorDelivery,
 } from "@cocalc/conat/agents/sensors";
 import { describeSensorSchedule } from "@cocalc/util/ai/sensor-schedule";
+import {
+  readTurnAgentReferences,
+  resolveAgentName,
+  type AgentNameBinding,
+} from "../core/agent-destination";
 import { sendIdentityMessage } from "../core/agent-message";
 import type { ProjectCommandDeps } from "./project";
 import { spawnProjectTerminalSession } from "./project/terminal";
@@ -29,12 +40,13 @@ import { spawnProjectTerminalSession } from "./project/terminal";
 const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. Three kinds:
 
 1. Watchers: CoCalc's own one-shot checks. No approval; use them instead of
-   polling, then end your turn. You get one turn when it happens:
+   polling, then end your turn. You are woken once when it happens:
      cocalc sensor watch ci --repo owner/name --pr 123   # needs the GitHub connector
      cocalc sensor watch file --path out.log [--match 'BUILD DONE']
      cocalc sensor watch at --at 2026-10-16T15:00:00Z --note "check PR 123"
      cocalc sensor watch exit -- make test   # runs it in a project terminal
      cocalc agent send reviewer --watch-turn "..."   # its turn on your message
+     cocalc sensor watch agent worker --until failed # any turn of a peer
 2. Scripts: a small program you write and a person approves. It runs like a
    command in your turn: in this project's software, as the approving person,
    with the connectors the spec lists in "uses" (if they gave them to you).
@@ -47,13 +59,26 @@ const CONTRACT = `A sensor is you (the agent) on a schedule, without the model. 
    together in the next wake.
 3. Scheduled prompts: a prompt sent to you on a schedule, a normal turn.
 
+A wake of a watcher or script arrives in your running turn if one is running
+(like a person's message, at your next tool result), else it starts a turn;
+at most once every 10 minutes per sensor, sooner ones are queued. Watchers
+take --delivery queued, specs "delivery": "queued", for a turn of its own
+after the running one. A scheduled prompt is queued unless its spec says
+"delivery": "guidance".
+
 Script spec (JSON): {"title", "purpose", "language": "sh"|"python"|"node",
   "script", "uses": ["cocalc"|"github"|"cloudflare", ...] (default none),
   "schedule": {"kind": "interval", "minutes": 30}
            or {"kind": "daily", "times": ["07:00"], "timezone": "Europe/Berlin"},
+           or {"kind": "monthly", "dates": [3], "times": ["08:30"],
+               "timezone": "America/Los_Angeles"} (days of the month 1-31; a
+               day past a month's end runs on its last day; quarterly: add
+               "months": [1, 4, 7, 10]),
   optional "days" [0-6, 0=Sunday], interval "window" {"start","end"},
-  "timeout_seconds" (default 60, max 300), "max_wakes_per_day" (default 24)}
-Prompt spec: {"kind": "prompt", "title", "prompt", "schedule", "max_wakes_per_day"}`;
+  "timeout_seconds" (default 60, max 300), "max_wakes_per_day" (default 24),
+  "delivery": "guidance"|"queued" (default guidance)}
+Prompt spec: {"kind": "prompt", "title", "prompt", "schedule", "max_wakes_per_day",
+  "delivery" (default queued)}`;
 
 async function readSpec(opts: { file?: string; stdin?: boolean }) {
   let text: string;
@@ -172,6 +197,47 @@ export function exitWatcherArgs(command: string, id: string): string[] {
   ];
 }
 
+/**
+ * An agent watcher for a peer named as `agent send` names it, from now on:
+ * `since` is when its last turn seen here ended. `now` is what it is doing.
+ */
+export function agentWatch(
+  name: string,
+  until: string,
+  directory: AgentNetworkDiscovery,
+  references: AgentNameBinding[] = [],
+  network?: string,
+): { watch: SensorWatch; now?: string } {
+  if (!SENSOR_WATCH_AGENT_UNTIL.includes(until as SensorWatchAgentUntil))
+    throw new Error("--until must be ended, failed or idle");
+  const { target } = resolveAgentName(name, directory, references, network);
+  const peer = directory.peers.find(
+    ({ member }) =>
+      member.kind === "registered" &&
+      member.endpoint.project_id === (target as any).project_id &&
+      member.endpoint.agent_id === (target as any).agent_id,
+  );
+  if (peer?.member.kind !== "registered")
+    throw new Error(
+      `@${name.replace(/^@/, "")} is an external agent: its turns are not reported`,
+    );
+  const { member } = peer;
+  const now = agentTurnStatusText(member.status, Date.now());
+  return {
+    watch: {
+      type: "agent",
+      target: {
+        project_id: member.endpoint.project_id,
+        agent_id: member.endpoint.agent_id,
+      },
+      until: until as SensorWatchAgentUntil,
+      since: member.status?.last?.at ?? 0,
+      name: member.name,
+    },
+    ...(now ? { now } : {}),
+  };
+}
+
 export function registerSensorCommand(
   program: Command,
   deps: Pick<
@@ -239,6 +305,14 @@ export function registerSensorCommand(
     );
   const hours = (value?: string) =>
     value == null ? {} : { hours: Number(value) };
+  // How long it waits, and how its wake arrives.
+  // The hub validates it: guidance or queued.
+  const extra = (opts: { hours?: string; delivery?: string }) => ({
+    ...hours(opts.hours),
+    ...(opts.delivery == null
+      ? {}
+      : { delivery: opts.delivery as SensorDelivery }),
+  });
   watch
     .command("ci")
     .description(
@@ -247,6 +321,10 @@ export function registerSensorCommand(
     .requiredOption("--repo <owner/name>", "repository")
     .requiredOption("--pr <number>", "pull request number")
     .option("--hours <n>", "give up after this many hours (default 24)")
+    .option(
+      "--delivery <mode>",
+      "guidance (default): into your running turn if one is running, else a new turn; queued: a turn of its own after the running one",
+    )
     .action(async (opts, cmd) =>
       send(
         cmd,
@@ -254,7 +332,7 @@ export function registerSensorCommand(
           action: "sensor",
           op: "watch",
           watch: { type: "ci", repo: opts.repo, pr: Number(opts.pr) },
-          ...hours(opts.hours),
+          ...extra(opts),
         },
         "sensor watch ci",
       ),
@@ -273,6 +351,10 @@ export function registerSensorCommand(
       "wait until it contains this text (plain text, not a regular expression)",
     )
     .option("--hours <n>", "give up after this many hours (default 24)")
+    .option(
+      "--delivery <mode>",
+      "guidance (default): into your running turn if one is running, else a new turn; queued: a turn of its own after the running one",
+    )
     .action(async (opts, cmd) =>
       send(
         cmd,
@@ -284,16 +366,22 @@ export function registerSensorCommand(
             path: watchedPath(opts.path),
             ...(opts.match ? { match: opts.match } : {}),
           },
-          ...hours(opts.hours),
+          ...extra(opts),
         },
         "sensor watch file",
       ),
     );
   watch
     .command("at")
-    .description("a reminder: wake at a time with a note to yourself")
+    .description(
+      "a reminder: wake at a time (up to 400 days ahead) with a note to yourself; pending reminders show in `sensor list` and are cancelled with `sensor delete`",
+    )
     .requiredOption("--at <time>", "ISO time, e.g. 2026-10-16T15:00:00Z")
     .requiredOption("--note <text>", "what to do then")
+    .option(
+      "--delivery <mode>",
+      "guidance (default): into your running turn if one is running, else a new turn; queued: a turn of its own after the running one",
+    )
     .action(async (opts, cmd) =>
       send(
         cmd,
@@ -301,6 +389,7 @@ export function registerSensorCommand(
           action: "sensor",
           op: "watch",
           watch: { type: "at", at: opts.at, note: opts.note },
+          ...extra(opts),
         },
         "sensor watch at",
       ),
@@ -316,6 +405,10 @@ export function registerSensorCommand(
     .requiredOption("--target-project <uuid>", "the recipient's project_id")
     .option("--name <name>", "the recipient's @name, for the title")
     .option("--hours <n>", "give up after this many hours (default 24)")
+    .option(
+      "--delivery <mode>",
+      "guidance (default): into your running turn if one is running, else a new turn; queued: a turn of its own after the running one",
+    )
     .action(async (opts, cmd) =>
       send(
         cmd,
@@ -329,11 +422,56 @@ export function registerSensorCommand(
             target: { project_id: opts.targetProject, agent_id: opts.toAgent },
             ...(opts.name ? { name: opts.name } : {}),
           },
-          ...hours(opts.hours),
+          ...extra(opts),
         },
         "sensor watch agent-turn",
       ),
     );
+  watch
+    .command("agent")
+    .description(
+      "when another agent in your Agent Networks finishes a turn, whoever started it (to watch the turn your own message started, use agent send --watch-turn)",
+    )
+    .argument("<name>", "the agent's @name, as agent destinations shows it")
+    .option(
+      "--until <when>",
+      "ended: any turn ends; failed: a turn ends without completing (failed, canceled or never started); idle: a turn ends and none is running or waiting",
+      "ended",
+    )
+    .option(
+      "--network <title-or-id>",
+      "the Agent Network, if the name is in several",
+    )
+    .option("--hours <n>", "give up after this many hours (default 24)")
+    .option(
+      "--delivery <mode>",
+      "guidance (default): into your running turn if one is running, else a new turn; queued: a turn of its own after the running one",
+    )
+    .action(async (name: string, opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      const [references, directory] = await Promise.all([
+        readTurnAgentReferences(),
+        sendIdentityMessage(
+          { version: 3, action: "destinations" },
+          globals.api,
+        ) as Promise<AgentNetworkDiscovery>,
+      ]);
+      const { watch: w, now } = agentWatch(
+        name,
+        opts.until,
+        directory,
+        references,
+        opts.network,
+      );
+      const set: any = await sendIdentityMessage(
+        { action: "sensor", op: "watch", watch: w, ...extra(opts) },
+        globals.api,
+      );
+      emitSuccess({ globals }, "sensor watch agent", {
+        ...set,
+        ...(now ? { now } : {}),
+      });
+    });
   watch
     .command("exit")
     .description(
@@ -342,6 +480,10 @@ export function registerSensorCommand(
     .argument("<command...>", "the command and its arguments, after --")
     .option("--cwd <path>", "working directory in the project")
     .option("--hours <n>", "give up after this many hours (default 24)")
+    .option(
+      "--delivery <mode>",
+      "guidance (default): into your running turn if one is running, else a new turn; queued: a turn of its own after the running one",
+    )
     .action(async (commandParts: string[], opts, cmd) =>
       deps.withContext(cmd, "sensor watch exit", async (ctx: any) => {
         const command = commandParts.join(" ").trim();
@@ -354,7 +496,7 @@ export function registerSensorCommand(
             action: "sensor",
             op: "watch",
             watch: { type: "exit", id, command: command.slice(0, 200) },
-            ...hours(opts.hours),
+            ...extra(opts),
           },
           api,
         );

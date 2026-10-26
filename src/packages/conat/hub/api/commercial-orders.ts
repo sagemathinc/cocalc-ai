@@ -269,6 +269,8 @@ export interface CommercialInvoicePreview {
   metadata: Record<string, string>;
   ready: boolean;
   blockers: string[];
+  // Not blocking, but worth a look before invoicing.
+  warnings?: string[];
 }
 
 export interface CommercialInvoicePreviewRequest extends CommercialReadRequest {

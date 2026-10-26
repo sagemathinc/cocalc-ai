@@ -283,6 +283,12 @@ class PersistStreamClient extends EventEmitter {
 
   getInstance = (): string | null | undefined => this.instance;
 
+  // Sent with every write: the instance this client last saw ("" for none,
+  // "*" before its first read), so the server refuses writes based on a
+  // history it has replaced (see server.ts assertCurrentInstance).
+  private instanceHeader = (): string =>
+    this.instance === undefined ? "*" : (this.instance ?? "");
+
   // A new instance of an ephemeral stream starts again from seq 1 with none
   // of the old messages, so resuming from lastSeq would skip everything it
   // has.  Start over, and tell the stream so it drops its old state first.
@@ -838,7 +844,7 @@ class PersistStreamClient extends EventEmitter {
     this.changefeedDesired = true;
     try {
       if (activateRemote && !this.changefeedActive) {
-        const resp = await this.socket.request(null, {
+        const resp = await this.request(null, {
           headers: {
             cmd: "changefeed",
           },
@@ -885,7 +891,7 @@ class PersistStreamClient extends EventEmitter {
     time: number;
   }> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         raw: messageData.raw,
         encoding: messageData.encoding,
         headers: {
@@ -910,7 +916,7 @@ class PersistStreamClient extends EventEmitter {
     ({ seq: number; time: number } | { error: string; code?: any })[]
   > => {
     return this.checkForError(
-      await this.socket.request(ops, {
+      await this.request(ops, {
         headers: {
           cmd: "setMany",
           timeout,
@@ -934,7 +940,7 @@ class PersistStreamClient extends EventEmitter {
     all?: boolean;
   }): Promise<{ seqs: number[] }> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: {
           cmd: "delete",
           seq,
@@ -956,7 +962,7 @@ class PersistStreamClient extends EventEmitter {
     timeout?: number;
   } = {}): Promise<Configuration> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: {
           cmd: "config",
           config,
@@ -973,7 +979,7 @@ class PersistStreamClient extends EventEmitter {
     timeout?: number;
   } = {}): Promise<JSONValue | undefined> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: {
           cmd: "metadata",
           timeout,
@@ -988,7 +994,7 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<JSONValue | undefined> => {
     return this.checkForError(
-      await this.socket.request(metadata ?? null, {
+      await this.request(metadata ?? null, {
         headers: {
           cmd: "setMetadata",
           timeout,
@@ -1003,7 +1009,7 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<JSONValue | undefined> => {
     return this.checkForError(
-      await this.socket.request(delta, {
+      await this.request(delta, {
         headers: {
           cmd: "patchMetadata",
           timeout,
@@ -1019,7 +1025,7 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<ResetHistoryResult> => {
     return this.checkForError(
-      await this.socket.request(opts, {
+      await this.request(opts, {
         headers: {
           cmd: "resetHistory",
           timeout,
@@ -1036,7 +1042,7 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<HistoryInclusion> => {
     return this.checkForError(
-      await this.socket.request(opts, {
+      await this.request(opts, {
         headers: {
           cmd: "historyInclusion",
           timeout,
@@ -1050,7 +1056,7 @@ class PersistStreamClient extends EventEmitter {
     ArchivedHistoryEpoch[]
   > => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: {
           cmd: "historyArchives",
           timeout,
@@ -1069,7 +1075,7 @@ class PersistStreamClient extends EventEmitter {
     done: boolean;
   }> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: {
           cmd: "purgeArchivedHistory",
           timeout,
@@ -1085,7 +1091,7 @@ class PersistStreamClient extends EventEmitter {
     timeout?: number;
   } = {}): Promise<StreamCheckpoints> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: {
           cmd: "checkpoints",
           timeout,
@@ -1100,7 +1106,7 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<StreamCheckpoint> => {
     return this.checkForError(
-      await this.socket.request(checkpoint, {
+      await this.request(checkpoint, {
         headers: {
           cmd: "setCheckpoint",
           timeout,
@@ -1115,7 +1121,7 @@ class PersistStreamClient extends EventEmitter {
     { timeout }: { timeout?: number } = {},
   ): Promise<void> => {
     this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: {
           cmd: "deleteCheckpoint",
           name,
@@ -1129,7 +1135,7 @@ class PersistStreamClient extends EventEmitter {
 
   inventory = async (timeout?): Promise<PartialInventory> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: {
           cmd: "inventory",
         } as any,
@@ -1148,12 +1154,13 @@ class PersistStreamClient extends EventEmitter {
     | { seq: number; key?: undefined }
     | { key: string; seq?: undefined }
   )): Promise<ConatMessage | undefined> => {
-    const resp = await this.socket.request(null, {
+    const resp = await this.request(null, {
       headers: { cmd: "get", seq, key, timeout } as any,
       timeout,
     });
     this.checkForError(resp, true);
-    if (resp.headers == null) {
+    // (an answer without a seq is "not found", whatever else it says)
+    if (resp.headers?.seq == null) {
       return undefined;
     }
     return resp;
@@ -1466,7 +1473,7 @@ class PersistStreamClient extends EventEmitter {
 
   keys = async ({ timeout }: { timeout?: number } = {}): Promise<string[]> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: { cmd: "keys", timeout } as any,
         timeout,
       }),
@@ -1483,7 +1490,7 @@ class PersistStreamClient extends EventEmitter {
     params?: any[];
   }): Promise<any[]> => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: {
           cmd: "sqlite",
           statement,
@@ -1492,6 +1499,47 @@ class PersistStreamClient extends EventEmitter {
         timeout,
       }),
     );
+  };
+
+  // The instance an answer says the stream is ("" for none), e.g., the
+  // refusal of a write based on a replaced history: if it changed, start over
+  // with it.
+  private notePersistInstance = (instance: unknown): void => {
+    if (typeof instance != "string") return;
+    const resets = this.instanceResets;
+    this.noteInstance(instance);
+    if (this.instanceResets !== resets && this.changefeeds.length > 0) {
+      void this.getMissed({ reason: "instance_changed" }).catch(() => {});
+    }
+  };
+
+  // Every request says which instance this client last saw, and its answer
+  // which one the stream is (persist_instance, see server.ts
+  // assertCurrentInstance).  A refusal may come back as a thrown error.
+  private request = async (
+    data: any,
+    opts: Parameters<ConatSocketClient["request"]>[1] = {},
+  ) => {
+    let resp;
+    try {
+      resp = await this.socket.request(data, {
+        ...opts,
+        headers: {
+          ...opts?.headers,
+          persist_instance: this.instanceHeader(),
+        },
+      });
+    } catch (err) {
+      this.notePersistInstance((err as any)?.persist_instance);
+      throw err;
+    }
+    const headers = resp?.headers as { persist_instance?: unknown } | undefined;
+    if (headers != null && "persist_instance" in headers) {
+      this.notePersistInstance(headers.persist_instance);
+      // not part of what the stream holds (e.g., a message's headers)
+      delete headers.persist_instance;
+    }
+    return resp;
   };
 
   private checkForError = (mesg, noReturn = false) => {
@@ -1509,7 +1557,7 @@ class PersistStreamClient extends EventEmitter {
   // id of the remote server we're connected to
   serverId = async () => {
     return this.checkForError(
-      await this.socket.request(null, {
+      await this.request(null, {
         headers: { cmd: "serverId" },
       }),
     );

@@ -29,6 +29,7 @@ import {
   parseRusticSnapshotsOutput,
   SubvolumeRustic,
 } from "./subvolume-rustic";
+import { setSnapshotPreparer } from "./snapshot-preparer";
 import {
   clearBtrfsOperationCachesForTest,
   configureBtrfsBackgroundMutationGuard,
@@ -801,6 +802,126 @@ describe("SubvolumeRustic.backup", () => {
         ),
       ],
       verbose: false,
+    });
+  });
+
+  describe("with a snapshot preparer", () => {
+    const volume = (name: string) =>
+      new SubvolumeRustic({
+        name,
+        path: `/mnt/test/${name}`,
+        filesystem: { opts: { mount: "/mnt/test" } },
+        fs: { rusticRepo: "/repo", rustic: jest.fn() },
+      } as any);
+    let capture: jest.Mock;
+    let addTo: jest.Mock;
+    let steps: string[];
+
+    beforeEach(() => {
+      steps = [];
+      btrfsMock = jest.fn(async ({ args }) => {
+        steps.push(args.filter((x) => !x.startsWith("/")).join(" "));
+        return args?.[0] === "subvolume" && args?.[1] === "show"
+          ? { stdout: "Generation: 42\n" }
+          : undefined;
+      });
+      addTo = jest.fn(async () => {
+        steps.push("add");
+      });
+      capture = jest.fn(async () => {
+        steps.push("capture");
+        return {
+          addTo,
+          release: async () => {
+            steps.push("release");
+          },
+        };
+      });
+      setSnapshotPreparer({
+        appliesTo: (name) => name === "project-1",
+        capture,
+      });
+    });
+
+    afterEach(() => {
+      setSnapshotPreparer(undefined);
+    });
+
+    it("captures before the snapshot and adds it before it is read-only, keeping the home's generation", async () => {
+      await expect(volume("project-1").backup()).resolves.toEqual(
+        expect.objectContaining({ snapshotGeneration: 42 }),
+      );
+      const temp =
+        /^\/mnt\/test\/\.rustic-backup-staging\/project-1\/temp-rustic-snapshot-/;
+      expect(capture).toHaveBeenCalledWith({
+        subvolume: "project-1",
+        stagingPath: expect.stringMatching(temp),
+      });
+      expect(addTo).toHaveBeenCalledWith(expect.stringMatching(temp));
+      expect(steps).toEqual([
+        "capture",
+        "subvolume snapshot",
+        "subvolume show",
+        "add",
+        "property set -ts ro true",
+        "release",
+        "subvolume delete",
+      ]);
+      expect(backupFsRusticMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("takes the snapshot again when there is something to add after all", async () => {
+      // e.g., the history moved out of the home just before the snapshot
+      const first = capture.getMockImplementation()!;
+      capture.mockImplementationOnce(async () => {
+        steps.push("capture");
+        return undefined;
+      });
+      capture.mockImplementation(first);
+      await volume("project-1").backup();
+      expect(steps).toEqual([
+        "capture",
+        "subvolume snapshot -r",
+        "subvolume show",
+        "capture",
+        "subvolume delete",
+        "subvolume snapshot",
+        "subvolume show",
+        "add",
+        "property set -ts ro true",
+        "release",
+        "subvolume delete",
+      ]);
+      expect(backupFsRusticMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("snapshots read-only, as before, when there is nothing to add", async () => {
+      capture.mockResolvedValue(undefined);
+      await volume("project-1").backup();
+      await volume("project-1-scratch").backup();
+      // checked again after the snapshot
+      expect(capture).toHaveBeenCalledTimes(2);
+      expect(steps.filter((x) => x.startsWith("subvolume snapshot"))).toEqual([
+        "subvolume snapshot -r",
+        "subvolume snapshot -r",
+      ]);
+    });
+
+    it("backs up nothing when adding fails, and releases the capture", async () => {
+      addTo.mockImplementation(async () => {
+        steps.push("add");
+        throw new Error("no copy");
+      });
+      await expect(volume("project-1").backup()).rejects.toThrow("no copy");
+      expect(backupFsRusticMock).not.toHaveBeenCalled();
+      expect(steps).toEqual([
+        "capture",
+        "subvolume snapshot",
+        "subvolume show",
+        "add",
+        "subvolume delete",
+        "release",
+      ]);
     });
   });
 

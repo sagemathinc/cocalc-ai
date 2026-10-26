@@ -331,6 +331,9 @@ export function snapshotCandidateFromHistory({
   return;
 }
 
+// Max patches snapshotAncestors visits.
+const SNAPSHOT_ANCESTOR_WALK_LIMIT = 100_000;
+
 // Max later patches snapshotTimeAvoidingMismatch checks.
 const SNAPSHOT_MISMATCH_SCAN = 200;
 
@@ -414,6 +417,110 @@ export function prevSeqForMoreHistoryFromHistory(
     }
   }
   return oldest?.prevSeq ?? 0;
+}
+
+// A snapshot record of a patch before the loaded range (seq_info.seq <
+// firstLoadedSeq). Each snapshot record is written about one interval after
+// its patch, so it usually lands just after the next snapshot's patch: the
+// range loaded from the latest snapshot holds the previous snapshot's record
+// without its patch. Taken as a patch, it is a head with no exact value, so
+// the client loaded more history; a step back to the previous snapshot then
+// held the next older record, and so on, until a prod agent chat replayed
+// its whole history (43,623 versions) on every open. Its patch is an
+// ancestor of the loaded snapshot's patch, so it says nothing the loaded
+// snapshot does not. Once more history loads its patch, it is used again.
+// Only an ancestor, though, which a client that loaded part of the history
+// cannot check: the record may be of a concurrent head that nothing loaded
+// builds on, and ignoring it would drop that head's edits. So the writer of
+// each snapshot records the older snapshots it found to be ancestors
+// (seq_info.snapshot_ancestors, by following parents), and only those are
+// ignored, also through the records of listed snapshots in the loaded range.
+// A snapshot written before that list existed has none: then its range's
+// records are not ignored, and the client loads the history to the previous
+// snapshot and sees for itself. Records stored before the stream position
+// the document was opened at (openStartSeq) come into view only by loading
+// more history, and a client that opens there never sees them anyway: they
+// are ignored until their patch loads, so loading more does not cascade.
+// (A restarted history's seed has seq 0: it is the start, with no patch.)
+function isBeforeLoadedRange(
+  patch: { seq_info?: { seq?: number } | null },
+  firstLoadedSeq: number | undefined,
+): boolean {
+  const seq = patch.seq_info?.seq;
+  return (
+    typeof seq === "number" &&
+    seq > 0 &&
+    typeof firstLoadedSeq === "number" &&
+    seq < firstLoadedSeq
+  );
+}
+
+export interface LoadedStartSnapshot {
+  // patch times proven to be ancestors of the loaded snapshot's patch;
+  // undefined for a snapshot written before snapshot_ancestors
+  ancestors?: Set<string>;
+}
+
+export interface SnapshotRecordContext {
+  // the snapshot the loaded range starts at, if loaded
+  start?: LoadedStartSnapshot;
+  // stream position of the record itself
+  recordSeq?: number;
+  // stream position the document was opened at
+  openStartSeq?: number;
+}
+
+export function isSnapshotRecordBeforeLoadedRange(
+  patch: {
+    time?: string;
+    is_snapshot?: boolean;
+    seq_info?: { seq?: number } | null;
+  },
+  firstLoadedSeq: number | undefined,
+  { start, recordSeq, openStartSeq }: SnapshotRecordContext,
+): boolean {
+  if (!patch.is_snapshot || !isBeforeLoadedRange(patch, firstLoadedSeq)) {
+    return false;
+  }
+  if (
+    typeof recordSeq === "number" &&
+    typeof openStartSeq === "number" &&
+    recordSeq < openStartSeq
+  ) {
+    return true;
+  }
+  return patch.time != null && start?.ancestors?.has(`${patch.time}`) === true;
+}
+
+// The snapshot the loaded range starts at (whose patch is at
+// firstLoadedSeq), with the ancestors its writer proved, followed through the
+// records of the listed snapshots that are loaded.
+export function loadedStartSnapshotFromMessages(
+  messages: any[],
+  firstLoadedSeq: number | undefined,
+): LoadedStartSnapshot | undefined {
+  if (firstLoadedSeq == null) return;
+  const byTime = new globalThis.Map<string, any>();
+  let start: any;
+  for (const mesg of messages) {
+    if (!mesg?.is_snapshot || mesg.seq_info == null) continue;
+    byTime.set(`${mesg.time}`, mesg.seq_info);
+    if (mesg.seq_info.seq === firstLoadedSeq) start = mesg.seq_info;
+  }
+  if (start == null) return;
+  if (!Array.isArray(start.snapshot_ancestors)) {
+    return {};
+  }
+  const ancestors = new Set<string>();
+  const queue: string[] = [...start.snapshot_ancestors];
+  while (queue.length > 0) {
+    const time = `${queue.pop()}`;
+    if (ancestors.has(time)) continue;
+    ancestors.add(time);
+    const more = byTime.get(time)?.snapshot_ancestors;
+    if (Array.isArray(more)) queue.push(...more);
+  }
+  return { ancestors };
 }
 
 // Whether the loaded patches are the whole history. Loading starts at the
@@ -533,6 +640,25 @@ export class SyncDoc extends EventEmitter {
   private syncMetadata: Map<string, any> = Map();
   private readonly patchMetadataChanged = () => {
     void this.refreshPatchMetadataFromDStream();
+  };
+  // The files of the patches were replaced under this open copy, e.g., by a
+  // restore of the project (conat/persist/fence.ts): hand off to the new
+  // history as after a reset, keeping any edits it lacks in a recovery copy.
+  // (An ephemeral document's server instance changes when it restarts; that
+  // copy keeps its value and writes it to the new instance, as before.)
+  // (While opening, it waits until the document is ready: see init.)
+  private readonly patchesInstanceReset = () => {
+    if (this.ephemeral || !this.isReady()) return;
+    this.beginHistoryTransition(undefined, this.history_epoch, "replaced");
+  };
+
+  // Whether the patches' stream was replaced (it then writes nothing more).
+  private patchesReplaced = (): boolean => {
+    try {
+      return this.dstream()?.isReplaced?.() === true;
+    } catch {
+      return false;
+    }
   };
 
   public ipywidgets_state?: IpywidgetsState;
@@ -796,6 +922,10 @@ export class SyncDoc extends EventEmitter {
     if (this.isClosed()) return;
     this.set_state("ready");
     this.emitOpenPhase("sync_ready");
+    // replaced while this opened: hand off now
+    if (this.patchesReplaced()) {
+      this.patchesInstanceReset();
+    }
 
     // Success -- everything initialized with no issues.
     if (this.opts.ignoreInitialChanges) {
@@ -1309,6 +1439,9 @@ export class SyncDoc extends EventEmitter {
     // the epoch this tab's pending patches were written in
     fromEpoch: number;
     toEpoch: number;
+    // reset: the history was reset (a new epoch); replaced: its files were
+    // replaced, e.g., by a restore
+    cause: "reset" | "replaced";
     // generation when the transition began: anything later is unsaved
     startGeneration: number;
     // copies written so far (kept and reported, never overwritten)
@@ -1323,6 +1456,7 @@ export class SyncDoc extends EventEmitter {
   private beginHistoryTransition = (
     toEpoch?: number,
     fromEpoch?: number,
+    cause: "reset" | "replaced" = "reset",
   ): void => {
     const epoch = toEpoch ?? this.history_epoch ?? 0;
     const t = this.historyTransition;
@@ -1339,6 +1473,7 @@ export class SyncDoc extends EventEmitter {
         // nothing can be proven absent, so the value is copied
         fromEpoch: fromEpoch ?? 0,
         toEpoch: epoch,
+        cause,
         startGeneration: this.localGeneration,
         copies: [],
         restart: false,
@@ -1547,6 +1682,7 @@ export class SyncDoc extends EventEmitter {
     this.emit("history-reset-unsaved", {
       history_epoch: t.toEpoch,
       reason,
+      cause: t.cause,
       copies: [...t.copies],
     });
   };
@@ -1558,6 +1694,7 @@ export class SyncDoc extends EventEmitter {
     if (t == null) return;
     this.emit("history-reset", {
       history_epoch: t.toEpoch,
+      cause: t.cause,
       copies: [...t.copies],
     });
     this.close();
@@ -2444,6 +2581,7 @@ export class SyncDoc extends EventEmitter {
       const dstream = this.dstream();
       dstream.removeListener("metadata-change", this.patchMetadataChanged);
       dstream.removeListener("checkpoints-change", this.patchMetadataChanged);
+      dstream.removeListener("instance-reset", this.patchesInstanceReset);
     }
 
     // must be after the emits above, so clients know
@@ -2935,6 +3073,9 @@ export class SyncDoc extends EventEmitter {
       );
       dstream.on("metadata-change", this.patchMetadataChanged);
       dstream.on("checkpoints-change", this.patchMetadataChanged);
+      dstream.on("instance-reset", this.patchesInstanceReset);
+      // which handles a replacement of the history (patchesInstanceReset)
+      dstream.keepOpenWhenReplaced?.();
     }
     this.applyPatchWriteHeaders();
 
@@ -3290,6 +3431,14 @@ export class SyncDoc extends EventEmitter {
   // Remote patches received but not applied to this.doc yet: they are
   // applied in a microtask (see the patchflow subscribe adapter).
   private remotePatchesPending = false;
+  // Table keys of snapshot records ignored because their patch was before the
+  // loaded range (see isSnapshotRecordBeforeLoadedRange). A snapshot record
+  // has its own key, which loading more history does not change, so it is fed
+  // to patchflow again here once its patch is loaded.
+  private snapshotRecordsBeforeLoadedRange = new Set<any>();
+  // Stream position the patches were opened at (see
+  // isSnapshotRecordBeforeLoadedRange).
+  private openStartSeq?: number;
 
   // The proof that value, about to be written to the file, is this document's
   // value including every patch with seq at most receivedThroughSeq.  Called
@@ -3435,7 +3584,10 @@ export class SyncDoc extends EventEmitter {
     if (snapshot == null) {
       throw Error("unable to compute snapshot");
     }
-    const seq_info = this.conatSnapshotSeqInfo(time);
+    const seq_info: NonNullable<Patch["seq_info"]> = {
+      ...this.conatSnapshotSeqInfo(time),
+      snapshot_ancestors: this.snapshotAncestors(time),
+    };
     const wall = p.wall ?? decodePatchId(time).timeMs;
     const obj = {
       size: snapshot.length,
@@ -3826,6 +3978,7 @@ export class SyncDoc extends EventEmitter {
   private createPatchflowStore = (): PatchflowPatchStore => {
     return {
       loadInitial: async () => {
+        this.openStartSeq = this.firstLoadedSeq();
         const raw = this.get_patches();
         const patches = raw.map((p) => this.toPatchflowEnvelope(p));
         return { patches, hasMore: !this.patchesHaveFullHistory(raw) };
@@ -3946,6 +4099,21 @@ export class SyncDoc extends EventEmitter {
       return [];
     }
     const envs: PatchEnvelope[] = [];
+    const firstLoadedSeq = this.firstLoadedSeq();
+    let context: ReturnType<typeof this.snapshotRecordContext> | undefined;
+    const contextFor = (p: Patch): SnapshotRecordContext => {
+      // the scan below only for a snapshot record before the loaded range,
+      // not for every ordinary patch
+      if (!p.is_snapshot || !isBeforeLoadedRange(p, firstLoadedSeq)) {
+        return {};
+      }
+      context ??= this.snapshotRecordContext(firstLoadedSeq);
+      return {
+        start: context.start,
+        recordSeq: context.recordSeqs.get(`${p.time}`),
+        openStartSeq: this.openStartSeq,
+      };
+    };
     for (const key of keys ?? []) {
       let x = this.patches_table.get(key);
       if (x == null) {
@@ -3955,7 +4123,32 @@ export class SyncDoc extends EventEmitter {
         x = fromJS(x);
       }
       const p = this.processPatch({ x });
-      if (p != null) {
+      if (p == null) continue;
+      if (isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, contextFor(p))) {
+        this.snapshotRecordsBeforeLoadedRange.add(key);
+      } else {
+        this.snapshotRecordsBeforeLoadedRange.delete(key);
+        envs.push(this.toPatchflowEnvelope(p));
+      }
+    }
+    // Ignored snapshot records whose patch is loaded now, in the same batch.
+    for (const key of [...this.snapshotRecordsBeforeLoadedRange]) {
+      let x = this.patches_table.get(key);
+      if (x == null) {
+        this.snapshotRecordsBeforeLoadedRange.delete(key);
+        continue;
+      }
+      if (!Map.isMap(x)) {
+        x = fromJS(x);
+      }
+      const p = this.processPatch({ x });
+      if (p == null) {
+        this.snapshotRecordsBeforeLoadedRange.delete(key);
+      } else if (
+        // ignored before: it stays so until its patch is loaded
+        !isBeforeLoadedRange(p, firstLoadedSeq)
+      ) {
+        this.snapshotRecordsBeforeLoadedRange.delete(key);
         envs.push(this.toPatchflowEnvelope(p));
       }
     }
@@ -4042,10 +4235,30 @@ export class SyncDoc extends EventEmitter {
       m = fromJS(m);
     }
     const v: Patch[] = [];
-    m.forEach((x, _) => {
+    const firstLoadedSeq = this.firstLoadedSeq();
+    let context: ReturnType<typeof this.snapshotRecordContext> | undefined;
+    const contextFor = (p: Patch): SnapshotRecordContext => {
+      // the scan below only for a snapshot record before the loaded range,
+      // not for every ordinary patch
+      if (!p.is_snapshot || !isBeforeLoadedRange(p, firstLoadedSeq)) {
+        return {};
+      }
+      context ??= this.snapshotRecordContext(firstLoadedSeq);
+      return {
+        start: context.start,
+        recordSeq: context.recordSeqs.get(`${p.time}`),
+        openStartSeq: this.openStartSeq,
+      };
+    };
+    m.forEach((x, key) => {
       try {
         const p = this.processPatch({ x });
-        if (p != null) {
+        if (p == null) return;
+        if (
+          isSnapshotRecordBeforeLoadedRange(p, firstLoadedSeq, contextFor(p))
+        ) {
+          this.snapshotRecordsBeforeLoadedRange.add(key);
+        } else {
           return v.push(p);
         }
       } catch (err) {
@@ -4054,6 +4267,83 @@ export class SyncDoc extends EventEmitter {
     });
     v.sort(patch_cmp);
     return v;
+  };
+
+  // Stream position of the oldest loaded message (loading more history moves
+  // it back before the older messages are processed).
+  private firstLoadedSeq = (): number | undefined => {
+    try {
+      const seq = this.dstream()?.seq?.(0);
+      return typeof seq === "number" ? seq : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  // The snapshot the loaded range starts at, and where each snapshot record
+  // is in the stream.
+  private snapshotRecordContext = (
+    firstLoadedSeq?: number,
+  ): {
+    start?: LoadedStartSnapshot;
+    recordSeqs: globalThis.Map<string, number>;
+  } => {
+    const recordSeqs = new globalThis.Map<string, number>();
+    try {
+      const dstream = this.dstream();
+      const messages = dstream?.getAll?.() ?? [];
+      for (let i = 0; i < messages.length; i++) {
+        if (messages[i]?.is_snapshot) {
+          const seq = dstream.seq(i);
+          if (typeof seq === "number") {
+            recordSeqs.set(`${messages[i].time}`, seq);
+          }
+        }
+      }
+      return {
+        start: loadedStartSnapshotFromMessages(messages, firstLoadedSeq),
+        recordSeqs,
+      };
+    } catch {
+      return { recordSeqs };
+    }
+  };
+
+  // Older snapshots whose patches are ancestors of time, found by following
+  // parents through the loaded patches. A path is a proof even when only
+  // part of the history is loaded.
+  private snapshotAncestors = (time: PatchId): PatchId[] => {
+    const session = this.patchflowSession as any;
+    if (typeof session?.getPatch !== "function") return [];
+    const snapshotTimes = new Set<string>();
+    try {
+      for (const mesg of this.dstream()?.getAll?.() ?? []) {
+        if (mesg?.is_snapshot && (mesg.seq_info?.seq ?? 0) > 0) {
+          snapshotTimes.add(`${mesg.time}`);
+        }
+      }
+    } catch {}
+    snapshotTimes.delete(time);
+    const found: PatchId[] = [];
+    if (snapshotTimes.size === 0) return found;
+    // (a parent before the loaded history is not known: the path ends)
+    const parents = (t: string): string[] => {
+      try {
+        return session.getPatch(t)?.parents ?? [];
+      } catch {
+        return [];
+      }
+    };
+    const seen = new Set<string>([time]);
+    const stack: string[] = [...parents(time)];
+    while (stack.length > 0 && seen.size < SNAPSHOT_ANCESTOR_WALK_LIMIT) {
+      const t = stack.pop()!;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      if (snapshotTimes.has(t)) found.push(t);
+      stack.push(...parents(t));
+    }
+    return found;
   };
 
   private patchesHaveFullHistory = (patches: Patch[]): boolean => {
@@ -4636,13 +4926,26 @@ export class SyncDoc extends EventEmitter {
 
   private patchflowPrevSeqForMoreHistory = (): number | undefined => {
     if (!this.patchflowReady() || this.patchflowSession == null) return;
-    const history = this.patchflowSession.history({ includeSnapshots: true });
-    let firstLoadedSeq: number | undefined;
+    const history: Parameters<typeof prevSeqForMoreHistoryFromHistory>[0] = [
+      ...this.patchflowSession.history({ includeSnapshots: true }),
+    ];
+    // Also every snapshot message in the loaded stream: patchflow does not
+    // see a record ignored before its patch was loaded (see
+    // isSnapshotRecordBeforeLoadedRange), and once its patch loads, the patch
+    // takes its table key, so the record that leads one snapshot further
+    // back would otherwise be missing.
     try {
-      const seq = this.dstream()?.seq?.(0);
-      firstLoadedSeq = typeof seq === "number" ? seq : undefined;
+      for (const mesg of this.dstream()?.getAll?.() ?? []) {
+        if (mesg?.is_snapshot && mesg.seq_info != null) {
+          history.push({
+            time: mesg.time,
+            isSnapshot: true,
+            seqInfo: mesg.seq_info,
+          });
+        }
+      }
     } catch {}
-    return prevSeqForMoreHistoryFromHistory(history, firstLoadedSeq);
+    return prevSeqForMoreHistoryFromHistory(history, this.firstLoadedSeq());
   };
 
   private patchflowSnapshotCandidate = (

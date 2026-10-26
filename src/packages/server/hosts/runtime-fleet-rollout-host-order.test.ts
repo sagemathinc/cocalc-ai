@@ -6,7 +6,7 @@
 const calls: string[] = [];
 const statuses: any[] = [];
 
-jest.mock("@cocalc/server/conat/api/hosts", () => ({
+jest.mock("@cocalc/server/conat/api/hosts-routed", () => ({
   upgradeHostSoftware: jest.fn(async () => {
     calls.push("upgrade project-host");
     return { op_id: "upgrade", scope_type: "host", scope_id: "h" };
@@ -20,6 +20,7 @@ jest.mock("@cocalc/server/conat/api/hosts", () => ({
     calls.push(`status ${status.label}`);
     return status;
   }),
+  waitForHostLro: jest.fn(async () => ({ status: "succeeded" })),
 }));
 jest.mock("@cocalc/server/lro/wait", () => ({
   waitForDurableLroCompletion: jest.fn(async () => ({ status: "succeeded" })),

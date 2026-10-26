@@ -1412,7 +1412,7 @@ describe("PublicApp", () => {
       await screen.findByRole("heading", { name: "Privacy Policy" }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Launchpad · Last Updated: June 30, 2026"),
+      screen.getByText("Launchpad · Last Updated: October 25, 2026"),
     ).not.toBeNull();
     expect(
       screen.getByText(/Protecting your privacy is really important to us/i),

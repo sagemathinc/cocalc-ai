@@ -1124,6 +1124,12 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   };
 
   setCellId = (id: string, newId: string, save = true) => {
+    // Writes the syncdb directly, so check read_only here as _set does (in
+    // the browser a notebook is read-only until its initial source settled,
+    // a customer report).
+    if (this.store?.get("read_only")) {
+      return;
+    }
     let cell = this.store.getIn(["cells", id])?.toJS();
     if (cell == null) {
       return;
@@ -1803,7 +1809,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   undo = (): boolean => {
     const syncdb = this.syncdb;
-    if (!syncdb?.isReady()) {
+    // A read-only notebook's history is not changed either.  In the browser
+    // this includes a notebook whose initial source has not settled yet
+    // (a customer report): undoing then would change the live notebook
+    // before the file is loaded.
+    if (!syncdb?.isReady() || this.store?.get("read_only")) {
       return false;
     }
     syncdb.undo();
@@ -1812,7 +1822,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   redo = (): boolean => {
     const syncdb = this.syncdb;
-    if (!syncdb?.isReady()) {
+    // A read-only notebook's history is not changed either.  In the browser
+    // this includes a notebook whose initial source has not settled yet
+    // (a customer report): redoing then would change the live notebook
+    // before the file is loaded.
+    if (!syncdb?.isReady() || this.store?.get("read_only")) {
       return false;
     }
     syncdb.redo();
@@ -2993,10 +3007,17 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     return ipynb;
   }
 
+  // Resolves to false if opts.skipIf said not to apply, else true.
   setToIpynb = async (
     ipynb: any,
     data_only: boolean = false,
-  ): Promise<void> => {
+    opts?: {
+      // Checked at the last moment before the live notebook is changed (after
+      // the asynchronous attachment step), so a caller can refuse to apply a
+      // read that the live notebook has since moved past.
+      skipIf?: () => boolean;
+    },
+  ): Promise<boolean> => {
     /*
      * set_to_ipynb - set from ipynb object.  This is
      * mainly meant to be run on the backend in the project,
@@ -3013,6 +3034,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     // Project-side implementations use this asynchronous boundary to replace
     // native Jupyter attachments before any live syncdoc state is mutated.
     ipynb = await this.prepareIpynbForSyncdoc(ipynb);
+    if (opts?.skipIf?.()) {
+      return false;
+    }
 
     this._state = "load";
 
@@ -3084,7 +3108,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
     if (data_only) {
       importer.close();
-      return;
+      return true;
     }
 
     // Set all the cells
@@ -3109,6 +3133,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     await this.syncdb.save();
     this.ensure_backend_kernel_setup();
     this._state = "ready";
+    return true;
   };
 }
 

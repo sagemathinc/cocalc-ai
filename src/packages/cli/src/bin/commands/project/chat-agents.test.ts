@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   friendlyAgentDestinations,
+  agentStatusReport,
   watchSentTurn,
   registerAgentCommands,
   registerChatAgentCommands,
@@ -91,6 +92,39 @@ test("friendly discovery omits internal identifiers", () => {
     ],
   });
   assert.doesNotMatch(JSON.stringify(value), /agent_network_id|project_id/);
+});
+
+test("friendly discovery names an external agent by what agent send takes", () => {
+  const member = (label: string, member_id = randomUUID()) => ({
+    member: {
+      kind: "external" as const,
+      member_id,
+      source: {
+        kind: "external" as const,
+        account_id: randomUUID(),
+        agent_id: member_id,
+        installation_id: randomUUID(),
+      },
+      label,
+      available: true,
+      added_at: new Date().toISOString(),
+    },
+    networks: [],
+  });
+  const unnamed = randomUUID();
+  const value = friendlyAgentDestinations({
+    peers: [
+      member("ops0 on alpha.cocalc.ai (ops project)"),
+      member("(unnamed)", unnamed),
+    ],
+  });
+  assert.deepEqual(
+    value.peers.map(({ name, label }: any) => ({ name, label })),
+    [
+      { name: "ops0", label: "ops0 on alpha.cocalc.ai (ops project)" },
+      { name: unnamed, label: "(unnamed)" },
+    ],
+  );
 });
 
 test("friendly discovery says what a peer is doing", () => {
@@ -264,6 +298,17 @@ test("cocalc agent send takes a name and reports a readable outcome", async () =
       /^Delivered to @reviewer \(Support\) via Agent Network "cocalc"/,
     );
     assert.equal(output[0].outcome, "accepted");
+    // Before waiting, the way to check without resending (a shell that
+    // times out still has it).
+    const before = stderr.mock.calls
+      .map((call) => `${call.arguments[0]}`)
+      .join("");
+    assert.match(
+      before,
+      new RegExp(
+        `Sending \\(attempt ${send.attempt_id}\\)\\. If this is cut off, check without resending: cocalc agent rpc inspect ${send.attempt_id} --agent-network ${network} --to-agent ${send.target.agent_id} --target-project ${send.target.project_id}`,
+      ),
+    );
     assert.equal(process.exitCode, 0);
   } finally {
     stderr.mock.restore();
@@ -611,6 +656,220 @@ test("a watcher that cannot be set leaves the send a success", async () => {
     assert.match(output[0].summary, /do not send it again/);
   } finally {
     stderr.mock.restore();
+    transport.mock.restore();
+  }
+});
+
+test("agent status says what each peer is doing and how its last turn ended", () => {
+  const now = Date.parse("2026-10-23T01:00:00Z");
+  const peer = (name: string, status?: any) => ({
+    member: {
+      kind: "registered" as const,
+      member_id: randomUUID(),
+      endpoint: { project_id: randomUUID(), agent_id: randomUUID() },
+      name,
+      available: true,
+      added_at: new Date().toISOString(),
+      ...(status ? { status } : {}),
+    },
+    networks: [
+      {
+        agent_network_id: randomUUID(),
+        title: "team",
+        delivery_mode: "live" as const,
+      },
+    ],
+  });
+  const directory: any = {
+    peers: [
+      peer("worker", {
+        version: 1,
+        running: 1,
+        queued: 2,
+        running_since: now - 5 * 60_000,
+        last: {
+          state: "failed",
+          kind: "error",
+          detail: "The tool crashed.",
+          at: now - 20 * 60_000,
+        },
+        at: now - 1000,
+      }),
+      peer("old", {
+        version: 1,
+        running: 1,
+        queued: 0,
+        at: now - 3 * 86_400_000,
+      }),
+      peer("quiet"),
+    ],
+  };
+  const all = agentStatusReport(directory, now).agents;
+  assert.deepEqual(all[0], {
+    name: "worker",
+    networks: ["team"],
+    state: "busy, 2 waiting",
+    running: 1,
+    queued: 2,
+    busy_since: new Date(now - 5 * 60_000).toISOString(),
+    busy_for: "5 min",
+    last_turn: {
+      ended: "failed",
+      kind: "error",
+      detail: "The tool crashed.",
+      at: new Date(now - 20 * 60_000).toISOString(),
+      ago: "20 min ago",
+    },
+  });
+  // A report older than a day says nothing.
+  assert.equal(all[1].state, "unknown (no report in the last day)");
+  assert.equal(all[1].running, undefined);
+  assert.equal(all[2].state, "unknown (no report in the last day)");
+  // One by name.
+  const one = agentStatusReport(directory, now, "@worker").agents;
+  assert.equal(one.length, 1);
+  assert.equal(one[0].name, "worker");
+  assert.throws(
+    () => agentStatusReport(directory, now, "nobody"),
+    /No approved/,
+  );
+});
+
+test("agent turn sets the current turn's subject and priority", async () => {
+  const calls: any[] = [];
+  const output: unknown[] = [];
+  const command = new Command();
+  registerAgentCommands(
+    command.command("agent"),
+    {
+      globalsFrom: () => ({}),
+      emitSuccess: (_ctx: unknown, _label: string, value: unknown) =>
+        output.push(value),
+      withContext: async (
+        _cmd: unknown,
+        _name: string,
+        fn: any,
+        options: any,
+      ) => {
+        calls.push({ options });
+        output.push(await fn({ ctx: true }));
+      },
+      projectChatTurnMetaData: async (request: any) => {
+        calls.push(request);
+        return { message_id: "m1", subject: request.subject ?? null };
+      },
+    } as any,
+    "agent",
+  );
+  const saved = { ...process.env };
+  process.env.COCALC_CODEX_CHAT_PATH = "/home/user/a.chat";
+  process.env.COCALC_CODEX_THREAD_ID = "thread-1";
+  process.env.COCALC_CODEX_MESSAGE_DATE = "2026-10-23T01:00:00.000Z";
+  try {
+    await command.parseAsync(
+      ["agent", "turn", "--subject", "Fixed it", "--priority", "HIGH"],
+      { from: "user" },
+    );
+    const request = calls.find((call) => call.path);
+    assert.equal(request.path, "/home/user/a.chat");
+    assert.equal(request.threadId, "thread-1");
+    assert.equal(request.messageDate, "2026-10-23T01:00:00.000Z");
+    assert.equal(request.subject, "Fixed it");
+    assert.equal(request.priority, "high");
+    // The project's own credential, never an account fallback.
+    assert.ok(calls[0].options.projectOnly);
+    for (const args of [
+      ["agent", "turn"],
+      ["agent", "turn", "--priority", "urgent"],
+    ]) {
+      await assert.rejects(command.parseAsync(args, { from: "user" }));
+    }
+    delete process.env.COCALC_CODEX_MESSAGE_DATE;
+    await assert.rejects(
+      command.parseAsync(["agent", "turn", "--priority", "low"], {
+        from: "user",
+      }),
+      /no current turn/,
+    );
+  } finally {
+    process.env = saved;
+  }
+});
+
+test("rpc inspect reaches an external member by account and installation", async () => {
+  const requests: any[] = [];
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      requests.push(request);
+      return {
+        version: 3,
+        attempt_id: request.attempt_id,
+        agent_network_id: request.agent_network_id,
+        target: request.target,
+        outcome: "accepted",
+        observed_at: Date.now(),
+        inbox: {
+          state: "pending",
+          created_at: "2026-10-23T10:00:00.000Z",
+          expires_at: "2026-10-30T10:00:00.000Z",
+        },
+      };
+    },
+  );
+  try {
+    const [network, agent, account, installation, attempt] = [
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+    ];
+    const output: any[] = [];
+    await topLevel(output).parseAsync(
+      [
+        "agent",
+        "rpc",
+        "inspect",
+        attempt,
+        "--agent-network",
+        network,
+        "--to-agent",
+        agent,
+        "--target-account",
+        account,
+        "--target-installation",
+        installation,
+      ],
+      { from: "user" },
+    );
+    assert.deepEqual(requests[0].target, {
+      kind: "external",
+      account_id: account,
+      agent_id: agent,
+      installation_id: installation,
+    });
+    assert.match(output[0].summary, /^Not read yet/);
+    await assert.rejects(
+      topLevel([]).parseAsync(
+        [
+          "agent",
+          "rpc",
+          "inspect",
+          attempt,
+          "--agent-network",
+          network,
+          "--to-agent",
+          agent,
+          "--target-account",
+          account,
+        ],
+        { from: "user" },
+      ),
+      /--target-account and --target-installation/,
+    );
+  } finally {
     transport.mock.restore();
   }
 });

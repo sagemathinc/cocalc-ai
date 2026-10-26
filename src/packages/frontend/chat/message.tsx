@@ -65,6 +65,7 @@ import {
   getBestResponseText,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
+  readTurnMeta,
   type InlineCodeLink,
   type CodexThreadConfig,
 } from "@cocalc/chat";
@@ -74,8 +75,14 @@ import {
   movePostedMessageToAgent,
 } from "./post-to-agent";
 import ContextualReply from "./contextual-reply";
+import {
+  presentedMessageMarkdown,
+  rpcSourceAttribution,
+  sensorWakeLabel,
+} from "./message-presentation";
 import { messageToMarkdown } from "./message-to-markdown";
 import { isCodexAgentMessageAuthor } from "./message-author";
+import { TurnSubjectHeader } from "./turn-subject-header";
 import { agentMessageDirectory } from "./activity-path-context";
 import { AgentMessageFileContext } from "./message-file-context";
 import { codexEventsToMarkdown } from "./codex-activity";
@@ -169,16 +176,10 @@ import {
 } from "./codex-final-response-copy";
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import {
-  agentMessageFence,
-  agentMessageWaitingDelivery,
-  sensorWakePresentation,
-  stripAgentRpcPrompt,
-} from "./agent-message-presentation";
-import { sensorWakeFence } from "@cocalc/frontend/editors/slate/elements/sensor-wake";
-import {
   TurnActivityTimeline,
   type TurnTimelineContext,
 } from "./turn-activity-timeline";
+import { useReaderFullScreen } from "./reader-full-screen";
 import type { TurnTimelineRow } from "./turn-timeline";
 import {
   EMPTY_TURN_ACTIVITY,
@@ -433,84 +434,6 @@ export function getFocusMessageButtonStyle(): CSSProperties {
   };
 }
 
-/**
- * The sensor a wake message says it came from. Chat rows are editable, so
- * this only labels the message; it never replaces the stored sender.
- */
-function sensorWakeLabel(
-  message: ChatMessageTyped,
-): { title: string; sensor_id: string } | undefined {
-  const raw = field<any>(message, "sensor_wake");
-  const sensor = typeof raw?.toJS === "function" ? raw.toJS() : raw;
-  if (typeof sensor?.sensor_id !== "string" || !sensor.sensor_id) return;
-  return {
-    sensor_id: sensor.sensor_id,
-    title:
-      typeof sensor.title === "string" && sensor.title.trim()
-        ? sensor.title.trim().slice(0, 100)
-        : "sensor",
-  };
-}
-
-function rpcSourceAttribution(
-  message: ChatMessageTyped,
-  // This message has not been delivered to its recipient's turn yet.
-  waiting = false,
-):
-  | {
-      label: string;
-      source_label: string;
-      source_agent_id: string;
-      source_project_id?: string;
-      direction: "incoming" | "report";
-      agent_network_id?: string;
-      attempt_id?: string;
-      delivery?: "queued" | "queued-fallback";
-    }
-  | undefined {
-  const raw = field<any>(message, "agent_rpc");
-  const rpc = typeof raw?.toJS === "function" ? raw.toJS() : raw;
-  const source = rpc?.source;
-  const agentId = `${source?.agent_id ?? ""}`.trim();
-  if (!agentId) return;
-  // A delivery report is CoCalc's, about the source agent.
-  const report = !!rpc.delivery_report;
-  const evidence = {
-    direction: report ? ("report" as const) : ("incoming" as const),
-    source_label:
-      typeof rpc.source_label === "string" && rpc.source_label.trim()
-        ? rpc.source_label.trim()
-        : source.kind === "external"
-          ? `External agent ${agentId.slice(0, 8)}`
-          : `Agent ${agentId.slice(0, 8)}`,
-    source_agent_id: agentId,
-    source_project_id:
-      typeof source.project_id === "string" ? source.project_id : undefined,
-    agent_network_id:
-      typeof rpc.agent_network_id === "string"
-        ? rpc.agent_network_id
-        : undefined,
-    attempt_id: typeof rpc.attempt_id === "string" ? rpc.attempt_id : undefined,
-    // Say why it has not started instead of looking delivered and ignored.
-    ...(() => {
-      const delivery = report
-        ? undefined
-        : agentMessageWaitingDelivery(rpc, waiting);
-      return delivery ? { delivery } : {};
-    })(),
-  };
-  if (source.kind === "external") {
-    return {
-      ...evidence,
-      label: "External agent message",
-    };
-  }
-  return {
-    ...evidence,
-    label: report ? "Delivery report" : "Agent message",
-  };
-}
-
 export default function Message({
   index,
   actions,
@@ -696,9 +619,16 @@ export default function Message({
   const [autoFocusEdit, setAutoFocusEdit] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
+  const readerFullScreen = useReaderFullScreen();
   const messageRowRef = useRef<HTMLDivElement>(null);
   const zenTriggerRef = useRef<HTMLElement | null>(null);
   const openZenMessage = (event?: React.MouseEvent<HTMLElement>) => {
+    // In the reader: its own full screen for the item, with its subject,
+    // buttons and keys, rather than this message alone.
+    if (readerFullScreen) {
+      readerFullScreen.open();
+      return;
+    }
     zenTriggerRef.current = event?.currentTarget ?? null;
     setShowZenMessage(true);
   };
@@ -1065,20 +995,7 @@ export default function Message({
           lite,
           acpState === "error",
         );
-    const rawRpc = field<any>(message, "agent_rpc");
-    const rpc = typeof rawRpc?.toJS === "function" ? rawRpc.toJS() : rawRpc;
-    const value = rpcAttribution
-      ? stripAgentRpcPrompt(formattedValue, rpc)
-      : formattedValue;
-    if (rpcAttribution) return agentMessageFence(value, rpcAttribution);
-    // A turn a sensor started: one compact line that expands to the prompt.
-    const sensor = sensorWakeLabel(message);
-    const sensorWake = sensor
-      ? sensorWakePresentation(value, sensor.title)
-      : undefined;
-    return sensorWake
-      ? sensorWakeFence({ ...sensorWake, sensor_id: sensor!.sensor_id, value })
-      : value;
+    return presentedMessageMarkdown(message, formattedValue, rpcAttribution);
   }, [
     is_viewers_message,
     renderedMessageValue,
@@ -2456,6 +2373,7 @@ export default function Message({
     return (
       <>
         {renderForkNotice()}
+        <TurnSubjectHeader message={message} />
         {/* How this turn began: above its activity, not under it as it grows. */}
         {showCodexActivity && acpRecoveryCount ? (
           <div
@@ -2678,6 +2596,10 @@ export default function Message({
   function renderZenMessageDrawer() {
     if (!showZenMessage) return null;
     const value = renderedMessageMarkdown;
+    // The subject the agent gave its turn, as the reader shows it.
+    const zenSubject = isAcpAssistantMessage(message)
+      ? readTurnMeta(message).subject
+      : undefined;
     const inlineCodeLinks = field<InlineCodeLink[]>(
       message,
       "inline_code_links",
@@ -2693,7 +2615,18 @@ export default function Message({
     };
     return (
       <Drawer
-        title={senderName}
+        title={
+          zenSubject ? (
+            <span>
+              {zenSubject}{" "}
+              <span style={{ color: UI_COLORS.muted, fontWeight: 400 }}>
+                · {senderName}
+              </span>
+            </span>
+          ) : (
+            senderName
+          )
+        }
         open={showZenMessage}
         onClose={closeZenMessage}
         placement="right"

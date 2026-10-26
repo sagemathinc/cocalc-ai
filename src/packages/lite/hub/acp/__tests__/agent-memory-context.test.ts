@@ -22,9 +22,25 @@ describe("loadAgentMemoryContext", () => {
     expect(memory.event).toEqual({ type: "memory", state: "loaded", notes: 2 });
   });
 
-  it("is silent when memory is off", async () => {
+  it("is silent when memory is unavailable (no answer)", async () => {
     setAgentMemoryContextProvider(async () => null);
     expect(await loadAgentMemoryContext(PROJECT, ACCOUNT)).toEqual({});
+  });
+
+  it("hints that memory exists when it is off, without a Memory line", async () => {
+    setAgentMemoryContextProvider(async () => ({
+      notes: 0,
+      index: "",
+      off: true,
+    }));
+    const memory = await loadAgentMemoryContext(PROJECT, ACCOUNT);
+    expect(memory.event).toBeUndefined();
+    expect(memory.context).toContain("[Agent memory]");
+    expect(memory.context).toContain("Agent memory is off");
+    expect(memory.context).toContain("tell them once");
+    expect(memory.context).toContain("Settings > AI");
+    // No notes and no memory commands: nothing to read or write while off.
+    expect(memory.context).not.toContain("project chat memory list");
   });
 
   it("reports a failed lookup instead of dropping it silently", async () => {

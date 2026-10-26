@@ -160,6 +160,31 @@ function logFallback(ext: string | undefined, path: string): void {
   );
 }
 
+/**
+ * The last two parts of a file name's extension ("todo.json" for
+ * foo.todo.json), which can name an editor of their own ahead of the last
+ * part's. A file named just todo.json has none: it is a JSON file.
+ */
+export function compoundExtension(path: string): string | undefined {
+  const parts = path_split(path).tail.toLowerCase().split(".");
+  if (parts.length < 3 || !parts[0] || !parts.at(-2) || !parts.at(-1)) {
+    return undefined;
+  }
+  return parts.slice(-2).join(".");
+}
+
+/**
+ * The extension that picks the editor for a path: a registered two-part
+ * extension (cal.json), else the last part. Callers that open a file under
+ * another identity (a canonical sync path) pass this for the path the user
+ * sees, since that identity need not keep the name.
+ */
+export function editorExtension(path: string): string {
+  const compound = compoundExtension(path);
+  if (compound != null && file_editors[compound] != null) return compound;
+  return filename_extension(path).toLowerCase();
+}
+
 // Get editor for given path.
 function get_ed(
   project_id: string | undefined,
@@ -171,10 +196,11 @@ function get_ed(
   if (e != null) {
     return e;
   }
-  ext =
-    ext ??
-    altExt[key(project_id, path)] ??
-    filename_extension(path).toLowerCase();
+  const plain = filename_extension(path).toLowerCase();
+  ext = ext ?? altExt[key(project_id, path)] ?? plain;
+  // A registered two-part extension (foo.cal.json) wins over the last part,
+  // unless the caller asked for some other editor.
+  if (ext === plain) ext = editorExtension(path);
 
   // either use the one given by ext, or if there isn't one, use the '' fallback.
   let spec = file_editors[ext];

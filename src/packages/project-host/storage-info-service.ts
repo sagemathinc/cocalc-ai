@@ -25,6 +25,7 @@ import type {
 import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { fileServerClient, getSharedScratchMountpoint } from "./file-server";
 import { getStorageAdmissionStatus } from "./storage-admission";
 
@@ -902,7 +903,7 @@ async function getStorageOverviewImpl({
   home?: string;
   force_sample?: boolean;
 }): Promise<ProjectStorageOverview> {
-  const homePath = normalizeStoragePath(home || "/root");
+  const homePath = normalizeStoragePath(home || DEFAULT_PROJECT_RUNTIME_HOME);
   const cacheKey = storageOverviewCacheKey({ project_id, home: homePath });
   const requestedAt = new Date();
   const forced = !!force_sample;
@@ -1045,6 +1046,13 @@ async function getStorageOverviewImpl({
           label: "Project quota",
           used: quota.used,
           size: quota.size,
+          ...(quota.history_used == null
+            ? {}
+            : {
+                files_used: quota.files_used,
+                history_used: quota.history_used,
+                history_reserve: quota.history_reserve,
+              }),
           qgroupid: quota.qgroupid,
           scope: quota.scope,
           warning: quota.warning,
@@ -1057,7 +1065,8 @@ async function getStorageOverviewImpl({
         bytes: liveBytes,
       },
       retained: buildRetainedSummary({
-        quotaUsed: quota.used,
+        // what the files take, without the edit history
+        quotaUsed: quota.files_used ?? quota.used,
         liveBytes,
         snapshotCount,
       }),

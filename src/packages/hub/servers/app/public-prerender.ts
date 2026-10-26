@@ -49,8 +49,12 @@ import {
   PUBLIC_FEATURED_GUIDES,
 } from "@cocalc/util/public-guides";
 import {
+  getPublicHomeAgentLinks,
   getPublicHomeHighlights,
   isPublicCocalcAiSite,
+  PUBLIC_HOME_AGENT_BODY,
+  PUBLIC_HOME_AGENT_STEPS,
+  PUBLIC_HOME_AGENT_TITLE,
   PUBLIC_HOME_EYEBROW,
   PUBLIC_HOME_HEADLINE,
   PUBLIC_HOME_INTRO,
@@ -187,9 +191,15 @@ function renderHome(
     .join("")}</ul>
 </header>
 <section>
-  <h2>Agents work where your project lives.</h2>
-  <p>Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code is an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.</p>
-  <p>${publicLink(basePath, "features/ai", "See agent workflows")} ${publicLink(basePath, "features/compare", "Compare with agent sandboxes")}</p>
+  <h2>${htmlEscape(PUBLIC_HOME_AGENT_TITLE)}</h2>
+  <p>${htmlEscape(PUBLIC_HOME_AGENT_BODY)}</p>
+  <ol>${PUBLIC_HOME_AGENT_STEPS.map(
+    (step) =>
+      `<li><strong>${htmlEscape(step.title)}</strong>: ${htmlEscape(step.body)}</li>`,
+  ).join("")}</ol>
+  <p>${getPublicHomeAgentLinks(config)
+    .map((link) => publicLink(basePath, link.href, link.label))
+    .join(" ")}</p>
 </section>
 </main>`;
 }

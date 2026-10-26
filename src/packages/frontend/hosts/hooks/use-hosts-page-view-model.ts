@@ -565,13 +565,21 @@ export const useHostsPageViewModel = () => {
   );
   const cancelHostOp = React.useCallback(
     async (op_id: string) => {
+      // Name the host, so the cancel reaches the host's bay.
+      const host_id = Object.keys(hostOps).find(
+        (id) => hostOps[id]?.op_id === op_id,
+      );
       try {
-        await hub.lro.cancel({ op_id });
+        await hub.lro.cancel(
+          host_id
+            ? { op_id, scope_type: "host", scope_id: host_id }
+            : { op_id },
+        );
       } catch (err) {
         console.error(err);
       }
     },
-    [hub],
+    [hub, hostOps],
   );
   const [editingHost, setEditingHost] =
     React.useState<(typeof hosts)[number]>();

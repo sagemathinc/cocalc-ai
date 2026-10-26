@@ -50,7 +50,23 @@ const DEFAULT_RECOVERY_MS = 60_000;
 // In recovery, scheduled snapshots (short btrfs metadata operations) are
 // admitted at this pace instead of waiting for the next starvation override.
 const DEFAULT_RECOVERY_SNAPSHOT_INTERVAL_MS = 20_000;
+// ... divided by this while the 60 s average is below the recovery threshold.
+const RECOVERY_QUIET_PACE_FACTOR = 4;
+// Consecutive samples, at least MIN_STATE_SAMPLE_MS apart, that every
+// escalation (to contended, back to contended from recovery, to emergency)
+// needs: a single stall burst (a SQLite checkpoint, a btrfs commit) must not
+// defer background work for the whole recovery interval.
 const DEFAULT_CONTENDED_SAMPLES = 2;
+// Admission checks sample too (for fresh lifecycle counts); only samples at
+// least this far apart move the pressure state. Below the 5 s timer, for its
+// jitter.
+const DEFAULT_MIN_STATE_SAMPLE_MS = 4_000;
+// And at least this long since the first of those samples: the count alone
+// depends on when the samples fall (the timer's phase, admission checks).
+const DEFAULT_ESCALATION_MS = 10_000;
+// Disk activity is compared over at least this long (maintenance stalls on
+// idle disks), not over the milliseconds between two admission checks.
+const MIN_DISK_ACTIVITY_INTERVAL_MS = 1_000;
 const DEFAULT_BACKGROUND_QUIET_MS = 2_000;
 
 type StorageAdmissionInputs = {
@@ -59,6 +75,11 @@ type StorageAdmissionInputs = {
   project_pool_io_full_avg10?: number;
   bees_io_full_avg10?: number;
   maintenance_io_full_avg10?: number;
+  // the same, averaged over 60 s: sustained pressure made of bursts
+  host_io_full_avg60?: number;
+  project_pool_io_full_avg60?: number;
+  bees_io_full_avg60?: number;
+  maintenance_io_full_avg60?: number;
   // Whether cocalc-maintenance has a finite io.max. Only then is its stall
   // the throttle's own doing rather than real disk contention.
   maintenance_io_capped?: boolean;
@@ -108,6 +129,8 @@ type StorageAdmissionControllerOptions = {
   // 0 disables paced snapshots in recovery.
   recoverySnapshotIntervalMs?: number;
   contendedSamples?: number;
+  minStateSampleMs?: number;
+  escalationMs?: number;
   backgroundQuietMs?: number;
   onPressureStateChange?: (state: HostStoragePressureState) => void;
 };
@@ -137,11 +160,12 @@ function configuredMode(value: unknown): HostStorageAdmissionMode {
   return "observe";
 }
 
-function readIoFullAvg10(path: string): number | undefined {
+function readIoFull(path: string): { avg10?: number; avg60?: number } {
   try {
-    return parseIoPressure(readFileSync(path, "utf8")).fullPercent;
+    const parsed = parseIoPressure(readFileSync(path, "utf8"));
+    return { avg10: parsed.fullPercent, avg60: parsed.fullAvg60Percent };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -239,10 +263,25 @@ function maintenanceStallOnIdleDisks(
   return used > 0;
 }
 
+// Time from `since` to `at` for interval checks: a clock set back (`since`
+// in the future) counts as the interval having passed, rather than as a
+// wait until the clock catches up.
+function elapsedMs(since: number, at: number): number {
+  return at >= since ? at - since : Infinity;
+}
+
 let lastDiskActivity: DiskActivity | undefined;
+let lastDisksIdle = false;
 
 function readMaintenanceDisksIdle(): boolean {
-  const next = readDiskActivity(Date.now());
+  const at = Date.now();
+  if (
+    lastDiskActivity != null &&
+    elapsedMs(lastDiskActivity.at_ms, at) < MIN_DISK_ACTIVITY_INTERVAL_MS
+  ) {
+    return lastDisksIdle;
+  }
+  const next = readDiskActivity(at);
   const idle = maintenanceStallOnIdleDisks(
     lastDiskActivity,
     next,
@@ -252,19 +291,28 @@ function readMaintenanceDisksIdle(): boolean {
     ),
   );
   lastDiskActivity = next;
+  lastDisksIdle = idle;
   return idle;
 }
 
 function defaultReadInputs(): StorageAdmissionInputs {
   const projectCounts = countProjectsByStates(["starting", "stopping"]);
   const locks = getBtrfsMutationLockStatus();
-  const hostIoFullAvg10 = readIoFullAvg10("/proc/pressure/io");
+  const host = readIoFull("/proc/pressure/io");
+  const pool = readIoFull(PROJECT_POOL_IO_PRESSURE);
+  const bees = readIoFull(BEES_IO_PRESSURE);
+  const maintenance = readIoFull(MAINTENANCE_IO_PRESSURE);
+  const hostIoFullAvg10 = host.avg10;
   return {
     sampled_at_ms: Date.now(),
     host_io_full_avg10: hostIoFullAvg10,
-    project_pool_io_full_avg10: readIoFullAvg10(PROJECT_POOL_IO_PRESSURE),
-    bees_io_full_avg10: readIoFullAvg10(BEES_IO_PRESSURE),
-    maintenance_io_full_avg10: readIoFullAvg10(MAINTENANCE_IO_PRESSURE),
+    project_pool_io_full_avg10: pool.avg10,
+    bees_io_full_avg10: bees.avg10,
+    maintenance_io_full_avg10: maintenance.avg10,
+    host_io_full_avg60: host.avg60,
+    project_pool_io_full_avg60: pool.avg60,
+    bees_io_full_avg60: bees.avg60,
+    maintenance_io_full_avg60: maintenance.avg60,
     maintenance_io_capped: readIoMaxCapped(MAINTENANCE_IO_MAX),
     maintenance_disks_idle: readMaintenanceDisksIdle(),
     starting_projects: projectCounts.starting ?? 0,
@@ -343,6 +391,19 @@ function effectiveIoFullAvg10(
   );
 }
 
+// effectiveIoFullAvg10 over the 60 s averages
+function effectiveIoFullAvg60(
+  inputs: StorageAdmissionInputs,
+): number | undefined {
+  return effectiveIoFullAvg10({
+    ...inputs,
+    host_io_full_avg10: inputs.host_io_full_avg60,
+    project_pool_io_full_avg10: inputs.project_pool_io_full_avg60,
+    bees_io_full_avg10: inputs.bees_io_full_avg60,
+    maintenance_io_full_avg10: inputs.maintenance_io_full_avg60,
+  });
+}
+
 function emptyActiveCounts(): Record<StorageOperationPriority, number> {
   return {
     lifecycle: 0,
@@ -404,6 +465,18 @@ export function createStorageAdmissionController(
       process.env.COCALC_PROJECT_HOST_STORAGE_IO_CONTENDED_SAMPLES,
       DEFAULT_CONTENDED_SAMPLES,
     );
+  const minStateSampleMs =
+    options.minStateSampleMs ??
+    finiteNonNegative(
+      process.env.COCALC_PROJECT_HOST_STORAGE_IO_MIN_STATE_SAMPLE_MS,
+      DEFAULT_MIN_STATE_SAMPLE_MS,
+    );
+  const escalationMs =
+    options.escalationMs ??
+    finiteNonNegative(
+      process.env.COCALC_PROJECT_HOST_STORAGE_IO_ESCALATION_MS,
+      DEFAULT_ESCALATION_MS,
+    );
   const backgroundQuietMs =
     options.backgroundQuietMs ??
     positiveInteger(
@@ -414,6 +487,11 @@ export function createStorageAdmissionController(
   let pressureState: HostStoragePressureState = "normal";
   let stateSince = now();
   let consecutiveContended = 0;
+  let consecutiveEmergency = 0;
+  // when the current run of samples at/above each threshold began
+  let contendedSince: number | undefined;
+  let emergencySince: number | undefined;
+  let lastStateSampleAt: number | undefined;
   let recoveryHealthySince: number | undefined;
   let transitionCount = 0;
   let lastTransitionReason: string | undefined;
@@ -449,6 +527,15 @@ export function createStorageAdmissionController(
   const recoveryHealthy = (full: number, lifecycleActive: number) =>
     full < recoveryFullAvg10 &&
     (!recoveryRequiresQuietLifecycle || lifecycleActive === 0);
+  // Start-to-start spacing of snapshots admitted in recovery. Once the last
+  // minute's stall is below the recovery threshold too, the burst that caused
+  // recovery is over: pace four times faster (still one at a time).
+  const recoverySnapshotPaceMs = () => {
+    const avg60 = effectiveIoFullAvg60(lastInputs);
+    return avg60 != null && !lastInputs.error && avg60 < recoveryFullAvg10
+      ? recoverySnapshotIntervalMs / RECOVERY_QUIET_PACE_FACTOR
+      : recoverySnapshotIntervalMs;
+  };
 
   const transition = (
     next: HostStoragePressureState,
@@ -461,6 +548,7 @@ export function createStorageAdmissionController(
       to: next,
       reason,
       effective_io_full_avg10: effectiveIoFullAvg10(lastInputs),
+      effective_io_full_avg60: effectiveIoFullAvg60(lastInputs),
       lifecycle_active:
         lastInputs.starting_projects + lastInputs.stopping_projects,
     });
@@ -472,33 +560,91 @@ export function createStorageAdmissionController(
     options.onPressureStateChange?.(next);
   };
 
+  // No reading is no evidence: a run of high samples must be unbroken.
+  const resetEscalation = () => {
+    consecutiveContended = 0;
+    consecutiveEmergency = 0;
+    contendedSince = undefined;
+    emergencySince = undefined;
+  };
+
   const updateState = (inputs: StorageAdmissionInputs) => {
     const at = inputs.sampled_at_ms;
     const full = effectiveIoFullAvg10(inputs);
     const lifecycleActive = inputs.starting_projects + inputs.stopping_projects;
-    if (full == null) {
+    // (a sample marked unavailable, e.g. no host PSI, is none, even if a
+    // cgroup's PSI still gives a number)
+    if (full == null || inputs.error) {
+      resetEscalation();
       return;
     }
-    if (full >= emergencyFullAvg10) {
+    // The clock was set back: the runs' start times are in the future, and
+    // the spacing check would skip every sample until it caught up. Start
+    // over, with this reading as the first sample.
+    if (lastStateSampleAt != null && at < lastStateSampleAt) {
+      resetEscalation();
+      recoveryHealthySince = undefined;
+      lastStateSampleAt = undefined;
+    }
+    // The 60 s average too: pressure made of bursts that never stay above a
+    // threshold for consecutive 10 s averages is still sustained pressure.
+    // It also holds contended/emergency until it is down too, so the gate
+    // does not bounce between recovery and contended while it decays.
+    const pressure = Math.max(full, effectiveIoFullAvg60(inputs) ?? 0);
+    // Any fresh reading below a threshold ends that run, also between
+    // state samples: a run must be unbroken.
+    if (pressure < emergencyFullAvg10) {
+      consecutiveEmergency = 0;
+      emergencySince = undefined;
+    }
+    if (pressure < contendedFullAvg10) {
       consecutiveContended = 0;
+      contendedSince = undefined;
+    }
+    // (recovery health is the 10 s average, as before: the 60 s one would
+    // keep a host in recovery for minutes after a burst)
+    const healthy =
+      pressure < contendedFullAvg10 && recoveryHealthy(full, lifecycleActive);
+    // Likewise any fresh unhealthy reading ends recovery's healthy interval.
+    if (pressureState === "recovery" && !healthy) {
+      recoveryHealthySince = undefined;
+    }
+    // Admission checks sample as often as operations come (for fresh
+    // lifecycle counts), so consecutive samples could be milliseconds apart
+    // and read the same 10 s average: only samples at least
+    // minStateSampleMs apart count, or move the state.
+    if (
+      lastStateSampleAt != null &&
+      at - lastStateSampleAt < minStateSampleMs
+    ) {
+      return;
+    }
+    lastStateSampleAt = at;
+    if (pressure >= emergencyFullAvg10) {
+      consecutiveEmergency += 1;
+      emergencySince ??= at;
+    }
+    if (pressure >= contendedFullAvg10) {
+      consecutiveContended += 1;
+      contendedSince ??= at;
+    }
+    const sustained = (count: number, since: number | undefined) =>
+      count >= contendedSamples && since != null && at - since >= escalationMs;
+    const emergencySustained = sustained(consecutiveEmergency, emergencySince);
+    const contendedSustained = sustained(consecutiveContended, contendedSince);
+    if (emergencySustained) {
       recoveryHealthySince = undefined;
       transition("emergency", "io_full_emergency", at);
       return;
     }
     if (pressureState === "normal") {
-      if (full >= contendedFullAvg10) {
-        consecutiveContended += 1;
-        if (consecutiveContended >= contendedSamples) {
-          consecutiveContended = 0;
-          transition("contended", "io_full_contended", at);
-        }
-      } else {
-        consecutiveContended = 0;
+      if (contendedSustained) {
+        transition("contended", "io_full_contended", at);
       }
       return;
     }
     if (pressureState === "contended" || pressureState === "emergency") {
-      if (full < contendedFullAvg10) {
+      if (pressure < contendedFullAvg10) {
         recoveryHealthySince = recoveryHealthy(full, lifecycleActive)
           ? at
           : undefined;
@@ -506,12 +652,12 @@ export function createStorageAdmissionController(
       }
       return;
     }
-    if (full >= contendedFullAvg10) {
+    if (contendedSustained) {
       recoveryHealthySince = undefined;
       transition("contended", "io_pressure_recurred", at);
       return;
     }
-    if (recoveryHealthy(full, lifecycleActive)) {
+    if (healthy) {
       recoveryHealthySince ??= at;
       if (at - recoveryHealthySince >= recoveryMs) {
         recoveryHealthySince = undefined;
@@ -580,9 +726,10 @@ export function createStorageAdmissionController(
       pressureState === "recovery"
         ? {
             recovery_snapshot_next_at: iso(
-              lastRecoverySnapshotAt == null
+              lastRecoverySnapshotAt == null ||
+                lastRecoverySnapshotAt > lastInputs.sampled_at_ms
                 ? lastInputs.sampled_at_ms
-                : lastRecoverySnapshotAt + recoverySnapshotIntervalMs,
+                : lastRecoverySnapshotAt + recoverySnapshotPaceMs(),
             ),
           }
         : {}),
@@ -597,16 +744,24 @@ export function createStorageAdmissionController(
   };
 
   const sample = (): HostStorageAdmissionMetrics => {
+    let read = true;
     try {
       lastInputs = readInputs();
     } catch (err) {
+      // (background work stays deferred on the error; the previous
+      // pressure values must not count as a new sample)
+      read = false;
       lastInputs = {
         ...lastInputs,
         sampled_at_ms: now(),
         error: `${err}`,
       };
     }
-    updateState(lastInputs);
+    if (read) {
+      updateState(lastInputs);
+    } else {
+      resetEscalation();
+    }
     if (lastInputs.starting_projects + lastInputs.stopping_projects > 0) {
       lastLifecycleActiveAt = lastInputs.sampled_at_ms;
     }
@@ -621,7 +776,7 @@ export function createStorageAdmissionController(
     }
     if (
       lastLifecycleActiveAt != null &&
-      now() - lastLifecycleActiveAt < backgroundQuietMs
+      elapsedMs(lastLifecycleActiveAt, now()) < backgroundQuietMs
     ) {
       return "lifecycle_settle";
     }
@@ -686,7 +841,8 @@ export function createStorageAdmissionController(
     const recoverySnapshotDue =
       allow_recovery_pace &&
       (lastRecoverySnapshotAt == null ||
-        decidedAtMs - lastRecoverySnapshotAt >= recoverySnapshotIntervalMs);
+        elapsedMs(lastRecoverySnapshotAt, decidedAtMs) >=
+          recoverySnapshotPaceMs());
     const starvationOverride =
       mode === "enforce" &&
       background &&

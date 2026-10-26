@@ -293,8 +293,15 @@ export function useThreadSections({
               actions?.getThreadReadCount?.(thread.key, accountId) ?? 0,
             )
           : 0;
+      // Plus what the reader marked unread again before the watermark.
       const unreadCount = readStateReady
-        ? Math.max(thread.messageCount - readCount, 0)
+        ? Math.max(thread.messageCount - readCount, 0) +
+          (accountId
+            ? (actions?.getReaderUnreadBeforeWatermark?.(
+                thread.key,
+                accountId,
+              ) ?? 0)
+            : 0)
         : 0;
       const metadataClassification =
         threadMetadataAgentClassification(threadMeta);

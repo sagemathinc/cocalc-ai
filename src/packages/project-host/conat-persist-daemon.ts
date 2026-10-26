@@ -33,6 +33,7 @@ export async function main(): Promise<ProjectHostConatPersistDaemonContext> {
     httpServer,
     persistServer,
     boardPersistServer,
+    fenceService,
     maintenance,
   } = await startStandaloneProjectHostConatPersist({
     systemAccountPassword,
@@ -51,6 +52,7 @@ export async function main(): Promise<ProjectHostConatPersistDaemonContext> {
       await Promise.all([persistServer.end(), boardPersistServer.end()]);
       await drainPersistStreamReleaseQueue();
     } finally {
+      fenceService.close();
       maintenance?.close();
       stopEventLoopStallMonitor();
       try {

@@ -6,6 +6,7 @@
  */
 import { Command } from "commander";
 
+import { readApiKeyFile } from "../../core/api-key-file";
 import type { ProjectCommandDeps } from "../project";
 
 export function registerProjectCodexCommands(
@@ -285,26 +286,57 @@ export function registerProjectCodexCommands(
   codexAuthApiKey
     .command("set")
     .description("set an OpenAI API key for project (default) or account scope")
-    .requiredOption("--api-key <key>", "OpenAI API key")
+    // Not --api-key: the root command owns that option (the CoCalc account
+    // key) and would consume it before this subcommand saw it.
+    .option(
+      "--openai-api-key <key>",
+      "OpenAI API key (visible in ps; prefer --key-file or --stdin)",
+    )
+    .option(
+      "--key-file <path>",
+      "read the OpenAI API key from a private file (mode 0600)",
+    )
+    .option("--stdin", "read the OpenAI API key from stdin")
     .option("--scope <scope>", "project|account", "project")
     .option("-w, --project <project>", "project id or name (for project scope)")
     .action(
       async (
         opts: {
-          apiKey: string;
+          openaiApiKey?: string;
+          keyFile?: string;
+          stdin?: boolean;
           scope?: string;
           project?: string;
         },
         command: Command,
       ) => {
+        // withContext reruns the callback after a fresh-auth elevation, and
+        // stdin can only be read once, so read the key at most once.
+        let keyRead: Promise<string> | undefined;
+        const readKey = async (): Promise<string> => {
+          const sources = [
+            opts.openaiApiKey != null,
+            opts.keyFile != null,
+            !!opts.stdin,
+          ].filter(Boolean).length;
+          if (sources !== 1) {
+            throw new Error(
+              "give the key with exactly one of --openai-api-key, --key-file or --stdin",
+            );
+          }
+          if (opts.keyFile != null) return readApiKeyFile(opts.keyFile);
+          if (opts.stdin) return await readAllStdin();
+          return `${opts.openaiApiKey}`;
+        };
         await withContext(
           command,
           "project codex auth api-key set",
           async (ctx) => {
             const scope = `${opts.scope ?? "project"}`.trim().toLowerCase();
-            const apiKey = `${opts.apiKey ?? ""}`.trim();
+            keyRead ??= readKey();
+            const apiKey = (await keyRead).trim();
             if (!apiKey) {
-              throw new Error("--api-key must be non-empty");
+              throw new Error("the OpenAI API key must be non-empty");
             }
             if (scope !== "project" && scope !== "account") {
               throw new Error("scope must be 'project' or 'account'");

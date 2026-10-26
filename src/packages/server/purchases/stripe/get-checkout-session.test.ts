@@ -8,6 +8,7 @@ const mockGetStripeCustomerId = jest.fn();
 const mockSanityCheckAmount = jest.fn();
 const mockCurrentStripeSite = jest.fn();
 const mockAssertPaymentCheckoutAllowed = jest.fn();
+const mockPoolQuery = jest.fn();
 
 jest.mock("@cocalc/server/stripe/connection", () => ({
   __esModule: true,
@@ -40,10 +41,18 @@ jest.mock("@cocalc/server/launch/kill-switches", () => ({
     mockAssertPaymentCheckoutAllowed(...args),
 }));
 
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: () => ({ query: (...args: any[]) => mockPoolQuery(...args) }),
+}));
+
 import getCheckoutSession from "./get-checkout-session";
 
 describe("getCheckoutSession", () => {
   const stripe = {
+    customers: {
+      retrieve: jest.fn(),
+    },
     checkout: {
       sessions: {
         create: jest.fn(),
@@ -70,6 +79,91 @@ describe("getCheckoutSession", () => {
     }));
     stripe.checkout.sessions.expire.mockResolvedValue({});
     stripe.checkout.sessions.list.mockResolvedValue({ data: [] });
+    // A customer with a saved billing address outside the EU and UK.
+    stripe.customers.retrieve.mockResolvedValue({
+      address: { country: "US" },
+    });
+    mockPoolQuery.mockReset().mockResolvedValue({ rows: [] });
+  });
+
+  describe("EU and UK customers need a VAT ID", () => {
+    const start = () =>
+      getCheckoutSession({
+        account_id: "acct-1",
+        description: "Buy course membership",
+        lineItems,
+        purpose: "membership-package-purchase",
+      });
+
+    it("refuses an EU customer without a VAT ID before creating a session", async () => {
+      stripe.customers.retrieve.mockResolvedValue({
+        address: { country: "FR" },
+        tax_ids: { data: [] },
+      });
+      await expect(start()).rejects.toMatchObject({
+        code: "business_tax_id_required",
+      });
+      expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+      expect(mockPoolQuery.mock.calls[0][1].slice(1, 5)).toEqual([
+        "acct-1",
+        "FR",
+        "checkout:membership-package-purchase",
+        "missing",
+      ]);
+    });
+
+    it("creates the session for an EU customer with a verified VAT ID", async () => {
+      stripe.customers.retrieve.mockResolvedValue({
+        address: { country: "FR" },
+        tax_ids: {
+          data: [
+            {
+              type: "eu_vat",
+              value: "FR12345678901",
+              verification: { status: "verified" },
+            },
+          ],
+        },
+      });
+      await expect(start()).resolves.toMatchObject({ sessionId: "cs_new" });
+      expect(mockPoolQuery).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["DE", true],
+      ["GB", true],
+      ["XX", true],
+      [undefined, true],
+      ["US", false],
+      ["JP", false],
+    ])(
+      "asks a customer with no saved address to enter one first when the request country is %s: %s",
+      async (request_country, required) => {
+        stripe.customers.retrieve.mockResolvedValue({ tax_ids: { data: [] } });
+        const run = getCheckoutSession({
+          account_id: "acct-1",
+          description: "Buy course membership",
+          lineItems,
+          purpose: "membership-package-purchase",
+          request_country,
+        });
+        if (required) {
+          await expect(run).rejects.toMatchObject({
+            code: "billing_address_required",
+          });
+          expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+        } else {
+          await expect(run).resolves.toMatchObject({ sessionId: "cs_new" });
+        }
+      },
+    );
+
+    it("leaves a US customer unaffected", async () => {
+      stripe.customers.retrieve.mockResolvedValue({
+        address: { country: "US" },
+      });
+      await expect(start()).resolves.toMatchObject({ sessionId: "cs_new" });
+    });
   });
 
   it("reuses a matching open embedded checkout session instead of expiring it", async () => {

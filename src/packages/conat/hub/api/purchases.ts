@@ -10,6 +10,34 @@ import type { MembershipPackageProduct } from "@cocalc/util/membership-package-p
 export type MembershipClass = string;
 export type MembershipPackageKind = "course" | "team" | "site";
 
+export type AdminCreditAttributionSource =
+  | "audit-log"
+  | "notes"
+  | "attached"
+  | "missing";
+
+// Who created an admin balance adjustment, and why
+// (server/purchases/admin-credit-attribution.ts).
+export interface AdminCreditAttribution {
+  purchase_id: number;
+  time: string;
+  account_id: string;
+  // Positive for a credit, negative for a debit.
+  amount: number;
+  description: string | null;
+  created_by: string | null;
+  reason: string | null;
+  source: AdminCreditAttributionSource;
+  attached_by?: string | null;
+  attached_at?: string | null;
+}
+
+export interface AdminCreditAttributionAttachResult {
+  committed: boolean;
+  before: AdminCreditAttribution;
+  after: AdminCreditAttribution;
+}
+
 export interface AdminMembershipPackagePurchaseResult {
   package_id: string;
   purchase_id: number;
@@ -1841,6 +1869,22 @@ export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {
     expires_at?: Date | string | null;
     metadata?: Record<string, unknown> | null;
   }) => Promise<SiteLicenseOverview>;
+  adminListCreditAttribution: (opts?: {
+    account_id?: string;
+    since?: string;
+    until?: string;
+    missing_only?: boolean;
+    limit?: number;
+  }) => Promise<AdminCreditAttribution[]>;
+  adminAttachCreditAttribution: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    purchase_id?: number;
+    attributed_admin_account_id?: string;
+    reason?: string;
+    commit?: boolean;
+  }) => Promise<AdminCreditAttributionAttachResult>;
   adminCreateMembershipPackagePurchase: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -2101,6 +2145,8 @@ export const purchases = {
   getClaimableMembershipPackages: authFirstRequireAccount,
   claimMembershipPackageSeat: authFirstRequireAccount,
   adminProvisionSiteLicense: authFirstRequireAccount,
+  adminListCreditAttribution: authFirstRequireAccountWithBoundSession,
+  adminAttachCreditAttribution: authFirstRequireAccountWithBoundSession,
   adminCreateMembershipPackagePurchase: authFirstRequireAccountWithBoundSession,
   listSiteLicenseOverviews: authFirstRequireAccount,
   getSiteLicenseOverview: authFirstRequireAccount,

@@ -3,9 +3,21 @@
  *  License: MS-RSL – see https://github.com/sagemathinc/cocalc-ai/blob/master/LICENSE.md
  */
 
-import { Alert, Button, Card, Progress, Space, Statistic, Tag } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Progress,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+} from "antd";
 import { useEffect, useState } from "react";
-import type { SiteFundedCodexStatus } from "@cocalc/util/ai/site-funded-codex";
+import type {
+  SiteFundedCodexStatus,
+  SiteFundedFunnel,
+} from "@cocalc/util/ai/site-funded-codex";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { Icon } from "@cocalc/frontend/components";
 
@@ -17,6 +29,105 @@ function poolLabel(poolId: string): string {
   if (poolId.endsWith("global")) return "Combined site budget";
   if (poolId.endsWith("paid")) return "Paid/member sub-pool";
   return "Free sub-pool";
+}
+
+const OUTCOME_LABELS: Record<string, string> = {
+  allowed: "Admitted",
+  unverified_email: "Refused: email address not verified",
+  no_allowance: "Refused: membership includes no AI allowance",
+  banned: "Refused: account banned",
+  ineligible: "Refused: no active account",
+  ai_disabled: "Refused: AI disabled for the site",
+  disabled: "Refused: site-funded Codex disabled",
+  missing_price: "Refused: pricing not configured",
+  account_limit_5h: "Refused: 5-hour allowance used up",
+  account_limit_7d: "Refused: 7-day allowance used up",
+  account_concurrency: "Refused: too many turns running for the account",
+  global_concurrency: "Refused: site-wide concurrency limit",
+  global_pool: "Refused: site budget used up",
+  account_hold: "Refused: account on hold",
+  unavailable: "Refused: funding service unavailable",
+  provider_keys_exhausted:
+    "Refused: every site Claude key is at its monthly limit",
+  error: "Failed: admission error",
+};
+
+const TURN_STATUS_LABELS: Record<string, string> = {
+  committed: "Completed",
+  active: "Running",
+  interrupted: "Interrupted",
+  failed: "Failed",
+  expired: "Expired (host stopped reporting)",
+  released: "Released unused",
+};
+
+export function SiteFundedFunnelSection({
+  funnel,
+}: {
+  funnel: SiteFundedFunnel;
+}) {
+  return (
+    <div>
+      <Space wrap style={{ marginBottom: 6 }}>
+        <b>Last 7 days</b>
+        <span>
+          {new Date(funnel.periodStart).toLocaleDateString()} through{" "}
+          {new Date(funnel.periodEnd).toLocaleDateString()}
+        </span>
+      </Space>
+      <Space wrap size={24} style={{ marginBottom: 12 }}>
+        <Statistic title="Admission attempts" value={funnel.attempts} />
+        <Statistic title="Accounts trying" value={funnel.accounts} />
+        <Statistic title="Accounts admitted" value={funnel.admittedAccounts} />
+      </Space>
+      <Table
+        size="small"
+        pagination={false}
+        rowKey="outcome"
+        style={{ marginBottom: 12 }}
+        dataSource={funnel.outcomes}
+        locale={{ emptyText: "No admission attempts recorded yet" }}
+        columns={[
+          {
+            title: "Admission",
+            dataIndex: "outcome",
+            render: (outcome: string) => OUTCOME_LABELS[outcome] ?? outcome,
+          },
+          { title: "Attempts", dataIndex: "attempts", align: "right" },
+          { title: "Accounts", dataIndex: "accounts", align: "right" },
+        ]}
+      />
+      <Table
+        size="small"
+        pagination={false}
+        rowKey="status"
+        dataSource={funnel.turns}
+        locale={{ emptyText: "No funded turns" }}
+        columns={[
+          {
+            title: "Admitted turns",
+            dataIndex: "status",
+            render: (status: string) => TURN_STATUS_LABELS[status] ?? status,
+          },
+          { title: "Turns", dataIndex: "turns", align: "right" },
+          { title: "Accounts", dataIndex: "accounts", align: "right" },
+          {
+            title: "Cost",
+            dataIndex: "committedMicrousd",
+            align: "right",
+            render: (microusd: number) => dollars(microusd),
+          },
+          {
+            title: "Per turn",
+            key: "perTurn",
+            align: "right",
+            render: (_: unknown, row: SiteFundedFunnel["turns"][number]) =>
+              row.turns ? dollars(row.committedMicrousd / row.turns) : "",
+          },
+        ]}
+      />
+    </div>
+  );
 }
 
 export default function SiteFundedCodexStatusCard() {
@@ -114,6 +225,9 @@ export default function SiteFundedCodexStatusCard() {
             </div>
           );
         })}
+        {status?.funnel ? (
+          <SiteFundedFunnelSection funnel={status.funnel} />
+        ) : null}
         {status?.reconciliation ? (
           <Alert
             type={

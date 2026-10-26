@@ -1024,17 +1024,20 @@ test("by default a host edits boards up to its own record limit", async () => {
   await over.cleanup();
 });
 
-test.each([
-  ["unset", {}],
-  ["empty", { COCALC_PROJECT_HOST_BOARD_EDITING: "" }],
-  ["0", { COCALC_PROJECT_HOST_BOARD_EDITING: "0" }],
-  ["true", { COCALC_PROJECT_HOST_BOARD_EDITING: "true" }],
-  [" 1", { COCALC_PROJECT_HOST_BOARD_EDITING: " 1" }],
-])(
-  "with board editing off (%s), a direct boardOpen or a large write starts nothing",
-  async (_name, env) => {
+describe("with board editing off", () => {
+  // Every value but exactly "1" leaves editing off (service.test.ts checks
+  // the parsing of each); here each one builds the writable file service as a
+  // project host does, gate off.
+  const OFF: [string, NodeJS.ProcessEnv][] = [
+    ["unset", {}],
+    ["empty", { COCALC_PROJECT_HOST_BOARD_EDITING: "" }],
+    ["0", { COCALC_PROJECT_HOST_BOARD_EDITING: "0" }],
+    ["true", { COCALC_PROJECT_HOST_BOARD_EDITING: "true" }],
+    [" 1", { COCALC_PROJECT_HOST_BOARD_EDITING: " 1" }],
+  ];
+
+  async function gatedService(env: NodeJS.ProcessEnv) {
     const project_id = uuid();
-    // The writable file service as a project host builds it, gate off.
     const service = `fs-gated-${uuid().slice(0, 8)}`;
     const server = await fsServer({
       service,
@@ -1056,21 +1059,46 @@ test.each([
     });
     const gated: any = connect().fs({ project_id, service });
     await files.writeFile("gated.board.json", canonical(BOARD));
+    return {
+      project_id,
+      gated,
+      close: () => (server as any)?.close?.(),
+    };
+  }
+
+  test.each(OFF)(
+    "(%s), a direct boardOpen or boardSave starts nothing",
+    async (_name, env) => {
+      const t = await gatedService(env);
+      try {
+        for (const call of ["boardOpen", "boardSave"]) {
+          await expect(t.gated[call]("gated.board.json")).rejects.toMatchObject(
+            {
+              code: "ENOSYS",
+            },
+          );
+        }
+        expect(openBoardCount()).toBe(0);
+      } finally {
+        t.close();
+      }
+    },
+  );
+
+  // The same for every value above (the service has no board handlers at
+  // all), and about 6.4 MB through a syncdb, so it runs once.
+  test("a large write to the board's stream starts nothing", async () => {
+    const t = await gatedService({});
     const writer = await openBoardSyncdb({
       // Writes as the host does (only the manager writes in production; these
       // replicas stand in for edits the host has admitted).
       writer: true,
       client: connect(),
-      project_id,
+      project_id: t.project_id,
       path: "gated.board.json",
       service: fileserver.service,
     });
     try {
-      for (const call of ["boardOpen", "boardSave"]) {
-        await expect(gated[call]("gated.board.json")).rejects.toMatchObject({
-          code: "ENOSYS",
-        });
-      }
       // A client writing an oversized change to the board's stream: no host
       // replica exists to apply it.
       // (Over the host's hard limits: 1,600 records, about 6.4 MB.)
@@ -1084,17 +1112,18 @@ test.each([
       }
       writer.commit();
       await writer.save();
-      await expect(gated.boardOpen("gated.board.json")).rejects.toMatchObject({
-        code: "ENOSYS",
-      });
+      await expect(t.gated.boardOpen("gated.board.json")).rejects.toMatchObject(
+        {
+          code: "ENOSYS",
+        },
+      );
       expect(openBoardCount()).toBe(0);
     } finally {
       await writer.close();
-      (server as any)?.close?.();
+      t.close();
     }
-  },
-  120_000,
-);
+  }, 120_000);
+});
 
 test("an invalid snapshot checkpoint is repaired through the board write service", async () => {
   const t = await setup(canonical(BOARD));

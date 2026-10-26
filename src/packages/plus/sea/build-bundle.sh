@@ -68,7 +68,9 @@ rm -rf "$OUT"/*
 cd "$ROOT"
 
 echo "- Build @cocalc/plus"
-pnpm --filter @cocalc/plus build
+# Filter within the workspace (packages/), so generated copies such as the
+# project bundle's source/ are never matched.
+pnpm --dir "$ROOT/packages" --filter @cocalc/plus build
 
 echo "- Bundle entry point with @vercel/ncc"
 "$ROOT/scripts/ncc.sh" build packages/plus/dist/bin/start.js \

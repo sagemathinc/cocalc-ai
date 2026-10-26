@@ -31,6 +31,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has_tests: ${{ steps.plan.outputs.has_tests }}
+      run_multibay: ${{ steps.plan.outputs.run_multibay }}
       mode: ${{ steps.plan.outputs.mode }}
       depcheck_packages: ${{ steps.plan.outputs.depcheck_packages }}
       jest_cache_key: ${{ steps.jest-cache-key.outputs.key }}
@@ -93,8 +94,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: src/packages/pnpm-lock.yaml
 
-      - name: Build
-        run: cd src && pnpm build
+      # Emit only: the typecheck job checks the whole solution in parallel, so
+      # the test jobs do not wait for type checking.
+      - name: Build (emit only)
+        run: |
+          node src/scripts/ci-tsc-emit-only.mjs
+          cd src && pnpm build
 
       - name: Pack workspace build
         run: |
@@ -124,6 +129,35 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 1
+
+  # Type checking for every workspace project (tsconfig.solution.json); the
+  # build job only emits.
+  typecheck:
+    needs: plan
+    if: needs.plan.outputs.has_tests == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.5.2
+          run_install: false
+
+      - name: Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        run: pnpm -C src/packages install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm -C src tsc
 
   checks:
     needs: plan
@@ -273,6 +307,11 @@ jobs:
           fi
           ./workspaces.py test "${test_args[@]}"
 
+      # Warnings only: flags a slow new test file on the PR that adds it.
+      - name: Slowest test files
+        if: always()
+        run: node src/scripts/ci-test-timings.mjs src/.cache/test-reports --title="Slowest test files (${{ matrix.lane }})"
+
       - name: Upload test attempts and timings
         if: always()
         uses: actions/upload-artifact@v6
@@ -286,9 +325,11 @@ jobs:
   # A real two-bay cluster (seed + attached bay), each a full hub with its own
   # PostgreSQL, joined by the real inter-bay fabric, plus fault injection.
   # Multibay is not deployed yet; this keeps it working until it is.
+  # Skipped when a change cannot reach a hub's server side (e.g. frontend-only);
+  # see needsMultibay in src/scripts/ci-test-plan.mjs.
   multibay:
     needs: [plan, build]
-    if: needs.plan.outputs.has_tests == 'true'
+    if: needs.plan.outputs.run_multibay == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 25
 

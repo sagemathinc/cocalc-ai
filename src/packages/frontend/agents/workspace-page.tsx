@@ -89,6 +89,8 @@ import {
   type NewAgentRuntimeKind,
 } from "./new-agent-runtime-select";
 import { preferredClaudeCredential } from "./claude-credential-options";
+import { siteFundedClaudeAvailable } from "./site-funded-claude";
+import { useClaudeRuntimeDefault } from "./use-claude-runtime-default";
 import {
   NewAgentClaudeControls,
   NewAgentAcpControls,
@@ -126,7 +128,7 @@ import {
 import { NewAgentPeople } from "./new-agent-people";
 import { ShareAgentModal } from "./share-agent-modal";
 import { useMobileSearchNavigation } from "./use-mobile-search-navigation";
-import { lite } from "@cocalc/frontend/lite";
+import { lite, project_id as liteProjectId } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
 import {
   ProjectContext,
@@ -323,7 +325,6 @@ import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit
 import {
   NewAgentCodexPaymentControl,
   newAgentPaymentSourceEnabled,
-  shouldDefaultToClaude,
   shouldPrepareProjectForClaude,
 } from "./new-agent-codex-payment";
 import { MembershipDetailsModal } from "@cocalc/frontend/project/start-button";
@@ -343,6 +344,15 @@ import {
   agentRowLabel,
   useAgentStatusNow,
 } from "./agent-status-mark";
+import { RecentAgentsCountMenu } from "./recent-agents-count-menu";
+import {
+  SIDEBAR_RECENT_AGENTS_SETTING,
+  sidebarRecentAgents,
+  sidebarRecentAgentsCount,
+  waitingKey,
+  waitingThreads,
+} from "./sidebar-recent";
+import { useLiteWaitingThreads } from "./use-lite-waiting";
 import {
   assertAgentWorkingDirectory,
   AgentProjectHomeNotReadyError,
@@ -638,7 +648,7 @@ function NewAgentPanel({
     }
   });
   // Whether the runtime came from the source agent or the user's choice,
-  // rather than the Codex default.
+  // rather than the default.
   const runtimeChosen = useRef(
     sourceRuntime != null || restoredPreparation != null,
   );
@@ -973,6 +983,21 @@ function NewAgentPanel({
             setClaudeCredential(
               preferredClaudeCredential(initialClaudeCredential.current, rows),
             );
+          // Then, if the membership includes Claude, it is the default for
+          // an account with no Claude credential of its own.
+          void siteFundedClaudeAvailable(boundAccount.accountId).then(
+            (membership) => {
+              if (disposed || !membership || claudeCredentialChosen.current)
+                return;
+              setClaudeCredential(
+                preferredClaudeCredential(
+                  initialClaudeCredential.current,
+                  rows,
+                  true,
+                ),
+              );
+            },
+          );
           setClaudeCredentialsLoaded(true);
         }
       })
@@ -1316,6 +1341,7 @@ function NewAgentPanel({
 
   async function create(requestValue?: string, withoutTask = false) {
     if (runtimeKind === "claude-code" && !claudeCredentialsLoaded) return;
+    if (runtimeDefaultPending) return;
     // Without a way to pay for the chosen agent, sending starts sign-in; the
     // request stays in the box.
     if (signInRequired && !withoutTask) {
@@ -1760,43 +1786,46 @@ function NewAgentPanel({
       setSignInOpen(true);
     }
   }
-  useEffect(() => {
-    const candidate = (claudeConnected: boolean) =>
-      runtimeKind === "codex-native" &&
-      shouldDefaultToClaude({
-        firstRun: isFirstRun,
-        codexUnconfigured: paymentUnconfigured,
-        runtimeChosen: runtimeChosen.current,
-        claudeConnected,
-      });
-    if (!candidate(true)) return;
-    let disposed = false;
-    void webapp_client.conat_client.hub.system
-      .listExternalCredentials({ provider: "anthropic", scope: "account" })
-      .then((rows) => {
-        if (disposed) return;
-        if (
-          candidate(
-            rows.some(
-              (row) =>
-                !row.revoked &&
-                (row.kind === "anthropic-api-key" ||
-                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
-            ),
-          )
-        )
-          setRuntimeKind("claude-code");
-      })
-      .catch(() => {
-        /* Keep the Codex default. */
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [isFirstRun, paymentUnconfigured, runtimeKind, boundAccount.accountId]);
+  // Whether Codex would run on the user's own ChatGPT plan; undefined until
+  // that is known.
+  const codexOwnPlan =
+    paymentSource != null
+      ? subscriptions.length > 0 || !!paymentSource.hasSubscription
+      : lite || paymentSourceError
+        ? false
+        : undefined;
+  const claudeDefault = useClaudeRuntimeDefault({
+    codexRuntime: runtimeKind === "codex-native",
+    runtimeChosen: () => runtimeChosen.current,
+    codexOwnPlan,
+    accountId: boundAccount.accountId,
+    checkClaude: async () => {
+      const [rows, claudeIncluded] = await Promise.all([
+        webapp_client.conat_client.hub.system
+          .listExternalCredentials({ provider: "anthropic", scope: "account" })
+          .catch(() => undefined),
+        siteFundedClaudeAvailable(boundAccount.accountId),
+      ]);
+      return {
+        claudeConnected: (rows ?? []).some(
+          (row) =>
+            !row.revoked &&
+            (row.kind === "anthropic-api-key" ||
+              row.kind === CLAUDE_SUBSCRIPTION_KIND),
+        ),
+        claudeIncluded,
+      };
+    },
+    onClaude: () => setRuntimeKind("claude-code"),
+  });
+  // Until it is decided whether this agent starts as Claude, it is not
+  // created: a quick submit would otherwise make the Codex agent the default
+  // was about to replace.
+  const runtimeDefaultPending = !claudeDefault.settled;
 
   function chooseRuntime(kind: NewAgentRuntimeKind) {
     runtimeChosen.current = true;
+    claudeDefault.settle();
     setClaudeConnectRequested(false);
     setRuntimeKind(kind);
     if (kind === "claude-code") void prepareProjectForClaude();
@@ -2091,7 +2120,9 @@ function NewAgentPanel({
                     atLimit ||
                     (!projectId &&
                       (!projectMap || emailVerificationRequired)) ||
-                    (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
+                    (runtimeKind === "claude-code" &&
+                      !claudeCredentialsLoaded) ||
+                    runtimeDefaultPending
                   }
                   onClick={() => {
                     const request =
@@ -3575,7 +3606,6 @@ function AgentWorkspace({
 }
 
 const SIDEBAR_SECTIONS_STORAGE_KEY = "cocalc-sidebar-sections-v1";
-const SIDEBAR_RECENT_AGENTS = 3;
 
 interface SidebarSections {
   agents: boolean;
@@ -3737,6 +3767,26 @@ export function MyAgentsWorkspacePage({
   const aiDisabled = !!useTypedRedux("account", "other_settings")?.get(
     "openai_disabled",
   );
+  // How many recent agents the sidebar shows (a per-account setting), and
+  // those waiting for this person's answer, always shown until answered.
+  const recentAgentsCount = sidebarRecentAgentsCount(
+    useTypedRedux("account", "other_settings")?.get(
+      SIDEBAR_RECENT_AGENTS_SETTING,
+    ),
+  );
+  const mentions = useTypedRedux("mentions", "mentions");
+  // Lite has no notifications: its project's attention records instead.
+  const liteWaiting = useLiteWaitingThreads({
+    active: lite,
+    project_id: liteProjectId,
+    account_id: webapp_client.account_id ?? undefined,
+  });
+  const waiting = useMemo(
+    () => (lite ? liteWaiting : waitingThreads(mentions)),
+    [mentions, liteWaiting],
+  );
+  const isWaiting = (agent: NamedAgent) =>
+    waiting.has(waitingKey(agent.endpoint.project_id, agent.thread_id));
   // The sidebar's sections (Agents, Projects, Artifacts, People) stay where
   // they are: navigating never expands, collapses or swaps one. A collapsed
   // section still shows the item that is open.
@@ -4685,11 +4735,11 @@ export function MyAgentsWorkspacePage({
           <button
             type="button"
             aria-current={active ? "page" : undefined}
-            aria-label={agentRowLabel(
+            aria-label={`${agentRowLabel(
               { title: theme.title, name: agent.name, project: projectTitle },
               agent.status,
               statusNow,
-            )}
+            )}${isWaiting(agent) ? ", waiting for your answer" : ""}`}
             title={`${theme.title} · @${agent.name}${showProjectTitle ? ` · ${projectTitle}` : ""}`}
             onClick={() => selectAgent(agent)}
             style={{
@@ -4719,6 +4769,17 @@ export function MyAgentsWorkspacePage({
               )}
             </Text>
             <AgentStatusMark status={agent.status} now={statusNow} />
+            {isWaiting(agent) && (
+              <Tooltip title="Waiting for your answer">
+                <Tag
+                  color="orange"
+                  aria-hidden
+                  style={{ marginInlineEnd: 0, fontWeight: 600 }}
+                >
+                  ?
+                </Tag>
+              </Tooltip>
+            )}
           </button>
         </div>
         {!hidden && (
@@ -4966,14 +5027,11 @@ export function MyAgentsWorkspacePage({
           // recent few and the open agent; "All agents" shows the rest.
           const unpinnedAgents = visibleGroups.unpinned;
           if (!search) {
-            const shown = unpinnedAgents.slice(0, SIDEBAR_RECENT_AGENTS);
-            if (
-              selected &&
-              unpinnedAgents.includes(selected) &&
-              !shown.includes(selected)
-            )
-              shown.push(selected);
-            visibleGroups.unpinned = shown;
+            visibleGroups.unpinned = sidebarRecentAgents(unpinnedAgents, {
+              count: recentAgentsCount,
+              isWaiting,
+              selected,
+            });
             // Hidden agents are on the Agents page (and found by a search).
             visibleGroups.hidden = [];
           }
@@ -5259,12 +5317,27 @@ export function MyAgentsWorkspacePage({
                         ) : (
                           recencySections.map((section) => (
                             <div key={section.key}>
-                              <Text
-                                type="secondary"
-                                style={{ display: "block", padding: 6 }}
-                              >
-                                {section.title}
-                              </Text>
+                              {search ? (
+                                <Text
+                                  type="secondary"
+                                  style={{ display: "block", padding: 6 }}
+                                >
+                                  {section.title}
+                                </Text>
+                              ) : (
+                                <RecentAgentsCountMenu
+                                  title={section.title}
+                                  count={recentAgentsCount}
+                                  onChange={(count) =>
+                                    void redux
+                                      .getActions("account")
+                                      .set_other_settings(
+                                        SIDEBAR_RECENT_AGENTS_SETTING,
+                                        count,
+                                      )
+                                  }
+                                />
+                              )}
                               {renderSortableAgentGroup(
                                 section.agents,
                                 false,

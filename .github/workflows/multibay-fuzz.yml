@@ -11,12 +11,16 @@ name: Multibay fuzz
 on:
   schedule:
     - cron: "17 6 * * *"
-  # A short run on changes to the fuzzer itself.
+  # A short run on changes to the fuzzer itself or the cluster it drives, not
+  # on new scenarios in the two-bay cluster test (multibay.test.mjs), which
+  # the Test workflow runs.
   pull_request:
     branches:
       - main
     paths:
-      - "src/scripts/multibay/**"
+      - "src/scripts/multibay/fuzz/**"
+      - "src/scripts/multibay/cluster.mjs"
+      - "src/scripts/multibay/harness.mjs"
       - ".github/workflows/multibay-fuzz.yml"
   workflow_dispatch:
     inputs:

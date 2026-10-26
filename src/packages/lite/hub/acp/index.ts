@@ -1,6 +1,9 @@
 import { isQualifiedClaudeCodeProfile } from "@cocalc/util/ai/qualified-harnesses";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
-import { agentMemoryTurnContext } from "@cocalc/conat/agents/memory";
+import {
+  agentMemoryOffTurnContext,
+  agentMemoryTurnContext,
+} from "@cocalc/conat/agents/memory";
 import {
   chainToolRan,
   toolRanOf,
@@ -26,6 +29,7 @@ import {
   takeAgentRpcReportByOpId,
 } from "../sqlite/agent-rpc-reports";
 import { agentRpcReportCapabilityExpiresAt } from "@cocalc/conat/agents/rpc-reports";
+import { SENSOR_WAKE_CLAIM_LEASE_MS } from "@cocalc/conat/agents/sensors";
 import { toolUseTracker } from "./tool-use";
 import { sweepAgentStatus } from "./agent-status-report";
 import {
@@ -132,6 +136,7 @@ import {
   CONTEXT_NOT_SYNCED_ERROR,
   contextStamp,
   preferredThreadConfigRecord,
+  sharedCodexThreadConfig,
   threadConfigRowRank,
   storedSessionInContext,
   threadContext,
@@ -277,8 +282,9 @@ import { agentUserTimeContext } from "./user-locale";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
 import {
   humanTurnComputerNote,
+  resolveHumanAgentMentions,
   resolveHumanTurnMentions,
-  resolveHumanTurnArtifactMentions,
+  humanTurnArtifacts,
 } from "./turn-mentions";
 import { augmentPromptWithAgentMentions } from "@cocalc/util/agent-mentions";
 import {
@@ -372,6 +378,7 @@ import {
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
+import { HarnessIdleDisposer, harnessIdleDisposeMs } from "./harness-idle";
 import { replaceAngleTags } from "@cocalc/util/linear-text";
 export {
   setHarnessAuthorityValidator,
@@ -461,7 +468,7 @@ type AgentMemoryContextProvider = (opts: {
   /** The turn's chat, so the index can list its agent's own notes. */
   chatPath?: string;
   threadId?: string;
-}) => Promise<{ notes: number; index: string } | null>;
+}) => Promise<{ notes: number; index: string; off?: true } | null>;
 let agentMemoryContextProvider: AgentMemoryContextProvider | undefined;
 
 export function setAgentMemoryContextProvider(
@@ -497,6 +504,8 @@ async function loadAgentMemoryContext(
       return { event: { type: "memory", state: "unavailable" } };
     }
     if (!result) return {};
+    // Memory is off: no notes and no Memory line, only the hint that it exists.
+    if (result.off) return { context: agentMemoryOffTurnContext() };
     return {
       context: agentMemoryTurnContext(
         result.index,
@@ -528,6 +537,25 @@ const agents = new Map<string, AcpAgent>();
 const harnessConversationProfiles = new Map<string, string>();
 const agentProjectIds = new WeakMap<AcpAgent, string>();
 const harnessAgents = new WeakSet<AcpAgent>();
+// A retained harness agent holds its process (and, for a Claude controller on
+// a project host, a transcript staging slot) until it is disposed: dispose one
+// that has been idle a while. Its conversation's next turn starts a fresh one.
+const harnessIdle = new HarnessIdleDisposer<AcpAgent>({
+  idleMs: harnessIdleDisposeMs(),
+  retire: (key, agent) => {
+    if (agents.get(key) !== agent) return false;
+    agents.delete(key);
+    agentProjectIds.delete(agent);
+    return true;
+  },
+  dispose: async (agent) => await agent.dispose?.(),
+  onError: (key, err, attempt) =>
+    logger.warn("failed to dispose idle ACP harness agent", {
+      key,
+      err,
+      attempt,
+    }),
+});
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 const pumpingAcpJobThreads = new Set<string>();
@@ -8278,10 +8306,10 @@ async function executeAcpRequest({
   const mentionReferences = harness
     ? []
     : await resolveHumanTurnMentions(request, hubApi.agent);
-  const artifactReferences = await resolveHumanTurnArtifactMentions(
-    request,
-    hubApi.artifactCatalog,
-  );
+  // A project-host's agent worker has no artifact catalog: its chips are
+  // named to the agent instead of bound (never a failed turn).
+  const { references: artifactReferences, note: artifactNote } =
+    await humanTurnArtifacts(request, hubApi.artifactCatalog);
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,
@@ -8349,22 +8377,36 @@ async function executeAcpRequest({
     harnessConversationProfiles.set(conversationKey, harnessKey);
   }
   let currentAgent = harnessKey ? agents.get(harnessKey) : undefined;
-  if (harnessKey && !currentAgent) {
-    currentAgent = await createHarnessAgent(
-      request,
-      createCodexAttentionHandler(conatClient!, {
-        runtimeLabel:
-          request.runtime?.profile.id === "claude-code" ? "Claude" : "Agent",
-        onSyncResponseResolved: persistAttentionResponseProjection,
-      }),
+  // This turn takes the agent, so it is not idle. Synchronous with the get
+  // above, so an idle disposal cannot remove it in between.
+  if (harnessKey) harnessIdle.acquire(harnessKey);
+  // Once, when the turn ends: dispose the agent if no turn takes it soon.
+  const releaseHarness = () => {
+    if (!harnessKey) return;
+    harnessIdle.release(
+      harnessKey,
+      currentAgent && agents.get(harnessKey) === currentAgent
+        ? currentAgent
+        : undefined,
     );
-    agents.set(harnessKey, currentAgent);
-    agentProjectIds.set(currentAgent, projectId);
-    harnessAgents.add(currentAgent);
-  }
-  currentAgent ??= await ensureAgent(projectId, useNativeTerminal, bindings);
-  const { prompt, local_images, image_attachments, cleanup } =
-    await materializeBlobs(
+  };
+  let materialized: Awaited<ReturnType<typeof materializeBlobs>>;
+  try {
+    if (harnessKey && !currentAgent) {
+      currentAgent = await createHarnessAgent(
+        request,
+        createCodexAttentionHandler(conatClient!, {
+          runtimeLabel:
+            request.runtime?.profile.id === "claude-code" ? "Claude" : "Agent",
+          onSyncResponseResolved: persistAttentionResponseProjection,
+        }),
+      );
+      agents.set(harnessKey, currentAgent);
+      agentProjectIds.set(currentAgent, projectId);
+      harnessAgents.add(currentAgent);
+    }
+    currentAgent ??= await ensureAgent(projectId, useNativeTerminal, bindings);
+    materialized = await materializeBlobs(
       request.prompt ?? "",
       projectId,
       useContainer && hostProjectRoot
@@ -8375,6 +8417,11 @@ async function executeAcpRequest({
         : undefined,
       !!harness,
     );
+  } catch (err) {
+    releaseHarness();
+    throw err;
+  }
+  const { prompt, local_images, image_attachments, cleanup } = materialized;
   try {
     if (!conatClient) {
       throw Error("conat client must be initialized");
@@ -8497,7 +8544,9 @@ async function executeAcpRequest({
             artifactReferences.length
               ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
               : augmentPromptWithAgentMentions(prompt, mentionReferences),
-            humanTurnComputerNote(request),
+            [humanTurnComputerNote(request), artifactNote]
+              .filter(Boolean)
+              .join("\n\n"),
           ),
           local_images: harness ? undefined : local_images,
           image_attachments: harness ? image_attachments : undefined,
@@ -8612,6 +8661,7 @@ async function executeAcpRequest({
       }),
     };
   } finally {
+    releaseHarness();
     await cleanup();
   }
 }
@@ -11650,14 +11700,13 @@ async function trySteerCandidateIds({
         if (typeof agent.steer !== "function") {
           continue;
         }
-        if (claimGuard && !claimGuard()) {
-          throw new Error("durable ACP steer claim was lost");
-        }
         try {
-          // Authorized RPC guidance inherits the actual live turn's funding,
-          // not next-turn preferences. Keep the original for durable/queue fallback.
+          // Authorized RPC guidance, and a sensor wake joining the turn,
+          // inherit the actual live turn's funding, not next-turn
+          // preferences. Keep the original for durable/queue fallback.
           const steerRequest =
-            request.chat.agent_rpc_execution?.guidance === true
+            request.chat.agent_rpc_execution?.guidance === true ||
+            request.chat.sensor_wake
               ? {
                   ...request,
                   config: {
@@ -11688,6 +11737,11 @@ async function trySteerCandidateIds({
             deliveredRequest = { ...steerRequest, prompt, image_attachments };
           }
           if (!sameContext()) return { state: "not_steerable" };
+          // After the last await: a claim (or its lease) can end during any.
+          if (claimGuard && !claimGuard())
+            throw Object.assign(Error("durable ACP steer claim was lost"), {
+              code: "steer_claim_lost",
+            });
           const result = await agent.steer(id, deliveredRequest);
           if (result.state === "steered") {
             return {
@@ -11699,7 +11753,8 @@ async function trySteerCandidateIds({
             sawNotSteerable = true;
           }
         } catch (err) {
-          if ((err as { code?: string }).code === "principal_mismatch")
+          const code = (err as { code?: string }).code;
+          if (code === "principal_mismatch" || code === "steer_claim_lost")
             throw err;
           if (firstError === undefined) {
             firstError = err;
@@ -12211,6 +12266,9 @@ async function handleAcpSteerRequest(
     return {
       ok: true,
       state: "steered",
+      // Handed to the worker running the turn: it may still run as a turn
+      // of its own.
+      pending: true,
       threadId: result.threadId ?? threadId,
     };
   }
@@ -12418,6 +12476,9 @@ async function deliverAsyncAttentionAnswer(
       if (typeof config?.toJS === "function") {
         config = config.toJS();
       }
+      // The account's payment selection picks the subscription, not shared
+      // thread config.
+      config = sharedCodexThreadConfig(config);
       // A session an old-context turn saved after the latest clear is not this
       // context's: the generation keys a fresh one.
       if (!storedSession) config = { ...config, sessionId: undefined };
@@ -12943,6 +13004,33 @@ async function handleAcpAttentionRequest(
       const answers = Object.fromEntries(
         Object.entries(normalized).map(([id, value]) => [id, value.answers]),
       );
+      // @agents in what the person wrote (not the agent's own option labels)
+      // are checked as in their own message: each must name an available
+      // agent, checked under this account. A retry of a stored response is
+      // not checked again: it was accepted, and nothing new is stored.
+      const custom = current.questions.flatMap((question) => {
+        const labels = new Set(
+          (question.options ?? []).map(({ label }) => label),
+        );
+        return (answers[question.id] ?? []).filter(
+          (answer) => !labels.has(answer),
+        );
+      });
+      if (!request.decline && !current.response_id && custom.length > 0) {
+        try {
+          await resolveHumanAgentMentions(
+            custom.join("\n"),
+            { account_id: request.account_id, project_id: request.project_id },
+            hubApi.agent,
+          );
+        } catch (err) {
+          return {
+            ok: false,
+            state: current.state,
+            error: `${(err as Error)?.message ?? err}. Your answer was not sent.`,
+          };
+        }
+      }
       const submitted = submitAcpAttentionResponse({
         codex_credential_id: request.codex_credential_id,
         attention_id: request.attention_id,
@@ -13091,6 +13179,147 @@ async function attemptAcpSteerRequest(
   extraCandidateIds: string[] = [],
   claimGuard?: () => boolean,
 ): Promise<AcpSteerAttemptResult> {
+  if (!request.chat?.sensor_wake)
+    return await steerAcpRequest(request, extraCandidateIds, claimGuard);
+  // A wake joins only a turn its approver runs (and so funds); a turn
+  // another collaborator started gets it as a turn of its own instead.
+  const otherPrincipal = (err: unknown) =>
+    (err as { code?: string })?.code === "principal_mismatch";
+  try {
+    assertRunningJobSteerPrincipal(request);
+  } catch (err) {
+    if (otherPrincipal(err)) return { state: "not_steerable" };
+    throw err;
+  }
+  // Handed off already (a retry of a new request; the durable steer's own
+  // processing passes its claim guard): the worker running the turn, or the
+  // fallback turn its handling queued, owns the permit. Claiming it here,
+  // even briefly, could make that turn find it claimed and fail.
+  const handedOff = claimGuard
+    ? undefined
+    : getAcpSteer({
+        project_id: request.chat.project_id ?? request.project_id,
+        path: request.chat.path,
+        user_message_id: `${request.chat.parent_message_id ?? ""}`,
+      });
+  if (handedOff && handedOff.state !== "error")
+    return {
+      state: "pending",
+      threadId: `${request.chat.thread_id ?? ""}` || undefined,
+    };
+  // A sensor wake's permit is one-time. Claim it (every check, atomically:
+  // only one attempt can, and a revocation committed before leaves nothing
+  // to claim) before injecting; consume the claim once it was injected, and
+  // release it if it was not, so its own turn can consume it instead.
+  // Its lease, from before the hub records the claim: no attempt to inject
+  // it begins after this (approving the sensor again stops counting the
+  // claim against later wakes once it ends).
+  const leaseEnds = Date.now() + SENSOR_WAKE_CLAIM_LEASE_MS;
+  await authorizeAgentDeliveryExecution(request, hubApi.agent, {
+    phase: "claim",
+  });
+  let deliveryTried = false;
+  // Checked immediately before each steer, after every await.
+  const leaseGuard = () => {
+    if (Date.now() >= leaseEnds) throw new SensorWakeClaimExpired();
+    const owned = !claimGuard || claimGuard();
+    if (owned) deliveryTried = true;
+    return owned;
+  };
+  // Released only when it certainly was not injected. A throw may come
+  // after the guidance reached the runtime (a lost acknowledgement): then
+  // the claim stays, so the wake is never run twice (at most once, as for a
+  // claim whose consume failed).
+  let injected = false;
+  let notInjected = false;
+  let released = false;
+  const release = async () => {
+    released = true;
+    await authorizeAgentDeliveryExecution(request, hubApi.agent, {
+      phase: "release",
+    }).catch((err) =>
+      logger.warn("sensor wake claim not released", {
+        run_id: request.chat?.sensor_wake?.run_id,
+        err: `${err}`,
+      }),
+    );
+  };
+  try {
+    const result = await steerAcpRequest(
+      request,
+      extraCandidateIds,
+      leaseGuard,
+      // Handing the wake to the worker running the turn: release the claim
+      // first, so that worker (which claims it itself) never finds it held.
+      { authorized: true, beforeHandoff: release },
+    ).catch((err) => {
+      if (otherPrincipal(err)) return { state: "not_steerable" as const };
+      // The lease ended before any attempt to inject it: it certainly was
+      // not, so it is released for its own turn.
+      if (err instanceof SensorWakeClaimExpired && !deliveryTried)
+        return { state: "not_steerable" as const };
+      // Any other failure before a steer started (a durable claim lost, say)
+      // certainly did not inject it either: released, never left claimed.
+      if (!deliveryTried) notInjected = true;
+      throw err;
+    });
+    // Only an injection by this attempt: a handed-off wake (pending) is the
+    // other worker's to claim and consume, even if it was handled already.
+    injected = result.state === "steered" && !released;
+    // Not here: not steerable, no running turn, another principal, or
+    // handed to the worker running the turn.
+    notInjected = !injected;
+    return result;
+  } finally {
+    if (injected) await consumeSensorWakeClaim(request);
+    else if (notInjected && !released) await release();
+  }
+}
+
+class SensorWakeClaimExpired extends Error {
+  code = "steer_claim_lost";
+  constructor() {
+    super("sensor wake claim lease ended before it was delivered");
+  }
+}
+
+// Injected: the claim must become consumed. Retried; if it still fails, the
+// claim stays (never claimed or run again: no second delivery). It holds the
+// sensor's later wakes back for ten minutes, and makes them turns of their
+// own rather than guidance until the sensor is approved again.
+async function consumeSensorWakeClaim(request: AcpSteerRequest) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await authorizeAgentDeliveryExecution(request, hubApi.agent, {
+        phase: "consume-claim",
+      });
+      return;
+    } catch (err) {
+      if (attempt >= 3) {
+        logger.error(
+          "sensor wake joined a turn, but its claim was not consumed",
+          { run_id: request.chat?.sensor_wake?.run_id, err: `${err}` },
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+}
+
+async function steerAcpRequest(
+  request: AcpSteerRequest,
+  extraCandidateIds: string[] = [],
+  claimGuard?: () => boolean,
+  {
+    authorized = false,
+    beforeHandoff,
+  }: {
+    authorized?: boolean;
+    /** Runs before the steer is handed to the worker running the turn. */
+    beforeHandoff?: () => Promise<void>;
+  } = {},
+): Promise<AcpSteerAttemptResult> {
   if (!request.chat) {
     throw new Error("chat metadata is required to steer an ACP turn");
   }
@@ -13104,7 +13333,8 @@ async function attemptAcpSteerRequest(
   assertRunningJobSteerPrincipal(request);
   // A forwarded steer may outlive its admission authority. Recheck before
   // injecting into any runtime; ordinary human guidance needs no network grant.
-  await authorizeAgentDeliveryExecution(request, hubApi.agent);
+  // (A sensor wake was claimed in attemptAcpSteerRequest.)
+  if (!authorized) await authorizeAgentDeliveryExecution(request, hubApi.agent);
   if (request.runtime) {
     const session = await withChatSyncDB({
       client: conatClient,
@@ -13191,6 +13421,7 @@ async function attemptAcpSteerRequest(
       candidateIds,
     })
   ) {
+    await beforeHandoff?.();
     const queued = enqueueSteerRequestForExecution({
       request,
       candidateIds,
@@ -13206,7 +13437,12 @@ async function attemptAcpSteerRequest(
       });
     }
     return {
-      state: queued.state === "handled" ? "steered" : "pending",
+      // A sensor wake's earlier handling may have been a fallback to a turn
+      // of its own, not an injection: never report it as joined here.
+      state:
+        queued.state === "handled" && !request.chat?.sensor_wake
+          ? "steered"
+          : "pending",
       threadId: result.threadId ?? candidateIds[0] ?? threadId,
     };
   }

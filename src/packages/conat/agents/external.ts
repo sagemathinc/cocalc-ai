@@ -44,6 +44,18 @@ export interface ExternalAgentInboxMessage {
   body: string;
   created_at: string;
   expires_at: string;
+  /** Listed with include_acknowledged only: whether it was acknowledged. */
+  state?: "pending" | "acknowledged";
+  acknowledged_at?: string;
+}
+
+/** What became of a message sent to an external inbox (for its sender). */
+export interface ExternalAgentDelivery {
+  /** pending: not acknowledged (read) yet; acknowledged: the agent read it. */
+  state: "pending" | "acknowledged";
+  created_at: string;
+  expires_at: string;
+  acknowledged_at?: string;
 }
 
 export type ExternalAgentControlRequest =
@@ -61,13 +73,27 @@ export type ExternalAgentControlRequest =
       home_bay_id: string;
       installation_id: string;
       secret_hash: string;
+    }
+  | {
+      /** The sender asks what became of its message. */
+      action: "inspect";
+      account_id: string;
+      home_bay_id: string;
+      installation_id: string;
+      attempt_id: string;
+      /** The network the message was sent in (proved by the caller's bay). */
+      agent_network_id: string;
+      source: import("./rpc").AgentRpcSource;
+      /** The sender's authenticated account (with source, who sent it). */
+      source_account_id: string;
     };
 export type ExternalAgentControlResult =
   | { message: ExternalAgentInboxMessage }
   | {
       challenge: { label: string; secret_hash: string; expires_at: string };
     }
-  | { installation: ExternalAgentInstallation | null };
+  | { installation: ExternalAgentInstallation | null }
+  | { delivery: ExternalAgentDelivery | null };
 
 /** Authorized, bounded inbox delivery over the sealed inter-bay control API. */
 export interface ExternalAgentEnqueueOptions {
@@ -77,6 +103,10 @@ export interface ExternalAgentEnqueueOptions {
   agent_network_id: string;
   network_generation: string;
   source: import("./rpc").AgentRpcSource;
+  /** The sender's authenticated account: only it may later inspect. Absent
+   * from a bay that predates it: the message is delivered, but can never be
+   * inspected. */
+  source_account_id?: string;
   body: string;
 }
 
@@ -143,6 +173,24 @@ export function validateExternalAgentLabel(label: string): void {
     throw new Error(
       "external agent label must contain 1 to 80 printable characters",
     );
+}
+
+/**
+ * The @name peers use for an external agent: its label's leading name, in
+ * the form registered agent names take ("ops0 on alpha.cocalc.ai (ops
+ * project)" is @ops0). Labels are free text, so it may not be unique, and a
+ * label without such a name has none.
+ */
+export function externalAgentHandle(label: string): string | undefined {
+  const lead = `${label ?? ""}`.trim().split(/\s|\(/)[0] ?? "";
+  const handle = lead
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(handle)
+    ? handle
+    : undefined;
 }
 
 export function validateExternalAgentApproval(options: {

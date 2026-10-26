@@ -148,13 +148,13 @@ mkdir -p "$OUT/runtime"
 cd "$ROOT"
 
 echo "- Build project-host bundle"
-pnpm --filter @cocalc/project-host run build:bundle
+pnpm --dir "$ROOT/packages" --filter @cocalc/project-host run build:bundle
 
 echo "- Clean static frontend outputs"
 rm -rf packages/static/dist
 
 echo "- Build CDN assets"
-pnpm --filter @cocalc/cdn run build
+pnpm --dir "$ROOT/packages" --filter @cocalc/cdn run build
 
 echo "- Build static frontend assets"
 pnpm static

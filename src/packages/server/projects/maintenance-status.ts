@@ -22,6 +22,9 @@ import {
   recoveryDelayExceeds,
 } from "@cocalc/util/consts/project-recovery";
 import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
+// Not "@cocalc/server/bay-directory": it loads the inter-bay bridge and host
+// APIs, which this module (and its tests, which reload it per test) never use.
+import { isAccountNotFoundError } from "@cocalc/server/bay-directory-errors";
 import {
   storageFundingAccountId,
   storageServiceClassFromMembership,
@@ -628,9 +631,7 @@ export async function getProjectRecoveryStatusLocal(
     const payer = storageFundingAccountId(project);
     if (payer) {
       try {
-        status.storage_service_class = storageServiceClassFromMembership(
-          await resolveRuntimeMembership(payer),
-        );
+        status.storage_service_class = await payerServiceClass(payer);
       } catch (err) {
         logger.warn("unable to classify recovery service funding", {
           project_id,
@@ -668,6 +669,26 @@ export interface ProjectRecoveryHealth {
   }>;
   by_host_class: ProjectRecoveryDebtAggregate[];
   oldest_debt: ProjectRecoveryOldestDebt[];
+  // Projects on hosts deliberately stopped or deprovisioned: no host can work
+  // their debt off until the project moves or the host starts, so they are
+  // listed here instead of counting as overdue debt or stalled queues.
+  parked_hosts: ProjectRecoveryParkedHost[];
+}
+
+export interface ProjectRecoveryParkedHost {
+  host_id: string;
+  host_status: string;
+  projects: number;
+  overdue_snapshots: number;
+  overdue_backups: number;
+  oldest_delay_seconds: number;
+}
+
+// A host whose owner or an operator stopped it on purpose. A preempted or
+// crashed host keeps desired_state "running" and stays an incident.
+export function parkedHostSql(alias: string): string {
+  return `(${alias}.status IN ('off', 'deprovisioned')
+           AND COALESCE(${alias}.metadata->>'desired_state', '')='stopped')`;
 }
 
 export interface ProjectRecoveryOldestDebt {
@@ -891,6 +912,22 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
   };
 }
 
+// A deleted funding account pays for nothing: its projects are free class,
+// not a classification failure. They stay provisioned until hard deletion,
+// so health passes meet this case routinely.
+async function payerServiceClass(
+  accountId: string,
+): Promise<ProjectRecoveryStatus["storage_service_class"]> {
+  try {
+    return storageServiceClassFromMembership(
+      await resolveRuntimeMembership(accountId),
+    );
+  } catch (err) {
+    if (isAccountNotFoundError(err)) return "free";
+    throw err;
+  }
+}
+
 // Health is queried by several operator paths. Share short-lived payer lookups
 // across them while bounding both the number of account-home RPCs and memory.
 const HEALTH_PAYER_CLASS_TTL_MS = 5 * 60_000;
@@ -916,9 +953,7 @@ async function currentHealthPayerClass(
   if (pending) return pending;
   const lookup = (async () => {
     try {
-      const serviceClass = storageServiceClassFromMembership(
-        await resolveRuntimeMembership(accountId),
-      );
+      const serviceClass = await payerServiceClass(accountId);
       healthPayerClassCache.delete(accountId);
       healthPayerClassCache.set(accountId, {
         serviceClass,
@@ -952,6 +987,8 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     last_changed: Date | null;
     last_backup: Date | null;
     host_last_seen: Date | null;
+    host_status: string | null;
+    host_parked: boolean | null;
     snapshots: SnapshotSchedule | null;
     backups: SnapshotSchedule | null;
     owner_account_id: string | null;
@@ -995,7 +1032,9 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     host_maintenance_blocks: [],
     by_host_class: [],
     oldest_debt: [],
+    parked_hosts: [],
   };
+  const parkedByHost = new Map<string, ProjectRecoveryParkedHost>();
   const oldestByClassKind = new Map<string, ProjectRecoveryOldestDebt[]>();
   const recordOldestDebt = (
     row: HealthRow,
@@ -1099,6 +1138,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
               COALESCE((to_jsonb(p)->>'last_changed')::TIMESTAMP, p.last_edited)
                 AS last_changed,
               p.last_backup, h.last_seen AS host_last_seen,
+              h.status AS host_status, ${parkedHostSql("h")} AS host_parked,
               p.snapshots, p.backups, p.usage_account_id::text AS usage_account_id,
               p.course,
               (SELECT account_id_text::text
@@ -1147,6 +1187,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     >();
     const payersByProject = new Map<string, string>();
     for (const row of rows) {
+      if (row.host_parked) continue;
       const { snapshot: snapshotDue, backup: backupDue } = dueTimes(row);
       const overdue =
         (snapshotDue != null && Date.parse(snapshotDue) < now) ||
@@ -1182,6 +1223,36 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
       currentClassByProject.set(projectId, classesByPayer.get(payer)!);
     }
     for (const row of rows) {
+      if (row.host_parked) {
+        let parked = parkedByHost.get(row.host_id);
+        if (!parked) {
+          parked = {
+            host_id: row.host_id,
+            host_status: row.host_status ?? "unknown",
+            projects: 0,
+            overdue_snapshots: 0,
+            overdue_backups: 0,
+            oldest_delay_seconds: 0,
+          };
+          parkedByHost.set(row.host_id, parked);
+        }
+        parked.projects++;
+        const due = dueTimes(row);
+        for (const [kind, at] of [
+          ["snapshot", row.snapshots?.disabled === true ? null : due.snapshot],
+          ["backup", row.backups?.disabled === true ? null : due.backup],
+        ] as const) {
+          const delaySeconds = at == null ? 0 : (now - Date.parse(at)) / 1000;
+          if (delaySeconds <= 0) continue;
+          if (kind === "snapshot") parked.overdue_snapshots++;
+          else parked.overdue_backups++;
+          parked.oldest_delay_seconds = Math.max(
+            parked.oldest_delay_seconds,
+            delaySeconds,
+          );
+        }
+        continue;
+      }
       const snapshotClass =
         currentClassByProject.get(row.project_id) ?? row.snapshot_class;
       const backupClass =
@@ -1338,6 +1409,11 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         b.delay_seconds - a.delay_seconds ||
         a.project_id.localeCompare(b.project_id),
     );
+  health.parked_hosts = [...parkedByHost.values()].sort(
+    (a, b) =>
+      b.oldest_delay_seconds - a.oldest_delay_seconds ||
+      a.host_id.localeCompare(b.host_id),
+  );
   const { rows: hostGates } = await getPool().query<{
     host_id: string;
     host_last_seen: Date | null;
@@ -1348,6 +1424,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
               AS gate
        FROM project_hosts h
       WHERE h.deleted IS NULL
+        AND NOT ${parkedHostSql("h")}
         AND EXISTS (
           SELECT 1 FROM projects p
            WHERE p.host_id=h.id AND p.provisioned IS TRUE

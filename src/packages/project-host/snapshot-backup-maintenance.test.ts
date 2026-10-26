@@ -144,6 +144,37 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
+  it("tells a refusal at the first mutation boundary from one after a mutation", async () => {
+    const { _test } = await import("./snapshot-backup-maintenance");
+    const { BtrfsMutationDeferredError } =
+      await import("@cocalc/file-server/btrfs/operation-cache");
+    const attempt = (mutateFirst: boolean) =>
+      _test.runScheduledStorageOperation({
+        hostId: "host-1",
+        project_id: "proj-1",
+        operation_kind: "scheduled_snapshot",
+        validate: async () => undefined,
+        run: async () => {
+          if (mutateFirst) {
+            // e.g. the snapshot was created, then its prune was refused
+            const [context] = mutationContextMock.mock.calls.at(-1)!;
+            context.mutations.count += 1;
+          }
+          throw new (BtrfsMutationDeferredError as any)("io_pressure_recovery");
+        },
+      });
+    expect(await attempt(false)).toMatchObject({
+      ran: false,
+      admissionDeferred: true,
+      mutated: false,
+    });
+    expect(await attempt(true)).toMatchObject({
+      ran: false,
+      admissionDeferred: true,
+      mutated: true,
+    });
+  });
+
   it("records due work deferred by emergency pressure without running it", async () => {
     getStorageAdmissionStatusMock.mockReturnValue({
       mode: "enforce",
@@ -1680,6 +1711,11 @@ describe("snapshot-backup-maintenance", () => {
       // pace, so these tests exercise the starvation overrides alone.
       const controller = createStorageAdmissionController({
         mode: "enforce",
+        // (put into emergency, then recovery, by one sample each; the
+        // hysteresis is storage-admission.test.ts's)
+        contendedSamples: 1,
+        minStateSampleMs: 0,
+        escalationMs: 0,
         recoveryFullAvg10: 1,
         recoveryRequiresQuietLifecycle: true,
         recoverySnapshotIntervalMs: 0,
@@ -1783,6 +1819,9 @@ describe("snapshot-backup-maintenance", () => {
       full = 10;
       const controller = createStorageAdmissionController({
         mode: "enforce",
+        contendedSamples: 1,
+        minStateSampleMs: 0,
+        escalationMs: 0,
         readInputs: () => ({
           sampled_at_ms: Date.now(),
           host_io_full_avg10: full,

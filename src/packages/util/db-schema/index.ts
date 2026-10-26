@@ -28,6 +28,7 @@ import "./account-profiles";
 import "./accounts";
 import "./blobs";
 import "./bookmarks";
+import "./business-tax-id-refusals";
 import "./central-log";
 import "./client-error-log";
 import "./collaborators";

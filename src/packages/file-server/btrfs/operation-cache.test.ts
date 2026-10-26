@@ -208,6 +208,30 @@ describe("btrfs mutation lock", () => {
     ).resolves.toBe("ok");
   });
 
+  it("counts the mutations that passed the boundary in the caller's context", async () => {
+    const mutations = { count: 0 };
+    let refuse: string | undefined;
+    configureBtrfsBackgroundMutationGuard(() => refuse);
+    const mutate = () =>
+      withBtrfsMutationLock({
+        mount: "/mnt/test",
+        operation: "snapshot-create",
+        run: async () => undefined,
+      });
+    await withBtrfsMutationContext(
+      { priority: "scheduled", mutations },
+      async () => {
+        await mutate();
+        refuse = "io_pressure_recovery";
+        await expect(mutate()).rejects.toMatchObject({
+          name: "BtrfsMutationDeferredError",
+        });
+      },
+    );
+    expect(mutations.count).toBe(1);
+    configureBtrfsBackgroundMutationGuard(undefined);
+  });
+
   it("defers scheduled work if lifecycle arrives while it waits", async () => {
     let blocked = false;
     let releaseHolder!: () => void;

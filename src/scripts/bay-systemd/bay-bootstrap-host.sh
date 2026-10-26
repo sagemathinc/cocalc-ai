@@ -8,7 +8,7 @@ BAY_ROOT_BASE="/mnt/cocalc/bays"
 INSTALL_BASE="/opt/cocalc/bay"
 INSTALL_PACKAGES=1
 INSTALL_NODEJS=0
-NODE_VERSION="26.2.0"
+NODE_VERSION="26.12.1"
 NVM_VERSION="0.40.4"
 NVM_DIR="/opt/cocalc/nvm"
 PRESERVE_SYSTEM_POSTGRES=0
@@ -27,8 +27,8 @@ Options:
   --bay-root-base <dir>    base dir for bay state (default: /mnt/cocalc/bays)
   --install-base <dir>     install base for releases/current (default: /opt/cocalc/bay)
   --skip-packages          do not apt install base packages
-  --install-nodejs         install Node.js 26.2.0 using nvm if missing
-  --node-version <v>       Node.js version when using --install-nodejs (default: 26.2.0)
+  --install-nodejs         install Node.js 26.12.1 using nvm if missing
+  --node-version <v>       Node.js version when using --install-nodejs (default: 26.12.1)
   --nvm-version <v>        nvm version to install or refresh (default: 0.40.4)
   --nvm-dir <dir>          nvm install directory (default: /opt/cocalc/nvm)
   --node-major <n>         deprecated alias for --node-version
@@ -303,7 +303,7 @@ main() {
           echo "--node-major is deprecated; only major 26 is supported" >&2
           exit 2
         fi
-        NODE_VERSION="26.2.0"
+        NODE_VERSION="26.12.1"
         shift 2
         ;;
       --preserve-system-postgres)

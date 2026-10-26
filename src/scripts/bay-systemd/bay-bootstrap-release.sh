@@ -27,7 +27,7 @@ PUBLIC_URL=""
 PROJECT_HOST_SOFTWARE_BASE_URL=""
 DAEMON_RELOAD=1
 SITE_MASTER_KEY_PATH="/etc/cocalc/site-master-key"
-NODE_VERSION="26.2.0"
+NODE_VERSION="26.12.1"
 NVM_DIR="/opt/cocalc/nvm"
 RETAIN_RELEASES="${COCALC_BAY_RETAIN_RELEASES:-3}"
 NEEDRESTART_POLICY_PATH="${COCALC_BAY_NEEDRESTART_POLICY_PATH:-/etc/needrestart/conf.d/cocalc-bay.conf}"
@@ -70,7 +70,7 @@ Options:
   --overlay <mode>         overlay mode passed to install-scaffold
                            (default: current-cocalc for --source, rocket-bundle for --bundle)
   --no-daemon-reload       skip daemon-reload during scaffold install
-  --node-version <v>       Node.js runtime version for generated bay env (default: 26.2.0)
+  --node-version <v>       Node.js runtime version for generated bay env (default: 26.12.1)
   --nvm-dir <dir>          nvm directory for generated bay env (default: /opt/cocalc/nvm)
   --retain-releases <n>    keep newest n extracted releases after staging (default: 3)
   -h, --help               show help
@@ -162,6 +162,13 @@ as_bay() {
   else
     "$@"
   fi
+}
+
+# A Node script read from stdin resolves require() from the working directory,
+# and Node 26.12.1 fails when a package.json there is unreadable (the deploy
+# user's home usually is, to the bay user). Run such scripts from /.
+as_bay_node() {
+  (cd / && as_bay "$@")
 }
 
 # Root's recursive chown over the bay-owned trees does not follow symbolic
@@ -615,7 +622,7 @@ prepare_frontend_asset_history() {
 
   local node_bin
   node_bin="$(find_node)"
-  as_bay "$node_bin" - "$target_static" "$previous_static" <<'NODE'
+  as_bay_node "$node_bin" - "$target_static" "$previous_static" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -746,7 +753,7 @@ preserve_previous_cdn_assets() {
   # As the bay account: require() runs index.js and cp -L follows links.
   local node_bin package_names
   node_bin="$(find_node)"
-  package_names="$(as_bay "$node_bin" - "${previous_cdn}/index.js" "${target_cdn}/index.js" <<'NODE'
+  package_names="$(as_bay_node "$node_bin" - "${previous_cdn}/index.js" "${target_cdn}/index.js" <<'NODE'
 const [previous, target] = process.argv.slice(2);
 const names = new Set([
   ...Object.keys(require(previous).versions ?? {}),
@@ -1081,6 +1088,9 @@ main() {
   fi
 
   BAY_ROOT="${BAY_ROOT_BASE}/${BAY_ID}"
+  # Absolute, so paths derived from it stay valid in helpers that run from /
+  # (as_bay_node) and in the generated bay env.
+  INSTALL_BASE="$(realpath -m -- "$INSTALL_BASE")"
   RELEASES_DIR="${INSTALL_BASE}/releases"
   CURRENT_LINK="${INSTALL_BASE}/current"
   TARGET_RELEASE="${RELEASES_DIR}/${RELEASE_ID}"

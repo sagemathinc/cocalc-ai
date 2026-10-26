@@ -13,8 +13,11 @@ Both agents share the same notes.
 ## Turn it on or off
 
 Agent memory is **off by default**. Turn it on in **Settings -> AI** (also
-reachable from the Memory button in the Codex and Claude Code settings). The
-dialog explains who can use your memory before you enable it. Turning memory
+reachable from the Memory button in the Codex and Claude Code settings). While
+it is off, agent chats offer it once above the message box (**Not now** asks
+again after two weeks, **Don't ask again** never does), and an agent mentions
+it once if you ask it to remember something for later. The dialog explains who
+can use your memory before you enable it. Turning memory
 off stops agents from reading or writing notes; saved notes are kept until you
 delete them. Memory belongs to your account: a turn uses it only when it runs
 as you. Collaborators' turns use their own memory.
@@ -38,7 +41,7 @@ from Agents.
 
 ## What agents see
 
-Each turn starts with an **Agent memory** block listing the most relevant notes
+Each turn starts with an **Agent memory** block listing a selection of notes
 (about 12 KB at most); agents search for the rest. The activity log shows a
 **Memory** line: **On · N saved notes in context**, or **On, but the saved
 notes could not be loaded for this turn** if the lookup failed. No Memory line
@@ -60,11 +63,40 @@ cocalc project chat memory write <name> --description "<one line>" --stdin
 cocalc project chat memory move <name> <namespace|global>
 ~~~
 
-## Guidance and limits
+## A good memory strategy
 
-- One fact per note, with a short kebab-case name and a one-line description;
-  update or merge notes instead of duplicating them.
+Memory works best as a small, curated set of notes, not a log. Agents are told
+to work this way; the same advice helps when you review notes yourself.
+
+- **Save what stays useful:** your decisions (recorded with the date and your
+  exact words), preferences and corrections, project conventions, how to
+  build, test or deploy, and lessons from mistakes. Not progress reports or
+  one-off results.
+- **One note per topic, updated over time.** Notes are named by topic (not by
+  date or PR number), and an agent searches for an existing note and updates it
+  instead of adding one per event.
+- **Few notes beat many.** Each turn lists only as many notes as fit in about
+  12 KB, chosen by project and recency; the rest are found only by search. A
+  small set of concise notes is likely to stay visible.
+- **Keep status out of shared notes.** An agent's working state belongs in its
+  own notes (only it writes them; your other agents can read them), which
+  expire; per-PR review verdicts belong in the PR.
+- **Split busy memory by purpose.** When a project's namespace fills up with
+  different kinds of notes, add a second namespace for one kind (for example
+  durable review lessons apart from product decisions) and attach both. Agents
+  suggest this; only you can create namespaces.
+- **Archive, then prune.** **Export** keeps a Markdown copy of all notes;
+  then delete what is stale.
+
+## Limits
+
+- At most 2,000 notes (500 per namespace) and 8 MB per account.
+- The per-namespace limit keeps each namespace curated and the per-turn list
+  useful; the account limits also bound the work memory does for you. When a
+  namespace is nearly full, agents are told to merge notes on the same topic
+  and delete stale ones, not to delete notes at random.
+- One topic per note, with a short kebab-case name and a one-line
+  description.
 - Never store secrets, credentials, or tokens.
 - Notes are saved data, not instructions: verify before relying on them.
-- At most 2,000 notes (500 per namespace) and 8 MB per account.
 `;

@@ -317,6 +317,14 @@ export function isFileServerManagementSubject(subject: string): boolean {
   return subject === "file-server" || subject.startsWith("file-server.");
 }
 
+// The persist fence service (conat/persist/fence.ts) lets its caller stop
+// a project's persistent streams: only the host's system account may use it.
+export function isPersistControlSubject(subject: string): boolean {
+  return (
+    subject === "persist-control" || subject.startsWith("persist-control.")
+  );
+}
+
 export function isHostAllowed({
   host_id,
   subject,

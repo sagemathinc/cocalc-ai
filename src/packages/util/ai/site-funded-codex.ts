@@ -5,14 +5,20 @@
 
 import Decimal from "decimal.js-light";
 
-import { getSiteFundedCodexPrice } from "./site-funded-codex-prices";
+import {
+  getSiteFundedCodexPrice,
+  type SiteFundedProvider,
+} from "./site-funded-codex-prices";
 
 export {
   getSiteFundedCodexPrice,
   hasSiteFundedCodexPrice,
   SITE_FUNDED_CODEX_PRICE_VERSION,
 } from "./site-funded-codex-prices";
-export type { SiteFundedCodexPrice } from "./site-funded-codex-prices";
+export type {
+  SiteFundedCodexPrice,
+  SiteFundedProvider,
+} from "./site-funded-codex-prices";
 
 export const MICROUSD_PER_USD = 1_000_000;
 export const SITE_FUNDED_CODEX_POLICY_VERSION = 7;
@@ -36,6 +42,13 @@ export type SiteFundedCodexPolicy = {
   allowFastMode: false;
   allowUltraOrMultiAgent: false;
   allowedProviderTools: string[];
+  /**
+   * A hard cap on one request's prompt, enforced before it is sent (Claude:
+   * the relay refuses longer prompts, which cost 5x).
+   */
+  maxPromptTokens?: number;
+  /** The most hosted-tool fees one request can incur (Claude: web search). */
+  maxProviderToolFeesMicrousdPerRequest?: number;
 };
 
 export const DEFAULT_SITE_FUNDED_CODEX_POLICY: SiteFundedCodexPolicy = {
@@ -61,6 +74,8 @@ export type SiteFundedCodexRequestUsage = {
   inputTokens: number;
   cachedInputTokens?: number;
   cacheWriteInputTokens?: number;
+  /** Of cacheWriteInputTokens, those written for 1 hour (Anthropic). */
+  cacheWrite1hInputTokens?: number;
   outputTokens: number;
   reasoningOutputTokens?: number;
   providerToolFeesMicrousd?: number;
@@ -73,6 +88,7 @@ export type SiteFundedCodexCost = {
   ordinaryInputTokens: number;
   cachedInputTokens: number;
   cacheWriteInputTokens: number;
+  cacheWrite1hInputTokens: number;
   outputTokens: number;
   reasoningOutputTokens: number;
   ordinaryInputCostMicrousd: number;
@@ -111,6 +127,10 @@ export type SiteFundedCodexReservation = {
   expiresAt: string;
   heartbeatIntervalMs: number;
   status: SiteFundedCodexReservationStatus;
+  /** Absent on reservations made before providers: OpenAI. */
+  provider?: SiteFundedProvider;
+  /** The site key this turn is funded by (site-funded Claude). */
+  providerKeyId?: string;
 };
 
 export type SiteFundedCodexUsageEvent = SiteFundedCodexRequestUsage & {
@@ -143,7 +163,9 @@ export type SiteFundedCodexDenialCode =
   | "global_pool"
   | "account_hold"
   | "ineligible"
-  | "unavailable";
+  | "unavailable"
+  /** Every site key for the provider has reached its monthly limit. */
+  | "provider_keys_exhausted";
 
 export type SiteFundedCodexAdmission =
   | {
@@ -181,8 +203,74 @@ export type SiteFundedCodexAccountStatus = {
   reset7dAt?: string;
 };
 
+/**
+ * How one site-funded admission attempt ended: "allowed", a denial code, or a
+ * finer reason for an early refusal ("unverified_email", "no_allowance",
+ * "banned", "ai_disabled"), or "error" if admission itself failed.
+ */
+export type SiteFundedAdmissionOutcome =
+  | "allowed"
+  | SiteFundedCodexDenialCode
+  | "unverified_email"
+  | "no_allowance"
+  | "banned"
+  | "ai_disabled"
+  | "error";
+
+// Every outcome once, checked by the compiler: a new denial code that is
+// missing here would make the funnel refuse (and so lose) its attempts.
+const ADMISSION_OUTCOMES: Record<SiteFundedAdmissionOutcome, true> = {
+  allowed: true,
+  disabled: true,
+  missing_price: true,
+  account_limit_5h: true,
+  account_limit_7d: true,
+  account_concurrency: true,
+  global_concurrency: true,
+  global_pool: true,
+  account_hold: true,
+  ineligible: true,
+  unavailable: true,
+  provider_keys_exhausted: true,
+  unverified_email: true,
+  no_allowance: true,
+  banned: true,
+  ai_disabled: true,
+  error: true,
+};
+
+export const SITE_FUNDED_ADMISSION_OUTCOMES = Object.keys(
+  ADMISSION_OUTCOMES,
+) as readonly SiteFundedAdmissionOutcome[];
+
+export type SiteFundedAdmissionRecord = {
+  fundedTurnId: string;
+  accountId: string;
+  provider: "openai" | "anthropic";
+  outcome: SiteFundedAdmissionOutcome;
+  membershipTier?: string;
+  surface?: string;
+};
+
+/** Who tried included AI, what admission said, and how admitted turns ended. */
+export type SiteFundedFunnel = {
+  periodStart: string;
+  periodEnd: string;
+  attempts: number;
+  accounts: number;
+  admittedAccounts: number;
+  outcomes: { outcome: string; attempts: number; accounts: number }[];
+  turns: {
+    status: string;
+    turns: number;
+    accounts: number;
+    committedMicrousd: number;
+  }[];
+};
+
 export type SiteFundedCodexStatus = {
   pools: SiteFundedCodexPoolStatus[];
+  funnel?: SiteFundedFunnel;
   account?: SiteFundedCodexAccountStatus;
   accountReservations?: {
     accountId: string;
@@ -241,6 +329,10 @@ export function computeSiteFundedCodexRequestCost({
     usage.cacheWriteInputTokens,
     "cacheWriteInputTokens",
   );
+  const cacheWrite1hInputTokens = tokenCount(
+    usage.cacheWrite1hInputTokens,
+    "cacheWrite1hInputTokens",
+  );
   const outputTokens = tokenCount(usage.outputTokens, "outputTokens");
   const reasoningOutputTokens = tokenCount(
     usage.reasoningOutputTokens,
@@ -254,6 +346,12 @@ export function computeSiteFundedCodexRequestCost({
     throw new Error(
       "cached and cache-write input tokens cannot exceed total input tokens",
     );
+  }
+  if (cacheWrite1hInputTokens > cacheWriteInputTokens) {
+    throw new Error("1-hour cache writes cannot exceed all cache writes");
+  }
+  if (cacheWrite1hInputTokens > 0 && price.cacheWrite1hUsdPerMillion == null) {
+    throw new Error(`model '${price.model}' has no 1-hour cache write price`);
   }
   if (reasoningOutputTokens > outputTokens) {
     throw new Error("reasoning output tokens cannot exceed output tokens");
@@ -278,9 +376,16 @@ export function computeSiteFundedCodexRequestCost({
     price.cachedInputUsdPerMillion,
   ).mul(inputMultiplier);
   const cacheWriteInputCost = microusdForTokens(
-    cacheWriteInputTokens,
+    cacheWriteInputTokens - cacheWrite1hInputTokens,
     price.cacheWriteUsdPerMillion,
-  ).mul(inputMultiplier);
+  )
+    .add(
+      microusdForTokens(
+        cacheWrite1hInputTokens,
+        price.cacheWrite1hUsdPerMillion ?? "0",
+      ),
+    )
+    .mul(inputMultiplier);
   const outputCost = microusdForTokens(
     outputTokens,
     price.outputUsdPerMillion,
@@ -298,6 +403,7 @@ export function computeSiteFundedCodexRequestCost({
     ordinaryInputTokens,
     cachedInputTokens,
     cacheWriteInputTokens,
+    cacheWrite1hInputTokens,
     outputTokens,
     reasoningOutputTokens,
     ordinaryInputCostMicrousd: ceilMicrousd(ordinaryInputCost),
@@ -318,15 +424,23 @@ export function siteFundedCodexMaxRequestBodyBytes(
 export function siteFundedCodexFinalRequestHeadroomMicrousd(
   policy: SiteFundedCodexPolicy,
 ): number {
+  // The worst single request: all of its largest prompt written to the
+  // dearest cache, its largest output, and its most hosted-tool fees.
   const inputTokens =
+    policy.maxPromptTokens ??
     policy.contextWindowTokens +
-    SITE_FUNDED_CODEX_PROVIDER_INPUT_OVERHEAD_TOKENS;
+      SITE_FUNDED_CODEX_PROVIDER_INPUT_OVERHEAD_TOKENS;
+  const hasHourCache =
+    getSiteFundedCodexPrice(policy.model).cacheWrite1hUsdPerMillion != null;
   return computeSiteFundedCodexRequestCost({
     model: policy.model,
     usage: {
       inputTokens,
       cacheWriteInputTokens: inputTokens,
+      cacheWrite1hInputTokens: hasHourCache ? inputTokens : 0,
       outputTokens: policy.maxOutputTokensPerRequest,
+      providerToolFeesMicrousd:
+        policy.maxProviderToolFeesMicrousdPerRequest ?? 0,
     },
   }).costMicrousd;
 }

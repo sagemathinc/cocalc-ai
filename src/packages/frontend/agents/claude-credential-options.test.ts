@@ -4,6 +4,8 @@
  */
 
 import {
+  claudeCredentialFromValue,
+  SITE_FUNDED_CLAUDE_VALUE,
   newAgentClaudeCredentialOptions,
   newAgentClaudeCredentialDefault,
   newAgentClaudeCredentialValue,
@@ -129,4 +131,77 @@ test("a long-lived token subscription is named by its label, else generically", 
       { ...token, metadata: { ...token.metadata, label: "Max 20x" } },
     ] as any)[0].label,
   ).toBe("Max 20x");
+});
+
+describe("included Claude (CoCalc Membership)", () => {
+  const key = {
+    id: "key-1",
+    kind: "anthropic-api-key",
+    revoked: null,
+    metadata: {},
+  } as any;
+  const siteFunded = {
+    version: 1,
+    provider: "anthropic",
+    mode: "site-funded",
+  } as const;
+  const projectSecret = {
+    version: 1,
+    provider: "anthropic",
+    mode: "project-secret",
+  } as const;
+
+  test("is offered after the account's own credentials, before the project secret", () => {
+    expect(
+      newAgentClaudeCredentialOptions([key], false, true).map(
+        ({ value }) => value,
+      ),
+    ).toEqual([
+      "account-api-key:key-1",
+      SITE_FUNDED_CLAUDE_VALUE,
+      "project-secret",
+    ]);
+    expect(newAgentClaudeCredentialOptions([], true, true)[0].label).toBe(
+      "CoCalc Membership",
+    );
+    expect(
+      newAgentClaudeCredentialOptions([], false, false).map(
+        ({ value }) => value,
+      ),
+    ).toEqual(["project-secret"]);
+  });
+
+  test("round-trips through the picker value", () => {
+    expect(newAgentClaudeCredentialValue(siteFunded)).toBe(
+      SITE_FUNDED_CLAUDE_VALUE,
+    );
+    expect(claudeCredentialFromValue(SITE_FUNDED_CLAUDE_VALUE)).toEqual(
+      siteFunded,
+    );
+    expect(claudeCredentialFromValue("account-api-key:key-1")).toEqual({
+      version: 1,
+      provider: "anthropic",
+      mode: "account-api-key",
+      credentialId: "key-1",
+    });
+    expect(claudeCredentialFromValue("project-secret")).toEqual(projectSecret);
+  });
+
+  test("is the default only without a Claude credential, and never replaces a chosen project secret", () => {
+    expect(newAgentClaudeCredentialDefault([], true)).toEqual(siteFunded);
+    expect(newAgentClaudeCredentialDefault([], false)).toEqual(projectSecret);
+    expect(newAgentClaudeCredentialDefault([key], true)).toMatchObject({
+      mode: "account-api-key",
+    });
+    expect(preferredClaudeCredential(projectSecret, [], true)).toEqual(
+      projectSecret,
+    );
+    // A remembered membership choice is kept while it is offered.
+    expect(preferredClaudeCredential(siteFunded, [key], true)).toEqual(
+      siteFunded,
+    );
+    expect(preferredClaudeCredential(siteFunded, [key], false)).toMatchObject({
+      mode: "account-api-key",
+    });
+  });
 });

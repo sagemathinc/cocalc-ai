@@ -376,6 +376,149 @@ test("ACP form questions enforce Unicode length and reject partial required answ
     form.response({ target: { answers: ["ok"] }, reason: { answers: [] } }),
   );
 });
+// Claude Code's AskUserQuestion, exactly as its ACP adapter (0.93) asks it.
+function askUserQuestionForm() {
+  const option = (label, description) => ({
+    const: label,
+    title: label,
+    description,
+  });
+  const other = (text) => ({
+    type: "string",
+    title: "Other",
+    description: text,
+  });
+  return {
+    mode: "form",
+    sessionId: "native-session",
+    toolCallId: "toolu_1",
+    message: "Please answer the following questions.",
+    requestedSchema: {
+      type: "object",
+      properties: {
+        question_0: {
+          type: "string",
+          title: "Focus",
+          description: "What would you like to focus on first?",
+          oneOf: [option("Code work", "Write code"), option("Files")],
+        },
+        question_0_custom: other("Type your own answer (optional)."),
+        question_1: {
+          type: "array",
+          title: "Areas",
+          description: "Which areas?",
+          items: { anyOf: [option("Docs"), option("Tests")] },
+        },
+        question_1_custom: other("Add your own (optional)."),
+      },
+    },
+  };
+}
+test("Claude's AskUserQuestion becomes question cards with Other, and answers map back", () => {
+  const form = harnessQuestionForm(askUserQuestionForm());
+  assert.equal(form.sessionId, "native-session");
+  assert.deepEqual(
+    form.questions.map(({ id, header, isOther }) => ({ id, header, isOther })),
+    [
+      { id: "question_0", header: "Focus", isOther: true },
+      { id: "question_1", header: "Areas", isOther: true },
+    ],
+  );
+  assert.match(
+    form.questions[0].question,
+    /^What would you like to focus on first\?/,
+  );
+  assert.match(form.questions[0].question, /Do not enter passwords/);
+  assert.deepEqual(form.questions[0].options, [
+    { label: "Code work", description: "Write code" },
+    { label: "Files", description: undefined },
+  ]);
+  // A choice goes to its field (an array for a multiple choice); other text
+  // to the question's Other field.
+  assert.deepEqual(
+    form.response({
+      question_0: { answers: ["Code work"] },
+      question_1: { answers: ["Benchmarks"] },
+    }),
+    {
+      action: "accept",
+      content: { question_0: "Code work", question_1_custom: "Benchmarks" },
+    },
+  );
+  assert.deepEqual(form.response({ question_1: { answers: ["Docs"] } }), {
+    action: "accept",
+    content: { question_1: ["Docs"] },
+  });
+  assert.deepEqual(form.response({}), { action: "decline" });
+  for (const answers of [
+    { question_0_custom: { answers: ["x"] } },
+    { question_0: { answers: ["a", "b"] } },
+    { question_0: { answers: [" "] } },
+  ])
+    assert.throws(() => form.response(answers));
+});
+test("Claude's AskUserQuestion: a single question is asked by the message; without Other, only choices", () => {
+  const source = askUserQuestionForm();
+  delete source.requestedSchema.properties.question_1;
+  delete source.requestedSchema.properties.question_1_custom;
+  delete source.requestedSchema.properties.question_0_custom;
+  source.message = "What would you like to focus on first?";
+  delete source.requestedSchema.properties.question_0.description;
+  const form = harnessQuestionForm(source);
+  assert.equal(form.questions[0].isOther, false);
+  assert.match(
+    form.questions[0].question,
+    /^What would you like to focus on first\?/,
+  );
+  assert.throws(() =>
+    form.response({ question_0: { answers: ["Something else"] } }),
+  );
+});
+test("a generic form that only uses question_N names keeps the generic check", () => {
+  const form = harnessQuestionForm({
+    mode: "form",
+    sessionId: "native-session",
+    message: "Proceed?",
+    requestedSchema: {
+      type: "object",
+      required: ["question_0"],
+      properties: {
+        question_0: { type: "string", title: "Proceed", enum: ["yes", "no"] },
+      },
+    },
+  });
+  assert.deepEqual(
+    form.questions[0].options.map(({ label }) => label),
+    ["yes", "no"],
+  );
+  assert.deepEqual(form.response({ question_0: { answers: ["yes"] } }), {
+    action: "accept",
+    content: { question_0: "yes" },
+  });
+});
+test("Claude's AskUserQuestion: anything beyond its shape is refused", () => {
+  for (const mutate of [
+    (x) => (x.requestedSchema.required = ["question_0"]),
+    (x) => (x.requestedSchema.properties.question_0.default = "Files"),
+    (x) => (x.requestedSchema.properties.question_0.oneOf[0].extra = 1),
+    (x) => (x.requestedSchema.properties.question_0.oneOf = []),
+    (x) =>
+      (x.requestedSchema.properties.question_0.oneOf[1].const = "Code work"),
+    (x) => (x.requestedSchema.properties.question_0_custom.format = "password"),
+    (x) => (x.requestedSchema.properties.question_0_custom.type = "number"),
+    (x) =>
+      (x.requestedSchema.properties.question_2_custom = { type: "string" }),
+    (x) => {
+      delete x.requestedSchema.properties.question_0;
+      delete x.requestedSchema.properties.question_0_custom;
+    },
+    (x) => (x.unexpected = true),
+  ]) {
+    const source = askUserQuestionForm();
+    mutate(source);
+    assert.throws(() => harnessQuestionForm(source));
+  }
+});
 test("ACP form questions reject unsupported schema constraints and non-session elicitation", () => {
   for (const mutate of [
     (x) => (x.mode = "url"),
@@ -496,6 +639,103 @@ test("subscription policy exposes only mediated project tools and refuses unknow
         /different billing method|not reported a verifiable subscription identity/,
       );
     }
+    await client.dispose();
+  }
+});
+
+test("a resumed session gets newer CoCalc instructions with its next turn, once", async (t) => {
+  for (const [resume, stored, expectUpdate] of [
+    [true, undefined, true], // a session from before versions were recorded
+    [true, "an older version", true],
+    [true, "current", false],
+    [true, "unreadable", true], // a store that cannot be read: unknown
+    [false, undefined, false], // a new session starts with them
+  ]) {
+    const child = spawn(
+      process.execPath,
+      [
+        ...profile.args,
+        "--claude-adapter",
+        "--expect-skill",
+        "--versioned-tools",
+        "--subscription-status",
+        "--echo-prompt-start",
+      ],
+      { env: {}, stdio: "pipe" },
+    );
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const versions = new Map();
+    const sets = [];
+    let current;
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "project-a",
+        accountId: "account-a",
+        profile: { ...profile, cwd: "/home/user/project-only-worktree" },
+      },
+      async () => ({
+        projectToolServerName: "cocalc_project_fixture_v2",
+        systemPromptAppend:
+          "CoCalc skill fixture: use project_exec for CLI commands.",
+        sessionInstructions: {
+          get: (id) => {
+            if (stored === "unreadable") throw Error("SQLITE_BUSY");
+            return stored === "current" ? current : versions.get(id);
+          },
+          set: (id, version) => {
+            sets.push([id, version]);
+            versions.set(id, version);
+          },
+        },
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+      30_000,
+      undefined,
+      "claude-subscription-controller",
+    );
+    t.after(() => client.dispose());
+    // The version is the hash of the instructions the session is given.
+    const { createHash } = require("node:crypto");
+    const {
+      harnessSessionGuidance,
+    } = require("../../dist/acp/harness-context");
+    current = createHash("sha256")
+      .update(
+        [
+          "CoCalc skill fixture: use project_exec for CLI commands.",
+          harnessSessionGuidance(true),
+        ].join("\n\n"),
+      )
+      .digest("hex");
+    if (stored && stored !== "current" && stored !== "unreadable")
+      versions.set("fixture-session", stored);
+    await client.open(resume ? "fixture-session" : undefined);
+    const firstLines = async () => {
+      const events = [];
+      await client.prompt("hello", async (event) => events.push(event));
+      return events
+        .filter((event) => event.type === "message")
+        .map((event) => event.text)
+        .join("");
+    };
+    const first = await firstLines();
+    assert.equal(
+      first.startsWith("[CoCalc session instructions update]"),
+      expectUpdate,
+      `resume=${resume} stored=${stored}`,
+    );
+    // Recorded: the next turn is plain.
+    assert.equal(await firstLines(), "hello");
+    if (expectUpdate || !resume)
+      assert.deepEqual(sets, [["fixture-session", current]]);
+    else assert.deepEqual(sets, []);
     await client.dispose();
   }
 });
@@ -946,6 +1186,51 @@ test("agent adapter persists streaming and stop before summary and reuses its se
   await agent.evaluate({ ...request, session_id: "fixture-session" });
   assert.equal(events.at(-1).finalResponse, "Hello world 2");
   assert.equal(launches(), 1);
+});
+
+test("a completed turn is persisted (turnCompleted) before its summary", async (t) => {
+  const seen = [];
+  let events;
+  const created = adapter(
+    t,
+    [],
+    undefined,
+    false,
+    undefined,
+    false,
+    undefined,
+    {
+      turnCompleted: async () => {
+        seen.push(events.filter((event) => event.type === "summary").length);
+      },
+    },
+  );
+  events = created.events;
+  await created.agent.evaluate(created.request);
+  assert.deepEqual(seen, [0]);
+  assert.equal(events.at(-1).type, "summary");
+});
+
+test("a turn whose completion cannot be persisted fails instead of reporting success", async (t) => {
+  const { agent, request, events } = adapter(
+    t,
+    [],
+    undefined,
+    false,
+    undefined,
+    false,
+    undefined,
+    {
+      turnCompleted: async () => {
+        throw Error("transcripts were not saved");
+      },
+    },
+  );
+  await assert.rejects(agent.evaluate(request), /transcripts were not saved/);
+  assert.equal(
+    events.some((event) => event.type === "summary"),
+    false,
+  );
 });
 
 test("explicit context reset retires the warm harness before opening a fresh session", async (t) => {
@@ -3331,4 +3616,60 @@ test("a token-authenticated controller still refuses API-key billing", async (t)
     client.prompt("hello", async () => {}),
     /different billing method/,
   );
+});
+
+test("a site-funded Claude turn is admitted before its prompt and settled after it", async (t) => {
+  const calls = [];
+  const { agent, request, events, stops } = adapter(
+    t,
+    ["--claude-adapter", "--delayed-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+    undefined,
+    {
+      beginFundedTurn: async (chat) => calls.push(["begin", chat.path]),
+      endFundedTurn: async (end) => calls.push(["end", end.status]),
+    },
+  );
+  await agent.evaluate(request);
+  assert.deepEqual(calls, [
+    ["begin", "a.chat"],
+    ["end", "committed"],
+  ]);
+  assert.equal(events.at(-1).type, "summary");
+  assert.equal(stops(), 0);
+});
+
+test("a site-funded Claude turn that is not admitted fails with the reason, and keeps the harness", async (t) => {
+  let admit = false;
+  const ended = [];
+  const { agent, request, launches, stops } = adapter(
+    t,
+    ["--claude-adapter", "--delayed-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+    undefined,
+    {
+      beginFundedTurn: async () => {
+        if (!admit)
+          throw Error("You have used your weekly included AI allowance.");
+      },
+      endFundedTurn: async (end) => ended.push(end.status),
+    },
+  );
+  await assert.rejects(
+    () => agent.evaluate(request),
+    /weekly included AI allowance/,
+  );
+  // Never admitted, so nothing to settle, and the harness is fine.
+  assert.deepEqual(ended, []);
+  assert.equal(stops(), 0);
+  admit = true;
+  await agent.evaluate({ ...request, session_id: "fixture-session" });
+  assert.deepEqual(ended, ["committed"]);
+  assert.equal(launches(), 1);
 });

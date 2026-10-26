@@ -808,6 +808,22 @@ export interface HostKernelSysctlTextMismatch {
   actual: string | null;
 }
 
+export interface HostKernelHardeningCheck {
+  key: string;
+  // ">= 2", "= 0", ...
+  expected: string;
+  actual: number | null;
+  ok: boolean;
+  // Written by the host (sysctl.d); otherwise only checked.
+  managed: boolean;
+}
+
+export interface HostKernelHardeningSnapshot {
+  ok: boolean;
+  config_path: string;
+  checks: HostKernelHardeningCheck[];
+}
+
 export interface HostKernelSysctlSnapshot {
   collected_at?: string;
   config_path?: string;
@@ -818,6 +834,9 @@ export interface HostKernelSysctlSnapshot {
   ok: boolean;
   mismatches: HostKernelSysctlMismatch[];
   text_mismatches?: HostKernelSysctlTextMismatch[];
+  // Kernel attack-surface settings; not part of `ok`, which covers the
+  // capacity limits above.
+  hardening?: HostKernelHardeningSnapshot;
   apply_attempted?: boolean;
   apply_succeeded?: boolean;
   error?: string;
@@ -1917,6 +1936,7 @@ export const hosts = {
   checkCodexSiteUsageAllowance: authFirstRequireHostWithAccountTarget,
   recordCodexSiteUsage: authFirstRequireHostWithAccountTarget,
   reserveSiteFundedCodexTurn: authFirstRequireHostWithAccountTarget,
+  getSiteFundedClaudeKey: authFirstRequireHost,
   heartbeatSiteFundedCodexTurn: authFirstRequireHost,
   recordSiteFundedCodexUsageEvent: authFirstRequireHost,
   finishSiteFundedCodexTurn: authFirstRequireHost,
@@ -1927,6 +1947,8 @@ export const hosts = {
   listManagedRootfsReleaseLifecycle: authFirstRequireHost,
   issueProjectHostAuthToken: authFirstRequireAccountWithBoundSession,
   issueProjectContentUrl: authFirstRequireAccountWithBoundSession,
+  issueProjectAppUrl: authFirstRequireAccountWithBoundSession,
+  issueProjectAppFrameUrl: authFirstRequireAccountWithBoundSession,
   revokeProjectContentLinks: authFirstRequireAccount,
 };
 
@@ -2369,13 +2391,16 @@ export interface Hosts {
   // owner_account_id because host auth reserves account_id for the caller.
   // With the turn's chat path and thread, the index also lists that agent's
   // own scope.
+  // With report_off, an account whose memory is off gets { off: true } (an
+  // older hub ignores it and answers null).
   getAgentMemoryContext: (opts: {
     host_id?: string;
     project_id: string;
     owner_account_id: string;
     chat_path?: string;
     thread_id?: string;
-  }) => Promise<{ notes: number; index: string } | null>;
+    report_off?: boolean;
+  }) => Promise<{ notes: number; index: string; off?: true } | null>;
   // Claude subscription limits reported during a turn, saved on the
   // credential. The owner is owner_account_id: host auth strips account_id.
   recordClaudeSubscriptionUsage: (opts: {
@@ -2457,7 +2482,14 @@ export interface Hosts {
     funded_turn_id: string;
     idempotency_key: string;
     path?: string;
+    /** "anthropic": a site-funded Claude turn. Default Codex. */
+    provider?: "openai" | "anthropic";
   }) => Promise<SiteFundedCodexAdmission>;
+  /** The site key funding an active Claude turn this host runs. */
+  getSiteFundedClaudeKey: (opts: {
+    host_id?: string;
+    reservation_id: string;
+  }) => Promise<{ api_key: string }>;
   heartbeatSiteFundedCodexTurn: (opts: {
     host_id?: string;
     reservation_id: string;
@@ -2515,6 +2547,44 @@ export interface Hosts {
     account_id?: string;
     project_id: string;
     path: string;
+  }) => Promise<
+    | { url: string; expires_at: number }
+    | {
+        unavailable:
+          | "off"
+          | "no-host"
+          | "host-not-ready"
+          | "other-bay"
+          | "no-access";
+      }
+  >;
+  // A short-lived, single-use link that opens a project's web server or app
+  // on its own app origin, or why there is none (then the caller falls back).
+  issueProjectAppUrl: (opts: {
+    account_id?: string;
+    project_id: string;
+    // /<project_id>/port/<n>/..., /proxy/..., /server/<name>/..., /apps/<id>/...
+    // or an app's own base path (then app_id is required).
+    path: string;
+    app_id?: string;
+  }) => Promise<
+    | { url: string; expires_at: number }
+    | {
+        unavailable:
+          | "off"
+          | "no-host"
+          | "host-not-ready"
+          | "other-bay"
+          | "no-access";
+      }
+  >;
+  // The same for the app framed by the site (a chat card): a single-use
+  // link to the app's /_af/, which sets a partitioned frame session.
+  issueProjectAppFrameUrl: (opts: {
+    account_id?: string;
+    project_id: string;
+    path: string;
+    app_id?: string;
   }) => Promise<
     | { url: string; expires_at: number }
     | {

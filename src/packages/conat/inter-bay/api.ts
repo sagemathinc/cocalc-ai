@@ -120,6 +120,10 @@ import type { MembershipPackageProduct } from "@cocalc/util/membership-package-p
 import type {
   AuthorizePublicDirectoryShareReadOptions,
   AuthorizePublicDirectoryShareReadResponse,
+  GetPublicDirectoryShareViewAggregatesOptions,
+  GetPublicDirectoryShareViewAggregatesResponse,
+  GetPublicDirectoryShareViewsOptions,
+  GetPublicDirectoryShareViewsResponse,
   CopyPublicDirectoryShareToNewProjectOptions,
   CopyPublicDirectoryShareToNewProjectResult,
   CopyPublicDirectoryShareToProjectOptions,
@@ -262,8 +266,13 @@ import type {
 import type { MoneyValue } from "@cocalc/util/money";
 import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
 import type {
+  SiteFundedProviderKeyAction,
+  SiteFundedProviderKeyInfo,
+} from "@cocalc/util/ai/site-funded-claude";
+import type {
   SiteFundedCodexAdmission,
   SiteFundedCodexPoolId,
+  SiteFundedAdmissionRecord,
   SiteFundedCodexStatus,
   SiteFundedCodexPolicy,
   SiteFundedCodexReservation,
@@ -690,9 +699,19 @@ export interface AccountDirectoryTouchRequest {
   account_id: string;
 }
 
+// Who started an account deletion; recorded in the account audit log.
+export type AccountDeletionInitiator =
+  | "self"
+  | "admin"
+  | "ephemeral-expiry"
+  | "system";
+
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
   only_if_tag?: string;
+  initiator?: AccountDeletionInitiator;
+  // the account that asked for the deletion: the account itself or an admin
+  actor_account_id?: string;
 }
 
 export interface AccountDirectoryDeleteResult {
@@ -2111,6 +2130,9 @@ export interface AccountRehomeResponse {
 }
 
 export interface BayRegistryRegisterRequest {
+  // The registering bay; typed services require it to match the
+  // authenticated calling bay, and the registry requires it to equal bay_id.
+  source_bay_id?: string;
   bay_id: string;
   label?: string;
   region?: string | null;
@@ -2381,10 +2403,24 @@ export interface BayOpsFinishSiteFundedCodexTurnRequest extends BayOpsSiteFunded
   outcome?: string;
 }
 
+export interface BayOpsSiteFundedProviderKeysRequest {
+  provider: "anthropic";
+  action?: SiteFundedProviderKeyAction;
+}
+
+export interface BayOpsSiteFundedProviderKeyRequest {
+  reservationId: string;
+  hostId: string;
+}
+
 export interface BayOpsSiteFundedCodexStatusRequest {
   reconcile?: boolean;
   accountId?: string;
+  /** Include the admission funnel (admins). */
+  funnel?: boolean;
 }
+
+export type BayOpsRecordSiteFundedAdmissionRequest = SiteFundedAdmissionRecord;
 
 export interface BayOpsReserveSiteFundedSpeechRequest {
   requestId: string;
@@ -2588,45 +2624,6 @@ export type HostConnectionMethod =
   | "update-api-relay-usage"
   | "update-api-relay-account-usage"
   | "list"
-  | "set-host-access"
-  | "remove-host-access"
-  | "set-host-project-ram-limit"
-  | "set-host-owner-spend-limits"
-  | "set-host-pool-access"
-  | "set-host-deletion-protection"
-  | "annotate-host-availability-event"
-  | "get-host-runtime-deployment-status"
-  | "start-host"
-  | "stop-host"
-  | "restart-host"
-  | "backup-host-projects"
-  | "drain-host"
-  | "refresh-host-cloud-state"
-  | "upgrade-host-software"
-  | "reconcile-host-software"
-  | "set-host-public-route-mode"
-  | "relocate-host"
-  | "set-host-maintenance-notice"
-  | "reconcile-host-runtime-deployments"
-  | "rollback-host-runtime-deployments"
-  | "rollout-host-managed-components"
-  | "delete-host"
-  | "force-deprovision-host"
-  | "remove-self-host-connector"
-  | "pull-host-rootfs-image"
-  | "delete-host-rootfs-image"
-  | "gc-deleted-host-rootfs-images"
-  | "set-host-exam-config"
-  | "create-host-exam-run"
-  | "rotate-host-exam-token"
-  | "open-host-exam-run"
-  | "update-host-exam-deadline"
-  | "increase-host-exam-capacity"
-  | "stop-and-erase-host-exam-run"
-  | "add-host-ssh-authorized-key"
-  | "remove-host-ssh-authorized-key"
-  | "list-host-operations"
-  | "set-host-runtime-deployments"
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
@@ -2642,7 +2639,6 @@ export type HostConnectionMethod =
   | "get-project-backup-indexes"
   | "sync-project-backup-indexes"
   | "delete-project-backup-index"
-  | "list-host-projects"
   | "ensure-host-owner-ssh-trust"
   | "rehome-host"
   | "prepare-host-rehome"
@@ -2902,6 +2898,8 @@ export type AccountLocalMethod =
   | "public-directory-share-upsert"
   | "public-directory-share-disable-for-banned-actor"
   | "public-directory-share-authorize-read"
+  | "public-directory-share-get-views"
+  | "public-directory-share-get-view-aggregates"
   | "public-directory-share-list-directory"
   | "public-directory-share-copy-to-project"
   | "public-directory-share-copy-to-new-project"
@@ -2949,6 +2947,9 @@ export type BayOpsMethod =
   | "record-site-funded-codex-usage"
   | "finish-site-funded-codex-turn"
   | "get-site-funded-codex-status"
+  | "record-site-funded-admission"
+  | "get-site-funded-provider-key"
+  | "manage-site-funded-provider-keys"
   | "reserve-site-funded-speech"
   | "finish-site-funded-speech"
   | "commercial-orders"
@@ -3302,127 +3303,8 @@ export interface InterBayHostConnectionApi {
     target_host_id: string;
     target_project_id: string;
   }) => ReturnType<Hosts["resolveProjectApiRelayTarget"]>;
-  listHostOperations: (opts: {
-    account_id?: string;
-    host_id: string;
-    include_completed?: boolean;
-  }) => Promise<LroSummary[]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
-  setHostAccess: (
-    opts: Parameters<Hosts["setHostAccess"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostAccess"]>>>;
-  removeHostAccess: (
-    opts: Parameters<Hosts["removeHostAccess"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["removeHostAccess"]>>>;
-  setHostProjectRamLimit: (
-    opts: Parameters<Hosts["setHostProjectRamLimit"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostProjectRamLimit"]>>>;
-  setHostOwnerSpendLimits: (
-    opts: Parameters<Hosts["setHostOwnerSpendLimits"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostOwnerSpendLimits"]>>>;
-  setHostPoolAccess: (
-    opts: Parameters<Hosts["setHostPoolAccess"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostPoolAccess"]>>>;
-  setHostDeletionProtection: (
-    opts: Parameters<Hosts["setHostDeletionProtection"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostDeletionProtection"]>>>;
-  annotateHostAvailabilityEvent: (
-    opts: Parameters<Hosts["annotateHostAvailabilityEvent"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["annotateHostAvailabilityEvent"]>>>;
-  getHostRuntimeDeploymentStatus: (
-    opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
-  startHost: (
-    opts: Parameters<Hosts["startHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["startHost"]>>>;
-  stopHost: (
-    opts: Parameters<Hosts["stopHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["stopHost"]>>>;
-  restartHost: (
-    opts: Parameters<Hosts["restartHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["restartHost"]>>>;
-  backupHostProjects: (
-    opts: Parameters<Hosts["backupHostProjects"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["backupHostProjects"]>>>;
-  drainHost: (
-    opts: Parameters<Hosts["drainHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["drainHost"]>>>;
-  refreshHostCloudState: (
-    opts: Parameters<Hosts["refreshHostCloudState"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["refreshHostCloudState"]>>>;
-  upgradeHostSoftware: (
-    opts: Parameters<Hosts["upgradeHostSoftware"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["upgradeHostSoftware"]>>>;
-  reconcileHostSoftware: (
-    opts: Parameters<Hosts["reconcileHostSoftware"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostSoftware"]>>>;
-  setHostPublicRouteMode: (
-    opts: Parameters<Hosts["setHostPublicRouteMode"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostPublicRouteMode"]>>>;
-  relocateHost: (
-    opts: Parameters<Hosts["relocateHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["relocateHost"]>>>;
-  setHostMaintenanceNotice: (
-    opts: Parameters<Hosts["setHostMaintenanceNotice"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostMaintenanceNotice"]>>>;
-  reconcileHostRuntimeDeployments: (
-    opts: Parameters<Hosts["reconcileHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostRuntimeDeployments"]>>>;
-  rollbackHostRuntimeDeployments: (
-    opts: Parameters<Hosts["rollbackHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["rollbackHostRuntimeDeployments"]>>>;
-  rolloutHostManagedComponents: (
-    opts: Parameters<Hosts["rolloutHostManagedComponents"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["rolloutHostManagedComponents"]>>>;
-  deleteHost: (
-    opts: Parameters<Hosts["deleteHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["deleteHost"]>>>;
-  forceDeprovisionHost: (
-    opts: Parameters<Hosts["forceDeprovisionHost"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["forceDeprovisionHost"]>>>;
-  removeSelfHostConnector: (
-    opts: Parameters<Hosts["removeSelfHostConnector"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["removeSelfHostConnector"]>>>;
-  pullHostRootfsImage: (
-    opts: Parameters<Hosts["pullHostRootfsImage"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["pullHostRootfsImage"]>>>;
-  deleteHostRootfsImage: (
-    opts: Parameters<Hosts["deleteHostRootfsImage"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["deleteHostRootfsImage"]>>>;
-  gcDeletedHostRootfsImages: (
-    opts: Parameters<Hosts["gcDeletedHostRootfsImages"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["gcDeletedHostRootfsImages"]>>>;
-  setHostExamConfig: (
-    opts: Parameters<Hosts["setHostExamConfig"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostExamConfig"]>>>;
-  createHostExamRun: (
-    opts: Parameters<Hosts["createHostExamRun"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["createHostExamRun"]>>>;
-  rotateHostExamToken: (
-    opts: Parameters<Hosts["rotateHostExamToken"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["rotateHostExamToken"]>>>;
-  openHostExamRun: (
-    opts: Parameters<Hosts["openHostExamRun"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["openHostExamRun"]>>>;
-  updateHostExamDeadline: (
-    opts: Parameters<Hosts["updateHostExamDeadline"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["updateHostExamDeadline"]>>>;
-  increaseHostExamCapacity: (
-    opts: Parameters<Hosts["increaseHostExamCapacity"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["increaseHostExamCapacity"]>>>;
-  stopAndEraseHostExamRun: (
-    opts: Parameters<Hosts["stopAndEraseHostExamRun"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["stopAndEraseHostExamRun"]>>>;
-  addHostSshAuthorizedKey: (
-    opts: Parameters<Hosts["addHostSshAuthorizedKey"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["addHostSshAuthorizedKey"]>>>;
-  removeHostSshAuthorizedKey: (
-    opts: Parameters<Hosts["removeHostSshAuthorizedKey"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["removeHostSshAuthorizedKey"]>>>;
-  setHostRuntimeDeployments: (
-    opts: Parameters<Hosts["setHostRuntimeDeployments"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["setHostRuntimeDeployments"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -3525,19 +3407,6 @@ export interface InterBayHostConnectionApi {
   deleteProjectBackupIndex: (
     opts: Parameters<Hosts["deleteProjectBackupIndex"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["deleteProjectBackupIndex"]>>>;
-  listHostProjects: (
-    opts: Pick<
-      Parameters<Hosts["listHostProjects"]>[0],
-      | "account_id"
-      | "id"
-      | "limit"
-      | "cursor"
-      | "risk_only"
-      | "free_only"
-      | "state_filter"
-      | "project_state"
-    >,
-  ) => Promise<Awaited<ReturnType<Hosts["listHostProjects"]>>>;
   ensureHostOwnerSshTrust: (
     opts: HostOwnerSshTrustRequest,
   ) => Promise<HostOwnerSshTrustResponse>;
@@ -3562,90 +3431,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
     method: "update-api-relay-account-usage",
   },
   { name: "list", method: "list" },
-  { name: "setHostAccess", method: "set-host-access" },
-  { name: "removeHostAccess", method: "remove-host-access" },
-  {
-    name: "setHostProjectRamLimit",
-    method: "set-host-project-ram-limit",
-  },
-  {
-    name: "setHostOwnerSpendLimits",
-    method: "set-host-owner-spend-limits",
-  },
-  { name: "setHostPoolAccess", method: "set-host-pool-access" },
-  {
-    name: "setHostDeletionProtection",
-    method: "set-host-deletion-protection",
-  },
-  {
-    name: "annotateHostAvailabilityEvent",
-    method: "annotate-host-availability-event",
-  },
-  {
-    name: "getHostRuntimeDeploymentStatus",
-    method: "get-host-runtime-deployment-status",
-  },
-  { name: "startHost", method: "start-host" },
-  { name: "stopHost", method: "stop-host" },
-  { name: "restartHost", method: "restart-host" },
-  { name: "backupHostProjects", method: "backup-host-projects" },
-  { name: "drainHost", method: "drain-host" },
-  { name: "refreshHostCloudState", method: "refresh-host-cloud-state" },
-  { name: "upgradeHostSoftware", method: "upgrade-host-software" },
-  { name: "reconcileHostSoftware", method: "reconcile-host-software" },
-  { name: "setHostPublicRouteMode", method: "set-host-public-route-mode" },
-  { name: "relocateHost", method: "relocate-host" },
-  {
-    name: "setHostMaintenanceNotice",
-    method: "set-host-maintenance-notice",
-  },
-  {
-    name: "reconcileHostRuntimeDeployments",
-    method: "reconcile-host-runtime-deployments",
-  },
-  {
-    name: "rollbackHostRuntimeDeployments",
-    method: "rollback-host-runtime-deployments",
-  },
-  {
-    name: "rolloutHostManagedComponents",
-    method: "rollout-host-managed-components",
-  },
-  { name: "deleteHost", method: "delete-host" },
-  { name: "forceDeprovisionHost", method: "force-deprovision-host" },
-  { name: "removeSelfHostConnector", method: "remove-self-host-connector" },
-  { name: "pullHostRootfsImage", method: "pull-host-rootfs-image" },
-  { name: "deleteHostRootfsImage", method: "delete-host-rootfs-image" },
-  {
-    name: "gcDeletedHostRootfsImages",
-    method: "gc-deleted-host-rootfs-images",
-  },
-  { name: "setHostExamConfig", method: "set-host-exam-config" },
-  { name: "createHostExamRun", method: "create-host-exam-run" },
-  { name: "rotateHostExamToken", method: "rotate-host-exam-token" },
-  { name: "openHostExamRun", method: "open-host-exam-run" },
-  {
-    name: "updateHostExamDeadline",
-    method: "update-host-exam-deadline",
-  },
-  {
-    name: "increaseHostExamCapacity",
-    method: "increase-host-exam-capacity",
-  },
-  {
-    name: "stopAndEraseHostExamRun",
-    method: "stop-and-erase-host-exam-run",
-  },
-  { name: "addHostSshAuthorizedKey", method: "add-host-ssh-authorized-key" },
-  {
-    name: "removeHostSshAuthorizedKey",
-    method: "remove-host-ssh-authorized-key",
-  },
-  { name: "listHostOperations", method: "list-host-operations" },
-  {
-    name: "setHostRuntimeDeployments",
-    method: "set-host-runtime-deployments",
-  },
   {
     name: "getProjectStartMetadata",
     method: "get-project-start-metadata",
@@ -3705,10 +3490,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "deleteProjectBackupIndex",
     method: "delete-project-backup-index",
-  },
-  {
-    name: "listHostProjects",
-    method: "list-host-projects",
   },
   {
     name: "ensureHostOwnerSshTrust",
@@ -4773,6 +4554,12 @@ export interface InterBayAccountLocalApi
   publicDirectoryShareAuthorizeRead: (
     opts: AuthorizePublicDirectoryShareReadOptions,
   ) => Promise<AuthorizePublicDirectoryShareReadResponse>;
+  publicDirectoryShareGetViews: (
+    opts: GetPublicDirectoryShareViewsOptions,
+  ) => Promise<GetPublicDirectoryShareViewsResponse>;
+  publicDirectoryShareGetViewAggregates: (
+    opts: GetPublicDirectoryShareViewAggregatesOptions,
+  ) => Promise<GetPublicDirectoryShareViewAggregatesResponse>;
   publicDirectoryShareListDirectory: (
     opts: ListPublicDirectoryShareDirectoryOptions,
   ) => Promise<ListPublicDirectoryShareDirectoryResponse>;
@@ -4892,6 +4679,15 @@ export interface InterBayBayOpsApi {
   getSiteFundedCodexStatus: (
     opts: BayOpsSiteFundedCodexStatusRequest,
   ) => Promise<SiteFundedCodexStatus>;
+  recordSiteFundedAdmission: (
+    opts: BayOpsRecordSiteFundedAdmissionRequest,
+  ) => Promise<void>;
+  getSiteFundedProviderKey: (
+    opts: BayOpsSiteFundedProviderKeyRequest,
+  ) => Promise<{ apiKey: string }>;
+  manageSiteFundedProviderKeys: (
+    opts: BayOpsSiteFundedProviderKeysRequest,
+  ) => Promise<SiteFundedProviderKeyInfo[]>;
   reserveSiteFundedSpeech: (
     opts: BayOpsReserveSiteFundedSpeechRequest,
   ) => Promise<{
@@ -8244,6 +8040,24 @@ export function createInterBayAccountLocalClient({
       method: "public-directory-share-authorize-read",
     }),
   });
+  const publicDirectoryShareGetViewsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViews">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-get-views",
+    }),
+  });
+  const publicDirectoryShareGetViewAggregatesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViewAggregates">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-get-view-aggregates",
+    }),
+  });
   const publicDirectoryShareListDirectoryClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "publicDirectoryShareListDirectory">
   >({
@@ -8804,6 +8618,14 @@ export function createInterBayAccountLocalClient({
       ),
     publicDirectoryShareAuthorizeRead: async (opts) =>
       await publicDirectoryShareAuthorizeReadClient.publicDirectoryShareAuthorizeRead(
+        opts,
+      ),
+    publicDirectoryShareGetViews: async (opts) =>
+      await publicDirectoryShareGetViewsClient.publicDirectoryShareGetViews(
+        opts,
+      ),
+    publicDirectoryShareGetViewAggregates: async (opts) =>
+      await publicDirectoryShareGetViewAggregatesClient.publicDirectoryShareGetViewAggregates(
         opts,
       ),
     publicDirectoryShareListDirectory: async (opts) =>
@@ -11008,6 +10830,34 @@ export function createInterBayAccountLocalHandler({
       },
     }),
     createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViews">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-get-views",
+      }),
+      impl: {
+        publicDirectoryShareGetViews: async (opts) =>
+          await impl.publicDirectoryShareGetViews(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareGetViewAggregates">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-get-view-aggregates",
+      }),
+      impl: {
+        publicDirectoryShareGetViewAggregates: async (opts) =>
+          await impl.publicDirectoryShareGetViewAggregates(opts),
+      },
+    }),
+    createServiceHandler<
       Pick<InterBayAccountLocalApi, "publicDirectoryShareListDirectory">
     >({
       ...options,
@@ -11234,6 +11084,33 @@ export function createInterBayBayOpsClient({
     subject: bayOpsSubject({
       dest_bay,
       method: "get-site-funded-codex-status",
+    }),
+  });
+  const recordSiteFundedAdmissionClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "recordSiteFundedAdmission">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "record-site-funded-admission",
+    }),
+  });
+  const siteFundedProviderKeyClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getSiteFundedProviderKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-site-funded-provider-key",
+    }),
+  });
+  const manageSiteFundedProviderKeysClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "manageSiteFundedProviderKeys">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "manage-site-funded-provider-keys",
     }),
   });
   const reserveSiteFundedSpeechClient = createServiceClient<
@@ -11532,6 +11409,14 @@ export function createInterBayBayOpsClient({
       await finishSiteFundedCodexTurnClient.finishSiteFundedCodexTurn(opts),
     getSiteFundedCodexStatus: async (opts) =>
       await siteFundedCodexStatusClient.getSiteFundedCodexStatus(opts),
+    recordSiteFundedAdmission: async (opts) =>
+      await recordSiteFundedAdmissionClient.recordSiteFundedAdmission(opts),
+    getSiteFundedProviderKey: async (opts) =>
+      await siteFundedProviderKeyClient.getSiteFundedProviderKey(opts),
+    manageSiteFundedProviderKeys: async (opts) =>
+      await manageSiteFundedProviderKeysClient.manageSiteFundedProviderKeys(
+        opts,
+      ),
     reserveSiteFundedSpeech: async (opts) =>
       await reserveSiteFundedSpeechClient.reserveSiteFundedSpeech(opts),
     finishSiteFundedSpeech: async (opts) =>
@@ -11774,6 +11659,44 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getSiteFundedCodexStatus: async (opts) =>
           await impl.getSiteFundedCodexStatus(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "recordSiteFundedAdmission">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "record-site-funded-admission",
+      }),
+      impl: {
+        recordSiteFundedAdmission: async (opts) =>
+          await impl.recordSiteFundedAdmission(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getSiteFundedProviderKey">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-site-funded-provider-key",
+      }),
+      impl: {
+        getSiteFundedProviderKey: async (opts) =>
+          await impl.getSiteFundedProviderKey(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "manageSiteFundedProviderKeys">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "manage-site-funded-provider-keys",
+      }),
+      impl: {
+        manageSiteFundedProviderKeys: async (opts) =>
+          await impl.manageSiteFundedProviderKeys(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">>({

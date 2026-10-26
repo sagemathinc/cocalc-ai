@@ -59,7 +59,8 @@ test("the summary says what happened and where a reply arrives", () => {
   const unknown = agentSendSummary(
     sent({ outcome: "unknown", reason: "timeout" }),
   );
-  assert.match(unknown, /unconfirmed: timeout/);
+  // Its first word says it: never mistaken for "Delivered".
+  assert.match(unknown, /^UNCONFIRMED: delivery to @reviewer .*\(timeout\)/);
   assert.match(unknown, /do not resend automatically/);
   assert.ok(unknown.includes(`agent rpc inspect ${base.attempt_id}`));
   assert.ok(unknown.includes(`--to-agent ${target.agent_id}`));
@@ -164,4 +165,37 @@ test("a withdrawal says whether an earlier attempt may already have acted", () =
   );
   assert.match(held(), /may have run tools/);
   assert.match(held(false), /it ran no tools/);
+});
+
+test("agent rpc inspect says whether an external member has read it", () => {
+  const external = {
+    kind: "external" as const,
+    account_id: randomUUID(),
+    agent_id: randomUUID(),
+    installation_id: randomUUID(),
+  };
+  const inspected = (inbox: any) =>
+    agentRpcInspectSummary({
+      ...base,
+      target: external,
+      outcome: "accepted",
+      inbox,
+    });
+  assert.match(
+    inspected({
+      state: "pending",
+      created_at: "2026-10-23T10:00:00.000Z",
+      expires_at: "2026-10-30T10:00:00.000Z",
+    }),
+    /^Not read yet: .* until 2026-10-30T10:00:00.000Z/,
+  );
+  assert.match(
+    inspected({
+      state: "acknowledged",
+      created_at: "2026-10-23T10:00:00.000Z",
+      expires_at: "2026-10-30T10:00:00.000Z",
+      acknowledged_at: "2026-10-23T11:00:00.000Z",
+    }),
+    /^Read: .* at 2026-10-23T11:00:00.000Z/,
+  );
 });

@@ -570,6 +570,29 @@ describe("hub API argument transforms", () => {
     });
   });
 
+  it.each([
+    "purchases.adminListCreditAttribution",
+    "purchases.adminAttachCreditAttribution",
+  ])("binds %s to the authenticated session", async (name) => {
+    const args = await transformArgs({
+      name,
+      args: [
+        {
+          account_id: "another-account",
+          session_hash: "stale-session",
+          purchase_id: 7,
+        },
+      ],
+      account_id: "admin-account",
+      auth_session_hash: "current-session",
+    });
+    expect(args[0]).toMatchObject({
+      account_id: "admin-account",
+      session_hash: "current-session",
+      purchase_id: 7,
+    });
+  });
+
   it("forces browser sign-in cookie issuance to the authenticated account", async () => {
     const args = await transformArgs({
       name: "system.issueBrowserSignInCookie",

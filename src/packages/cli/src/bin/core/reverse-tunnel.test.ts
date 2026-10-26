@@ -68,12 +68,13 @@ test("gives up at once on authentication failures", async () => {
   assert.match((await tunnel.failed).message, /ssh to the project failed/);
 });
 
-test("reconnects when the connection drops, then gives up if it keeps failing", async () => {
+test("reconnects when the connection drops; a limit, if given, ends it", async () => {
   let spawns = 0;
   const statuses: string[] = [];
   const tunnel = startReverseTunnel({
     args: [],
     reconnectDelaysMs: [10],
+    maxQuickFailures: 6,
     onStatus: (message) => statuses.push(message),
     spawnSsh: () => {
       spawns++;
@@ -120,4 +121,71 @@ test("ssh's stdin stays open as the lifetime pipe", async () => {
   ]);
   assert.equal(outcome, "still up");
   await tunnel.stop();
+});
+
+test("by default it never gives up on a dropped or refused connection", async () => {
+  // A laptop asleep or offline, a broken pipe, the project's ssh endpoint
+  // refusing the websocket while it restarts (J12's log): all retried.
+  const failures = [
+    "client_loop: send disconnect: Broken pipe",
+    "websocket: bad handshake",
+    "ssh: Could not resolve hostname ssh-host.example: nodename nor servname provided",
+  ];
+  let spawns = 0;
+  const tunnel = startReverseTunnel({
+    args: [],
+    reconnectDelaysMs: [5],
+    spawnSsh: () => {
+      const message = failures[spawns % failures.length];
+      spawns++;
+      return fake(
+        `process.stderr.write(${JSON.stringify(message + "\n")}); process.exit(255)`,
+      )();
+    },
+  });
+  const outcome = await Promise.race([
+    tunnel.failed.then((err) => `failed: ${err.message}`),
+    new Promise((r) => setTimeout(() => r("still trying"), 2500)),
+  ]);
+  assert.equal(outcome, "still trying");
+  assert.ok(spawns > 6, `retried ${spawns} times`);
+  await tunnel.stop();
+});
+
+test("a refused forward is retried once the tunnel was up (the old one may still hold it)", async () => {
+  let spawns = 0;
+  const tunnel = startReverseTunnel({
+    args: [],
+    reconnectDelaysMs: [5],
+    spawnSsh: () => {
+      spawns++;
+      return fake(
+        spawns === 1
+          ? "setTimeout(() => process.exit(255), 50)"
+          : "process.stderr.write('Error: remote port forwarding failed for listen port 9222\\n'); process.exit(255)",
+      )();
+    },
+  });
+  const outcome = await Promise.race([
+    tunnel.failed.then(() => "failed"),
+    new Promise((r) => setTimeout(() => r("still trying"), 800)),
+  ]);
+  assert.equal(outcome, "still trying");
+  assert.ok(spawns >= 3);
+  await tunnel.stop();
+});
+
+test("delays vary a little, so tunnels dropped together do not return together", async () => {
+  const statuses: string[] = [];
+  const tunnel = startReverseTunnel({
+    args: [],
+    reconnectDelaysMs: [100_000],
+    jitter: 0.2,
+    onStatus: (message) => statuses.push(message),
+    spawnSsh: fake("process.exit(255)"),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  await tunnel.stop();
+  const seconds = Number(statuses[0]?.match(/reconnecting in (\d+)s/)?.[1]);
+  assert.ok(seconds >= 80 && seconds <= 120, `${seconds}s`);
 });
