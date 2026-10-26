@@ -274,6 +274,9 @@ async function sendRenewalBusinessTaxIdNotice(
       to_ids: [attempt.account_id],
       dedupMinutes: RENEWAL_NOTICE_DEDUP_MINUTES,
       dedupBySubject: true,
+      // Delivered to the account's home bay before the notice is recorded,
+      // so a failed delivery is retried on the next recheck.
+      requireAccountNoticeDelivery: true,
       subject: `Action needed: add a VAT number to renew your ${site_name} subscription (Id ${attempt.subscription_id})`,
       body: `
 We couldn't renew your ${site_name} subscription (id=${attempt.subscription_id}). ${site_name} sells to customers in the EU and the UK only with the VAT number of their organization, and there is none on file.

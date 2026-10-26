@@ -8,6 +8,7 @@ import getPool from "@cocalc/database/pool";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import {
   BUSINESS_TAX_ID_REFUSAL_PREFIX,
+  renewalAttemptClaimableSql,
   RENEWAL_PAYMENT_GRACE_MS,
 } from "./subscription-renewal-attempts";
 
@@ -85,8 +86,7 @@ function delayedRenewalTable(
 }
 
 export async function alertDelayedSubscriptionRenewals(): Promise<number> {
-  const { billingAccountsTable } = await import("./billing-account");
-  const accountTable = billingAccountsTable();
+  const claimable = await renewalAttemptClaimableSql("$4");
   const { subscription_maintenance: maintenance } = await getServerSettings();
   const { warningMinutes, criticalMinutes } =
     getSubscriptionRenewalHealthThresholds(maintenance);
@@ -101,14 +101,7 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
             a.payment_intent_id,
             a.stripe_invoice_id,
             a.last_error,
-            NOT EXISTS (
-              SELECT 1 FROM ${accountTable} AS account
-               WHERE account.account_id=a.account_id
-                 AND (account.banned IS TRUE OR account.deleted IS TRUE)
-            ) AND NOT EXISTS (
-              SELECT 1 FROM billing_authority_account_fences AS fence
-               WHERE fence.account_id=a.account_id AND fence.frozen
-            ) AS claimable
+            ${claimable.sql} AS claimable
        FROM subscription_renewal_attempts a
        JOIN subscriptions s
          ON s.id=a.subscription_id
@@ -136,7 +129,12 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
           a.next_attempt_at > NOW() - ($1 * INTERVAL '1 minute')
         )
       ORDER BY a.not_before, a.subscription_id`,
-    [warningMinutes, RENEWAL_PAYMENT_GRACE_MS, BUSINESS_TAX_ID_REFUSAL_PREFIX],
+    [
+      warningMinutes,
+      RENEWAL_PAYMENT_GRACE_MS,
+      BUSINESS_TAX_ID_REFUSAL_PREFIX,
+      ...(claimable.bay != null ? [claimable.bay] : []),
+    ],
   );
   if (rows.length === 0) {
     return 0;

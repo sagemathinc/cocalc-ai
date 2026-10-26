@@ -227,24 +227,49 @@ export async function cancelOpenSubscriptionRenewalAttempts({
   return rowCount ?? 0;
 }
 
+// The SQL condition under which this bay's renewal worker may claim renewal
+// attempt `a`: its account is not banned, deleted or billing-frozen, and,
+// without the billing authority, the account and its funding authority belong
+// to this bay. Shared by the claim and the renewal health alert, so the alert
+// counts exactly what the claim can take. If `bay` is set, pass this bay's id
+// as that query parameter.
+export async function renewalAttemptClaimableSql(
+  bayParam: string,
+): Promise<{ sql: string; bay?: string }> {
+  const { billingAccountsTable } = await import("./billing-account");
+  const { isBillingAuthorityEnabled } =
+    await import("./billing-authority/config");
+  const accountTable = billingAccountsTable();
+  const legacyHome = isBillingAuthorityEnabled()
+    ? ""
+    : `EXISTS (SELECT 1 FROM accounts owner WHERE owner.account_id=a.account_id
+            AND COALESCE(NULLIF(BTRIM(owner.home_bay_id),''),${bayParam})=${bayParam})
+          AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
+            WHERE f.payer_account_id=a.account_id AND (f.state <> 'active' OR f.home_bay_id <> ${bayParam}))
+          AND `;
+  return {
+    sql: `(${legacyHome}NOT EXISTS (
+            SELECT 1 FROM ${accountTable} AS account
+             WHERE account.account_id=a.account_id
+               AND (account.banned IS TRUE OR account.deleted IS TRUE)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM billing_authority_account_fences AS fence
+             WHERE fence.account_id=a.account_id AND fence.frozen
+          ))`,
+    bay: legacyHome ? getConfiguredBayId() : undefined,
+  };
+}
+
 export async function claimDueSubscriptionRenewalAttempts({
   limit,
 }: {
   limit: number;
 }): Promise<SubscriptionRenewalAttempt[]> {
-  const { billingAccountsTable } = await import("./billing-account");
-  const { isBillingAuthorityEnabled } =
-    await import("./billing-authority/config");
-  const accountTable = billingAccountsTable();
-  const legacyHomePredicate = isBillingAuthorityEnabled()
-    ? ""
-    : `AND EXISTS (SELECT 1 FROM accounts owner WHERE owner.account_id=a.account_id
-            AND COALESCE(NULLIF(BTRIM(owner.home_bay_id),''),$3)=$3)
-          AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
-            WHERE f.payer_account_id=a.account_id AND (f.state <> 'active' OR f.home_bay_id <> $3))`;
+  const claimable = await renewalAttemptClaimableSql("$3");
   const queryParams: (number | string)[] = [limit, RENEWAL_ATTEMPT_LEASE_MS];
-  if (legacyHomePredicate) {
-    queryParams.push(getConfiguredBayId());
+  if (claimable.bay != null) {
+    queryParams.push(claimable.bay);
   }
   const { rows } = await getPool().query<SubscriptionRenewalAttempt>(
     `WITH candidates AS (
@@ -257,19 +282,10 @@ export async function claimDueSubscriptionRenewalAttempts({
           AND s.status='active'
           AND s.current_period_end=a.period_end
         WHERE a.state IN ('scheduled','processing')
-          ${legacyHomePredicate}
           AND a.not_before <= NOW()
           AND a.next_attempt_at <= NOW()
           AND (a.lease_expires_at IS NULL OR a.lease_expires_at <= NOW())
-          AND NOT EXISTS (
-            SELECT 1 FROM ${accountTable} AS account
-             WHERE account.account_id=a.account_id
-               AND (account.banned IS TRUE OR account.deleted IS TRUE)
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM billing_authority_account_fences AS fence
-             WHERE fence.account_id=a.account_id AND fence.frozen
-          )
+          AND ${claimable.sql}
         -- Least recently due first. A failed attempt's next_attempt_at moves
         -- forward on every retry, so it goes behind every attempt that has
         -- been due longer instead of being claimed by every pass ahead of

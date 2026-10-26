@@ -130,9 +130,12 @@ describe("subscription renewal worker", () => {
     expect(await subscriptionStatus(subscription_id)).toBe("active");
     // the customer is told what to do, which subscription, and until when
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const [{ subject, body, dedupBySubject }] = mockSend.mock.calls[0];
+    const [{ subject, body, dedupBySubject, requireAccountNoticeDelivery }] =
+      mockSend.mock.calls[0];
     expect(subject).toContain(`Id ${subscription_id}`);
     expect(dedupBySubject).toBe(true);
+    // recorded only once delivered to the account's home bay
+    expect(requireAccountNoticeDelivery).toBe(true);
     expect(body).toContain("VAT number");
     expect(body).toContain("payment-methods");
     expect(body).toMatch(/stays active until .+ will be canceled/s);
