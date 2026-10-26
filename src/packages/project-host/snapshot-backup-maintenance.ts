@@ -31,6 +31,9 @@ import {
 import {
   clearPendingPrune,
   dropPendingPruneRetry,
+  clearLimitRetry,
+  limitRetryAt,
+  noteLimitRetry,
   notePendingPrune,
   type PendingPrune,
   startDeferredPruneLoop,
@@ -790,6 +793,10 @@ function snapshotDueAt(
   row: HostProjectMaintenanceSchedule,
   schedule: SnapshotSchedule,
 ): number | undefined {
+  // A deferred snapshot-limit prune makes the project due again for a full
+  // update, even if its newest snapshot already covers every change.
+  const limitRetry = limitRetryAt(row.project_id);
+  if (limitRetry != null) return limitRetry;
   const changedAt = parseTimestampMs(row.last_changed ?? row.last_edited);
   if (changedAt == null) return undefined;
   const reconciledChangeAt = parseTimestampMs(
@@ -1560,6 +1567,9 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 // nothing yet restart the gate's bound.
                 dropPendingPruneRetry(project_id);
               } else if (updated?.prune_deferred) {
+                // the update ran and applied the limit; only rolling
+                // retention waits
+                clearLimitRetry(project_id);
                 // Retried within the bound even if this project isn't due
                 // again for a day (snapshot-prune-gate.ts).
                 notePendingPrune(project_id, {
@@ -1643,6 +1653,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             !result.ran &&
             result.admissionDeferred === true &&
             result.mutated !== true;
+          if (limitPruneDeferred) {
+            noteLimitRetry(
+              project_id,
+              nextRetry ? Date.parse(nextRetry) : Date.now() + 60_000,
+            );
+          }
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           if (intervalWaiting && nextSnapshotDueAt != null) {
             onFutureDue?.(project_id, nextSnapshotDueAt);

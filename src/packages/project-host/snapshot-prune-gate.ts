@@ -44,6 +44,10 @@ export interface SnapshotPruneGateStats {
 const firstDeferredAt = new Map<string, number>();
 // Projects whose prune was deferred, with what the retry needs.
 const pendingPrunes = new Map<string, PendingPrune>();
+// Projects whose snapshot-limit prune was deferred: when their full update
+// is due again. Kept here because the bay sees a fresh snapshot (when one
+// was created) and would otherwise not consider the project due for a day.
+const limitRetries = new Map<string, number>();
 
 export interface PendingPrune {
   /** The retention the deferred prune was computed with. */
@@ -132,7 +136,23 @@ export function dropPendingPruneRetry(projectId: string): void {
 /** A scheduled snapshot pruned (or the project went away): no retry needed. */
 export function clearPendingPrune(projectId: string): void {
   pendingPrunes.delete(projectId);
+  limitRetries.delete(projectId);
   firstDeferredAt.delete(projectId);
+}
+
+/** The snapshot limit couldn't be applied: run the full update again at
+ * `at` (the scheduler treats the project as due then). */
+export function noteLimitRetry(projectId: string, at: number): void {
+  limitRetries.set(projectId, at);
+}
+
+/** The full update applied the limit: the project is no longer due for it. */
+export function clearLimitRetry(projectId: string): void {
+  limitRetries.delete(projectId);
+}
+
+export function limitRetryAt(projectId: string): number | undefined {
+  return limitRetries.get(projectId);
 }
 
 export const DEFERRED_PRUNE_RETRY_MS = 60_000;
@@ -220,6 +240,7 @@ export function getSnapshotPruneGateStats(): SnapshotPruneGateStats {
 export function resetSnapshotPruneGateForTest(): void {
   firstDeferredAt.clear();
   pendingPrunes.clear();
+  limitRetries.clear();
   deferredCount = 0;
   forcedCount = 0;
   if (loop != null) clearInterval(loop);

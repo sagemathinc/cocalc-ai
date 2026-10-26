@@ -3344,6 +3344,81 @@ describe("deferred snapshot prunes", () => {
     ).toBeGreaterThanOrEqual(30 * 60_000);
   });
 
+  describe("the full update after a limit deferral", () => {
+    const created = "2026-04-10T22:30:00.000Z";
+    async function firstSweep() {
+      runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+        latest_snapshot_at: created,
+        created_snapshot_at: created,
+        changed: true,
+        disabled: false,
+        prune_deferred: false,
+        limit_prune_deferred: true,
+      });
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      const report = reportProjectMaintenanceMock.mock.calls
+        .map(([value]) => value)
+        .filter((value) => value.kind === "snapshot")
+        .at(-1);
+      // what the bay lists next: the created snapshot covers every change,
+      // and the deferred status and retry time have passed
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([
+        {
+          project_id: "proj-1",
+          last_edited: "2026-04-10T22:00:00.000Z",
+          last_snapshot: created,
+          last_snapshot_observed_at: new Date().toISOString(),
+          snapshot_status_outcome: "deferred",
+          snapshot_status_due_at: report.due_at,
+          snapshot_retry_at: new Date(Date.now() - 1000).toISOString(),
+          snapshots: { daily: 5 },
+          backups: { disabled: true },
+          max_snapshots_per_project: 8,
+          max_backups_per_project: 5,
+        },
+      ]);
+      runScheduledSnapshotMaintenanceMock.mockClear();
+      runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+        latest_snapshot_at: created,
+        created_snapshot_at: null,
+        changed: false,
+        disabled: false,
+      });
+      return runProjectSnapshotBackupMaintenanceSweepOnce;
+    }
+
+    it("runs the update again once the retry time passes, despite the fresh snapshot", async () => {
+      const sweep = await firstSweep();
+      const now = Date.now();
+      jest.spyOn(Date, "now").mockReturnValue(now + 5 * 60_000);
+      try {
+        await sweep({ hostId: "host-1" });
+      } finally {
+        jest.restoreAllMocks();
+      }
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+      // once it applied the limit, the project is no longer forced due
+      const gate = await import("./snapshot-prune-gate");
+      expect(gate.limitRetryAt("proj-1")).toBeUndefined();
+    });
+
+    it("(control) would be filtered out without the remembered retry", async () => {
+      const sweep = await firstSweep();
+      const gate = await import("./snapshot-prune-gate");
+      gate.clearLimitRetry("proj-1");
+      const now = Date.now();
+      jest.spyOn(Date, "now").mockReturnValue(now + 5 * 60_000);
+      try {
+        await sweep({ hostId: "host-1" });
+      } finally {
+        jest.restoreAllMocks();
+      }
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("keeps the retry pending while storage admission refuses it", async () => {
     await deferOnce();
     admitStorageOperationMock.mockImplementation(() => ({
