@@ -4339,3 +4339,90 @@ describe("bay registry registration is bound to the calling bay", () => {
     assert.deepEqual(await seedEntry(ATTACHED), before);
   });
 });
+
+describe("backup prune plans run on the seed, which owns the repositories", () => {
+  // An admin homed on the attached bay asks for a read-only prune plan. Auth
+  // is checked on the attached bay; the plan is forwarded over the real
+  // inter-bay fabric and runs on the seed, which records it. The repository
+  // exists only on the seed and has no usable bucket, so only the seed's
+  // handler can produce the error the admin sees.
+  let admin;
+  const repo_id = randomUUID();
+
+  const prunePlanLog = async (bay) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT value FROM central_log WHERE event='project_backup_repo_prune_plan' AND value->>'repo_id'=$1",
+         [${JSON.stringify(repo_id)}]);
+       return rows.map((row) => row.value);`,
+    );
+
+  before(async () => {
+    admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "pruner",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);
+       // The plan needs an admin with a second factor and a recent second
+       // factor verification (the harness session is freshly verified).
+       await getPool().query(
+         "INSERT INTO account_second_factors (id, account_id, type, label, secret_encrypted, status, created, activated_at, metadata) VALUES (gen_random_uuid(), $1, 'totp', 'multibay test', 'unused', 'active', NOW(), NOW(), '{}'::jsonb)",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    await runInBay(
+      cluster,
+      SEED,
+      `const { ensureProjectBackupRepoSchema } = server("project-backup/index.js");
+       await ensureProjectBackupRepoSchema();
+       const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO project_backup_repos (id, region, bucket_id, root, secret, status) VALUES ($1, 'wnam', $2, 'rustic/multibay-prune-plan', 'v1:unused', 'active')",
+         [${JSON.stringify(repo_id)}, ${JSON.stringify(randomUUID())}]);`,
+    );
+  });
+
+  it("forwards from the attached bay; the seed runs and records it", async () => {
+    await assert.rejects(
+      admin.client.call("system.getProjectBackupRepoPrunePlan", {
+        repo_id,
+        max_unused: "0",
+      }),
+      /no usable configuration/,
+    );
+    const seedLog = await prunePlanLog(SEED);
+    assert.equal(seedLog.length, 1);
+    assert.equal(seedLog[0].account_id, admin.account_id);
+    assert.equal(seedLog[0].source_bay_id, ATTACHED);
+    assert.equal(seedLog[0].bay_id, SEED);
+    assert.equal(seedLog[0].max_unused, "0");
+    assert.equal(seedLog[0].ok, false);
+    assert.deepEqual(await prunePlanLog(ATTACHED), []);
+  });
+
+  it("reports a repository the seed does not have", async () => {
+    await assert.rejects(
+      admin.client.call("system.getProjectBackupRepoPrunePlan", {
+        repo_id: randomUUID(),
+      }),
+      /no shared project backup repository/,
+    );
+  });
+
+  it("refuses a non-admin before forwarding", async () => {
+    await assert.rejects(
+      bob.client.call("system.getProjectBackupRepoPrunePlan", { repo_id }),
+      /must be an admin/,
+    );
+    assert.equal((await prunePlanLog(SEED)).length, 1);
+  });
+});

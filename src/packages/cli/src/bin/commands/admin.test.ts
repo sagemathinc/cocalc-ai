@@ -2966,3 +2966,83 @@ test("admin critical recovery drill forwards a stable drill id", async () => {
   ]);
   assert.deepEqual(captured, { drill_id });
 });
+
+test("backup-shard-prune-plan waits for the whole plan, not the default RPC timeout", async () => {
+  const calls: any[] = [];
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      system: {
+        getProjectBackupRepoPrunePlan: async (opts: any) => {
+          calls.push(opts);
+          return { dry_run: true };
+        },
+      },
+    }) as any,
+  );
+  const repo = "44444444-4444-4444-8444-444444444444";
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "backup-shard-prune-plan",
+    repo,
+    "--max-unused",
+    "0",
+    "--repoinfo",
+  ]);
+  assert.deepEqual(calls[0], {
+    account_id: "11111111-1111-4111-8111-111111111111",
+    repo_id: repo,
+    max_unused: "0",
+    max_repack: undefined,
+    repoinfo: true,
+    timeout_minutes: 30,
+    timeout: 35 * 60_000,
+  });
+  // The CLI's RPC proxy uses args[0].timeout as the call's timeout; it must
+  // outlast both the default --rpc-timeout and the plan's own budget.
+  assert.ok(calls[0].timeout > 30_000);
+  assert.ok(calls[0].timeout > calls[0].timeout_minutes * 60_000);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "backup-shard-prune-plan",
+    repo,
+    "--timeout-minutes",
+    "90",
+  ]);
+  assert.equal(calls[1].timeout_minutes, 90);
+  assert.equal(calls[1].timeout, 95 * 60_000);
+
+  // Over the maximum is clamped to it (120 minutes), and so is the timeout.
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "backup-shard-prune-plan",
+    repo,
+    "--timeout-minutes",
+    "500",
+  ]);
+  assert.equal(calls[2].timeout_minutes, 120);
+  assert.equal(calls[2].timeout, 125 * 60_000);
+
+  await assert.rejects(
+    program.parseAsync([
+      "node",
+      "test",
+      "admin",
+      "backup-shard-prune-plan",
+      repo,
+      "--timeout-minutes",
+      "0",
+    ]),
+    /must be a positive integer/,
+  );
+  assert.equal(calls.length, 3);
+});

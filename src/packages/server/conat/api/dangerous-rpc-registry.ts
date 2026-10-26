@@ -1630,6 +1630,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "system.getProjectBackupRepoPrunePlan": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin runs rustic against a shared backup repository with its stored secret (read-only dry run)",
+  },
   "system.adminCreateUser": {
     decision: "fresh-auth-required",
     reason: "admin account creation with password issuance",

@@ -575,6 +575,7 @@ describe("hub API argument transforms", () => {
     "purchases.adminListCreditAttribution",
     "purchases.adminAttachCreditAttribution",
     "purchases.adminCreateRefund",
+    "system.getProjectBackupRepoPrunePlan",
   ])("binds %s to the authenticated session", async (name) => {
     const args = await transformArgs({
       name,
