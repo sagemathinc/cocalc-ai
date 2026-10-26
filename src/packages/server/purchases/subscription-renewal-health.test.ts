@@ -194,6 +194,7 @@ describe("subscription renewal health alert", () => {
       const body = mockAdminAlert.mock.calls[0][0].body;
       expect(body).not.toContain("Never tried");
       expect(body).toContain("Not claimable: 1");
+      expect(body).toContain("this bay's renewal worker may not claim them");
     },
   );
 

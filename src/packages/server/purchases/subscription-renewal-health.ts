@@ -155,7 +155,7 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
       ? `\n- **Never tried yet: ${neverTried}.** These are overdue and claimable but no renewal pass has attempted them, most likely because other renewals are taking every pass (head-of-line blocking): check the renewals with many tries.`
       : "") +
     (unclaimable > 0
-      ? `\n- Not claimable: ${unclaimable} (the account is banned, deleted or has billing frozen, so no renewal pass will try them).`
+      ? `\n- Not claimable: ${unclaimable} (this bay's renewal worker may not claim them: the account is banned, deleted or has billing frozen, or, without the billing authority, the account or its funding authority belongs to another bay or is inactive).`
       : "");
   const body = `Automatic personal membership renewals are taking longer than expected.
 
