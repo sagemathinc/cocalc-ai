@@ -146,4 +146,49 @@ describe("subscription renewal health alert", () => {
     await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(0);
     expect(mockAdminAlert).not.toHaveBeenCalled();
   });
+
+  it("points out overdue renewals that were never tried", async () => {
+    const neverTried = uuid();
+    const retried = uuid();
+    await createTestAccount(neverTried);
+    await createTestAccount(retried);
+    await createTestMembershipSubscription(neverTried, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(2, "hour").toDate(),
+    });
+    const r = await createTestMembershipSubscription(retried, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(3, "hour").toDate(),
+    });
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts
+          SET attempt_count=40, last_attempt_at=NOW()
+        WHERE subscription_id=$1`,
+      [r.subscription_id],
+    );
+
+    await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(2);
+    const body = mockAdminAlert.mock.calls[0][0].body;
+    expect(body).toContain("Never tried yet: 1.");
+    expect(body).toContain("head-of-line");
+  });
+
+  it("does not report starvation when every overdue renewal was tried", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        start: dayjs().subtract(1, "month").toDate(),
+        end: dayjs().subtract(2, "hour").toDate(),
+      },
+    );
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts SET attempt_count=3
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+    await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(1);
+    expect(mockAdminAlert.mock.calls[0][0].body).not.toContain("Never tried");
+  });
 });

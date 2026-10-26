@@ -13,6 +13,7 @@ import createSubscriptionPayment, {
   processSubscriptionRenewalFailure,
 } from "./stripe/create-subscription-payment";
 import { cancelPaymentIntent } from "./stripe/create-payment-intent";
+import { isBusinessTaxIdRequiredError } from "./stripe/business-tax-id-gate";
 import processPaymentIntents from "./stripe/process-payment-intents";
 import {
   claimDueSubscriptionRenewalAttempts,
@@ -190,6 +191,46 @@ ${await support()}`,
   });
 }
 
+// What to do with a renewal that the EU/UK business tax ID check refuses once
+// its grace period has ended. "hold" keeps it waiting (rechecked every
+// RENEWAL_CUSTOMER_ACTION_RECHECK_MS, and reported by the renewal health
+// alert) until a decision is made for these customers. Pending William's
+// decision (10-26) between canceling at the end of the grace period and
+// exempting subscriptions that started before the check existed.
+const BUSINESS_TAX_ID_REFUSAL_PAST_GRACE: "hold" = "hold";
+
+// A refusal that cannot succeed until the customer acts: the customer is in
+// the EU or the UK without a valid VAT ID. Retrying it soon cannot help, so it
+// waits for the customer like a declined card, instead of being retried (and
+// recorded) every few minutes. The check itself already notified the customer
+// (at most weekly), so no second notice is sent.
+async function deferRenewalRefusedForCustomer({
+  attempt,
+  err,
+}: {
+  attempt: SubscriptionRenewalAttempt;
+  err: unknown;
+}): Promise<void> {
+  const pastGrace =
+    Date.now() >= renewalGraceEndsAt(attempt.period_end).valueOf();
+  const { deferred } = await deferSubscriptionRenewalAttemptForCustomer({
+    attempt_id: attempt.id,
+    error: err,
+  });
+  if (!deferred) return;
+  await markSubscriptionRenewalCustomerNotified({ attempt_id: attempt.id });
+  if (pastGrace) {
+    logger.warn(
+      "renewal refused by the business tax ID check past its grace period",
+      {
+        attempt_id: attempt.id,
+        subscription_id: attempt.subscription_id,
+        policy: BUSINESS_TAX_ID_REFUSAL_PAST_GRACE,
+      },
+    );
+  }
+}
+
 async function processClaimedRenewalAttempt(
   attempt: SubscriptionRenewalAttempt,
 ): Promise<void> {
@@ -216,6 +257,10 @@ async function processClaimedRenewalAttempt(
     const current = await getSubscriptionRenewalAttempt({
       attempt_id: attempt.id,
     });
+    if (current?.state === "processing" && isBusinessTaxIdRequiredError(err)) {
+      await deferRenewalRefusedForCustomer({ attempt, err });
+      return;
+    }
     if (current?.state === "scheduled" || current?.state === "processing") {
       await releaseSubscriptionRenewalAttempt({
         attempt_id: attempt.id,

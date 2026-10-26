@@ -15,7 +15,21 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 type Queryable = Pick<PoolClient, "query">;
 
 export const RENEWAL_ATTEMPT_LEASE_MS = 2 * 60 * 1000;
-const RENEWAL_ATTEMPT_RETRY_MS = 60 * 1000;
+// A failed attempt is retried after RENEWAL_ATTEMPT_RETRY_MS, doubling with
+// each further failure up to RENEWAL_ATTEMPT_MAX_RETRY_MS, so an attempt that
+// keeps failing is not retried every minute.
+export const RENEWAL_ATTEMPT_RETRY_MS = 60 * 1000;
+export const RENEWAL_ATTEMPT_MAX_RETRY_MS = 6 * 60 * 60 * 1000;
+
+// The delay before retrying an attempt that has now been tried attempt_count
+// times.
+export function renewalRetryDelayMs(attempt_count: number): number {
+  const failures = Math.max(0, Math.floor(attempt_count) - 1);
+  return Math.min(
+    RENEWAL_ATTEMPT_MAX_RETRY_MS,
+    RENEWAL_ATTEMPT_RETRY_MS * 2 ** Math.min(failures, 30),
+  );
+}
 // When automatic payment needs the customer (declined card, or the bank
 // requires authentication), the open payment stays payable and membership
 // benefits continue for this long after the paid-through boundary.
@@ -255,7 +269,11 @@ export async function claimDueSubscriptionRenewalAttempts({
             SELECT 1 FROM billing_authority_account_fences AS fence
              WHERE fence.account_id=a.account_id AND fence.frozen
           )
-        ORDER BY a.not_before, a.subscription_id
+        -- Least recently due first. A failed attempt's next_attempt_at moves
+        -- forward on every retry, so it goes behind every attempt that has
+        -- been due longer instead of being claimed by every pass ahead of
+        -- them (head-of-line starvation).
+        ORDER BY a.next_attempt_at, a.not_before, a.subscription_id
         LIMIT $1
         FOR UPDATE OF a SKIP LOCKED
      )
@@ -402,15 +420,28 @@ export async function releaseSubscriptionRenewalAttempt({
   attempt_id: string;
   error: unknown;
 }): Promise<void> {
+  // Exponential backoff by the number of tries so far (see
+  // renewalRetryDelayMs).
   await getPool().query(
     `UPDATE subscription_renewal_attempts
         SET lease_expires_at=NULL,
-            next_attempt_at=NOW() + ($2 * INTERVAL '1 millisecond'),
+            next_attempt_at=NOW() + (
+              LEAST(
+                $4::double precision,
+                $2::double precision *
+                  POWER(2, LEAST(GREATEST(attempt_count - 1, 0), 30))
+              ) * INTERVAL '1 millisecond'
+            ),
             last_error=$3,
             updated_at=NOW()
       WHERE id=$1
         AND state='processing'`,
-    [attempt_id, RENEWAL_ATTEMPT_RETRY_MS, `${error}`],
+    [
+      attempt_id,
+      RENEWAL_ATTEMPT_RETRY_MS,
+      `${error}`,
+      RENEWAL_ATTEMPT_MAX_RETRY_MS,
+    ],
   );
 }
 

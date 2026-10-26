@@ -121,9 +121,18 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
     ({ age_minutes }) => Number(age_minutes) >= criticalMinutes,
   );
   const hidden = Math.max(0, rows.length - MAX_ALERT_ROWS);
+  // Overdue renewals that no pass has picked up at all: other renewals are
+  // being processed (or retried) ahead of them.
+  const neverTried = rows.filter(
+    ({ attempt_count }) => Number(attempt_count) === 0,
+  ).length;
+  const starvation =
+    neverTried > 0
+      ? `\n- **Never tried yet: ${neverTried}.** These are overdue but no renewal pass has attempted them, so other renewals are taking every pass (head-of-line blocking): check the renewals with many tries.`
+      : "";
   const body = `Automatic personal membership renewals are taking longer than expected.
 
-- Affected renewals: ${rows.length}
+- Affected renewals: ${rows.length}${starvation}
 - Oldest age: ${Math.floor(Number(rows[0].age_minutes))} minutes
 - Warning threshold: ${warningMinutes} minutes
 - Critical threshold: ${criticalMinutes} minutes
