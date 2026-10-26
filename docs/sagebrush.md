@@ -325,11 +325,18 @@ Content-Type: application/json
   which after a rehome can be an earlier change stamped by a bay whose clock
   is ahead. Then it is retried issued at its retry time, so it overtakes that
   stamp once the clocks' difference has passed.
-- Anything else is retried, with the same `request_id` and `issued`, with backoff
-  from 1 minute to 6 hours.
+- Anything else is retried, with the same `request_id` and `issued` (except an
+  outranked notice, above, whose `issued` moves to its retry time), with
+  backoff from 1 minute to 6 hours.
 - Admins are alerted immediately on a 401, which probably means the keys
   disagree, and after a day otherwise.
 - A newer change replaces a notice that is still pending.
+- Before each attempt, the bay holding the notice asks the account's current
+  home bay for its membership. A notice that is no longer the account's state
+  is dropped unsent: one left on an old home bay by a rehome, after the
+  account changed its membership on the new home, or one for an account
+  deleted or banned since. The home bay's next check sends the current state.
+  If the membership can't be resolved, the attempt fails and is retried.
 
 ### The emails
 

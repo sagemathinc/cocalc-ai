@@ -184,7 +184,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
   // One maintenance pass, at the fake clock.
   async function pass(fetch: any) {
     await checkSyncStates({ getLimits, now });
-    await deliverDueSyncNotices({ config, fetch, now });
+    await deliverDueSyncNotices({ config, fetch, now, getLimits });
     await runDueRetentionSteps({ config, fetch, now, send, getLimits });
   }
 
@@ -227,7 +227,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     const account_id = await syncedAccount(fetch);
     const purge_after = lapse(s, account_id);
     await checkSyncStates({ getLimits, now });
-    await deliverDueSyncNotices({ config, fetch, now });
+    await deliverDueSyncNotices({ config, fetch, now, getLimits });
     expect((await stateOf(account_id)).email_stage).toBe("ended");
     return { account_id, purge_after };
   }
@@ -243,7 +243,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     await pass(fetch);
     for (const account_id of ids) lapse(s, account_id);
     await checkSyncStates({ getLimits, now });
-    await deliverDueSyncNotices({ config, fetch, now });
+    await deliverDueSyncNotices({ config, fetch, now, getLimits });
     for (const account_id of ids) {
       expect((await stateOf(account_id)).email_stage).toBe("ended");
     }
@@ -429,7 +429,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       purge_after: clock + 89 * DAY,
     });
     expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(1);
-    await deliverDueSyncNotices({ config, fetch, now });
+    await deliverDueSyncNotices({ config, fetch, now, getLimits });
     expect(s.notices).toHaveLength(1);
     expect(s.notices[0]).toMatchObject({ account_id, issued: clock });
     expect(s.notices[0].limits.sync.enabled).toBe(true);
@@ -441,7 +441,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     // Checked again later: no further notice.
     clock += RECHECK_MS + 1;
     expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(0);
-    await deliverDueSyncNotices({ config, fetch, now });
+    await deliverDueSyncNotices({ config, fetch, now, getLimits });
     expect(s.notices).toHaveLength(1);
 
     // A first check of an account Sagebrush has active (or never saw) only
@@ -599,6 +599,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       config,
       fetch: unauthorized as any,
       now,
+      getLimits,
     });
     expect(result).toEqual({ accepted: 0, failed: 0 });
     expect(mockAlert).not.toHaveBeenCalled();
@@ -607,7 +608,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     expect(row.notice_next_at).toBeNull();
     // Nothing is due again.
     clock += DAY;
-    await deliverDueSyncNotices({ config, fetch, now });
+    await deliverDueSyncNotices({ config, fetch, now, getLimits });
     expect(s.notices).toHaveLength(0);
   });
 
@@ -655,7 +656,9 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     enabled.set(account_id, true);
     await checkSyncStates({ config, fetch, getLimits, now });
     // The reconcile notice's stamp is earlier than the one Sagebrush holds.
-    expect(await deliverDueSyncNotices({ config, fetch, now })).toEqual({
+    expect(
+      await deliverDueSyncNotices({ config, fetch, now, getLimits }),
+    ).toEqual({
       accepted: 0,
       failed: 1,
     });
@@ -669,7 +672,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
 
     for (let i = 0; i < 10 && row.notice_accepted_at == null; i++) {
       clock = new Date(row.notice_next_at).valueOf();
-      await deliverDueSyncNotices({ config, fetch, now });
+      await deliverDueSyncNotices({ config, fetch, now, getLimits });
       row = await stateOf(account_id);
     }
     expect(row.notice_accepted_at).not.toBeNull();
@@ -691,11 +694,42 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     // A newer renewal is held: this ending is stale, but Sagebrush is
     // read-only already, so it stands.
     s.held.enabled = false;
-    expect(await deliverDueSyncNotices({ config, fetch, now })).toEqual({
+    expect(
+      await deliverDueSyncNotices({ config, fetch, now, getLimits }),
+    ).toEqual({
       accepted: 1,
       failed: 0,
     });
     expect((await stateOf(account_id)).email_stage).toBe("ended");
+  });
+
+  it("drops a pending notice the membership no longer matches, unsent", async () => {
+    const { s, fetch } = fakeSagebrush();
+    const account_id = await syncedAccount(fetch);
+    lapse(s, account_id);
+    await checkSyncStates({ getLimits, now });
+    // Renewed before the notice went out (e.g. on a new home bay, after a
+    // rehome left this notice here).
+    enabled.set(account_id, true);
+    expect(
+      await deliverDueSyncNotices({ config, fetch, now, getLimits }),
+    ).toEqual({ accepted: 0, failed: 0 });
+    expect(s.notices).toHaveLength(0);
+    let row = await stateOf(account_id);
+    expect(row.notice_accepted_at).toBeNull();
+    expect(row.notice_next_at).toBeNull();
+    expect(row.last_error).toBe("notice_superseded");
+    expect(row.email_stage).not.toBe("ended");
+
+    // The next check here sees the change, and tells Sagebrush.
+    clock += RECHECK_MS + 1;
+    await pass(fetch);
+    expect(s.notices).toHaveLength(1);
+    expect(s.notices[0].limits.sync.enabled).toBe(true);
+    row = await stateOf(account_id);
+    expect(row.sync_enabled).toBe(true);
+    expect(row.notice_accepted_at).not.toBeNull();
+    expect(sent).toHaveLength(0);
   });
 
   it("acts only for accounts whose home bay this is", async () => {
@@ -725,7 +759,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       expect(row.email_stage).toBe("cancelled");
       expect(row.sync_enabled).toBe(true);
       // The renewal's notice is queued.
-      await deliverDueSyncNotices({ config, fetch, now });
+      await deliverDueSyncNotices({ config, fetch, now, getLimits });
       expect(s.notices).toHaveLength(2);
       expect(s.notices[1].limits.sync.enabled).toBe(true);
       clock += 100 * DAY;
@@ -743,7 +777,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       expect(await steps(fetch)).toMatchObject({ sent: 0, cancelled: 1 });
       expect(sent).toHaveLength(1);
       expect((await stateOf(account_id)).sync_enabled).toBe(true);
-      await deliverDueSyncNotices({ config, fetch, now });
+      await deliverDueSyncNotices({ config, fetch, now, getLimits });
       expect(s.notices.at(-1).limits.sync.enabled).toBe(true);
     });
 
@@ -870,7 +904,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       h.release();
       expect(await old).toMatchObject({ cancelled: 0, stale: 1 });
       expect(await stateOf(account_id)).toEqual(current);
-      await deliverDueSyncNotices({ config, fetch, now });
+      await deliverDueSyncNotices({ config, fetch, now, getLimits });
       expect(s.notices).toHaveLength(notices);
     });
 
@@ -887,7 +921,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       h.release();
       expect(await old).toMatchObject({ cancelled: 0, stale: 1 });
       expect(await stateOf(account_id)).toEqual(current);
-      await deliverDueSyncNotices({ config, fetch, now });
+      await deliverDueSyncNotices({ config, fetch, now, getLimits });
       expect(s.notices).toHaveLength(notices);
     });
   });
@@ -1235,7 +1269,7 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       expect(mockAlert.mock.calls[0][0].subject).toMatch(/notice/);
       s.noticeStatus = 200;
       clock += 7 * 60 * 60_000;
-      await deliverDueSyncNotices({ config, fetch, now });
+      await deliverDueSyncNotices({ config, fetch, now, getLimits });
       expect((await stateOf(account_id)).email_stage).toBe("ended");
       await steps(fetch, { getLimits: unresolvable });
       expect(mockAlert).toHaveBeenCalledTimes(1); // not overdue yet
@@ -1432,10 +1466,11 @@ describeDb("Sagebrush sync notices and retention emails", () => {
         config,
         fetch: leaky(status, text, /\/limits$/),
         now,
+        getLimits,
       });
       later();
     }
-    await deliverDueSyncNotices({ config, fetch, now });
+    await deliverDueSyncNotices({ config, fetch, now, getLimits });
     expect((await stateOf(account_id)).email_stage).toBe("ended");
     // Retention reads failing the same ways.
     for (const [status, text] of [

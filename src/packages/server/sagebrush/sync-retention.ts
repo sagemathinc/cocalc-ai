@@ -656,6 +656,44 @@ async function checkUnappliedNotice({
   return { accepted: true, status: 200 };
 }
 
+/** The account's state: this bay's own row, unless the account moved, then
+ * its current home bay's answer (routed). An account homed here is answered
+ * here, without depending on the cluster directory having caught up. */
+async function currentAccountState({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<OAuthAccountState> {
+  const local = await getOAuthAccountStateLocal({ account_id });
+  return local.state === "moved"
+    ? await getOAuthAccountState(account_id)
+    : local;
+}
+
+/** Whether a pending notice is still the account's state: its membership,
+ * asked of its current home bay. A deleted or banned account has nothing
+ * left to tell (the purge outbox deletes the data). */
+async function currentNotice({
+  row,
+  accountState,
+  getLimits,
+}: {
+  row: NoticeRow;
+  accountState: (opts: { account_id: string }) => Promise<OAuthAccountState>;
+  getLimits: (account_id: string) => Promise<SagebrushLimits | undefined>;
+}): Promise<"current" | "stale"> {
+  const account = await accountState({ account_id: row.account_id });
+  if (account.state === "moved") {
+    throw new SyncFailure("account_state_unavailable");
+  }
+  if (account.state !== "live") return "stale";
+  const limits = await getLimits(row.account_id);
+  if (limits == null) throw new SyncFailure("entitlement_unknown");
+  return (limits.sync.enabled === true) === row.sync_enabled
+    ? "current"
+    : "stale";
+}
+
 type NoticeRow = {
   account_id: string;
   sync_enabled: boolean;
@@ -674,12 +712,19 @@ export async function deliverDueSyncNotices({
   fetch = globalThis.fetch,
   now = Date.now,
   alert = adminAlert,
+  // (this bay's row first; routed to the current home only if the account
+  // moved: a notice this bay holds may outlive a rehome, and the account may
+  // have changed its membership on its new home bay since)
+  accountState = currentAccountState,
+  getLimits = getSagebrushLimits,
 }: {
   db?: Queryable;
   config: SyncNoticeConfig;
   fetch?: Fetch;
   now?: () => number;
   alert?: typeof adminAlert;
+  accountState?: (opts: { account_id: string }) => Promise<OAuthAccountState>;
+  getLimits?: (account_id: string) => Promise<SagebrushLimits | undefined>;
 }): Promise<{ accepted: number; failed: number }> {
   const { rows } = await db.query<NoticeRow>(
     `UPDATE sagebrush_sync_states
@@ -697,21 +742,66 @@ export async function deliverDueSyncNotices({
   let accepted = 0;
   let failed = 0;
   for (const row of rows) {
-    const result = await sendSyncNotice({
-      config,
-      notice: {
+    // A notice is sent only while it is still the account's state: one left
+    // on an old home bay by a rehome may have been overtaken by a change on
+    // the new home, whose first check then saw nothing to tell Sagebrush.
+    let current: "current" | "stale" | SyncFailure;
+    try {
+      current = await currentNotice({ row, accountState, getLimits });
+    } catch (err) {
+      current = asFailure(err, "account_state_unavailable");
+    }
+    if (current === "stale") {
+      // Dropped, unaccepted: the account's home bay notices its state.
+      await db
+        .query(
+          `UPDATE sagebrush_sync_states
+              SET notice_next_at = NULL, notice_alerted_at = NULL,
+                  last_error = 'notice_superseded'
+            WHERE account_id = $1::UUID AND notice_request_id = $2::UUID
+              AND notice_accepted_at IS NULL`,
+          [row.account_id, row.notice_request_id],
+        )
+        .catch((err) =>
+          logger.warn("dropping a superseded sync notice failed", {
+            request_id: row.notice_request_id,
+            code: asFailure(err, "db_error").code,
+          }),
+        );
+      logger.info("sync notice superseded", {
         request_id: row.notice_request_id,
-        account_id: row.account_id,
-        issued: Number(row.notice_issued),
-        limits: row.notice_limits,
-      },
-      fetch,
-      now,
-    })
-      .then((r) =>
-        r.accepted && r.applied === false
-          ? checkUnappliedNotice({ config, row, fetch, now })
-          : r,
+      });
+      continue;
+    }
+    const result = await (
+      current instanceof SyncFailure
+        ? Promise.resolve({
+            accepted: undefined,
+            status: undefined,
+            failure: current,
+          })
+        : sendSyncNotice({
+            config,
+            notice: {
+              request_id: row.notice_request_id,
+              account_id: row.account_id,
+              issued: Number(row.notice_issued),
+              limits: row.notice_limits,
+            },
+            fetch,
+            now,
+          })
+    )
+      .then(
+        (r: {
+          accepted?: true;
+          applied?: boolean;
+          status?: number;
+          failure?: SyncFailure;
+        }) =>
+          r.accepted && r.applied === false
+            ? checkUnappliedNotice({ config, row, fetch, now })
+            : r,
       )
       .catch((err) => ({
         accepted: undefined,
@@ -975,7 +1065,7 @@ export async function runDueRetentionSteps({
   // (routed: a cycle this bay holds is carried on here after a rehome, asking the
   // account's current home bay, CORR-1385-R3-REHOME-1; only the discovery scan,
   // checkSyncStates, is local, so only the current home starts new cycles)
-  accountState = ({ account_id }) => getOAuthAccountState(account_id),
+  accountState = currentAccountState,
   getLimits = getSagebrushLimits,
   send = sendEmail,
 }: {
