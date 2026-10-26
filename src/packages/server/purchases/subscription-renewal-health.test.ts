@@ -191,4 +191,39 @@ describe("subscription renewal health alert", () => {
     await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(1);
     expect(mockAdminAlert.mock.calls[0][0].body).not.toContain("Never tried");
   });
+
+  it.each([
+    [true, 0],
+    [false, 1],
+  ])(
+    "treats a renewal waiting for a VAT ID as expected only if the customer was told (notice recorded: %s)",
+    async (noticed, alerted) => {
+      const account_id = uuid();
+      await createTestAccount(account_id);
+      const { subscription_id } = await createTestMembershipSubscription(
+        account_id,
+        {
+          start: dayjs().subtract(1, "month").toDate(),
+          end: dayjs().subtract(2, "day").toDate(),
+        },
+      );
+      await getPool().query("DELETE FROM business_tax_id_notices");
+      if (noticed) {
+        await getPool().query(
+          `INSERT INTO business_tax_id_notices (account_id, notified_at)
+           VALUES ($1, NOW())`,
+          [account_id],
+        );
+      }
+      await getPool().query(
+        `UPDATE subscription_renewal_attempts
+            SET attempt_count=3,
+                last_error='business_tax_id_required: a VAT ID is required',
+                next_attempt_at=NOW() + INTERVAL '6 hours'
+          WHERE subscription_id=$1`,
+        [subscription_id],
+      );
+      await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(alerted);
+    },
+  );
 });

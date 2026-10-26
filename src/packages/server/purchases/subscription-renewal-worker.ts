@@ -13,14 +13,11 @@ import createSubscriptionPayment, {
   processSubscriptionRenewalFailure,
 } from "./stripe/create-subscription-payment";
 import { cancelPaymentIntent } from "./stripe/create-payment-intent";
-import getPool from "@cocalc/database/pool";
-import {
-  isBusinessTaxIdRequiredError,
-  OFF_SESSION_NOTICE_DAYS,
-} from "./stripe/business-tax-id-gate";
+import { isBusinessTaxIdRequiredError } from "./stripe/business-tax-id-gate";
 import processPaymentIntents from "./stripe/process-payment-intents";
 import {
   claimDueSubscriptionRenewalAttempts,
+  deferSubscriptionRenewalAttemptForBusinessTaxId,
   deferSubscriptionRenewalAttemptForCustomer,
   getSubscriptionRenewalAttempt,
   markSubscriptionRenewalCustomerNotified,
@@ -205,11 +202,10 @@ const BUSINESS_TAX_ID_REFUSAL_PAST_GRACE: "hold" = "hold";
 
 // A refusal that cannot succeed until the customer acts: the customer is in
 // the EU or the UK without a valid VAT ID. Retrying it soon cannot help, so it
-// waits for the customer like a declined card, instead of being retried (and
-// recorded) every few minutes. The check itself notifies the customer (at most
-// weekly), so no second notice is sent; the attempt counts as notified only
-// if that notice was actually recorded, so a failed notice still shows up in
-// the renewal health alert.
+// waits for the customer (rechecked every few hours) instead of being retried
+// (and recorded) every few minutes. The check itself notifies the customer, at
+// most weekly; the renewal health alert counts the renewal as waiting for the
+// customer only if that notice was recorded.
 async function deferRenewalRefusedForCustomer({
   attempt,
   err,
@@ -217,28 +213,14 @@ async function deferRenewalRefusedForCustomer({
   attempt: SubscriptionRenewalAttempt;
   err: unknown;
 }): Promise<void> {
-  const pastGrace =
-    Date.now() >= renewalGraceEndsAt(attempt.period_end).valueOf();
-  const { deferred } = await deferSubscriptionRenewalAttemptForCustomer({
+  const deferred = await deferSubscriptionRenewalAttemptForBusinessTaxId({
     attempt_id: attempt.id,
     error: err,
   });
-  if (!deferred) return;
-  const { rows } = await getPool().query(
-    `SELECT 1 FROM business_tax_id_notices
-      WHERE account_id=$1
-        AND notified_at > NOW() - make_interval(days => $2)`,
-    [attempt.account_id, OFF_SESSION_NOTICE_DAYS],
-  );
-  if (rows.length > 0) {
-    await markSubscriptionRenewalCustomerNotified({ attempt_id: attempt.id });
-  } else {
-    logger.warn("no business tax ID notice recorded for a refused renewal", {
-      attempt_id: attempt.id,
-      subscription_id: attempt.subscription_id,
-    });
-  }
-  if (pastGrace) {
+  if (
+    deferred &&
+    Date.now() >= renewalGraceEndsAt(attempt.period_end).valueOf()
+  ) {
     logger.warn(
       "renewal refused by the business tax ID check past its grace period",
       {

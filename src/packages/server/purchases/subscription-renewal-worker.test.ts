@@ -39,9 +39,17 @@ jest.mock("@cocalc/server/messages/send", () => ({
 
 import maintainSubscriptionRenewals from "./subscription-renewal-worker";
 import {
+  BUSINESS_TAX_ID_REFUSAL_PREFIX,
+  claimDueSubscriptionRenewalAttempts,
+  deferSubscriptionRenewalAttemptForCustomer,
   RENEWAL_ATTEMPT_RETRY_MS,
   RENEWAL_CUSTOMER_ACTION_RECHECK_MS,
 } from "./subscription-renewal-attempts";
+
+const taxRefusal = () =>
+  Object.assign(new Error("a VAT ID is required"), {
+    code: "business_tax_id_required",
+  });
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -80,49 +88,62 @@ describe("subscription renewal worker", () => {
   });
 
   it("waits for the customer when the business tax ID check refuses a renewal", async () => {
-    const { account_id, subscription_id } = await dueRenewal();
-    // the check's own off-session notice to this account was recorded
-    await getPool().query(
-      `INSERT INTO business_tax_id_notices (account_id, notified_at)
-       VALUES ($1, NOW())`,
-      [account_id],
-    );
-    mockCreateSubscriptionPayment.mockRejectedValue(
-      Object.assign(new Error("a VAT ID is required"), {
-        code: "business_tax_id_required",
-      }),
-    );
+    const { subscription_id } = await dueRenewal();
+    mockCreateSubscriptionPayment.mockRejectedValue(taxRefusal());
 
     await maintainSubscriptionRenewals({ max_attempts: 1 });
 
     const attempt = await attemptOf(subscription_id);
     expect(mockCreateSubscriptionPayment).toHaveBeenCalledTimes(1);
-    // deferred like a declined card, rechecked hours later, not every minute
+    // rechecked hours later, not every minute
     expect(attempt.state).toBe("scheduled");
-    expect(attempt.customer_action_required_at).not.toBeNull();
     expect(Number(attempt.wait_ms)).toBeGreaterThan(
       RENEWAL_CUSTOMER_ACTION_RECHECK_MS - 60_000,
     );
-    // the check already sent its own (weekly) notice: no second notice
-    expect(attempt.customer_action_notified_at).not.toBeNull();
+    expect(attempt.last_error.startsWith(BUSINESS_TAX_ID_REFUSAL_PREFIX)).toBe(
+      true,
+    );
+    // the card/bank action state is untouched, and no second notice is sent
+    expect(attempt.customer_action_required_at).toBeNull();
+    expect(attempt.customer_action_notified_at).toBeNull();
     expect(mockSend).not.toHaveBeenCalled();
   });
 
-  it("does not count the customer as notified when the check recorded no notice", async () => {
+  it("releases the account credit set aside for a refused renewal", async () => {
     const { subscription_id } = await dueRenewal();
-    mockCreateSubscriptionPayment.mockRejectedValue(
-      Object.assign(new Error("a VAT ID is required"), {
-        code: "business_tax_id_required",
-      }),
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts SET balance_applied=4.5
+        WHERE subscription_id=$1`,
+      [subscription_id],
     );
+    mockCreateSubscriptionPayment.mockRejectedValue(taxRefusal());
 
     await maintainSubscriptionRenewals({ max_attempts: 1 });
 
     const attempt = await attemptOf(subscription_id);
     expect(attempt.state).toBe("scheduled");
-    expect(attempt.customer_action_required_at).not.toBeNull();
-    // left un-notified, so the renewal health alert reports it
-    expect(attempt.customer_action_notified_at).toBeNull();
+    expect(attempt.balance_applied).toBeNull();
+  });
+
+  it("still sends the card action notice after the VAT ID is fixed", async () => {
+    const { subscription_id } = await dueRenewal();
+    mockCreateSubscriptionPayment.mockRejectedValue(taxRefusal());
+    await maintainSubscriptionRenewals({ max_attempts: 1 });
+
+    // the customer adds a VAT ID; the next try's card is declined
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts
+          SET next_attempt_at=NOW() - INTERVAL '1 second'
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+    const [claimed] = await claimDueSubscriptionRenewalAttempts({ limit: 1 });
+    expect(claimed.subscription_id).toBe(subscription_id);
+    const result = await deferSubscriptionRenewalAttemptForCustomer({
+      attempt_id: claimed.id,
+      error: "Stripe payment is requires_payment_method",
+    });
+    expect(result).toEqual({ deferred: true, needsNotice: true });
   });
 
   it("retries other failures with backoff", async () => {

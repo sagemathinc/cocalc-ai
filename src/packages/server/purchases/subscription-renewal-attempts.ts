@@ -475,6 +475,47 @@ export async function deferSubscriptionRenewalAttemptForCustomer({
   return { deferred: true, needsNotice: !!rows[0].needs_notice };
 }
 
+// last_error of a renewal waiting because the EU/UK business tax ID check
+// refused it (see deferSubscriptionRenewalAttemptForBusinessTaxId).
+export const BUSINESS_TAX_ID_REFUSAL_PREFIX = "business_tax_id_required: ";
+
+// A renewal the business tax ID check refused waits for the customer (to add
+// a valid VAT ID) and is rechecked every RENEWAL_CUSTOMER_ACTION_RECHECK_MS.
+// It is kept apart from the card/bank action state (customer_action_*), so a
+// later declined card on the same renewal still gets its own notice. No
+// Stripe payment exists yet (the check refuses before anything is created),
+// so the account credit set aside for this renewal is released; the next try
+// works the split out again.
+export async function deferSubscriptionRenewalAttemptForBusinessTaxId({
+  attempt_id,
+  error,
+}: {
+  attempt_id: string;
+  error: unknown;
+}): Promise<boolean> {
+  const { rowCount } = await getPool().query(
+    `UPDATE subscription_renewal_attempts
+        SET state='scheduled',
+            lease_expires_at=NULL,
+            next_attempt_at=NOW() + ($2 * INTERVAL '1 millisecond'),
+            balance_applied=CASE
+              WHEN payment_intent_id IS NULL AND stripe_invoice_id IS NULL
+                THEN NULL
+              ELSE balance_applied
+            END,
+            last_error=$3,
+            updated_at=NOW()
+      WHERE id=$1
+        AND state='processing'`,
+    [
+      attempt_id,
+      RENEWAL_CUSTOMER_ACTION_RECHECK_MS,
+      `${BUSINESS_TAX_ID_REFUSAL_PREFIX}${error}`,
+    ],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 export async function markSubscriptionRenewalCustomerNotified({
   attempt_id,
 }: {
