@@ -539,6 +539,19 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     expect(row.notice_request_id).not.toBeNull();
   });
 
+  it("checks every due account in one pass, batch after batch", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const account_id = await insertAccount();
+      enabled.set(account_id, i % 2 === 0);
+      ids.push(account_id);
+    }
+    await checkSyncStates({ getLimits, now, batch: 2 });
+    for (const [i, account_id] of ids.entries()) {
+      expect((await stateOf(account_id)).sync_enabled).toBe(i % 2 === 0);
+    }
+  });
+
   it("backs off accounts whose check keeps failing, so the others are checked", async () => {
     const failing = [await insertAccount(), await insertAccount()];
     const ok = await insertAccount();

@@ -287,8 +287,9 @@ notices, no emails.
 ### Noticing a change
 
 There are no membership events to hook: a membership ends when it expires. So the
-home bay checks the accounts that approved a Sagebrush sign-in there, a batch at a
-time, each again every 10 minutes:
+home bay checks the accounts that approved a Sagebrush sign-in there, each again
+every 10 minutes. Each pass (once a minute) works through all the due accounts,
+in batches of 50:
 
 - it reads the limits (section 2);
 - it records `sync.enabled` in `sagebrush_sync_states`;

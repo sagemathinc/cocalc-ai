@@ -65,6 +65,8 @@ const REQUEST_TIMEOUT_MS = 15_000;
 // How often an account's membership is checked again.
 export const RECHECK_MS = 10 * 60_000;
 const CHECK_BATCH = 50;
+// At most this many batches per pass (50,000 accounts by default).
+const MAX_CHECK_BATCHES = 1000;
 const STEP_BATCH = 20;
 // A claimed row is not picked up again by another pass for this long.
 const LEASE_MS = 5 * 60_000;
@@ -371,8 +373,9 @@ export function retentionEmail({
   };
 }
 
-/** Check a batch of accounts that approved a Sagebrush sign-in on this bay,
- * those not checked for RECHECK_MS, and record their sync state. A change
+/** Check the accounts that approved a Sagebrush sign-in on this bay, those
+ * not checked for RECHECK_MS, in batches until none is due, and record their
+ * sync state. A change
  * from what was last seen queues a plan notice; the first check of an account
  * only records it, unless sync is enabled while Sagebrush still holds the data
  * read-only (see recordSyncState). An account whose check fails waits
@@ -403,6 +406,41 @@ export async function checkSyncStates({
           const r = await readSyncRetention({ config, account_id, fetch, now });
           return r.synced && r.state === "readonly";
         };
+  let changes = 0;
+  // Every account checked gets a new checked_at, failed or not, so each batch
+  // is new; the bound and the seen set only guard against a row that wasn't.
+  const seen = new Set<string>();
+  for (let pass = 0; pass < MAX_CHECK_BATCHES; pass++) {
+    const due = await checkSyncStatesBatch({
+      db,
+      getLimits,
+      accountState,
+      now,
+      batch,
+      readOnlyOnSagebrush,
+    });
+    changes += due.changes;
+    if (due.ids.length < batch || due.ids.every((id) => seen.has(id))) break;
+    due.ids.forEach((id) => seen.add(id));
+  }
+  return changes;
+}
+
+async function checkSyncStatesBatch({
+  db,
+  getLimits,
+  accountState,
+  now,
+  batch,
+  readOnlyOnSagebrush,
+}: {
+  db: Queryable;
+  getLimits: (account_id: string) => Promise<SagebrushLimits | undefined>;
+  accountState: (opts: { account_id: string }) => Promise<OAuthAccountState>;
+  now: () => number;
+  batch: number;
+  readOnlyOnSagebrush?: (account_id: string) => Promise<boolean>;
+}): Promise<{ ids: string[]; changes: number }> {
   const { rows } = await db.query<{ account_id: string }>(
     `SELECT a.account_id
        FROM oauth_client_approvals a
@@ -468,7 +506,7 @@ export async function checkSyncStates({
         );
     }
   }
-  return changes;
+  return { ids: rows.map((r) => r.account_id), changes };
 }
 
 // What a change of sync_enabled sets: a new notice (replacing any still
