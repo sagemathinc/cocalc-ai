@@ -42,11 +42,17 @@ test("cleanup removes every object of a past day, and nothing else", async () =>
       removed.push(...gone);
     }),
   });
-  expect(
-    await removeExpiredExternalInboxObjects(Date.parse("2026-10-26T01:00:00Z")),
-  ).toBe(2);
+  const now = Date.parse("2026-10-26T01:00:00Z");
+  // A bounded run takes the first ones; the next takes the rest.
+  expect(await removeExpiredExternalInboxObjects({ now, limit: 1 })).toBe(1);
+  expect(removed).toEqual(keys.slice(0, 1));
+  keys.splice(0, 1);
+  expect(await removeExpiredExternalInboxObjects({ now })).toBe(1);
   expect(list).toHaveBeenCalledWith(EXTERNAL_INBOX_OBJECT_PREFIX);
-  expect(removed).toEqual(keys.slice(0, 2));
+  expect(removed).toEqual([
+    `${EXTERNAL_INBOX_OBJECT_PREFIX}2026-10-24/a/b/0-x`,
+    `${EXTERNAL_INBOX_OBJECT_PREFIX}2026-10-25/a/c/0-y`,
+  ]);
 });
 
 test("without R2 there is nothing to clean up", async () => {

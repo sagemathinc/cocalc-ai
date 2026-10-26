@@ -30,7 +30,9 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
   // their day, whether or not a row still names them.
   if (Object.keys(result).length) {
     try {
-      result.external_inbox_objects = await removeExpiredExternalInboxObjects();
+      result.external_inbox_objects = await removeExpiredExternalInboxObjects({
+        limit: BATCH,
+      });
     } catch (error) {
       logger.warn("external inbox object cleanup failed", {
         error: `${error}`,

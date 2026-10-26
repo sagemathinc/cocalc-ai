@@ -16,7 +16,6 @@ import {
   listR2ObjectKeys,
   putR2ObjectFromBuffer,
 } from "@cocalc/backend/r2";
-import { resolveBlobStorageConfig } from "@cocalc/server/blobs/config";
 
 export const EXTERNAL_INBOX_OBJECT_PREFIX = "agent-external-inbox/v1/";
 
@@ -34,6 +33,9 @@ export async function externalInboxObjects(): Promise<
   ExternalInboxObjectStore | undefined
 > {
   if (forTesting !== undefined) return forTesting ?? undefined;
+  // Loaded when needed: it brings the database pool and settings along.
+  const { resolveBlobStorageConfig } =
+    await import("@cocalc/server/blobs/config");
   const config = await resolveBlobStorageConfig();
   if (config.activeBackend !== "r2" || !config.r2) return undefined;
   const auth = config.r2.auth;
@@ -88,19 +90,23 @@ export function externalInboxObjectKey({
   return `${EXTERNAL_INBOX_OBJECT_PREFIX}${utcDay(expires_at + DAY_MS)}/${account_id}/${attempt_id}/${idx}-${sha256}`;
 }
 
-/** Removes the objects of every day before today; returns how many. */
-export async function removeExpiredExternalInboxObjects(
+/**
+ * Removes objects of days before today, at most limit of them (a full batch
+ * says more may be left); returns how many.
+ */
+export async function removeExpiredExternalInboxObjects({
   now = Date.now(),
-): Promise<number> {
+  limit = Infinity,
+}: { now?: number; limit?: number } = {}): Promise<number> {
   const store = await externalInboxObjects();
   if (!store) return 0;
   const today = utcDay(now);
-  const expired = (await store.list(EXTERNAL_INBOX_OBJECT_PREFIX)).filter(
-    (key) => {
+  const expired = (await store.list(EXTERNAL_INBOX_OBJECT_PREFIX))
+    .filter((key) => {
       const day = key.slice(EXTERNAL_INBOX_OBJECT_PREFIX.length).split("/")[0];
       return /^\d{4}-\d{2}-\d{2}$/.test(day) && day < today;
-    },
-  );
+    })
+    .slice(0, limit);
   if (expired.length) await store.delete(expired);
   return expired.length;
 }
