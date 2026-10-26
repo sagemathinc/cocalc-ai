@@ -32,6 +32,27 @@ export interface AdminCreditAttribution {
   attached_at?: string | null;
 }
 
+export interface AdminRefundPurchasePreview {
+  id: number;
+  account_id: string;
+  time: string | null;
+  service: string;
+  cost: number | null;
+  description_type: string | null;
+  // A card payment refund goes back through the payment provider.
+  provider_payment: boolean;
+  // Set when this purchase was already refunded; committing returns it.
+  existing_refund_purchase_id: number | null;
+}
+
+export interface AdminRefundResult {
+  commit: boolean;
+  purchase: AdminRefundPurchasePreview;
+  reason: "duplicate" | "fraudulent" | "requested_by_customer" | "other";
+  notes: string;
+  refund_purchase_id?: number;
+}
+
 export interface AdminCreditAttributionAttachResult {
   committed: boolean;
   before: AdminCreditAttribution;
@@ -1885,6 +1906,15 @@ export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {
     reason?: string;
     commit?: boolean;
   }) => Promise<AdminCreditAttributionAttachResult>;
+  adminCreateRefund: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    purchase_id?: number;
+    reason?: string;
+    notes?: string;
+    commit?: boolean;
+  }) => Promise<AdminRefundResult>;
   adminCreateMembershipPackagePurchase: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -2147,6 +2177,7 @@ export const purchases = {
   adminProvisionSiteLicense: authFirstRequireAccount,
   adminListCreditAttribution: authFirstRequireAccountWithBoundSession,
   adminAttachCreditAttribution: authFirstRequireAccountWithBoundSession,
+  adminCreateRefund: authFirstRequireAccountWithBoundSession,
   adminCreateMembershipPackagePurchase: authFirstRequireAccountWithBoundSession,
   listSiteLicenseOverviews: authFirstRequireAccount,
   getSiteLicenseOverview: authFirstRequireAccount,
