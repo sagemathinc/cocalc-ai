@@ -225,7 +225,10 @@ export function computeAnchoredThreads({
         0,
         actions.getThreadReadCount?.(threadId, accountId) ?? 0,
       );
-      unreadCount = Math.max(messageCount - readCount, 0);
+      // Plus what the reader marked unread again before the watermark.
+      unreadCount =
+        Math.max(messageCount - readCount, 0) +
+        (actions.getReaderUnreadBeforeWatermark?.(threadId, accountId) ?? 0);
     }
     const name = parseNonemptyString((row as any)?.name);
     // Config-only threads have no messages yet; fall back to the config

@@ -968,9 +968,32 @@ describe("hosts start-worker billing drain completion metadata", () => {
     expect(alert.body).toContain("project-1");
     expect(alert.body).toContain("The compute stop request succeeded.");
     expect(alert.body).toContain("provider disk were retained");
-    expect(alert.body).toContain("Automatic disk deprovisioning is disabled");
+    expect(alert.body).toContain("rescue drain");
+    expect(alert.body).toContain("30 days after the host stopped");
+    expect(alert.body).not.toContain("deprovisioning is disabled");
     expect(alert.dedupMinutes).toBe(24 * 60);
     expect(alert.dedupBySubject).toBe(true);
+  });
+
+  test("names the disk deletion time when a rescue drain fails", () => {
+    const now = Date.parse("2026-10-23T00:00:00.000Z");
+    const alert = __test__.billingEnforcementDrainFailureAdminAlert({
+      host_id: "host-1",
+      account_id: "account-1",
+      op_id: "op-1",
+      error: new Error("failed to drain workspace project-1"),
+      final_backup_status: "failed",
+      rescue: true,
+      // Stopped long ago: the 7-day review period after this alert decides.
+      stopped_at: "2026-09-22T00:00:00.000Z",
+      now,
+    });
+
+    expect(alert.body).toContain("The rescue drain failed.");
+    expect(alert.body).toContain(
+      "deleted automatically on or after 2026-10-30T00:00:00.000Z",
+    );
+    expect(alert.body).toContain("restore the owner's funding");
   });
 
   test("preserves successful-backup messaging when only the compute stop fails", () => {
@@ -990,6 +1013,59 @@ describe("hosts start-worker billing drain completion metadata", () => {
     );
     expect(alert.body).not.toContain(
       "Automatic disk deprovisioning is disabled",
+    );
+  });
+});
+
+describe("hosts start-worker heartbeat wait", () => {
+  test("cancellation interrupts the heartbeat wait", async () => {
+    let checks = 0;
+    await expect(
+      __test__.waitForHostHeartbeat({
+        host_id: "h",
+        since: Date.now() + 60_000,
+        loadStatus: async () => ({ status: "running", last_seen: new Date() }),
+        shouldCancel: async () => ++checks >= 2,
+        delayFn: async () => {},
+      }),
+    ).rejects.toThrow(/cancel/i);
+  });
+
+  test("a terminal host status ends the heartbeat wait", async () => {
+    await expect(
+      __test__.waitForHostHeartbeat({
+        host_id: "h",
+        since: Date.now() + 60_000,
+        failOn: ["error", "off"],
+        loadStatus: async () => ({ status: "error", last_seen: new Date() }),
+        delayFn: async () => {},
+      }),
+    ).rejects.toThrow("host status is error");
+  });
+});
+
+describe("hosts start-worker billing rescue start", () => {
+  test("starts the stopped host without a billing session and waits for it", async () => {
+    const d = {
+      startHost: jest.fn(async () => ({})) as any,
+      waitStatus: jest.fn(async () => ({})) as any,
+      waitHeartbeat: jest.fn(async () => ({})) as any,
+    };
+    await __test__.startBillingBlockedHostForRescue({
+      account_id: "a",
+      host_id: "h",
+      deps: d,
+    });
+    expect(d.startHost).toHaveBeenCalledWith({
+      account_id: "a",
+      id: "h",
+      billing_rescue: true,
+    });
+    expect(d.waitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ desired: ["running"] }),
+    );
+    expect(d.waitHeartbeat).toHaveBeenCalledWith(
+      expect.objectContaining({ failOn: ["error", "off", "deprovisioned"] }),
     );
   });
 });

@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { createPortal } from "react-dom";
 import { agentWorkingDirectory } from "./agent-working-directory";
 import {
   Alert,
@@ -28,6 +29,22 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import { ChatReaderView } from "./reader-view";
+import {
+  AttentionPanel,
+  AttentionPanelButton,
+  isFailedDelivery,
+  isWaitingAttention,
+} from "./attention-panel";
+import {
+  isOpenAttention,
+  readerItemAttention,
+  readerItemThreadIndex,
+  readerItemWaitsFor,
+  readerItemWorking,
+} from "./reader-item-log";
+import { readerItems, type ReaderItem } from "./reader-model";
+import { itemPriority, itemSubject, itemTurnMeta } from "./reader-turn-meta";
 import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
@@ -360,6 +377,8 @@ export function reconcileNewThreadSetupWithCodexCatalog({
   });
 }
 
+const NO_ATTENTION: readonly AcpAttentionRecord[] = [];
+
 export function resolveActiveThreadSearchMatchDate({
   threadSearchOpen,
   matchCount,
@@ -553,6 +572,14 @@ interface ChatRoomThreadPanelProps {
   }) => void;
   readOnly?: boolean;
   mobile?: boolean;
+  /** Show the selected thread in the reader instead of the log. */
+  readerMode?: boolean;
+  /** Over the whole chat (its composer too): where the questions panel goes. */
+  attentionPanelHost?: HTMLElement | null;
+  onReaderModeChange?: (on: boolean) => void;
+  /** Move the keyboard focus into the reader as it appears. */
+  readerAutoFocus?: boolean;
+  readStateVersion?: number;
   onMobileToolsAction?: () => void;
 }
 
@@ -603,6 +630,11 @@ export function ChatRoomThreadPanel({
   onOpenGitBrowser,
   readOnly = false,
   mobile = false,
+  readerMode = false,
+  attentionPanelHost,
+  onReaderModeChange,
+  readerAutoFocus = false,
+  readStateVersion,
   onMobileToolsAction,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
@@ -633,6 +665,12 @@ export function ChatRoomThreadPanel({
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [threadSearchCursor, setThreadSearchCursor] = useState(0);
   const [threadSearchJumpToken, setThreadSearchJumpToken] = useState(0);
+  // In the reader, a hit opens the item that holds it: the current hit, or
+  // one opened from the backend's results once its message is loaded.
+  const [readerSearchJump, setReaderSearchJump] = useState<{
+    date: string;
+    token: number;
+  }>();
   const [archivedSearchLoading, setArchivedSearchLoading] = useState(false);
   const [archivedSearchHits, setArchivedSearchHits] = useState<
     ChatStoreSearchHit[]
@@ -800,6 +838,37 @@ export function ChatRoomThreadPanel({
     selectedThreadMessageCount: number;
   } | null>(null);
   const selectedThreadLookup = selectedThreadId;
+  const showReader = readerMode && !!selectedThreadId;
+  // Wide, the reader's toolbar keeps a place for the running turn's status;
+  // narrow, it is shown above, as for the log.
+  const readerStatusSlot = showReader && !(mobile || variant === "compact");
+  const readerMessages = useMemo(
+    () =>
+      showReader && selectedThreadId
+        ? (actions.getMessagesInThread(selectedThreadId) ?? [])
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showReader, actions, selectedThreadId, messages, docVersion],
+  );
+  // The thread's running turn, as the panel finds it (not a stale flag).
+  const readerRunningMessage = useMemo(
+    () =>
+      showReader
+        ? resolveSelectedThreadRunningCodexMessage(readerMessages, acpState)
+        : undefined,
+    [showReader, readerMessages, acpState],
+  );
+  // Each item's questions and approvals, for its log and its list row.
+  const readerAttention = useMemo(
+    () =>
+      showReader
+        ? readerItemAttention(
+            attentionRecords,
+            readerItems(readerMessages, { acpState }),
+          )
+        : new Map<string, readonly AcpAttentionRecord[]>(),
+    [showReader, attentionRecords, readerMessages, acpState],
+  );
   const selectedThreadMessages = useMemo(
     () =>
       selectedThreadLookup != null
@@ -807,6 +876,75 @@ export function ChatRoomThreadPanel({
         : [],
     [actions, selectedThreadLookup, messages],
   );
+  // What the thread's agents wait for from the person is answered in a
+  // panel beside the chat, never in the log.
+  const [attentionPanelOpen, setAttentionPanelOpen] = useState(false);
+  const [attentionFocus, setAttentionFocus] = useState<{
+    id?: string;
+    token: number;
+  }>({ token: 0 });
+  // Open requests and late questions (still answerable as a new message).
+  const openAttention = useMemo(
+    () => attentionRecords.filter(isWaitingAttention),
+    [attentionRecords],
+  );
+  const projectedAttention = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of selectedThreadMessages) {
+      const projection = field<any>(message, "acp_attention_response");
+      const id = projection?.get?.("attention_id") ?? projection?.attention_id;
+      if (id) ids.add(`${id}`);
+    }
+    return ids;
+  }, [selectedThreadMessages]);
+  const failedAttention = useMemo(
+    () =>
+      attentionRecords.filter((record) =>
+        isFailedDelivery(record, projectedAttention),
+      ),
+    [attentionRecords, projectedAttention],
+  );
+  // Where the keys go back to when the panel is hidden.
+  const attentionButtonRef = useRef<HTMLSpanElement>(null);
+  const closeAttentionPanel = useCallback(() => {
+    setAttentionPanelOpen(false);
+    requestAnimationFrame(() => {
+      // The button, else (nothing waits any more) the chat itself.
+      const content = attentionButtonRef.current?.parentElement;
+      const target =
+        attentionButtonRef.current?.querySelector<HTMLElement>("button") ??
+        content?.querySelector<HTMLElement>("[data-virtuoso-scroller]") ??
+        content?.querySelector<HTMLElement>('[role="listbox"]') ??
+        panelRef.current;
+      if (
+        target &&
+        !target.hasAttribute("tabindex") &&
+        target.tagName !== "BUTTON"
+      )
+        target.tabIndex = -1;
+      target?.focus({ preventScroll: true });
+    });
+  }, []);
+  useEffect(() => {
+    setAttentionPanelOpen(false);
+  }, [selectedThreadKey]);
+  // A jump to a request (from its turn's activity or a notification) opens
+  // the panel at it, once, as soon as the request is loaded.
+  const appliedAttentionJumpRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!activityJumpAttentionId) return;
+    const jump = `${activityJumpAttentionId}:${activityJumpToken ?? 0}`;
+    if (appliedAttentionJumpRef.current === jump) return;
+    if (
+      !attentionRecords.some(
+        ({ attention_id }) => attention_id === activityJumpAttentionId,
+      )
+    )
+      return;
+    appliedAttentionJumpRef.current = jump;
+    setAttentionPanelOpen(true);
+    setAttentionFocus({ id: activityJumpAttentionId, token: Date.now() });
+  }, [activityJumpAttentionId, activityJumpToken, attentionRecords]);
   const selectedRunningCodexMessage = useMemo(
     () =>
       resolveSelectedThreadRunningCodexMessage(
@@ -1165,6 +1303,7 @@ export function ChatRoomThreadPanel({
             hit.date_ms,
         );
         if (!Number.isFinite(hydratedDateMs)) return;
+        setReaderSearchJump({ date: `${hydratedDateMs}`, token: Date.now() });
         actions.scrollToDate(hydratedDateMs);
       } catch (err) {
         setArchivedSearchError(`${err}`);
@@ -1392,6 +1531,20 @@ export function ChatRoomThreadPanel({
     if (!activeSearchMatchDate) return;
     setThreadSearchJumpToken((n) => n + 1);
   }, [activeSearchMatchDate]);
+
+  useEffect(() => {
+    if (!activeSearchMatchDate) return;
+    setReaderSearchJump({ date: activeSearchMatchDate, token: Date.now() });
+  }, [activeSearchMatchDate, threadSearchJumpToken]);
+  // One jump for the reader and its open item's log alike.
+  const readerJump = threadSearchOpen ? readerSearchJump : undefined;
+  const readerSearchDates = useMemo(
+    () =>
+      threadSearchOpen && threadSearchMatches.length
+        ? new Set(threadSearchMatches)
+        : undefined,
+    [threadSearchOpen, threadSearchMatches],
+  );
 
   useEffect(() => {
     const query = threadSearchQuery.trim();
@@ -2088,8 +2241,60 @@ export function ChatRoomThreadPanel({
     showTopControls &&
     topRightControlsPortal === undefined;
   const runningStatusTop = reserveToolbarSpace ? 52 : 8;
+  // The running turn's status and Interrupt: above the log, or in the
+  // reader's toolbar, where its place is kept so nothing moves.
+  const runningStatus =
+    selectedRunningCodexMessage != null && selectedRunningCodexDate != null
+      ? (inline: boolean) => (
+          <AgentMessageStatus
+            show={true}
+            inline={inline}
+            generating={true}
+            durationLabel=""
+            startedAtMs={selectedRunningAcpStartedAtMs}
+            fontSize={fontSize}
+            project_id={project_id}
+            path={path}
+            activityBasePath={threadWorkingDirectory}
+            date={selectedRunningCodexDate}
+            logRefs={{
+              store: selectedRunningLogStore,
+              key: selectedRunningLogKey,
+              subject: selectedRunningLogSubject,
+              liveStream: selectedRunningLiveLogStream,
+            }}
+            activityContext={{
+              actions,
+              message: selectedRunningCodexMessage,
+              messages,
+              threadRootMs: selectedRunningThreadRootMs,
+              threadId: selectedRunningThreadId,
+              project_id,
+              path,
+            }}
+            activityLiveStatus={selectedRunningCodexActivity.liveStatus}
+            lastActivityAtMs={selectedRunningCodexActivity.lastActivityAtMs}
+            activeDescendantThreadIds={
+              selectedRunningCodexActivity.activeDescendantThreadIds
+            }
+            openDrawerToken={
+              activityJumpDate === `${selectedRunningCodexDate}`
+                ? activityJumpToken
+                : undefined
+            }
+            focusAttentionId={
+              activityJumpDate === `${selectedRunningCodexDate}`
+                ? activityJumpAttentionId
+                : undefined
+            }
+            interruptRequested={interruptRequested}
+            onInterrupt={handleInterruptSelectedRunningTurn}
+          />
+        )
+      : undefined;
   const contentTopInset =
-    (reserveToolbarSpace ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);
+    (reserveToolbarSpace ? 44 : 0) +
+    (selectedRunningCodexMessage && !readerStatusSlot ? 56 : 0);
   const compactTopRightButtonStyle = compactTopRightControls
     ? { minWidth: 24, height: 22, padding: "0 4px" }
     : undefined;
@@ -2174,6 +2379,36 @@ export function ChatRoomThreadPanel({
         threadId={selectedThreadId}
         compact={compactTopRightControls && !mobile}
       />
+      {onReaderModeChange && selectedThreadId ? (
+        <Tooltip
+          title={
+            readerMode
+              ? "Back to the chat log"
+              : "Read this thread as an inbox: unread items in bold, j/k to move, y to archive"
+          }
+        >
+          <Button
+            size="small"
+            type={
+              readerMode
+                ? "primary"
+                : compactTopRightControls
+                  ? "text"
+                  : "default"
+            }
+            aria-label="Reader"
+            aria-pressed={readerMode}
+            onClick={() => {
+              onMobileToolsAction?.();
+              onReaderModeChange(!readerMode);
+            }}
+            icon={<Icon name="mail" />}
+            style={compactTopRightButtonStyle}
+          >
+            {compactTopRightControls ? null : "Reader"}
+          </Button>
+        </Tooltip>
+      ) : null}
       <Tooltip title="Search thread (Ctrl/Cmd+F)">
         <Button
           size="small"
@@ -2256,9 +2491,7 @@ export function ChatRoomThreadPanel({
           </Space>
         </div>
       )}
-      {!readOnly &&
-      selectedRunningCodexMessage != null &&
-      selectedRunningCodexDate != null ? (
+      {!readOnly && runningStatus && !readerStatusSlot ? (
         <div
           style={{
             position: "absolute",
@@ -2269,51 +2502,7 @@ export function ChatRoomThreadPanel({
             pointerEvents: "none",
           }}
         >
-          <div style={{ pointerEvents: "auto" }}>
-            <AgentMessageStatus
-              show={true}
-              generating={true}
-              durationLabel=""
-              startedAtMs={selectedRunningAcpStartedAtMs}
-              fontSize={fontSize}
-              project_id={project_id}
-              path={path}
-              activityBasePath={threadWorkingDirectory}
-              date={selectedRunningCodexDate}
-              logRefs={{
-                store: selectedRunningLogStore,
-                key: selectedRunningLogKey,
-                subject: selectedRunningLogSubject,
-                liveStream: selectedRunningLiveLogStream,
-              }}
-              activityContext={{
-                actions,
-                message: selectedRunningCodexMessage,
-                messages,
-                threadRootMs: selectedRunningThreadRootMs,
-                threadId: selectedRunningThreadId,
-                project_id,
-                path,
-              }}
-              activityLiveStatus={selectedRunningCodexActivity.liveStatus}
-              lastActivityAtMs={selectedRunningCodexActivity.lastActivityAtMs}
-              activeDescendantThreadIds={
-                selectedRunningCodexActivity.activeDescendantThreadIds
-              }
-              openDrawerToken={
-                activityJumpDate === `${selectedRunningCodexDate}`
-                  ? activityJumpToken
-                  : undefined
-              }
-              focusAttentionId={
-                activityJumpDate === `${selectedRunningCodexDate}`
-                  ? activityJumpAttentionId
-                  : undefined
-              }
-              interruptRequested={interruptRequested}
-              onInterrupt={handleInterruptSelectedRunningTurn}
-            />
-          </div>
+          <div style={{ pointerEvents: "auto" }}>{runningStatus(false)}</div>
         </div>
       ) : null}
       {threadImagePreview ? (
@@ -2957,6 +3146,7 @@ export function ChatRoomThreadPanel({
           flex: "1 1 0",
           minHeight: 0,
           paddingTop: contentTopInset,
+          position: "relative",
         }}
       >
         {showArchivedBanner ? (
@@ -3038,39 +3228,160 @@ export function ChatRoomThreadPanel({
             {archivedLoadError}
           </div>
         ) : null}
-        <ChatLog
-          actions={actions}
-          project_id={project_id ?? ""}
-          path={path ?? ""}
-          messages={messages}
-          threadIndex={threadIndex}
-          docVersion={docVersion}
-          acpState={acpState}
-          scrollToBottomRef={scrollToBottomRef}
-          scrollCacheId={scrollCacheId}
-          isVisible={isVisible}
-          mode={variant === "compact" ? "sidechat" : "standalone"}
-          fontSize={fontSize}
-          selectedThread={selectedThreadForLog}
-          scrollToIndex={scrollToIndex}
-          scrollToDate={scrollToDate}
-          selectedDate={activeSearchMatchDate ?? fragmentId ?? undefined}
-          searchJumpDate={activeSearchMatchDate}
-          searchJumpToken={threadSearchJumpToken}
-          searchQuery={threadSearchHighlightQuery}
-          onAtTopStateChange={setThreadNearTop}
-          activityJumpDate={activityJumpDate}
-          activityJumpToken={activityJumpToken}
-          activityJumpAttentionId={activityJumpAttentionId}
-          onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
-          suppressInlineCodexStatusDate={
-            selectedRunningCodexDate != null
-              ? `${selectedRunningCodexDate}`
-              : undefined
-          }
-          attentionRecords={attentionRecords}
-          readOnly={readOnly}
-        />
+        {showReader ? (
+          <ChatReaderView
+            actions={actions}
+            threadId={selectedThreadId}
+            messages={readerMessages}
+            accountId={accountId}
+            readStateVersion={readStateVersion}
+            fontSize={fontSize}
+            narrow={mobile || variant === "compact"}
+            autoFocus={readerAutoFocus}
+            projectId={project_id}
+            path={path}
+            readOnly={readOnly}
+            isVisible={isVisible}
+            acpState={acpState}
+            runningStatus={
+              !readOnly && readerStatusSlot && runningStatus
+                ? runningStatus(true)
+                : undefined
+            }
+            searchJump={readerJump}
+            searchDates={readerSearchDates}
+            isItemWorking={(item: ReaderItem) =>
+              readerItemWorking(item, readerRunningMessage)
+            }
+            itemInfo={(item: ReaderItem) => {
+              const meta = itemTurnMeta(item);
+              return {
+                subject: itemSubject(item, meta),
+                priority: itemPriority(
+                  item,
+                  meta,
+                  (readerAttention.get(item.id) ?? []).some(isOpenAttention),
+                ),
+              };
+            }}
+            itemBadges={(item: ReaderItem) => (
+              <ReaderItemBadges
+                working={readerItemWorking(item, readerRunningMessage)}
+                waitsFor={readerItemWaitsFor(
+                  readerAttention.get(item.id) ?? [],
+                )}
+              />
+            )}
+            renderItem={(item: ReaderItem) => (
+              <ChatLog
+                actions={actions}
+                project_id={project_id ?? ""}
+                path={path ?? ""}
+                messages={messages}
+                threadIndex={readerItemThreadIndex(
+                  selectedThreadForLog ?? selectedThreadId,
+                  item,
+                )}
+                docVersion={docVersion}
+                acpState={acpState}
+                scrollCacheId={`${scrollCacheId ?? `${project_id}${path}`}:reader:${item.id}`}
+                isVisible={isVisible}
+                mode={variant === "compact" ? "sidechat" : "standalone"}
+                fontSize={fontSize}
+                selectedThread={selectedThreadForLog ?? selectedThreadId}
+                onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
+                // Answered in the panel beside the chat.
+                attentionRecords={NO_ATTENTION}
+                readOnly={readOnly}
+                // The search's current hit (also one opened from the
+                // backend's results), scrolled to and highlighted.
+                selectedDate={readerJump?.date}
+                searchJumpDate={readerJump?.date}
+                searchJumpToken={readerJump?.token}
+                searchQuery={threadSearchHighlightQuery}
+                // The panel shows the running turn's status already, as for
+                // the log.
+                suppressInlineCodexStatusDate={
+                  selectedRunningCodexDate != null
+                    ? `${selectedRunningCodexDate}`
+                    : undefined
+                }
+              />
+            )}
+          />
+        ) : (
+          <ChatLog
+            actions={actions}
+            project_id={project_id ?? ""}
+            path={path ?? ""}
+            messages={messages}
+            threadIndex={threadIndex}
+            docVersion={docVersion}
+            acpState={acpState}
+            scrollToBottomRef={scrollToBottomRef}
+            scrollCacheId={scrollCacheId}
+            isVisible={isVisible}
+            mode={variant === "compact" ? "sidechat" : "standalone"}
+            fontSize={fontSize}
+            selectedThread={selectedThreadForLog}
+            scrollToIndex={scrollToIndex}
+            scrollToDate={scrollToDate}
+            selectedDate={activeSearchMatchDate ?? fragmentId ?? undefined}
+            searchJumpDate={activeSearchMatchDate}
+            searchJumpToken={threadSearchJumpToken}
+            searchQuery={threadSearchHighlightQuery}
+            onAtTopStateChange={setThreadNearTop}
+            activityJumpDate={activityJumpDate}
+            activityJumpToken={activityJumpToken}
+            activityJumpAttentionId={activityJumpAttentionId}
+            onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
+            suppressInlineCodexStatusDate={
+              selectedRunningCodexDate != null
+                ? `${selectedRunningCodexDate}`
+                : undefined
+            }
+            // Answered in the panel beside the chat.
+            attentionRecords={NO_ATTENTION}
+            readOnly={readOnly}
+          />
+        )}
+        {!readOnly && selectedThreadId ? (
+          <>
+            <span ref={attentionButtonRef}>
+              {attentionPanelOpen ? null : (
+                <AttentionPanelButton
+                  open={openAttention}
+                  failed={failedAttention}
+                  onOpen={() => {
+                    setAttentionPanelOpen(true);
+                    setAttentionFocus((current) => ({
+                      token: current.token + 1,
+                    }));
+                  }}
+                />
+              )}
+            </span>
+            {(() => {
+              const panel = (
+                <AttentionPanel
+                  key={selectedThreadKey ?? ""}
+                  records={attentionRecords}
+                  projected={projectedAttention}
+                  open={attentionPanelOpen}
+                  onClose={closeAttentionPanel}
+                  // Below the chat's toolbar, which sits over the content's top.
+                  top={contentTopInset}
+                  focusAttentionId={attentionFocus.id}
+                  focusToken={attentionFocus.token}
+                />
+              );
+              // Over the composer too, when the chat gives it a place.
+              return attentionPanelHost
+                ? createPortal(panel, attentionPanelHost)
+                : panel;
+            })()}
+          </>
+        ) : null}
       </div>
     </div>
   );
@@ -3167,5 +3478,48 @@ function renderOptionWithDescription({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** The list row's marks for an item: its turn is running, or asks you. */
+function ReaderItemBadges({
+  working,
+  waitsFor,
+}: {
+  working: boolean;
+  waitsFor?: "answer" | "action";
+}) {
+  return (
+    <>
+      {waitsFor ? (
+        <span
+          aria-label={
+            waitsFor === "answer"
+              ? "Waiting for your answer"
+              : "Waiting for your action"
+          }
+          style={{
+            color: UI_COLORS.warning,
+            background: UI_COLORS.warningBg,
+            border: `1px solid ${UI_COLORS.warning}`,
+            borderRadius: 4,
+            padding: "0 6px",
+            fontSize: 11,
+            fontWeight: 600,
+            flex: "none",
+          }}
+        >
+          {waitsFor === "answer" ? "Question" : "Needs you"}
+        </span>
+      ) : null}
+      {working ? (
+        <span
+          aria-label="Working"
+          style={{ color: UI_COLORS.info, fontSize: 11, flex: "none" }}
+        >
+          working…
+        </span>
+      ) : null}
+    </>
   );
 }

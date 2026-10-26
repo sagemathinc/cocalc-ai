@@ -86,6 +86,14 @@ const hostDeploymentScope: HubApiRoute = {
   key: (args) => (args?.[0]?.scope_type === "host" ? args?.[0]?.id : undefined),
 };
 
+// A host's long-running operations live on the host's bay. Other scopes
+// (or none) run where received.
+const hostLroScope: HubApiRoute = {
+  owner: "host",
+  key: (args) =>
+    args?.[0]?.scope_type === "host" ? args?.[0]?.scope_id : undefined,
+};
+
 const collabInviteFromOpts: HubApiRoute = {
   owner: "collab-invite",
   key: (args) => ({
@@ -119,6 +127,10 @@ const leftOrDeletedProjects: HubApiRoute = {
 };
 
 const HUB_API_ROUTES: Record<string, HubApiRoute> = {
+  "lro.get": hostLroScope,
+  "lro.list": hostLroScope,
+  "lro.cancel": hostLroScope,
+  "lro.dismiss": hostLroScope,
   // Host reads run on the host's owning bay.
   "hosts.getHostLog": hostFromOpts,
   "hosts.getHostAvailability": hostFromOpts,
@@ -130,6 +142,50 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.listHostAccess": hostFromOpts,
   "hosts.listHostRuntimeDeployments": hostDeploymentScope,
   "hosts.getHostManagedComponentStatus": hostFromOpts,
+  "hosts.listHostProjects": hostFromOpts,
+  // Host changes run on the host's owning bay too.
+  "hosts.setHostAccess": hostFromOpts,
+  "hosts.removeHostAccess": hostFromOpts,
+  "hosts.setHostProjectRamLimit": hostFromOpts,
+  "hosts.setHostOwnerSpendLimits": hostFromOpts,
+  "hosts.setHostPoolAccess": hostFromOpts,
+  "hosts.annotateHostAvailabilityEvent": hostFromOpts,
+  "hosts.addHostSshAuthorizedKey": hostFromOpts,
+  "hosts.removeHostSshAuthorizedKey": hostFromOpts,
+  "hosts.setHostPublicRouteMode": hostFromOpts,
+  "hosts.setHostMaintenanceNotice": hostFromOpts,
+  "hosts.pullHostRootfsImage": hostFromOpts,
+  "hosts.deleteHostRootfsImage": hostFromOpts,
+  "hosts.gcDeletedHostRootfsImages": hostFromOpts,
+  "hosts.setHostExamConfig": hostFromOpts,
+  "hosts.createHostExamRun": hostFromOpts,
+  "hosts.rotateHostExamToken": hostFromOpts,
+  "hosts.openHostExamRun": hostFromOpts,
+  "hosts.updateHostExamDeadline": hostFromOpts,
+  "hosts.increaseHostExamCapacity": hostFromOpts,
+  "hosts.stopAndEraseHostExamRun": hostFromOpts,
+  "hosts.setHostRuntimeDeployments": hostDeploymentScope,
+  "hosts.reconcileHostRuntimeDeployments": hostFromOpts,
+  "hosts.rollbackHostRuntimeDeployments": hostFromOpts,
+  "hosts.reconcileHostSoftware": hostFromOpts,
+  // Host lifecycle runs on the host's owning bay.
+  "hosts.startHost": hostFromOpts,
+  "hosts.stopHost": hostFromOpts,
+  "hosts.restartHost": hostFromOpts,
+  "hosts.drainHost": hostFromOpts,
+  "hosts.backupHostProjects": hostFromOpts,
+  "hosts.stopHostProjects": hostFromOpts,
+  "hosts.restartHostProjects": hostFromOpts,
+  "hosts.deleteHost": hostFromOpts,
+  "hosts.forceDeprovisionHost": hostFromOpts,
+  "hosts.refreshHostCloudState": hostFromOpts,
+  "hosts.removeSelfHostConnector": hostFromOpts,
+  "hosts.setHostDeletionProtection": hostFromOpts,
+  "hosts.relocateHost": hostFromOpts,
+  // Fleet rollout calls these for hosts on any bay (as the rollout's account).
+  "hosts.upgradeHostSoftware": hostFromOpts,
+  "hosts.rolloutHostManagedComponents": hostFromOpts,
+  "hosts.getHostRuntimeDeploymentStatus": hostFromOpts,
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,
@@ -206,6 +262,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // A document's edit history (TimeTravel) lives with its project.
   "sync.history": projectFromOpts,
   "sync.purgeHistory": projectFromOpts,
+  // a project's edit history and logs (conat/project/persist-storage.ts)
+  "projects.listProjectPersistStorage": projectFromOpts,
+  "projects.applyProjectPersistStorage": projectFromOpts,
   // Admin overrides apply where the project is; isAdmin asks the admin's
   // home bay (#904).
   "projects.getAdminProjectEntitlementOverride": projectFromOpts,

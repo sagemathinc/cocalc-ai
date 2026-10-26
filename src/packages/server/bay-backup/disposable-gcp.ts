@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { InstancesClient, ZoneOperationsClient } from "@google-cloud/compute";
 
 import getLogger from "@cocalc/backend/logger";
+import { withDefaultGcpLabels } from "@cocalc/cloud/gcp-labels";
 import {
   formatRecoveryTargetTimeForPostgres,
   normalizeRecoveryTargetTime,
@@ -470,13 +471,17 @@ export async function runDisposableGcpRestoreWorker({
             },
           },
         ],
-        labels: {
+        // Deployment default labels (COCALC_GCP_DEFAULT_LABELS) apply to this
+        // VM too, so a restore drill or a real disaster restore carries the
+        // same compliance labels as every other CoCalc-created VM.
+        labels: withDefaultGcpLabels({
           "cocalc-role": "bay-restore-drill",
+          application: "bay-restore-drill",
           "cocalc-bay": config.bay_id
             .toLowerCase()
             .replace(/[^a-z0-9_-]/g, "-")
             .slice(0, 63),
-        },
+        }),
         metadata: {
           items: [
             { key: "startup-script", value: startupScript },

@@ -2213,12 +2213,29 @@ def js_positive_integer(value: str | None) -> int | None:
 
 
 def project_conat_router_port(env_lines: list[str]) -> int:
-    """The port of this host's conat router, the one host-local service
-    besides DNS that projects may connect to. Derived as project-host derives
-    it (project-host/daemon.ts): COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else
-    PORT + 100, with PORT defaulting to 9002. That is daemon index 0, the only
-    one bootstrap runs; another daemon on the same host (index > 0, PORT
-    9002 + index) would need its router port allowed too."""
+    """The port of this host's conat router, a host-local service projects
+    may connect to. Derived as project-host derives it (project-host/daemon.ts):
+    COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else PORT + 100, with PORT
+    defaulting to 9002. That is daemon index 0, the only one bootstrap runs;
+    another daemon on the same host (index > 0, PORT 9002 + index) would need
+    its router port allowed too."""
+    return project_host_derived_port(
+        env_lines, "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT", 100
+    )
+
+
+def project_site_codex_proxy_port(env_lines: list[str]) -> int:
+    """The first port of the site-funded Codex proxy range, which projects
+    may connect to: COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT, else PORT + 300
+    (siteFundedCodexProxyPorts in project-host/codex/site-funded-proxy.ts)."""
+    return project_host_derived_port(
+        env_lines, "COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT", 300, minimum=1024
+    )
+
+
+def project_host_derived_port(
+    env_lines: list[str], key: str, offset: int, minimum: int = 1
+) -> int:
     env: dict[str, str] = {}
     for line in env_lines:
         try:
@@ -2231,18 +2248,16 @@ def project_conat_router_port(env_lines: list[str]) -> int:
     def valid(number: int | None) -> int | None:
         return number if number is not None and number <= 65535 else None
 
-    # The router binds Number(COCALC_PROJECT_HOST_CONAT_ROUTER_PORT); PORT is
-    # read by parsePort, i.e. Number() of the text after the last ":".
-    explicit = valid(
-        js_positive_integer(env.get("COCALC_PROJECT_HOST_CONAT_ROUTER_PORT"))
-    )
-    if explicit is not None:
+    # The explicit key is read with Number(); PORT is read by parsePort, i.e.
+    # Number() of the text after the last ":".
+    explicit = valid(js_positive_integer(env.get(key)))
+    if explicit is not None and explicit >= minimum:
         return explicit
     raw_port = env.get("PORT")
     base = (
         js_positive_integer(raw_port.rsplit(":", 1)[-1]) if raw_port else None
     ) or DEFAULT_PROJECT_HOST_PORT
-    return valid(base + 100) or DEFAULT_PROJECT_HOST_PORT + 100
+    return valid(base + offset) or DEFAULT_PROJECT_HOST_PORT + offset
 
 
 def read_env_assignments(path: str | Path) -> dict[str, str]:
@@ -3660,6 +3675,83 @@ def configure_kernel_module_hardening(
     conf = modprobe_dir / "disable-algif-aead.conf"
     conf.write_text(ALGIF_AEAD_DISABLE_CONF, encoding="utf-8")
     run_best_effort(cfg, ["rmmod", "algif_aead"], "unload algif_aead")
+
+
+KERNEL_HARDENING_SYSCTL_CONF_NAME = "92-cocalc-project-host-hardening.conf"
+# Set on every project host. io_uring is a large kernel attack surface that
+# nothing on the host needs: io_uring_setup then fails with EPERM and libuv
+# (which creates a ring when an event loop starts) falls back to epoll;
+# project containers already get ENOSYS from seccomp. The setting only refuses
+# new rings, so it is applied before the project-host stack starts: here,
+# before every daemon start in the root helper, and at boot by systemd-sysctl.
+# userfaultfd stays limited to privileged users.
+KERNEL_HARDENING_SYSCTLS: dict[str, int] = {
+    "kernel.io_uring_disabled": 2,
+    "vm.unprivileged_userfaultfd": 0,
+}
+# Checked but not written: the supported images' defaults are at least this
+# strict, and writing these values could lower a stricter default (Ubuntu uses
+# unprivileged_bpf_disabled=2 and perf_event_paranoid=4).
+KERNEL_HARDENING_MINIMUMS: dict[str, int] = {
+    "kernel.apparmor_restrict_unprivileged_userns": 1,
+    "kernel.unprivileged_bpf_disabled": 1,
+    "kernel.perf_event_paranoid": 3,
+}
+
+
+def kernel_hardening_sysctl_conf() -> str:
+    lines = [
+        "# Managed by CoCalc project-host: kernel attack surface reduction.",
+        *(f"{key} = {value}" for key, value in KERNEL_HARDENING_SYSCTLS.items()),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def kernel_hardening_problems(proc_sys: Path = Path("/proc/sys")) -> list[str]:
+    problems: list[str] = []
+
+    def read(key: str) -> int | None:
+        try:
+            return int(
+                (proc_sys / key.replace(".", "/")).read_text(encoding="utf-8").strip()
+            )
+        except (OSError, ValueError):
+            return None
+
+    for key, value in KERNEL_HARDENING_SYSCTLS.items():
+        actual = read(key)
+        # A larger value is stricter for io_uring_disabled; userfaultfd must be 0.
+        ok = actual is not None and (
+            actual == 0 if value == 0 else actual >= value
+        )
+        if not ok:
+            problems.append(f"{key}={actual if actual is not None else 'missing'} (want {value})")
+    for key, minimum in KERNEL_HARDENING_MINIMUMS.items():
+        actual = read(key)
+        if actual is None or actual < minimum:
+            problems.append(
+                f"{key}={actual if actual is not None else 'missing'} (want >= {minimum})"
+            )
+    return problems
+
+
+def configure_kernel_sysctl_hardening(
+    cfg: BootstrapConfig,
+    *,
+    sysctl_dir: Path = Path("/etc/sysctl.d"),
+    proc_sys: Path = Path("/proc/sys"),
+) -> None:
+    log_line(cfg, "bootstrap: configuring kernel hardening sysctls")
+    sysctl_dir.mkdir(parents=True, exist_ok=True)
+    conf = sysctl_dir / KERNEL_HARDENING_SYSCTL_CONF_NAME
+    conf.write_text(kernel_hardening_sysctl_conf(), encoding="utf-8")
+    os.chmod(conf, 0o644)
+    # -e: a kernel without one of these keys must not fail the host.
+    run_best_effort(cfg, ["sysctl", "-e", "-p", str(conf)], "sysctl kernel hardening")
+    # Warn rather than fail: the host-agent reports the same checks in its
+    # metrics, and the hub's admin health raises them.
+    for problem in kernel_hardening_problems(proc_sys):
+        log_line(cfg, f"bootstrap: WARNING kernel hardening drift: {problem}")
 
 
 def configure_kernel_key_limits(
@@ -6797,13 +6889,16 @@ PROJECT_METADATA_TCP_PORTS="{ 80, 443 }"
 # arrives at the host's own services (sshd, the project-host API, ...), and a
 # connection to a VPC address leaves as the host. The only host-local services
 # a project needs are the host resolver (pasta forwards the project's DNS to
-# it) and this host's conat router. DNS to a private address stays allowed so
-# a host whose resolver is on its VPC keeps working; on GCP the project's DNS
-# goes to the host's 127.0.0.53, so this could later be narrowed to the
-# host's actual resolvers. The conat router port is read from the daemon's
-# env files when the rules are emitted (see project_conat_router_port); this
-# bootstrap-derived value applies only when neither file sets it.
+# it), this host's conat router and the site-funded Codex proxy. DNS to a
+# private address stays allowed so a host whose resolver is on its VPC keeps
+# working; on GCP the project's DNS goes to the host's 127.0.0.53, so this
+# could later be narrowed to the host's actual resolvers. The router and proxy
+# ports are read from the daemon's env files when the rules are emitted (see
+# project_host_derived_port); these bootstrap-derived values apply only when
+# neither file sets them.
 PROJECT_CONAT_ROUTER_PORT_DEFAULT="__PROJECT_CONAT_ROUTER_PORT__"
+PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT="__PROJECT_SITE_CODEX_PROXY_PORT__"
+PROJECT_SITE_CODEX_PROXY_PORT_COUNT=16
 PROJECT_HOST_ENV_FILE="__PROJECT_HOST_ENV_FILE__"
 PROJECT_HOST_LOCAL_ENV_FILE="__PROJECT_HOST_LOCAL_ENV_FILE__"
 PROJECT_PRIVATE_IPV4="{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }"
@@ -7753,7 +7848,9 @@ normalize_project_io_class_state() {
 
 reconcile_project_io_policy() {
   local pool project_id
-  acquire_project_cgroup_lock
+  # (background maintenance: it waits for a start or snapshot holding the
+  # lock, rather than failing the whole host reconcile after 5 s)
+  acquire_project_cgroup_lock "$PROJECT_IO_RECONCILE_LOCK_WAIT_SECONDS"
   normalize_project_io_class_state
   configure_project_pool_hierarchy
   configure_maintenance_cgroup
@@ -8557,37 +8654,80 @@ project_host_port_number() {
   fi
 }
 
-# The port of this host's conat router, the one host-local TCP service besides
-# DNS that projects may connect to, derived as project-host's ensureDefaults
-# derives it: COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else PORT + 100, where an
-# empty or unparsable PORT means the default 9002. Presence matters: an empty
-# value in the local file still overrides the managed one. Only when neither
-# file sets either key does the bootstrap-derived value apply.
-project_conat_router_port() {
-  local explicit="" base="" has_explicit=0 has_base=0
-  if explicit="$(project_host_env_value COCALC_PROJECT_HOST_CONAT_ROUTER_PORT)"; then
+# A project-host port derived as project-host derives it from the daemon's env
+# files: the explicit key ($1) when it is at least the minimum ($4, default 1),
+# else PORT + offset ($2), where an empty or unparsable PORT means the default
+# 9002. Presence matters: an empty value in the local file still overrides the
+# managed one. Only when neither file sets either key does the
+# bootstrap-derived value ($3) apply.
+project_host_derived_port() {
+  local key="$1" offset="$2" bootstrap_default="$3" min="${4:-1}" explicit="" base="" has_explicit=0 has_base=0
+  if explicit="$(project_host_env_value "$key")"; then
     has_explicit=1
   fi
   if base="$(project_host_env_value PORT)"; then
     has_base=1
   fi
   if [ "$has_explicit" -eq 0 ] && [ "$has_base" -eq 0 ]; then
-    echo "$PROJECT_CONAT_ROUTER_PORT_DEFAULT"
+    echo "$bootstrap_default"
     return
   fi
-  # The router binds Number(COCALC_PROJECT_HOST_CONAT_ROUTER_PORT); PORT goes
-  # through parsePort, i.e. Number() of the text after the last ":".
+  # The explicit key is read with Number(); PORT goes through parsePort,
+  # i.e. Number() of the text after the last ":".
   explicit="$(project_host_port_number "$explicit")"
-  if [ "$has_explicit" -eq 1 ] && [ -n "$explicit" ]; then
+  if [ "$has_explicit" -eq 1 ] && [ -n "$explicit" ] && [ "$explicit" -ge "$min" ]; then
     echo "$explicit"
     return
   fi
   base="$(project_host_port_number "${base##*:}")"
   [ -n "$base" ] || base=9002
-  if [ "$((base + 100))" -le 65535 ]; then
-    echo "$((base + 100))"
+  if [ "$((base + offset))" -le 65535 ]; then
+    echo "$((base + offset))"
   else
-    echo 9102
+    echo "$((9002 + offset))"
+  fi
+}
+
+# The port of this host's conat router, a host-local TCP service projects may
+# connect to: COCALC_PROJECT_HOST_CONAT_ROUTER_PORT, else PORT + 100.
+project_conat_router_port() {
+  project_host_derived_port COCALC_PROJECT_HOST_CONAT_ROUTER_PORT 100 \\
+    "$PROJECT_CONAT_ROUTER_PORT_DEFAULT"
+}
+
+# The ports of the site-funded Codex provider proxy, which Codex in a project
+# reaches as host.containers.internal: the first is
+# COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT, else PORT + 300, and each ACP
+# worker binds the first free one of PROJECT_SITE_CODEX_PROXY_PORT_COUNT (see
+# siteFundedCodexProxyPorts in project-host/codex/site-funded-proxy-port.ts).
+# The runtime user cannot bind privileged ports, so an explicit start below
+# 1024 falls back like an invalid one. Prints "first last".
+project_site_codex_proxy_ports() {
+  local first last
+  first="$(project_host_derived_port COCALC_PROJECT_HOST_SITE_CODEX_PROXY_PORT 300 \\
+    "$PROJECT_SITE_CODEX_PROXY_PORT_DEFAULT" 1024)"
+  last="$((first + PROJECT_SITE_CODEX_PROXY_PORT_COUNT - 1))"
+  [ "$last" -le 65535 ] || last=65535
+  echo "$first $last"
+}
+
+# The host-local TCP ports projects may open new connections to, as nft set
+# elements: DNS, the conat router and the Codex proxy range. Elements may not
+# overlap in an nft set, so a port inside the range is left to the range.
+project_egress_local_tcp_ports() {
+  local router first last elements=""
+  router="$(project_conat_router_port)"
+  read -r first last <<< "$(project_site_codex_proxy_ports)"
+  if [ 53 -lt "$first" ] || [ 53 -gt "$last" ]; then
+    elements="53, "
+  fi
+  if [ "$router" -ne 53 ] && { [ "$router" -lt "$first" ] || [ "$router" -gt "$last" ]; }; then
+    elements="${elements}${router}, "
+  fi
+  if [ "$first" -eq "$last" ]; then
+    echo "${elements}${first}"
+  else
+    echo "${elements}${first}-${last}"
   fi
 }
 
@@ -8607,11 +8747,12 @@ emit_project_metadata_rules() {
   # disabled policy's broad local accept. Only new connections are dropped;
   # replies on the inbound pasta forwards (SSH into the project, the host
   # proxy) go to host-local client ports and must keep flowing.
-  # Host-local: DNS over TCP and UDP, and the conat router (HTTP) over TCP only.
+  # Host-local: DNS over TCP and UDP, and over TCP only the conat router and
+  # the site-funded Codex proxy (both HTTP).
   marker="cocalc-project-network-egress"
-  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new fib daddr type local meta l4proto tcp tcp dport != { 53, %s } counter drop comment "%s-local-tcp"\\n' \
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new fib daddr type local meta l4proto tcp tcp dport != { %s } counter drop comment "%s-local-tcp"\\n' \
     "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
-    "$(project_conat_router_port)" "$marker"
+    "$(project_egress_local_tcp_ports)" "$marker"
   printf 'add rule inet %s %s socket cgroupv2 level %s "%s" ct state new fib daddr type local meta l4proto udp udp dport != 53 counter drop comment "%s-local-udp"\\n' \
     "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
     "$marker"
@@ -8649,10 +8790,16 @@ emit_project_network_rules() {
 }
 
 apply_pasta_resource_limits() {
-  local pid="$1"
+  local pid="$1" err
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 0
-  /usr/bin/prlimit --pid "$pid" \
-    --nofile="${PROJECT_PASTA_NOFILE_LIMIT}:${PROJECT_PASTA_NOFILE_LIMIT}"
+  if ! err="$(/usr/bin/prlimit --pid "$pid" \
+    --nofile="${PROJECT_PASTA_NOFILE_LIMIT}:${PROJECT_PASTA_NOFILE_LIMIT}" 2>&1)"; then
+    # A pasta process that exited meanwhile (its project stopped) needs no
+    # limit: only fail for one that is still there.
+    kill -0 "$pid" 2>/dev/null || return 0
+    printf '%s\\n' "$err" >&2
+    return 1
+  fi
 }
 
 project_cgroup_has_processes() {
@@ -9192,6 +9339,21 @@ check_args() {
       deny "relative-path-not-allowed" "$arg"
     fi
   done
+}
+
+# btrfs qgroup commands also take quota group ids ("level/id"): only a
+# project's quota group (level 1, project-host project-quota-group.ts) is
+# allowed besides paths, never a subvolume's own (level 0).
+check_qgroup_args() {
+  local arg
+  local -a rest=()
+  for arg in "$@"; do
+    if [[ "$arg" =~ ^1/[0-9]{1,15}$ ]]; then
+      continue
+    fi
+    rest+=("$arg")
+  done
+  check_args "${rest[@]}"
 }
 
 set_rustic_profile_parts() {
@@ -9876,7 +10038,11 @@ PY
     reconcile_project_network_limits
     ;;
   btrfs|btrfs-maintenance)
-    check_args "$@"
+    if [ "${1:-}" = "qgroup" ]; then
+      check_qgroup_args "$@"
+    else
+      check_args "$@"
+    fi
     if [ "$cmd" = "btrfs-maintenance" ]; then
       attach_maintenance_worker
     fi
@@ -11278,6 +11444,9 @@ esac
     storage_wrapper = storage_wrapper.replace(
         "__PROJECT_CONAT_ROUTER_PORT__",
         str(project_conat_router_port(getattr(cfg, "env_lines", None) or [])),
+    ).replace(
+        "__PROJECT_SITE_CODEX_PROXY_PORT__",
+        str(project_site_codex_proxy_port(getattr(cfg, "env_lines", None) or [])),
     )
     env_path = Path(getattr(cfg, "env_file", None) or DEFAULT_PROJECT_HOST_ENV_FILE)
     storage_wrapper = storage_wrapper.replace(
@@ -12583,6 +12752,7 @@ MIN_PROJECT_POOL_CPU_CORES="__MIN_PROJECT_POOL_CPU_CORES__"
 PROJECT_POOL_CPU_PERIOD_US="__PROJECT_POOL_CPU_PERIOD_US__"
 SYSCTL_CONFIG_PATH="/etc/sysctl.d/90-cocalc-project-host.conf"
 CORE_SYSCTL_CONFIG_PATH="/etc/sysctl.d/91-cocalc-project-host-core.conf"
+HARDENING_SYSCTL_CONFIG_PATH="/etc/sysctl.d/92-cocalc-project-host-hardening.conf"
 LEGACY_CORE_SUDOERS_CONFIG_PATH="/etc/sudoers.d/cocalc-project-host-core"
 CORE_HANDLER="/usr/local/sbin/cocalc-project-host-core-handler"
 CORE_ORIGINAL_PATTERN="/var/lib/cocalc/project-host-core-pattern.original"
@@ -12644,6 +12814,23 @@ net.ipv4.ip_local_reserved_ports = 30000-59999
 SYSCTL
   chmod 0644 "${SYSCTL_CONFIG_PATH}"
   sysctl -p "${SYSCTL_CONFIG_PATH}"
+  apply_kernel_hardening_sysctls
+}
+
+# Before every daemon start: io_uring_disabled only refuses new rings, so a
+# daemon started first would keep the ring its event loop created. Never
+# fails the start: drift is reported by project-host and admin health.
+apply_kernel_hardening_sysctls() {
+  # Keep in sync with KERNEL_HARDENING_SYSCTLS (bootstrap.py) and
+  # PROJECT_HOST_KERNEL_HARDENING (conat/project-host/kernel-hardening.ts).
+  cat > "${HARDENING_SYSCTL_CONFIG_PATH}" <<'SYSCTL'
+# Managed by CoCalc project-host: kernel attack surface reduction.
+kernel.io_uring_disabled = 2
+vm.unprivileged_userfaultfd = 0
+SYSCTL
+  chmod 0644 "${HARDENING_SYSCTL_CONFIG_PATH}"
+  sysctl -e -p "${HARDENING_SYSCTL_CONFIG_PATH}" >/dev/null ||
+    echo "warning: unable to apply ${HARDENING_SYSCTL_CONFIG_PATH}" >&2
 }
 
 read_env_file_value() {
@@ -13625,6 +13812,7 @@ case "${cmd}" in
     repair_runtime_environment
     preflight_podman_runtime
     reconcile_app_core_dumps
+    apply_kernel_hardening_sysctls
     run_daemon "${cmd}" "$@"
     protect_pid
     attach_running_project_processes || true
@@ -13634,6 +13822,7 @@ case "${cmd}" in
     repair_runtime_environment
     preflight_podman_runtime
     reconcile_app_core_dumps
+    apply_kernel_hardening_sysctls
     run_daemon stop "$@" || true
     run_daemon start "$@"
     protect_pid
@@ -14671,6 +14860,7 @@ def run_provision(cfg: BootstrapConfig) -> int:
         report_bootstrap_status(cfg, "running", "Installing Ubuntu packages")
         apt_update_install(cfg)
         configure_kernel_module_hardening(cfg)
+        configure_kernel_sysctl_hardening(cfg)
         configure_kernel_key_limits(cfg)
         configure_inotify_limits(cfg)
         report_bootstrap_status(cfg, "running", "Configuring storage and containers")
@@ -14708,6 +14898,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         ensure_automatic_security_updates(cfg)
         configure_daily_root_cleanup(cfg)
         configure_kernel_module_hardening(cfg)
+        configure_kernel_sysctl_hardening(cfg)
         configure_kernel_key_limits(cfg)
         configure_inotify_limits(cfg)
         configure_journald_limits(cfg)
@@ -14793,6 +14984,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         ensure_bootstrap_paths(cfg)
         configure_rsyslog_limits(cfg)
         configure_daily_root_cleanup(cfg)
+        configure_kernel_sysctl_hardening(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)
         write_helpers(cfg)

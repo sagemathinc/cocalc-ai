@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import { join } from "node:path";
+import { BeneathDir } from "../beneath-copy";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import getLogger from "@cocalc/backend/logger";
 
@@ -19,7 +18,9 @@ export async function createAgentIdentityLease({
   projectId: string;
   accountId: string;
   env?: NodeJS.ProcessEnv;
-  hostDir: string;
+  // The lease directory (in the project's scratch or home): written only
+  // through BeneathDir, never through a symlink the project put there.
+  hostDir: BeneathDir;
 }) {
   const path = env?.COCALC_CODEX_CHAT_PATH;
   const thread_id = env?.COCALC_CODEX_THREAD_ID;
@@ -36,20 +37,13 @@ export async function createAgentIdentityLease({
     });
   const initial = await issue(run_id);
   if (!initial) return;
-  const hostPath = join(hostDir, "identity.json");
   let closed = false;
   let refreshing: Promise<void> | undefined;
   let pendingRecovery:
     | { expiredRunId: string; replacementRunId: string }
     | undefined;
   const write = async (credential: typeof initial) => {
-    const temp = join(hostDir, `.identity-${randomUUID()}`);
-    try {
-      await fs.writeFile(temp, JSON.stringify(credential), { mode: 0o600 });
-      await fs.rename(temp, hostPath);
-    } finally {
-      await fs.rm(temp, { force: true });
-    }
+    hostDir.writeFile("identity.json", JSON.stringify(credential), 0o600);
   };
   try {
     await write(initial);
@@ -111,7 +105,7 @@ export async function createAgentIdentityLease({
   }, 3 * 60_000);
   timer.unref();
   return {
-    hostPath,
+    hostPath: hostDir.child("identity.json").hostPath,
     get currentRun() {
       return { agent_id: initial.agent_id, run_id };
     },
@@ -133,7 +127,7 @@ export async function createAgentIdentityLease({
           { agent_id: initial.agent_id, run_id },
         );
       }
-      await fs.rm(hostPath, { force: true });
+      hostDir.unlink("identity.json");
     },
   };
 }

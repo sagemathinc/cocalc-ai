@@ -287,6 +287,30 @@ describe("bootstrap-host promoted artifact defaults", () => {
     expect(scripts).not.toHaveProperty("managedHarness");
   });
 
+  it("writes the project content domain to the host env file when configured", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      project_hosts_software_base_url: softwareBaseUrl,
+      project_hosts_bootstrap_channel: "latest",
+      project_hosts_bootstrap_version: "",
+      project_content_dns: " https://UserContent.Example.org/ ",
+    });
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts(baseRow() as any);
+    expect(scripts.envLines).toContain(
+      "COCALC_PROJECT_CONTENT_DOMAIN=usercontent.example.org",
+    );
+  });
+
+  it("writes no project content domain when none is configured", async () => {
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts(baseRow() as any);
+    expect(
+      scripts.envLines.filter((line) =>
+        line.startsWith("COCALC_PROJECT_CONTENT_DOMAIN="),
+      ),
+    ).toEqual([]);
+  });
+
   it("does not send a separate managed harness to bootstrap", async () => {
     const { buildBootstrapScriptWithStatus } = await loadBootstrapHost();
     const script = await buildBootstrapScriptWithStatus(

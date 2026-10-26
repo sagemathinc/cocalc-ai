@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
 import { localPath } from "./filesystem";
@@ -171,6 +172,9 @@ export async function sandboxExec({
     }
   };
 
+  // The podman client was killed (at its deadline, or for printing more
+  // than maxBuffer): its container may live on, and --rm never runs.
+  let clientKilled = false;
   const runPodman = async (
     args: string[],
     launcher?: ReturnType<typeof projectPoolPodmanLauncher>,
@@ -208,6 +212,12 @@ export async function sandboxExec({
           clearTimeout(deadline);
           signal?.removeEventListener("abort", stop);
           if (error) {
+            if (
+              error.killed ||
+              error.signal === "SIGKILL" ||
+              error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+            )
+              clientKilled = true;
             resolve({
               stdout: stdout ?? "",
               stderr: stderr ?? error?.message ?? "",
@@ -233,6 +243,8 @@ export async function sandboxExec({
   };
 
   let rootfs: string | undefined;
+  // The one-off container's name, to remove it if its run is killed.
+  let containerName: string | undefined;
   try {
     if (useEphemeral) {
       const { home, scratch } = await localPath({
@@ -314,8 +326,11 @@ export async function sandboxExec({
         );
       }
 
-      // Name the container for easier debugging; allow reuse without conflicts.
-      args.push("--name", `sandbox-${project_id}-${Date.now()}`);
+      // Named for easier debugging. Unique even for runs started in the same
+      // millisecond (several sensors of a project fall due on one tick), as
+      // a name already in use makes podman refuse the run.
+      containerName = `sandbox-${project_id}-${Date.now()}-${randomBytes(4).toString("hex")}`;
+      args.push("--name", containerName);
 
       rootfs = await mountRootFs({ project_id, home, config: { image } });
       args.push("--rootfs", rootfs);
@@ -371,7 +386,9 @@ export async function sandboxExec({
     logger.debug("podman", argsJoin(args));
     // With Podman cgroups disabled, exec processes inherit the caller's
     // cgroup. Admit both run and exec launchers so no project command escapes.
-    return await runPodman(args, projectPoolPodmanLauncher(project_id));
+    const result = await runPodman(args, projectPoolPodmanLauncher(project_id));
+    if (containerName && clientKilled) await removeContainer(containerName);
+    return result;
   } finally {
     if (rootfs) {
       // Decrement overlay mount refcount; actual unmount happens only when
@@ -379,4 +396,23 @@ export async function sandboxExec({
       await unmount(project_id);
     }
   }
+}
+
+/** Best effort: a killed run's container is removed, never left behind. */
+async function removeContainer(name: string): Promise<void> {
+  await new Promise<void>((resolve) =>
+    execFile(
+      "podman",
+      ["rm", "--force", "--time", "0", name],
+      { cwd: "/", timeout: 30_000, env: podmanEnv() },
+      (error) => {
+        if (error)
+          logger.warn("could not remove a killed sandbox container", {
+            name,
+            err: `${error}`,
+          });
+        resolve();
+      },
+    ),
+  );
 }

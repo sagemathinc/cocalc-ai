@@ -27,6 +27,8 @@ export type ClaudePaymentSelection =
   /** Follow the account's default for Claude Code agents. */
   | { version: 1; provider: "claude-code"; mode: "default" }
   | { version: 1; provider: "claude-code"; mode: "project-secret" }
+  /** Included Claude, paid by the site from the account's CoCalc membership. */
+  | { version: 1; provider: "claude-code"; mode: "membership" }
   | {
       version: 1;
       provider: "claude-code";
@@ -152,7 +154,11 @@ export function parseAgentPaymentSelection(
       };
     }
   } else if (obj.provider === "claude-code") {
-    if (obj.mode === "default" || obj.mode === "project-secret") {
+    if (
+      obj.mode === "default" ||
+      obj.mode === "project-secret" ||
+      obj.mode === "membership"
+    ) {
       only(obj, base);
       return { version: 1, provider: "claude-code", mode: obj.mode };
     }
@@ -210,6 +216,8 @@ export function harnessCredentialFromSelection(
       : selection;
   if (!effective || effective.mode === "project-secret")
     return { version: 1, provider: "anthropic", mode: "project-secret" };
+  if (effective.mode === "membership")
+    return { version: 1, provider: "anthropic", mode: "site-funded" };
   if (effective.mode === "account-api-key")
     return {
       version: 1,
@@ -233,6 +241,8 @@ export function selectionFromHarnessCredential(
 ): ClaudePaymentSelection {
   if (!credential || credential.provider !== "anthropic")
     return { version: 1, provider: "claude-code", mode: "project-secret" };
+  if (credential.mode === "site-funded")
+    return { version: 1, provider: "claude-code", mode: "membership" };
   if (credential.mode === "account-api-key")
     return {
       version: 1,

@@ -32,6 +32,7 @@ import { stampFileReadPrincipal } from "../files/read-principal";
 import { fileMutationAuthority } from "../files/mutation-authority";
 import {
   validateMessageHeaders,
+  EGRESS_LABEL_HEADER,
   REPLY_HEADER,
   SOCKET_RETURN_HEADER,
 } from "./message-headers";
@@ -1648,7 +1649,12 @@ export class ConatServer extends EventEmitter {
     validateMessageHeaders(data[5]);
     const replySubject = data[5]?.[REPLY_HEADER];
     if (typeof replySubject === "string") {
-      this.replySubjects.remember(replySubject, subject);
+      this.replySubjects.remember(
+        replySubject,
+        subject,
+        Date.now(),
+        data[5]?.[EGRESS_LABEL_HEADER],
+      );
     }
     const socketReturn = data[5]?.[SOCKET_RETURN_HEADER] as string | undefined;
     if (

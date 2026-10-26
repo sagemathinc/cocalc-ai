@@ -33,7 +33,10 @@ export type TableAuthorityKey =
   | "mixed";
 
 export type TablePortabilityStatus =
-  "portable" | "rebuildable" | "stable" | "unsupported";
+  | "portable"
+  | "rebuildable"
+  | "stable"
+  | "unsupported";
 
 export type TableReferenceField =
   | "account_id"
@@ -63,6 +66,23 @@ function entries(
 }
 
 export const TABLE_OWNERSHIP = {
+  ...entries(
+    [
+      "site_ai_account_holds",
+      "site_ai_admission_attempts",
+      "site_ai_funding_periods",
+      "site_ai_provider_keys",
+      "site_ai_speech_reservations",
+      "site_ai_turn_reservations",
+    ],
+    {
+      ownership: "seed-global",
+      authority: "seed",
+      portability: "stable",
+      notes:
+        "Cluster-wide site-funded AI state (util/db-schema/site-ai-funding.ts): budgets, account holds, turn and speech reservations, the admission funnel, and the site's encrypted provider keys. All admission, settlement and key management route to the seed bay, so concurrency and spending limits hold across the cluster and keys never leave it except to the host running a turn they fund.",
+    },
+  ),
   ...entries(
     [
       "account_funding_authorities",
@@ -113,6 +133,7 @@ export const TABLE_OWNERSHIP = {
       "billing_authority_commands",
       "billing_authority_lease",
       "billing_authority_migrations",
+      "business_tax_id_notices",
       "credit_payment_roots",
       "credit_transfer_deliveries",
       "credit_transfer_entries",
@@ -829,6 +850,7 @@ export const TABLE_OWNERSHIP = {
     [
       "account_admin_audit_log",
       "ai_usage_log",
+      "business_tax_id_refusals",
       "central_log",
       "client_error_log",
       "cloud_vm_log",
@@ -1212,24 +1234,6 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
 
   ...adHocEntries(
     [
-      "site_ai_account_holds",
-      "site_ai_funding_periods",
-      "site_ai_speech_reservations",
-      "site_ai_turn_reservations",
-    ],
-    {
-      ownership: "seed-global",
-      authority: "seed",
-      portability: "stable",
-      source: "server site-funded AI reservation schema bootstrap",
-      migrate_to_schema: true,
-      notes:
-        "Cluster-wide site-funded AI budget, hold, and reservation state. All admission and settlement operations route to the seed bay so concurrency and spending limits are enforced globally.",
-    },
-  ),
-
-  ...adHocEntries(
-    [
       "project_active_operations",
       "project_backup_repo_assignments",
       "project_collab_invite_inbox",
@@ -1278,6 +1282,19 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     migrate_to_schema: true,
     notes:
       "Project public-directory share grant state keyed through public_project_paths. Reads/writes must follow the owning project path; rehome is unsafe until explicitly audited.",
+  }),
+
+  ...adHocEntries(["public_share_views"], {
+    ownership: "project-owning",
+    authority: "mixed",
+    portability: "unsupported",
+    source: "server public directory share views bootstrap",
+    migrate_to_schema: true,
+    secondary_reference_fields: {
+      account_id: "The viewer, a reference, not placement authority.",
+    },
+    notes:
+      "Who read a public share, one row per (share, account, UTC day), kept 13 months. Stored on the bay that stores the share's public_project_paths row (normally the project's owning bay); account_id is a reference, and the rows are deleted with the account.",
   }),
 
   ...adHocEntries(

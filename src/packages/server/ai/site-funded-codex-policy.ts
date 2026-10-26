@@ -10,6 +10,7 @@ import {
   type SiteFundedCodexPolicy,
   usdToMicrousd,
 } from "@cocalc/util/ai/site-funded-codex";
+import { DEFAULT_SITE_FUNDED_CLAUDE_POLICY } from "@cocalc/util/ai/site-funded-claude";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 
 type Settings = Record<string, unknown>;
@@ -49,7 +50,7 @@ export function siteFundedCodexConfigurationFromSettings(
     settings.site_funded_codex_model ?? DEFAULT_SITE_FUNDED_CODEX_POLICY.model
   }`.trim();
   // This is deliberately an eager fail-closed validation.
-  getSiteFundedCodexPrice(model);
+  getSiteFundedCodexPrice(model, "openai");
   const policy: SiteFundedCodexPolicy = {
     ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
     model,
@@ -109,6 +110,60 @@ export function siteFundedCodexConfigurationFromSettings(
       100_000,
     ),
   };
+}
+
+/**
+ * Site-funded Claude: its own switch, model and per-turn guards; the same
+ * weekly pools and concurrency as Codex (one included-AI budget).
+ */
+export function siteFundedClaudeConfigurationFromSettings(
+  settings: Settings,
+): SiteFundedCodexConfiguration {
+  const shared = siteFundedCodexConfigurationFromSettings({
+    ...settings,
+    // Pools and concurrency only: an invalid Codex model must not disable
+    // Claude.
+    site_funded_codex_model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
+  });
+  const model = `${
+    settings.site_funded_claude_model ?? DEFAULT_SITE_FUNDED_CLAUDE_POLICY.model
+  }`.trim();
+  // This is deliberately an eager fail-closed validation.
+  getSiteFundedCodexPrice(model, "anthropic");
+  return {
+    ...shared,
+    enabled: to_bool(settings.site_funded_claude_enabled),
+    policy: {
+      ...DEFAULT_SITE_FUNDED_CLAUDE_POLICY,
+      model,
+      maxTurnCostMicrousd: positiveUsdMicrousd(
+        settings.site_funded_claude_max_turn_usd,
+        DEFAULT_SITE_FUNDED_CLAUDE_POLICY.maxTurnCostMicrousd,
+      ),
+      maxTurnDurationMs:
+        positiveInteger(
+          settings.site_funded_claude_max_turn_seconds,
+          DEFAULT_SITE_FUNDED_CLAUDE_POLICY.maxTurnDurationMs / 1_000,
+          24 * 60 * 60,
+        ) * 1_000,
+      maxOutputTokensPerRequest: positiveInteger(
+        settings.site_funded_claude_max_output_tokens_per_request,
+        DEFAULT_SITE_FUNDED_CLAUDE_POLICY.maxOutputTokensPerRequest,
+        64_000,
+      ),
+      maxRequestsPerTurn: positiveInteger(
+        settings.site_funded_claude_max_requests_per_turn,
+        DEFAULT_SITE_FUNDED_CLAUDE_POLICY.maxRequestsPerTurn,
+        10_000,
+      ),
+    },
+  };
+}
+
+export async function getSiteFundedClaudeConfiguration(): Promise<SiteFundedCodexConfiguration> {
+  return siteFundedClaudeConfigurationFromSettings(
+    (await getServerSettings()) as Settings,
+  );
 }
 
 export async function getSiteFundedCodexConfiguration(): Promise<SiteFundedCodexConfiguration> {

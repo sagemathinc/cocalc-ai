@@ -28,6 +28,11 @@ import { FrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-co
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 
 import { delay } from "awaiting";
+import {
+  assertAllowedWidgetModule,
+  inlineSanitize,
+  safeWidgetClass,
+} from "./safety";
 
 const K3D_DELAY_MS = 25;
 
@@ -77,6 +82,7 @@ export class WidgetManager {
     }
     const provider = new Environment(this);
     this.manager = createWidgetManager(provider);
+    this.restrictWidgetCode();
     this.guardCodeActivation();
 
     this.initAllModels();
@@ -92,6 +98,31 @@ export class WidgetManager {
   };
 
   isClosed = (): boolean => this.closed;
+
+  // Widget state is shared with every collaborator, so it must not choose
+  // code or markup that runs in this page (see safety.ts): only allowed
+  // modules load, the HTML views are inert, HTML descriptions are text.
+  private restrictWidgetCode = (): void => {
+    const manager = this.manager as any;
+    const loadClass = manager?.loadClass;
+    if (typeof loadClass == "function") {
+      manager.loadClass = async (
+        className: string,
+        moduleName: string,
+        moduleVersion: string,
+      ) => {
+        assertAllowedWidgetModule(moduleName, moduleVersion);
+        const cls = await loadClass.call(
+          manager,
+          className,
+          moduleName,
+          moduleVersion,
+        );
+        return safeWidgetClass(className, moduleName, cls);
+      };
+    }
+    if (manager != null) manager.inline_sanitize = inlineSanitize;
+  };
 
   // Every model and view class the widget library uses is loaded through
   // loadClass, and every model and view is created through new_model,
@@ -854,7 +885,10 @@ class Environment implements WidgetEnvironment {
         FileContext.Provider,
         {
           value: {
-            noSanitize: trust,
+            // Widget state is shared with every collaborator: what an
+            // Output widget shows is sanitized like untrusted content (HTML
+            // and JavaScript outputs are framed either way).
+            noSanitize: false,
             project_id,
             path,
             // see https://github.com/sagemathinc/cocalc/issues/5258

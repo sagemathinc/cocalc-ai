@@ -51,6 +51,9 @@ interface PrintOptions {
   src?: string; // if given, just loads that url (default: ''); this is typically a raw URL into a project.
   path?: string; // must be given if src is empty, so can put it in the HTML title and relative links work.
   project_id?: string; // must be given if src is empty
+  // The page at src prints itself once loaded (/content-view?print=1); the
+  // popup only has to open it.
+  selfPrinting?: boolean;
 }
 
 // Raises an exception if there is an error.
@@ -66,6 +69,7 @@ export function print_html(opts: PrintOptions): void {
     }
     write_content(w, opts);
   }
+  if (opts.selfPrinting) return;
   print_window(w);
 }
 

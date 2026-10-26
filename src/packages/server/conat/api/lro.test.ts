@@ -10,17 +10,9 @@ let cancelCopiesByOpIdMock: jest.Mock;
 let cancelCourseCollectChildrenMock: jest.Mock;
 let cancelStaleProjectStartLrosMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
-let listHostOperationsMock: jest.Mock;
 
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
-}));
-jest.mock("@cocalc/server/inter-bay/bridge", () => ({
-  getInterBayBridge: () => ({
-    hostConnection: (bay_id: string) => ({
-      listHostOperations: (opts: any) => listHostOperationsMock(bay_id, opts),
-    }),
-  }),
 }));
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -69,7 +61,6 @@ describe("lro host authorization", () => {
     jest.resetModules();
     process.env.COCALC_BAY_ID = "bay-0";
     resolveHostBayMock = jest.fn(async () => ({ bay_id: "bay-0" }));
-    listHostOperationsMock = jest.fn(async () => [{ op_id: "remote-op" }]);
     getLroMock = jest.fn(async () => ({
       op_id: "op-1",
       kind: "host-upgrade-software",
@@ -143,7 +134,9 @@ describe("lro host authorization", () => {
     expect(cancelStaleProjectStartLrosMock).not.toHaveBeenCalled();
   });
 
-  it("reads remote host history from the owning bay, not local replicas", async () => {
+  it("refuses to list a host's operations off the host's bay", async () => {
+    // Routed to the host's bay (see @cocalc/conat/hub/api/routes), which keeps
+    // the authoritative log: never answered from a local copy.
     resolveHostBayMock.mockResolvedValue({ bay_id: "bay-1" });
     const { list } = await import("./lro");
     await expect(
@@ -153,28 +146,112 @@ describe("lro host authorization", () => {
         scope_id: "host-1",
         include_completed: true,
       }),
-    ).resolves.toEqual([{ op_id: "remote-op" }]);
-    expect(listHostOperationsMock).toHaveBeenCalledWith("bay-1", {
-      account_id: "project-user",
-      host_id: "host-1",
-      include_completed: true,
-    });
+    ).rejects.toMatchObject({ code: 409 });
     expect(listLroMock).not.toHaveBeenCalled();
     expect(queryMock).not.toHaveBeenCalled();
   });
 
-  it("does not substitute stale local history when the owner is unavailable", async () => {
-    resolveHostBayMock.mockResolvedValue({ bay_id: "bay-1" });
-    listHostOperationsMock.mockRejectedValue(new Error("owner unavailable"));
-    const { list } = await import("./lro");
+  it("answers a get only for an operation of the scope it names", async () => {
+    const { get } = await import("./lro");
+    // The creator reads it, with or without the right scope.
+    getLroMock = jest.fn(async () => ({
+      op_id: "op-1",
+      kind: "host-upgrade-software",
+      scope_type: "host",
+      scope_id: "host-1",
+      status: "running",
+      created_by: "creator",
+    }));
     await expect(
-      list({
-        account_id: "project-user",
+      get({ account_id: "creator", op_id: "op-1" }),
+    ).resolves.toMatchObject({ op_id: "op-1" });
+    await expect(
+      get({
+        account_id: "creator",
+        op_id: "op-1",
         scope_type: "host",
         scope_id: "host-1",
       }),
-    ).rejects.toThrow("owner unavailable");
-    expect(listLroMock).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ op_id: "op-1" });
+    // The same id in another spelling (a UUID in upper case) is the same scope.
+    await expect(
+      get({
+        account_id: "creator",
+        op_id: "op-1",
+        scope_type: "host",
+        scope_id: "HOST-1",
+      }),
+    ).resolves.toMatchObject({ op_id: "op-1" });
+    // Another scope's operation does not answer: the call was routed by it.
+    await expect(
+      get({
+        account_id: "creator",
+        op_id: "op-1",
+        scope_type: "host",
+        scope_id: "host-2",
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      get({
+        account_id: "creator",
+        op_id: "op-1",
+        scope_type: "project",
+        scope_id: "host-1",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each(["get", "cancel", "dismiss"] as const)(
+    "refuses a %s naming a host off the host's bay",
+    async (name) => {
+      resolveHostBayMock.mockResolvedValue({ bay_id: "bay-1" });
+      const api = await import("./lro");
+      await expect(
+        api[name]({
+          account_id: "creator",
+          op_id: "op-1",
+          scope_type: "host",
+          scope_id: "host-1",
+        }),
+      ).rejects.toMatchObject({ code: 409 });
+      expect(getLroMock).not.toHaveBeenCalled();
+      // Without a named host it runs where received, as before.
+      await api[name]({ account_id: "creator", op_id: "op-1" }).catch(
+        () => undefined,
+      );
+      expect(getLroMock).toHaveBeenCalled();
+    },
+  );
+
+  it("cancels or dismisses only an operation of the scope it names", async () => {
+    const { cancel, dismiss } = await import("./lro");
+    getLroMock = jest.fn(async () => ({
+      op_id: "op-1",
+      kind: "host-upgrade-software",
+      scope_type: "host",
+      scope_id: "host-1",
+      status: "succeeded",
+      created_by: "creator",
+    }));
+    const other = {
+      account_id: "creator",
+      op_id: "op-1",
+      scope_type: "host" as const,
+      scope_id: "host-2",
+    };
+    await cancel(other);
+    await dismiss(other);
+    expect(updateLroMock).not.toHaveBeenCalled();
+    expect(dismissLroMock).not.toHaveBeenCalled();
+    const named = { ...other, scope_id: "HOST-1" };
+    await cancel(named);
+    await dismiss(named);
+    expect(updateLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({ op_id: "op-1", status: "canceled" }),
+    );
+    expect(dismissLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({ op_id: "op-1" }),
+    );
   });
 
   it("cleans orphaned project-start operations before listing project lros", async () => {

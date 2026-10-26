@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AgentApi, AgentHumanAuth } from "@cocalc/conat/hub/api/agent";
+import {
+  parseAgentTurnStatus,
+  sameAgentTurnStatus,
+} from "@cocalc/conat/agents/agent-status";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
@@ -565,6 +569,104 @@ export const describeNetworkSelf: AgentApi["describeNetworkSelf"] = async (
     },
   })) as import("@cocalc/conat/agents/personal").AgentNetworkDiscovery;
   return directory.self;
+};
+
+// Host-attested: the project host holding a turn whose sign-in failed asks
+// when the turn's account last updated that credential, to resume the turn
+// once it was signed in again (I4c). Routed to the account's home bay by the
+// credential store; only the time and whether it is revoked come back.
+export const credentialUpdatedAt: AgentApi["credentialUpdatedAt"] = async (
+  opts,
+) => {
+  requireUuid(opts.credential_id, "credential_id");
+  await assertProjectHostAgentTokenAccess({
+    host_id: opts.host_id!,
+    account_id: opts.account_id!,
+    project_id: opts.project_id,
+  });
+  const provider =
+    typeof opts.provider === "string" &&
+    /^[a-z0-9_-]{1,64}$/.test(opts.provider)
+      ? opts.provider
+      : undefined;
+  const { listAccountExternalCredentialsRouted } =
+    await import("@cocalc/server/external-credentials/routing");
+  // Summaries only (never the secret), from the account's home bay.
+  const credentials = await listAccountExternalCredentialsRouted({
+    owner_account_id: opts.account_id!,
+    includeRevoked: true,
+    ...(provider ? { provider } : {}),
+  });
+  const found = credentials.find(
+    (credential) => credential.id === opts.credential_id,
+  );
+  const ms = (value: Date | string) => new Date(value).valueOf();
+  const peers = credentials.filter(
+    (credential) =>
+      credential.revoked == null &&
+      (found
+        ? credential.provider === found.provider &&
+          credential.kind === found.kind
+        : provider != null && credential.provider === provider),
+  );
+  const newestCredential = peers.reduce<(typeof peers)[number] | undefined>(
+    (best, credential) =>
+      !best || ms(credential.updated) > ms(best.updated) ? credential : best,
+    undefined,
+  );
+  return {
+    ...(found
+      ? { updated_at: ms(found.updated), revoked: found.revoked != null }
+      : {}),
+    ...(newestCredential
+      ? {
+          newest_updated_at: ms(newestCredential.updated),
+          newest_credential_id: newestCredential.id,
+        }
+      : {}),
+  };
+};
+
+// Host-attested: the project host running an agent's turns reports what it
+// is doing. Kept on the identity, so it reaches everyone who named the agent
+// (destinations, the Agents page) the way its runtime and appearance do.
+/** A refresh of an unchanged status is stored at most this often. */
+const STATUS_REFRESH_MIN_MS = 60 * 60_000;
+
+export const reportStatus: AgentApi["reportStatus"] = async (opts) => {
+  await assertLocalAgentProject(opts.project_id);
+  await assertProjectHostAgentTokenAccess({
+    host_id: opts.host_id!,
+    account_id: opts.account_id!,
+    project_id: opts.project_id,
+  });
+  const parsed = parseAgentTurnStatus(opts.status);
+  if (!parsed) throw new Error("invalid agent status");
+  // Never later than the hub's own clock: a host whose clock ran ahead
+  // would otherwise outrank every later (correct) report, and outlive its
+  // TTL.
+  const status = { ...parsed, at: Math.min(parsed.at, Date.now()) };
+  const db = agentStore();
+  const agent = await db.find(opts.project_id, opts.path, opts.thread_id);
+  if (!agent) return { registered: false };
+  // Unchanged: kept, unless this refreshes it well before it would expire
+  // (the host sends an unchanged status again every few hours).
+  const stored = parseAgentTurnStatus(agent.turn_status);
+  if (
+    sameAgentTurnStatus(stored, status) &&
+    status.at - (stored?.at ?? 0) < STATUS_REFRESH_MIN_MS
+  )
+    return { registered: true };
+  // Atomically never older than what is stored: of two overlapping
+  // reports (a retried one, say), the older cannot land last and win.
+  const { rowCount } = await db.query(
+    `UPDATE agent_identities SET turn_status=$2::jsonb
+     WHERE agent_id=$1
+       AND (turn_status IS NULL OR (turn_status->>'at')::bigint <= $3)`,
+    [agent.agent_id, JSON.stringify(status), status.at],
+  );
+  if (rowCount) void notifyIdentityWatchers(agent.agent_id);
+  return { registered: true };
 };
 
 // Host-attested: the project host admitting a turn reports the agent's

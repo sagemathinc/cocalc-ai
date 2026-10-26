@@ -15,7 +15,7 @@
  *
  * Usage:
  *   node plus/dist-release/build-release.mjs [--out DIR]
- *     [--platforms linux-x64,linux-arm64,darwin-arm64] [--node-version 26.11.1]
+ *     [--platforms linux-x64,linux-arm64,darwin-arm64] [--node-version 26.12.1]
  *     [--skip-node-signature] [--zstd-level 19]
  * Then publish with the same command as the CLI:
  *   node cli/dist-release/publish-release.mjs --build <out> [...]

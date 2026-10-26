@@ -12,6 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 jest.mock("@cocalc/file-server/btrfs/util", () => ({ sudo: jest.fn() }));
+const forgetSubvolumePaths = jest.fn();
+jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
+  forgetSubvolumePaths: (...paths: string[]) => forgetSubvolumePaths(...paths),
+}));
 
 const paths = {
   home: "/home",
@@ -126,4 +130,15 @@ test("metadata failure restores real directory contents without deleting replace
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+describe("what was read about the swapped paths", () => {
+  it("is forgotten: another subvolume is at the home's path", async () => {
+    await swapSnapshotHome({ ...paths, record });
+    // (the cached subvolume ids and quota scan, file-server qgroup-scan.ts)
+    expect(forgetSubvolumePaths.mock.calls).toEqual([
+      [paths.home, paths.previous],
+      [paths.replacement, paths.home],
+    ]);
+  });
 });

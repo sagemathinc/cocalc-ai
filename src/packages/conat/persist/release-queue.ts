@@ -147,6 +147,21 @@ export class PersistStreamReleaseQueue {
     this.immediate.unref?.();
   }
 
+  // Releases now, ignoring the grace period, every pending stream that match
+  // selects, e.g., all of one project's streams (fence.ts).  Yields between
+  // releases, like the timer does.
+  async releaseMatching(match: (stream: Releasable) => boolean): Promise<void> {
+    while (true) {
+      const i = this.pending.findIndex(({ stream }) => match(stream));
+      if (i < 0) {
+        return;
+      }
+      const [next] = this.pending.splice(i, 1);
+      this.release(next);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+
   private releaseOne({ rearm }: { rearm: boolean }): void {
     const next = this.pending[0];
     if (next == null) {
@@ -159,6 +174,15 @@ export class PersistStreamReleaseQueue {
       return;
     }
     this.pending.shift();
+    this.release(next);
+    // Always yield before releasing another SQLite reference. The final
+    // reference closes synchronously to preserve close/reopen exclusion.
+    if (rearm) {
+      this.arm();
+    }
+  }
+
+  private release(next: PendingRelease): void {
     const started = this.now();
     try {
       next.stream.close();
@@ -177,11 +201,6 @@ export class PersistStreamReleaseQueue {
         this.slowReleasesTotal += 1;
         this.onSlowRelease?.(durationMs);
       }
-    }
-    // Always yield before releasing another SQLite reference. The final
-    // reference closes synchronously to preserve close/reopen exclusion.
-    if (rearm) {
-      this.arm();
     }
   }
 

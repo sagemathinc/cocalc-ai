@@ -63,6 +63,8 @@ type EditorType =
   | "crm-account"
   | "crm-tables"
   | "csv-grid"
+  | "calendar"
+  | "todo"
   | "errors"
   | "iframe"
   | "jupyter_json_edit"

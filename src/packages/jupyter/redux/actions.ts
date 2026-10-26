@@ -101,7 +101,10 @@ function normalizeLastRuntimeMs(value: any): number | undefined {
   return Math.round(n);
 }
 
-function patchCellMetadataWithLastRuntime(metadata: any, last: any): any {
+export function patchCellMetadataWithLastRuntime(
+  metadata: any,
+  last: any,
+): any {
   let metadataPatch: any;
   if (metadata == null) {
     metadataPatch = {};
@@ -135,6 +138,9 @@ function getCellMetadataLastRuntimeMs(cell: immutable.Map<string, any>): any {
 // How long a client that finds the .ipynb file changed waits for a save of
 // it to be recorded before taking it for an external edit (see isIpynbSave).
 const IPYNB_SAVE_RECORD_WAIT_MS = 3000;
+
+// The id of the first cell of a notebook started from empty.
+export const FIRST_CELL_ID = "alpha";
 
 export class JupyterActions extends Actions<JupyterStoreState> {
   public is_project: boolean;
@@ -1118,6 +1124,12 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   };
 
   setCellId = (id: string, newId: string, save = true) => {
+    // Writes the syncdb directly, so check read_only here as _set does (in
+    // the browser a notebook is read-only until its initial source settled,
+    // a customer report).
+    if (this.store?.get("read_only")) {
+      return;
+    }
     let cell = this.store.getIn(["cells", id])?.toJS();
     if (cell == null) {
       return;
@@ -1719,15 +1731,22 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       throw Error("document is read only");
     }
     const new_id = id ?? this.new_id();
+    const wasEmpty = (this.store.get_cell_list()?.size ?? 0) === 0;
     this._set(
       {
         type: "cell",
         id: new_id,
-        pos,
+        // With no cells there is no neighbor to place it by (an insert
+        // above/below the missing current cell would compute NaN).
+        pos: wasEmpty ? 0 : pos,
         input: "",
       },
       save,
     );
+    if (wasEmpty) {
+      // It is safe to trust a notebook the user started from empty.
+      this.set_trust_notebook(true, save);
+    }
     return new_id; // violates CQRS... (this *is* used elsewhere)
   }
 
@@ -1790,7 +1809,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   undo = (): boolean => {
     const syncdb = this.syncdb;
-    if (!syncdb?.isReady()) {
+    // A read-only notebook's history is not changed either.  In the browser
+    // this includes a notebook whose initial source has not settled yet
+    // (a customer report): undoing then would change the live notebook
+    // before the file is loaded.
+    if (!syncdb?.isReady() || this.store?.get("read_only")) {
       return false;
     }
     syncdb.undo();
@@ -1799,7 +1822,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   redo = (): boolean => {
     const syncdb = this.syncdb;
-    if (!syncdb?.isReady()) {
+    // A read-only notebook's history is not changed either.  In the browser
+    // this includes a notebook whose initial source has not settled yet
+    // (a customer report): redoing then would change the live notebook
+    // before the file is loaded.
+    if (!syncdb?.isReady() || this.store?.get("read_only")) {
       return false;
     }
     syncdb.redo();
@@ -2901,23 +2928,31 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     this.setState({ runProgress: total > 0 ? (100 * ran) / total : 100 });
   };
 
-  ensureThereIsACell = () => {
-    if (this._state !== "ready") {
-      return;
+  // An empty notebook stores no cells. The editor shows a placeholder until
+  // the user starts editing, and only then is the first cell created. A blank
+  // cell stored as soon as a notebook opens empty used to win over, or be
+  // saved on top of, a notebook file that was still being written (support
+  // ticket 21023). Clients that start an empty cell at once converge on one
+  // fixed id; typed text gets a cell of its own, so concurrent starts cannot
+  // overwrite each other's text.
+  createFirstCell = (input: string = ""): string => {
+    const cell_list = this.store.get_cell_list();
+    if (cell_list != null && cell_list.size > 0) {
+      // A cell arrived (from a collaborator or the file) just before the
+      // user started: keep what they typed in a cell of its own at the end.
+      if (!input) return cell_list.get(0)!;
+      const id = this.insert_cell_adjacent(cell_list.last()!, 1);
+      this.set_cell_input(id, input);
+      return id;
     }
-    const cells = this.store.get("cells");
-    if (cells == null || cells.size === 0) {
-      this._set({
-        type: "cell",
-        // by using the same id across clients we solve the problem of multiple
-        // clients creating a cell at the same time.
-        id: "alpha",
-        pos: 0,
-        input: "",
-      });
-      // It is safe to trust an empty notebook.
-      this.set_trust_notebook(true);
-    }
+    const id = input ? this.new_id() : FIRST_CELL_ID;
+    // Typed cells started at once by several clients each get their own
+    // position near 0, so cells inserted between them later land between.
+    const pos = input ? Math.random() - 0.5 : 0;
+    this._set({ type: "cell", id, pos, input });
+    // It is safe to trust a notebook the user started from empty.
+    this.set_trust_notebook(true);
+    return id;
   };
 
   processOutput = (content: any) => {
@@ -2972,10 +3007,17 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     return ipynb;
   }
 
+  // Resolves to false if opts.skipIf said not to apply, else true.
   setToIpynb = async (
     ipynb: any,
     data_only: boolean = false,
-  ): Promise<void> => {
+    opts?: {
+      // Checked at the last moment before the live notebook is changed (after
+      // the asynchronous attachment step), so a caller can refuse to apply a
+      // read that the live notebook has since moved past.
+      skipIf?: () => boolean;
+    },
+  ): Promise<boolean> => {
     /*
      * set_to_ipynb - set from ipynb object.  This is
      * mainly meant to be run on the backend in the project,
@@ -2992,6 +3034,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     // Project-side implementations use this asynchronous boundary to replace
     // native Jupyter attachments before any live syncdoc state is mutated.
     ipynb = await this.prepareIpynbForSyncdoc(ipynb);
+    if (opts?.skipIf?.()) {
+      return false;
+    }
 
     this._state = "load";
 
@@ -3063,7 +3108,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
     if (data_only) {
       importer.close();
-      return;
+      return true;
     }
 
     // Set all the cells
@@ -3088,6 +3133,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     await this.syncdb.save();
     this.ensure_backend_kernel_setup();
     this._state = "ready";
+    return true;
   };
 }
 

@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitReadService, GIT_READ_LIMIT } from "./read-service";
+import { GitReadError, GitReadService, GIT_READ_LIMIT } from "./read-service";
 import type { GitReadExecutor } from "./read-service";
 import { loadGitHistoricalFile } from "./historical-file";
 import { resolveHistorySelection } from "./history-selection";
@@ -691,4 +691,34 @@ test("concurrent callers share a four-command execution bound", async () => {
   );
   expect(peak).toBe(4);
   expect(active).toBe(0);
+});
+
+test("a commit this clone doesn't have is reported as missing, plainly", async () => {
+  const repository = {
+    projectId: "p",
+    commonDirectory: "/repo/.git",
+    locator: "/repo",
+    objectFormat: "sha1" as const,
+  };
+  const sha = "26f36336bc" + "0".repeat(30);
+  const reader = new GitReadService(async () => ({
+    exit_code: 128,
+    stdout: "",
+    stderr: "fatal: Needed a single revision\n",
+  }));
+  const error = await reader.resolveCommit(repository, sha).catch((e) => e);
+  expect(error).toBeInstanceOf(GitReadError);
+  expect(error.kind).toBe("missing");
+  expect(error.message).toBe(
+    `Commit ${sha} isn't in this clone (/repo). Fetch it from origin, or open it from a clone that has it.`,
+  );
+  // Other Git failures keep their own message.
+  const other = new GitReadService(async () => ({
+    exit_code: 128,
+    stdout: "",
+    stderr: "fatal: not a git repository\n",
+  }));
+  await expect(other.resolveCommit(repository, sha)).rejects.toMatchObject({
+    kind: "git",
+  });
 });

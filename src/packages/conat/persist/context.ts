@@ -16,15 +16,52 @@ export let compress: (data: Buffer) => Buffer = () => {
   throw Error("must initialize persist context");
 };
 
-export let decompress: (data: Buffer) => Buffer = () => {
+// maxOutputLength: refuse to produce more than this many bytes.  Stored data
+// is not trusted (a project's persist files live in the project), so callers
+// always pass a limit.
+export let decompress: (
+  data: Buffer,
+  maxOutputLength?: number,
+) => Buffer = () => {
   throw Error("must initialize persist context");
 };
 
 // Decompression that runs off the event loop (e.g., in the libuv threadpool),
 // used for large messages so one huge stored message cannot stall every other
 // stream served by the same process.  Defaults to the synchronous version.
-export let decompressAsync: (data: Buffer) => Promise<Buffer> = async (data) =>
-  decompress(data);
+export let decompressAsync: (
+  data: Buffer,
+  maxOutputLength?: number,
+) => Promise<Buffer> = async (data, maxOutputLength) =>
+  decompress(data, maxOutputLength);
+
+// Called with the path of a database file before it is opened.  Throws if
+// opening it is unsafe, e.g., a symlink a project put in its persist
+// directory.  The backend sets it; by default it allows everything.
+export let assertSafeDatabasePath: (path: string) => void = () => {};
+
+// Whether a database file is in a project, which can change it (and its -wal
+// and -shm files) at any time.  The backend sets it; by default nothing is.
+export let isProjectOwnedDatabasePath: (path: string) => boolean = () => false;
+
+// Called before a project's databases are opened, with the directory that
+// holds them.  A project-host creates that directory (a volume of its own) and
+// imports the project's old databases into it; it throws to refuse access.
+// By default it does nothing.
+export type PrepareProjectStore = (opts: {
+  project_id: string;
+  root: string;
+}) => Promise<void>;
+let prepareProjectStoreFn: PrepareProjectStore = async () => {};
+export function prepareProjectStore(opts: {
+  project_id: string;
+  root: string;
+}): Promise<void> {
+  return prepareProjectStoreFn(opts);
+}
+export function setPrepareProjectStore(fn: PrepareProjectStore): void {
+  prepareProjectStoreFn = fn;
+}
 
 export let syncFiles = {
   local: "",
@@ -54,8 +91,10 @@ export let copyFileSync = (_src: string, _desc: string): void => {
 export function initContext(opts: {
   sqlite: { DatabaseSync: new (...args: any[]) => DatabaseSync };
   compress: (Buffer) => Buffer;
-  decompress: (Buffer) => Buffer;
-  decompressAsync?: (Buffer) => Promise<Buffer>;
+  decompress: (data: Buffer, maxOutputLength?: number) => Buffer;
+  decompressAsync?: (data: Buffer, maxOutputLength?: number) => Promise<Buffer>;
+  assertSafeDatabasePath?: (path: string) => void;
+  isProjectOwnedDatabasePath?: (path: string) => boolean;
   syncFiles: {
     local: string;
     localProjects: string;
@@ -74,7 +113,11 @@ export function initContext(opts: {
   compress = opts.compress;
   decompress = opts.decompress;
   decompressAsync =
-    opts.decompressAsync ?? (async (data: Buffer) => opts.decompress(data));
+    opts.decompressAsync ??
+    (async (data: Buffer, maxOutputLength?: number) =>
+      opts.decompress(data, maxOutputLength));
+  assertSafeDatabasePath = opts.assertSafeDatabasePath ?? (() => {});
+  isProjectOwnedDatabasePath = opts.isProjectOwnedDatabasePath ?? (() => false);
   syncFiles = opts.syncFiles;
   ensureContainingDirectoryExists = opts.ensureContainingDirectoryExists;
   statSync = opts.statSync;

@@ -13,6 +13,11 @@ import {
 import { createServer as createHttpsServer } from "node:https";
 import { isIP } from "node:net";
 import { availableParallelism } from "node:os";
+import {
+  getProjectContentDomain,
+  installContentHostnameUpgradeGuard,
+  isContentRequestHost,
+} from "./content-origin";
 import express from "express";
 import type { Application } from "express";
 import getPort from "@cocalc/backend/get-port";
@@ -398,9 +403,6 @@ export async function startStandaloneProjectHostConatRouter({
   let directHttpsServer: ReturnType<typeof createHttpsServer> | undefined;
   if (upstreamUrl && ((ingressHost && ingressPort != null) || directHttps)) {
     const ingressApp = express();
-    ingressApp.get("/healthz", (_req, res) => {
-      res.json(projectHostConatRouterHealthState(hostId, true));
-    });
     const ingressServers: HttpServer[] = [];
     if (ingressHost && ingressPort != null) {
       assertLocalBindOrInsecure({
@@ -432,15 +434,12 @@ export async function startStandaloneProjectHostConatRouter({
         certPath,
       });
     }
-    attachProjectHostConatRouterProxy({
+    attachProjectHostIngress({
       app: ingressApp,
       httpServers: ingressServers,
-      target: `http://${normalizeLoopbackHost(bindHost)}:${bindPort}`,
-    });
-    attachProjectHostHttpFallbackProxy({
-      app: ingressApp,
-      httpServers: ingressServers,
-      target: upstreamUrl,
+      conatTarget: `http://${normalizeLoopbackHost(bindHost)}:${bindPort}`,
+      upstreamUrl,
+      hostId,
     });
     if (ingressHttpServer && ingressHost && ingressPort != null) {
       ingressHttpServer.listen(ingressPort, ingressHost);
@@ -540,9 +539,57 @@ export function examHostnameFromProjectHostPublicUrl(
   return examHostnameFromPublicHostname(publicHostname, host_id);
 }
 
+// The public ingress in front of the conat router and the main host server.
+// Content hostnames (trust-free step 6) never reach the router or /healthz:
+// HTTP goes to the main server's content handler.  Websocket upgrades on
+// file hostnames are refused here; on app hostnames they go on to the main
+// server, whose app origin authorizes them (content-app-origin.ts).
+export function attachProjectHostIngress({
+  app,
+  httpServers,
+  conatTarget,
+  upstreamUrl,
+  hostId,
+}: {
+  app: Application;
+  httpServers: readonly HttpServer[];
+  conatTarget: string;
+  upstreamUrl: string;
+  hostId: string;
+}): void {
+  for (const server of httpServers) {
+    installContentHostnameUpgradeGuard(
+      server,
+      getProjectContentDomain(),
+      () => async () => true,
+    );
+  }
+  app.get("/healthz", (req, res, next) => {
+    if (isContentRequestHost(req.headers.host, getProjectContentDomain())) {
+      return next();
+    }
+    res.json(projectHostConatRouterHealthState(hostId, true));
+  });
+  attachProjectHostConatRouterProxy({
+    app,
+    httpServers,
+    target: conatTarget,
+  });
+  attachProjectHostHttpFallbackProxy({
+    app,
+    httpServers,
+    target: upstreamUrl,
+  });
+}
+
 export function shouldRouteProjectHostIngressToApp(
   req: Pick<IncomingMessage, "headers">,
 ): boolean {
+  // Content hostnames always belong to the main server's content handler,
+  // whatever PROJECT_HOST_PUBLIC_URL says.
+  if (isContentRequestHost(req.headers.host, getProjectContentDomain())) {
+    return true;
+  }
   const requestHostname = normalizeHostname(req.headers.host);
   if (
     !requestHostname ||

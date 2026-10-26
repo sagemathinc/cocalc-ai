@@ -35,6 +35,7 @@ const SOURCE_MODULES: SourceModule[] = [
   { filename: "project-backups.ts", hubGroup: "projects" },
   { filename: "project-site-migration.ts", hubGroup: "projects" },
   { filename: "project-snapshots.ts", hubGroup: "projects" },
+  { filename: "project-persist-storage.ts", hubGroup: "projects" },
   { filename: "hosts.ts", hubGroup: "hosts" },
   { filename: "system.ts", hubGroup: "system" },
   { filename: "org.ts", hubGroup: "org" },

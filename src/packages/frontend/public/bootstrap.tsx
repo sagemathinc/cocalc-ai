@@ -10,6 +10,7 @@ import PublicApp from "./app";
 import { getPublicAuthRedirectTargetFromSearch } from "./auth/routes";
 import {
   attachPublicNavigationInterceptor,
+  landOnPublicPage,
   setPublicNavigationListener,
 } from "./navigation";
 import {
@@ -37,6 +38,9 @@ export async function init(): Promise<void> {
   if (movedToPath != null) {
     initialUrl.pathname = movedToPath;
   }
+
+  // Observe the container while a lazy route renders its requested section.
+  const container = document.getElementById("cocalc-webapp-container")!;
 
   function PublicBootstrapApp() {
     const [routePath, setRoutePath] = useState(
@@ -72,15 +76,15 @@ export async function init(): Promise<void> {
     useEffect(() => {
       if (!didMount.current) {
         didMount.current = true;
-        return;
+        return window.location.hash ? landOnPublicPage(container) : undefined;
       }
-      window.scrollTo({ top: 0 });
+      return landOnPublicPage(container);
     }, [routePath]);
 
     return <PublicApp initialRoute={route} redirectToPath={redirectToPath} />;
   }
 
-  const root = createRoot(document.getElementById("cocalc-webapp-container")!);
+  const root = createRoot(container);
   root.render(<PublicBootstrapApp />);
   if (movedToPath != null) {
     window.history.replaceState(

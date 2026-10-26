@@ -31,6 +31,8 @@ export function initAgentMemoryContextProvider(): void {
           {
             project_id: projectId,
             owner_account_id: accountId,
+            // So a turn whose memory is off can hint that it exists.
+            report_off: true,
             ...(chatPath && threadId
               ? { chat_path: chatPath, thread_id: threadId }
               : {}),

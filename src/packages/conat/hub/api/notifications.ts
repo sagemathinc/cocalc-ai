@@ -61,6 +61,14 @@ export interface CreateCodexTurnNoticeOptions {
   body_markdown: string;
   severity?: NotificationSeverity;
   stable_source_id?: string;
+  /**
+   * One notice per account and group a day, whichever conversation hit it
+   * first (agents paused by the same usage limit share one).
+   */
+  group_key?: string;
+  /** The turn is paused (e.g. until a usage limit resets), not finished:
+   * notifications must not say it finished. */
+  paused?: boolean;
 }
 
 export interface CreateCodexAttentionNoticeOptions {

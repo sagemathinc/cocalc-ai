@@ -61,6 +61,7 @@ import {
   endCommercialSiteLicenseFulfillment,
   provisionCommercialSiteLicense,
 } from "./fulfillment/site-license";
+import { recordCommercialMembershipFulfillment } from "./fulfillment/membership";
 import admins from "@cocalc/server/accounts/admins";
 import { stripeBillingPreview, syncStripeBilling } from "./stripe-billing";
 import { searchClusterAccounts } from "@cocalc/server/inter-bay/accounts";
@@ -199,6 +200,8 @@ export async function dispatchCommercialSeedRequest(
       return await provisionCommercialSiteLicense(opts);
     case "endFulfillment":
       return await endCommercialSiteLicenseFulfillment(opts);
+    case "recordMembershipFulfillment":
+      return await recordCommercialMembershipFulfillment(opts);
     case "diagnostics": {
       if (
         !opts.include_legacy_invoices &&

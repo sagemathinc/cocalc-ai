@@ -686,7 +686,7 @@ export function createAgentMemory(
     const now = await usage(db, account_id, namespace);
     const full = (what: string) =>
       new Error(
-        `agent memory ${what}; merge related notes and delete outdated ones first`,
+        `agent memory ${what}; merge notes on the same topic into one, or delete stale ones first (memory export keeps a copy)`,
       );
     const agentScope = agentOfMemoryNamespace(namespace) != null;
     const namespaceLimit = agentScope
@@ -1512,9 +1512,13 @@ export function createAgentMemory(
       account_id: string,
       project_id: string,
       agent?: AgentMemoryCaller,
-    ): Promise<{ notes: number; index: string } | undefined> {
+      { reportOff = false }: { reportOff?: boolean } = {},
+    ): Promise<{ notes: number; index: string; off?: true } | undefined> {
       const settings = await settingsOf(account_id);
-      if (!settings.enabled) return undefined;
+      // A host that asks gets { off: true }, so its agents can mention that
+      // memory exists; older hosts keep getting nothing.
+      if (!settings.enabled)
+        return reportOff ? { notes: 0, index: "", off: true } : undefined;
       await deps.charge(account_id, "read");
       const caller = agent ? await resolveCaller(account_id, agent) : undefined;
       const projectNamespaces = projectMemoryNamespaces(settings, project_id);

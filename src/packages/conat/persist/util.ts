@@ -46,6 +46,7 @@ import { join } from "path";
 import {
   syncFiles,
   ensureContainingDirectoryExists,
+  prepareProjectStore,
   statSync,
 } from "./context";
 import type {
@@ -53,6 +54,11 @@ import type {
   PersistMaintenancePath,
   PersistMaintenanceScopeType,
 } from "./maintenance/types";
+import {
+  enterProjectOpen,
+  projectOfStoragePath,
+  projectReplacedInstance,
+} from "./project-fence";
 
 // this is per-server -- and "user" means where the resource is, usually
 // a given project.  E.g., 500 streams in a project, across many users.
@@ -77,6 +83,26 @@ function resolveTemplateBase(base: string, token: string, id: string): string {
   return join(base, id);
 }
 
+// The directory that holds all of a project's databases, if projects have
+// their own (e.g., /mnt/cocalc/project-[project_id]-persist).
+export function projectStoreRoot(
+  storagePath: string,
+): { project_id: string; root: string } | undefined {
+  const projectMatch = storagePath.match(/^projects\/([^/]+)(?:\/(.*))?$/);
+  if (projectMatch == null || !syncFiles.localProjects) return;
+  const template = syncFiles.localProjects;
+  const project_id = projectMatch[1];
+  if (!template.includes("[project_id]")) {
+    return {
+      project_id,
+      root: resolveTemplateBase(template, "project_id", project_id),
+    };
+  }
+  const [prefix, suffix] = template.split("[project_id]");
+  const suffixRoot = suffix.split("/")[0] ?? "";
+  return { project_id, root: `${prefix}${project_id}${suffixRoot}` };
+}
+
 export function resolveLocalPath(
   storagePath: string,
   { ephemeral }: { ephemeral?: boolean },
@@ -87,13 +113,7 @@ export function resolveLocalPath(
     if (syncFiles.localProjects) {
       const template = syncFiles.localProjects;
       const base = resolveTemplateBase(template, "project_id", projectId);
-      const projectRoot = template.includes("[project_id]")
-        ? (() => {
-            const [prefix, suffix] = template.split("[project_id]");
-            const suffixRoot = suffix.split("/")[0] ?? "";
-            return `${prefix}${projectId}${suffixRoot}`;
-          })()
-        : base;
+      const projectRoot = projectStoreRoot(storagePath)!.root;
       if (!ephemeral) {
         try {
           statSync(projectRoot);
@@ -191,8 +211,40 @@ export async function getStream({
     path: storage.path,
     service,
   });
+  // While a project is fenced its disk-backed streams wait here, and once its
+  // files were replaced they report a new instance (project-fence.ts).
+  const project_id = storage.ephemeral
+    ? undefined
+    : projectOfStoragePath(storage.path);
+  if (project_id == null) {
+    return await openStream({ storage, maintenance });
+  }
+  const leave = await enterProjectOpen(project_id);
+  try {
+    const stream = await openStream({ storage, maintenance });
+    const replaced = projectReplacedInstance(project_id);
+    if (replaced != null) {
+      stream.replacedInstance = replaced;
+    }
+    return stream;
+  } finally {
+    leave();
+  }
+}
+
+async function openStream({
+  storage,
+  maintenance,
+}: {
+  storage: StorageOptions;
+  maintenance?: PersistMaintenanceHooks;
+}): Promise<PersistentStream> {
   // Project/host/account paths can be redirected to per-subject roots.
   const ephemeral = !!storage.ephemeral;
+  const store = ephemeral ? undefined : projectStoreRoot(storage.path);
+  if (store != null) {
+    await prepareProjectStore(store);
+  }
   const path = resolveLocalPath(storage.path, { ephemeral });
   const archive =
     !ephemeral && syncFiles.archive

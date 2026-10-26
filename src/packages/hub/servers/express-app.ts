@@ -28,6 +28,7 @@ import initPublicContent from "./app/public-content";
 import initPublicFeatures from "./app/public-features";
 import initPublicLang from "./app/public-lang";
 import initPublicLlmsTxt from "./app/public-llms-txt";
+import initPublicPolicies from "./app/public-policies";
 import initPublicSupport from "./app/public-support";
 import { resolveStaticPath, servePublicShell } from "./app/public-shell";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
@@ -38,6 +39,8 @@ import initSelfHostConnector from "./app/self-host-connector";
 import initStripeWebhook from "./app/stripe-webhook";
 import initCrmOutreach from "./app/crm-outreach";
 import initCommercialQuotes from "./app/commercial-quotes";
+import initContentView from "./app/content-view";
+import initAppOpen from "./app/app-open";
 import { renderEssentialShell } from "./app/essential-shell";
 import initRootfsManifest from "./app/rootfs-manifest";
 import { getDatabase } from "./database";
@@ -223,6 +226,8 @@ export default async function init(opts: Options): Promise<{
   router.use("/robots.txt", initRobots());
   router.use("/sitemap.xml", initSitemap());
   initPublicLlmsTxt(router);
+  // Before initPublicContent, whose /policies/:slug would take "terms.md".
+  initPublicPolicies(router);
 
   // Hosted bays currently run in Launchpad mode too. Keep self-hosted
   // Launchpad analytics opt-in while enabling it by default for Rocket.
@@ -338,6 +343,8 @@ export default async function init(opts: Options): Promise<{
   initStripeWebhook(router);
   initCrmOutreach(router);
   initCommercialQuotes(router);
+  initContentView(router);
+  initAppOpen(router);
   router.use("/api/conat", createConatRouter());
   logger.info("enabling api/v2 express router");
   router.use("/api/v2", createApiV2Router());

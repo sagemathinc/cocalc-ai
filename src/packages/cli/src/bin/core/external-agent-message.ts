@@ -22,7 +22,7 @@ import type {
 } from "@cocalc/conat/agents/personal";
 import {
   matchesAgentNetwork,
-  selectAgentNetwork,
+  resolveAgentName,
   type ResolvedAgentDestination,
 } from "./agent-destination";
 import { readExternalAgentCredential } from "./external-agent-profile";
@@ -142,7 +142,11 @@ export async function sendExternalAgentMessage(
     } else if (request.action === "ack-inbox") {
       if (
         result?.acknowledged !== true ||
-        result?.message_id !== request.message_id
+        result?.message_id !== request.message_id ||
+        // An older server returns no message; a newer one, the one acknowledged.
+        (result.message !== undefined &&
+          (result.message?.message_id !== request.message_id ||
+            typeof result.message?.body !== "string"))
       )
         throw new Error("invalid external inbox acknowledgment");
     } else if (request.action === "propose-network") {
@@ -166,6 +170,11 @@ export async function sendExternalAgentMessage(
         reason:
           "Preparation not acknowledged; no bytes or message were sent. Startup may still finish.",
       });
+    if (request.action === "withdraw")
+      return rpcOutcome(request, "unknown", {
+        reason:
+          "No authoritative response; inspect to see whether it was withdrawn.",
+      });
     if (request.action === "send" || request.action === "inspect")
       return rpcOutcome(request, "unknown", {
         reason:
@@ -182,31 +191,35 @@ export async function resolveExternalAgentName(
   name: string,
   agentNetworkId?: string,
 ): Promise<ResolvedAgentDestination> {
-  const normalized = name.replace(/^@/, "");
   const destinations = (await sendExternalAgentMessage(profile, {
     version: 3,
     action: "destinations",
   })) as AgentNetworkDiscovery;
-  const matches = destinations.peers.filter(
-    ({ member, networks }) =>
-      member.kind === "registered" &&
-      member.name === normalized &&
-      networks.some((network) => matchesAgentNetwork(network, agentNetworkId)),
+  return resolveExternalAgentNameIn(destinations, name, agentNetworkId);
+}
+
+/**
+ * The peer an external agent names, among those in the requested network:
+ * by the same rules as `agent send` from a project (registered name, an
+ * external agent's handle or label, a member id), so every name `agent
+ * destinations` shows works here too.
+ */
+export function resolveExternalAgentNameIn(
+  destinations: AgentNetworkDiscovery,
+  name: string,
+  agentNetworkId?: string,
+): ResolvedAgentDestination {
+  return resolveAgentName(
+    name,
+    {
+      ...destinations,
+      peers: destinations.peers.filter(({ networks }) =>
+        networks.some((network) =>
+          matchesAgentNetwork(network, agentNetworkId),
+        ),
+      ),
+    },
+    [],
+    agentNetworkId,
   );
-  if (matches.length !== 1 || matches[0].member.kind !== "registered")
-    throw new Error(
-      "No unambiguous network peer; run agent destinations and specify --agent-network with the exact network title",
-    );
-  const network = selectAgentNetwork(matches[0].networks, agentNetworkId);
-  if (!network)
-    throw new Error("No active unambiguous Agent Network authorizes this peer");
-  return {
-    target: matches[0].member.endpoint,
-    agent_network_id: network.agent_network_id,
-    agent_network_title: network.title,
-    delivery_mode: network.delivery_mode,
-    ...(matches[0].member.project_title
-      ? { project_title: matches[0].member.project_title }
-      : {}),
-  };
 }

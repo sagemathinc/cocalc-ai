@@ -18,6 +18,8 @@ describe("Codex native notification privacy", () => {
     const content = [
       codexNativeNotificationContent(true),
       codexNativeNotificationContent(false),
+      // A turn paused until a usage limit resets has not finished.
+      codexNativeNotificationContent(false, true),
     ];
 
     expect(content).toEqual([
@@ -28,6 +30,10 @@ describe("Codex native notification privacy", () => {
       {
         title: "Agent turn finished",
         body: "Open CoCalc to view details.",
+      },
+      {
+        title: "Agent turn paused",
+        body: "It resumes automatically. Open CoCalc to view details.",
       },
     ]);
     expect(JSON.stringify(content)).not.toContain(hostileDetails.join(""));

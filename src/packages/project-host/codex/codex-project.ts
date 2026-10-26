@@ -13,7 +13,7 @@ import {
 import { agentNetworkSelfContext } from "./agent-network-self";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, join, isAbsolute } from "node:path";
 import { URL } from "node:url";
 import getLogger from "@cocalc/backend/logger";
@@ -56,6 +56,7 @@ import {
   verifyProjectContainerInPool,
 } from "@cocalc/project-runner/run/podman";
 import { mountArg } from "@cocalc/backend/podman";
+import { BeneathDir } from "../beneath-copy";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
 import { resolveProjectHostPreferredMasterConatServer } from "../master-conat-server";
@@ -616,6 +617,23 @@ export type ProjectCliTokenLease = {
   close: () => Promise<void>;
 };
 
+// The host writes a runtime's private files (CLI tokens, an isolated Codex
+// home) into the project's scratch volume. Without one they would go under
+// the project's home, by paths whose directories the project controls: a
+// symlinked ~/.local or ~/.cocalc would make the host create, chmod and write
+// files wherever it points. Only the workspace runtime (COCALC_PROJECT_PATH)
+// has no scratch, and there projects already run as the host's user, so the
+// home is no worse. Anywhere else, refuse.
+export function assertHostWritableRuntimeRoot(
+  scratch: string | undefined,
+  what: string,
+): void {
+  if (scratch || `${process.env.COCALC_PROJECT_PATH ?? ""}`.trim()) return;
+  throw new Error(
+    `${what}: the project has no scratch volume; refusing to write host runtime files under the project home`,
+  );
+}
+
 export async function createProjectCliTokenLease({
   projectId,
   accountId,
@@ -649,35 +667,38 @@ export async function createProjectCliTokenLease({
     `${currentEnv?.COCALC_AGENT_TOKEN ?? ""}`.trim();
   const initialToken = issued?.token || fallbackToken;
   if (!initialToken) return;
+  assertHostWritableRuntimeRoot(scratch, "CLI token lease");
 
   const leaseName = `.cocalc-agent-${randomUUID()}`;
-  const relativeHomeDir = join(
-    ".local",
-    "share",
-    "cocalc",
-    "runtime",
-    leaseName,
+  const relativeHomeParts = [".local", "share", "cocalc", "runtime", leaseName];
+  const relativeHomeDir = join(...relativeHomeParts);
+  // The lease lives in the project's scratch (or home), whose every component
+  // the project can swap for a symlink at any moment: all of its files are
+  // made, written and removed through BeneathDir, anchored at that trusted
+  // root, which refuses symlinks instead of following them.
+  const leaseDir = new BeneathDir(
+    scratch ?? home,
+    scratch ? leaseName : relativeHomeDir,
   );
-  const hostDir = scratch
-    ? join(scratch, leaseName)
-    : join(home, relativeHomeDir);
+  const hostDir = leaseDir.hostPath;
   const containerDir = scratch
     ? join("/tmp", leaseName)
     : join(PROJECT_RUNTIME_HOME, relativeHomeDir);
   const hostPath = join(hostDir, "token");
   const containerPath = join(containerDir, "token");
-  const connectorHostPath = join(hostDir, "connector-key");
   const connectorContainerPath = join(containerDir, "connector-key");
 
-  await fs.mkdir(hostDir, { recursive: true, mode: 0o700 });
-  await fs.chmod(hostDir, 0o700);
+  leaseDir.mkdir(0o700);
   // Connectors are entirely dormant unless the site set one up.
   const cliConnectors = await siteCliConnectors(hubApi.system?.getCustomize);
   const cliActive = cliConnectors.length > 0;
-  if (cliActive) await writeCliConnectorTools(hostDir, cliConnectors);
+  if (cliActive) await writeCliConnectorTools(leaseDir, cliConnectors);
   const sweepStaleTokens = () =>
     sweepStaleCliConnectorTokens({
-      runtimeDir: dirname(hostDir),
+      runtimeDir: new BeneathDir(
+        scratch ?? home,
+        scratch ? "" : join(...relativeHomeParts.slice(0, -1)),
+      ),
       ownLeaseName: leaseName,
     }).catch((err) =>
       logger.warn("could not sweep stale CLI connector tokens", {
@@ -688,15 +709,7 @@ export async function createProjectCliTokenLease({
   void sweepStaleTokens();
 
   const writeToken = async (token: string): Promise<void> => {
-    const tempPath = join(hostDir, `.token-${randomUUID()}.tmp`);
-    try {
-      await fs.writeFile(tempPath, `${token}\n`, { mode: 0o600 });
-      await fs.chmod(tempPath, 0o600);
-      await fs.rename(tempPath, hostPath);
-    } catch (err) {
-      await fs.rm(tempPath, { force: true });
-      throw err;
-    }
+    leaseDir.writeFile("token", `${token}\n`, 0o600);
   };
   await writeToken(initialToken);
   const { createAgentIdentityLease } = await import("./agent-identity-lease");
@@ -721,7 +734,7 @@ export async function createProjectCliTokenLease({
   };
   const clearConnectorKey = () =>
     queueConnectorOperation(async () => {
-      await fs.rm(connectorHostPath, { force: true });
+      leaseDir.unlink("connector-key");
     });
   const setConnectorKey = (secret: string, stillCurrent = () => true) =>
     queueConnectorOperation(async () => {
@@ -731,17 +744,7 @@ export async function createProjectCliTokenLease({
       if (!secret || secret.length > 4096 || /\s/.test(secret)) {
         throw new Error("invalid managed connector credential");
       }
-      const tempPath = join(hostDir, `.connector-${randomUUID()}.tmp`);
-      try {
-        await fs.writeFile(tempPath, `${secret}\n`, { mode: 0o600 });
-        await fs.chmod(tempPath, 0o600);
-        if (closed || !stillCurrent()) {
-          throw new Error("connector runtime closed");
-        }
-        await fs.rename(tempPath, connectorHostPath);
-      } finally {
-        await fs.rm(tempPath, { force: true });
-      }
+      leaseDir.writeFile("connector-key", `${secret}\n`, 0o600);
     });
   // CLI connector tokens (gh, cf) for the current turn. The hub rechecks the
   // grants and the live turn on every renewal; a token it no longer returns
@@ -757,7 +760,7 @@ export async function createProjectCliTokenLease({
       // Fail closed: the prompt names only connectors whose files were all
       // written; any failure leaves no token files at all.
       cliTokens = [];
-      await syncCliConnectorTokens(hostDir, tokens);
+      await syncCliConnectorTokens(leaseDir, tokens);
       cliTokens = tokens;
     });
   const beginCliTurn = async (
@@ -992,7 +995,7 @@ export async function createProjectCliTokenLease({
           projectId,
           accountId: resolvedAccountId,
           env: currentEnv,
-          hostDir,
+          hostDir: leaseDir,
         });
       }
     })().finally(() => {
@@ -1003,7 +1006,7 @@ export async function createProjectCliTokenLease({
   try {
     await prepareIdentity();
   } catch (error) {
-    await fs.rm(hostDir, { recursive: true, force: true });
+    await leaseDir.rm();
     throw error;
   }
 
@@ -1122,7 +1125,7 @@ export async function createProjectCliTokenLease({
       await connectorOperation.catch(() => undefined);
       await identityPreparation?.catch(() => undefined);
       await identityLease?.close();
-      await fs.rm(hostDir, { recursive: true, force: true });
+      await leaseDir.rm();
     },
   };
 }
@@ -1218,23 +1221,14 @@ export async function getBuiltinLaunchpadSkillMounts(
 ): Promise<OptionalBindMount[]> {
   const skillsRoot = await resolvePackagedSkillsRoot(packagedSkillsRoot);
 
-  const projectSkillsRoot = join(projectHome, ".codex", "skills");
-  try {
-    await fs.mkdir(projectSkillsRoot, { recursive: true, mode: 0o700 });
-  } catch {
-    // Best effort: project home mount may already provide this path.
-  }
+  // Best effort: the project home mount may already provide this path.
+  await ensureDirectoryBeneath(projectHome, [".codex", "skills"]);
 
   const mounts: OptionalBindMount[] = [];
   for (const skillName of BUILTIN_LAUNCHPAD_SKILLS) {
     const source = join(skillsRoot, skillName);
-    const projectSkill = join(projectSkillsRoot, skillName);
-    try {
-      const projectStat = await fs.stat(projectSkill);
-      if (projectStat.isDirectory()) continue;
-    } catch {
-      // Missing project-local skill is the normal case.
-    }
+    if (await hasProjectSkill(projectHome, [".codex", "skills", skillName]))
+      continue;
     mounts.push({
       source,
       target: join(PROJECT_RUNTIME_CODEX_HOME, "skills", skillName),
@@ -1242,6 +1236,104 @@ export async function getBuiltinLaunchpadSkillMounts(
     });
   }
   return mounts;
+}
+
+/**
+ * Walk `parts` beneath `root` (the project's home: ours, not the project's)
+ * without following any symlink the project controls, even one swapped in
+ * mid-walk: each directory is opened with O_NOFOLLOW and the next name is
+ * resolved relative to that open directory (/proc/self/fd/N/name), never by
+ * a path that crosses project-controlled components again. Calls `last` with
+ * the path of the final component, relative to its open parent.
+ */
+async function withParentBeneath<T>(
+  root: string,
+  parts: string[],
+  last: (path: string) => Promise<T>,
+  { create = false }: { create?: boolean } = {},
+): Promise<T> {
+  const flags =
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW;
+  let dir = await fs.open(root, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY);
+  try {
+    for (const part of parts.slice(0, -1)) {
+      const at = `/proc/self/fd/${dir.fd}/${part}`;
+      if (create) {
+        // mkdir never follows a symlink in its last component.
+        await fs.mkdir(at, { mode: 0o700 }).catch((err) => {
+          if (err?.code !== "EEXIST") throw err;
+        });
+      }
+      const next = await fs.open(at, flags);
+      await dir.close();
+      dir = next;
+    }
+    return await last(`/proc/self/fd/${dir.fd}/${parts[parts.length - 1]}`);
+  } finally {
+    await dir.close().catch(() => {});
+  }
+}
+
+/**
+ * Create (if needed) a real directory beneath `root` (the project's home or
+ * scratch), never through a symlink the project controls; throws if that is
+ * not possible (a symlink on the way, or the leaf is one).
+ */
+export async function makeDirectoryBeneath(
+  root: string,
+  parts: string[],
+): Promise<void> {
+  await withParentBeneath(
+    root,
+    parts,
+    async (path) => {
+      await fs.mkdir(path, { mode: 0o700 }).catch((err) => {
+        if (err?.code !== "EEXIST") throw err;
+      });
+      // A real directory, not a symlink planted in its place.
+      await (
+        await fs.open(
+          path,
+          fsConstants.O_RDONLY |
+            fsConstants.O_DIRECTORY |
+            fsConstants.O_NOFOLLOW,
+        )
+      ).close();
+    },
+    { create: true },
+  );
+}
+
+/** Best effort, as before: a symlink anywhere is simply left alone. */
+async function ensureDirectoryBeneath(
+  root: string,
+  parts: string[],
+): Promise<void> {
+  await makeDirectoryBeneath(root, parts).catch(() => {});
+}
+
+/**
+ * A project overrides a packaged skill only with a real one: a regular
+ * SKILL.md in real directories of its home. Mounting the packaged skill
+ * leaves its (empty) mount point there, and that must not count, or the
+ * skill would mount only on the first start. A symlink anywhere on the way
+ * is not an override, and is never followed: whether the mount appears must
+ * not tell the project anything about host paths.
+ */
+async function hasProjectSkill(
+  projectHome: string,
+  parts: string[],
+): Promise<boolean> {
+  try {
+    return await withParentBeneath(
+      projectHome,
+      [...parts, "SKILL.md"],
+      async (path) => (await fs.lstat(path)).isFile(),
+    );
+  } catch {
+    // Missing, unreadable or not verifiable: the packaged skill.
+    return false;
+  }
 }
 
 /** First-party skill text only: never load controller instructions from project HOME. */
@@ -1259,18 +1351,10 @@ export async function getBuiltinClaudeSkillMount(
   projectHome: string,
   packagedSkillsRoot?: string,
 ): Promise<OptionalBindMount[]> {
-  const projectSkillsRoot = join(projectHome, ".claude", "skills");
-  try {
-    await fs.mkdir(projectSkillsRoot, { recursive: true, mode: 0o700 });
-  } catch {
-    // Best effort: project home mount may already provide this path.
-  }
-  const projectSkill = join(projectSkillsRoot, "cocalc");
-  try {
-    if ((await fs.stat(projectSkill)).isDirectory()) return [];
-  } catch {
-    // A missing project override uses the packaged first-party skill.
-  }
+  // Best effort: the project home mount may already provide this path.
+  await ensureDirectoryBeneath(projectHome, [".claude", "skills"]);
+  if (await hasProjectSkill(projectHome, [".claude", "skills", "cocalc"]))
+    return [];
   const skillsRoot = await resolvePackagedSkillsRoot(packagedSkillsRoot);
   return [
     {
@@ -1719,7 +1803,6 @@ async function ensureContainer({
     (authRuntime.source === "shared-home"
       ? resolveSharedCodexHome()
       : undefined);
-  const projectCodexHome = join(home, ".codex");
   const projectRow = getProject(projectId);
   const hasGpu =
     projectRow?.run_quota?.gpu === true ||
@@ -1852,11 +1935,8 @@ async function ensureContainer({
   }
 
   args.push(mountArg({ source: home, target: PROJECT_RUNTIME_HOME }));
-  try {
-    await fs.mkdir(projectCodexHome, { recursive: true, mode: 0o700 });
-  } catch {
-    // best effort: project home mount may already provide this path
-  }
+  // Best effort: the project home mount may already provide this path.
+  await ensureDirectoryBeneath(home, [".codex"]);
   if (scratch) {
     args.push(mountArg({ source: scratch, target: "/tmp" }));
   }
@@ -2437,17 +2517,12 @@ async function spawnCodexAppServerInProjectRuntime({
     if (isolatedCodexHome) {
       // Upstream's file model cache is not account-scoped. Status probes use a
       // fresh home so one project collaborator cannot seed another's catalog.
-      const relativePath = join(
-        ".cocalc",
-        "codex-account-status",
-        randomUUID(),
-      );
+      const relativeParts = [".cocalc", "codex-account-status", randomUUID()];
+      const relativePath = join(...relativeParts);
+      assertHostWritableRuntimeRoot(scratch, "isolated Codex home");
       const hostRoot = scratch ?? home;
       isolatedCodexHomeHostPath = join(hostRoot, relativePath);
-      await fs.mkdir(isolatedCodexHomeHostPath, {
-        recursive: true,
-        mode: 0o700,
-      });
+      await makeDirectoryBeneath(hostRoot, relativeParts);
       const containerPath = join(
         scratch ? "/tmp" : PROJECT_RUNTIME_HOME,
         relativePath,

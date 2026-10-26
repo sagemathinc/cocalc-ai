@@ -41,6 +41,11 @@ import { type CopyOptions } from "./fs";
 export { type CopyOptions };
 import { type LroScopeType } from "@cocalc/conat/hub/api/lro";
 import { isValidUUID } from "@cocalc/util/misc";
+import type {
+  PersistStorageAction,
+  PersistStorageApplyResult,
+  PersistStorageList,
+} from "@cocalc/conat/project/persist-storage";
 
 const SUBJECT = "file-server";
 
@@ -51,6 +56,11 @@ export const ARCHIVE_BACKUP_SOURCE_RELEASED_ERROR_CODE =
 
 export type RestoreMode = "none" | "auto" | "recover" | "required";
 export type SnapshotRestoreMode = "home" | "rootfs" | "both";
+
+// The error of a snapshot restore the project's host refuses
+// (checkSnapshotRestore).
+export const SNAPSHOT_HOME_RESTORE_UNAVAILABLE =
+  "Restoring the whole home from a snapshot is temporarily unavailable. Copy the files you need from ~/.snapshots, or restore the home from a backup.";
 
 export interface BackupFindResult {
   id: string;
@@ -269,13 +279,30 @@ export interface Fileserver {
     free: number;
   }>;
 
+  // A project's edit history and logs, which its users can't reach
+  // (conat/project/persist-storage.ts); the hub checks who may.
+  persistStorageList: (opts: {
+    project_id: string;
+    limit?: number;
+  }) => Promise<PersistStorageList>;
+  persistStorageApply: (opts: {
+    project_id: string;
+    actions: PersistStorageAction[];
+  }) => Promise<PersistStorageApplyResult>;
+
   getQuota: (opts: {
     project_id: string;
     // if true, operate on scratch volume quota
     scratch?: boolean;
   }) => Promise<{
     size: number;
+    // the home's: its files and edit history together (project-host
+    // project-quota-group.ts), split as well as btrfs can tell below
     used: number;
+    files_used?: number;
+    history_used?: number;
+    // what the history may use beyond `size`
+    history_reserve?: number;
     qgroupid?: string;
     scope?: "subvolume";
     warning?: string;
@@ -516,6 +543,13 @@ export interface Fileserver {
     mode?: SnapshotRestoreMode;
     safety_snapshot_name?: string;
     lro?: LroRef;
+  }) => Promise<void>;
+  // Throws SNAPSHOT_HOME_RESTORE_UNAVAILABLE if restoreSnapshot would refuse
+  // this mode, so that a restore is refused before the project is stopped.
+  // (Hosts from before it don't have it: the hub then refuses home restores.)
+  checkSnapshotRestore: (opts: {
+    project_id: string;
+    mode?: SnapshotRestoreMode;
   }) => Promise<void>;
   publishRootfsImage: (opts: {
     project_id: string;

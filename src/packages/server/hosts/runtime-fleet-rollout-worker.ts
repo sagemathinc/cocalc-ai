@@ -12,11 +12,13 @@ import { getProjectHostStoragePressureWindows } from "@cocalc/database/postgres/
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { LaunchHealthLevel } from "@cocalc/conat/hub/api/system";
 import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
+// The hosts may be on any bay: these run on each host's own bay.
 import {
   getHostRuntimeDeploymentStatus,
   rolloutHostManagedComponents,
   upgradeHostSoftware,
-} from "@cocalc/server/conat/api/hosts";
+  waitForHostLro,
+} from "@cocalc/server/conat/api/hosts-routed";
 import { computeHostOperationalAvailability } from "@cocalc/server/conat/api/hosts-normalization";
 import {
   hostOverridesEveryRolloutTarget,
@@ -42,7 +44,6 @@ import {
   updateLro,
 } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
-import { waitForDurableLroCompletion } from "@cocalc/server/lro/wait";
 
 const logger = getLogger("server:hosts:runtime-fleet-rollout-worker");
 const KIND = "host-runtime-fleet-rollout";
@@ -695,10 +696,9 @@ async function runHostRollout({
         record_runtime_deployments: true,
       });
       childOpId = child.op_id;
-      const summary = await waitForDurableLroCompletion({
-        op_id: child.op_id,
-        scope_type: child.scope_type,
-        scope_id: child.scope_id,
+      const summary = await waitForHostLro({
+        account_id,
+        op: child,
         client: conat(),
         timeout_ms: CHILD_TIMEOUT_MS,
       });
@@ -736,10 +736,9 @@ async function runHostRollout({
         reason,
       });
       managedComponentOpId = componentChild.op_id;
-      const componentSummary = await waitForDurableLroCompletion({
-        op_id: componentChild.op_id,
-        scope_type: componentChild.scope_type,
-        scope_id: componentChild.scope_id,
+      const componentSummary = await waitForHostLro({
+        account_id,
+        op: componentChild,
         client: conat(),
         timeout_ms: CHILD_TIMEOUT_MS,
       });

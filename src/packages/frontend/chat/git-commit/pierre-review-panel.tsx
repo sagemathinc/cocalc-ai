@@ -460,6 +460,11 @@ function ReviewContent(props: ReviewDiffPanelProps) {
                 path={path}
                 oldPath={item.fileDiff.prevName}
                 fontSize={props.fontSize}
+                description={
+                  file.file.omittedLines
+                    ? `Too large to show with the rest of this comparison (${file.file.omittedLines.toLocaleString()} diff lines). View the file, or narrow the comparison.`
+                    : undefined
+                }
                 copyLabel={
                   props.repoRoot
                     ? "Copy absolute path"

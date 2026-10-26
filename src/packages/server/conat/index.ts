@@ -63,10 +63,12 @@ import { startSiteFundedCodexMaintenance } from "@cocalc/server/ai/site-funded-c
 import startPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import { startBillingAuthorityService } from "@cocalc/server/purchases/billing-authority/service";
 import { startLroExpirationMaintenance } from "@cocalc/server/lro/expiration-maintenance";
+import { startShareViewsRetentionMaintenance } from "@cocalc/server/public-directory-shares/views";
 import { startUsageRetentionMaintenance } from "@cocalc/server/membership/usage-retention-maintenance";
 import { startProjectApiKeyRevocationMaintenance } from "@cocalc/server/api/project-membership-maintenance";
 import { startApiKeyActionMaintenance } from "@cocalc/server/api/key-action-maintenance";
 import { startApiRelayQuotaMaintenance } from "@cocalc/server/membership/api-relay-maintenance";
+import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
 import { startOAuthClientPurgeMaintenance } from "@cocalc/server/auth/oauth/purge";
 import { startActiveUserMapHistoryMaintenance } from "@cocalc/server/active-user-map-history";
 import { startGrowthAnalyticsMaintenance } from "@cocalc/server/growth-analytics/maintenance";
@@ -160,6 +162,7 @@ export function startConatApiBackgroundWorkers(): void {
     startProjectArchiveLifecycleMaintenance();
     startComputeVmWorker();
     startLroExpirationMaintenance();
+    startShareViewsRetentionMaintenance();
     startUsageRetentionMaintenance();
     startApiRelayQuotaMaintenance();
     startActiveUserMapHistoryMaintenance();
@@ -183,6 +186,7 @@ export function startConatApiBackgroundWorkers(): void {
   startNotificationEmailOutboxMaintenance();
   if (isPrimaryBayWorker()) {
     startOAuthClientPurgeMaintenance();
+    initDeletedAccountRetention();
   }
   startMembershipSideEffectsMaintenance();
   startSiteLicenseAffiliationReleaseMaintenance();

@@ -188,9 +188,11 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
     credentialId: credential_id,
     subscriptions: [{ id: "personal", label: "My Pro", isDefault: false }],
   }));
+  const setPaymentSelections = jest.fn().mockResolvedValue({ updated: 1 });
   jest.mocked(getActiveSiteSession).mockResolvedValue({
     hubApi: {
       system: { getCodexPaymentSource: lookup },
+      agent: { setPaymentSelections },
       projects: {
         getCodexUsageStatus: async () => ({
           models: [
@@ -232,14 +234,325 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
     }),
   );
   await act(async () => find("Save agent settings").props.onPress());
+  // The subscription is this account's choice, not shared thread config.
+  expect(setPaymentSelections).toHaveBeenCalledWith({
+    targets: [{ project_id: "project", thread_id: "t" }],
+    provider: "codex",
+    selection: {
+      version: 1,
+      provider: "codex",
+      mode: "credential",
+      credential_id: "personal",
+    },
+  });
   expect(save).toHaveBeenCalledWith(
     expect.objectContaining({
       acp_config: expect.objectContaining({
         paymentSource: "subscription",
-        credentialId: "personal",
         serviceTier: undefined,
         reasoning: undefined,
       }),
     }),
   );
+  expect(save.mock.calls[0][0].acp_config).not.toHaveProperty("credentialId");
+});
+
+it("shows the account's stored subscription for the agent, not one saved in the thread", async () => {
+  const lookup = jest.fn(async ({ credential_id }: any) => ({
+    source: "subscription",
+    hasSubscription: true,
+    credentialId: credential_id,
+    subscriptions: [
+      { id: "current", label: "Current plan" },
+      { id: "removed", label: "Old plan" },
+    ],
+  }));
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: { getCodexPaymentSource: lookup },
+      agent: {
+        getPaymentSelections: async () => ({
+          selections: [
+            {
+              project_id: "project",
+              thread_id: "t",
+              provider: "codex",
+              selection: {
+                version: 1,
+                provider: "codex",
+                mode: "credential",
+                credential_id: "current",
+              },
+            },
+          ],
+          defaults: {},
+        }),
+      },
+      projects: {
+        getCodexUsageStatus: async () => ({
+          models: [
+            {
+              model: "test",
+              displayName: "Test",
+              reasoning: [],
+              serviceTiers: [],
+            },
+          ],
+        }),
+      },
+    },
+  } as any);
+  await act(async () => {
+    renderer = create(
+      <ChatSettings
+        profile="p"
+        project="project"
+        thread="t"
+        config={{
+          model: "test",
+          paymentSource: "subscription",
+          credentialId: "removed",
+        }}
+        client={{ updateCodexThreadConfig: jest.fn() } as any}
+        onClose={() => {}}
+      />,
+    );
+  });
+  expect(find("ChatGPT: Current plan").props.accessibilityState.selected).toBe(
+    true,
+  );
+  expect(lookup).toHaveBeenLastCalledWith(
+    expect.objectContaining({ credential_id: "current" }),
+  );
+});
+
+it("clears the stored subscription when another payment source is chosen, and keeps it otherwise", async () => {
+  const { DEFAULT_CODEX_MODEL_NAME } = require("@cocalc/util/ai/codex");
+  const setPaymentSelections = jest.fn().mockResolvedValue({ updated: 1 });
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: {
+        getCodexPaymentSource: async ({ preference, credential_id }: any) =>
+          preference === "subscription"
+            ? {
+                source: "subscription",
+                hasSubscription: true,
+                credentialId: credential_id,
+                subscriptions: [{ id: "current", label: "Current plan" }],
+              }
+            : { source: "account-api-key", hasAccountApiKey: true },
+      },
+      agent: {
+        getPaymentSelections: async () => ({
+          selections: [
+            {
+              project_id: "project",
+              thread_id: "t",
+              provider: "codex",
+              selection: {
+                version: 1,
+                provider: "codex",
+                mode: "credential",
+                credential_id: "current",
+              },
+            },
+          ],
+          defaults: {},
+        }),
+        setPaymentSelections,
+      },
+      projects: {
+        getCodexUsageStatus: async () => ({
+          models: [
+            {
+              model: DEFAULT_CODEX_MODEL_NAME,
+              displayName: "Plan model",
+              reasoning: [],
+              serviceTiers: [],
+            },
+          ],
+        }),
+      },
+    },
+  } as any);
+  const render = async (save: jest.Mock) =>
+    await act(async () => {
+      renderer = create(
+        <ChatSettings
+          profile="p"
+          project="project"
+          thread="t"
+          config={{
+            model: DEFAULT_CODEX_MODEL_NAME,
+            paymentSource: "subscription",
+          }}
+          client={{ updateCodexThreadConfig: save } as any}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+  // Saving without touching payment leaves the stored choice alone.
+  const save = jest.fn().mockResolvedValue(undefined);
+  await render(save);
+  await act(async () => find("Save agent settings").props.onPress());
+  expect(save).toHaveBeenCalled();
+  expect(setPaymentSelections).not.toHaveBeenCalled();
+  await act(async () => renderer.unmount());
+
+  // Choosing Automatic clears it.
+  const save2 = jest.fn().mockResolvedValue(undefined);
+  await render(save2);
+  await act(async () => find("Automatic").props.onPress());
+  await act(async () => find("Save agent settings").props.onPress());
+  expect(setPaymentSelections).toHaveBeenCalledWith({
+    targets: [{ project_id: "project", thread_id: "t" }],
+    provider: "codex",
+    selection: null,
+  });
+  expect(save2).toHaveBeenCalled();
+});
+
+it("falls back to the account's default subscription when the agent has none", async () => {
+  const lookup = jest.fn(async ({ credential_id }: any) => ({
+    source: "subscription",
+    hasSubscription: true,
+    credentialId: credential_id,
+    subscriptions: [{ id: "account-default", label: "Personal Pro" }],
+  }));
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: { getCodexPaymentSource: lookup },
+      agent: {
+        getPaymentSelections: async () => ({
+          selections: [],
+          defaults: {
+            codex: {
+              version: 1,
+              provider: "codex",
+              mode: "credential",
+              credential_id: "account-default",
+            },
+          },
+        }),
+      },
+      projects: {
+        getCodexUsageStatus: async () => ({
+          models: [
+            {
+              model: "test",
+              displayName: "Test",
+              reasoning: [],
+              serviceTiers: [],
+            },
+          ],
+        }),
+      },
+    },
+  } as any);
+  await act(async () => {
+    renderer = create(
+      <ChatSettings
+        profile="p"
+        project="project"
+        thread="t"
+        config={{ model: "test", paymentSource: "subscription" }}
+        client={{ updateCodexThreadConfig: jest.fn() } as any}
+        onClose={() => {}}
+      />,
+    );
+  });
+  expect(find("ChatGPT: Personal Pro").props.accessibilityState.selected).toBe(
+    true,
+  );
+  expect(lookup).toHaveBeenLastCalledWith(
+    expect.objectContaining({ credential_id: "account-default" }),
+  );
+});
+
+it("drops a stale shared pin when the hub reports no stored choice, and saving the account default follows it", async () => {
+  const lookup = jest.fn(async ({ credential_id }: any) => ({
+    source: "subscription",
+    hasSubscription: true,
+    credentialId: credential_id ?? "designated",
+    subscriptions: [
+      { id: "account-default", label: "Personal Pro" },
+      { id: "pinned", label: "Team plan" },
+    ],
+  }));
+  let selections: any[] = [];
+  let defaults: any = {};
+  const setPaymentSelections = jest.fn().mockResolvedValue({ updated: 1 });
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: { getCodexPaymentSource: lookup },
+      agent: {
+        getPaymentSelections: async () => ({ selections, defaults }),
+        setPaymentSelections,
+      },
+      projects: {
+        getCodexUsageStatus: async () => ({
+          models: [
+            {
+              model: "test",
+              displayName: "Test",
+              reasoning: [],
+              serviceTiers: [],
+            },
+          ],
+        }),
+      },
+    },
+  } as any);
+  const render = async () =>
+    await act(async () => {
+      renderer = create(
+        <ChatSettings
+          profile="p"
+          project="project"
+          thread="t"
+          config={{
+            model: "test",
+            paymentSource: "subscription",
+            credentialId: "removed",
+          }}
+          client={{ updateCodexThreadConfig: jest.fn() } as any}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+  await render();
+  expect(lookup).toHaveBeenLastCalledWith(
+    expect.objectContaining({ credential_id: undefined }),
+  );
+  await act(async () => renderer.unmount());
+
+  // An agent pinned to another plan, switched back to the account default.
+  const credential = (credential_id: string) => ({
+    version: 1,
+    provider: "codex",
+    mode: "credential",
+    credential_id,
+  });
+  selections = [
+    {
+      project_id: "project",
+      thread_id: "t",
+      provider: "codex",
+      selection: credential("pinned"),
+    },
+  ];
+  defaults = { codex: credential("account-default") };
+  await render();
+  expect(find("ChatGPT: Team plan").props.accessibilityState.selected).toBe(
+    true,
+  );
+  await act(async () => find("ChatGPT: Personal Pro").props.onPress());
+  await act(async () => find("Save agent settings").props.onPress());
+  expect(setPaymentSelections).toHaveBeenLastCalledWith({
+    targets: [{ project_id: "project", thread_id: "t" }],
+    provider: "codex",
+    selection: null,
+  });
 });

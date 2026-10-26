@@ -35,6 +35,7 @@ import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
 import { useArtifactFeedbackDraft } from "./use-artifact-feedback";
 import { artifactFeedbackPrompt } from "@cocalc/chat";
 import { ChatRoomComposer } from "./composer";
+import { AgentMemoryOffer } from "@cocalc/frontend/account/agent-memory-offer";
 import { ChatSpeechPlayer } from "./audio/chat-speech-player";
 import { ChatLiveVoice } from "./live-voice";
 import { projectLiveVoiceMessages } from "./live-voice-messages";
@@ -64,6 +65,7 @@ import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadMenu, stripThreadHtml } from "./chatroom-thread-menu";
 import { requestThreadSearch } from "./thread-search-request";
+import { useChatReaderMode } from "./reader-view";
 import {
   ChatRoomThreadPanel,
   resolveSelectedThreadRunningCodexMessage,
@@ -695,6 +697,9 @@ function ChatPanelContent({
   const focusRootRef = useRef<HTMLDivElement>(null);
   useChatFocusIsolation(focusRootRef, focused && messages != null);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  // Where the questions panel goes: over the whole chat, its composer too.
+  const [attentionPanelHost, setAttentionPanelHost] =
+    useState<HTMLDivElement | null>(null);
   const mobileChatsTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileToolsTriggerRef = useRef<HTMLButtonElement>(null);
   const [mobileToolsPortal, setMobileToolsPortal] =
@@ -1822,8 +1827,31 @@ function ChatPanelContent({
 
   const selectedThreadReadSignatureRef = useRef<string | null>(null);
 
+  const [readerMode, setReaderMode] = useChatReaderMode(project_id, path);
+  // The reader takes the keys when the person turns it on with one of its
+  // buttons, in this chat; never when a chat simply opens in it.
+  const readerChatKey = `${project_id ?? ""}:${path ?? ""}`;
+  const [readerTurnedOnIn, setReaderTurnedOnIn] = useState<string>();
+  // Leaving the chat consumes the request: coming back does not focus.
+  const [readerFocusChat, setReaderFocusChat] = useState(readerChatKey);
+  if (readerFocusChat !== readerChatKey) {
+    setReaderFocusChat(readerChatKey);
+    setReaderTurnedOnIn(undefined);
+  }
+  const readerAutoFocus = readerMode && readerTurnedOnIn === readerChatKey;
+  const toggleReaderMode = (on: boolean) => {
+    setReaderTurnedOnIn(on ? readerChatKey : undefined);
+    setReaderMode(on);
+  };
+
   useEffect(() => {
-    if (!singleThreadView || !selectedThreadKey || !actions?.markThreadRead) {
+    // The reader marks what is opened in it, not the whole thread.
+    if (
+      readerMode ||
+      !singleThreadView ||
+      !selectedThreadKey ||
+      !actions?.markThreadRead
+    ) {
       selectedThreadReadSignatureRef.current = null;
       return;
     }
@@ -1842,10 +1870,12 @@ function ChatPanelContent({
       return;
     }
     const ok = actions.markThreadRead(thread.key, messageCount);
+    // All of it read: what the reader marked unread is read now too.
+    if (ok !== false) actions.clearReaderReadExceptions?.(thread.key);
     if (ok !== false) {
       selectedThreadReadSignatureRef.current = signature;
     }
-  }, [singleThreadView, selectedThreadKey, threads, actions]);
+  }, [readerMode, singleThreadView, selectedThreadKey, threads, actions]);
 
   const mark_as_read = useCallback(() => {
     if (readOnly) return;
@@ -2632,9 +2662,35 @@ function ChatPanelContent({
     </Tooltip>
   ) : null;
 
+  // On a phone the thread toolbar is in the tools drawer: the reader, used
+  // most there, gets its own button in the header.
+  const readerToggleButton =
+    narrow && singleThreadView && selectedThreadKey ? (
+      <Button
+        type="text"
+        aria-label={readerMode ? "Back to the chat log" : "Reader"}
+        aria-pressed={readerMode}
+        icon={<Icon name="mail" />}
+        onClick={() => toggleReaderMode(!readerMode)}
+        style={{
+          color: readerMode ? UI_COLORS.primary : "inherit",
+        }}
+      />
+    ) : null;
+
   const renderChatContent = () => (
-    <div className="smc-vfill" style={GRID_STYLE}>
+    <div className="smc-vfill" style={{ ...GRID_STYLE, position: "relative" }}>
+      <div
+        ref={setAttentionPanelHost}
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 40,
+          pointerEvents: "none",
+        }}
+      />
       <ChatRoomThreadPanel
+        attentionPanelHost={attentionPanelHost}
         actions={actions}
         project_id={project_id}
         path={path}
@@ -2694,6 +2750,10 @@ function ChatPanelContent({
           narrow
         }
         mobile={narrow}
+        readerMode={readerMode}
+        onReaderModeChange={toggleReaderMode}
+        readerAutoFocus={readerAutoFocus}
+        readStateVersion={effectiveReadStateVersion}
         onMobileToolsAction={() => setMobileToolsOpen(false)}
         allowSidebarToggle={
           !embeddingOptions.agentWorkspace &&
@@ -2749,6 +2809,10 @@ function ChatPanelContent({
       ) : !readOnly ? (
         <>
           {artifactFeedback.control}
+          {isSelectedThreadAI &&
+            isCodexThreadMetadata(selectedThreadMetadata) && (
+              <AgentMemoryOffer />
+            )}
           <ChatRoomComposer
             isActive={
               embeddingOptions.agentWorkspace
@@ -2890,6 +2954,7 @@ function ChatPanelContent({
                   />
                 )}
               {focusButton}
+              {readerToggleButton}
               <Button
                 type="text"
                 aria-label="Chat tools"
@@ -2949,6 +3014,7 @@ function ChatPanelContent({
               />
             )}
           {focusButton}
+          {readerToggleButton}
           <Button
             type="text"
             aria-label="Chat tools"

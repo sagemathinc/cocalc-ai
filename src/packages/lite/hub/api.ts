@@ -1433,6 +1433,19 @@ export const hubApi: HubApi = {
     getProjectSnapshotSchedule: getProjectSnapshotScheduleLite,
     getProjectBackupSchedule: getProjectBackupScheduleLite,
     getProjectActiveOperation: getProjectActiveOperationLite,
+    // A Lite project's edit history is with its files, which its user manages
+    // like any others (conat/project/persist-storage.ts).
+    listProjectPersistStorage: async () => ({
+      supported: false,
+      streams: [],
+      total: { count: 0, bytes: 0 },
+      by_kind: {},
+    }),
+    applyProjectPersistStorage: async () => {
+      throw new Error(
+        "this project's edit history is with its other files; manage it there",
+      );
+    },
     codexDeviceAuthStart: codexDeviceAuthStartLite,
     codexDeviceAuthStartV2: codexDeviceAuthStartV2Lite,
     getCodexCredentialSelectionCapability:

@@ -417,6 +417,43 @@ describe("conat notifications api", () => {
     ]);
   });
 
+  it("one shared notice for every agent a usage limit paused", async () => {
+    await seedMentionContext();
+    const notice = (thread_id: string) =>
+      createCodexTurnNotice({
+        account_id: TARGET_ACCOUNT_ID,
+        source_project_id: PROJECT_ID,
+        source_path: "work/chat.chat",
+        thread_id,
+        title: "Claude agents paused: usage limit reached",
+        body_markdown: "Their turns are paused, not lost.",
+        severity: "info",
+        group_key: "usage-limit:credential:c1:493800",
+        paused: true,
+      });
+    await expect(notice("thread-1")).resolves.toMatchObject({
+      target_count: 1,
+    });
+    // Another agent paused by the same limit: no second notice.
+    await expect(notice("thread-2")).resolves.toMatchObject({
+      target_count: 0,
+    });
+    const { rows } = await getPool().query(
+      "SELECT dedupe_key FROM notification_targets WHERE target_account_id=$1",
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(rows).toEqual([
+      {
+        dedupe_key: `agent_turn_group:usage-limit:credential:c1:493800:${TARGET_ACCOUNT_ID}`,
+      },
+    ]);
+    // Marked paused, so no notification says the turn finished.
+    const projected = await getPool().query(
+      "SELECT payload_json->'summary'->>'turn_state' AS turn_state FROM notification_target_outbox",
+    );
+    expect(projected.rows).toEqual([{ turn_state: "paused" }]);
+  });
+
   it("keeps Codex question content out of attention projections", async () => {
     await seedMentionContext();
     const sensitiveTitle = "Use sk-secret-value for /private/customer.chat?";

@@ -234,16 +234,19 @@ export async function hydrateNotebookFromIpynbIfNeeded({
   fs: Pick<Filesystem, "readFile">;
   path: string;
 }): Promise<boolean> {
-  const existing = actions.syncdb.get({ type: "cell" });
-  const existingCount =
-    typeof existing?.size === "number"
-      ? existing.size
-      : Array.isArray(existing)
-        ? existing.length
-        : existing == null
-          ? 0
-          : 1;
-  if (existingCount > 0) {
+  const hasCells = (): boolean => {
+    const existing = actions.syncdb.get({ type: "cell" });
+    const existingCount =
+      typeof existing?.size === "number"
+        ? existing.size
+        : Array.isArray(existing)
+          ? existing.length
+          : existing == null
+            ? 0
+            : 1;
+    return existingCount > 0;
+  };
+  if (hasCells()) {
     return false;
   }
   const notebookPath = ipynbPath(path);
@@ -265,8 +268,13 @@ export async function hydrateNotebookFromIpynbIfNeeded({
   if (cells.length === 0) {
     return false;
   }
-  await actions.setToIpynb(ipynb);
-  return true;
+  // A client may add cells while the file is read (a customer report: a
+  // cell pasted into a new notebook was replaced by the file's blank cell
+  // when the kernel started), so check again at the last moment, inside
+  // setToIpynb, before replacing the cells.
+  return (
+    (await actions.setToIpynb(ipynb, false, { skipIf: hasCells })) !== false
+  );
 }
 
 export async function loadKernelSpecsIntoStore({
@@ -347,6 +355,12 @@ export function notebookCellsMatchExpected(opts: {
   return countMatches && cellsMatch && orderMatches && kernelMatches;
 }
 
+// The notebook's live syncdb in this backend, if it is running (for the
+// live-writer seed, history-restart.ts).
+export function liveSyncdb(path: string) {
+  return jupyterActions[ipynbPath(path)]?.syncdb as any;
+}
+
 export function isRunning(path): boolean {
   return jupyterActions[ipynbPath(path)] != null;
 }
@@ -377,16 +391,38 @@ export async function start({
     client,
     fs: syncFs,
   });
+  const { actions } = initJupyterRedux(syncdb, client);
+  jupyterActions[ipynbPath(path)] = actions;
+  // Only this session's own end stops it: a late "closed" or "error" from an
+  // older session never stops its replacement (bounded history plan H1b-3,
+  // §4).
+  const stopThisSession = () => {
+    if (jupyterActions[ipynbPath(path)] === actions) {
+      stop({ path });
+    }
+  };
   syncdb.on("error", (err) => {
     // [ ] TODO: some way to convey this to clients (?)
     logger.debug(`syncdb error -- ${err}`, path);
-    stop({ path });
+    stopThisSession();
+  });
+  // After the history was reset (a completed hand-off, H1b-2), the notebook
+  // comes back in the new epoch, once.  The running kernel does not survive
+  // this; the notebook document does (it is the new history's seed).
+  let reopen = false;
+  syncdb.once("history-reset", () => {
+    reopen = true;
   });
   syncdb.once("closed", () => {
-    stop({ path });
+    const current = jupyterActions[ipynbPath(path)] === actions;
+    stopThisSession();
+    if (reopen && current && !isRunning(path)) {
+      logger.debug("start: reopening after a history reset", path);
+      start({ path, project_id: project_id0, client, fs }).catch((err) =>
+        logger.debug("start: reopening failed", { path, err: `${err}` }),
+      );
+    }
   });
-  const { actions } = initJupyterRedux(syncdb, client);
-  jupyterActions[ipynbPath(path)] = actions;
   if (syncdb.get_state() === "init") {
     await once(syncdb, "ready");
   }
@@ -394,7 +430,12 @@ export async function start({
     return;
   }
   try {
-    await hydrateNotebookFromIpynbIfNeeded({ actions, fs: syncFs, path });
+    // After a reset, the history's seed is the notebook: never refill it
+    // from the .ipynb, even when it has no cells (bounded history plan
+    // H1b-3, CORR-H1B3P-2).
+    if (syncdb.get_settings()?.get?.("history_reset") == null) {
+      await hydrateNotebookFromIpynbIfNeeded({ actions, fs: syncFs, path });
+    }
     await restoreKernelFromIpynb({ actions, fs: syncFs, path });
     await loadKernelSpecsIntoStore({ actions });
   } catch (err) {

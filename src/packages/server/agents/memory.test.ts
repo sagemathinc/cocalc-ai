@@ -173,6 +173,10 @@ describeDb("agent memory", () => {
       AGENT_MEMORY_DISABLED,
     );
     expect(await memory.turnIndex(account, P1)).toBeUndefined();
+    // A host that asks learns that memory is off (to hint that it exists).
+    expect(
+      await memory.turnIndex(account, P1, undefined, { reportOff: true }),
+    ).toEqual({ notes: 0, index: "", off: true });
     // An account that never used memory gets no row from turns.
     const { rows } = await getPool().query(
       "SELECT 1 FROM agent_memory_accounts WHERE account_id=$1",
@@ -596,7 +600,7 @@ describeDb("agent memory", () => {
     expect(
       (results.find((r) => r.status === "rejected") as PromiseRejectedResult)
         .reason.message,
-    ).toMatch(/already has 500 notes in global; merge related notes/);
+    ).toMatch(/already has 500 notes in global; merge notes on the same topic/);
     // A full namespace still takes updates to its notes.
     expect((await write(memory, account, P1, "n-1")).saved).toBe("updated");
   });
@@ -650,7 +654,7 @@ describeDb("agent memory", () => {
     expect(index).toMatch(/\(\d+ more: `memory search <words>` finds them/);
     // A project without the namespace sees only the global note.
     expect((await memory.turnIndex(account, P3))?.index).toBe(
-      "Saved notes (name: description), most relevant first:\n- prefs: the prefs note",
+      "Saved notes (name: description), a selection (this project's and recent first):\n- prefs: the prefs note",
     );
   });
 

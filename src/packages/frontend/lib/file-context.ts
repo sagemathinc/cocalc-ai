@@ -89,6 +89,11 @@ export interface IFileContext {
 
   is_visible?: boolean;
 
+  // If given, images without a size of their own are shown in a box of this
+  // height (scaled down to fit, never up), so their row does not grow when
+  // they load: e.g., in a virtualized chat log, where growth moves the reader.
+  imageBoxHeight?: number;
+
   // mermaid is only available in the app because it is ESM only and I can't load it into nextjs anymore.
   getMermaid?: () => Promise<any>;
 }

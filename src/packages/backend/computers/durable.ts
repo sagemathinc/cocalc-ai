@@ -53,7 +53,7 @@ export function readJson<T>(path: string): T | undefined {
   return JSON.parse(text) as T;
 }
 
-function fsyncDir(dir: string): void {
+export function fsyncDir(dir: string): void {
   let fd: number | undefined;
   try {
     fd = openSync(dir, "r");

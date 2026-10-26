@@ -95,6 +95,14 @@ import {
 import { recordProjectMaintenanceStatus } from "@cocalc/server/projects/maintenance-status";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getCurrentAuthSessionForSessionHash } from "@cocalc/server/auth/auth-sessions";
+import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import {
+  issueProjectAppUrlLocal,
+  issueProjectContentUrlLocal,
+  revokeProjectContentLinksLocal,
+  type ProjectContentUrl,
+  type RevokedProjectContentLinks,
+} from "./project-content-url";
 import centralLog from "@cocalc/database/postgres/central-log";
 import {
   recordServiceAdmissionDenialLocal as recordServiceAdmissionDenialCentralLog,
@@ -119,6 +127,8 @@ import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/proje
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
+import { releaseHostContentDns } from "@cocalc/server/cloud/host-content-dns";
+import adminAlert from "@cocalc/server/messages/admin-alert";
 import {
   enqueueCloudVmWork,
   listCloudVmLog,
@@ -249,14 +259,22 @@ import {
   reserveSiteFundedCodexTurn as reserveSiteFundedCodexTurnLocal,
   type ReserveSiteFundedCodexTurnOptions,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
-import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
+import {
+  getSiteFundedClaudeConfiguration,
+  getSiteFundedCodexConfiguration,
+} from "@cocalc/server/ai/site-funded-codex-policy";
+import { recordSiteFundedAdmissionLocal } from "@cocalc/server/ai/site-funded-admissions";
+import { getSiteFundedProviderKeyForReservation } from "@cocalc/server/ai/site-funded-provider-keys";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import type {
+  SiteFundedAdmissionOutcome,
+  SiteFundedAdmissionRecord,
   SiteFundedCodexAdmission,
   SiteFundedCodexPoolStatus,
   SiteFundedCodexReservation,
   SiteFundedCodexUsageEvent,
   SiteFundedCodexUsageRecordResult,
+  SiteFundedProvider,
 } from "@cocalc/util/ai/site-funded-codex";
 import { moneyToDbString, type MoneyValue } from "@cocalc/util/money";
 import type { DedicatedHostPricingSnapshot } from "@cocalc/util/db-schema/purchases";
@@ -275,6 +293,7 @@ import {
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { assertHostOwnedHere } from "@cocalc/server/inter-bay/host-owned-here";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { validateHostActionAuth } from "@cocalc/server/auth/host-action-auth";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -1093,10 +1112,6 @@ async function loadHostForAvailability(
   return { row, full_view: false };
 }
 
-function isHostNotFoundError(err: unknown): boolean {
-  return err instanceof Error && err.message === "host not found";
-}
-
 async function resolveRemoteHostBayIfAuthoritative(
   host_id: string,
 ): Promise<string | undefined> {
@@ -1106,54 +1121,6 @@ async function resolveRemoteHostBayIfAuthoritative(
     return;
   }
   return bay_id;
-}
-
-// A method routed to the host's owning bay refuses to run anywhere else: a
-// stale route, which the caller retries after re-resolving the owner.
-async function assertHostOwnedHere(host_id: string): Promise<void> {
-  const owner = await resolveRemoteHostBayIfAuthoritative(host_id);
-  if (owner) {
-    throw Object.assign(
-      new Error(
-        `stale route: host ${host_id} is owned by ${owner}, not ${getConfiguredBayId()}; retry`,
-      ),
-      { code: 409 },
-    );
-  }
-}
-
-async function resolveHostProjectListingTarget({
-  id,
-  account_id,
-}: {
-  id: string;
-  account_id?: string;
-}): Promise<
-  | { kind: "local"; host: Awaited<ReturnType<typeof loadHostForListing>> }
-  | { kind: "remote"; bay_id: string }
-> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return { kind: "remote", bay_id: remoteBay };
-  }
-  try {
-    const host = await loadHostForListing(id, account_id);
-    const bay_id = `${host?.bay_id ?? ""}`.trim();
-    if (bay_id && bay_id !== getConfiguredBayId()) {
-      return { kind: "remote", bay_id };
-    }
-    return { kind: "local", host };
-  } catch (err) {
-    if (!isHostNotFoundError(err)) {
-      throw err;
-    }
-  }
-
-  const ownership = await resolveHostBay(id);
-  if (!ownership || ownership.bay_id === getConfiguredBayId()) {
-    throw new Error("host not found");
-  }
-  return { kind: "remote", bay_id: ownership.bay_id };
 }
 
 type HostProjectsCursor = {
@@ -1257,6 +1224,15 @@ async function markHostDeprovisioned(row: any, action: string) {
     deleteCloudflareTunnel,
     hasDns,
     deleteHostDns,
+    releaseHostContentDns,
+    alertAdmin: async ({ subject, body }) => {
+      await adminAlert({
+        subject,
+        body,
+        dedupMinutes: 60,
+        dedupBySubject: true,
+      });
+    },
     logWarn: (message, payload) => logger.warn(message, payload),
     updateHostDeprovisionedRecord: async ({ row, nextMetadata }) => {
       await pool().query(
@@ -2701,6 +2677,100 @@ export async function issueProjectHostAuthToken({
   });
 }
 
+export async function issueProjectContentUrl({
+  account_id,
+  session_hash,
+  project_id,
+  path,
+}: {
+  account_id?: string;
+  session_hash?: string;
+  project_id: string;
+  path: string;
+}): Promise<ProjectContentUrl> {
+  const owner = requireAccount(account_id);
+  const browser_session_exp_s = await restrictedBrowserSessionExpiration({
+    account_id: owner,
+    session_hash,
+  });
+  return await issueProjectContentUrlLocal({
+    account_id: owner,
+    project_id,
+    path,
+    browser_session_exp_s,
+  });
+}
+
+export async function issueProjectAppUrl({
+  account_id,
+  session_hash,
+  project_id,
+  path,
+  app_id,
+}: {
+  account_id?: string;
+  session_hash?: string;
+  project_id: string;
+  path: string;
+  app_id?: string;
+}): Promise<ProjectContentUrl> {
+  const owner = requireAccount(account_id);
+  const browser_session_exp_s = await restrictedBrowserSessionExpiration({
+    account_id: owner,
+    session_hash,
+  });
+  return await issueProjectAppUrlLocal({
+    account_id: owner,
+    project_id,
+    path,
+    app_id,
+    browser_session_exp_s,
+  });
+}
+
+export async function issueProjectAppFrameUrl({
+  account_id,
+  session_hash,
+  project_id,
+  path,
+  app_id,
+}: {
+  account_id?: string;
+  session_hash?: string;
+  project_id: string;
+  path: string;
+  app_id?: string;
+}): Promise<ProjectContentUrl> {
+  const owner = requireAccount(account_id);
+  const browser_session_exp_s = await restrictedBrowserSessionExpiration({
+    account_id: owner,
+    session_hash,
+  });
+  return await issueProjectAppUrlLocal({
+    account_id: owner,
+    project_id,
+    path,
+    app_id,
+    browser_session_exp_s,
+    frame: true,
+  });
+}
+
+export async function revokeProjectContentLinks({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<RevokedProjectContentLinks> {
+  return await revokeProjectContentLinksLocal({
+    account_id: requireAccount(account_id),
+    project_id,
+    syncHost: async (project_id) =>
+      await syncProjectUsersOnHost({ project_id }),
+  });
+}
+
 export async function issueProjectHostAuthTokenLocal({
   account_id,
   actor,
@@ -3002,13 +3072,15 @@ export async function getAgentMemoryContext({
   owner_account_id,
   chat_path,
   thread_id,
+  report_off,
 }: {
   host_id?: string;
   project_id: string;
   owner_account_id: string;
   chat_path?: string;
   thread_id?: string;
-}): Promise<{ notes: number; index: string } | null> {
+  report_off?: boolean;
+}): Promise<{ notes: number; index: string; off?: true } | null> {
   if (!host_id) throw new Error("host_id must be specified");
   if (!project_id) throw new Error("project_id must be specified");
   if (!isValidUUID(owner_account_id))
@@ -3044,6 +3116,7 @@ export async function getAgentMemoryContext({
       kind: "turn-index",
       project_id,
       ...(agent ? { agent } : {}),
+      ...(report_off === true ? { report_off: true } : {}),
     })) ?? null
   );
 }
@@ -3701,22 +3774,97 @@ function remoteSiteFundedCodexSeed() {
   return getInterBayBridge().bayOps(seedBayId, { timeout_ms: 20_000 });
 }
 
-export async function reserveSiteFundedCodexTurn({
-  host_id,
-  project_id,
-  account_id,
-  funded_turn_id,
-  idempotency_key,
-  path,
-}: {
+type ReserveSiteFundedCodexTurnArgs = {
   host_id?: string;
   project_id: string;
   account_id: string;
   funded_turn_id: string;
   idempotency_key: string;
   path?: string;
-}): Promise<SiteFundedCodexAdmission> {
+  /** "anthropic": a site-funded Claude turn. Default Codex. */
+  provider?: SiteFundedProvider;
+};
+
+/** What admission learned, for the admission funnel. */
+type SiteFundedAdmissionNote = {
+  /** The host was authorized for this project and account. */
+  authorized?: boolean;
+  /** A finer reason than the denial code, for early refusals. */
+  outcome?: SiteFundedAdmissionOutcome;
+  membershipTier?: string;
+};
+
+function siteFundedSurface(path?: string): string {
+  return path?.endsWith(".ipynb")
+    ? "jupyter"
+    : path?.endsWith(".chat")
+      ? "chat"
+      : path
+        ? "editor"
+        : "unknown";
+}
+
+// Best effort: the funnel never delays or fails an admission. Everything,
+// finding the seed included, runs inside the promise, so not even a
+// synchronous failure can escape.
+function recordSiteFundedAdmission(record: SiteFundedAdmissionRecord): void {
+  void (async () => {
+    const remoteSeed = remoteSiteFundedCodexSeed();
+    await (remoteSeed
+      ? remoteSeed.recordSiteFundedAdmission(record)
+      : recordSiteFundedAdmissionLocal(record));
+  })().catch((err) =>
+    logger.debug("site-funded admission not recorded", { err: `${err}` }),
+  );
+}
+
+export async function reserveSiteFundedCodexTurn(
+  args: ReserveSiteFundedCodexTurnArgs,
+): Promise<SiteFundedCodexAdmission> {
+  const note: SiteFundedAdmissionNote = {};
+  let admission: SiteFundedCodexAdmission | undefined;
+  try {
+    admission = await admitSiteFundedCodexTurn(args, note);
+    return admission;
+  } finally {
+    if (note.authorized) {
+      recordSiteFundedAdmission({
+        fundedTurnId: args.funded_turn_id,
+        accountId: args.account_id,
+        provider: args.provider ?? "openai",
+        outcome: !admission
+          ? "error"
+          : admission.allowed
+            ? "allowed"
+            : (note.outcome ?? admission.code),
+        membershipTier: note.membershipTier,
+        surface: siteFundedSurface(args.path),
+      });
+    }
+  }
+}
+
+async function admitSiteFundedCodexTurn(
+  {
+    host_id,
+    project_id,
+    account_id,
+    funded_turn_id,
+    idempotency_key,
+    path,
+    provider = "openai",
+  }: ReserveSiteFundedCodexTurnArgs,
+  note: SiteFundedAdmissionNote,
+): Promise<SiteFundedCodexAdmission> {
   if (!host_id) throw new Error("host_id must be specified");
+  if (provider !== "openai" && provider !== "anthropic") {
+    throw new Error("provider must be openai or anthropic");
+  }
+  const product = provider === "anthropic" ? "Claude" : "Codex";
+  const alternative =
+    provider === "anthropic"
+      ? "Connect a Claude subscription or personal Anthropic API key"
+      : "Connect a ChatGPT plan or personal OpenAI API key";
   if (!project_id) throw new Error("project_id must be specified");
   if (!account_id) throw new Error("account_id must be specified");
   if (!isValidUUID(funded_turn_id)) {
@@ -3727,7 +3875,9 @@ export async function reserveSiteFundedCodexTurn({
     project_id,
     owner_account_id: account_id,
   });
+  note.authorized = true;
   if (await isAiLaunchDisabled()) {
+    note.outcome = "ai_disabled";
     return {
       allowed: false,
       code: "disabled",
@@ -3737,33 +3887,39 @@ export async function reserveSiteFundedCodexTurn({
   }
   let configuration;
   try {
-    configuration = await getSiteFundedCodexConfiguration();
+    configuration =
+      provider === "anthropic"
+        ? await getSiteFundedClaudeConfiguration()
+        : await getSiteFundedCodexConfiguration();
   } catch (err) {
-    logger.error("invalid site-funded Codex pricing or policy", {
+    logger.error(`invalid site-funded ${product} pricing or policy`, {
       err: `${err}`,
     });
     return {
       allowed: false,
       code: "missing_price",
-      reason: "Site-funded Codex pricing is not configured safely.",
+      reason: `Site-funded ${product} pricing is not configured safely.`,
     };
   }
   if (!configuration.enabled) {
     return {
       allowed: false,
       code: "disabled",
-      reason:
-        "Site-funded Codex is disabled. Connect a ChatGPT plan or personal OpenAI API key to continue.",
+      reason: `Site-funded ${product} is disabled. ${alternative} to continue.`,
     };
   }
   // The host's bay need not store the executing human's account or directory row.
   const account = await getClusterAccountById(account_id);
   if (!account || account.banned || !account.email_address_verified) {
+    note.outcome = !account
+      ? "ineligible"
+      : account.banned
+        ? "banned"
+        : "unverified_email";
     return {
       allowed: false,
       code: "ineligible",
-      reason:
-        "A verified, active CoCalc account is required for included Codex usage.",
+      reason: `A verified, active CoCalc account is required for included ${product} usage.`,
     };
   }
   const homeBayId =
@@ -3803,16 +3959,17 @@ export async function reserveSiteFundedCodexTurn({
           ] as const;
         })();
   const paid = membership.source !== "free";
+  note.membershipTier = membership.class;
   const accountConcurrency =
     getEffectiveMembershipUsageLimits(membership).acp_max_running_per_account ??
     configuration.policy?.maxConcurrentTurnsPerAccount ??
     DEFAULT_SITE_FUNDED_CODEX_POLICY.maxConcurrentTurnsPerAccount;
   if (account5h.limit <= 0 || account7d.limit <= 0) {
+    note.outcome = "no_allowance";
     return {
       allowed: false,
       code: "ineligible",
-      reason:
-        "Your CoCalc membership does not include site-funded Codex usage. Connect a ChatGPT plan or personal OpenAI API key to continue.",
+      reason: `Your CoCalc membership does not include site-funded ${product} usage. ${alternative} to continue.`,
     };
   }
   const reservationOptions: ReserveSiteFundedCodexTurnOptions = {
@@ -3834,22 +3991,44 @@ export async function reserveSiteFundedCodexTurn({
       ...configuration.policy,
       maxConcurrentTurnsPerAccount: accountConcurrency,
     },
+    provider,
     accountRemaining5hMicrousd: account5h.remaining,
     accountRemaining7dMicrousd: account7d.remaining,
     accountCredited5hMicrousdByFundedTurn: account5h.creditsByFundedTurn,
     accountCredited7dMicrousdByFundedTurn: account7d.creditsByFundedTurn,
-    surface: path?.endsWith(".ipynb")
-      ? "jupyter"
-      : path?.endsWith(".chat")
-        ? "chat"
-        : path
-          ? "editor"
-          : "unknown",
+    surface: siteFundedSurface(path),
   };
   const remoteSeed = remoteSiteFundedCodexSeed();
   return remoteSeed
     ? await remoteSeed.reserveSiteFundedCodexTurn(reservationOptions)
     : await reserveSiteFundedCodexTurnLocal(reservationOptions);
+}
+
+/** The site key funding an active Claude turn, for the host running it. */
+export async function getSiteFundedClaudeKey({
+  host_id,
+  reservation_id,
+}: {
+  host_id?: string;
+  reservation_id: string;
+}): Promise<{ api_key: string }> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (await isAiLaunchDisabled()) {
+    throw new Error("AI is temporarily disabled by the site administrator.");
+  }
+  const remoteSeed = remoteSiteFundedCodexSeed();
+  const api_key = remoteSeed
+    ? (
+        await remoteSeed.getSiteFundedProviderKey({
+          reservationId: reservation_id,
+          hostId: host_id,
+        })
+      ).apiKey
+    : await getSiteFundedProviderKeyForReservation({
+        reservationId: reservation_id,
+        hostId: host_id,
+      });
+  return { api_key };
 }
 
 export async function heartbeatSiteFundedCodexTurn({
@@ -4458,18 +4637,8 @@ export async function setHostAccess({
   target_email_address?: string;
   role: HostAccessRole;
 }): Promise<HostAccessEntry> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).setHostAccess({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-      target_account_id,
-      target_email_address,
-      role,
-    });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   if (role === "manager") {
     await maybeRequireFreshAuthForInteractiveHostAction({
       account_id,
@@ -4508,18 +4677,8 @@ export async function removeHostAccess({
     browser_id,
     session_hash,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .removeHostAccess({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-        target_account_id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   return serializeHostAccessEntry(
     await removeHostAccessEntry({
       host_id: id,
@@ -4604,18 +4763,8 @@ export async function setHostProjectRamLimit({
   id: string;
   project_ram_limit_mb?: number | null;
 }): Promise<Host> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostProjectRamLimit({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        project_ram_limit_mb,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForView(id, account_id);
   await requireLoadedHostPermission({
     row,
@@ -4666,19 +4815,8 @@ export async function setHostOwnerSpendLimits(opts: {
   owner_spend_limit_7d_usd?: number | null;
 }): Promise<Host> {
   const { account_id, id } = opts;
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostOwnerSpendLimits({
-        account_id,
-        browser_id: opts.browser_id,
-        session_hash: opts.session_hash,
-        id,
-        owner_spend_limit_5h_usd: opts.owner_spend_limit_5h_usd,
-        owner_spend_limit_7d_usd: opts.owner_spend_limit_7d_usd,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForView(id, account_id);
   await requireLoadedHostPermission({
     row,
@@ -4754,18 +4892,8 @@ export async function setHostPoolAccess({
   id: string;
   tier?: number | null;
 }): Promise<Host> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostPoolAccess({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        tier,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const actor = requireAccount(account_id);
   if (!(await isAdmin(actor))) {
     throw new Error("only admins can configure public host pool access");
@@ -4959,22 +5087,9 @@ export async function listHostProjects({
   state_filter?: HostProjectStateFilter;
   project_state?: string;
 }): Promise<HostProjectsResponse> {
-  const target = await resolveHostProjectListingTarget({ id, account_id });
-  if (target.kind === "remote") {
-    return await getInterBayBridge()
-      .hostConnection(target.bay_id)
-      .listHostProjects({
-        account_id,
-        id,
-        limit,
-        cursor,
-        risk_only,
-        free_only,
-        state_filter,
-        project_state,
-      });
-  }
-  const { host } = target;
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
+  const host = await loadHostForListing(id, account_id);
   const cappedLimit = normalizeHostProjectsLimit(limit);
   const snapshot = await listHostProjectsLocalSnapshot({
     id,
@@ -5202,43 +5317,13 @@ async function selectHostProjectActionRows({
   project_state?: string;
   rows: Array<{ project_id: string; state: string }>;
 }> {
-  const target = await resolveHostProjectListingTarget({ id, account_id });
+  const host = await loadHostForListing(id, account_id);
   const { normalizedStateFilter, normalizedProjectState } =
     buildHostProjectsBaseQuery({
       host_id: id,
       state_filter,
       project_state,
     });
-  if (target.kind === "remote") {
-    const rows: HostProjectRow[] = [];
-    let cursor: string | undefined;
-    do {
-      const response = await getInterBayBridge()
-        .hostConnection(target.bay_id)
-        .listHostProjects({
-          account_id,
-          id,
-          limit: HOST_PROJECTS_MAX_LIMIT,
-          cursor,
-          risk_only,
-          free_only,
-          state_filter,
-          project_state,
-        });
-      rows.push(...response.rows);
-      cursor = response.next_cursor;
-    } while (cursor);
-    return {
-      host: { id },
-      state_filter: normalizedStateFilter,
-      project_state: normalizedProjectState || undefined,
-      rows: rows.map((row) => ({
-        project_id: row.project_id,
-        state: row.state ?? "",
-      })),
-    };
-  }
-
   const snapshot = await listHostProjectsLocalSnapshot({
     id,
     risk_only,
@@ -5249,7 +5334,7 @@ async function selectHostProjectActionRows({
   const rows = snapshot.rows.sort(compareHostProjectRows);
 
   return {
-    host: target.host,
+    host,
     state_filter: normalizedStateFilter,
     project_state: normalizedProjectState || undefined,
     rows: rows.map((row) => ({
@@ -5442,16 +5527,8 @@ export async function backupHostProjects({
   id: string;
   parallel?: number;
 }): Promise<HostLroResponse> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .backupHostProjects({
-        account_id,
-        id,
-        parallel,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, account_id);
   const snapshot = await listHostProjectsLocalSnapshot({
     id: row.id,
@@ -5503,6 +5580,8 @@ export async function stopHostProjects({
   free_only?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
@@ -5540,6 +5619,8 @@ export async function restartHostProjects({
   risk_only?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
@@ -5645,21 +5726,8 @@ export async function annotateHostAvailabilityEvent({
   planned?: boolean;
   summary?: string | null;
 }): Promise<HostAvailabilityEvent> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .annotateHostAvailabilityEvent({
-        account_id,
-        id,
-        event_id,
-        admin_note,
-        admin_note_visibility,
-        category,
-        planned,
-        summary,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForView(id, account_id);
   if (account_id) {
     await requireLoadedHostPermission({
@@ -5778,17 +5846,8 @@ export async function pullHostRootfsImage({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .pullHostRootfsImage({
-        account_id,
-        session_hash,
-        id,
-        image,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   const availability = computeHostOperationalAvailability(row);
   if (!availability.operational) {
@@ -5830,17 +5889,8 @@ export async function deleteHostRootfsImage({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .deleteHostRootfsImage({
-        account_id,
-        session_hash,
-        id,
-        image,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   const availability = computeHostOperationalAvailability(row);
   if (!availability.operational) {
@@ -5869,16 +5919,8 @@ export async function gcDeletedHostRootfsImages({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .gcDeletedHostRootfsImages({
-        account_id,
-        session_hash,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   const availability = computeHostOperationalAvailability(row);
   if (!availability.operational) {
@@ -6018,24 +6060,14 @@ export async function setHostExamConfig({
   id: string;
   config: HostExamConfigInput;
 }): Promise<HostExamState> {
-  const freshSessionHash = await requireFreshExamMutation({
+  await requireFreshExamMutation({
     account_id,
     browser_id,
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostExamConfig({
-        account_id,
-        browser_id,
-        session_hash: freshSessionHash,
-        id,
-        config,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row } = await loadHostForExam({
     id,
     account_id,
@@ -6072,28 +6104,14 @@ export async function createHostExamRun({
   stop_host_at_deadline?: boolean;
   idempotency_key: string;
 }): Promise<HostExamState & { token: string }> {
-  const freshSessionHash = await requireFreshExamMutation({
+  await requireFreshExamMutation({
     account_id,
     browser_id,
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .createHostExamRun({
-        account_id,
-        browser_id,
-        session_hash: freshSessionHash,
-        id,
-        rootfs_image,
-        cleanup_mode,
-        scheduled_stop_at,
-        stop_host_at_deadline,
-        idempotency_key,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row } = await loadHostForExam({
     id,
     account_id,
@@ -6133,26 +6151,14 @@ export async function rotateHostExamToken({
   idempotency_key: string;
   token?: string;
 }): Promise<HostExamState & { token: string }> {
-  const freshSessionHash = await requireFreshExamMutation({
+  await requireFreshExamMutation({
     account_id,
     browser_id,
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .rotateHostExamToken({
-        account_id,
-        browser_id,
-        session_hash: freshSessionHash,
-        id,
-        run_id,
-        idempotency_key,
-        token: requestedToken,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row } = await loadHostForExam({
     id,
     account_id,
@@ -6177,7 +6183,6 @@ export async function openHostExamRun({
   internalAuth,
   id,
   run_id,
-  idempotency_key,
 }: {
   account_id?: string;
   browser_id?: string | null;
@@ -6187,23 +6192,14 @@ export async function openHostExamRun({
   run_id: string;
   idempotency_key: string;
 }): Promise<HostExamState> {
-  const freshSessionHash = await requireFreshExamMutation({
+  await requireFreshExamMutation({
     account_id,
     browser_id,
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).openHostExamRun({
-      account_id,
-      browser_id,
-      session_hash: freshSessionHash,
-      id,
-      run_id,
-      idempotency_key,
-    });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row } = await loadHostForExam({
     id,
     account_id,
@@ -6223,7 +6219,6 @@ export async function updateHostExamDeadline({
   cleanup_mode,
   scheduled_stop_at,
   stop_host_at_deadline,
-  idempotency_key,
 }: {
   account_id?: string;
   browser_id?: string | null;
@@ -6236,28 +6231,14 @@ export async function updateHostExamDeadline({
   stop_host_at_deadline?: boolean;
   idempotency_key: string;
 }): Promise<HostExamState> {
-  const freshSessionHash = await requireFreshExamMutation({
+  await requireFreshExamMutation({
     account_id,
     browser_id,
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .updateHostExamDeadline({
-        account_id,
-        browser_id,
-        session_hash: freshSessionHash,
-        id,
-        run_id,
-        cleanup_mode,
-        scheduled_stop_at,
-        stop_host_at_deadline,
-        idempotency_key,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row } = await loadHostForExam({
     id,
     account_id,
@@ -6281,7 +6262,6 @@ export async function increaseHostExamCapacity({
   id,
   run_id,
   max_projects,
-  idempotency_key,
 }: {
   account_id?: string;
   browser_id?: string | null;
@@ -6292,26 +6272,14 @@ export async function increaseHostExamCapacity({
   max_projects: number;
   idempotency_key: string;
 }): Promise<HostExamState> {
-  const freshSessionHash = await requireFreshExamMutation({
+  await requireFreshExamMutation({
     account_id,
     browser_id,
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .increaseHostExamCapacity({
-        account_id,
-        browser_id,
-        session_hash: freshSessionHash,
-        id,
-        run_id,
-        max_projects,
-        idempotency_key,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row } = await loadHostForExam({
     id,
     account_id,
@@ -6329,7 +6297,6 @@ export async function stopAndEraseHostExamRun({
   id,
   run_id,
   stop_host = true,
-  idempotency_key,
 }: {
   account_id?: string;
   browser_id?: string | null;
@@ -6340,26 +6307,14 @@ export async function stopAndEraseHostExamRun({
   stop_host?: boolean;
   idempotency_key: string;
 }): Promise<HostExamState> {
-  const freshSessionHash = await requireFreshExamMutation({
+  await requireFreshExamMutation({
     account_id,
     browser_id,
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .stopAndEraseHostExamRun({
-        account_id,
-        browser_id,
-        session_hash: freshSessionHash,
-        id,
-        run_id,
-        stop_host,
-        idempotency_key,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row } = await loadHostForExam({
     id,
     account_id,
@@ -6438,18 +6393,8 @@ export async function addHostSshAuthorizedKey({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .addHostSshAuthorizedKey({
-        account_id,
-        session_hash,
-        id,
-        public_key,
-        user,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.addHostSshAuthorizedKey({ public_key, user });
@@ -6488,17 +6433,8 @@ export async function removeHostSshAuthorizedKey({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .removeHostSshAuthorizedKey({
-        account_id,
-        session_hash,
-        id,
-        public_key,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.removeHostSshAuthorizedKey({ public_key });
@@ -6752,23 +6688,8 @@ export async function startHost({
   id: string;
 }): Promise<HostLroResponse> {
   const actor = requireAccount(account_id);
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    const auth = await maybeRequireFreshAuthForInteractiveHostAction({
-      account_id,
-      browser_id,
-      session_hash,
-      required: true,
-    });
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .startHost({
-        account_id,
-        browser_id,
-        session_hash: auth.session_hash ?? session_hash,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, actor);
   assertHostNotUnderMaintenance(row);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
@@ -6806,15 +6727,18 @@ export async function startHost({
 export async function startHostInternal({
   account_id,
   id,
+  billing_rescue,
   onWorkQueued,
 }: {
   account_id?: string;
   id: string;
+  billing_rescue?: boolean;
   onWorkQueued?: (workId: string) => void;
 }): Promise<Host> {
   return await startHostInternalHelper({
     account_id,
     id,
+    billing_rescue,
     onWorkQueued,
     loadHostForStartStop,
     markHostActionPending,
@@ -6836,24 +6760,31 @@ export async function stopHost({
   id: string;
   skip_backups?: boolean;
 }): Promise<HostLroResponse> {
-  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+  await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
     session_hash,
     required: true,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .stopHost({
-        account_id,
-        browser_id,
-        session_hash: auth.session_hash ?? session_hash,
-        id,
-        skip_backups,
-      });
-  }
+  return await queueHostStop({ account_id, id, skip_backups });
+}
+
+/**
+ * Queue a stop of a host owned by this bay, as `account_id` (who must be
+ * allowed to stop it). No fresh-auth check: stopHost does that for users,
+ * and trusted server code calls this as a system action.
+ */
+export async function queueHostStop({
+  account_id,
+  id,
+  skip_backups,
+}: {
+  account_id?: string;
+  id: string;
+  skip_backups?: boolean;
+}): Promise<HostLroResponse> {
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, account_id);
   assertHostNotUnderMaintenance(row);
   await eraseActiveExamRunBeforeHostStopLocal({ host: row });
@@ -6896,24 +6827,14 @@ export async function restartHost({
   id: string;
   mode?: "reboot" | "hard";
 }): Promise<HostLroResponse> {
-  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+  await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
     session_hash,
     required: true,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .restartHost({
-        account_id,
-        browser_id,
-        session_hash: auth.session_hash ?? session_hash,
-        id,
-        mode,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, account_id);
   assertHostNotUnderMaintenance(row);
   await assertNoPendingDestructiveHostOp(row.id);
@@ -6973,21 +6894,8 @@ export async function drainHost({
     browser_id,
     session_hash,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .drainHost({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-        dest_host_id,
-        force,
-        allow_offline,
-        parallel,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const owner = requireAccount(account_id);
   const row = await loadHostForDrainInternal({ id, owner });
   assertHostNotUnderMaintenance(row);
@@ -7081,17 +6989,8 @@ export async function forceDeprovisionHost({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .forceDeprovisionHost({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   if (machineCloud !== "self-host") {
@@ -7187,16 +7086,8 @@ export async function refreshHostCloudState({
   id: string;
   confirm_missing?: boolean;
 }): Promise<HostCloudRefreshResult> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .refreshHostCloudState({
-        account_id,
-        id,
-        confirm_missing,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const owner = requireAccount(account_id);
   if (!(await isAdmin(owner))) {
     throw new Error("not authorized");
@@ -7341,17 +7232,8 @@ export async function removeSelfHostConnector({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .removeSelfHostConnector({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   if (machineCloud !== "self-host") {
@@ -8948,19 +8830,8 @@ export async function upgradeHostSoftware({
   align_runtime_stack?: boolean;
   record_runtime_deployments?: boolean;
 }): Promise<HostLroResponse> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .upgradeHostSoftware({
-        account_id,
-        id,
-        targets,
-        base_url,
-        align_runtime_stack,
-        record_runtime_deployments,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -9006,17 +8877,8 @@ export async function reconcileHostSoftware({
   if (bootstrap_scope && !force_bootstrap) {
     throw new Error("bootstrap_scope requires force_bootstrap");
   }
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .reconcileHostSoftware({
-        account_id,
-        id,
-        ...(force_bootstrap ? { force_bootstrap: true } : {}),
-        ...(bootstrap_scope ? { bootstrap_scope } : {}),
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -9037,10 +8899,14 @@ export async function reconcileHostSoftware({
 
 export async function setHostPublicRouteMode({
   account_id,
+  browser_id,
+  session_hash,
   id,
   mode,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   mode: HostPublicRouteMode;
 }): Promise<HostLroResponse> {
@@ -9049,12 +8915,15 @@ export async function setHostPublicRouteMode({
       "public route mode must be cloudflare-tunnel or cloudflare-proxy",
     );
   }
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostPublicRouteMode({ account_id, id, mode });
-  }
+  // Changes the host's public ingress and DNS routing.
+  await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
+  });
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -9132,21 +9001,8 @@ export async function relocateHost({
     session_hash,
   });
   await requireHostMaintenanceAdmin(account_id);
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).relocateHost({
-      account_id,
-      browser_id,
-      session_hash,
-      id,
-      zone,
-      machine_type,
-      expected_minutes,
-      message,
-      skip_backups,
-      keep_snapshot,
-    });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { owner, row } = await requireAdminForHostMaintenance(account_id, id);
   assertHostNotUnderMaintenance(row);
   // Validate now, so a bad request fails here instead of in the worker.
@@ -9243,21 +9099,8 @@ export async function setHostMaintenanceNotice({
   clear?: boolean;
 }): Promise<HostMaintenanceNotice | null> {
   await requireHostMaintenanceAdmin(account_id);
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostMaintenanceNotice({
-        account_id,
-        browser_id,
-        session_hash,
-        id,
-        scheduled_for,
-        expected_minutes,
-        message,
-        clear,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const { row } = await requireAdminForHostMaintenance(account_id, id);
   const current = row.maintenance;
   if (hostLifecycleFenced(current)) {
@@ -9409,15 +9252,8 @@ export async function getHostRuntimeDeploymentStatus({
   account_id?: string;
   id: string;
 }): Promise<HostRuntimeDeploymentStatus> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .getHostRuntimeDeploymentStatus({
-        account_id,
-        id,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForListing(id, account_id);
   return await getHostRuntimeDeploymentStatusInternal({
     id,
@@ -9477,19 +9313,8 @@ export async function setHostRuntimeDeployments({
     );
     return result;
   }
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id ?? "");
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostRuntimeDeployments({
-        account_id,
-        scope_type,
-        id,
-        deployments: normalized,
-        replace,
-        ...(align_runtime_stack == null ? {} : { align_runtime_stack }),
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id ?? "");
   const row = await loadHostForRootfsManagement(id ?? "", account_id);
   const before = await listProjectHostRuntimeDeployments({
     scope_type: "host",
@@ -9521,17 +9346,8 @@ export async function reconcileHostRuntimeDeployments({
   components?: ManagedComponentKind[];
   reason?: string;
 }): Promise<HostLroResponse> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .reconcileHostRuntimeDeployments({
-        account_id,
-        id,
-        components,
-        reason,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -9761,20 +9577,8 @@ export async function rollbackHostRuntimeDeployments({
   last_known_good?: boolean;
   reason?: string;
 }): Promise<HostLroResponse> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .rollbackHostRuntimeDeployments({
-        account_id,
-        id,
-        target_type,
-        target,
-        version,
-        last_known_good,
-        reason,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   const normalizedTarget =
@@ -9844,20 +9648,8 @@ export async function rolloutHostManagedComponents({
   base_url?: string;
   reason?: string;
 }): Promise<HostLroResponse> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .rolloutHostManagedComponents({
-        account_id,
-        id,
-        components,
-        desired_version,
-        record_runtime_deployments,
-        base_url,
-        reason,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -10512,18 +10304,8 @@ export async function deleteHost({
     session_hash,
     internalAuth,
   });
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .deleteHost({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-        skip_backups,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   const row = await loadHostForDestructiveAction(id, account_id);
   assertHostNotUnderMaintenance(row);
   if (row.deletion_protection === true) {
@@ -10570,18 +10352,8 @@ export async function setHostDeletionProtection({
   id: string;
   enabled: boolean;
 }): Promise<Host> {
-  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
-  if (remoteBay) {
-    return await getInterBayBridge()
-      .hostConnection(remoteBay)
-      .setHostDeletionProtection({
-        account_id,
-        ...(browser_id ? { browser_id } : {}),
-        session_hash,
-        id,
-        enabled,
-      });
-  }
+  // Routed to the host's owning bay (see @cocalc/conat/hub/api/routes).
+  await assertHostOwnedHere(id);
   await loadOwnedHost(id, account_id);
   if (!enabled) {
     await requireDangerousHostMutationAuth({

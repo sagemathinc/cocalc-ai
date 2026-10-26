@@ -11,6 +11,9 @@ import type { GitSource } from "@cocalc/frontend/components/diff-viewer/review-m
 export type GitShowFile = {
   path: string;
   lines: string[];
+  /** The file's diff was too large to show with the others: its patch
+   * lines (only its header is kept). */
+  omittedLines?: number;
   oldSource?: GitSource;
   newSource?: GitSource;
 };

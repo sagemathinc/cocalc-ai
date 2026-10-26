@@ -752,3 +752,42 @@ describe("initHostStatusService registerOnPremTunnel", () => {
     });
   });
 });
+
+describe("initHostStatusService reportProjectProvisioned", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    createHostStatusServiceMock = jest.fn(({ impl }) => impl);
+    conatMock = jest.fn(async () => ({ ok: true }));
+    queryMock = jest.fn(async () => ({ rows: [] }));
+  });
+
+  it("asks a non-owner host to delete only data it has, and never updates the owner's project", async () => {
+    const ownership = await import("./host-project-ownership");
+    (ownership.shouldDeleteHostProjectUpdate as jest.Mock).mockResolvedValue(
+      true,
+    );
+    const { initHostStatusService } = await import("./host-status");
+    const service: any = await initHostStatusService();
+
+    // e.g. a move's destination, after its pre-restore cleanup and before
+    // the placement switched to it
+    await expect(
+      service.reportProjectProvisioned({
+        host_id: "dest",
+        project_id: "p",
+        provisioned: false,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      service.reportProjectProvisioned({
+        host_id: "old",
+        project_id: "p",
+        provisioned: true,
+      }),
+    ).resolves.toEqual({ action: "delete" });
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects SET provisioned"),
+      expect.anything(),
+    );
+  });
+});

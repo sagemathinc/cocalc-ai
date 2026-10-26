@@ -400,3 +400,30 @@ describe("Stripe webhook processing", () => {
     expect(mockProcessPaymentIntent).toHaveBeenCalled();
   });
 });
+
+describe("checkoutSessionMissingVatId", () => {
+  const { checkoutSessionMissingVatId } = require("./webhook");
+  it("flags an EU or UK checkout without a VAT ID", () => {
+    expect(
+      checkoutSessionMissingVatId({
+        customer_details: { address: { country: "fr" }, tax_ids: [] },
+      }),
+    ).toBe("FR");
+  });
+  it("accepts an EU checkout with a VAT ID, and any checkout outside the EU and UK", () => {
+    expect(
+      checkoutSessionMissingVatId({
+        customer_details: {
+          address: { country: "FR" },
+          tax_ids: [{ type: "eu_vat", value: "FR123" }],
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      checkoutSessionMissingVatId({
+        customer_details: { address: { country: "US" } },
+      }),
+    ).toBeUndefined();
+    expect(checkoutSessionMissingVatId({})).toBeUndefined();
+  });
+});

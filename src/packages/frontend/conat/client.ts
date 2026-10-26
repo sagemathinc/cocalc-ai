@@ -875,6 +875,20 @@ export class ConatClient extends EventEmitter {
     }
   };
 
+  // After this browser ended the account's other sessions (password change,
+  // passkey or 2FA setup), project hosts refuse every host credential issued
+  // before then, this browser's too. Drop them all and reconnect with fresh
+  // ones, rather than waiting for each host to kick the old connection.
+  public renewProjectHostCredentials = async (): Promise<void> => {
+    for (const host_id of Object.keys(this.projectHostTokens)) {
+      this.invalidateProjectHostToken(host_id, { resetFailureState: true });
+    }
+    for (const routing_key of Object.keys(this.projectHostBrowserSessions)) {
+      this.invalidateProjectHostBrowserSession(routing_key);
+    }
+    await this.forceReconnectAllRoutedHosts("other sessions ended");
+  };
+
   private setConnectionStatus = (status: Partial<ConatConnectionStatus>) => {
     const actions = redux?.getActions?.("page");
     const store = redux?.getStore?.("page");
@@ -3514,7 +3528,10 @@ export class ConatClient extends EventEmitter {
               ...routing,
               project_id,
             });
-            const retryResp = await retryClient.request(
+            // Through requestHub too, so the retry is labelled for egress
+            // attribution like the first attempt.
+            const retryResp = await requestHub(
+              retryClient,
               subject,
               { name, args },
               { timeout },

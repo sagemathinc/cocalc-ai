@@ -44,6 +44,10 @@ export interface AcpChatContext {
      * message it was never sent.
      */
     report_capability?: string;
+    /** The sender asked to be told if the turn ends without replying to it.
+     * Not in the signed binding: it only adds a report about this message,
+     * which report_capability already authorizes. */
+    report_no_reply?: true;
   };
   // A turn a delivery report started (another agent's turn on this agent's
   // message failed). Rechecked at execution; never itself reported.
@@ -153,6 +157,9 @@ export type AcpSteerRequest = {
 export type AcpSteerResponse = {
   ok: boolean;
   state: "steered" | "queued" | "running" | "missing";
+  /** steered, but handed to the worker running the turn: it may still run
+   * as a turn of its own. */
+  pending?: boolean;
   threadId?: string | null;
 };
 

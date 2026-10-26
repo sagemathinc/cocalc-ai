@@ -120,22 +120,23 @@ export function newAgentPaymentSourceEnabled({
   return codex && (!!projectId || projectsLoaded);
 }
 
-// Codex is only the default runtime: someone who already connected Claude,
-// but cannot pay for Codex, starts with Claude. Never during the first-run
-// flow, which prepares a Codex agent in the background and shows no runtime
-// choice, and never over a source agent's runtime or the user's own choice.
+// A new agent is a Claude agent whenever Claude can run it: on the user's own
+// Claude credential, or on included Claude (CoCalc Membership) unless Codex
+// would run on their own ChatGPT plan. Otherwise it stays Codex. Never over a
+// source agent's runtime or the user's own choice.
 export function shouldDefaultToClaude({
-  firstRun,
-  codexUnconfigured,
   runtimeChosen,
   claudeConnected,
+  claudeIncluded,
+  codexOwnPlan,
 }: {
-  firstRun: boolean;
-  codexUnconfigured: boolean;
   runtimeChosen: boolean;
   claudeConnected: boolean;
+  claudeIncluded: boolean;
+  codexOwnPlan: boolean;
 }): boolean {
-  return !firstRun && codexUnconfigured && !runtimeChosen && claudeConnected;
+  if (runtimeChosen) return false;
+  return claudeConnected || (claudeIncluded && !codexOwnPlan);
 }
 
 // Claude signs in through a project, so choosing Claude without any project
