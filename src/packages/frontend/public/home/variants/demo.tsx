@@ -154,7 +154,7 @@ function OdePlot() {
         stroke="#4474c0"
         strokeWidth="2"
       />
-      <text x="282" y="68" fontSize="9" fill="currentColor" opacity=".6">
+      <text x="283" y="49" fontSize="9" fill="currentColor" opacity=".6">
         4π
       </text>
       <text x="14" y="58" fontSize="9" fill="currentColor" opacity=".6">
