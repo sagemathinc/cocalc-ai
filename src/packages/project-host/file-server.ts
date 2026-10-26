@@ -260,7 +260,9 @@ import {
   type ProjectQuotaBreakdown,
 } from "./project-quota-group";
 import { setSnapshotPreparer } from "@cocalc/file-server/btrfs/snapshot-preparer";
-import { withBackupParallelLimit } from "./backup-queue";
+import { backupsInFlight, withBackupParallelLimit } from "./backup-queue";
+import { decideSnapshotPrune } from "./snapshot-prune-gate";
+import { getStorageAdmissionStatus } from "./storage-admission";
 import { createSharedWorkLimit } from "./shared-work-limit";
 export { getBackupExecutionStatus } from "./backup-queue";
 import {
@@ -3318,13 +3320,29 @@ export async function runScheduledSnapshotMaintenance({
         return { skipped_reason: "project_volume_archiving" };
       }
       const stageDurations = stage_durations_ms ?? {};
+      let pruneDecision: ReturnType<typeof decideSnapshotPrune> | undefined;
       const update = await vol.snapshots.update(counts, {
         limit,
         quotaMode: "async",
         onStage: (stage: string, durationMs: number) => {
           stageDurations[stage] = (stageDurations[stage] ?? 0) + durationMs;
         },
+        // Expired snapshots wait while a backup or a project start/stop runs
+        // on this host (bounded; see snapshot-prune-gate.ts).
+        beforePrune: () => {
+          pruneDecision = decideSnapshotPrune({
+            projectId: project_id,
+            backupsInFlight: backupsInFlight(),
+            lifecycleActive: getStorageAdmissionStatus()?.lifecycle_active ?? 0,
+          });
+          return pruneDecision.allow;
+        },
       });
+      if (update.pruneDeferred) {
+        // Reported with the attempt, so deferrals show in
+        // project_maintenance_attempts.stage_durations_ms.
+        stageDurations.prune_deferred_ms = pruneDecision?.deferredForMs ?? 0;
+      }
       const confirmationStarted = Date.now();
       const snapshots = (await vol.snapshots.readdir())
         .filter(isISODate)
@@ -3693,8 +3711,7 @@ async function publishRootfsImage({
     });
 
     let uploadResult:
-      | Extract<RootfsUploadedArtifactResult, { backend: "rustic" }>
-      | undefined;
+      Extract<RootfsUploadedArtifactResult, { backend: "rustic" }> | undefined;
     let image: string;
     let digest: string | undefined;
     let contentKey: string;

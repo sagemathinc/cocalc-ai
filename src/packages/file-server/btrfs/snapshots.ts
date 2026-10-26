@@ -30,13 +30,13 @@ export interface RollingSnapshotUpdateResult {
   changed: boolean | null;
   createdName: string | null;
   disabled: boolean;
+  /** Expired snapshots kept because beforePrune declined; a later update
+   * deletes them. */
+  pruneDeferred?: number;
 }
 
 export type RollingSnapshotStage =
-  | "inventory"
-  | "change_detection"
-  | "create"
-  | "prune";
+  "inventory" | "change_detection" | "create" | "prune";
 
 export type RollingSnapshotStageObserver = (
   stage: RollingSnapshotStage,
@@ -55,6 +55,11 @@ export async function updateRollingSnapshots({
     beforeCreate?: () => Promise<void>;
     afterCreate?: (created: unknown) => Promise<void>;
     onStage?: RollingSnapshotStageObserver;
+    /** Asked before expired snapshots are deleted. Deleting is only space
+     * reclamation, so a caller may decline (return false) when it would
+     * compete with more urgent I/O; the snapshots stay until a later update
+     * is allowed to delete them. */
+    beforePrune?: (names: string[]) => boolean | Promise<boolean>;
     [key: string]: unknown;
   };
 }): Promise<RollingSnapshotUpdateResult> {
@@ -133,6 +138,7 @@ export async function updateRollingSnapshots({
           beforeCreate,
           afterCreate,
           onStage: _onStage,
+          beforePrune: _beforePrune,
           ...createOpts
         } = opts ?? {};
         await beforeCreate?.();
@@ -156,6 +162,24 @@ export async function updateRollingSnapshots({
     ...tempRusticSnapshotsToDelete(allSnapshotNames),
   ];
   let deleteError: any = undefined;
+  if (toDelete.length > 0 && opts?.beforePrune) {
+    let allowed = true;
+    try {
+      allowed = await opts.beforePrune(toDelete);
+    } catch (err) {
+      // A failing gate must not stop retention for good.
+      logger.warn("rolling snapshot prune gate failed; pruning", { err });
+    }
+    if (!allowed) {
+      if (createError) throw createError;
+      return {
+        changed,
+        createdName,
+        disabled: false,
+        pruneDeferred: toDelete.length,
+      };
+    }
+  }
   await timed("prune", async () => {
     for (const name of toDelete) {
       try {

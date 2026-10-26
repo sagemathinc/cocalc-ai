@@ -202,3 +202,85 @@ describe("rolling btrfs snapshot retention", () => {
     expect(result.createdName).toBe(new Date(now).toISOString());
   });
 });
+
+describe("the rolling snapshot prune gate", () => {
+  const now = Date.parse("2026-04-22T12:00:00.000Z");
+  const day = 24 * 60 * 60 * 1000;
+  beforeEach(() => {
+    jest.resetModules();
+    delete process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+    jest.spyOn(Date, "now").mockReturnValue(now);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  // Two snapshots, one past retention: a prune has one name to delete.
+  const fixture = () => ({
+    subvolume: { name: "project-1" },
+    hasUnsavedChanges: jest.fn(async () => false),
+    readdir: jest.fn(async () => [
+      new Date(now - 10 * day).toISOString(),
+      new Date(now - 60_000).toISOString(),
+    ]),
+    create: jest.fn(async () => undefined),
+    delete: jest.fn(async () => undefined),
+  });
+  const counts = { frequent: 1, daily: 0, weekly: 0, monthly: 0 };
+
+  it("keeps expired snapshots when the gate declines, and says how many", async () => {
+    const { updateRollingSnapshots } = await import("./snapshots");
+    const snapshots = fixture();
+    const beforePrune = jest.fn(() => false);
+    const stages: string[] = [];
+    const result = await updateRollingSnapshots({
+      snapshots: snapshots as any,
+      counts,
+      opts: { beforePrune, onStage: (stage) => stages.push(stage) },
+    });
+    expect(beforePrune).toHaveBeenCalledWith([
+      new Date(now - 10 * day).toISOString(),
+    ]);
+    expect(snapshots.delete).not.toHaveBeenCalled();
+    expect(result.pruneDeferred).toBe(1);
+    expect(stages).not.toContain("prune");
+  });
+
+  it("prunes when the gate allows it, or fails", async () => {
+    const { updateRollingSnapshots } = await import("./snapshots");
+    for (const beforePrune of [
+      jest.fn(async () => true),
+      jest.fn(async () => {
+        throw new Error("gate broken");
+      }),
+    ]) {
+      const snapshots = fixture();
+      const result = await updateRollingSnapshots({
+        snapshots: snapshots as any,
+        counts,
+        opts: { beforePrune },
+      });
+      expect(snapshots.delete).toHaveBeenCalledTimes(1);
+      expect(result.pruneDeferred).toBeUndefined();
+    }
+  });
+
+  it("doesn't ask when there is nothing to delete, and never passes the gate to create", async () => {
+    const { updateRollingSnapshots } = await import("./snapshots");
+    const snapshots = {
+      ...fixture(),
+      hasUnsavedChanges: jest.fn(async () => true),
+      // inside the second daily bucket, so kept after the new snapshot
+      readdir: jest.fn(async () => [new Date(now - 1.5 * day).toISOString()]),
+    };
+    const beforePrune = jest.fn(() => false);
+    await updateRollingSnapshots({
+      snapshots: snapshots as any,
+      counts: { frequent: 0, daily: 2, weekly: 0, monthly: 0 },
+      opts: { beforePrune },
+    });
+    expect(snapshots.create).toHaveBeenCalledTimes(1);
+    expect((snapshots.create.mock.calls[0] as any)[1]).not.toHaveProperty(
+      "beforePrune",
+    );
+    expect(beforePrune).not.toHaveBeenCalled();
+  });
+});
