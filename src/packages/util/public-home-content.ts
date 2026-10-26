@@ -257,7 +257,9 @@ export function getPublicHomeContent(
     secondary: agent
       ? { href: "features/ai", label: "See how agents work" }
       : { href: "features", label: "Explore the tools" },
-    image: workspace || plus ? getPublicHomeHeroImage(config) : undefined,
+    // (Plus's screenshot shows the Agent controls: not when AI is disabled)
+    image:
+      workspace || (plus && agent) ? getPublicHomeHeroImage(config) : undefined,
     process: agent
       ? [
           {

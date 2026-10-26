@@ -259,6 +259,22 @@ describe("PublicHomeApp deployment choices", () => {
     expect(section).toHaveTextContent(/organization-operated/);
   });
 
+  it("shows Plus no screenshot of Agent controls when AI is disabled", () => {
+    render(
+      <PublicHomeApp
+        config={{
+          cocalc_product: "plus",
+          dns: "localhost",
+          is_authenticated: true,
+          openai_disabled: true,
+          site_name: "CoCalc",
+        }}
+      />,
+    );
+    expect(within(hero()).queryByRole("img")).toBeNull();
+    expect(document.body.innerHTML).not.toContain("project-notebook-20260916");
+  });
+
   it("keeps Plus local and avoids hosted agents, browser, collaborator and compute promises", () => {
     render(
       <PublicHomeApp
