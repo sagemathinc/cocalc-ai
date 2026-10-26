@@ -230,6 +230,12 @@ import {
   projectBackupReposAreSeedManaged,
 } from "@cocalc/server/project-backup";
 import {
+  PRUNE_PLAN_DEFAULT_TIMEOUT_MS,
+  PRUNE_PLAN_MAX_TIMEOUT_MS,
+  runAuditedProjectBackupRepoPrunePlan,
+  type ProjectBackupRepoPrunePlan,
+} from "@cocalc/server/project-backup/repo-prune-plan";
+import {
   getProjectBackupRepoHealth,
   projectBackupRepoHealthDetails,
   projectBackupRepoHealthLevel,
@@ -3108,6 +3114,68 @@ export async function handoffBillingAuthority({
   });
   return await handoffBillingAuthority0({
     timeout_ms: billingAuthorityLifecycleTimeout(timeout_ms),
+  });
+}
+
+// Read-only: `rustic --dry-run prune` (and optionally `repoinfo`) of one
+// shared backup repository, to size the prune backlog. Admin with a recent
+// second factor, no impersonation, checked here; the bay that owns the
+// repositories (the seed, in a multi-bay cluster) runs it and records it in
+// its central log.
+export async function getProjectBackupRepoPrunePlan({
+  account_id,
+  browser_id,
+  session_hash,
+  repo_id,
+  max_unused,
+  max_repack,
+  repoinfo,
+  timeout_minutes,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  repo_id?: string;
+  max_unused?: string | null;
+  max_repack?: string | null;
+  repoinfo?: boolean;
+  timeout_minutes?: number;
+} = {}): Promise<ProjectBackupRepoPrunePlan> {
+  await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+    allow_actor_impersonation: false,
+  });
+  const request = {
+    actor_account_id: account_id!,
+    source_bay_id: getConfiguredBayId(),
+    repo_id: `${repo_id ?? ""}`.trim(),
+    max_unused: max_unused ?? null,
+    max_repack: max_repack ?? null,
+    repoinfo: repoinfo === true,
+    timeout_ms:
+      timeout_minutes == null ? undefined : Number(timeout_minutes) * 60_000,
+  };
+  const cluster = getClusterConfig();
+  if (projectBackupReposAreSeedManaged() && cluster.seed_bay_id) {
+    // The seed owns the repositories: it runs the plan and records it.
+    return await getInterBayBridge()
+      .hostConnection(cluster.seed_bay_id, {
+        timeout_ms:
+          Math.min(
+            PRUNE_PLAN_MAX_TIMEOUT_MS,
+            request.timeout_ms ?? PRUNE_PLAN_DEFAULT_TIMEOUT_MS,
+          ) +
+          5 * 60_000,
+      })
+      .getSeedProjectBackupRepoPrunePlan(request);
+  }
+  return await runAuditedProjectBackupRepoPrunePlan({
+    ...request,
+    bay_id: getConfiguredBayId(),
   });
 }
 

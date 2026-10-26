@@ -88,6 +88,7 @@ export const system = {
   getRootfsQuotaReport: authFirstRequireAccount,
   getProjectRuntimeSlotReport: authFirstRequireAccount,
   getProjectBackupShards: authFirstRequireAccount,
+  getProjectBackupRepoPrunePlan: authFirstRequireAccountWithBoundSession,
   runBayBackup: authFirstRequireAccount,
   runBayRestore: authFirstRequireAccount,
   runBayRestoreTest: authFirstRequireAccount,
@@ -1633,6 +1634,58 @@ export interface ProjectBackupShardAdminRegionInfo {
   active_available_project_slots: number;
 }
 
+export interface ProjectBackupRepoPruneStatsEntry {
+  packs?: number;
+  blobs?: number;
+  // Rounded: rustic prints sizes in human units (e.g. "1.9 MiB").
+  bytes?: number;
+  percent?: number;
+}
+
+// A read-only `rustic --dry-run prune` of one shared backup repository.
+export interface ProjectBackupRepoPrunePlan {
+  repo_id: string;
+  region: string | null;
+  status: string | null;
+  bucket_name: string | null;
+  root: string | null;
+  dry_run: true;
+  options: { max_unused: string | null; max_repack: string | null };
+  started_at: string;
+  duration_ms: number;
+  // rustic's prune statistics, keyed by its labels in snake case:
+  // to_repack, this_removes, to_delete, unindexed (only when there are
+  // packs in no index), total_prune, remaining,
+  // unused_size_after_prune, packs_marked_for_deletion, complete_deletion,
+  // keep_marked, recover.
+  stats: Record<string, ProjectBackupRepoPruneStatsEntry>;
+  // rustic prunes in two phases: this run would only mark the packs it
+  // repacks or no longer needs ("eventually"); they are removed by a later
+  // prune after --keep-delete. It removes now only packs marked earlier.
+  estimate: {
+    // Bytes read back and rewritten to repack partially used packs.
+    repack_read_bytes: number | null;
+    repack_write_bytes: number | null;
+    // Bytes that stop being stored once the marked packs are removed.
+    eventually_freed_bytes: number | null;
+    packs_read: number | null;
+    packs_marked_for_deletion: number | null;
+    // Packs marked by an earlier prune that this run would remove.
+    removed_now_packs: number | null;
+    removed_now_bytes: number | null;
+    // Writes (one PUT per new pack, plus index files). Needs the average
+    // data pack size, so only with repoinfo.
+    class_a_ops: number | null;
+    // At least one GET per repacked pack.
+    class_b_ops_min: number | null;
+    note: string;
+  };
+  repoinfo?: unknown;
+  repoinfo_error?: string;
+  // The statistic lines as rustic printed them.
+  lines: string[];
+}
+
 export interface ProjectBackupShardAdminStatus {
   checked_at: string;
   active_shards_per_region: number;
@@ -2356,6 +2409,21 @@ export interface System {
     account_id?: string;
     region?: string | null;
   }) => Promise<ProjectBackupShardAdminStatus>;
+
+  // Read-only `rustic --dry-run prune` of one shared backup repository
+  // (admin, recent second factor). Runs on the repository-authoritative bay.
+  getProjectBackupRepoPrunePlan: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    repo_id?: string;
+    max_unused?: string | null;
+    max_repack?: string | null;
+    repoinfo?: boolean;
+    timeout_minutes?: number;
+    // Client-side RPC timeout (ms): the plan can run for its whole budget.
+    timeout?: number;
+  }) => Promise<ProjectBackupRepoPrunePlan>;
 
   runBayBackup: (opts?: {
     account_id?: string;
