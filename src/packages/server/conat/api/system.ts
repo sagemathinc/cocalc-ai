@@ -470,7 +470,11 @@ import { getClusterConfig } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
-import { getProjectArchiveLifecycleOperationalStatus } from "@cocalc/server/projects/archive-lifecycle-maintenance";
+import {
+  getProjectArchiveHostCoverage,
+  getProjectArchiveLifecycleOperationalStatus,
+  projectArchiveHostCoverageHealth,
+} from "@cocalc/server/projects/archive-lifecycle-maintenance";
 import { getConatAdmissionConfig } from "../admission-settings";
 import {
   recordServiceAdmissionDenialLocal,
@@ -2289,6 +2293,7 @@ export async function getLaunchHealth({
     billingExposureResult,
     kernelHardeningResult,
     backupRepoResult,
+    archiveHostCoverageResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2316,7 +2321,12 @@ export async function getLaunchHealth({
       await getProjectBackupRepoHealth({
         seed_managed: projectBackupReposAreSeedManaged(),
       }))(),
+    getProjectArchiveHostCoverage(),
   ]);
+  const archiveHostCoverage =
+    archiveHostCoverageResult.status === "fulfilled"
+      ? projectArchiveHostCoverageHealth(archiveHostCoverageResult.value)
+      : undefined;
 
   const settings =
     settingsResult.status === "fulfilled"
@@ -2677,6 +2687,18 @@ export async function getLaunchHealth({
         backupRepoResult.status === "rejected"
           ? [`${backupRepoResult.reason}`]
           : projectBackupRepoHealthDetails(backupRepoResult.value),
+    }),
+    launchHealthCheck({
+      id: "project-archive-hosts",
+      label: "Automatic archiving host coverage",
+      level: archiveHostCoverage?.level ?? "warning",
+      summary:
+        archiveHostCoverage?.summary ??
+        "Unable to read automatic archiving host coverage.",
+      details:
+        archiveHostCoverageResult.status === "rejected"
+          ? [`${archiveHostCoverageResult.reason}`]
+          : (archiveHostCoverage?.details ?? []),
     }),
     launchHealthCheck({
       id: "project-recovery",

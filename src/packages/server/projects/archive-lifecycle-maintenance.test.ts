@@ -62,6 +62,8 @@ jest.mock("./archive-lifecycle-schema", () => ({
 
 import {
   __test__,
+  getProjectArchiveHostCoverage,
+  projectArchiveHostCoverageHealth,
   runProjectArchiveLifecycleOnce,
 } from "./archive-lifecycle-maintenance";
 import type { ProjectArchiveLifecycleConfig } from "./archive-lifecycle-types";
@@ -421,5 +423,118 @@ describe("dispatching queued archive jobs", () => {
     expect(summary.rate_limited).toBeLessThanOrEqual(4);
     expect(summary.rate_limited).toBeGreaterThan(0);
     expect(mockClaimProjectArchiveLifecycleJob).not.toHaveBeenCalled();
+  });
+});
+
+describe("automatic archiving host coverage", () => {
+  const LISTED = "11111111-1111-4111-8111-111111111111";
+  beforeEach(() => {
+    query.mockReset();
+    mockGetServerSettings.mockReset();
+  });
+
+  function settings(overrides: Record<string, unknown> = {}) {
+    mockGetServerSettings.mockResolvedValue({
+      automatic_project_archiving_enabled: true,
+      automatic_project_archiving_report_only: false,
+      free_project_archive_after_days: 30,
+      automatic_project_archiving_canary_hosts: `${LISTED}, not-a-uuid, ${LISTED.replace("1", "A")}`,
+      ...overrides,
+    });
+  }
+
+  it("lists shared hosts with projects on disk that the canary list leaves out", async () => {
+    settings();
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "22222222-2222-4222-8222-222222222222",
+          name: "asia-3",
+          status: "running",
+          on_disk: "6039",
+          idle: "3267",
+        },
+      ],
+    });
+    const coverage = await getProjectArchiveHostCoverage();
+    const [sql, params] = query.mock.calls[0];
+    // shared pool hosts only, bay-scoped, archived projects excluded
+    expect(sql).toContain("h.tier IS NOT NULL");
+    expect(sql).toContain("<> 'deprovisioned'");
+    expect(sql).toContain("<> 'archived'");
+    expect(sql).toContain("NOT (h.id::text = ANY($2::text[]))");
+    // ids compared exactly, as the policy does: an uppercase id doesn't
+    // match a host there either; a non-id entry is ignored, not an error
+    expect(params).toEqual(["bay-0", [LISTED], 30]);
+    expect(coverage).toEqual({
+      applies: true,
+      free_after_days: 30,
+      missing: [
+        {
+          host_id: "22222222-2222-4222-8222-222222222222",
+          name: "asia-3",
+          status: "running",
+          on_disk: 6039,
+          idle: 3267,
+        },
+      ],
+    });
+    expect(projectArchiveHostCoverageHealth(coverage)).toEqual({
+      level: "warning",
+      summary:
+        "1 shared host is missing from automatic_project_archiving_canary_hosts, so its idle projects are never archived automatically.",
+      details: [
+        "asia-3 (22222222-2222-4222-8222-222222222222, running): 6039 projects on disk, 3267 idle over 30 days",
+      ],
+    });
+  });
+
+  it("applies on a bay that the bay canary list includes", async () => {
+    settings({ automatic_project_archiving_canary_bays: "bay-0,bay-other" });
+    query.mockResolvedValueOnce({ rows: [] });
+    const coverage = await getProjectArchiveHostCoverage();
+    expect(coverage.applies).toBe(true);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it("is healthy when every shared host is listed", async () => {
+    settings();
+    query.mockResolvedValueOnce({ rows: [] });
+    expect(
+      projectArchiveHostCoverageHealth(await getProjectArchiveHostCoverage())
+        .level,
+    ).toBe("healthy");
+  });
+
+  it.each([
+    [
+      // the list is kept (settings()), so only the reason tells them apart
+      "automatic archiving is off, even with a list",
+      { automatic_project_archiving_enabled: false },
+      "archiving_disabled",
+      "Automatic archiving is disabled, so there is no host coverage to check.",
+    ],
+    [
+      "a bay canary list leaves this bay out",
+      { automatic_project_archiving_canary_bays: "bay-other" },
+      "bay_not_in_canary",
+      "This bay is not in automatic_project_archiving_canary_bays, so automatic archiving does not run here.",
+    ],
+    [
+      "there is no canary host list",
+      { automatic_project_archiving_canary_hosts: "" },
+      "no_canary_list",
+      "Automatic archiving has no canary host list, so it covers every host.",
+    ],
+  ])("does not query when %s", async (_, overrides, reason, summary) => {
+    settings(overrides);
+    const coverage = await getProjectArchiveHostCoverage();
+    expect(query).not.toHaveBeenCalled();
+    expect(coverage).toMatchObject({ applies: false, not_applicable: reason });
+    expect(projectArchiveHostCoverageHealth(coverage)).toEqual({
+      level: "healthy",
+      summary,
+      details: [],
+    });
   });
 });

@@ -165,6 +165,129 @@ const SNAPSHOT_SELECT = `
     FROM projects p
     LEFT JOIN project_hosts h ON h.id = p.host_id`;
 
+export interface ProjectArchiveHostCoverage {
+  /** False when automatic archiving is off, or covers every host (no
+   * canary host list). */
+  applies: boolean;
+  /** Why the check doesn't apply, when it doesn't. */
+  not_applicable?:
+    | "archiving_disabled"
+    | "bay_not_in_canary"
+    | "no_canary_list";
+  free_after_days: number;
+  /** Shared pool hosts with projects on disk that the canary host list
+   * leaves out: automatic archiving never runs there. */
+  missing: Array<{
+    host_id: string;
+    name: string | null;
+    status: string | null;
+    on_disk: number;
+    idle: number;
+  }>;
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// A shared pool host (tier set) left out of a non-empty canary host list
+// never archives its idle projects; personal and dedicated hosts (no tier)
+// are left out on purpose and are not reported.
+export async function getProjectArchiveHostCoverage(): Promise<ProjectArchiveHostCoverage> {
+  const config = await loadProjectArchiveLifecycleConfig();
+  // runProjectArchiveLifecycleOnce selects nothing on a bay a bay canary
+  // list leaves out, so host coverage doesn't apply there either.
+  const bayExcluded =
+    config.canaryBays.length > 0 &&
+    !config.canaryBays.includes(getConfiguredBayId());
+  const notApplicable = !config.enabled
+    ? ("archiving_disabled" as const)
+    : bayExcluded
+      ? ("bay_not_in_canary" as const)
+      : config.canaryHosts.length === 0
+        ? ("no_canary_list" as const)
+        : undefined;
+  const coverage: ProjectArchiveHostCoverage = {
+    applies: notApplicable == null,
+    ...(notApplicable ? { not_applicable: notApplicable } : {}),
+    free_after_days: config.freeAfterDays,
+    missing: [],
+  };
+  if (!coverage.applies) return coverage;
+  // Exactly as the policy matches them (evaluateProjectArchiveEligibility):
+  // an id listed in another case is left out there too, so it is reported.
+  const listed = config.canaryHosts.filter((id) => UUID_PATTERN.test(id));
+  const { rows } = await getPool().query<{
+    host_id: string;
+    name: string | null;
+    status: string | null;
+    on_disk: string;
+    idle: string;
+  }>(
+    `SELECT h.id::text AS host_id, h.name, h.status,
+            COUNT(*)::text AS on_disk,
+            COUNT(*) FILTER (
+              WHERE COALESCE(p.last_edited, p.created) <=
+                    NOW() - make_interval(days => $3::int)
+            )::text AS idle
+       FROM project_hosts h
+       JOIN projects p ON p.host_id = h.id
+      WHERE h.deleted IS NULL
+        AND h.tier IS NOT NULL
+        AND COALESCE(h.status, '') <> 'deprovisioned'
+        AND COALESCE(NULLIF(BTRIM(h.bay_id), ''), $1) = $1
+        AND NOT (h.id::text = ANY($2::text[]))
+        AND p.deleted IS NULL
+        AND p.provisioned IS TRUE
+        AND COALESCE(p.owning_bay_id, $1) = $1
+        AND COALESCE(p.state ->> 'state', '') <> 'archived'
+      GROUP BY h.id, h.name, h.status
+      ORDER BY COUNT(*) DESC, h.id`,
+    [getConfiguredBayId(), listed, config.freeAfterDays],
+  );
+  coverage.missing = rows.map((row) => ({
+    host_id: row.host_id,
+    name: row.name,
+    status: row.status,
+    on_disk: Number(row.on_disk) || 0,
+    idle: Number(row.idle) || 0,
+  }));
+  return coverage;
+}
+
+export function projectArchiveHostCoverageHealth(
+  coverage: ProjectArchiveHostCoverage,
+): { level: "healthy" | "warning"; summary: string; details: string[] } {
+  if (!coverage.applies) {
+    return {
+      level: "healthy",
+      summary:
+        coverage.not_applicable === "archiving_disabled"
+          ? "Automatic archiving is disabled, so there is no host coverage to check."
+          : coverage.not_applicable === "bay_not_in_canary"
+            ? "This bay is not in automatic_project_archiving_canary_bays, so automatic archiving does not run here."
+            : "Automatic archiving has no canary host list, so it covers every host.",
+      details: [],
+    };
+  }
+  if (!coverage.missing.length) {
+    return {
+      level: "healthy",
+      summary:
+        "Every shared host with projects on disk is in automatic_project_archiving_canary_hosts.",
+      details: [],
+    };
+  }
+  const count = coverage.missing.length;
+  return {
+    level: "warning",
+    summary: `${count} shared host${count === 1 ? " is" : "s are"} missing from automatic_project_archiving_canary_hosts, so ${count === 1 ? "its" : "their"} idle projects are never archived automatically.`,
+    details: coverage.missing.map(
+      (host) =>
+        `${host.name ?? host.host_id} (${host.host_id}, ${host.status ?? "unknown"}): ${host.on_disk} projects on disk, ${host.idle} idle over ${coverage.free_after_days} days`,
+    ),
+  };
+}
+
 async function listCandidateSnapshots({
   config,
 }: {
