@@ -290,6 +290,26 @@ test("Refresh reads the file again and posts it to a new frame", async () => {
   expect(posted).toHaveBeenCalledTimes(1);
 });
 
+test("a Refresh that fails keeps the board shown, labelled as the board as last read", async () => {
+  const { frame } = await renderBoard();
+  readFile.mockRejectedValueOnce(Error("ENOENT: the file was deleted"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByText(/the file was deleted/);
+  // The same live board, not dropped; but never called the current file.
+  expect(screen.getByTitle(TITLE)).toBe(frame);
+  expect(frame.isConnected).toBe(true);
+  expect(screen.queryByText("Current saved board")).toBeNull();
+  expect(
+    screen.getByText(/Refresh failed: the board as last read/),
+  ).toBeInTheDocument();
+  // A Refresh that succeeds makes it current again.
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(screen.getByTitle(TITLE)).not.toBe(frame));
+  await screen.findByText("Current saved board");
+  expect(screen.queryByText(/Refresh failed/)).toBeNull();
+  expect(screen.queryByText(/the file was deleted/)).toBeNull();
+});
+
 test("lays the frame over the placeholder, clipped to its scrolling ancestors", async () => {
   const view = render(
     <div style={{ overflowY: "auto" }} data-testid="scroller">

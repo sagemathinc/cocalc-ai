@@ -97,6 +97,12 @@ export default function BoardArtifact({
   const [frameError, setFrameError] = useState("");
   const [shownElsewhere, setShownElsewhere] = useState(false);
   const [loading, setLoading] = useState(false);
+  // A Refresh failed while a board was shown: it stays, labelled as the board
+  // as last read, not the current saved file, until a read succeeds.
+  const [stale, setStale] = useState(false);
+  const frameRef = useRef(frame);
+  frameRef.current = frame;
+  useEffect(() => setStale(false), [frame]);
   // Bumped by Refresh. The first read happens only when no live frame
   // exists for this view.
   const [refresh, setRefresh] = useState(frame == null ? 1 : 0);
@@ -181,7 +187,10 @@ export default function BoardArtifact({
             return;
           }
         }
-        if (!cancelled) setError(String(err));
+        if (!cancelled) {
+          setError(String(err));
+          setStale(frameRef.current != null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -354,7 +363,11 @@ export default function BoardArtifact({
         Refresh
       </Button>
       <span role="status">
-        {loading ? "Loading current saved board..." : "Current saved board"}
+        {loading
+          ? "Loading current saved board..."
+          : stale
+            ? "Refresh failed: the board as last read, which may not be the current saved file"
+            : "Current saved board"}
       </span>
     </Space>
   );
@@ -372,8 +385,11 @@ export default function BoardArtifact({
       {toolbar}
       {historical && (
         <div role="note">
-          Published file reference; the board shown is the current saved file,
-          not a historical snapshot.
+          Published file reference; the board shown is{" "}
+          {stale
+            ? "the file as last read (Refresh failed)"
+            : "the current saved file"}
+          , not a historical snapshot.
         </div>
       )}
       {history && (
