@@ -165,4 +165,55 @@ describe("webapp configuration", () => {
       custom_openai: {},
     });
   });
+
+  it("a stored vanity theme only overrides whitelabeling keys", async () => {
+    mockGetServerSettings.mockResolvedValue({
+      all: { ollama_configuration: {}, custom_openai_configuration: {} },
+      pub: {
+        site_name: "CoCalc",
+        terms_of_service_url: "https://cocalc.example/terms",
+      },
+      version: {},
+      table: { on: jest.fn() },
+    });
+    mockGetLaunchpadCloudflaredStatus.mockResolvedValue({
+      enabled: false,
+      running: false,
+      hostname: null,
+      error: null,
+    });
+    mockGetPoolQuery.mockResolvedValue({
+      rows: [
+        {
+          theme: {
+            site_name: "Vanity",
+            help_email: "help@example.com",
+            // not whitelabeling keys:
+            terms_of_service_url: "https://attacker.example",
+            commercial: true,
+            anonymous_signup: true,
+          },
+        },
+      ],
+    });
+
+    const { WebappConfiguration, clear_cache } =
+      await import("./webapp-configuration");
+    clear_cache();
+    const config = new WebappConfiguration({
+      db: { _query: jest.fn() } as any,
+    });
+    const result: any = await config.get({
+      host: "vanity.cocalc.ai",
+      country: "XX",
+    } as any);
+
+    expect(result.configuration).toMatchObject({
+      site_name: "Vanity",
+      help_email: "help@example.com",
+      terms_of_service_url: "https://cocalc.example/terms",
+    });
+    expect(result.configuration.commercial).toBeUndefined();
+    expect(result.configuration.anonymous_signup).toBeUndefined();
+  });
 });
