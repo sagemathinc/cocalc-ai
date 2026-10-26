@@ -458,6 +458,63 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     expect((await stateOf(other)).notice_request_id).toBeNull();
   });
 
+  it("keeps a first check a first check when queuing its reconcile notice fails", async () => {
+    const { s, fetch } = fakeSagebrush();
+    const account_id = await insertAccount();
+    enabled.set(account_id, true);
+    s.retention.set(account_id, {
+      state: "readonly",
+      readonly_since: clock - DAY,
+      purge_after: clock + 89 * DAY,
+    });
+    let reads = 0;
+    const countingFetch = async (url: any, init: any) => {
+      if (`${url}`.includes("/sync-retention/")) reads += 1;
+      return fetch(url, init);
+    };
+    // The statement that records the state and queues the notice fails once
+    // (e.g. the process dies there).
+    let failNext = true;
+    const db = {
+      query: (sql: string, params?: any[]) => {
+        if (failNext && /SET sync_enabled = \$2/.test(sql)) {
+          failNext = false;
+          return Promise.reject(new Error("connection lost"));
+        }
+        return getPool().query(sql, params);
+      },
+    };
+    expect(
+      await checkSyncStates({
+        db: db as any,
+        config,
+        fetch: countingFetch as any,
+        getLimits,
+        now,
+      }),
+    ).toBe(0);
+    expect(reads).toBe(1);
+    let row = await stateOf(account_id);
+    expect(row.sync_enabled).toBeNull();
+    expect(row.notice_request_id).toBeNull();
+
+    // The next eligible check asks Sagebrush again and queues the notice.
+    clock += RECHECK_MS + 1;
+    expect(
+      await checkSyncStates({
+        db: db as any,
+        config,
+        fetch: countingFetch as any,
+        getLimits,
+        now,
+      }),
+    ).toBe(1);
+    expect(reads).toBe(2);
+    row = await stateOf(account_id);
+    expect(row.sync_enabled).toBe(true);
+    expect(row.notice_request_id).not.toBeNull();
+  });
+
   it("retries a first check when Sagebrush can't be read, without recording a baseline", async () => {
     const account_id = await insertAccount();
     enabled.set(account_id, true);
@@ -527,12 +584,24 @@ describeDb("Sagebrush sync notices and retention emails", () => {
       );
       return new Response("down", { status: 503 });
     };
+    // A day overdue, and a 401: either would alert, had the notice still
+    // been pending.
+    await getPool().query(
+      `UPDATE sagebrush_sync_states SET changed_at = changed_at - INTERVAL '2 days'
+        WHERE account_id = $1`,
+      [account_id],
+    );
+    const unauthorized = async (url: any, init: any) => {
+      await slowFailure(url, init);
+      return new Response("bad signature", { status: 401 });
+    };
     const result = await deliverDueSyncNotices({
       config,
-      fetch: slowFailure as any,
+      fetch: unauthorized as any,
       now,
     });
-    expect(result.failed).toBe(1);
+    expect(result).toEqual({ accepted: 0, failed: 0 });
+    expect(mockAlert).not.toHaveBeenCalled();
     const row = await stateOf(account_id);
     expect(row.notice_accepted_at).not.toBeNull();
     expect(row.notice_next_at).toBeNull();

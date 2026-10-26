@@ -525,6 +525,31 @@ async function recordSyncState({
       onPhase?.("db_error");
     }
   }
+  const request_id = randomUUID();
+  if (reconcile) {
+    // Record the state and queue its notice in one statement, still a first
+    // check (sync_enabled null): if it fails or the process dies, the next
+    // eligible check is a first check again and asks Sagebrush again.
+    await db.query(
+      `INSERT INTO sagebrush_sync_states(account_id, checked_at)
+       VALUES($1::UUID, to_timestamp($2::BIGINT / 1000.0))
+       ON CONFLICT (account_id) DO NOTHING`,
+      [account_id, t],
+    );
+    const { rows } = await db.query(
+      `UPDATE sagebrush_sync_states
+          SET ${changeAssignments(2, 3, 4, 5)},
+              checked_at = to_timestamp($3::BIGINT / 1000.0)
+        WHERE account_id = $1::UUID AND sync_enabled IS NULL
+        RETURNING account_id`,
+      [account_id, enabled, t, request_id, JSON.stringify(limits)],
+    );
+    if (rows.length > 0) {
+      logger.info("sync state reconciled with Sagebrush", { request_id });
+      return true;
+    }
+    // Another pass recorded this account meanwhile: handled as below.
+  }
   await db.query(
     `INSERT INTO sagebrush_sync_states(account_id, sync_enabled, checked_at)
      VALUES($1::UUID, $2, to_timestamp($3::BIGINT / 1000.0))
@@ -533,17 +558,12 @@ async function recordSyncState({
            sync_enabled = COALESCE(sagebrush_sync_states.sync_enabled, EXCLUDED.sync_enabled)`,
     [account_id, enabled, t],
   );
-  const request_id = randomUUID();
-  // A change, or (reconcile) a first check whose state Sagebrush hasn't
-  // applied, unless a notice was already queued for it.
   const { rows } = await db.query(
     `UPDATE sagebrush_sync_states
         SET ${changeAssignments(2, 3, 4, 5)}
-      WHERE account_id = $1::UUID
-        AND (sync_enabled IS DISTINCT FROM $2
-             OR ($6::BOOLEAN AND changed_at IS NULL AND notice_request_id IS NULL))
+      WHERE account_id = $1::UUID AND sync_enabled IS DISTINCT FROM $2
       RETURNING account_id`,
-    [account_id, enabled, t, request_id, JSON.stringify(limits), reconcile],
+    [account_id, enabled, t, request_id, JSON.stringify(limits)],
   );
   if (rows.length > 0) {
     logger.info("sync membership changed", { request_id, enabled });
@@ -680,17 +700,18 @@ export async function deliverDueSyncNotices({
         );
         continue;
       }
-      failed += 1;
       const failure = result.failure ?? new SyncFailure("internal_error");
       // Only while this notice is still unaccepted: another pass that
       // reclaimed it after the lease may have recorded its acceptance, and
-      // rescheduling it then would retry it forever.
-      await db.query(
+      // rescheduling it then would retry it forever. Then this attempt's
+      // failure is moot: not counted, logged or alerted.
+      const { rows: pending } = await db.query(
         `UPDATE sagebrush_sync_states
             SET notice_attempts = $3, last_error = $4,
                 notice_next_at = to_timestamp($5::BIGINT / 1000.0)
           WHERE account_id = $1::UUID AND notice_request_id = $2::UUID
-            AND notice_accepted_at IS NULL`,
+            AND notice_accepted_at IS NULL
+          RETURNING account_id`,
         [
           row.account_id,
           row.notice_request_id,
@@ -699,6 +720,8 @@ export async function deliverDueSyncNotices({
           now() + purgeBackoffMs(attempts),
         ],
       );
+      if (pending.length === 0) continue;
+      failed += 1;
       logger.warn("sync notice failed", {
         request_id: row.notice_request_id,
         attempts,
