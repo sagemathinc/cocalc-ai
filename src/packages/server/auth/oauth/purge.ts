@@ -185,7 +185,7 @@ type Fetch = typeof globalThis.fetch;
 // broken endpoint must not make the worker buffer an unbounded body.
 const MAX_RESPONSE_BYTES = 4096;
 
-async function readCapped(response: Response): Promise<string> {
+export async function readCapped(response: Response): Promise<string> {
   const reader = response.body?.getReader();
   if (reader == null) return "";
   const chunks: Uint8Array[] = [];

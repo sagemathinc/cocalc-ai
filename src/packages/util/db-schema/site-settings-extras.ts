@@ -366,6 +366,7 @@ export type SiteSettingsExtrasKeys =
   | "sagebrush_purge_url"
   | "sagebrush_purge_secret"
   | "sagebrush_purge_obligation"
+  | "sagebrush_limits_secret"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
   | "pay_as_you_go_section"
@@ -1058,6 +1059,10 @@ export const EXTRAS: SettingsExtras = {
   }),
   sagebrush_purge_secret: sagebrushSetting("Sagebrush Purge Key", {
     desc: "HMAC-SHA256 key shared with the Sagebrush Worker for signing purge requests. While it or the purge URL is blank, purge requests wait and admins are alerted.",
+    password: true,
+  }),
+  sagebrush_limits_secret: sagebrushSetting("Sagebrush Limits Key", {
+    desc: "HMAC-SHA256 key shared with the Sagebrush Worker (its LIMITS_KEY) for the sync notices: CoCalc tells Sagebrush when a membership starts or stops including sync, reads when synced data will be deleted, and emails the user. Blank turns these notices and emails off. See docs/sagebrush.md.",
     password: true,
   }),
   sagebrush_purge_obligation: sagebrushSetting("Sagebrush Purge Obligation", {

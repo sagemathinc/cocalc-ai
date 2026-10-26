@@ -4074,6 +4074,195 @@ describe("public share views for a share stored off its project's bay", () => {
   });
 });
 
+describe("Sagebrush retention emails across a rehome", () => {
+  // A retention cycle is kept on the bay that started it; a rehome leaves it
+  // there (docs/sagebrush.md). That bay carries it on, asking the account's
+  // new home bay for its state, and the new home's first check tells
+  // Sagebrush what it already holds.
+  const DAY = 24 * 60 * 60_000;
+  let sage;
+  let admin;
+
+  // A fake Sagebrush and membership, for one snippet: the data is read-only,
+  // to be deleted in 90 days, and sync is not in the membership.
+  const fakes = `
+    const purge_after = Date.now() + 90 * ${DAY};
+    const notices = [];
+    const fetch = async (url, init) => {
+      const p = new URL(String(url)).pathname;
+      if (p === "/api/admin/limits") {
+        notices.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({ applied: true }), { status: 200 });
+      }
+      const m = p.match(/^\\/api\\/admin\\/sync-retention\\/(.+)$/);
+      if (m) {
+        return new Response(JSON.stringify({ account_id: m[1], state: "readonly",
+          readonly_since: Date.now() - ${DAY}, purge_after, now: Date.now() }), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+    const limits = { tier: "free", storage_bytes: 1000, max_file_bytes: 100,
+      private_links: false, sync: { enabled: false, version_bytes: 10,
+      read_bytes_per_day: 10, retention_days: 90 } };
+    const getLimits = async () => limits;
+    const config = { origin: "https://sagebrush.test", secret: "multibay" };
+    const retention = require("@cocalc/server/sagebrush/sync-retention");`;
+
+  it("rehomes an account with a retention email due on its old home bay", async () => {
+    admin = await createAccount(cluster, { home_bay_id: SEED, name: "wren" });
+    sage = await createAccount(cluster, { home_bay_id: SEED, name: "sage" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);
+       // The membership ended and its notice was accepted: the first email is due.
+       await getPool().query(
+         \`INSERT INTO sagebrush_sync_states(account_id, sync_enabled, checked_at,
+            changed_at, notice_accepted_at, email_stage, email_cycle, email_next_at,
+            email_due_at, email_attempts)
+          VALUES($1, false, NOW(), NOW(), NOW(), 'ended', gen_random_uuid(),
+            NOW() - interval '1 minute', NOW(), 0)\`,
+         [${JSON.stringify(sage.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    // An admin's rehome needs a second factor: this session counts as one,
+    // as a dev CLI sign-in does outside production.
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         \`UPDATE account_auth_sessions
+             SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"dev_cli_fresh_auth": true}'::jsonb
+           WHERE account_id = $1\`,
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    const rehomed = await admin.client.call("system.rehomeAccount", {
+      user_account_id: sage.account_id,
+      dest_bay_id: ATTACHED,
+      reason: "multibay sagebrush retention",
+    });
+    assert.equal(rehomed.status, "rehomed");
+    assert.equal(rehomed.home_bay_id, ATTACHED);
+    // The old home's own row now says the account moved.
+    assert.equal(
+      await runInBay(
+        cluster,
+        SEED,
+        `const { getOAuthAccountStateLocal } = require("@cocalc/server/auth/oauth/account-state");
+         return (await getOAuthAccountStateLocal({ account_id: ${JSON.stringify(sage.account_id)} })).state;`,
+      ),
+      "moved",
+    );
+  });
+
+  it("sends the due email from the old home bay, asking the new home for the account", async () => {
+    const r = await runInBay(
+      cluster,
+      SEED,
+      `${fakes}
+       const sent = [];
+       const send = async (message) => { sent.push(message.to); };
+       // The default accountState: routed through the directory to the new home.
+       const counts = await retention.runDueRetentionSteps({ config, fetch, getLimits, send });
+       const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT email_stage FROM sagebrush_sync_states WHERE account_id=$1",
+         [${JSON.stringify(sage.account_id)}]);
+       return { counts, sent, stage: rows[0]?.email_stage };`,
+      { timeoutMs: 120_000 },
+    );
+    assert.deepEqual(r.counts, {
+      sent: 1,
+      cancelled: 0,
+      failed: 0,
+      stale: 0,
+      unresolved: 0,
+    });
+    assert.deepEqual(r.sent, [sage.email_address]);
+    assert.equal(r.stage, "before");
+  });
+
+  it("drops a notice left on the old home bay once the new home's membership no longer matches", async () => {
+    // A notice ending sync, still pending on the seed when the account moves
+    // and renews on its new home.
+    const rowan = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "rowan",
+    });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         \`INSERT INTO sagebrush_sync_states(account_id, sync_enabled, checked_at,
+            changed_at, notice_request_id, notice_issued, notice_limits,
+            notice_attempts, notice_next_at)
+          VALUES($1, false, NOW(), NOW(), gen_random_uuid(), $2, '{}'::jsonb, 0,
+            NOW() + interval '1 hour')\`,
+         [${JSON.stringify(rowan.account_id)}, Date.now()]);`,
+    );
+    const rehomed = await admin.client.call("system.rehomeAccount", {
+      user_account_id: rowan.account_id,
+      dest_bay_id: ATTACHED,
+      reason: "multibay sagebrush retention",
+    });
+    assert.equal(rehomed.home_bay_id, ATTACHED);
+    const r = await runInBay(
+      cluster,
+      SEED,
+      `${fakes}
+       const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE sagebrush_sync_states SET notice_next_at = NOW() - interval '1 minute' WHERE account_id=$1",
+         [${JSON.stringify(rowan.account_id)}]);
+       // Renewed on the new home (the default accountState asks it).
+       limits.sync.enabled = true;
+       const delivered = await retention.deliverDueSyncNotices({ config, fetch, getLimits });
+       const { rows } = await getPool().query(
+         "SELECT notice_next_at, notice_accepted_at, last_error FROM sagebrush_sync_states WHERE account_id=$1",
+         [${JSON.stringify(rowan.account_id)}]);
+       return { delivered, notices: notices.length, row: rows[0] };`,
+      { timeoutMs: 120_000 },
+    );
+    assert.deepEqual(r.delivered, { accepted: 0, failed: 0 });
+    assert.equal(r.notices, 0);
+    assert.equal(r.row.notice_next_at, null);
+    assert.equal(r.row.notice_accepted_at, null);
+    assert.equal(r.row.last_error, "notice_superseded");
+  });
+
+  it("tells Sagebrush on the new home's first check that sync is back", async () => {
+    const r = await runInBay(
+      cluster,
+      ATTACHED,
+      `${fakes}
+       const getPool = require("@cocalc/database/pool").default;
+       // Approvals stay on the old home too: signing in again records one here.
+       await getPool().query(
+         \`INSERT INTO oauth_client_approvals(account_id, client_id, first_approved, last_approved)
+          VALUES($1, 'sagebrush', NOW(), NOW())\`,
+         [${JSON.stringify(sage.account_id)}]);
+       // Renewed: the new home's first check sees sync on, while Sagebrush
+       // still holds the data read-only.
+       limits.sync.enabled = true;
+       await retention.checkSyncStates({ config, fetch, getLimits });
+       const delivered = await retention.deliverDueSyncNotices({ config, fetch, getLimits });
+       const { rows } = await getPool().query(
+         "SELECT sync_enabled, notice_accepted_at IS NOT NULL AS accepted, notice_next_at, last_error FROM sagebrush_sync_states WHERE account_id=$1",
+         [${JSON.stringify(sage.account_id)}]);
+       return { delivered, notices: notices.map((n) => [n.account_id, n.limits.sync.enabled]), row: rows[0] };`,
+      { timeoutMs: 120_000 },
+    );
+    assert.deepEqual(r.notices, [[sage.account_id, true]], JSON.stringify(r));
+    assert.equal(r.row.sync_enabled, true);
+    assert.equal(r.row.accepted, true);
+  });
+});
+
 describe("bay registry registration is bound to the calling bay", () => {
   // The attached bay, with its real fabric credential, tries to rewrite the
   // seed's registry entry. Both hops must refuse: the registry (bay_id must
