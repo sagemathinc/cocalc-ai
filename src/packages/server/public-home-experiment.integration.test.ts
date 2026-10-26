@@ -238,9 +238,43 @@ describe("Thompson sampling helpers", () => {
       0.7, 0.1, 0.1, 0.1,
     ]);
     expect(suggestedWeights([0.5, 0.5], 0.1)).toEqual([0.5, 0.5]);
-    expect(suggestedWeights([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0.1)).toEqual(
-      Array(11).fill(0.09),
-    );
+    // Too many arms for the floor: equal shares, still summing to 1.
+    expect(suggestedWeights([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0.1)).toEqual([
+      0.1, 0.09, 0.09, 0.09, 0.09, 0.09, 0.09, 0.09, 0.09, 0.09, 0.09,
+    ]);
     expect(suggestedWeights([])).toEqual([]);
+  });
+
+  it("rounds to hundredths that sum to exactly 1", () => {
+    const cents = (w: number[]) =>
+      Math.round(w.reduce((a, b) => a + b, 0) * 100);
+    expect(suggestedWeights([0.335, 0.335, 0.33])).toEqual([0.34, 0.33, 0.33]);
+    expect(cents(suggestedWeights([1 / 3, 1 / 3, 1 / 3]))).toBe(100);
+    // Real no-data runs with 3 and 4 arms.
+    for (const n of [3, 4]) {
+      for (let seed = 1; seed <= 20; seed++) {
+        const p = probabilityBest(
+          Array.from({ length: n }, () => ({ views: 0, successes: 0 })),
+          seeded(seed),
+          2000,
+        );
+        const w = suggestedWeights(p);
+        expect(cents(w)).toBe(100);
+        for (const x of w) {
+          expect(x).toBeGreaterThanOrEqual(0.1);
+          expect(Math.round(x * 100)).toBeCloseTo(x * 100, 9);
+        }
+      }
+    }
+    // Arbitrary inputs, 2 to 6 arms.
+    const random = seeded(11);
+    for (let k = 0; k < 500; k++) {
+      const n = 2 + Math.floor(random() * 5);
+      const raw = Array.from({ length: n }, () => random());
+      const total = raw.reduce((a, b) => a + b, 0);
+      const w = suggestedWeights(raw.map((x) => x / total));
+      expect(cents(w)).toBe(100);
+      for (const x of w) expect(x).toBeGreaterThanOrEqual(0.1);
+    }
   });
 });

@@ -235,7 +235,7 @@ export function probabilityBest(
 export function suggestedWeights(p: number[], floor = FLOOR): number[] {
   const n = p.length;
   if (n === 0) return [];
-  if (floor * n >= 1) return p.map(() => Math.round((1 / n) * 100) / 100);
+  if (floor * n >= 1) return toCents(p.map(() => 1 / n));
   const floored = new Set<number>();
   for (;;) {
     const free = p.map((_, i) => i).filter((i) => !floored.has(i));
@@ -245,12 +245,27 @@ export function suggestedWeights(p: number[], floor = FLOOR): number[] {
       total > 0 ? (mass * Math.max(p[i], 0)) / total : mass / free.length;
     const below = free.filter((i) => share(i) < floor);
     if (below.length === 0) {
-      return p.map(
-        (_, i) => Math.round((floored.has(i) ? floor : share(i)) * 100) / 100,
-      );
+      return toCents(p.map((_, i) => (floored.has(i) ? floor : share(i))));
     }
     for (const i of below) floored.add(i);
   }
+}
+
+/** Round shares that sum to 1 to hundredths that still sum to exactly 1
+ * (largest remainder), so a suggestion can be used as the setting as is. */
+function toCents(shares: number[]): number[] {
+  const scaled = shares.map((share) => share * 100);
+  // The small epsilon keeps 0.1 * 100 = 9.999... from rounding down.
+  const cents = scaled.map((x) => Math.floor(x + 1e-9));
+  let left = 100 - cents.reduce((sum, c) => sum + c, 0);
+  const order = scaled
+    .map((x, i) => ({ i, rest: x - cents[i] }))
+    .sort((a, b) => b.rest - a.rest || a.i - b.i);
+  for (let k = 0; left > 0 && order.length > 0; k = (k + 1) % order.length) {
+    cents[order[k].i] += 1;
+    left -= 1;
+  }
+  return cents.map((c) => c / 100);
 }
 
 // Beta(a, b) from two Gamma draws (Marsaglia and Tsang, a, b >= 1 here).
