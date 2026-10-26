@@ -207,8 +207,12 @@ export async function purgeHistory({
       });
       await syncstrings.save();
     }
+    // A history still being counted reports COUNT_PROBE_RECORDS + 1, meaning
+    // "more than COUNT_PROBE_RECORDS": pass on that lower bound, marked as one.
+    const inexact = result.reset && result.countExact === false;
     return {
-      deleted: result.reset ? result.count : 0,
+      deleted: result.reset ? (inexact ? result.count - 1 : result.count) : 0,
+      ...(inexact ? { deletedExact: false as const } : {}),
       history_epoch: result.history_epoch,
       reset: result.reset,
     };
