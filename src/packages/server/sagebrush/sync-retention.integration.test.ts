@@ -611,6 +611,93 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     expect(s.notices).toHaveLength(0);
   });
 
+  // A Sagebrush that applies a notice only if it is newer than the one it
+  // holds, as the Worker does.
+  function orderingSagebrush(held: { issued: number; enabled: boolean }) {
+    const s = { held, notices: [] as any[] };
+    const fetch = async (url: any, init: any) => {
+      const path = new URL(`${url}`).pathname;
+      if (path === "/api/admin/limits") {
+        const n = JSON.parse(init.body);
+        s.notices.push(n);
+        const applied = n.issued > s.held.issued;
+        if (applied) {
+          s.held = { issued: n.issued, enabled: n.limits.sync.enabled };
+        }
+        return new Response(JSON.stringify({ applied }), { status: 200 });
+      }
+      const m = path.match(/^\/api\/admin\/sync-retention\/(.+)$/);
+      if (m) {
+        return new Response(
+          JSON.stringify({
+            account_id: m[1],
+            state: s.held.enabled ? "active" : "readonly",
+            readonly_since: s.held.enabled ? null : s.held.issued,
+            purge_after: s.held.enabled ? null : s.held.issued + 90 * DAY,
+            now: Date.now(),
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    };
+    return { s, fetch: fetch as any };
+  }
+
+  it("sends a notice outranked by a skewed stamp again, until Sagebrush applies it", async () => {
+    // The old home bay ended sync, its clock 2 minutes ahead of this one's;
+    // the account renewed and signed in here soon after its rehome.
+    const { s, fetch } = orderingSagebrush({
+      issued: clock + 2 * 60_000,
+      enabled: false,
+    });
+    const account_id = await insertAccount();
+    enabled.set(account_id, true);
+    await checkSyncStates({ config, fetch, getLimits, now });
+    // The reconcile notice's stamp is earlier than the one Sagebrush holds.
+    expect(await deliverDueSyncNotices({ config, fetch, now })).toEqual({
+      accepted: 0,
+      failed: 1,
+    });
+    let row = await stateOf(account_id);
+    expect(s.held.enabled).toBe(false);
+    expect(row.notice_accepted_at).toBeNull();
+    expect(row.last_error).toBe("notice_outranked 200");
+    expect(Number(row.notice_issued)).toBe(
+      new Date(row.notice_next_at).valueOf(),
+    );
+
+    for (let i = 0; i < 10 && row.notice_accepted_at == null; i++) {
+      clock = new Date(row.notice_next_at).valueOf();
+      await deliverDueSyncNotices({ config, fetch, now });
+      row = await stateOf(account_id);
+    }
+    expect(row.notice_accepted_at).not.toBeNull();
+    expect(s.held.enabled).toBe(true);
+    expect(mockAlert).not.toHaveBeenCalled();
+  });
+
+  it("counts a notice Sagebrush didn't apply as delivered when its state is the notice's", async () => {
+    const { s, fetch } = orderingSagebrush({
+      issued: clock + 60 * 60_000,
+      enabled: true,
+    });
+    const account_id = await insertAccount();
+    enabled.set(account_id, true);
+    await pass(fetch);
+    enabled.set(account_id, false);
+    clock += RECHECK_MS + 1;
+    await checkSyncStates({ getLimits, now });
+    // A newer renewal is held: this ending is stale, but Sagebrush is
+    // read-only already, so it stands.
+    s.held.enabled = false;
+    expect(await deliverDueSyncNotices({ config, fetch, now })).toEqual({
+      accepted: 1,
+      failed: 0,
+    });
+    expect((await stateOf(account_id)).email_stage).toBe("ended");
+  });
+
   it("acts only for accounts whose home bay this is", async () => {
     const { s, fetch } = fakeSagebrush();
     const account_id = await insertAccount();

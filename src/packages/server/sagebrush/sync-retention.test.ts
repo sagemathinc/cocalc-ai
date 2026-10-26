@@ -98,7 +98,7 @@ describe("sendSyncNotice", () => {
     });
     expect(
       await sendSyncNotice({ config, notice, fetch: fetch as any }),
-    ).toEqual({ accepted: true, status: 200 });
+    ).toEqual({ accepted: true, applied: true, status: 200 });
   });
 
   it("counts a notice not applied (older, or no synced data) as delivered", async () => {

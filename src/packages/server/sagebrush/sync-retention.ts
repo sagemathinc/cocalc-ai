@@ -113,6 +113,8 @@ export type SyncFailureCode =
   // an HTTP status other than the expected ones
   | "http_error"
   | "malformed_response"
+  // Sagebrush holds a newer notice, yet its state isn't this notice's
+  | "notice_outranked"
   | "account_state_unavailable"
   // the account's membership couldn't be resolved
   | "entitlement_unknown"
@@ -205,7 +207,12 @@ export async function sendSyncNotice({
   };
   fetch?: Fetch;
   now?: () => number;
-}): Promise<{ accepted?: true; status?: number; failure?: SyncFailure }> {
+}): Promise<{
+  accepted?: true;
+  applied?: boolean;
+  status?: number;
+  failure?: SyncFailure;
+}> {
   const body = JSON.stringify(notice);
   const r = await signedRequest({
     config,
@@ -226,7 +233,9 @@ export async function sendSyncNotice({
   try {
     applied = JSON.parse(r.text)?.applied;
   } catch {}
-  if (typeof applied === "boolean") return { accepted: true, status: 200 };
+  if (typeof applied === "boolean") {
+    return { accepted: true, applied, status: 200 };
+  }
   return { status: 200, failure: new SyncFailure("malformed_response", 200) };
 }
 
@@ -619,6 +628,34 @@ async function alertIfDue({
   }
 }
 
+/** Sagebrush didn't apply a notice: it holds a newer one. That is right if
+ * this one is stale, but after a rehome the other bay's clock may have stamped
+ * an earlier change later than this one, and then Sagebrush would keep the
+ * earlier state for good. So the notice counts as delivered only if
+ * Sagebrush's state is the notice's (or it holds no synced data). */
+async function checkUnappliedNotice({
+  config,
+  row,
+  fetch,
+  now,
+}: {
+  config: SyncNoticeConfig;
+  row: NoticeRow;
+  fetch: Fetch;
+  now: () => number;
+}): Promise<{ accepted?: true; status?: number; failure?: SyncFailure }> {
+  const r = await readSyncRetention({
+    config,
+    account_id: row.account_id,
+    fetch,
+    now,
+  });
+  if (r.synced && (r.state === "readonly") === row.sync_enabled) {
+    return { status: 200, failure: new SyncFailure("notice_outranked", 200) };
+  }
+  return { accepted: true, status: 200 };
+}
+
 type NoticeRow = {
   account_id: string;
   sync_enabled: boolean;
@@ -670,11 +707,17 @@ export async function deliverDueSyncNotices({
       },
       fetch,
       now,
-    }).catch((err) => ({
-      accepted: undefined,
-      status: undefined,
-      failure: asFailure(err, "internal_error"),
-    }));
+    })
+      .then((r) =>
+        r.accepted && r.applied === false
+          ? checkUnappliedNotice({ config, row, fetch, now })
+          : r,
+      )
+      .catch((err) => ({
+        accepted: undefined,
+        status: undefined,
+        failure: asFailure(err, "internal_error"),
+      }));
     const attempts = row.notice_attempts + 1;
     try {
       if (result.accepted) {
@@ -705,10 +748,14 @@ export async function deliverDueSyncNotices({
       // reclaimed it after the lease may have recorded its acceptance, and
       // rescheduling it then would retry it forever. Then this attempt's
       // failure is moot: not counted, logged or alerted.
+      // An outranked notice is sent again issued at its retry time, so it
+      // overtakes a skewed stamp once the clocks' difference has passed.
       const { rows: pending } = await db.query(
         `UPDATE sagebrush_sync_states
             SET notice_attempts = $3, last_error = $4,
-                notice_next_at = to_timestamp($5::BIGINT / 1000.0)
+                notice_next_at = to_timestamp($5::BIGINT / 1000.0),
+                notice_issued = CASE WHEN $6::BOOLEAN
+                  THEN GREATEST(notice_issued + 1, $5::BIGINT) ELSE notice_issued END
           WHERE account_id = $1::UUID AND notice_request_id = $2::UUID
             AND notice_accepted_at IS NULL
           RETURNING account_id`,
@@ -718,6 +765,7 @@ export async function deliverDueSyncNotices({
           attempts,
           failure.message,
           now() + purgeBackoffMs(attempts),
+          failure.code === "notice_outranked",
         ],
       );
       if (pending.length === 0) continue;

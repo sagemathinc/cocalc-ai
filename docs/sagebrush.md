@@ -318,7 +318,13 @@ Content-Type: application/json
 
 - The Worker answers `200 {"applied": <boolean>}`. It applies a notice only if
   `issued` is newer than what it holds, and ignores it for an account that never
-  synced. Either answer counts as delivered.
+  synced. `true` counts as delivered. After `false`, CoCalc reads the sync
+  retention (below): the notice counts as delivered if Sagebrush holds no
+  synced data or its state is already the notice's (read-only exactly when the
+  notice ends sync). Otherwise the notice was outranked by one stamped later,
+  which after a rehome can be an earlier change stamped by a bay whose clock
+  is ahead. Then it is retried issued at its retry time, so it overtakes that
+  stamp once the clocks' difference has passed.
 - Anything else is retried, with the same `request_id` and `issued`, with backoff
   from 1 minute to 6 hours.
 - Admins are alerted immediately on a 401, which probably means the keys
