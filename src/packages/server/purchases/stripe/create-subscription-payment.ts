@@ -102,21 +102,37 @@ export async function hasOpenPaygPurchases({
   return rows[0]?.open === true;
 }
 
-// How a renewal of this amount would be paid if it ran now, read only: below
-// the minimum or covered by the spendable balance (with balance-funded renewals
-// on), it is paid without a card payment, so the business tax ID check does
-// not run; otherwise ("card") it is charged through Stripe. This mirrors the
-// payNow cases of prepareRenewalFunding below; keep them in step.
+// How a renewal of this amount would be paid if it ran now, read only. With a
+// Stripe payment already bound to the open attempt ("open-payment"),
+// createSubscriptionPayment reuses it, so the business tax ID check does not
+// run again. Below the minimum, or covered by the spendable balance (with
+// balance-funded renewals on, and no funding split saved on the attempt), it
+// is paid without a card payment, so the check does not run either. Otherwise
+// ("card") it is charged through Stripe. This mirrors createSubscriptionPayment
+// and prepareRenewalFunding below; keep them in step.
 export async function predictRenewalFunding({
   account_id,
   amount,
+  attempt,
 }: {
   account_id: string;
   amount: MoneyValue;
-}): Promise<"below-minimum" | "balance" | "card"> {
+  // The open renewal attempt, if any.
+  attempt?: {
+    payment_intent_id?: string | null;
+    balance_applied?: MoneyValue | null;
+  };
+}): Promise<"open-payment" | "below-minimum" | "balance" | "card"> {
+  if (attempt?.payment_intent_id) {
+    return "open-payment";
+  }
   const amountValue = toDecimal(amount);
   if (amountValue.lte(MIN_SUBSCRIPTION_AMOUNT)) {
     return "below-minimum";
+  }
+  if (attempt?.balance_applied != null) {
+    // A saved split is never changed: the card pays the rest.
+    return "card";
   }
   if (await useBalanceTowardSubscriptions(account_id)) {
     const balance = toDecimal(

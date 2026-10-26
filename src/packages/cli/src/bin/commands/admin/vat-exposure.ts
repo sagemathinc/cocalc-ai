@@ -88,7 +88,7 @@ export function formatVatExposureReport(report: VatExposureReport): string {
   const lines = [
     `Active memberships checked: ${report.checked}`,
     `Would be refused at renewal: ${report.affected_count}`,
-    `Would be refused if charged, but paid now without a card (balance or below minimum): ${report.paid_without_check_count}`,
+    `Would be refused if checked, but the next renewal skips the check (open payment, balance or below minimum): ${report.paid_without_check_count}`,
     `Stripe errors: ${report.stripe_error_count}`,
     `Without a Stripe customer (not refused): ${report.no_stripe_customer}`,
   ];
@@ -110,7 +110,7 @@ export function formatVatExposureReport(report: VatExposureReport): string {
   if (report.paid_without_check.length > 0) {
     lines.push(
       "",
-      "Paid now without a card (refused if charged):",
+      "Next renewal skips the check (refused if checked):",
       "account_id\tsubscription_id\tnext_renewal\treason\tcountry\tfunding",
     );
     for (const row of report.paid_without_check) {

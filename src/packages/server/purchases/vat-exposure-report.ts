@@ -9,8 +9,9 @@ at their next renewal, so admins can contact those customers before then.
 
 Like a renewal, it finds the account's Stripe customer (stored, or else by
 its account_id metadata, as getStripeCustomerId recovers it), predicts how the
-renewal would be paid (predictRenewalFunding: below the minimum or covered by
-the balance means no card payment, so no check) and decides with
+renewal would be paid (predictRenewalFunding, with the open attempt's saved
+payment and funding split: an already bound Stripe payment, or no card payment
+at all, means no check) and decides with
 decideBusinessTaxIdForPurchase, the same function the check itself uses.
 
 Read only: it records no refusals, sends no notices, stores no recovered
@@ -49,6 +50,9 @@ interface Candidate {
   current_period_end: Date;
   amount: string;
   stripe_customer_id: string | null;
+  // The open renewal attempt's funding state, if there is one.
+  payment_intent_id: string | null;
+  balance_applied: string | null;
 }
 
 // Stops waiting after ms; the read itself may still finish in the background.
@@ -83,7 +87,7 @@ async function checkCandidate(
   candidate: Candidate,
 ): Promise<
   | {
-      funding: "below-minimum" | "balance" | "card";
+      funding: "open-payment" | "below-minimum" | "balance" | "card";
       row?: VatExposureRow;
     }
   | undefined
@@ -99,6 +103,7 @@ async function checkCandidate(
   const funding = await predictRenewalFunding({
     account_id: candidate.account_id,
     amount: candidate.amount,
+    attempt: candidate,
   });
   const { refusal } = await decideBusinessTaxIdForPurchase({
     stripe,
@@ -141,7 +146,8 @@ export async function vatExposureReportPage({
   // Active personal memberships, the ones the renewal worker renews.
   const { rows: candidates } = await getPool().query<Candidate>(
     `SELECT s.id AS subscription_id, s.account_id, s.current_period_end,
-            COALESCE(a.amount, s.cost)::text AS amount, b.stripe_customer_id
+            COALESCE(a.amount, s.cost)::text AS amount, b.stripe_customer_id,
+            a.payment_intent_id, a.balance_applied::text AS balance_applied
        FROM subscriptions s
        LEFT JOIN ${billingAccountsTable()} b ON b.account_id=s.account_id
        LEFT JOIN subscription_renewal_attempts a

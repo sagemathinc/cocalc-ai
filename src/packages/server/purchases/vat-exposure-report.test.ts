@@ -219,6 +219,42 @@ describe("VAT exposure report", () => {
     ]);
   });
 
+  it("follows the open attempt's saved funding split and bound payment", async () => {
+    await getPool().query("DELETE FROM subscriptions");
+    // a split was saved on the attempt, then the account was topped up: the
+    // retry keeps the split and charges the card, so the check runs
+    const split = await membership("cus_de", 10);
+    await createCredit({ account_id: split.account_id, amount: 20 });
+    // a Stripe payment is already bound: the retry reuses it, no check
+    const bound = await membership("cus_de", 10);
+    for (const [subscription_id, sql] of [
+      [split.subscription_id, "balance_applied=0"],
+      [bound.subscription_id, "payment_intent_id='pi_bound'"],
+    ] as const) {
+      const { rowCount } = await getPool().query(
+        `UPDATE subscription_renewal_attempts SET ${sql}
+          WHERE subscription_id=$1 AND state IN ('scheduled','processing')`,
+        [subscription_id],
+      );
+      expect(rowCount).toBe(1);
+    }
+    const stripe = fakeStripe({
+      cus_de: { address: { country: "DE" }, tax_ids: { data: [] } },
+    });
+
+    const page = await vatExposureReportPage({
+      stripe,
+      customer_interval_ms: 0,
+    });
+
+    expect(page.affected.map((row) => row.subscription_id)).toEqual([
+      split.subscription_id,
+    ]);
+    expect(
+      page.paid_without_check.map((row) => [row.subscription_id, row.funding]),
+    ).toEqual([[bound.subscription_id, "open-payment"]]);
+  });
+
   it("skips canceled subscriptions and continues from a cursor", async () => {
     await getPool().query("DELETE FROM subscriptions");
     const first = await membership("cus_a");

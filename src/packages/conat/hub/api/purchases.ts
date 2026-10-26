@@ -79,11 +79,12 @@ export interface VatExposureReportPage {
   no_stripe_customer: number;
   // Would be refused when the renewal is charged through Stripe.
   affected: VatExposureRow[];
-  // Would be refused if charged, but right now the renewal would be paid
-  // without a card payment (below the minimum, or covered by the account
-  // balance), so the check would not run. That changes if the balance does.
+  // Would be refused if checked, but right now the renewal would not run the
+  // check: a Stripe payment is already bound to it ("open-payment"), or it
+  // would be paid without a card payment ("below-minimum", or "balance":
+  // covered by the account balance, which can change).
   paid_without_check: (VatExposureRow & {
-    funding: "below-minimum" | "balance";
+    funding: "open-payment" | "below-minimum" | "balance";
   })[];
   stripe_errors: {
     account_id: string;
