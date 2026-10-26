@@ -417,6 +417,131 @@ describeDb("Sagebrush sync notices and retention emails", () => {
     expect(mockAlert.mock.calls[0][0].body).toMatch(/Limits Key/);
   });
 
+  it("tells Sagebrush on a first check when it still holds the data read-only (after a rehome)", async () => {
+    const { s, fetch } = fakeSagebrush();
+    // The old home bay ended sync on Sagebrush; the account renewed and is
+    // first seen here with sync enabled.
+    const account_id = await insertAccount();
+    enabled.set(account_id, true);
+    s.retention.set(account_id, {
+      state: "readonly",
+      readonly_since: clock - DAY,
+      purge_after: clock + 89 * DAY,
+    });
+    expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(1);
+    await deliverDueSyncNotices({ config, fetch, now });
+    expect(s.notices).toHaveLength(1);
+    expect(s.notices[0]).toMatchObject({ account_id, issued: clock });
+    expect(s.notices[0].limits.sync.enabled).toBe(true);
+    const row = await stateOf(account_id);
+    expect(row.sync_enabled).toBe(true);
+    expect(row.notice_accepted_at).not.toBeNull();
+    expect(row.email_stage).toBeNull();
+
+    // Checked again later: no further notice.
+    clock += RECHECK_MS + 1;
+    expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(0);
+    await deliverDueSyncNotices({ config, fetch, now });
+    expect(s.notices).toHaveLength(1);
+
+    // A first check of an account Sagebrush has active (or never saw) only
+    // records it, as before.
+    const other = await insertAccount();
+    enabled.set(other, true);
+    s.retention.set(other, {
+      state: "active",
+      readonly_since: null,
+      purge_after: null,
+    });
+    expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(0);
+    expect((await stateOf(other)).sync_enabled).toBe(true);
+    expect((await stateOf(other)).notice_request_id).toBeNull();
+  });
+
+  it("retries a first check when Sagebrush can't be read, without recording a baseline", async () => {
+    const account_id = await insertAccount();
+    enabled.set(account_id, true);
+    const down = async () => new Response("down", { status: 503 });
+    expect(
+      await checkSyncStates({ config, fetch: down as any, getLimits, now }),
+    ).toBe(0);
+    let row = await stateOf(account_id);
+    expect(row.sync_enabled).toBeNull();
+    expect(new Date(row.checked_at).valueOf()).toBe(clock);
+
+    const { s, fetch } = fakeSagebrush();
+    s.retention.set(account_id, {
+      state: "readonly",
+      readonly_since: clock - DAY,
+      purge_after: clock + 89 * DAY,
+    });
+    clock += RECHECK_MS + 1;
+    expect(await checkSyncStates({ config, fetch, getLimits, now })).toBe(1);
+    row = await stateOf(account_id);
+    expect(row.sync_enabled).toBe(true);
+    expect(row.notice_request_id).not.toBeNull();
+  });
+
+  it("backs off accounts whose check keeps failing, so the others are checked", async () => {
+    const failing = [await insertAccount(), await insertAccount()];
+    const ok = await insertAccount();
+    enabled.set(ok, true);
+    const accountState = async ({ account_id }: { account_id: string }) => {
+      if (failing.includes(account_id)) throw new Error("bay unreachable");
+      return getOAuthAccountStateLocal({ account_id });
+    };
+    // A batch as small as the failing accounts: without the backoff they
+    // would be selected first on every pass.
+    for (let i = 0; i < 2; i++) {
+      await checkSyncStates({ getLimits, accountState, now, batch: 2 });
+    }
+    expect((await stateOf(ok)).sync_enabled).toBe(true);
+    for (const account_id of failing) {
+      const row = await stateOf(account_id);
+      expect(row.sync_enabled).toBeNull();
+      expect(new Date(row.checked_at).valueOf()).toBe(clock);
+    }
+    // And they are retried once RECHECK_MS has passed.
+    failing.forEach((a) => enabled.set(a, false));
+    clock += RECHECK_MS + 1;
+    await checkSyncStates({ getLimits, now, batch: 2 });
+    for (const account_id of failing) {
+      expect((await stateOf(account_id)).sync_enabled).toBe(false);
+    }
+  });
+
+  it("does not reschedule a notice that another pass got accepted meanwhile", async () => {
+    const { s, fetch } = fakeSagebrush();
+    const account_id = await syncedAccount(fetch);
+    enabled.set(account_id, false);
+    clock += RECHECK_MS + 1;
+    await checkSyncStates({ getLimits, now });
+    // This pass's attempt fails, but while it was in flight (past its lease)
+    // another pass sent the same notice and recorded its acceptance.
+    const slowFailure = async (url: any, init: any) => {
+      await getPool().query(
+        `UPDATE sagebrush_sync_states
+            SET notice_accepted_at = NOW(), notice_next_at = NULL
+          WHERE account_id = $1`,
+        [account_id],
+      );
+      return new Response("down", { status: 503 });
+    };
+    const result = await deliverDueSyncNotices({
+      config,
+      fetch: slowFailure as any,
+      now,
+    });
+    expect(result.failed).toBe(1);
+    const row = await stateOf(account_id);
+    expect(row.notice_accepted_at).not.toBeNull();
+    expect(row.notice_next_at).toBeNull();
+    // Nothing is due again.
+    clock += DAY;
+    await deliverDueSyncNotices({ config, fetch, now });
+    expect(s.notices).toHaveLength(0);
+  });
+
   it("acts only for accounts whose home bay this is", async () => {
     const { s, fetch } = fakeSagebrush();
     const account_id = await insertAccount();

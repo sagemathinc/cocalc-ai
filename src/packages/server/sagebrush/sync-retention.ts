@@ -365,20 +365,35 @@ export function retentionEmail({
 /** Check a batch of accounts that approved a Sagebrush sign-in on this bay,
  * those not checked for RECHECK_MS, and record their sync state. A change
  * from what was last seen queues a plan notice; the first check of an account
- * only records it. Returns the number of changes. */
+ * only records it, unless sync is enabled while Sagebrush still holds the data
+ * read-only (see recordSyncState). An account whose check fails waits
+ * RECHECK_MS too. Returns the number of changes. */
 export async function checkSyncStates({
   db = getPool(),
+  config,
+  fetch = globalThis.fetch,
   getLimits = getSagebrushLimits,
   accountState = getOAuthAccountStateLocal,
   now = Date.now,
   batch = CHECK_BATCH,
 }: {
   db?: Queryable;
+  /** Needed to reconcile a first check with Sagebrush; without it the first
+   * check only records the state. */
+  config?: SyncNoticeConfig;
+  fetch?: Fetch;
   getLimits?: (account_id: string) => Promise<SagebrushLimits | undefined>;
   accountState?: (opts: { account_id: string }) => Promise<OAuthAccountState>;
   now?: () => number;
   batch?: number;
 } = {}): Promise<number> {
+  const readOnlyOnSagebrush =
+    config == null
+      ? undefined
+      : async (account_id: string) => {
+          const r = await readSyncRetention({ config, account_id, fetch, now });
+          return r.synced && r.state === "readonly";
+        };
   const { rows } = await db.query<{ account_id: string }>(
     `SELECT a.account_id
        FROM oauth_client_approvals a
@@ -411,11 +426,37 @@ export async function checkSyncStates({
         );
         continue;
       }
-      if (await recordSyncState({ db, account_id, limits, t })) changes += 1;
+      if (
+        await recordSyncState({
+          db,
+          account_id,
+          limits,
+          t,
+          readOnlyOnSagebrush,
+          onPhase: (p) => (phase = p),
+        })
+      ) {
+        changes += 1;
+      }
     } catch (err) {
       logger.warn("checking an account's sync state failed", {
         code: asFailure(err, phase).code,
       });
+      // Back off: the account waits RECHECK_MS like a checked one, so accounts
+      // that keep failing cannot hold the head of the scan and starve the
+      // rest. (Its sync_enabled is kept; a first check stays a first check.)
+      await db
+        .query(
+          `INSERT INTO sagebrush_sync_states(account_id, checked_at)
+           VALUES($1::UUID, to_timestamp($2::BIGINT / 1000.0))
+           ON CONFLICT (account_id) DO UPDATE SET checked_at = EXCLUDED.checked_at`,
+          [account_id, now()],
+        )
+        .catch((err) =>
+          logger.warn("recording a failed sync check failed", {
+            code: asFailure(err, "db_error").code,
+          }),
+        );
     }
   }
   return changes;
@@ -449,19 +490,41 @@ function changeAssignments(e: number, t: number, r: number, l: number) {
 // Record an account's sync state as CoCalc resolved it at time t. A change from
 // what was last seen queues a new notice and ends the current retention cycle;
 // the emails of a sync that ended start once its notice is accepted. The first
-// answer for an account only records it.
+// answer for an account only records it, with one exception: sync is enabled
+// but Sagebrush still holds the data read-only. That happens after a rehome
+// (the old home bay sent the notice that ended sync, and the account renewed
+// before signing in to Sagebrush here, so this bay never saw sync end); without
+// a notice Sagebrush would stay read-only until the old bay's next step. So
+// that first check queues a notice of the current state.
 async function recordSyncState({
   db,
   account_id,
   limits,
   t,
+  readOnlyOnSagebrush,
+  onPhase,
 }: {
   db: Queryable;
   account_id: string;
   limits: SagebrushLimits;
   t: number;
+  readOnlyOnSagebrush?: (account_id: string) => Promise<boolean>;
+  onPhase?: (phase: SyncFailureCode) => void;
 }): Promise<boolean> {
   const enabled = limits.sync.enabled === true;
+  let reconcile = false;
+  if (enabled && readOnlyOnSagebrush != null) {
+    const { rows: prior } = await db.query<{ sync_enabled: boolean | null }>(
+      `SELECT sync_enabled FROM sagebrush_sync_states WHERE account_id = $1::UUID`,
+      [account_id],
+    );
+    if (prior[0]?.sync_enabled == null) {
+      // (a failure here leaves the first check to be retried, after backoff)
+      onPhase?.("request_failed");
+      reconcile = await readOnlyOnSagebrush(account_id);
+      onPhase?.("db_error");
+    }
+  }
   await db.query(
     `INSERT INTO sagebrush_sync_states(account_id, sync_enabled, checked_at)
      VALUES($1::UUID, $2, to_timestamp($3::BIGINT / 1000.0))
@@ -471,12 +534,16 @@ async function recordSyncState({
     [account_id, enabled, t],
   );
   const request_id = randomUUID();
+  // A change, or (reconcile) a first check whose state Sagebrush hasn't
+  // applied, unless a notice was already queued for it.
   const { rows } = await db.query(
     `UPDATE sagebrush_sync_states
         SET ${changeAssignments(2, 3, 4, 5)}
-      WHERE account_id = $1::UUID AND sync_enabled IS DISTINCT FROM $2
+      WHERE account_id = $1::UUID
+        AND (sync_enabled IS DISTINCT FROM $2
+             OR ($6::BOOLEAN AND changed_at IS NULL AND notice_request_id IS NULL))
       RETURNING account_id`,
-    [account_id, enabled, t, request_id, JSON.stringify(limits)],
+    [account_id, enabled, t, request_id, JSON.stringify(limits), reconcile],
   );
   if (rows.length > 0) {
     logger.info("sync membership changed", { request_id, enabled });
@@ -615,11 +682,15 @@ export async function deliverDueSyncNotices({
       }
       failed += 1;
       const failure = result.failure ?? new SyncFailure("internal_error");
+      // Only while this notice is still unaccepted: another pass that
+      // reclaimed it after the lease may have recorded its acceptance, and
+      // rescheduling it then would retry it forever.
       await db.query(
         `UPDATE sagebrush_sync_states
             SET notice_attempts = $3, last_error = $4,
                 notice_next_at = to_timestamp($5::BIGINT / 1000.0)
-          WHERE account_id = $1::UUID AND notice_request_id = $2::UUID`,
+          WHERE account_id = $1::UUID AND notice_request_id = $2::UUID
+            AND notice_accepted_at IS NULL`,
         [
           row.account_id,
           row.notice_request_id,
@@ -644,7 +715,8 @@ export async function deliverDueSyncNotices({
         markAlerted: () =>
           db.query(
             `UPDATE sagebrush_sync_states SET notice_alerted_at = NOW()
-              WHERE account_id = $1::UUID AND notice_request_id = $2::UUID`,
+              WHERE account_id = $1::UUID AND notice_request_id = $2::UUID
+                AND notice_accepted_at IS NULL`,
             [row.account_id, row.notice_request_id],
           ),
         now: now(),
@@ -1232,7 +1304,7 @@ export function startSagebrushSyncRetentionMaintenance({
     try {
       const config = await getSyncNoticeConfig();
       if (config != null) {
-        await checkSyncStates();
+        await checkSyncStates({ config });
         await deliverDueSyncNotices({ config });
         await runDueRetentionSteps({ config });
         await escalateUnresolvedRetentionEmails();

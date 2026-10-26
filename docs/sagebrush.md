@@ -292,7 +292,15 @@ time, each again every 10 minutes:
 
 - it reads the limits (section 2);
 - it records `sync.enabled` in `sagebrush_sync_states`;
-- the first check of an account only records the state.
+- the first check of an account only records the state, unless sync is enabled
+  while Sagebrush still holds the account's data read-only. That is what an
+  account rehomed after its sync ended, and renewed before signing in to
+  Sagebrush on the new home bay, looks like there. Then the first check sends
+  the plan notice of the current state, so Sagebrush is not left read-only until
+  the old home bay's next step;
+- an account whose check fails (its state or limits can't be read) waits the same
+  10 minutes before it is tried again, so failing accounts can't keep the rest of
+  the batch from being checked.
 
 An account whose home bay is elsewhere is skipped, and so is a deleted or banned
 one; deleted accounts are purged by section 3. A rehome leaves the rows behind. A cycle already pending there is carried on by that bay, which asks the account's current home bay before each step, through the routed account state; a rehome in progress is retried. Only the current home bay's discovery scan starts new cycles, once the account signs in to Sagebrush there and a change is seen.
