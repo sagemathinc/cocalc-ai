@@ -845,21 +845,27 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   // Count the view once, when the visitor may be counted: at once, or when
   // they give usage consent on a site with the cookie banner.
   const cookieBannerEnabled = !!config?.cookie_banner_enabled;
-  const countedView = useRef<string | undefined>(undefined);
+  // The sign-up links carry the version only once its view has been counted,
+  // so a sign-up page visit or a sign-up never exists without its view.
+  const sentView = useRef<string | undefined>(undefined);
+  const [countedView, setCountedView] = useState<string | undefined>();
   useEffect(() => {
     if (!choice.counted) return;
     const count = () => {
-      if (countedView.current === choice.variant) return;
       if (!publicHomeExperimentAllowed(cookieBannerEnabled)) return;
-      countedView.current = choice.variant;
-      sendPublicHomeExperimentEvent(choice.variant, "view");
+      if (sentView.current !== choice.variant) {
+        sentView.current = choice.variant;
+        sendPublicHomeExperimentEvent(choice.variant, "view");
+      }
+      setCountedView(choice.variant);
     };
     count();
     return cookieBannerEnabled ? onConsentChange(count) : undefined;
   }, [choice, cookieBannerEnabled]);
-  const signUpPath = choice.counted
-    ? withPublicHomeVariant("auth/sign-up", choice.variant)
-    : "auth/sign-up";
+  const signUpPath =
+    choice.counted && countedView === choice.variant
+      ? withPublicHomeVariant("auth/sign-up", choice.variant)
+      : "auth/sign-up";
 
   return (
     <PublicPage active="home" config={marketingConfig} signUpPath={signUpPath}>
