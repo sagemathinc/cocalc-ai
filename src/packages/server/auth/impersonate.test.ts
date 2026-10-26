@@ -450,6 +450,7 @@ describe("auth/impersonate", () => {
       "X-Content-Type-Options",
       "nosniff",
     );
+    expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
     expect(res.send).toHaveBeenCalledWith(
       expect.stringContaining("ERROR: impersonate error"),
     );

@@ -221,7 +221,9 @@ export default function initPublicContent(router: Router): void {
       res.setHeader("Cache-Control", "public, max-age=3600");
       res.json(await renderJsonFeed(req));
     } catch (err) {
-      res.status(500).json({ error: `${err}` });
+      logger.warn("rendering the news JSON feed failed", err);
+      res.setHeader("Cache-Control", "no-store");
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 

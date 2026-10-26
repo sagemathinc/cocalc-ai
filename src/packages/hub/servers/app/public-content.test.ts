@@ -112,4 +112,13 @@ describe("public content routes", () => {
     const body = await response.text();
     expect(body).toBe("Internal server error");
   });
+
+  it("sends a generic uncached error when the JSON feed fails", async () => {
+    const { getFeedData } = jest.requireMock("@cocalc/database/postgres/news");
+    getFeedData.mockRejectedValueOnce(Error("database password=hunter2"));
+    const response = await request("/news/feed.json");
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ error: "Internal server error" });
+  });
 });

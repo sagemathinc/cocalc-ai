@@ -38,6 +38,7 @@ export async function signInUsingImpersonateToken({ req, res }) {
     // rendered as HTML.
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "no-store");
     res.send(`ERROR: impersonate error -- ${err}`);
   }
 }
