@@ -292,7 +292,12 @@ export async function updateProjectArchiveLifecycleJob({
             failure_category = $3,
             error = $4,
             updated_at = NOW()
-      WHERE id = $1`,
+      WHERE id = $1
+        -- an admin reopen (reserved or done) is final: a worker that is
+        -- still finishing this job must not overwrite it or make it
+        -- retryable again
+        AND COALESCE(failure_category, '') <> 'admin-reopen'
+        AND NOT (COALESCE(evidence, '{}'::jsonb) ? 'admin_reopen')`,
     [
       job_id,
       status,

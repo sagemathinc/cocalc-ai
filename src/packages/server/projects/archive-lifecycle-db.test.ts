@@ -202,6 +202,20 @@ describe("project archive lifecycle job persistence", () => {
     );
   });
 
+  it("never overwrites a job an admin reopen has reserved or finished", async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 0 });
+    await updateProjectArchiveLifecycleJob({
+      job_id: "job-1",
+      status: "failed",
+      failure_category: "archive-storage",
+    });
+    const [sql] = query.mock.calls.at(-1)!;
+    expect(sql).toContain("COALESCE(failure_category, '') <> 'admin-reopen'");
+    expect(sql).toContain(
+      "NOT (COALESCE(evidence, '{}'::jsonb) ? 'admin_reopen')",
+    );
+  });
+
   it("neither lists nor claims terminal jobs or jobs reserved for an admin reopen", async () => {
     query.mockResolvedValue({ rows: [], rowCount: 0 });
     await listQueuedProjectArchiveLifecycleJobs(10);

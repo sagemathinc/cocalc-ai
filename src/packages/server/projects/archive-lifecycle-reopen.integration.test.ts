@@ -7,6 +7,7 @@ import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { uuid } from "@cocalc/util/misc";
 import { lockProjectRehomeFence } from "@cocalc/database/postgres/project-rehome-fence";
+import { updateProjectArchiveLifecycleJob } from "./archive-lifecycle-db";
 import {
   reopenStuckProjectArchive,
   reserveStuckArchiveJob,
@@ -309,5 +310,35 @@ describePostgres("admin reopen reservation (PostgreSQL)", () => {
       job_id,
       freeze_status: "already-writable",
     });
+  });
+
+  it("keeps a finished admin reopen when the job's worker records its failure late", async () => {
+    const { project_id, job_id } = await stuckProject();
+    await reopenStuckProjectArchive({
+      project_id,
+      actor_account_id: ADMIN,
+      reason: "test",
+      releaseArchiveFreeze: async () => ({
+        status: "already-writable" as const,
+      }),
+    });
+    // the archive worker, still finishing, records its own failure
+    await updateProjectArchiveLifecycleJob({
+      job_id,
+      status: "failed",
+      failure_category: "archive-storage",
+      error: "late",
+    });
+    const {
+      rows: [job],
+    } = await getPool().query(
+      `SELECT status, failure_category, next_attempt_at, evidence
+         FROM project_archive_lifecycle_jobs WHERE id = $1`,
+      [job_id],
+    );
+    expect(job.status).toBe("canceled");
+    expect(job.failure_category).toBe("admin-reopen");
+    expect(job.next_attempt_at).toBeNull();
+    expect(job.evidence.admin_reopen.reason).toBe("test");
   });
 });
