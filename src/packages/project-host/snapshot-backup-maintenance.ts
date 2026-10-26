@@ -30,6 +30,7 @@ import {
 } from "./file-server";
 import {
   clearPendingPrune,
+  dropPendingPruneRetry,
   notePendingPrune,
   type PendingPrune,
   startDeferredPruneLoop,
@@ -1553,9 +1554,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               stageDurations = updated?.stage_durations_ms ?? {};
               limitPruneDeferred = updated?.limit_prune_deferred === true;
               if (limitPruneDeferred) {
-                // Only a full update applies the limit (the background
-                // retry is rolling-only and would restart the gate's bound),
-                // and the retried update reruns rolling retention too.
+                // Only a full update applies the limit, and the retried
+                // update reruns rolling retention too. Drop any older
+                // rolling-only retry: run on a quiet host it would delete
+                // nothing yet restart the gate's bound.
+                dropPendingPruneRetry(project_id);
               } else if (updated?.prune_deferred) {
                 // Retried within the bound even if this project isn't due
                 // again for a day (snapshot-prune-gate.ts).

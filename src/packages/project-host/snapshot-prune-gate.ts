@@ -122,6 +122,13 @@ export function notePendingPrune(
   pendingPrunes.set(projectId, pending);
 }
 
+/** Forget a pending background retry but keep the deferral's start, so the
+ * bound keeps counting (a limit deferral, retried as a full update, must
+ * not be restarted by a rolling-only retry that deletes nothing). */
+export function dropPendingPruneRetry(projectId: string): void {
+  pendingPrunes.delete(projectId);
+}
+
 /** A scheduled snapshot pruned (or the project went away): no retry needed. */
 export function clearPendingPrune(projectId: string): void {
   pendingPrunes.delete(projectId);

@@ -3312,6 +3312,38 @@ describe("deferred snapshot prunes", () => {
     expect(gate.getSnapshotPruneGateStats().pending_projects).toBe(0);
   });
 
+  it("drops an older rolling retry on a limit deferral, without restarting the bound", async () => {
+    await deferOnce(); // a rolling retry is pending
+    const gate = await import("./snapshot-prune-gate");
+    // a deferral that began 30 minutes ago
+    gate.decideSnapshotPrune({
+      projectId: "proj-1",
+      backupsInFlight: 1,
+      lifecycleActive: 0,
+      now: Date.now() - 30 * 60_000,
+    });
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: null,
+      created_snapshot_at: null,
+      changed: null,
+      disabled: false,
+      skipped_reason: "snapshot_prune_deferred",
+      limit_prune_deferred: true,
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    expect(gate.getSnapshotPruneGateStats().pending_projects).toBe(0);
+    // the bound still counts from the first deferral
+    expect(
+      gate.decideSnapshotPrune({
+        projectId: "proj-1",
+        backupsInFlight: 1,
+        lifecycleActive: 0,
+      }).deferredForMs,
+    ).toBeGreaterThanOrEqual(30 * 60_000);
+  });
+
   it("keeps the retry pending while storage admission refuses it", async () => {
     await deferOnce();
     admitStorageOperationMock.mockImplementation(() => ({
