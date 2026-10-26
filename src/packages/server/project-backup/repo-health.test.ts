@@ -178,11 +178,33 @@ describe("project backup repository health probe", () => {
           },
         }),
       ).toMatchObject({
+        // Possibly transient (database, settings, site key): not deterministic.
         result: "failed",
-        error_kind: "no_config",
+        error_kind: "error",
         error: expect.stringContaining("bucket row missing"),
       });
       expect(await calls()).toEqual([]);
+    });
+
+    it("records a failure when the temporary profile cannot be created", async () => {
+      expect(
+        await probe("good", { tempRoot: join(dir, "does-not-exist") }),
+      ).toMatchObject({ result: "failed", error_kind: "error" });
+      expect(await calls()).toEqual([]);
+    });
+
+    it("reports a probe profile it could not remove", async () => {
+      let leftover = "";
+      const outcome = await probe("good", {
+        removeTempDir: async (path: string) => {
+          leftover = path;
+          throw new Error("EBUSY");
+        },
+      });
+      expect(outcome).toMatchObject({ result: "failed", error_kind: "error" });
+      expect(outcome.error).toContain(leftover);
+      expect(outcome.error).toContain("holds the repository credentials");
+      await rm(leftover, { recursive: true, force: true });
     });
   });
 
@@ -315,6 +337,10 @@ describe("project backup repository health probe", () => {
     let health = await getProjectBackupRepoHealth({ now });
     expect(projectBackupRepoHealthLevel(health)).toBe("healthy");
     expect(health).toMatchObject({ repos: 1, never_probed: 1, problems: [] });
+    // ... and is not described as verified before then.
+    expect(projectBackupRepoHealthSummary(health)).toBe(
+      "0 of 1 shared project backup repositories open with their stored secret; 1 new one has not been probed yet.",
+    );
 
     // A single network error is a warning ...
     const flaky = await addRepo("active");
@@ -421,6 +447,30 @@ describe("project backup repository health probe", () => {
     expect(alert.body).toContain(bad);
     expect(alert.body).toContain("wrong_password");
     expect(alert.body).not.toContain("s3-secret");
+
+    // Probing itself fails (here: the clock), and the repository has gone
+    // unprobed for days: the alert still goes out.
+    adminAlert.mockReset();
+    await getPool().query(
+      "UPDATE project_backup_repo_probes SET last_result='ok', last_probe_at = NOW() - INTERVAL '3 days'",
+    );
+    let first = true;
+    await expect(
+      runProjectBackupRepoHealthCheck({
+        rusticPath,
+        staggerMs: 0,
+        loadToml: async () => toml("good"),
+        now: () => {
+          if (first) {
+            first = false;
+            throw new Error("probe run failed");
+          }
+          return new Date();
+        },
+      }),
+    ).rejects.toThrow("probe run failed");
+    expect(adminAlert).toHaveBeenCalledTimes(1);
+    expect(adminAlert.mock.calls[0][0].body).toContain("last probed");
 
     adminAlert.mockReset();
     await getPool().query("DELETE FROM project_backup_repos");

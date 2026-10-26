@@ -80,6 +80,9 @@ export interface ProbeDeps {
   timeoutMs?: number;
   staggerMs?: number;
   now?: () => Date;
+  // For tests: where the temporary profile goes, and how it is removed.
+  tempRoot?: string;
+  removeTempDir?: (dir: string) => Promise<void>;
 }
 
 async function defaultLoadToml(repo_id: string): Promise<string> {
@@ -151,9 +154,11 @@ export async function probeProjectBackupRepo(
   try {
     toml = await (deps.loadToml ?? defaultLoadToml)(repo_id);
   } catch (err) {
+    // The database, site settings or site key may be briefly unreadable, so
+    // this is not (yet) a statement about the repository.
     return {
       result: "failed",
-      error_kind: "no_config",
+      error_kind: "error",
       error: `unable to load the repository configuration: ${`${err}`.slice(0, MAX_ERROR_LENGTH)}`,
       duration_ms: elapsed(),
     };
@@ -168,47 +173,88 @@ export async function probeProjectBackupRepo(
     };
   }
   const secrets = profileSecrets(toml);
-  const tempDir = await mkdtemp(join(tmpdir(), "cocalc-backup-repo-probe-"));
+  let tempDir: string | undefined;
+  let outcome: ProjectBackupRepoProbeOutcome;
   try {
-    const profile = join(tempDir, "repo");
-    await writeFile(`${profile}.toml`, toml, { mode: 0o600 });
-    const output = await exec({
-      cmd: deps.rusticPath ?? defaultRusticPath,
-      safety: ["-P", profile, "--no-cache", "cat", "config"],
-      timeout: deps.timeoutMs ?? PROBE_TIMEOUT_MS,
-      maxSize: PROBE_MAX_OUTPUT_BYTES,
-      env: { HOME: tempDir },
-    });
-    if (output.code === 0 && !output.truncated) {
-      return { result: "ok", duration_ms: elapsed() };
-    }
-    const stderr = Buffer.from(output.stderr).toString();
-    if (output.truncated && output.code !== 0) {
-      return {
-        result: "failed",
-        error_kind: "timeout",
-        error: `rustic did not finish within ${Math.round((deps.timeoutMs ?? PROBE_TIMEOUT_MS) / 1000)}s`,
-        duration_ms: elapsed(),
-      };
-    }
-    return {
-      result: "failed",
-      error_kind: classifyRusticError(stderr),
-      error:
-        summarizeRusticError(stderr, secrets) ||
-        `rustic exited with code ${output.code}`,
-      duration_ms: elapsed(),
-    };
+    tempDir = await mkdtemp(
+      join(deps.tempRoot ?? tmpdir(), "cocalc-backup-repo-probe-"),
+    );
+    outcome = await runRusticProbe({ tempDir, toml, secrets, deps });
+    outcome.duration_ms = elapsed();
   } catch (err) {
-    return {
+    outcome = {
       result: "failed",
       error_kind: "error",
       error: summarizeRusticError(`${err}`, secrets),
       duration_ms: elapsed(),
     };
-  } finally {
-    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
+  if (tempDir) {
+    try {
+      await (
+        deps.removeTempDir ??
+        ((dir) => rm(dir, { recursive: true, force: true }))
+      )(tempDir);
+    } catch (err) {
+      // The profile holds the repository password and storage keys: make
+      // the leftover visible instead of reporting a clean probe.
+      logger.error("unable to remove a backup repository probe profile", {
+        repo_id,
+        path: tempDir,
+        err: `${err}`,
+      });
+      outcome = {
+        result: "failed",
+        error_kind: "error",
+        error: `unable to remove the temporary probe profile ${tempDir}, which holds the repository credentials; delete it: ${`${err}`.slice(0, 200)}`,
+        duration_ms: elapsed(),
+      };
+    }
+  }
+  return outcome;
+}
+
+async function runRusticProbe({
+  tempDir,
+  toml,
+  secrets,
+  deps,
+}: {
+  tempDir: string;
+  toml: string;
+  secrets: string[];
+  deps: ProbeDeps;
+}): Promise<ProjectBackupRepoProbeOutcome> {
+  const profile = join(tempDir, "repo");
+  await writeFile(`${profile}.toml`, toml, { mode: 0o600 });
+  const timeoutMs = deps.timeoutMs ?? PROBE_TIMEOUT_MS;
+  const output = await exec({
+    cmd: deps.rusticPath ?? defaultRusticPath,
+    safety: ["-P", profile, "--no-cache", "cat", "config"],
+    timeout: timeoutMs,
+    maxSize: PROBE_MAX_OUTPUT_BYTES,
+    env: { HOME: tempDir },
+  });
+  if (output.code === 0 && !output.truncated) {
+    return { result: "ok", duration_ms: 0 };
+  }
+  if (output.truncated && output.code !== 0) {
+    return {
+      result: "failed",
+      error_kind: "timeout",
+      error: `rustic did not finish within ${Math.round(timeoutMs / 1000)}s`,
+      duration_ms: 0,
+    };
+  }
+  const stderr = Buffer.from(output.stderr).toString();
+  return {
+    result: "failed",
+    error_kind: classifyRusticError(stderr),
+    error:
+      summarizeRusticError(stderr, secrets) ||
+      `rustic exited with code ${output.code}`,
+    duration_ms: 0,
+  };
 }
 
 // Repositories whose probe is due: never probed, last probed a day ago, or
@@ -249,14 +295,23 @@ export async function runProjectBackupRepoProbes(
   const worker = async () => {
     for (let repo_id = queue.shift(); repo_id; repo_id = queue.shift()) {
       const outcome = await probeProjectBackupRepo(repo_id, deps);
-      await recordProjectBackupRepoProbe({
-        repo_id,
-        probed_at: now(),
-        result: outcome.result,
-        error_kind: outcome.error_kind,
-        error: outcome.error,
-        duration_ms: outcome.duration_ms,
-      });
+      try {
+        await recordProjectBackupRepoProbe({
+          repo_id,
+          probed_at: now(),
+          result: outcome.result,
+          error_kind: outcome.error_kind,
+          error: outcome.error,
+          duration_ms: outcome.duration_ms,
+        });
+      } catch (err) {
+        // Keep probing the others; the unrecorded one stays due.
+        logger.warn("unable to record a project backup repository probe", {
+          repo_id,
+          err: `${err}`,
+        });
+        continue;
+      }
       probed += 1;
       if (outcome.result === "failed") {
         failed += 1;
@@ -385,7 +440,10 @@ export function projectBackupRepoHealthSummary(
     if (health.repos === 0) {
       return "No shared project backup repository to probe on this bay.";
     }
-    return `All ${health.repos} shared project backup repositories open with their stored secret${health.never_probed ? ` (${health.never_probed} new, not probed yet)` : ""}.`;
+    if (health.never_probed === 0) {
+      return `All ${health.repos} shared project backup repositories open with their stored secret.`;
+    }
+    return `${health.ok} of ${health.repos} shared project backup repositories open with their stored secret; ${health.never_probed} new ${health.never_probed === 1 ? "one has" : "ones have"} not been probed yet.`;
   }
   const parts: string[] = [];
   if (failing.length) {
@@ -434,15 +492,23 @@ export async function runProjectBackupRepoHealthCheck(
 ): Promise<void> {
   // In a multi-bay cluster the seed bay owns the repositories and probes them.
   if (projectBackupReposAreSeedManaged()) return;
-  const result = await runProjectBackupRepoProbes(deps);
-  if (result.probed > 0) {
-    logger.info("project backup repository probes completed", result);
+  let runError: unknown;
+  try {
+    const result = await runProjectBackupRepoProbes(deps);
+    if (result.probed > 0) {
+      logger.info("project backup repository probes completed", result);
+    }
+  } catch (err) {
+    runError = err;
   }
+  // Even when probing itself fails, so that repositories going unprobed for
+  // two days still reach admins.
   await alertIfUnhealthy(
     await getProjectBackupRepoHealth({
       now: (deps.now ?? (() => new Date()))(),
     }),
   );
+  if (runError) throw runError;
 }
 
 let timer: NodeJS.Timeout | undefined;
