@@ -16,11 +16,13 @@ jest.mock("./archive-lifecycle-schema", () => ({
 }));
 
 import {
+  claimProjectArchiveLifecycleJob,
   claimRetainedProjectArchiveLifecycleJob,
   countRunningArchivesByHost,
   clearProjectArchiveLifecycleFinalBackup,
   createProjectArchiveLifecycleJob,
   getProjectArchiveLifecycleFinalBackup,
+  listQueuedProjectArchiveLifecycleJobs,
   listRecoverableProjectArchiveLifecycleJobs,
   recordProjectArchiveLifecycleFinalBackup,
   updateProjectArchiveLifecycleJob,
@@ -198,5 +200,34 @@ describe("project archive lifecycle job persistence", () => {
     expect(query.mock.calls.at(-1)![0]).toContain(
       "claimed_at = COALESCE(job.claimed_at, NOW())",
     );
+  });
+
+  it("never overwrites a job an admin reopen has reserved or finished", async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 0 });
+    await updateProjectArchiveLifecycleJob({
+      job_id: "job-1",
+      status: "failed",
+      failure_category: "archive-storage",
+    });
+    const [sql] = query.mock.calls.at(-1)!;
+    expect(sql).toContain("COALESCE(failure_category, '') <> 'admin-reopen'");
+    expect(sql).toContain(
+      "NOT (COALESCE(evidence, '{}'::jsonb) ? 'admin_reopen')",
+    );
+  });
+
+  it("neither lists nor claims terminal jobs or jobs reserved for an admin reopen", async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 0 });
+    await listQueuedProjectArchiveLifecycleJobs(10);
+    await listRecoverableProjectArchiveLifecycleJobs(10);
+    await claimProjectArchiveLifecycleJob("job-1");
+    await claimRetainedProjectArchiveLifecycleJob("job-1");
+    const statements = query.mock.calls.map(([sql]) => `${sql}`);
+    expect(statements).toHaveLength(4);
+    for (const sql of statements) {
+      expect(sql).toMatch(
+        /COALESCE\((job\.)?failure_category, ''\) NOT IN \('oversized-files', 'admin-reopen'\)/,
+      );
+    }
   });
 });
