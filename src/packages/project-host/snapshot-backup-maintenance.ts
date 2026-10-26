@@ -1552,6 +1552,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 // again for a day (snapshot-prune-gate.ts).
                 notePendingPrune(project_id, {
                   counts: scheduleToCounts(schedule),
+                  limit: row.max_snapshots_per_project ?? undefined,
                   validate: () => validateAssignment(row, "snapshot"),
                 });
               } else if (updated != null && !updated.skipped_reason) {
@@ -1998,7 +1999,8 @@ export async function retryDeferredSnapshotPrune({
       const reason = await pending.validate();
       return reason === "change_generation_changed" ? undefined : reason;
     },
-    run: () => prune(project_id, { counts: pending.counts }),
+    run: () =>
+      prune(project_id, { counts: pending.counts, limit: pending.limit }),
   });
   if (result.ran) return;
   if (result.admissionDeferred || result.reason === "assignment_unverified") {

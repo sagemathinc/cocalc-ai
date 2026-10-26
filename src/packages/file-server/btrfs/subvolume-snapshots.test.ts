@@ -306,6 +306,69 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
     );
   });
 
+  describe("the snapshot limit and the prune gate", () => {
+    const day = 24 * 60 * 60_000;
+    // retention (daily: 5) keeps more than the limit (2): only the limit
+    // prune deletes
+    function atLimit() {
+      const snapshots = new SubvolumeSnapshots(createSubvolume() as any);
+      const names = [
+        new Date(Date.now() - 2 * day).toISOString(),
+        new Date(Date.now() - 1 * day).toISOString(),
+      ];
+      snapshots.readdir = jest.fn(async () => [...names]);
+      snapshots.hasUnsavedChanges = jest.fn(async () => true);
+      snapshots.create = jest.fn(async (name?: string) => {
+        names.push(name!);
+      });
+      snapshots.delete = jest.fn(async (name: string) => {
+        names.splice(names.indexOf(name), 1);
+      });
+      return { snapshots, names };
+    }
+
+    it("asks the gate before freeing the replacement slot, and keeps it when declined", async () => {
+      const { snapshots, names } = atLimit();
+      const oldest = names[0];
+      const beforePrune = jest.fn(() => false);
+      const result = await snapshots.update(
+        { daily: 5 },
+        { limit: 2, beforePrune },
+      );
+      expect(beforePrune).toHaveBeenCalledWith([oldest]);
+      expect(snapshots.delete).not.toHaveBeenCalled();
+      // one over the limit, reported as deferred
+      expect(names).toHaveLength(3);
+      expect(result.pruneDeferred).toBeGreaterThan(0);
+    });
+
+    it("frees the slot when the gate allows it", async () => {
+      const { snapshots, names } = atLimit();
+      const oldest = names[0];
+      const result = await snapshots.update(
+        { daily: 5 },
+        { limit: 2, beforePrune: () => true },
+      );
+      expect(snapshots.delete).toHaveBeenCalledWith(oldest);
+      expect(names).toHaveLength(2);
+      expect(result.pruneDeferred).toBeUndefined();
+    });
+
+    it("never goes more than one over: the next update makes room first", async () => {
+      const { snapshots, names } = atLimit();
+      const beforePrune = jest.fn(() => false);
+      await snapshots.update({ daily: 5 }, { limit: 2, beforePrune });
+      expect(names).toHaveLength(3);
+      jest.spyOn(Date, "now").mockReturnValue(Date.now() + 2 * day);
+      try {
+        await snapshots.update({ daily: 5 }, { limit: 2, beforePrune });
+      } finally {
+        jest.restoreAllMocks();
+      }
+      expect(names).toHaveLength(3);
+    });
+  });
+
   it("preserves the old snapshot when replacement creation fails", async () => {
     const snapshots = new SubvolumeSnapshots(createSubvolume() as any);
     const old = new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString();

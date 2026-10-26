@@ -508,15 +508,33 @@ export class SubvolumeSnapshots {
         code: 507,
       });
     }
-    const pruneToLimit = async () => {
+    const countBeyondLimit = async () =>
+      Math.max(0, (await this.readdir()).length - normalizedLimit);
+    // Delete the oldest automatic snapshots beyond the limit; with
+    // beforePrune, ask first, and keep them (at most one over the limit,
+    // the replacement slot) if it declines.
+    const pruneToLimit = async (ask: boolean): Promise<number> => {
+      let deferred = 0;
       await timed("prune", async () => {
         const names = await this.readdir();
         const automatic = names.filter(isISODate).sort();
         let excess = names.length - normalizedLimit;
         // The newest automatic recovery point and named/manual snapshots survive
         // even when they prevent us from meeting a reduced entitlement.
-        for (const name of automatic.slice(0, -1)) {
-          if (excess <= 0) break;
+        const victims = automatic.slice(0, -1).slice(0, Math.max(0, excess));
+        if (ask && victims.length > 0 && opts?.beforePrune) {
+          let allowed = true;
+          try {
+            allowed = await opts.beforePrune(victims);
+          } catch (err) {
+            logger.warn("snapshot limit prune gate failed; pruning", { err });
+          }
+          if (!allowed) {
+            deferred = victims.length;
+            return;
+          }
+        }
+        for (const name of victims) {
           await this.delete(name);
           excess--;
         }
@@ -526,15 +544,24 @@ export class SubvolumeSnapshots {
           });
         }
       });
+      return deferred;
     };
-    await pruneToLimit();
+    // Make room first: a deferral leaves at most one extra snapshot, which
+    // must go before the next one can be created.
+    await pruneToLimit(false);
     const result = await updateRollingSnapshots({
       snapshots: this,
       counts,
       opts: { ...opts, limit: normalizedLimit + 1 },
     });
-    await pruneToLimit();
-    return result;
+    // The replacement slot is freed like any other prune: through the gate,
+    // unless the rolling prune just asked it (and declined) in this update.
+    const capDeferred = result.pruneDeferred
+      ? await countBeyondLimit()
+      : await pruneToLimit(true);
+    return capDeferred > 0 || result.pruneDeferred
+      ? { ...result, pruneDeferred: (result.pruneDeferred ?? 0) + capDeferred }
+      : result;
   };
 
   // has newly written changes since last snapshot

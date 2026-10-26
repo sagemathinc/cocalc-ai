@@ -48,6 +48,8 @@ const pendingPrunes = new Map<string, PendingPrune>();
 export interface PendingPrune {
   /** The retention the deferred prune was computed with. */
   counts: Partial<SnapshotCounts>;
+  /** The project's snapshot limit, if any (a deferral may leave one over). */
+  limit?: number;
   /** The scheduled snapshot's assignment check, run right before deleting;
    * returns a reason if the host no longer owns the project or its schedule
    * changed (a content change alone doesn't stop a prune). */
