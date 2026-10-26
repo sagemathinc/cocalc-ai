@@ -1968,10 +1968,14 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
 }
 
 /** One deferred prune, as scheduled storage work: admission, the maintenance
- * cgroup, the background mutation context, and the same assignment check as
- * a scheduled snapshot. Throws (stays pending) only when admission refuses;
- * a changed assignment, schedule or content drops the retry, and the next
- * scheduled snapshot applies the current retention. */
+ * cgroup, the background mutation context, and the scheduled snapshot's
+ * assignment check, except for content. Deleting expired snapshots doesn't
+ * depend on the content (the bay confirms owner, then schedule, then content,
+ * so change_generation_changed means owner and schedule still hold).
+ * - a changed owner or schedule drops the retry; the next scheduled snapshot
+ *   applies the current retention;
+ * - an admission refusal or an unverifiable assignment throws, so the retry
+ *   stays pending with its bound. */
 export async function retryDeferredSnapshotPrune({
   hostId,
   project_id,
@@ -1989,12 +1993,15 @@ export async function retryDeferredSnapshotPrune({
     hostId,
     project_id,
     operation_kind: "scheduled_snapshot",
-    validate: pending.validate,
+    validate: async () => {
+      const reason = await pending.validate();
+      return reason === "change_generation_changed" ? undefined : reason;
+    },
     run: () => prune(project_id, { counts: pending.counts }),
   });
   if (result.ran) return;
-  if (result.admissionDeferred) {
-    throw new Error(`not admitted: ${result.reason ?? "unknown"}`);
+  if (result.admissionDeferred || result.reason === "assignment_unverified") {
+    throw new Error(`not run yet: ${result.reason ?? "unknown"}`);
   }
   logger.info("dropping deferred snapshot prune", {
     hostId,

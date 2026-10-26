@@ -3180,6 +3180,36 @@ describe("deferred snapshot prunes", () => {
     expect(pruneDeferredSnapshotsMock).not.toHaveBeenCalled();
   });
 
+  it("still prunes after the project's content changed", async () => {
+    await deferOnce();
+    // an edit after the deferral; owner and schedule unchanged
+    confirmProjectMaintenanceAssignmentMock.mockResolvedValue({
+      valid: false,
+      reason: "change_generation_changed",
+    });
+    expect(await retry()).toEqual({ pruned: ["proj-1"], waiting: 0 });
+    expect(pruneDeferredSnapshotsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the retry pending when the assignment can't be verified", async () => {
+    await deferOnce();
+    confirmProjectMaintenanceAssignmentMock.mockRejectedValue(
+      new Error("bay unreachable"),
+    );
+    expect(await retry()).toEqual({ pruned: [], waiting: 1 });
+    expect(pruneDeferredSnapshotsMock).not.toHaveBeenCalled();
+  });
+
+  it("drops the retry when the project moved to another host", async () => {
+    await deferOnce();
+    confirmProjectMaintenanceAssignmentMock.mockResolvedValue({
+      valid: false,
+      reason: "assignment_changed",
+    });
+    expect(await retry()).toEqual({ pruned: ["proj-1"], waiting: 0 });
+    expect(pruneDeferredSnapshotsMock).not.toHaveBeenCalled();
+  });
+
   it("keeps the retry pending while storage admission refuses it", async () => {
     await deferOnce();
     admitStorageOperationMock.mockImplementation(() => ({
