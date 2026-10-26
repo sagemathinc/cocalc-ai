@@ -47,13 +47,13 @@ export const PUBLIC_COMPARE_HISTORY_SECTIONS: PublicFeatureSection[] = [
   {
     title: PUBLIC_COMPARE_HISTORY_TITLE,
     paragraphs: [
-      "Every CoCalc.ai project keeps its history with nothing to set up. TimeTravel records earlier versions of each document, scheduled snapshots capture the project's files, and backups stored off the host can include the files, the system environment, and the edit history.",
+      "Every CoCalc.ai project keeps its history with nothing to set up. TimeTravel records earlier versions of the documents you edit in CoCalc's editors, scheduled snapshots capture the project's files, and backups stored off the host can include the files, the system environment, and the edit history.",
       "The people and AI agents working in a project can recover work themselves, from Recovery in the project's Files or with the CoCalc CLI. When an agent edits real work, you can see what it changed and bring back an earlier version from TimeTravel, a snapshot, or a backup.",
     ],
     cards: [
       {
         title: "A virtual machine per user",
-        body: "Snapshots and backups are possible, but someone has to set them up, watch them, and pay for them on every machine, and restoring usually needs an administrator.",
+        body: "Snapshots and backups are possible, but whoever runs the machines has to set them up, watch them, and pay for them on every one.",
       },
       {
         title: "Ephemeral agent sandboxes",
@@ -75,10 +75,10 @@ export const PUBLIC_COMPARE_HISTORY_SECTIONS: PublicFeatureSection[] = [
       "Regular snapshots and backups are simple for one machine. On CoCalc.ai, thousands of projects can share a host, and every one needs its own schedule without slowing down the people working on that host.",
     ],
     bullets: [
-      "Snapshots and backups run in separate queues on each host, so a long backup does not hold up snapshots",
+      "Snapshots and backups run in separate queues on each host, so a long backup does not hold up the snapshot queue",
       "Maintenance waits while the host's disk is busy, so interactive work comes first",
       "Accounts take turns, so one large account cannot crowd out everyone else",
-      "Deleting old snapshots waits while a backup or a project start is running on the host",
+      "Deleting old snapshots normally waits until no backup or project start is running on the host",
     ],
   },
 ];
