@@ -76,7 +76,7 @@ const CSS = `
 .hv-band p { color:rgba(255,255,255,.86); }
 .hv-band .hv-card { background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.22); color:#fff; }
 .hv-band .hv-card h3 { color:#fff; }
-.hv-band .hv-card .hv-who, .hv-band .hv-eyebrow { color:#ffe2a6; }
+.hv-band .hv-card .hv-who, .hv-band .hv-eyebrow { color:#fff3d6; }
 .hv-show { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr); gap:clamp(24px,4vw,56px); align-items:center; }
 .hv-show:nth-child(even) .hv-show-text { order:2; }
 .hv-show-text { display:grid; gap:14px; }

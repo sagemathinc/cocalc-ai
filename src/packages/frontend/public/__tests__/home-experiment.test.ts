@@ -244,13 +244,51 @@ describe("a sign-up that leaves before the visit is stored", () => {
     );
   });
 
-  it("lets a click through when nothing is pending", () => {
+  it("gives the version to a handler from the render before the receipt", async () => {
+    window.history.replaceState(null, "", "/auth/sign-up?home=math");
+    const visit = deferredFetch();
+    const { result } = renderHook(() => usePublicHomeSignupVariant(false));
+    const stale = result.current;
+    await act(async () => visit.resolve(true));
+    expect(stale.pending()).toBe(false);
+    expect(stale()).toBe("math");
+    expect(await stale.settled()).toBe("math");
+    // and a link rendered before then gets the version at the click
+    const navigate = jest.fn();
+    const event = {
+      preventDefault: jest.fn(),
+      currentTarget: { href: "https://cocalc.test/auth/google?terms=true" },
+    };
+    followWithPublicHomeVariant(event, stale, navigate);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith(
+      "https://cocalc.test/auth/google?terms=true&home_variant=math",
+    );
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("lets a click through when the link already has the version, or there is none", () => {
     const homeVariant = Object.assign(() => "math", {
       pending: () => false,
       settled: async () => "math",
     });
-    const event = { preventDefault: jest.fn(), currentTarget: { href: "x" } };
-    followWithPublicHomeVariant(event, homeVariant);
-    expect(event.preventDefault).not.toHaveBeenCalled();
+    const tagged = {
+      preventDefault: jest.fn(),
+      currentTarget: {
+        href: "https://cocalc.test/auth/google?home_variant=math",
+      },
+    };
+    followWithPublicHomeVariant(tagged, homeVariant);
+    expect(tagged.preventDefault).not.toHaveBeenCalled();
+    const none = Object.assign(() => undefined, {
+      pending: () => false,
+      settled: async () => undefined,
+    });
+    const plain = {
+      preventDefault: jest.fn(),
+      currentTarget: { href: "https://cocalc.test/auth/google" },
+    };
+    followWithPublicHomeVariant(plain, none);
+    expect(plain.preventDefault).not.toHaveBeenCalled();
   });
 });

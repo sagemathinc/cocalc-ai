@@ -71,7 +71,7 @@ const CSS = `
 .ht-band { background:${C.heroBackground}; color:#fff; border-radius:20px; padding:clamp(28px,4vw,52px); display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:clamp(24px,4vw,56px); align-items:center; }
 .ht-band h2 { color:#fff; }
 .ht-band p, .ht-band li { color:rgba(255,255,255,.86); }
-.ht-band .ht-eyebrow { color:#ffe2a6; }
+.ht-band .ht-eyebrow { color:#fff3d6; }
 .ht-band ul { margin:0; padding-left:20px; display:grid; gap:8px; }
 .ht-band figure { margin:0; }
 .ht-band img { border-color:rgba(255,255,255,.22); }

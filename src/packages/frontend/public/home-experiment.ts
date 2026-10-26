@@ -138,6 +138,9 @@ export function usePublicHomeSignupVariant(
   }, [cookieBannerEnabled]);
   const visit = useRef<Promise<boolean> | undefined>(undefined);
   const inFlight = useRef(false);
+  // Read through a ref too, so a handler from the render before the receipt
+  // already sees the version (the state below re-renders the links).
+  const stored = useRef(false);
   const [counted, setCounted] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -150,13 +153,15 @@ export function usePublicHomeSignupVariant(
     if (!variant || !allowed || visit.current) return;
     inFlight.current = true;
     visit.current = sendPublicHomeExperimentEvent(variant, "cta").then((ok) => {
+      stored.current = ok;
       inFlight.current = false;
       if (ok && mounted.current) setCounted(true);
       return ok;
     });
   }, [variant, allowed]);
   return useMemo(() => {
-    const now = () => (variant && allowed && counted ? variant : undefined);
+    const now = () =>
+      variant && allowed && (counted || stored.current) ? variant : undefined;
     return Object.assign(now, {
       pending: () => inFlight.current,
       settled: async () => {
@@ -174,15 +179,24 @@ export function usePublicHomeSignupVariant(
 }
 
 /** For a link that leaves for single sign-on: while the visit is still being
- * recorded, wait for it, then follow the link with the version added. */
+ * recorded, wait for it, then follow the link with the version added; a link
+ * rendered before the visit was stored gets the version added at the click. */
 export function followWithPublicHomeVariant(
   event: { preventDefault: () => void; currentTarget: { href?: string } },
   homeVariant: PublicHomeSignupVariant,
   navigate: (url: string) => void = (url) => window.location.assign(url),
 ): void {
-  if (!homeVariant.pending()) return;
   const href = event.currentTarget.href;
   if (!href || typeof window === "undefined") return;
+  if (!homeVariant.pending()) {
+    const variant = homeVariant();
+    const url = new URL(href, window.location.href);
+    if (!variant || url.searchParams.get("home_variant") === variant) return;
+    event.preventDefault();
+    url.searchParams.set("home_variant", variant);
+    navigate(url.toString());
+    return;
+  }
   event.preventDefault();
   void homeVariant.settled().then((variant) => {
     const url = new URL(href, window.location.href);
