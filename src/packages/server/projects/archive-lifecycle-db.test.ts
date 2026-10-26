@@ -17,6 +17,7 @@ jest.mock("./archive-lifecycle-schema", () => ({
 
 import {
   claimRetainedProjectArchiveLifecycleJob,
+  countRunningArchivesByHost,
   clearProjectArchiveLifecycleFinalBackup,
   createProjectArchiveLifecycleJob,
   getProjectArchiveLifecycleFinalBackup,
@@ -179,5 +180,23 @@ describe("project archive lifecycle job persistence", () => {
       "job.status IN ('queued', 'stale', 'canceled', 'completed')",
     );
     expect(parameters).toEqual(["66666666-6666-4666-8666-666666666666"]);
+  });
+
+  it("counts an archive whose final backup is pending as running on its host", async () => {
+    query.mockResolvedValue({ rows: [{ count: "1" }] });
+    await expect(countRunningArchivesByHost("host-1")).resolves.toBe(1);
+    const [sql, params] = query.mock.calls.at(-1)!;
+    expect(params).toEqual(["host-1"]);
+    expect(sql).toContain("job.status = 'running'");
+    expect(sql).toContain("job.status = 'queued'");
+    expect(sql).toContain("p.state ->> 'state' = 'archiving'");
+  });
+
+  it("keeps the first claim time when resuming, so the hourly limit counts an archive once", async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 1 });
+    await claimRetainedProjectArchiveLifecycleJob("job-1");
+    expect(query.mock.calls.at(-1)![0]).toContain(
+      "claimed_at = COALESCE(job.claimed_at, NOW())",
+    );
   });
 });

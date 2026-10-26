@@ -836,6 +836,84 @@ describe("projects.archiveProject", () => {
     });
   });
 
+  it.each([
+    ["an active final backup", true],
+    ["a new final backup", false],
+  ])(
+    "stops waiting for %s after the bounded wait, releasing nothing and queuing the job",
+    async (_, active) => {
+      if (active) {
+        listLrosByDedupeMock.mockResolvedValueOnce([
+          {
+            op_id: "99999999-9999-4999-8999-999999999999",
+            scope_type: "project",
+            scope_id: AUTOMATIC_PROJECT_ID,
+            status: "running",
+          },
+        ]);
+      }
+      poolQueryMock.mockResolvedValue({ rows: [automaticArchiveRow()] });
+      waitForDurableLroCompletionMock.mockRejectedValueOnce(
+        new Error("timeout waiting for lro completion"),
+      );
+
+      const { archiveProjectStorage, FinalArchiveBackupPendingError } =
+        await import("@cocalc/server/projects/archive");
+      const attempt = archiveProjectStorage({
+        project_id: AUTOMATIC_PROJECT_ID,
+        mode: "automatic",
+        job_id: AUTOMATIC_JOB_ID,
+        reason: "free-inactive",
+        expected_host_id: AUTOMATIC_HOST_ID,
+        final_backup_wait_ms: 60_000,
+      });
+      await expect(attempt).rejects.toBeInstanceOf(
+        FinalArchiveBackupPendingError,
+      );
+      expect(waitForDurableLroCompletionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ timeout_ms: 60_000 }),
+      );
+      // the running backup owns its freeze: nothing is released or deleted
+      expect(releaseProjectDataArchiveFreezeOnHostMock).not.toHaveBeenCalled();
+      expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
+      expect(updateProjectArchiveLifecycleJobMock).toHaveBeenCalledWith({
+        job_id: AUTOMATIC_JOB_ID,
+        status: "queued",
+      });
+      expect(updateProjectArchiveLifecycleJobMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: "failed" }),
+      );
+    },
+  );
+
+  it("(control) an unbounded wait that times out still fails the job", async () => {
+    listLrosByDedupeMock.mockResolvedValueOnce([
+      {
+        op_id: "99999999-9999-4999-8999-999999999999",
+        scope_type: "project",
+        scope_id: AUTOMATIC_PROJECT_ID,
+        status: "running",
+      },
+    ]);
+    poolQueryMock.mockResolvedValue({ rows: [automaticArchiveRow()] });
+    waitForDurableLroCompletionMock.mockRejectedValueOnce(
+      new Error("timeout waiting for lro completion"),
+    );
+    const { archiveProjectStorage, FinalArchiveBackupPendingError } =
+      await import("@cocalc/server/projects/archive");
+    const error = await archiveProjectStorage({
+      project_id: AUTOMATIC_PROJECT_ID,
+      mode: "automatic",
+      job_id: AUTOMATIC_JOB_ID,
+      reason: "free-inactive",
+      expected_host_id: AUTOMATIC_HOST_ID,
+    }).catch((err) => err);
+    expect(error).not.toBeInstanceOf(FinalArchiveBackupPendingError);
+    expect(updateProjectArchiveLifecycleJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed" }),
+    );
+  });
+
   it("does not recover an older success across a newer uncertain attempt", async () => {
     listLrosByDedupeMock.mockResolvedValueOnce([
       {

@@ -13,7 +13,11 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
-import { archiveProjectStorage, ProjectArchiveStorageError } from "./archive";
+import {
+  archiveProjectStorage,
+  FinalArchiveBackupPendingError,
+  ProjectArchiveStorageError,
+} from "./archive";
 import { resolveArchiveLifecycleAccountStatuses } from "./archive-lifecycle-accounts";
 import {
   claimProjectArchiveLifecycleJob,
@@ -498,7 +502,7 @@ async function executeJob({
 }: {
   job: ProjectArchiveLifecycleJob;
   config: ProjectArchiveLifecycleConfig;
-}): Promise<"completed" | "stale" | "failed" | "rate-limited"> {
+}): Promise<JobResult> {
   const existing = await loadSnapshot(job.project_id);
   if (
     existing?.state?.state === "archiving" &&
@@ -518,6 +522,7 @@ async function executeJob({
     }
     try {
       await archiveProjectStorage({
+        final_backup_wait_ms: finalBackupWaitMs(),
         project_id: job.project_id,
         mode: "automatic",
         job_id: job.id,
@@ -526,6 +531,7 @@ async function executeJob({
       });
       return "completed";
     } catch (err) {
+      if (err instanceof FinalArchiveBackupPendingError) return "pending";
       const cleanupCompleted =
         err instanceof ProjectArchiveStorageError && err.hostCleanupCompleted;
       const reopenSafe =
@@ -568,14 +574,23 @@ async function executeJob({
     await updateProjectArchiveLifecycleJob({ job_id: job.id, status: "stale" });
     return "stale";
   }
-  const [recent, onHost] = await Promise.all([
-    countRecentAutomaticArchives(),
-    countRunningArchivesByHost(job.host_id),
-  ]);
-  if (recent >= config.globalPerHour || onHost >= config.perHostConcurrency) {
-    return "rate-limited";
-  }
-  if (!(await claimProjectArchiveLifecycleJob(job.id))) return "stale";
+  // One admission at a time, so concurrent workers can't all pass the hourly
+  // limit on the same count before any of them claims (a claim is counted).
+  const admitted = await withArchiveAdmission(async () => {
+    const [recent, onHost] = await Promise.all([
+      countRecentAutomaticArchives(),
+      countRunningArchivesByHost(job.host_id!),
+    ]);
+    if (recent >= config.globalPerHour) return "rate-limited" as const;
+    // Another archive is running on this host: try this job next pass, but
+    // let jobs on other hosts go ahead.
+    if (onHost >= config.perHostConcurrency) return "host-busy" as const;
+    if (!(await claimProjectArchiveLifecycleJob(job.id))) {
+      return "stale" as const;
+    }
+    return "claimed" as const;
+  });
+  if (admitted !== "claimed") return admitted;
 
   const claimed = await claimAutomaticProject({ job, config });
   if (!claimed) {
@@ -623,6 +638,7 @@ async function executeJob({
 
   try {
     await archiveProjectStorage({
+      final_backup_wait_ms: finalBackupWaitMs(),
       project_id: job.project_id,
       mode: "automatic",
       job_id: job.id,
@@ -631,6 +647,7 @@ async function executeJob({
     });
     return "completed";
   } catch (err) {
+    if (err instanceof FinalArchiveBackupPendingError) return "pending";
     const cleanupCompleted =
       err instanceof ProjectArchiveStorageError && err.hostCleanupCompleted;
     const reopenSafe =
@@ -668,22 +685,120 @@ function emptySummary(
     stale: 0,
     failed: 0,
     rate_limited: 0,
+    pending: 0,
     exclusions: {},
     job_ids: [],
   };
+}
+
+let archiveAdmission: Promise<unknown> = Promise.resolve();
+
+// Serializes the hourly-limit check with the claim it admits. The lifecycle
+// worker runs in one process at a time (advisory lock), so this suffices.
+async function withArchiveAdmission<T>(fn: () => Promise<T>): Promise<T> {
+  const run = archiveAdmission.then(fn, fn);
+  archiveAdmission = run.catch(() => undefined);
+  return await run;
+}
+
+type JobResult =
+  | "completed"
+  | "stale"
+  | "failed"
+  | "rate-limited"
+  | "host-busy"
+  | "pending";
+
+function envMs(name: string, fallback: number, min = 0): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > min ? value : fallback;
+}
+
+// How long one job waits for its final backup before it is queued to resume
+// waiting next pass (archive.ts FinalArchiveBackupPendingError). Below the
+// 10 minute threshold at which a running job counts as stale.
+export function finalBackupWaitMs(): number {
+  return envMs("COCALC_PROJECT_ARCHIVE_FINAL_BACKUP_WAIT_MS", 8 * 60_000, 1000);
+}
+
+// Archive jobs run at once across hosts, still one per host.
+export function archiveJobConcurrency(): number {
+  return Math.floor(envMs("COCALC_PROJECT_ARCHIVE_CONCURRENCY", 4, 0.5));
+}
+
+// A pass starts no new job after this long, so candidate selection (which
+// starts each pass) keeps running while one host has a long backlog.
+export function archivePassBudgetMs(): number {
+  return envMs("COCALC_PROJECT_ARCHIVE_PASS_BUDGET_MS", 15 * 60_000, 1000);
+}
+
+// Run jobs in order, up to archiveJobConcurrency() at once and one per host,
+// so one slow final backup never stalls the fleet. A job whose host already
+// has one running in this pass waits for it; the global hourly limit stops
+// starting new jobs.
+async function runArchiveJobs({
+  jobs,
+  config,
+  summary,
+  startedAt,
+}: {
+  jobs: ProjectArchiveLifecycleJob[];
+  config: ProjectArchiveLifecycleConfig;
+  summary: ProjectArchiveLifecycleRunSummary;
+  startedAt: number;
+}): Promise<void> {
+  const remaining = [...jobs];
+  const hostsInFlight = new Set<string>();
+  let stopped = false;
+  const next = (): ProjectArchiveLifecycleJob | undefined => {
+    const index = remaining.findIndex(
+      ({ host_id }) => !host_id || !hostsInFlight.has(host_id),
+    );
+    return index < 0 ? undefined : remaining.splice(index, 1)[0];
+  };
+  const worker = async () => {
+    while (!stopped && Date.now() - startedAt < archivePassBudgetMs()) {
+      const job = next();
+      if (!job) return;
+      if (job.host_id) hostsInFlight.add(job.host_id);
+      let result: JobResult;
+      try {
+        result = await executeJob({ job, config });
+      } catch (err) {
+        logger.warn("automatic archive job failed unexpectedly", {
+          job_id: job.id,
+          err: `${err}`,
+        });
+        result = "failed";
+      }
+      // A pending job's final backup is still running on its host: the host
+      // stays busy for the rest of this pass (and countRunningArchivesByHost
+      // counts it for later passes).
+      if (job.host_id && result !== "pending") {
+        hostsInFlight.delete(job.host_id);
+      }
+      if (result === "rate-limited" || result === "host-busy") {
+        summary.rate_limited += 1;
+        if (result === "rate-limited") stopped = true;
+      } else {
+        summary[result] += 1;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, archiveJobConcurrency()) }, worker),
+  );
 }
 
 export async function runProjectArchiveLifecycleOnce(): Promise<ProjectArchiveLifecycleRunSummary> {
   await ensureProjectArchiveLifecycleSchema();
   const config = await loadProjectArchiveLifecycleConfig();
   const summary = emptySummary(config);
+  const startedAt = Date.now();
   const recoverable = await listRecoverableProjectArchiveLifecycleJobs(
     config.batchLimit,
   );
-  for (const job of recoverable) {
-    const result = await executeJob({ job, config });
-    summary[result === "rate-limited" ? "rate_limited" : result] += 1;
-  }
+  await runArchiveJobs({ jobs: recoverable, config, summary, startedAt });
   if (!config.enabled) return summary;
   if (
     config.canaryBays.length > 0 &&
@@ -728,12 +843,12 @@ export async function runProjectArchiveLifecycleOnce(): Promise<ProjectArchiveLi
   if (config.reportOnly) return summary;
   const queued = await listQueuedProjectArchiveLifecycleJobs(config.batchLimit);
   const recoveredIds = new Set(recoverable.map(({ id }) => id));
-  for (const job of queued) {
-    if (recoveredIds.has(job.id)) continue;
-    const result = await executeJob({ job, config });
-    summary[result === "rate-limited" ? "rate_limited" : result] += 1;
-    if (result === "rate-limited") break;
-  }
+  await runArchiveJobs({
+    jobs: queued.filter(({ id }) => !recoveredIds.has(id)),
+    config,
+    summary,
+    startedAt,
+  });
   return summary;
 }
 

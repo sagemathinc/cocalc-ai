@@ -320,9 +320,21 @@ export async function countRunningArchivesByHost(
   await ensureProjectArchiveLifecycleSchema();
   const { rows } = await getPool().query<{ count: string }>(
     `SELECT COUNT(*)::text AS count
-       FROM ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
-      WHERE host_id = $1
-        AND status = 'running'`,
+       FROM ${PROJECT_ARCHIVE_LIFECYCLE_TABLE} job
+      WHERE job.host_id = $1
+        AND (
+          job.status = 'running'
+          -- queued while its final backup is still running (pending): the
+          -- archive is still in progress on this host
+          OR (
+            job.status = 'queued'
+            AND EXISTS (
+              SELECT 1 FROM projects p
+               WHERE p.archive_lifecycle_job_id = job.id
+                 AND p.state ->> 'state' = 'archiving'
+            )
+          )
+        )`,
     [host_id],
   );
   return Math.max(0, Number(rows[0]?.count ?? 0) || 0);
@@ -361,7 +373,9 @@ export async function claimRetainedProjectArchiveLifecycleJob(
     `UPDATE ${PROJECT_ARCHIVE_LIFECYCLE_TABLE} job
         SET status = 'running',
             attempts = attempts + 1,
-            claimed_at = NOW(),
+            -- the first claim: resuming a pending archive is not a new one
+            -- for the hourly limit (countRecentAutomaticArchives)
+            claimed_at = COALESCE(job.claimed_at, NOW()),
             completed_at = NULL,
             next_attempt_at = NULL,
             failure_category = NULL,
