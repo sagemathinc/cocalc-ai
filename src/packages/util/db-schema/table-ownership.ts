@@ -68,6 +68,23 @@ function entries(
 export const TABLE_OWNERSHIP = {
   ...entries(
     [
+      "site_ai_account_holds",
+      "site_ai_admission_attempts",
+      "site_ai_funding_periods",
+      "site_ai_provider_keys",
+      "site_ai_speech_reservations",
+      "site_ai_turn_reservations",
+    ],
+    {
+      ownership: "seed-global",
+      authority: "seed",
+      portability: "stable",
+      notes:
+        "Cluster-wide site-funded AI state (util/db-schema/site-ai-funding.ts): budgets, account holds, turn and speech reservations, the admission funnel, and the site's encrypted provider keys. All admission, settlement and key management route to the seed bay, so concurrency and spending limits hold across the cluster and keys never leave it except to the host running a turn they fund.",
+    },
+  ),
+  ...entries(
+    [
       "account_funding_authorities",
       "account_funding_holds",
       "compute_funding_pools",
@@ -1229,44 +1246,6 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     migrate_to_schema: true,
     notes:
       "Global usage-window epoch/reset state. This defines cluster-wide reset semantics and should be seed-authoritative.",
-  }),
-
-  ...adHocEntries(
-    [
-      "site_ai_account_holds",
-      "site_ai_funding_periods",
-      "site_ai_speech_reservations",
-      "site_ai_turn_reservations",
-    ],
-    {
-      ownership: "seed-global",
-      authority: "seed",
-      portability: "stable",
-      source: "server site-funded AI reservation schema bootstrap",
-      migrate_to_schema: true,
-      notes:
-        "Cluster-wide site-funded AI budget, hold, and reservation state. All admission and settlement operations route to the seed bay so concurrency and spending limits are enforced globally.",
-    },
-  ),
-
-  ...adHocEntries(["site_ai_admission_attempts"], {
-    ownership: "seed-global",
-    authority: "seed",
-    portability: "stable",
-    source: "server site-funded AI admission funnel bootstrap",
-    migrate_to_schema: true,
-    notes:
-      "One row per site-funded admission attempt and its outcome (kept 90 days), recorded on the seed bay for the admin AI pool funnel.",
-  }),
-
-  ...adHocEntries(["site_ai_provider_keys"], {
-    ownership: "seed-global",
-    authority: "seed",
-    portability: "stable",
-    source: "server site-funded provider key bootstrap",
-    migrate_to_schema: true,
-    notes:
-      "The site's ordered provider API keys for site-funded Claude, encrypted at rest with secret-storage encryption, each with its monthly spend limit and reset point. Read and changed only on the seed bay.",
   }),
 
   ...adHocEntries(

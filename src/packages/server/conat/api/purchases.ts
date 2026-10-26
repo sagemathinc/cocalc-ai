@@ -210,6 +210,8 @@ import type {
   SiteLicenseAccountDetails,
   SiteLicensePoolAccountSearchResult,
 } from "@cocalc/conat/hub/api/purchases";
+import { adminRefundPurchase } from "@cocalc/server/purchases/admin-refund";
+import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import {
   attachAdminCreditAttribution,
   listAdminCreditAttribution,
@@ -217,6 +219,7 @@ import {
 import type {
   AdminCreditAttribution,
   AdminCreditAttributionAttachResult,
+  AdminRefundResult,
 } from "@cocalc/conat/hub/api/purchases";
 import { searchClusterAccounts } from "@cocalc/server/inter-bay/accounts";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
@@ -2583,6 +2586,44 @@ export async function adminAttachCreditAttribution({
     purchase_id: Number(purchase_id),
     attributed_admin_account_id: `${attributed_admin_account_id ?? ""}`,
     reason: `${reason ?? ""}`,
+    commit: commit === true,
+  });
+}
+
+export async function adminCreateRefund({
+  account_id,
+  browser_id,
+  session_hash,
+  purchase_id,
+  reason,
+  notes,
+  commit,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  purchase_id?: number;
+  reason?: string;
+  notes?: string;
+  commit?: boolean;
+} = {}): Promise<AdminRefundResult> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  // Same check as the HTTP refund route: recent second factor, no impersonation.
+  await requireDangerousSessionAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+    allow_actor_impersonation: false,
+  });
+  return await adminRefundPurchase({
+    admin_account_id: actorId,
+    purchase_id,
+    reason,
+    notes,
     commit: commit === true,
   });
 }

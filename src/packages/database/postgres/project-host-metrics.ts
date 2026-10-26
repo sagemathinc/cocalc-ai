@@ -1000,6 +1000,10 @@ export async function getProjectHostStoragePressureWindows({
        FROM project_hosts h
        WHERE h.bay_id = $1
          AND h.deleted IS NULL
+         -- A host stopped on purpose sends no telemetry; a preempted or
+         -- crashed one keeps desired_state 'running' and stays included.
+         AND NOT (h.status IN ('off', 'deprovisioned')
+                  AND COALESCE(h.metadata->>'desired_state', '') = 'stopped')
          AND EXISTS (
            SELECT 1 FROM projects p
            WHERE p.host_id = h.id AND p.deleted IS NOT TRUE AND p.provisioned

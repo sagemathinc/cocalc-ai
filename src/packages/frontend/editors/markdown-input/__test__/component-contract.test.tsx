@@ -6,6 +6,8 @@ import { MarkdownInput } from "../component";
 type HandlerMap = Record<string, Array<(...args: any[]) => void>>;
 
 let latestEditor: any = null;
+const mockAddFile = jest.fn();
+let mockDropzoneAvailable = true;
 
 async function waitForEditor() {
   await act(async () => {
@@ -190,7 +192,12 @@ jest.mock("@cocalc/frontend/feature", () => ({
 }));
 
 jest.mock("@cocalc/frontend/file-upload", () => ({
-  BlobUpload: ({ children }: any) => <>{children}</>,
+  BlobUpload: ({ children, dropzone_ref }: any) => {
+    dropzone_ref.current = mockDropzoneAvailable
+      ? { addFile: mockAddFile }
+      : null;
+    return <>{children}</>;
+  },
   Dropzone: function Dropzone() {
     return null;
   },
@@ -259,6 +266,137 @@ jest.mock("@cocalc/sync/editor/generic/simple-input-merge", () => ({
     }
   },
 }));
+
+describe("MarkdownInput pasted image bytes", () => {
+  beforeEach(() => {
+    latestEditor = null;
+    mockAddFile.mockClear();
+    mockDropzoneAvailable = true;
+    jest.useRealTimers();
+  });
+
+  afterEach(() => {
+    mockDropzoneAvailable = true;
+  });
+
+  it.each([
+    ["one byte / two padding characters", "AQ==", "image/png"],
+    ["two bytes / one padding character", "Af8=", "image/jpeg"],
+    ["three bytes / no padding", "Af+A", "image/gif"],
+    [
+      "complete one-pixel PNG",
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "image/png",
+    ],
+  ])("preserves %s", async (_label, base64, type) => {
+    await renderMarkdownInput(
+      <MarkdownInput
+        value=""
+        onChange={() => {}}
+        enableUpload
+        project_id="project"
+        path="chat"
+      />,
+    );
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const original = new File([bytes], "clipboard", {
+      type: "application/octet-stream",
+    });
+    const laterImage = { type, getAsFile: jest.fn(() => original) };
+    const event = {
+      clipboardData: {
+        items: [{ type, getAsFile: () => original }, laterImage],
+      },
+      preventDefault: jest.fn(),
+    };
+    act(() => latestEditor.__trigger("paste", latestEditor, event));
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(laterImage.getAsFile).not.toHaveBeenCalled();
+    expect(mockAddFile).toHaveBeenCalledTimes(1);
+    const uploaded: File = mockAddFile.mock.calls[0][0];
+    expect(uploaded).toBeInstanceOf(File);
+    expect(uploaded.size).toBe(original.size);
+    expect(uploaded.type).toBe(type);
+    expect(uploaded.name).toMatch(/^paste-/);
+    const actual = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(uploaded);
+    });
+    expect(new Uint8Array(actual)).toEqual(bytes);
+    expect(new Uint8Array(actual).at(-1)).toBe(bytes.at(-1));
+    const dataURL = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(uploaded);
+    });
+    expect(dataURL).toBe(`data:${type};base64,${base64}`);
+  });
+
+  it("retains image-paste handling when the dropzone is unavailable", async () => {
+    mockDropzoneAvailable = false;
+    await renderMarkdownInput(
+      <MarkdownInput
+        value=""
+        onChange={() => {}}
+        enableUpload
+        project_id="project"
+        path="chat"
+      />,
+    );
+    const event = {
+      clipboardData: {
+        items: [
+          {
+            type: "image/png",
+            getAsFile: () => new File(["image"], "clipboard"),
+          },
+        ],
+      },
+      preventDefault: jest.fn(),
+    };
+    act(() => latestEditor.__trigger("paste", latestEditor, event));
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(mockAddFile).not.toHaveBeenCalled();
+  });
+
+  it("leaves non-image paste alone and retains null-file first-image behavior", async () => {
+    await renderMarkdownInput(
+      <MarkdownInput
+        value=""
+        onChange={() => {}}
+        enableUpload
+        project_id="project"
+        path="chat"
+      />,
+    );
+    const text = {
+      clipboardData: { items: [{ type: "text/plain" }] },
+      preventDefault: jest.fn(),
+    };
+    act(() => latestEditor.__trigger("paste", latestEditor, text));
+    expect(text.preventDefault).not.toHaveBeenCalled();
+    expect(mockAddFile).not.toHaveBeenCalled();
+
+    const laterImage = {
+      type: "image/png",
+      getAsFile: jest.fn(() => new File(["later"], "later.png")),
+    };
+    const image = {
+      clipboardData: {
+        items: [{ type: "image/png", getAsFile: () => null }, laterImage],
+      },
+      preventDefault: jest.fn(),
+    };
+    act(() => latestEditor.__trigger("paste", latestEditor, image));
+    expect(image.preventDefault).toHaveBeenCalledTimes(1);
+    expect(mockAddFile).not.toHaveBeenCalled();
+    expect(laterImage.getAsFile).not.toHaveBeenCalled();
+  });
+});
 
 describe("MarkdownInput CodeMirror wrapper contract", () => {
   beforeEach(() => {

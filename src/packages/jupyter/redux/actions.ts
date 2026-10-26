@@ -2615,14 +2615,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     this.setState({ edit_cell_metadata: { id, metadata } });
   };
 
+  // Sets the given top-level keys of the notebook metadata, keeping the
+  // others: the document merges a map field shallowly. Only the given keys
+  // are sent, so a key whose value is null (nbformat allows it) isn't sent
+  // back as null, which would delete it (#1388).
   public set_global_metadata(metadata: object, save: boolean = true): void {
-    const cur = this.syncdb.get_one({ type: "settings" })?.toJS()?.metadata;
-    if (cur) {
-      metadata = {
-        ...cur,
-        ...metadata,
-      };
-    }
     this.syncdb.set({ type: "settings", metadata });
     if (save) {
       this.syncdb.commit();
@@ -2683,11 +2680,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     }
 
     if (merge) {
-      const current = this.store.getIn(
-        ["cells", id, "metadata"],
-        immutable.Map(),
-      );
-      metadata = current.merge(immutable.fromJS(metadata)).toJS();
+      // Only the given keys: the document merges a map field shallowly, so
+      // the others are kept. Setting the whole merged map would send each
+      // null-valued key back as null, which deletes it (#1388).
+      metadata = { ...metadata };
     }
 
     // special fields

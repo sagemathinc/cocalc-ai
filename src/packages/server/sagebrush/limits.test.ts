@@ -8,8 +8,11 @@ jest.mock("@cocalc/server/auth/oauth/account-state", () => ({
   getOAuthAccountState: (...args: any[]) => mockGetOAuthAccountState(...args),
 }));
 
+import { TIER_TEMPLATES } from "@cocalc/util/membership-tier-templates";
 import { getSagebrushLimits } from "./limits";
 
+// (the fallback: the free tier template's values, whatever they are)
+const FREE = TIER_TEMPLATES.free.usage_limits;
 const ACCOUNT = "00000000-0000-4000-8000-000000000001";
 
 function live(membership: any) {
@@ -63,14 +66,14 @@ describe("getSagebrushLimits", () => {
     );
     expect(await getSagebrushLimits(ACCOUNT)).toEqual({
       tier: "custom",
-      storage_bytes: 1_000_000_000,
-      max_file_bytes: 100_000_000,
-      private_links: false,
+      storage_bytes: FREE.sagebrush_storage_bytes,
+      max_file_bytes: FREE.sagebrush_max_file_bytes,
+      private_links: FREE.sagebrush_private_links,
       sync: {
-        enabled: false,
-        version_bytes: 100_000_000,
-        read_bytes_per_day: 2_000_000_000,
-        retention_days: 90,
+        enabled: FREE.sagebrush_sync_enabled,
+        version_bytes: FREE.sagebrush_sync_version_bytes,
+        read_bytes_per_day: FREE.sagebrush_sync_read_bytes_per_day,
+        retention_days: FREE.sagebrush_sync_retention_days,
       },
     });
   });
@@ -119,9 +122,9 @@ describe("getSagebrushLimits", () => {
       }),
     );
     const limits = await getSagebrushLimits(ACCOUNT);
-    expect(limits?.storage_bytes).toBe(1_000_000_000);
-    expect(limits?.max_file_bytes).toBe(100_000_000);
-    expect(limits?.private_links).toBe(false);
+    expect(limits?.storage_bytes).toBe(FREE.sagebrush_storage_bytes);
+    expect(limits?.max_file_bytes).toBe(FREE.sagebrush_max_file_bytes);
+    expect(limits?.private_links).toBe(FREE.sagebrush_private_links);
   });
 
   it("always answers the sync block, off for a tier that turns sync off", async () => {

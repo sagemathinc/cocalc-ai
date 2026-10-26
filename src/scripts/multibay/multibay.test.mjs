@@ -4262,3 +4262,80 @@ describe("Sagebrush retention emails across a rehome", () => {
     assert.equal(r.row.accepted, true);
   });
 });
+
+describe("bay registry registration is bound to the calling bay", () => {
+  // The attached bay, with its real fabric credential, tries to rewrite the
+  // seed's registry entry. Both hops must refuse: the registry (bay_id must
+  // equal source_bay_id) and the typed service layer (source_bay_id must be
+  // the authenticated calling bay).
+  async function registerFromAttached(request) {
+    return await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+       const { createInterBayBayRegistryClient } = require("@cocalc/conat/inter-bay/api");
+       const client = createInterBayBayRegistryClient({ client: getInterBayFabricClient() });
+       try {
+         await client.register(${JSON.stringify(request)});
+         return "registered";
+       } catch (err) {
+         return String(err?.message ?? err);
+       }`,
+    );
+  }
+
+  async function seedEntry(bay_id) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const { listBayRegistryLocal } = server("bay-registry.js");
+       const entry = (await listBayRegistryLocal()).find((e) => e.bay_id === ${JSON.stringify(bay_id)});
+       return entry ? { label: entry.label, region: entry.region, role: entry.role, public_origin: entry.public_origin, public_target: entry.public_target } : null;`,
+    );
+  }
+
+  it("refuses another bay's id under the caller's own source_bay_id", async () => {
+    const before = await seedEntry(SEED);
+    assert.ok(before, "the seed has a registry entry");
+    assert.match(
+      await registerFromAttached({
+        bay_id: SEED,
+        source_bay_id: ATTACHED,
+        label: "hijacked",
+        public_target: "attacker.example.com",
+      }),
+      /a bay may only register its own presence/,
+    );
+    assert.deepEqual(await seedEntry(SEED), before);
+  });
+
+  it("refuses a source_bay_id that is not the authenticated caller", async () => {
+    const before = await seedEntry(SEED);
+    assert.match(
+      await registerFromAttached({
+        bay_id: SEED,
+        source_bay_id: SEED,
+        label: "hijacked",
+        public_target: "attacker.example.com",
+      }),
+      /source_bay_id must match authenticated bay/,
+    );
+    assert.deepEqual(await seedEntry(SEED), before);
+  });
+
+  it("still accepts the attached bay registering itself", async () => {
+    const before = await seedEntry(ATTACHED);
+    assert.ok(before, "the attached bay has a registry entry");
+    const result = await registerFromAttached({
+      bay_id: ATTACHED,
+      source_bay_id: ATTACHED,
+      label: before.label,
+      region: before.region,
+      role: before.role,
+      public_origin: before.public_origin,
+      public_target: before.public_target,
+    });
+    assert.equal(result, "registered");
+    assert.deepEqual(await seedEntry(ATTACHED), before);
+  });
+});

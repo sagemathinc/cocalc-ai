@@ -21,9 +21,11 @@ import {
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DEFAULT_MAX_TRANSCRIPT_BYTES,
   defaultTranscriptStagings,
   maxTranscriptStagings,
   stageClaudeTranscripts,
+  stagedForSession,
 } from "./claude-transcript-staging";
 import { copyRegularFileBeneath } from "../beneath-copy";
 import { isManagedClaudeTranscriptStaging } from "./claude-subscription-paths";
@@ -436,4 +438,157 @@ test("each copy back renews the staging directory's time, which the reaper ages 
     await chmod(join(transcripts, "-workspace"), 0o700);
   }
   await staging.close();
+});
+
+describe("staging only the conversation's own session", () => {
+  const mine = "11111111-1111-4111-8111-111111111111";
+  const others = [
+    "22222222-2222-4222-8222-222222222222",
+    "33333333-3333-4333-8333-333333333333",
+    "44444444-4444-4444-8444-444444444444",
+  ];
+  const workspace = () => join(transcripts, "-workspace");
+  const big = Buffer.alloc(4096, "x");
+
+  beforeEach(async () => {
+    // other conversations' sessions, with their own directories
+    for (const id of others) {
+      await writeFile(join(workspace(), `${id}.jsonl`), big);
+      await mkdir(join(workspace(), id, "subagents"), { recursive: true });
+      await writeFile(join(workspace(), id, "subagents", "agent-1.jsonl"), big);
+    }
+    // this conversation's, small
+    await writeFile(join(workspace(), `${mine}.jsonl`), "mine\n");
+    await mkdir(join(workspace(), mine, "subagents"), { recursive: true });
+    await writeFile(
+      join(workspace(), mine, "subagents", "agent-1.jsonl"),
+      "sub\n",
+    );
+    // no one session's: Claude's project memory
+    await mkdir(join(workspace(), "memory"));
+    await writeFile(join(workspace(), "memory", "MEMORY.md"), "notes\n");
+  });
+
+  it("decides by session, only for a session's transcript and directory", () => {
+    expect(stagedForSession(`-workspace/${mine}.jsonl`, "file", mine)).toBe(
+      true,
+    );
+    expect(stagedForSession(`-workspace/${mine}`, "dir", mine)).toBe(true);
+    expect(
+      stagedForSession(`-workspace/${others[0]}.jsonl`, "file", mine),
+    ).toBe(false);
+    expect(stagedForSession(`-workspace/${others[0]}`, "dir", mine)).toBe(
+      false,
+    );
+    expect(stagedForSession(`-workspace/${others[0]}.jsonl`, "file")).toBe(
+      false,
+    );
+    // everything else is kept
+    expect(stagedForSession("-workspace", "dir", mine)).toBe(true);
+    expect(stagedForSession("-workspace/memory", "dir", mine)).toBe(true);
+    expect(stagedForSession("-workspace/s.jsonl", "file", mine)).toBe(true);
+    expect(
+      stagedForSession(`-workspace/${others[0]}/x/y.jsonl`, "file", mine),
+    ).toBe(true);
+  });
+
+  it("stages a small session fine in a tree of many large ones, and copies back only what changed", async () => {
+    // all of it would be far over the bound; this conversation's part is not
+    const staging = await stageClaudeTranscripts({
+      projectId,
+      projectHome,
+      parts,
+      sessionId: mine,
+      maxBytes: 1024,
+      limits: { host: 100, project: 100 },
+    });
+    try {
+      const staged = join(staging.directory, "-workspace");
+      expect((await readdir(staged)).sort()).toEqual(
+        [`${mine}.jsonl`, mine, "memory", "s.jsonl"].sort(),
+      );
+      expect(
+        await readFile(
+          join(staged, mine, "subagents", "agent-1.jsonl"),
+          "utf8",
+        ),
+      ).toBe("sub\n");
+      // the turn appends to its session and starts a subagent
+      await writeFile(join(staged, `${mine}.jsonl`), "mine\nmore\n");
+      await writeFile(
+        join(staged, mine, "subagents", "agent-2.jsonl"),
+        "two\n",
+      );
+      const before = await stat(join(workspace(), `${others[0]}.jsonl`));
+      await staging.sync();
+      expect(await readFile(join(workspace(), `${mine}.jsonl`), "utf8")).toBe(
+        "mine\nmore\n",
+      );
+      expect(
+        await readFile(
+          join(workspace(), mine, "subagents", "agent-2.jsonl"),
+          "utf8",
+        ),
+      ).toBe("two\n");
+      // other sessions are left alone
+      const after = await stat(join(workspace(), `${others[0]}.jsonl`));
+      expect(after.size).toBe(big.length);
+      expect(after.mtimeMs).toBe(before.mtimeMs);
+    } finally {
+      await staging.close();
+    }
+    expect((await readdir(workspace())).sort()).toEqual(
+      [
+        ...others,
+        ...others.map((id) => `${id}.jsonl`),
+        mine,
+        `${mine}.jsonl`,
+        "memory",
+        "s.jsonl",
+      ].sort(),
+    );
+  });
+
+  it("stages no session for a new conversation, and copies its new one back", async () => {
+    const staging = await stageClaudeTranscripts({
+      projectId,
+      projectHome,
+      parts,
+      maxBytes: 1024,
+      limits: { host: 100, project: 100 },
+    });
+    const fresh = "55555555-5555-4555-8555-555555555555";
+    try {
+      const staged = join(staging.directory, "-workspace");
+      expect((await readdir(staged)).sort()).toEqual(["memory", "s.jsonl"]);
+      await writeFile(join(staged, `${fresh}.jsonl`), "new\n");
+      await staging.sync();
+      expect(await readFile(join(workspace(), `${fresh}.jsonl`), "utf8")).toBe(
+        "new\n",
+      );
+    } finally {
+      await staging.close();
+    }
+  });
+
+  it("refuses a session over the bound with a clear message", async () => {
+    await writeFile(join(workspace(), `${mine}.jsonl`), big);
+    await expect(
+      stageClaudeTranscripts({
+        projectId,
+        projectHome,
+        parts,
+        sessionId: mine,
+        maxBytes: 1024,
+        limits: { host: 100, project: 100 },
+      }),
+    ).rejects.toThrow(
+      /this conversation's Claude transcripts are larger than 1024 bytes/,
+    );
+  });
+
+  it("allows long-lived conversations by default", () => {
+    // one session of a long-lived agent measured about 748 MB
+    expect(DEFAULT_MAX_TRANSCRIPT_BYTES).toBeGreaterThanOrEqual(4 * 1024 ** 3);
+  });
 });

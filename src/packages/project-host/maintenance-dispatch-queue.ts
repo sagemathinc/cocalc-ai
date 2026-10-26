@@ -10,13 +10,24 @@ interface Work {
   row: Row;
   observedAt: number;
   due: (row: Row) => string | null | undefined;
-  run: (row: Row, opts: { afterRunning: boolean }) => Promise<void>;
+  // Resolves to "deferred" when storage admission refused the operation
+  // before it did any work: that does not use up the account's turn.
+  run: (
+    row: Row,
+    opts: { afterRunning: boolean },
+  ) => Promise<void | "deferred">;
   waiters: { resolve: () => void; reject: (err: unknown) => void }[];
   // Reports a failure that no waiter observes (detached submissions).
   onError?: (err: unknown, row: Row) => void;
   // Submitted while an operation for the same project was running, so the row
   // predates that operation's result and must be re-read before use.
   afterRunning?: boolean;
+  // The account turn this work took when dispatched, to give back if refused.
+  served?: {
+    account: string;
+    turn: number;
+    previousPaidSinceFree: number;
+  };
 }
 
 // One queue per host/lane. Arrivals join between operations, never by starting
@@ -24,7 +35,12 @@ interface Work {
 export class MaintenanceDispatchQueue {
   private readonly pending = new Map<string, Work>();
   private readonly active = new Map<string, Work>();
+  // Each account's latest turn whose operation was not refused, and the
+  // turns of its operations still running. Ordering uses the latest of both;
+  // a refused operation only drops its running turn, in whatever order
+  // concurrent operations finish.
   private readonly servedAccounts = new Map<string, number>();
+  private readonly runningTurns = new Map<string, Set<number>>();
   private turn = 0;
   private paidSinceFree = 0;
   private concurrency = 1;
@@ -109,8 +125,8 @@ export class MaintenanceDispatchQueue {
     let paying: Work | undefined;
     let free: Work | undefined;
     const earlier = (a: Work, b: Work): boolean => {
-      const aTurn = this.servedAccounts.get(this.account(a)) ?? -1;
-      const bTurn = this.servedAccounts.get(this.account(b)) ?? -1;
+      const aTurn = this.accountTurn(this.account(a));
+      const bTurn = this.accountTurn(this.account(b));
       if (aTurn !== bTurn) return aTurn < bTurn;
       const time = (work: Work) => {
         const value = Date.parse(work.due(work.row) ?? "");
@@ -133,11 +149,53 @@ export class MaintenanceDispatchQueue {
     const next =
       free && (!paying || this.paidSinceFree >= 9) ? free : (paying ?? free);
     if (next) {
+      const account = this.account(next);
+      next.served = {
+        account,
+        turn: this.turn,
+        previousPaidSinceFree: this.paidSinceFree,
+      };
       this.paidSinceFree = next === paying ? this.paidSinceFree + 1 : 0;
-      this.servedAccounts.set(this.account(next), this.turn++);
+      let running = this.runningTurns.get(account);
+      if (!running) {
+        running = new Set();
+        this.runningTurns.set(account, running);
+      }
+      running.add(this.turn++);
       this.pending.delete(next.row.project_id);
     }
     return next;
+  }
+
+  private accountTurn(account: string): number {
+    let turn = this.servedAccounts.get(account) ?? -1;
+    for (const running of this.runningTurns.get(account) ?? []) {
+      turn = Math.max(turn, running);
+    }
+    return turn;
+  }
+
+  // The operation finished. One refused by storage admission before it did
+  // any work (e.g. in an I/O-gate recovery window) gives its account turn
+  // back, so when the project returns it is not queued behind every account
+  // served meanwhile.
+  private settleTurn(work: Work, refused: boolean): void {
+    const served = work.served;
+    if (!served) return;
+    work.served = undefined;
+    const running = this.runningTurns.get(served.account);
+    running?.delete(served.turn);
+    if (running?.size === 0) this.runningTurns.delete(served.account);
+    if (!refused) {
+      this.servedAccounts.set(
+        served.account,
+        Math.max(this.servedAccounts.get(served.account) ?? -1, served.turn),
+      );
+    } else if (this.turn === served.turn + 1) {
+      // Nothing else was dispatched since: the paid/free interleave is as
+      // before.
+      this.paidSinceFree = served.previousPaidSinceFree;
+    }
   }
 
   private pump(): void {
@@ -150,8 +208,14 @@ export class MaintenanceDispatchQueue {
           work.run(work.row, { afterRunning: work.afterRunning === true }),
         )
         .then(
-          () => this.finish(work),
-          (err) => this.finish(work, { err }),
+          (result) => {
+            this.settleTurn(work, result === "deferred");
+            this.finish(work);
+          },
+          (err) => {
+            this.settleTurn(work, false);
+            this.finish(work, { err });
+          },
         );
     }
   }
@@ -160,6 +224,7 @@ export class MaintenanceDispatchQueue {
     this.active.delete(work.row.project_id);
     if (!this.active.size && !this.pending.size) {
       this.servedAccounts.clear();
+      this.runningTurns.clear();
       this.turn = 0;
       this.paidSinceFree = 0;
     }
