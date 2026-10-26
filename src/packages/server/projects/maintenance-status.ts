@@ -714,6 +714,8 @@ export interface ProjectRecoveryDebtAggregate {
   /** The oldest status observation in the group: a host re-observes idle
    * projects daily, so this rising past a day is re-observation lag. */
   oldest_observation_age_seconds: number;
+  /** Projects in the group with no status observation at all. */
+  never_observed_count: number;
 }
 
 export interface ProjectRecoveryAttemptAggregate {
@@ -1095,6 +1097,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         unknown_count: 0,
         repeated_failures: 0,
         oldest_observation_age_seconds: 0,
+        never_observed_count: 0,
       };
       debtByHostClass.set(key, group);
     }
@@ -1280,7 +1283,9 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           }
           group.repeated_failures++;
         }
-        if (row.snapshot_observed_at != null) {
+        if (row.snapshot_observed_at == null) {
+          group.never_observed_count++;
+        } else {
           group.oldest_observation_age_seconds = Math.max(
             group.oldest_observation_age_seconds,
             Math.floor(
@@ -1351,7 +1356,9 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           }
           group.repeated_failures++;
         }
-        if (row.backup_observed_at != null) {
+        if (row.backup_observed_at == null) {
+          group.never_observed_count++;
+        } else {
           group.oldest_observation_age_seconds = Math.max(
             group.oldest_observation_age_seconds,
             Math.floor(
@@ -1423,6 +1430,8 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
       (a, b) =>
         b.oldest_delay_seconds - a.oldest_delay_seconds ||
         b.overdue_count - a.overdue_count ||
+        b.never_observed_count - a.never_observed_count ||
+        b.oldest_observation_age_seconds - a.oldest_observation_age_seconds ||
         a.host_id.localeCompare(b.host_id) ||
         a.kind.localeCompare(b.kind) ||
         a.storage_service_class.localeCompare(b.storage_service_class),

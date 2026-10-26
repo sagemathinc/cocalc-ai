@@ -3490,7 +3490,9 @@ describe("deferred snapshot prunes", () => {
       }));
       const { runProjectSnapshotBackupMaintenanceSweepOnce } =
         await import("./snapshot-backup-maintenance");
-      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-reobserve" });
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
       expect(inspectScheduledSnapshotsMock).toHaveBeenCalledWith({
         project_id: "proj-idle",
         counts: expect.objectContaining({ daily: 5 }),
@@ -3524,7 +3526,9 @@ describe("deferred snapshot prunes", () => {
         retryDeferredSnapshotPrune,
         runProjectSnapshotBackupMaintenanceSweepOnce,
       } = await import("./snapshot-backup-maintenance");
-      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-reobserve" });
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
       expect(snapshotReports()).toEqual([
         expect.objectContaining({ outcome: "skipped" }),
       ]);
@@ -3606,7 +3610,9 @@ describe("deferred snapshot prunes", () => {
         getSnapshotReobservationStats,
         runProjectSnapshotBackupMaintenanceSweepOnce,
       } = await import("./snapshot-backup-maintenance");
-      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-reobserve" });
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
       expect(snapshotReports()).toEqual([]);
       expect(getSnapshotReobservationStats()).toMatchObject({ dropped: 1 });
     });
@@ -3617,7 +3623,9 @@ describe("deferred snapshot prunes", () => {
       ]);
       const { runProjectSnapshotBackupMaintenanceSweepOnce } =
         await import("./snapshot-backup-maintenance");
-      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-reobserve" });
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
       expect(inspectScheduledSnapshotsMock).not.toHaveBeenCalled();
       expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
     });
@@ -3626,7 +3634,9 @@ describe("deferred snapshot prunes", () => {
       process.env.COCALC_PROJECT_HOST_SNAPSHOT_REOBSERVE = "0";
       const { runProjectSnapshotBackupMaintenanceSweepOnce } =
         await import("./snapshot-backup-maintenance");
-      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-reobserve" });
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
       expect(inspectScheduledSnapshotsMock).not.toHaveBeenCalled();
       expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
     });
@@ -3641,17 +3651,22 @@ describe("deferred snapshot prunes", () => {
           project_id: "proj-fresh",
           last_snapshot_observed_at: new Date().toISOString(),
         }),
+        idleRow({ project_id: "proj-never", last_snapshot_observed_at: null }),
       ]);
       const { runProjectSnapshotBackupMaintenanceSweepOnce } =
         await import("./snapshot-backup-maintenance");
-      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-reobserve" });
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
       const [, stats] = loggerInfoMock.mock.calls.find(
         ([message]) => message === "snapshot re-observation",
       )!;
       expect(stats).toMatchObject({
         hostId: "host-reobserve",
         enabled: true,
-        backlog: 1,
+        // the never-observed project is due too, and counted on its own
+        backlog: 2,
+        never_observed: 1,
       });
       expect(stats.oldest_observation_age_ms).toBeGreaterThanOrEqual(
         26 * 60 * 60_000,

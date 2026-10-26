@@ -699,6 +699,59 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     expect(group.oldest_observation_age_seconds).toBeLessThan(25 * 3600);
   });
 
+  it("orders lag-only groups by observation age and counts never-observed projects", async () => {
+    const { getProjectRecoveryHealth, snapshotScheduleRevision } =
+      await import("./maintenance-status");
+    const schedule = { frequent: 0, daily: 1, weekly: 0, monthly: 0 };
+    const changed = new Date(Date.now() - 10 * 24 * 60 * 60_000);
+    const idle = (
+      project_id: string,
+      host_id: string,
+      observedHours: number | null,
+    ) => ({
+      project_id,
+      host_id,
+      owner_account_id: "owner-account",
+      last_changed: changed,
+      last_backup: null,
+      host_last_seen: new Date(),
+      snapshots: schedule,
+      backups: { disabled: true },
+      snapshot_at: new Date(changed.getTime() + 60_000),
+      snapshot_observed_at:
+        observedHours == null
+          ? null
+          : new Date(Date.now() - observedHours * 60 * 60_000),
+      snapshot_class: "free",
+      snapshot_outcome: "skipped",
+      reconciled_change_at: changed,
+      reconciled_schedule_revision: snapshotScheduleRevision(schedule),
+    });
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+        return {
+          rows: [
+            idle("project-a", "host-a", 24.2),
+            idle("project-b", "host-b", 24.6),
+            idle("project-c", "host-c", null),
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(
+      health.by_host_class.map((group) => [
+        group.host_id,
+        group.never_observed_count,
+      ]),
+    ).toEqual([
+      ["host-c", 1],
+      ["host-b", 0],
+      ["host-a", 0],
+    ]);
+  });
+
   describe("health classification of payers that cannot be resolved", () => {
     const old = new Date(Date.now() - 4 * 60 * 60_000);
     function mockOverdueProject() {

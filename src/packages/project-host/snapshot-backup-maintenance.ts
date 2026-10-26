@@ -941,6 +941,8 @@ export interface SnapshotReobservationStats {
   /** From the last full sweep: projects whose observation is a day old. */
   backlog: number;
   oldest_observation_age_ms: number;
+  /** From the last full sweep: snapshot projects never observed. */
+  never_observed: number;
 }
 
 const reobservationStats: SnapshotReobservationStats = {
@@ -951,6 +953,7 @@ const reobservationStats: SnapshotReobservationStats = {
   failed: 0,
   backlog: 0,
   oldest_observation_age_ms: 0,
+  never_observed: 0,
 };
 
 export function getSnapshotReobservationStats(): SnapshotReobservationStats {
@@ -1419,19 +1422,19 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     // observation, and the oldest observation of any snapshot project.
     let backlog = 0;
     let oldest = 0;
+    let neverObserved = 0;
     for (const row of rows) {
       if (mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots).disabled) {
         continue;
       }
       if (reobservable(row, queuedAt)) backlog++;
       const observed = parseTimestampMs(row.last_snapshot_observed_at);
-      oldest = Math.max(
-        oldest,
-        observed == null ? 0 : Math.max(0, queuedAt - observed),
-      );
+      if (observed == null) neverObserved++;
+      else oldest = Math.max(oldest, queuedAt - observed);
     }
     reobservationStats.backlog = backlog;
     reobservationStats.oldest_observation_age_ms = oldest;
+    reobservationStats.never_observed = neverObserved;
     logger.info("snapshot re-observation", {
       hostId,
       enabled: reobserveEnabled,
