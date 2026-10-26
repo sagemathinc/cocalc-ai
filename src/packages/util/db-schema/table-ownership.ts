@@ -374,6 +374,8 @@ export const TABLE_OWNERSHIP = {
       "agent_external_identities",
       "agent_external_installations",
       "agent_external_inbox",
+      "agent_external_inbox_attachments",
+      "agent_external_inbox_reservations",
     ],
     {
       ownership: "account-home",

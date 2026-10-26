@@ -159,17 +159,19 @@ export async function sendAgentMessage(
     | Awaited<ReturnType<typeof readAgentAttachmentSnapshots>>
     | undefined;
   if (opts.attach?.length) {
-    if (isExternalAgentSource(target))
-      throw new Error(
-        "Attachments to external network members are not supported",
-      );
-    const self = opts.externalAgent
-      ? undefined
-      : ((await sendIdentityMessage(
-          { action: "whoami" },
-          opts.api,
-        )) as AgentSelf);
-    if (self?.identity?.project_id !== target.project_id) {
+    // An external member has no project: it gets copies, kept with the
+    // message in its inbox.
+    const self =
+      opts.externalAgent || isExternalAgentSource(target)
+        ? undefined
+        : ((await sendIdentityMessage(
+            { action: "whoami" },
+            opts.api,
+          )) as AgentSelf);
+    if (
+      isExternalAgentSource(target) ||
+      self?.identity?.project_id !== target.project_id
+    ) {
       snapshots = await readAgentAttachmentSnapshots(opts.attach);
     } else {
       const metadata = await readAgentFileReferences(opts.attach);

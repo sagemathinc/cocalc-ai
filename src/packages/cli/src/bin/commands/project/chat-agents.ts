@@ -13,6 +13,9 @@ import {
   resolveAgentName,
   resolveBroadcastTargets,
 } from "../../core/agent-destination";
+import { saveInboxAttachments } from "../../core/agent-inbox-attachments";
+import type { ExternalAgentInboxAttachment } from "@cocalc/conat/agents/external";
+import { join } from "node:path";
 import {
   createAgentFromCopy,
   listNamedAgentsSummary,
@@ -298,6 +301,37 @@ export function registerAgentCommands(
           action: "inbox",
           limit,
           ...(opts.includeAcknowledged ? { include_acknowledged: true } : {}),
+        }),
+      );
+    });
+  agent
+    .command("inbox-attachments <message-id>")
+    .requiredOption(
+      "--external-agent <profile>",
+      "enrolled external-agent profile",
+    )
+    .option(
+      "--dir <dir>",
+      "where to save them (default: ./inbox-attachments/<message-id>)",
+    )
+    .description(
+      "save the files sent with an external-agent inbox message (checked against their SHA-256; existing files are never overwritten)",
+    )
+    .action(async (message_id, opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      emitSuccess(
+        { globals },
+        `${prefix} inbox-attachments`,
+        await saveInboxAttachments({
+          message_id,
+          dir: opts.dir ?? join("inbox-attachments", message_id),
+          fetch: (index) =>
+            sendExternalAgentMessage(opts.externalAgent, {
+              version: 3,
+              action: "inbox-attachment",
+              message_id,
+              index,
+            }) as unknown as Promise<ExternalAgentInboxAttachment>,
         }),
       );
     });

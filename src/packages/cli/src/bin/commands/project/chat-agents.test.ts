@@ -796,6 +796,103 @@ test("agent turn sets the current turn's subject and priority", async () => {
   }
 });
 
+test("files go to an external member as copies, with the message", async () => {
+  const network = randomUUID();
+  const external = {
+    kind: "external" as const,
+    account_id: randomUUID(),
+    agent_id: randomUUID(),
+    installation_id: randomUUID(),
+  };
+  const directory = {
+    peers: [
+      {
+        member: {
+          kind: "external",
+          member_id: external.agent_id,
+          label: "ops0 on alpha.cocalc.ai (ops project)",
+          source: external,
+          available: true,
+          added_at: new Date().toISOString(),
+        },
+        networks: [
+          {
+            agent_network_id: network,
+            title: "cocalc",
+            delivery_mode: "queued",
+            generation: randomUUID(),
+          },
+        ],
+      },
+    ],
+  };
+  const requests: any[] = [];
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      requests.push(request);
+      if (request.action === "destinations") return directory;
+      const attempt = {
+        version: 3,
+        attempt_id: request.attempt_id,
+        agent_network_id: request.agent_network_id,
+        target: request.target,
+      };
+      if (request.action === "prepare-attachments")
+        return {
+          ...attempt,
+          outcome: "prepared",
+          reservation_id: randomUUID(),
+          expires_at: Date.now() + 60_000,
+        };
+      if (request.action === "send")
+        return {
+          ...attempt,
+          outcome: "accepted",
+          observed_at: Date.now(),
+          chat_effect: "saved",
+        };
+      throw new Error(`unexpected ${request.action}`);
+    },
+  );
+  const stderr = mock.method(process.stderr, "write", () => true);
+  const file = join(mkdtempSync(join(tmpdir(), "agent-send-")), "report.md");
+  try {
+    writeFileSync(file, "# Bug report\n");
+    const output: any[] = [];
+    await topLevel(output).parseAsync(
+      ["agent", "send", "ops0", "--attach", file, "Report", "attached"],
+      { from: "user" },
+    );
+    // No whoami: an external member has no project to share paths with.
+    assert.deepEqual(
+      requests.map((request) => request.action),
+      ["destinations", "prepare-attachments", "send"],
+    );
+    const [, prepare, send] = requests;
+    assert.deepEqual(send.target, external);
+    assert.equal(prepare.snapshot_manifest[0].name, "report.md");
+    assert.equal(send.attachment_reservation !== undefined, true);
+    assert.equal(
+      Buffer.from(send.snapshot_payload[0].data).toString(),
+      "# Bug report\n",
+    );
+    assert.equal(output[0].outcome, "accepted");
+    // How to check it later, for an external member too.
+    assert.match(
+      stderr.mock.calls.map((call) => `${call.arguments[0]}`).join(""),
+      new RegExp(
+        `cocalc agent rpc inspect ${send.attempt_id} --agent-network ${network} --to-agent ${external.agent_id} --target-account ${external.account_id} --target-installation ${external.installation_id}`,
+      ),
+    );
+  } finally {
+    stderr.mock.restore();
+    transport.mock.restore();
+    process.exitCode = 0;
+  }
+});
+
 test("rpc inspect reaches an external member by account and installation", async () => {
   const requests: any[] = [];
   const transport = mock.method(

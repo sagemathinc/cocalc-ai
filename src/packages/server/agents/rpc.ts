@@ -68,6 +68,8 @@ import {
   assertExternalAgentLoginEnabled,
   externalControl,
   enqueueExternalAgentMessage,
+  releaseExternalAgentAttachments,
+  reserveExternalAgentAttachments,
   externalStore,
   inspectExternalAgentMessage,
 } from "./external";
@@ -999,6 +1001,146 @@ export const authorizeRpcReportExecution: AgentApi["authorizeRpcReportExecution"
   };
 
 /**
+ * The sender may reach this external member now: a current member of the
+ * network, and the target is the installation the network names. Otherwise
+ * the outcome to answer with.
+ */
+async function externalTargetProof(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+) {
+  if (!isExternalAgentSource(request.target))
+    throw new Error("external inbox target required");
+  // Members and inbox rows hold UUIDs in canonical (lowercase) form; the
+  // caller may spell them otherwise. The outcome still echoes the request.
+  const target = {
+    ...request.target,
+    account_id: request.target.account_id.toLowerCase(),
+    agent_id: request.target.agent_id.toLowerCase(),
+    installation_id: request.target.installation_id.toLowerCase(),
+  };
+  const checked = await networkProof(
+    account_id,
+    source,
+    run_id,
+    target,
+    request.agent_network_id.toLowerCase(),
+  );
+  if ("denied" in checked)
+    return {
+      ok: false as const,
+      outcome: rpcOutcome(request, "rejected", {
+        code: "network_unavailable",
+        chat_effect: "none",
+        reason: checked.denied,
+      }),
+    };
+  if (
+    checked.account_id !== target.account_id ||
+    checked.target.kind !== "external" ||
+    checked.target.source.installation_id !== target.installation_id
+  )
+    return {
+      ok: false as const,
+      outcome: rpcOutcome(request, "rejected", {
+        code: "principal_mismatch",
+        chat_effect: "none",
+        reason: "External target principal mismatch",
+      }),
+    };
+  return {
+    ok: true as const,
+    checked,
+    installation_id: target.installation_id,
+  };
+}
+
+/**
+ * Files for an external member: before any bytes move, the sender must be
+ * able to reach it, and its inbox reserves room for exactly these files at
+ * the account's home. The send names that reservation, and storing the
+ * message consumes it.
+ */
+async function prepareExternalAttachments(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+): Promise<import("@cocalc/conat/agents/rpc").AgentRpcPreparation> {
+  if (request.file_references !== undefined || !request.snapshot_manifest)
+    return rpcOutcome(request, "rejected", {
+      code: "attachment_unavailable",
+      chat_effect: "none",
+      reason:
+        "An external network member has no project: send copies of the files",
+    });
+  const proof = await externalTargetProof(account_id, source, run_id, request);
+  if (!proof.ok) return proof.outcome;
+  try {
+    const reservation = await reserveExternalAgentAttachments({
+      account_id: proof.checked.account_id,
+      installation_id: proof.installation_id,
+      attempt_id: request.attempt_id,
+      agent_network_id: proof.checked.agent_network_id,
+      network_generation: proof.checked.network_generation,
+      source,
+      source_account_id: account_id,
+      manifest: request.snapshot_manifest,
+    });
+    return {
+      version: 3,
+      attempt_id: request.attempt_id,
+      agent_network_id: request.agent_network_id,
+      target: request.target,
+      outcome: "prepared",
+      reservation_id: reservation.reservation_id,
+      expires_at: reservation.expires_at,
+    };
+  } catch (error) {
+    return rpcOutcome(request, "rejected", {
+      code: "attachment_preparation_unavailable",
+      chat_effect: "none",
+      reason: `The external inbox cannot take these files: ${error}`,
+    });
+  }
+}
+
+/** The sender gives up its reservation: nothing was sent. */
+async function cancelExternalAttachments(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+) {
+  const canceled = rpcOutcome(request, "rejected", {
+    chat_effect: "none",
+    reason: "Attachment preparation canceled; no message was sent",
+  });
+  if (request.attachment_reservation === undefined) return canceled;
+  const proof = await externalTargetProof(account_id, source, run_id, request);
+  // Without access now, the reservation simply lapses.
+  if (!proof.ok) return canceled;
+  try {
+    await releaseExternalAgentAttachments({
+      account_id: proof.checked.account_id,
+      installation_id: proof.installation_id,
+      attempt_id: request.attempt_id,
+      reservation_id: request.attachment_reservation,
+      source,
+      source_account_id: account_id,
+    });
+  } catch (error) {
+    logger.warn("external attachment reservation not released", {
+      attempt_id: request.attempt_id,
+      error: `${error}`,
+    });
+  }
+  return canceled;
+}
+
+/**
  * For the sender: whether the external member has read its message. Only a
  * current member of the network, asking about its own message (the same
  * source, run by the same authenticated account, in that network), learns
@@ -1087,64 +1229,58 @@ function externalTargetRequest(
     }
   >,
 ) {
-  if (request.action === "send")
-    return submitExternalInbox(account_id, source, run_id, request);
-  if (request.action === "inspect")
-    return inspectExternalInbox(account_id, source, run_id, request);
-  return rpcOutcome(request, "rejected", {
-    chat_effect: "none",
-    reason:
-      request.action === "withdraw"
-        ? "A message in an external inbox cannot be withdrawn: no turn starts there"
-        : "External inbox attachments are not available",
-  });
+  switch (request.action) {
+    case "send":
+      return submitExternalInbox(account_id, source, run_id, request);
+    case "prepare-attachments":
+      return prepareExternalAttachments(account_id, source, run_id, request);
+    case "cancel-attachments":
+      return cancelExternalAttachments(account_id, source, run_id, request);
+    case "inspect":
+      return inspectExternalInbox(account_id, source, run_id, request);
+    default:
+      return rpcOutcome(request, "rejected", {
+        chat_effect: "none",
+        reason:
+          "A message in an external inbox cannot be withdrawn: no turn starts there",
+      });
+  }
 }
 
 async function submitExternalInbox(
   account_id: string,
   source: AgentRpcSource,
   run_id: string | undefined,
-  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend & {
+    snapshot_payload?: import("@cocalc/conat/agents/attachments").AgentSnapshot[];
+  },
 ) {
   if (!isExternalAgentSource(request.target))
     throw new Error("external inbox target required");
-  if (
-    request.file_references !== undefined ||
-    request.snapshot_manifest !== undefined ||
-    request.attachment_reservation !== undefined
-  )
+  if (request.file_references !== undefined)
     return rpcOutcome(request, "rejected", {
       code: "attachment_unavailable",
       chat_effect: "none",
-      reason: "External inbox attachments are not available",
+      reason:
+        "An external network member has no project: send copies of the files",
     });
-  const checked = await networkProof(
-    account_id,
-    source,
-    run_id,
-    request.target,
-    request.agent_network_id,
-  );
-  if ("denied" in checked)
-    return rpcOutcome(request, "rejected", {
-      code: "network_unavailable",
-      chat_effect: "none",
-      reason: checked.denied,
-    });
+  // Files travel only with the reservation made for them (prepare).
   if (
-    checked.account_id !== request.target.account_id ||
-    checked.target.kind !== "external" ||
-    checked.target.source.installation_id !== request.target.installation_id
+    request.snapshot_payload?.length &&
+    request.attachment_reservation === undefined
   )
     return rpcOutcome(request, "rejected", {
-      code: "principal_mismatch",
+      code: "attachment_preparation_unavailable",
       chat_effect: "none",
-      reason: "External target principal mismatch",
+      reason: "Files for an external member must be prepared first",
     });
+  const proof = await externalTargetProof(account_id, source, run_id, request);
+  if (!proof.ok) return proof.outcome;
+  const { checked } = proof;
   try {
     await enqueueExternalAgentMessage({
       account_id: checked.account_id,
-      installation_id: request.target.installation_id,
+      installation_id: proof.installation_id,
       attempt_id: request.attempt_id,
       agent_network_id: checked.agent_network_id,
       network_generation: checked.network_generation,
@@ -1152,6 +1288,12 @@ async function submitExternalInbox(
       // The sender's authenticated account: only it may inspect later.
       source_account_id: account_id,
       body: request.body,
+      ...(request.snapshot_payload?.length
+        ? {
+            attachments: request.snapshot_payload,
+            reservation_id: request.attachment_reservation,
+          }
+        : {}),
     });
     const outcome = rpcOutcome(request, "accepted", {
       chat_effect: "saved",
@@ -1229,7 +1371,11 @@ export async function acceptAgentRpc(
           authorization,
         ),
     );
-  if (request.action === "inbox" || request.action === "ack-inbox")
+  if (
+    request.action === "inbox" ||
+    request.action === "ack-inbox" ||
+    request.action === "inbox-attachment"
+  )
     throw new Error("native agents do not have an external inbox");
   if (isExternalAgentSource(request.target))
     return externalTargetRequest(run.account_id, source, run_id, request);
@@ -1342,6 +1488,13 @@ export async function acceptExternalAgentRpc(
       account_id,
       installation_id,
       request.message_id,
+    );
+  if (request.action === "inbox-attachment")
+    return externalStore().attachment(
+      account_id,
+      installation_id,
+      request.message_id,
+      request.index,
     );
   if (isExternalAgentSource(request.target))
     return externalTargetRequest(account_id, source, undefined, request);
