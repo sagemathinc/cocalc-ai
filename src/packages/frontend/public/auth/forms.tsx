@@ -1027,6 +1027,7 @@ export function PublicEmailFirstForm({
     return view === "sign-up" ? (
       <PublicSignUpForm
         cookieBannerEnabled={cookieBannerEnabled}
+        homeVariant={homeVariant}
         initialEmail={email}
         initialRegistrationToken={registrationToken}
         initialSSOStrategies={initialSSOStrategies}
@@ -2170,6 +2171,7 @@ function PostSignupVerificationStep({
 
 export function PublicSignUpForm({
   cookieBannerEnabled = false,
+  homeVariant: parentHomeVariant,
   initialEmail,
   initialRegistrationToken,
   initialSSOStrategies,
@@ -2180,6 +2182,9 @@ export function PublicSignUpForm({
   signupEmailDomainPolicy,
 }: {
   cookieBannerEnabled?: boolean;
+  /** Set when shown inside the email-first form, which already counts the
+   * Home experiment visit: use its version, and don't count again. */
+  homeVariant?: () => string | undefined;
   initialEmail?: string;
   initialRegistrationToken?: string;
   initialSSOStrategies?: PublicSsoStrategy[];
@@ -2236,7 +2241,11 @@ export function PublicSignUpForm({
   );
   // Reached from a version of Home in the Home page experiment
   // (util/public-home-experiment.ts): aggregate counts only.
-  const homeVariant = usePublicHomeSignupVariant(cookieBannerEnabled);
+  const ownHomeVariant = usePublicHomeSignupVariant(
+    cookieBannerEnabled,
+    parentHomeVariant == null,
+  );
+  const homeVariant = parentHomeVariant ?? ownHomeVariant;
 
   useEffect(() => {
     if (requiresToken !== undefined) {

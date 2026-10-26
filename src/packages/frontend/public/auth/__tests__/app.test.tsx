@@ -506,6 +506,36 @@ describe("PublicAuthApp", () => {
     expect(screen.getByPlaceholderText("At least 8 characters")).not.toBeNull();
   });
 
+  it("counts a Home experiment sign-up page visit once across email-first and password", () => {
+    window.history.replaceState(null, "", "/auth/sign-up?home=default");
+    const fetch = jest.fn(async () => ({ ok: true, json: async () => ({}) }));
+    const previous = window.fetch;
+    (window as any).fetch = fetch;
+    try {
+      render(
+        <PublicAuthApp
+          config={config({ email_authentication_mode: "email_first" })}
+          initialRoute={{ kind: "auth-form", view: "sign-up" }}
+        />,
+      );
+      fireEvent.click(screen.getByText("Use a password instead"));
+      expect(
+        screen.getByPlaceholderText("At least 8 characters"),
+      ).not.toBeNull();
+      const visits = fetch.mock.calls.filter(([url]) =>
+        `${url}`.endsWith("home-experiment"),
+      );
+      expect(visits).toHaveLength(1);
+      expect(JSON.parse((visits[0] as any)[1].body)).toEqual({
+        variant: "default",
+        event: "cta",
+      });
+    } finally {
+      (window as any).fetch = previous;
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   it("requests the registration token in email-first signup", async () => {
     mockedApi.mockResolvedValueOnce(true);
     mockedPostAuthApi.mockResolvedValueOnce({
