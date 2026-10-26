@@ -249,6 +249,8 @@ describe("Thompson sampling helpers", () => {
     const cents = (w: number[]) =>
       Math.round(w.reduce((a, b) => a + b, 0) * 100);
     expect(suggestedWeights([0.335, 0.335, 0.33])).toEqual([0.34, 0.33, 0.33]);
+    // Rounding keeps the floor: no arm below 0.1, total exactly 1.
+    expect(suggestedWeights([0.1, 0.105, 0.795])).toEqual([0.1, 0.11, 0.79]);
     expect(cents(suggestedWeights([1 / 3, 1 / 3, 1 / 3]))).toBe(100);
     // Real no-data runs with 3 and 4 arms.
     for (const n of [3, 4]) {

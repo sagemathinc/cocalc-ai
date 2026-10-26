@@ -81,6 +81,14 @@ describe("the public Home experiment endpoints", () => {
     expect(await res.text()).toBe("");
   });
 
+  it("never counts a sign-up sent by a browser", async () => {
+    for (const event of ["signup", "SIGNUP", undefined, 3]) {
+      const res = await post({ variant: "math", event });
+      expect(res.status).toBe(422);
+    }
+    expect(recordPublicHomeExperimentEvent).not.toHaveBeenCalled();
+  });
+
   it("answers with an error when the write fails", async () => {
     jest
       .mocked(recordPublicHomeExperimentEvent)

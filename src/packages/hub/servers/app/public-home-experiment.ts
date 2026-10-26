@@ -43,11 +43,18 @@ export default function initPublicHomeExperiment(router: Router): void {
         res.status(429).end();
         return;
       }
+      // Browsers report views and sign-up page visits only. Sign-ups are
+      // counted by the server when an account is created, never from here.
+      const event = req.body?.event;
+      if (event !== "view" && event !== "cta") {
+        res.status(422).end();
+        return;
+      }
       let stored: boolean;
       try {
         stored = await recordPublicHomeExperimentEvent({
           variant: req.body?.variant,
-          event: req.body?.event,
+          event,
         });
       } catch (err) {
         logger.warn("recording a home experiment event failed", {
