@@ -10,6 +10,7 @@ import { useCallback, useMemo } from "react";
 import { SEARCH_STYLE } from "./consts";
 import { MultipleAddSearch } from "./multiple-add-search";
 import { ItemName } from "./types";
+import { projectRelativeCoursePath } from "../assignments/paths";
 
 interface FoldersToolbarProps {
   search?: string;
@@ -56,6 +57,23 @@ export function FoldersToolbar({
   );
 }
 
+// The home-relative paths of the items that are not deleted.
+export function coursePathsToOmit(items): Set<string> {
+  const omit: Set<string> = new Set([]);
+  items
+    .filter((val) => !val.get("deleted"))
+    .map((val) => {
+      const path = val.get("path");
+      if (path != null) {
+        // path might not be set in case something went wrong
+        // (this has been hit in production). Older records may store an
+        // absolute home path; the selector works with home-relative ones.
+        omit.add(projectRelativeCoursePath(path));
+      }
+    });
+  return omit;
+}
+
 export function AddItems({
   addItems,
   itemName,
@@ -73,20 +91,7 @@ export function AddItems({
 }) {
   // Omits any -collect directory (unless explicitly searched for).
   // Omits any currently assigned directory or subdirectories.
-  const pathsToOmit = useMemo(() => {
-    const omit: Set<string> = new Set([]);
-    items
-      .filter((val) => !val.get("deleted"))
-      .map((val) => {
-        const path = val.get("path");
-        if (path != null) {
-          // path might not be set in case something went wrong
-          // (this has been hit in production)
-          omit.add(path);
-        }
-      });
-    return omit;
-  }, [items]);
+  const pathsToOmit = useMemo(() => coursePathsToOmit(items), [items]);
 
   const isExcluded = useCallback(
     (path) => {
