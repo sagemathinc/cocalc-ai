@@ -24,8 +24,17 @@ import {
 import {
   listProjectBackupIds,
   runScheduledBackupMaintenance,
+  pruneDeferredSnapshots,
   runScheduledSnapshotMaintenance,
+  snapshotPruneBusy,
 } from "./file-server";
+import {
+  clearPendingPrune,
+  notePendingPrune,
+  type PendingPrune,
+  startDeferredPruneLoop,
+  stopDeferredPruneLoop,
+} from "./snapshot-prune-gate";
 import {
   admitStorageOperation,
   getStorageAdmissionStatus,
@@ -1538,6 +1547,18 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               disabled = updated?.disabled ?? false;
               skippedReason = updated?.skipped_reason;
               stageDurations = updated?.stage_durations_ms ?? {};
+              if (updated?.prune_deferred) {
+                // Retried within the bound even if this project isn't due
+                // again for a day (snapshot-prune-gate.ts).
+                notePendingPrune(project_id, {
+                  counts: scheduleToCounts(schedule),
+                  validate: () => validateAssignment(row, "snapshot"),
+                });
+              } else {
+                // This scan applied the current retention: an older retry
+                // must not run later with stale counts.
+                clearPendingPrune(project_id);
+              }
             },
           });
           const changedAt = parseTimestampMs(
@@ -1946,6 +1967,42 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
   });
 }
 
+/** One deferred prune, as scheduled storage work: admission, the maintenance
+ * cgroup, the background mutation context, and the same assignment check as
+ * a scheduled snapshot. Throws (stays pending) only when admission refuses;
+ * a changed assignment, schedule or content drops the retry, and the next
+ * scheduled snapshot applies the current retention. */
+export async function retryDeferredSnapshotPrune({
+  hostId,
+  project_id,
+  pending,
+  run = runScheduledStorageOperation,
+  prune = pruneDeferredSnapshots,
+}: {
+  hostId: string;
+  project_id: string;
+  pending: PendingPrune;
+  run?: typeof runScheduledStorageOperation;
+  prune?: typeof pruneDeferredSnapshots;
+}): Promise<void> {
+  const result = await run({
+    hostId,
+    project_id,
+    operation_kind: "scheduled_snapshot",
+    validate: pending.validate,
+    run: () => prune(project_id, { counts: pending.counts }),
+  });
+  if (result.ran) return;
+  if (result.admissionDeferred) {
+    throw new Error(`not admitted: ${result.reason ?? "unknown"}`);
+  }
+  logger.info("dropping deferred snapshot prune", {
+    hostId,
+    project_id,
+    reason: result.reason,
+  });
+}
+
 export function startProjectSnapshotBackupMaintenance({
   hostId,
 }: {
@@ -1966,6 +2023,16 @@ export function startProjectSnapshotBackupMaintenance({
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS,
     DEFAULT_INITIAL_DELAY_MS + initialDelayJitterMs(hostId),
   );
+  // Snapshots whose prune was deferred (snapshot-prune-gate.ts) are pruned
+  // here as scheduled storage work: storage admission, the maintenance cgroup
+  // and the background mutation context, like the snapshot itself.
+  if (!shadow) {
+    startDeferredPruneLoop({
+      prune: (project_id, pending) =>
+        retryDeferredSnapshotPrune({ hostId, project_id, pending }),
+      busy: snapshotPruneBusy,
+    });
+  }
   let closed = false;
   const changedProjects = new Set<string>();
   const futureDue = new Map<string, number>();
@@ -2134,6 +2201,7 @@ export function startProjectSnapshotBackupMaintenance({
   let repeatingTimer: ReturnType<typeof setInterval> | undefined;
   return () => {
     closed = true;
+    stopDeferredPruneLoop();
     unsubscribeChanges();
     unsubscribeProvisioned();
     clearTimeout(changedTimer);

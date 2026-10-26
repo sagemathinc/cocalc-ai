@@ -284,3 +284,51 @@ describe("the rolling snapshot prune gate", () => {
     expect(beforePrune).not.toHaveBeenCalled();
   });
 });
+
+describe("pruneRollingSnapshots", () => {
+  const now = Date.parse("2026-04-22T12:00:00.000Z");
+  const day = 24 * 60 * 60 * 1000;
+  beforeEach(() => {
+    jest.resetModules();
+    delete process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+    jest.spyOn(Date, "now").mockReturnValue(now);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it("deletes only the expired snapshots and creates none", async () => {
+    const { pruneRollingSnapshots } = await import("./snapshots");
+    const old = new Date(now - 10 * day).toISOString();
+    const recent = new Date(now - 60_000).toISOString();
+    const snapshots = {
+      readdir: jest.fn(async () => [old, recent, "my-named-snapshot"]),
+      delete: jest.fn(async () => undefined),
+    };
+    await expect(
+      pruneRollingSnapshots({
+        snapshots: snapshots as any,
+        counts: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+      }),
+    ).resolves.toBe(1);
+    expect(snapshots.delete).toHaveBeenCalledWith(old);
+    expect(snapshots.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it("tries every deletion, then reports the failure", async () => {
+    const { pruneRollingSnapshots } = await import("./snapshots");
+    const names = [3, 2].map((d) => new Date(now - d * day).toISOString());
+    const snapshots = {
+      readdir: jest.fn(async () => [...names, new Date(now).toISOString()]),
+      delete: jest
+        .fn()
+        .mockRejectedValueOnce(new Error("busy"))
+        .mockResolvedValue(undefined),
+    };
+    await expect(
+      pruneRollingSnapshots({
+        snapshots: snapshots as any,
+        counts: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+      }),
+    ).rejects.toThrow("busy");
+    expect(snapshots.delete).toHaveBeenCalledTimes(2);
+  });
+});

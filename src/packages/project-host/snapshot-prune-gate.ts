@@ -12,10 +12,14 @@
 // host or a project start/stop is in progress, but never longer than
 // MAX_DEFERRAL_MS for a project, so expired snapshots are still deleted.
 //
-// The state is in memory: a restart forgets deferrals, which only restarts
-// the bound.
+// The scheduler may not visit a project again for a day (unchanged content,
+// sparse schedules), so the gate keeps its own list of projects with a
+// deferred prune and retries them every minute (startDeferredPruneLoop): the
+// bound is wall time. The state is in memory: a restart forgets deferrals;
+// the next scheduled snapshot of each project prunes again.
 
 import getLogger from "@cocalc/backend/logger";
+import type { SnapshotCounts } from "@cocalc/util/db-schema/projects";
 
 const logger = getLogger("project-host:snapshot-prune-gate");
 
@@ -30,12 +34,25 @@ export type SnapshotPruneDecision =
     };
 
 export interface SnapshotPruneGateStats {
+  /** Prunes deferred, and run anyway at the bound, since start. */
   deferred: number;
   forced: number;
+  /** Projects with a deferred prune waiting for the retry. */
   pending_projects: number;
 }
 
 const firstDeferredAt = new Map<string, number>();
+// Projects whose prune was deferred, with what the retry needs.
+const pendingPrunes = new Map<string, PendingPrune>();
+
+export interface PendingPrune {
+  /** The retention the deferred prune was computed with. */
+  counts: Partial<SnapshotCounts>;
+  /** Confirms, right before deleting, that this host still owns the project
+   * under the same schedule and content (as a scheduled snapshot does);
+   * returns a reason if not. */
+  validate: () => Promise<string | undefined>;
+}
 let deferredCount = 0;
 let forcedCount = 0;
 
@@ -74,7 +91,8 @@ export function decideSnapshotPrune({
     firstDeferredAt.delete(projectId);
     return { allow: true, reason: "idle", deferredForMs };
   }
-  if (first != null && deferredForMs >= maxDeferralMs) {
+  // A bound of 0 turns deferral off.
+  if (maxDeferralMs <= 0 || (first != null && deferredForMs >= maxDeferralMs)) {
     firstDeferredAt.delete(projectId);
     forcedCount += 1;
     logger.info("pruning snapshots after the deferral bound", {
@@ -96,16 +114,108 @@ export function decideSnapshotPrune({
   return { allow: false, reason: busy, deferredForMs };
 }
 
+/** Remember a project whose prune was deferred, so the loop retries it. */
+export function notePendingPrune(
+  projectId: string,
+  pending: PendingPrune,
+): void {
+  pendingPrunes.set(projectId, pending);
+}
+
+/** A scheduled snapshot pruned (or the project went away): no retry needed. */
+export function clearPendingPrune(projectId: string): void {
+  pendingPrunes.delete(projectId);
+  firstDeferredAt.delete(projectId);
+}
+
+export const DEFERRED_PRUNE_RETRY_MS = 60_000;
+
+/** One pass over the deferred prunes: each runs once the gate allows it (the
+ * host is quiet, or its bound is up). A failed run stays pending for the
+ * next pass. */
+export async function retryDeferredPrunes({
+  prune,
+  busy,
+  now = Date.now,
+  maxDeferralMs = maxPruneDeferralMs(),
+}: {
+  prune: (projectId: string, pending: PendingPrune) => Promise<void>;
+  busy: () => { backupsInFlight: number; lifecycleActive: number };
+  now?: () => number;
+  maxDeferralMs?: number;
+}): Promise<{ pruned: string[]; waiting: number }> {
+  const pruned: string[] = [];
+  for (const [projectId, pending] of [...pendingPrunes]) {
+    const decision = decideSnapshotPrune({
+      projectId,
+      ...busy(),
+      now: now(),
+      maxDeferralMs,
+    });
+    if (!decision.allow) continue;
+    try {
+      await prune(projectId, pending);
+      // Only if nothing newer replaced it meanwhile.
+      if (pendingPrunes.get(projectId) === pending) {
+        pendingPrunes.delete(projectId);
+      }
+      pruned.push(projectId);
+    } catch (err) {
+      // Keep it, with its original deferral start: the bound has passed or
+      // the host is quiet, so the next pass tries again (storage admission
+      // still decides when it may run).
+      firstDeferredAt.set(projectId, now() - decision.deferredForMs);
+      logger.warn("deferred snapshot prune failed; will retry", {
+        project_id: projectId,
+        err: `${err}`.slice(0, 200),
+      });
+    }
+  }
+  return { pruned, waiting: pendingPrunes.size };
+}
+
+let loop: ReturnType<typeof setInterval> | undefined;
+let looping = false;
+
+/** Start (once) the background retry of deferred prunes. */
+export function startDeferredPruneLoop(
+  opts: Parameters<typeof retryDeferredPrunes>[0],
+  intervalMs = DEFERRED_PRUNE_RETRY_MS,
+): void {
+  if (loop != null) return;
+  loop = setInterval(() => {
+    if (looping || pendingPrunes.size === 0) return;
+    looping = true;
+    void retryDeferredPrunes(opts)
+      .catch((err) =>
+        logger.warn("deferred snapshot prune pass failed", { err }),
+      )
+      .finally(() => {
+        looping = false;
+      });
+  }, intervalMs);
+  loop.unref?.();
+}
+
+export function stopDeferredPruneLoop(): void {
+  if (loop != null) clearInterval(loop);
+  loop = undefined;
+}
+
 export function getSnapshotPruneGateStats(): SnapshotPruneGateStats {
   return {
     deferred: deferredCount,
     forced: forcedCount,
-    pending_projects: firstDeferredAt.size,
+    pending_projects: pendingPrunes.size,
   };
 }
 
 export function resetSnapshotPruneGateForTest(): void {
   firstDeferredAt.clear();
+  pendingPrunes.clear();
   deferredCount = 0;
   forcedCount = 0;
+  if (loop != null) clearInterval(loop);
+  loop = undefined;
+  looping = false;
 }

@@ -205,6 +205,9 @@ const MAINTENANCE_STAGES = new Set([
   "change_detection",
   "create",
   "prune",
+  // How long a snapshot's prune had been waiting when this attempt deferred
+  // it again (project-host snapshot-prune-gate.ts).
+  "prune_deferred_ms",
   "confirmation",
   "reporting",
 ]);

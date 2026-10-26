@@ -8,7 +8,10 @@ import {
   DEFAULT_MAX_PRUNE_DEFERRAL_MS,
   getSnapshotPruneGateStats,
   maxPruneDeferralMs,
+  notePendingPrune,
+  clearPendingPrune,
   resetSnapshotPruneGateForTest,
+  retryDeferredPrunes,
 } from "./snapshot-prune-gate";
 
 const MIN = 60_000;
@@ -47,7 +50,7 @@ describe("decideSnapshotPrune", () => {
     expect(getSnapshotPruneGateStats()).toEqual({
       deferred: 2,
       forced: 0,
-      pending_projects: 2,
+      pending_projects: 0,
     });
   });
 
@@ -103,6 +106,129 @@ describe("decideSnapshotPrune", () => {
     expect(
       decideSnapshotPrune({ ...busy, projectId: "b", now: MIN }).allow,
     ).toBe(false);
+  });
+});
+
+describe("a bound of 0", () => {
+  it("never defers", () => {
+    expect(
+      decideSnapshotPrune({
+        projectId: "p",
+        backupsInFlight: 2,
+        lifecycleActive: 1,
+        now: 0,
+        maxDeferralMs: 0,
+      }),
+    ).toMatchObject({ allow: true, reason: "deferral_bound" });
+  });
+});
+
+describe("retrying deferred prunes, independent of the snapshot schedule", () => {
+  const counts = { frequent: 4 };
+  let busy = { backupsInFlight: 0, lifecycleActive: 0 };
+  let clock = 0;
+  const now = () => clock;
+  beforeEach(() => {
+    busy = { backupsInFlight: 0, lifecycleActive: 0 };
+    clock = 0;
+  });
+
+  function defer(projectId: string) {
+    // what the scheduled snapshot does when the gate declines
+    const d = decideSnapshotPrune({
+      projectId,
+      backupsInFlight: 1,
+      lifecycleActive: 0,
+      now: clock,
+      maxDeferralMs: 60 * MIN,
+    });
+    expect(d.allow).toBe(false);
+    notePendingPrune(projectId, { counts, validate: async () => undefined });
+  }
+
+  it("prunes as soon as the host is quiet, without another scheduled visit", async () => {
+    defer("p");
+    const prune = jest.fn(async () => undefined);
+    busy = { backupsInFlight: 1, lifecycleActive: 0 };
+    clock = 5 * MIN;
+    expect(
+      await retryDeferredPrunes({
+        prune,
+        busy: () => busy,
+        now,
+        maxDeferralMs: 60 * MIN,
+      }),
+    ).toEqual({ pruned: [], waiting: 1 });
+    busy = { backupsInFlight: 0, lifecycleActive: 0 };
+    clock = 6 * MIN;
+    expect(
+      await retryDeferredPrunes({
+        prune,
+        busy: () => busy,
+        now,
+        maxDeferralMs: 60 * MIN,
+      }),
+    ).toEqual({ pruned: ["p"], waiting: 0 });
+    expect(prune).toHaveBeenCalledWith(
+      "p",
+      expect.objectContaining({ counts }),
+    );
+  });
+
+  it("prunes at the bound even if the host never quiets down", async () => {
+    defer("p");
+    const prune = jest.fn(async () => undefined);
+    busy = { backupsInFlight: 3, lifecycleActive: 2 };
+    for (clock = MIN; clock < 60 * MIN; clock += MIN) {
+      await retryDeferredPrunes({
+        prune,
+        busy: () => busy,
+        now,
+        maxDeferralMs: 60 * MIN,
+      });
+    }
+    expect(prune).not.toHaveBeenCalled();
+    clock = 60 * MIN;
+    expect(
+      (
+        await retryDeferredPrunes({
+          prune,
+          busy: () => busy,
+          now,
+          maxDeferralMs: 60 * MIN,
+        })
+      ).pruned,
+    ).toEqual(["p"]);
+    expect(getSnapshotPruneGateStats()).toMatchObject({
+      forced: 1,
+      pending_projects: 0,
+    });
+  });
+
+  it("keeps a failed prune pending, with a fresh bound", async () => {
+    defer("p");
+    const prune = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("btrfs busy"))
+      .mockResolvedValue(undefined);
+    clock = MIN;
+    expect(await retryDeferredPrunes({ prune, busy: () => busy, now })).toEqual(
+      { pruned: [], waiting: 1 },
+    );
+    clock = 2 * MIN;
+    expect(
+      (await retryDeferredPrunes({ prune, busy: () => busy, now })).pruned,
+    ).toEqual(["p"]);
+  });
+
+  it("drops the retry when a scheduled snapshot prunes first", async () => {
+    defer("p");
+    clearPendingPrune("p");
+    const prune = jest.fn(async () => undefined);
+    expect(await retryDeferredPrunes({ prune, busy: () => busy, now })).toEqual(
+      { pruned: [], waiting: 0 },
+    );
+    expect(prune).not.toHaveBeenCalled();
   });
 });
 

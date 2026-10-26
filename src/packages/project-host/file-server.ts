@@ -85,7 +85,10 @@ import {
   isBtrfsSubvolume,
 } from "@cocalc/file-server/btrfs/subvolume";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
-import { RollingSnapshotRetentionSkipped } from "@cocalc/file-server/btrfs/snapshots";
+import {
+  pruneRollingSnapshots,
+  RollingSnapshotRetentionSkipped,
+} from "@cocalc/file-server/btrfs/snapshots";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
@@ -3302,6 +3305,7 @@ export async function runScheduledSnapshotMaintenance({
   changed: boolean | null;
   disabled: boolean;
   skipped_reason?: string;
+  prune_deferred?: boolean;
   stage_durations_ms?: Record<string, number>;
 }> {
   const generation = currentProjectVolumeLifecycleGeneration(project_id);
@@ -3332,8 +3336,7 @@ export async function runScheduledSnapshotMaintenance({
         beforePrune: () => {
           pruneDecision = decideSnapshotPrune({
             projectId: project_id,
-            backupsInFlight: backupsInFlight(),
-            lifecycleActive: getStorageAdmissionStatus()?.lifecycle_active ?? 0,
+            ...snapshotPruneBusy(),
           });
           return pruneDecision.allow;
         },
@@ -3356,6 +3359,8 @@ export async function runScheduledSnapshotMaintenance({
         created_snapshot_at: update.createdName,
         changed: update.changed,
         disabled: update.disabled,
+        // The caller retries the prune (snapshot-backup-maintenance.ts).
+        prune_deferred: (update.pruneDeferred ?? 0) > 0,
         stage_durations_ms: stageDurations,
       };
     },
@@ -3371,6 +3376,47 @@ export async function runScheduledSnapshotMaintenance({
     };
   }
   return result;
+}
+
+/** What the snapshot prune gate waits for on this host. */
+export function snapshotPruneBusy(): {
+  backupsInFlight: number;
+  lifecycleActive: number;
+} {
+  return {
+    backupsInFlight: backupsInFlight(),
+    lifecycleActive: getStorageAdmissionStatus()?.lifecycle_active ?? 0,
+  };
+}
+
+// Deletes the expired snapshots of a project whose prune was deferred, under
+// the same lifecycle lock and volume checks as the scheduled snapshot. The
+// caller runs it as scheduled storage work (snapshot-backup-maintenance.ts).
+export async function pruneDeferredSnapshots(
+  project_id: string,
+  { counts }: { counts: Partial<SnapshotCounts> },
+): Promise<void> {
+  const generation = currentProjectVolumeLifecycleGeneration(project_id);
+  await withCurrentProjectVolumeLifecycleLock(
+    project_id,
+    generation,
+    async () => {
+      const vol = await getVolumeUnchecked(project_id);
+      if (
+        !(await exists(vol.path)) ||
+        !(await isBtrfsSubvolume(vol.path)) ||
+        (await isSubvolumeReadonly(vol.path))
+      ) {
+        // Gone or being archived: nothing to prune now.
+        return;
+      }
+      const deleted = await pruneRollingSnapshots({
+        snapshots: vol.snapshots,
+        counts,
+      });
+      logger.info("pruned deferred snapshots", { project_id, deleted });
+    },
+  );
 }
 
 async function allSnapshotUsage({
@@ -3711,7 +3757,8 @@ async function publishRootfsImage({
     });
 
     let uploadResult:
-      Extract<RootfsUploadedArtifactResult, { backend: "rustic" }> | undefined;
+      | Extract<RootfsUploadedArtifactResult, { backend: "rustic" }>
+      | undefined;
     let image: string;
     let digest: string | undefined;
     let contentKey: string;
