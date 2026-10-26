@@ -52,6 +52,8 @@ export const EmailAuthExchangeSchema = z.object({
 export const EmailAuthStartInputSchema = z.object({
   email: z.string().email(),
   onboarding_intent: z.enum(PROJECT_ONBOARDING_INTENTS).optional(),
+  // The Home page experiment version: counted once the account exists.
+  home_variant: z.string().max(32).optional(),
   registration_token: z.string().max(4096).optional(),
   analytics_token: z.string().uuid().optional(),
   terms: z.boolean().optional(),
