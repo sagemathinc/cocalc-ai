@@ -11,6 +11,10 @@ import { projectRunWaitReason } from "../../project/project-start-warning";
 
 export const ADD_FOLDER_TIMEOUT_MS = 60_000;
 
+// The course project or the course file is unavailable: adding any other
+// folder now would fail the same way.
+export class CourseUnavailableError extends Error {}
+
 // Create the folder in the course project. exec first waits for the project
 // to be running, and that wait has no limit (a stopped project, or one whose
 // host is unavailable, may never get there), so bound the whole step.
@@ -34,7 +38,7 @@ export async function ensureCourseFolder({
         "host-unavailable": "the course project's host is not reachable",
       }[projectRunWaitReason(project_id) ?? ""];
       reject(
-        new Error(
+        new CourseUnavailableError(
           `${reason ?? "the course project did not answer"} (waited ${seconds} seconds), so the ${itemName} "${path}" was not added. Reload the page or restart the course project, then try again.`,
         ),
       );
@@ -53,7 +57,7 @@ export async function ensureCourseFolder({
     // exec returns (rather than throws) a failed result when the project was
     // not started, e.g. the user declined to start it.
     if (output?.exit_code) {
-      throw new Error(
+      throw new CourseUnavailableError(
         `${output.stderr || "the course project is not running"} -- the ${itemName} "${path}" was not added.`,
       );
     }
@@ -72,7 +76,7 @@ export async function waitForCourseData({
   timeoutMs?: number;
 }): Promise<void> {
   if (syncdb?.get_state() === "ready") return;
-  const notLoaded = new Error(
+  const notLoaded = new CourseUnavailableError(
     "the course file has not finished loading. Reload the page, then try again.",
   );
   if (syncdb == null || syncdb.get_state() === "closed") throw notLoaded;
@@ -90,16 +94,30 @@ export async function waitForCourseData({
 }
 
 // Add each path, continuing past failures, and report every failure at once.
+// Stop early when the course is unavailable, or once the whole batch has
+// taken longer than deadlineMs, so a batch is bounded and not N timeouts.
 export async function addEachPath(
   paths: string[],
   add: (path: string) => Promise<void>,
+  deadlineMs: number = 2 * ADD_FOLDER_TIMEOUT_MS,
 ): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
   const errors: string[] = [];
-  for (const path of paths) {
+  for (let i = 0; i < paths.length; i++) {
+    if (i > 0 && Date.now() > deadline) {
+      errors.push(`not added (took too long): ${paths.slice(i).join(", ")}`);
+      break;
+    }
     try {
-      await add(path);
+      await add(paths[i]);
     } catch (err) {
       errors.push(`${err instanceof Error ? err.message : err}`);
+      if (err instanceof CourseUnavailableError) {
+        if (i + 1 < paths.length) {
+          errors.push(`not added: ${paths.slice(i + 1).join(", ")}`);
+        }
+        break;
+      }
     }
   }
   if (errors.length > 0) {

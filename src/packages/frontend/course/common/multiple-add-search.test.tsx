@@ -34,13 +34,16 @@ jest.mock("@cocalc/frontend/project/directory-selector", () => ({
   ),
 }));
 
-function renderSearch(addSelected: (paths: string[]) => void | Promise<void>) {
+function renderSearch(
+  addSelected: (paths: string[]) => void | Promise<void>,
+  isExcluded: (path: string) => boolean = () => false,
+) {
   return render(
     <IntlProvider locale="en">
       <MultipleAddSearch
         addSelected={addSelected}
         itemName="assignment"
-        isExcluded={() => false}
+        isExcluded={isExcluded}
         defaultOpen
         closable
       />
@@ -98,5 +101,26 @@ describe("MultipleAddSearch", () => {
     expect(
       screen.getByRole("button", { name: /add 1 assignment/i }),
     ).toBeEnabled();
+  });
+
+  it("does not resubmit folders that were added before a retry", async () => {
+    const added = new Set<string>();
+    const addSelected = jest.fn(async (paths: string[]) => {
+      for (const path of paths) added.add(path);
+    });
+    renderSearch(addSelected, (path) => added.has(path));
+    added.add("assignment-1"); // added by an earlier, partly failed attempt
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Select assignment-1" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /add 1 assignment/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Select assignment-1" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(addSelected).not.toHaveBeenCalled();
   });
 });

@@ -16,6 +16,7 @@ jest.mock("../../project/project-start-warning", () => ({
 
 import {
   addEachPath,
+  CourseUnavailableError,
   ensureCourseFolder,
   waitForCourseData,
 } from "./add-folder";
@@ -108,5 +109,51 @@ describe("addEachPath", () => {
       }),
     ).rejects.toThrow("b failed");
     expect(added).toEqual(["a", "c"]);
+  });
+
+  it("stops at the first course-unavailable failure", async () => {
+    const tried: string[] = [];
+    await expect(
+      addEachPath(["a", "b", "c"], async (path) => {
+        tried.push(path);
+        throw new CourseUnavailableError("the course project did not answer");
+      }),
+    ).rejects.toThrow("the course project did not answer\nnot added: b, c");
+    expect(tried).toEqual(["a"]);
+  });
+
+  it("bounds the whole batch", async () => {
+    const tried: string[] = [];
+    await expect(
+      addEachPath(
+        ["a", "b", "c"],
+        async (path) => {
+          tried.push(path);
+          await new Promise((done) => setTimeout(done, 20));
+        },
+        10,
+      ),
+    ).rejects.toThrow("not added (took too long): b, c");
+    expect(tried).toEqual(["a"]);
+  });
+});
+
+describe("ensureCourseFolder never answering on several folders", () => {
+  it("fails once for the batch, not once per folder", async () => {
+    execMock = jest.fn(never);
+    waitReason = jest.fn(() => "host-unavailable");
+    const started = Date.now();
+    await expect(
+      addEachPath(["h1", "h2", "h3"], (path) =>
+        ensureCourseFolder({
+          project_id: "p",
+          path,
+          itemName: "handout",
+          timeoutMs: 50,
+        }),
+      ),
+    ).rejects.toThrow("not added: h2, h3");
+    expect(execMock).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });

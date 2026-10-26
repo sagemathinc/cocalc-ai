@@ -52,7 +52,14 @@ export function MultipleAddSearch({
     setSubmitting(true);
     setError(undefined);
     try {
-      await addSelected(Array.from(selectedItems));
+      // After a partial failure the folders that were added stay selected;
+      // they are excluded now, so a retry adds only the rest.
+      const paths = Array.from(selectedItems).filter(
+        (path) => !isExcluded(path),
+      );
+      if (paths.length > 0) {
+        await addSelected(paths);
+      }
       clear();
     } catch (err) {
       setError(err);
