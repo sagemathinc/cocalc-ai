@@ -3175,6 +3175,38 @@ describe("feature configuration loading", () => {
     expect(screen.queryByRole("link", { name: "Open your agents" })).toBeNull();
   });
 
+  it("waits for the auth bootstrap on Home after leaving Docs, from the first render", async () => {
+    global.fetch = jest.fn(async () =>
+      customizeResponse("launchpad"),
+    ) as typeof fetch;
+    const { rerender } = render(
+      <PublicApp
+        initialRoute={{ section: "docs", route: { view: "docs-index" } }}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(authBootstrap).not.toHaveBeenCalled();
+    const auth =
+      deferred<
+        Awaited<ReturnType<typeof authApi.getControlPlaneAuthBootstrap>>
+      >();
+    authBootstrap.mockReturnValue(auth.promise);
+    rerender(<PublicApp initialRoute={{ section: "home" }} />);
+    // Not even the first Home render offers agents before auth answers.
+    expect(screen.queryByRole("link", { name: "Open your agents" })).toBeNull();
+    expect(screen.queryByRole("region", { name: /hero$/ })).toBeNull();
+    await act(async () => {
+      auth.resolve({ signed_in: true, openai_disabled: true } as any);
+    });
+    expect(await screen.findByRole("region", { name: /hero$/ })).not.toBeNull();
+    expect(screen.queryByRole("link", { name: "Open your agents" })).toBeNull();
+  });
+
   it("waits for Plus customize even if auth bootstrap resolves first", async () => {
     const customize = deferred<Response>();
     global.fetch = jest.fn(() => customize.promise) as typeof fetch;

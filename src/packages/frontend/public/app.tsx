@@ -180,11 +180,15 @@ export default function PublicApp({
     sourceConfig: config,
     pending: config === undefined,
   });
-  // Whether the auth bootstrap is still out: Home waits for it too, since a
-  // signed-in account's AI preference changes what Home offers.
-  const [authPending, setAuthPending] = useState(
-    initialRoute.section !== "docs",
-  );
+  // Whether the auth bootstrap for this config and section is still out:
+  // Home waits for it too, since a signed-in account's AI preference changes
+  // what Home offers. Keyed like customizeState, so a route change (e.g. from
+  // Docs, which runs none) waits from its first render.
+  const [authState, setAuthState] = useState({
+    sourceConfig: config,
+    section: initialRoute.section,
+    pending: initialRoute.section !== "docs",
+  });
 
   useEffect(() => {
     authOverride.current = undefined;
@@ -239,17 +243,20 @@ export default function PublicApp({
   }, [resolvedConfig?.cookie_banner_enabled, resolvedConfig?.is_authenticated]);
 
   useEffect(() => {
-    if (initialRoute.section === "docs") {
-      setAuthPending(false);
+    const section = initialRoute.section;
+    if (section === "docs") {
+      setAuthState({ sourceConfig: config, section, pending: false });
       return;
     }
     let cancelled = false;
-    setAuthPending(true);
+    setAuthState({ sourceConfig: config, section, pending: true });
+    const settled = () => {
+      if (!cancelled)
+        setAuthState({ sourceConfig: config, section, pending: false });
+    };
     // Bounded like customize: a hung request must not keep Home blank. A late
     // answer still applies.
-    const timer = setTimeout(() => {
-      if (!cancelled) setAuthPending(false);
-    }, CUSTOMIZE_REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(settled, CUSTOMIZE_REQUEST_TIMEOUT_MS);
     void (async () => {
       try {
         const bootstrap = await getControlPlaneAuthBootstrap();
@@ -272,7 +279,7 @@ export default function PublicApp({
         // stale customize state after sign-in/sign-up.
       } finally {
         clearTimeout(timer);
-        if (!cancelled) setAuthPending(false);
+        settled();
       }
     })();
     return () => {
@@ -284,6 +291,11 @@ export default function PublicApp({
   // A changed prop must not briefly expose the previous product while its
   // effect is pending. Keep request readiness independent of auth state.
   const configChanged = customizeState.sourceConfig !== config;
+  const authPending =
+    initialRoute.section !== "docs" &&
+    (authState.sourceConfig !== config ||
+      authState.section !== initialRoute.section ||
+      authState.pending);
   const currentConfig = configChanged ? config : resolvedConfig;
   const productDependentRoute =
     initialRoute.section === "features" &&
