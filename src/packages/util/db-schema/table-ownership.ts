@@ -328,7 +328,7 @@ export const TABLE_OWNERSHIP = {
     authority: "local",
     portability: "stable",
     notes:
-      "Aggregate daily counts for the public Home page experiment, kept on the bay that served the page or the sign-up. No visitor or account is identified; reports sum across bays.",
+      "Aggregate daily counts for the public Home page experiment, kept on the bay that served the page or the sign-up. No visitor or account is identified. The counts are bay-local: the report refuses on a multi-bay site until summing across bays is implemented (#1404).",
   }),
 
   ...entries(["growth_annotations"], {
