@@ -38,6 +38,7 @@ import {
 } from "@cocalc/util/public-pricing";
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicApp from "../app";
+import { CUSTOMIZE_REQUEST_TIMEOUT_MS } from "@cocalc/frontend/customize/fetch-customize";
 import type { PublicAboutRoute } from "../about/routes";
 import { getAboutRouteFromPath } from "../about/routes";
 import type { PublicNewsRoute } from "../news/routes";
@@ -3080,7 +3081,7 @@ describe("feature configuration loading", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(global.fetch).toHaveBeenCalledWith("/customize");
+    expect(global.fetch).toHaveBeenCalledWith("/customize", expect.anything());
     // Not the unresolved variant first (no image, other headline).
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
 
@@ -3093,6 +3094,38 @@ describe("feature configuration loading", () => {
         name: "Build and use software with AI.",
       }),
     ).not.toBeNull();
+  });
+
+  it("renders the unresolved Home when customize never answers", async () => {
+    jest.useFakeTimers();
+    try {
+      // Never settles, except when aborted.
+      global.fetch = jest.fn(
+        (_url: any, init?: any) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+          }),
+      ) as typeof fetch;
+      render(<PublicApp initialRoute={{ section: "home" }} />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+      await act(async () => {
+        jest.advanceTimersByTime(CUSTOMIZE_REQUEST_TIMEOUT_MS);
+      });
+      jest.useRealTimers();
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Build and use software.",
+        }),
+      ).not.toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("renders the unresolved Home when customize fails", async () => {
@@ -3119,7 +3152,7 @@ describe("feature configuration loading", () => {
       await Promise.resolve();
     });
     expect(authBootstrap).toHaveBeenCalled();
-    expect(global.fetch).toHaveBeenCalledWith("/customize");
+    expect(global.fetch).toHaveBeenCalledWith("/customize", expect.anything());
     expectNoCompute();
     expect(screen.queryByText("Feature page not found")).toBeNull();
     expectServerHead();
@@ -3279,7 +3312,10 @@ describe("feature configuration loading", () => {
           }),
         ).not.toBeNull();
       }
-      expect(global.fetch).not.toHaveBeenCalledWith("/customize");
+      expect(global.fetch).not.toHaveBeenCalledWith(
+        "/customize",
+        expect.anything(),
+      );
     },
   );
 

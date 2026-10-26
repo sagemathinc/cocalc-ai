@@ -14,6 +14,7 @@ import {
 } from "@cocalc/frontend/cookie-consent";
 import { linkFirstPartyAnalyticsAccount } from "@cocalc/frontend/cookie-consent/analytics";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { fetchCustomize } from "@cocalc/frontend/customize/fetch-customize";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 import { getSiteName, type PublicConfig, PublicSectionShell } from "./common";
@@ -43,11 +44,13 @@ interface PublicAppProps {
   redirectToPath?: string;
 }
 
+// Bounded (fetchCustomize times out after 15 s): Home waits for this, so a
+// stalled request must end with the unresolved fallback, not a blank page.
 async function loadCustomize(): Promise<PublicConfig | undefined> {
   try {
-    const resp = await fetch(joinUrlPath(appBasePath, "customize"));
-    if (!resp.ok) return undefined;
-    const result = await resp.json();
+    const result = await fetchCustomize({
+      url: joinUrlPath(appBasePath, "customize"),
+    });
     const configuration = result?.configuration;
     return configuration != null &&
       typeof configuration === "object" &&
