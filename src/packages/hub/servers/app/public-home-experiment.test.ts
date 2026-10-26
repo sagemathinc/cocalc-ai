@@ -6,7 +6,7 @@ import {
   getPublicHomeExperimentReport,
   recordPublicHomeExperimentEvent,
 } from "@cocalc/server/public-home-experiment";
-import initPublicHomeExperiment from "./public-home-experiment";
+import initPublicHomeExperiment, { PER_WINDOW } from "./public-home-experiment";
 
 jest.mock("@cocalc/server/public-home-experiment", () => ({
   getPublicHomeExperimentReport: jest.fn(),
@@ -53,33 +53,64 @@ describe("the public Home experiment endpoints", () => {
     });
   }
 
-  it("counts an event and sets no cookie", async () => {
+  it("answers 204 only after the event is stored, and sets no cookie", async () => {
+    let stored = false;
+    jest
+      .mocked(recordPublicHomeExperimentEvent)
+      .mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        stored = true;
+        return true;
+      });
     const res = await post({ variant: "math", event: "view" });
+    expect(stored).toBe(true);
     expect(res.status).toBe(204);
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(res.headers.get("cache-control")).toContain("no-store");
-    await new Promise((r) => setTimeout(r, 20));
     expect(recordPublicHomeExperimentEvent).toHaveBeenCalledWith({
       variant: "math",
       event: "view",
     });
   });
 
-  it("answers the same whether or not the event was counted", async () => {
-    jest
-      .mocked(recordPublicHomeExperimentEvent)
-      .mockRejectedValue(Error("database down"));
+  it("answers an unknown or inactive version like a counted one", async () => {
+    jest.mocked(recordPublicHomeExperimentEvent).mockResolvedValue(false);
     const res = await post({ variant: "nope", event: "x" });
     expect(res.status).toBe(204);
     expect(await res.text()).toBe("");
   });
 
-  it("drops events beyond the per-address limit", async () => {
-    for (let i = 0; i < 70; i++) await post({ variant: "math", event: "view" });
-    await new Promise((r) => setTimeout(r, 20));
-    expect(
-      jest.mocked(recordPublicHomeExperimentEvent).mock.calls.length,
-    ).toBeLessThanOrEqual(60);
+  it("answers with an error when the write fails", async () => {
+    jest
+      .mocked(recordPublicHomeExperimentEvent)
+      .mockRejectedValue(Error("database down"));
+    const res = await post({ variant: "math", event: "view" });
+    expect(res.status).toBe(503);
+  });
+
+  it("counts a busy shared address, and answers 429 only past the flood ceiling", async () => {
+    // Hundreds of visitors behind one school or office NAT address.
+    const busy = await Promise.all(
+      Array.from({ length: 300 }, () =>
+        post({ variant: "math", event: "view" }),
+      ),
+    );
+    expect(busy.every((res) => res.status === 204)).toBe(true);
+    for (let i = 300; i < PER_WINDOW; i += 100) {
+      await Promise.all(
+        Array.from({ length: Math.min(100, PER_WINDOW - i) }, () =>
+          post({ variant: "math", event: "view" }),
+        ),
+      );
+    }
+    const calls = jest.mocked(recordPublicHomeExperimentEvent).mock.calls
+      .length;
+    expect(calls).toBe(PER_WINDOW);
+    const over = await post({ variant: "math", event: "view" });
+    expect(over.status).toBe(429);
+    expect(jest.mocked(recordPublicHomeExperimentEvent).mock.calls.length).toBe(
+      PER_WINDOW,
+    );
   });
 
   it("refuses the report on a multi-bay site with the reason", async () => {

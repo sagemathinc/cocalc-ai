@@ -847,20 +847,35 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   const cookieBannerEnabled = !!config?.cookie_banner_enabled;
   // The sign-up links carry the version only once its view has been counted,
   // so a sign-up page visit or a sign-up never exists without its view.
-  const sentView = useRef<string | undefined>(undefined);
+  const sentView = useRef<
+    { variant: string; stored: Promise<boolean> } | undefined
+  >(undefined);
   const [countedView, setCountedView] = useState<string | undefined>();
   useEffect(() => {
     if (!choice.counted) return;
+    let active = true;
+    const variant = choice.variant;
     const count = () => {
       if (!publicHomeExperimentAllowed(cookieBannerEnabled)) return;
-      if (sentView.current !== choice.variant) {
-        sentView.current = choice.variant;
-        sendPublicHomeExperimentEvent(choice.variant, "view");
+      // One request per version; an effect re-run waits for the same one.
+      if (sentView.current?.variant !== variant) {
+        sentView.current = {
+          variant,
+          stored: sendPublicHomeExperimentEvent(variant, "view"),
+        };
       }
-      setCountedView(choice.variant);
+      // Tag the links only once the server stored the view; a failed or
+      // throttled view leaves them untagged (and is not retried).
+      void sentView.current.stored.then((ok) => {
+        if (ok && active) setCountedView(variant);
+      });
     };
     count();
-    return cookieBannerEnabled ? onConsentChange(count) : undefined;
+    const off = cookieBannerEnabled ? onConsentChange(count) : undefined;
+    return () => {
+      active = false;
+      off?.();
+    };
   }, [choice, cookieBannerEnabled]);
   const signUpPath =
     choice.counted && countedView === choice.variant

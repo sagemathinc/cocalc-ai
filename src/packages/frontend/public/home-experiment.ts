@@ -73,34 +73,39 @@ export function publicHomeExperimentAllowed(
 }
 
 /** Add one to the aggregate count for this version and event (sign-ups are
- * counted by the server when the account is created). Best effort: failures
- * are ignored and never affect the page. The request carries no cookies. */
-export function sendPublicHomeExperimentEvent(
+ * counted by the server when the account is created). Resolves true only
+ * when the server answered that it stored the event; failures resolve false
+ * and never affect the page. The request carries no cookies. */
+export async function sendPublicHomeExperimentEvent(
   variant: string,
   event: Exclude<PublicHomeExperimentEvent, "signup">,
-): void {
-  if (typeof window === "undefined") return;
+): Promise<boolean> {
+  if (typeof window === "undefined") return false;
   try {
-    void window
-      .fetch(joinUrlPath(appBasePath, "home-experiment"), {
+    const res = await window.fetch(
+      joinUrlPath(appBasePath, "home-experiment"),
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ variant, event }),
         keepalive: true,
         credentials: "omit",
-      })
-      .catch(() => {});
+      },
+    );
+    return !!res?.ok;
   } catch {
     // never let counting affect the page
+    return false;
   }
 }
 
 /** For the sign-up forms: when the page was reached from a Home version,
  * count the visit (now, or once the visitor consents), and return a getter
  * for the version to send with the sign-up, which the server counts when the
- * account exists. Consent is tracked as state, so links built during render
- * (single sign-on) pick the version up as soon as the visitor consents. The
- * getter returns undefined unless the visitor may be counted. */
+ * account exists. The getter returns the version only after the server
+ * stored the visit, so the counts stay a funnel (views, then visits, then
+ * sign-ups); it is state, so links built during render (single sign-on) pick
+ * the version up as soon as that happens. */
 export function usePublicHomeSignupVariant(
   cookieBannerEnabled: boolean,
   enabled = true,
@@ -120,13 +125,23 @@ export function usePublicHomeSignupVariant(
     );
   }, [cookieBannerEnabled]);
   const sentCta = useRef(false);
+  const [counted, setCounted] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   useEffect(() => {
     if (!variant || !allowed || sentCta.current) return;
     sentCta.current = true;
-    sendPublicHomeExperimentEvent(variant, "cta");
+    void sendPublicHomeExperimentEvent(variant, "cta").then((ok) => {
+      if (ok && mounted.current) setCounted(true);
+    });
   }, [variant, allowed]);
   return useCallback(
-    () => (variant && allowed ? variant : undefined),
-    [variant, allowed],
+    () => (variant && allowed && counted ? variant : undefined),
+    [variant, allowed, counted],
   );
 }

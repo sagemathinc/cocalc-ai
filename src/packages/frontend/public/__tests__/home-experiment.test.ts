@@ -4,7 +4,7 @@
  */
 
 import { hasCategoryConsent } from "@cocalc/frontend/cookie-consent";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   choosePublicHomeVariant,
   publicHomeExperimentAllowed,
@@ -109,7 +109,7 @@ describe("consent", () => {
 });
 
 describe("sendPublicHomeExperimentEvent", () => {
-  it("posts one aggregate event with fetch, without cookies", () => {
+  it("posts one aggregate event with fetch, without cookies", async () => {
     const sendBeacon = jest.fn(() => true);
     Object.defineProperty(navigator, "sendBeacon", {
       configurable: true,
@@ -117,7 +117,7 @@ describe("sendPublicHomeExperimentEvent", () => {
     });
     const fetch = jest.fn(async () => ({ ok: true }));
     (window as any).fetch = fetch;
-    sendPublicHomeExperimentEvent("math", "view");
+    expect(await sendPublicHomeExperimentEvent("math", "view")).toBe(true);
     // sendBeacon would send cookies: never used.
     expect(sendBeacon).not.toHaveBeenCalled();
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -127,10 +127,21 @@ describe("sendPublicHomeExperimentEvent", () => {
     expect(init.credentials).toBe("omit");
     expect(init.keepalive).toBe(true);
   });
+
+  it("reports false when the event was not stored", async () => {
+    (window as any).fetch = jest.fn(async () => ({ ok: false, status: 429 }));
+    expect(await sendPublicHomeExperimentEvent("math", "view")).toBe(false);
+    (window as any).fetch = jest.fn(async () => ({ ok: false, status: 503 }));
+    expect(await sendPublicHomeExperimentEvent("math", "cta")).toBe(false);
+    (window as any).fetch = jest.fn(async () => {
+      throw Error("network down");
+    });
+    expect(await sendPublicHomeExperimentEvent("math", "view")).toBe(false);
+  });
 });
 
 describe("usePublicHomeSignupVariant", () => {
-  it("adds the version only after consent, and re-renders when it is given", () => {
+  it("adds the version only after consent, and re-renders when it is given", async () => {
     window.history.replaceState(null, "", "/auth/sign-up?home=math");
     const fetch = jest.fn(async () => ({ ok: true }));
     (window as any).fetch = fetch;
@@ -143,19 +154,32 @@ describe("usePublicHomeSignupVariant", () => {
     // the visit is counted once.
     jest.mocked(hasCategoryConsent).mockReturnValue(true);
     act(() => consentListeners.forEach((cb) => cb()));
-    expect(result.current()).toBe("math");
+    await waitFor(() => expect(result.current()).toBe("math"));
     expect(fetch).toHaveBeenCalledTimes(1);
     act(() => consentListeners.forEach((cb) => cb()));
     expect(fetch).toHaveBeenCalledTimes(1);
     window.history.replaceState(null, "", "/");
   });
 
-  it("needs no consent on sites without the cookie banner", () => {
+  it("needs no consent on sites without the cookie banner", async () => {
     window.history.replaceState(null, "", "/auth/sign-up?home=math");
     (window as any).fetch = jest.fn(async () => ({ ok: true }));
     jest.mocked(hasCategoryConsent).mockReturnValue(false);
     const { result } = renderHook(() => usePublicHomeSignupVariant(false));
-    expect(result.current()).toBe("math");
+    await waitFor(() => expect(result.current()).toBe("math"));
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("withholds the version when the visit was not stored", async () => {
+    window.history.replaceState(null, "", "/auth/sign-up?home=math");
+    const fetch = jest.fn(async () => ({ ok: false, status: 429 }));
+    (window as any).fetch = fetch;
+    const { result } = renderHook(() => usePublicHomeSignupVariant(false));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(result.current()).toBeUndefined();
     window.history.replaceState(null, "", "/");
   });
 });

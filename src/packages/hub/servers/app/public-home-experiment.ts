@@ -21,22 +21,28 @@ import { checkAndRecordCount } from "./connector-rate-limit";
 
 const logger = getLogger("hub:servers:app:public-home-experiment");
 
-// Per address: a visitor sends a few events per page; anything beyond this is
-// not a person reading the page, and is dropped without counting.
+// Per address. A school, office or campus behind one NAT address sends many
+// visitors' events, so this is only a ceiling against floods, far above any
+// real shared network.
 const WINDOW_MS = 10 * 60_000;
-const PER_WINDOW = 60;
-const byAddress = new LRU<string, number>({ max: 100_000, ttl: WINDOW_MS });
+export const PER_WINDOW = 5000;
 
 export default function initPublicHomeExperiment(router: Router): void {
+  const byAddress = new LRU<string, number>({ max: 100_000, ttl: WINDOW_MS });
   router.post(
     "/home-experiment",
     express.json({ limit: "1kb" }),
     async (req: Request, res: Response) => {
       res.setHeader("Cache-Control", "no-store");
-      // The answer never depends on the outcome, so it reveals nothing.
-      res.status(204).end();
+      // The page tags its sign-up links only after a 2xx answer, so an event
+      // that was not stored must never get one: a throttled or failed write
+      // answers with an error. Unknown or inactive versions get the same 204
+      // as counted ones (the running versions are public anyway).
       const address = req.ip ?? req.socket.remoteAddress ?? "unknown";
-      if (!checkAndRecordCount(byAddress, address, PER_WINDOW)) return;
+      if (!checkAndRecordCount(byAddress, address, PER_WINDOW)) {
+        res.status(429).end();
+        return;
+      }
       try {
         await recordPublicHomeExperimentEvent({
           variant: req.body?.variant,
@@ -46,7 +52,10 @@ export default function initPublicHomeExperiment(router: Router): void {
         logger.warn("recording a home experiment event failed", {
           err: `${err}`.slice(0, 200),
         });
+        res.status(503).end();
+        return;
       }
+      res.status(204).end();
     },
   );
 

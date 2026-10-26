@@ -3,7 +3,7 @@
 // Home in the Home page experiment (util/public-home-experiment.ts): its
 // sign-up links carry the version only once the view has been counted.
 
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { hasCategoryConsent } from "@cocalc/frontend/cookie-consent";
 import PublicHomeApp from "../app";
 
@@ -55,7 +55,7 @@ describe("Home in the Home page experiment", () => {
     cookie_banner_enabled: true,
   };
 
-  it("tags the sign-up links only after the view is counted, which waits for consent", () => {
+  it("tags the sign-up links only after the view is counted, which waits for consent", async () => {
     const fetch = jest.fn(async () => ({ ok: true }));
     (window as any).fetch = fetch;
     jest.mocked(hasCategoryConsent).mockReturnValue(false);
@@ -70,6 +70,9 @@ describe("Home in the Home page experiment", () => {
     // sign-up link, the header's included, now carries the version.
     jest.mocked(hasCategoryConsent).mockReturnValue(true);
     act(() => consentListeners.forEach((cb) => cb()));
+    await waitFor(() =>
+      expect(signUpHrefs(container)[0]).toContain("home=default"),
+    );
     const after = signUpHrefs(container);
     expect(after.length).toBe(before.length);
     for (const href of after) expect(href).toContain("home=default");
@@ -82,7 +85,7 @@ describe("Home in the Home page experiment", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("tags the links at once on sites without the cookie banner", () => {
+  it("tags the links on sites without the cookie banner once the view is stored", async () => {
     (window as any).fetch = jest.fn(async () => ({ ok: true }));
     jest.mocked(hasCategoryConsent).mockReturnValue(false);
     const { container } = render(
@@ -90,8 +93,42 @@ describe("Home in the Home page experiment", () => {
         config={{ ...config, cookie_banner_enabled: false } as any}
       />,
     );
+    await waitFor(() =>
+      expect(signUpHrefs(container)[0]).toContain("home=default"),
+    );
     const hrefs = signUpHrefs(container);
     expect(hrefs.length).toBeGreaterThan(0);
     for (const href of hrefs) expect(href).toContain("home=default");
   });
+
+  for (const [why, fetch] of [
+    [
+      "the server could not store the view",
+      async () => ({ ok: false, status: 503 }),
+    ],
+    ["the address is throttled", async () => ({ ok: false, status: 429 })],
+    [
+      "the request fails",
+      async () => {
+        throw Error("network down");
+      },
+    ],
+  ] as const) {
+    it(`leaves the links untagged when ${why}`, async () => {
+      const send = jest.fn(fetch);
+      (window as any).fetch = send;
+      const { container } = render(
+        <PublicHomeApp
+          config={{ ...config, cookie_banner_enabled: false } as any}
+        />,
+      );
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      const hrefs = signUpHrefs(container);
+      expect(hrefs.length).toBeGreaterThan(0);
+      for (const href of hrefs) expect(href).not.toContain("home=");
+    });
+  }
 });
