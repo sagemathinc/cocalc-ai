@@ -932,6 +932,49 @@ test("a superseded read that fails adopts the newest read's frame", async () => 
   second.unmount();
 });
 
+test("a card whose newer read failed shows the frame the other place's retry makes", async () => {
+  const older = deferred();
+  const newer = deferred();
+  readFile
+    .mockImplementationOnce(() => older.promise)
+    .mockImplementationOnce(() => newer.promise)
+    .mockImplementation(async () => TEXT);
+  const first = render(<Board />);
+  await waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+  const second = render(<Board />);
+  await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
+  // The newer read (the second card's) fails: that card shows its error.
+  await act(async () => {
+    newer.promise.catch(() => {});
+    newer.reject(Error("newer read failed"));
+    await newer.promise.catch(() => {});
+  });
+  await waitFor(() =>
+    expect(
+      within(second.container).getByText(/newer read failed/),
+    ).toBeInTheDocument(),
+  );
+  // The older read succeeds, finds the newest failed, and reads again: the
+  // frame it makes is the second card's too, which drops its error.
+  await act(async () => {
+    older.resolve("stale");
+    await older.promise;
+  });
+  await waitFor(() => expect(readFile).toHaveBeenCalledTimes(3));
+  await waitFor(() =>
+    expect(screen.getAllByText("Current saved board")).toHaveLength(2),
+  );
+  expect(within(second.container).queryByText(/newer read failed/)).toBeNull();
+  expect(document.querySelectorAll("iframe")).toHaveLength(1);
+  // Shown in both places: the newest place (the second card) has it.
+  expect(
+    within(first.container).getByText("This board is shown in another view."),
+  ).toBeInTheDocument();
+  expect(placeholder(second.container).getAttribute("aria-owns")).toBe(
+    (document.querySelector("iframe") as HTMLIFrameElement).id,
+  );
+});
+
 test("a card waiting for an abandoned newer read reads the board itself", async () => {
   const older = deferred();
   const newer = deferred();

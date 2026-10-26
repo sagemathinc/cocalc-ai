@@ -64,6 +64,7 @@ import {
   isBoardFrameLive,
   isLatestBoardLoad,
   nextBoardFrame,
+  onBoardFrameCreated,
   type BoardFrame,
 } from "./board-frame-host";
 
@@ -192,6 +193,18 @@ export default function BoardArtifact({
       boardLoadFailed(key, generation);
     };
   }, [key, refresh]);
+
+  // With no frame (this card's own read failed, say), a frame another
+  // place's read makes for the view is this card's too: it shows it then,
+  // instead of keeping its error until Refresh.
+  useEffect(() => {
+    if (frame != null) return;
+    return onBoardFrameCreated(key, (made) => {
+      setError("");
+      setLoading(false);
+      setFrame(made);
+    });
+  }, [key, frame]);
 
   useEffect(() => {
     let cancelled = false;

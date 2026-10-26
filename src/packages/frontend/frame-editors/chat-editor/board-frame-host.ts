@@ -582,6 +582,31 @@ export function boardLoadFailed(key: string, generation: number): void {
   settleLoad(key, generation);
 }
 
+// Cards of a view with no frame (their own read failed, while another
+// place's read later made one): told of each frame made for the view, which
+// they then show too.
+const createdListeners = new Map<string, Set<(frame: BoardFrame) => void>>();
+
+/** Call `listener` with each new frame made for this view, until the
+ * returned function is called. */
+export function onBoardFrameCreated(
+  key: string,
+  listener: (frame: BoardFrame) => void,
+): () => void {
+  let listeners = createdListeners.get(key);
+  if (listeners == null) {
+    listeners = new Set();
+    createdListeners.set(key, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && createdListeners.get(key) === listeners) {
+      createdListeners.delete(key);
+    }
+  };
+}
+
 export function createBoardFrame({
   key,
   path,
@@ -675,6 +700,9 @@ export function createBoardFrame({
   // Created hidden (no placeholder yet): it expires like any hidden frame.
   if (entry.hiddenSince != null) evictHidden();
   if (generation != null) settleLoad(key, generation, entry);
+  for (const listener of [...(createdListeners.get(key) ?? [])]) {
+    listener(entry);
+  }
   return entry;
 }
 
@@ -742,6 +770,7 @@ export function destroyBoardFrame(key: string): void {
 export function resetBoardFrames(): void {
   for (const key of [...entries.keys()]) destroyBoardFrame(key);
   loads.clear();
+  createdListeners.clear();
   if (animationFrame != null && typeof cancelAnimationFrame === "function") {
     cancelAnimationFrame(animationFrame);
   }
