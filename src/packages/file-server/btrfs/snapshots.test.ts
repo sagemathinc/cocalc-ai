@@ -363,3 +363,60 @@ describe("pruneRollingSnapshots", () => {
     expect(snapshots.delete).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("inspectRollingSnapshots", () => {
+  const now = Date.parse("2026-04-22T12:00:00.000Z");
+  const day = 24 * 60 * 60 * 1000;
+  beforeEach(() => {
+    jest.resetModules();
+    delete process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+    jest.spyOn(Date, "now").mockReturnValue(now);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    delete process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+  });
+
+  it("reports what the next update would find without changing anything", async () => {
+    const { inspectRollingSnapshots } = await import("./snapshots");
+    const old = new Date(now - 10 * day).toISOString();
+    const recent = new Date(now - 60_000).toISOString();
+    const snapshots = {
+      readdir: jest.fn(async () => [recent, "my-named-snapshot", old]),
+      hasUnsavedChanges: jest.fn(async () => false),
+      create: jest.fn(),
+      delete: jest.fn(),
+    };
+    await expect(
+      inspectRollingSnapshots({
+        snapshots: snapshots as any,
+        counts: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+      }),
+    ).resolves.toEqual({
+      names: [recent, "my-named-snapshot", old],
+      latest: recent,
+      changed: false,
+      expired: 1,
+    });
+    expect(snapshots.hasUnsavedChanges).toHaveBeenCalledWith([
+      recent,
+      "my-named-snapshot",
+      old,
+    ]);
+    expect(snapshots.create).not.toHaveBeenCalled();
+    expect(snapshots.delete).not.toHaveBeenCalled();
+  });
+
+  it("is undefined when rolling snapshots are disabled", async () => {
+    process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS = "1";
+    const { inspectRollingSnapshots } = await import("./snapshots");
+    const snapshots = {
+      readdir: jest.fn(async () => []),
+      hasUnsavedChanges: jest.fn(async () => true),
+    };
+    await expect(
+      inspectRollingSnapshots({ snapshots: snapshots as any }),
+    ).resolves.toBeUndefined();
+    expect(snapshots.readdir).not.toHaveBeenCalled();
+  });
+});

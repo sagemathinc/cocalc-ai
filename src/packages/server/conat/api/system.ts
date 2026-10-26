@@ -2759,7 +2759,7 @@ export async function getLaunchHealth({
                   .slice(0, 12)
                   .map(
                     (group) =>
-                      `${group.host_id} ${group.storage_service_class} ${group.kind} debt: ${group.overdue_count} overdue, oldest ${Math.round(group.oldest_delay_seconds / 60)} minutes, ${group.unknown_count} unknown, ${group.repeated_failures} repeated failures`,
+                      `${group.host_id} ${group.storage_service_class} ${group.kind} debt: ${group.overdue_count} overdue, oldest ${Math.round(group.oldest_delay_seconds / 60)} minutes, ${group.unknown_count} unknown, ${group.repeated_failures} repeated failures, oldest observation ${Math.round(group.oldest_observation_age_seconds / 3600)} hours`,
                   ),
                 ...projectRecovery.parked_hosts
                   .slice(0, 12)

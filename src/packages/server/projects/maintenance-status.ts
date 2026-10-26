@@ -711,6 +711,9 @@ export interface ProjectRecoveryDebtAggregate {
   oldest_delay_seconds: number;
   unknown_count: number;
   repeated_failures: number;
+  /** The oldest status observation in the group: a host re-observes idle
+   * projects daily, so this rising past a day is re-observation lag. */
+  oldest_observation_age_seconds: number;
 }
 
 export interface ProjectRecoveryAttemptAggregate {
@@ -1091,6 +1094,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         oldest_delay_seconds: 0,
         unknown_count: 0,
         repeated_failures: 0,
+        oldest_observation_age_seconds: 0,
       };
       debtByHostClass.set(key, group);
     }
@@ -1276,6 +1280,14 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           }
           group.repeated_failures++;
         }
+        if (row.snapshot_observed_at != null) {
+          group.oldest_observation_age_seconds = Math.max(
+            group.oldest_observation_age_seconds,
+            Math.floor(
+              Math.max(0, now - row.snapshot_observed_at.getTime()) / 1000,
+            ),
+          );
+        }
         if (
           hostUnknown ||
           row.snapshot_observed_at == null ||
@@ -1339,6 +1351,14 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           }
           group.repeated_failures++;
         }
+        if (row.backup_observed_at != null) {
+          group.oldest_observation_age_seconds = Math.max(
+            group.oldest_observation_age_seconds,
+            Math.floor(
+              Math.max(0, now - row.backup_observed_at.getTime()) / 1000,
+            ),
+          );
+        }
         if (
           hostUnknown ||
           row.backup_observed_at == null ||
@@ -1396,7 +1416,8 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
       (group) =>
         group.overdue_count > 0 ||
         group.unknown_count > 0 ||
-        group.repeated_failures > 0,
+        group.repeated_failures > 0 ||
+        group.oldest_observation_age_seconds > 24 * 60 * 60,
     )
     .sort(
       (a, b) =>

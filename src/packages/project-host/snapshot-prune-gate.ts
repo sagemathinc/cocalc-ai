@@ -56,6 +56,9 @@ export interface PendingPrune {
    * returns a reason if the host no longer owns the project or its schedule
    * changed (a content change alone doesn't stop a prune). */
   validate: () => Promise<string | undefined>;
+  /** False when this prune must not take the recovery slot from a due
+   * snapshot (a re-observed idle project's retention). */
+  allowRecoveryPace?: boolean;
 }
 let deferredCount = 0;
 let forcedCount = 0;
@@ -106,15 +109,17 @@ export function decideSnapshotPrune({
     });
     return { allow: true, reason: "deferral_bound", deferredForMs };
   }
-  if (first == null) firstDeferredAt.set(projectId, now);
   deferredCount += 1;
-  logger.info("deferring snapshot prune", {
-    project_id: projectId,
-    reason: busy,
-    backups_in_flight: backupsInFlight,
-    lifecycle_active: lifecycleActive,
-    deferred_for_ms: deferredForMs,
-  });
+  // Once per deferral: the retry loop asks again every minute.
+  if (first == null) {
+    firstDeferredAt.set(projectId, now);
+    logger.info("deferring snapshot prune", {
+      project_id: projectId,
+      reason: busy,
+      backups_in_flight: backupsInFlight,
+      lifecycle_active: lifecycleActive,
+    });
+  }
   return { allow: false, reason: busy, deferredForMs };
 }
 

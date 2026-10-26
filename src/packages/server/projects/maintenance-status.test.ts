@@ -650,6 +650,55 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     ]);
   });
 
+  it("shows a host's re-observation lag before statuses turn unknown", async () => {
+    const { getProjectRecoveryHealth, snapshotScheduleRevision } =
+      await import("./maintenance-status");
+    const schedule = { frequent: 0, daily: 1, weekly: 0, monthly: 0 };
+    const changed = new Date(Date.now() - 3 * 24 * 60 * 60_000);
+    const observed = new Date(Date.now() - 24.5 * 60 * 60_000);
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              host_id: "host-1",
+              owner_account_id: "owner-account",
+              last_changed: changed,
+              last_backup: null,
+              host_last_seen: new Date(),
+              snapshots: schedule,
+              backups: { disabled: true },
+              snapshot_at: new Date(changed.getTime() + 60_000),
+              snapshot_observed_at: observed,
+              snapshot_class: "free",
+              snapshot_outcome: "skipped",
+              reconciled_change_at: changed,
+              reconciled_schedule_revision: snapshotScheduleRevision(schedule),
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(health.unknown_snapshot_status).toBe(0);
+    expect(health.by_host_class).toEqual([
+      expect.objectContaining({
+        host_id: "host-1",
+        storage_service_class: "free",
+        kind: "snapshot",
+        overdue_count: 0,
+        unknown_count: 0,
+      }),
+    ]);
+    const [group] = health.by_host_class;
+    expect(group.oldest_observation_age_seconds).toBeGreaterThanOrEqual(
+      24.5 * 3600 - 5,
+    );
+    expect(group.oldest_observation_age_seconds).toBeLessThan(25 * 3600);
+  });
+
   describe("health classification of payers that cannot be resolved", () => {
     const old = new Date(Date.now() - 4 * 60 * 60_000);
     function mockOverdueProject() {

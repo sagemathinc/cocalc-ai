@@ -26,6 +26,7 @@ import {
   runScheduledBackupMaintenance,
   pruneDeferredSnapshots,
   runScheduledSnapshotMaintenance,
+  inspectScheduledSnapshots,
   snapshotPruneBusy,
 } from "./file-server";
 import {
@@ -111,6 +112,7 @@ const dispatchQueues = new Map<
   {
     snapshot: MaintenanceDispatchQueue;
     backup: MaintenanceDispatchQueue;
+    reobserve: MaintenanceDispatchQueue;
     refresh: MaintenanceScheduleRefresh;
   }
 >();
@@ -120,6 +122,7 @@ function queuesForHost(hostId: string) {
     queues = {
       snapshot: new MaintenanceDispatchQueue(),
       backup: new MaintenanceDispatchQueue(),
+      reobserve: new MaintenanceDispatchQueue(),
       refresh: new MaintenanceScheduleRefresh(),
     };
     dispatchQueues.set(hostId, queues);
@@ -895,6 +898,71 @@ function actionableMaintenance(
   );
 }
 
+// An idle project's daily re-observation: no snapshot is due, but the bay
+// needs a fresh observation within 25 h. Re-observed with a read-only look at
+// its snapshots (inspectScheduledSnapshots), outside the snapshot lane and
+// storage admission; a due snapshot there would otherwise always go first.
+function reobservable(
+  row: HostProjectMaintenanceSchedule,
+  now: number,
+): boolean {
+  const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
+  if (schedule.disabled) return false;
+  const due = snapshotDueAt(row, schedule);
+  return (
+    (due == null || due > now) &&
+    (parseTimestampMs(row.snapshot_retry_at) ?? 0) <= now &&
+    reconciliationDue(row, "snapshot", now)
+  );
+}
+
+function reobservationEnabled(
+  value = process.env.COCALC_PROJECT_HOST_SNAPSHOT_REOBSERVE,
+): boolean {
+  return !["0", "false", "no", "off"].includes(
+    `${value ?? ""}`.trim().toLowerCase(),
+  );
+}
+
+const DEFAULT_REOBSERVE_PARALLELISM = 1;
+// What the full update defaults to when the bay sends no limit.
+const DEFAULT_SNAPSHOT_LIMIT = 250;
+
+export interface SnapshotReobservationStats {
+  /** Re-observed read-only and reported. */
+  observed: number;
+  /** Needed the full update (changed, at the limit, volume unavailable). */
+  fallback: number;
+  /** Re-observed with expired snapshots, left to the deferred prune. */
+  prune_queued: number;
+  /** The assignment changed before the report. */
+  dropped: number;
+  failed: number;
+  /** From the last full sweep: projects whose observation is a day old. */
+  backlog: number;
+  oldest_observation_age_ms: number;
+}
+
+const reobservationStats: SnapshotReobservationStats = {
+  observed: 0,
+  fallback: 0,
+  prune_queued: 0,
+  dropped: 0,
+  failed: 0,
+  backlog: 0,
+  oldest_observation_age_ms: 0,
+};
+
+export function getSnapshotReobservationStats(): SnapshotReobservationStats {
+  return { ...reobservationStats };
+}
+
+export function resetSnapshotReobservationStatsForTest(): void {
+  for (const key of Object.keys(reobservationStats)) {
+    reobservationStats[key as keyof SnapshotReobservationStats] = 0;
+  }
+}
+
 function retryAt(
   outcome: "succeeded" | "deferred" | "failed" | "skipped",
   failures: number,
@@ -1037,6 +1105,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   const snapshotStarvationIntervalMs = parsePositiveInteger(
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_STARVATION_INTERVAL_MS,
     DEFAULT_SNAPSHOT_STARVATION_INTERVAL_MS,
+  );
+  const reobserveEnabled = reobservationEnabled();
+  const reobserveParallelism = parsePositiveInteger(
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_REOBSERVE_PARALLELISM,
+    DEFAULT_REOBSERVE_PARALLELISM,
   );
   // Memory pressure reduces both lanes to one operation.
   const parallelism = Math.min(
@@ -1341,6 +1414,30 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     return true;
   }
   const queuedAt = Date.now();
+  if (!projectIds) {
+    // Re-observation lag on this host: how many idle projects have a day-old
+    // observation, and the oldest observation of any snapshot project.
+    let backlog = 0;
+    let oldest = 0;
+    for (const row of rows) {
+      if (mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots).disabled) {
+        continue;
+      }
+      if (reobservable(row, queuedAt)) backlog++;
+      const observed = parseTimestampMs(row.last_snapshot_observed_at);
+      oldest = Math.max(
+        oldest,
+        observed == null ? 0 : Math.max(0, queuedAt - observed),
+      );
+    }
+    reobservationStats.backlog = backlog;
+    reobservationStats.oldest_observation_age_ms = oldest;
+    logger.info("snapshot re-observation", {
+      hostId,
+      enabled: reobserveEnabled,
+      ...reobservationStats,
+    });
+  }
   const starved: StarvedMaintenance[] = [];
   for (const kind of ["snapshot", "backup"] as const) {
     for (const row of kind === "snapshot" ? snapshotRows : backupRows) {
@@ -1447,6 +1544,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           pendingProjectIds: () => [
             ...queues.snapshot.pendingProjectIds(100),
             ...queues.backup.pendingProjectIds(100),
+            ...queues.reobserve.pendingProjectIds(100),
           ],
           list: (project_ids) =>
             statusClient.listProjectMaintenanceSchedules({
@@ -1475,280 +1573,286 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         kind,
         err: `${err}`,
       });
-  const snapshotLane = async () => {
-    await queues.snapshot.submit({
-      detach,
+  const snapshotDue = (row: HostProjectMaintenanceSchedule) => {
+    const at = snapshotDueAt(
+      row,
+      mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots),
+    );
+    return at == null ? null : new Date(at).toISOString();
+  };
+  const runSnapshot = async (
+    candidate: HostProjectMaintenanceSchedule,
+    opts: { afterRunning: boolean },
+  ): Promise<"deferred" | undefined> => {
+    const row = await refreshQueuedRow(candidate, opts);
+    if (!row) {
+      // Gone from this host: it must not hold the recovery head.
+      dropRecoveryWaiting([candidate.project_id]);
+      return;
+    }
+    const project_id = row.project_id;
+    const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
+    const dueAt = snapshotDueAt(row, schedule);
+    const notDue = snapshotNotDue(row, Date.now());
+    if (notDue) dropRecoveryWaiting([project_id]);
+    if (
+      !project_id ||
+      notDue ||
+      ((parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() &&
+        !recoverySlotOpenFor(project_id)) ||
+      inFlightSnapshots.has(project_id)
+    ) {
+      return;
+    }
+    inFlightSnapshots.add(project_id);
+    // Only the longest waiting snapshot may take a recovery slot.
+    const head = recoveryWaitingHead();
+    const allowRecoveryPace = head == null || head === project_id;
+    let started = false;
+    let refused = false;
+    const startedAt = Date.now();
+    let stageDurations: Record<string, number> = {};
+    try {
+      let latest_snapshot_at: string | null = null;
+      let created_snapshot_at: string | null = null;
+      let changed: boolean | null = null;
+      let disabled = false;
+      let skippedReason: string | undefined;
+      // The snapshot limit couldn't be applied (the gate declined): the
+      // whole update is retried in about a minute, within the gate's
+      // bound, whether or not a snapshot was just created.
+      let limitPruneDeferred = false;
+      const result = await runScheduledStorageOperation({
+        hostId,
+        project_id,
+        operation_kind: "scheduled_snapshot",
+        allowStarvationOverride: starvationOverrideEligible,
+        starvationIntervalMs: snapshotStarvationIntervalMs,
+        allowRecoveryPace,
+        validate: () => validateAssignment(row, "snapshot"),
+        run: async () => {
+          started = true;
+          const updated = await runScheduledSnapshotMaintenance({
+            project_id,
+            counts: scheduleToCounts(schedule),
+            limit: row.max_snapshots_per_project ?? undefined,
+            stage_durations_ms: stageDurations,
+          });
+          latest_snapshot_at = updated?.latest_snapshot_at ?? null;
+          created_snapshot_at = updated?.created_snapshot_at ?? null;
+          changed = updated?.changed ?? null;
+          disabled = updated?.disabled ?? false;
+          skippedReason = updated?.skipped_reason;
+          stageDurations = updated?.stage_durations_ms ?? {};
+          limitPruneDeferred = updated?.limit_prune_deferred === true;
+          if (limitPruneDeferred) {
+            // Only a full update applies the limit, and the retried
+            // update reruns rolling retention too. Drop any older
+            // rolling-only retry: run on a quiet host it would delete
+            // nothing yet restart the gate's bound.
+            dropPendingPruneRetry(project_id);
+          } else if (updated?.prune_deferred) {
+            // the update ran and applied the limit; only rolling
+            // retention waits
+            clearLimitRetry(project_id);
+            // Retried within the bound even if this project isn't due
+            // again for a day (snapshot-prune-gate.ts).
+            notePendingPrune(project_id, {
+              counts: scheduleToCounts(schedule),
+              validate: () => validateAssignment(row, "snapshot"),
+            });
+          } else if (updated != null && !updated.skipped_reason) {
+            // This scan applied the current retention: an older retry
+            // must not run later with stale counts. A skipped scan
+            // (lifecycle, archiving, ...) applied nothing: keep it.
+            clearPendingPrune(project_id);
+          }
+        },
+      });
+      const changedAt = parseTimestampMs(row.last_changed ?? row.last_edited);
+      const latestSnapshotAt = parseTimestampMs(latest_snapshot_at);
+      const confirmedRecoveryPoint =
+        created_snapshot_at != null ||
+        (changed === false &&
+          latestSnapshotAt != null &&
+          (changedAt == null || latestSnapshotAt >= changedAt));
+      const nextSnapshotDueAt = result.ran
+        ? snapshotDueAt({ ...row, last_snapshot: latest_snapshot_at }, schedule)
+        : dueAt;
+      // The bay can have an old snapshot timestamp while the host has a
+      // newer local one. If the replacement interval has not elapsed,
+      // publish the verified inventory and wake at the actual due time
+      // instead of retrying the same Btrfs scan every minute.
+      const intervalWaiting =
+        result.ran &&
+        !disabled &&
+        !confirmedRecoveryPoint &&
+        changed === true &&
+        latestSnapshotAt != null &&
+        nextSnapshotDueAt != null &&
+        nextSnapshotDueAt > Date.now();
+      const outcome = !result.ran
+        ? "deferred"
+        : limitPruneDeferred
+          ? "deferred"
+          : disabled
+            ? "deferred"
+            : confirmedRecoveryPoint
+              ? "succeeded"
+              : changed === false || intervalWaiting
+                ? "skipped"
+                : "deferred";
+      const reason =
+        result.reason ??
+        (limitPruneDeferred ? "snapshot_prune_deferred" : undefined) ??
+        skippedReason ??
+        (disabled
+          ? "snapshot_maintenance_disabled"
+          : intervalWaiting
+            ? "snapshot_interval_wait"
+            : outcome === "skipped"
+              ? "no_content_change"
+              : outcome === "deferred"
+                ? "snapshot_not_created"
+                : undefined);
+      const nextRetry = recoveryPacedRetry(
+        project_id,
+        started
+          ? "finished"
+          : !result.admissionDeferred
+            ? "dropped"
+            : !allowRecoveryPace && result.reason === "io_pressure_recovery"
+              ? "withheld"
+              : "blocked",
+        dueAt,
+        retryAt(outcome, row.snapshot_failures ?? 0),
+      );
+      // Refused up front, or at the first mutation boundary after it
+      // started; not if a snapshot was made before a prune was refused.
+      refused =
+        !result.ran &&
+        result.admissionDeferred === true &&
+        result.mutated !== true;
+      if (limitPruneDeferred) {
+        noteLimitRetry(
+          project_id,
+          nextRetry ? Date.parse(nextRetry) : Date.now() + 60_000,
+        );
+      }
+      if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
+      if (intervalWaiting && nextSnapshotDueAt != null) {
+        onFutureDue?.(project_id, nextSnapshotDueAt);
+      }
+      await report({
+        host_id: hostId,
+        project_id,
+        kind: "snapshot",
+        storage_service_class: row.storage_service_class,
+        observed_at: new Date().toISOString(),
+        outcome,
+        reason,
+        // The host inventory is authoritative for the latest local
+        // recovery point even when a newer change cannot be snapshotted
+        // until the interval expires. Do not publish it if assignment
+        // validation failed after the scan.
+        latest_snapshot_at: result.ran ? latest_snapshot_at : null,
+        reconciled_change_at:
+          reason === "no_content_change"
+            ? (row.last_changed ?? row.last_edited)
+            : null,
+        schedule_revision:
+          reason === "no_content_change"
+            ? row.snapshot_schedule_revision
+            : null,
+        // a limit deferral stays due, so the retry runs the update
+        due_at: limitPruneDeferred
+          ? new Date().toISOString()
+          : result.ran
+            ? reason === "no_content_change"
+              ? null
+              : nextSnapshotDueAt == null
+                ? null
+                : new Date(nextSnapshotDueAt).toISOString()
+            : dueAt == null
+              ? null
+              : new Date(dueAt).toISOString(),
+        attempt_due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+        duration_ms: Date.now() - startedAt,
+        stage_durations_ms: {
+          candidate_discovery: candidateDiscoveryMs,
+          queue_wait: startedAt - queuedAt,
+          ...stageDurations,
+        },
+        retry_at: nextRetry,
+        consecutive_failures:
+          outcome === "succeeded" ? 0 : (row.snapshot_failures ?? 0),
+      }).catch((err) =>
+        logger.warn("snapshot status report failed", { project_id, err }),
+      );
+    } catch (err) {
+      logger.warn("scheduled snapshot maintenance failed", {
+        hostId,
+        project_id,
+        err: `${err}`,
+      });
+      const nextRetry = recoveryPacedRetry(
+        project_id,
+        started ? "finished" : "dropped",
+        dueAt,
+        retryAt("failed", (row.snapshot_failures ?? 0) + 1),
+      );
+      if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
+      await report({
+        host_id: hostId,
+        project_id,
+        kind: "snapshot",
+        storage_service_class: row.storage_service_class,
+        observed_at: new Date().toISOString(),
+        outcome: "failed",
+        reason: recoveryFailureReason(err, "snapshot") ?? `${err}`,
+        due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+        attempt_due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+        duration_ms: Date.now() - startedAt,
+        stage_durations_ms: {
+          candidate_discovery: candidateDiscoveryMs,
+          queue_wait: startedAt - queuedAt,
+          ...stageDurations,
+        },
+        retry_at: nextRetry,
+        consecutive_failures: (row.snapshot_failures ?? 0) + 1,
+      }).catch(() => {});
+    } finally {
+      inFlightSnapshots.delete(project_id);
+    }
+    return refused ? "deferred" : undefined;
+  };
+  const submitSnapshots = (
+    rows: HostProjectMaintenanceSchedule[],
+    { detached = detach }: { detached?: boolean } = {},
+  ) =>
+    queues.snapshot.submit({
+      detach: detached,
       onError: onDetachedError("snapshot"),
-      rows: snapshotRows.filter(
-        (row) =>
-          actionableMaintenance(row, "snapshot", queuedAt) ||
-          (recoverySlotOpenFor(row.project_id, queuedAt) &&
-            actionableMaintenance(
-              { ...row, snapshot_retry_at: null },
-              "snapshot",
-              queuedAt,
-            )),
-      ),
+      rows,
       observedAt: listingVersion,
       parallelism,
-      due: (row) => {
-        const at = snapshotDueAt(
-          row,
-          mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots),
-        );
-        return at == null ? null : new Date(at).toISOString();
-      },
-      run: async (candidate, opts) => {
-        const row = await refreshQueuedRow(candidate, opts);
-        if (!row) {
-          // Gone from this host: it must not hold the recovery head.
-          dropRecoveryWaiting([candidate.project_id]);
-          return;
-        }
-        const project_id = row.project_id;
-        const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
-        const dueAt = snapshotDueAt(row, schedule);
-        const notDue = snapshotNotDue(row, Date.now());
-        if (notDue) dropRecoveryWaiting([project_id]);
-        if (
-          !project_id ||
-          notDue ||
-          ((parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() &&
-            !recoverySlotOpenFor(project_id)) ||
-          inFlightSnapshots.has(project_id)
-        ) {
-          return;
-        }
-        inFlightSnapshots.add(project_id);
-        // Only the longest waiting snapshot may take a recovery slot.
-        const head = recoveryWaitingHead();
-        const allowRecoveryPace = head == null || head === project_id;
-        let started = false;
-        let refused = false;
-        const startedAt = Date.now();
-        let stageDurations: Record<string, number> = {};
-        try {
-          let latest_snapshot_at: string | null = null;
-          let created_snapshot_at: string | null = null;
-          let changed: boolean | null = null;
-          let disabled = false;
-          let skippedReason: string | undefined;
-          // The snapshot limit couldn't be applied (the gate declined): the
-          // whole update is retried in about a minute, within the gate's
-          // bound, whether or not a snapshot was just created.
-          let limitPruneDeferred = false;
-          const result = await runScheduledStorageOperation({
-            hostId,
-            project_id,
-            operation_kind: "scheduled_snapshot",
-            allowStarvationOverride: starvationOverrideEligible,
-            starvationIntervalMs: snapshotStarvationIntervalMs,
-            allowRecoveryPace,
-            validate: () => validateAssignment(row, "snapshot"),
-            run: async () => {
-              started = true;
-              const updated = await runScheduledSnapshotMaintenance({
-                project_id,
-                counts: scheduleToCounts(schedule),
-                limit: row.max_snapshots_per_project ?? undefined,
-                stage_durations_ms: stageDurations,
-              });
-              latest_snapshot_at = updated?.latest_snapshot_at ?? null;
-              created_snapshot_at = updated?.created_snapshot_at ?? null;
-              changed = updated?.changed ?? null;
-              disabled = updated?.disabled ?? false;
-              skippedReason = updated?.skipped_reason;
-              stageDurations = updated?.stage_durations_ms ?? {};
-              limitPruneDeferred = updated?.limit_prune_deferred === true;
-              if (limitPruneDeferred) {
-                // Only a full update applies the limit, and the retried
-                // update reruns rolling retention too. Drop any older
-                // rolling-only retry: run on a quiet host it would delete
-                // nothing yet restart the gate's bound.
-                dropPendingPruneRetry(project_id);
-              } else if (updated?.prune_deferred) {
-                // the update ran and applied the limit; only rolling
-                // retention waits
-                clearLimitRetry(project_id);
-                // Retried within the bound even if this project isn't due
-                // again for a day (snapshot-prune-gate.ts).
-                notePendingPrune(project_id, {
-                  counts: scheduleToCounts(schedule),
-                  validate: () => validateAssignment(row, "snapshot"),
-                });
-              } else if (updated != null && !updated.skipped_reason) {
-                // This scan applied the current retention: an older retry
-                // must not run later with stale counts. A skipped scan
-                // (lifecycle, archiving, ...) applied nothing: keep it.
-                clearPendingPrune(project_id);
-              }
-            },
-          });
-          const changedAt = parseTimestampMs(
-            row.last_changed ?? row.last_edited,
-          );
-          const latestSnapshotAt = parseTimestampMs(latest_snapshot_at);
-          const confirmedRecoveryPoint =
-            created_snapshot_at != null ||
-            (changed === false &&
-              latestSnapshotAt != null &&
-              (changedAt == null || latestSnapshotAt >= changedAt));
-          const nextSnapshotDueAt = result.ran
-            ? snapshotDueAt(
-                { ...row, last_snapshot: latest_snapshot_at },
-                schedule,
-              )
-            : dueAt;
-          // The bay can have an old snapshot timestamp while the host has a
-          // newer local one. If the replacement interval has not elapsed,
-          // publish the verified inventory and wake at the actual due time
-          // instead of retrying the same Btrfs scan every minute.
-          const intervalWaiting =
-            result.ran &&
-            !disabled &&
-            !confirmedRecoveryPoint &&
-            changed === true &&
-            latestSnapshotAt != null &&
-            nextSnapshotDueAt != null &&
-            nextSnapshotDueAt > Date.now();
-          const outcome = !result.ran
-            ? "deferred"
-            : limitPruneDeferred
-              ? "deferred"
-              : disabled
-                ? "deferred"
-                : confirmedRecoveryPoint
-                  ? "succeeded"
-                  : changed === false || intervalWaiting
-                    ? "skipped"
-                    : "deferred";
-          const reason =
-            result.reason ??
-            (limitPruneDeferred ? "snapshot_prune_deferred" : undefined) ??
-            skippedReason ??
-            (disabled
-              ? "snapshot_maintenance_disabled"
-              : intervalWaiting
-                ? "snapshot_interval_wait"
-                : outcome === "skipped"
-                  ? "no_content_change"
-                  : outcome === "deferred"
-                    ? "snapshot_not_created"
-                    : undefined);
-          const nextRetry = recoveryPacedRetry(
-            project_id,
-            started
-              ? "finished"
-              : !result.admissionDeferred
-                ? "dropped"
-                : !allowRecoveryPace && result.reason === "io_pressure_recovery"
-                  ? "withheld"
-                  : "blocked",
-            dueAt,
-            retryAt(outcome, row.snapshot_failures ?? 0),
-          );
-          // Refused up front, or at the first mutation boundary after it
-          // started; not if a snapshot was made before a prune was refused.
-          refused =
-            !result.ran &&
-            result.admissionDeferred === true &&
-            result.mutated !== true;
-          if (limitPruneDeferred) {
-            noteLimitRetry(
-              project_id,
-              nextRetry ? Date.parse(nextRetry) : Date.now() + 60_000,
-            );
-          }
-          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
-          if (intervalWaiting && nextSnapshotDueAt != null) {
-            onFutureDue?.(project_id, nextSnapshotDueAt);
-          }
-          await report({
-            host_id: hostId,
-            project_id,
-            kind: "snapshot",
-            storage_service_class: row.storage_service_class,
-            observed_at: new Date().toISOString(),
-            outcome,
-            reason,
-            // The host inventory is authoritative for the latest local
-            // recovery point even when a newer change cannot be snapshotted
-            // until the interval expires. Do not publish it if assignment
-            // validation failed after the scan.
-            latest_snapshot_at: result.ran ? latest_snapshot_at : null,
-            reconciled_change_at:
-              reason === "no_content_change"
-                ? (row.last_changed ?? row.last_edited)
-                : null,
-            schedule_revision:
-              reason === "no_content_change"
-                ? row.snapshot_schedule_revision
-                : null,
-            // a limit deferral stays due, so the retry runs the update
-            due_at: limitPruneDeferred
-              ? new Date().toISOString()
-              : result.ran
-                ? reason === "no_content_change"
-                  ? null
-                  : nextSnapshotDueAt == null
-                    ? null
-                    : new Date(nextSnapshotDueAt).toISOString()
-                : dueAt == null
-                  ? null
-                  : new Date(dueAt).toISOString(),
-            attempt_due_at:
-              dueAt == null ? null : new Date(dueAt).toISOString(),
-            duration_ms: Date.now() - startedAt,
-            stage_durations_ms: {
-              candidate_discovery: candidateDiscoveryMs,
-              queue_wait: startedAt - queuedAt,
-              ...stageDurations,
-            },
-            retry_at: nextRetry,
-            consecutive_failures:
-              outcome === "succeeded" ? 0 : (row.snapshot_failures ?? 0),
-          }).catch((err) =>
-            logger.warn("snapshot status report failed", { project_id, err }),
-          );
-        } catch (err) {
-          logger.warn("scheduled snapshot maintenance failed", {
-            hostId,
-            project_id,
-            err: `${err}`,
-          });
-          const nextRetry = recoveryPacedRetry(
-            project_id,
-            started ? "finished" : "dropped",
-            dueAt,
-            retryAt("failed", (row.snapshot_failures ?? 0) + 1),
-          );
-          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
-          await report({
-            host_id: hostId,
-            project_id,
-            kind: "snapshot",
-            storage_service_class: row.storage_service_class,
-            observed_at: new Date().toISOString(),
-            outcome: "failed",
-            reason: recoveryFailureReason(err, "snapshot") ?? `${err}`,
-            due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
-            attempt_due_at:
-              dueAt == null ? null : new Date(dueAt).toISOString(),
-            duration_ms: Date.now() - startedAt,
-            stage_durations_ms: {
-              candidate_discovery: candidateDiscoveryMs,
-              queue_wait: startedAt - queuedAt,
-              ...stageDurations,
-            },
-            retry_at: nextRetry,
-            consecutive_failures: (row.snapshot_failures ?? 0) + 1,
-          }).catch(() => {});
-        } finally {
-          inFlightSnapshots.delete(project_id);
-        }
-        return refused ? "deferred" : undefined;
-      },
+      due: snapshotDue,
+      run: runSnapshot,
     });
+  const snapshotLane = async () => {
+    await submitSnapshots(
+      snapshotRows.filter(
+        (row) =>
+          !(reobserveEnabled && reobservable(row, queuedAt)) &&
+          (actionableMaintenance(row, "snapshot", queuedAt) ||
+            (recoverySlotOpenFor(row.project_id, queuedAt) &&
+              actionableMaintenance(
+                { ...row, snapshot_retry_at: null },
+                "snapshot",
+                queuedAt,
+              ))),
+      ),
+    );
   };
   const backupLane = async () => {
     await queues.backup.submit({
@@ -1960,7 +2064,120 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       },
     });
   };
-  const lanes = [snapshotLane(), backupLane()];
+  const reobserveLane = async () => {
+    await queues.reobserve.submit({
+      detach,
+      onError: onDetachedError("snapshot"),
+      rows: reobserveEnabled
+        ? snapshotRows.filter((row) => reobservable(row, queuedAt))
+        : [],
+      observedAt: listingVersion,
+      parallelism: reobserveParallelism,
+      // the oldest observation first
+      due: (row) => row.last_snapshot_observed_at ?? new Date(0).toISOString(),
+      run: async (candidate, opts) => {
+        const row = await refreshQueuedRow(candidate, opts);
+        if (!row) return;
+        const project_id = row.project_id;
+        if (inFlightSnapshots.has(project_id)) return;
+        if (!reobservable(row, Date.now())) {
+          // Due again (or observed meanwhile): the snapshot lane decides.
+          if (actionableMaintenance(row, "snapshot", Date.now())) {
+            void submitSnapshots([row], { detached: true });
+          }
+          return;
+        }
+        inFlightSnapshots.add(project_id);
+        const startedAt = Date.now();
+        // Whether the full update must run instead; handed to the snapshot
+        // lane once this project is no longer in flight here.
+        const observe = async (): Promise<boolean> => {
+          const schedule = mergeSchedule(
+            DEFAULT_SNAPSHOT_COUNTS,
+            row.snapshots,
+          );
+          const counts = scheduleToCounts(schedule);
+          const inspected = await inspectScheduledSnapshots({
+            project_id,
+            counts,
+          });
+          // Only an unchanged project under its limit can be confirmed by
+          // reading; anything else needs the full update.
+          if (
+            inspected == null ||
+            inspected.changed ||
+            inspected.snapshot_count >=
+              (row.max_snapshots_per_project ?? DEFAULT_SNAPSHOT_LIMIT)
+          ) {
+            reobservationStats.fallback++;
+            return true;
+          }
+          const invalid = await validateAssignment(row, "snapshot");
+          if (invalid) {
+            reobservationStats.dropped++;
+            logger.info("dropping snapshot re-observation", {
+              hostId,
+              project_id,
+              reason: invalid,
+            });
+            return false;
+          }
+          if (inspected.expired > 0) {
+            // Retention still applies: the deferred prune deletes them when
+            // the host allows, never taking a recovery slot from a due
+            // snapshot.
+            notePendingPrune(project_id, {
+              counts,
+              validate: () => validateAssignment(row, "snapshot"),
+              allowRecoveryPace: false,
+            });
+            reobservationStats.prune_queued++;
+          }
+          const reobservationMs = Date.now() - startedAt;
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "snapshot",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome: "skipped",
+            reason: "no_content_change",
+            latest_snapshot_at: inspected.latest_snapshot_at,
+            reconciled_change_at: row.last_changed ?? row.last_edited,
+            schedule_revision: row.snapshot_schedule_revision,
+            due_at: null,
+            attempt_due_at: null,
+            duration_ms: reobservationMs,
+            stage_durations_ms: {
+              candidate_discovery: candidateDiscoveryMs,
+              queue_wait: startedAt - queuedAt,
+              reobservation: reobservationMs,
+            },
+            retry_at: null,
+            consecutive_failures: row.snapshot_failures ?? 0,
+          });
+          reobservationStats.observed++;
+          return false;
+        };
+        let fallback = false;
+        try {
+          fallback = await observe();
+        } catch (err) {
+          reobservationStats.failed++;
+          fallback = true;
+          logger.warn("snapshot re-observation failed", {
+            hostId,
+            project_id,
+            err: `${err}`,
+          });
+        } finally {
+          inFlightSnapshots.delete(project_id);
+        }
+        if (fallback) void submitSnapshots([row], { detached: true });
+      },
+    });
+  };
+  const lanes = [snapshotLane(), backupLane(), reobserveLane()];
   onDispatched?.();
   await Promise.all(lanes);
   const nextStarved = starvationQueue.next();
@@ -2028,6 +2245,7 @@ export async function retryDeferredSnapshotPrune({
     hostId,
     project_id,
     operation_kind: "scheduled_snapshot",
+    allowRecoveryPace: pending.allowRecoveryPace ?? true,
     validate: async () => {
       const reason = await pending.validate();
       return reason === "change_generation_changed" ? undefined : reason;
