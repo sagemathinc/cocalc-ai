@@ -4,12 +4,12 @@
  */
 
 export const CLAUDE_CODE_BODY = String.raw`
-## Experimental preview
+## Work with Claude Code
 
-Claude Code can work in a CoCalc project from the Agents workspace. This is an
-experimental preview: availability depends on the site's configuration, and
-some capabilities differ from Codex. Start in a project whose files you can
-restore and whose collaborators and code you trust.
+Use Claude Code from the Agents workspace to work with project files, run
+software, and review results alongside the conversation. Choose Claude in the
+runtime menu and a payment method in its settings. Availability depends on the
+site; the sections below explain each access option and its permissions.
 
 See [Agent features: Codex and Claude Code](/docs/ai/agent-features) for the
 feature-by-feature comparison, including known messaging limitations.
@@ -21,8 +21,10 @@ feature-by-feature comparison, including known messaging limitations.
    **What would you like to work on?**, it prepares a project for you.
 2. In the runtime menu below the request box, select **Claude**, then open its
    settings icon to configure Claude Code.
-3. Choose a credential in settings: a project API-key secret, an account API key, or a
-   connected Claude Pro/Max subscription, where offered by the site.
+3. Choose a payment method in settings: **CoCalc Membership** when your
+   membership includes Claude, a connected Claude Pro/Max subscription, an
+   account API key, or a project API-key secret. Membership access does not
+   require your own Anthropic credential.
 4. For a project key, use the Claude API-key dialog. For a subscription, use
    **Connect Claude Pro/Max** and complete the sign-in flow.
    Never paste credentials or login codes into a chat message.
@@ -74,7 +76,7 @@ on claude.ai, or disable CoCalc's project tools.
 Claude has full project access. It can read and edit files, run commands,
 access project secrets, and send project content to external services. CoCalc
 does not ask for approval before each tool or shell command. The project is
-the collaboration and execution trust boundary: only use this preview with
+the collaboration and execution trust boundary: use it with
 collaborators, repository instructions, skills, and code you trust.
 
 Credential isolation protects the credential material described below. It does

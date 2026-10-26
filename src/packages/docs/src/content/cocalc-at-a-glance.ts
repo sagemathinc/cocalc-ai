@@ -57,7 +57,7 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
 - Some features still differ between Codex and Claude Code. For the current
   status of each feature by agent, see
   [Agent features: Codex and Claude Code](/docs/ai/agent-features) and
-  [Claude Code in CoCalc (Experimental Preview)](/docs/ai/claude-code).
+  [Claude Code in CoCalc](/docs/ai/claude-code).
 - A Codex agent or a Claude Code agent can be given access to other projects
   you choose, with **Read-only files** or **Full runtime** access, without
   creating an API key. See

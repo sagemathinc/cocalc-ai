@@ -35,7 +35,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     searchKeywords:
       "Codex Claude Code feature comparison matrix parity Agent Networks agent-to-agent messaging cross-project workbench artifacts goals schedules subagents",
     summary:
-      "A systematic feature reference for Codex, with Claude Code support levels, limitations, and links to detailed guides.",
+      "Compare Codex and Claude Code workflows, payment methods, prerequisites, and current limitations.",
     title: "Agent features: Codex and Claude Code",
   },
   {
@@ -45,12 +45,12 @@ export const AI_ENTRIES: DocsEntry[] = [
     id: "ai.claude-code",
     lastReviewed: "2026-09-28",
     noActionReason:
-      "Claude Code preview availability and credential setup depend on the site and account.",
+      "Configure Claude Code from the agent runtime settings; payment methods depend on the site and account.",
     slug: "ai/claude-code",
     status: "ready",
     summary:
-      "Use Claude Code in CoCalc: experimental setup, images, Agent Networks, credentials, billing, and the security model.",
-    title: "Claude Code in CoCalc (Experimental Preview)",
+      "Set up Claude Code with membership, subscription, or API-key access; use project tools and understand billing and permissions.",
+    title: "Claude Code in CoCalc",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],
@@ -107,10 +107,13 @@ export const AI_ENTRIES: DocsEntry[] = [
     ),
     lastReviewed: "2026-09-07",
     noActionReason:
-      "Credential setup depends on whether the user is configuring ChatGPT, an OpenAI API key, or project code.",
+      "Choose access for Codex or Claude Code in agent settings; project-code credentials are configured separately.",
     slug: "ai/connect-credentials",
     status: "ready",
-    summary: "Connect ChatGPT or OpenAI API access for Codex and project code.",
+    searchKeywords:
+      "Codex Claude Code Anthropic OpenAI ChatGPT Pro Max membership subscription payment method API key credentials",
+    summary:
+      "Choose membership, subscription, or API-key access for Codex and Claude Code, and configure keys for project code.",
     title: "Connect AI access",
   },
   {
