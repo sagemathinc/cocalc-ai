@@ -42,7 +42,7 @@ export class HandoutsActions {
     return store
       .get("handouts")
       .valueSeq()
-      .filter((x) => x.get("path") == path)
+      .filter((x) => projectRelativeCoursePath(x.get("path")) == path)
       .get(0);
   };
 

@@ -122,4 +122,19 @@ describe("addHandout", () => {
     await actions.addHandout("/home/user/Handouts/Handout4");
     expect(sets[0].path).toBe("Handouts/Handout4");
   });
+
+  it("matches an existing handout stored with an absolute home path", async () => {
+    const { actions, sets } = setup({
+      h1: { handout_id: "h1", path: "/home/user/Handouts/Handout4" },
+      h2: { handout_id: "h2", path: "/root/Old", deleted: true },
+    });
+    await expect(actions.addHandout("Handouts/Handout4")).rejects.toThrow(
+      '"Handouts/Handout4" is already a handout in this course.',
+    );
+    await actions.addHandout("Old");
+    expect(sets).toEqual([
+      { deleted: false, handout_id: "h2", table: "handouts" },
+    ]);
+    expect(ensureFolder).not.toHaveBeenCalled();
+  });
 });
