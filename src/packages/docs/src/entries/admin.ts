@@ -343,7 +343,7 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
       "/public/docs/project-files-6c4ff552.webp",
       "Backup shard storage routes connected to project folders",
     ),
-    lastReviewed: "2026-05-26",
+    lastReviewed: "2026-10-26",
     slug: "admin/project-backup-shards",
     status: "ready",
     summary:
