@@ -277,10 +277,10 @@ export const AIUsageWarning: React.FC<{
         <Space vertical size="middle" style={{ width: "100%" }}>
           <Text>
             AI API usage is limited by both a 5-hour window and a 7-day window.
-            When a limit is hit, AI features stop until usage rolls out of the
-            window. CoCalc membership upgrades do not currently include
-            additional AI usage on cocalc.ai; connect a ChatGPT plan in AI
-            settings instead.
+            When a limit is hit, AI features and agent turns that use your
+            included AI usage stop until usage rolls out of the window. Higher
+            CoCalc memberships include more AI usage. You can also use your own
+            API key or connect a ChatGPT plan in AI settings.
           </Text>
           {warnings.map((warning) => (
             <div key={warning.window}>

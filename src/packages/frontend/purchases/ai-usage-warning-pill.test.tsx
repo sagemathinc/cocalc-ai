@@ -54,6 +54,10 @@ describe("AIUsageWarning pill", () => {
     await user.keyboard("{Enter}");
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain("AI usage nearing limit");
+    expect(dialog.textContent).toContain(
+      "Higher CoCalc memberships include more AI usage.",
+    );
+    expect(dialog.textContent).not.toContain("do not currently include");
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
