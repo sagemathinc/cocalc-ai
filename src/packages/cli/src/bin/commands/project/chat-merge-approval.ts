@@ -96,9 +96,12 @@ export function registerChatMergeApprovalCommands(
             chat: target,
             matches: (artifact) =>
               artifact?.merge_approval?.request_ids?.includes(request.id),
+            // Every reader of the chat sees the publication, approvers or
+            // not: only the opaque request id goes in it. The card shows
+            // the details to approvers, from the hub.
             payload: {
-              title: `Merge approval: ${request.repo} #${request.pr_number}`,
-              markdown: `Approval of the exact head \`${request.head_sha}\`.`,
+              title: "Merge approval request",
+              markdown: "",
               merge_approval: { request_ids: [request.id] },
             },
           });

@@ -80,7 +80,14 @@ test("requests approval through the hub, then publishes a card with only the req
   assert.equal(publish.path, "/a.chat");
   assert.equal(publish.threadId, "t");
   assert.equal(publish.messageDate, "d");
-  assert.deepEqual(publish.payload.merge_approval, { request_ids: [ID] });
+  assert.deepEqual(publish.payload, {
+    title: "Merge approval request",
+    markdown: "",
+    merge_approval: { request_ids: [ID] },
+  });
+  // Nothing about the PR goes into the chat.
+  assert.ok(!JSON.stringify(publish.payload).includes(HEAD));
+  assert.ok(!JSON.stringify(publish.payload).includes("o/r"));
 });
 
 test("reuses the card already published for the same request", async () => {
