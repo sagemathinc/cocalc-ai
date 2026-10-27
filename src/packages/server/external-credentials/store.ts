@@ -660,6 +660,11 @@ FOR UPDATE
         await client.query("ROLLBACK");
         return false;
       }
+      // An erased (revoked) payload matches no expectation, not even "".
+      if (rows[0].encrypted_payload == null) {
+        await client.query("ROLLBACK");
+        throw new Error(EXTERNAL_CREDENTIAL_CONFLICT);
+      }
       const stored = await decryptPayload(
         normalized,
         rows[0].encrypted_payload,

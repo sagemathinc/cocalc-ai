@@ -285,6 +285,24 @@ describeDb("revoking deletes CoCalc's copy of the credential", () => {
     ).rejects.toThrow(EXTERNAL_CREDENTIAL_CONFLICT);
   });
 
+  test("an erased payload doesn't match the hash of an empty string", async () => {
+    const { id } = await createExternalCredential({ selector, payload: "old" });
+    await revokeExternalCredential({ id, owner_account_id: accountId });
+    await expect(
+      updateExternalCredentialById({
+        id,
+        selector,
+        payload: "new",
+        metadata: {},
+        revive: true,
+        expectedPayloadSha256: createHash("sha256")
+          .update("", "utf8")
+          .digest("hex"),
+      }),
+    ).rejects.toThrow(EXTERNAL_CREDENTIAL_CONFLICT);
+    expect((await stored(id)).encrypted_payload).toBeNull();
+  });
+
   test("the migration erases payloads of rows revoked before this rule", async () => {
     const legacy = randomUUID();
     const legacy2 = randomUUID();
