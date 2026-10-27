@@ -12,12 +12,21 @@ import { selectTransport } from "./transport";
 
 describe("COCALC_JUPYTER_ZMQ", () => {
   test("unset, empty or js: the pure-JS transport", () => {
-    for (const v of [undefined, "", "js"]) {
-      const t = selectTransport(v);
-      assert.equal(t.name, "js");
-      const d = new t.Dealer({ routingId: "x" });
-      assert.ok(d instanceof zmtp.Dealer);
-      d.close();
+    const saved = process.env.COCALC_JUPYTER_ZMQ;
+    delete process.env.COCALC_JUPYTER_ZMQ;
+    try {
+      for (const t of [
+        selectTransport(),
+        selectTransport(""),
+        selectTransport("js"),
+      ]) {
+        assert.equal(t.name, "js");
+        const d = new t.Dealer({ routingId: "x" });
+        assert.ok(d instanceof zmtp.Dealer);
+        d.close();
+      }
+    } finally {
+      if (saved != null) process.env.COCALC_JUPYTER_ZMQ = saved;
     }
   });
 

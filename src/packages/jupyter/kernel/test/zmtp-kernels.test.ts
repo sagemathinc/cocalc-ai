@@ -40,9 +40,10 @@ async function run(k, code: string) {
   return out;
 }
 
-const maybe = names.length ? describe : describe.skip;
-
-maybe("non-Python libzmq kernels", () => {
+describe("non-Python libzmq kernels", () => {
+  if (!names.length) {
+    it("skipped: ZMTP_KERNELS names no kernelspec", () => {});
+  }
   for (const name of names) {
     const c = CASES[name];
     it(`${name}: kernel_info, a result and a display`, async () => {
