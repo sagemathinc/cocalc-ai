@@ -203,17 +203,18 @@ export default function BoardArtifact({
     };
   }, [key, refresh]);
 
-  // With no frame (this card's own read failed, say), a frame another
-  // place's read makes for the view is this card's too: it shows it then,
-  // instead of keeping its error until Refresh.
+  // A frame any place's read makes for the view is this card's too: with
+  // none (its own read failed, say) it shows it, and with an older one (kept
+  // after its own Refresh failed) it drops the error and the stale label,
+  // since what it shows is now the newest read.
   useEffect(() => {
-    if (frame != null) return;
     return onBoardFrameCreated(key, (made) => {
       setError("");
+      setStale(false);
       setLoading(false);
       setFrame(made);
     });
-  }, [key, frame]);
+  }, [key]);
 
   useEffect(() => {
     let cancelled = false;

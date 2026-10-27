@@ -17,6 +17,7 @@ import { boardHistoryActions } from "@cocalc/util/board/history-unloadable";
 import { boardFrameUrl, isBoardPath } from "./board-artifact-frame";
 import {
   BOARD_FRAME_HIDDEN_TTL_MS,
+  BOARD_FRAME_IDLE_POLL_MS,
   BOARD_FRAME_MAX_HIDDEN,
   BOARD_FRAME_PENDING_MS,
   attachBoardFrame,
@@ -308,6 +309,88 @@ test("a Refresh that fails keeps the board shown, labelled as the board as last 
   await screen.findByText("Current saved board");
   expect(screen.queryByText(/Refresh failed/)).toBeNull();
   expect(screen.queryByText(/the file was deleted/)).toBeNull();
+});
+
+test("a copy kept stale after its Refresh failed is current again once another copy's Refresh succeeds", async () => {
+  const first = await renderBoard();
+  const second = render(<Board />);
+  await waitFor(() =>
+    expect(
+      first.view.getByText("This board is shown in another view."),
+    ).toBeInTheDocument(),
+  );
+  // The first copy's Refresh fails: it keeps the frame, labelled stale.
+  readFile.mockRejectedValueOnce(Error("ENOENT: read failed once"));
+  fireEvent.click(
+    within(first.view.container).getByRole("button", { name: "Refresh" }),
+  );
+  await within(first.view.container).findByText(/read failed once/);
+  expect(
+    within(first.view.container).getByText(
+      /Refresh failed: the board as last read/,
+    ),
+  ).toBeInTheDocument();
+  // The second copy's Refresh succeeds: the new frame is the first copy's
+  // too, so it drops the error and the stale label.
+  fireEvent.click(
+    within(second.container).getByRole("button", { name: "Refresh" }),
+  );
+  await waitFor(() => expect(screen.getByTitle(TITLE)).not.toBe(first.frame));
+  await waitFor(() =>
+    expect(
+      within(first.view.container).queryByText(/Refresh failed/),
+    ).toBeNull(),
+  );
+  expect(
+    within(first.view.container).queryByText(/read failed once/),
+  ).toBeNull();
+  expect(
+    within(first.view.container).getByText("Current saved board"),
+  ).toBeInTheDocument();
+  expect(document.querySelectorAll("iframe")).toHaveLength(1);
+});
+
+test("while every board is hidden, the layout loop idles until one can be seen", () => {
+  jest.useFakeTimers({ now: Date.now() });
+  const raf = jest.spyOn(window, "requestAnimationFrame");
+  const element = document.createElement("div");
+  document.body.appendChild(element);
+  try {
+    const size = jest
+      .spyOn(element, "getBoundingClientRect")
+      .mockReturnValue(rect(0, 0, 0, 0));
+    const frame = createBoardFrame({
+      key: "idle",
+      path: PATH,
+      frameUrl: FRAME,
+      sandbox: "allow-scripts",
+      text: TEXT,
+      name: "overnight.board.json",
+      title: TITLE,
+    });
+    // Attached but hidden (its editor in an inactive tab, say).
+    attachBoardFrame(frame, element, () => {});
+    raf.mockClear();
+    jest.advanceTimersByTime(2000);
+    // About one look per idle period, not one per animation frame.
+    expect(raf.mock.calls.length).toBeLessThanOrEqual(
+      2000 / BOARD_FRAME_IDLE_POLL_MS + 1,
+    );
+    expect(frame.iframe.style.visibility).toBe("hidden");
+    // Shown again by a click (a tab switch): at once, not at the next look.
+    size.mockReturnValue(rect(10, 50, 400, 300));
+    window.dispatchEvent(new Event("pointerdown"));
+    jest.advanceTimersByTime(40);
+    expect(frame.iframe.style.visibility).toBe("visible");
+    // And while it can be seen, it follows every animation frame again.
+    raf.mockClear();
+    jest.advanceTimersByTime(320);
+    expect(raf.mock.calls.length).toBeGreaterThan(10);
+  } finally {
+    raf.mockRestore();
+    element.remove();
+    jest.useRealTimers();
+  }
 });
 
 test("lays the frame over the placeholder, clipped to its scrolling ancestors", async () => {

@@ -442,16 +442,60 @@ function anyShown(): boolean {
 }
 
 // Placeholders move with scrolling, resizing and layout changes that no
-// event reports, so shown frames follow them every animation frame.
-function schedule(): void {
-  if (animationFrame != null || typeof requestAnimationFrame !== "function") {
-    return;
+// event reports, so shown frames follow them every animation frame. While
+// every attached frame is hidden (its editor in an inactive tab, say), the
+// placeholders are only checked every BOARD_FRAME_IDLE_POLL_MS, until one
+// can be seen again.
+export const BOARD_FRAME_IDLE_POLL_MS = 500;
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+function anyVisible(): boolean {
+  for (const entry of entries.values()) {
+    if (
+      entry.placeholders.length > 0 &&
+      entry.iframe.style.visibility === "visible"
+    ) {
+      return true;
+    }
   }
+  return false;
+}
+
+// What usually reveals a hidden board (a click or keypress switching tabs, a
+// resize) wakes the idle loop at once, rather than at its next check.
+let waking = false;
+function wakeOnInput(): void {
+  if (waking || typeof window === "undefined") return;
+  waking = true;
+  const wake = () => {
+    if (idleTimer != null) schedule();
+  };
+  for (const type of ["pointerdown", "keydown", "focusin", "resize"]) {
+    window.addEventListener(type, wake, { capture: true, passive: true });
+  }
+}
+
+function schedule(): void {
+  if (typeof requestAnimationFrame !== "function") return;
+  wakeOnInput();
+  if (idleTimer != null) {
+    // Something changed (a card attached, say): look again at once.
+    clearTimeout(idleTimer);
+    idleTimer = undefined;
+  }
+  if (animationFrame != null) return;
   const step = () => {
     animationFrame = undefined;
     if (!anyShown()) return;
     layoutBoardFrames();
-    animationFrame = requestAnimationFrame(step);
+    if (anyVisible()) {
+      animationFrame = requestAnimationFrame(step);
+    } else {
+      idleTimer = setTimeout(() => {
+        idleTimer = undefined;
+        if (animationFrame == null) step();
+      }, BOARD_FRAME_IDLE_POLL_MS);
+    }
   };
   animationFrame = requestAnimationFrame(step);
 }
@@ -775,6 +819,8 @@ export function resetBoardFrames(): void {
     cancelAnimationFrame(animationFrame);
   }
   animationFrame = undefined;
+  if (idleTimer != null) clearTimeout(idleTimer);
+  idleTimer = undefined;
   if (evictTimer != null) clearTimeout(evictTimer);
   evictTimer = undefined;
   layer?.remove();
