@@ -216,6 +216,25 @@ export async function setGpuProviderKey(
     // The browser may have given up; storing now would surprise it.
     throw Error("RunPod took too long to check this key. Try again shortly.");
   }
+  // A removal (say, in another tab) while this key was being checked wins:
+  // saving now would silently reconnect an account the user just
+  // disconnected. One second of slack covers clock skew with the database.
+  const removedSince = (
+    await listAccountExternalCredentialsRouted({
+      owner_account_id: account_id,
+      provider,
+      kind: GPU_PROVIDER_API_KEY_KIND,
+      scope: "account",
+      includeRevoked: true,
+    })
+  ).some(
+    (row) => row.revoked && new Date(row.revoked).getTime() >= started - 1_000,
+  );
+  if (removedSince) {
+    throw Error(
+      "Your RunPod key was removed while this one was being checked, so it wasn't saved. Paste it again to connect it.",
+    );
+  }
   const verified_at = new Date().toISOString();
   const provider_account_name =
     identity.kind === "organization" && identity.name

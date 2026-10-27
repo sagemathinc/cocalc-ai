@@ -149,8 +149,12 @@ describe("GPU provider keys", () => {
       provider_account: { kind: "personal", id: "user_1" },
       connected_at: stored.metadata.verified_at,
     });
-    // No routed read after the write: the status comes from what was stored.
-    expect(listMock).not.toHaveBeenCalled();
+    // One routed read before the write (for removals since the check
+    // started), none after it: the status comes from what was stored.
+    expect(listMock).toHaveBeenCalledTimes(1);
+    expect(listMock.mock.invocationCallOrder[0]).toBeLessThan(
+      upsertMock.mock.invocationCallOrder[0],
+    );
     // The key is never part of what comes back.
     expect(JSON.stringify(status)).not.toContain(KEY);
   });
@@ -383,5 +387,32 @@ describe("GPU provider keys", () => {
       ),
     ).rejects.toThrow("can't manage pods");
     expect(upsertMock).not.toHaveBeenCalled();
+  });
+
+  it("doesn't save a key if the key was removed while it was being checked", async () => {
+    const { fetch } = fakeFetch([PERSONAL_ORG_403, MYSELF, NO_PODS, WRITE_OK]);
+    // Another tab removes the old key during verification.
+    listMock.mockImplementation(async ({ includeRevoked }) =>
+      includeRevoked ? [{ ...summary({}), revoked: new Date() }] : [],
+    );
+    await expect(
+      setGpuProviderKey(
+        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        { fetch, isEntitled: entitled },
+      ),
+    ).rejects.toThrow("removed while this one was being checked");
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
+  it("an older removal doesn't block a new save", async () => {
+    const { fetch } = fakeFetch([PERSONAL_ORG_403, MYSELF, NO_PODS, WRITE_OK]);
+    listMock.mockResolvedValue([
+      { ...summary({}), revoked: new Date(Date.now() - 60_000) },
+    ]);
+    await setGpuProviderKey(
+      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      { fetch, isEntitled: entitled },
+    );
+    expect(upsertMock).toHaveBeenCalled();
   });
 });
