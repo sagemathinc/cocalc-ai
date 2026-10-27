@@ -720,7 +720,8 @@ FRONTEND_ASSET_VERSION_SLACK_MS=$((24 * 3600 * 1000))
 # static-only release keeps the current release's, as it keeps its hub).
 release_hub_smc_version() {
   local release="$1" node_bin="$2"
-  "$node_bin" -e '
+  # As the bay account: root never reads files in the bay-owned release tree.
+  as_bay_node "$node_bin" -e '
 const fs = require("node:fs");
 const [source, recorded] = process.argv.slice(1);
 let version;
