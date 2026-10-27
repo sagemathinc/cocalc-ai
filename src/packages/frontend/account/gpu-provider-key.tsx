@@ -104,7 +104,7 @@ export function GpuProviderKeySection() {
   };
 
   const keyForm = (
-    <Space direction="vertical" style={{ width: "100%", maxWidth: 600 }}>
+    <Space orientation="vertical" style={{ width: "100%", maxWidth: 600 }}>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
         On{" "}
         <a href={RUNPOD_API_KEYS_URL} target="_blank" rel="noreferrer">
@@ -150,7 +150,7 @@ export function GpuProviderKeySection() {
   } else if (status.connected) {
     const account = status.provider_account;
     body = (
-      <Space direction="vertical" style={{ width: "100%" }}>
+      <Space orientation="vertical" style={{ width: "100%" }}>
         <Typography.Paragraph style={{ marginBottom: 0 }}>
           Connected to RunPod
           {account
