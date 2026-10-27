@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import {
+  MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS,
   MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT,
   MAX_MERGE_APPROVAL_ATTEMPTS_PER_HOUR,
   MAX_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT_PER_HOUR,
@@ -237,7 +238,7 @@ describeDb("merge approval store", () => {
     await getPool().query(
       `INSERT INTO merge_approval_attempts
          (id, project_id, account_id, repo, pr_number, attempted_at)
-       SELECT gen_random_uuid(), $1, $2, 'o/r', 1, now() - interval '10 minutes'
+       SELECT gen_random_uuid(), $1, $2, 'o/r', 1, now() - interval '15 minutes'
          FROM generate_series(1, $3::int)`,
       [
         project_id,
@@ -261,6 +262,32 @@ describeDb("merge approval store", () => {
       ],
     );
     await expect(store.admitAttempt(who)).rejects.toMatchObject({ code: 429 });
+    await getPool().query("DELETE FROM merge_approval_attempts");
+  });
+
+  it("limits attempts in flight site-wide", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS; i++) {
+      ids.push(
+        await store.admitAttempt({
+          project_id: randomUUID(),
+          account_id: randomUUID(),
+          repo: "o/r",
+          pr_number: 1,
+        }),
+      );
+    }
+    const other = {
+      project_id: randomUUID(),
+      account_id: randomUUID(),
+      repo: "o/r",
+      pr_number: 1,
+    };
+    await expect(store.admitAttempt(other)).rejects.toThrow(
+      "other merge approval requests are in progress",
+    );
+    await store.finishAttempt(ids[0], "recorded");
+    await store.admitAttempt(other);
     await getPool().query("DELETE FROM merge_approval_attempts");
   });
 

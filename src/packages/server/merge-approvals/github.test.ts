@@ -6,6 +6,7 @@
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { MAX_MERGE_APPROVAL_SNAPSHOT_BYTES } from "@cocalc/util/merge-approval";
 import {
+  gitHubBudget,
   mergeApprovalAppJwt,
   readPullRequestHead,
   readPullRequestSnapshot,
@@ -119,6 +120,8 @@ function fakeGitHub({
 
 afterEach(() => setMergeApprovalGitHubFetchForTests());
 
+const budget = () => gitHubBudget({ max_calls: 1000, timeout_ms: 60_000 });
+
 describe("merge approval GitHub App", () => {
   it("signs a short-lived RS256 App JWT", () => {
     const now = Date.parse("2026-10-27T00:00:00Z");
@@ -148,6 +151,7 @@ describe("merge approval GitHub App", () => {
       config,
       repo: "sagemathinc/cocalc-ai",
       pr_number: 12,
+      budget: budget(),
     });
     expect(snap).toMatchObject({
       title: "Fix it",
@@ -194,6 +198,7 @@ describe("merge approval GitHub App", () => {
       config,
       repo: "sagemathinc/cocalc-ai",
       pr_number: 12,
+      budget: budget(),
     });
     expect(gh.calls.filter((c) => c.method === "POST")).toHaveLength(1);
   });
@@ -205,6 +210,7 @@ describe("merge approval GitHub App", () => {
       config,
       repo: "sagemathinc/cocalc-ai",
       pr_number: 12,
+      budget: budget(),
     });
     expect(snap.state).toBe("merged");
   });
@@ -221,6 +227,7 @@ describe("merge approval GitHub App", () => {
       config,
       repo: "sagemathinc/cocalc-ai",
       pr_number: 12,
+      budget: budget(),
     });
     expect(snap.files.length).toBeLessThanOrEqual(300);
     expect(snap.files_truncated).toBe(true);
@@ -236,7 +243,12 @@ describe("merge approval GitHub App", () => {
     const gh = fakeGitHub();
     setMergeApprovalGitHubFetchForTests(gh.fetchImpl);
     await expect(
-      readPullRequestSnapshot({ config, repo: "other/repo", pr_number: 1 }),
+      readPullRequestSnapshot({
+        config,
+        repo: "other/repo",
+        pr_number: 1,
+        budget: budget(),
+      }),
     ).rejects.toThrow("no installation for other");
     expect(gh.calls).toHaveLength(0);
   });
@@ -253,6 +265,7 @@ describe("merge approval GitHub App", () => {
       config,
       repo: "sagemathinc/cocalc-ai",
       pr_number: 12,
+      budget: budget(),
     }).catch((e) => e);
     expect(err.message).toBe(
       "GitHub GET /repos/sagemathinc/cocalc-ai/pulls/12 returned 403: Resource not accessible by integration",
@@ -274,6 +287,7 @@ describe("merge approval GitHub App", () => {
       config,
       repo: "sagemathinc/cocalc-ai",
       pr_number: 12,
+      budget: budget(),
     });
     expect(snap.head_sha).toBe(HEAD);
     expect(snap.base_sha).toBe(BASE);
@@ -294,6 +308,7 @@ describe("merge approval GitHub App", () => {
         config,
         repo: "sagemathinc/cocalc-ai",
         pr_number: 12,
+        budget: budget(),
       }),
     ).rejects.toMatchObject({ code: "head_changed" });
 
@@ -305,6 +320,7 @@ describe("merge approval GitHub App", () => {
         config,
         repo: "sagemathinc/cocalc-ai",
         pr_number: 12,
+        budget: budget(),
       }),
     ).rejects.toMatchObject({ code: "head_changed" });
   });
@@ -317,6 +333,7 @@ describe("merge approval GitHub App", () => {
         config,
         repo: "sagemathinc/cocalc-ai",
         pr_number: 12,
+        budget: budget(),
       }),
     ).resolves.toEqual({
       head_sha: HEAD,
@@ -344,6 +361,7 @@ describe("merge approval GitHub App", () => {
         config,
         repo: "sagemathinc/cocalc-ai",
         pr_number: 12,
+        budget: budget(),
       }),
     ).rejects.toMatchObject({ code: "head_changed" });
   });
@@ -375,6 +393,7 @@ describe("merge approval GitHub App", () => {
       config,
       repo: "sagemathinc/cocalc-ai",
       pr_number: 12,
+      budget: budget(),
     });
     expect(snap.check_summary).toEqual({
       total: 141,
@@ -416,12 +435,73 @@ describe("merge approval GitHub App", () => {
       config,
       repo: "sagemathinc/cocalc-ai",
       pr_number: 12,
+      budget: budget(),
     });
     expect(snap.review_summary).toMatchObject({
-      total: 1000,
+      total: 300,
       changes_requested: 0,
       complete: false,
     });
     expect(snap.reviews_truncated).toBe(true);
+  });
+
+  it("stays within the per-attempt call budget for the largest PR it reads", async () => {
+    const many = (n: number, f: (i: number) => any) =>
+      Array.from({ length: n }, (_, i) => f(i));
+    const gh = fakeGitHub({
+      files: many(450, (i) => ({
+        filename: `f${i}`,
+        additions: 1,
+        deletions: 0,
+      })),
+      pr: { changed_files: 450, additions: 450, deletions: 0 },
+      checkRuns: many(500, (i) => ({
+        name: `c${i}`,
+        status: "completed",
+        conclusion: "success",
+      })),
+      reviews: many(500, (i) => ({
+        user: { login: `r${i}` },
+        state: "COMMENTED",
+        commit_id: HEAD,
+      })),
+    });
+    setMergeApprovalGitHubFetchForTests(gh.fetchImpl);
+    const b = gitHubBudget({ max_calls: 40, timeout_ms: 60_000 });
+    await readPullRequestSnapshot({
+      config,
+      repo: "sagemathinc/cocalc-ai",
+      pr_number: 12,
+      budget: b,
+    });
+    // This read: 1 mint + 1 PR + 3 file pages with 3 head checks + 3
+    // check-run pages + 1 status page (there is one status) + 3 review pages
+    // + 1 final head check. The worst case is 18 (3 status pages), or about
+    // 36 with the one retry and the head re-check under the lock: within
+    // the 40 an attempt may use.
+    expect(gh.calls).toHaveLength(16);
+    expect(b.calls_left).toBe(24);
+  });
+
+  it("stops when the attempt's budget runs out", async () => {
+    const gh = fakeGitHub();
+    setMergeApprovalGitHubFetchForTests(gh.fetchImpl);
+    await expect(
+      readPullRequestSnapshot({
+        config,
+        repo: "sagemathinc/cocalc-ai",
+        pr_number: 12,
+        budget: gitHubBudget({ max_calls: 3, timeout_ms: 60_000 }),
+      }),
+    ).rejects.toMatchObject({ code: "github_budget_exceeded" });
+    expect(gh.calls).toHaveLength(3);
+    await expect(
+      readPullRequestHead({
+        config,
+        repo: "sagemathinc/cocalc-ai",
+        pr_number: 12,
+        budget: gitHubBudget({ max_calls: 10, timeout_ms: -1 }),
+      }),
+    ).rejects.toMatchObject({ code: "github_budget_exceeded" });
   });
 });

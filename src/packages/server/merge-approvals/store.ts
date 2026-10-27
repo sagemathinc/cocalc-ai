@@ -14,7 +14,9 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "@cocalc/database/pool";
 import { assertMergeApprovalIntegrity } from "@cocalc/database/postgres/schema/merge-approval-integrity";
 import {
+  MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS,
   MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT,
+  MERGE_APPROVAL_ATTEMPT_STALE_MS,
   MAX_MERGE_APPROVAL_ATTEMPTS_PER_HOUR,
   MAX_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT_PER_HOUR,
   MAX_NEW_MERGE_APPROVALS_PER_PROJECT_PER_HOUR,
@@ -213,9 +215,10 @@ export class MergeApprovalStore {
 
   // Admits one request attempt before the caller reads from GitHub, or
   // refuses it (429): at most so many per project per hour, site-wide per
-  // hour, and in flight per project. Every attempt counts, whatever its
-  // outcome; call finishAttempt when it is done. Attempts left unfinished
-  // (a crashed hub) stop counting as in flight after a few minutes.
+  // hour, and in flight per project and site-wide. Every attempt counts,
+  // whatever its outcome; call finishAttempt when it is done. Attempts left
+  // unfinished (a crashed hub) stop counting as in flight after
+  // MERGE_APPROVAL_ATTEMPT_STALE_MS, well past the attempt timeout.
   async admitAttempt({
     project_id,
     account_id,
@@ -242,13 +245,22 @@ export class MergeApprovalStore {
            count(*) FILTER (WHERE project_id = $1)::int AS project_hour,
            count(*)::int AS site_hour,
            count(*) FILTER (WHERE project_id = $1 AND finished_at IS NULL
-                              AND attempted_at > now() - interval '5 minutes')::int
-             AS in_flight
+                              AND attempted_at > now() - $2::bigint * interval '1 millisecond')::int
+             AS in_flight,
+           count(*) FILTER (WHERE finished_at IS NULL
+                              AND attempted_at > now() - $2::bigint * interval '1 millisecond')::int
+             AS site_in_flight
          FROM merge_approval_attempts
         WHERE attempted_at > now() - interval '1 hour'`,
-        [project_id],
+        [project_id, MERGE_APPROVAL_ATTEMPT_STALE_MS],
       );
-      const { project_hour, site_hour, in_flight } = rows[0];
+      const { project_hour, site_hour, in_flight, site_in_flight } = rows[0];
+      if (site_in_flight >= MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS) {
+        throw codeError(
+          "other merge approval requests are in progress; try again shortly",
+          429,
+        );
+      }
       if (in_flight >= MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT) {
         throw codeError(
           "another merge approval request from this project is in progress; try again shortly",

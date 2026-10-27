@@ -24,8 +24,9 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_FILES = 300;
 const FILES_PER_PAGE = 100;
 const PER_PAGE = 100;
-// Checks and reviews are read in full up to this many pages each.
-const MAX_LIST_PAGES = 10;
+// Checks, statuses and reviews are read up to this many pages each; the
+// summaries say when that wasn't everything.
+const MAX_LIST_PAGES = 3;
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -35,6 +36,25 @@ let fetchImpl: Fetch = (url, init) => fetch(url, init);
 export function setMergeApprovalGitHubFetchForTests(f?: Fetch): void {
   fetchImpl = f ?? ((url, init) => fetch(url, init));
   tokenCache.clear();
+}
+
+// What one request attempt may spend on GitHub: a number of calls (the
+// installation token mint included) and a deadline for all of them. This is
+// what makes the admission limits a bound on the shared installation's API
+// use, and on how long an attempt can stay in flight.
+export interface GitHubBudget {
+  calls_left: number;
+  deadline: number;
+}
+
+export function gitHubBudget({
+  max_calls,
+  timeout_ms,
+}: {
+  max_calls: number;
+  timeout_ms: number;
+}): GitHubBudget {
+  return { calls_left: max_calls, deadline: Date.now() + timeout_ms };
 }
 
 export class MergeApprovalGitHubError extends Error {
@@ -80,8 +100,19 @@ async function github(
   method: "GET" | "POST",
   path: string,
   token: string,
-  body?: unknown,
+  body: unknown,
+  budget: GitHubBudget,
 ): Promise<any> {
+  const remaining = budget.deadline - Date.now();
+  if (budget.calls_left <= 0 || remaining <= 0) {
+    throw Object.assign(
+      new MergeApprovalGitHubError(
+        "reading this pull request from GitHub needs more requests or time than one attempt may use",
+      ),
+      { code: "github_budget_exceeded" },
+    );
+  }
+  budget.calls_left -= 1;
   let resp: Response;
   try {
     resp = await fetchImpl(`${GITHUB_API}${path}`, {
@@ -91,7 +122,7 @@ async function github(
         ...(body == null ? {} : { "Content-Type": "application/json" }),
       },
       body: body == null ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, remaining)),
     });
   } catch (err) {
     throw new MergeApprovalGitHubError(`GitHub request failed: ${err}`);
@@ -127,6 +158,7 @@ async function installationToken(
   config: MergeApprovalAppConfig,
   repo: string,
   permissions: Permissions,
+  budget: GitHubBudget,
 ): Promise<string> {
   const [owner, name] = repo.split("/");
   const installation_id = config.installations.get(owner);
@@ -145,6 +177,7 @@ async function installationToken(
     `/app/installations/${installation_id}/access_tokens`,
     mergeApprovalAppJwt(config),
     { repositories: [name], permissions },
+    budget,
   );
   const token = `${resp?.token ?? ""}`;
   const expires_at = Date.parse(`${resp?.expires_at ?? ""}`);
@@ -221,6 +254,7 @@ interface PullRequestTarget {
   config: MergeApprovalAppConfig;
   repo: string;
   pr_number: number;
+  budget: GitHubBudget;
 }
 
 function commitSha(value: unknown, what: string): string {
@@ -254,10 +288,17 @@ export async function readPullRequestHead({
   config,
   repo,
   pr_number,
+  budget,
 }: PullRequestTarget): Promise<PullRequestHead> {
-  const token = await installationToken(config, repo, READ_PERMISSIONS);
+  const token = await installationToken(config, repo, READ_PERMISSIONS, budget);
   return pullRequestHead(
-    await github("GET", `/repos/${repo}/pulls/${pr_number}`, token),
+    await github(
+      "GET",
+      `/repos/${repo}/pulls/${pr_number}`,
+      token,
+      undefined,
+      budget,
+    ),
   );
 }
 
@@ -294,18 +335,31 @@ async function readSnapshotOnce({
   config,
   repo,
   pr_number,
+  budget,
 }: PullRequestTarget): Promise<{
   snapshot: MergeApprovalGitHubSnapshot;
   base_sha: string;
   consistent: boolean;
 }> {
-  const token = await installationToken(config, repo, READ_PERMISSIONS);
-  const pr = await github("GET", `/repos/${repo}/pulls/${pr_number}`, token);
+  const token = await installationToken(config, repo, READ_PERMISSIONS, budget);
+  const pr = await github(
+    "GET",
+    `/repos/${repo}/pulls/${pr_number}`,
+    token,
+    undefined,
+    budget,
+  );
   const { head_sha, base_sha } = pullRequestHead(pr);
 
   const samePr = async () => {
     const now = pullRequestHead(
-      await github("GET", `/repos/${repo}/pulls/${pr_number}`, token),
+      await github(
+        "GET",
+        `/repos/${repo}/pulls/${pr_number}`,
+        token,
+        undefined,
+        budget,
+      ),
     );
     return now.head_sha === head_sha && now.base_sha === base_sha;
   };
@@ -316,6 +370,8 @@ async function readSnapshotOnce({
       "GET",
       `/repos/${repo}/pulls/${pr_number}/files?per_page=${FILES_PER_PAGE}&page=${page}`,
       token,
+      undefined,
+      budget,
     );
     if (!Array.isArray(batch)) break;
     for (const f of batch) {
@@ -346,6 +402,8 @@ async function readSnapshotOnce({
         "GET",
         `${path}${sep}per_page=${PER_PAGE}&page=${page}`,
         token,
+        undefined,
+        budget,
       );
       const batch = rows(body);
       all.push(...batch);

@@ -41,6 +41,10 @@ jest.mock("./settings", () => ({
 jest.mock("./github", () => ({
   readPullRequestSnapshot: (...args: any[]) => snapshotMock(...args),
   readPullRequestHead: (...args: any[]) => headMock(...args),
+  gitHubBudget: ({ max_calls, timeout_ms }) => ({
+    calls_left: max_calls,
+    deadline: Date.now() + timeout_ms,
+  }),
 }));
 jest.mock("./store", () => ({
   MergeApprovalStore: jest.fn().mockImplementation(() => ({
@@ -163,12 +167,12 @@ describe("requestMergeApproval", () => {
       config: app,
       repo: "o/r",
       pr_number: 7,
+      budget: expect.objectContaining({ calls_left: expect.any(Number) }),
     });
-    expect(headMock).toHaveBeenCalledWith({
-      config: app,
-      repo: "o/r",
-      pr_number: 7,
-    });
+    // The re-check spends from the same attempt's budget.
+    expect(headMock.mock.calls[0][0].budget).toBe(
+      snapshotMock.mock.calls[0][0].budget,
+    );
     expect(createMock.mock.calls[0][0]).toEqual({
       repo: "o/r",
       pr_number: 7,

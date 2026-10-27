@@ -24,9 +24,19 @@ export const MAX_NEW_MERGE_APPROVALS_PER_PROJECT_PER_HOUR = 30;
 // Every request attempt reads from GitHub through one shared App
 // installation, so attempts are admitted (and counted) before any read,
 // whatever their outcome: per project, site-wide, and at most a few at once.
-export const MAX_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT_PER_HOUR = 60;
-export const MAX_MERGE_APPROVAL_ATTEMPTS_PER_HOUR = 100;
+// Each attempt may make at most MAX_MERGE_APPROVAL_GITHUB_CALLS_PER_ATTEMPT
+// calls within MERGE_APPROVAL_ATTEMPT_TIMEOUT_MS, so the site-wide hourly
+// cap bounds the installation's use: 60 * 40 = 2,400 calls an hour, under
+// half of GitHub's 5,000 per installation, leaving room for the relay.
+export const MAX_MERGE_APPROVAL_GITHUB_CALLS_PER_ATTEMPT = 40;
+export const MERGE_APPROVAL_ATTEMPT_TIMEOUT_MS = 2 * 60_000;
+export const MAX_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT_PER_HOUR = 30;
+export const MAX_MERGE_APPROVAL_ATTEMPTS_PER_HOUR = 60;
 export const MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT = 2;
+export const MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS = 4;
+// An unfinished attempt (a crashed hub) stops counting as in flight after
+// this, which is well past the attempt timeout.
+export const MERGE_APPROVAL_ATTEMPT_STALE_MS = 10 * 60_000;
 export const MAX_MERGE_APPROVAL_NOTE_BYTES = 8 * 1024;
 export const MAX_MERGE_APPROVAL_COMMENT_BYTES = 2 * 1024;
 // Cap on the stored GitHub snapshot (files list etc. are truncated to fit).

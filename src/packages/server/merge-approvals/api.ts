@@ -28,6 +28,8 @@ import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   MAX_MERGE_APPROVAL_COMMENT_BYTES,
+  MAX_MERGE_APPROVAL_GITHUB_CALLS_PER_ATTEMPT,
+  MERGE_APPROVAL_ATTEMPT_TIMEOUT_MS,
   MAX_MERGE_APPROVAL_NOTE_BYTES,
   MERGE_APPROVAL_DECISIONS,
   mergeApprovalNeedsSecondFactor,
@@ -40,7 +42,12 @@ import {
   type MergeApprovalDecisionKind,
   type MergeApprovalRequest,
 } from "@cocalc/util/merge-approval";
-import { readPullRequestHead, readPullRequestSnapshot } from "./github";
+import {
+  gitHubBudget,
+  readPullRequestHead,
+  readPullRequestSnapshot,
+  type GitHubBudget,
+} from "./github";
 import { getMergeApprovalSettings } from "./settings";
 import { MergeApprovalStore } from "./store";
 
@@ -129,6 +136,11 @@ export async function requestMergeApproval(
   let outcome = "error";
   try {
     const request = await readAndRecordRequest({
+      // Bounds what this attempt can spend on GitHub, and for how long.
+      budget: gitHubBudget({
+        max_calls: MAX_MERGE_APPROVAL_GITHUB_CALLS_PER_ATTEMPT,
+        timeout_ms: MERGE_APPROVAL_ATTEMPT_TIMEOUT_MS,
+      }),
       app: settings.app,
       repo,
       pr_number,
@@ -155,6 +167,7 @@ export async function requestMergeApproval(
 }
 
 async function readAndRecordRequest({
+  budget,
   app,
   repo,
   pr_number,
@@ -163,6 +176,7 @@ async function readAndRecordRequest({
   chat,
   requested_by,
 }: {
+  budget: GitHubBudget;
   app: NonNullable<Awaited<ReturnType<typeof getMergeApprovalSettings>>["app"]>;
   repo: string;
   pr_number: number;
@@ -180,6 +194,7 @@ async function readAndRecordRequest({
     config: app,
     repo,
     pr_number,
+    budget,
   });
   if (snapshot.state !== "open") {
     throw codeError(`pull request #${pr_number} is ${snapshot.state}`, 409);
@@ -203,7 +218,12 @@ async function readAndRecordRequest({
     {
       // Again under the PR's lock: the head may have moved since the read.
       verify: async () => {
-        const now = await readPullRequestHead({ config: app, repo, pr_number });
+        const now = await readPullRequestHead({
+          config: app,
+          repo,
+          pr_number,
+          budget,
+        });
         if (now.state !== "open" || now.draft) {
           throw codeError(`pull request #${pr_number} changed; try again`, 409);
         }
