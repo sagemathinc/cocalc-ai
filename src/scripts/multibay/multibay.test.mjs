@@ -872,6 +872,73 @@ describe("inspecting a sent message's turn across bays", () => {
   });
 });
 
+describe("automatic placement across bays skips billing-blocked hosts", () => {
+  // Shared-pool hosts live on the attached bay; alice is homed on the seed.
+  // The seed's automatic selection sees them only through the attached bay's
+  // redacted catalog listing, so the host's own bay must report a host being
+  // drained for billing as not placeable, and selection must fall back.
+  const blocked = randomUUID();
+  const healthy = randomUUID();
+
+  async function poolHost(id, name, metadata) {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `await require("@cocalc/database/pool").default().query(
+         "INSERT INTO project_hosts (id, name, status, bay_id, tier, last_seen, metadata, created, updated) VALUES ($1, $2, 'running', $3, 0, NOW(), $4, NOW(), NOW())",
+         [${JSON.stringify(id)}, ${JSON.stringify(name)}, ${JSON.stringify(ATTACHED)},
+          ${JSON.stringify({
+            owner: randomUUID(),
+            runtime_health: { status: "ready", ready: true },
+            machine: { cloud: "gcp", machine_type: "t2d-standard-2" },
+            ...metadata,
+          })}]);`,
+    );
+  }
+
+  async function seedSelects() {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const { selectActiveHost } = server("project-host/control.js");
+       const host = await selectActiveHost({
+         bay_id: ${JSON.stringify(SEED)},
+         account_id: ${JSON.stringify(alice.account_id)},
+       });
+       return host?.id ?? null;`,
+    );
+  }
+
+  before(async () => {
+    await poolHost(blocked, "draining pool host", {
+      billing: { enforcement: { state: "draining" } },
+    });
+  });
+
+  after(async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `await require("@cocalc/database/pool").default().query(
+         "DELETE FROM project_hosts WHERE id = ANY($1::uuid[])",
+         [${JSON.stringify([blocked, healthy])}]);`,
+    );
+  });
+
+  it("does not choose the other bay's host while it is drained for billing", async () => {
+    assert.equal(await seedSelects(), null);
+  });
+
+  it("falls back to a healthy host on the other bay", async () => {
+    await poolHost(healthy, "healthy pool host", {});
+    // The listing comes over the fabric each time; the choice is random among
+    // placeable hosts, so a few picks must all be the healthy one.
+    for (let i = 0; i < 5; i += 1) {
+      assert.equal(await seedSelects(), healthy);
+    }
+  });
+});
+
 describe("an agent's status across bays", () => {
   // The agent's project (and the host reporting its status) on the seed;
   // the account that named it homed on the attached bay. The host's report

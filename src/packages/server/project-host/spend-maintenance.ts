@@ -894,19 +894,6 @@ async function reconcileStoppedHost({
   });
 }
 
-async function updateHostStatusAndBillingMetadata({
-  row,
-  status,
-  metadata,
-}: {
-  row: CandidateHostRow;
-  status: string;
-  metadata: any;
-}): Promise<boolean> {
-  return (await writeHostBillingChanges({ row, metadata, status: { status } }))
-    .written;
-}
-
 async function requestHostDrainForBilling({
   row,
   enforcement,
@@ -935,10 +922,14 @@ async function requestHostDrainForBilling({
     last_action_at: new Date().toISOString(),
   };
   // Queue nothing on a host a relocation took after this pass read it.
+  // The drain is recorded in the enforcement state only. The host's status
+  // stays as it is: project routing follows that status, and the drain's
+  // moves (and the host's users, until their project has moved) still reach
+  // their projects through the host. A status of "draining" also lasted only
+  // until the host's next heartbeat.
   if (
-    !(await updateHostStatusAndBillingMetadata({
+    !(await updateHostBillingMetadata({
       row,
-      status: "draining",
       metadata: nextMetadata,
     }))
   ) {

@@ -11,6 +11,19 @@ import {
 } from "@cocalc/server/inter-bay/directory";
 import { isValidUUID } from "@cocalc/util/misc";
 
+// Host statuses that projects are routed to. A draining host still holds its
+// projects until each move finishes (and the move code treats it as online),
+// so its projects must stay reachable: the move itself writes a sentinel
+// through this route first.
+export const ROUTABLE_HOST_STATUSES = [
+  "running",
+  "active",
+  "draining",
+] as const;
+const ROUTABLE_HOST_STATUS_SQL = ROUTABLE_HOST_STATUSES.map(
+  (status) => `'${status}'`,
+).join(", ");
+
 const log = getLogger("server:conat:route-project");
 
 const INVALIDATION_TABLE = "project_host_route_invalidations";
@@ -193,7 +206,7 @@ async function fetchHostTarget(
           FROM project_hosts
           WHERE project_hosts.id = $1
             AND project_hosts.deleted IS NULL
-            AND project_hosts.status IN ('running', 'active')
+            AND project_hosts.status IN (${ROUTABLE_HOST_STATUS_SQL})
         `,
         [host_id, defaultBayId],
       );
@@ -259,7 +272,7 @@ async function fetchHostAddress(
           LEFT JOIN project_hosts
             ON project_hosts.id = projects.host_id
            AND project_hosts.deleted IS NULL
-           AND project_hosts.status IN ('running', 'active')
+           AND project_hosts.status IN (${ROUTABLE_HOST_STATUS_SQL})
           WHERE project_id=$1
         `,
         [project_id, defaultBayId],

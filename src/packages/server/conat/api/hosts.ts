@@ -313,7 +313,10 @@ import {
   reconcileDedicatedHostPurchaseSessionForAccount,
   type DedicatedHostFundingLane,
 } from "@cocalc/server/project-host/spend";
-import { evaluateDedicatedHostBillingEnforcement } from "@cocalc/server/project-host/spend-enforcement";
+import {
+  billingEnforcementBlocksPlacement,
+  evaluateDedicatedHostBillingEnforcement,
+} from "@cocalc/server/project-host/spend-enforcement";
 import { resolveFreshAuthSessionHash } from "@cocalc/server/conat/socketio/fresh-auth-session";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import {
@@ -4383,15 +4386,23 @@ export async function listHostsLocal({
     }
     const availability = computeHostOperationalAvailability(row);
     const ioPlacementConformant = hostIoPlacementConformant(row);
+    // Decided here, by the host's bay: listings for other bays omit the
+    // billing state, and their automatic selection relies on can_place.
+    const billingState = billingEnforcementBlocksPlacement(metadata);
     const can_place =
-      placement.can_place && availability.operational && ioPlacementConformant;
+      placement.can_place &&
+      availability.operational &&
+      ioPlacementConformant &&
+      !billingState;
     const reason_unavailable =
       placement.reason_unavailable ??
       (!ioPlacementConformant
         ? "Host I/O containment policy is not validated"
-        : availability.operational
-          ? undefined
-          : availability.reason_unavailable);
+        : billingState
+          ? `Host billing enforcement is ${billingState}`
+          : availability.operational
+            ? undefined
+            : availability.reason_unavailable);
 
     const can_start = hostAccessRoleCan(accessRole, "start-stop");
 

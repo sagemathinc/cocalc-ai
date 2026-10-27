@@ -2,6 +2,7 @@ import {
   choosePlacementHostRow,
   hostPlacementPressureRank,
   immediateStartReplacementReason,
+  remoteSharedPoolCandidateRows,
   shouldSkipStartForSnapshot,
 } from "./control";
 import { hostIoPlacementConformant } from "./placement";
@@ -385,5 +386,39 @@ describe("host placement pressure helpers", () => {
       "wnam",
     );
     expect(selected?.id).toBe("host-right-region");
+  });
+});
+
+describe("remoteSharedPoolCandidateRows", () => {
+  const host = (id: string, extra: Record<string, unknown> = {}) =>
+    ({
+      id,
+      bay_id: "bay-7",
+      name: id,
+      region: "us-west1",
+      tier: 0,
+      can_place: true,
+      ...extra,
+    }) as any;
+
+  it("skips remote hosts whose billing enforcement blocks placement", () => {
+    const rows = remoteSharedPoolCandidateRows([
+      host("ok"),
+      host("draining", { billing_enforcement: { state: "draining" } }),
+      host("blocked", {
+        billing_enforcement: { state: "stopped_billing_blocked" },
+      }),
+      host("recovered", { billing_enforcement: { state: "ok" } }),
+    ]);
+    expect(rows.map((row) => row.id)).toEqual(["ok", "recovered"]);
+  });
+
+  it("keeps skipping non-pool and unplaceable remote hosts", () => {
+    const rows = remoteSharedPoolCandidateRows([
+      host("private", { tier: undefined }),
+      host("refused", { can_place: false }),
+      host("ok"),
+    ]);
+    expect(rows.map((row) => row.id)).toEqual(["ok"]);
   });
 });
