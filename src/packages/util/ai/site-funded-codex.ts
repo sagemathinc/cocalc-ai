@@ -275,8 +275,9 @@ export function formatSiteFundedTurnUsageWarning({
 }: SiteFundedTurnUsageWarning): string {
   return (
     `The ${WINDOW_NAME[window]} included AI allowance of the account running this turn is over ${threshold}% used.` +
-    ` When it runs out, its agent turns are refused until the window resets;` +
-    ` the AI usage indicator in the top bar shows the details, and you can upgrade your membership or use your own API key.`
+    // Collaborators read this too: address the account's owner, not "you".
+    ` When it runs out, that account's agent turns are refused until the window resets.` +
+    ` The account's owner can see the details in their top bar, and can upgrade their membership or use their own API key.`
   );
 }
 

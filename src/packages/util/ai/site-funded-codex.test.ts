@@ -210,7 +210,7 @@ describe("site-funded usage warnings", () => {
     expect(
       formatSiteFundedTurnUsageWarning({ window: "5h", threshold: 95 }),
     ).toBe(
-      "The 5-hour included AI allowance of the account running this turn is over 95% used. When it runs out, its agent turns are refused until the window resets; the AI usage indicator in the top bar shows the details, and you can upgrade your membership or use your own API key.",
+      "The 5-hour included AI allowance of the account running this turn is over 95% used. When it runs out, that account's agent turns are refused until the window resets. The account's owner can see the details in their top bar, and can upgrade their membership or use their own API key.",
     );
     expect(formatSiteFundedLimitDetail(in2h10m, now)).toBe(
       " It resets in about 2 h 10 min, at Oct 27, 14:10 UTC.",
