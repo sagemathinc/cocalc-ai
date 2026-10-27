@@ -216,4 +216,27 @@ describe("NebiusCapacityPicker", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Standard" }));
     expect(onPricingModelChange).toHaveBeenCalledWith("on_demand");
   });
+
+  it("offers Standard only while Nebius Spot is unavailable (#684)", () => {
+    const onPricingModelChange = jest.fn();
+    render(
+      <NebiusCapacityPicker
+        catalog={catalog}
+        selection={{
+          pricing_model: "spot",
+          region: "us-central1",
+          machine_type: "1gpu-24vcpu-218gb",
+          provider_platform: "gpu-rtx6000",
+        }}
+        onPricingModelChange={onPricingModelChange}
+        onSelect={jest.fn()}
+      />,
+    );
+    // a Spot selection moves to Standard, and Spot can't be chosen
+    expect(onPricingModelChange).toHaveBeenCalledWith("on_demand");
+    expect(screen.getByRole("radio", { name: "Spot" })).toBeDisabled();
+    expect(
+      screen.getByText("Nebius Spot is unavailable for now; Standard only."),
+    ).toBeTruthy();
+  });
 });
