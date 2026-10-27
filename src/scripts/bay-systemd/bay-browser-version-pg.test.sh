@@ -14,7 +14,7 @@ $B/initdb -D $T/data -U $BAY_USER >/dev/null 2>&1
 $B/pg_ctl -D $T/data -o "-k $T/run/postgres -h '' -p 5432 -c listen_addresses=''" -l $T/log -w start >/dev/null
 psql -h $T/run/postgres -p 5432 -U $BAY_USER -d postgres -XAtq -c "CREATE DATABASE $BAY_USER"
 PSQL=(psql -h $T/run/postgres -p 5432 -U $BAY_USER -d $BAY_USER -XAtq)
-"${PSQL[@]}" -c "CREATE TABLE server_settings (name text primary key, value text)"
+"${PSQL[@]}" -c "CREATE TABLE server_settings (name text primary key, value text, readonly boolean)"
 PSQL_BIN=psql
 runuser() { shift 3; "$@"; }
 eval "$(sed -n '/^write_browser_version_setting() {/,/^}/p' ${SCRIPT_DIR}/bay-bootstrap-release.sh)"
@@ -36,5 +36,9 @@ set_value ' 1700000000 '; try padded-stale 0 1790408000
 set_value 1792999999; try concurrent-higher 2 1792999999
 set_value 18446744075502679816; try huge-future 2 18446744075502679816
 set_value 1790408000; try equal 2 1790408000
+# A row the environment sets (COCALC_SETTING_*) is never touched.
+set_value 1700000000
+"${PSQL[@]}" -c "UPDATE server_settings SET readonly = true WHERE name = 'version_min_browser'"
+try readonly-stale 3 1700000000
 [[ "$("${PSQL[@]}" -c "SELECT count(*) FROM server_settings WHERE name='_last_update'")" == 1 ]]
 echo "browser version postgres tests passed"

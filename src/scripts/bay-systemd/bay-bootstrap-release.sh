@@ -807,9 +807,10 @@ browser_version_raise_target() {
 # Raises one browser version setting to VALUE as the bay account, atomically
 # and only while the stored value is not a number (missing, empty, "-",
 # anything else) or is numerically below VALUE: a value an admin raised in
-# between, or one in the future, is never lowered. Bumps _last_update so
-# running hubs reload. Returns 0 when it was raised, 2 when it was left, 1 on
-# error.
+# between, or one in the future, is never lowered, and a row the environment
+# sets (COCALC_SETTING_*, readonly) is never touched. Bumps _last_update so
+# running hubs reload. Returns 0 when it was raised, 2 when it was left, 3
+# when the environment sets it, 1 on error.
 write_browser_version_setting() {
   local name="$1" value="$2"
   [[ "$name" =~ ^version_(min|recommended)_browser$ && "$value" =~ ^[0-9]+$ ]] || return 1
@@ -826,7 +827,7 @@ WITH up AS (
   INSERT INTO server_settings (name, value) VALUES (:'name', :'value')
   ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
   -- CASE, not OR: only CASE fixes the order, so the cast never sees text.
-  WHERE CASE
+  WHERE NOT coalesce(server_settings.readonly, false) AND CASE
     WHEN server_settings.value IS NULL
       OR btrim(server_settings.value) !~ '^[0-9]+$' THEN true
     ELSE btrim(server_settings.value)::numeric < (:'value')::numeric
@@ -839,10 +840,25 @@ WITH up AS (
   ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
   RETURNING 1
 )
-SELECT count(*) FROM up;
+SELECT (SELECT count(*) FROM up) || ' ' || coalesce(
+  (SELECT readonly::text FROM server_settings WHERE name = :'name'), 'false');
 SQL
   )" || return 1
-  [[ "$updated" == 1 ]] || return 2
+  [[ "$updated" == "1 "* ]] && return 0
+  [[ "$updated" == *" true" ]] && return 3
+  return 2
+}
+
+# This bay's COCALC_CLUSTER_ROLE (standalone, seed or attached), from its
+# topology env (standalone when unset).
+bay_cluster_role() {
+  local file role=""
+  for file in "${ENV_DIR:-/etc/cocalc}/bay-topology.env" "${ENV_DIR:-/etc/cocalc}/bay.env"; do
+    [[ -f "$file" ]] || continue
+    role="$(sed -n 's/^COCALC_CLUSTER_ROLE=//p' "$file" | tail -n1 | tr -d "\"'[:space:]")"
+    [[ -n "$role" ]] && break
+  done
+  echo "${role:-standalone}"
 }
 
 # Raises the required and recommended browser versions to at most
@@ -856,6 +872,14 @@ ensure_recent_browser_version() {
   fi
   days=$((10#$days))
   ((days > 0)) || return 0
+  # In a multi-bay cluster site settings belong to the seed, which records
+  # and propagates them; a direct write here would bypass that.
+  local role
+  role="$(bay_cluster_role)"
+  if [[ "$role" != standalone ]]; then
+    echo "NOTE: this bay's cluster role is '${role}': site settings belong to the seed bay, so the browser versions are not changed here; keep them at most ${days} days old in the admin site settings"
+    return 0
+  fi
   local settings
   settings="$(read_browser_version_settings)"
   [[ -n "$settings" ]] || return 0
@@ -875,6 +899,7 @@ ensure_recent_browser_version() {
     case "$status" in
       0) echo "browser version: raised ${name} from ${value} to ${target} (at most ${days} days old)" ;;
       2) echo "browser version: ${name} is already at least ${target} (changed meanwhile); left as is" ;;
+      3) echo "browser version: ${name} is set by COCALC_SETTING_${name^^} in the environment; left as is" ;;
       *) echo "WARNING: could not raise ${name} from ${value} to ${target}" >&2 ;;
     esac
   done

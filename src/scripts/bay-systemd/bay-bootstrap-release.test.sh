@@ -668,6 +668,9 @@ FLOOR_S=$((NOW_S - 30 * 86400))
 [[ -z "$(browser_version_raise_target 18446744075502679816 "$NOW_S" "$FLOOR_S")" ]]
 
 # The deploy step reads both settings and writes only those it raises.
+# (A standalone bay: an empty topology env.)
+ENV_DIR="${TMP_ROOT}/etc-browser-version"
+mkdir -p "$ENV_DIR"
 WRITES="${TMP_ROOT}/browser-version-writes"
 write_browser_version_setting() { echo "$1=$2" >>"$WRITES"; }
 RECENT=$(($(date +%s) - 5 * 86400))
@@ -714,6 +717,26 @@ grep -q "is not a number of days" "${TMP_ROOT}/browser-version.err"
 write_browser_version_setting() { return 2; }
 ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
 grep -q "version_min_browser is already at least .* (changed meanwhile); left as is" "${TMP_ROOT}/browser-version.log"
+# One the environment sets is left as is, and said so.
+write_browser_version_setting() { return 3; }
+ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+grep -q "version_min_browser is set by COCALC_SETTING_VERSION_MIN_BROWSER in the environment; left as is" "${TMP_ROOT}/browser-version.log"
+# In a multi-bay cluster the seed owns site settings: no write on any bay.
+write_browser_version_setting() { echo "$1=$2" >>"$WRITES"; }
+for role in seed attached; do
+  : >"$WRITES"
+  # (render-bay-topology-env.sh writes it shell-quoted)
+  echo "COCALC_CLUSTER_ROLE='${role}'" >"${ENV_DIR}/bay-topology.env"
+  ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+  [[ ! -s "$WRITES" ]]
+  grep -q "cluster role is '${role}'" "${TMP_ROOT}/browser-version.log"
+done
+echo "COCALC_CLUSTER_ROLE=standalone" >"${ENV_DIR}/bay-topology.env"
+: >"$WRITES"
+ensure_recent_browser_version >/dev/null
+[[ -s "$WRITES" ]]
+rm -f "${ENV_DIR}/bay-topology.env"
+: >"$WRITES"
 read_browser_version_settings() { :; }
 ensure_recent_browser_version >/dev/null
 [[ ! -s "$WRITES" ]]
