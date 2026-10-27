@@ -89,7 +89,8 @@ class Helper {
     let buf = "";
     this.proc.stdout!.on("data", (d) => {
       buf += d;
-      const parts = buf.split("\n");
+      const parts =
+        buf.split(/\r?\n/); /* (Windows Python ends lines with \r\n) */
       buf = parts.pop()!;
       this.lines.push(...parts);
     });

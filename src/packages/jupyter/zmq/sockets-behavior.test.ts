@@ -93,7 +93,11 @@ function helper(
   });
   const lines: string[] = [];
   proc.stdout!.on("data", (d) =>
-    lines.push(...String(d).split("\n").filter(Boolean)),
+    lines.push(
+      ...String(d)
+        .split(/\r?\n/) /* (Windows Python ends lines with \r\n) */
+        .filter(Boolean),
+    ),
   );
   return { proc, lines };
 }
