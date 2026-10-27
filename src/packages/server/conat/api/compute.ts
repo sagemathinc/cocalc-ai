@@ -4,6 +4,7 @@
  */
 
 import {
+  assertNebiusSpotOffered,
   NEBIUS_SPOT_OFFERED,
   NEBIUS_SPOT_UNAVAILABLE_MESSAGE,
 } from "@cocalc/util/consts/nebius-spot";
@@ -2583,6 +2584,8 @@ async function requestState(opts: {
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
   if (opts.desired_state === "running") {
+    // a VM created earlier may still be Nebius Spot
+    assertNebiusSpotOffered(vm.provider, vm.desired_pricing_model);
     if (hasCourseVmFunding(vm)) {
       if (!vm.stopped_at) await requireCourseVmService(vm);
     } else

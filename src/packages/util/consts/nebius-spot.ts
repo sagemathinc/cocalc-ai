@@ -11,3 +11,15 @@ export const NEBIUS_SPOT_OFFERED = false;
 
 export const NEBIUS_SPOT_UNAVAILABLE_MESSAGE =
   "Nebius Spot is unavailable until spot pricing support lands; use Standard pricing";
+
+/** Refuses Nebius Spot (for dedicated VMs and project hosts alike) while it
+ * is not offered; anything else passes. */
+export function assertNebiusSpotOffered(
+  provider: unknown,
+  pricingModel: unknown,
+): void {
+  if (NEBIUS_SPOT_OFFERED) return;
+  if (`${provider ?? ""}`.toLowerCase() !== "nebius") return;
+  if (pricingModel !== "spot") return;
+  throw new Error(NEBIUS_SPOT_UNAVAILABLE_MESSAGE);
+}
