@@ -220,7 +220,7 @@ test("Claude account-key selection links to the shared security model by keyboar
       />,
     );
     const link = screen.getByRole("link", {
-      name: "Claude Code preview: setup, security model, and billing",
+      name: "Claude Code: setup, security model, and billing",
     });
     expect(link.getAttribute("href")).toMatch(/\/docs\/ai\/claude-code$/);
     link.focus();
@@ -272,7 +272,7 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
     expect(
       screen.getByRole("link", {
-        name: /Claude Code preview: setup, security model, and billing/,
+        name: /Claude Code: setup, security model, and billing/,
       }),
     ).toBeTruthy();
   } finally {
@@ -709,6 +709,29 @@ test("failed refresh of current controls remains visible", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Discovery unavailable",
   );
+});
+
+test("only custom ACP harness settings are labelled an experimental preview", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  const { unmount } = render(
+    <HarnessRuntimeControl
+      runtime={runtime}
+      onDiscover={jest.fn(async () => ({
+        profile: runtime.profile,
+        controls: claudeControls,
+      }))}
+    />,
+  );
+  // The Claude settings form itself, without the preview label.
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+  expect(screen.queryByText("Experimental preview")).toBeNull();
+  unmount();
+  render(
+    <HarnessRuntimeControl
+      runtime={harnessRuntimeFromDraft(draft, "/home/user")}
+    />,
+  );
+  expect(screen.getByText("Experimental preview")).toBeTruthy();
 });
 
 test("Claude composer automatically discovers model and effort without selecting a default", async () => {

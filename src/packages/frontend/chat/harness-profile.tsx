@@ -351,7 +351,7 @@ function ClaudeCredentialControl({
           </div>
         )}
       <DocsLink projectId={projectId} slug="ai/claude-code">
-        Claude Code preview: setup, security model, and billing
+        Claude Code: setup, security model, and billing
       </DocsLink>
       {error && (
         <div role="alert">Unable to load account credentials: {error}</div>
@@ -735,7 +735,9 @@ function HarnessRuntimeSummaryContent({
       size={12}
       style={{ width: "100%", minWidth: 0 }}
     >
-      <Tag>Experimental preview</Tag>
+      {/* Custom ACP harnesses are experimental; Claude Code is not a
+          preview (William, 2026-10-27). */}
+      {!claude && <Tag>Experimental preview</Tag>}
       {configuration}
       {onDiscover && (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
