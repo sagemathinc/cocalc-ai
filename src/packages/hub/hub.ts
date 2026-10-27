@@ -389,18 +389,23 @@ async function startServer(): Promise<void> {
     startCloudCatalogWorker();
     logger.info("starting cloud VM reconcile loop...");
     startCloudVmReconciler();
-    // One-time cleanup, run by every API hub (Launchpad and Rocket alike;
-    // idempotent; it erases one row per statement, so concurrent hubs only wait briefly): revoked
-    // credentials keep no encrypted payload.
-    eraseRevokedExternalCredentialPayloads()
-      .then((erased) => {
-        if (erased > 0) {
-          logger.info(`erased payloads of ${erased} revoked credentials`);
-        }
-      })
-      .catch((err) =>
-        logger.warn(`erasing revoked credential payloads failed: ${err}`),
-      );
+    // Revoked credentials keep no encrypted payload. Every API hub
+    // (Launchpad and Rocket alike) erases leftovers at startup and then
+    // hourly: that also covers rows revoked by an older hub during a rolling
+    // upgrade. Idempotent, one row per statement, cheap when there's nothing
+    // to do.
+    const eraseRevokedPayloads = () =>
+      eraseRevokedExternalCredentialPayloads()
+        .then((erased) => {
+          if (erased > 0) {
+            logger.info(`erased payloads of ${erased} revoked credentials`);
+          }
+        })
+        .catch((err) =>
+          logger.warn(`erasing revoked credential payloads failed: ${err}`),
+        );
+    eraseRevokedPayloads();
+    setInterval(eraseRevokedPayloads, 60 * 60 * 1000).unref?.();
   }
 
   if (program.all || program.mentions) {
