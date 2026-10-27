@@ -696,6 +696,19 @@ done
 eval "read_browser_version_settings() { echo '$STALE $STALE'; }"
 FRONTEND_MAX_BROWSER_AGE_DAYS=0 ensure_recent_browser_version >/dev/null
 [[ ! -s "$WRITES" ]]
+# A leading zero is decimal (not an octal error); more than 5 digits, which
+# could overflow into a future floor, is refused with a warning.
+FRONTEND_MAX_BROWSER_AGE_DAYS=08 ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+grep -q "(at most 8 days old)" "${TMP_ROOT}/browser-version.log"
+: >"$WRITES"
+FRONTEND_MAX_BROWSER_AGE_DAYS=999999999999999 ensure_recent_browser_version \
+  >/dev/null 2>"${TMP_ROOT}/browser-version.err"
+[[ ! -s "$WRITES" ]]
+grep -q "is not a number of days" "${TMP_ROOT}/browser-version.err"
+# A value changed while the deploy read it is left as is, and said so.
+write_browser_version_setting() { return 2; }
+ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+grep -q "version_min_browser changed while this deploy read it; left as is" "${TMP_ROOT}/browser-version.log"
 read_browser_version_settings() { :; }
 ensure_recent_browser_version >/dev/null
 [[ ! -s "$WRITES" ]]
@@ -703,8 +716,8 @@ ensure_recent_browser_version >/dev/null
 unset -f write_browser_version_setting
 # shellcheck disable=SC1091
 eval "$(sed -n '/^write_browser_version_setting() {/,/^}/p' "${SCRIPT_DIR}/bay-bootstrap-release.sh")"
-if write_browser_version_setting version_min_browser "1; DROP TABLE x" 2>/dev/null ||
-  write_browser_version_setting other_setting 1792710260 2>/dev/null; then
+if write_browser_version_setting version_min_browser "1; DROP TABLE x" - 2>/dev/null ||
+  write_browser_version_setting other_setting 1792710260 - 2>/dev/null; then
   echo "write_browser_version_setting accepted a bad name or value" >&2
   exit 1
 fi

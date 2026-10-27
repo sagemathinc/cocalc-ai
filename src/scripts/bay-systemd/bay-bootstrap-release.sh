@@ -785,10 +785,10 @@ frontend_asset_retention_cutoff() {
   esac
 }
 
-# Each deploy keeps "Required browser version" (and the recommended version,
-# since the hub enforces the smaller of the two) at most this many days old,
-# so browsers older than that are disconnected and their chunks can go.
-# 0 turns this off.
+# A deploy that installs a frontend keeps "Required browser version" (and the
+# recommended version, since the hub enforces the smaller of the two) at most
+# this many days old, so browsers older than that are disconnected and a later
+# deploy can drop their chunks. 0 turns this off. Hub-only deploys leave it.
 FRONTEND_MAX_BROWSER_AGE_DAYS="${FRONTEND_MAX_BROWSER_AGE_DAYS:-30}"
 
 # The value a browser version setting is raised to so it is at least FLOOR,
@@ -802,19 +802,39 @@ browser_version_raise_target() {
   fi
 }
 
-# Writes one browser version setting as the bay account, and bumps
-# _last_update so running hubs reload their settings.
+# Sets one browser version setting to VALUE as the bay account, only if it
+# still holds OLD (the value read; "-" when unset), so a value an admin wrote
+# in between is never overwritten; bumps _last_update so running hubs reload.
+# Returns 0 when it was set, 2 when it had changed, 1 on error.
 write_browser_version_setting() {
-  local name="$1" value="$2"
+  local name="$1" value="$2" old="${3:--}"
   [[ "$name" =~ ^version_(min|recommended)_browser$ && "$value" =~ ^[0-9]+$ ]] || return 1
-  runuser -u "$BAY_USER" -- env \
-    PGHOST="${BAY_ROOT}/run/postgres" \
-    PGPORT=5432 \
-    PGUSER="$BAY_USER" \
-    PGCONNECT_TIMEOUT=5 \
-    timeout 15 "$PSQL_BIN" -d "$BAY_USER" -XAtq -v ON_ERROR_STOP=1 -c \
-    "INSERT INTO server_settings (name, value) VALUES ('${name}', '${value}') ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value; INSERT INTO server_settings (name, value) VALUES ('_last_update', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')) ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value" \
-    >/dev/null
+  [[ "$old" == "-" ]] && old=""
+  local updated
+  updated="$(
+    runuser -u "$BAY_USER" -- env \
+      PGHOST="${BAY_ROOT}/run/postgres" \
+      PGPORT=5432 \
+      PGUSER="$BAY_USER" \
+      PGCONNECT_TIMEOUT=5 \
+      timeout 15 "$PSQL_BIN" -d "$BAY_USER" -XAtq -v ON_ERROR_STOP=1 \
+      -v name="$name" -v value="$value" -v old="$old" <<'SQL'
+WITH up AS (
+  INSERT INTO server_settings (name, value) VALUES (:'name', :'value')
+  ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
+  WHERE COALESCE(server_settings.value, '') = :'old'
+  RETURNING 1
+), touched AS (
+  INSERT INTO server_settings (name, value)
+  SELECT '_last_update', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  WHERE EXISTS (SELECT 1 FROM up)
+  ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
+  RETURNING 1
+)
+SELECT count(*) FROM up;
+SQL
+  )" || return 1
+  [[ "$updated" == 1 ]] || return 2
 }
 
 # Raises the required and recommended browser versions to at most
@@ -822,10 +842,11 @@ write_browser_version_setting() {
 # the settings cannot be read (the retention step reports that).
 ensure_recent_browser_version() {
   local days="$FRONTEND_MAX_BROWSER_AGE_DAYS"
-  if [[ ! "$days" =~ ^[0-9]+$ ]]; then
-    echo "WARNING: FRONTEND_MAX_BROWSER_AGE_DAYS='${days}' is not a number of days; not changing browser versions" >&2
+  if [[ ! "$days" =~ ^[0-9]{1,5}$ ]]; then
+    echo "WARNING: FRONTEND_MAX_BROWSER_AGE_DAYS='${days}' is not a number of days (at most 5 digits); not changing browser versions" >&2
     return 0
   fi
+  days=$((10#$days))
   ((days > 0)) || return 0
   local settings
   settings="$(read_browser_version_settings)"
@@ -833,7 +854,7 @@ ensure_recent_browser_version() {
   local now floor
   now="$(date +%s)"
   floor=$((now - days * 86400))
-  local name value target
+  local name value target status
   # shellcheck disable=SC2086
   set -- $settings
   for name in version_min_browser version_recommended_browser; do
@@ -841,11 +862,13 @@ ensure_recent_browser_version() {
     shift
     target="$(browser_version_raise_target "$value" "$now" "$floor")"
     [[ -n "$target" ]] || continue
-    if write_browser_version_setting "$name" "$target"; then
-      echo "browser version: raised ${name} from ${value} to ${target} (at most ${days} days old)"
-    else
-      echo "WARNING: could not raise ${name} from ${value} to ${target}" >&2
-    fi
+    status=0
+    write_browser_version_setting "$name" "$target" "$value" || status=$?
+    case "$status" in
+      0) echo "browser version: raised ${name} from ${value} to ${target} (at most ${days} days old)" ;;
+      2) echo "browser version: ${name} changed while this deploy read it; left as is" ;;
+      *) echo "WARNING: could not raise ${name} from ${value} to ${target}" >&2 ;;
+    esac
   done
 }
 
@@ -889,7 +912,6 @@ prepare_frontend_asset_history() {
       fi
     fi
   fi
-  ensure_recent_browser_version
   local cutoff cutoff_ms cutoff_source
   cutoff="$(frontend_asset_retention_cutoff "$hub_version")"
   cutoff_ms="${cutoff%% *}"
@@ -1603,15 +1625,23 @@ main() {
   else
     stage_source_release
   fi
+  local frontend_prepared=0
   if [[ -n "$STATIC_BUNDLE_PATH" || -n "$BUNDLE_PATH" ]]; then
     prepare_frontend_asset_history
+    frontend_prepared=1
   elif [[
     -z "$HUB_BUNDLE_PATH" &&
       -f "${TARGET_RELEASE}/runtime/control-plane/static/frontend-build.json"
   ]]; then
     prepare_frontend_asset_history
+    frontend_prepared=1
   fi
   validate_release
+  # Only once the release is staged and valid, and before it goes live: this
+  # deploy kept chunks by the setting as it was; the next one prunes to it.
+  if ((frontend_prepared)); then
+    ensure_recent_browser_version
+  fi
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
     stage_trusted_scaffold static
     install_needrestart_policy
