@@ -175,7 +175,7 @@ test("project archive stops, creates a final backup, waits, and archives when th
       "archiveProject",
       {
         project_id: "11111111-1111-4111-8111-111111111111",
-        timeout: 30000,
+        timeout: 600000,
       },
     ],
   ]);
@@ -261,7 +261,7 @@ test("project archive reuses a fresh backup without creating another one", async
       "archiveProject",
       {
         project_id: "11111111-1111-4111-8111-111111111111",
-        timeout: 30000,
+        timeout: 600000,
       },
     ],
   ]);
@@ -343,7 +343,7 @@ for (const status of ["deprovisioned", "off"]) {
           "archiveProject",
           {
             project_id,
-            timeout: 30000,
+            timeout: 600000,
             require_deprovisioned_host_id: "host-1",
           },
         ],

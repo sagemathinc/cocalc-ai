@@ -470,6 +470,19 @@ async function setArchivedState({
         expected_host_id: expected_host_id ?? null,
       });
     }
+    if (require_deprovisioned_host_id != null) {
+      // the host row stays share-locked until the archived state commits, so
+      // its status can't change between this check and the commit
+      const { rows: hostRows } = await client.query(
+        "SELECT status FROM project_hosts WHERE id = $1 FOR SHARE",
+        [require_deprovisioned_host_id],
+      );
+      if (`${hostRows[0]?.status ?? ""}`.toLowerCase() !== "deprovisioned") {
+        throw new Error(
+          "the project's host changed or is no longer deprovisioned; retry the archive",
+        );
+      }
+    }
     // The advisory rehome fence remains held until the archived state commits,
     // closing the authority-check-to-host-deletion race.
     await cleanupHostData?.();
@@ -488,13 +501,7 @@ async function setArchivedState({
             AND archive_lifecycle_job_id = $5
             AND host_id IS NOT DISTINCT FROM $7::uuid
           ))
-          AND ($8::uuid IS NULL OR (
-            host_id = $8::uuid
-            AND EXISTS (
-              SELECT 1 FROM project_hosts h
-               WHERE h.id = $8::uuid AND h.status = 'deprovisioned'
-            )
-          ))`,
+          AND ($8::uuid IS NULL OR host_id = $8::uuid)`,
       [
         project_id,
         { state: "archived", time: checkedAt.toISOString() },

@@ -94,6 +94,10 @@ function createProjectArchiveProgressReporter(
   };
 }
 
+// An archive may delete the project's data on its host before it returns, and
+// a routed call to the project's owning bay waits only as long as this.
+const ARCHIVE_RPC_TIMEOUT_MS = 10 * 60_000;
+
 async function hostIsDeprovisioned(
   ctx: any,
   project: { project_id: string; host_id?: string | null },
@@ -296,7 +300,7 @@ export function registerProjectLifecycleCommands(
             if (!(await hostIsDeprovisioned(ctx, project))) throw err;
             await ctx.hub.projects.archiveProject({
               project_id: project.project_id,
-              timeout: Math.max(ctx.rpcTimeoutMs, 30_000),
+              timeout: Math.max(ctx.rpcTimeoutMs, ARCHIVE_RPC_TIMEOUT_MS),
               // checked again on the owning bay against the current placement
               require_deprovisioned_host_id: project.host_id,
               ...(opts.allowOversizedSkip
@@ -443,7 +447,7 @@ export function registerProjectLifecycleCommands(
           });
           await ctx.hub.projects.archiveProject({
             project_id: ws.project_id,
-            timeout: Math.max(ctx.rpcTimeoutMs, 30_000),
+            timeout: Math.max(ctx.rpcTimeoutMs, ARCHIVE_RPC_TIMEOUT_MS),
             ...(opts.allowOversizedSkip ? { allow_oversized_skip: true } : {}),
           });
           progress?.({
