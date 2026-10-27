@@ -1253,6 +1253,36 @@ describe("NebiusProvider while Nebius Spot is off (#684)", () => {
     expect(instancesStartMock).toHaveBeenCalledTimes(1);
   });
 
+  it("refuses to restart an existing preemptible instance, without stopping it", async () => {
+    instancesStopMock.mockReset();
+    instancesGetMock.mockResolvedValueOnce({
+      spec: {
+        preemptible: {
+          onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+          priority: 0,
+        },
+      },
+    });
+    await expect(
+      new NebiusProvider().restartHost(
+        { instance_id: "instance-1" } as any,
+        creds,
+      ),
+    ).rejects.toThrow(/Nebius Spot is unavailable/);
+    expect(instancesStopMock).not.toHaveBeenCalled();
+    expect(instancesStartMock).not.toHaveBeenCalled();
+
+    // (control) an on-demand instance restarts as before
+    instancesStopMock.mockResolvedValue(instanceOp("instance-1"));
+    instancesGetMock.mockResolvedValueOnce({ spec: {} });
+    await new NebiusProvider().restartHost(
+      { instance_id: "instance-1" } as any,
+      creds,
+    );
+    expect(instancesStopMock).toHaveBeenCalledTimes(1);
+    expect(instancesStartMock).toHaveBeenCalledTimes(1);
+  });
+
   it("still starts a preemptible instance for a billing rescue (final backups)", async () => {
     await new NebiusProvider().startHost(
       { instance_id: "instance-1" } as any,

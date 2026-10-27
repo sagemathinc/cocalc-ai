@@ -117,6 +117,23 @@ function hasProvisionalInstanceId(runtime: HostRuntime): boolean {
   );
 }
 
+// An existing preemptible instance has no pricing option either, so while
+// Nebius Spot is off (#684) it is not started or restarted, except for a
+// billing rescue's final backups.
+async function assertPreemptibleStartAllowed(
+  client: NebiusClient,
+  runtime: HostRuntime,
+  opts?: { allow_preemptible?: boolean },
+): Promise<void> {
+  if (NEBIUS_SPOT_OFFERED || opts?.allow_preemptible) return;
+  const instance = await client.instances.get(
+    GetInstanceRequest.create({ id: runtime.instance_id }),
+  );
+  if (instanceIsPreemptible(instance as any)) {
+    assertNebiusSpotOffered("nebius", "spot");
+  }
+}
+
 function instanceIsPreemptible(instance: {
   spec?: { preemptible?: PreemptibleSpec };
 }): boolean {
@@ -1420,15 +1437,7 @@ export class NebiusProvider implements CloudProvider {
     opts?: { allow_preemptible?: boolean },
   ) {
     await using client = new NebiusClient(creds);
-    if (!NEBIUS_SPOT_OFFERED && !opts?.allow_preemptible) {
-      // an existing preemptible instance has no pricing option either
-      const instance = await client.instances.get(
-        GetInstanceRequest.create({ id: runtime.instance_id }),
-      );
-      if (instanceIsPreemptible(instance as any)) {
-        assertNebiusSpotOffered("nebius", "spot");
-      }
-    }
+    await assertPreemptibleStartAllowed(client, runtime, opts);
     const op = await client.instances.start(
       StartInstanceRequest.create({ id: runtime.instance_id }),
     );
@@ -1520,6 +1529,8 @@ export class NebiusProvider implements CloudProvider {
 
   async restartHost(runtime: HostRuntime, creds: NebiusProviderCreds) {
     await using client = new NebiusClient(creds);
+    // refuse before stopping: a refused restart leaves the instance running
+    await assertPreemptibleStartAllowed(client, runtime);
     const stopOp = await client.instances.stop(
       StopInstanceRequest.create({ id: runtime.instance_id }),
     );
