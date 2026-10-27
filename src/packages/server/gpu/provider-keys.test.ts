@@ -384,19 +384,4 @@ describe("GPU provider keys", () => {
     ).rejects.toThrow("can't manage pods");
     expect(upsertMock).not.toHaveBeenCalled();
   });
-
-  it("removes every active row, e.g. after two saves raced", async () => {
-    listMock.mockResolvedValue([
-      { ...summary({}), id: "cred-1" },
-      { ...summary({}), id: "cred-2" },
-      { ...summary({}), id: "cred-0", revoked: new Date() },
-    ]);
-    expect(
-      await deleteGpuProviderKey({ account_id: ACCOUNT, provider: "runpod" }),
-    ).toEqual({ revoked: true });
-    expect(revokeMock.mock.calls.map(([{ id }]) => id)).toEqual([
-      "cred-1",
-      "cred-2",
-    ]);
-  });
 });

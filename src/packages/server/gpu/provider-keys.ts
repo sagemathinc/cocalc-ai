@@ -256,20 +256,14 @@ export async function deleteGpuProviderKey({
   provider: unknown;
 }): Promise<{ revoked: boolean }> {
   const provider = requireProvider(providerInput);
-  // Every active row: two saves racing (say, from two tabs) can each insert
-  // one, and removing the key must leave none.
-  const existing = await activeKeySummaries(account_id, provider);
-  let revoked = false;
-  for (const row of existing) {
-    if (
-      await revokeAccountExternalCredentialRouted({
-        id: row.id,
-        owner_account_id: account_id,
-      })
-    ) {
-      revoked = true;
-    }
-  }
+  // The store keeps one active key per selector (upsert holds the selector
+  // lock), so there is at most one to revoke.
+  const [existing] = await activeKeySummaries(account_id, provider);
+  if (!existing) return { revoked: false };
+  const revoked = await revokeAccountExternalCredentialRouted({
+    id: existing.id,
+    owner_account_id: account_id,
+  });
   return { revoked };
 }
 
