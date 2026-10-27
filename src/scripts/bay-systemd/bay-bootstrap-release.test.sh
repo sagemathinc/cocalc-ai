@@ -722,6 +722,18 @@ if write_browser_version_setting version_min_browser "1; DROP TABLE x" 2>/dev/nu
   exit 1
 fi
 
+# Ordering: in main(), the raise comes after the release goes live (and so
+# after the static pre-cutover setup), never before it.
+main_body="$(sed -n '/^main() {/,/^}/p' "${SCRIPT_DIR}/bay-bootstrap-release.sh")"
+raise_line="$(grep -n '^    ensure_recent_browser_version$' <<<"$main_body" | cut -d: -f1)"
+cutover_line="$(grep -n '^  set_current_release$' <<<"$main_body" | head -n1 | cut -d: -f1)"
+static_setup_line="$(grep -n '^    remove_trusted_scaffold$' <<<"$main_body" | head -n1 | cut -d: -f1)"
+if [[ -z "$raise_line" || -z "$cutover_line" || -z "$static_setup_line" ]] ||
+  ((raise_line < cutover_line || raise_line < static_setup_line)); then
+  echo "ensure_recent_browser_version must run after set_current_release" >&2
+  exit 1
+fi
+
 # Against a real postgres when its server binaries are available.
 PG_BIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n1 || true)"
 if [[ -n "$PG_BIN" && -x "${PG_BIN}/initdb" ]] && command -v psql >/dev/null; then

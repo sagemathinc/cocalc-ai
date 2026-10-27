@@ -1643,11 +1643,6 @@ main() {
     frontend_prepared=1
   fi
   validate_release
-  # Only once the release is staged and valid, and before it goes live: this
-  # deploy kept chunks by the setting as it was; the next one prunes to it.
-  if ((frontend_prepared)); then
-    ensure_recent_browser_version
-  fi
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
     stage_trusted_scaffold static
     install_needrestart_policy
@@ -1655,6 +1650,12 @@ main() {
     remove_trusted_scaffold
   fi
   set_current_release
+  # Only once the new frontend is live: a failed deploy never leaves the old
+  # one serving under a raised floor. This deploy kept chunks by the setting
+  # as it was; the next one prunes to it. Failures here only warn.
+  if ((frontend_prepared)); then
+    ensure_recent_browser_version
+  fi
 
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
     prune_old_releases
