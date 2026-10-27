@@ -32,6 +32,14 @@ describe("assertProjectHostProviderOffered", () => {
     await expect(assertProjectHostProviderOffered("nebius")).resolves.toBe(
       undefined,
     );
+    // and never with Nebius itself off
+    mockGetServerSettings.mockResolvedValue({
+      project_hosts_nebius_enabled: false,
+      project_hosts_nebius_hosts_enabled: true,
+    });
+    await expect(assertProjectHostProviderOffered("nebius")).rejects.toThrow(
+      /not offered/,
+    );
   });
 
   it("never blocks other providers, and doesn't read settings for them", async () => {
