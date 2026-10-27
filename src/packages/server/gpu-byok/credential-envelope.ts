@@ -27,6 +27,8 @@ const AAD_DOMAIN = "cocalc-gpu-provider-credential";
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const MAX_SECRET_BYTES = 4096;
+// GCM ciphertext is as long as the plaintext.
+const MAX_CIPHERTEXT_BASE64 = Math.ceil(MAX_SECRET_BYTES / 3) * 4;
 
 export interface GpuCredentialBinding {
   credentialId: string;
@@ -107,6 +109,13 @@ export function encryptGpuCredential(
     throw new GpuCredentialEnvelopeError("secret is too long");
   }
   checkKey(key);
+  // A next key may be abandoned and a retired key pruned: new ciphertext
+  // only ever goes under the active key.
+  if (key.role !== "active") {
+    throw new GpuCredentialEnvelopeError(
+      "encryption key is not the active key",
+    );
+  }
   const nonce = randomBytes(NONCE_BYTES);
   const cipher = createCipheriv("aes-256-gcm", key.key, nonce, {
     authTagLength: TAG_BYTES,
@@ -127,8 +136,9 @@ export function encryptGpuCredential(
 
 export interface DecryptedGpuCredential {
   secret: string;
-  // True when the key that worked is not the active one: re-encrypt under
-  // the active key (key rotation).
+  // True only when the key that worked is retired: re-encrypt under the
+  // active key. A "next" key is newer than this process's active key during
+  // a rolling rotation, so rewrapping it would undo the rotation.
   needsRewrap: boolean;
 }
 
@@ -151,8 +161,15 @@ export function decryptGpuCredential(
   checkKey(key);
   const nonce = decodeBase64(envelope.nonce, NONCE_BYTES);
   const tag = decodeBase64(envelope.tag, TAG_BYTES);
+  // Bound before decoding: a corrupt stored envelope must fail, not allocate.
+  if (
+    typeof envelope.ciphertext !== "string" ||
+    envelope.ciphertext.length > MAX_CIPHERTEXT_BASE64
+  ) {
+    throw new GpuCredentialEnvelopeError("malformed credential envelope");
+  }
   const ciphertext = decodeBase64(envelope.ciphertext);
-  if (ciphertext.length === 0) {
+  if (ciphertext.length === 0 || ciphertext.length > MAX_SECRET_BYTES) {
     throw new GpuCredentialEnvelopeError("malformed credential envelope");
   }
   try {
@@ -165,7 +182,7 @@ export function decryptGpuCredential(
       decipher.update(ciphertext),
       decipher.final(),
     ]).toString("utf8");
-    return { secret, needsRewrap: key.role !== "active" };
+    return { secret, needsRewrap: key.role === "retired" };
   } catch {
     throw new GpuCredentialEnvelopeError(
       "credential failed authentication (wrong row, owner, provider or key)",
@@ -188,6 +205,10 @@ function decodeBase64(value: unknown, expectedBytes?: number): Buffer {
     throw new GpuCredentialEnvelopeError("malformed credential envelope");
   }
   const buf = Buffer.from(value, "base64");
+  // canonical encoding only
+  if (buf.toString("base64") !== value) {
+    throw new GpuCredentialEnvelopeError("malformed credential envelope");
+  }
   if (expectedBytes != null && buf.length !== expectedBytes) {
     throw new GpuCredentialEnvelopeError("malformed credential envelope");
   }

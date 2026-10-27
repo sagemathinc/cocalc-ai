@@ -72,7 +72,9 @@ describe("GPU credential envelope", () => {
       decryptGpuCredential({ ...binding, credentialId: other }, env, [active]),
     );
     failsClosed(() =>
-      decryptGpuCredential({ ...binding, ownerAccountId: other }, env, [active]),
+      decryptGpuCredential({ ...binding, ownerAccountId: other }, env, [
+        active,
+      ]),
     );
     failsClosed(() =>
       decryptGpuCredential({ ...binding, provider: "lambda" }, env, [active]),
@@ -99,9 +101,11 @@ describe("GPU credential envelope", () => {
       return buf.toString("base64");
     };
     failsClosed(() =>
-      decryptGpuCredential(binding, { ...env, ciphertext: flip(env.ciphertext) }, [
-        active,
-      ]),
+      decryptGpuCredential(
+        binding,
+        { ...env, ciphertext: flip(env.ciphertext) },
+        [active],
+      ),
     );
     failsClosed(() =>
       decryptGpuCredential(binding, { ...env, tag: flip(env.tag) }, [active]),
@@ -150,19 +154,62 @@ describe("GPU credential envelope", () => {
     failsClosed(() => decryptGpuCredential(binding, env, [key("smk_active")]));
   });
 
-  it("asks for a rewrap after key rotation", () => {
-    const env = encryptGpuCredential(binding, SECRET, retired);
+  it("asks for a rewrap only under a retired key", () => {
+    // encrypted while the old key was active, read after it was retired
+    const old = { ...retired, role: "active" as const };
+    const env = encryptGpuCredential(binding, SECRET, old);
     expect(decryptGpuCredential(binding, env, [active, retired])).toEqual({
       secret: SECRET,
       needsRewrap: true,
     });
   });
 
+  it("does not rewrap a newer 'next' key during a rolling rotation", () => {
+    // written by a process that already switched to the new key, read by a
+    // stale process that still sees it as "next"
+    const newer = key("smk_new");
+    const env = encryptGpuCredential(binding, SECRET, newer);
+    const stale = [active, { ...newer, role: "next" as const }];
+    expect(decryptGpuCredential(binding, env, stale)).toEqual({
+      secret: SECRET,
+      needsRewrap: false,
+    });
+  });
+
+  it("encrypts only under the active key", () => {
+    failsClosed(() => encryptGpuCredential(binding, SECRET, retired));
+    failsClosed(() =>
+      encryptGpuCredential(binding, SECRET, { ...active, role: "next" }),
+    );
+  });
+
+  it("bounds the ciphertext before decoding", () => {
+    const env = encryptGpuCredential(binding, SECRET, active);
+    const huge = Buffer.alloc(8192, 1).toString("base64");
+    failsClosed(() =>
+      decryptGpuCredential(binding, { ...env, ciphertext: huge }, [active]),
+    );
+    // non-canonical base64 is rejected: set an unused low bit in the last
+    // significant character of the 16-byte tag ("xxxx...x==")
+    const alphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const v = alphabet.indexOf(env.tag[21]);
+    const tag = env.tag.slice(0, 21) + alphabet[v ^ 1] + env.tag.slice(22);
+    expect(
+      Buffer.from(tag, "base64").equals(Buffer.from(env.tag, "base64")),
+    ).toBe(true);
+    failsClosed(() => decryptGpuCredential(binding, { ...env, tag }, [active]));
+  });
+
   it("validates inputs", () => {
     failsClosed(() => encryptGpuCredential(binding, "", active));
     failsClosed(() => encryptGpuCredential(binding, "x".repeat(5000), active));
     failsClosed(() =>
-      encryptGpuCredential({ ...binding, credentialId: "nope" }, SECRET, active),
+      encryptGpuCredential(
+        { ...binding, credentialId: "nope" },
+        SECRET,
+        active,
+      ),
     );
     failsClosed(() =>
       encryptGpuCredential({ ...binding, provider: "run:pod" }, SECRET, active),
