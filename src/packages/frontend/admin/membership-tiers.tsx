@@ -425,8 +425,6 @@ export const MODELED_TIER_JSON_KEYS = {
     "prepaid_host_usage_limit_7d_usd",
     "acp_max_queued_per_account",
     "acp_max_queued_per_thread",
-    "acp_max_created_5h_per_account",
-    "acp_max_created_7d_per_account",
     "acp_max_running_per_account",
     "acp_max_running_per_project",
     "acp_max_active_automations_per_project",
@@ -589,12 +587,6 @@ export function tierToFormValues(tier: Partial<Tier>) {
     ),
     usage_limit_acp_max_queued_per_thread: normalizedOptionalNumber(
       tier.usage_limits?.acp_max_queued_per_thread,
-    ),
-    usage_limit_acp_max_created_5h_per_account: normalizedOptionalNumber(
-      tier.usage_limits?.acp_max_created_5h_per_account,
-    ),
-    usage_limit_acp_max_created_7d_per_account: normalizedOptionalNumber(
-      tier.usage_limits?.acp_max_created_7d_per_account,
     ),
     usage_limit_acp_max_running_per_account: normalizedOptionalNumber(
       tier.usage_limits?.acp_max_running_per_account,
@@ -759,16 +751,6 @@ export function buildMembershipTierPayload(values): AdminMembershipTierPayload {
     usage_limits,
     "acp_max_queued_per_thread",
     values.usage_limit_acp_max_queued_per_thread,
-  );
-  setOrDeleteUsageLimit(
-    usage_limits,
-    "acp_max_created_5h_per_account",
-    values.usage_limit_acp_max_created_5h_per_account,
-  );
-  setOrDeleteUsageLimit(
-    usage_limits,
-    "acp_max_created_7d_per_account",
-    values.usage_limit_acp_max_created_7d_per_account,
   );
   setOrDeleteUsageLimit(
     usage_limits,
@@ -2343,11 +2325,10 @@ export function MembershipTiers() {
 
           {editorCard({
             title: "Codex / ACP",
-            subtitle:
-              "Durable agent queue, creation, running, and automation limits.",
+            subtitle: "Durable agent queue, running, and automation limits.",
             summary: cardSummary((get) =>
               summaryPieces(
-                `created ${get("usage_limit_acp_max_created_5h_per_account") ?? "unset"}/${get("usage_limit_acp_max_created_7d_per_account") ?? "unset"}`,
+                `queued/account ${get("usage_limit_acp_max_queued_per_account") ?? "unset"}`,
                 `running/account ${get("usage_limit_acp_max_running_per_account") ?? "unset"}`,
                 `running/project ${get("usage_limit_acp_max_running_per_project") ?? "unset"}`,
               ),
@@ -2366,22 +2347,6 @@ export function MembershipTiers() {
                   <Form.Item
                     name="usage_limit_acp_max_queued_per_thread"
                     label="Queued ACP turns / thread"
-                  >
-                    <InputNumber min={0} step={1} precision={0} />
-                  </Form.Item>
-                </Col>
-                <Col {...fieldCol}>
-                  <Form.Item
-                    name="usage_limit_acp_max_created_5h_per_account"
-                    label="Created ACP turns / account / 5h"
-                  >
-                    <InputNumber min={0} step={1} precision={0} />
-                  </Form.Item>
-                </Col>
-                <Col {...fieldCol}>
-                  <Form.Item
-                    name="usage_limit_acp_max_created_7d_per_account"
-                    label="Created ACP turns / account / 7d"
                   >
                     <InputNumber min={0} step={1} precision={0} />
                   </Form.Item>

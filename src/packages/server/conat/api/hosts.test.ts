@@ -7146,7 +7146,10 @@ describe("hosts.resolveHostConnection", () => {
         max_snapshots_per_project: 8,
       },
     }));
-    const { getProjectOwnerEffectiveLimits } = await import("./hosts");
+    const {
+      getProjectOwnerEffectiveLimits,
+      RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+    } = await import("./hosts");
     await expect(
       getProjectOwnerEffectiveLimits({
         host_id: REMOTE_HOST_ID,
@@ -7155,6 +7158,7 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       max_backups_per_project: 5,
       max_snapshots_per_project: 8,
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
     });
   });
 
@@ -7163,9 +7167,12 @@ describe("hosts.resolveHostConnection", () => {
       bay_id: "bay-7",
       epoch: 2,
     }));
+    // An owning bay not yet upgraded still sends the stored created-turn caps.
     hostConnectionGetProjectOwnerEffectiveLimitsMock = jest.fn(async () => ({
       max_backups_per_project: 5,
       max_snapshots_per_project: 8,
+      acp_max_created_5h_per_account: 500,
+      acp_max_created_7d_per_account: 2000,
     }));
     const { getProjectOwnerEffectiveLimits } = await import("./hosts");
     await expect(
@@ -7176,6 +7183,9 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       max_backups_per_project: 5,
       max_snapshots_per_project: 8,
+      // Overwritten for hosts not yet upgraded.
+      acp_max_created_5h_per_account: 1_000_000_000,
+      acp_max_created_7d_per_account: 1_000_000_000,
     });
     expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
     expect(
@@ -7205,6 +7215,10 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       acp_max_queued_per_account: 12,
       acp_max_running_per_account: 3,
+      // Hosts not yet upgraded must not fall back to their old 500/2000
+      // created-turn defaults.
+      acp_max_created_5h_per_account: 1_000_000_000,
+      acp_max_created_7d_per_account: 1_000_000_000,
     });
     expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
       account_id: "actor-1",
@@ -7217,9 +7231,12 @@ describe("hosts.resolveHostConnection", () => {
       home_bay_id: "bay-7",
       epoch: 2,
     }));
+    // A home bay not yet upgraded still sends the stored created-turn caps.
     hostConnectionGetAccountEffectiveLimitsMock = jest.fn(async () => ({
       acp_max_queued_per_account: 12,
       acp_max_running_per_account: 3,
+      acp_max_created_5h_per_account: 500,
+      acp_max_created_7d_per_account: 2000,
     }));
     const { getAccountEffectiveLimits } = await import("./hosts");
     await expect(
@@ -7230,6 +7247,8 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       acp_max_queued_per_account: 12,
       acp_max_running_per_account: 3,
+      acp_max_created_5h_per_account: 1_000_000_000,
+      acp_max_created_7d_per_account: 1_000_000_000,
     });
     expect(hostConnectionGetAccountEffectiveLimitsMock).toHaveBeenCalledWith({
       host_id: REMOTE_HOST_ID,

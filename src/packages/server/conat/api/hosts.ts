@@ -1630,6 +1630,17 @@ export async function getBackupConfigLocal({
   });
 }
 
+// Project hosts not yet upgraded still enforce the retired rolling
+// created-turn limits, and fall back to 500 (5 hours) and 2000 (7 days) when
+// the hub sends none. Send them a value no account reaches. Remove once
+// every project host runs a release without those limits. Added at the
+// host-facing boundary too, since a bay not yet upgraded may answer for
+// another bay's host.
+export const RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS = {
+  acp_max_created_5h_per_account: 1_000_000_000,
+  acp_max_created_7d_per_account: 1_000_000_000,
+};
+
 export async function getProjectOwnerEffectiveLimits({
   host_id,
   project_id,
@@ -1645,12 +1656,15 @@ export async function getProjectOwnerEffectiveLimits({
   }
   const ownership = await resolveProjectBay(project_id);
   if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .hostConnection(ownership.bay_id)
-      .getProjectOwnerEffectiveLimits({
-        host_id,
-        project_id,
-      });
+    return {
+      ...(await getInterBayBridge()
+        .hostConnection(ownership.bay_id)
+        .getProjectOwnerEffectiveLimits({
+          host_id,
+          project_id,
+        })),
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+    };
   }
   return await getProjectOwnerEffectiveLimitsLocal({ project_id });
 }
@@ -1674,14 +1688,16 @@ export async function getProjectOwnerEffectiveLimitsLocal({
     return {
       acp_max_queued_per_account: 0,
       acp_max_queued_per_thread: 0,
-      acp_max_created_5h_per_account: 0,
-      acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
     };
   }
   const resolution = await resolveMembershipForAccount(account_id);
-  return resolution.effective_limits ?? {};
+  return {
+    ...(resolution.effective_limits ?? {}),
+    ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+  };
 }
 
 export async function getAccountEffectiveLimits({
@@ -1705,12 +1721,15 @@ export async function getAccountEffectiveLimits({
   const homeBayId =
     `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
   if (homeBayId !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .hostConnection(homeBayId)
-      .getAccountEffectiveLimits({
-        host_id,
-        account_id: accountId,
-      });
+    return {
+      ...(await getInterBayBridge()
+        .hostConnection(homeBayId)
+        .getAccountEffectiveLimits({
+          host_id,
+          account_id: accountId,
+        })),
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+    };
   }
   return await getAccountEffectiveLimitsLocal({ account_id: accountId });
 }
@@ -1730,14 +1749,16 @@ export async function getAccountEffectiveLimitsLocal({
     return {
       acp_max_queued_per_account: 0,
       acp_max_queued_per_thread: 0,
-      acp_max_created_5h_per_account: 0,
-      acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
     };
   }
   const resolution = await resolveMembershipForAccount(accountId);
-  return resolution.effective_limits ?? {};
+  return {
+    ...(resolution.effective_limits ?? {}),
+    ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+  };
 }
 
 function nonnegativeInteger(value: unknown): number {
