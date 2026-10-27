@@ -15,12 +15,17 @@ import {
   RunpodClient,
   type RunpodProviderIdentity,
 } from "@cocalc/cloud/runpod/client";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import {
-  getExternalCredentialRouted,
+  listAccountExternalCredentialsRouted,
   revokeAccountExternalCredentialRouted,
   upsertExternalCredentialRouted,
 } from "@cocalc/server/external-credentials/routing";
-import type { ExternalCredentialRecord } from "@cocalc/server/external-credentials/store";
+import {
+  getExternalCredential,
+  type ExternalCredentialSummary,
+} from "@cocalc/server/external-credentials/store";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   GPU_PROVIDER_API_KEY_KIND,
@@ -36,6 +41,7 @@ export interface GpuProviderKeyDeps {
   // for tests
   fetch?: Fetch;
   isEntitled?: (account_id: string) => Promise<boolean>;
+  isHomeBay?: (account_id: string) => Promise<boolean>;
 }
 
 function selector(account_id: string, provider: GpuProvider) {
@@ -108,7 +114,7 @@ async function verifyRunpodKey(
 }
 
 function providerAccount(
-  record: ExternalCredentialRecord,
+  record: ExternalCredentialSummary,
 ): GpuProviderAccount | undefined {
   const m = record.metadata ?? {};
   if (
@@ -130,7 +136,7 @@ function providerAccount(
 function toStatus(
   provider: GpuProvider,
   entitled: boolean,
-  record: ExternalCredentialRecord | undefined,
+  record: ExternalCredentialSummary | undefined,
 ): GpuProviderKeyStatus {
   if (!record || record.revoked) {
     return { provider, entitled, connected: false };
@@ -144,6 +150,20 @@ function toStatus(
   };
 }
 
+// Summaries only: the key itself never leaves the owner's home bay.
+async function activeKeySummary(
+  account_id: string,
+  provider: GpuProvider,
+): Promise<ExternalCredentialSummary | undefined> {
+  const rows = await listAccountExternalCredentialsRouted({
+    owner_account_id: account_id,
+    provider,
+    kind: GPU_PROVIDER_API_KEY_KIND,
+    scope: "account",
+  });
+  return rows.find((row) => !row.revoked);
+}
+
 export async function getGpuProviderKeyStatus(
   {
     account_id,
@@ -154,10 +174,7 @@ export async function getGpuProviderKeyStatus(
   const provider = requireProvider(providerInput);
   const [entitled, record] = await Promise.all([
     (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id),
-    getExternalCredentialRouted({
-      selector: selector(account_id, provider),
-      touchLastUsed: false,
-    }),
+    activeKeySummary(account_id, provider),
   ]);
   return toStatus(provider, entitled, record);
 }
@@ -204,10 +221,7 @@ export async function deleteGpuProviderKey({
   provider: unknown;
 }): Promise<{ revoked: boolean }> {
   const provider = requireProvider(providerInput);
-  const existing = await getExternalCredentialRouted({
-    selector: selector(account_id, provider),
-    touchLastUsed: false,
-  });
+  const existing = await activeKeySummary(account_id, provider);
   if (!existing) return { revoked: false };
   const revoked = await revokeAccountExternalCredentialRouted({
     id: existing.id,
@@ -216,14 +230,43 @@ export async function deleteGpuProviderKey({
   return { revoked };
 }
 
-// A RunPod client acting with the account's own key, for server code that
-// launches, inspects or cleans up GPUs on its behalf. Never log or return
-// the client's key; RunpodClient hides it from inspect and JSON.
+async function isAccountHomeBay(account_id: string): Promise<boolean> {
+  const { home_bay_id } = await resolveAccountHomeBay({ account_id });
+  return (
+    (`${home_bay_id ?? ""}`.trim() || getConfiguredBayId()) ===
+    getConfiguredBayId()
+  );
+}
+
+// A RunPod client acting with the account's own key, for the server code
+// that launches, inspects or cleans up GPUs on its behalf.
+//
+// Custody: this runs only on the key owner's home bay, and reads the key
+// from the local store; anywhere else it throws. A GPU operation for an
+// account on another bay must be routed to that bay as a whole; the key
+// never crosses the inter-bay bridge.
+//
+// Purpose: "operate" (launch, start, inspect) also requires the owner's
+// live gpu_provider_keys entitlement. "cleanup" (inventory, terminate,
+// delete storage) doesn't, so a lapsed membership can still be cleaned up.
+//
+// Never log or return the client's key; RunpodClient hides it from inspect
+// and JSON.
 export async function getRunpodClientForAccount(
   account_id: string,
-  deps: Pick<GpuProviderKeyDeps, "fetch"> = {},
+  { purpose }: { purpose: "operate" | "cleanup" },
+  deps: GpuProviderKeyDeps = {},
 ): Promise<RunpodClient | undefined> {
-  const record = await getExternalCredentialRouted({
+  if (!(await (deps.isHomeBay ?? isAccountHomeBay)(account_id))) {
+    throw Error("GPU provider keys are used only on the key owner's home bay");
+  }
+  if (
+    purpose === "operate" &&
+    !(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))
+  ) {
+    throw Error("Your membership doesn't include using a GPU provider key.");
+  }
+  const record = await getExternalCredential({
     selector: selector(account_id, "runpod"),
   });
   if (!record || record.revoked || !record.payload) return undefined;

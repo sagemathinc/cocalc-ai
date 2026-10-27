@@ -4,15 +4,21 @@
  */
 
 const upsertMock = jest.fn();
-const getMock = jest.fn();
+const listMock = jest.fn();
+const localGetMock = jest.fn();
 const revokeMock = jest.fn();
 const membershipMock = jest.fn();
 
+// Only summaries cross bays (list, revoke); the payload read is local only.
 jest.mock("@cocalc/server/external-credentials/routing", () => ({
   upsertExternalCredentialRouted: (...args: any[]) => upsertMock(...args),
-  getExternalCredentialRouted: (...args: any[]) => getMock(...args),
+  listAccountExternalCredentialsRouted: (...args: any[]) => listMock(...args),
   revokeAccountExternalCredentialRouted: (...args: any[]) =>
     revokeMock(...args),
+}));
+
+jest.mock("@cocalc/server/external-credentials/store", () => ({
+  getExternalCredential: (...args: any[]) => localGetMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
@@ -72,9 +78,17 @@ function storedRecord(metadata: Record<string, any>) {
   };
 }
 
+function summary(metadata: Record<string, any>) {
+  const { payload: _payload, ...rest } = storedRecord(metadata);
+  return rest;
+}
+
+const home = { isHomeBay: async () => true };
+
 beforeEach(() => {
   upsertMock.mockReset().mockResolvedValue({ id: "cred-1", created: true });
-  getMock.mockReset().mockResolvedValue(undefined);
+  listMock.mockReset().mockResolvedValue([]);
+  localGetMock.mockReset().mockResolvedValue(undefined);
   revokeMock.mockReset().mockResolvedValue(true);
   membershipMock.mockReset();
 });
@@ -93,9 +107,9 @@ describe("GPU provider keys", () => {
 
   it("verifies a key with RunPod, then stores it with the account identity", async () => {
     const { fetch, urls } = fakeFetch([PERSONAL_ORG_403, MYSELF, NO_PODS]);
-    getMock.mockImplementation(async () =>
-      storedRecord(upsertMock.mock.calls[0][0].metadata),
-    );
+    listMock.mockImplementation(async () => [
+      summary(upsertMock.mock.calls[0][0].metadata),
+    ]);
     const status = await setGpuProviderKey(
       { account_id: ACCOUNT, provider: "runpod", api_key: ` ${KEY}\n` },
       { fetch, isEntitled: entitled },
@@ -212,16 +226,23 @@ describe("GPU provider keys", () => {
     expect(urls).toEqual([]);
   });
 
-  it("reports status without the key, and without touching last use", async () => {
+  it("reports status from summaries, ignoring revoked rows", async () => {
+    listMock.mockResolvedValue([
+      { ...summary({}), revoked: new Date("2026-10-27T21:00:00Z") },
+    ]);
     expect(
       await getGpuProviderKeyStatus(
         { account_id: ACCOUNT, provider: "runpod" },
         { isEntitled: async () => false },
       ),
     ).toEqual({ provider: "runpod", entitled: false, connected: false });
-    expect(getMock).toHaveBeenCalledWith(
-      expect.objectContaining({ touchLastUsed: false }),
-    );
+    expect(listMock).toHaveBeenCalledWith({
+      owner_account_id: ACCOUNT,
+      provider: "runpod",
+      kind: "gpu-provider-api-key",
+      scope: "account",
+    });
+    expect(localGetMock).not.toHaveBeenCalled();
   });
 
   it("removes the account's key, and reports when there was none", async () => {
@@ -229,24 +250,60 @@ describe("GPU provider keys", () => {
       await deleteGpuProviderKey({ account_id: ACCOUNT, provider: "runpod" }),
     ).toEqual({ revoked: false });
     expect(revokeMock).not.toHaveBeenCalled();
-    getMock.mockResolvedValue(storedRecord({}));
+    listMock.mockResolvedValue([summary({})]);
     expect(
       await deleteGpuProviderKey({ account_id: ACCOUNT, provider: "runpod" }),
     ).toEqual({ revoked: true });
+    expect(localGetMock).not.toHaveBeenCalled();
     expect(revokeMock).toHaveBeenCalledWith({
       id: "cred-1",
       owner_account_id: ACCOUNT,
     });
   });
 
-  it("builds a RunPod client from the stored key, or nothing without one", async () => {
-    expect(await getRunpodClientForAccount(ACCOUNT)).toBeUndefined();
-    getMock.mockResolvedValue(storedRecord({}));
-    const client = await getRunpodClientForAccount(ACCOUNT);
+  it("builds a RunPod client from the local store, or nothing without a key", async () => {
+    expect(
+      await getRunpodClientForAccount(
+        ACCOUNT,
+        { purpose: "operate" },
+        { ...home, isEntitled: entitled },
+      ),
+    ).toBeUndefined();
+    localGetMock.mockResolvedValue(storedRecord({}));
+    const client = await getRunpodClientForAccount(
+      ACCOUNT,
+      { purpose: "operate" },
+      { ...home, isEntitled: entitled },
+    );
     expect(client).toBeDefined();
     expect(JSON.stringify(client)).not.toContain(KEY);
-    expect(getMock).toHaveBeenCalledWith({
+    expect(localGetMock).toHaveBeenCalledWith({
       selector: expect.objectContaining({ owner_account_id: ACCOUNT }),
     });
+  });
+
+  it("never reads the key away from the owner's home bay", async () => {
+    localGetMock.mockResolvedValue(storedRecord({}));
+    for (const purpose of ["operate", "cleanup"] as const) {
+      await expect(
+        getRunpodClientForAccount(
+          ACCOUNT,
+          { purpose },
+          { isHomeBay: async () => false, isEntitled: entitled },
+        ),
+      ).rejects.toThrow("home bay");
+    }
+    expect(localGetMock).not.toHaveBeenCalled();
+  });
+
+  it("requires the live entitlement to operate, but not to clean up", async () => {
+    localGetMock.mockResolvedValue(storedRecord({}));
+    const lapsed = { ...home, isEntitled: async () => false };
+    await expect(
+      getRunpodClientForAccount(ACCOUNT, { purpose: "operate" }, lapsed),
+    ).rejects.toThrow("membership");
+    expect(
+      await getRunpodClientForAccount(ACCOUNT, { purpose: "cleanup" }, lapsed),
+    ).toBeDefined();
   });
 });
