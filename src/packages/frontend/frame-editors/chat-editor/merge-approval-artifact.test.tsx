@@ -63,7 +63,12 @@ function view(overrides: any = {}) {
         check_summary: { total: 1, counted: 1, failing: 0, pending: 0 },
         checks_truncated: false,
         reviews: [],
-        review_summary: { total: 0, changes_requested: 0, approved: 0 },
+        review_summary: {
+          total: 0,
+          changes_requested: 0,
+          approved: 0,
+          complete: true,
+        },
         reviews_truncated: false,
         read_at: "2026-10-27T04:00:00Z",
       },
@@ -116,7 +121,12 @@ test("warns about failing checks and change requests, even when not listed", asy
     check_summary: { total: 1400, counted: 1000, failing: 2, pending: 0 },
     reviews: [],
     reviews_truncated: true,
-    review_summary: { total: 100, changes_requested: 1, approved: 0 },
+    review_summary: {
+      total: 1000,
+      changes_requested: 1,
+      approved: 0,
+      complete: false,
+    },
   };
   get.mockResolvedValue([v]);
   render(<MergeApprovalArtifact requestIds={[ID]} />);
@@ -127,6 +137,9 @@ test("warns about failing checks and change requests, even when not listed", asy
     screen.getByText(/Not all checks and reviews are listed/),
   ).toBeInTheDocument();
   expect(screen.getByText(/counted over the first 1000/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/at least 1000 total.*GitHub has more than were read/),
+  ).toBeInTheDocument();
 });
 
 test("approves the exact head with a comment, by keyboard", async () => {

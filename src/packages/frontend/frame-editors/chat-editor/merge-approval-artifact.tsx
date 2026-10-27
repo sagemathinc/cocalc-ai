@@ -203,6 +203,7 @@ function MergeApprovalRequestCard({
     total: snap.reviews.length,
     changes_requested: 0,
     approved: 0,
+    complete: !snap.reviews_truncated,
   };
   return (
     <section
@@ -283,8 +284,12 @@ function MergeApprovalRequestCard({
           </dd>
           <dt>Reviews</dt>
           <dd>
+            {reviewSummary.complete === false ? "at least " : ""}
             {reviewSummary.total} total, {reviewSummary.changes_requested}{" "}
             requesting changes, {reviewSummary.approved} approving
+            {reviewSummary.complete === false
+              ? " (GitHub has more than were read)"
+              : ""}
           </dd>
         </dl>
         {(checkSummary.failing > 0 || reviewSummary.changes_requested > 0) && (

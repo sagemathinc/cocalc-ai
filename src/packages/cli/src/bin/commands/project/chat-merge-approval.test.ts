@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Command } from "commander";
-import { registerChatMergeApprovalCommands } from "./chat-merge-approval";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  readNote,
+  registerChatMergeApprovalCommands,
+} from "./chat-merge-approval";
 
 const ID = "55555555-5555-4555-8555-555555555555";
 const HEAD = "c".repeat(40);
@@ -118,4 +124,24 @@ test("needs the current chat turn", async () => {
       if (previous[i] !== undefined) process.env[key] = previous[i];
     });
   }
+});
+
+test("reads a note only up to the limit, from stdin or a file", async () => {
+  let produced = 0;
+  async function* endless() {
+    for (;;) {
+      produced += 1024;
+      yield Buffer.alloc(1024, 120);
+    }
+  }
+  await assert.rejects(readNote("-", endless()), /longer than 8192 bytes/);
+  assert.ok(produced <= 9 * 1024);
+  const dir = mkdtempSync(join(tmpdir(), "note-"));
+  const big = join(dir, "big.md");
+  writeFileSync(big, "x".repeat(1024 * 1024));
+  await assert.rejects(readNote(big), /longer than 8192 bytes/);
+  const ok = join(dir, "ok.md");
+  writeFileSync(ok, "fine");
+  assert.equal(await readNote(ok), "fine");
+  assert.equal(await readNote(undefined), undefined);
 });

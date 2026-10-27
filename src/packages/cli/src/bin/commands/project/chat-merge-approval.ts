@@ -4,7 +4,7 @@
  * reads the PR from GitHub and records the request; the card holds only its
  * id.
  */
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { Command } from "commander";
 
 import type { ProjectCommandDeps } from "../project";
@@ -13,20 +13,33 @@ import { chatTarget, publishCardOnce } from "./chat-card";
 // The hub's limit; checked here too so a long note fails before the call.
 const MAX_NOTE_BYTES = 8 * 1024;
 
-async function readNote(file?: string): Promise<string | undefined> {
+// Reads at most the limit (plus one chunk), whatever the source's size.
+export async function readNote(
+  file?: string,
+  stdin: AsyncIterable<unknown> = process.stdin,
+): Promise<string | undefined> {
   if (!file) return undefined;
-  let note: string;
-  if (file === "-") {
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
-    note = Buffer.concat(chunks).toString("utf8");
-  } else {
-    note = await readFile(file, "utf8");
+  const source =
+    file === "-"
+      ? stdin
+      : createReadStream(file, { highWaterMark: MAX_NOTE_BYTES + 1 });
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for await (const chunk of source) {
+      const b = Buffer.from(chunk as any);
+      size += b.length;
+      if (size > MAX_NOTE_BYTES) {
+        throw Error(`the note is longer than ${MAX_NOTE_BYTES} bytes`);
+      }
+      chunks.push(b);
+    }
+  } finally {
+    if (typeof (source as any).destroy === "function" && source !== stdin) {
+      (source as any).destroy();
+    }
   }
-  if (Buffer.byteLength(note) > MAX_NOTE_BYTES) {
-    throw Error(`the note is longer than ${MAX_NOTE_BYTES} bytes`);
-  }
-  return note;
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 export function registerChatMergeApprovalCommands(
