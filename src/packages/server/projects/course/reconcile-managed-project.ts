@@ -25,6 +25,7 @@ import {
 } from "@cocalc/server/projects/collaborators";
 import { normalizeCoursePath } from "@cocalc/util/course-path";
 import { isValidUUID } from "@cocalc/util/misc";
+import { setProjectMembershipAuditContext } from "@cocalc/database/postgres/schema/project-membership-audit";
 
 const logger = getLogger("projects:course:reconcile-managed-project");
 
@@ -377,6 +378,10 @@ export async function reconcileCourseManagedProjectLocal(
   const changedFields = new Set<string>();
   try {
     await client.query("BEGIN");
+    await setProjectMembershipAuditContext(client, {
+      actor_account_id: account_id,
+      via: "course-reconcile",
+    });
     await assertProjectNotRehoming({
       db: client,
       project_id,

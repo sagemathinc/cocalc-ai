@@ -509,6 +509,44 @@ describe("project collaborators local bay access", () => {
     expect(removeCollaboratorFromProject).not.toHaveBeenCalled();
   });
 
+  it("attributes a role change to the changing manager in one transaction", async () => {
+    const statements: string[] = [];
+    queryMock = jest.fn(async (sql: string) => {
+      statements.push(sql);
+      if (sql.includes("AS actor_group")) {
+        return { rows: [{ actor_group: "owner" }] };
+      }
+      if (sql.includes("RETURNING users -> $2::text ->> 'group'")) {
+        return { rows: [{ group: "collaborator" }] };
+      }
+      return { rows: [] };
+    });
+    const { setProjectUserRole } = await import("./collaborators");
+    await setProjectUserRole({
+      account_id: ACCOUNT_ID,
+      opts: {
+        project_id: PROJECT_ID,
+        target_account_id: TARGET_ACCOUNT_ID,
+        role: "collaborator",
+      },
+    });
+    const audit = statements.indexOf("SELECT set_config($1, $2, true)");
+    const update = statements.findIndex((sql) =>
+      sql.includes("RETURNING users -> $2::text ->> 'group'"),
+    );
+    expect(statements.indexOf("BEGIN")).toBeLessThan(audit);
+    expect(audit).toBeLessThan(update);
+    expect(update).toBeLessThan(statements.indexOf("COMMIT"));
+    expect(queryMock).toHaveBeenCalledWith("SELECT set_config($1, $2, true)", [
+      "cocalc.membership_audit",
+      JSON.stringify({
+        actor_account_id: ACCOUNT_ID,
+        via: "role-change",
+        invite_creator_account_id: null,
+      }),
+    ]);
+  });
+
   it("does not log a removal when nothing was removed", async () => {
     removeCollaboratorFromProject.mockImplementation(async () => false);
     const { removeCollaborator } = await import("./collaborators");
@@ -598,6 +636,7 @@ describe("project collaborators local bay access", () => {
       account_id: TARGET_ACCOUNT_ID,
       group: "collaborator",
       project_id: PROJECT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "admin-direct-add" },
     });
   });
 
@@ -629,6 +668,7 @@ describe("project collaborators local bay access", () => {
       account_id: ACCOUNT_ID,
       group: "collaborator",
       project_id: PROJECT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "admin-direct-add" },
     });
   });
 
@@ -661,6 +701,7 @@ describe("project collaborators local bay access", () => {
       account_id: TARGET_ACCOUNT_ID,
       group: "collaborator",
       project_id: PROJECT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "admin-direct-add" },
     });
   });
 
@@ -688,6 +729,7 @@ describe("project collaborators local bay access", () => {
       account_id: TARGET_ACCOUNT_ID,
       group: "collaborator",
       project_id: PROJECT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "admin-direct-add" },
     });
   });
 
@@ -720,6 +762,7 @@ describe("project collaborators local bay access", () => {
       account_id: ACCOUNT_ID,
       group: "collaborator",
       project_id: PROJECT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "admin-direct-add" },
     });
   });
 
@@ -1478,6 +1521,12 @@ describe("project collaborators local bay access", () => {
         account_id: ACCOUNT_ID,
         group: "viewer",
         project_id: PROJECT_ID,
+        // the membership audit: who accepted, and who sent the invite
+        audit: {
+          actor_account_id: ACCOUNT_ID,
+          via: "invite-accept",
+          invite_creator_account_id: expect.any(String),
+        },
       }),
     );
     expect(queryMock).toHaveBeenCalledWith(
@@ -2497,6 +2546,21 @@ describe("project collaborators local bay access", () => {
       sql.includes("SET status='accepted'"),
     );
     const commit = statementIndex((sql) => sql === "COMMIT");
+    // the membership audit records who accepted and who sent the invite,
+    // set in the same transaction before the grant
+    const audit = statementIndex(
+      (sql) => sql === "SELECT set_config($1, $2, true)",
+    );
+    const auditCall = queryMock.mock.calls.find(
+      ([sql]) => sql === "SELECT set_config($1, $2, true)",
+    );
+    expect(JSON.parse(auditCall[1][1])).toEqual({
+      actor_account_id: ACCOUNT_ID,
+      via: "email-invite-accept",
+      invite_creator_account_id: expect.any(String),
+    });
+    expect(begin).toBeLessThan(audit);
+    expect(audit).toBeLessThan(grant);
     expect(begin).toBeGreaterThanOrEqual(0);
     expect(begin).toBeLessThan(grant);
     expect(grant).toBeLessThan(bind);
@@ -3808,6 +3872,7 @@ describe("project collaborators local bay access", () => {
       account_id: TARGET_ACCOUNT_ID,
       group: "collaborator",
       project_id: PROJECT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "access-request-approve" },
     });
     expect(appendProjectLogRowBestEffortMock).toHaveBeenCalledWith(
       expect.objectContaining({

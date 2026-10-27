@@ -101,6 +101,14 @@ function ownerOnlyProjectRow() {
   });
 }
 
+// The context the membership audit trigger reads, set in the transaction.
+function membershipAuditContext() {
+  const call = clientQueryMock.mock.calls.find(
+    ([sql]) => sql === "SELECT set_config($1, $2, true)",
+  );
+  return call == null ? undefined : JSON.parse(call[1][1]);
+}
+
 describe("project ownership", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -176,6 +184,12 @@ describe("project ownership", () => {
       old_owner_retained: true,
     });
     expect(clientQueryMock.mock.calls.at(-1)).toEqual(["COMMIT"]);
+    // the membership audit attributes the role changes to the owner
+    expect(membershipAuditContext()).toEqual({
+      actor_account_id: OWNER_ID,
+      via: "ownership-transfer",
+      invite_creator_account_id: null,
+    });
   });
 
   it("preserves independently assigned usage and runtime sponsors", async () => {
@@ -255,6 +269,10 @@ describe("project ownership", () => {
     expect(JSON.parse(audit![1][2])).toMatchObject({
       actor_account_id: OTHER_COLLABORATOR_ID,
       authorized_as_admin: true,
+    });
+    expect(membershipAuditContext()).toMatchObject({
+      actor_account_id: OTHER_COLLABORATOR_ID,
+      via: "admin-ownership-transfer",
     });
   });
 

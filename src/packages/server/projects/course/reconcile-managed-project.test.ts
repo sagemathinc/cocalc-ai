@@ -203,6 +203,18 @@ describe("course managed project reconciliation", () => {
       [MANAGER]: { group: "collaborator" },
     });
     expect(users[EXTRA]).toBeUndefined();
+    // Grants are recorded by the membership audit, attributed to the actor.
+    const auditCall = queryMock.mock.calls.find(
+      ([sql]) => sql === "SELECT set_config($1, $2, true)",
+    );
+    expect(JSON.parse(auditCall[1][1])).toEqual({
+      actor_account_id: ACTOR,
+      via: "course-reconcile",
+      invite_creator_account_id: null,
+    });
+    expect(queryMock.mock.calls.indexOf(auditCall)).toBeLessThan(
+      queryMock.mock.calls.indexOf(update),
+    );
     // The removal is recorded with who did it and why (support #20986).
     expect(centralLogMock).toHaveBeenCalledWith({
       event: "project_collaborator_removed",

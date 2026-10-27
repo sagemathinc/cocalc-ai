@@ -15,6 +15,7 @@ export async function add_collaborators_to_projects(
   accounts: string[],
   projects: string[],
 ): Promise<void> {
+  let via = "self-add";
   try {
     await verify_write_access_to_projects(account_id, projects);
   } catch (err) {
@@ -25,6 +26,7 @@ export async function add_collaborators_to_projects(
     // collaborator on project_id. We only support one accounts/projects.
     if (accounts.length == 1 && account_id == accounts[0]) {
       await verify_course_access_to_project(db, account_id, projects[0]);
+      via = "course-self-add";
     } else {
       throw err;
     }
@@ -43,6 +45,7 @@ export async function add_collaborators_to_projects(
   // will happen and the client gets an error.  This should result in minimal
   // load given that it's one at a time, and the server and db are a ms from
   // each other.
+  const actor_account_id = account_id;
   for (const i in projects) {
     const project_id: string = projects[i];
     const account_id: string = accounts[i];
@@ -53,6 +56,11 @@ export async function add_collaborators_to_projects(
     await callback2(db.add_user_to_project, {
       project_id,
       account_id,
+      // Only admins may add someone else (projects/collaborators.ts).
+      audit: {
+        actor_account_id,
+        via: account_id === actor_account_id ? via : "admin-add",
+      },
     });
   }
   for (const project_id of new Set(projects)) {

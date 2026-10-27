@@ -109,6 +109,10 @@ import {
 import { isEncryptedSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
 import { upsertProjectCollabInviteDirectory } from "@cocalc/server/projects/collab-invite-directory";
 import { appendProjectLogRowBestEffort } from "@cocalc/server/projects/project-log";
+import {
+  setProjectMembershipAuditContext,
+  type ProjectMembershipAuditContext,
+} from "@cocalc/database/postgres/schema/project-membership-audit";
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
@@ -900,11 +904,13 @@ async function addUserToProjectForAcceptedInvite({
   project_id,
   invite_role,
   read_policy,
+  audit,
 }: {
   account_id: string;
   project_id: string;
   invite_role?: string | null;
   read_policy?: ProjectViewerReadPolicy | null;
+  audit: ProjectMembershipAuditContext;
 }): Promise<void> {
   const role = normalizeInviteRole(invite_role);
   const policy = normalizeInviteReadPolicy({ invite_role: role, read_policy });
@@ -913,6 +919,7 @@ async function addUserToProjectForAcceptedInvite({
     project_id,
     account_id,
     group: role,
+    audit,
   });
   const rolePatch =
     role === "viewer"
@@ -1040,32 +1047,49 @@ export async function setProjectUserRole({
             opts.read_policy ?? DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
         }
       : { group: "collaborator" };
-  const { rows } = await getPool().query<{ group: string | null }>(
-    `
-      UPDATE projects
-         SET users = jsonb_set(
-           users,
-           ARRAY[$2::text],
-           CASE
-             WHEN $3::text = 'collaborator' THEN
-               (COALESCE(users -> $2::text, '{}'::jsonb) - 'read_policy') || $4::jsonb
-             ELSE
-               COALESCE(users -> $2::text, '{}'::jsonb) || $4::jsonb
-           END,
-           false
-         )
-       WHERE project_id=$1
-         AND users ? $2::text
-         AND users -> $2::text ->> 'group' <> 'owner'
-       RETURNING users -> $2::text ->> 'group' AS "group"
-    `,
-    [
-      opts.project_id,
-      opts.target_account_id,
-      opts.role,
-      JSON.stringify(rolePatch),
-    ],
-  );
+  // One transaction so the membership audit knows who changed the role.
+  const client = await getPool().connect();
+  let rows: { group: string | null }[];
+  try {
+    await client.query("BEGIN");
+    await setProjectMembershipAuditContext(client, {
+      actor_account_id: account_id,
+      via: "role-change",
+    });
+    const result = await client.query<{ group: string | null }>(
+      `
+        UPDATE projects
+           SET users = jsonb_set(
+             users,
+             ARRAY[$2::text],
+             CASE
+               WHEN $3::text = 'collaborator' THEN
+                 (COALESCE(users -> $2::text, '{}'::jsonb) - 'read_policy') || $4::jsonb
+               ELSE
+                 COALESCE(users -> $2::text, '{}'::jsonb) || $4::jsonb
+             END,
+             false
+           )
+         WHERE project_id=$1
+           AND users ? $2::text
+           AND users -> $2::text ->> 'group' <> 'owner'
+         RETURNING users -> $2::text ->> 'group' AS "group"
+      `,
+      [
+        opts.project_id,
+        opts.target_account_id,
+        opts.role,
+        JSON.stringify(rolePatch),
+      ],
+    );
+    rows = result.rows;
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
   if (!isProjectUserRole(rows[0]?.group)) {
     throw new Error("target account is not a non-owner project user");
   }
@@ -1325,6 +1349,7 @@ export async function createCollabInvite(
       account_id: invitee_account_id,
       invite_role: role,
       read_policy: policy,
+      audit: { actor_account_id: account_id, via: "admin-direct-add" },
     });
     await syncProjectUsersOnHostBestEffort(
       project_id,
@@ -2038,6 +2063,11 @@ export async function respondCollabInviteCanonical({
         account_id,
         invite_role: invite.invite_role,
         read_policy: invite.read_policy,
+        audit: {
+          actor_account_id: account_id,
+          via: "invite-accept",
+          invite_creator_account_id: invite.inviter_account_id,
+        },
       });
       await syncProjectUsersOnHostBestEffort(
         invite.project_id,
@@ -2885,6 +2915,7 @@ export async function respondProjectAccessRequest({
       invite_role: approvedRole,
       read_policy:
         approvedRole === "viewer" ? (read_policy ?? request.read_policy) : null,
+      audit: { actor_account_id: account_id, via: "access-request-approve" },
     });
     await syncProjectUsersOnHostBestEffort(
       project_id,
@@ -3926,6 +3957,11 @@ async function acceptEmailInviteAtomically({
   let granted = false;
   try {
     await client.query("BEGIN");
+    await setProjectMembershipAuditContext(client, {
+      actor_account_id: account_id,
+      via: "email-invite-accept",
+      invite_creator_account_id: invite.inviter_account_id,
+    });
     // Same lock order as other membership writers (course reconcile,
     // add/remove collaborator): rehome fence, then the project row; the
     // invite row is locked last.

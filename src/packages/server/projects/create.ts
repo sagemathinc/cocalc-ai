@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { setProjectMembershipAuditContext } from "@cocalc/database/postgres/schema/project-membership-audit";
 import { isValidUUID } from "@cocalc/util/misc";
 import { v4 } from "uuid";
 import getLogger from "@cocalc/backend/logger";
@@ -762,6 +763,18 @@ async function createProjectImpl(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Course managers added as collaborators of a new student project are
+    // recorded by the membership audit as added by the creator.
+    if (
+      Object.values(users ?? {}).some(
+        (user) => (user as { group?: string })?.group !== "owner",
+      )
+    ) {
+      await setProjectMembershipAuditContext(client, {
+        actor_account_id: account_id ?? null,
+        via: "project-create",
+      });
+    }
     if (creationRequest) {
       await lockProjectCreation(client, project_id);
       if (

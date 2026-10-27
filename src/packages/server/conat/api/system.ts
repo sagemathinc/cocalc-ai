@@ -477,6 +477,10 @@ import {
   projectArchiveBlockedHealth,
   projectArchiveHostCoverageHealth,
 } from "@cocalc/server/projects/archive-lifecycle-maintenance";
+import {
+  getProjectMembershipAuditHealthStatus,
+  projectMembershipAuditHealth,
+} from "@cocalc/server/projects/membership-audit-health";
 import { getConatAdmissionConfig } from "../admission-settings";
 import {
   recordServiceAdmissionDenialLocal,
@@ -2297,6 +2301,7 @@ export async function getLaunchHealth({
     backupRepoResult,
     archiveHostCoverageResult,
     archiveBlockedResult,
+    membershipAuditResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2326,7 +2331,12 @@ export async function getLaunchHealth({
       }))(),
     getProjectArchiveHostCoverage(),
     getProjectArchiveBlockedSummary(),
+    getProjectMembershipAuditHealthStatus(),
   ]);
+  const membershipAudit =
+    membershipAuditResult.status === "fulfilled"
+      ? projectMembershipAuditHealth(membershipAuditResult.value)
+      : undefined;
   const archiveHostCoverage =
     archiveHostCoverageResult.status === "fulfilled"
       ? projectArchiveHostCoverageHealth(archiveHostCoverageResult.value)
@@ -2695,6 +2705,18 @@ export async function getLaunchHealth({
         backupRepoResult.status === "rejected"
           ? [`${backupRepoResult.reason}`]
           : projectBackupRepoHealthDetails(backupRepoResult.value),
+    }),
+    launchHealthCheck({
+      id: "project-membership-audit",
+      label: "Project membership audit",
+      level: membershipAudit?.level ?? "warning",
+      summary:
+        membershipAudit?.summary ??
+        "Unable to read the project membership audit status.",
+      details:
+        membershipAuditResult.status === "rejected"
+          ? [`${membershipAuditResult.reason}`]
+          : (membershipAudit?.details ?? []),
     }),
     launchHealthCheck({
       id: "project-archive-hosts",

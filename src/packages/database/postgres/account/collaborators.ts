@@ -8,11 +8,17 @@ import getPool from "@cocalc/database/pool";
 import { appendProjectOutboxEventForProject } from "../project-events-outbox";
 import { assertProjectNotRehoming } from "../project-rehome-fence";
 import type { PostgreSQL } from "../types";
+import {
+  setProjectMembershipAuditContext,
+  type ProjectMembershipAuditContext,
+} from "../schema/project-membership-audit";
 
 export interface AddUserToProjectOptions {
   project_id: string;
   account_id: string;
   group?: string; // defaults to 'collaborator'
+  // Who added the user and how, for the membership audit.
+  audit?: ProjectMembershipAuditContext;
 }
 
 export async function addUserToProject(
@@ -26,6 +32,9 @@ export async function addUserToProject(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    if (opts.audit != null) {
+      await setProjectMembershipAuditContext(client, opts.audit);
+    }
     await assertProjectNotRehoming({
       db: client,
       project_id: opts.project_id,
