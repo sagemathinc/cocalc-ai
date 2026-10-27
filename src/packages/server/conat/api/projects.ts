@@ -5495,10 +5495,12 @@ export async function archiveProject({
   account_id,
   project_id,
   allow_oversized_skip,
+  require_deprovisioned_host_id,
 }: {
   account_id?: string;
   project_id: string;
   allow_oversized_skip?: boolean;
+  require_deprovisioned_host_id?: string;
 }): Promise<void> {
   assertProjectRuntimeCapability("archive");
   await assertCanPerformDestructiveStorageAction({
@@ -5511,6 +5513,7 @@ export async function archiveProject({
     mode: "manual",
     actor_account_id: account_id,
     allow_oversized_skip: allow_oversized_skip === true,
+    require_deprovisioned_host_id,
   });
 }
 

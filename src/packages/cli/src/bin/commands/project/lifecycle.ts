@@ -297,20 +297,20 @@ export function registerProjectLifecycleCommands(
             await ctx.hub.projects.archiveProject({
               project_id: project.project_id,
               timeout: Math.max(ctx.rpcTimeoutMs, 30_000),
+              // checked again on the owning bay against the current placement
+              require_deprovisioned_host_id: project.host_id,
               ...(opts.allowOversizedSkip
                 ? { allow_oversized_skip: true }
                 : {}),
             });
+            // the owning bay archived it from the project's latest backup;
+            // the CLI made no backup and stopped nothing
             return {
               project_id: project.project_id,
               status: "archived",
               host_deprovisioned: true,
-              backup_reused: false,
+              archived_from: "latest existing backup",
               backup_created: false,
-              backup_op_id: null,
-              latest_backup_time: null,
-              last_edited:
-                normalizeDate(project.last_edited)?.toISOString() ?? null,
               stopped_first: false,
             };
           }

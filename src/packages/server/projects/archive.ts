@@ -57,6 +57,9 @@ export type ArchiveProjectStorageOptions = {
   // Manual archives only: the user confirmed that files over the backup file
   // size limit may be lost. Automatic archives never skip files.
   allow_oversized_skip?: boolean;
+  // Manual archives only: refuse unless the project is still placed on this
+  // host and the host is deprovisioned (the caller skipped host checks).
+  require_deprovisioned_host_id?: string;
   // Automatic archives only: stop waiting for a running final backup after
   // this long and throw FinalArchiveBackupPendingError, leaving the claim and
   // the backup in place; the next attempt resumes waiting for the same backup.
@@ -438,6 +441,7 @@ async function setArchivedState({
   automatic,
   expected_host_id,
   cleanupHostData,
+  require_deprovisioned_host_id,
 }: {
   project_id: string;
   reason: ProjectArchiveReason;
@@ -445,6 +449,9 @@ async function setArchivedState({
   automatic: boolean;
   expected_host_id?: string | null;
   cleanupHostData?: () => Promise<void>;
+  // commit only while the project is still placed on this host and the host
+  // is still deprovisioned (decided here, fenced with the update)
+  require_deprovisioned_host_id?: string;
 }): Promise<void> {
   const checkedAt = new Date();
   const client = await getPool().connect();
@@ -480,6 +487,13 @@ async function setArchivedState({
             state ->> 'state' = 'archiving'
             AND archive_lifecycle_job_id = $5
             AND host_id IS NOT DISTINCT FROM $7::uuid
+          ))
+          AND ($8::uuid IS NULL OR (
+            host_id = $8::uuid
+            AND EXISTS (
+              SELECT 1 FROM project_hosts h
+               WHERE h.id = $8::uuid AND h.status = 'deprovisioned'
+            )
           ))`,
       [
         project_id,
@@ -489,6 +503,7 @@ async function setArchivedState({
         job_id,
         automatic,
         expected_host_id ?? null,
+        require_deprovisioned_host_id ?? null,
       ],
     );
     if ((result.rowCount ?? 0) === 0) {
@@ -519,10 +534,22 @@ export async function archiveProjectStorage({
   expected_host_id,
   allow_oversized_skip,
   final_backup_wait_ms,
+  require_deprovisioned_host_id,
 }: ArchiveProjectStorageOptions): Promise<void> {
   let row = await loadArchiveRow(project_id);
   const currentState = `${row.state?.state ?? ""}`.trim();
   if (currentState === "archived" && row.provisioned === false) return;
+  if (
+    require_deprovisioned_host_id != null &&
+    (row.host_id !== require_deprovisioned_host_id ||
+      `${row.host_status ?? ""}`.trim().toLowerCase() !== "deprovisioned")
+  ) {
+    // the caller's view of the placement is stale: it skipped the checks
+    // that a live host needs, so archiving now could lose newer changes
+    throw new Error(
+      "the project's host changed or is no longer deprovisioned; retry the archive",
+    );
+  }
 
   const automatic = mode === "automatic";
   const reason = automatic ? providedReason : (providedReason ?? "manual");
@@ -721,6 +748,7 @@ export async function archiveProjectStorage({
       automatic,
       expected_host_id: expected_host_id ?? row.host_id,
       cleanupHostData,
+      require_deprovisioned_host_id,
     });
     await updateProjectArchiveLifecycleJob({
       job_id: jobId,

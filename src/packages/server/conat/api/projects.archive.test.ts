@@ -499,6 +499,57 @@ describe("projects.archiveProject", () => {
     );
   });
 
+  it("checks a caller's deprovisioned-host precondition against the current placement", async () => {
+    const row = (host_id: string, host_status: string) => ({
+      rows: [
+        {
+          host_id,
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "opened" },
+          host_status,
+          last_backup: new Date(),
+        },
+      ],
+    });
+    const { archiveProject } = await import("./projects");
+    // the project moved to another host, or its host is live again
+    for (const current of [
+      row("host-2", "deprovisioned"),
+      row("host-1", "running"),
+    ]) {
+      poolQueryMock.mockResolvedValueOnce(current);
+      await expect(
+        archiveProject({
+          account_id: "owner-1",
+          project_id: "proj-1",
+          require_deprovisioned_host_id: "host-1",
+        }),
+      ).rejects.toThrow(/host changed or is no longer deprovisioned/);
+    }
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(poolConnectQueryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects"),
+      expect.anything(),
+    );
+
+    // (control) still placed on the deprovisioned host: archived
+    poolQueryMock.mockResolvedValueOnce(row("host-1", "deprovisioned"));
+    await expect(
+      archiveProject({
+        account_id: "owner-1",
+        project_id: "proj-1",
+        require_deprovisioned_host_id: "host-1",
+      }),
+    ).resolves.toBeUndefined();
+    // and the commit itself requires that placement, in its fenced update
+    const [sql, params] = poolConnectQueryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("UPDATE projects"),
+    )!;
+    expect(sql).toContain("h.status = 'deprovisioned'");
+    expect(params[7]).toBe("host-1");
+  });
+
   it("archives an off host with existing backups without stopping or deleting host data", async () => {
     poolQueryMock.mockResolvedValueOnce({
       rows: [

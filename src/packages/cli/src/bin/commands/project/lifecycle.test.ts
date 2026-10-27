@@ -339,7 +339,14 @@ for (const status of ["deprovisioned", "off"]) {
       // archived from its existing backup: no host checks, no new backup
       assert.deepEqual(calls, [
         ["resolveHostConnection", { host_id: "host-1", project_id }],
-        ["archiveProject", { project_id, timeout: 30000 }],
+        [
+          "archiveProject",
+          {
+            project_id,
+            timeout: 30000,
+            require_deprovisioned_host_id: "host-1",
+          },
+        ],
       ]);
       assert.equal(returned.status, "archived");
       assert.equal(returned.host_deprovisioned, true);
