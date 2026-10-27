@@ -422,11 +422,19 @@ export function formatAcpAdmissionDenial(denial: AcpAdmissionDenial): string {
   if (text == null) {
     return `Agent turn limit reached (${denial.limit}): ${denial.current} of ${denial.maximum}.`;
   }
+  const where =
+    `"${text.setting}" (usage_limits.${text.key}) ` +
+    `in the account's membership tier, or as an entitlement override for this account; ` +
+    `without either, the server default ${text.env} applies.`;
+  if (denial.maximum <= 0) {
+    // Waiting cannot help: nothing is allowed at all.
+    return (
+      `Agent turns are not allowed here: the limit on ${text.counted} is 0. ` +
+      `Ask an admin to raise ${where}`
+    );
+  }
   return (
     `Agent turn limit reached: ${denial.current} ${text.counted}, and the limit is ${denial.maximum}. ` +
-    `Wait for some of them to finish. ` +
-    `An admin can change the limit with "${text.setting}" (usage_limits.${text.key}) ` +
-    `in the account's membership tier, or as an entitlement override for this account; ` +
-    `without either, the server default ${text.env} applies.`
+    `Wait for some of them to finish. An admin can change the limit with ${where}`
   );
 }

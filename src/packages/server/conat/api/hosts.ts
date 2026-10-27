@@ -1655,6 +1655,15 @@ export async function getProjectOwnerEffectiveLimits({
   return await getProjectOwnerEffectiveLimitsLocal({ project_id });
 }
 
+// Project hosts not yet upgraded still enforce the retired rolling
+// created-turn limits, and fall back to 500 (5 hours) and 2000 (7 days) when
+// the hub sends none. Send them a value no account reaches. Remove once
+// every project host runs a release without those limits.
+export const RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS = {
+  acp_max_created_5h_per_account: 1_000_000_000,
+  acp_max_created_7d_per_account: 1_000_000_000,
+};
+
 export async function getProjectOwnerEffectiveLimitsLocal({
   project_id,
 }: {
@@ -1676,10 +1685,14 @@ export async function getProjectOwnerEffectiveLimitsLocal({
       acp_max_queued_per_thread: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
     };
   }
   const resolution = await resolveMembershipForAccount(account_id);
-  return resolution.effective_limits ?? {};
+  return {
+    ...(resolution.effective_limits ?? {}),
+    ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+  };
 }
 
 export async function getAccountEffectiveLimits({
@@ -1730,10 +1743,14 @@ export async function getAccountEffectiveLimitsLocal({
       acp_max_queued_per_thread: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
     };
   }
   const resolution = await resolveMembershipForAccount(accountId);
-  return resolution.effective_limits ?? {};
+  return {
+    ...(resolution.effective_limits ?? {}),
+    ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+  };
 }
 
 function nonnegativeInteger(value: unknown): number {

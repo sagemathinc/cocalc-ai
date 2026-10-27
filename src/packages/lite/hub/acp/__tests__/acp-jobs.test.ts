@@ -6,6 +6,7 @@ import {
   initAcpDatabase,
 } from "../../sqlite/acp-database";
 import {
+  AcpAdmissionDeniedError,
   acpAdmissionLimitsFromEffectiveLimits,
   admitAcpJobExecution,
   admitAcpJobCreation,
@@ -1462,6 +1463,12 @@ describe("acp job queue ordering", () => {
       '"Queued ACP turns / account" (usage_limits.acp_max_queued_per_account)',
     );
     expect(`${error}`).toContain("entitlement override");
+    // With a limit of 0 there is nothing to wait for: say so.
+    expect(
+      `${new AcpAdmissionDeniedError({ ...decision, current: 0, maximum: 0 } as any)}`,
+    ).toMatch(
+      /^Agent turns are not allowed here: the limit on agent turns waiting to run for this account is 0\. Ask an admin to raise "Queued ACP turns \/ account"/,
+    );
     expect(countQueuedAcpJobsForAccount(firstRequest.account_id)).toBe(1);
   });
 

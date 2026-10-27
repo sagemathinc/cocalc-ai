@@ -7146,7 +7146,10 @@ describe("hosts.resolveHostConnection", () => {
         max_snapshots_per_project: 8,
       },
     }));
-    const { getProjectOwnerEffectiveLimits } = await import("./hosts");
+    const {
+      getProjectOwnerEffectiveLimits,
+      RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+    } = await import("./hosts");
     await expect(
       getProjectOwnerEffectiveLimits({
         host_id: REMOTE_HOST_ID,
@@ -7155,6 +7158,7 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       max_backups_per_project: 5,
       max_snapshots_per_project: 8,
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
     });
   });
 
@@ -7205,6 +7209,10 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       acp_max_queued_per_account: 12,
       acp_max_running_per_account: 3,
+      // Hosts not yet upgraded must not fall back to their old 500/2000
+      // created-turn defaults.
+      acp_max_created_5h_per_account: 1_000_000_000,
+      acp_max_created_7d_per_account: 1_000_000_000,
     });
     expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
       account_id: "actor-1",
