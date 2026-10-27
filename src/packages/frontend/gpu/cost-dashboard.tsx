@@ -39,7 +39,6 @@ import {
 import type { GpuSpendPeriod } from "./cost-dashboard-model";
 import type {
   GpuCostDashboardApi,
-  GpuKillSwitchScope,
   GpuPodScope,
   GpuPodSummary,
   GpuSpendGroupBy,
@@ -61,20 +60,26 @@ function formatTime(value: string): string {
 export function GpuCostDashboard({
   api,
   scope = "funded",
-  killScope,
   scopeLabel = "your RunPod key pays for",
 }: {
   api: GpuCostDashboardApi;
+  // What is shown is exactly what "Terminate all" terminates.
   scope?: GpuPodScope;
-  // Defaults to scope; a course passes the same {course_id}.
-  killScope?: GpuKillSwitchScope;
   // Completes "GPU pods ..." in headings and confirmations.
   scopeLabel?: string;
 }) {
   const [period, setPeriod] = useState<GpuSpendPeriod>("7d");
   const [groupBy, setGroupBy] = useState<GpuSpendGroupBy>("beneficiary");
-  const [pods, setPods] = useState<GpuPodSummary[]>();
-  const [spend, setSpend] = useState<GpuSpendResult>();
+  // Each result is stored with the query it answers, and only shown while that
+  // query is current, so new labels are never put on old numbers.
+  const [podsResult, setPodsResult] = useState<{
+    key: string;
+    pods: GpuPodSummary[];
+  }>();
+  const [spendResult, setSpendResult] = useState<{
+    key: string;
+    spend: GpuSpendResult;
+  }>();
   const [loadError, setLoadError] = useState("");
   const [confirm, setConfirm] = useState<Confirmation>();
   const [busy, setBusy] = useState(false);
@@ -82,25 +87,35 @@ export function GpuCostDashboard({
   const [notice, setNotice] = useState("");
   const generation = useRef(0);
 
+  // Callers may pass a new but equal scope object on every render.
+  const scopeKey = JSON.stringify(scope);
+  const spendKey = JSON.stringify([scope, period, groupBy]);
+  const pods = podsResult?.key === scopeKey ? podsResult.pods : undefined;
+  const spend = spendResult?.key === spendKey ? spendResult.spend : undefined;
+
   const refresh = useCallback(async () => {
     const version = ++generation.current;
+    const query: GpuPodScope = JSON.parse(scopeKey);
+    setLoadError("");
     try {
       const [nextPods, nextSpend] = await Promise.all([
-        api.pods({ scope }),
+        api.pods({ scope: query }),
         api.spend({
-          scope,
+          scope: query,
           since: periodSince(period, Date.now()),
           group_by: groupBy,
         }),
       ]);
       if (generation.current !== version) return;
-      setPods(nextPods);
-      setSpend(nextSpend);
-      setLoadError("");
+      setPodsResult({ key: scopeKey, pods: nextPods });
+      setSpendResult({
+        key: JSON.stringify([query, period, groupBy]),
+        spend: nextSpend,
+      });
     } catch (err) {
       if (generation.current === version) setLoadError(errorText(err));
     }
-  }, [api, scope, period, groupBy]);
+  }, [api, scopeKey, period, groupBy]);
 
   useEffect(() => {
     void refresh();
@@ -121,9 +136,7 @@ export function GpuCostDashboard({
     setActionError("");
     try {
       if (confirm.kind === "all") {
-        const { terminating } = await api.killSwitch({
-          scope: killScope ?? scope,
-        });
+        const { terminating } = await api.killSwitch({ scope });
         setNotice(
           terminating === 1
             ? "Terminating 1 pod."
@@ -143,6 +156,8 @@ export function GpuCostDashboard({
   }
 
   const groupLabel = GROUP_BY_LABELS[groupBy];
+  // Missing numbers are never shown as zero.
+  const pending = loadError ? "unavailable" : "…";
 
   return (
     <section aria-label="GPU spending" style={{ color: UI_COLORS.text }}>
@@ -187,23 +202,23 @@ export function GpuCostDashboard({
       <Space wrap size="large" style={{ marginTop: 12 }}>
         <span>
           <Typography.Text type="secondary">Live pods: </Typography.Text>
-          <strong>{pods ? live.length : "…"}</strong>
+          <strong>{pods ? live.length : pending}</strong>
         </span>
         <span>
           <Typography.Text type="secondary">Live rate: </Typography.Text>
-          <strong>{pods ? `${moneyToCurrency(rate)}/hour` : "…"}</strong>
+          <strong>{pods ? `${moneyToCurrency(rate)}/hour` : pending}</strong>
         </span>
         <span>
           <Typography.Text type="secondary">
             Estimated spend ({PERIOD_LABELS[period].toLowerCase()}):{" "}
           </Typography.Text>
-          <strong>{spend ? moneyToCurrency(totals.estimated) : "…"}</strong>
+          <strong>{spend ? moneyToCurrency(totals.estimated) : pending}</strong>
         </span>
         <span>
           <Typography.Text type="secondary">Billed by RunPod: </Typography.Text>
           <strong>
             {!spend
-              ? "…"
+              ? pending
               : totals.billed == null
                 ? "not yet billed"
                 : moneyToCurrency(totals.billed)}
@@ -227,7 +242,7 @@ export function GpuCostDashboard({
         dataSource={live}
         pagination={false}
         scroll={{ x: "max-content" }}
-        locale={{ emptyText: "No live pods." }}
+        locale={{ emptyText: loadError ? "Unavailable." : "No live pods." }}
         columns={[
           { title: "Pod", dataIndex: "handle", key: "handle" },
           {
@@ -321,7 +336,11 @@ export function GpuCostDashboard({
         dataSource={spend?.rows ?? []}
         pagination={false}
         scroll={{ x: "max-content" }}
-        locale={{ emptyText: "No GPU spending in this period." }}
+        locale={{
+          emptyText: loadError
+            ? "Unavailable."
+            : "No GPU spending in this period.",
+        }}
         columns={[
           { title: groupLabel, dataIndex: "label", key: "label" },
           {
@@ -380,8 +399,9 @@ export function GpuCostDashboard({
           <p>
             This terminates every GPU pod {scopeLabel}, including pods started
             by agents and students.{" "}
-            {live.length === 1 ? "1 pod is" : `${live.length} pods are`} live
-            now, at {moneyToCurrency(rate)}/hour.
+            {pods == null
+              ? "The number of live pods and their rate are unavailable right now."
+              : `${live.length === 1 ? "1 pod is" : `${live.length} pods are`} live now, at ${moneyToCurrency(rate)}/hour.`}
           </p>
         )}
         <p>

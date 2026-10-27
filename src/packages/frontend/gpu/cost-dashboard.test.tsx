@@ -54,7 +54,7 @@ function api(): jest.Mocked<GpuCostDashboardApi> {
       rows: [
         {
           key: "33333333-3333-4333-8333-333333333333",
-          label: "Ada Lovelace",
+          label: "Spend row Ada",
           estimated: "1.25",
           billed: "1",
           pods_live: 1,
@@ -190,6 +190,95 @@ describe("GpuCostDashboard", () => {
     expect(mock.killSwitch).toHaveBeenCalledWith({
       scope: { course_id: "c1" },
     });
+  });
+
+  it("terminates exactly the scope it shows, and doesn't refetch for an equal scope object", async () => {
+    const mock = api();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <GpuCostDashboard
+        api={mock}
+        scope={{ course_id: "c1" }}
+        scopeLabel="in this course"
+      />,
+    );
+    await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    rerender(
+      <GpuCostDashboard
+        api={mock}
+        scope={{ course_id: "c1" }}
+        scopeLabel="in this course"
+      />,
+    );
+    expect(mock.pods).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Terminate all" }));
+    const dialog = await findDialog("Terminate all GPU pods in this course?");
+    expect(within(dialog).getByText(/2 pods are live now/)).toBeTruthy();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Terminate all" }),
+    );
+    expect(mock.killSwitch).toHaveBeenCalledTimes(1);
+    expect(mock.killSwitch.mock.calls[0][0].scope).toEqual(
+      mock.pods.mock.calls[0][0].scope,
+    );
+  });
+
+  it("never shows old rows under a new period while the new query is loading", async () => {
+    const mock = api();
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    await screen.findByRole("cell", { name: "Spend row Ada" });
+    let resolve!: (value: Awaited<ReturnType<typeof mock.spend>>) => void;
+    mock.spend.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    await user.click(screen.getByText("Last 24 hours"));
+    expect(
+      (screen.getByRole("radio", { name: "Last 24 hours" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    await waitFor(() =>
+      expect(screen.queryByRole("cell", { name: "Spend row Ada" })).toBeNull(),
+    );
+    expect(screen.queryByText("$1.25")).toBeNull();
+    resolve({
+      as_of: "2026-10-27T12:00:00.000Z",
+      rows: [
+        { key: "x", label: "Grace Hopper", estimated: "0.5", pods_live: 0 },
+      ],
+    });
+    expect(
+      await screen.findByRole("cell", { name: "Grace Hopper" }),
+    ).toBeTruthy();
+  });
+
+  it("hides old rows and says numbers are unavailable when a new grouping fails", async () => {
+    const mock = api();
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    await screen.findByRole("cell", { name: "Spend row Ada" });
+    mock.spend.mockRejectedValue(new Error("spend is down"));
+    await user.click(
+      screen.getByRole("combobox", { name: "Group spending by" }),
+    );
+    await user.click(await screen.findByTitle("Agent"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("spend is down");
+    expect(screen.queryByRole("cell", { name: "Spend row Ada" })).toBeNull();
+    expect(screen.getAllByText("unavailable").length).toBeGreaterThan(0);
+  });
+
+  it("keeps Terminate all available but doesn't claim zero pods when pods can't load", async () => {
+    const mock = api();
+    mock.pods.mockRejectedValue(new Error("pods are down"));
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Terminate all" }));
+    const dialog = await findDialog(
+      "Terminate all GPU pods your RunPod key pays for?",
+    );
+    expect(
+      within(dialog).getByText(/live pods and their rate are unavailable/),
+    ).toBeTruthy();
+    expect(within(dialog).queryByText(/0 pods are live/)).toBeNull();
   });
 
   it("reports load failures in an alert", async () => {
