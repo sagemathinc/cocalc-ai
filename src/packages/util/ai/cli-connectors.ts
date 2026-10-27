@@ -147,16 +147,15 @@ export interface CliConnectorTurnToken {
 }
 
 // Prompt context for a turn that has CLI connector tokens, or that should
-// have had them but the host could not get them (`unavailable`, the reason).
+// have had them but the host could not get them. The reason is fixed text:
+// the error itself (logged on the host) may carry internal details.
 export function cliConnectorTurnContext(
   tokens: readonly Pick<CliConnectorTurnToken, "connector" | "description">[],
-  unavailable?: string,
+  unavailable = false,
 ): string | undefined {
-  if (unavailable != null) {
-    const reason =
-      sanitizeConnectionDescription(unavailable) || "unknown error";
+  if (unavailable) {
     return `[CLI connectors]
-CLI connector tokens are unavailable this turn (${reason}). \`gh\`, \`git\` and \`cf\` are not signed in as the account the user chose: they use whatever login the project itself has, if any. Tell the user before relying on them.
+CLI connector tokens are unavailable this turn (connector access could not be confirmed). \`gh\`, \`git\` and \`cf\` are not signed in as the account the user chose: they use whatever login the project itself has, if any. Tell the user before relying on them.
 [/CLI connectors]`;
   }
   const lines: string[] = [];
