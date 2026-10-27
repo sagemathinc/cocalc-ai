@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { setProjectMembershipAuditContext } from "@cocalc/database/postgres/schema/project-membership-audit";
 import { preservePreparationAuditSql } from "./preparation-audit";
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -4312,22 +4313,39 @@ async function addMigrationCollaborator({
   account_id: string;
   project_id: string;
 }): Promise<void> {
-  const { rowCount } = await getPool().query(
-    `
-    UPDATE projects
-       SET users=jsonb_set(
-             COALESCE(users, '{}'::jsonb),
-             ARRAY[$2::TEXT],
-             COALESCE(users -> $2::TEXT, '{}'::jsonb) ||
-               jsonb_build_object('group', 'collaborator'),
-             true
-           ),
-           last_edited=NOW()
-     WHERE project_id=$1
-       AND COALESCE(users -> $2::TEXT ->> 'group', '') <> 'owner'
-    `,
-    [project_id, account_id],
-  );
+  // The user imports their own legacy project.
+  const client = await getPool().connect();
+  let rowCount: number | null;
+  try {
+    await client.query("BEGIN");
+    await setProjectMembershipAuditContext(client, {
+      actor_account_id: account_id,
+      via: "legacy-import",
+    });
+    const result = await client.query(
+      `
+      UPDATE projects
+         SET users=jsonb_set(
+               COALESCE(users, '{}'::jsonb),
+               ARRAY[$2::TEXT],
+               COALESCE(users -> $2::TEXT, '{}'::jsonb) ||
+                 jsonb_build_object('group', 'collaborator'),
+               true
+             ),
+             last_edited=NOW()
+       WHERE project_id=$1
+         AND COALESCE(users -> $2::TEXT ->> 'group', '') <> 'owner'
+      `,
+      [project_id, account_id],
+    );
+    rowCount = result.rowCount;
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
   if (rowCount && rowCount > 0) {
     await syncProjectUsersOnHost({ project_id });
     await publishProjectAccountFeedEventsBestEffort({ project_id });
@@ -5844,3 +5862,7 @@ export async function dismissProjectRemediation({
   }
   return remediationResponse(row);
 }
+
+export const __test__ = {
+  addMigrationCollaborator,
+};

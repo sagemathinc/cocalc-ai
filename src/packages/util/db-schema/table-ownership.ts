@@ -884,6 +884,7 @@ export const TABLE_OWNERSHIP = {
       "instance_actions_log",
       "membership_side_effects_outbox",
       "notification_events",
+      "project_membership_audit_failures",
       "webapp_error_resolutions",
       "webapp_errors",
     ],

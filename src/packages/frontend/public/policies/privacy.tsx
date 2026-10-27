@@ -11,7 +11,7 @@ export const privacyPolicy: PublicPolicy = {
   navLabel: "Privacy",
   slug: "privacy",
   title: "Privacy Policy",
-  updated: "October 25, 2026",
+  updated: "October 27, 2026",
   content: (
     <>
       <p>
@@ -199,6 +199,19 @@ export const privacyPolicy: PublicPolicy = {
             five viewers. We rely on our legitimate interests in securing the
             Services and in providing these statistics, and we delete these
             records after 13 months.
+          </p>
+          <p>
+            <strong>Project Access Records.</strong> When someone is added to or
+            removed from a project, or their role in a project changes, we
+            record the project, the account whose access changed, the account
+            that made the change (and, for an accepted invitation, the account
+            that sent it), the role, how the change was made (for example,
+            accepting an invitation or being added to a course), and the time.
+            These records contain account identifiers only, not names, email
+            addresses or file contents, and project members cannot delete them.
+            We use them to investigate security problems and abuse, such as
+            unauthorized access to a project, relying on our legitimate interest
+            in securing the Services, and we delete them after 13 months.
           </p>
           <p>
             {" "}
@@ -852,6 +865,12 @@ export const privacyPolicy: PublicPolicy = {
           (records about shares stored in another region of our service are
           deleted within those 13 months).
         </p>
+        <p>
+          Records of changes to who can access a project are deleted 13 months
+          after the change. These records are kept for 13 months even if an
+          account is deleted, because they are needed to investigate security
+          problems.
+        </p>
       </PolicySection>{" "}
       <PolicySection
         id="security-of-your-information"
@@ -1209,6 +1228,10 @@ export const privacyPolicy: PublicPolicy = {
             <tr>
               <td>Update: records of public share views</td>
               <td> 2026-10-25 </td>
+            </tr>
+            <tr>
+              <td>Update: records of project access changes</td>
+              <td> 2026-10-27 </td>
             </tr>
           </tbody>
         </table>
