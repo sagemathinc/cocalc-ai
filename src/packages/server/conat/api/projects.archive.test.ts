@@ -499,6 +499,84 @@ describe("projects.archiveProject", () => {
     );
   });
 
+  it("checks a caller's deprovisioned-host precondition against the current placement", async () => {
+    const row = (host_id: string, host_status: string) => ({
+      rows: [
+        {
+          host_id,
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "opened" },
+          host_status,
+          last_backup: new Date(),
+        },
+      ],
+    });
+    const { archiveProject } = await import("./projects");
+    // the project moved to another host, or its host is live again
+    for (const current of [
+      row("host-2", "deprovisioned"),
+      row("host-1", "running"),
+    ]) {
+      poolQueryMock.mockResolvedValueOnce(current);
+      await expect(
+        archiveProject({
+          account_id: "owner-1",
+          project_id: "proj-1",
+          require_deprovisioned_host_id: "host-1",
+        }),
+      ).rejects.toThrow(/host changed or is no longer deprovisioned/);
+    }
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(poolConnectQueryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects"),
+      expect.anything(),
+    );
+
+    // the host became live again between the first check and the commit:
+    // the share-locked status check in the fenced transaction refuses
+    let hostStatusAtCommit = "running";
+    const defaultClientQuery = poolConnectQueryMock.getMockImplementation()!;
+    poolConnectQueryMock.mockImplementation(async (sql: string, params) =>
+      `${sql}`.includes("FROM project_hosts WHERE id = $1 FOR SHARE")
+        ? { rows: [{ status: hostStatusAtCommit }] }
+        : defaultClientQuery(sql, params),
+    );
+    poolQueryMock.mockResolvedValueOnce(row("host-1", "deprovisioned"));
+    await expect(
+      archiveProject({
+        account_id: "owner-1",
+        project_id: "proj-1",
+        require_deprovisioned_host_id: "host-1",
+      }),
+    ).rejects.toThrow(/host changed or is no longer deprovisioned/);
+    expect(poolConnectQueryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects"),
+      expect.anything(),
+    );
+
+    // (control) still placed on the deprovisioned host: archived
+    hostStatusAtCommit = "deprovisioned";
+    poolQueryMock.mockResolvedValueOnce(row("host-1", "deprovisioned"));
+    await expect(
+      archiveProject({
+        account_id: "owner-1",
+        project_id: "proj-1",
+        require_deprovisioned_host_id: "host-1",
+      }),
+    ).resolves.toBeUndefined();
+    // the host row is share-locked, and the commit requires the placement
+    expect(poolConnectQueryMock).toHaveBeenCalledWith(
+      expect.stringContaining("FOR SHARE"),
+      ["host-1"],
+    );
+    const [sql, params] = poolConnectQueryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("UPDATE projects"),
+    )!;
+    expect(sql).toContain("$8::uuid IS NULL OR host_id = $8::uuid");
+    expect(params[7]).toBe("host-1");
+  });
+
   it("archives an off host with existing backups without stopping or deleting host data", async () => {
     poolQueryMock.mockResolvedValueOnce({
       rows: [

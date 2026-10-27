@@ -420,7 +420,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_FAILURE_RETRY_MS = 10_000;
   private static HOST_RECOVERY_POLL_MS = 10_000;
   private static HOST_RECOVERY_WAIT_MS = 10 * 60_000;
-  private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
+  // an archive may delete the project's data on its host before it returns,
+  // and a routed call to the owning bay waits only as long as this
+  private static ARCHIVE_RPC_TIMEOUT_MS = 10 * 60_000;
   private static REALTIME_FEED_BATCH_MS = 50;
   private static PROJECT_ROW_RECONCILE_DELAYS_MS = [1_000, 5_000] as const;
   private static PROJECT_LIFECYCLE_RECONCILE_DELAYS_MS = [
@@ -5407,10 +5409,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   };
 
+  // Returns the precondition the owning bay must confirm when the final
+  // backup was skipped because this client saw the host deprovisioned: its
+  // view may be stale, and archiving a project that moved to a live host
+  // without its normal checks could lose newer changes.
   private ensureArchiveBackupFresh = async (
     project_id: string,
     actions?: { setState?: (next: any) => void },
-  ): Promise<void> => {
+  ): Promise<{ require_deprovisioned_host_id?: string } | undefined> => {
     const lifecycleState = store.getIn([
       "project_map",
       project_id,
@@ -5449,7 +5455,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           backup_time:
             lastBackup instanceof Date ? lastBackup.toISOString() : undefined,
         });
-        return;
+        return { require_deprovisioned_host_id: host_id };
       }
       if (hostOperational.state === "unavailable") {
         actions?.setState?.({
@@ -5591,7 +5597,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
         actions?.setState?.({ control_status: "" });
         return;
       }
-      await this.ensureArchiveBackupFresh(project_id, actions);
+      const precondition = await this.ensureArchiveBackupFresh(
+        project_id,
+        actions,
+      );
       actions?.setState?.({ control_status: "Archiving project..." });
       await writeAndWaitForProjection({
         consumer: "projects",
@@ -5601,6 +5610,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           webapp_client.conat_client.hub.projects.archiveProject({
             project_id,
             timeout: ProjectsActions.ARCHIVE_RPC_TIMEOUT_MS,
+            ...(precondition ?? {}),
             ...(allow_oversized_skip ? { allow_oversized_skip: true } : {}),
           }),
         matchesProjection: () =>
