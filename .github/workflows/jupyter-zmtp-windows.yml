@@ -46,5 +46,8 @@ jobs:
           cd "$out"
           node "$RUNNER_TEMP/ts/node_modules/typescript/bin/tsc" --esModuleInterop --target es2022 --lib es2022 --module commonjs --types node,jest --typeRoots "$RUNNER_TEMP/ts/node_modules/@types" zmtp.test.ts zmtp-interop.test.ts
           shim="$GITHUB_WORKSPACE/src/packages/jupyter/zmq/node-test-shim.cjs"
-          node --test-reporter=spec "$shim" zmtp.test.js
-          node --test-reporter=spec "$shim" zmtp-interop.test.js
+          # both files run even if the first fails, so one can't hide the other's coverage
+          rc=0
+          node --test-reporter=spec "$shim" zmtp.test.js || rc=1
+          node --test-reporter=spec "$shim" zmtp-interop.test.js || rc=1
+          exit $rc
