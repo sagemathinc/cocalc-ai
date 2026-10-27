@@ -466,6 +466,11 @@ SETTINGS_ROWS=$'version_min_browser 1792710260\n'
 [[ "$(read_required_browser_version 1792900000)" == none ]]
 SETTINGS_ROWS=$'version_min_browser 4102444800\nversion_recommended_browser 4102444800\n'
 [[ "$(read_required_browser_version 1792900000)" == none ]]
+# Inner whitespace never joins digits into a recent version (the hub's
+# parseInt reads "1792" here): the value is invalid, so a deploy raises it.
+SETTINGS_ROWS=$'version_min_browser  1792 710260 \nversion_recommended_browser 1792800000\n'
+[[ "$(read_browser_version_settings)" == "1792_710260 1792800000" ]]
+[[ "$(browser_version_raise_target 1792_710260 1792900000 1792000000)" == 1792000000 ]]
 runuser() { return 2; }
 [[ -z "$(read_browser_version_settings)" ]]
 [[ -z "$(read_required_browser_version 1792900000)" ]]
@@ -647,6 +652,157 @@ HUB_BUNDLE_PATH="${TMP_ROOT}/hub-overlay/new-hub.tar.gz"
 stage_hub_bundle_release >/dev/null
 [[ "$(release_hub_smc_version "$TARGET_RELEASE" "$(find_node)")" == 1792950000 ]]
 HUB_BUNDLE_PATH=""
+
+# Each deploy keeps the browser versions at most FRONTEND_MAX_BROWSER_AGE_DAYS
+# old: raise only, never lower, never touch a recent (or future) value.
+NOW_S=1793000000
+FLOOR_S=$((NOW_S - 30 * 86400))
+[[ "$(browser_version_raise_target 1790000000 "$NOW_S" "$FLOOR_S")" == "$FLOOR_S" ]]
+[[ -z "$(browser_version_raise_target $((FLOOR_S + 1)) "$NOW_S" "$FLOOR_S")" ]]
+[[ -z "$(browser_version_raise_target "$FLOOR_S" "$NOW_S" "$FLOOR_S")" ]]
+[[ "$(browser_version_raise_target - "$NOW_S" "$FLOOR_S")" == "$FLOOR_S" ]]
+[[ "$(browser_version_raise_target 0 "$NOW_S" "$FLOOR_S")" == "$FLOOR_S" ]]
+[[ "$(browser_version_raise_target oct-22 "$NOW_S" "$FLOOR_S")" == "$FLOOR_S" ]]
+# A future value (the hub ignores it) is not lowered.
+[[ -z "$(browser_version_raise_target 4102444800 "$NOW_S" "$FLOOR_S")" ]]
+[[ -z "$(browser_version_raise_target 18446744075502679816 "$NOW_S" "$FLOOR_S")" ]]
+
+# The deploy step reads both settings and writes only those it raises.
+# (A standalone bay: an empty topology env.)
+ENV_DIR="${TMP_ROOT}/etc-browser-version"
+mkdir -p "$ENV_DIR"
+WRITES="${TMP_ROOT}/browser-version-writes"
+write_browser_version_setting() { echo "$1=$2" >>"$WRITES"; }
+RECENT=$(($(date +%s) - 5 * 86400))
+STALE=$(($(date +%s) - 90 * 86400))
+for case_settings in "$STALE $RECENT" "$RECENT $RECENT" "- -" "4102444800 $STALE"; do
+  : >"$WRITES"
+  eval "read_browser_version_settings() { echo '$case_settings'; }"
+  ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+  floor_now=$(($(date +%s) - 30 * 86400))
+  case "$case_settings" in
+    "$STALE $RECENT")
+      grep -Eq "^version_min_browser=($((floor_now - 1))|${floor_now})$" "$WRITES"
+      [[ "$(wc -l <"$WRITES")" -eq 1 ]]
+      grep -q "raised version_min_browser from ${STALE} to .* (at most 30 days old)" "${TMP_ROOT}/browser-version.log"
+      ;;
+    "$RECENT $RECENT")
+      [[ ! -s "$WRITES" ]]
+      ;;
+    "- -")
+      grep -q '^version_min_browser=' "$WRITES"
+      grep -q '^version_recommended_browser=' "$WRITES"
+      ;;
+    "4102444800 $STALE")
+      [[ "$(cat "$WRITES")" == version_recommended_browser=* ]]
+      [[ "$(wc -l <"$WRITES")" -eq 1 ]]
+      ;;
+  esac
+done
+# 0 days turns it off; unreadable settings change nothing.
+: >"$WRITES"
+eval "read_browser_version_settings() { echo '$STALE $STALE'; }"
+FRONTEND_MAX_BROWSER_AGE_DAYS=0 ensure_recent_browser_version >/dev/null
+[[ ! -s "$WRITES" ]]
+# A leading zero is decimal (not an octal error); more than 5 digits, which
+# could overflow into a future floor, is refused with a warning.
+FRONTEND_MAX_BROWSER_AGE_DAYS=08 ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+grep -q "(at most 8 days old)" "${TMP_ROOT}/browser-version.log"
+: >"$WRITES"
+FRONTEND_MAX_BROWSER_AGE_DAYS=999999999999999 ensure_recent_browser_version \
+  >/dev/null 2>"${TMP_ROOT}/browser-version.err"
+[[ ! -s "$WRITES" ]]
+grep -q "is not a number of days" "${TMP_ROOT}/browser-version.err"
+# A value changed while the deploy read it is left as is, and said so.
+write_browser_version_setting() { return 2; }
+ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+grep -q "version_min_browser is already at least .* (changed meanwhile); left as is" "${TMP_ROOT}/browser-version.log"
+# One the environment sets is left as is, and said so.
+write_browser_version_setting() { return 3; }
+ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+grep -q "version_min_browser is set by COCALC_SETTING_VERSION_MIN_BROWSER in the environment; left as is" "${TMP_ROOT}/browser-version.log"
+# In a multi-bay cluster the seed owns site settings: no write on any bay.
+write_browser_version_setting() { echo "$1=$2" >>"$WRITES"; }
+for role in seed attached; do
+  : >"$WRITES"
+  # (render-bay-topology-env.sh writes it shell-quoted)
+  echo "COCALC_CLUSTER_ROLE='${role}'" >"${ENV_DIR}/bay-topology.env"
+  ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+  [[ ! -s "$WRITES" ]]
+  grep -q "cluster role is '${role}'" "${TMP_ROOT}/browser-version.log"
+done
+echo "COCALC_CLUSTER_ROLE=standalone" >"${ENV_DIR}/bay-topology.env"
+: >"$WRITES"
+ensure_recent_browser_version >/dev/null
+[[ -s "$WRITES" ]]
+# The role is the one the services get: the units' file order, the last
+# value winning, so the operator's bay-local.env overrides the topology.
+echo "COCALC_CLUSTER_ROLE=attached" >"${ENV_DIR}/bay-local.env"
+[[ "$(bay_cluster_role)" == attached ]]
+: >"$WRITES"
+ensure_recent_browser_version >/dev/null
+[[ ! -s "$WRITES" ]]
+# A later empty assignment is unset (standalone), as the hub reads it.
+echo "COCALC_CLUSTER_ROLE=seed" >"${ENV_DIR}/bay-topology.env"
+echo "COCALC_CLUSTER_ROLE=" >"${ENV_DIR}/bay-local.env"
+[[ "$(bay_cluster_role)" == standalone ]]
+# bay.env comes first, so the topology overrides it.
+rm -f "${ENV_DIR}/bay-local.env"
+echo "COCALC_CLUSTER_ROLE=attached" >"${ENV_DIR}/bay.env"
+[[ "$(bay_cluster_role)" == seed ]]
+# An unknown role fails closed, with a warning.
+echo "COCALC_CLUSTER_ROLE=sede" >"${ENV_DIR}/bay-topology.env"
+: >"$WRITES"
+ensure_recent_browser_version >/dev/null 2>"${TMP_ROOT}/browser-version.err"
+[[ ! -s "$WRITES" ]]
+grep -q "unknown COCALC_CLUSTER_ROLE 'sede'" "${TMP_ROOT}/browser-version.err"
+# Only outer whitespace and one pair of quotes go: inner whitespace keeps a
+# misspelled role unknown (the hub rejects it), never "standalone".
+printf '%s\n' "COCALC_CLUSTER_ROLE='st andalone'" >"${ENV_DIR}/bay-topology.env"
+[[ "$(bay_cluster_role)" == "st andalone" ]]
+: >"$WRITES"
+ensure_recent_browser_version >/dev/null 2>"${TMP_ROOT}/browser-version.err"
+[[ ! -s "$WRITES" ]]
+grep -q "unknown COCALC_CLUSTER_ROLE 'st andalone'" "${TMP_ROOT}/browser-version.err"
+printf '%s\n' 'COCALC_CLUSTER_ROLE= " attached " ' >"${ENV_DIR}/bay-topology.env"
+[[ "$(bay_cluster_role)" == attached ]]
+printf '%s\n' "COCALC_CLUSTER_ROLE=seed " >"${ENV_DIR}/bay-topology.env"
+[[ "$(bay_cluster_role)" == seed ]]
+rm -f "${ENV_DIR}/bay-topology.env" "${ENV_DIR}/bay.env"
+[[ "$(bay_cluster_role)" == standalone ]]
+: >"$WRITES"
+read_browser_version_settings() { :; }
+ensure_recent_browser_version >/dev/null
+[[ ! -s "$WRITES" ]]
+# The writer only accepts the two settings and a number.
+unset -f write_browser_version_setting
+# shellcheck disable=SC1091
+eval "$(sed -n '/^write_browser_version_setting() {/,/^}/p' "${SCRIPT_DIR}/bay-bootstrap-release.sh")"
+if write_browser_version_setting version_min_browser "1; DROP TABLE x" 2>/dev/null ||
+  write_browser_version_setting other_setting 1792710260 2>/dev/null; then
+  echo "write_browser_version_setting accepted a bad name or value" >&2
+  exit 1
+fi
+
+# Ordering: in main(), the raise comes after the release goes live (and so
+# after the static pre-cutover setup), never before it.
+main_body="$(sed -n '/^main() {/,/^}/p' "${SCRIPT_DIR}/bay-bootstrap-release.sh")"
+raise_line="$(grep -n '^    ensure_recent_browser_version$' <<<"$main_body" | cut -d: -f1)"
+cutover_line="$(grep -n '^  set_current_release$' <<<"$main_body" | head -n1 | cut -d: -f1)"
+static_setup_line="$(grep -n '^    remove_trusted_scaffold$' <<<"$main_body" | head -n1 | cut -d: -f1)"
+if [[ -z "$raise_line" || -z "$cutover_line" || -z "$static_setup_line" ]] ||
+  ((raise_line < cutover_line || raise_line < static_setup_line)); then
+  echo "ensure_recent_browser_version must run after set_current_release" >&2
+  exit 1
+fi
+
+# Against a real postgres when its server binaries are available.
+PG_BIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n1 || true)"
+if [[ -n "$PG_BIN" && -x "${PG_BIN}/initdb" ]] && command -v psql >/dev/null; then
+  bash "${SCRIPT_DIR}/bay-browser-version-pg.test.sh" "$PG_BIN" >/dev/null
+else
+  echo "skipping browser version postgres tests (no postgres server binaries)" >&2
+fi
 
 VALIDATION_RELEASE="${TMP_ROOT}/validation-release"
 TARGET_RELEASE="$VALIDATION_RELEASE"
