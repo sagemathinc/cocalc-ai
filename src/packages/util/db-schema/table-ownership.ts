@@ -110,13 +110,15 @@ export const TABLE_OWNERSHIP = {
       "merge_approval_requests",
       "merge_approval_decisions",
       "merge_approval_relays",
+      "merge_approval_attempts",
     ],
     {
       ownership: "seed-global",
       authority: "seed",
       portability: "stable",
       secondary_reference_fields: {
-        account_id: "The deciding approver, not account-home placement.",
+        account_id:
+          "The deciding approver (decisions) or the requesting account (attempts), not account-home placement.",
       },
       notes:
         "Merge approvals bound to an exact pull-request head. The seed holds the GitHub App key and is the only bay that records or relays them; decisions and relays are append-only.",

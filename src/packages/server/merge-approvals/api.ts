@@ -119,8 +119,65 @@ export async function requestMergeApproval(
     throw codeError("the merge approval GitHub App is not configured", 503);
   }
 
+  // Admitted and counted before any GitHub read, whatever happens next.
+  const attempt = await store().admitAttempt({
+    project_id: project_id!,
+    account_id: account_id!,
+    repo,
+    pr_number,
+  });
+  let outcome = "error";
+  try {
+    const request = await readAndRecordRequest({
+      app: settings.app,
+      repo,
+      pr_number,
+      head_sha,
+      agent_note,
+      chat,
+      requested_by: {
+        account_id: account_id!,
+        project_id: project_id!,
+        token_fingerprint: opts.auth_token_fingerprint,
+        agent_label,
+      },
+    });
+    outcome = "recorded";
+    return request;
+  } catch (err) {
+    outcome = `${(err as any)?.code ?? "error"}`;
+    throw err;
+  } finally {
+    await store()
+      .finishAttempt(attempt, outcome)
+      .catch(() => {});
+  }
+}
+
+async function readAndRecordRequest({
+  app,
+  repo,
+  pr_number,
+  head_sha,
+  agent_note,
+  chat,
+  requested_by,
+}: {
+  app: NonNullable<Awaited<ReturnType<typeof getMergeApprovalSettings>>["app"]>;
+  repo: string;
+  pr_number: number;
+  head_sha: string;
+  agent_note: string;
+  chat: ReturnType<typeof normalizeMergeApprovalChatRef>;
+  requested_by: {
+    account_id: string;
+    project_id: string;
+    token_fingerprint?: string;
+    agent_label?: string;
+  };
+}): Promise<MergeApprovalRequest> {
   const snapshot = await readPullRequestSnapshot({
-    config: settings.app,
+    config: app,
     repo,
     pr_number,
   });
@@ -132,7 +189,6 @@ export async function requestMergeApproval(
   }
   assertCurrentHead(pr_number, head_sha, snapshot.head_sha);
 
-  const app = settings.app;
   return await store().create(
     {
       repo,
@@ -141,12 +197,7 @@ export async function requestMergeApproval(
       base_ref: snapshot.base_ref,
       github_snapshot: snapshot,
       agent_note,
-      requested_by: {
-        account_id: account_id!,
-        project_id: project_id!,
-        token_fingerprint: opts.auth_token_fingerprint,
-        agent_label,
-      },
+      requested_by,
       chat,
     },
     {

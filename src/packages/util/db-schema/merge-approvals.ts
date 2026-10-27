@@ -214,3 +214,55 @@ Table({
     relay_error: { type: "string", desc: "Error, when failed." },
   },
 });
+
+// Admission of request attempts, before the hub reads from GitHub: every
+// attempt is counted, valid or not, so a misbehaving agent can't use the
+// shared App installation's API quota. Operational data, not approval
+// records: rows are finished in place and dropped after two days.
+Table({
+  name: "merge_approval_attempts",
+  rules: {
+    primary_key: "id",
+    pg_indexes: ["attempted_at"],
+    pg_custom_indexes: [
+      {
+        name: "merge_approval_attempts_project_idx",
+        query: "(project_id, attempted_at)",
+      },
+    ],
+  },
+  fields: {
+    id: { type: "uuid", not_null: true, desc: "Attempt id." },
+    project_id: {
+      type: "uuid",
+      not_null: true,
+      desc: "The requesting agent's project.",
+    },
+    account_id: {
+      type: "uuid",
+      not_null: true,
+      desc: "The account the agent acts for.",
+    },
+    repo: {
+      type: "string",
+      pg_type: "VARCHAR(140)",
+      not_null: true,
+      desc: "Repository asked about.",
+    },
+    pr_number: { type: "integer", not_null: true, desc: "PR asked about." },
+    attempted_at: {
+      type: "timestamp",
+      not_null: true,
+      desc: "When the attempt was admitted.",
+    },
+    finished_at: {
+      type: "timestamp",
+      desc: "When it finished; null while in flight.",
+    },
+    outcome: {
+      type: "string",
+      pg_type: "VARCHAR(64)",
+      desc: "created, existing, or the error code it ended with.",
+    },
+  },
+});

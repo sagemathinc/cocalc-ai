@@ -19,6 +19,8 @@ const headMock = jest.fn();
 const createMock = jest.fn();
 const getMock = jest.fn();
 const decideMock = jest.fn();
+const admitMock = jest.fn();
+const finishMock = jest.fn();
 const dangerousAuthMock = jest.fn();
 const impersonationMock = jest.fn();
 const accountMock = jest.fn();
@@ -45,6 +47,8 @@ jest.mock("./store", () => ({
     create: (...args: any[]) => createMock(...args),
     get: (...args: any[]) => getMock(...args),
     decide: (...args: any[]) => decideMock(...args),
+    admitAttempt: (...args: any[]) => admitMock(...args),
+    finishAttempt: (...args: any[]) => finishMock(...args),
   })),
 }));
 jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
@@ -121,6 +125,8 @@ beforeEach(() => {
     app,
   };
   snapshotMock.mockReset().mockResolvedValue(prSnapshot());
+  admitMock.mockReset().mockResolvedValue("attempt-1");
+  finishMock.mockReset().mockResolvedValue(undefined);
   headMock.mockReset().mockResolvedValue({
     head_sha: HEAD,
     base_sha: "b".repeat(40),
@@ -297,6 +303,43 @@ describe("requestMergeApproval", () => {
       );
     }
     expect(createMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("request admission", () => {
+  it("admits the attempt before reading GitHub, and records how it ended", async () => {
+    await requestMergeApproval(agentRequest());
+    expect(admitMock).toHaveBeenCalledWith({
+      project_id: PROJECT,
+      account_id: APPROVER,
+      repo: "o/r",
+      pr_number: 7,
+    });
+    expect(admitMock.mock.invocationCallOrder[0]).toBeLessThan(
+      snapshotMock.mock.invocationCallOrder[0],
+    );
+    expect(finishMock).toHaveBeenCalledWith("attempt-1", "recorded");
+  });
+
+  it("reads nothing from GitHub when admission refuses", async () => {
+    admitMock.mockRejectedValue(
+      Object.assign(new Error("too many"), { code: 429 }),
+    );
+    await expect(requestMergeApproval(agentRequest())).rejects.toMatchObject({
+      code: 429,
+    });
+    expect(snapshotMock).not.toHaveBeenCalled();
+    expect(headMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("counts failed attempts too", async () => {
+    snapshotMock.mockResolvedValue(prSnapshot({ head_sha: "d".repeat(40) }));
+    await expect(requestMergeApproval(agentRequest())).rejects.toMatchObject({
+      code: "head_mismatch",
+    });
+    expect(admitMock).toHaveBeenCalledTimes(1);
+    expect(finishMock).toHaveBeenCalledWith("attempt-1", "head_mismatch");
   });
 });
 

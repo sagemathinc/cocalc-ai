@@ -14,6 +14,9 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "@cocalc/database/pool";
 import { assertMergeApprovalIntegrity } from "@cocalc/database/postgres/schema/merge-approval-integrity";
 import {
+  MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT,
+  MAX_MERGE_APPROVAL_ATTEMPTS_PER_HOUR,
+  MAX_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT_PER_HOUR,
   MAX_NEW_MERGE_APPROVALS_PER_PROJECT_PER_HOUR,
   MAX_PENDING_MERGE_APPROVALS_PER_PROJECT,
   MERGE_APPROVAL_TTL_MS,
@@ -133,21 +136,34 @@ export class MergeApprovalStore {
             AND requested_by->>'project_id' = $1`,
         [project_id],
       );
+      // The same merge means the same head, base commit and base branch.
+      const base_sha = req.github_snapshot.base_sha;
       const existing = await client.query(
         `SELECT * FROM merge_approval_requests
           WHERE status='pending' AND repo=$1 AND pr_number=$2 AND head_sha=$3
             AND requested_by->>'project_id' = $4
+            AND base_ref = $5 AND github_snapshot->>'base_sha' = $6
           ORDER BY created_at DESC LIMIT 1`,
-        [req.repo, req.pr_number, req.head_sha, project_id],
+        [
+          req.repo,
+          req.pr_number,
+          req.head_sha,
+          project_id,
+          req.base_ref,
+          base_sha,
+        ],
       );
       if (existing.rows[0] != null) return toRequest(existing.rows[0]);
 
-      // Supersede first, so a request for a new head frees its old head's
+      // Supersede open requests for any other merge of this PR (another
+      // head, base commit or base branch) first, so the new one frees their
       // slot. If a limit refuses it below, this rolls back too.
       await client.query(
         `UPDATE merge_approval_requests SET status='superseded'
-          WHERE status='pending' AND repo=$1 AND pr_number=$2 AND head_sha<>$3`,
-        [req.repo, req.pr_number, req.head_sha],
+          WHERE status='pending' AND repo=$1 AND pr_number=$2
+            AND (head_sha <> $3 OR base_ref <> $4
+                 OR github_snapshot->>'base_sha' IS DISTINCT FROM $5)`,
+        [req.repo, req.pr_number, req.head_sha, req.base_ref, base_sha],
       );
       const counts = await client.query(
         `SELECT count(*) FILTER (WHERE status='pending')::int AS pending,
@@ -193,6 +209,86 @@ export class MergeApprovalStore {
       );
       return toRequest(rows[0]);
     });
+  }
+
+  // Admits one request attempt before the caller reads from GitHub, or
+  // refuses it (429): at most so many per project per hour, site-wide per
+  // hour, and in flight per project. Every attempt counts, whatever its
+  // outcome; call finishAttempt when it is done. Attempts left unfinished
+  // (a crashed hub) stop counting as in flight after a few minutes.
+  async admitAttempt({
+    project_id,
+    account_id,
+    repo,
+    pr_number,
+  }: {
+    project_id: string;
+    account_id: string;
+    repo: string;
+    pr_number: number;
+  }): Promise<string> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Admission is site-wide and rare: one lock for all of it.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        "merge-approval-admission",
+      ]);
+      await client.query(
+        "DELETE FROM merge_approval_attempts WHERE attempted_at < now() - interval '2 days'",
+      );
+      const { rows } = await client.query(
+        `SELECT
+           count(*) FILTER (WHERE project_id = $1)::int AS project_hour,
+           count(*)::int AS site_hour,
+           count(*) FILTER (WHERE project_id = $1 AND finished_at IS NULL
+                              AND attempted_at > now() - interval '5 minutes')::int
+             AS in_flight
+         FROM merge_approval_attempts
+        WHERE attempted_at > now() - interval '1 hour'`,
+        [project_id],
+      );
+      const { project_hour, site_hour, in_flight } = rows[0];
+      if (in_flight >= MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT) {
+        throw codeError(
+          "another merge approval request from this project is in progress; try again shortly",
+          429,
+        );
+      }
+      if (project_hour >= MAX_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT_PER_HOUR) {
+        throw codeError(
+          "too many merge approval requests from this project in the last hour",
+          429,
+        );
+      }
+      if (site_hour >= MAX_MERGE_APPROVAL_ATTEMPTS_PER_HOUR) {
+        throw codeError(
+          "too many merge approval requests in the last hour; try again later",
+          429,
+        );
+      }
+      const id = randomUUID();
+      await client.query(
+        `INSERT INTO merge_approval_attempts
+           (id, project_id, account_id, repo, pr_number, attempted_at)
+         VALUES ($1, $2, $3, $4, $5, now())`,
+        [id, project_id, account_id, repo, pr_number],
+      );
+      await client.query("COMMIT");
+      return id;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async finishAttempt(id: string, outcome: string): Promise<void> {
+    await this.pool.query(
+      "UPDATE merge_approval_attempts SET finished_at=now(), outcome=$2 WHERE id=$1",
+      [id, outcome.slice(0, 64)],
+    );
   }
 
   // Records one decision for a pending, unexpired request and moves it to

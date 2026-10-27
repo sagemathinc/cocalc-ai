@@ -21,6 +21,12 @@ export const MERGE_APPROVAL_RETENTION = "13 months";
 // approvers.
 export const MAX_PENDING_MERGE_APPROVALS_PER_PROJECT = 50;
 export const MAX_NEW_MERGE_APPROVALS_PER_PROJECT_PER_HOUR = 30;
+// Every request attempt reads from GitHub through one shared App
+// installation, so attempts are admitted (and counted) before any read,
+// whatever their outcome: per project, site-wide, and at most a few at once.
+export const MAX_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT_PER_HOUR = 60;
+export const MAX_MERGE_APPROVAL_ATTEMPTS_PER_HOUR = 100;
+export const MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT = 2;
 export const MAX_MERGE_APPROVAL_NOTE_BYTES = 8 * 1024;
 export const MAX_MERGE_APPROVAL_COMMENT_BYTES = 2 * 1024;
 // Cap on the stored GitHub snapshot (files list etc. are truncated to fit).

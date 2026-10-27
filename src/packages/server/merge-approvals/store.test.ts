@@ -6,6 +6,9 @@
 import { randomUUID } from "node:crypto";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import {
+  MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT,
+  MAX_MERGE_APPROVAL_ATTEMPTS_PER_HOUR,
+  MAX_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT_PER_HOUR,
   MAX_NEW_MERGE_APPROVALS_PER_PROJECT_PER_HOUR,
   MAX_PENDING_MERGE_APPROVALS_PER_PROJECT,
   type MergeApprovalGitHubSnapshot,
@@ -17,7 +20,10 @@ const describeDb =
 
 const sha = (c: string) => c.repeat(40);
 
-function snapshot(head_sha: string): MergeApprovalGitHubSnapshot {
+function snapshot(
+  head_sha: string,
+  base_sha = "b".repeat(40),
+): MergeApprovalGitHubSnapshot {
   return {
     title: "t",
     state: "open",
@@ -26,6 +32,7 @@ function snapshot(head_sha: string): MergeApprovalGitHubSnapshot {
     base_ref: "main",
     head_ref: "b",
     head_sha,
+    base_sha,
     html_url: "https://github.com/o/r/pull/1",
     additions: 1,
     deletions: 0,
@@ -177,6 +184,118 @@ describeDb("merge approval store", () => {
     );
     expect(verify).toHaveBeenCalledTimes(1);
     expect((await store.get(old.id))?.status).toBe("superseded");
+  });
+
+  it("reuses an open request only for the same head and base", async () => {
+    const project_id = randomUUID();
+    const a = await store.create(newRequest(project_id, { pr_number: 41 }));
+    const same = await store.create(newRequest(project_id, { pr_number: 41 }));
+    expect(same.id).toBe(a.id);
+    // The base branch advanced; the head is the same.
+    const rebased = await store.create(
+      newRequest(project_id, {
+        pr_number: 41,
+        github_snapshot: snapshot(sha("a"), sha("e")),
+      }),
+    );
+    expect(rebased.id).not.toBe(a.id);
+    expect((await store.get(a.id))?.status).toBe("superseded");
+    // Retargeted to another branch.
+    const retargeted = await store.create(
+      newRequest(project_id, {
+        pr_number: 41,
+        base_ref: "release",
+        github_snapshot: snapshot(sha("a"), sha("e")),
+      }),
+    );
+    expect(retargeted.id).not.toBe(rebased.id);
+    expect((await store.get(rebased.id))?.status).toBe("superseded");
+  });
+
+  it("admits attempts within the hourly and concurrency limits, before any read", async () => {
+    const project_id = randomUUID();
+    const who = {
+      project_id,
+      account_id: randomUUID(),
+      repo: "o/r",
+      pr_number: 1,
+    };
+    const ids: string[] = [];
+    for (
+      let i = 0;
+      i < MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT;
+      i++
+    ) {
+      ids.push(await store.admitAttempt(who));
+    }
+    await expect(store.admitAttempt(who)).rejects.toThrow("in progress");
+    await store.finishAttempt(ids[0], "recorded");
+    ids.push(await store.admitAttempt(who));
+    for (const id of ids) await store.finishAttempt(id, "head_mismatch");
+
+    // An attempt left unfinished stops counting as in flight after a while.
+    await getPool().query(
+      `INSERT INTO merge_approval_attempts
+         (id, project_id, account_id, repo, pr_number, attempted_at)
+       SELECT gen_random_uuid(), $1, $2, 'o/r', 1, now() - interval '10 minutes'
+         FROM generate_series(1, $3::int)`,
+      [
+        project_id,
+        who.account_id,
+        MAX_CONCURRENT_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT,
+      ],
+    );
+    await store.finishAttempt(await store.admitAttempt(who), "recorded");
+
+    // Every attempt counts toward the hour, finished or not.
+    await getPool().query(
+      `INSERT INTO merge_approval_attempts
+         (id, project_id, account_id, repo, pr_number, attempted_at, finished_at, outcome)
+       SELECT gen_random_uuid(), $1, $2, 'o/r', 1, now() - interval '30 minutes',
+              now() - interval '30 minutes', 'existing'
+         FROM generate_series(1, $3::int)`,
+      [
+        project_id,
+        who.account_id,
+        MAX_MERGE_APPROVAL_ATTEMPTS_PER_PROJECT_PER_HOUR,
+      ],
+    );
+    await expect(store.admitAttempt(who)).rejects.toMatchObject({ code: 429 });
+    await getPool().query("DELETE FROM merge_approval_attempts");
+  });
+
+  it("limits attempts site-wide", async () => {
+    await getPool().query(
+      `INSERT INTO merge_approval_attempts
+         (id, project_id, account_id, repo, pr_number, attempted_at, finished_at)
+       SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'o/r', 1,
+              now() - interval '10 minutes', now() - interval '10 minutes'
+         FROM generate_series(1, $1::int)`,
+      [MAX_MERGE_APPROVAL_ATTEMPTS_PER_HOUR],
+    );
+    await expect(
+      store.admitAttempt({
+        project_id: randomUUID(),
+        account_id: randomUUID(),
+        repo: "o/r",
+        pr_number: 1,
+      }),
+    ).rejects.toThrow("in the last hour");
+    // Old attempts are dropped.
+    await getPool().query(
+      "UPDATE merge_approval_attempts SET attempted_at = now() - interval '3 days'",
+    );
+    await store.admitAttempt({
+      project_id: randomUUID(),
+      account_id: randomUUID(),
+      repo: "o/r",
+      pr_number: 1,
+    });
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM merge_approval_attempts",
+    );
+    expect(rows[0].n).toBe(1);
+    await getPool().query("DELETE FROM merge_approval_attempts");
   });
 
   it("refuses unknown requests", async () => {
