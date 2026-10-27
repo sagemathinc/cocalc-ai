@@ -1527,6 +1527,19 @@ export class NebiusProvider implements CloudProvider {
     return advice;
   }
 
+  async startRefusal(
+    runtime: HostRuntime,
+    creds: NebiusProviderCreds,
+  ): Promise<string | undefined> {
+    await using client = new NebiusClient(creds);
+    try {
+      await assertPreemptibleStartAllowed(client, runtime);
+    } catch (err) {
+      return `${(err as Error)?.message ?? err}`;
+    }
+    return undefined;
+  }
+
   async restartHost(runtime: HostRuntime, creds: NebiusProviderCreds) {
     await using client = new NebiusClient(creds);
     // refuse before stopping: a refused restart leaves the instance running

@@ -824,6 +824,12 @@ export async function restartHostInternalHelper({
   const owner = metadata.owner ?? account_id;
   const machine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  assertNebiusSpotOffered(
+    machineCloud,
+    metadata.desired_pricing_model ??
+      metadata.effective_pricing_model ??
+      metadata.pricing_model,
+  );
   const provider = machineCloud ? getServerProvider(machineCloud) : undefined;
   const caps = provider?.entry.capabilities;
   const wantsHard = mode === "hard";

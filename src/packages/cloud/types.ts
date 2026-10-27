@@ -175,6 +175,9 @@ export interface CloudProvider {
   >;
   restartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   hardRestartHost?(runtime: HostRuntime, creds: any): Promise<void>;
+  // Why the provider would refuse to (re)start this instance now, if it
+  // would; checked before the caller changes anything. No side effects.
+  startRefusal?(runtime: HostRuntime, creds: any): Promise<string | undefined>;
   ensureStartupScript?(runtime: HostRuntime, creds: any): Promise<void>;
   ensureSshAccess?(runtime: HostRuntime, creds: any): Promise<void>;
   ensurePublicIngress?(

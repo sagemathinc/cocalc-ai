@@ -4004,3 +4004,67 @@ describe("spot recovery fallback ladder", () => {
     expect(state.fallback_rungs_tried).toContain("spot:n2d-standard-32");
   });
 });
+
+describe("a restart the provider refuses (Nebius Spot while it is off)", () => {
+  it("leaves the running host untouched: no status, last_seen or DNS change", async () => {
+    const hostId = "5a1f0c2e-9b7d-4e61-8f3a-2c4d6e8f0a1b";
+    const restartHost = jest.fn(async () => undefined);
+    const stopHost = jest.fn(async () => undefined);
+    const startHost = jest.fn(async () => undefined);
+    const startRefusal = jest.fn(
+      async () =>
+        "Nebius Spot is unavailable until spot pricing support lands; use Standard pricing",
+    );
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: { restartHost, stopHost, startHost, startRefusal },
+        capabilities: { supportsStop: true },
+      },
+      creds: {},
+    });
+    const contentDns = await import("./host-content-dns");
+    const releaseDns = jest
+      .spyOn(contentDns, "releaseHostContentDns")
+      .mockResolvedValue(undefined as any);
+    const lastSeen = new Date("2026-10-27T03:00:00.000Z");
+    await upsertProjectHost({
+      id: hostId,
+      name: "Nebius spot host",
+      region: "eu-north1",
+      status: "running",
+      last_seen: lastSeen,
+      metadata: {
+        owner: "acct-owner",
+        desired_state: "running",
+        machine: { cloud: "nebius", machine_type: "1gpu-16vcpu-200gb" },
+        effective_pricing_model: "spot",
+        runtime: { provider: "nebius", instance_id: "instance-1" },
+      },
+    } as any);
+
+    const { cloudHostHandlers } = await import("./host-work");
+    for (const action of ["restart", "hard_restart"] as const) {
+      await cloudHostHandlers[action]({
+        id: `work-${action}`,
+        vm_id: hostId,
+        action,
+        payload: { provider: "nebius" },
+      } as any);
+    }
+
+    expect(startRefusal).toHaveBeenCalledTimes(2);
+    expect(restartHost).not.toHaveBeenCalled();
+    expect(stopHost).not.toHaveBeenCalled();
+    expect(startHost).not.toHaveBeenCalled();
+    expect(releaseDns).not.toHaveBeenCalled();
+    const { rows } = await getPool().query(
+      "SELECT status, last_seen FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(rows[0].status).toBe("running");
+    expect(new Date(rows[0].last_seen).toISOString()).toBe(
+      lastSeen.toISOString(),
+    );
+    releaseDns.mockRestore();
+  });
+});

@@ -3115,6 +3115,17 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
     region: row.region,
   });
   const provider = entry.provider;
+  const refusal = await provider.startRefusal?.(runtime, creds);
+  if (refusal) {
+    // before marking it restarting or releasing its DNS: the host keeps
+    // running untouched, and this queued restart is dropped
+    logger.warn("handleRestart: provider refuses to restart this host", {
+      host_id: row.id,
+      provider: providerId,
+      refusal,
+    });
+    return;
+  }
   let runtimeForRestart = runtime;
   try {
     const { baseUrl } = await resolveLaunchpadBootstrapUrl({
