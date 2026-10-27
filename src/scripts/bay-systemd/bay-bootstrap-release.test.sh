@@ -756,6 +756,18 @@ echo "COCALC_CLUSTER_ROLE=sede" >"${ENV_DIR}/bay-topology.env"
 ensure_recent_browser_version >/dev/null 2>"${TMP_ROOT}/browser-version.err"
 [[ ! -s "$WRITES" ]]
 grep -q "unknown COCALC_CLUSTER_ROLE 'sede'" "${TMP_ROOT}/browser-version.err"
+# Only outer whitespace and one pair of quotes go: inner whitespace keeps a
+# misspelled role unknown (the hub rejects it), never "standalone".
+printf '%s\n' "COCALC_CLUSTER_ROLE='st andalone'" >"${ENV_DIR}/bay-topology.env"
+[[ "$(bay_cluster_role)" == "st andalone" ]]
+: >"$WRITES"
+ensure_recent_browser_version >/dev/null 2>"${TMP_ROOT}/browser-version.err"
+[[ ! -s "$WRITES" ]]
+grep -q "unknown COCALC_CLUSTER_ROLE 'st andalone'" "${TMP_ROOT}/browser-version.err"
+printf '%s\n' 'COCALC_CLUSTER_ROLE= " attached " ' >"${ENV_DIR}/bay-topology.env"
+[[ "$(bay_cluster_role)" == attached ]]
+printf '%s\n' "COCALC_CLUSTER_ROLE=seed " >"${ENV_DIR}/bay-topology.env"
+[[ "$(bay_cluster_role)" == seed ]]
 rm -f "${ENV_DIR}/bay-topology.env" "${ENV_DIR}/bay.env"
 [[ "$(bay_cluster_role)" == standalone ]]
 : >"$WRITES"

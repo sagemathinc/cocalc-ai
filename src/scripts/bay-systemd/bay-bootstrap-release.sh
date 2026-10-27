@@ -859,10 +859,22 @@ bay_cluster_role() {
     bay-secrets.env bay-local.env; do
     [[ -r "${dir}/${file}" ]] || continue
     grep -q '^COCALC_CLUSTER_ROLE=' "${dir}/${file}" || continue
-    role="$(sed -n 's/^COCALC_CLUSTER_ROLE=//p' "${dir}/${file}" | tail -n1 |
-      tr -d "\"'[:space:]")"
+    role="$(sed -n 's/^COCALC_CLUSTER_ROLE=//p' "${dir}/${file}" | tail -n1)"
   done
+  # Only the outer syntax goes: surrounding whitespace and one pair of
+  # quotes, then the hub's trim. Inner whitespace stays, so a misspelling
+  # like "st andalone" is unknown, as the hub finds it.
+  role="$(trim_outer_space "$role")"
+  if ((${#role} >= 2)) && [[ "$role" == \"*\" || "$role" == \'*\' ]]; then
+    role="$(trim_outer_space "${role:1:${#role}-2}")"
+  fi
   echo "${role:-standalone}"
+}
+
+trim_outer_space() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  echo "${s%"${s##*[![:space:]]}"}"
 }
 
 # Raises the required and recommended browser versions to at most
