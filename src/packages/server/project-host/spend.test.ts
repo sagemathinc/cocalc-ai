@@ -427,6 +427,120 @@ describe("dedicated host spend accounting", () => {
     expect(toDecimal(usage.credit_7d_usd).toNumber()).toBeCloseTo(10, 1);
   });
 
+  // Opens a metered dedicated-host purchase and, if `closed`, closes it the way
+  // billing does: cost and period_end set.
+  async function meteredHostPurchase({
+    account_id,
+    funding_lane,
+    cost_per_hour,
+    period_start,
+    period_end,
+    closed = true,
+  }: {
+    account_id: string;
+    funding_lane: "prepaid" | "credit";
+    cost_per_hour: number;
+    period_start: Date;
+    period_end?: Date;
+    closed?: boolean;
+  }) {
+    const id = await createPurchase({
+      account_id,
+      service: "dedicated-host",
+      description: {
+        type: "dedicated-host",
+        host_id: uuid(),
+        provider: "gcp",
+        funding_lane,
+        hourly_cost_usd: `${cost_per_hour}`,
+      } as any,
+      client: null,
+      cost_per_hour: `${cost_per_hour}`,
+      period_start,
+      tag: `dedicated-host:${uuid()}`,
+    });
+    if (closed && period_end) {
+      const hours = (period_end.valueOf() - period_start.valueOf()) / 3_600_000;
+      await getPool().query(
+        "UPDATE purchases SET period_end=$2, cost=$3 WHERE id=$1",
+        [id, period_end, (cost_per_hour * hours).toFixed(2)],
+      );
+    } else if (period_end) {
+      await getPool().query("UPDATE purchases SET period_end=$2 WHERE id=$1", [
+        id,
+        period_end,
+      ]);
+    }
+    return id;
+  }
+
+  it("counts only the overlap of a long purchase that closes inside the window", async () => {
+    const account_id = await account();
+    const windowStart = dayjs().subtract(3, "hour").toDate();
+    await ensureAccountUsageWindowsForEvent({
+      account_id,
+      occurred_at: windowStart,
+    });
+    // 12 days at $0.19/h (about $54.7), closed 2 h into the window
+    for (const funding_lane of ["prepaid", "credit"] as const) {
+      await meteredHostPurchase({
+        account_id,
+        funding_lane,
+        cost_per_hour: 0.19,
+        period_start: dayjs(windowStart).subtract(12, "day").toDate(),
+        period_end: dayjs(windowStart).add(2, "hour").toDate(),
+      });
+    }
+
+    const usage = await getDedicatedHostWindowUsageLocal(account_id);
+    // 2 h of it, not the whole cost
+    for (const key of [
+      "prepaid_5h_usd",
+      "prepaid_7d_usd",
+      "credit_5h_usd",
+      "credit_7d_usd",
+    ] as const) {
+      expect(toDecimal(usage[key]).toNumber()).toBeCloseTo(0.38, 2);
+    }
+  });
+
+  it("counts a closed purchase entirely inside the window in full, and open ones by the hour", async () => {
+    const account_id = await account();
+    const windowStart = dayjs().subtract(3, "hour").toDate();
+    await ensureAccountUsageWindowsForEvent({
+      account_id,
+      occurred_at: windowStart,
+    });
+    // closed, entirely inside: 1 h at $7/h
+    await meteredHostPurchase({
+      account_id,
+      funding_lane: "prepaid",
+      cost_per_hour: 7,
+      period_start: dayjs(windowStart).add(30, "minute").toDate(),
+      period_end: dayjs(windowStart).add(90, "minute").toDate(),
+    });
+    // open since before the window: 3 h of it at $2/h
+    await meteredHostPurchase({
+      account_id,
+      funding_lane: "prepaid",
+      cost_per_hour: 2,
+      period_start: dayjs(windowStart).subtract(2, "day").toDate(),
+      closed: false,
+    });
+    // closed before the window started: nothing
+    await meteredHostPurchase({
+      account_id,
+      funding_lane: "prepaid",
+      cost_per_hour: 100,
+      period_start: dayjs(windowStart).subtract(3, "day").toDate(),
+      period_end: dayjs(windowStart).subtract(1, "minute").toDate(),
+    });
+
+    const usage = await getDedicatedHostWindowUsageLocal(account_id);
+    expect(toDecimal(usage.prepaid_5h_usd).toNumber()).toBeCloseTo(7 + 6, 1);
+    expect(toDecimal(usage.prepaid_7d_usd).toNumber()).toBeCloseTo(7 + 6, 1);
+  });
+
   it("computes fixed-window spend for a specific host", async () => {
     const account_id = await account();
     const host_id = uuid();
