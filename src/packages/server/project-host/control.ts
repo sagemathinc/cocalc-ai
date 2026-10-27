@@ -1,5 +1,8 @@
 import getLogger from "@cocalc/backend/logger";
-import { BILLING_ENFORCEMENT_NO_PLACEMENT_STATES } from "./spend-enforcement";
+import {
+  BILLING_ENFORCEMENT_NO_PLACEMENT_STATES,
+  billingEnforcementBlocksPlacement,
+} from "./spend-enforcement";
 import getPool from "@cocalc/database/pool";
 import type { Host, HostPressureZone } from "@cocalc/conat/hub/api/hosts";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
@@ -167,6 +170,18 @@ type HostRegistryRow = {
   metadata?: any;
   delegated_access_role?: HostAccessRole | null;
 };
+
+// Shared-pool hosts another bay offers for placement. Like local automatic
+// selection, skip hosts being drained, stopped or deprovisioned for billing:
+// their bay refuses the project, and creation should fall back instead.
+export function remoteSharedPoolCandidateRows(
+  hosts: Host[],
+): HostRegistryRow[] {
+  return hosts
+    .filter((host) => host.tier != null && host.can_place !== false)
+    .map(hostToRegistryRow)
+    .filter((row) => !billingEnforcementBlocksPlacement(row.metadata));
+}
 
 function hostToRegistryRow(host: Host): HostRegistryRow {
   return {
@@ -930,11 +945,7 @@ export async function selectActiveHost({
                 account_id,
                 catalog: true,
               });
-            remoteRows.push(
-              ...hosts
-                .filter((host) => host.tier != null && host.can_place !== false)
-                .map(hostToRegistryRow),
-            );
+            remoteRows.push(...remoteSharedPoolCandidateRows(hosts));
           } catch (err) {
             log.warn("selectActiveHost: failed remote shared-pool host scan", {
               bay_id: candidateBayId,
