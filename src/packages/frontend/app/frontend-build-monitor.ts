@@ -8,10 +8,23 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { frontend_build_fingerprint } from "@cocalc/frontend/components/constants";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import {
+  isLikelyStaleChunkError,
+  onStaleChunkError,
+  REFRESH_QUERY_PARAM,
+  reloadForFrontendBuild,
+  reportStaleChunkError,
+  staleChunkErrorSeen,
+} from "./stale-chunk";
+
+export {
+  isLikelyStaleChunkError,
+  reloadForFrontendBuild,
+  reportStaleChunkError,
+};
 
 const POLL_INTERVAL_MS = 5 * 60_000;
 const MIN_CHECK_INTERVAL_MS = 15_000;
-const REFRESH_QUERY_PARAM = "_cocalc_refresh";
 
 export type FrontendBuildManifest = {
   schema: 1;
@@ -43,28 +56,6 @@ export function isFrontendBuildMismatch(
   return !!local && !!current && local !== current;
 }
 
-export function isLikelyStaleChunkError(value: unknown): boolean {
-  const message = `${
-    (value as any)?.reason?.message ??
-    (value as any)?.error?.message ??
-    (value as any)?.message ??
-    value ??
-    ""
-  }`;
-  return /ChunkLoadError|Loading (?:CSS )?chunk|__webpack_require__|__webpack_modules__/i.test(
-    message,
-  );
-}
-
-export function reloadForFrontendBuild(manifest?: FrontendBuildManifest): void {
-  const url = new URL(window.location.href);
-  url.searchParams.set(
-    REFRESH_QUERY_PARAM,
-    `${manifest?.build_timestamp ?? Date.now()}`,
-  );
-  window.location.replace(url.toString());
-}
-
 export function urlWithoutFrontendRefreshToken(
   href: string,
 ): string | undefined {
@@ -80,7 +71,6 @@ const listeners = new Set<(status: FrontendBuildStatus) => void>();
 let users = 0;
 let stopMonitor: (() => void) | undefined;
 let lastCheckAt = 0;
-let chunkErrorSeen = false;
 
 function update(
   next: (previous: FrontendBuildStatus) => FrontendBuildStatus,
@@ -92,6 +82,16 @@ function update(
   }
   for (const listener of listeners) listener(shared);
 }
+
+// A stale chunk reported anywhere (an error boundary, or the window handlers
+// below) recommends a reload in every indicator.
+onStaleChunkError(() =>
+  update((previous) => ({
+    ...previous,
+    reloadRecommended: true,
+    reason: previous.reason ?? "chunk-error",
+  })),
+);
 
 function startMonitor(): () => void {
   const cleanUrl = urlWithoutFrontendRefreshToken(window.location.href);
@@ -122,12 +122,12 @@ function startMonitor(): () => void {
           ...previous,
           current: manifest,
           reloadRecommended:
-            previous.reloadRecommended || changed || chunkErrorSeen,
+            previous.reloadRecommended || changed || staleChunkErrorSeen(),
           reason:
             previous.reason ??
             (changed
               ? "build-changed"
-              : chunkErrorSeen
+              : staleChunkErrorSeen()
                 ? "chunk-error"
                 : undefined),
         }));
@@ -145,14 +145,7 @@ function startMonitor(): () => void {
   };
   const onConnected = () => void check();
   const onRuntimeError = (event: unknown) => {
-    if (!isLikelyStaleChunkError(event)) return;
-    chunkErrorSeen = true;
-    update((previous) => ({
-      ...previous,
-      reloadRecommended: true,
-      reason: previous.reason ?? "chunk-error",
-    }));
-    void check(true);
+    if (reportStaleChunkError(event)) void check(true);
   };
 
   const initial = window.setTimeout(
