@@ -271,3 +271,85 @@ test("project archive reuses a fresh backup without creating another one", async
   assert.equal(returned.stopped_first, false);
   assert.equal(returned.latest_backup_time, "2026-04-25T15:45:00.000Z");
 });
+
+for (const status of ["deprovisioned", "off"]) {
+  test(`project archive on a host that can't be reached (${status})`, async () => {
+    const calls: Array<[string, any]> = [];
+    let returned: any;
+    const project_id = "11111111-1111-4111-8111-111111111111";
+    const unreachable = new Error(
+      "host 'host-1' has no connect_url and is not local_proxy",
+    );
+    const backupsMock = mock.method(archiveInfo, "getBackups", async () => {
+      throw new Error("must not ask the host");
+    });
+    const deps = {
+      withContext: async (_command, _label, fn) => {
+        const ctx = {
+          timeoutMs: 600_000,
+          rpcTimeoutMs: 15_000,
+          pollMs: 10,
+          globals: {},
+          hub: {
+            hosts: {
+              resolveHostConnection: async (opts: any) => {
+                calls.push(["resolveHostConnection", opts]);
+                return { host_id: "host-1", status };
+              },
+            },
+            projects: {
+              createBackup: async (opts: any) => {
+                calls.push(["createBackup", opts]);
+              },
+              archiveProject: async (opts: any) => {
+                calls.push(["archiveProject", opts]);
+              },
+            },
+          },
+        };
+        try {
+          returned = await fn(ctx);
+        } catch (err) {
+          returned = err;
+        }
+      },
+      resolveProjectConatClient: async () => {
+        throw unreachable;
+      },
+      resolveProjectFromArgOrContext: async () => ({
+        project_id,
+        title: "Stranded",
+        host_id: "host-1",
+        last_edited: new Date("2026-04-25T15:30:00.000Z"),
+      }),
+    };
+    const program = new Command();
+    registerProjectLifecycleCommands(program.command("project"), deps as any);
+    await program.parseAsync([
+      "node",
+      "test",
+      "project",
+      "archive",
+      "--project",
+      project_id,
+    ]);
+    backupsMock.mock.restore();
+
+    if (status === "deprovisioned") {
+      // archived from its existing backup: no host checks, no new backup
+      assert.deepEqual(calls, [
+        ["resolveHostConnection", { host_id: "host-1", project_id }],
+        ["archiveProject", { project_id, timeout: 30000 }],
+      ]);
+      assert.equal(returned.status, "archived");
+      assert.equal(returned.host_deprovisioned, true);
+      assert.equal(returned.backup_created, false);
+    } else {
+      // (control) any other unreachable host still fails as before
+      assert.equal(returned, unreachable);
+      assert.deepEqual(calls, [
+        ["resolveHostConnection", { host_id: "host-1", project_id }],
+      ]);
+    }
+  });
+}

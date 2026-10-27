@@ -94,6 +94,22 @@ function createProjectArchiveProgressReporter(
   };
 }
 
+async function hostIsDeprovisioned(
+  ctx: any,
+  project: { project_id: string; host_id?: string | null },
+): Promise<boolean> {
+  if (!project.host_id) return false;
+  try {
+    const connection = await ctx.hub.hosts.resolveHostConnection({
+      host_id: project.host_id,
+      project_id: project.project_id,
+    });
+    return connection?.status === "deprovisioned";
+  } catch {
+    return false;
+  }
+}
+
 export function registerProjectLifecycleCommands(
   project: Command,
   deps: ProjectCommandDeps,
@@ -262,10 +278,42 @@ export function registerProjectLifecycleCommands(
         command: Command,
       ) => {
         await withContext(command, "project archive", async (ctx) => {
-          const { project: ws, client } = await resolveProjectConatClient(
-            ctx,
-            opts.project,
-          );
+          let ws: any;
+          let client: any;
+          try {
+            ({ project: ws, client } = await resolveProjectConatClient(
+              ctx,
+              opts.project,
+            ));
+          } catch (err) {
+            // A project whose host is deprovisioned has nothing left on a
+            // host to check or back up: the server archives it from its
+            // existing backup without touching the host.
+            const project = await resolveProjectFromArgOrContext(
+              ctx,
+              opts.project,
+            );
+            if (!(await hostIsDeprovisioned(ctx, project))) throw err;
+            await ctx.hub.projects.archiveProject({
+              project_id: project.project_id,
+              timeout: Math.max(ctx.rpcTimeoutMs, 30_000),
+              ...(opts.allowOversizedSkip
+                ? { allow_oversized_skip: true }
+                : {}),
+            });
+            return {
+              project_id: project.project_id,
+              status: "archived",
+              host_deprovisioned: true,
+              backup_reused: false,
+              backup_created: false,
+              backup_op_id: null,
+              latest_backup_time: null,
+              last_edited:
+                normalizeDate(project.last_edited)?.toISOString() ?? null,
+              stopped_first: false,
+            };
+          }
           const progress = opts.wait
             ? createProjectArchiveProgressReporter(ctx, {
                 project_id: ws.project_id,
