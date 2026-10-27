@@ -107,7 +107,14 @@ export class MergeApprovalStore {
   // request for the same head. Open requests for an older head of the same
   // pull request are superseded: the caller has just read the new head from
   // GitHub.
-  async create(req: NewMergeApprovalRequest): Promise<MergeApprovalRequest> {
+  //
+  // verify runs while this pull request's lock is held, before anything is
+  // written: the caller re-reads the head there, so a slower request for an
+  // older head can't supersede a newer one that got in first.
+  async create(
+    req: NewMergeApprovalRequest,
+    { verify }: { verify?: () => Promise<void> } = {},
+  ): Promise<MergeApprovalRequest> {
     const project_id = req.requested_by.project_id;
     return await this.transaction(async (client) => {
       // Serialize requests for one pull request (from any project), so only
@@ -116,6 +123,7 @@ export class MergeApprovalStore {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
         `merge-approval-pr:${req.repo}#${req.pr_number}`,
       ]);
+      await verify?.();
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
         `merge-approval-request:${project_id}`,
       ]);

@@ -7,6 +7,7 @@ import { createVerify, generateKeyPairSync } from "node:crypto";
 import { MAX_MERGE_APPROVAL_SNAPSHOT_BYTES } from "@cocalc/util/merge-approval";
 import {
   mergeApprovalAppJwt,
+  readPullRequestHead,
   readPullRequestSnapshot,
   setMergeApprovalGitHubFetchForTests,
 } from "./github";
@@ -20,6 +21,7 @@ const config = {
   installations: new Map([["sagemathinc", "99"]]),
 };
 const HEAD = "c".repeat(40);
+const BASE = "b".repeat(40);
 const INSTALLATION_TOKEN = "ghs_installation_token_for_tests";
 
 type Call = { method: string; url: string; headers: any; body?: any };
@@ -37,7 +39,7 @@ function fakeGitHub({
   files = [{ filename: "a.ts", additions: 1, deletions: 2 }],
   overrides = {},
 }: {
-  pr?: Record<string, unknown>;
+  pr?: Record<string, unknown> | (() => Record<string, unknown>);
   files?: any[];
   overrides?: Record<string, () => Response>;
 } = {}) {
@@ -65,27 +67,35 @@ function fakeGitHub({
         draft: false,
         merged: false,
         user: { login: "agent" },
-        base: { ref: "main" },
+        base: { ref: "main", sha: BASE },
         head: { ref: "fix", sha: HEAD },
         html_url: "https://github.com/sagemathinc/cocalc-ai/pull/12",
-        additions: 10,
-        deletions: 3,
+        additions: files.reduce((n, f) => n + f.additions, 0),
+        deletions: files.reduce((n, f) => n + f.deletions, 0),
         changed_files: files.length,
-        ...pr,
+        ...(typeof pr === "function" ? pr() : pr),
       });
     }
     if (base === "/repos/sagemathinc/cocalc-ai/pulls/12/files") {
       const page = Number(new URL(url).searchParams.get("page"));
       return json(files.slice((page - 1) * 100, page * 100));
     }
-    if (base === `/repos/sagemathinc/cocalc-ai/commits/${HEAD}/check-runs`) {
+    if (
+      /^\/repos\/sagemathinc\/cocalc-ai\/commits\/[0-9a-f]{40}\/check-runs$/.test(
+        base,
+      )
+    ) {
       return json({
         check_runs: [
           { name: "test", status: "completed", conclusion: "success" },
         ],
       });
     }
-    if (base === `/repos/sagemathinc/cocalc-ai/commits/${HEAD}/status`) {
+    if (
+      /^\/repos\/sagemathinc\/cocalc-ai\/commits\/[0-9a-f]{40}\/status$/.test(
+        base,
+      )
+    ) {
       return json({ statuses: [{ context: "ci/legacy", state: "pending" }] });
     }
     if (base === "/repos/sagemathinc/cocalc-ai/pulls/12/reviews") {
@@ -240,5 +250,68 @@ describe("merge approval GitHub App", () => {
     );
     expect(err.status).toBe(403);
     expect(err.message).not.toContain(INSTALLATION_TOKEN);
+  });
+
+  it("reads again when the head moves while the snapshot is read", async () => {
+    let reads = 0;
+    const gh = fakeGitHub({
+      // The second PR read (the check after the first snapshot) sees a push.
+      pr: () =>
+        ++reads === 2 ? { head: { ref: "fix", sha: "d".repeat(40) } } : {},
+    });
+    setMergeApprovalGitHubFetchForTests(gh.fetchImpl);
+    const snap = await readPullRequestSnapshot({
+      config,
+      repo: "sagemathinc/cocalc-ai",
+      pr_number: 12,
+    });
+    expect(snap.head_sha).toBe(HEAD);
+    expect(reads).toBe(4);
+  });
+
+  it("refuses a PR that keeps changing, or whose files don't add up", async () => {
+    let reads = 0;
+    const moving = fakeGitHub({
+      pr: () => ({
+        head: { ref: "fix", sha: (++reads % 2 ? "d" : "e").repeat(40) },
+      }),
+    });
+    setMergeApprovalGitHubFetchForTests(moving.fetchImpl);
+    await expect(
+      readPullRequestSnapshot({
+        config,
+        repo: "sagemathinc/cocalc-ai",
+        pr_number: 12,
+      }),
+    ).rejects.toMatchObject({ code: "head_changed" });
+
+    // The files list describes a different commit than the PR's totals.
+    const mismatched = fakeGitHub({ pr: { additions: 99 } });
+    setMergeApprovalGitHubFetchForTests(mismatched.fetchImpl);
+    await expect(
+      readPullRequestSnapshot({
+        config,
+        repo: "sagemathinc/cocalc-ai",
+        pr_number: 12,
+      }),
+    ).rejects.toMatchObject({ code: "head_changed" });
+  });
+
+  it("reads the current head in one request", async () => {
+    const gh = fakeGitHub();
+    setMergeApprovalGitHubFetchForTests(gh.fetchImpl);
+    await expect(
+      readPullRequestHead({
+        config,
+        repo: "sagemathinc/cocalc-ai",
+        pr_number: 12,
+      }),
+    ).resolves.toEqual({
+      head_sha: HEAD,
+      base_sha: BASE,
+      state: "open",
+      draft: false,
+    });
+    expect(gh.calls.filter((c) => c.method === "GET")).toHaveLength(1);
   });
 });

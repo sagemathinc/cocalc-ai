@@ -40,7 +40,7 @@ import {
   type MergeApprovalDecisionKind,
   type MergeApprovalRequest,
 } from "@cocalc/util/merge-approval";
-import { readPullRequestSnapshot } from "./github";
+import { readPullRequestHead, readPullRequestSnapshot } from "./github";
 import { getMergeApprovalSettings } from "./settings";
 import { MergeApprovalStore } from "./store";
 
@@ -130,30 +130,51 @@ export async function requestMergeApproval(
   if (snapshot.draft) {
     throw codeError(`pull request #${pr_number} is a draft`, 409);
   }
-  if (snapshot.head_sha !== head_sha) {
+  assertCurrentHead(pr_number, head_sha, snapshot.head_sha);
+
+  const app = settings.app;
+  return await store().create(
+    {
+      repo,
+      pr_number,
+      head_sha,
+      base_ref: snapshot.base_ref,
+      github_snapshot: snapshot,
+      agent_note,
+      requested_by: {
+        account_id: account_id!,
+        project_id: project_id!,
+        token_fingerprint: opts.auth_token_fingerprint,
+        agent_label,
+      },
+      chat,
+    },
+    {
+      // Again under the PR's lock: the head may have moved since the read.
+      verify: async () => {
+        const now = await readPullRequestHead({ config: app, repo, pr_number });
+        if (now.state !== "open" || now.draft) {
+          throw codeError(`pull request #${pr_number} changed; try again`, 409);
+        }
+        assertCurrentHead(pr_number, head_sha, now.head_sha);
+      },
+    },
+  );
+}
+
+function assertCurrentHead(
+  pr_number: number,
+  head_sha: string,
+  current: string,
+): void {
+  if (current !== head_sha) {
     throw Object.assign(
       new Error(
-        `pull request #${pr_number} head is ${snapshot.head_sha}, not ${head_sha}`,
+        `pull request #${pr_number} head is ${current}, not ${head_sha}`,
       ),
-      { code: "head_mismatch", current_head_sha: snapshot.head_sha },
+      { code: "head_mismatch", current_head_sha: current },
     );
   }
-
-  return await store().create({
-    repo,
-    pr_number,
-    head_sha,
-    base_ref: snapshot.base_ref,
-    github_snapshot: snapshot,
-    agent_note,
-    requested_by: {
-      account_id: account_id!,
-      project_id: project_id!,
-      token_fingerprint: opts.auth_token_fingerprint,
-      agent_label,
-    },
-    chat,
-  });
 }
 
 export interface DecideMergeApprovalOptions {

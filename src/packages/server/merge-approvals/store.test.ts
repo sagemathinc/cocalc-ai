@@ -154,6 +154,31 @@ describeDb("merge approval store", () => {
     );
   });
 
+  it("runs verify under the PR lock and writes nothing when it fails", async () => {
+    const project_id = randomUUID();
+    const old = await store.create(newRequest(project_id, { pr_number: 31 }));
+    await expect(
+      store.create(
+        newRequest(project_id, { pr_number: 31, head_sha: sha("e") }),
+        {
+          verify: async () => {
+            throw Error("head moved");
+          },
+        },
+      ),
+    ).rejects.toThrow("head moved");
+    expect((await store.get(old.id))?.status).toBe("pending");
+    const verify = jest.fn(async () => {});
+    await store.create(
+      newRequest(project_id, { pr_number: 31, head_sha: sha("e") }),
+      {
+        verify,
+      },
+    );
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect((await store.get(old.id))?.status).toBe("superseded");
+  });
+
   it("refuses unknown requests", async () => {
     await expect(store.decide(decideOpts(randomUUID()))).rejects.toThrow(
       "not found",

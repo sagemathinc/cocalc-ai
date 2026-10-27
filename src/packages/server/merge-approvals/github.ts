@@ -188,22 +188,87 @@ function fitSnapshot(
   return snapshot;
 }
 
-// What GitHub says about the pull request now.
-export async function readPullRequestSnapshot({
-  config,
-  repo,
-  pr_number,
-}: {
+interface PullRequestTarget {
   config: MergeApprovalAppConfig;
   repo: string;
   pr_number: number;
-}): Promise<MergeApprovalGitHubSnapshot> {
+}
+
+function commitSha(value: unknown, what: string): string {
+  const sha = str(value, 40).toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new MergeApprovalGitHubError(`GitHub returned no ${what} commit`);
+  }
+  return sha;
+}
+
+export interface PullRequestHead {
+  head_sha: string;
+  base_sha: string;
+  state: string;
+  draft: boolean;
+}
+
+function pullRequestHead(pr: any): PullRequestHead {
+  return {
+    head_sha: commitSha(pr?.head?.sha, "head"),
+    base_sha: commitSha(pr?.base?.sha, "base"),
+    state: pr?.merged ? "merged" : str(pr?.state, 20),
+    draft: pr?.draft === true,
+  };
+}
+
+// Where the pull request is now: one request, for checks that must be fresh.
+export async function readPullRequestHead({
+  config,
+  repo,
+  pr_number,
+}: PullRequestTarget): Promise<PullRequestHead> {
+  const token = await installationToken(config, repo, READ_PERMISSIONS);
+  return pullRequestHead(
+    await github("GET", `/repos/${repo}/pulls/${pr_number}`, token),
+  );
+}
+
+// What GitHub says about the pull request now. The files list follows the
+// PR's current head, and the App can't read commits by SHA (no Contents
+// permission), so the snapshot is read again if the head or base moved
+// while it was read, or if a complete files list doesn't add up to the PR's
+// totals: every part of it then describes the same commits.
+export async function readPullRequestSnapshot(
+  target: PullRequestTarget,
+): Promise<MergeApprovalGitHubSnapshot> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { snapshot, base_sha, consistent } = await readSnapshotOnce(target);
+    const after = await readPullRequestHead(target);
+    if (
+      consistent &&
+      after.head_sha === snapshot.head_sha &&
+      after.base_sha === base_sha
+    ) {
+      return fitSnapshot(snapshot);
+    }
+  }
+  throw Object.assign(
+    new MergeApprovalGitHubError(
+      "the pull request changed while it was being read; try again",
+    ),
+    { code: "head_changed" },
+  );
+}
+
+async function readSnapshotOnce({
+  config,
+  repo,
+  pr_number,
+}: PullRequestTarget): Promise<{
+  snapshot: MergeApprovalGitHubSnapshot;
+  base_sha: string;
+  consistent: boolean;
+}> {
   const token = await installationToken(config, repo, READ_PERMISSIONS);
   const pr = await github("GET", `/repos/${repo}/pulls/${pr_number}`, token);
-  const head_sha = str(pr?.head?.sha, 40).toLowerCase();
-  if (!/^[0-9a-f]{40}$/.test(head_sha)) {
-    throw new MergeApprovalGitHubError("GitHub returned no head commit");
-  }
+  const { head_sha, base_sha } = pullRequestHead(pr);
 
   const files: MergeApprovalGitHubSnapshot["files"] = [];
   for (let page = 1; files.length < MAX_FILES; page++) {
@@ -262,7 +327,14 @@ export async function readPullRequestSnapshot({
     commit_id: r?.commit_id == null ? null : str(r.commit_id, 40),
   }));
 
-  return fitSnapshot({
+  const additions = num(pr?.additions);
+  const deletions = num(pr?.deletions);
+  const complete = files.length === changed_files;
+  const consistent =
+    !complete ||
+    (files.reduce((n, f) => n + f.additions, 0) === additions &&
+      files.reduce((n, f) => n + f.deletions, 0) === deletions);
+  const snapshot: MergeApprovalGitHubSnapshot = {
     title: str(pr?.title, 500),
     state: pr?.merged ? "merged" : str(pr?.state, 20),
     draft: pr?.draft === true,
@@ -271,13 +343,14 @@ export async function readPullRequestSnapshot({
     head_ref: str(pr?.head?.ref, 255),
     head_sha,
     html_url: str(pr?.html_url, 500),
-    additions: num(pr?.additions),
-    deletions: num(pr?.deletions),
+    additions,
+    deletions,
     changed_files,
     files,
     files_truncated: files.length < changed_files,
     checks,
     reviews,
     read_at: new Date().toISOString(),
-  });
+  };
+  return { snapshot, base_sha, consistent };
 }

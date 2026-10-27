@@ -15,6 +15,7 @@ const FINGERPRINT = "f".repeat(64);
 let bayId = "seed";
 let settings: any;
 const snapshotMock = jest.fn();
+const headMock = jest.fn();
 const createMock = jest.fn();
 const getMock = jest.fn();
 const decideMock = jest.fn();
@@ -37,6 +38,7 @@ jest.mock("./settings", () => ({
 }));
 jest.mock("./github", () => ({
   readPullRequestSnapshot: (...args: any[]) => snapshotMock(...args),
+  readPullRequestHead: (...args: any[]) => headMock(...args),
 }));
 jest.mock("./store", () => ({
   MergeApprovalStore: jest.fn().mockImplementation(() => ({
@@ -118,11 +120,17 @@ beforeEach(() => {
     app,
   };
   snapshotMock.mockReset().mockResolvedValue(prSnapshot());
-  createMock.mockReset().mockImplementation(async (req) => ({
-    id: REQUEST_ID,
-    status: "pending",
-    ...req,
-  }));
+  headMock.mockReset().mockResolvedValue({
+    head_sha: HEAD,
+    base_sha: "b".repeat(40),
+    state: "open",
+    draft: false,
+  });
+  // Like the store: verify runs under the PR lock, before any write.
+  createMock.mockReset().mockImplementation(async (req, { verify }) => {
+    await verify?.();
+    return { id: REQUEST_ID, status: "pending", ...req };
+  });
   getMock.mockReset().mockResolvedValue({
     id: REQUEST_ID,
     repo: "o/r",
@@ -148,7 +156,12 @@ describe("requestMergeApproval", () => {
       repo: "o/r",
       pr_number: 7,
     });
-    expect(createMock).toHaveBeenCalledWith({
+    expect(headMock).toHaveBeenCalledWith({
+      config: app,
+      repo: "o/r",
+      pr_number: 7,
+    });
+    expect(createMock.mock.calls[0][0]).toEqual({
       repo: "o/r",
       pr_number: 7,
       head_sha: HEAD,
@@ -168,6 +181,27 @@ describe("requestMergeApproval", () => {
         message_date: undefined,
       },
     });
+  });
+
+  it("checks the head again under the PR lock, and writes nothing if it moved", async () => {
+    headMock.mockResolvedValue({
+      head_sha: "d".repeat(40),
+      base_sha: "b".repeat(40),
+      state: "open",
+      draft: false,
+    });
+    await expect(requestMergeApproval(agentRequest())).rejects.toMatchObject({
+      code: "head_mismatch",
+    });
+    headMock.mockResolvedValue({
+      head_sha: HEAD,
+      base_sha: "b".repeat(40),
+      state: "closed",
+      draft: false,
+    });
+    await expect(requestMergeApproval(agentRequest())).rejects.toThrow(
+      "changed; try again",
+    );
   });
 
   it("refuses anything but an agent session", async () => {
