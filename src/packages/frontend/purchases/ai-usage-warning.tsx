@@ -224,7 +224,8 @@ export const AIUsageWarning: React.FC<{
           onClick={() => setOpen(true)}
           className={TOP_BAR_ELEMENT_CLASS}
           aria-haspopup="dialog"
-          aria-label={`${modalTitle}. ${getSummaryTooltip(warnings)}`}
+          // The visible label comes first, so speech input can name it.
+          aria-label={`${getSummaryLabel(primary, pageStyle.isNarrow)}: ${modalTitle}. ${getSummaryTooltip(warnings)}`}
           data-cocalc-ai-usage-warning
         >
           <span style={pillStyle}>

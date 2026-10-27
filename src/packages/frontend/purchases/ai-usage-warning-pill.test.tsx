@@ -45,9 +45,11 @@ describe("AIUsageWarning pill", () => {
     const user = userEvent.setup();
     render(<AIUsageWarning pageStyle={pageStyle} />);
     const trigger = await screen.findByRole("button", {
-      name: /AI usage nearing limit\. 5h: 84 of 100 units \(84%\)/,
+      name: /^AI 5h 84%: AI usage nearing limit\. 5h: 84 of 100 units \(84%\)/,
     });
     expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
+    // The accessible name contains the visible label.
+    expect(trigger.getAttribute("aria-label")).toContain(trigger.textContent);
 
     await user.tab();
     expect(document.activeElement).toBe(trigger);
