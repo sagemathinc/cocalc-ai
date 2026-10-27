@@ -10,6 +10,7 @@
     "./hyperstack/*": "./dist/hyperstack/*.js",
     "./lambda/*": "./dist/lambda/*.js",
     "./nebius/*": "./dist/nebius/*.js",
+    "./runpod/*": "./dist/runpod/*.js",
     "./gcp": "./dist/gcp.js",
     "./local": "./dist/local.js",
     "./types": "./dist/types.js",
