@@ -771,6 +771,36 @@ describe("projects.createProject clone routing", () => {
     },
   );
 
+  it("refuses the insert when a drain starts after the placement check", async () => {
+    const defaultQuery = queryMock;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const result = await defaultQuery(sql, params);
+      if (sql.includes("FOR SHARE")) {
+        return {
+          rows: result.rows.map((row) => ({
+            ...row,
+            metadata: {
+              ...row.metadata,
+              billing: { enforcement: { state: "draining" } },
+            },
+          })),
+        };
+      }
+      return result;
+    });
+    const createProject = (await import("./create")).default;
+    await expect(
+      createProject({ account_id: ACCOUNT_ID, host_id: HOST_ID, start: false }),
+    ).rejects.toThrow("billing enforcement is draining");
+    const calls = queryMock.mock.calls.map(([sql]) => `${sql}`);
+    const lockAt = calls.findIndex((sql) => sql.includes("FOR SHARE"));
+    expect(lockAt).toBeGreaterThan(calls.indexOf("BEGIN"));
+    expect(calls).toContain("ROLLBACK");
+    expect(calls.some((sql) => sql.startsWith("INSERT INTO projects "))).toBe(
+      false,
+    );
+  });
+
   it("resolves a managed rootfs image id to the runtime image during project creation", async () => {
     const createProject = (await import("./create")).default;
 
