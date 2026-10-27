@@ -26,7 +26,10 @@ import {
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { GpuProviderKeyStatus } from "@cocalc/util/gpu/provider-keys";
+import {
+  type GpuProviderKeyStatus,
+  VERIFY_RPC_TIMEOUT_MS,
+} from "@cocalc/util/gpu/provider-keys";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 export const RUNPOD_SECTION = "RunPod GPUs";
@@ -71,6 +74,7 @@ export function GpuProviderKeySection() {
             provider: "runpod",
             api_key: key,
             browser_id: webapp_client.browser_id,
+            timeout: VERIFY_RPC_TIMEOUT_MS,
           }),
         );
       });
@@ -80,6 +84,8 @@ export function GpuProviderKeySection() {
       }
     } catch (err) {
       setError(`${err}`);
+      // Show what the server actually has, e.g. after a timeout.
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -126,7 +132,7 @@ export function GpuProviderKeySection() {
         <Button
           type="primary"
           loading={busy}
-          disabled={!apiKey.trim()}
+          disabled={busy || !apiKey.trim()}
           onClick={() => void connect()}
         >
           {status?.connected ? "Replace key" : "Connect"}
@@ -168,7 +174,9 @@ export function GpuProviderKeySection() {
         </Typography.Paragraph>
         <Space>
           {!replacing && (
-            <Button onClick={() => setReplacing(true)}>Replace key</Button>
+            <Button disabled={busy} onClick={() => setReplacing(true)}>
+              Replace key
+            </Button>
           )}
           <Popconfirm
             title="Remove your RunPod key?"
@@ -180,9 +188,10 @@ export function GpuProviderKeySection() {
             }
             okText="Remove"
             okButtonProps={{ danger: true }}
+            disabled={busy}
             onConfirm={() => void remove()}
           >
-            <Button danger loading={busy && !replacing}>
+            <Button danger disabled={busy}>
               Remove
             </Button>
           </Popconfirm>

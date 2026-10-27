@@ -20,6 +20,11 @@ export const GPU_PROVIDER_LABELS: Record<GpuProvider, string> = {
 // The external-credentials kind; the provider is the GpuProvider id.
 export const GPU_PROVIDER_API_KEY_KIND = "gpu-provider-api-key";
 
+// How long the browser waits for setGpuProviderKey: longer than the server's
+// worst-case verification (three RunPod requests of at most 8 s each) plus
+// storing the key.
+export const VERIFY_RPC_TIMEOUT_MS = 45_000;
+
 export function isGpuProvider(value: unknown): value is GpuProvider {
   return GPU_PROVIDERS.includes(value as GpuProvider);
 }

@@ -37,6 +37,8 @@ import {
 
 type Fetch = typeof globalThis.fetch;
 
+const VERIFY_REQUEST_TIMEOUT_MS = 8_000;
+
 export interface GpuProviderKeyDeps {
   // for tests
   fetch?: Fetch;
@@ -103,7 +105,14 @@ async function verifyRunpodKey(
   apiKey: string,
   fetch?: Fetch,
 ): Promise<RunpodProviderIdentity> {
-  const client = new RunpodClient({ apiKey, fetch, timeoutMs: 15_000 });
+  // At most three sequential requests; the browser's RPC waits longer than
+  // all of them together (VERIFY_RPC_TIMEOUT_MS in util/gpu/provider-keys), so it never reports a
+  // failure for a key the server then stores.
+  const client = new RunpodClient({
+    apiKey,
+    fetch,
+    timeoutMs: VERIFY_REQUEST_TIMEOUT_MS,
+  });
   try {
     const identity = await client.getProviderIdentity();
     await client.listPods();

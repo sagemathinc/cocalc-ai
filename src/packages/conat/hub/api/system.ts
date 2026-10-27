@@ -3009,6 +3009,7 @@ export interface System {
     session_hash?: string | null;
     provider: GpuProvider;
     api_key: string;
+    timeout?: number;
   }) => Promise<GpuProviderKeyStatus>;
 
   deleteGpuProviderKey: (opts: {

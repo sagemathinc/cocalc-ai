@@ -61,6 +61,8 @@ describe("GpuProviderKeySection", () => {
         provider: "runpod",
         api_key: KEY,
         browser_id: "browser-1",
+        // longer than the server's worst-case verification
+        timeout: 45_000,
       }),
     );
     expect(mockFreshAuth).toHaveBeenCalled();
@@ -114,5 +116,49 @@ describe("GpuProviderKeySection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByText(/RunPod rejected this API key/)).toBeTruthy();
+  });
+
+  it("disables Remove while a replacement key is being verified", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue(CONNECTED);
+    let finish!: (status: any) => void;
+    mockSystem.setGpuProviderKey.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    render(<GpuProviderKeySection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Replace key" }),
+    );
+    await userEvent.type(screen.getByLabelText("RunPod API key"), KEY);
+    await userEvent.click(
+      screen.getAllByRole("button", { name: /Replace key/ }).at(-1)!,
+    );
+    await waitFor(() =>
+      expect(mockSystem.setGpuProviderKey).toHaveBeenCalled(),
+    );
+    expect(
+      (screen.getByRole("button", { name: "Remove" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    finish(CONNECTED);
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Remove" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+  });
+
+  it("reloads the real status after a failed save, e.g. a timeout", async () => {
+    mockSystem.getGpuProviderKeyStatus
+      .mockResolvedValueOnce(DISCONNECTED)
+      .mockResolvedValue(CONNECTED);
+    mockSystem.setGpuProviderKey.mockRejectedValue(new Error("timeout"));
+    render(<GpuProviderKeySection />);
+    await userEvent.type(await screen.findByLabelText("RunPod API key"), KEY);
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(
+      await screen.findByText(/Connected to RunPod account user_1/),
+    ).toBeTruthy();
+    expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
   });
 });
