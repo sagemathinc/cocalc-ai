@@ -32,4 +32,4 @@ export const DOLLAR_AMOUNT = /\$\s*\d/;
 // Agents change project files as they work, with no separate step that keeps
 // or discards the work.
 export const STALE_AGENT_PHRASES =
-  /Claude Code in a terminal, or other shell|Claude Code(,? and|,? or|,) (OpenCode|(an)?other (shell|command-line|terminal))|(terminal|command-line|shell)(-(native|based))? agents,? (such as|like) Claude Code|before keeping it|Claude Code[^.]{0,40}experimental preview/i;
+  /Claude Code in a terminal, or other shell|Claude Code(,? and|,? or|,) (OpenCode|(an)?other (shell|command-line|terminal))|(terminal|command-line|shell)(-(native|based))? agents,? (such as|like) Claude Code|before keeping it|Claude Code[^.]{0,40}experimental\s+preview/i;

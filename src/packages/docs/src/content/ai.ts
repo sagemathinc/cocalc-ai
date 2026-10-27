@@ -73,8 +73,8 @@ checks that would make the result useful.
 
 When CoCalc opens the request box for you, it asks **What would you like to work
 on?** There is no name or project to choose. Below the box, the runtime menu
-starts at **Codex**; choose **Claude** there for the Claude Code experimental
-preview, where the site enables it. For Codex, the model, thinking level, and
+starts at **Codex**; choose **Claude** there for Claude Code, where the site
+enables it. For Codex, the model, thinking level, and
 payment source buttons work as in the new-agent form described below. If CoCalc
 asks you to verify your email, do that first. When you start typing, CoCalc
 prepares a project and starts it, which can start project compute; the chat and

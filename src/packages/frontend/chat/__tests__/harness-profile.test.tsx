@@ -711,6 +711,18 @@ test("failed refresh of current controls remains visible", async () => {
   );
 });
 
+test("Claude credential warnings keep their guidance without a preview label", () => {
+  for (const mode of [
+    "project-secret",
+    "account-api-key",
+    "account-subscription",
+  ] as const) {
+    const warning = claudeCredentialTrustWarning(mode);
+    expect(warning).not.toMatch(/preview|experimental/i);
+    expect(warning).toMatch(/trusted/);
+  }
+});
+
 test("only custom ACP harness settings are labelled an experimental preview", async () => {
   const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
   const { unmount } = render(
@@ -722,9 +734,11 @@ test("only custom ACP harness settings are labelled an experimental preview", as
       }))}
     />,
   );
-  // The Claude settings form itself, without the preview label.
+  // The Claude settings form itself, including its collapsed help, has no
+  // preview label: Claude Code is not a preview (William, 2026-10-27).
   expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
   expect(screen.queryByText("Experimental preview")).toBeNull();
+  expect(document.body.textContent).not.toMatch(/preview/i);
   unmount();
   render(
     <HarnessRuntimeControl

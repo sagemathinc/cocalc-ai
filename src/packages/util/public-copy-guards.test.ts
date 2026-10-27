@@ -19,6 +19,7 @@ describe("STALE_AGENT_PHRASES", () => {
     "Review the change before keeping it.",
     "Claude Code is an experimental preview on sites that enable it.",
     "Claude Code (experimental preview) works with your subscription.",
+    "choose Claude there for the Claude Code experimental\npreview, where enabled.",
   ])("flags %j", (text) => {
     expect(text).toMatch(STALE_AGENT_PHRASES);
   });
