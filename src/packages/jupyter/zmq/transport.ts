@@ -43,7 +43,12 @@ interface Transport {
 
 let chosen: Transport | undefined;
 
-export function selectTransport(value = process.env[TRANSPORT_ENV]): Transport {
+export function selectTransport(
+  value = process.env[TRANSPORT_ENV],
+  // (tests: a build without the addon)
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  loadNative: () => any = () => require("zeromq"),
+): Transport {
   if (value == null || value === "" || value === "js") {
     const log = (...args: any[]) => logger.debug(...args);
     return {
@@ -63,8 +68,7 @@ export function selectTransport(value = process.env[TRANSPORT_ENV]): Transport {
   if (value === "native") {
     let zmq;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      zmq = require("zeromq");
+      zmq = loadNative();
     } catch (err) {
       throw new Error(`${TRANSPORT_ENV}=native, but the native zeromq transport isn't available in this build: ${err}`);
     }
