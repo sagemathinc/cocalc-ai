@@ -8,6 +8,7 @@ import { testCleanup } from "@cocalc/database/test-utils";
 import { uuid } from "@cocalc/util/misc";
 import {
   assertMergeApprovalIntegrity,
+  truncateTablesForTestReset,
   ensureMergeApprovalIntegritySchema,
   mergeApprovalIntegritySchemaNeedsSync,
 } from "./merge-approval-integrity";
@@ -272,6 +273,25 @@ describe("merge approval integrity triggers", () => {
     }
     await expect(assertMergeApprovalIntegrity(getPool())).resolves.toBe(
       undefined,
+    );
+  });
+
+  it("let only the test reset truncate them, and stay in force after it", async () => {
+    await insertRequest();
+    await truncateTablesForTestReset(getPool(), [
+      "merge_approval_relays",
+      "merge_approval_decisions",
+      "merge_approval_requests",
+    ]);
+    const { rows } = await q(
+      "SELECT count(*)::int AS n FROM merge_approval_requests",
+    );
+    expect(rows[0].n).toBe(0);
+    await expect(assertMergeApprovalIntegrity(getPool())).resolves.toBe(
+      undefined,
+    );
+    await expect(q("TRUNCATE merge_approval_requests CASCADE")).rejects.toThrow(
+      "cannot be truncated",
     );
   });
 });

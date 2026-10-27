@@ -249,6 +249,42 @@ export async function mergeApprovalIntegritySchemaNeedsSync(
   return false;
 }
 
+// Test databases only: their reset truncates every table, which these
+// triggers refuse. Truncates the given tables in one transaction with the
+// truncate guards disabled just for it, so they are back on whether or not
+// it succeeds. Production code never truncates them.
+export async function truncateTablesForTestReset(
+  db: Pick<Client, "query">,
+  tableNames: string[],
+): Promise<void> {
+  if (tableNames.length === 0) return;
+  const { rows } = await db.query<{ table: string; trigger: string }>(
+    `SELECT c.relname AS table, t.tgname AS trigger
+       FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+      WHERE t.tgname = ANY($1) AND NOT t.tgisinternal`,
+    [
+      MERGE_APPROVAL_TRIGGERS.filter((t) => t.level === "STATEMENT").map(
+        (t) => t.trigger,
+      ),
+    ],
+  );
+  const guards = rows.filter((r) => tableNames.includes(r.table));
+  await db.query("BEGIN");
+  try {
+    for (const { table, trigger } of guards) {
+      await db.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
+    }
+    await db.query(`TRUNCATE ${tableNames.join(",")}`);
+    for (const { table, trigger } of guards) {
+      await db.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
+    }
+    await db.query("COMMIT");
+  } catch (err) {
+    await db.query("ROLLBACK");
+    throw err;
+  }
+}
+
 // Writers call this first and refuse to record anything while a trigger is
 // missing, disabled or outdated: the records are only as good as the triggers.
 export async function assertMergeApprovalIntegrity(

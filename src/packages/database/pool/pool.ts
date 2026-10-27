@@ -5,6 +5,7 @@
 
 import { Client, Pool, PoolClient } from "pg";
 import { schemaNeedsSync, syncSchema } from "@cocalc/database/postgres/schema";
+import { truncateTablesForTestReset } from "@cocalc/database/postgres/schema/merge-approval-integrity";
 import {
   pgdatabase as database,
   pghost as host,
@@ -483,7 +484,7 @@ async function dropAllData() {
       "SELECT tablename FROM pg_tables WHERE schemaname='public'",
     );
     const tableNames = result.rows.map((row) => row.tablename);
-    await client.query(`TRUNCATE ${tableNames.join(",")}`);
+    await truncateTablesForTestReset(client, tableNames);
   } catch (err) {
     throw err;
   } finally {
@@ -500,9 +501,7 @@ async function dropAllDataPglite() {
       "SELECT tablename FROM pg_tables WHERE schemaname='public'",
     );
     const tableNames = result.rows.map((row) => row.tablename);
-    if (tableNames.length > 0) {
-      await client.query(`TRUNCATE ${tableNames.join(",")}`);
-    }
+    await truncateTablesForTestReset(client, tableNames);
   } finally {
     client.release();
   }
