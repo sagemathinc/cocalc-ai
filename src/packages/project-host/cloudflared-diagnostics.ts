@@ -5,7 +5,7 @@
 
 import type { CloudflaredDiagnosticSnapshot } from "@cocalc/conat/project-host/api";
 
-export const EXPECTED_CLOUDFLARED_VERSION = "2026.7.2";
+export const EXPECTED_CLOUDFLARED_VERSION = "2026.10.3";
 
 const METRICS_PORTS = [20241, 20242, 20243, 20244, 20245];
 const MAX_METRIC_LINES = 160;
