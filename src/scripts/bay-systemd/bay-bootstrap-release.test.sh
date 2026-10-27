@@ -223,7 +223,11 @@ const root = process.argv[2];
 const assets = Array.from({ length: 933 }, (_, i) => `fresh-${i}-0123456789abcdef.js`);
 fs.writeFileSync(path.join(root, "frontend-build.json"), JSON.stringify({ assets }));
 NODE
-prepare_frontend_asset_history >/dev/null
+prepare_frontend_asset_history >"${TMP_ROOT}/near-cap.log"
+# At the cap the deploy passes, but warns that the required browser version
+# needs raising.
+grep -q '^WARNING: frontend asset history has 11000 of 11000 files (100%).*Raise "Required browser version"' \
+  "${TMP_ROOT}/near-cap.log"
 
 # A genuinely oversized unique inventory must still fail before activation.
 node - "${ASSET_PREVIOUS}/runtime/control-plane/static/frontend-build.json" <<'NODE'
@@ -284,6 +288,10 @@ if [[ -e "${RET_STATIC}/old-3333333333333333.js" ]]; then
   echo "retention kept a chunk of a build older than the cutoff" >&2
   exit 1
 fi
+if grep -q '^WARNING' "${TMP_ROOT}/retention.log"; then
+  echo "a small history must not warn" >&2
+  exit 1
+fi
 if ! grep -q 'frontend asset retention: cutoff=.* (override) builds kept=2 dropped=1 inherited files kept=2 removed=1 unlisted=1 missing=1' \
   "${TMP_ROOT}/retention.log"; then
   cat "${TMP_ROOT}/retention.log" >&2
@@ -296,6 +304,9 @@ const path = require("node:path");
 const [root, ledgerPath] = process.argv.slice(2);
 const history = JSON.parse(fs.readFileSync(path.join(root, "frontend-build-history.json"), "utf8"));
 if (history.builds.length !== 2) throw new Error("history must keep its two-build shape");
+if (history.retention?.source !== "override" || history.retention.required_browser_version !== null) {
+  throw new Error(`unexpected retention record: ${JSON.stringify(history.retention)}`);
+}
 const retained = history.builds[1].assets.join(",");
 if (retained !== "mid-2222222222222222.js,previous-1111111111111111.js") {
   throw new Error(`unexpected retained assets: ${retained}`);

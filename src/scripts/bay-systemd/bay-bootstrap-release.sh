@@ -872,10 +872,19 @@ if (retained.size > 0) {
   const newest = kept.reduce((a, b) => (b.build_timestamp > a.build_timestamp ? b : a));
   builds.push({ ...newest, assets: [...retained].sort() });
 }
+const requiredBrowserVersion =
+  Number(/^required-browser-version=(\d+)$/.exec(cutoffSource)?.[1]) || null;
 const history = {
   schema: 1,
   generated_at: new Date().toISOString(),
   builds,
+  // Read by `software smoke static` to name the setting in its warning.
+  retention: {
+    cutoff: new Date(cutoffMs).toISOString(),
+    source: cutoffSource,
+    required_browser_version: requiredBrowserVersion,
+    max_assets: MAX_ASSETS,
+  },
 };
 function writeJson(output, value) {
   const temporary = `${output}.tmp-${process.pid}`;
@@ -894,6 +903,13 @@ console.log(
 console.log(
   `validated frontend assets: builds=${builds.length} files=${unionSize}`,
 );
+// History only shrinks when the required browser version is raised: say so a
+// release or two before the cap blocks a deploy.
+if (unionSize >= Math.floor(MAX_ASSETS * 0.8)) {
+  console.log(
+    `WARNING: frontend asset history has ${unionSize} of ${MAX_ASSETS} files (${Math.floor((unionSize / MAX_ASSETS) * 100)}%), back to ${new Date(cutoffMs).toISOString()} (${requiredBrowserVersion ? `required browser version ${requiredBrowserVersion}` : cutoffSource}). Raise "Required browser version" in the admin site settings so older builds' chunks are dropped before a deploy is refused at ${MAX_ASSETS}.`,
+  );
+}
 NODE
 }
 
