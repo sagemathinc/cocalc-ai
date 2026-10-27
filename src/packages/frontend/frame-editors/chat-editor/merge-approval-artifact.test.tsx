@@ -52,6 +52,7 @@ function view(overrides: any = {}) {
         base_ref: "main",
         head_ref: "feat/x",
         head_sha: HEAD,
+        base_sha: "b".repeat(40),
         html_url: "https://github.com/sagemathinc/cocalc-ai/pull/1430",
         additions: 10,
         deletions: 2,
@@ -59,7 +60,11 @@ function view(overrides: any = {}) {
         files: [{ filename: "a.ts", additions: 10, deletions: 2 }],
         files_truncated: false,
         checks: [{ name: "test", status: "completed", conclusion: "success" }],
+        check_summary: { total: 1, failing: 0, pending: 0 },
+        checks_truncated: false,
         reviews: [],
+        review_summary: { total: 0, changes_requested: 0, approved: 0 },
+        reviews_truncated: false,
         read_at: "2026-10-27T04:00:00Z",
       },
       ...overrides,
@@ -93,6 +98,34 @@ test("shows what the hub recorded and labels the agent's note", async () => {
   ).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "this" })).toBeNull();
   expect(get).toHaveBeenCalledWith({ request_ids: [ID] });
+  expect(
+    screen.getByRole("link", { name: "Review the diff of exactly this head" }),
+  ).toHaveAttribute(
+    "href",
+    `https://github.com/sagemathinc/cocalc-ai/compare/${"b".repeat(40)}...${HEAD}`,
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("warns about failing checks and change requests, even when not listed", async () => {
+  const v = view();
+  v.request.github_snapshot = {
+    ...v.request.github_snapshot,
+    checks: [],
+    checks_truncated: true,
+    check_summary: { total: 140, failing: 2, pending: 0 },
+    reviews: [],
+    reviews_truncated: true,
+    review_summary: { total: 100, changes_requested: 1, approved: 0 },
+  };
+  get.mockResolvedValue([v]);
+  render(<MergeApprovalArtifact requestIds={[ID]} />);
+  expect(
+    await screen.findByText("2 failing checks; 1 review requesting changes"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/Not all checks and reviews are listed/),
+  ).toBeInTheDocument();
 });
 
 test("approves the exact head with a comment, by keyboard", async () => {

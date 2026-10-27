@@ -47,6 +47,15 @@ function isGitHubUrl(url: string): boolean {
   return /^https:\/\/github\.com\//.test(url);
 }
 
+const SHA = /^[0-9a-f]{40}$/;
+
+// GitHub's diff of exactly these commits, which can't change later.
+function compareUrl(repo: string, base?: string, head?: string) {
+  if (!base || !head || !SHA.test(base) || !SHA.test(head)) return undefined;
+  if (!/^[a-z0-9][a-z0-9-]*\/[a-z0-9._-]+$/.test(repo)) return undefined;
+  return `https://github.com/${repo}/compare/${base}...${head}`;
+}
+
 function when(iso?: string): string {
   const t = Date.parse(iso ?? "");
   return Number.isFinite(t) ? new Date(t).toLocaleString() : "";
@@ -183,6 +192,17 @@ function MergeApprovalRequestCard({
   }
 
   const heading = `${request.repo} #${request.pr_number}`;
+  const diffUrl = compareUrl(request.repo, snap.base_sha, request.head_sha);
+  const checkSummary = snap.check_summary ?? {
+    total: snap.checks.length,
+    failing: 0,
+    pending: 0,
+  };
+  const reviewSummary = snap.review_summary ?? {
+    total: snap.reviews.length,
+    changes_requested: 0,
+    approved: 0,
+  };
   return (
     <section
       aria-label={`Merge approval for ${heading}`}
@@ -208,6 +228,31 @@ function MergeApprovalRequestCard({
           </Tag>
         </Space>
         <Typography.Text strong>{snap.title}</Typography.Text>
+        {diffUrl ? (
+          <Space wrap>
+            <Button
+              type="primary"
+              icon={<Icon name="github" />}
+              href={diffUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Review the diff of exactly this head
+            </Button>
+            <Typography.Text type="secondary">
+              GitHub's diff of {request.base_ref} at{" "}
+              <code>{snap.base_sha.slice(0, 12)}</code> to{" "}
+              <code>{request.head_sha.slice(0, 12)}</code>; it can't change
+              later. Approve only what you reviewed there.
+            </Typography.Text>
+          </Space>
+        ) : (
+          <Alert
+            type="warning"
+            showIcon
+            title="No pinned diff link for this request: review the exact head on GitHub before approving."
+          />
+        )}
         <dl style={{ margin: 0 }}>
           <dt>Merge into</dt>
           <dd>
@@ -227,10 +272,34 @@ function MergeApprovalRequestCard({
           <dd>
             +{snap.additions} −{snap.deletions} in {snap.changed_files} files
           </dd>
+          <dt>Checks</dt>
+          <dd>
+            {checkSummary.total} total, {checkSummary.failing} failing,{" "}
+            {checkSummary.pending} pending
+          </dd>
+          <dt>Reviews</dt>
+          <dd>
+            {reviewSummary.total} total, {reviewSummary.changes_requested}{" "}
+            requesting changes, {reviewSummary.approved} approving
+          </dd>
         </dl>
+        {(checkSummary.failing > 0 || reviewSummary.changes_requested > 0) && (
+          <Alert
+            type="warning"
+            showIcon
+            title={[
+              checkSummary.failing > 0 &&
+                `${checkSummary.failing} failing check${checkSummary.failing === 1 ? "" : "s"}`,
+              reviewSummary.changes_requested > 0 &&
+                `${reviewSummary.changes_requested} review${reviewSummary.changes_requested === 1 ? "" : "s"} requesting changes`,
+            ]
+              .filter(Boolean)
+              .join("; ")}
+          />
+        )}
         {snap.files.length > 0 && (
           <details>
-            <summary>Files</summary>
+            <summary>Files, as listed by GitHub at request time</summary>
             <ul style={{ margin: 0 }}>
               {snap.files.map((f) => (
                 <li key={f.filename}>
@@ -247,7 +316,8 @@ function MergeApprovalRequestCard({
         )}
         <details>
           <summary>
-            Checks ({snap.checks.length}) and reviews ({snap.reviews.length})
+            Checks ({snap.checks.length} shown) and reviews (
+            {snap.reviews.length} shown)
           </summary>
           <ul style={{ margin: 0 }}>
             {snap.checks.map((c, i) => (
@@ -264,6 +334,14 @@ function MergeApprovalRequestCard({
               </li>
             ))}
           </ul>
+          {(snap.checks_truncated || snap.reviews_truncated) && (
+            <Typography.Text type="secondary">
+              Not all {snap.checks_truncated ? "checks" : ""}
+              {snap.checks_truncated && snap.reviews_truncated ? " and " : ""}
+              {snap.reviews_truncated ? "reviews" : ""} are listed; the counts
+              above include them. Failures and change requests are listed first.
+            </Typography.Text>
+          )}
         </details>
         <Typography.Text type="secondary">
           Read from GitHub {when(snap.read_at)}. Requested by{" "}
