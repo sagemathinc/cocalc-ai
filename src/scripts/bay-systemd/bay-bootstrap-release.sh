@@ -802,14 +802,15 @@ browser_version_raise_target() {
   fi
 }
 
-# Sets one browser version setting to VALUE as the bay account, only if it
-# still holds OLD (the value read; "-" when unset), so a value an admin wrote
-# in between is never overwritten; bumps _last_update so running hubs reload.
-# Returns 0 when it was set, 2 when it had changed, 1 on error.
+# Raises one browser version setting to VALUE as the bay account, atomically
+# and only while the stored value is not a number (missing, empty, "-",
+# anything else) or is numerically below VALUE: a value an admin raised in
+# between, or one in the future, is never lowered. Bumps _last_update so
+# running hubs reload. Returns 0 when it was raised, 2 when it was left, 1 on
+# error.
 write_browser_version_setting() {
-  local name="$1" value="$2" old="${3:--}"
+  local name="$1" value="$2"
   [[ "$name" =~ ^version_(min|recommended)_browser$ && "$value" =~ ^[0-9]+$ ]] || return 1
-  [[ "$old" == "-" ]] && old=""
   local updated
   updated="$(
     runuser -u "$BAY_USER" -- env \
@@ -818,11 +819,13 @@ write_browser_version_setting() {
       PGUSER="$BAY_USER" \
       PGCONNECT_TIMEOUT=5 \
       timeout 15 "$PSQL_BIN" -d "$BAY_USER" -XAtq -v ON_ERROR_STOP=1 \
-      -v name="$name" -v value="$value" -v old="$old" <<'SQL'
+      -v name="$name" -v value="$value" <<'SQL'
 WITH up AS (
   INSERT INTO server_settings (name, value) VALUES (:'name', :'value')
   ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
-  WHERE COALESCE(server_settings.value, '') = :'old'
+  WHERE server_settings.value IS NULL
+    OR btrim(server_settings.value) !~ '^[0-9]+$'
+    OR btrim(server_settings.value)::numeric < (:'value')::numeric
   RETURNING 1
 ), touched AS (
   INSERT INTO server_settings (name, value)
@@ -863,10 +866,10 @@ ensure_recent_browser_version() {
     target="$(browser_version_raise_target "$value" "$now" "$floor")"
     [[ -n "$target" ]] || continue
     status=0
-    write_browser_version_setting "$name" "$target" "$value" || status=$?
+    write_browser_version_setting "$name" "$target" || status=$?
     case "$status" in
       0) echo "browser version: raised ${name} from ${value} to ${target} (at most ${days} days old)" ;;
-      2) echo "browser version: ${name} changed while this deploy read it; left as is" ;;
+      2) echo "browser version: ${name} is already at least ${target} (changed meanwhile); left as is" ;;
       *) echo "WARNING: could not raise ${name} from ${value} to ${target}" >&2 ;;
     esac
   done

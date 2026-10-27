@@ -708,7 +708,7 @@ grep -q "is not a number of days" "${TMP_ROOT}/browser-version.err"
 # A value changed while the deploy read it is left as is, and said so.
 write_browser_version_setting() { return 2; }
 ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
-grep -q "version_min_browser changed while this deploy read it; left as is" "${TMP_ROOT}/browser-version.log"
+grep -q "version_min_browser is already at least .* (changed meanwhile); left as is" "${TMP_ROOT}/browser-version.log"
 read_browser_version_settings() { :; }
 ensure_recent_browser_version >/dev/null
 [[ ! -s "$WRITES" ]]
@@ -716,10 +716,18 @@ ensure_recent_browser_version >/dev/null
 unset -f write_browser_version_setting
 # shellcheck disable=SC1091
 eval "$(sed -n '/^write_browser_version_setting() {/,/^}/p' "${SCRIPT_DIR}/bay-bootstrap-release.sh")"
-if write_browser_version_setting version_min_browser "1; DROP TABLE x" - 2>/dev/null ||
-  write_browser_version_setting other_setting 1792710260 - 2>/dev/null; then
+if write_browser_version_setting version_min_browser "1; DROP TABLE x" 2>/dev/null ||
+  write_browser_version_setting other_setting 1792710260 2>/dev/null; then
   echo "write_browser_version_setting accepted a bad name or value" >&2
   exit 1
+fi
+
+# Against a real postgres when its server binaries are available.
+PG_BIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n1 || true)"
+if [[ -n "$PG_BIN" && -x "${PG_BIN}/initdb" ]] && command -v psql >/dev/null; then
+  bash "${SCRIPT_DIR}/bay-browser-version-pg.test.sh" "$PG_BIN" >/dev/null
+else
+  echo "skipping browser version postgres tests (no postgres server binaries)" >&2
 fi
 
 VALIDATION_RELEASE="${TMP_ROOT}/validation-release"
