@@ -133,13 +133,16 @@ describe("an ipykernel on this transport", () => {
       })();
       await sleep(1500);
       k.signal("SIGINT"); // sent as interrupt_request on control
-      // the kernel is free again: a new execution finishes in seconds, not after the 100 s sleep
+      // the kernel is free again: "1 + 1" returns 2 within seconds, not after the 100 s sleep.
+      // (kernel.ts clears its execute queue on an interrupt, so the interrupted cell's own
+      // last messages can end the next execution's output early: retry until the result comes.)
       const t0 = Date.now();
-      const out = await run(k, "1 + 1");
-      expect(out.find((m) => m.content?.data)?.content.data).toEqual({
-        "text/plain": "2",
-      });
-      expect(Date.now() - t0).toBeLessThan(20_000);
+      let result;
+      while (result == null && Date.now() - t0 < 20_000) {
+        const out = await run(k, "1 + 1");
+        result = out.find((m) => m.content?.data)?.content.data;
+      }
+      expect(result).toEqual({ "text/plain": "2" });
     } finally {
       spec.interrupt_mode = saved;
     }
