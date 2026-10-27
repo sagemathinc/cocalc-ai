@@ -425,8 +425,6 @@ export const MODELED_TIER_JSON_KEYS = {
     "prepaid_host_usage_limit_7d_usd",
     "acp_max_queued_per_account",
     "acp_max_queued_per_thread",
-    "acp_max_created_5h_per_account",
-    "acp_max_created_7d_per_account",
     "acp_max_running_per_account",
     "acp_max_running_per_project",
     "acp_max_active_automations_per_project",

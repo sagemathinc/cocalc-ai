@@ -17,8 +17,8 @@ const tier = {
   id: "pro",
   label: "Pro",
   usage_limits: {
-    acp_max_created_5h_per_account: 500,
-    acp_max_created_7d_per_account: 2000,
+    acp_max_queued_per_account: 500,
+    acp_max_queued_per_thread: 50,
     acp_max_running_per_account: 4,
     blob_account_total_gb: 10,
   },
@@ -31,7 +31,7 @@ describe("membership tier form", () => {
   it("shows modeled keys only in their fields, not in the JSON editors", () => {
     const values = tierToFormValues(tier);
     expect(values.usage_limits).toEqual({ blob_account_total_gb: 10 });
-    expect(values.usage_limit_acp_max_created_7d_per_account).toBe(2000);
+    expect(values.usage_limit_acp_max_queued_per_account).toBe(500);
     expect(values.features).toEqual({ some_flag: "x" });
     expect(values.feature_create_hosts).toBe(true);
     expect(values.ai_limits).toEqual({ model_overrides: { a: 1 } });
@@ -49,15 +49,15 @@ describe("membership tier form", () => {
   });
 
   it("saves the value set in a modeled field", () => {
-    // The lost edit: 2500/10000 must not revert to the stored 500/2000.
+    // The lost edit: a new value must not revert to the stored one.
     const payload = buildMembershipTierPayload({
       ...tierToFormValues(tier),
-      usage_limit_acp_max_created_5h_per_account: 2500,
-      usage_limit_acp_max_created_7d_per_account: 10000,
+      usage_limit_acp_max_queued_per_account: 2500,
+      usage_limit_acp_max_queued_per_thread: 100,
     });
     expect(payload.usage_limits).toMatchObject({
-      acp_max_created_5h_per_account: 2500,
-      acp_max_created_7d_per_account: 10000,
+      acp_max_queued_per_account: 2500,
+      acp_max_queued_per_thread: 100,
     });
   });
 
@@ -70,6 +70,26 @@ describe("membership tier form", () => {
     expect(payload.usage_limits).toMatchObject({ blob_account_total_gb: 50 });
   });
 
+  it("keeps retired created-turn limits as plain JSON keys", () => {
+    // They no longer have fields: a stored value shows in the JSON and is kept.
+    const retired = {
+      ...tier,
+      usage_limits: {
+        ...tier.usage_limits,
+        acp_max_created_5h_per_account: 500,
+        acp_max_created_7d_per_account: 2000,
+      },
+    };
+    const values = tierToFormValues(retired);
+    expect(values.usage_limits).toMatchObject({
+      acp_max_created_5h_per_account: 500,
+      acp_max_created_7d_per_account: 2000,
+    });
+    expect(buildMembershipTierPayload(values).usage_limits).toEqual(
+      retired.usage_limits,
+    );
+  });
+
   it("refuses a modeled key typed into the JSON instead of dropping it", () => {
     const values = tierToFormValues(tier);
     expect(() =>
@@ -77,10 +97,10 @@ describe("membership tier form", () => {
         ...values,
         usage_limits: {
           ...values.usage_limits,
-          acp_max_created_7d_per_account: 10000,
+          acp_max_queued_per_account: 10000,
         },
       }),
-    ).toThrow(/usage_limits\.acp_max_created_7d_per_account has its own field/);
+    ).toThrow(/usage_limits\.acp_max_queued_per_account has its own field/);
     for (const field of ["features", "ai_limits", "project_defaults"]) {
       const key = MODELED_TIER_JSON_KEYS[field][0];
       expect(() =>
