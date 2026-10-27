@@ -1094,6 +1094,137 @@ describe("dedicated host spend maintenance", () => {
     );
   });
 
+  it("defers the billing deprovision while a machine change holds the host", async () => {
+    let metadataWritten = false;
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              name: "GPU Host",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: "acc-1",
+                desired_state: "stopped",
+                machine: { cloud: "gcp", machine_type: "n1-standard-4" },
+                billing: {
+                  funding_mode: "account-prepaid",
+                  enforcement: {
+                    state: "stopped_billing_blocked",
+                    reason: "prepaid balance is exhausted",
+                    final_backup_status: "succeeded",
+                    deprovision_after: "2026-01-01T00:00:00.000Z",
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata=(")
+      ) {
+        metadataWritten = true;
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    // updateHostMachine holds the host's machine-change lock.
+    withSessionAdvisoryLockMock = jest.fn(
+      async ({ lockKey, fn }: { lockKey: string; fn: () => Promise<any> }) =>
+        lockKey === "project_hosts:machine-change:host-1"
+          ? undefined
+          : await fn(),
+    );
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(withSessionAdvisoryLockMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lockKey: "project_hosts:machine-change:host-1",
+      }),
+    );
+    expect(metadataWritten).toBe(false);
+    expect(createLroMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "host-deprovision" }),
+    );
+    expect(
+      notifyDedicatedHostBillingEnforcementBestEffortMock,
+    ).not.toHaveBeenCalledWith(
+      expect.objectContaining({ state: "deprovision_pending" }),
+    );
+  });
+
+  it("defers a billing drain while a machine change holds the host", async () => {
+    let statusWritten = false;
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              name: "GPU Host",
+              region: "us-central1",
+              status: "running",
+              metadata: {
+                owner: "acc-1",
+                machine: { cloud: "gcp", machine_type: "n1-standard-4" },
+                billing: { funding_mode: "account-prepaid" },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        statusWritten = true;
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    withSessionAdvisoryLockMock = jest.fn(
+      async ({ lockKey, fn }: { lockKey: string; fn: () => Promise<any> }) =>
+        lockKey === "project_hosts:machine-change:host-1"
+          ? undefined
+          : await fn(),
+    );
+    const { __test__ } = await import("./spend-maintenance");
+    await __test__.requestHostDrainForBilling({
+      row: {
+        id: "host-1",
+        name: "GPU Host",
+        status: "running",
+        metadata: {
+          owner: "acc-1",
+          machine: { cloud: "gcp", machine_type: "n1-standard-4" },
+          billing: { funding_mode: "account-prepaid" },
+        },
+      },
+      enforcement: { state: "drain_requested", reason: "test" },
+      rescue: true,
+    });
+    expect(statusWritten).toBe(false);
+    expect(createLroMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "host-drain" }),
+    );
+  });
+
   function blockedHostRow(enforcement: Record<string, any>) {
     return {
       id: "host-1",
