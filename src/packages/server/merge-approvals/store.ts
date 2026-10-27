@@ -110,7 +110,12 @@ export class MergeApprovalStore {
   async create(req: NewMergeApprovalRequest): Promise<MergeApprovalRequest> {
     const project_id = req.requested_by.project_id;
     return await this.transaction(async (client) => {
-      // Serialize one project's requests so they can't race the limits.
+      // Serialize requests for one pull request (from any project), so only
+      // the newest head stays open, and then one project's requests, so they
+      // can't race the limits. Always in this order, so they can't deadlock.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        `merge-approval-pr:${req.repo}#${req.pr_number}`,
+      ]);
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
         `merge-approval-request:${project_id}`,
       ]);
@@ -129,6 +134,13 @@ export class MergeApprovalStore {
       );
       if (existing.rows[0] != null) return toRequest(existing.rows[0]);
 
+      // Supersede first, so a request for a new head frees its old head's
+      // slot. If a limit refuses it below, this rolls back too.
+      await client.query(
+        `UPDATE merge_approval_requests SET status='superseded'
+          WHERE status='pending' AND repo=$1 AND pr_number=$2 AND head_sha<>$3`,
+        [req.repo, req.pr_number, req.head_sha],
+      );
       const counts = await client.query(
         `SELECT count(*) FILTER (WHERE status='pending')::int AS pending,
                 count(*) FILTER (WHERE created_at > now() - interval '1 hour')::int AS recent
@@ -151,11 +163,6 @@ export class MergeApprovalStore {
         );
       }
 
-      await client.query(
-        `UPDATE merge_approval_requests SET status='superseded'
-          WHERE status='pending' AND repo=$1 AND pr_number=$2 AND head_sha<>$3`,
-        [req.repo, req.pr_number, req.head_sha],
-      );
       const { rows } = await client.query(
         `INSERT INTO merge_approval_requests
            (id, repo, pr_number, head_sha, base_ref, github_snapshot,

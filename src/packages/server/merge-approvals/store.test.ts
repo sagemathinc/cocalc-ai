@@ -189,6 +189,58 @@ describeDb("merge approval store", () => {
     ).resolves.toMatchObject({ status: "pending" });
   });
 
+  it("lets a new head replace an old one at the open-request limit", async () => {
+    const project_id = randomUUID();
+    const first = await store.create(
+      newRequest(project_id, { repo: "o/full", pr_number: 1 }),
+    );
+    await getPool().query(
+      `INSERT INTO merge_approval_requests
+         (id, repo, pr_number, head_sha, base_ref, github_snapshot,
+          agent_note, requested_by, created_at, expires_at, status)
+       SELECT gen_random_uuid(),'o/full',100 + n,$1,'main','{}'::jsonb,'',
+              $2::jsonb, now() - interval '2 hours', now() + interval '1 day',
+              'pending'
+         FROM generate_series(1, $3::int) AS n`,
+      [
+        sha("c"),
+        JSON.stringify({ account_id: randomUUID(), project_id }),
+        MAX_PENDING_MERGE_APPROVALS_PER_PROJECT - 1,
+      ],
+    );
+    await expect(
+      store.create(newRequest(project_id, { repo: "o/full", pr_number: 2 })),
+    ).rejects.toMatchObject({ code: 429 });
+    const next = await store.create(
+      newRequest(project_id, {
+        repo: "o/full",
+        pr_number: 1,
+        head_sha: sha("b"),
+      }),
+    );
+    expect(next.status).toBe("pending");
+    expect((await store.get(first.id))?.status).toBe("superseded");
+  });
+
+  it("leaves one open request per PR when projects race", async () => {
+    const heads = ["d", "e", "f", "1", "2", "3"].map(sha);
+    await Promise.all(
+      heads.map((head_sha) =>
+        store.create(
+          newRequest(randomUUID(), {
+            repo: "o/race",
+            pr_number: 1,
+            head_sha,
+          }),
+        ),
+      ),
+    );
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM merge_approval_requests WHERE repo='o/race' AND status='pending'",
+    );
+    expect(rows[0].n).toBe(1);
+  });
+
   it("limits new requests per project per hour", async () => {
     const project_id = randomUUID();
     for (let i = 0; i < MAX_NEW_MERGE_APPROVALS_PER_PROJECT_PER_HOUR; i++) {
