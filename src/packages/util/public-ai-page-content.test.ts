@@ -88,6 +88,8 @@ describe("AI feature page words", () => {
         getDocsEntry(href.slice("/docs/".length), { product: "plus" }),
       ).toBeUndefined();
     }
-    expect(getDocsEntry("ai/claude-code")?.title).toBe("Claude Code in CoCalc");
+    expect(getDocsEntry("ai/claude-code")?.title).toBe(
+      "Claude Code in CoCalc (Experimental Preview)",
+    );
   });
 });

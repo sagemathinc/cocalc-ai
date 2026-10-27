@@ -7,7 +7,7 @@ test("Claude access options and security model are public and searchable in both
   for (const registry of [{ getDocsEntry, searchDocsEntries }, essential]) {
     const entry = registry.getDocsEntry("ai/claude-code");
     assert.ok(entry);
-    assert.equal(entry.title, "Claude Code in CoCalc");
+    assert.match(entry.title, /Experimental Preview/);
     assert.match(entry.body, /membership includes Claude/);
     assert.match(entry.body, /Account API key/);
     assert.match(entry.body, /Project API-key secret/);

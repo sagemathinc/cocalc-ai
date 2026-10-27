@@ -23,9 +23,11 @@ describe("About page words", () => {
   it("links the lead's Claude mention to the Claude guide on cocalc.ai", () => {
     const links = getPublicAboutIntro(true).filter(({ path }) => path != null);
     expect(links).toEqual([{ path: "docs/ai/claude-code", text: "Claude" }]);
-    // The guide explains access options and limitations. CoCalc Plus has no
-    // such guide, and the lead names Claude only on cocalc.ai.
-    expect(getDocsEntry("ai/claude-code")?.title).toBe("Claude Code in CoCalc");
+    // The guide states the preview status, so the link text does not. CoCalc
+    // Plus has no such guide, and the lead names Claude only on cocalc.ai.
+    expect(getDocsEntry("ai/claude-code")?.title).toBe(
+      "Claude Code in CoCalc (Experimental Preview)",
+    );
     expect(getDocsEntry("ai/claude-code", { product: "plus" })).toBeUndefined();
   });
 

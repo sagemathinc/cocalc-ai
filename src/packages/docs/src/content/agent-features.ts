@@ -23,6 +23,8 @@ Claude qualifications refer to **integrated Claude Code with a personal Pro/Max
 subscription on an enabled managed project host** and retain the assessment above.
 They do not qualify generic ACP adapters or Claude running independently in a
 terminal, or establish feature parity across payment methods.
+Claude Code remains an experimental preview; this comparison does not
+announce general availability or close its release gates.
 
 | Status | Meaning |
 | --- | --- |

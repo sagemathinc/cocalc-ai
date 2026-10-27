@@ -383,7 +383,7 @@ For unavailable-model messages, see
    Changes apply to future turns, not work already admitted.
 
 Membership-funded Claude uses its included model and the AI allowance shared
-with Codex. A personal subscription uses that provider plan's allowance;
+with Codex; higher membership tiers include a larger allowance. A personal subscription uses that provider plan's allowance;
 API-key usage is billed by Anthropic. These modes have different credential
 and tool boundaries: see [Claude Code access and billing](/docs/ai/claude-code).
 In particular, an account API key does not authorize agent-authored network
