@@ -630,15 +630,35 @@ read_browser_version_settings() {
   echo "$min $recommended"
 }
 
-# A browser version as the hub reads it (normalizeVersionValue in
-# util/db-schema/site-settings-public.ts): a number of seconds, and 0 when it
-# is not one or is not in the past.
-normalize_browser_version() {
+# A raw browser version setting, clamped without arithmetic until it is known
+# to be in the past (so an oversized typo cannot wrap around): 0 when it is
+# not a number of seconds, NOW when it is not in the past, else the value.
+clamp_browser_version() {
   local value="$1" now="$2"
-  if [[ ! "$value" =~ ^[0-9]+$ ]] || ((10#$value >= now)); then
+  [[ "$value" =~ ^[0-9]+$ ]] || {
+    echo 0
+    return
+  }
+  value="${value#"${value%%[!0]*}"}"
+  if [[ -z "$value" ]]; then
+    echo 0
+  elif ((${#value} > ${#now})) || [[ ${#value} -eq ${#now} && ! "$value" < "$now" ]]; then
+    echo "$now"
+  else
+    echo "$value"
+  fi
+}
+
+# A browser version as the hub reads it (normalizeVersionValue in
+# util/db-schema/site-settings-public.ts): 0 unless it is a number of seconds
+# in the past.
+normalize_browser_version() {
+  local value
+  value="$(clamp_browser_version "$1" "$2")"
+  if [[ "$value" == "$2" ]]; then
     echo 0
   else
-    echo "$((10#$value))"
+    echo "$value"
   fi
 }
 
@@ -649,14 +669,16 @@ normalize_browser_version() {
 # Prints nothing when the hub enforces no version (0).
 effective_required_browser_version() {
   local min="$1" recommended="$2" now="$3" frontend="$4"
-  local raw_min=0 raw_recommended=0
-  [[ "$min" =~ ^[0-9]+$ ]] && raw_min=$((10#$min))
-  [[ "$recommended" =~ ^[0-9]+$ ]] && raw_recommended=$((10#$recommended))
-  # server-settings.ts: Math.min(min || 0, recommended || 0).
-  local combined=$((raw_min < raw_recommended ? raw_min : raw_recommended))
+  # server-settings.ts: Math.min(min || 0, recommended || 0), on values
+  # clamped to at most NOW, which keeps their order relative to past ones.
+  local raw_min raw_recommended combined
+  raw_min="$(clamp_browser_version "$min" "$now")"
+  raw_recommended="$(clamp_browser_version "$recommended" "$now")"
+  combined=$((raw_min < raw_recommended ? raw_min : raw_recommended))
   local bounded_recommended bounded
-  bounded_recommended="$(normalize_browser_version "$raw_recommended" "$now")"
-  if [[ "$frontend" =~ ^[0-9]+$ ]] && ((frontend > 0 && frontend < bounded_recommended)); then
+  bounded_recommended="$(normalize_browser_version "$recommended" "$now")"
+  frontend="$(normalize_browser_version "$frontend" "$now")"
+  if ((frontend > 0 && frontend < bounded_recommended)); then
     bounded_recommended="$frontend"
   fi
   bounded="$(normalize_browser_version "$combined" "$now")"

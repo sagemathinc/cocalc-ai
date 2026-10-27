@@ -367,6 +367,18 @@ erbv() { effective_required_browser_version "$1" "$2" "$NOW" "${3:-$FE}"; }
 # The boundary: a version equal to now is not in the past.
 [[ -z "$(erbv "$NOW" "$NOW")" ]]
 [[ "$(erbv $((NOW - 1)) $((NOW - 1)) $NOW)" == $((NOW - 1)) ]]
+# An oversized typo must not wrap around in Bash arithmetic: 2^64 + a
+# plausible timestamp is still in the future, so nothing is enforced.
+HUGE=18446744075502679816
+[[ -z "$(effective_required_browser_version "$HUGE" "$HUGE" 1793128300 1793128200)" ]]
+[[ "$(normalize_browser_version "$HUGE" "$NOW")" == 0 ]]
+[[ "$(clamp_browser_version "$HUGE" "$NOW")" == "$NOW" ]]
+# A huge required version with a past recommended one yields the recommended.
+[[ "$(erbv "$HUGE" 1792800000)" == 1792800000 ]]
+[[ -z "$(erbv 1792710260 "$HUGE")" ]]
+# Leading zeros are read as the hub's parseInt reads them.
+[[ "$(erbv 0001792710260 1792800000)" == 1792710260 ]]
+[[ "$(clamp_browser_version 000 "$NOW")" == 0 ]]
 # Unset, 0 or not a number: nothing.
 [[ -z "$(erbv 1792710260 -)" ]]
 [[ -z "$(erbv - 1792800000)" ]]
