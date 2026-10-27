@@ -603,10 +603,10 @@ preserve_previous_static_assets() {
     "${previous_static}/" "${target_static}/"
 }
 
-# The required browser version (site setting version_min_browser, unix
-# seconds) as the hub enforces it: the smaller of it and the recommended
-# version. Prints nothing when it cannot be read.
-read_required_browser_version() {
+# The raw version_min_browser and version_recommended_browser site settings,
+# as "MIN REC" ("-" for one that is unset). Prints nothing when they cannot be
+# read.
+read_browser_version_settings() {
   [[ -n "${PSQL_BIN:-}" && -d "${BAY_ROOT}/run/postgres" ]] || return 0
   local rows
   rows="$(
@@ -619,40 +619,84 @@ read_required_browser_version() {
       "SELECT name, value FROM server_settings WHERE name IN ('version_min_browser', 'version_recommended_browser')" \
       2>/dev/null
   )" || return 0
-  local name value min="" recommended=""
+  local name value min="-" recommended="-"
   while read -r name value; do
     value="${value//[[:space:]]/}"
-    [[ "$value" =~ ^[0-9]+$ ]] || continue
     case "$name" in
-      version_min_browser) min="$value" ;;
-      version_recommended_browser) recommended="$value" ;;
+      version_min_browser) min="${value:--}" ;;
+      version_recommended_browser) recommended="${value:--}" ;;
     esac
   done <<<"$rows"
-  [[ -n "$min" && -n "$recommended" ]] || return 0
-  if ((recommended < min)); then
-    min="$recommended"
+  echo "$min $recommended"
+}
+
+# A browser version as the hub reads it (normalizeVersionValue in
+# util/db-schema/site-settings-public.ts): a number of seconds, and 0 when it
+# is not one or is not in the past.
+normalize_browser_version() {
+  local value="$1" now="$2"
+  if [[ ! "$value" =~ ^[0-9]+$ ]] || ((10#$value >= now)); then
+    echo 0
+  else
+    echo "$((10#$value))"
   fi
-  if ((min > 0)); then
-    echo "$min"
+}
+
+# The required browser version the hub enforces, given the raw settings, the
+# time and the version of the frontend it serves (server-settings.ts, then
+# buildPublicSiteSettings): min(required, recommended) normalized, bounded by
+# the normalized recommended version, itself bounded by the frontend version.
+# Prints nothing when the hub enforces no version (0).
+effective_required_browser_version() {
+  local min="$1" recommended="$2" now="$3" frontend="$4"
+  local raw_min=0 raw_recommended=0
+  [[ "$min" =~ ^[0-9]+$ ]] && raw_min=$((10#$min))
+  [[ "$recommended" =~ ^[0-9]+$ ]] && raw_recommended=$((10#$recommended))
+  # server-settings.ts: Math.min(min || 0, recommended || 0).
+  local combined=$((raw_min < raw_recommended ? raw_min : raw_recommended))
+  local bounded_recommended bounded
+  bounded_recommended="$(normalize_browser_version "$raw_recommended" "$now")"
+  if [[ "$frontend" =~ ^[0-9]+$ ]] && ((frontend > 0 && frontend < bounded_recommended)); then
+    bounded_recommended="$frontend"
   fi
+  bounded="$(normalize_browser_version "$combined" "$now")"
+  if ((bounded_recommended < bounded)); then
+    bounded="$bounded_recommended"
+  fi
+  if ((bounded > 0)); then
+    echo "$bounded"
+  fi
+}
+
+# The required browser version the hub will enforce for this release, or
+# nothing.
+read_required_browser_version() {
+  local frontend="${1:-0}" settings
+  settings="$(read_browser_version_settings)"
+  [[ -n "$settings" ]] || return 0
+  # shellcheck disable=SC2086
+  effective_required_browser_version $settings "$(date +%s)" "$frontend"
 }
 
 # Inherited frontend chunks are kept only for builds a browser may still run:
 # those at or after the required browser version (older clients are
-# disconnected). Without a readable setting, a fixed window applies, never
-# everything.
+# disconnected). Without a version the hub enforces, a fixed window applies,
+# never everything.
 FRONTEND_ASSET_FALLBACK_DAYS="${FRONTEND_ASSET_FALLBACK_DAYS:-14}"
 # The version is set from a build's smc-version, written around the frontend
 # build; a day of slack keeps a build whose bundle was stamped a little earlier.
 FRONTEND_ASSET_VERSION_SLACK_MS=$((24 * 3600 * 1000))
 
+# The cutoff for a release whose frontend build is at FRONTEND (unix seconds;
+# the hub bounds the required version by the frontend it serves).
 frontend_asset_retention_cutoff() {
+  local frontend="${1:-0}"
   if [[ -n "${FRONTEND_ASSET_RETENTION_CUTOFF_MS:-}" ]]; then
     echo "${FRONTEND_ASSET_RETENTION_CUTOFF_MS} override"
     return
   fi
   local version
-  version="$(read_required_browser_version)"
+  version="$(read_required_browser_version "$frontend")"
   if [[ -n "$version" ]]; then
     echo "$((version * 1000 - FRONTEND_ASSET_VERSION_SLACK_MS)) required-browser-version=${version}"
   else
@@ -679,13 +723,18 @@ prepare_frontend_asset_history() {
   fi
   local target_ledger="${TARGET_RELEASE}/runtime/control-plane/frontend-asset-ledger.json"
 
+  local node_bin
+  node_bin="$(find_node)"
+  # The new frontend's build time bounds the version the hub will enforce.
+  local frontend_seconds
+  frontend_seconds="$(
+    "$node_bin" -e 'const m = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(Math.floor((Number(m.build_timestamp) || 0) / 1000));'       "$current_manifest" 2>/dev/null || echo 0
+  )"
   local cutoff cutoff_ms cutoff_source
-  cutoff="$(frontend_asset_retention_cutoff)"
+  cutoff="$(frontend_asset_retention_cutoff "$frontend_seconds")"
   cutoff_ms="${cutoff%% *}"
   cutoff_source="${cutoff#* }"
 
-  local node_bin
-  node_bin="$(find_node)"
   as_bay_node "$node_bin" - "$target_static" "$previous_static" \
     "$previous_ledger" "$target_ledger" "$cutoff_ms" "$cutoff_source" <<'NODE'
 const fs = require("node:fs");

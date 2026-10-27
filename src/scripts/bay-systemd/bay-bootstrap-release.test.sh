@@ -346,31 +346,59 @@ if (history.builds.length !== 1) throw new Error("only the current build should 
 NODE
 unset FRONTEND_ASSET_RETENTION_CUTOFF_MS
 
-# Reading the setting as the hub enforces it: the smaller of the required and
-# recommended versions, nothing when either is unset or unusable.
+# The hub's arithmetic (server-settings.ts, buildPublicSiteSettings): a
+# version not in the past counts as 0; the result is min(required,
+# recommended), bounded by the recommended version, itself bounded by the
+# frontend the hub serves; 0 means no version is enforced.
+NOW=1793000000
+FE=1792900000
+erbv() { effective_required_browser_version "$1" "$2" "$NOW" "${3:-$FE}"; }
+[[ "$(erbv 1792710260 1792800000)" == 1792710260 ]]
+[[ "$(erbv 1792710260 1792000000)" == 1792000000 ]]
+# Both in the future: the hub enforces nothing (old clients stay connected).
+[[ -z "$(erbv 1794000000 1794000000)" ]]
+# A future recommended version normalizes to 0, so nothing is enforced.
+[[ -z "$(erbv 1792710260 1794000000)" ]]
+# A future required version still yields the past recommended one.
+[[ "$(erbv 1794000000 1792800000)" == 1792800000 ]]
+# Bounded by the frontend the hub serves.
+[[ "$(erbv 1792950000 1792960000)" == "$FE" ]]
+[[ "$(erbv 1792950000 1792960000 0)" == 1792950000 ]]
+# The boundary: a version equal to now is not in the past.
+[[ -z "$(erbv "$NOW" "$NOW")" ]]
+[[ "$(erbv $((NOW - 1)) $((NOW - 1)) $NOW)" == $((NOW - 1)) ]]
+# Unset, 0 or not a number: nothing.
+[[ -z "$(erbv 1792710260 -)" ]]
+[[ -z "$(erbv - 1792800000)" ]]
+[[ -z "$(erbv 0 1792800000)" ]]
+[[ -z "$(erbv oct-22 1792800000)" ]]
+
+# Reading the raw settings from the bay database.
 mkdir -p "${BAY_ROOT}/run/postgres"
 PSQL_BIN=/bin/false
 SETTINGS_ROWS=""
 runuser() { printf '%s' "$SETTINGS_ROWS"; }
 SETTINGS_ROWS=$'version_min_browser 1792710260\nversion_recommended_browser 1792800000\n'
-[[ "$(read_required_browser_version)" == 1792710260 ]]
-SETTINGS_ROWS=$'version_min_browser 1792710260\nversion_recommended_browser 1792000000\n'
-[[ "$(read_required_browser_version)" == 1792000000 ]]
+[[ "$(read_browser_version_settings)" == "1792710260 1792800000" ]]
+[[ "$(read_required_browser_version 1792900000)" == 1792710260 ]]
+# The frontend bound applies end to end.
+[[ "$(read_required_browser_version 1792700000)" == 1792700000 ]]
 SETTINGS_ROWS=$'version_min_browser 1792710260\n'
-[[ -z "$(read_required_browser_version)" ]]
-SETTINGS_ROWS=$'version_min_browser oct-22\nversion_recommended_browser 1792800000\n'
-[[ -z "$(read_required_browser_version)" ]]
-SETTINGS_ROWS=$'version_min_browser 0\nversion_recommended_browser 1792800000\n'
-[[ -z "$(read_required_browser_version)" ]]
+[[ "$(read_browser_version_settings)" == "1792710260 -" ]]
+[[ -z "$(read_required_browser_version 1792900000)" ]]
+SETTINGS_ROWS=$'version_min_browser 4102444800\nversion_recommended_browser 4102444800\n'
+[[ -z "$(read_required_browser_version 1792900000)" ]]
 runuser() { return 2; }
-[[ -z "$(read_required_browser_version)" ]]
+[[ -z "$(read_browser_version_settings)" ]]
+[[ -z "$(read_required_browser_version 1792900000)" ]]
 unset -f runuser
 PSQL_BIN=""
 
 # The cutoff: the required browser version less a day of slack, or a fixed
 # window when the setting cannot be read; never everything.
-read_required_browser_version() { echo 1792710260; }
-[[ "$(frontend_asset_retention_cutoff)" == "$((1792710260000 - 86400000)) required-browser-version=1792710260" ]]
+read_required_browser_version() { echo "${1:-none}" >"${TMP_ROOT}/frontend-arg"; echo 1792710260; }
+[[ "$(frontend_asset_retention_cutoff 1792900000)" == "$((1792710260000 - 86400000)) required-browser-version=1792710260" ]]
+[[ "$(cat "${TMP_ROOT}/frontend-arg")" == 1792900000 ]]
 read_required_browser_version() { :; }
 cutoff="$(frontend_asset_retention_cutoff)"
 [[ "${cutoff#* }" == "fallback-14d" ]]
