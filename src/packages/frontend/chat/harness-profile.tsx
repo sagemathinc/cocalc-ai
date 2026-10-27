@@ -77,7 +77,7 @@ export function claudeCredentialTrustWarning(
   mode: "project-secret" | "account-api-key" | "account-subscription",
 ): string {
   if (mode === "account-subscription")
-    return "Claude Pro/Max: sign-in is account-owned and runs in a separate controller. Project commands run through a private tool bridge, not inside the controller. Use only with trusted project code.";
+    return "Claude Pro/Max: sign-in is account-owned and runs in a separate controller. Project commands run through a private tool bridge, not inside the controller. Credential isolation and subscription billing still require live qualification; use only with trusted project code.";
   return mode === "account-api-key"
     ? "Full project trust: CoCalc does not expose the account-stored key value to project code for reading or copying. However, project code can use the key through Claude's active relay and incur Anthropic charges. Use only with trusted collaborators and code."
     : "Full project trust: the project secret can be read, copied, or used by project collaborators and code Claude runs. Anthropic bills the key owner. Use only with trusted collaborators and code.";

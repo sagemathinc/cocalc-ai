@@ -721,6 +721,9 @@ test("Claude credential warnings keep their guidance without a preview label", (
     expect(warning).not.toMatch(/preview|experimental/i);
     expect(warning).toMatch(/trusted/);
   }
+  expect(claudeCredentialTrustWarning("account-subscription")).toMatch(
+    /Credential isolation and subscription billing still require live qualification/,
+  );
 });
 
 test("only custom ACP harness settings are labelled an experimental preview", async () => {

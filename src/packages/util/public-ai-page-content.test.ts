@@ -90,4 +90,19 @@ describe("AI feature page words", () => {
     }
     expect(getDocsEntry("ai/claude-code")?.title).toBe("Claude Code in CoCalc");
   });
+
+  it.each([[{ cocalc_product: "plus" }], [{}], [COCALC_AI]])(
+    "qualifies Claude Code by site, since every product shows the cards: %j",
+    (config) => {
+      // Plus and sites with Claude disabled offer neither Claude Code nor
+      // CoCalc membership.
+      const claude = getPublicAiCards(config)
+        .flatMap(({ paragraphs }) => paragraphs ?? [])
+        .filter((paragraph) => /Claude Code/.test(paragraph));
+      expect(claude.length).toBeGreaterThan(0);
+      for (const paragraph of claude) {
+        expect(paragraph).toMatch(/On sites that enable it, Claude Code/);
+      }
+    },
+  );
 });

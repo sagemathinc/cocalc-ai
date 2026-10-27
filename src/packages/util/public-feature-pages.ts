@@ -478,7 +478,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Integrated Codex and Claude Code",
         paragraphs: [
-          "Codex works with project files, terminals, commands, and live notebook state through CoCalc's project chat. Claude Code is integrated too, and can use CoCalc membership, a Claude Pro or Max subscription, or an Anthropic API key.",
+          "Codex works with project files, terminals, commands, and live notebook state through CoCalc's project chat. On sites that enable it, Claude Code is integrated too and can use CoCalc membership, a Claude Pro or Max subscription, or an Anthropic API key.",
         ],
         links: [
           { href: "/docs/ai/codex-chat", label: "Read the Codex guide" },
