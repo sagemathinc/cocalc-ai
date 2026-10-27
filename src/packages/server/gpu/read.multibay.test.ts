@@ -31,21 +31,30 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 // The wire between the bays: every request and reply, as encoded bytes.
 const wire: { subject: string; bytes: Uint8Array }[] = [];
 let homeImpl: Record<string, (opts: any) => Promise<any>> = {};
-const fastRpcRequest = jest.fn(async (subject: string, { raw }) => {
-  wire.push({ subject, bytes: raw });
-  const { name, args } = decode({ encoding: DataEncoding.MsgPack, data: raw });
+const encoded = (mesg: unknown) =>
+  encode({ encoding: DataEncoding.MsgPack, mesg });
+// GPU reads use request/reply: their timeout is longer than fast RPC allows.
+const request = jest.fn(async (subject: string, mesg: any, _opts: any) => {
+  wire.push({ subject, bytes: encoded(mesg) });
+  const { name, args } = decode({
+    encoding: DataEncoding.MsgPack,
+    data: encoded(mesg),
+  });
   const result = await homeImpl[name](args[0]);
-  const reply = encode({ encoding: DataEncoding.MsgPack, mesg: result });
-  wire.push({ subject, bytes: reply });
-  return { raw: reply };
+  wire.push({ subject, bytes: encoded(result) });
+  return { data: result };
+});
+const fastRpcRequest = jest.fn(async () => {
+  throw Error("GPU reads must not use fast RPC (its timeout is capped)");
 });
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
-  getInterBayFabricClient: () => ({ fastRpcRequest }),
+  getInterBayFabricClient: () => ({ request, fastRpcRequest }),
 }));
 
 import { RunpodClient } from "@cocalc/cloud/runpod/client";
 import * as hubGpu from "@cocalc/server/conat/api/gpu";
 import {
+  GPU_HOME_BAY_TIMEOUT_MS,
   clearGpuCatalogCache,
   getGpuAvailabilityLocal,
   getGpuCatalogLocal,
@@ -139,6 +148,15 @@ describe("gpu.* for an account homed on another bay", () => {
       "bay.bay-1.rpc.account-local.gpu",
       "bay.bay-1.rpc.account-local.gpu",
     ]);
+    // A forwarded read may take as long as a local one: never the inter-bay
+    // default, which is shorter than one RunPod request.
+    expect(request).toHaveBeenCalledWith(
+      "bay.bay-1.rpc.account-local.gpu",
+      expect.anything(),
+      expect.objectContaining({ timeout: GPU_HOME_BAY_TIMEOUT_MS }),
+    );
+    expect(fastRpcRequest).not.toHaveBeenCalled();
+    expect(GPU_HOME_BAY_TIMEOUT_MS).toBeGreaterThanOrEqual(120_000);
     expect(home.received).toEqual([{ account_id: ACCOUNT }]);
     expect(edgeGetClient).not.toHaveBeenCalled();
     expect(edgeGetCleanup).not.toHaveBeenCalled();

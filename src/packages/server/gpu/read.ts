@@ -67,6 +67,15 @@ export interface GpuReadDeps {
   now?: () => number;
 }
 
+// How long a read forwarded to the key owner's home bay may take. The
+// inter-bay default (10 s) is shorter than one RunPod request may take
+// (30 s), so a remotely homed account would fail where a local read
+// succeeds. 120 s covers the catalog (three parallel requests) and a pod
+// inventory of a few slow pages; a larger account's inventory is a step 3
+// concern (managed pods come from our own records), not a reason to wait
+// out the theoretical 50-page maximum.
+export const GPU_HOME_BAY_TIMEOUT_MS = 120_000;
+
 export interface GpuRoutingDeps {
   // for tests: the home bay's API, or undefined when this is the home bay
   homeClient?: (account_id: string) => Promise<InterBayGpuApi | undefined>;
@@ -83,6 +92,7 @@ async function gpuHomeClient(
   return createInterBayAccountLocalClient({
     client: getInterBayFabricClient(),
     dest_bay: home_bay_id,
+    timeout: GPU_HOME_BAY_TIMEOUT_MS,
   });
 }
 
