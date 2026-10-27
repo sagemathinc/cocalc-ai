@@ -1953,6 +1953,63 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("publishes a usage warning in the live preview, without an inline block", async () => {
+    const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+      livePreviewStreamFactory: () =>
+        ({
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            previewPayloads.push(payload);
+            return { seq: previewPayloads.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+    });
+
+    await writer.handle({
+      type: "event",
+      event: { type: "usage_warning", window: "7d", threshold: 95 },
+      seq: 0,
+      time: 1000,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "Working on it." } as any,
+      seq: 1,
+      time: 1100,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 2,
+      time: 1200,
+    } as AcpStreamMessage);
+    await flush(writer);
+    await writer.waitForLivePreviewFlush();
+
+    const previewEvents = flattenLivePayloads(previewPayloads);
+    expect(previewEvents).toContainEqual(
+      expect.objectContaining({
+        type: "event",
+        seq: 0,
+        event: { type: "usage_warning", window: "7d", threshold: 95 },
+      }),
+    );
+    expect(getLiveResponseBlocks(previewEvents, [])).toEqual([
+      expect.objectContaining({ kind: "agent", text: "Working on it." }),
+    ]);
+    (writer as any).dispose?.(true);
+  });
+
   it("publishes cumulative preview snapshots for raw agent deltas", async () => {
     const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
     const { syncdb } = makeFakeSyncDB();
