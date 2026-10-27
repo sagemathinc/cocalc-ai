@@ -470,6 +470,9 @@ stage_source_release() {
   tar -C "$SOURCE_ROOT" \
     --exclude=./.git --exclude=./.local --exclude=./data --exclude=./.build-home \
     -cf - . | as_bay tar --no-same-owner -xf - -C "$TARGET_RELEASE"
+  # Like a bundle deploy: inherited chunks of builds still in retention must be
+  # present, or the retention step would find them missing.
+  preserve_previous_static_assets
 }
 
 stage_bundle_release() {
@@ -711,17 +714,43 @@ FRONTEND_ASSET_FALLBACK_DAYS="${FRONTEND_ASSET_FALLBACK_DAYS:-14}"
 # build; a day of slack keeps a build whose bundle was stamped a little earlier.
 FRONTEND_ASSET_VERSION_SLACK_MS=$((24 * 3600 * 1000))
 
-# The cutoff for a release whose frontend build is at FRONTEND (unix seconds;
-# the hub bounds the required version by the frontend it serves).
+# The smc-version compiled into the hub a release runs, or nothing when the
+# release does not say: a source tree's packages/util/smc-version.js, else the
+# runtime/control-plane/hub-version.json that full and hub bundles carry (a
+# static-only release keeps the current release's, as it keeps its hub).
+release_hub_smc_version() {
+  local release="$1" node_bin="$2"
+  "$node_bin" -e '
+const fs = require("node:fs");
+const [source, recorded] = process.argv.slice(1);
+let version;
+if (fs.existsSync(source)) {
+  version = Number(/exports\.version\s*=\s*(\d+)/.exec(fs.readFileSync(source, "utf8"))?.[1]);
+} else if (fs.existsSync(recorded)) {
+  version = Number(JSON.parse(fs.readFileSync(recorded, "utf8")).smc_version);
+}
+console.log(Number.isSafeInteger(version) && version > 0 ? version : "");
+' "${release}/packages/util/smc-version.js" \
+    "${release}/runtime/control-plane/hub-version.json" 2>/dev/null || true
+}
+
+# The cutoff for a release whose hub was built with smc-version HUB (unix
+# seconds; the hub bounds the required version by it).
 frontend_asset_retention_cutoff() {
-  local frontend="${1:-0}"
+  local frontend="${1:-}"
   if [[ -n "${FRONTEND_ASSET_RETENTION_CUTOFF_MS:-}" ]]; then
     echo "${FRONTEND_ASSET_RETENTION_CUTOFF_MS} override"
     return
   fi
+  local fallback="$((($(date +%s) - FRONTEND_ASSET_FALLBACK_DAYS * 86400) * 1000))"
+  if [[ ! "$frontend" =~ ^[0-9]+$ ]]; then
+    # A release that does not record its hub's smc-version (built before it
+    # was): the version the hub enforces cannot be bounded.
+    echo "${fallback} fallback-${FRONTEND_ASSET_FALLBACK_DAYS}d:unknown-hub-version"
+    return
+  fi
   local version
   version="$(read_required_browser_version "$frontend")"
-  local fallback="$((($(date +%s) - FRONTEND_ASSET_FALLBACK_DAYS * 86400) * 1000))"
   case "$version" in
     "")
       echo "${fallback} fallback-${FRONTEND_ASSET_FALLBACK_DAYS}d:unreadable"
@@ -758,13 +787,12 @@ prepare_frontend_asset_history() {
 
   local node_bin
   node_bin="$(find_node)"
-  # The new frontend's build time bounds the version the hub will enforce.
-  local frontend_seconds
-  frontend_seconds="$(
-    "$node_bin" -e 'const m = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(Math.floor((Number(m.build_timestamp) || 0) / 1000));'       "$current_manifest" 2>/dev/null || echo 0
-  )"
+  # The hub's own smc-version bounds the version it enforces: the hub this
+  # release runs (a static-only release keeps the current one).
+  local hub_version
+  hub_version="$(release_hub_smc_version "$TARGET_RELEASE" "$node_bin")"
   local cutoff cutoff_ms cutoff_source
-  cutoff="$(frontend_asset_retention_cutoff "$frontend_seconds")"
+  cutoff="$(frontend_asset_retention_cutoff "$hub_version")"
   cutoff_ms="${cutoff%% *}"
   cutoff_source="${cutoff#* }"
 
@@ -799,6 +827,13 @@ function safeAsset(value) {
     throw new Error(`frontend asset is not content-addressed: ${asset}`);
   }
   return asset;
+}
+
+function smcVersion(value) {
+  const version = Number(value?.smc_version);
+  return Number.isSafeInteger(version) && version > 0
+    ? { smc_version: version }
+    : {};
 }
 
 function readManifest(root) {
@@ -851,6 +886,7 @@ function normalizeBuild(manifest, root, allowScan) {
   return {
     git_revision: `${manifest.git_revision ?? ""}`,
     build_timestamp: Number(manifest.build_timestamp) || 0,
+    ...smcVersion(manifest),
     build_date: `${manifest.build_date ?? ""}`,
     fingerprint: `${manifest.fingerprint ?? ""}`,
     assets,
@@ -898,6 +934,7 @@ if (ledgerBuilds) {
     inherited.push({
       git_revision: `${build.git_revision ?? ""}`,
       build_timestamp: Number(build.build_timestamp) || 0,
+      ...smcVersion(build),
       build_date: `${build.build_date ?? ""}`,
       fingerprint: `${build.fingerprint ?? ""}`,
       assets: present.sort(),
@@ -911,8 +948,18 @@ if (ledgerBuilds) {
 // assets never include the current build's own.)
 inherited = inherited.filter((build) => build.assets.length > 0);
 
-const kept = inherited.filter((build) => build.build_timestamp >= cutoffMs);
-const dropped = inherited.filter((build) => build.build_timestamp < cutoffMs);
+// A browser on a build reports that build's smc-version, and the hub admits it
+// when that is at least the required version: keep a build by the same test
+// when both are known. Otherwise by build time, which is never earlier than
+// the build's smc-version (so this never drops a build the hub admits).
+const requiredVersion =
+  Number(/^required-browser-version=(\d+)$/.exec(cutoffSource)?.[1]) || null;
+const retain = (build) =>
+  requiredVersion != null && build.smc_version != null
+    ? build.smc_version >= requiredVersion
+    : build.build_timestamp >= cutoffMs;
+const kept = inherited.filter(retain);
+const dropped = inherited.filter((build) => !retain(build));
 const currentAssets = new Set(current.assets);
 const retained = new Set();
 for (const build of kept) {
@@ -980,8 +1027,7 @@ if (retained.size + unlisted > 0) {
     assets: [...new Set([...retained, ...unlistedAssets])].sort(),
   });
 }
-const requiredBrowserVersion =
-  Number(/^required-browser-version=(\d+)$/.exec(cutoffSource)?.[1]) || null;
+const requiredBrowserVersion = requiredVersion;
 const history = {
   schema: 1,
   generated_at: new Date().toISOString(),
