@@ -5,25 +5,52 @@ import {
   rename,
   rm,
   stat,
-  unlink,
   writeFile,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { executeCode } from "@cocalc/backend/execute-code";
 
-const CLOUDFLARED_DOWNLOAD_BASE =
-  "https://github.com/cloudflare/cloudflared/releases/latest/download";
+// Keep in step with CLOUDFLARED_VERSION in server/cloud/bootstrap/bootstrap.py
+// and EXPECTED_CLOUDFLARED_VERSION in project-host/cloudflared-diagnostics.ts.
+export const CLOUDFLARED_VERSION = "2026.10.3";
+
+const CLOUDFLARED_DOWNLOAD_BASE = `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}`;
+
+// SHA-256 of the Linux release binaries, as published with the release and
+// checked against a download. The macOS archives are checked by version only.
+const CLOUDFLARED_SHA256: Record<string, string> = {
+  "cloudflared-linux-amd64":
+    "053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0",
+  "cloudflared-linux-arm64":
+    "89297ebfb9e8c99c0dc013a1140601453cf3798d8306c5591651f4a3f5210be8",
+};
 
 export type CloudflaredDownloadSpec = {
   filename: string;
   url: string;
   kind: "binary" | "tgz";
+  sha256?: string;
 };
 
 type LoggerLike = {
   info: (message: string, meta?: Record<string, unknown>) => void;
+  warn?: (message: string, meta?: Record<string, unknown>) => void;
 };
+
+function spec(
+  filename: string,
+  kind: CloudflaredDownloadSpec["kind"],
+): CloudflaredDownloadSpec {
+  const sha256 = CLOUDFLARED_SHA256[filename];
+  return {
+    filename,
+    url: `${CLOUDFLARED_DOWNLOAD_BASE}/${filename}`,
+    kind,
+    ...(sha256 ? { sha256 } : {}),
+  };
+}
 
 export function getCloudflaredDownloadSpec(opts?: {
   platform?: NodeJS.Platform;
@@ -32,44 +59,24 @@ export function getCloudflaredDownloadSpec(opts?: {
   const platform = opts?.platform ?? process.platform;
   const arch = opts?.arch ?? process.arch;
   if (platform === "darwin") {
-    if (arch === "x64") {
-      return {
-        filename: "cloudflared-darwin-amd64.tgz",
-        url: `${CLOUDFLARED_DOWNLOAD_BASE}/cloudflared-darwin-amd64.tgz`,
-        kind: "tgz",
-      };
-    }
-    if (arch === "arm64") {
-      return {
-        filename: "cloudflared-darwin-arm64.tgz",
-        url: `${CLOUDFLARED_DOWNLOAD_BASE}/cloudflared-darwin-arm64.tgz`,
-        kind: "tgz",
-      };
-    }
+    if (arch === "x64") return spec("cloudflared-darwin-amd64.tgz", "tgz");
+    if (arch === "arm64") return spec("cloudflared-darwin-arm64.tgz", "tgz");
     return undefined;
   }
   if (platform !== "linux") {
     return undefined;
   }
-  if (arch === "x64") {
-    return {
-      filename: "cloudflared-linux-amd64",
-      url: `${CLOUDFLARED_DOWNLOAD_BASE}/cloudflared-linux-amd64`,
-      kind: "binary",
-    };
-  }
-  if (arch === "arm64") {
-    return {
-      filename: "cloudflared-linux-arm64",
-      url: `${CLOUDFLARED_DOWNLOAD_BASE}/cloudflared-linux-arm64`,
-      kind: "binary",
-    };
-  }
+  if (arch === "x64") return spec("cloudflared-linux-amd64", "binary");
+  if (arch === "arm64") return spec("cloudflared-linux-arm64", "binary");
   return undefined;
 }
 
 export function localCloudflaredBinaryPath(stateDir: string): string {
   return join(stateDir, "bin", "cloudflared");
+}
+
+export function parseCloudflaredVersion(output: string): string | undefined {
+  return output.match(/cloudflared version\s+([^\s(]+)/i)?.[1];
 }
 
 async function isExecutable(path: string): Promise<boolean> {
@@ -81,11 +88,34 @@ async function isExecutable(path: string): Promise<boolean> {
   }
 }
 
+async function installedVersion(path: string): Promise<string | undefined> {
+  try {
+    const result = await executeCode({
+      command: path,
+      args: ["--version"],
+      timeout: 15,
+      err_on_exit: false,
+    });
+    return parseCloudflaredVersion(
+      `${result.stdout ?? ""}${result.stderr ?? ""}`,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+// Return a cloudflared binary at the pinned version under stateDir,
+// downloading it when missing and replacing it when its version differs. A
+// running tunnel keeps the old binary until it is restarted. If replacing an
+// existing binary fails, the existing one is returned so the tunnel still
+// starts; the next start tries again.
 export async function ensureLocalCloudflaredBinary(opts: {
   stateDir: string;
   logger: LoggerLike;
+  // For tests: the download to use instead of this platform's release file.
+  spec?: CloudflaredDownloadSpec;
 }): Promise<string> {
-  const spec = getCloudflaredDownloadSpec();
+  const spec = opts.spec ?? getCloudflaredDownloadSpec();
   if (!spec) {
     throw new Error(
       `automatic cloudflared install is unsupported on ${process.platform}/${process.arch}`,
@@ -93,15 +123,42 @@ export async function ensureLocalCloudflaredBinary(opts: {
   }
   const destination = localCloudflaredBinaryPath(opts.stateDir);
   if (await isExecutable(destination)) {
+    const version = await installedVersion(destination);
+    if (version === CLOUDFLARED_VERSION) {
+      return destination;
+    }
+    opts.logger.info("upgrading cloudflared for launchpad", {
+      installed: version ?? "unknown",
+      expected: CLOUDFLARED_VERSION,
+      destination,
+    });
+    try {
+      await downloadCloudflared(spec, destination, opts.logger);
+    } catch (err) {
+      (opts.logger.warn ?? opts.logger.info)(
+        "cloudflared upgrade failed; keeping the installed binary",
+        { installed: version ?? "unknown", err: `${err}` },
+      );
+    }
     return destination;
   }
-  const binDir = join(opts.stateDir, "bin");
+  await downloadCloudflared(spec, destination, opts.logger);
+  return destination;
+}
+
+async function downloadCloudflared(
+  spec: CloudflaredDownloadSpec,
+  destination: string,
+  logger: LoggerLike,
+): Promise<void> {
+  const binDir = dirname(destination);
   await mkdir(binDir, { recursive: true });
   const tempPath = join(
     binDir,
     `${spec.filename}.${process.pid}.${Date.now().toString(36)}.tmp`,
   );
-  opts.logger.info("downloading cloudflared for launchpad", {
+  const stagedPath = `${tempPath}.bin`;
+  logger.info("downloading cloudflared for launchpad", {
     url: spec.url,
     destination,
   });
@@ -113,10 +170,17 @@ export async function ensureLocalCloudflaredBinary(opts: {
       );
     }
     const buffer = Buffer.from(await response.arrayBuffer());
+    if (spec.sha256) {
+      const actual = createHash("sha256").update(buffer).digest("hex");
+      if (actual !== spec.sha256) {
+        throw new Error(
+          `cloudflared checksum mismatch for ${spec.filename}: expected ${spec.sha256}, got ${actual}`,
+        );
+      }
+    }
     await writeFile(tempPath, buffer, { mode: 0o755 });
     if (spec.kind === "binary") {
-      await chmod(tempPath, 0o755);
-      await rename(tempPath, destination);
+      await rename(tempPath, stagedPath);
     } else {
       const extractDir = await mkdtemp(join(tmpdir(), "cocalc-cloudflared-"));
       try {
@@ -131,19 +195,22 @@ export async function ensureLocalCloudflaredBinary(opts: {
             `failed to extract cloudflared archive: ${result.stderr || result.stdout || `exit code ${result.exit_code}`}`,
           );
         }
-        await rename(join(extractDir, "cloudflared"), destination);
+        await rename(join(extractDir, "cloudflared"), stagedPath);
       } finally {
         await rm(extractDir, { recursive: true, force: true });
       }
     }
-    await chmod(destination, 0o755);
-    return destination;
-  } catch (err) {
-    try {
-      await unlink(tempPath);
-    } catch {
-      // ignore cleanup failure
+    await chmod(stagedPath, 0o755);
+    const version = await installedVersion(stagedPath);
+    if (version !== CLOUDFLARED_VERSION) {
+      throw new Error(
+        `downloaded cloudflared reports version ${version ?? "unknown"}, expected ${CLOUDFLARED_VERSION}`,
+      );
     }
-    throw err;
+    // Atomic: a running cloudflared keeps its open binary.
+    await rename(stagedPath, destination);
+  } finally {
+    await rm(tempPath, { force: true });
+    await rm(stagedPath, { force: true });
   }
 }

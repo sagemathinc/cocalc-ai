@@ -7298,7 +7298,7 @@ WantedBy=multi-user.target
 
             self.assertIn(
                 (
-                    "https://github.com/cloudflare/cloudflared/releases/download/2026.7.2/cloudflared-linux-amd64.deb",
+                    "https://github.com/cloudflare/cloudflared/releases/download/2026.10.3/cloudflared-linux-amd64.deb",
                     "/tmp/cloudflared.deb",
                     {"attempts": 6},
                 ),
@@ -7396,7 +7396,7 @@ WantedBy=multi-user.target
                 downloads,
                 [
                     (
-                        "https://github.com/cloudflare/cloudflared/releases/download/2026.7.2/cloudflared-linux-amd64.deb",
+                        "https://github.com/cloudflare/cloudflared/releases/download/2026.10.3/cloudflared-linux-amd64.deb",
                         "/tmp/cloudflared.deb",
                         {"attempts": 6},
                     )

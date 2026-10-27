@@ -4,6 +4,7 @@
  */
 
 import {
+  EXPECTED_CLOUDFLARED_VERSION,
   cloudflaredHeartbeatSummary,
   collectCloudflaredDiagnosticSnapshot,
   normalizeCloudflaredProtocol,
@@ -108,7 +109,10 @@ describe("cloudflared diagnostics", () => {
       fetchImpl,
       execute: async (command) => {
         if (command.includes("cloudflared")) {
-          return { stdout: "cloudflared version 2026.7.2", exit_code: 0 };
+          return {
+            stdout: `cloudflared version ${EXPECTED_CLOUDFLARED_VERSION}`,
+            exit_code: 0,
+          };
         }
         if (command.includes("awk")) {
           return { stdout: "auto\n", exit_code: 0 };
@@ -118,7 +122,7 @@ describe("cloudflared diagnostics", () => {
       readJournal: async () => "recent tunnel line",
     });
     expect(snapshot).toMatchObject({
-      version: "2026.7.2",
+      version: EXPECTED_CLOUDFLARED_VERSION,
       version_drift: false,
       configured_protocol: "auto",
       process: { pid: 123 },
@@ -146,7 +150,7 @@ describe("cloudflared diagnostics", () => {
     expect(
       cloudflaredHeartbeatSummary({
         captured_at: "2026-07-18T00:00:00.000Z",
-        expected_version: "2026.7.2",
+        expected_version: EXPECTED_CLOUDFLARED_VERSION,
         configured_protocol: "http2",
         tunnel: {
           connector_id: "connector-1",
