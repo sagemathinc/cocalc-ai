@@ -488,7 +488,9 @@ export interface ProjectCryptominingEvidence {
 }
 
 export type ProjectBandwidthRelaySignalKind =
-  "tunnel_process" | "bulk_transfer_process" | "automated_uploader_process";
+  | "tunnel_process"
+  | "bulk_transfer_process"
+  | "automated_uploader_process";
 
 export interface ProjectBandwidthRelaySignal {
   kind: ProjectBandwidthRelaySignalKind;
@@ -637,7 +639,10 @@ export interface CloudflareTunnelApplyResult {
 }
 
 export type CloudflareTeardownClassification =
-  "safe_owned" | "probably_owned" | "unknown" | "protected";
+  | "safe_owned"
+  | "probably_owned"
+  | "unknown"
+  | "protected";
 
 export interface CloudflareTeardownResource {
   kind: "tunnel" | "dns_record" | "r2_bucket" | "api_token";
@@ -1379,7 +1384,10 @@ export interface SiteSettingsReadResult {
 }
 
 export type GlobalConfigPropagationBayState =
-  "current" | "stale" | "missing" | "error";
+  | "current"
+  | "stale"
+  | "missing"
+  | "error";
 
 export interface GlobalConfigPropagationBayStatus {
   bay_id: string;
@@ -1406,7 +1414,11 @@ export interface GlobalConfigPropagationStatus {
 }
 
 export type SiteSetupStepState =
-  "done" | "blocked" | "warning" | "optional" | "manual";
+  | "done"
+  | "blocked"
+  | "warning"
+  | "optional"
+  | "manual";
 
 export interface SiteSetupStep {
   id: string;
@@ -1800,7 +1812,11 @@ export interface BayRestoreReadinessStatus {
   latest_backup_set_id: string | null;
   latest_backup_format: "pg_basebackup" | "pg_dumpall" | null;
   latest_backup_restore_test_status:
-    "no-backup" | "not-run" | "stale" | "passed" | "failed";
+    | "no-backup"
+    | "not-run"
+    | "stale"
+    | "passed"
+    | "failed";
   latest_backup_restore_tested: boolean;
   latest_backup_restore_tested_at: string | null;
   latest_backup_pitr_test_status:

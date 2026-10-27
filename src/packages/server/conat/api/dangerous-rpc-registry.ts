@@ -4,7 +4,9 @@
  */
 
 export type DangerousRpcFreshAuthDecision =
-  "fresh-auth-required" | "fresh-auth-not-required" | "internal-auth-only";
+  | "fresh-auth-required"
+  | "fresh-auth-not-required"
+  | "internal-auth-only";
 
 export type DangerousRpcDecision = {
   decision: DangerousRpcFreshAuthDecision;

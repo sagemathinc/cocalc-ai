@@ -7045,7 +7045,10 @@ function parseMap(raw?: string): Record<string, string> {
 }
 
 function resolveSharedHomeMode():
-  "disabled" | "fallback" | "prefer" | "always" {
+  | "disabled"
+  | "fallback"
+  | "prefer"
+  | "always" {
   const defaultMode =
     `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad"
       ? "disabled"
@@ -7064,7 +7067,8 @@ const OPENAI_API_KEY_KIND = "openai-api-key";
 
 function toExternalCredentialInfo(
   credential:
-    Awaited<ReturnType<typeof getExternalCredentialRouted>> | undefined,
+    | Awaited<ReturnType<typeof getExternalCredentialRouted>>
+    | undefined,
 ) {
   if (!credential) return undefined;
   return {

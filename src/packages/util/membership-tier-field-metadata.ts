@@ -14,7 +14,10 @@ export type MembershipTierFieldCard =
   | "advanced";
 
 export type MembershipTierFieldStatus =
-  "primary" | "advanced" | "compatibility-only" | "deprecated";
+  | "primary"
+  | "advanced"
+  | "compatibility-only"
+  | "deprecated";
 
 export type MembershipTierFieldRisk =
   | "storefront"
@@ -36,10 +39,15 @@ export type MembershipTierFieldInputType =
   | "textarea";
 
 export type MembershipTierFieldValueType =
-  "boolean" | "json" | "number" | "string" | "string-list";
+  | "boolean"
+  | "json"
+  | "number"
+  | "string"
+  | "string-list";
 
 export type MembershipTierFieldPath =
-  readonly [string] | readonly [string, string];
+  | readonly [string]
+  | readonly [string, string];
 
 export interface MembershipTierFieldMetadata {
   id: string;
