@@ -68,24 +68,37 @@ function asOf(value: string, at: number | undefined): string {
     : `${value} (as of ${formatTime(at)}; not updating)`;
 }
 
+/** Polls `load`, scheduling each request only after the previous one settles.
+ * The returned restart() starts a fresh loop at once (e.g. a manual Refresh):
+ * the old loop stops scheduling, and the new request's generation supersedes a
+ * hung one, so a manual refresh also revives automatic polling. */
 function usePolling(
   load: () => Promise<void>,
   generation: { current: number },
-) {
+): () => void {
+  const restartRef = useRef<() => void>(() => {});
   useEffect(() => {
-    let active = true;
+    let loop = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    async function poll() {
-      await load();
-      if (active) timer = setTimeout(poll, REFRESH_MS);
+    function start() {
+      const mine = ++loop;
+      if (timer != null) clearTimeout(timer);
+      async function poll() {
+        await load();
+        if (loop === mine) timer = setTimeout(poll, REFRESH_MS);
+      }
+      void poll();
     }
-    void poll();
+    restartRef.current = start;
+    start();
     return () => {
-      active = false;
+      loop++;
       generation.current++;
       if (timer != null) clearTimeout(timer);
+      restartRef.current = () => {};
     };
   }, [load, generation]);
+  return useCallback(() => restartRef.current(), []);
 }
 
 export function GpuCostDashboard({
@@ -193,12 +206,12 @@ export function GpuCostDashboard({
   // Each endpoint polls itself: the next request is scheduled only after the
   // previous one settles, so a slow endpoint never piles up requests. A query
   // change restarts the loop, and its generation supersedes the old request.
-  usePolling(refreshPods, podsGeneration);
-  usePolling(refreshSpend, spendGeneration);
+  const restartPods = usePolling(refreshPods, podsGeneration);
+  const restartSpend = usePolling(refreshSpend, spendGeneration);
 
   function refresh() {
-    void refreshPods();
-    void refreshSpend();
+    restartPods();
+    restartSpend();
   }
 
   const live = useMemo(() => livePods(pods ?? []), [pods]);

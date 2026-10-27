@@ -378,6 +378,39 @@ describe("GpuCostDashboard", () => {
     }
   });
 
+  it("restarts automatic polling after a manual Refresh recovers from a hung poll", async () => {
+    jest.useFakeTimers();
+    try {
+      const mock = api();
+      const user = userEvent.setup({
+        advanceTimers: jest.advanceTimersByTime,
+      });
+      render(<GpuCostDashboard api={mock} />);
+      await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+      expect(mock.pods).toHaveBeenCalledTimes(1);
+      mock.pods.mockReturnValueOnce(new Promise(() => {}));
+      await act(async () => {
+        jest.advanceTimersByTime(15_000);
+      });
+      expect(mock.pods).toHaveBeenCalledTimes(2);
+      // Exactly one replacement request on Refresh.
+      await user.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(mock.pods).toHaveBeenCalledTimes(3));
+      await act(async () => {
+        jest.advanceTimersByTime(1_000);
+      });
+      expect(mock.pods).toHaveBeenCalledTimes(3);
+      // One interval later, automatic polling continues.
+      await act(async () => {
+        jest.advanceTimersByTime(15_000);
+      });
+      expect(mock.pods).toHaveBeenCalledTimes(4);
+      expect(screen.getByText("$0.77/hour")).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("treats cached pods as last known, not live, after a failed refresh", async () => {
     const mock = api();
     const user = userEvent.setup();
