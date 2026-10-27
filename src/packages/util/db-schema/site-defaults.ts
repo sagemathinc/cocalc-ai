@@ -1731,7 +1731,7 @@ export const site_settings_conf: SiteSettings = {
   },
   project_hosts_nebius_hosts_enabled: {
     name: "Offer Nebius for Project Hosts",
-    desc: "Whether users may create, start or switch project hosts on Nebius. Off keeps Nebius for dedicated VMs only; existing Nebius hosts can still be stopped, deprovisioned and deleted. Requires Nebius Cloud to be enabled.",
+    desc: "Whether users may create new project hosts on Nebius, or switch a host to Nebius. Off keeps Nebius for dedicated VMs and for existing Nebius hosts, which their owners can still start, restart, stop, deprovision and delete. Requires Nebius Cloud to be enabled.",
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
