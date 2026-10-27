@@ -391,9 +391,9 @@ async function startServer(): Promise<void> {
     startCloudVmReconciler();
     // Revoked credentials keep no encrypted payload. Every API hub
     // (Launchpad and Rocket alike) erases leftovers at startup and then
-    // hourly: that also covers rows revoked by an older hub during a rolling
-    // upgrade. Idempotent, one row per statement, cheap when there's nothing
-    // to do.
+    // hourly for a day, which also covers rows revoked by an older hub during
+    // a rolling upgrade; after that, revocation itself keeps them empty.
+    // Idempotent, one row per statement.
     const eraseRevokedPayloads = () =>
       eraseRevokedExternalCredentialPayloads()
         .then((erased) => {
@@ -405,7 +405,15 @@ async function startServer(): Promise<void> {
           logger.warn(`erasing revoked credential payloads failed: ${err}`),
         );
     eraseRevokedPayloads();
-    setInterval(eraseRevokedPayloads, 60 * 60 * 1000).unref?.();
+    let erasePasses = 0;
+    const eraseTimer = setInterval(
+      () => {
+        eraseRevokedPayloads();
+        if (++erasePasses >= 24) clearInterval(eraseTimer);
+      },
+      60 * 60 * 1000,
+    );
+    eraseTimer.unref?.();
   }
 
   if (program.all || program.mentions) {
