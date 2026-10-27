@@ -389,6 +389,18 @@ async function startServer(): Promise<void> {
     startCloudCatalogWorker();
     logger.info("starting cloud VM reconcile loop...");
     startCloudVmReconciler();
+    // One-time cleanup, run by every API hub (Launchpad and Rocket alike;
+    // idempotent, and concurrent hubs skip each other's rows): revoked
+    // credentials keep no encrypted payload.
+    eraseRevokedExternalCredentialPayloads()
+      .then((erased) => {
+        if (erased > 0) {
+          logger.info(`erased payloads of ${erased} revoked credentials`);
+        }
+      })
+      .catch((err) =>
+        logger.warn(`erasing revoked credential payloads failed: ${err}`),
+      );
   }
 
   if (program.all || program.mentions) {
@@ -401,16 +413,6 @@ async function startServer(): Promise<void> {
     // upgrades of projects.
     initPurchasesMaintenanceLoop();
     initEphemeralMaintenance();
-    // One-time cleanup: revoked credentials keep no encrypted payload.
-    eraseRevokedExternalCredentialPayloads()
-      .then((erased) => {
-        if (erased > 0) {
-          logger.info(`erased payloads of ${erased} revoked credentials`);
-        }
-      })
-      .catch((err) =>
-        logger.warn(`erasing revoked credential payloads failed: ${err}`),
-      );
     initDeletedAccountRetention();
     initSalesloftMaintenance();
     initDeleteExpiredLoop();
