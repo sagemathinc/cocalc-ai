@@ -358,6 +358,20 @@ describe("merge approval integrity triggers", () => {
       "merge_approval_relays_integrity_trigger is mismatched",
     );
     await reinstall();
+
+    // The right trigger, but invoked with an argument.
+    await q(
+      "DROP TRIGGER merge_approval_requests_integrity_trigger ON merge_approval_requests",
+    );
+    await q(
+      `CREATE TRIGGER merge_approval_requests_integrity_trigger
+         BEFORE INSERT OR UPDATE OR DELETE ON merge_approval_requests
+         FOR EACH ROW EXECUTE FUNCTION merge_approval_requests_integrity('x')`,
+    );
+    await expect(assertMergeApprovalIntegrity(getPool())).rejects.toThrow(
+      "merge_approval_requests_integrity_trigger is mismatched",
+    );
+    await reinstall();
     await expect(assertMergeApprovalIntegrity(getPool())).resolves.toBe(
       undefined,
     );

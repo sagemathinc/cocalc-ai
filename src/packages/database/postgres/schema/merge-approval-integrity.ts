@@ -230,8 +230,9 @@ $$;
 type TriggerState = "ok" | "missing" | "mismatched" | "disabled" | "outdated";
 
 // A trigger counts only if it is exactly the one sync creates: on this table,
-// BEFORE the right events at the right level, calling the right function, with
-// no WHEN clause or column list, enabled, and with the current function body.
+// BEFORE the right events at the right level, calling the right function with
+// no arguments, with no WHEN clause or column list, enabled, and with the
+// current function body.
 async function triggerState(
   db: Pick<Client, "query">,
   { table, trigger, fn, tgtype }: (typeof MERGE_APPROVAL_TRIGGERS)[number],
@@ -244,6 +245,7 @@ async function triggerState(
     `SELECT t.tgenabled::text AS enabled,
             (t.tgtype = $4
              AND p.proname = $3 AND p.pronargs = 0
+             AND t.tgnargs = 0
              AND p.pronamespace = c.relnamespace
              AND t.tgqual IS NULL
              AND cardinality(t.tgattr::int2[]) = 0) AS shape,
