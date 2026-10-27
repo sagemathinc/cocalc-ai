@@ -394,6 +394,80 @@ function riskSeverityType(severity: MembershipTierRiskSeverity) {
   }
 }
 
+// Keys that have their own control in the tier form. The "Advanced JSON"
+// editors show and accept only the other keys, so a value is never edited in
+// two places. Before this, a value typed in the JSON was silently replaced on
+// save by its control's value.
+export const MODELED_TIER_JSON_KEYS = {
+  project_defaults: ["memory", "memory_request", "disk_quota"],
+  features: [
+    "create_hosts",
+    "project_network",
+    "project_host_tier",
+    "private_app_hostnames_per_project",
+  ],
+  ai_limits: ["units_5h", "units_7d"],
+  usage_limits: [
+    "shared_compute_priority",
+    "total_storage_soft_bytes",
+    "total_storage_hard_bytes",
+    "max_projects",
+    "max_sponsored_running_projects",
+    "max_snapshots_per_project",
+    "max_backups_per_project",
+    "egress_5h_bytes",
+    "egress_7d_bytes",
+    "cpu_5h_seconds",
+    "cpu_7d_seconds",
+    "credit_spend_limit_5h_usd",
+    "credit_spend_limit_7d_usd",
+    "prepaid_host_usage_limit_5h_usd",
+    "prepaid_host_usage_limit_7d_usd",
+    "acp_max_queued_per_account",
+    "acp_max_queued_per_thread",
+    "acp_max_created_5h_per_account",
+    "acp_max_created_7d_per_account",
+    "acp_max_running_per_account",
+    "acp_max_running_per_project",
+    "acp_max_active_automations_per_project",
+    "sensor_min_interval_minutes",
+    "sensor_max_wakes_per_day",
+    "sensor_max_active_watchers",
+    "sensor_max_active_watchers_per_agent",
+  ],
+} as const;
+
+type ModeledTierJsonField = keyof typeof MODELED_TIER_JSON_KEYS;
+
+function withoutModeledKeys(
+  field: ModeledTierJsonField,
+  obj: Record<string, unknown> | undefined | null,
+): Record<string, unknown> {
+  const rest = { ...(obj ?? {}) };
+  for (const key of MODELED_TIER_JSON_KEYS[field]) {
+    delete rest[key];
+  }
+  return rest;
+}
+
+function assertNoModeledKeys(
+  field: ModeledTierJsonField,
+  obj: Record<string, unknown>,
+) {
+  const keys = MODELED_TIER_JSON_KEYS[field].filter((key) => key in obj);
+  if (keys.length > 0) {
+    throw Error(
+      `${keys.map((key) => `${field}.${key}`).join(", ")} ${
+        keys.length == 1 ? "has its own field" : "have their own fields"
+      } in the tier form; set ${
+        keys.length == 1 ? "it" : "them"
+      } there, not in the Advanced JSON, and remove ${
+        keys.length == 1 ? "it" : "them"
+      } from the JSON.`,
+    );
+  }
+}
+
 function setOrDeleteUsageLimit(
   usage_limits: Record<string, unknown>,
   key: string,
@@ -426,7 +500,7 @@ function setOrDeleteBoolean(
   }
 }
 
-function tierToFormValues(tier: Partial<Tier>) {
+export function tierToFormValues(tier: Partial<Tier>) {
   const projectDefaults = cleanProjectDefaults(tier.project_defaults);
   return {
     ...tier,
@@ -435,10 +509,11 @@ function tierToFormValues(tier: Partial<Tier>) {
       tier.course_allowed_domains,
     ),
     store_highlights_text: storeHighlightsToText(tier.store_highlights),
-    project_defaults: projectDefaults,
-    ai_limits: tier.ai_limits ?? {},
-    features: tier.features ?? {},
-    usage_limits: tier.usage_limits ?? {},
+    // The JSON editors hold only keys without their own control.
+    project_defaults: withoutModeledKeys("project_defaults", projectDefaults),
+    ai_limits: withoutModeledKeys("ai_limits", tier.ai_limits),
+    features: withoutModeledKeys("features", tier.features),
+    usage_limits: withoutModeledKeys("usage_limits", tier.usage_limits),
     project_default_memory_mb: normalizedOptionalNumber(projectDefaults.memory),
     project_default_memory_request_mb: normalizedOptionalNumber(
       projectDefaults.memory_request,
@@ -547,7 +622,7 @@ function tierToFormValues(tier: Partial<Tier>) {
   };
 }
 
-function buildMembershipTierPayload(values): AdminMembershipTierPayload {
+export function buildMembershipTierPayload(values): AdminMembershipTierPayload {
   const project_defaults = cleanProjectDefaults(
     parseJsonField(values.project_defaults, "project_defaults"),
   );
@@ -557,6 +632,12 @@ function buildMembershipTierPayload(values): AdminMembershipTierPayload {
     {}) as Record<string, unknown>;
   const usage_limits = (parseJsonField(values.usage_limits, "usage_limits") ??
     {}) as Record<string, unknown>;
+  // A modeled key in the JSON would be overwritten by its field below: refuse
+  // it rather than silently drop the edit.
+  assertNoModeledKeys("project_defaults", project_defaults);
+  assertNoModeledKeys("ai_limits", ai_limits);
+  assertNoModeledKeys("features", features);
+  assertNoModeledKeys("usage_limits", usage_limits);
   setOrDeleteNumber(
     project_defaults,
     "memory",
@@ -929,7 +1010,11 @@ function useMembershipTiers() {
       return completed;
     } catch (err) {
       set_error(err.message ?? String(err));
-      set_editing(val_orig);
+      // Keep the form as the admin left it. Re-deriving it from these form
+      // values would reset each field from the JSON objects and lose edits.
+      if (editing == null) {
+        set_editing(val_orig);
+      }
       return false;
     }
   }
@@ -3391,9 +3476,9 @@ export function MembershipTiers() {
             children: (
               <>
                 <Paragraph style={sectionIntroStyle}>
-                  The typed controls above merge into these objects on save.
-                  Removed legacy project-default fields are stripped on save and
-                  export.
+                  Only keys without their own field above appear here; set those
+                  keys in their fields. Removed legacy project-default fields
+                  are stripped on save and export.
                 </Paragraph>
                 <Row gutter={16}>
                   <Col {...wideFieldCol}>
