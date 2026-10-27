@@ -35,6 +35,7 @@ import initProjectControl from "@cocalc/server/projects/control";
 import { start as startHubRegister } from "@cocalc/server/metrics/hub_register";
 import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
+import { eraseRevokedExternalCredentialPayloads } from "@cocalc/server/external-credentials/store";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
@@ -400,6 +401,16 @@ async function startServer(): Promise<void> {
     // upgrades of projects.
     initPurchasesMaintenanceLoop();
     initEphemeralMaintenance();
+    // One-time cleanup: revoked credentials keep no encrypted payload.
+    eraseRevokedExternalCredentialPayloads()
+      .then((erased) => {
+        if (erased > 0) {
+          logger.info(`erased payloads of ${erased} revoked credentials`);
+        }
+      })
+      .catch((err) =>
+        logger.warn(`erasing revoked credential payloads failed: ${err}`),
+      );
     initDeletedAccountRetention();
     initSalesloftMaintenance();
     initDeleteExpiredLoop();
