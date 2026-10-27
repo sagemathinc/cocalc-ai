@@ -2273,6 +2273,7 @@ export function ChatRoomThreadPanel({
               path,
             }}
             activityLiveStatus={selectedRunningCodexActivity.liveStatus}
+            usageWarning={selectedRunningCodexActivity.usageWarning}
             lastActivityAtMs={selectedRunningCodexActivity.lastActivityAtMs}
             activeDescendantThreadIds={
               selectedRunningCodexActivity.activeDescendantThreadIds
