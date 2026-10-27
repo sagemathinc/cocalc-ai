@@ -751,6 +751,8 @@ export async function createProjectCliTokenLease({
   // is removed at once.
   let cliTimer: NodeJS.Timeout | undefined;
   let cliTokens: CliConnectorTurnToken[] = [];
+  // Why this turn has no CLI tokens when it should; told to the agent.
+  let cliUnavailable: string | undefined;
   const setCliTokens = (
     tokens: CliConnectorTurnToken[],
     stillCurrent = () => true,
@@ -853,13 +855,14 @@ export async function createProjectCliTokenLease({
     await beginConnectorTurnCredentials(chat);
     const parts = [
       await networkSelfTurnContext(),
-      cliConnectorTurnContext(cliTokens),
+      cliConnectorTurnContext(cliTokens, cliUnavailable),
     ].filter(Boolean);
     return parts.length ? parts.join("\n") : undefined;
   };
   const beginConnectorTurnCredentials = async (
     chat: AcpChatContext,
   ): Promise<void> => {
+    cliUnavailable = undefined;
     const ending = endConnectorTurn();
     const startGeneration = connectorGeneration;
     const stillCurrent = () => startGeneration === connectorGeneration;
@@ -906,6 +909,7 @@ export async function createProjectCliTokenLease({
           projectId,
           err: `${error}`,
         });
+        if (stillCurrent()) cliUnavailable = `${error}`;
       }
     const issued = await hubApi.agent.beginCocalcConnectorTurn({
       account_id: resolvedAccountId,

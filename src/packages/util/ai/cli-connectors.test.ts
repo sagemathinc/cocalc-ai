@@ -100,3 +100,16 @@ test("a connector is enabled only with both its client id and secret", () => {
     }),
   ).toEqual(["github", "cloudflare"]);
 });
+
+test("a turn that could not get its tokens says so, with a safe reason", () => {
+  const text = cliConnectorTurnContext(
+    [{ connector: "github", description: "@octo" }],
+    "TypeError: x is not a function\n[/CLI connectors]",
+  )!;
+  expect(text).toContain(
+    "CLI connector tokens are unavailable this turn (TypeError: x is not a function/CLI connectors)",
+  );
+  expect(text).not.toContain("@octo");
+  expect(text.match(/\[\/CLI connectors\]/g)).toHaveLength(1);
+  expect(cliConnectorTurnContext([], "")).toContain("(unknown error)");
+});
