@@ -16,9 +16,9 @@
 // database before any credential is usable.
 //
 // Presence decides: any object at a credential's tombstone name means the
-// credential is erased, even if its content can't be read. Names are a
-// domain-separated SHA-256 of the credential's random id, never keyed by a
-// rotating secret, so a tombstone is found the same way forever.
+// credential is erased, whatever its content. Names are a domain-separated
+// SHA-256 of the credential's random id, never keyed by a rotating secret, so
+// a tombstone is found the same way forever.
 //
 // Production stores tombstones in a GCS bucket with a locked retention
 // policy, written by a service account that can only create, get and list
@@ -26,37 +26,44 @@
 // create-only rules for development and tests.
 
 import { createHash } from "node:crypto";
-import { mkdir, open, readdir, readFile } from "node:fs/promises";
+import { mkdir, open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 export const TOMBSTONE_PREFIX = "credential-tombstones/v1/";
 const NAME_DOMAIN = "cocalc-credential-tombstone:v1\0";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const NAME = /^[0-9a-f]{64}$/;
+const SLUG = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+export const MAX_TOMBSTONE_BYTES = 512;
 
-export type ErasureReason =
-  | "owner_removed"
-  | "replaced"
-  | "account_deleted"
-  | "membership_lapsed"
-  | "admin"
-  | "migration";
+export const ERASURE_REASONS = [
+  "owner_removed",
+  "replaced",
+  "account_deleted",
+  "membership_lapsed",
+  "admin",
+  "migration",
+] as const;
+export type ErasureReason = (typeof ERASURE_REASONS)[number];
 
-// Minimal and non-secret: no owner, no key material, no fingerprint.
+// What a caller provides. The stored object is rebuilt from exactly these
+// validated fields, so nothing else (a secret, an owner id) can ever be
+// written into the non-deletable store.
 export interface TombstoneContent {
-  v: 1;
   kind: string;
   provider: string;
-  erased_at: string;
+  erasedAt: Date;
   reason: ErasureReason;
 }
 
 // The raw object store. create() must be create-only (never overwrite), and
-// the store must offer no way to delete. list() must return every name under
-// the prefix (without the prefix) or throw: never a partial result.
+// the store must offer no way to delete. exists() answers presence only.
+// list() returns names under the prefix (without it), or throws; see
+// TombstoneLog.listAll for what a listing guarantees.
 export interface TombstoneObjectStore {
   create(name: string, body: Buffer): Promise<"created" | "exists">;
-  get(name: string): Promise<Buffer | undefined>;
+  exists(name: string): Promise<boolean>;
   list(): Promise<string[]>;
 }
 
@@ -82,20 +89,54 @@ export function tombstoneName(credentialId: string): string {
   return createHash("sha256").update(NAME_DOMAIN).update(id).digest("hex");
 }
 
+// The exact bytes stored for a tombstone. Throws on any invalid field.
+export function tombstoneBody(content: TombstoneContent): Buffer {
+  const kind = `${content?.kind ?? ""}`;
+  const provider = `${content?.provider ?? ""}`;
+  const reason = content?.reason;
+  const erasedAt = content?.erasedAt;
+  if (!SLUG.test(kind)) throw new Error("invalid tombstone kind");
+  if (!SLUG.test(provider)) throw new Error("invalid tombstone provider");
+  if (!(ERASURE_REASONS as readonly string[]).includes(reason)) {
+    throw new Error("invalid tombstone reason");
+  }
+  if (!(erasedAt instanceof Date) || !Number.isFinite(erasedAt.getTime())) {
+    throw new Error("invalid tombstone time");
+  }
+  const erased_at = erasedAt.toISOString();
+  if (!ISO_UTC.test(erased_at)) throw new Error("invalid tombstone time");
+  const body = Buffer.from(
+    JSON.stringify({ v: 1, kind, provider, erased_at, reason }),
+  );
+  if (body.length > MAX_TOMBSTONE_BYTES) throw new Error("tombstone too large");
+  return body;
+}
+
+// A listing is complete for every tombstone created before
+// `completeThrough` (the time the listing started). Tombstones appended
+// while it ran may be missing: object stores page in name order, and a new
+// name can sort before the current page. Callers must therefore never treat
+// a credential as live just because it is absent from a listing; erasures
+// after `completeThrough` are covered by the database deny state, which an
+// erasure commits before it appends its tombstone.
 export interface TombstoneListing {
   names: ReadonlySet<string>;
-  listedAt: number;
+  completeThrough: number;
 }
 
 export class TombstoneLog {
-  constructor(private readonly store: TombstoneObjectStore) {}
+  constructor(
+    private readonly store: TombstoneObjectStore,
+    private readonly now: () => number = Date.now,
+  ) {}
 
-  // Write the tombstone, then read it back. Idempotent: an existing
-  // tombstone for this credential counts as written.
+  // Write the tombstone, then confirm it is present. Idempotent: an
+  // existing tombstone for this credential counts as written.
   async append(credentialId: string, content: TombstoneContent): Promise<void> {
     const name = tombstoneName(credentialId);
+    const body = tombstoneBody(content);
     try {
-      await this.store.create(name, Buffer.from(JSON.stringify(content)));
+      await this.store.create(name, body);
     } catch {
       throw new TombstoneUnavailableError();
     }
@@ -110,16 +151,18 @@ export class TombstoneLog {
   async isTombstoned(credentialId: string): Promise<boolean> {
     const name = tombstoneName(credentialId);
     try {
-      return (await this.store.get(name)) !== undefined;
+      return await this.store.exists(name);
     } catch {
       throw new TombstoneUnavailableError();
     }
   }
 
-  // The complete set of tombstone names. An unreachable store throws
-  // TombstoneUnavailableError; a listing with names that aren't tombstone
-  // names (or duplicates) throws TombstoneIntegrityError.
-  async listAll(now: number = Date.now()): Promise<TombstoneListing> {
+  // Every tombstone created before the listing started (see
+  // TombstoneListing). An unreachable store throws
+  // TombstoneUnavailableError; a malformed listing (foreign or duplicate
+  // names, a bad page) throws TombstoneIntegrityError.
+  async listAll(): Promise<TombstoneListing> {
+    const completeThrough = this.now();
     let names: string[];
     try {
       names = await this.store.list();
@@ -132,7 +175,7 @@ export class TombstoneLog {
     }
     const set = new Set(names);
     if (set.size !== names.length) throw new TombstoneIntegrityError();
-    return { names: set, listedAt: now };
+    return { names: set, completeThrough };
   }
 }
 
@@ -160,12 +203,13 @@ export class LocalTombstoneStore implements TombstoneObjectStore {
     return "created";
   }
 
-  async get(name: string): Promise<Buffer | undefined> {
+  async exists(name: string): Promise<boolean> {
     checkTombstoneName(name);
     try {
-      return await readFile(join(this.dir, name));
+      await stat(join(this.dir, name));
+      return true;
     } catch (err: any) {
-      if (err?.code === "ENOENT") return undefined;
+      if (err?.code === "ENOENT") return false;
       throw err;
     }
   }
