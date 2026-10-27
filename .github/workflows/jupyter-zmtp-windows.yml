@@ -32,7 +32,7 @@ jobs:
         run: |
           python -m pip install pyzmq==27.1.0
           python -c "import zmq; print('libzmq', zmq.zmq_version(), 'pyzmq', zmq.__version__)"
-          mkdir -p "$RUNNER_TEMP/ts" && cd "$RUNNER_TEMP/ts" && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund typescript@5.9.3 @types/node@24
+          mkdir -p "$RUNNER_TEMP/ts" && cd "$RUNNER_TEMP/ts" && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund typescript@5.9.3 @types/node@24 @types/jest@30
       - name: Compile and run the ZMTP tests
         shell: bash
         env:
@@ -43,7 +43,7 @@ jobs:
           mkdir -p "$out"
           cp src/packages/jupyter/zmq/zmtp.ts src/packages/jupyter/zmq/zmtp.test.ts src/packages/jupyter/zmq/zmtp-interop.test.ts "$out/"
           cd "$out"
-          node "$RUNNER_TEMP/ts/node_modules/typescript/bin/tsc" --esModuleInterop --target es2022 --lib es2022 --module commonjs --types node --typeRoots "$RUNNER_TEMP/ts/node_modules/@types" zmtp.test.ts zmtp-interop.test.ts
+          node "$RUNNER_TEMP/ts/node_modules/typescript/bin/tsc" --esModuleInterop --target es2022 --lib es2022 --module commonjs --types node,jest --typeRoots "$RUNNER_TEMP/ts/node_modules/@types" zmtp.test.ts zmtp-interop.test.ts
           shim="$GITHUB_WORKSPACE/src/packages/jupyter/zmq/node-test-shim.cjs"
           node --test-reporter=spec "$shim" zmtp.test.js
           node --test-reporter=spec "$shim" zmtp-interop.test.js
