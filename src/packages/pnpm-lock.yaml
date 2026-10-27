@@ -577,8 +577,8 @@ importers:
         specifier: ^6.9.1
         version: 6.9.1
       '@nebius/js-sdk':
-        specifier: ^0.2.11
-        version: 0.2.11
+        specifier: 0.2.82
+        version: 0.2.82
       awaiting:
         specifier: ^3.0.0
         version: 3.0.0
@@ -4472,9 +4472,9 @@ packages:
       '@emnapi/core': ^1.7.1
       '@emnapi/runtime': ^1.7.1
 
-  '@nebius/js-sdk@0.2.11':
-    resolution: {integrity: sha512-snEOwfVdl83wNmsJ+yaqxvmkU5vqwIeyzFBSXPP5TRGyrBOs3QGbj6zMhE1lD+wZi78dBHkyxaQG462eUeflfA==}
-    engines: {node: '>=22 <26'}
+  '@nebius/js-sdk@0.2.82':
+    resolution: {integrity: sha512-WGxYX4GHTawG/bhVotQTWONwo8DXZQbOS+X+jd8Fa7T+0mCU4LpQqBen5BKi8a0TYfi6EN6lyUq5qf6PbtcvCA==}
+    engines: {node: '>=22 <27'}
 
   '@noble/ciphers@2.0.1':
     resolution: {integrity: sha512-xHK3XHPUW8DTAobU+G0XT+/w+JLM7/8k1UFdB5xg/zTFPnFCobhftzw8wl4Lw2aq/Rvir5pxfZV5fEazmeCJ2g==}
@@ -14680,7 +14680,7 @@ snapshots:
       '@tybys/wasm-util': 0.10.3
     optional: true
 
-  '@nebius/js-sdk@0.2.11':
+  '@nebius/js-sdk@0.2.82':
     dependencies:
       '@bufbuild/protobuf': 2.10.2
       '@grpc/grpc-js': 1.14.5
