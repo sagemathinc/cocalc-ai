@@ -67,23 +67,31 @@ describeRealPostgres("external credential save and removal concurrency", () => {
 
   // Hold the selector's lock in a separate transaction, run `queue` (which
   // starts the operations that must wait for it), then release it and wait
-  // for them. Cleanup runs even if an assertion fails, so no connection or
-  // PostgreSQL child is left behind.
+  // for them. Cleanup runs even if an assertion fails, so no connection,
+  // open transaction or PostgreSQL child is left behind.
   async function withSelectorLockHeld(
     selector: ReturnType<typeof selectorFor>,
     queue: (pending: Promise<unknown>[]) => Promise<void>,
   ): Promise<void> {
     const blocker = await getPool().connect();
     const pending: Promise<unknown>[] = [];
-    let open = true;
-    const release = async () => {
-      if (!open) return;
-      open = false;
-      await blocker.query("COMMIT").catch(() => undefined);
-    };
-    const timeout = setTimeout(() => void release(), 10_000);
+    let inTransaction = false;
+    // Single flight: the normal path, the emergency timer and cleanup all
+    // share one COMMIT, whose failure the normal path still sees.
+    let committing: Promise<void> | undefined;
+    const release = () =>
+      (committing ??= blocker.query("COMMIT").then(() => {
+        inTransaction = false;
+      }));
+    // Emergency release, so a stuck test can't hold the lock forever; its
+    // failure is reported by the normal path or cleanup, not left unhandled.
+    const timeout = setTimeout(
+      () => void release().catch(() => undefined),
+      10_000,
+    );
     try {
       await blocker.query("BEGIN");
+      inTransaction = true;
       await blocker.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
         store.selectorLockKey(selector),
       ]);
@@ -91,10 +99,15 @@ describeRealPostgres("external credential save and removal concurrency", () => {
       await release();
       await Promise.all(pending);
     } finally {
-      await release();
-      await Promise.allSettled(pending);
       clearTimeout(timeout);
-      blocker.release();
+      await committing?.catch(() => undefined);
+      if (inTransaction) {
+        await blocker.query("ROLLBACK").catch(() => undefined);
+      }
+      await Promise.allSettled(pending);
+      // A client whose transaction may still be open is destroyed, never
+      // returned to the pool.
+      blocker.release(inTransaction ? true : undefined);
     }
   }
 
