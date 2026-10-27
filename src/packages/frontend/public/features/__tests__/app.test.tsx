@@ -180,7 +180,7 @@ describe("PublicFeaturesApp", () => {
     ).toHaveAttribute("href", "/docs/ai/codex-chat");
     expect(
       screen.getByRole("link", {
-        name: "Claude Code in CoCalc (Experimental Preview)",
+        name: "Claude Code in CoCalc",
       }),
     ).toHaveAttribute("href", "/docs/ai/claude-code");
     expect(
@@ -235,7 +235,7 @@ describe("PublicFeaturesApp", () => {
     ).toBeNull();
     expect(
       screen.queryByRole("link", {
-        name: "Claude Code in CoCalc (Experimental Preview)",
+        name: "Claude Code in CoCalc",
       }),
     ).toBeNull();
     expect(screen.queryByRole("link", { name: "Codex setup" })).toBeNull();

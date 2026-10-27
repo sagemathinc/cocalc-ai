@@ -17,13 +17,15 @@ describe("STALE_AGENT_PHRASES", () => {
     "Use terminal agents like Claude Code.",
     "Run Claude Code in a terminal, or other shell-based agents.",
     "Review the change before keeping it.",
+    "Claude Code is an experimental preview on sites that enable it.",
+    "Claude Code (experimental preview) works with your subscription.",
   ])("flags %j", (text) => {
     expect(text).toMatch(STALE_AGENT_PHRASES);
   });
 
   it.each([
     "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals.",
-    "Claude Code is an integrated agent (experimental preview).",
+    "Claude Code is an integrated agent.",
     "You can also run Claude Code in a terminal.",
     "Codex and Claude Code work in the same project.",
   ])("allows %j", (text) => {

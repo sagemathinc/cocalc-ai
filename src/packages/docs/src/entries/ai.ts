@@ -45,12 +45,12 @@ export const AI_ENTRIES: DocsEntry[] = [
     id: "ai.claude-code",
     lastReviewed: "2026-09-28",
     noActionReason:
-      "Claude Code preview availability and payment methods depend on the site and account.",
+      "Claude Code availability and payment methods depend on the site and account.",
     slug: "ai/claude-code",
     status: "ready",
     summary:
-      "Use Claude Code in CoCalc (experimental preview): membership, subscription, or API-key access, project tools, billing, and permissions.",
-    title: "Claude Code in CoCalc (Experimental Preview)",
+      "Use Claude Code in CoCalc: membership, subscription, or API-key access, project tools, billing, and permissions.",
+    title: "Claude Code in CoCalc",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],

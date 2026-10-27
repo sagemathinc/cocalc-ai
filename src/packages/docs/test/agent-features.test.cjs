@@ -65,7 +65,7 @@ test("feature matrix renders as tables with valid detailed-guide links", () => {
 test("assessment distinguishes Claude preview from full parity and unknown evidence", () => {
   const body = full.getDocsEntry(slug).body;
   for (const phrase of [
-    "Claude Code remains an experimental preview",
+    "describes that capability, not Claude Code as a whole",
     "Access options reviewed 2026-10-26",
     "Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Conditional",
     "Live Agent Networks that guide busy recipients | Supported | Preview",

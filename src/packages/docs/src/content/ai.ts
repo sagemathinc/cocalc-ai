@@ -17,8 +17,8 @@ files, run commands, work with notebooks, and make changes.
 3. Start a Codex thread.
 4. Ask a concrete task, including relevant files and constraints.
 
-Claude Code is also integrated, as an experimental preview on sites that enable
-it. For other terminal-native agents such as opencode, install and run them
+Claude Code is also integrated, on sites that enable it. For other
+terminal-native agents such as opencode, install and run them
 inside a normal project terminal with compatible software and permissions.
 Hosted project images and local CoCalc Plus can provide different operating
 systems and installed tools; terminal-native agents provide their own interface.
@@ -30,7 +30,7 @@ On phones, open **Chat tools** using the ellipsis button, then choose
 
 - [Compare all integrated agent features](/docs/ai/agent-features).
 - [Start and review work in Agents](/docs/ai/my-agents).
-- [Use Claude Code (experimental preview)](/docs/ai/claude-code).
+- [Use Claude Code](/docs/ai/claude-code).
 - [Let agents remember notes across sessions](/docs/ai/agent-memory).
 - [Connect access and choose funding](/docs/ai/connect-credentials).
 - [Give an agent access to other CoCalc projects](/docs/ai/cocalc-access).
@@ -93,8 +93,8 @@ box. They start from the agent you had selected, if any.
    no project, CoCalc says **Your first project will be created
    automatically**, and titles that project from the first line of your
    request, or **My first project** if there is no request.
-3. In the runtime menu, choose **Claude** for the Claude Code experimental
-   preview, where the site enables it; see [Use Claude Code](/docs/ai/claude-code).
+3. In the runtime menu, choose **Claude** for Claude Code, where the site
+   enables it; see [Use Claude Code](/docs/ai/claude-code).
    For Codex, click the model, thinking level, or payment source button to
    change it. When **CoCalc Membership** pays, whether chosen directly or
    automatically, the thinking level is fixed. Access, funding, project

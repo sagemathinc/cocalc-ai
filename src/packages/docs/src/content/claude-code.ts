@@ -4,11 +4,10 @@
  */
 
 export const CLAUDE_CODE_BODY = String.raw`
-## Experimental preview
+## Work with Claude Code
 
-Claude Code can work in a CoCalc project from the Agents workspace. This is an
-experimental preview: availability depends on the site's configuration, and
-some capabilities differ from Codex. Choose Claude in the runtime menu and a
+Claude Code works in a CoCalc project from the Agents workspace. Availability
+depends on the site's configuration, and some capabilities differ from Codex. Choose Claude in the runtime menu and a
 payment method in its settings; the sections below explain each access option
 and its permissions. Start in a project whose files you can restore and whose
 collaborators and code you trust.
@@ -78,7 +77,7 @@ on claude.ai, or disable CoCalc's project tools.
 Claude has full project access. It can read and edit files, run commands,
 access project secrets, and send project content to external services. CoCalc
 does not ask for approval before each tool or shell command. The project is
-the collaboration and execution trust boundary: only use this preview with
+the collaboration and execution trust boundary: only use Claude Code with
 collaborators, repository instructions, skills, and code you trust.
 
 Credential isolation protects the credential material described below. It does

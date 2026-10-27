@@ -25,11 +25,11 @@ export const UNSUPPORTED_CAPABILITY_TERMS =
 // Dollar amounts belong on the pricing page only.
 export const DOLLAR_AMOUNT = /\$\s*\d/;
 
-// Stale descriptions of agents. Claude Code is an integrated agent
-// (experimental preview), so copy must not list it among the terminal-only
-// agents, in either order and with or without a serial comma; running it in a
+// Stale descriptions of agents. Claude Code is an integrated agent, and no
+// longer an experimental preview (William, 2026-10-27), so copy must not call
+// it a preview or list it among the terminal-only agents, in either order and with or without a serial comma; running it in a
 // terminal is still possible, so a plain mention of a terminal is allowed.
 // Agents change project files as they work, with no separate step that keeps
 // or discards the work.
 export const STALE_AGENT_PHRASES =
-  /Claude Code in a terminal, or other shell|Claude Code(,? and|,? or|,) (OpenCode|(an)?other (shell|command-line|terminal))|(terminal|command-line|shell)(-(native|based))? agents,? (such as|like) Claude Code|before keeping it/i;
+  /Claude Code in a terminal, or other shell|Claude Code(,? and|,? or|,) (OpenCode|(an)?other (shell|command-line|terminal))|(terminal|command-line|shell)(-(native|based))? agents,? (such as|like) Claude Code|before keeping it|Claude Code[^.]{0,40}experimental preview/i;
