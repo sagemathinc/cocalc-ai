@@ -312,101 +312,82 @@ export async function upsertExternalCredential({
   const normalized = normalizeSelector(selector);
   validatePayload(payload);
   const encrypted_payload = await encryptPayload(normalized, payload);
-  const id = randomUUID();
-
-  const { rows } = await pool().query<{ id: string }>(
-    `
-WITH existing AS (
-  SELECT id
-  FROM external_credentials
-  WHERE provider=$1
-    AND kind=$2
-    AND scope=$3
-    AND owner_account_id IS NOT DISTINCT FROM $4
-    AND project_id IS NOT DISTINCT FROM $5
-    AND organization_id IS NOT DISTINCT FROM $6
-    AND revoked IS NULL
-  ORDER BY updated DESC NULLS LAST, created DESC NULLS LAST
-  LIMIT 1
-),
-updated AS (
-  UPDATE external_credentials
-  SET encrypted_payload=$7, metadata=$8, updated=NOW(), revoked=NULL
-  WHERE id IN (SELECT id FROM existing)
-  RETURNING id
-)
-INSERT INTO external_credentials (
-  id,
-  provider,
-  kind,
-  scope,
-  owner_account_id,
-  project_id,
-  organization_id,
-  encrypted_payload,
-  metadata,
-  created,
-  updated
-)
-SELECT
-  $9,
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  $7,
-  $8,
-  NOW(),
-  NOW()
-WHERE NOT EXISTS (SELECT 1 FROM updated)
-RETURNING id
-    `,
-    [
-      normalized.provider,
-      normalized.kind,
-      normalized.scope,
-      normalized.owner_account_id ?? null,
-      normalized.project_id ?? null,
-      normalized.organization_id ?? null,
-      encrypted_payload,
-      metadata ?? {},
-      id,
-    ],
-  );
-
-  if (rows[0]?.id) {
-    return { id: rows[0].id, created: true };
-  }
-
-  const { rows: currentRows } = await pool().query<{ id: string }>(
-    `
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    // One writer per selector at a time, as in create and revoke: two saves
+    // racing must not leave two active credentials for one selector.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      selectorLockKey(normalized),
+    ]);
+    const { rows: active } = await client.query<{ id: string }>(
+      `
 SELECT id
 FROM external_credentials
-WHERE provider=$1
-  AND kind=$2
-  AND scope=$3
-  AND owner_account_id IS NOT DISTINCT FROM $4
-  AND project_id IS NOT DISTINCT FROM $5
-  AND organization_id IS NOT DISTINCT FROM $6
+WHERE ${ownershipClause(1)}
   AND revoked IS NULL
 ORDER BY updated DESC NULLS LAST, created DESC NULLS LAST
-LIMIT 1
-    `,
-    [
-      normalized.provider,
-      normalized.kind,
-      normalized.scope,
-      normalized.owner_account_id ?? null,
-      normalized.project_id ?? null,
-      normalized.organization_id ?? null,
-    ],
-  );
-  if (!currentRows[0]?.id) {
-    throw Error("failed to upsert external credential");
+      `,
+      [...selectorValues(normalized)],
+    );
+    let id: string;
+    let created: boolean;
+    if (active[0]) {
+      id = active[0].id;
+      created = false;
+      await client.query(
+        `
+UPDATE external_credentials
+SET encrypted_payload=$2, metadata=$3, updated=NOW(), revoked=NULL
+WHERE id=$1
+        `,
+        [id, encrypted_payload, metadata ?? {}],
+      );
+    } else {
+      id = randomUUID();
+      created = true;
+      await client.query(
+        `
+INSERT INTO external_credentials (
+  id, provider, kind, scope, owner_account_id, project_id, organization_id,
+  encrypted_payload, metadata, created, updated
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+        `,
+        [
+          id,
+          normalized.provider,
+          normalized.kind,
+          normalized.scope,
+          normalized.owner_account_id ?? null,
+          normalized.project_id ?? null,
+          normalized.organization_id ?? null,
+          encrypted_payload,
+          metadata ?? {},
+        ],
+      );
+    }
+    // An upserted selector has one active credential: retire any others,
+    // e.g. left by an earlier race, deleting their payloads like a revoke.
+    const others = active.slice(1).map((row) => row.id);
+    if (others.length > 0) {
+      await client.query(
+        `
+UPDATE external_credentials
+SET revoked=NOW(), updated=NOW(), encrypted_payload=NULL
+WHERE id = ANY($1::uuid[])
+        `,
+        [others],
+      );
+    }
+    await client.query("COMMIT");
+    return { id, created };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
   }
-  return { id: currentRows[0].id, created: false };
 }
 
 export async function createExternalCredential({

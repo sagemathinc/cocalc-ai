@@ -21,6 +21,7 @@ import {
   touchExternalCredential,
   updateExternalCredentialById,
   updateExternalCredentialPayloadLocked,
+  upsertExternalCredential,
 } from "./store";
 import { createHash } from "node:crypto";
 import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-conflict";
@@ -452,4 +453,97 @@ test("strict ISO UTC parsing rejects calendar-normalized values", () => {
     undefined,
   ])
     expect(parseStrictIsoUtc(value)).toBeUndefined();
+});
+
+describeDb("upsert keeps one active credential per selector", () => {
+  const selectorFor = (accountId: string) => ({
+    provider: "openai",
+    kind: "api-key",
+    scope: "account" as const,
+    owner_account_id: accountId,
+  });
+  const rows = async (accountId: string) =>
+    (
+      await getPool().query(
+        `SELECT id, encrypted_payload, revoked FROM external_credentials
+         WHERE owner_account_id=$1 AND provider='openai' AND kind='api-key'
+         ORDER BY created`,
+        [accountId],
+      )
+    ).rows;
+
+  beforeAll(async () => {
+    await syncSchema({ external_credentials: SCHEMA.external_credentials });
+  });
+
+  test("saves at the same time leave exactly one active credential", async () => {
+    const accountId = randomUUID();
+    const selector = selectorFor(accountId);
+    await Promise.all(
+      ["a", "b", "c", "d"].map((payload) =>
+        upsertExternalCredential({ selector, payload }),
+      ),
+    );
+    const active = (await rows(accountId)).filter((row) => !row.revoked);
+    expect(active).toHaveLength(1);
+    expect(["a", "b", "c", "d"]).toContain(active[0].encrypted_payload);
+  });
+
+  test("a later save updates the active credential in place", async () => {
+    const accountId = randomUUID();
+    const selector = selectorFor(accountId);
+    const first = await upsertExternalCredential({ selector, payload: "one" });
+    const second = await upsertExternalCredential({ selector, payload: "two" });
+    expect(first.created).toBe(true);
+    expect(second).toEqual({ id: first.id, created: false });
+    expect((await getExternalCredential({ selector }))?.payload).toBe("two");
+  });
+
+  test("a save retires extra active rows and deletes their payloads", async () => {
+    const accountId = randomUUID();
+    const selector = selectorFor(accountId);
+    // Two active rows, as an earlier race could have left them.
+    for (const payload of ["old-1", "old-2"]) {
+      await getPool().query(
+        `INSERT INTO external_credentials
+           (id, provider, kind, scope, owner_account_id, encrypted_payload,
+            metadata, created, updated)
+         VALUES ($1, 'openai', 'api-key', 'account', $2, $3, '{}', NOW(), NOW())`,
+        [randomUUID(), accountId, payload],
+      );
+    }
+    await upsertExternalCredential({ selector, payload: "new" });
+    const all = await rows(accountId);
+    const active = all.filter((row) => !row.revoked);
+    expect(active).toHaveLength(1);
+    expect(active[0].encrypted_payload).toBe("new");
+    for (const row of all.filter((row) => row.revoked)) {
+      expect(row.encrypted_payload).toBeNull();
+    }
+  });
+
+  test("a removal after a racing save leaves no stored copy", async () => {
+    const accountId = randomUUID();
+    const selector = selectorFor(accountId);
+    const { id } = await upsertExternalCredential({ selector, payload: "one" });
+    await Promise.all([
+      upsertExternalCredential({ selector, payload: "two" }),
+      revokeExternalCredential({ id, owner_account_id: accountId }),
+    ]);
+    // Whichever ran first, the save updated the one row in place, so the
+    // removal reached it: nothing active, and no payload left.
+    for (const row of await rows(accountId)) {
+      if (row.id === id) {
+        expect(row.revoked).not.toBeNull();
+        expect(row.encrypted_payload).toBeNull();
+      }
+    }
+    const active = (await rows(accountId)).filter((row) => !row.revoked);
+    expect(active.length).toBeLessThanOrEqual(1);
+    if (active.length === 1) {
+      // The save ran after the removal: that is a new, deliberate save.
+      expect(active[0].id).not.toBe(id);
+      expect(active[0].encrypted_payload).toBe("two");
+    }
+  });
 });
