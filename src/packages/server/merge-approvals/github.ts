@@ -23,8 +23,9 @@ const GITHUB_API = "https://api.github.com";
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_FILES = 300;
 const FILES_PER_PAGE = 100;
-const MAX_CHECKS = 100;
-const MAX_REVIEWS = 100;
+const PER_PAGE = 100;
+// Checks and reviews are read in full up to this many pages each.
+const MAX_LIST_PAGES = 10;
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -330,18 +331,41 @@ async function readSnapshotOnce({
   }
   const changed_files = num(pr?.changed_files);
 
-  const runs = await github(
-    "GET",
-    `/repos/${repo}/commits/${head_sha}/check-runs?per_page=${MAX_CHECKS}`,
-    token,
+  // Every page (up to MAX_LIST_PAGES), so the summaries count them all.
+  const allPages = async (
+    path: string,
+    rows: (body: any) => any[],
+  ): Promise<{ rows: any[]; total: number; more: boolean }> => {
+    const all: any[] = [];
+    let total = 0;
+    for (let page = 1; page <= MAX_LIST_PAGES; page++) {
+      const sep = path.includes("?") ? "&" : "?";
+      const body = await github(
+        "GET",
+        `${path}${sep}per_page=${PER_PAGE}&page=${page}`,
+        token,
+      );
+      const batch = rows(body);
+      all.push(...batch);
+      total = Math.max(total, num(body?.total_count));
+      if (batch.length < PER_PAGE) {
+        return { rows: all, total: Math.max(total, all.length), more: false };
+      }
+      if (total > 0 && all.length >= total) break;
+    }
+    const more = total > all.length || (total === 0 && all.length > 0);
+    return { rows: all, total: Math.max(total, all.length), more };
+  };
+  const runs = await allPages(
+    `/repos/${repo}/commits/${head_sha}/check-runs`,
+    (body) => (Array.isArray(body?.check_runs) ? body.check_runs : []),
   );
-  const statuses = await github(
-    "GET",
-    `/repos/${repo}/commits/${head_sha}/status?per_page=${MAX_CHECKS}`,
-    token,
+  const statuses = await allPages(
+    `/repos/${repo}/commits/${head_sha}/status`,
+    (body) => (Array.isArray(body?.statuses) ? body.statuses : []),
   );
-  const runList = Array.isArray(runs?.check_runs) ? runs.check_runs : [];
-  const statusList = Array.isArray(statuses?.statuses) ? statuses.statuses : [];
+  const runList = runs.rows;
+  const statusList = statuses.rows;
   const checks: MergeApprovalGitHubSnapshot["checks"] = [
     ...runList.map((r) => ({
       name: str(r?.name, 200),
@@ -355,12 +379,11 @@ async function readSnapshotOnce({
     })),
   ];
 
-  const reviewList = await github(
-    "GET",
-    `/repos/${repo}/pulls/${pr_number}/reviews?per_page=${MAX_REVIEWS}`,
-    token,
+  const reviewPages = await allPages(
+    `/repos/${repo}/pulls/${pr_number}/reviews`,
+    (body) => (Array.isArray(body) ? body : []),
   );
-  const reviewRows = Array.isArray(reviewList) ? reviewList : [];
+  const reviewRows = reviewPages.rows;
   const reviews: MergeApprovalGitHubSnapshot["reviews"] = reviewRows.map(
     (r) => ({
       author: str(r?.user?.login, 100),
@@ -380,9 +403,6 @@ async function readSnapshotOnce({
     (complete
       ? fileAdditions === additions && fileDeletions === deletions
       : fileAdditions <= additions && fileDeletions <= deletions);
-  // More than one page means GitHub has more than these.
-  const totalRuns = Math.max(num(runs?.total_count), runList.length);
-  const totalStatuses = Math.max(num(statuses?.total_count), statusList.length);
   const snapshot: MergeApprovalGitHubSnapshot = {
     title: str(pr?.title, 500),
     state: pr?.merged ? "merged" : str(pr?.state, 20),
@@ -400,12 +420,14 @@ async function readSnapshotOnce({
     files_truncated: files.length < changed_files,
     checks,
     check_summary: {
-      total: totalRuns + totalStatuses,
+      total: runs.total + statuses.total,
+      // failing and pending are counted over this many (all of them, unless
+      // there were more than MAX_LIST_PAGES pages).
+      counted: checks.length,
       failing: checks.filter((c) => checkRank(c) === 0).length,
       pending: checks.filter((c) => checkRank(c) === 1).length,
     },
-    checks_truncated:
-      totalRuns > runList.length || totalStatuses > statusList.length,
+    checks_truncated: runs.more || statuses.more,
     reviews,
     review_summary: {
       total: reviews.length,
@@ -413,7 +435,7 @@ async function readSnapshotOnce({
         .length,
       approved: reviews.filter((r) => r.state === "APPROVED").length,
     },
-    reviews_truncated: reviewRows.length >= MAX_REVIEWS,
+    reviews_truncated: reviewPages.more,
     read_at: new Date().toISOString(),
   };
   return { snapshot, base_sha, consistent };

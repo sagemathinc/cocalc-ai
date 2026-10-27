@@ -44,7 +44,7 @@ function fakeGitHub({
   pr?: Record<string, unknown> | (() => Record<string, unknown>);
   files?: any[];
   overrides?: Record<string, () => Response>;
-  checkRuns?: any;
+  checkRuns?: any[];
   reviews?: any[];
 } = {}) {
   const calls: Call[] = [];
@@ -89,13 +89,14 @@ function fakeGitHub({
         base,
       )
     ) {
-      return json(
-        checkRuns ?? {
-          check_runs: [
-            { name: "test", status: "completed", conclusion: "success" },
-          ],
-        },
-      );
+      const all = checkRuns ?? [
+        { name: "test", status: "completed", conclusion: "success" },
+      ];
+      const page = Number(new URL(url).searchParams.get("page") ?? 1);
+      return json({
+        total_count: all.length,
+        check_runs: all.slice((page - 1) * 100, page * 100),
+      });
     }
     if (
       /^\/repos\/sagemathinc\/cocalc-ai\/commits\/[0-9a-f]{40}\/status$/.test(
@@ -105,11 +106,11 @@ function fakeGitHub({
       return json({ statuses: [{ context: "ci/legacy", state: "pending" }] });
     }
     if (base === "/repos/sagemathinc/cocalc-ai/pulls/12/reviews") {
-      return json(
-        reviews ?? [
-          { user: { login: "codex" }, state: "COMMENTED", commit_id: HEAD },
-        ],
-      );
+      const all = reviews ?? [
+        { user: { login: "codex" }, state: "COMMENTED", commit_id: HEAD },
+      ];
+      const page = Number(new URL(url).searchParams.get("page") ?? 1);
+      return json(all.slice((page - 1) * 100, page * 100));
     }
     return json({ message: "Not Found" }, 404);
   };
@@ -347,18 +348,19 @@ describe("merge approval GitHub App", () => {
   });
 
   it("summarizes checks and reviews and says when lists are shortened", async () => {
-    const runs = Array.from({ length: 100 }, (_, i) => ({
+    // The failure and the change request are on the second pages.
+    const runs = Array.from({ length: 140 }, (_, i) => ({
       name: `${"x".repeat(150)}-${i}`,
       status: "completed",
-      conclusion: i === 77 ? "failure" : "success",
+      conclusion: i === 120 ? "failure" : "success",
     }));
-    const reviews = Array.from({ length: 100 }, (_, i) => ({
+    const reviews = Array.from({ length: 150 }, (_, i) => ({
       user: { login: `r${i}` },
-      state: i === 55 ? "CHANGES_REQUESTED" : "COMMENTED",
+      state: i === 130 ? "CHANGES_REQUESTED" : "COMMENTED",
       commit_id: HEAD,
     }));
     const gh = fakeGitHub({
-      checkRuns: { total_count: 140, check_runs: runs },
+      checkRuns: runs,
       reviews,
       files: Array.from({ length: 300 }, (_, i) => ({
         filename: `${"d/".repeat(200)}f${i}.ts`,
@@ -373,19 +375,26 @@ describe("merge approval GitHub App", () => {
       repo: "sagemathinc/cocalc-ai",
       pr_number: 12,
     });
-    expect(snap.check_summary).toEqual({ total: 141, failing: 1, pending: 1 });
-    expect(snap.checks_truncated).toBe(true);
+    expect(snap.check_summary).toEqual({
+      total: 141,
+      counted: 141,
+      failing: 1,
+      pending: 1,
+    });
     expect(snap.review_summary).toEqual({
-      total: 100,
+      total: 150,
       changes_requested: 1,
       approved: 0,
     });
-    expect(snap.reviews_truncated).toBe(true);
+    // All pages were read, so a list is marked shortened exactly when the
+    // size cap shortened it.
+    expect(snap.checks_truncated).toBe(snap.checks.length < 141);
+    expect(snap.reviews_truncated).toBe(snap.reviews.length < 150);
     // Whatever was shortened, failures and change requests come first.
-    if (snap.checks.length < 101) {
+    if (snap.checks.length < 141) {
       expect(snap.checks[0]).toMatchObject({ conclusion: "failure" });
     }
-    if (snap.reviews.length < 100) {
+    if (snap.reviews.length < 150) {
       expect(snap.reviews[0]).toMatchObject({ state: "CHANGES_REQUESTED" });
     }
     expect(Buffer.byteLength(JSON.stringify(snap))).toBeLessThanOrEqual(

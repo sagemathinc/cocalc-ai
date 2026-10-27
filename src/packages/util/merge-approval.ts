@@ -62,7 +62,14 @@ export interface MergeApprovalGitHubSnapshot {
   files_truncated: boolean;
   checks: { name: string; conclusion: string | null; status: string }[];
   // Counted over everything GitHub returned, before any list was shortened.
-  check_summary: { total: number; failing: number; pending: number };
+  // failing and pending are counted over `counted` of the `total` checks
+  // (all of them unless GitHub had very many).
+  check_summary: {
+    total: number;
+    counted: number;
+    failing: number;
+    pending: number;
+  };
   // True when checks lists fewer than GitHub has (see check_summary).
   checks_truncated: boolean;
   reviews: { author: string; state: string; commit_id: string | null }[];
