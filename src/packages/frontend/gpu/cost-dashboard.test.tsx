@@ -38,6 +38,7 @@ function api(): jest.Mocked<GpuCostDashboardApi> {
       pod({
         id: "44444444-4444-4444-8444-444444444444",
         handle: "cc-agent001",
+        beneficiary_account_id: "66666666-6666-4666-8666-666666666666",
         beneficiary_name: undefined,
         agent_id: "agent-1",
         cost_per_hr: "0.5",
@@ -84,7 +85,11 @@ describe("GpuCostDashboard", () => {
     ).toBeTruthy();
     expect(screen.getByRole("cell", { name: "cc-agent001" })).toBeTruthy();
     expect(screen.queryByRole("cell", { name: "cc-gone0000" })).toBeNull();
-    expect(screen.getByRole("cell", { name: "You (agent)" })).toBeTruthy();
+    // Unnamed and not known to be the viewer: never "You".
+    expect(
+      screen.getByRole("cell", { name: "Unknown person (agent)" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("cell", { name: /^You/ })).toBeNull();
     expect(screen.getByText("$0.77/hour")).toBeTruthy();
     expect(screen.getAllByText("$1.25").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$1.00").length).toBeGreaterThan(0);
@@ -92,6 +97,19 @@ describe("GpuCostDashboard", () => {
     expect(mock.spend).toHaveBeenCalledWith(
       expect.objectContaining({ scope: "funded", group_by: "beneficiary" }),
     );
+  });
+
+  it("labels the viewer's own pods as You only when the viewer is known", async () => {
+    render(
+      <GpuCostDashboard
+        api={api()}
+        viewerAccountId="33333333-3333-4333-8333-333333333333"
+      />,
+    );
+    expect(await screen.findAllByRole("cell", { name: "You" })).toHaveLength(1);
+    expect(
+      screen.getByRole("cell", { name: "Unknown person (agent)" }),
+    ).toBeTruthy();
   });
 
   it("names every control, including per-pod terminate buttons", async () => {

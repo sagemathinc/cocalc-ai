@@ -82,10 +82,23 @@ describe("GPU cost dashboard model", () => {
     expect(podGpuLabel(pod({ gpu_count: 2, cloud: "COMMUNITY" }))).toBe(
       "2 × NVIDIA RTX A5000 (Community Cloud)",
     );
-    expect(podOwnerLabel({})).toBe("You");
-    expect(podOwnerLabel({ beneficiary_name: "Ada", agent_id: "a1" })).toBe(
-      "Ada (agent)",
+    const mine = { beneficiary_account_id: "me" };
+    // A missing name is never assumed to be the viewer.
+    expect(podOwnerLabel(mine)).toBe("Unknown person");
+    expect(podOwnerLabel({ beneficiary_account_id: "other" }, "me")).toBe(
+      "Unknown person",
     );
+    expect(podOwnerLabel(mine, "me")).toBe("You");
+    expect(podOwnerLabel({ ...mine, beneficiary_name: "Ada" }, "me")).toBe(
+      "You",
+    );
+    expect(
+      podOwnerLabel({
+        beneficiary_account_id: "x",
+        beneficiary_name: "Ada",
+        agent_id: "a1",
+      }),
+    ).toBe("Ada (agent)");
   });
 
   it("computes the start of each period", () => {

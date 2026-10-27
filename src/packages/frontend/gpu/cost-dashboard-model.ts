@@ -96,10 +96,19 @@ export function podGpuLabel(
   return `${pod.gpu_count} × ${pod.gpu_type_id} (${cloud} Cloud)`;
 }
 
+/** "You" only when the viewer is known to be the beneficiary; a missing name
+ * is never assumed to be the viewer. */
 export function podOwnerLabel(
-  pod: Pick<GpuPodSummary, "beneficiary_name" | "agent_id">,
+  pod: Pick<
+    GpuPodSummary,
+    "beneficiary_name" | "beneficiary_account_id" | "agent_id"
+  >,
+  viewerAccountId?: string,
 ): string {
-  const who = pod.beneficiary_name || "You";
+  const who =
+    viewerAccountId != null && pod.beneficiary_account_id === viewerAccountId
+      ? "You"
+      : pod.beneficiary_name || "Unknown person";
   return pod.agent_id ? `${who} (agent)` : who;
 }
 

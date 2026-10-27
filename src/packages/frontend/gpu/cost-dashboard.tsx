@@ -105,6 +105,7 @@ export function GpuCostDashboard({
   api,
   scope = "funded",
   scopeLabel: scopeLabelOverride,
+  viewerAccountId,
 }: {
   api: GpuCostDashboardApi;
   // What is shown is exactly what "Terminate all" terminates.
@@ -112,6 +113,8 @@ export function GpuCostDashboard({
   // Completes "GPU pods ..." in headings and confirmations; defaults to a
   // label derived from scope.
   scopeLabel?: string;
+  // The signed-in account, so its own pods read "You".
+  viewerAccountId?: string;
 }) {
   const scopeLabel = scopeLabelOverride ?? defaultScopeLabel(scope);
   const [period, setPeriod] = useState<GpuSpendPeriod>("7d");
@@ -363,7 +366,7 @@ export function GpuCostDashboard({
           {
             title: "For",
             key: "owner",
-            render: (_, pod) => podOwnerLabel(pod),
+            render: (_, pod) => podOwnerLabel(pod, viewerAccountId),
           },
           {
             title: "GPU",
@@ -523,7 +526,8 @@ export function GpuCostDashboard({
       >
         {confirm?.kind === "pod" ? (
           <p>
-            {podGpuLabel(confirm.pod)} for {podOwnerLabel(confirm.pod)}, at{" "}
+            {podGpuLabel(confirm.pod)} for{" "}
+            {podOwnerLabel(confirm.pod, viewerAccountId)}, at{" "}
             {moneyToCurrency(confirm.pod.cost_per_hr)}/hour.
           </p>
         ) : (
