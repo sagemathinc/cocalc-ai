@@ -192,11 +192,16 @@ export class RunpodClient {
     return { kind: "personal", id: me.id };
   }
 
+  // Every pod in the account, including Instant Cluster members, which
+  // RunPod leaves out by default: a hidden pod is hidden spend.
   async listPods(): Promise<RunpodPodView[]> {
     const pods: RunpodPodView[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
-      const body = await this.get("/v2/pods", cursor ? { cursor } : {});
+      const body = await this.get("/v2/pods", {
+        includeClusterPods: "true",
+        ...(cursor ? { cursor } : {}),
+      });
       if (
         !Array.isArray(body?.pods) ||
         typeof body.pagination?.hasNextPage !== "boolean"

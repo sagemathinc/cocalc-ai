@@ -56,7 +56,9 @@ describe("RunpodClient", () => {
     ]);
     await client(fetch).listPods();
     const headers = calls[0].init.headers as Record<string, string>;
-    expect(calls[0].url).toBe("https://api.runpod.io/v2/pods");
+    expect(calls[0].url).toBe(
+      "https://api.runpod.io/v2/pods?includeClusterPods=true",
+    );
     expect(headers.Authorization).toBe(`Bearer ${KEY}`);
     // Cloudflare blocks some default user agents (error 1010).
     expect(headers["User-Agent"]).toMatch(/^cocalc-runpod\//);
@@ -95,7 +97,7 @@ describe("RunpodClient", () => {
     expect(() => new RunpodClient({ apiKey: "a b" })).toThrow(/required/);
   });
 
-  it("follows pagination cursors for the pod inventory", async () => {
+  it("follows pagination cursors for the whole pod inventory, cluster pods included", async () => {
     const { fetch, calls } = fakeFetch([
       {
         body: {
@@ -112,9 +114,11 @@ describe("RunpodClient", () => {
     ]);
     const pods = await client(fetch).listPods();
     expect(pods.map((p) => p.id)).toEqual(["pod_aaaaaa", "pod_bbbbbb"]);
-    expect(calls[1].url).toBe(
-      "https://api.runpod.io/v2/pods?cursor=c%2F2%3Fx%3D1",
-    );
+    // Every page asks for cluster members too.
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api.runpod.io/v2/pods?includeClusterPods=true",
+      "https://api.runpod.io/v2/pods?includeClusterPods=true&cursor=c%2F2%3Fx%3D1",
+    ]);
   });
 
   it("treats a malformed inventory as an error, not an empty list", async () => {
