@@ -19,6 +19,7 @@ import {
   Popconfirm,
   Segmented,
   Space,
+  Tabs,
 } from "antd";
 import type {
   KeyboardEvent,
@@ -70,9 +71,9 @@ const READER_MODE_KEY = "cocalc-chat-reader-mode";
 const READER_VIEW_KEY = "cocalc-chat-reader-view";
 
 /**
- * for-you: what is for the person (high and normal); all; filed: low, FYI;
- * starred: what the person starred, archived or not. One choice for every
- * chat, kept in this browser.
+ * for-you: what is for the person (high and normal); all; filed: low, FYI
+ * (shown as "Low priority"); starred: what the person starred, archived or
+ * not. One choice for every chat, kept in this browser.
  */
 export type ReaderListView = "for-you" | "all" | "filed" | "starred";
 
@@ -317,7 +318,8 @@ export function ChatReaderView({
     [actions, threadId, readStateVersion],
   );
   const [showArchived, setShowArchived] = useState(false);
-  const [showKeys, setShowKeys] = useState(false);
+  // The About dialog and its tab: what everything here does, and the keys.
+  const [about, setAbout] = useState<"about" | "keys" | undefined>();
   // Without priorities (no itemInfo) there are two views: all and starred.
   const [chosenView, setView] = useReaderListView();
   const view: ReaderListView =
@@ -376,7 +378,7 @@ export function ChatReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [items, watermark, state, showArchived, filed],
   );
-  // As the Filed list shows them: archived ones too while they are shown.
+  // As the Low priority list shows them: archived ones too while they are shown.
   const filedUnread = useMemo(
     () => unreadIn("filed", showArchived ? undefined : false),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -541,7 +543,7 @@ export function ChatReaderView({
           if (selected) star(selected);
           return !!selected;
         case "?":
-          setShowKeys(true);
+          setAbout("keys");
           return true;
         case "f":
           if (!selected || narrow) return false;
@@ -725,8 +727,8 @@ export function ChatReaderView({
                     ? // This view has items: all archived.
                       "Everything here is archived"
                     : view === "for-you"
-                      ? "Nothing for you here: the rest is filed"
-                      : "Nothing filed"
+                      ? "Nothing for you here: the rest is low priority"
+                      : "Nothing low priority"
             }
           />
         ) : null}
@@ -1269,7 +1271,9 @@ export function ChatReaderView({
                 ? [
                     {
                       value: "filed",
-                      label: filedUnread ? `Filed (${filedUnread})` : "Filed",
+                      label: filedUnread
+                        ? `Low priority (${filedUnread})`
+                        : "Low priority",
                     },
                   ]
                 : []),
@@ -1285,16 +1289,14 @@ export function ChatReaderView({
           >
             Show archived
           </Checkbox>
-          {narrow ? null : (
-            <Button
-              size="small"
-              type="text"
-              icon={<Icon name="keyboard" />}
-              onClick={() => setShowKeys(true)}
-            >
-              Keys
-            </Button>
-          )}
+          <Button
+            size="small"
+            type="text"
+            icon={<Icon name="question-circle" />}
+            onClick={() => setAbout("about")}
+          >
+            About
+          </Button>
         </div>
       )}
       <div ref={rowRef} style={{ display: "flex", flex: 1, minHeight: 0 }}>
@@ -1363,29 +1365,60 @@ export function ChatReaderView({
         )}
       </div>
       <Modal
-        title="Reader keyboard shortcuts"
-        open={showKeys}
+        title="About the reader"
+        open={about != null}
         footer={null}
         onCancel={() => {
-          setShowKeys(false);
+          setAbout(undefined);
           focusKeys();
         }}
       >
-        <table aria-label="Keyboard shortcuts">
-          <tbody>
-            {READER_KEYS.map(([keys, what]) => (
-              <tr key={keys}>
-                <td style={{ padding: "4px 16px 4px 0", whiteSpace: "nowrap" }}>
-                  <kbd>{keys}</kbd>
-                </td>
-                <td style={{ padding: "4px 0" }}>{what}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p style={{ color: UI_COLORS.muted, marginTop: 12, marginBottom: 0 }}>
-          Click a message in the list first, so the keys go to the reader.
-        </p>
+        <Tabs
+          activeKey={about}
+          onChange={(key) => setAbout(key as "about" | "keys")}
+          items={[
+            {
+              key: "about",
+              label: "About",
+              children: <ReaderAbout priorities={!!itemInfo} />,
+            },
+            {
+              key: "keys",
+              label: "Keys",
+              children: (
+                <>
+                  <table aria-label="Keyboard shortcuts">
+                    <tbody>
+                      {READER_KEYS.map(([keys, what]) => (
+                        <tr key={keys}>
+                          <td
+                            style={{
+                              padding: "4px 16px 4px 0",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            <kbd>{keys}</kbd>
+                          </td>
+                          <td style={{ padding: "4px 0" }}>{what}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p
+                    style={{
+                      color: UI_COLORS.muted,
+                      marginTop: 12,
+                      marginBottom: 0,
+                    }}
+                  >
+                    Click a message in the list first, so the keys go to the
+                    reader.
+                  </p>
+                </>
+              ),
+            },
+          ]}
+        />
       </Modal>
     </div>
   );
@@ -1401,3 +1434,101 @@ const READER_KEYS: [string, string][] = [
   ["f", "Full screen for the open message (again, or Esc: back)"],
   ["?", "Show these shortcuts"],
 ];
+
+// What each view, control and mark in the reader means. Without priorities
+// (no itemInfo) there are only All and Starred, so only they are explained.
+function ReaderAbout({ priorities }: { priorities: boolean }) {
+  const section = { marginTop: 16, marginBottom: 4 };
+  return (
+    <div>
+      <p style={{ marginTop: 0 }}>
+        The reader shows this thread as an inbox: each incoming message (from a
+        person, an agent, a sensor or a schedule), with the agent replies that
+        follow it, is one item in the list. The newest is at the top.
+      </p>
+      <h4 style={section}>Views</h4>
+      <dl style={{ margin: 0 }}>
+        {priorities ? (
+          <ReaderTerm term="For you">
+            What needs you: high and normal priority. Its number is how many of
+            them are unread.
+          </ReaderTerm>
+        ) : null}
+        <ReaderTerm term="All">
+          Every message not archived, of any priority.
+        </ReaderTerm>
+        {priorities ? (
+          <ReaderTerm term="Low priority">
+            For your information only, marked <em>fyi</em> in the list. Its
+            unread messages have their own number and are not counted in the
+            unread total.
+          </ReaderTerm>
+        ) : null}
+        <ReaderTerm term="Starred">
+          The messages you starred (s), archived or not.
+        </ReaderTerm>
+      </dl>
+      <p style={{ color: UI_COLORS.muted, marginBottom: 0 }}>
+        Your choice of view applies to every chat, in this browser.
+      </p>
+      {priorities ? (
+        <>
+          <h4 style={section}>Priority</h4>
+          <dl style={{ margin: 0 }}>
+            <ReaderTerm term="High">
+              An agent is waiting for your answer, or said the message needs you
+              (a decision, an approval, results you asked for). Marked{" "}
+              <em>for you</em>, with a bar down its side.
+            </ReaderTerm>
+            <ReaderTerm term="Normal">
+              A turn a person started, unless the agent said otherwise.
+            </ReaderTerm>
+            <ReaderTerm term="Low">
+              A turn started by another agent&apos;s message, a sensor or a
+              schedule, unless the agent said otherwise.
+            </ReaderTerm>
+          </dl>
+          <p style={{ color: UI_COLORS.muted, marginBottom: 0 }}>
+            An agent sets the priority of its turn with{" "}
+            <code>cocalc agent turn --priority</code>.
+          </p>
+        </>
+      ) : null}
+      <h4 style={section}>Reading and archiving</h4>
+      <dl style={{ margin: 0 }}>
+        <ReaderTerm term="Unread">
+          Unread messages are bold, with a dot. Opening one marks it read; m
+          marks it unread again.
+        </ReaderTerm>
+        <ReaderTerm term="Mark all read">
+          Marks every message in the thread read, in every view.
+        </ReaderTerm>
+        <ReaderTerm term="Archive">
+          y archives the open message: it leaves the list but is kept. A new
+          reply brings it back.
+        </ReaderTerm>
+        <ReaderTerm term="Archive all">
+          Archives and reads everything in the thread, in every view: a clean
+          slate. A turn still running stays in the list, and stays unread if it
+          was.
+        </ReaderTerm>
+        <ReaderTerm term="Show archived">
+          Shows archived messages in the list too, faded.
+        </ReaderTerm>
+      </dl>
+      <p style={{ color: UI_COLORS.muted, marginBottom: 0 }}>
+        Read, archived and starred are yours alone: others in the chat keep
+        their own.
+      </p>
+    </div>
+  );
+}
+
+function ReaderTerm({ term, children }: { term: string; children: ReactNode }) {
+  return (
+    <>
+      <dt style={{ fontWeight: 600, marginTop: 6 }}>{term}</dt>
+      <dd style={{ marginLeft: 16, marginBottom: 0 }}>{children}</dd>
+    </>
+  );
+}
