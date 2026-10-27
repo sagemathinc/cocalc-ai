@@ -13,6 +13,11 @@ COCALC_JUPYTER_ZMQ, before the first socket:
 Changing it needs a restart of the process.  An invalid value, or "native"
 in a build without the addon, is an error at the first kernel start; there
 is never a silent fallback.
+
+For every project on a project host, set it in
+/etc/cocalc/project-host.local.env and restart project-host: new project
+starts get it (project-runner/run/env.ts).  A project's own environment
+setting, applied later, wins.
 */
 
 import { getLogger } from "@cocalc/backend/logger";

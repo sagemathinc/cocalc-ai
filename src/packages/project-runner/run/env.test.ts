@@ -158,4 +158,17 @@ describe("project container environment", () => {
     expect(env.COCALC_CLOUD_ZONE).toBeUndefined();
     expect(env.COCALC_APT_UBUNTU_MIRROR).toBeUndefined();
   });
+
+  it("passes the host's Jupyter transport to its projects, and nothing when unset", async () => {
+    const { getEnvironment } = await import("./env");
+    const opts = {
+      HOME: "/home/user",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      image: "test-image",
+    };
+    delete process.env.COCALC_JUPYTER_ZMQ;
+    expect((await getEnvironment(opts)).COCALC_JUPYTER_ZMQ).toBeUndefined();
+    process.env.COCALC_JUPYTER_ZMQ = "native";
+    expect((await getEnvironment(opts)).COCALC_JUPYTER_ZMQ).toBe("native");
+  });
 });

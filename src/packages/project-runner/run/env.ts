@@ -118,6 +118,11 @@ export async function getEnvironment({
   const aptUbuntuMirror =
     cloudProvider === "gcp" ? gceUbuntuMirrorForZone(cloudZone) : undefined;
   const siteUrl = `${process.env.COCALC_SITE_URL ?? ""}`.trim() || undefined;
+  // the Jupyter transport for every project on this host, from the
+  // project-host env files ("native" rolls back the pure-JS one); a project's
+  // own env setting is applied later and wins
+  const jupyterZmq =
+    `${process.env.COCALC_JUPYTER_ZMQ ?? ""}`.trim() || undefined;
 
   const USER = DEFAULT_PROJECT_RUNTIME_USER;
   const DATA = dataPath(HOME);
@@ -182,5 +187,6 @@ export async function getEnvironment({
     ...(cloudRegion ? { COCALC_CLOUD_REGION: cloudRegion } : {}),
     ...(cloudZone ? { COCALC_CLOUD_ZONE: cloudZone } : {}),
     ...(aptUbuntuMirror ? { COCALC_APT_UBUNTU_MIRROR: aptUbuntuMirror } : {}),
+    ...(jupyterZmq ? { COCALC_JUPYTER_ZMQ: jupyterZmq } : {}),
   };
 }
