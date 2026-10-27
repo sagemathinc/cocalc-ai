@@ -957,7 +957,7 @@ const MUTANTS: [
 ];
 
 function loadMutant(from: string, to: string): typeof Z {
-  const src = readFileSync(join(__dirname, "zmtp.ts"), "utf8");
+  const src = zmtpSource();
   assert.equal(
     src.split(from).length,
     2,
@@ -1030,6 +1030,15 @@ const cat = (b) => Buffer.concat(b);
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
+// zmtp.ts as LF text: a Windows checkout has CRLF line ends, which the mutants' and the
+// GC control's exact texts don't match
+function zmtpSource(): string {
+  return readFileSync(join(__dirname, "zmtp.ts"), "utf8").replace(
+    /\r\n/g,
+    "\n",
+  );
+}
+
 function transpiled(src: string): { file: string; dir: string } {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const ts = require(process.env.ZMTP_TS_API ?? "typescript");
@@ -1064,7 +1073,7 @@ function gcAlive(src: string): { frames: number; alive: number } {
 }
 
 describe("garbage collection (grader G2)", () => {
-  const SRC = () => readFileSync(join(__dirname, "zmtp.ts"), "utf8");
+  const SRC = () => zmtpSource();
 
   test("after a fill and drain, no delivered frame's backing store is kept alive", () => {
     const out = gcAlive(SRC());
