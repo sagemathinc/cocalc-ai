@@ -1,0 +1,201 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { GpuCostDashboard } from "./cost-dashboard";
+import type { GpuCostDashboardApi, GpuPodSummary } from "./types";
+
+beforeEach(() => {
+  const getComputedStyle = window.getComputedStyle;
+  jest
+    .spyOn(window, "getComputedStyle")
+    .mockImplementation((element) => getComputedStyle(element));
+});
+afterEach(() => jest.restoreAllMocks());
+
+function pod(overrides: Partial<GpuPodSummary>): GpuPodSummary {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    handle: "cc-7f3k9q2x",
+    provider: "runpod",
+    key_owner_account_id: "22222222-2222-4222-8222-222222222222",
+    beneficiary_account_id: "33333333-3333-4333-8333-333333333333",
+    beneficiary_name: "Ada Lovelace",
+    gpu_type_id: "NVIDIA RTX A5000",
+    gpu_count: 1,
+    cloud: "COMMUNITY",
+    cost_per_hr: "0.27",
+    estimated_cost: "0.54",
+    state: "running",
+    desired_state: "running",
+    created: "2026-10-27T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function api(): jest.Mocked<GpuCostDashboardApi> {
+  return {
+    pods: jest.fn().mockResolvedValue([
+      pod({}),
+      pod({
+        id: "44444444-4444-4444-8444-444444444444",
+        handle: "cc-agent001",
+        beneficiary_name: undefined,
+        agent_id: "agent-1",
+        cost_per_hr: "0.5",
+      }),
+      pod({
+        id: "55555555-5555-4555-8555-555555555555",
+        handle: "cc-gone0000",
+        state: "terminated",
+      }),
+    ]),
+    spend: jest.fn().mockResolvedValue({
+      as_of: "2026-10-27T12:00:00.000Z",
+      billed_through: "2026-10-27T11:00:00.000Z",
+      rows: [
+        {
+          key: "33333333-3333-4333-8333-333333333333",
+          label: "Ada Lovelace",
+          estimated: "1.25",
+          billed: "1",
+          pods_live: 1,
+        },
+      ],
+    }),
+    terminate: jest.fn().mockResolvedValue({ state: "terminating" }),
+    killSwitch: jest.fn().mockResolvedValue({ terminating: 2 }),
+  };
+}
+
+// antd's id helper returns the same "test-id" for every component under jest,
+// so the dialog's aria-labelledby can't resolve here; check its title instead.
+async function findDialog(title: string): Promise<HTMLElement> {
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog.getAttribute("aria-modal")).toBe("true");
+  expect(within(dialog).getByText(title)).toBeTruthy();
+  return dialog;
+}
+
+describe("GpuCostDashboard", () => {
+  it("shows live pods, the live rate and estimated vs billed spend", async () => {
+    const mock = api();
+    render(<GpuCostDashboard api={mock} />);
+    expect(
+      await screen.findByRole("cell", { name: "cc-7f3k9q2x" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "cc-agent001" })).toBeTruthy();
+    expect(screen.queryByRole("cell", { name: "cc-gone0000" })).toBeNull();
+    expect(screen.getByRole("cell", { name: "You (agent)" })).toBeTruthy();
+    expect(screen.getByText("$0.77/hour")).toBeTruthy();
+    expect(screen.getAllByText("$1.25").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$1.00").length).toBeGreaterThan(0);
+    expect(mock.pods).toHaveBeenCalledWith({ scope: "funded" });
+    expect(mock.spend).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "funded", group_by: "beneficiary" }),
+    );
+  });
+
+  it("names every control, including per-pod terminate buttons", async () => {
+    render(<GpuCostDashboard api={api()} />);
+    await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    expect(screen.getByRole("button", { name: "Terminate all" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Terminate pod cc-7f3k9q2x" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "Period" })).toBeTruthy();
+    expect(
+      screen.getByRole("combobox", { name: "Group spending by" }),
+    ).toBeTruthy();
+  });
+
+  it("asks for confirmation, stating the scope, before terminating all", async () => {
+    const mock = api();
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    await user.click(screen.getByRole("button", { name: "Terminate all" }));
+    const dialog = await findDialog(
+      "Terminate all GPU pods your RunPod key pays for?",
+    );
+    expect(within(dialog).getByText(/2 pods are live now/)).toBeTruthy();
+    expect(
+      within(dialog).getByText(/including pods started by agents/),
+    ).toBeTruthy();
+    expect(mock.killSwitch).not.toHaveBeenCalled();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Terminate all" }),
+    );
+    expect(mock.killSwitch).toHaveBeenCalledWith({ scope: "funded" });
+    expect(await screen.findByText("Terminating 2 pods.")).toBeTruthy();
+  });
+
+  it("is keyboard operable: Escape cancels and focus returns to the trigger", async () => {
+    const mock = api();
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    const trigger = screen.getByRole("button", { name: "Terminate all" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(mock.killSwitch).not.toHaveBeenCalled();
+  });
+
+  it("terminates one pod after confirming, and shows errors in the dialog", async () => {
+    const mock = api();
+    mock.terminate.mockRejectedValueOnce(new Error("RunPod is unavailable"));
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    await user.click(
+      await screen.findByRole("button", { name: "Terminate pod cc-7f3k9q2x" }),
+    );
+    const dialog = await findDialog("Terminate pod cc-7f3k9q2x?");
+    const confirm = within(dialog).getByRole("button", {
+      name: "Terminate pod",
+    });
+    await user.click(confirm);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "RunPod is unavailable",
+    );
+    await user.click(confirm);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mock.terminate).toHaveBeenLastCalledWith({
+      pod_id: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(
+      await screen.findByText("Terminating pod cc-7f3k9q2x."),
+    ).toBeTruthy();
+  });
+
+  it("passes a course scope through to every call", async () => {
+    const mock = api();
+    const user = userEvent.setup();
+    render(
+      <GpuCostDashboard
+        api={mock}
+        scope={{ course_id: "c1" }}
+        scopeLabel="in this course"
+      />,
+    );
+    await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    expect(mock.pods).toHaveBeenCalledWith({ scope: { course_id: "c1" } });
+    await user.click(screen.getByRole("button", { name: "Terminate all" }));
+    const dialog = await findDialog("Terminate all GPU pods in this course?");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Terminate all" }),
+    );
+    expect(mock.killSwitch).toHaveBeenCalledWith({
+      scope: { course_id: "c1" },
+    });
+  });
+
+  it("reports load failures in an alert", async () => {
+    const mock = api();
+    mock.spend.mockRejectedValue(new Error("not entitled"));
+    render(<GpuCostDashboard api={mock} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("not entitled");
+  });
+});
