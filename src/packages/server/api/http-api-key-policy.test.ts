@@ -42,6 +42,21 @@ describe("HTTP API key policy audit", () => {
       }),
     ).rejects.toThrow("API keys are not allowed");
   });
+  it.each(["mergeApprovals.decide", "mergeApprovals.request"])(
+    "never lets an API key call %s",
+    async (name) => {
+      await expect(
+        assertHttpHubApiKeyAllowed({
+          principal: {
+            ...principal,
+            capabilities: ["account:read", "project:exec"],
+          },
+          name,
+          args: [{ session_hash: "forged", decision: "approve" }],
+        }),
+      ).rejects.toThrow("API keys are not allowed");
+    },
+  );
   beforeEach(() => {
     mockRecordApiKeyAuditEventSoon.mockClear();
     mockSoloCheck.mockClear();

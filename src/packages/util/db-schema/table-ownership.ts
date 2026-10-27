@@ -105,6 +105,23 @@ export const TABLE_OWNERSHIP = {
         "Seed-authoritative sponsorship budgets, grants, reservations, events, attributions, and personal funding consents. Account rehome changes routing metadata but never moves or duplicates this financial state.",
     },
   ),
+  ...entries(
+    [
+      "merge_approval_requests",
+      "merge_approval_decisions",
+      "merge_approval_relays",
+    ],
+    {
+      ownership: "seed-global",
+      authority: "seed",
+      portability: "stable",
+      secondary_reference_fields: {
+        account_id: "The deciding approver, not account-home placement.",
+      },
+      notes:
+        "Merge approvals bound to an exact pull-request head. The seed holds the GitHub App key and is the only bay that records or relays them; decisions and relays are append-only.",
+    },
+  ),
   ...entries(["account_usernames", "account_username_release_log"], {
     ownership: "seed-global",
     authority: "seed",

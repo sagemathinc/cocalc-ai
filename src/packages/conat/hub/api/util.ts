@@ -12,7 +12,8 @@ export type HubApiPrincipalPolicy =
   | "account-or-compute-project"
   | "account-or-compute-agent"
   | "account-or-host-or-compute-agent"
-  | "account-or-bound-agent-project";
+  | "account-or-bound-agent-project"
+  | "bound-agent-project";
 
 export interface HubApiArgTransformContext {
   args: any[];
@@ -122,6 +123,30 @@ export const authFirstRequireAccountOrBoundAgentProject =
     }
     return bindAccount(context);
   });
+
+// Agent session tokens only, acting for the project sealed into the token.
+// The hub sets who is asking: callers can't nominate an account, project or
+// token.
+export const authFirstRequireBoundAgentProject = declareHubApiPrincipalPolicy(
+  "bound-agent-project",
+  (context) => {
+    if (
+      context.auth_actor !== "agent" ||
+      !context.account_id ||
+      !context.project_id
+    ) {
+      throw Error("an agent session is required");
+    }
+    const opts = firstArg(context.args);
+    delete opts.host_id;
+    delete opts.session_hash;
+    opts.account_id = context.account_id;
+    opts.project_id = context.project_id;
+    opts.auth_actor = "agent";
+    opts.auth_token_fingerprint = context.auth_token_fingerprint;
+    return context.args;
+  },
+);
 
 // Use for methods that derive security policy from the authenticated browser
 // session itself. Unlike the general account transform, callers may not

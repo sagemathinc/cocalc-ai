@@ -39,6 +39,7 @@ import {
   commercialOrders,
 } from "./commercial-orders";
 import { type AdminCrmApi, adminCrm } from "./crm";
+import { type MergeApprovals, mergeApprovals } from "./merge-approvals";
 import type { HubApiArgTransform, HubApiPrincipalPolicy } from "./util";
 
 export interface HubApi {
@@ -75,6 +76,7 @@ export interface HubApi {
   growthAnalytics: GrowthAnalyticsApi;
   commercialOrders: CommercialOrdersApi;
   adminCrm: AdminCrmApi;
+  mergeApprovals: MergeApprovals;
 }
 
 type HubApiTransformStructure = {
@@ -117,6 +119,7 @@ const HubApiStructure = {
   growthAnalytics,
   commercialOrders,
   adminCrm,
+  mergeApprovals,
 } as const satisfies HubApiTransformStructure;
 
 export function getHubApiPrincipalPolicy(
@@ -198,6 +201,9 @@ export function isHubApiPrincipalAllowed({
   }
   if (policy === "account-or-bound-agent-project") {
     return !!account_id && (auth_actor !== "agent" || !!project_id);
+  }
+  if (policy === "bound-agent-project") {
+    return auth_actor === "agent" && !!account_id && !!project_id;
   }
   return false;
 }

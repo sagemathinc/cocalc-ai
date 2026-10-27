@@ -23,6 +23,16 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "mergeApprovals.decide": {
+    decision: "fresh-auth-required",
+    reason:
+      "approves the merge of a pull-request head; approvers only, never impersonated, with a second factor where the repo requires it",
+  },
+  "mergeApprovals.request": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "only a request from an agent session; nothing is approved until an approver decides with fresh auth",
+  },
   "computers.approveComputerRequest": {
     decision: "fresh-auth-required",
     reason:

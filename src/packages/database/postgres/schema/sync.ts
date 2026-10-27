@@ -64,6 +64,10 @@ import {
   ensureProjectMembershipAuditSchema,
   projectMembershipAuditSchemaNeedsSync,
 } from "./project-membership-audit";
+import {
+  ensureMergeApprovalIntegritySchema,
+  mergeApprovalIntegritySchemaNeedsSync,
+} from "./merge-approval-integrity";
 
 const log = getLogger("db:schema:sync");
 
@@ -421,6 +425,14 @@ function getMissingTables(
   return missing;
 }
 
+function hasMergeApprovalTables(dbSchema: any): boolean {
+  return (
+    dbSchema.merge_approval_requests != null &&
+    dbSchema.merge_approval_decisions != null &&
+    dbSchema.merge_approval_relays != null
+  );
+}
+
 export async function syncSchema(
   dbSchema: DBSchema = SCHEMA,
   role?: string,
@@ -498,6 +510,9 @@ export async function syncSchema(
       dbSchema.project_membership_audit_failures != null
     ) {
       await ensureProjectMembershipAuditSchema(db);
+    }
+    if (hasMergeApprovalTables(dbSchema)) {
+      await ensureMergeApprovalIntegritySchema(db);
     }
     if (dbSchema.purchases != null) {
       await ensurePurchaseCostCentsSchema(db);
@@ -633,6 +648,13 @@ export async function schemaNeedsSync(
       (await projectMembershipAuditSchemaNeedsSync(db))
     ) {
       dbg("detected missing project membership audit trigger");
+      return true;
+    }
+    if (
+      hasMergeApprovalTables(dbSchema) &&
+      (await mergeApprovalIntegritySchemaNeedsSync(db))
+    ) {
+      dbg("detected missing merge approval integrity triggers");
       return true;
     }
     if (

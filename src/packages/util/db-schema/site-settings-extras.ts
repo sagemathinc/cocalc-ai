@@ -363,6 +363,13 @@ export type SiteSettingsExtrasKeys =
   | "github_connector_app_url"
   | "cloudflare_connector_client_id"
   | "cloudflare_connector_client_secret"
+  | "merge_approval_heading"
+  | "merge_approvers"
+  | "merge_approval_repos"
+  | "merge_approval_second_factor_repos"
+  | "merge_approval_github_app_id"
+  | "merge_approval_github_app_private_key"
+  | "merge_approval_github_app_installations"
   | "sagebrush_heading"
   | "sagebrush_client_secret"
   | "sagebrush_redirect_uris"
@@ -438,6 +445,22 @@ function connectorSetting(name: string, extra: Partial<Config> = {}): Config {
     tags: ["AI"],
     group: "AI & Agents",
     subgroup: "Agent Connectors",
+    ...extra,
+  };
+}
+
+function mergeApprovalSetting(
+  name: string,
+  extra: Partial<Config> = {},
+): Config {
+  return {
+    name,
+    desc: "",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["SSO"],
+    group: "Access & Identity",
+    subgroup: "Merge Approvals",
     ...extra,
   };
 }
@@ -1036,6 +1059,45 @@ export const EXTRAS: SettingsExtras = {
   github_connector_app_url: connectorSetting("GitHub App Public Link", {
     desc: "https://github.com/apps/<name>",
   }),
+  merge_approval_heading: mergeApprovalSetting("Merge Approvals", {
+    desc: "Approvers approve the merge of an exact pull-request head in CoCalc; a GitHub App relays it as a review and a required status. Only the seed bay records or relays approvals.",
+    type: "header",
+  }),
+  merge_approvers: mergeApprovalSetting("Merge Approvers", {
+    desc: "Account ids that can approve merges, separated by commas or spaces. Blank turns merge approvals off.",
+    multiline: 2,
+  }),
+  merge_approval_repos: mergeApprovalSetting("Merge Approval Repos", {
+    desc: "GitHub repos (owner/name) that merge approvals can be requested for, separated by commas or spaces.",
+    multiline: 3,
+  }),
+  merge_approval_second_factor_repos: mergeApprovalSetting(
+    "Merge Approval Second-Factor Repos",
+    {
+      desc: "Repos (owner/name) where approving needs a second factor. * or blank means all of them; none means none.",
+      default: "*",
+    },
+  ),
+  merge_approval_github_app_id: mergeApprovalSetting(
+    "Merge Approval GitHub App ID",
+    {
+      desc: "The App that relays approvals. Separate from the GitHub connector App. Seed bay only.",
+    },
+  ),
+  merge_approval_github_app_private_key: mergeApprovalSetting(
+    "Merge Approval GitHub App Private Key",
+    {
+      desc: "PEM private key of that App. Seed bay only; never propagated to other bays.",
+      password: true,
+      multiline: 6,
+    },
+  ),
+  merge_approval_github_app_installations: mergeApprovalSetting(
+    "Merge Approval GitHub App Installations",
+    {
+      desc: "Installation id per owner, as owner:id separated by commas or spaces, e.g. sagemathinc:12345. Seed bay only.",
+    },
+  ),
   cloudflare_connector_client_id: connectorSetting(
     "Cloudflare OAuth Client ID",
     { desc: "Blank turns the Cloudflare connector off." },

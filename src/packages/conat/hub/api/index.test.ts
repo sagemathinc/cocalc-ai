@@ -182,6 +182,72 @@ describe("hub API argument transforms", () => {
     ).toThrow("agent project is required");
   });
 
+  it("lets only agent sessions request merge approvals, and only accounts decide", async () => {
+    const policies = getHubApiPrincipalPolicies();
+    expect(policies["mergeApprovals.request"]).toBe("bound-agent-project");
+    expect(policies["mergeApprovals.decide"]).toBe("account");
+    const agent = {
+      account_id: "agent-account",
+      project_id: "own-project",
+      auth_actor: "agent" as const,
+    };
+    expect(
+      isHubApiPrincipalAllowed({ policy: "bound-agent-project", ...agent }),
+    ).toBe(true);
+    for (const principal of [
+      { account_id: "human" },
+      { project_id: "project" },
+      { host_id: "host" },
+      { account_id: "agent-account", auth_actor: "agent" as const },
+    ]) {
+      expect(
+        isHubApiPrincipalAllowed({
+          policy: "bound-agent-project",
+          ...principal,
+        }),
+      ).toBe(false);
+    }
+    expect(
+      await transformArgs({
+        name: "mergeApprovals.request",
+        args: [
+          {
+            repo: "o/r",
+            account_id: "forged",
+            project_id: "other-project",
+            host_id: "host",
+            session_hash: "forged",
+            auth_token_fingerprint: "forged",
+          },
+        ],
+        ...agent,
+        auth_token_fingerprint: "token",
+      }),
+    ).toEqual([
+      {
+        repo: "o/r",
+        account_id: "agent-account",
+        project_id: "own-project",
+        auth_actor: "agent",
+        auth_token_fingerprint: "token",
+      },
+    ]);
+    expect(() =>
+      transformArgs({
+        name: "mergeApprovals.request",
+        args: [{}],
+        account_id: "human",
+      }),
+    ).toThrow("an agent session is required");
+    await expect(
+      transformArgs({
+        name: "mergeApprovals.decide",
+        args: [{}],
+        ...agent,
+      }),
+    ).rejects.toThrow("user must be signed in");
+  });
+
   it.each(["agent.registerIdentity", "agent.startFreshConversation"])(
     "binds %s to the authenticated human without requiring fresh auth",
     async (name) => {

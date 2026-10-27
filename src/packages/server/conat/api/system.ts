@@ -898,6 +898,10 @@ export const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
 export const SEED_ONLY_SITE_SETTINGS = new Set([
   "stripe_secret_key",
   "stripe_webhook_secret",
+  // Merge approvals are recorded and relayed by the seed bay only.
+  "merge_approval_github_app_id",
+  "merge_approval_github_app_private_key",
+  "merge_approval_github_app_installations",
 ]);
 
 export function isSeedOnlySiteSetting(name: string): boolean {

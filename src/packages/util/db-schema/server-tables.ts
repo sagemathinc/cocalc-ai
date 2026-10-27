@@ -71,6 +71,7 @@ import "./membership-analytics-daily-counts";
 import "./membership-analytics-events";
 import "./membership-daily-allocations";
 import "./membership-side-effects-outbox";
+import "./merge-approvals";
 import "./notification-email-outbox";
 import "./notification-events";
 import "./notification-events-outbox";
