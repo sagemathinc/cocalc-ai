@@ -396,6 +396,7 @@ jobs:
     needs: [plan, build, typecheck, checks, test, multibay]
     if: ${{ !cancelled() }}
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    permissions: {}
 
     steps:
       - name: Every job succeeded or was skipped by the plan
