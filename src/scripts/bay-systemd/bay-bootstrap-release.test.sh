@@ -466,6 +466,11 @@ SETTINGS_ROWS=$'version_min_browser 1792710260\n'
 [[ "$(read_required_browser_version 1792900000)" == none ]]
 SETTINGS_ROWS=$'version_min_browser 4102444800\nversion_recommended_browser 4102444800\n'
 [[ "$(read_required_browser_version 1792900000)" == none ]]
+# Inner whitespace never joins digits into a recent version (the hub's
+# parseInt reads "1792" here): the value is invalid, so a deploy raises it.
+SETTINGS_ROWS=$'version_min_browser  1792 710260 \nversion_recommended_browser 1792800000\n'
+[[ "$(read_browser_version_settings)" == "1792_710260 1792800000" ]]
+[[ "$(browser_version_raise_target 1792_710260 1792900000 1792000000)" == 1792000000 ]]
 runuser() { return 2; }
 [[ -z "$(read_browser_version_settings)" ]]
 [[ -z "$(read_required_browser_version 1792900000)" ]]

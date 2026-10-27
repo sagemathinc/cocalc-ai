@@ -626,7 +626,9 @@ read_browser_version_settings() {
   )" || return 0
   local name value min="-" recommended="-"
   while read -r name value; do
-    value="${value//[[:space:]]/}"
+    # (read trims the ends.) Inner whitespace keeps the value one word and
+    # invalid: the hub's parseInt would stop at it, never join the digits.
+    value="${value//[[:space:]]/_}"
     case "$name" in
       version_min_browser) min="${value:--}" ;;
       version_recommended_browser) recommended="${value:--}" ;;
