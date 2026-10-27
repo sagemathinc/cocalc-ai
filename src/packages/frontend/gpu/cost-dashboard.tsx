@@ -53,8 +53,28 @@ function errorText(err: unknown): string {
   return String(err instanceof Error ? err.message : err);
 }
 
-function formatTime(value: string): string {
+function formatTime(value: string | number): string {
   return new Date(value).toLocaleString();
+}
+
+function usePolling(
+  load: () => Promise<void>,
+  generation: { current: number },
+) {
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function poll() {
+      await load();
+      if (active) timer = setTimeout(poll, REFRESH_MS);
+    }
+    void poll();
+    return () => {
+      active = false;
+      generation.current++;
+      if (timer != null) clearTimeout(timer);
+    };
+  }, [load, generation]);
 }
 
 export function GpuCostDashboard({
@@ -75,15 +95,25 @@ export function GpuCostDashboard({
   const [podsResult, setPodsResult] = useState<{
     key: string;
     pods: GpuPodSummary[];
+    at: number;
   }>();
   const [spendResult, setSpendResult] = useState<{
     key: string;
     spend: GpuSpendResult;
+    at: number;
   }>();
   // Pods and spend load and fail independently: a billing outage must not
   // hide the pod list and its per-pod terminate buttons, nor the reverse.
-  const [podsError, setPodsError] = useState("");
-  const [spendError, setSpendError] = useState("");
+  // Errors are kept per query and cleared only by a successful read, so a
+  // cached result after a failed refresh is shown as last known, never live.
+  const [podsFailure, setPodsFailure] = useState<{
+    key: string;
+    message: string;
+  }>();
+  const [spendFailure, setSpendFailure] = useState<{
+    key: string;
+    message: string;
+  }>();
   const [confirm, setConfirm] = useState<Confirmation>();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -94,58 +124,53 @@ export function GpuCostDashboard({
   // Callers may pass a new but equal scope object on every render.
   const scopeKey = JSON.stringify(scope);
   const spendKey = JSON.stringify([scope, period, groupBy]);
-  const pods = podsResult?.key === scopeKey ? podsResult.pods : undefined;
-  const spend = spendResult?.key === spendKey ? spendResult.spend : undefined;
+  const podsLoaded = podsResult?.key === scopeKey ? podsResult : undefined;
+  const spendLoaded = spendResult?.key === spendKey ? spendResult : undefined;
+  const pods = podsLoaded?.pods;
+  const spend = spendLoaded?.spend;
+  const podsError = podsFailure?.key === scopeKey ? podsFailure.message : "";
+  const spendError = spendFailure?.key === spendKey ? spendFailure.message : "";
+  // Fresh: loaded for this query and not followed by a failed refresh.
+  const podsFresh = pods != null && !podsError;
+  const spendFresh = spend != null && !spendError;
 
   const refreshPods = useCallback(async () => {
     const version = ++podsGeneration.current;
-    setPodsError("");
     try {
       const next = await api.pods({ scope: JSON.parse(scopeKey) });
-      if (podsGeneration.current === version)
-        setPodsResult({ key: scopeKey, pods: next });
+      if (podsGeneration.current !== version) return;
+      setPodsResult({ key: scopeKey, pods: next, at: Date.now() });
+      setPodsFailure(undefined);
     } catch (err) {
-      if (podsGeneration.current === version) setPodsError(errorText(err));
+      if (podsGeneration.current === version)
+        setPodsFailure({ key: scopeKey, message: errorText(err) });
     }
   }, [api, scopeKey]);
 
   const refreshSpend = useCallback(async () => {
     const version = ++spendGeneration.current;
     const query: GpuPodScope = JSON.parse(scopeKey);
-    setSpendError("");
+    const key = JSON.stringify([query, period, groupBy]);
     try {
       const next = await api.spend({
         scope: query,
         since: periodSince(period, Date.now()),
         group_by: groupBy,
       });
-      if (spendGeneration.current === version)
-        setSpendResult({
-          key: JSON.stringify([query, period, groupBy]),
-          spend: next,
-        });
+      if (spendGeneration.current !== version) return;
+      setSpendResult({ key, spend: next, at: Date.now() });
+      setSpendFailure(undefined);
     } catch (err) {
-      if (spendGeneration.current === version) setSpendError(errorText(err));
+      if (spendGeneration.current === version)
+        setSpendFailure({ key, message: errorText(err) });
     }
   }, [api, scopeKey, period, groupBy]);
 
-  useEffect(() => {
-    void refreshPods();
-    const interval = setInterval(() => void refreshPods(), REFRESH_MS);
-    return () => {
-      podsGeneration.current++;
-      clearInterval(interval);
-    };
-  }, [refreshPods]);
-
-  useEffect(() => {
-    void refreshSpend();
-    const interval = setInterval(() => void refreshSpend(), REFRESH_MS);
-    return () => {
-      spendGeneration.current++;
-      clearInterval(interval);
-    };
-  }, [refreshSpend]);
+  // Each endpoint polls itself: the next request is scheduled only after the
+  // previous one settles, so a slow endpoint never piles up requests. A query
+  // change restarts the loop, and its generation supersedes the old request.
+  usePolling(refreshPods, podsGeneration);
+  usePolling(refreshSpend, spendGeneration);
 
   function refresh() {
     void refreshPods();
@@ -219,12 +244,12 @@ export function GpuCostDashboard({
       <Space wrap size="large" style={{ marginTop: 12 }}>
         <span>
           <Typography.Text type="secondary">Live pods: </Typography.Text>
-          <strong>{pods ? live.length : podsPending}</strong>
+          <strong>{podsFresh ? live.length : podsPending}</strong>
         </span>
         <span>
           <Typography.Text type="secondary">Live rate: </Typography.Text>
           <strong>
-            {pods ? `${moneyToCurrency(rate)}/hour` : podsPending}
+            {podsFresh ? `${moneyToCurrency(rate)}/hour` : podsPending}
           </strong>
         </span>
         <span>
@@ -232,19 +257,19 @@ export function GpuCostDashboard({
             Estimated spend ({PERIOD_LABELS[period].toLowerCase()}):{" "}
           </Typography.Text>
           <strong>
-            {spend ? moneyToCurrency(totals.estimated) : spendPending}
+            {spendFresh ? moneyToCurrency(totals.estimated) : spendPending}
           </strong>
         </span>
         <span>
           <Typography.Text type="secondary">Billed by RunPod: </Typography.Text>
           <strong>
-            {!spend
+            {!spendFresh
               ? spendPending
               : totals.billed == null
                 ? "not yet billed"
                 : moneyToCurrency(totals.billed)}
           </strong>
-          {spend?.billed_through && (
+          {spendFresh && spend?.billed_through && (
             <Typography.Text type="secondary">
               {" "}
               (through {formatTime(spend.billed_through)})
@@ -265,6 +290,12 @@ export function GpuCostDashboard({
           title="Couldn't load live pods"
           description={podsError}
         />
+      )}
+      {podsError && podsLoaded && (
+        <Typography.Paragraph type="secondary">
+          Showing the pods last loaded at {formatTime(podsLoaded.at)}; they may
+          be out of date.
+        </Typography.Paragraph>
       )}
       <Table<GpuPodSummary>
         size="small"
@@ -369,6 +400,12 @@ export function GpuCostDashboard({
           description={spendError}
         />
       )}
+      {spendError && spendLoaded && (
+        <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+          Showing spending last loaded at {formatTime(spendLoaded.at)}; it may
+          be out of date.
+        </Typography.Paragraph>
+      )}
       <Table
         size="small"
         style={{ marginTop: 8 }}
@@ -440,7 +477,7 @@ export function GpuCostDashboard({
           <p>
             This terminates every GPU pod {scopeLabel}, including pods started
             by agents and students.{" "}
-            {pods == null
+            {!podsFresh
               ? "The number of live pods and their rate are unavailable right now."
               : `${live.length === 1 ? "1 pod is" : `${live.length} pods are`} live now, at ${moneyToCurrency(rate)}/hour.`}
           </p>

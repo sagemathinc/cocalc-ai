@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GpuCostDashboard } from "./cost-dashboard";
 import type { GpuCostDashboardApi, GpuPodSummary } from "./types";
@@ -309,6 +309,61 @@ describe("GpuCostDashboard", () => {
     ).toBeTruthy();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getByText("Unavailable.")).toBeTruthy();
+  });
+
+  it("waits for a slow pod request to settle before polling again", async () => {
+    jest.useFakeTimers();
+    try {
+      const mock = api();
+      let resolve!: (value: GpuPodSummary[]) => void;
+      mock.pods.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+      render(<GpuCostDashboard api={mock} />);
+      await act(async () => {
+        jest.advanceTimersByTime(60_000);
+      });
+      expect(mock.pods).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        resolve([pod({})]);
+      });
+      expect(
+        await screen.findByRole("cell", { name: "cc-7f3k9q2x" }),
+      ).toBeTruthy();
+      await act(async () => {
+        jest.advanceTimersByTime(15_000);
+      });
+      expect(mock.pods).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("treats cached pods as last known, not live, after a failed refresh", async () => {
+    const mock = api();
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    expect(screen.getByText("$0.77/hour")).toBeTruthy();
+    mock.pods.mockRejectedValueOnce(new Error("inventory is down"));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load live pods",
+    );
+    // The table stays, for narrow terminate actions, marked as last known.
+    expect(screen.getByText(/Showing the pods last loaded at/)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Terminate pod cc-7f3k9q2x" }),
+    ).toBeTruthy();
+    // The summary no longer calls the old numbers live.
+    expect(screen.queryByText("$0.77/hour")).toBeNull();
+    expect(screen.getAllByText("unavailable").length).toBeGreaterThanOrEqual(2);
+    await user.click(screen.getByRole("button", { name: "Terminate all" }));
+    const dialog = await findDialog(
+      "Terminate all GPU pods your RunPod key pays for?",
+    );
+    expect(
+      within(dialog).getByText(/live pods and their rate are unavailable/),
+    ).toBeTruthy();
+    expect(within(dialog).queryByText(/pods are live now/)).toBeNull();
   });
 
   it("reports load failures in an alert", async () => {
