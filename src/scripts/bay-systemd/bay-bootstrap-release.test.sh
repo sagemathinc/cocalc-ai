@@ -120,6 +120,8 @@ cat >"${ASSET_TARGET}/runtime/control-plane/static/frontend-build.json" <<'EOF'
 {"schema":1,"fingerprint":"current","build_timestamp":2,"assets":["current-fedcba9876543210.js"]}
 EOF
 
+# These fixtures have build timestamps 1 and 2: keep every inherited build.
+export FRONTEND_ASSET_RETENTION_CUTOFF_MS=0
 preserve_previous_static_assets
 prepare_frontend_asset_history >/dev/null
 
@@ -174,6 +176,11 @@ NODE
 rm -f "${ASSET_PREVIOUS}"/runtime/control-plane/static/chunk-* \
   "${ASSET_PREVIOUS}"/runtime/control-plane/static/historic-* \
   "${ASSET_PREVIOUS}"/runtime/control-plane/static/previous-*
+# A deploy stages a fresh target release: drop what earlier rounds copied in,
+# or it would count as unlisted retained files.
+rm -f "${ASSET_TARGET}"/runtime/control-plane/static/chunk-* \
+  "${ASSET_TARGET}"/runtime/control-plane/static/historic-* \
+  "${ASSET_TARGET}"/runtime/control-plane/static/previous-*
 node - "${ASSET_PREVIOUS}/runtime/control-plane/static" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
@@ -220,8 +227,16 @@ const path = require("node:path");
 const root = process.argv[2];
 const assets = Array.from({ length: 933 }, (_, i) => `fresh-${i}-0123456789abcdef.js`);
 fs.writeFileSync(path.join(root, "frontend-build.json"), JSON.stringify({ assets }));
+// This build ships exactly its manifest: no files from earlier rounds.
+for (const name of ["fresh-933-0123456789abcdef.js", "current-fedcba9876543210.js"]) {
+  fs.rmSync(path.join(root, name), { force: true });
+}
 NODE
-prepare_frontend_asset_history >/dev/null
+prepare_frontend_asset_history >"${TMP_ROOT}/near-cap.log"
+# At the cap the deploy passes, but warns that the required browser version
+# needs raising.
+grep -q '^WARNING: frontend asset history has 11000 of 11000 files (100%).*Raise "Required browser version"' \
+  "${TMP_ROOT}/near-cap.log"
 
 # A genuinely oversized unique inventory must still fail before activation.
 node - "${ASSET_PREVIOUS}/runtime/control-plane/static/frontend-build.json" <<'NODE'
@@ -234,6 +249,404 @@ if prepare_frontend_asset_history >"${TMP_ROOT}/oversized-assets.log" 2>&1; then
   exit 1
 fi
 grep -q 'frontend asset manifest exceeds 11000 files' "${TMP_ROOT}/oversized-assets.log"
+
+# Retention: inherited chunks are kept only for builds at or after the cutoff
+# (the required browser version); the ledger keeps each build's own assets.
+RET_RELEASES="${TMP_ROOT}/retention-releases"
+RET_PREVIOUS="${RET_RELEASES}/previous"
+RET_TARGET="${RET_RELEASES}/target"
+RET_PREV_STATIC="${RET_PREVIOUS}/runtime/control-plane/static"
+RET_STATIC="${RET_TARGET}/runtime/control-plane/static"
+CURRENT_LINK="${TMP_ROOT}/retention-current"
+TARGET_RELEASE="$RET_TARGET"
+mkdir -p "$RET_PREV_STATIC" "$RET_STATIC"
+ln -sfn "$RET_PREVIOUS" "$CURRENT_LINK"
+NOW_MS="$(($(date +%s) * 1000))"
+DAY_MS=86400000
+for asset in \
+  previous-1111111111111111.js \
+  mid-2222222222222222.js \
+  old-3333333333333333.js \
+  shared-4444444444444444.js \
+  unlisted-5555555555555555.js; do
+  printf '%s\n' "$asset" >"${RET_PREV_STATIC}/${asset}"
+done
+printf '{"schema":1,"fingerprint":"previous","build_timestamp":%s,"assets":["previous-1111111111111111.js"]}\n' \
+  "$((NOW_MS - 2 * DAY_MS))" >"${RET_PREV_STATIC}/frontend-build.json"
+printf '{"schema":1,"builds":[%s,%s,%s]}\n' \
+  "{\"fingerprint\":\"previous\",\"build_timestamp\":$((NOW_MS - 2 * DAY_MS)),\"assets\":[\"previous-1111111111111111.js\"]}" \
+  "{\"fingerprint\":\"mid\",\"build_timestamp\":$((NOW_MS - 5 * DAY_MS)),\"assets\":[\"mid-2222222222222222.js\"]}" \
+  "{\"fingerprint\":\"old\",\"build_timestamp\":$((NOW_MS - 20 * DAY_MS)),\"assets\":[\"old-3333333333333333.js\",\"shared-4444444444444444.js\",\"gone-6666666666666666.js\"]}" \
+  >"${RET_PREVIOUS}/runtime/control-plane/frontend-asset-ledger.json"
+printf '%s\n' current >"${RET_STATIC}/current-7777777777777777.js"
+printf '%s\n' shared >"${RET_STATIC}/shared-4444444444444444.js"
+printf '{"schema":1,"fingerprint":"current","build_timestamp":%s,"assets":["current-7777777777777777.js","shared-4444444444444444.js"]}\n' \
+  "$NOW_MS" >"${RET_STATIC}/frontend-build.json"
+export FRONTEND_ASSET_RETENTION_CUTOFF_MS="$((NOW_MS - 10 * DAY_MS))"
+preserve_previous_static_assets
+prepare_frontend_asset_history >"${TMP_ROOT}/retention.log"
+for asset in previous-1111111111111111.js mid-2222222222222222.js \
+  current-7777777777777777.js shared-4444444444444444.js \
+  unlisted-5555555555555555.js; do
+  if [[ ! -f "${RET_STATIC}/${asset}" ]]; then
+    echo "retention removed a frontend asset it must keep: ${asset}" >&2
+    exit 1
+  fi
+done
+if [[ -e "${RET_STATIC}/old-3333333333333333.js" ]]; then
+  echo "retention kept a chunk of a build older than the cutoff" >&2
+  exit 1
+fi
+if grep -q '^WARNING' "${TMP_ROOT}/retention.log"; then
+  echo "a small history must not warn" >&2
+  exit 1
+fi
+if ! grep -q 'frontend asset retention: cutoff=.* (override) builds kept=2 dropped=1 inherited files kept=2 removed=1 unlisted=1 missing=1' \
+  "${TMP_ROOT}/retention.log"; then
+  cat "${TMP_ROOT}/retention.log" >&2
+  echo "retention did not log what it kept and dropped" >&2
+  exit 1
+fi
+grep -q "^note: rolling the hub back does not restore pruned frontend chunks; old tabs may need a reload$" \
+  "${TMP_ROOT}/retention.log"
+node - "$RET_STATIC" "${RET_TARGET}/runtime/control-plane/frontend-asset-ledger.json" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const [root, ledgerPath] = process.argv.slice(2);
+const history = JSON.parse(fs.readFileSync(path.join(root, "frontend-build-history.json"), "utf8"));
+if (history.builds.length !== 2) throw new Error("history must keep its two-build shape");
+if (history.retention?.source !== "override" || history.retention.required_browser_version !== null) {
+  throw new Error(`unexpected retention record: ${JSON.stringify(history.retention)}`);
+}
+// The served history lists everything kept, unlisted files included, so the
+// hub monitor and smoke test check them too.
+const retained = history.builds[1].assets.join(",");
+if (retained !== "mid-2222222222222222.js,previous-1111111111111111.js,unlisted-5555555555555555.js") {
+  throw new Error(`unexpected retained assets: ${retained}`);
+}
+const ledger = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
+const names = ledger.builds.map((build) => build.fingerprint).join(",");
+if (names !== "current,previous,mid,unlisted") throw new Error(`unexpected ledger builds: ${names}`);
+// The unlisted file is recorded with this release's build date, so the next
+// deploy keeps or drops it like any listed build.
+const unlistedBuild = ledger.builds[3];
+if (
+  unlistedBuild.build_timestamp !== ledger.builds[0].build_timestamp ||
+  unlistedBuild.assets.join(",") !== "unlisted-5555555555555555.js"
+) {
+  throw new Error(`unexpected unlisted ledger entry: ${JSON.stringify(unlistedBuild)}`);
+}
+NODE
+
+# Redeploying the same bundle does not grow the ledger: its previous entry for
+# the current build is merged, not appended again.
+for round in 1 2; do
+  cp "${RET_TARGET}/runtime/control-plane/frontend-asset-ledger.json" \
+    "${RET_PREVIOUS}/runtime/control-plane/frontend-asset-ledger.json"
+  preserve_previous_static_assets
+  prepare_frontend_asset_history >/dev/null
+done
+node - "${RET_TARGET}/runtime/control-plane/frontend-asset-ledger.json" <<'NODE'
+const fs = require("node:fs");
+const ledger = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const names = ledger.builds.map((build) => build.fingerprint).join(",");
+if (names !== "current,previous,mid,unlisted") {
+  throw new Error(`a redeploy changed the ledger's builds: ${names}`);
+}
+NODE
+cp "${RET_PREVIOUS}/runtime/control-plane/frontend-asset-ledger.json" "${TMP_ROOT}/ledger-redeploy.json"
+printf '{"schema":1,"builds":[%s,%s,%s]}\n' \
+  "{\"fingerprint\":\"previous\",\"build_timestamp\":$((NOW_MS - 2 * DAY_MS)),\"assets\":[\"previous-1111111111111111.js\"]}" \
+  "{\"fingerprint\":\"mid\",\"build_timestamp\":$((NOW_MS - 5 * DAY_MS)),\"assets\":[\"mid-2222222222222222.js\"]}" \
+  "{\"fingerprint\":\"old\",\"build_timestamp\":$((NOW_MS - 20 * DAY_MS)),\"assets\":[\"old-3333333333333333.js\",\"shared-4444444444444444.js\",\"gone-6666666666666666.js\"]}" \
+  >"${RET_PREVIOUS}/runtime/control-plane/frontend-asset-ledger.json"
+
+# Hashed files no build lists are kept, so they count toward the cap: here the
+# listed files are few, but with the unlisted ones the release is over it, and
+# it fails before anything is removed.
+node - "$RET_STATIC" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+for (let i = 0; i < 10997; i++) {
+  fs.writeFileSync(path.join(process.argv[2], `stray-${i}-0123456789abcdef.js`), "x");
+}
+NODE
+cp "${RET_PREV_STATIC}/old-3333333333333333.js" "${RET_STATIC}/"
+if prepare_frontend_asset_history >"${TMP_ROOT}/unlisted-cap.log" 2>&1; then
+  echo "unlisted files did not count toward the frontend asset cap" >&2
+  exit 1
+fi
+grep -q 'frontend asset history exceeds 11000 files (11002 from 3 builds.*, 10998 unlisted)' \
+  "${TMP_ROOT}/unlisted-cap.log"
+[[ -f "${RET_STATIC}/old-3333333333333333.js" ]]
+rm -f "${RET_STATIC}"/stray-* "${RET_STATIC}/old-3333333333333333.js"
+
+# A previous release without a ledger: its build and every chunk it carried
+# age together, kept while it is within the cutoff, removed once it is not.
+rm -f "${RET_PREVIOUS}/runtime/control-plane/frontend-asset-ledger.json"
+preserve_previous_static_assets
+prepare_frontend_asset_history >"${TMP_ROOT}/retention-legacy.log"
+grep -q 'builds kept=1 dropped=0' "${TMP_ROOT}/retention-legacy.log"
+[[ -f "${RET_STATIC}/unlisted-5555555555555555.js" ]]
+export FRONTEND_ASSET_RETENTION_CUTOFF_MS="$((NOW_MS - DAY_MS))"
+prepare_frontend_asset_history >"${TMP_ROOT}/retention-legacy-old.log"
+grep -q 'builds kept=0 dropped=1' "${TMP_ROOT}/retention-legacy-old.log"
+for asset in previous-1111111111111111.js mid-2222222222222222.js unlisted-5555555555555555.js; do
+  if [[ -e "${RET_STATIC}/${asset}" ]]; then
+    echo "an aged-out legacy chunk was kept: ${asset}" >&2
+    exit 1
+  fi
+done
+for asset in current-7777777777777777.js shared-4444444444444444.js; do
+  if [[ ! -f "${RET_STATIC}/${asset}" ]]; then
+    echo "the current build lost ${asset}" >&2
+    exit 1
+  fi
+done
+node - "$RET_STATIC" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const history = JSON.parse(fs.readFileSync(path.join(process.argv[2], "frontend-build-history.json"), "utf8"));
+if (history.builds.length !== 1) throw new Error("only the current build should remain");
+NODE
+unset FRONTEND_ASSET_RETENTION_CUTOFF_MS
+
+# The hub's arithmetic (server-settings.ts, buildPublicSiteSettings): a
+# version not in the past counts as 0; the result is min(required,
+# recommended), bounded by the recommended version, itself bounded by the
+# frontend the hub serves; 0 means no version is enforced.
+NOW=1793000000
+FE=1792900000
+erbv() { effective_required_browser_version "$1" "$2" "$NOW" "${3:-$FE}"; }
+[[ "$(erbv 1792710260 1792800000)" == 1792710260 ]]
+[[ "$(erbv 1792710260 1792000000)" == 1792000000 ]]
+# Both in the future: the hub enforces nothing (old clients stay connected).
+[[ -z "$(erbv 1794000000 1794000000)" ]]
+# A future recommended version normalizes to 0, so nothing is enforced.
+[[ -z "$(erbv 1792710260 1794000000)" ]]
+# A future required version still yields the past recommended one.
+[[ "$(erbv 1794000000 1792800000)" == 1792800000 ]]
+# Bounded by the frontend the hub serves.
+[[ "$(erbv 1792950000 1792960000)" == "$FE" ]]
+[[ "$(erbv 1792950000 1792960000 0)" == 1792950000 ]]
+# The boundary: a version equal to now is not in the past.
+[[ -z "$(erbv "$NOW" "$NOW")" ]]
+[[ "$(erbv $((NOW - 1)) $((NOW - 1)) $NOW)" == $((NOW - 1)) ]]
+# An oversized typo must not wrap around in Bash arithmetic: 2^64 + a
+# plausible timestamp is still in the future, so nothing is enforced.
+HUGE=18446744075502679816
+[[ -z "$(effective_required_browser_version "$HUGE" "$HUGE" 1793128300 1793128200)" ]]
+[[ "$(normalize_browser_version "$HUGE" "$NOW")" == 0 ]]
+[[ "$(clamp_browser_version "$HUGE" "$NOW")" == "$NOW" ]]
+# A huge required version with a past recommended one yields the recommended.
+[[ "$(erbv "$HUGE" 1792800000)" == 1792800000 ]]
+[[ -z "$(erbv 1792710260 "$HUGE")" ]]
+# Leading zeros are read as the hub's parseInt reads them.
+[[ "$(erbv 0001792710260 1792800000)" == 1792710260 ]]
+[[ "$(clamp_browser_version 000 "$NOW")" == 0 ]]
+# Unset, 0 or not a number: nothing.
+[[ -z "$(erbv 1792710260 -)" ]]
+[[ -z "$(erbv - 1792800000)" ]]
+[[ -z "$(erbv 0 1792800000)" ]]
+[[ -z "$(erbv oct-22 1792800000)" ]]
+
+# Reading the raw settings from the bay database.
+mkdir -p "${BAY_ROOT}/run/postgres"
+PSQL_BIN=/bin/false
+SETTINGS_ROWS=""
+runuser() { printf '%s' "$SETTINGS_ROWS"; }
+SETTINGS_ROWS=$'version_min_browser 1792710260\nversion_recommended_browser 1792800000\n'
+[[ "$(read_browser_version_settings)" == "1792710260 1792800000" ]]
+[[ "$(read_required_browser_version 1792900000)" == 1792710260 ]]
+# The frontend bound applies end to end.
+[[ "$(read_required_browser_version 1792700000)" == 1792700000 ]]
+SETTINGS_ROWS=$'version_min_browser 1792710260\n'
+[[ "$(read_browser_version_settings)" == "1792710260 -" ]]
+# Read, but the hub enforces no version: reported apart from unreadable.
+[[ "$(read_required_browser_version 1792900000)" == none ]]
+SETTINGS_ROWS=$'version_min_browser 4102444800\nversion_recommended_browser 4102444800\n'
+[[ "$(read_required_browser_version 1792900000)" == none ]]
+runuser() { return 2; }
+[[ -z "$(read_browser_version_settings)" ]]
+[[ -z "$(read_required_browser_version 1792900000)" ]]
+unset -f runuser
+PSQL_BIN=""
+
+# The cutoff: the required browser version less a day of slack, or a fixed
+# window when the setting cannot be read; never everything.
+read_required_browser_version() { echo "${1:-none}" >"${TMP_ROOT}/frontend-arg"; echo 1792710260; }
+[[ "$(frontend_asset_retention_cutoff 1792900000)" == "$((1792710260000 - 86400000)) required-browser-version=1792710260" ]]
+[[ "$(cat "${TMP_ROOT}/frontend-arg")" == 1792900000 ]]
+read_required_browser_version() { echo none; }
+[[ "$(frontend_asset_retention_cutoff 1792900000)" == *" fallback-14d:no-enforced-version" ]]
+read_required_browser_version() { :; }
+cutoff="$(frontend_asset_retention_cutoff 1792900000)"
+[[ "${cutoff#* }" == "fallback-14d:unreadable" ]]
+expected=$((($(date +%s) - 14 * 86400) * 1000))
+if ((${cutoff%% *} > expected || ${cutoff%% *} < expected - 5000)); then
+  echo "fallback cutoff is not 14 days ago: ${cutoff}" >&2
+  exit 1
+fi
+# Without the hub's smc-version the enforced version cannot be bounded, so the
+# settings are not used.
+read_required_browser_version() { echo 1792710260; }
+[[ "$(frontend_asset_retention_cutoff)" == *" fallback-14d:unknown-hub-version" ]]
+[[ "$(FRONTEND_ASSET_RETENTION_CUTOFF_MS=123 frontend_asset_retention_cutoff)" == "123 override" ]]
+
+# With the required version known, a build that records its smc-version is
+# kept exactly when the hub would admit a browser on it, whatever its build
+# time; a build without one is kept by build time.
+SMC_PREVIOUS="${TMP_ROOT}/smc-releases/previous"
+SMC_TARGET="${TMP_ROOT}/smc-releases/target"
+SMC_STATIC="${SMC_TARGET}/runtime/control-plane/static"
+mkdir -p "${SMC_PREVIOUS}/runtime/control-plane/static" "$SMC_STATIC"
+CURRENT_LINK="${TMP_ROOT}/smc-current"
+ln -sfn "$SMC_PREVIOUS" "$CURRENT_LINK"
+TARGET_RELEASE="$SMC_TARGET"
+for asset in \
+  admitted-aaaaaaaaaaaaaaaa.js \
+  rejected-bbbbbbbbbbbbbbbb.js \
+  oldnosmc-cccccccccccccccc.js \
+  newnosmc-dddddddddddddddd.js; do
+  printf '%s\n' "$asset" >"${SMC_PREVIOUS}/runtime/control-plane/static/${asset}"
+done
+printf '{"schema":1,"fingerprint":"p","build_timestamp":%s,"assets":["newnosmc-dddddddddddddddd.js"]}\n' \
+  "$((NOW_MS - 2 * DAY_MS))" >"${SMC_PREVIOUS}/runtime/control-plane/static/frontend-build.json"
+printf '{"schema":1,"builds":[%s,%s,%s,%s]}\n' \
+  '{"fingerprint":"admitted","build_timestamp":1790000000000,"smc_version":1792710260,"assets":["admitted-aaaaaaaaaaaaaaaa.js"]}' \
+  "{\"fingerprint\":\"rejected\",\"build_timestamp\":$((NOW_MS - DAY_MS)),\"smc_version\":1792000000,\"assets\":[\"rejected-bbbbbbbbbbbbbbbb.js\"]}" \
+  '{"fingerprint":"oldnosmc","build_timestamp":1790000000000,"assets":["oldnosmc-cccccccccccccccc.js"]}' \
+  "{\"fingerprint\":\"newnosmc\",\"build_timestamp\":$((NOW_MS - 2 * DAY_MS)),\"assets\":[\"newnosmc-dddddddddddddddd.js\"]}" \
+  >"${SMC_PREVIOUS}/runtime/control-plane/frontend-asset-ledger.json"
+printf '%s\n' current >"${SMC_STATIC}/now-eeeeeeeeeeeeeeee.js"
+printf '{"schema":1,"fingerprint":"now","build_timestamp":%s,"smc_version":1792797364,"assets":["now-eeeeeeeeeeeeeeee.js"]}\n' \
+  "$NOW_MS" >"${SMC_STATIC}/frontend-build.json"
+# The hub this release runs (as a static-only release keeps the current one)
+# was built with an older smc-version than the new frontend.
+printf '{"smc_version":1792750000}\n' >"${SMC_TARGET}/runtime/control-plane/hub-version.json"
+# The currently serving release's hub is newer here, so the target's bounds.
+printf '{"smc_version":1792760000}\n' >"${SMC_PREVIOUS}/runtime/control-plane/hub-version.json"
+read_required_browser_version() { echo "$1" >"${TMP_ROOT}/smc-frontend-arg"; echo 1792710260; }
+preserve_previous_static_assets
+prepare_frontend_asset_history >"${TMP_ROOT}/smc.log"
+# The bound passed on is the hub's smc-version, not the new frontend's.
+[[ "$(cat "${TMP_ROOT}/smc-frontend-arg")" == 1792750000 ]]
+# During a rollout the current release's hub workers keep serving this static
+# tree until rolled: when their hub is older, its version bounds retention.
+printf '{"smc_version":1792740000}\n' >"${SMC_PREVIOUS}/runtime/control-plane/hub-version.json"
+preserve_previous_static_assets
+prepare_frontend_asset_history >/dev/null
+[[ "$(cat "${TMP_ROOT}/smc-frontend-arg")" == 1792740000 ]]
+# A current release that does not record its hub makes the bound unknown.
+rm -f "${SMC_PREVIOUS}/runtime/control-plane/hub-version.json"
+preserve_previous_static_assets
+prepare_frontend_asset_history >"${TMP_ROOT}/smc-unknown.log"
+grep -q "fallback-14d:unknown-hub-version" "${TMP_ROOT}/smc-unknown.log"
+printf '{"smc_version":1792760000}\n' >"${SMC_PREVIOUS}/runtime/control-plane/hub-version.json"
+preserve_previous_static_assets
+prepare_frontend_asset_history >"${TMP_ROOT}/smc.log"
+grep -q 'required-browser-version=1792710260) builds kept=2 dropped=2' "${TMP_ROOT}/smc.log"
+for asset in admitted-aaaaaaaaaaaaaaaa.js newnosmc-dddddddddddddddd.js now-eeeeeeeeeeeeeeee.js; do
+  if [[ ! -f "${SMC_STATIC}/${asset}" ]]; then
+    echo "a build the hub admits lost ${asset}" >&2
+    exit 1
+  fi
+done
+for asset in rejected-bbbbbbbbbbbbbbbb.js oldnosmc-cccccccccccccccc.js; do
+  if [[ -e "${SMC_STATIC}/${asset}" ]]; then
+    echo "a build the hub rejects kept ${asset}" >&2
+    exit 1
+  fi
+done
+node - "${SMC_TARGET}/runtime/control-plane/frontend-asset-ledger.json" <<'NODE'
+const fs = require("node:fs");
+const ledger = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (ledger.builds[0].smc_version !== 1792797364) {
+  throw new Error("the ledger lost the current build's smc-version");
+}
+NODE
+
+# The hub's smc-version is only what the release records in hub-version.json:
+# a source tree's smc-version.js left in a release may be stale (a hub bundle
+# over a source release), so it is never read here.
+HV="${TMP_ROOT}/hub-version-release"
+mkdir -p "${HV}/runtime/control-plane" "${HV}/packages/util"
+[[ -z "$(release_hub_smc_version "$HV" "$(find_node)")" ]]
+printf '/* autogenerated by the update_version script */\nexports.version=1792797364;\n' \
+  >"${HV}/packages/util/smc-version.js"
+[[ -z "$(release_hub_smc_version "$HV" "$(find_node)")" ]]
+printf '{"smc_version":1792750000}\n' >"${HV}/runtime/control-plane/hub-version.json"
+[[ "$(release_hub_smc_version "$HV" "$(find_node)")" == 1792750000 ]]
+printf '{"smc_version":"x"}\n' >"${HV}/runtime/control-plane/hub-version.json"
+[[ -z "$(release_hub_smc_version "$HV" "$(find_node)")" ]]
+# The reader runs as the bay account (root never reads the bay-owned tree).
+eval "original_$(declare -f as_bay)"
+as_bay() { echo called >"${TMP_ROOT}/as-bay-called"; original_as_bay "$@"; }
+rm -f "${TMP_ROOT}/as-bay-called"
+release_hub_smc_version "$HV" "$(find_node)" >/dev/null
+[[ -f "${TMP_ROOT}/as-bay-called" ]]
+eval "$(declare -f original_as_bay | sed 's/^original_as_bay/as_bay/')"
+
+# A source deploy stages a fresh tree, so it must carry the inherited chunks
+# forward like a bundle deploy, or the retention step would drop kept builds.
+SRC_TREE="${TMP_ROOT}/source-tree"
+SRC_PREVIOUS="${TMP_ROOT}/source-releases/previous"
+mkdir -p "${SRC_TREE}/packages" "${SRC_TREE}/runtime/control-plane/static" \
+  "${SRC_PREVIOUS}/runtime/control-plane/static"
+printf '%s\n' new >"${SRC_TREE}/runtime/control-plane/static/new-1212121212121212.js"
+printf '%s\n' kept >"${SRC_PREVIOUS}/runtime/control-plane/static/kept-3434343434343434.js"
+CURRENT_LINK="${TMP_ROOT}/source-current"
+ln -sfn "$SRC_PREVIOUS" "$CURRENT_LINK"
+SOURCE_ROOT="$SRC_TREE"
+TARGET_RELEASE="${TMP_ROOT}/source-releases/target"
+mkdir -p "${SRC_TREE}/packages/util"
+printf 'exports.version=1792797364;\n' >"${SRC_TREE}/packages/util/smc-version.js"
+stage_source_release >/dev/null
+for asset in new-1212121212121212.js kept-3434343434343434.js; do
+  if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/static/${asset}" ]]; then
+    echo "a source deploy did not stage ${asset}" >&2
+    exit 1
+  fi
+done
+# A source deploy records the hub it runs, from the tree it staged.
+[[ "$(release_hub_smc_version "$TARGET_RELEASE" "$(find_node)")" == 1792797364 ]]
+
+# A hub bundle overlay replaces the hub, so it must not keep the inherited
+# hub-version.json: an older bundle without one leaves the version unknown
+# (not the newer hub's), and a source tree's smc-version.js is never read.
+HUB_CURRENT="${TMP_ROOT}/hub-overlay/current"
+mkdir -p "${HUB_CURRENT}/runtime/control-plane" "${HUB_CURRENT}/packages/util"
+printf '{"smc_version":1792900000}\n' >"${HUB_CURRENT}/runtime/control-plane/hub-version.json"
+printf 'exports.version=1792800000;\n' >"${HUB_CURRENT}/packages/util/smc-version.js"
+HUB_SRC="${TMP_ROOT}/hub-overlay/bundle/hub"
+for required_file in \
+  bay-hub-manifest.json \
+  runtime/control-plane/bundle/index.js \
+  runtime/control-plane/api-v2-routes/index.js \
+  runtime/control-plane/http-api-dist/pages/api/v2/index.js \
+  runtime/migrate-schema/index.js \
+  scripts/bay-systemd/install-scaffold.sh \
+  scripts/bay-systemd/needrestart/cocalc-bay.conf \
+  scripts/bay-systemd/systemd/cocalc-bay-hub@.service; do
+  mkdir -p "${HUB_SRC}/$(dirname "$required_file")"
+  touch "${HUB_SRC}/${required_file}"
+done
+tar -C "$(dirname "$HUB_SRC")" -czf "${TMP_ROOT}/hub-overlay/old-hub.tar.gz" hub
+CURRENT_LINK="${TMP_ROOT}/hub-overlay/current-link"
+ln -sfn "$HUB_CURRENT" "$CURRENT_LINK"
+HUB_BUNDLE_PATH="${TMP_ROOT}/hub-overlay/old-hub.tar.gz"
+TARGET_RELEASE="${TMP_ROOT}/hub-overlay/target"
+stage_hub_bundle_release >/dev/null
+[[ ! -e "${TARGET_RELEASE}/runtime/control-plane/hub-version.json" ]]
+[[ -z "$(release_hub_smc_version "$TARGET_RELEASE" "$(find_node)")" ]]
+# A new hub bundle brings its own record.
+mkdir -p "${HUB_SRC}/runtime/control-plane"
+printf '{"smc_version":1792950000}\n' >"${HUB_SRC}/runtime/control-plane/hub-version.json"
+tar -C "$(dirname "$HUB_SRC")" -czf "${TMP_ROOT}/hub-overlay/new-hub.tar.gz" hub
+HUB_BUNDLE_PATH="${TMP_ROOT}/hub-overlay/new-hub.tar.gz"
+stage_hub_bundle_release >/dev/null
+[[ "$(release_hub_smc_version "$TARGET_RELEASE" "$(find_node)")" == 1792950000 ]]
+HUB_BUNDLE_PATH=""
 
 VALIDATION_RELEASE="${TMP_ROOT}/validation-release"
 TARGET_RELEASE="$VALIDATION_RELEASE"
