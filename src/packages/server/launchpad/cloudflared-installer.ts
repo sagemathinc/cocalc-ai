@@ -27,8 +27,9 @@ const CLOUDFLARED_SHA256: Record<string, string> = {
     "89297ebfb9e8c99c0dc013a1140601453cf3798d8306c5591651f4a3f5210be8",
 };
 
-// Whole download, including the body. The bay's systemd unit allows 120 s to
-// start; a stalled download must fail early enough to fall back to the
+// Whole download, including the body. Nothing else bounds it: the bay's
+// systemd unit is Type=exec, so it counts as started before the download, and
+// a stalled download would leave the tunnel down with no fallback to the
 // installed binary.
 const CLOUDFLARED_DOWNLOAD_TIMEOUT_MS = 45_000;
 
