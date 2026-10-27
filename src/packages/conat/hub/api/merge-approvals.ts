@@ -4,11 +4,14 @@
  */
 
 import type {
-  MergeApprovalDecision,
   MergeApprovalDecisionKind,
+  MergeApprovalDecisionView,
   MergeApprovalRequest,
+  MergeApprovalStatusView,
+  MergeApprovalView,
 } from "@cocalc/util/merge-approval";
 import {
+  authFirstRequireAccount,
   authFirstRequireAccountWithBoundSession,
   authFirstRequireBoundAgentProject,
 } from "./util";
@@ -38,8 +41,21 @@ export interface MergeApprovals {
     session_hash?: string;
   }) => Promise<{
     request: MergeApprovalRequest;
-    decision: MergeApprovalDecision;
+    decision: MergeApprovalDecisionView;
   }>;
+  // Approvers only: what the hub recorded, for the card.
+  get: (opts: {
+    request_ids: string[];
+    account_id?: string;
+  }) => Promise<MergeApprovalView[]>;
+  // Agents only: the status of their own project's requests.
+  status: (opts: {
+    request_ids: string[];
+    account_id?: string;
+    project_id?: string;
+    auth_actor?: "agent";
+    auth_token_fingerprint?: string;
+  }) => Promise<MergeApprovalStatusView[]>;
 }
 
 export const mergeApprovals = {
@@ -47,4 +63,6 @@ export const mergeApprovals = {
   // Account principals only: agent, project and host callers are refused
   // before this runs.
   decide: authFirstRequireAccountWithBoundSession,
+  get: authFirstRequireAccount,
+  status: authFirstRequireBoundAgentProject,
 } as const;

@@ -7,6 +7,8 @@ export {};
 
 const requestMock = jest.fn(async () => ({ id: "request" }));
 const decideMock = jest.fn(async () => ({ decided: true }));
+const getMock = jest.fn(async () => []);
+const statusMock = jest.fn(async () => []);
 const recordPrincipalDenialMock = jest.fn(async () => true);
 
 jest.mock("@cocalc/server/accounts/security-state", () => ({
@@ -27,6 +29,8 @@ jest.mock("./merge-approvals", () => ({
   __esModule: true,
   request: (...args: any[]) => requestMock(...args),
   decide: (...args: any[]) => decideMock(...args),
+  get: (...args: any[]) => getMock(...args),
+  status: (...args: any[]) => statusMock(...args),
 }));
 
 jest.mock("./principal-policy-denials", () => ({
@@ -48,6 +52,8 @@ describe("hub merge approval principal enforcement", () => {
     jest.resetModules();
     requestMock.mockClear();
     decideMock.mockClear();
+    getMock.mockClear();
+    statusMock.mockClear();
     recordPrincipalDenialMock.mockClear();
   });
 
@@ -173,5 +179,28 @@ describe("hub merge approval principal enforcement", () => {
       auth_actor: "agent",
       auth_token_fingerprint: fingerprint,
     });
+  });
+
+  it.each([
+    ["project", `hub.project.${project_id}.api`],
+    ["host", `hub.host.${host_id}.api`],
+    ["agent", agentSubject],
+  ])("refuses the approver view to a %s principal", async (_kind, subject) => {
+    await call(subject, "mergeApprovals.get", [{ request_ids: [victim] }]);
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it("gives an agent its own project's status, and nobody else", async () => {
+    await call(agentSubject, "mergeApprovals.status", [
+      { request_ids: [victim], project_id: other_project },
+    ]);
+    expect(statusMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id, auth_actor: "agent" }),
+    );
+    statusMock.mockClear();
+    await call(`hub.account.${account_id}.api`, "mergeApprovals.status", [
+      { request_ids: [victim] },
+    ]);
+    expect(statusMock).not.toHaveBeenCalled();
   });
 });

@@ -37,10 +37,14 @@ import {
   normalizeMergeApprovalHeadSha,
   normalizeMergeApprovalPrNumber,
   normalizeMergeApprovalRepo,
+  normalizeMergeApprovalRequestIds,
   normalizeMergeApprovalText,
   type MergeApprovalDecision,
   type MergeApprovalDecisionKind,
+  type MergeApprovalDecisionView,
   type MergeApprovalRequest,
+  type MergeApprovalStatusView,
+  type MergeApprovalView,
 } from "@cocalc/util/merge-approval";
 import {
   gitHubBudget,
@@ -272,7 +276,10 @@ export interface DecideMergeApprovalOptions {
 
 export async function decideMergeApproval(
   opts: DecideMergeApprovalOptions,
-): Promise<{ request: MergeApprovalRequest; decision: MergeApprovalDecision }> {
+): Promise<{
+  request: MergeApprovalRequest;
+  decision: MergeApprovalDecisionView;
+}> {
   const { account_id, session_hash } = opts;
   if (opts.auth_actor === "agent" || !isValidUUID(account_id)) {
     throw codeError("an approver must decide from a browser session", 403);
@@ -337,7 +344,7 @@ export async function decideMergeApproval(
     allow_actor_impersonation: false,
   });
 
-  return await store().decide({
+  const result = await store().decide({
     request_id: request.id,
     account_id: account_id!,
     decision: opts.decision,
@@ -345,4 +352,70 @@ export async function decideMergeApproval(
     session_hash: session.session_hash ?? session_hash,
     factor_level: session.factor_level ?? "none",
   });
+  return { request: result.request, decision: decisionView(result.decision)! };
+}
+
+// Session hashes stay in the database: they identify a live session.
+function decisionView(
+  decision?: MergeApprovalDecision,
+): MergeApprovalDecisionView | undefined {
+  if (decision == null) return undefined;
+  const { session_hash: _, ...view } = decision;
+  return view;
+}
+
+// The card: what the hub recorded for these requests. Approvers only.
+export async function getMergeApprovals(opts: {
+  account_id?: string;
+  auth_actor?: "agent";
+  request_ids: string[];
+}): Promise<MergeApprovalView[]> {
+  if (opts.auth_actor === "agent" || !isValidUUID(opts.account_id)) {
+    throw codeError("merge approvals are shown to approvers only", 403);
+  }
+  assertSeedBay();
+  const request_ids = normalizeMergeApprovalRequestIds(opts.request_ids);
+  const settings = await getMergeApprovalSettings();
+  if (!settings.approvers.includes(opts.account_id!)) {
+    throw codeError("merge approvals are shown to approvers only", 403);
+  }
+  const rows = await store().list(request_ids);
+  return rows.map(({ request, decision }) => ({
+    request,
+    decision: decisionView(decision),
+  }));
+}
+
+// What the requesting agent can learn about its own project's requests.
+export async function getMergeApprovalStatus(opts: {
+  account_id?: string;
+  project_id?: string;
+  auth_actor?: "agent";
+  request_ids: string[];
+}): Promise<MergeApprovalStatusView[]> {
+  if (opts.auth_actor !== "agent" || !isValidUUID(opts.project_id)) {
+    throw codeError("merge approval status is for agent sessions", 403);
+  }
+  assertSeedBay();
+  const request_ids = normalizeMergeApprovalRequestIds(opts.request_ids);
+  const rows = await store().list(request_ids, {
+    project_id: opts.project_id,
+  });
+  return rows.map(({ request, decision }) => ({
+    id: request.id,
+    repo: request.repo,
+    pr_number: request.pr_number,
+    head_sha: request.head_sha,
+    status: request.status,
+    expires_at: request.expires_at,
+    ...(decision == null
+      ? {}
+      : {
+          decision: {
+            decision: decision.decision,
+            comment: decision.comment,
+            decided_at: decision.decided_at,
+          },
+        }),
+  }));
 }

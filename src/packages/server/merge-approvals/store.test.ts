@@ -325,6 +325,42 @@ describeDb("merge approval store", () => {
     await getPool().query("DELETE FROM merge_approval_attempts");
   });
 
+  it("lists requests with their decisions, scoped to a project when asked", async () => {
+    const project_id = randomUUID();
+    const a = await store.create(newRequest(project_id, { pr_number: 21 }));
+    const b = await store.create(newRequest(project_id, { pr_number: 22 }));
+    const other = await store.create(
+      newRequest(randomUUID(), { pr_number: 23 }),
+    );
+    await store.decide(decideOpts(a.id));
+    const missing = randomUUID();
+    const all = await store.list([b.id, a.id, other.id, missing]);
+    expect(all.map((row) => row.request.id)).toEqual([b.id, a.id, other.id]);
+    expect(all[1].decision).toMatchObject({ decision: "approve" });
+    expect(all[0].decision).toBeUndefined();
+    const own = await store.list([a.id, other.id], { project_id });
+    expect(own.map((row) => row.request.id)).toEqual([a.id]);
+  });
+
+  it("shows requests past their expiry as expired", async () => {
+    const req = await store.create(newRequest(randomUUID(), { pr_number: 24 }));
+    await getPool().query(
+      "ALTER TABLE merge_approval_requests DISABLE TRIGGER merge_approval_requests_integrity_trigger",
+    );
+    try {
+      await getPool().query(
+        "UPDATE merge_approval_requests SET expires_at=now() - interval '1 second' WHERE id=$1",
+        [req.id],
+      );
+    } finally {
+      await getPool().query(
+        "ALTER TABLE merge_approval_requests ENABLE TRIGGER merge_approval_requests_integrity_trigger",
+      );
+    }
+    const [row] = await store.list([req.id]);
+    expect(row.request.status).toBe("expired");
+  });
+
   it("refuses unknown requests", async () => {
     await expect(store.decide(decideOpts(randomUUID()))).rejects.toThrow(
       "not found",

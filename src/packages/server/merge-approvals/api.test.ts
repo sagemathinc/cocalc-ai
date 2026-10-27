@@ -21,6 +21,7 @@ const getMock = jest.fn();
 const decideMock = jest.fn();
 const admitMock = jest.fn();
 const finishMock = jest.fn();
+const listMock = jest.fn();
 const dangerousAuthMock = jest.fn();
 const impersonationMock = jest.fn();
 const accountMock = jest.fn();
@@ -53,6 +54,7 @@ jest.mock("./store", () => ({
     decide: (...args: any[]) => decideMock(...args),
     admitAttempt: (...args: any[]) => admitMock(...args),
     finishAttempt: (...args: any[]) => finishMock(...args),
+    list: (...args: any[]) => listMock(...args),
   })),
 }));
 jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
@@ -66,7 +68,12 @@ jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountById: (...args: any[]) => accountMock(...args),
 }));
 
-import { decideMergeApproval, requestMergeApproval } from "./api";
+import {
+  decideMergeApproval,
+  getMergeApprovalStatus,
+  getMergeApprovals,
+  requestMergeApproval,
+} from "./api";
 
 const app = {
   app_id: "1",
@@ -148,7 +155,32 @@ beforeEach(() => {
     repo: "o/r",
     status: "pending",
   });
-  decideMock.mockReset().mockResolvedValue({ request: {}, decision: {} });
+  decideMock.mockReset().mockResolvedValue({
+    request: { id: REQUEST_ID },
+    decision: { id: "d", session_hash: "session-hash", decision: "approve" },
+  });
+  listMock.mockReset().mockResolvedValue([
+    {
+      request: {
+        id: REQUEST_ID,
+        repo: "o/r",
+        pr_number: 7,
+        head_sha: HEAD,
+        status: "approved",
+        expires_at: "later",
+        agent_note: "note",
+      },
+      decision: {
+        id: "d",
+        decision: "approve",
+        comment: "ok",
+        decided_at: "now",
+        session_hash: "session-hash",
+        factor_level: "totp",
+        account_id: APPROVER,
+      },
+    },
+  ]);
   dangerousAuthMock.mockReset().mockResolvedValue({
     session_hash: "session-hash",
     factor_level: "totp",
@@ -450,5 +482,72 @@ describe("decideMergeApproval", () => {
     ).rejects.toThrow("comment is longer");
     getMock.mockResolvedValue(undefined);
     await expect(decideMergeApproval(decision())).rejects.toThrow("not found");
+  });
+});
+
+describe("reading merge approvals", () => {
+  it("never returns a session hash", async () => {
+    const decided = await decideMergeApproval(decision());
+    expect(decided.decision).not.toHaveProperty("session_hash");
+    const [view] = await getMergeApprovals({
+      account_id: APPROVER,
+      request_ids: [REQUEST_ID],
+    });
+    expect(view.decision).toMatchObject({ decision: "approve" });
+    expect(view.decision).not.toHaveProperty("session_hash");
+  });
+
+  it("shows the card to approvers only", async () => {
+    await expect(
+      getMergeApprovals({
+        account_id: OTHER_ACCOUNT,
+        request_ids: [REQUEST_ID],
+      }),
+    ).rejects.toThrow("approvers only");
+    await expect(
+      getMergeApprovals({
+        account_id: APPROVER,
+        auth_actor: "agent",
+        request_ids: [REQUEST_ID],
+      }),
+    ).rejects.toThrow("approvers only");
+    await expect(
+      getMergeApprovals({ account_id: APPROVER, request_ids: [] }),
+    ).rejects.toThrow("between 1 and 20");
+    await expect(
+      getMergeApprovals({
+        account_id: APPROVER,
+        request_ids: Array.from({ length: 21 }, () => REQUEST_ID),
+      }),
+    ).rejects.toThrow("between 1 and 20");
+    expect(listMock).not.toHaveBeenCalled();
+  });
+
+  it("tells an agent the status of its own project's requests only", async () => {
+    const [status] = await getMergeApprovalStatus({
+      account_id: APPROVER,
+      project_id: PROJECT,
+      auth_actor: "agent",
+      request_ids: [REQUEST_ID],
+    });
+    expect(listMock).toHaveBeenCalledWith([REQUEST_ID], {
+      project_id: PROJECT,
+    });
+    expect(status).toEqual({
+      id: REQUEST_ID,
+      repo: "o/r",
+      pr_number: 7,
+      head_sha: HEAD,
+      status: "approved",
+      expires_at: "later",
+      decision: { decision: "approve", comment: "ok", decided_at: "now" },
+    });
+    await expect(
+      getMergeApprovalStatus({
+        account_id: APPROVER,
+        project_id: PROJECT,
+        request_ids: [REQUEST_ID],
+      }),
+    ).rejects.toThrow("for agent sessions");
   });
 });

@@ -261,3 +261,45 @@ export function parseMergeApprovalInstallations(
   }
   return installations;
 }
+
+// A batch card shows at most this many requests.
+export const MAX_MERGE_APPROVAL_BATCH = 20;
+
+// A decision as shown to people and agents: never with its session hash.
+export type MergeApprovalDecisionView = Omit<
+  MergeApprovalDecision,
+  "session_hash"
+>;
+
+// What an approver's card shows for one request.
+export interface MergeApprovalView {
+  request: MergeApprovalRequest;
+  decision?: MergeApprovalDecisionView;
+}
+
+// What the requesting agent can learn about its own request.
+export interface MergeApprovalStatusView {
+  id: string;
+  repo: string;
+  pr_number: number;
+  head_sha: string;
+  status: MergeApprovalStatus;
+  expires_at: string;
+  decision?: Pick<
+    MergeApprovalDecisionView,
+    "decision" | "comment" | "decided_at"
+  >;
+}
+
+export function normalizeMergeApprovalRequestIds(value: unknown): string[] {
+  const ids = Array.isArray(value) ? value : [value];
+  if (ids.length === 0 || ids.length > MAX_MERGE_APPROVAL_BATCH) {
+    throw new Error(
+      `between 1 and ${MAX_MERGE_APPROVAL_BATCH} request ids are required`,
+    );
+  }
+  for (const id of ids) {
+    if (!isValidUUID(id)) throw new Error("invalid merge approval request id");
+  }
+  return [...new Set(ids as string[])];
+}

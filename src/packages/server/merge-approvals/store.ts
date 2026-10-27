@@ -108,6 +108,50 @@ export class MergeApprovalStore {
     return rows[0] == null ? undefined : toRequest(rows[0]);
   }
 
+  // Requests and their decisions, in the order asked; only the requesting
+  // project's when project_id is given. Open requests past their expiry are
+  // marked expired first, so nobody sees them as open. Unknown ids are left
+  // out.
+  async list(
+    ids: string[],
+    { project_id }: { project_id?: string } = {},
+  ): Promise<
+    { request: MergeApprovalRequest; decision?: MergeApprovalDecision }[]
+  > {
+    if (ids.length === 0) return [];
+    return await this.transaction(async (client) => {
+      const scope =
+        project_id == null ? "" : "AND requested_by->>'project_id' = $2";
+      const params = project_id == null ? [ids] : [ids, project_id];
+      await client.query(
+        `UPDATE merge_approval_requests SET status='expired'
+          WHERE id = ANY($1::uuid[]) AND status='pending'
+            AND expires_at <= now() ${scope}`,
+        params,
+      );
+      const requests = await client.query(
+        `SELECT * FROM merge_approval_requests
+          WHERE id = ANY($1::uuid[]) ${scope}`,
+        params,
+      );
+      const decisions = await client.query(
+        `SELECT * FROM merge_approval_decisions
+          WHERE request_id = ANY($1::uuid[])`,
+        [requests.rows.map((row) => row.id)],
+      );
+      const byRequest = new Map(
+        decisions.rows.map((row) => [row.request_id, toDecision(row)]),
+      );
+      const byId = new Map(requests.rows.map((row) => [row.id, row]));
+      return ids
+        .filter((id) => byId.has(id))
+        .map((id) => ({
+          request: toRequest(byId.get(id)),
+          decision: byRequest.get(id),
+        }));
+    });
+  }
+
   // Records a new pending request, or returns the requesting project's open
   // request for the same head. Open requests for an older head of the same
   // pull request are superseded: the caller has just read the new head from

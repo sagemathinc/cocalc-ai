@@ -564,6 +564,8 @@ const AGENT_HUB_API_METHODS = new Set([
   "compute.resizeVolume",
   "compute.setVolumeFundingMode",
   "compute.deleteVolume",
-  // Only asks; deciding is for approvers' browser sessions.
+  // Only asks and reads its own requests; deciding is for approvers' browser
+  // sessions.
   "mergeApprovals.request",
+  "mergeApprovals.status",
 ]);

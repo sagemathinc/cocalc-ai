@@ -5,6 +5,8 @@
 
 import {
   decideMergeApproval,
+  getMergeApprovalStatus,
+  getMergeApprovals,
   requestMergeApproval,
   type DecideMergeApprovalOptions,
   type RequestMergeApprovalOptions,
@@ -16,4 +18,14 @@ export async function request(opts: RequestMergeApprovalOptions) {
 
 export async function decide(opts: DecideMergeApprovalOptions) {
   return await decideMergeApproval(opts);
+}
+
+export async function get(opts: Parameters<typeof getMergeApprovals>[0]) {
+  return await getMergeApprovals(opts);
+}
+
+export async function status(
+  opts: Parameters<typeof getMergeApprovalStatus>[0],
+) {
+  return await getMergeApprovalStatus(opts);
 }
