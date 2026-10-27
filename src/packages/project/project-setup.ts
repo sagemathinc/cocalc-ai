@@ -20,6 +20,8 @@ export const DEFAULT_FREE_PROCS_NICENESS = 18;
 
 const PRESERVED_COCALC_ENV_VARS = new Set([
   "COCALC_EXTRA_ENV",
+  // the host-wide Jupyter transport (jupyter/zmq/transport.ts)
+  "COCALC_JUPYTER_ZMQ",
   "COCALC_PROJECT_SSH_START_SCRIPT",
   "COCALC_PROXY_HOST",
   "COCALC_PROXY_PORT",

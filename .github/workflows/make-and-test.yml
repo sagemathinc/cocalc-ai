@@ -276,7 +276,10 @@ jobs:
           python3 -m pip install --upgrade pip virtualenv
           python3 -m virtualenv venv
           source venv/bin/activate
-          pip install ipykernel requests yapf
+          # ipykernel and pyzmq pinned: the Jupyter transport's interop and
+          # conformance tests say which libzmq they spoke to
+          pip install ipykernel==7.3.0 pyzmq==27.1.0 requests yapf
+          python -c "import zmq; print('libzmq', zmq.zmq_version(), 'pyzmq', zmq.__version__)"
           python -m ipykernel install --prefix=./jupyter-local --name python3-local --display-name "Python 3 (Local)"
 
       - name: Check Essential frontend bundle budgets
@@ -298,6 +301,8 @@ jobs:
           COCALC_TEST_REPORT_DIR: ${{ github.workspace }}/src/.cache/test-reports
           TEST_PACKAGES: ${{ matrix.packages }}
           TEST_SHARD: ${{ matrix.shard }}
+          # (the rest lane has the Python stack: the Jupyter transport's suites fail, not skip, without it)
+          ZMTP_REQUIRE_PYZMQ: ${{ matrix.lane == 'rest' && '1' || '' }}
         run: |
           if [[ "${{ matrix.lane }}" == "rest" ]]; then
             source venv/bin/activate
@@ -308,6 +313,20 @@ jobs:
             test_args+=(--shard="$TEST_SHARD")
           fi
           ./workspaces.py test "${test_args[@]}"
+
+      # The pure-JS ZMTP transport is the default (jupyter/zmq/zmtp.ts); while
+      # the native zeromq addon still ships as its fallback, the Jupyter kernel
+      # suites run on it too.
+      - name: Jupyter tests on the native transport
+        if: matrix.lane == 'rest' && contains(format(',{0},', matrix.packages), ',jupyter,')
+        env:
+          COCALC_JUPYTER_ZMQ: native
+          ZMTP_REQUIRE_PYZMQ: "1"
+        run: |
+          source venv/bin/activate
+          jupyter --version > /dev/null && python -c "import zmq"
+          cd src/packages/jupyter
+          pnpm exec jest --maxWorkers=1 kernel/test zmq/transport.test.ts zmq/sockets-behavior.test.ts
 
       # Warnings only: flags a slow new test file on the PR that adds it.
       - name: Slowest test files

@@ -1,14 +1,14 @@
 import { EventEmitter } from "events";
-import { Dealer, Subscriber, context } from "zeromq";
 import { Message } from "./message";
+import {
+  transport,
+  type JupyterSocket,
+  type JupyterSubscriber,
+} from "./transport";
 import type { JupyterMessage } from "./types";
 
 //import { getLogger } from "@cocalc/backend/logger";
 //const logger = getLogger("jupyter:zmq");
-
-// Jupyter closes its sockets explicitly; leaving the global zeromq context in
-// blocky mode can keep test and short-lived CLI processes alive at exit.
-context.blocky = false;
 
 type JupyterSocketName = "iopub" | "shell" | "stdin" | "control";
 
@@ -43,10 +43,10 @@ export async function jupyterSockets(
 
 export class JupyterSockets extends EventEmitter {
   private sockets?: {
-    iopub: Subscriber;
-    stdin: Dealer;
-    shell: Dealer;
-    control: Dealer;
+    iopub: JupyterSubscriber;
+    stdin: JupyterSocket;
+    shell: JupyterSocket;
+    control: JupyterSocket;
   };
   private readonly listenTasks: Promise<void>[] = [];
 
@@ -128,6 +128,8 @@ export class JupyterSockets extends EventEmitter {
   private createSocket = async (name: JupyterSocketName) => {
     const zmqType = ZMQ_TYPE[name];
     let socket;
+    // (./transport.ts: the pure-JS ZMTP transport, or the native addon)
+    const { Dealer, Subscriber } = transport();
     if (zmqType == "dealer") {
       socket = new Dealer({ routingId: this.identity });
     } else if (zmqType == "sub") {
