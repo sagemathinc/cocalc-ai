@@ -539,10 +539,20 @@ class ZSocket {
   }
 
   [Symbol.asyncIterator](): AsyncIterator<Buffer[]> {
+    // As zeromq.js's: leaving a for-await loop (break, or a throw in its
+    // body) ends that loop only; the socket stays open, and close() is the
+    // caller's.
+    let finished = false;
     return {
-      next: () => this.next(),
+      next: () =>
+        finished
+          ? Promise.resolve({ done: true, value: undefined })
+          : this.next(),
       return: async () => {
-        this.close();
+        finished = true;
+        const w = this.waiting;
+        this.waiting = undefined;
+        w?.({ done: true, value: undefined });
         return { done: true, value: undefined };
       },
     };

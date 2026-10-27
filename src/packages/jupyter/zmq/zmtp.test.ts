@@ -483,6 +483,9 @@ describe("delivery and flow control", () => {
       seen,
       Array.from({ length: 1000 }, (_, i) => i),
     );
+    // (leaving the loop ends it only, as zeromq.js: the socket stays open)
+    assert.equal(d.closed, false);
+    d.close();
     await srv.close();
   });
 
