@@ -4665,3 +4665,71 @@ describe("backup prune plans run on the seed, which owns the repositories", () =
     assert.equal((await prunePlanLog(SEED)).length, 1);
   });
 });
+
+describe("GPU reads run whole on the key owner's home bay", () => {
+  // A syntactically valid, fake RunPod key: RunPod rejects it.
+  const FAKE_KEY = `rpa_MULTIBAYFAKE${"0".repeat(36)}`;
+  const selector = (owner_account_id) => ({
+    provider: "runpod",
+    kind: "gpu-provider-api-key",
+    scope: "account",
+    owner_account_id,
+  });
+  // Runs on `bay` for `account`: the read's error (if any), and whether this
+  // bay has the key or may read it.
+  async function readFrom(bay, account, method) {
+    return await runInBay(
+      cluster,
+      bay,
+      `const read = server("gpu/read.js");
+       const { getExternalCredential } = server("external-credentials/store.js");
+       const { getRunpodCleanupForAccount } = server("gpu/provider-keys.js");
+       const account_id = ${JSON.stringify(account.account_id)};
+       const out = {};
+       try { await read.${method}({ account_id }); out.read = "ok"; }
+       catch (e) { out.read = String(e?.message ?? e); }
+       const local = await getExternalCredential({ selector: ${JSON.stringify(selector(account.account_id))} });
+       out.local_key = !!local;
+       try { await getRunpodCleanupForAccount(account_id); out.custody = "allowed"; }
+       catch (e) { out.custody = String(e?.message ?? e); }
+       return out;`,
+    );
+  }
+
+  before(async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { upsertExternalCredential } = server("external-credentials/store.js");
+       await upsertExternalCredential({
+         selector: ${JSON.stringify(selector(bob.account_id))},
+         payload: ${JSON.stringify(FAKE_KEY)},
+         metadata: { source: "multibay-test" },
+       });`,
+    );
+  });
+
+  it("forwards a pod read to the home bay, which alone has and uses the key", async () => {
+    const r = await readFrom(SEED, bob, "getGpuPods");
+    // bay-1 found the key and called RunPod with it.
+    assert.match(r.read, /RunPod rejected your API key/);
+    assert.equal(r.local_key, false);
+    assert.match(r.custody, /only on the key owner's home bay/);
+    assert.ok(!JSON.stringify(r).includes(FAKE_KEY));
+  });
+
+  it("checks the owner's entitlement on the home bay", async () => {
+    const r = await readFrom(SEED, bob, "getGpuCatalog");
+    assert.match(
+      r.read,
+      /Your membership doesn't include GPUs on your own key/,
+    );
+  });
+
+  it("forwards the other way for an account homed on the seed", async () => {
+    const r = await readFrom(ATTACHED, alice, "getGpuPods");
+    assert.match(r.read, /No RunPod API key is connected/);
+    assert.equal(r.local_key, false);
+    assert.match(r.custody, /only on the key owner's home bay/);
+  });
+});
