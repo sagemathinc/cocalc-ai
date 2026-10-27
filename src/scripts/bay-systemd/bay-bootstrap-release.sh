@@ -715,24 +715,25 @@ FRONTEND_ASSET_FALLBACK_DAYS="${FRONTEND_ASSET_FALLBACK_DAYS:-14}"
 FRONTEND_ASSET_VERSION_SLACK_MS=$((24 * 3600 * 1000))
 
 # The smc-version compiled into the hub a release runs, or nothing when the
-# release does not say: a source tree's packages/util/smc-version.js, else the
-# runtime/control-plane/hub-version.json that full and hub bundles carry (a
-# static-only release keeps the current release's, as it keeps its hub).
+# release does not say: the recorded runtime/control-plane/hub-version.json
+# when there is one (written by full and hub bundles; a static-only release
+# keeps the current one), else a source tree's packages/util/smc-version.js
+# (a source tree never has the recorded file).
 release_hub_smc_version() {
   local release="$1" node_bin="$2"
   # As the bay account: root never reads files in the bay-owned release tree.
   as_bay_node "$node_bin" -e '
 const fs = require("node:fs");
-const [source, recorded] = process.argv.slice(1);
+const [recorded, source] = process.argv.slice(1);
 let version;
-if (fs.existsSync(source)) {
-  version = Number(/exports\.version\s*=\s*(\d+)/.exec(fs.readFileSync(source, "utf8"))?.[1]);
-} else if (fs.existsSync(recorded)) {
+if (fs.existsSync(recorded)) {
   version = Number(JSON.parse(fs.readFileSync(recorded, "utf8")).smc_version);
+} else if (fs.existsSync(source)) {
+  version = Number(/exports\.version\s*=\s*(\d+)/.exec(fs.readFileSync(source, "utf8"))?.[1]);
 }
 console.log(Number.isSafeInteger(version) && version > 0 ? version : "");
-' "${release}/packages/util/smc-version.js" \
-    "${release}/runtime/control-plane/hub-version.json" 2>/dev/null || true
+' "${release}/runtime/control-plane/hub-version.json" \
+    "${release}/packages/util/smc-version.js" 2>/dev/null || true
 }
 
 # The cutoff for a release whose hub was built with smc-version HUB (unix
