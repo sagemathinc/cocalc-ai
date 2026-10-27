@@ -3,6 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+// no database here: the rest of the start fails fast after the checks
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: () => ({
+    query: async () => {
+      throw new Error("no database in this test");
+    },
+    connect: async () => {
+      throw new Error("no database in this test");
+    },
+  }),
+}));
+
 import { startHostInternalHelper } from "./hosts-cloud-lifecycle";
 
 describe("starting a Nebius Spot project host while Nebius Spot is off", () => {
@@ -22,7 +35,9 @@ describe("starting a Nebius Spot project host while Nebius Spot is off", () => {
       id: host(pricing).id,
       billing_rescue,
       loadHostForStartStop: async () => host(pricing),
-      markHostActionPending: jest.fn(),
+      markHostActionPending: jest.fn(async () => {
+        throw new Error("stop here");
+      }),
       logStatusUpdate: jest.fn(),
       parseRow: jest.fn(),
     });

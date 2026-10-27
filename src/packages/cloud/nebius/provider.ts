@@ -4,6 +4,10 @@ import type {
   HostSpec,
   RemoteInstance,
 } from "../types";
+import {
+  assertNebiusSpotOffered,
+  NEBIUS_SPOT_OFFERED,
+} from "@cocalc/util/consts/nebius-spot";
 import getLogger from "@cocalc/backend/logger";
 import { NebiusClient, type NebiusCreds } from "./client";
 import {
@@ -980,6 +984,9 @@ export class NebiusProvider implements CloudProvider {
     spec: HostSpec,
     creds: NebiusProviderCreds,
   ): Promise<HostRuntime> {
+    // The execution boundary for every caller (API, workers, spot probes and
+    // returns): no preemptible instance without a pricing option (#684).
+    assertNebiusSpotOffered("nebius", spec.pricing_model);
     await using client = new NebiusClient(creds);
     const parentId = creds.parentId;
     if (!parentId) {
@@ -1409,6 +1416,15 @@ export class NebiusProvider implements CloudProvider {
 
   async startHost(runtime: HostRuntime, creds: NebiusProviderCreds) {
     await using client = new NebiusClient(creds);
+    if (!NEBIUS_SPOT_OFFERED) {
+      // an existing preemptible instance has no pricing option either
+      const instance = await client.instances.get(
+        GetInstanceRequest.create({ id: runtime.instance_id }),
+      );
+      if (instanceIsPreemptible(instance as any)) {
+        assertNebiusSpotOffered("nebius", "spot");
+      }
+    }
     const op = await client.instances.start(
       StartInstanceRequest.create({ id: runtime.instance_id }),
     );
