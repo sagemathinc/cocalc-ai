@@ -47,6 +47,11 @@ const PERSONAL_ORG_403 = {
 };
 const MYSELF = { body: { data: { myself: { id: "user_1" } } } };
 const NO_PODS = { body: { pods: [], pagination: { hasNextPage: false } } };
+// Measured 10-27: a key that may change pods gets this for a random id.
+const WRITE_OK = {
+  status: 404,
+  body: { detail: "pod not found", status: 404, title: "Not Found" },
+};
 
 function fakeFetch(responses: Array<{ status?: number; body: unknown }>) {
   const urls: string[] = [];
@@ -107,7 +112,12 @@ describe("GPU provider keys", () => {
   });
 
   it("verifies a key with RunPod, then stores it with the account identity", async () => {
-    const { fetch, urls } = fakeFetch([PERSONAL_ORG_403, MYSELF, NO_PODS]);
+    const { fetch, urls } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      NO_PODS,
+      WRITE_OK,
+    ]);
     const status = await setGpuProviderKey(
       { account_id: ACCOUNT, provider: "runpod", api_key: ` ${KEY}\n` },
       { fetch, isEntitled: entitled },
@@ -116,6 +126,9 @@ describe("GPU provider keys", () => {
       "https://api.runpod.io/v2/organization",
       "https://api.runpod.io/graphql",
       "https://api.runpod.io/v2/pods",
+      expect.stringMatching(
+        /^https:\/\/api\.runpod\.io\/v2\/pods\/cc0probe[0-9a-f]{12}$/,
+      ),
     ]);
     const stored = upsertMock.mock.calls[0][0];
     expect(stored.selector).toEqual({
@@ -146,6 +159,7 @@ describe("GPU provider keys", () => {
     const { fetch } = fakeFetch([
       { body: { id: "org_9", name: "Physics 101" } },
       NO_PODS,
+      WRITE_OK,
     ]);
     await setGpuProviderKey(
       { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
@@ -175,7 +189,7 @@ describe("GPU provider keys", () => {
     [
       "a key without read access",
       { status: 403, body: { detail: "Forbidden" } },
-      "can't read",
+      "can't manage",
     ],
     ["RunPod being down", { status: 503, body: { detail: KEY } }, "reached"],
   ])(
@@ -203,7 +217,7 @@ describe("GPU provider keys", () => {
         { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
         { fetch, isEntitled: entitled },
       ),
-    ).rejects.toThrow("can't read the account and its pods");
+    ).rejects.toThrow("can't manage pods");
     expect(upsertMock).not.toHaveBeenCalled();
   });
 
@@ -321,12 +335,17 @@ describe("GPU provider keys", () => {
     const MORE = {
       body: { pods: [], pagination: { hasNextPage: true, nextCursor: "c2" } },
     };
-    const { fetch, urls } = fakeFetch([PERSONAL_ORG_403, MYSELF, MORE]);
+    const { fetch, urls } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      MORE,
+      WRITE_OK,
+    ]);
     await setGpuProviderKey(
       { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
       { fetch, isEntitled: entitled },
     );
-    expect(urls.filter((u) => u.includes("/v2/pods"))).toHaveLength(1);
+    expect(urls.filter((u) => u.endsWith("/v2/pods"))).toHaveLength(1);
     expect(upsertMock).toHaveBeenCalled();
   });
 
@@ -337,7 +356,9 @@ describe("GPU provider keys", () => {
         ? new Response(JSON.stringify(PERSONAL_ORG_403.body), { status: 403 })
         : url.endsWith("/graphql")
           ? new Response(JSON.stringify(MYSELF.body))
-          : new Response(JSON.stringify(NO_PODS.body));
+          : url.endsWith("/v2/pods")
+            ? new Response(JSON.stringify(NO_PODS.body))
+            : new Response(JSON.stringify(WRITE_OK.body), { status: 404 });
     }) as unknown as typeof globalThis.fetch;
     await expect(
       setGpuProviderKey(
@@ -345,6 +366,22 @@ describe("GPU provider keys", () => {
         { fetch: slow, isEntitled: entitled, verifyDeadlineMs: 10 },
       ),
     ).rejects.toThrow("too long");
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
+  it("stores nothing for a Read Only key: one that can't change pods", async () => {
+    const { fetch } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      NO_PODS,
+      { status: 403, body: { detail: "Forbidden" } },
+    ]);
+    await expect(
+      setGpuProviderKey(
+        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        { fetch, isEntitled: entitled },
+      ),
+    ).rejects.toThrow("can't manage pods");
     expect(upsertMock).not.toHaveBeenCalled();
   });
 });

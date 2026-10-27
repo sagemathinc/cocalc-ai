@@ -505,4 +505,36 @@ describe("podView", () => {
       "protocol",
     );
   });
+
+  it("probes write access with one empty update of a random, nonexistent pod", async () => {
+    const notFound = {
+      status: 404,
+      body: { detail: "pod not found", status: 404, title: "Not Found" },
+    };
+    const ok = fakeFetch([notFound]);
+    await client(ok.fetch).canWritePods();
+    expect(ok.calls).toHaveLength(1);
+    expect(ok.calls[0].url).toMatch(
+      /^https:\/\/api\.runpod\.io\/v2\/pods\/cc0probe[0-9a-f]{12}$/,
+    );
+    expect(ok.calls[0].init.method).toBe("PATCH");
+    expect(ok.calls[0].init.body).toBe("{}");
+    const readOnly = fakeFetch([
+      { status: 403, body: { detail: "Forbidden" } },
+    ]);
+    expect((await failure(client(readOnly.fetch).canWritePods())).kind).toBe(
+      "forbidden",
+    );
+    // Anything but "pod not found" fails closed: a 200, or some other 404.
+    const ok200 = fakeFetch([{ body: { id: "x" } }]);
+    expect((await failure(client(ok200.fetch).canWritePods())).kind).toBe(
+      "protocol",
+    );
+    const route404 = fakeFetch([
+      { status: 404, body: { detail: "route not found" } },
+    ]);
+    expect((await failure(client(route404.fetch).canWritePods())).kind).toBe(
+      "not_found",
+    );
+  });
 });

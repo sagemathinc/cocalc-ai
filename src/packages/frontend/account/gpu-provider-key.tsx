@@ -114,6 +114,8 @@ export function GpuProviderKeySection() {
       if (completed) await refresh();
     } catch (err) {
       setError(`${err}`);
+      // The removal may have happened before a timeout or a lost reply.
+      await refresh();
     } finally {
       busyRef.current = false;
       setBusy(false);

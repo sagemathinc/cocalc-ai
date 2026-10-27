@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { randomBytes } from "node:crypto";
+
 // Internal RunPod client on the REST API v2 (https://api.runpod.io/v2; v1 is
 // retired 2026-11-15). Read-only for now: catalog, availability, pods and
 // pod billing. Writes come with the allowlist request builder and the key
@@ -230,6 +232,30 @@ export class RunpodClient {
     ) {
       throw new RunpodApiError("protocol");
     }
+  }
+
+  // One request: may this key change pods? RunPod has no endpoint that lists
+  // a key's permissions, so this sends an empty update for a random pod id
+  // that cannot exist. Measured 10-27: a key with write access gets 404 "pod
+  // not found"; a key without it is refused (403). An empty update changes
+  // nothing even if the id did exist. Anything else fails closed.
+  async canWritePods(): Promise<void> {
+    const id = `cc0probe${randomBytes(6).toString("hex")}`;
+    const res = await this.request(`${API_ORIGIN}/v2/pods/${id}`, {
+      method: "PATCH",
+      body: "{}",
+    });
+    const text = await res.text().catch(() => "");
+    if (res.status === 404 && /pod not found/i.test(text)) return;
+    if (!res.ok) {
+      throw new RunpodApiError(
+        errorKind(res.status),
+        res.status,
+        retryAfter(res.headers.get("retry-after")),
+        knownReason(text),
+      );
+    }
+    throw new RunpodApiError("protocol", res.status);
   }
 
   async getPod(podId: string): Promise<RunpodPodView | undefined> {

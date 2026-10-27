@@ -37,13 +37,13 @@ import {
 
 type Fetch = typeof globalThis.fetch;
 
-// Verification is at most three requests (organization, maybe GraphQL
-// `myself`, one page of pods) of at most 8 s each, and must finish within
+// Verification is at most four requests (organization, maybe GraphQL
+// `myself`, one page of pods, a write-permission probe) of at most 6 s each, and must finish within
 // VERIFY_DEADLINE_MS or nothing is stored. With the store (routed, at most
 // 15 s) that stays under the browser's VERIFY_RPC_TIMEOUT_MS (45 s, in
 // util/gpu/provider-keys), so the browser never reports a failure for a key
 // that is stored afterwards.
-const VERIFY_REQUEST_TIMEOUT_MS = 8_000;
+const VERIFY_REQUEST_TIMEOUT_MS = 6_000;
 const VERIFY_DEADLINE_MS = 25_000;
 
 export interface GpuProviderKeyDeps {
@@ -93,7 +93,7 @@ function verificationError(err: unknown): Error {
         return Error("RunPod rejected this API key. Check that it is correct.");
       case "forbidden":
         return Error(
-          "This RunPod API key can't read the account and its pods. Create a key with read and write access to pods.",
+          'This RunPod API key can\'t manage pods. Create a key with "All" permissions.',
         );
       case "rate_limited":
         return Error("RunPod is rate-limiting requests. Try again shortly.");
@@ -107,8 +107,8 @@ function verificationError(err: unknown): Error {
   return Error("RunPod could not verify this API key.");
 }
 
-// The key must act for a provider account and be able to see that account's
-// pods: launches, cleanup and attribution all depend on that.
+// The key must act for a provider account, see that account's pods, and be
+// allowed to change them: launches, cleanup and attribution depend on that.
 async function verifyRunpodKey(
   apiKey: string,
   fetch?: Fetch,
@@ -121,6 +121,7 @@ async function verifyRunpodKey(
   try {
     const identity = await client.getProviderIdentity();
     await client.canListPods();
+    await client.canWritePods();
     return identity;
   } catch (err) {
     throw verificationError(err);

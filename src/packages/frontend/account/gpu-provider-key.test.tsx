@@ -202,4 +202,23 @@ describe("GpuProviderKeySection", () => {
       expect((remove as HTMLButtonElement).disabled).toBe(false),
     );
   });
+
+  it("reloads the real status after a failed removal, e.g. a lost reply", async () => {
+    const user = userEvent.setup();
+    mockSystem.getGpuProviderKeyStatus
+      .mockResolvedValueOnce(CONNECTED)
+      .mockResolvedValue(DISCONNECTED);
+    mockSystem.deleteGpuProviderKey.mockRejectedValue(new Error("timeout"));
+    render(<GpuProviderKeySection />);
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(
+      within(await screen.findByRole("tooltip")).getByRole("button", {
+        name: "Remove",
+      }),
+    );
+    // It was in fact removed: the panel shows that, with the error.
+    expect(await screen.findByLabelText("RunPod API key")).toBeTruthy();
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
+  });
 });
