@@ -566,5 +566,4 @@ const AGENT_HUB_API_METHODS = new Set([
   "compute.deleteVolume",
   "gpu.catalog",
   "gpu.availability",
-  "gpu.pods",
 ]);

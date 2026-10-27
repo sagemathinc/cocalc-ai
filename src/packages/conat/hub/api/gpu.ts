@@ -18,14 +18,19 @@ import type {
   RunpodPodView,
   RunpodStockLevel,
 } from "@cocalc/util/gpu/runpod";
-import { authFirstRequireAccountOrBoundAgentProject } from "./util";
+import {
+  authFirstRequireAccount,
+  authFirstRequireAccountOrBoundAgentProject,
+} from "./util";
 
-// Agents may read these for the account they act for, from the project
-// sealed into their token.
+// Agents may read the catalog and stock for the account they act for, from
+// the project sealed into their token. Pods are account-only until they can
+// be filtered to the pods that agent's project started (launch, step 3): the
+// account's whole pod list spans projects and includes SSH endpoints.
 export const gpu = {
   catalog: authFirstRequireAccountOrBoundAgentProject,
   availability: authFirstRequireAccountOrBoundAgentProject,
-  pods: authFirstRequireAccountOrBoundAgentProject,
+  pods: authFirstRequireAccount,
 };
 
 interface GpuReadOpts {
