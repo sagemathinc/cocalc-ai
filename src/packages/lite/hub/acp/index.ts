@@ -12169,7 +12169,6 @@ async function enqueueChatAcpTurn({
     admitAcpJobCreation(
       request,
       await resolveAcpAdmissionLimits(acpAdmissionContextFromRequest(request)),
-      Date.now(),
       { supersedesQueuedRecoveries: true },
     ),
     "chat",

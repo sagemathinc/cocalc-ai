@@ -1674,8 +1674,6 @@ export async function getProjectOwnerEffectiveLimitsLocal({
     return {
       acp_max_queued_per_account: 0,
       acp_max_queued_per_thread: 0,
-      acp_max_created_5h_per_account: 0,
-      acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
     };
@@ -1730,8 +1728,6 @@ export async function getAccountEffectiveLimitsLocal({
     return {
       acp_max_queued_per_account: 0,
       acp_max_queued_per_thread: 0,
-      acp_max_created_5h_per_account: 0,
-      acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
     };
