@@ -146,4 +146,109 @@ describe("subscription renewal health alert", () => {
     await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(0);
     expect(mockAdminAlert).not.toHaveBeenCalled();
   });
+
+  it("points out overdue renewals that were never tried", async () => {
+    const neverTried = uuid();
+    const retried = uuid();
+    await createTestAccount(neverTried);
+    await createTestAccount(retried);
+    await createTestMembershipSubscription(neverTried, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(2, "hour").toDate(),
+    });
+    const r = await createTestMembershipSubscription(retried, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(3, "hour").toDate(),
+    });
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts
+          SET attempt_count=40, last_attempt_at=NOW()
+        WHERE subscription_id=$1`,
+      [r.subscription_id],
+    );
+
+    await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(2);
+    const body = mockAdminAlert.mock.calls[0][0].body;
+    expect(body).toContain("Never tried yet: 1.");
+    expect(body).toContain("head-of-line");
+  });
+
+  it.each([
+    ["is banned", "UPDATE accounts SET banned=true WHERE account_id=$1"],
+    [
+      "belongs to another bay",
+      "UPDATE accounts SET home_bay_id='another-bay' WHERE account_id=$1",
+    ],
+  ])(
+    "does not count renewals no pass may claim as never tried (account %s)",
+    async (_, sql) => {
+      const account_id = uuid();
+      await createTestAccount(account_id);
+      await createTestMembershipSubscription(account_id, {
+        start: dayjs().subtract(1, "month").toDate(),
+        end: dayjs().subtract(2, "hour").toDate(),
+      });
+      await getPool().query(sql, [account_id]);
+
+      await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(1);
+      const body = mockAdminAlert.mock.calls[0][0].body;
+      expect(body).not.toContain("Never tried");
+      expect(body).toContain("Not claimable: 1");
+      expect(body).toContain("this bay's renewal worker may not claim them");
+    },
+  );
+
+  it("does not report starvation when every overdue renewal was tried", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        start: dayjs().subtract(1, "month").toDate(),
+        end: dayjs().subtract(2, "hour").toDate(),
+      },
+    );
+    await getPool().query(
+      `UPDATE subscription_renewal_attempts SET attempt_count=3
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+    await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(1);
+    expect(mockAdminAlert.mock.calls[0][0].body).not.toContain("Never tried");
+  });
+
+  it.each([
+    [true, 0],
+    [false, 1],
+  ])(
+    "treats a renewal waiting for a VAT ID as expected only if the customer was told about it (renewal notice recorded: %s)",
+    async (noticed, alerted) => {
+      const account_id = uuid();
+      await createTestAccount(account_id);
+      const { subscription_id } = await createTestMembershipSubscription(
+        account_id,
+        {
+          start: dayjs().subtract(1, "month").toDate(),
+          end: dayjs().subtract(2, "day").toDate(),
+        },
+      );
+      // An account-wide VAT notice alone does not tell the customer about
+      // this renewal.
+      await getPool().query(
+        `INSERT INTO business_tax_id_notices (account_id, notified_at)
+         VALUES ($1, NOW())`,
+        [account_id],
+      );
+      await getPool().query(
+        `UPDATE subscription_renewal_attempts
+            SET attempt_count=3,
+                last_error='business_tax_id_required: a VAT ID is required',
+                business_tax_id_notified_at=CASE WHEN $2 THEN NOW() END,
+                next_attempt_at=NOW() + INTERVAL '6 hours'
+          WHERE subscription_id=$1`,
+        [subscription_id, noticed],
+      );
+      await expect(alertDelayedSubscriptionRenewals()).resolves.toBe(alerted);
+    },
+  );
 });

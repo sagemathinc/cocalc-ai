@@ -1370,6 +1370,7 @@ export const projects = {
   restart: authFirstRequireAccount,
   restartProjects: authFirstRequireAccount,
   archiveProject: authFirstRequireAccount,
+  reopenStuckProjectArchive: authFirstRequireAccount,
   getProjectState: authFirstRequireAccount,
   getProjectAddress: authFirstRequireAccount,
   ensureProjectScratchVolume: authFirstRequireAccount,
@@ -2459,6 +2460,19 @@ export interface Projects {
     // the archive cannot include, may be lost.
     allow_oversized_skip?: boolean;
   }) => Promise<void>;
+  // Admin only: reopen a project stuck in state "archiving" under an
+  // automatic archive job that cannot finish. Refused unless the project's
+  // host confirms its volume is not frozen; the reason is recorded.
+  reopenStuckProjectArchive: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    project_id: string;
+    reason: string;
+  }) => Promise<{
+    job_id: string;
+    freeze_status: "already-writable" | "released";
+  }>;
   getProjectState: (opts: {
     account_id?: string;
     project_id: string;

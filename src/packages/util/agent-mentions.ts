@@ -1,28 +1,71 @@
+/** An agent on another site, a member of the person's Agent Networks. */
+export interface ExternalAgentMentionTarget {
+  kind: "external";
+  account_id: string;
+  agent_id: string;
+  installation_id: string;
+}
+
+export type AgentMentionTarget =
+  | { project_id: string; agent_id: string }
+  | ExternalAgentMentionTarget;
+
 /** A bound reference is identity metadata, never a communication capability. */
 export interface AgentMentionReference {
   version: 1;
   naming_account_id: string;
-  target: { project_id: string; agent_id: string };
+  target: AgentMentionTarget;
   name: string;
+}
+
+export function isExternalMentionTarget(
+  target: AgentMentionTarget,
+): target is ExternalAgentMentionTarget {
+  return (target as ExternalAgentMentionTarget).kind === "external";
+}
+
+/** The same target, however its UUIDs are spelled. */
+export function agentMentionTargetKey(target: AgentMentionTarget): string {
+  return isExternalMentionTarget(target)
+    ? `external:${target.account_id}/${target.agent_id}/${target.installation_id}`.toLowerCase()
+    : `${target.project_id}/${target.agent_id}`.toLowerCase();
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+
+function uuid(value: unknown): value is string {
+  return typeof value === "string" && UUID.test(value);
+}
+
+function mentionTarget(value: unknown): AgentMentionTarget | undefined {
+  if (!value || typeof value !== "object") return;
+  const t = value as Record<string, unknown>;
+  if (t.kind === "external")
+    return uuid(t.account_id) && uuid(t.agent_id) && uuid(t.installation_id)
+      ? {
+          kind: "external",
+          account_id: t.account_id,
+          agent_id: t.agent_id,
+          installation_id: t.installation_id,
+        }
+      : undefined;
+  if (t.kind !== undefined) return;
+  return uuid(t.project_id) && uuid(t.agent_id)
+    ? { project_id: t.project_id, agent_id: t.agent_id }
+    : undefined;
+}
 
 export function agentMentionReference(
   value: unknown,
 ): AgentMentionReference | undefined {
   if (!value || typeof value !== "object") return;
   const v = value as AgentMentionReference;
+  const target = mentionTarget(v.target);
   if (
     v.version !== 1 ||
-    typeof v.naming_account_id !== "string" ||
-    !UUID.test(v.naming_account_id) ||
-    !v.target ||
-    typeof v.target.project_id !== "string" ||
-    !UUID.test(v.target.project_id) ||
-    typeof v.target.agent_id !== "string" ||
-    !UUID.test(v.target.agent_id) ||
+    !uuid(v.naming_account_id) ||
+    !target ||
     typeof v.name !== "string" ||
     !NAME.test(v.name)
   )
@@ -30,7 +73,7 @@ export function agentMentionReference(
   return {
     version: 1,
     naming_account_id: v.naming_account_id,
-    target: { project_id: v.target.project_id, agent_id: v.target.agent_id },
+    target,
     name: v.name,
   };
 }
@@ -102,8 +145,8 @@ export function agentMentionReferenceMap(
     const previous = result[key];
     if (
       previous &&
-      (previous.target.project_id !== reference.target.project_id ||
-        previous.target.agent_id !== reference.target.agent_id)
+      agentMentionTargetKey(previous.target) !==
+        agentMentionTargetKey(reference.target)
     ) {
       throw new Error(
         `Ambiguous agent reference ${key}; select a single destination`,
@@ -119,5 +162,8 @@ export function augmentPromptWithAgentMentions(
   validatedReferences: readonly AgentMentionReference[],
 ): string {
   if (!validatedReferences.length) return prompt;
-  return `${prompt}\n\nBound agent references for this human turn (identity only, not send permission):\n${JSON.stringify(agentMentionReferenceMap(validatedReferences))}\nUse these exact endpoints rather than guessing from names or history. Communication authorization is checked at send time. Selecting a reference does not send a message.`;
+  const external = validatedReferences.some((reference) =>
+    isExternalMentionTarget(reference.target),
+  );
+  return `${prompt}\n\nBound agent references for this human turn (identity only, not send permission):\n${JSON.stringify(agentMentionReferenceMap(validatedReferences))}\nUse these exact endpoints rather than guessing from names or history. Communication authorization is checked at send time. Selecting a reference does not send a message.${external ? ' A target of kind "external" is an agent on another site, a member of a shared Agent Network: send to it by its @name with `cocalc agent send`. Its message waits in its inbox; no turn starts there.' : ""}`;
 }

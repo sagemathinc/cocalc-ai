@@ -2572,6 +2572,122 @@ describe("admin entitlement overrides across bays", () => {
   });
 });
 
+describe("stuck archive reopen across bays", () => {
+  // bob's project lives on the attached bay and is stuck in state archiving
+  // under an automatic job stopped by files over the backup limit. An admin
+  // homed on the seed asks to reopen it: the call is routed to the owning
+  // bay, fresh auth and admin status come from the admin's home bay, and the
+  // job and project there are what it acts on. The cluster has no project
+  // hosts, so the host's freeze release fails and the reopen must refuse,
+  // leaving the job and project exactly as they were.
+  let admin;
+  let project_id;
+  const job_id = randomUUID();
+  const stuckState = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows: [job] } = await getPool().query(
+         "SELECT status, failure_category, evidence FROM project_archive_lifecycle_jobs WHERE id=$1",
+         [${JSON.stringify(job_id)}]);
+       const { rows: [project] } = await getPool().query(
+         "SELECT state ->> 'state' AS state, archive_lifecycle_job_id FROM projects WHERE project_id=$1",
+         [${JSON.stringify(project_id)}]);
+       return { job, project };`,
+    );
+  const forwarded = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const t = await getPool().query("SELECT to_regclass('hub_api_forwarded_calls') AS t");
+       if (t.rows[0].t == null) return 0;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.reopenStuckProjectArchive' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(admin.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  before(async () => {
+    project_id = await createProject(bob.client, "stuck-archive");
+    admin = await createAccount(cluster, { home_bay_id: SEED, name: "uma" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    // a host this cluster doesn't have: its freeze release cannot succeed
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { ensureProjectArchiveLifecycleSchema } = require("@cocalc/server/projects/archive-lifecycle-schema");
+       await ensureProjectArchiveLifecycleSchema();
+       const host_id = ${JSON.stringify(randomUUID())};
+       await getPool().query(
+         "INSERT INTO project_archive_lifecycle_jobs (id, project_id, owning_bay_id, host_id, reason, policy_version, status, report_only, failure_category, dedupe_key) VALUES ($1, $2, $3, $4, 'free-inactive', 1, 'failed', false, 'oversized-files', $5)",
+         [${JSON.stringify(job_id)}, ${JSON.stringify(project_id)}, ${JSON.stringify(ATTACHED)}, host_id, ${JSON.stringify(`multibay:${job_id}`)}]);
+       await getPool().query(
+         "UPDATE projects SET state='{\\"state\\":\\"archiving\\"}'::jsonb, archive_lifecycle_job_id=$2 WHERE project_id=$1",
+         [${JSON.stringify(project_id)}, ${JSON.stringify(job_id)}]);`,
+    );
+  });
+
+  after(async () => {
+    // leave bob's project usable for anything that runs later
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE projects SET state='{\\"state\\":\\"opened\\"}'::jsonb, archive_lifecycle_job_id=NULL WHERE project_id=$1",
+         [${JSON.stringify(project_id)}]);`,
+    );
+  });
+
+  it("refuses a non-admin on the other bay", async () => {
+    await assert.rejects(
+      alice.client.call("projects.reopenStuckProjectArchive", {
+        project_id,
+        reason: "multibay test",
+      }),
+      /only an admin can reopen a stuck archive/,
+    );
+  });
+
+  it("acts on the owning bay's job for an admin on the other bay, and refuses when the host can't release the freeze", async () => {
+    const before = await forwarded();
+    await assert.rejects(
+      admin.client.call("projects.reopenStuckProjectArchive", {
+        project_id,
+        reason: "multibay test",
+      }),
+      (err) => {
+        // past the auth and admin checks: it reached the owning bay's job
+        // and asked for that job's host, which this cluster doesn't have
+        assert.doesNotMatch(`${err?.message ?? err}`, /only an admin|fresh/i);
+        return true;
+      },
+    );
+    assert.equal(await forwarded(), before + 1);
+    // the refusal rolled the reservation back with everything else
+    const { job, project } = await stuckState();
+    assert.equal(job.status, "failed");
+    assert.equal(job.failure_category, "oversized-files");
+    assert.equal(job.evidence?.admin_reopen_reservation, undefined);
+    assert.equal(job.evidence?.admin_reopen, undefined);
+    assert.deepEqual(project, {
+      state: "archiving",
+      archive_lifecycle_job_id: job_id,
+    });
+  });
+});
+
 describe("sensor budgets on the account's home bay", () => {
   // carol is homed on the attached bay; her watchers are set from the seed,
   // as when one of her agents works in a project the seed owns. The budget
@@ -4337,5 +4453,92 @@ describe("bay registry registration is bound to the calling bay", () => {
     });
     assert.equal(result, "registered");
     assert.deepEqual(await seedEntry(ATTACHED), before);
+  });
+});
+
+describe("backup prune plans run on the seed, which owns the repositories", () => {
+  // An admin homed on the attached bay asks for a read-only prune plan. Auth
+  // is checked on the attached bay; the plan is forwarded over the real
+  // inter-bay fabric and runs on the seed, which records it. The repository
+  // exists only on the seed and has no usable bucket, so only the seed's
+  // handler can produce the error the admin sees.
+  let admin;
+  const repo_id = randomUUID();
+
+  const prunePlanLog = async (bay) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT value FROM central_log WHERE event='project_backup_repo_prune_plan' AND value->>'repo_id'=$1",
+         [${JSON.stringify(repo_id)}]);
+       return rows.map((row) => row.value);`,
+    );
+
+  before(async () => {
+    admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "pruner",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);
+       // The plan needs an admin with a second factor and a recent second
+       // factor verification (the harness session is freshly verified).
+       await getPool().query(
+         "INSERT INTO account_second_factors (id, account_id, type, label, secret_encrypted, status, created, activated_at, metadata) VALUES (gen_random_uuid(), $1, 'totp', 'multibay test', 'unused', 'active', NOW(), NOW(), '{}'::jsonb)",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+    await runInBay(
+      cluster,
+      SEED,
+      `const { ensureProjectBackupRepoSchema } = server("project-backup/index.js");
+       await ensureProjectBackupRepoSchema();
+       const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO project_backup_repos (id, region, bucket_id, root, secret, status) VALUES ($1, 'wnam', $2, 'rustic/multibay-prune-plan', 'v1:unused', 'active')",
+         [${JSON.stringify(repo_id)}, ${JSON.stringify(randomUUID())}]);`,
+    );
+  });
+
+  it("forwards from the attached bay; the seed runs and records it", async () => {
+    await assert.rejects(
+      admin.client.call("system.getProjectBackupRepoPrunePlan", {
+        repo_id,
+        max_unused: "0",
+      }),
+      /no usable configuration/,
+    );
+    const seedLog = await prunePlanLog(SEED);
+    assert.equal(seedLog.length, 1);
+    assert.equal(seedLog[0].account_id, admin.account_id);
+    assert.equal(seedLog[0].source_bay_id, ATTACHED);
+    assert.equal(seedLog[0].bay_id, SEED);
+    assert.equal(seedLog[0].max_unused, "0");
+    assert.equal(seedLog[0].ok, false);
+    assert.deepEqual(await prunePlanLog(ATTACHED), []);
+  });
+
+  it("reports a repository the seed does not have", async () => {
+    await assert.rejects(
+      admin.client.call("system.getProjectBackupRepoPrunePlan", {
+        repo_id: randomUUID(),
+      }),
+      /no shared project backup repository/,
+    );
+  });
+
+  it("refuses a non-admin before forwarding", async () => {
+    await assert.rejects(
+      bob.client.call("system.getProjectBackupRepoPrunePlan", { repo_id }),
+      /must be an admin/,
+    );
+    assert.equal((await prunePlanLog(SEED)).length, 1);
   });
 });

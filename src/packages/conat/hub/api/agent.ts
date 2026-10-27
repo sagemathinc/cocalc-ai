@@ -76,6 +76,7 @@ export const agent = {
   createScheduledPrompt: authFirstRequireAccountWithBoundSession,
   authorizeSensorExecution: authFirstRequireHostWithAccountTarget,
   getMentionIdentity: authFirstRequireHostWithAccountTarget,
+  getMentionMember: authFirstRequireHostWithAccountTarget,
   registerIdentity: authFirstRequireAccount,
   startFreshConversation: authFirstRequireAccount,
   listIdentities: authFirstRequireAccount,
@@ -652,6 +653,17 @@ export interface AgentApi {
   getMentionIdentity(
     opts: AgentHostAuth & { project_id: string; target: AgentEndpoint },
   ): Promise<AgentIdentity>;
+  /**
+   * For a person's @mention of an agent on another site: that agent as a
+   * member of one of the person's Agent Networks, or null when it is in none
+   * of them (removed members do not count).
+   */
+  getMentionMember(
+    opts: AgentHostAuth & {
+      project_id: string;
+      target: import("@cocalc/conat/agents/external").ExternalAgentSource;
+    },
+  ): Promise<{ label: string; available: boolean } | null>;
   registerIdentity(
     opts: AgentHumanAuth & {
       project_id: string;

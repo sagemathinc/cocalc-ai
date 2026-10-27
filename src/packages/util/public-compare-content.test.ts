@@ -3,6 +3,9 @@ import {
   PUBLIC_COMPARE_COCALC_AI_COLLABORATION_BULLET,
   PUBLIC_COMPARE_COLLABORATION_BULLET,
   PUBLIC_COMPARE_DEPLOYMENT_BULLET,
+  PUBLIC_COMPARE_HISTORY_SECTIONS,
+  PUBLIC_COMPARE_HISTORY_TITLE,
+  PUBLIC_COMPARE_SCALE_TITLE,
 } from "./public-compare-content";
 import { getPublicFeaturePage } from "./public-feature-pages";
 import { PUBLIC_PRODUCT_AVAILABILITY } from "./public-product-availability";
@@ -109,7 +112,11 @@ describe("Compare page content", () => {
   it("changes no other Compare section for any site", () => {
     const registry = getPublicFeaturePage("compare")?.sections ?? [];
     for (const config of [COCALC_AI, { cocalc_product: "plus" }, undefined]) {
-      const sections = getPublicCompareSections(config);
+      // the record's sections; cocalc.ai adds its own after them (below)
+      const sections = getPublicCompareSections(config).slice(
+        0,
+        registry.length,
+      );
       expect(sections.map(({ title }) => title)).toEqual(
         registry.map(({ title }) => title),
       );
@@ -117,5 +124,46 @@ describe("Compare page content", () => {
         sections.filter(({ title }) => title !== "Choose CoCalc when"),
       ).toEqual(registry.filter(({ title }) => title !== "Choose CoCalc when"));
     }
+  });
+});
+
+describe("Compare page history and backup sections", () => {
+  const titles = (config?: { cocalc_product?: string; dns?: string }) =>
+    getPublicCompareSections(config).map(({ title }) => title);
+
+  it("are added on cocalc.ai only, after the record's sections", () => {
+    const record = getPublicFeaturePage("compare")!.sections!.map(
+      ({ title }) => title,
+    );
+    expect(titles(COCALC_AI)).toEqual([
+      ...record,
+      PUBLIC_COMPARE_HISTORY_TITLE,
+      PUBLIC_COMPARE_SCALE_TITLE,
+    ]);
+    for (const config of [
+      { cocalc_product: "rocket", dns: "cocalc.example.edu" },
+      { cocalc_product: "launchpad", dns: "cocalc.example.edu" },
+      { cocalc_product: "launchpad", dns: "staging.cocalc.ai" },
+      { cocalc_product: "plus", dns: "localhost:5173" },
+      undefined,
+    ]) {
+      expect(titles(config)).toEqual(record);
+    }
+  });
+
+  it("compare three ways to keep history, CoCalc.ai's last", () => {
+    const [history] = PUBLIC_COMPARE_HISTORY_SECTIONS;
+    expect(history.cards?.map(({ title }) => title)).toEqual([
+      "A virtual machine per user",
+      "Ephemeral agent sandboxes",
+      "A CoCalc.ai project",
+    ]);
+  });
+
+  it("publish no schedule, retention, or certification claims", () => {
+    const text = JSON.stringify(PUBLIC_COMPARE_HISTORY_SECTIONS);
+    // retention and cadence depend on the project's runtime and schedules
+    expect(text).not.toMatch(/\d+\s*(minute|hour|day|week|month)s?\b/i);
+    expect(text).not.toMatch(/certified|compliant|SOC/i);
   });
 });

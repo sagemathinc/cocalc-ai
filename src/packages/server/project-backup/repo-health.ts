@@ -95,7 +95,7 @@ async function defaultLoadToml(repo_id: string): Promise<string> {
 }
 
 // Values from the profile that must never reach a log, a table or an alert.
-function profileSecrets(toml: string): string[] {
+export function profileSecrets(toml: string): string[] {
   const secrets: string[] = [];
   for (const line of toml.split("\n")) {
     const m = line.match(
@@ -177,21 +177,61 @@ export async function probeProjectBackupRepo(
     };
   }
   const secrets = profileSecrets(toml);
-  let tempDir: string | undefined;
-  let outcome: ProjectBackupRepoProbeOutcome;
-  try {
-    tempDir = await mkdtemp(
-      join(deps.tempRoot ?? tmpdir(), "cocalc-backup-repo-probe-"),
-    );
-    outcome = await runRusticProbe({ tempDir, toml, secrets, deps });
-    outcome.duration_ms = elapsed();
-  } catch (err) {
-    outcome = {
+  const run = await withRepoProfile(
+    { repo_id, toml, deps, prefix: PROBE_PROFILE_PREFIX },
+    (profile, tempDir) => runRusticProbe({ profile, tempDir, secrets, deps }),
+  );
+  if (run.cleanupError != null) {
+    return {
       result: "failed",
-      error_kind: "error",
-      error: summarizeRusticError(`${err}`, secrets),
+      error_kind: "cleanup_failed",
+      error: run.cleanupError,
       duration_ms: elapsed(),
     };
+  }
+  if (run.error !== undefined) {
+    return {
+      result: "failed",
+      error_kind: "error",
+      error: summarizeRusticError(`${run.error}`, secrets),
+      duration_ms: elapsed(),
+    };
+  }
+  return { ...run.value!, duration_ms: elapsed() };
+}
+
+// Temporary rustic profiles (they hold a repository's password and storage
+// keys), by prefix, with the age after which one is surely a leftover: no
+// run of that kind takes longer.
+export const PROBE_PROFILE_PREFIX = "cocalc-backup-repo-probe-";
+export const PRUNE_PLAN_PROFILE_PREFIX = "cocalc-backup-repo-prune-plan-";
+const PROFILE_MAX_AGE_MS: Record<string, number> = {
+  [PROBE_PROFILE_PREFIX]: 10 * 60 * 1000,
+  [PRUNE_PLAN_PROFILE_PREFIX]: 3 * 60 * 60 * 1000,
+};
+
+// Write the repository's profile to a new temporary directory, run fn with
+// its rustic `-P` path, then remove the directory. A directory that cannot be
+// removed is recorded as a leftover, which keeps admin health critical until
+// it is gone; cleanupError then says so.
+export async function withRepoProfile<T>(
+  {
+    repo_id,
+    toml,
+    deps = {},
+    prefix,
+  }: { repo_id: string; toml: string; deps?: ProbeDeps; prefix: string },
+  fn: (profile: string, tempDir: string) => Promise<T>,
+): Promise<{ value?: T; error?: unknown; cleanupError?: string }> {
+  let tempDir: string | undefined;
+  const result: { value?: T; error?: unknown; cleanupError?: string } = {};
+  try {
+    tempDir = await mkdtemp(join(deps.tempRoot ?? tmpdir(), prefix));
+    const profile = join(tempDir, "repo");
+    await writeFile(`${profile}.toml`, toml, { mode: 0o600 });
+    result.value = await fn(profile, tempDir);
+  } catch (err) {
+    result.error = err ?? new Error("unknown error");
   }
   if (tempDir) {
     try {
@@ -200,9 +240,7 @@ export async function probeProjectBackupRepo(
         ((dir) => rm(dir, { recursive: true, force: true }))
       )(tempDir);
     } catch (err) {
-      // The profile holds the repository password and storage keys: make
-      // the leftover visible instead of reporting a clean probe.
-      logger.error("unable to remove a backup repository probe profile", {
+      logger.error("unable to remove a backup repository rustic profile", {
         repo_id,
         path: tempDir,
         err: `${err}`,
@@ -211,35 +249,28 @@ export async function probeProjectBackupRepo(
         path: tempDir,
         error: `${err}`.slice(0, MAX_ERROR_LENGTH),
       }).catch((recordErr) =>
-        logger.error("unable to record a leftover probe profile", {
+        logger.error("unable to record a leftover rustic profile", {
           path: tempDir,
           err: `${recordErr}`,
         }),
       );
-      outcome = {
-        result: "failed",
-        error_kind: "cleanup_failed",
-        error: `unable to remove the temporary probe profile ${tempDir}, which holds the repository credentials; delete it: ${`${err}`.slice(0, 200)}`,
-        duration_ms: elapsed(),
-      };
+      result.cleanupError = `unable to remove the temporary probe profile ${tempDir}, which holds the repository credentials; delete it: ${`${err}`.slice(0, 200)}`;
     }
   }
-  return outcome;
+  return result;
 }
 
 async function runRusticProbe({
+  profile,
   tempDir,
-  toml,
   secrets,
   deps,
 }: {
+  profile: string;
   tempDir: string;
-  toml: string;
   secrets: string[];
   deps: ProbeDeps;
 }): Promise<ProjectBackupRepoProbeOutcome> {
-  const profile = join(tempDir, "repo");
-  await writeFile(`${profile}.toml`, toml, { mode: 0o600 });
   const timeoutMs = deps.timeoutMs ?? PROBE_TIMEOUT_MS;
   const output = await exec({
     cmd: deps.rusticPath ?? defaultRusticPath,
@@ -270,10 +301,6 @@ async function runRusticProbe({
   };
 }
 
-const PROFILE_PREFIX = "cocalc-backup-repo-probe-";
-// No probe takes this long, so an older profile directory is a leftover.
-const LEFTOVER_PROFILE_AGE_MS = 10 * 60 * 1000;
-
 // Remove probe profiles that an earlier probe (maybe in a process that has
 // since restarted) failed to remove. Those that still cannot be removed are
 // recorded, which keeps admin health critical until they are gone.
@@ -297,11 +324,14 @@ export async function removeLeftoverProbeProfiles(
     return { removed, failed };
   }
   for (const name of names) {
-    if (!name.startsWith(PROFILE_PREFIX)) continue;
+    const prefix = Object.keys(PROFILE_MAX_AGE_MS).find((p) =>
+      name.startsWith(p),
+    );
+    if (!prefix) continue;
     const path = join(root, name);
     try {
       const { mtimeMs } = await stat(path);
-      if (now.getTime() - mtimeMs < LEFTOVER_PROFILE_AGE_MS) continue;
+      if (now.getTime() - mtimeMs < PROFILE_MAX_AGE_MS[prefix]) continue;
       await (
         deps.removeTempDir ??
         ((dir) => rm(dir, { recursive: true, force: true }))

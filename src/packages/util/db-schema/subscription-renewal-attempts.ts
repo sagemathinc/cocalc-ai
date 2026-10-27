@@ -33,6 +33,7 @@ export interface SubscriptionRenewalAttempt {
   last_error?: string;
   customer_action_required_at?: Date | null;
   customer_action_notified_at?: Date | null;
+  business_tax_id_notified_at?: Date | null;
   created_at: Date;
   updated_at: Date;
   completed_at?: Date;
@@ -153,6 +154,10 @@ Table({
     customer_action_notified_at: {
       type: "timestamp",
       desc: "When the customer was successfully sent the action-needed notice for this attempt. Null while it still has to be (re)sent.",
+    },
+    business_tax_id_notified_at: {
+      type: "timestamp",
+      desc: "When the customer was successfully sent the notice that this renewal needs their organization's VAT number. Null while it still has to be (re)sent.",
     },
     created_at: {
       type: "timestamp",

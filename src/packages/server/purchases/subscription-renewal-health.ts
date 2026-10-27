@@ -6,7 +6,11 @@
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getPool from "@cocalc/database/pool";
 import adminAlert from "@cocalc/server/messages/admin-alert";
-import { RENEWAL_PAYMENT_GRACE_MS } from "./subscription-renewal-attempts";
+import {
+  BUSINESS_TAX_ID_REFUSAL_PREFIX,
+  renewalAttemptClaimableSql,
+  RENEWAL_PAYMENT_GRACE_MS,
+} from "./subscription-renewal-attempts";
 
 const DEFAULT_WARNING_MINUTES = 10;
 const DEFAULT_CRITICAL_MINUTES = 24 * 60;
@@ -24,6 +28,9 @@ interface DelayedRenewalRow {
   payment_intent_id?: string;
   stripe_invoice_id?: string;
   last_error?: string;
+  // whether a renewal pass may claim it (claimDueSubscriptionRenewalAttempts
+  // skips banned, deleted and billing-frozen accounts)
+  claimable: boolean;
 }
 
 export interface SubscriptionRenewalHealthThresholds {
@@ -79,6 +86,7 @@ function delayedRenewalTable(
 }
 
 export async function alertDelayedSubscriptionRenewals(): Promise<number> {
+  const claimable = await renewalAttemptClaimableSql("$4");
   const { subscription_maintenance: maintenance } = await getServerSettings();
   const { warningMinutes, criticalMinutes } =
     getSubscriptionRenewalHealthThresholds(maintenance);
@@ -92,7 +100,8 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
             a.attempt_count,
             a.payment_intent_id,
             a.stripe_invoice_id,
-            a.last_error
+            a.last_error,
+            ${claimable.sql} AS claimable
        FROM subscription_renewal_attempts a
        JOIN subscriptions s
          ON s.id=a.subscription_id
@@ -111,8 +120,21 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
           a.not_before > NOW() - ($2 * INTERVAL '1 millisecond') AND
           a.next_attempt_at > NOW() - ($1 * INTERVAL '1 minute')
         )
+        -- Likewise for a renewal waiting for a VAT number, as long as the
+        -- customer was sent the notice for this renewal.
+        AND NOT (
+          LEFT(COALESCE(a.last_error, ''), LENGTH($3)) = $3 AND
+          a.business_tax_id_notified_at IS NOT NULL AND
+          a.not_before > NOW() - ($2 * INTERVAL '1 millisecond') AND
+          a.next_attempt_at > NOW() - ($1 * INTERVAL '1 minute')
+        )
       ORDER BY a.not_before, a.subscription_id`,
-    [warningMinutes, RENEWAL_PAYMENT_GRACE_MS],
+    [
+      warningMinutes,
+      RENEWAL_PAYMENT_GRACE_MS,
+      BUSINESS_TAX_ID_REFUSAL_PREFIX,
+      ...(claimable.bay != null ? [claimable.bay] : []),
+    ],
   );
   if (rows.length === 0) {
     return 0;
@@ -121,9 +143,23 @@ export async function alertDelayedSubscriptionRenewals(): Promise<number> {
     ({ age_minutes }) => Number(age_minutes) >= criticalMinutes,
   );
   const hidden = Math.max(0, rows.length - MAX_ALERT_ROWS);
+  // Overdue renewals that a pass could claim but none has picked up at all:
+  // most likely other renewals are being processed (or retried) ahead of
+  // them. Renewals no pass may claim are counted separately.
+  const neverTried = rows.filter(
+    ({ attempt_count, claimable }) => claimable && Number(attempt_count) === 0,
+  ).length;
+  const unclaimable = rows.filter(({ claimable }) => !claimable).length;
+  const starvation =
+    (neverTried > 0
+      ? `\n- **Never tried yet: ${neverTried}.** These are overdue and claimable but no renewal pass has attempted them, most likely because other renewals are taking every pass (head-of-line blocking): check the renewals with many tries.`
+      : "") +
+    (unclaimable > 0
+      ? `\n- Not claimable: ${unclaimable} (this bay's renewal worker may not claim them: the account is banned, deleted or has billing frozen, or, without the billing authority, the account or its funding authority belongs to another bay or is inactive).`
+      : "");
   const body = `Automatic personal membership renewals are taking longer than expected.
 
-- Affected renewals: ${rows.length}
+- Affected renewals: ${rows.length}${starvation}
 - Oldest age: ${Math.floor(Number(rows[0].age_minutes))} minutes
 - Warning threshold: ${warningMinutes} minutes
 - Critical threshold: ${criticalMinutes} minutes

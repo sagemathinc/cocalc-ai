@@ -94,6 +94,7 @@ export const disableIdentity = identities.disableIdentity;
 export const recoverIdentity = forCaller(identities.recoverIdentity);
 export const issueIdentity = identities.issueIdentity;
 export const getMentionIdentity = forCaller(identities.getMentionIdentity);
+export const getMentionMember = identities.getMentionMember;
 export const endIdentityRun = identities.endIdentityRun;
 import { CodexAppServerAgent, type AcpAgent } from "@cocalc/ai/acp";
 import type { AcpStreamPayload } from "@cocalc/conat/ai/acp/types";

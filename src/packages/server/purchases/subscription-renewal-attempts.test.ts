@@ -15,6 +15,10 @@ import {
 import {
   cancelOpenSubscriptionRenewalAttempts,
   claimDueSubscriptionRenewalAttempts,
+  completeSubscriptionRenewalAttempt,
+  releaseSubscriptionRenewalAttempt,
+  RENEWAL_ATTEMPT_MAX_RETRY_MS,
+  renewalRetryDelayMs,
   scheduleMissingSubscriptionRenewalAttempts,
   scheduleSubscriptionRenewalAttempt,
 } from "./subscription-renewal-attempts";
@@ -97,6 +101,107 @@ describe("durable subscription renewal attempts", () => {
     expect(thirdClaim).toEqual([]);
     expect(firstClaim[0].state).toBe("processing");
     expect(firstClaim[0].attempt_count).toBe(1);
+  });
+
+  it("does not let a renewal that keeps failing starve the other due renewals", async () => {
+    // One renewal, due longest, fails on every try; three others are due.
+    // Each pass claims one renewal (like the billing authority dispatch), and
+    // passes are further apart than the failing renewal's retry delay.
+    const failingAccount = uuid();
+    await createTestAccount(failingAccount);
+    const failing = await createTestMembershipSubscription(failingAccount, {
+      start: dayjs().subtract(1, "month").toDate(),
+      end: dayjs().subtract(2, "day").toDate(),
+    });
+    const others: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const account_id = uuid();
+      await createTestAccount(account_id);
+      const { subscription_id } = await createTestMembershipSubscription(
+        account_id,
+        {
+          start: dayjs().subtract(1, "month").toDate(),
+          end: dayjs().subtract(1, "day").add(i, "minute").toDate(),
+        },
+      );
+      others.push(subscription_id);
+    }
+
+    const claimed: number[] = [];
+    for (let pass = 0; pass < 4; pass++) {
+      const [attempt] = await claimDueSubscriptionRenewalAttempts({ limit: 1 });
+      expect(attempt).toBeDefined();
+      claimed.push(attempt.subscription_id);
+      if (attempt.subscription_id === failing.subscription_id) {
+        await releaseSubscriptionRenewalAttempt({
+          attempt_id: attempt.id,
+          error: "refused",
+        });
+      } else {
+        await completeSubscriptionRenewalAttempt({
+          attempt_id: attempt.id,
+          state: "succeeded",
+        });
+      }
+      // the next pass comes after the failing renewal's retry delay
+      await getPool().query(
+        `UPDATE subscription_renewal_attempts
+            SET next_attempt_at=LEAST(next_attempt_at, NOW())
+          WHERE subscription_id=$1`,
+        [failing.subscription_id],
+      );
+    }
+
+    expect(claimed.filter((id) => id === failing.subscription_id)).toHaveLength(
+      1,
+    );
+    expect(claimed.filter((id) => others.includes(id)).sort()).toEqual(
+      [...others].sort(),
+    );
+  });
+
+  it("backs off a failing renewal exponentially, up to a cap", async () => {
+    expect(renewalRetryDelayMs(1)).toBe(60_000);
+    expect(renewalRetryDelayMs(2)).toBe(120_000);
+    expect(renewalRetryDelayMs(4)).toBe(480_000);
+    expect(renewalRetryDelayMs(1000)).toBe(RENEWAL_ATTEMPT_MAX_RETRY_MS);
+
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        start: dayjs().subtract(1, "month").toDate(),
+        end: dayjs().subtract(1, "hour").toDate(),
+      },
+    );
+    for (const [tries, delayMs] of [
+      [1, 60_000],
+      [4, 480_000],
+      [50, RENEWAL_ATTEMPT_MAX_RETRY_MS],
+    ]) {
+      await getPool().query(
+        `UPDATE subscription_renewal_attempts
+            SET next_attempt_at=NOW() - INTERVAL '1 second',
+                state='scheduled', lease_expires_at=NULL,
+                attempt_count=$2 - 1
+          WHERE subscription_id=$1`,
+        [subscription_id, tries],
+      );
+      const [attempt] = await claimDueSubscriptionRenewalAttempts({ limit: 1 });
+      expect(attempt.attempt_count).toBe(tries);
+      await releaseSubscriptionRenewalAttempt({
+        attempt_id: attempt.id,
+        error: "failed",
+      });
+      const { rows } = await getPool().query(
+        `SELECT EXTRACT(EPOCH FROM (next_attempt_at - NOW())) * 1000 AS ms
+           FROM subscription_renewal_attempts WHERE id=$1`,
+        [attempt.id],
+      );
+      expect(Number(rows[0].ms)).toBeGreaterThan(delayMs - 10_000);
+      expect(Number(rows[0].ms)).toBeLessThanOrEqual(delayMs);
+    }
   });
 
   it("claims due attempts when centralized billing omits the legacy bay predicate", async () => {

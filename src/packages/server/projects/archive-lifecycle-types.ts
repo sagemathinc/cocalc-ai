@@ -106,6 +106,8 @@ export type ProjectArchiveLifecycleRunSummary = {
   stale: number;
   failed: number;
   rate_limited: number;
+  /** Final backups still running after the bounded wait; resumed next pass. */
+  pending: number;
   exclusions: Partial<Record<ProjectArchiveEligibilityExclusion, number>>;
   job_ids: string[];
 };

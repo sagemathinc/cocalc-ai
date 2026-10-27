@@ -230,6 +230,12 @@ import {
   projectBackupReposAreSeedManaged,
 } from "@cocalc/server/project-backup";
 import {
+  PRUNE_PLAN_DEFAULT_TIMEOUT_MS,
+  PRUNE_PLAN_MAX_TIMEOUT_MS,
+  runAuditedProjectBackupRepoPrunePlan,
+  type ProjectBackupRepoPrunePlan,
+} from "@cocalc/server/project-backup/repo-prune-plan";
+import {
   getProjectBackupRepoHealth,
   projectBackupRepoHealthDetails,
   projectBackupRepoHealthLevel,
@@ -454,7 +460,13 @@ import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getClusterConfig } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
-import { getProjectArchiveLifecycleOperationalStatus } from "@cocalc/server/projects/archive-lifecycle-maintenance";
+import {
+  getProjectArchiveBlockedSummary,
+  getProjectArchiveHostCoverage,
+  getProjectArchiveLifecycleOperationalStatus,
+  projectArchiveBlockedHealth,
+  projectArchiveHostCoverageHealth,
+} from "@cocalc/server/projects/archive-lifecycle-maintenance";
 import { getConatAdmissionConfig } from "../admission-settings";
 import {
   recordServiceAdmissionDenialLocal,
@@ -2280,6 +2292,8 @@ export async function getLaunchHealth({
     billingExposureResult,
     kernelHardeningResult,
     backupRepoResult,
+    archiveHostCoverageResult,
+    archiveBlockedResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2307,7 +2321,17 @@ export async function getLaunchHealth({
       await getProjectBackupRepoHealth({
         seed_managed: projectBackupReposAreSeedManaged(),
       }))(),
+    getProjectArchiveHostCoverage(),
+    getProjectArchiveBlockedSummary(),
   ]);
+  const archiveHostCoverage =
+    archiveHostCoverageResult.status === "fulfilled"
+      ? projectArchiveHostCoverageHealth(archiveHostCoverageResult.value)
+      : undefined;
+  const archiveBlocked =
+    archiveBlockedResult.status === "fulfilled"
+      ? projectArchiveBlockedHealth(archiveBlockedResult.value)
+      : undefined;
 
   const settings =
     settingsResult.status === "fulfilled"
@@ -2670,6 +2694,30 @@ export async function getLaunchHealth({
           : projectBackupRepoHealthDetails(backupRepoResult.value),
     }),
     launchHealthCheck({
+      id: "project-archive-hosts",
+      label: "Automatic archiving host coverage",
+      level: archiveHostCoverage?.level ?? "warning",
+      summary:
+        archiveHostCoverage?.summary ??
+        "Unable to read automatic archiving host coverage.",
+      details:
+        archiveHostCoverageResult.status === "rejected"
+          ? [`${archiveHostCoverageResult.reason}`]
+          : (archiveHostCoverage?.details ?? []),
+    }),
+    launchHealthCheck({
+      id: "project-archive-blocked",
+      label: "Automatic archives stopped by oversized files",
+      level: archiveBlocked?.level ?? "warning",
+      summary:
+        archiveBlocked?.summary ??
+        "Unable to read automatic archives stopped by oversized files.",
+      details:
+        archiveBlockedResult.status === "rejected"
+          ? [`${archiveBlockedResult.reason}`]
+          : (archiveBlocked?.details ?? []),
+    }),
+    launchHealthCheck({
       id: "project-recovery",
       label: "Project snapshots and backups",
       level:
@@ -2784,7 +2832,7 @@ export async function getLaunchHealth({
                   .slice(0, 12)
                   .map(
                     (group) =>
-                      `${group.host_id} ${group.storage_service_class} ${group.kind} debt: ${group.overdue_count} overdue, oldest ${Math.round(group.oldest_delay_seconds / 60)} minutes, ${group.unknown_count} unknown, ${group.repeated_failures} repeated failures`,
+                      `${group.host_id} ${group.storage_service_class} ${group.kind} debt: ${group.overdue_count} overdue, oldest ${Math.round(group.oldest_delay_seconds / 60)} minutes, ${group.unknown_count} unknown, ${group.repeated_failures} repeated failures, oldest observation ${Math.round(group.oldest_observation_age_seconds / 3600)} hours, ${group.never_observed_count} never observed`,
                   ),
                 ...projectRecovery.parked_hosts
                   .slice(0, 12)
@@ -3105,6 +3153,68 @@ export async function handoffBillingAuthority({
   });
   return await handoffBillingAuthority0({
     timeout_ms: billingAuthorityLifecycleTimeout(timeout_ms),
+  });
+}
+
+// Read-only: `rustic --dry-run prune` (and optionally `repoinfo`) of one
+// shared backup repository, to size the prune backlog. Admin with a recent
+// second factor, no impersonation, checked here; the bay that owns the
+// repositories (the seed, in a multi-bay cluster) runs it and records it in
+// its central log.
+export async function getProjectBackupRepoPrunePlan({
+  account_id,
+  browser_id,
+  session_hash,
+  repo_id,
+  max_unused,
+  max_repack,
+  repoinfo,
+  timeout_minutes,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  repo_id?: string;
+  max_unused?: string | null;
+  max_repack?: string | null;
+  repoinfo?: boolean;
+  timeout_minutes?: number;
+} = {}): Promise<ProjectBackupRepoPrunePlan> {
+  await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+    allow_actor_impersonation: false,
+  });
+  const request = {
+    actor_account_id: account_id!,
+    source_bay_id: getConfiguredBayId(),
+    repo_id: `${repo_id ?? ""}`.trim(),
+    max_unused: max_unused ?? null,
+    max_repack: max_repack ?? null,
+    repoinfo: repoinfo === true,
+    timeout_ms:
+      timeout_minutes == null ? undefined : Number(timeout_minutes) * 60_000,
+  };
+  const cluster = getClusterConfig();
+  if (projectBackupReposAreSeedManaged() && cluster.seed_bay_id) {
+    // The seed owns the repositories: it runs the plan and records it.
+    return await getInterBayBridge()
+      .hostConnection(cluster.seed_bay_id, {
+        timeout_ms:
+          Math.min(
+            PRUNE_PLAN_MAX_TIMEOUT_MS,
+            request.timeout_ms ?? PRUNE_PLAN_DEFAULT_TIMEOUT_MS,
+          ) +
+          5 * 60_000,
+      })
+      .getSeedProjectBackupRepoPrunePlan(request);
+  }
+  return await runAuditedProjectBackupRepoPrunePlan({
+    ...request,
+    bay_id: getConfiguredBayId(),
   });
 }
 

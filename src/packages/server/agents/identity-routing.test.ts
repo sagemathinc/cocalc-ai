@@ -5,6 +5,7 @@ import {
   registerIdentity,
   getIdentity,
   getMentionIdentity,
+  getMentionMember,
   recoverIdentity,
   startFreshConversation,
   startFreshConversationLocal,
@@ -37,6 +38,10 @@ const sourceHostAccess = jest.fn();
 const localProject = jest.fn();
 const chatReady = jest.fn();
 const prepareFresh = jest.fn();
+const listNetworks = jest.fn();
+jest.mock("./personal", () => ({
+  listAgentNetworks: (...a) => listNetworks(...a),
+}));
 jest.mock("@cocalc/conat/ai/acp/client", () => ({
   controlAcp: (...args) => prepareFresh(...args),
 }));
@@ -594,4 +599,92 @@ test.each([
   ).rejects.toThrow("stale");
   expect(query).not.toHaveBeenCalled();
   expect(fabric).not.toHaveBeenCalled();
+});
+
+describe("host mention lookup of an agent on another site", () => {
+  const target = {
+    kind: "external" as const,
+    account_id: randomUUID(),
+    agent_id: randomUUID(),
+    installation_id: randomUUID(),
+  };
+  const member = (over: object = {}) => ({
+    kind: "external",
+    source: target,
+    label: "ops0 on alpha",
+    available: true,
+    ...over,
+  });
+
+  test("finds it among the human's own networks, after source-host authorization", async () => {
+    const sourceProject = randomUUID();
+    listNetworks
+      .mockResolvedValueOnce({
+        networks: [{ members: [member({ removed_at: "gone" })] }],
+        next_cursor: "page2",
+      })
+      .mockResolvedValueOnce({
+        networks: [
+          {
+            members: [
+              member({
+                source: { ...target, agent_id: target.agent_id.toUpperCase() },
+              }),
+            ],
+          },
+        ],
+      });
+    expect(
+      await getMentionMember({
+        host_id: "source-host",
+        account_id,
+        project_id: sourceProject,
+        target,
+      }),
+    ).toEqual({ label: "ops0 on alpha", available: true });
+    expect(sourceHostAccess).toHaveBeenCalledWith({
+      host_id: "source-host",
+      account_id,
+      project_id: sourceProject,
+    });
+    expect(listNetworks).toHaveBeenNthCalledWith(1, { account_id, limit: 100 });
+    expect(listNetworks).toHaveBeenNthCalledWith(2, {
+      account_id,
+      limit: 100,
+      cursor: "page2",
+    });
+  });
+
+  test("is null when no network of the human has it, and needs the source host", async () => {
+    listNetworks.mockResolvedValueOnce({
+      networks: [
+        {
+          members: [
+            member({ source: { ...target, installation_id: randomUUID() } }),
+          ],
+        },
+      ],
+    });
+    expect(
+      await getMentionMember({
+        host_id: "source-host",
+        account_id,
+        project_id: randomUUID(),
+        target,
+      }),
+    ).toBeNull();
+    sourceHostAccess.mockRejectedValueOnce(
+      new Error("host does not own source"),
+    );
+    listNetworks.mockClear();
+    await expect(
+      getMentionMember({
+        host_id: "other-host",
+        account_id,
+        project_id: randomUUID(),
+        target,
+      }),
+    ).rejects.toThrow("host does not own source");
+    expect(listNetworks).not.toHaveBeenCalled();
+  });
 });

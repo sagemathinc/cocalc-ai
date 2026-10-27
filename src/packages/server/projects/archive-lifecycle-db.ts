@@ -292,7 +292,12 @@ export async function updateProjectArchiveLifecycleJob({
             failure_category = $3,
             error = $4,
             updated_at = NOW()
-      WHERE id = $1`,
+      WHERE id = $1
+        -- an admin reopen (reserved or done) is final: a worker that is
+        -- still finishing this job must not overwrite it or make it
+        -- retryable again
+        AND COALESCE(failure_category, '') <> 'admin-reopen'
+        AND NOT (COALESCE(evidence, '{}'::jsonb) ? 'admin_reopen')`,
     [
       job_id,
       status,
@@ -320,9 +325,21 @@ export async function countRunningArchivesByHost(
   await ensureProjectArchiveLifecycleSchema();
   const { rows } = await getPool().query<{ count: string }>(
     `SELECT COUNT(*)::text AS count
-       FROM ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
-      WHERE host_id = $1
-        AND status = 'running'`,
+       FROM ${PROJECT_ARCHIVE_LIFECYCLE_TABLE} job
+      WHERE job.host_id = $1
+        AND (
+          job.status = 'running'
+          -- queued while its final backup is still running (pending): the
+          -- archive is still in progress on this host
+          OR (
+            job.status = 'queued'
+            AND EXISTS (
+              SELECT 1 FROM projects p
+               WHERE p.archive_lifecycle_job_id = job.id
+                 AND p.state ->> 'state' = 'archiving'
+            )
+          )
+        )`,
     [host_id],
   );
   return Math.max(0, Number(rows[0]?.count ?? 0) || 0);
@@ -343,6 +360,7 @@ export async function claimProjectArchiveLifecycleJob(
             error = NULL,
             updated_at = NOW()
       WHERE id = $1
+        AND COALESCE(failure_category, '') NOT IN ('oversized-files', 'admin-reopen')
         AND (
           status = 'queued'
           OR (status = 'failed' AND (next_attempt_at IS NULL OR next_attempt_at <= NOW()))
@@ -361,7 +379,9 @@ export async function claimRetainedProjectArchiveLifecycleJob(
     `UPDATE ${PROJECT_ARCHIVE_LIFECYCLE_TABLE} job
         SET status = 'running',
             attempts = attempts + 1,
-            claimed_at = NOW(),
+            -- the first claim: resuming a pending archive is not a new one
+            -- for the hourly limit (countRecentAutomaticArchives)
+            claimed_at = COALESCE(job.claimed_at, NOW()),
             completed_at = NULL,
             next_attempt_at = NULL,
             failure_category = NULL,
@@ -370,6 +390,7 @@ export async function claimRetainedProjectArchiveLifecycleJob(
       WHERE job.id = $1
         AND job.reason <> 'manual'
         AND job.report_only IS FALSE
+        AND COALESCE(job.failure_category, '') NOT IN ('oversized-files', 'admin-reopen')
         AND (
           job.status IN ('queued', 'stale', 'canceled', 'completed')
           OR (
@@ -403,6 +424,8 @@ export async function listQueuedProjectArchiveLifecycleJobs(
        FROM ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
       WHERE reason <> 'manual'
         AND report_only IS FALSE
+        -- terminal or reserved for an admin reopen (archive-lifecycle-maintenance)
+        AND COALESCE(failure_category, '') NOT IN ('oversized-files', 'admin-reopen')
         AND (
           (
             status IN ('queued', 'failed')
@@ -436,6 +459,8 @@ export async function listRecoverableProjectArchiveLifecycleJobs(
         AND project.state ->> 'state' = 'archiving'
       WHERE job.reason <> 'manual'
         AND job.report_only IS FALSE
+        -- terminal or reserved for an admin reopen (archive-lifecycle-maintenance)
+        AND COALESCE(job.failure_category, '') NOT IN ('oversized-files', 'admin-reopen')
         AND (
           job.status IN ('queued', 'stale', 'canceled', 'completed')
           OR

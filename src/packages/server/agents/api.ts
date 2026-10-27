@@ -530,6 +530,44 @@ export const getMentionIdentity: AgentApi["getMentionIdentity"] = async (
   });
 };
 
+// The same host-scoped read for an external network member: found among
+// the human's own Agent Networks, never by the source host's authority.
+export const getMentionMember: AgentApi["getMentionMember"] = async (opts) => {
+  await assertLocalAgentProject(opts.project_id);
+  await assertProjectHostAgentTokenAccess({
+    host_id: opts.host_id!,
+    account_id: opts.account_id!,
+    project_id: opts.project_id,
+  });
+  const target = opts.target;
+  if (target?.kind !== "external") throw new Error("external target required");
+  for (const field of ["account_id", "agent_id", "installation_id"] as const)
+    requireUuid(target[field], field);
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const { listAgentNetworks } = await import("./personal");
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const directory = await listAgentNetworks({
+      account_id: opts.account_id!,
+      limit: 100,
+      ...(cursor ? { cursor } : {}),
+    });
+    for (const network of directory.networks)
+      for (const member of network.members)
+        if (
+          member.kind === "external" &&
+          !member.removed_at &&
+          same(member.source.account_id, target.account_id) &&
+          same(member.source.agent_id, target.agent_id) &&
+          same(member.source.installation_id, target.installation_id)
+        )
+          return { label: member.label, available: member.available };
+    cursor = directory.next_cursor;
+    if (!cursor) break;
+  }
+  return null;
+};
+
 export const endIdentityRun: AgentApi["endIdentityRun"] = async (opts) => {
   const db = agentStore();
   const agent = await db.get(opts.agent_id);

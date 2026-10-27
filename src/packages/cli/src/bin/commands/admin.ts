@@ -4303,6 +4303,48 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     );
 
   admin
+    .command("backup-shard-prune-plan <repo-id>")
+    .description(
+      "size the prune backlog of one shared backup repository with a read-only `rustic --dry-run prune` on the repository-authoritative bay (admin, recent second factor; never deletes or repacks)",
+    )
+    .option(
+      "--max-unused <limit>",
+      "rustic --max-unused for the plan, e.g. 0 (strict), 5%, or unlimited",
+    )
+    .option("--max-repack <limit>", "rustic --max-repack for the plan")
+    .option(
+      "--repoinfo",
+      "also read the index summary (rustic repoinfo --only-index) for pack sizes",
+      false,
+    )
+    .option("--timeout-minutes <n>", "give up after this long (1-120)", "30")
+    .action(async (repoId: string, opts: any, command: Command) => {
+      await withContext(
+        command,
+        "admin backup-shard-prune-plan",
+        async (ctx) => {
+          const timeout_minutes = parsePositiveIntegerOption({
+            name: "--timeout-minutes",
+            value: opts.timeoutMinutes,
+            fallback: 30,
+            max: 120,
+          });
+          return await ctx.hub.system.getProjectBackupRepoPrunePlan({
+            account_id: ctx.accountId,
+            repo_id: repoId.trim(),
+            max_unused: opts.maxUnused?.trim() || undefined,
+            max_repack: opts.maxRepack?.trim() || undefined,
+            repoinfo: !!opts.repoinfo,
+            timeout_minutes,
+            // Wait for the whole plan, not the default RPC timeout: the
+            // server holds the one-plan lock until it finishes.
+            timeout: (timeout_minutes + 5) * 60_000,
+          });
+        },
+      );
+    });
+
+  admin
     .command("acp-denials")
     .description(
       "show repeated ACP admission-denied events from central_log (admin-only)",

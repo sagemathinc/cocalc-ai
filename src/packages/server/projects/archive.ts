@@ -57,7 +57,20 @@ export type ArchiveProjectStorageOptions = {
   // Manual archives only: the user confirmed that files over the backup file
   // size limit may be lost. Automatic archives never skip files.
   allow_oversized_skip?: boolean;
+  // Automatic archives only: stop waiting for a running final backup after
+  // this long and throw FinalArchiveBackupPendingError, leaving the claim and
+  // the backup in place; the next attempt resumes waiting for the same backup.
+  final_backup_wait_ms?: number;
 };
+
+/** The final backup is still running after the bounded wait. Nothing was
+ * released or reopened; the job is queued to resume waiting for it. */
+export class FinalArchiveBackupPendingError extends Error {
+  constructor(readonly op_id: string) {
+    super(`final automatic archive backup ${op_id} is still running`);
+    this.name = "FinalArchiveBackupPendingError";
+  }
+}
 
 export class ProjectArchiveStorageError extends Error {
   readonly hostCleanupCompleted: boolean;
@@ -270,12 +283,36 @@ async function createFinalAutomaticArchiveBackup({
   job_id,
   beforeCreateNew,
   onBackupBarrierMayExist,
+  waitMs,
 }: {
   project_id: string;
   job_id: string;
   beforeCreateNew: () => Promise<void>;
   onBackupBarrierMayExist?: () => void;
+  waitMs?: number;
 }): Promise<ProjectArchiveLifecycleFinalBackup> {
+  const bounded = waitMs != null && waitMs > 0;
+  const waitFor = async (op: {
+    op_id: string;
+    scope_type: LroSummary["scope_type"];
+    scope_id: string;
+  }): Promise<LroSummary> => {
+    try {
+      return await waitForDurableLroCompletion({
+        op_id: op.op_id,
+        scope_type: op.scope_type,
+        scope_id: op.scope_id,
+        client: conat(),
+        timeout_ms: bounded ? waitMs : BACKUP_TIMEOUT_MS + 60_000,
+      });
+    } catch (err) {
+      // Only the waiter timed out: the backup keeps running on the host.
+      if (bounded && /timeout waiting for lro completion/.test(`${err}`)) {
+        throw new FinalArchiveBackupPendingError(op.op_id);
+      }
+      throw err;
+    }
+  };
   const dedupeKey = finalArchiveBackupDedupeKey(job_id);
   let history: LroSummary[];
   try {
@@ -313,13 +350,7 @@ async function createFinalAutomaticArchiveBackup({
   );
   if (active) {
     onBackupBarrierMayExist?.();
-    summary = await waitForDurableLroCompletion({
-      op_id: active.op_id,
-      scope_type: active.scope_type,
-      scope_id: active.scope_id,
-      client: conat(),
-      timeout_ms: BACKUP_TIMEOUT_MS + 60_000,
-    });
+    summary = await waitFor(active);
   } else if (succeeded) {
     onBackupBarrierMayExist?.();
     summary = succeeded;
@@ -345,13 +376,7 @@ async function createFinalAutomaticArchiveBackup({
       },
     );
     onBackupBarrierMayExist?.();
-    summary = await waitForDurableLroCompletion({
-      op_id: op.op_id,
-      scope_type: op.scope_type,
-      scope_id: op.scope_id,
-      client: conat(),
-      timeout_ms: BACKUP_TIMEOUT_MS + 60_000,
-    });
+    summary = await waitFor(op);
   }
   if (summary.status !== "succeeded") {
     throw new FinalAutomaticArchiveBackupError(
@@ -493,6 +518,7 @@ export async function archiveProjectStorage({
   reason: providedReason,
   expected_host_id,
   allow_oversized_skip,
+  final_backup_wait_ms,
 }: ArchiveProjectStorageOptions): Promise<void> {
   let row = await loadArchiveRow(project_id);
   const currentState = `${row.state?.state ?? ""}`.trim();
@@ -603,6 +629,7 @@ export async function archiveProjectStorage({
           onBackupBarrierMayExist: () => {
             finalBackupBarrierMayExist = true;
           },
+          waitMs: final_backup_wait_ms,
         });
         expectedArchiveGeneration = Number(finalBackup.generation);
         expectedArchiveBackupId = finalBackup.id;
@@ -700,6 +727,15 @@ export async function archiveProjectStorage({
       status: "completed",
     });
   } catch (err) {
+    if (automatic && err instanceof FinalArchiveBackupPendingError) {
+      // The backup is still running and owns its freeze: release nothing,
+      // keep the claim, and queue the job to resume waiting for it.
+      await updateProjectArchiveLifecycleJob({
+        job_id: jobId,
+        status: "queued",
+      }).catch(() => undefined);
+      throw err;
+    }
     // A prior or current freeze-capable backup can continue on the project
     // host when the worker times out or loses its response. Without a returned
     // generation, keep the claim so a lifecycle retry can recover the barrier.

@@ -1813,6 +1813,12 @@ configuration and avoid silent backup-capacity or routing mistakes.
 6. Use **Bay Operations** to inspect bay backup health if a shard looks stale or
    overloaded.
 
+To size a shard's prune backlog, run
+\`cocalc admin backup-shard-prune-plan <repo-id> [--max-unused 0|5%] [--repoinfo]\`.
+It runs a read-only \`rustic --dry-run prune\` on the bay that owns the shards
+(admin with a recent second factor) and returns what a real prune would repack
+and delete. It never changes the shard; each run is recorded in the central log.
+
 Backups are a safety boundary. Treat edits as operational changes that need a
 clear reason, a rollback path, and a small verification afterwards.
 `;

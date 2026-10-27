@@ -94,6 +94,23 @@ describe("wireHostsApi", () => {
       args: [opts],
       host_id: process.env.PROJECT_HOST_ID,
     });
+    const external = {
+      account_id: "human",
+      project_id: "source-project",
+      target: {
+        kind: "external" as const,
+        account_id: "remote-account",
+        agent_id: "ops0",
+        installation_id: "install",
+      },
+    };
+    await hubApi.agent.getMentionMember(external);
+    expect(callHubMock).toHaveBeenCalledWith({
+      client: { id: "master-client" },
+      name: "agent.getMentionMember",
+      args: [external],
+      host_id: process.env.PROJECT_HOST_ID,
+    });
   });
 
   it("forwards the connector turn lifecycle through the authenticated host", async () => {

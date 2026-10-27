@@ -275,8 +275,16 @@ export class SubvolumeSnapshots {
     });
   };
 
-  readdir = async (): Promise<string[]> => {
-    await this.makeSnapshotsDir();
+  // create: false lists without creating a missing snapshots directory
+  // (a read-only look): no directory means no snapshots.
+  readdir = async ({ create = true }: { create?: boolean } = {}): Promise<
+    string[]
+  > => {
+    if (create) {
+      await this.makeSnapshotsDir();
+    } else if (!(await this.subvolume.fs.exists(SNAPSHOTS))) {
+      return [];
+    }
     const entries = await this.subvolume.fs.readdir(SNAPSHOTS);
     const snapshots: string[] = [];
     for (const name of entries) {

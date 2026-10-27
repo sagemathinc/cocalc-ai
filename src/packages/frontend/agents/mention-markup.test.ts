@@ -119,3 +119,27 @@ test("computer mention round trips its identity through Markdown and Slate", () 
   ).toEqual(computer);
   expect(md.render(markup)).toContain(markup);
 });
+
+test("an agent on another site parses and round trips through Markdown and Slate", () => {
+  const external: AgentMentionReference = {
+    version: 1,
+    naming_account_id: "11111111-1111-4111-8111-111111111111",
+    target: {
+      kind: "external",
+      account_id: "66666666-6666-4666-8666-666666666666",
+      agent_id: "77777777-7777-4777-8777-777777777777",
+      installation_id: "88888888-8888-4888-8888-888888888888",
+    },
+    name: "ops0",
+  };
+  const md = new MarkdownIt({ html: true });
+  md.use(mentionPlugin);
+  const markup = serializeAgentMention(external);
+  const token = md.parse(markup, {})[1].children![0];
+  expect(token.type).toBe("agent-mention");
+  const node = getMarkdownToSlate("agent-mention")({ token });
+  expect(node).toEqual(createAgentMention(external));
+  expect(
+    parseAgentMention(getSlateToMarkdown("agent-mention")({ node } as any)),
+  ).toEqual(external);
+});

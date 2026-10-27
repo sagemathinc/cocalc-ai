@@ -1303,6 +1303,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.reopenStuckProjectArchive": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin action that changes another account's project state and its host volume freeze",
+  },
   "projects.restart": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -1627,6 +1632,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "sync.purgeHistory": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "system.getProjectBackupRepoPrunePlan": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin runs rustic against a shared backup repository with its stored secret (read-only dry run)",
   },
   "system.adminCreateUser": {
     decision: "fresh-auth-required",

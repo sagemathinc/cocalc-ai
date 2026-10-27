@@ -63,6 +63,16 @@ export function isBackupsPath(path?: string): boolean {
   return normalized === BACKUPS || normalized.startsWith(`${BACKUPS}/`);
 }
 
+// The fixed part of oversizedFilesMessage, which survives the message being
+// wrapped in other errors on its way to the bay.
+const OVERSIZED_FILES_MESSAGE_MARKER =
+  /larger than this project's .+ backup file size limit and would not be included/;
+
+/** Whether an error message is oversizedFilesMessage's refusal. */
+export function isOversizedFilesMessage(text: unknown): boolean {
+  return OVERSIZED_FILES_MESSAGE_MARKER.test(`${text ?? ""}`);
+}
+
 // Message for an operation refused because it would leave out oversized files.
 export function oversizedFilesMessage(
   action: string,

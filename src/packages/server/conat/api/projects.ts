@@ -18,6 +18,7 @@ import {
   markProjectHardDeleteAccepted,
 } from "@cocalc/server/projects/hard-delete-state";
 import getLogger from "@cocalc/backend/logger";
+import { reopenStuckProjectArchive as reopenStuckProjectArchiveOnBay } from "@cocalc/server/projects/archive-lifecycle-maintenance";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
 import {
@@ -5510,6 +5511,41 @@ export async function archiveProject({
     mode: "manual",
     actor_account_id: account_id,
     allow_oversized_skip: allow_oversized_skip === true,
+  });
+}
+
+// Admin-only: reopen a project left in state "archiving" by an automatic
+// archive that cannot finish (archive-lifecycle-maintenance). Refuses unless
+// the host confirms the volume is not frozen; audited on the archive job.
+export async function reopenStuckProjectArchive({
+  account_id,
+  browser_id,
+  session_hash,
+  project_id,
+  reason,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  project_id: string;
+  reason: string;
+}): Promise<{
+  job_id: string;
+  freeze_status: "already-writable" | "released";
+}> {
+  if (!account_id) throw new Error("must be signed in");
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  if (!(await isAdmin(account_id))) {
+    throw new Error("only an admin can reopen a stuck archive");
+  }
+  return await reopenStuckProjectArchiveOnBay({
+    project_id,
+    actor_account_id: account_id,
+    reason,
   });
 }
 

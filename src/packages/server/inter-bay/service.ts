@@ -474,6 +474,7 @@ import {
   syncProjectBackupIndexesLocal,
   deleteProjectBackupIndexLocal,
 } from "@cocalc/server/conat/api/hosts";
+import { runAuditedProjectBackupRepoPrunePlan } from "@cocalc/server/project-backup/repo-prune-plan";
 import {
   getProjectBackupShardAdminStatus,
   getSeedProjectBackupConfig,
@@ -2785,6 +2786,21 @@ async function startHostConnectionService(): Promise<void> {
       }),
     releaseSeedProjectAppPublicSubdomains: async ({ project_id }) =>
       await releaseProjectAppPublicSubdomainsForProject({ project_id }),
+    getSeedProjectBackupRepoPrunePlan: async (opts) => {
+      if (!isValidUUID(opts?.actor_account_id ?? "")) {
+        throw new Error("actor_account_id must be a valid uuid");
+      }
+      return await runAuditedProjectBackupRepoPrunePlan({
+        actor_account_id: opts.actor_account_id,
+        source_bay_id: `${opts.source_bay_id ?? ""}`.slice(0, 128),
+        bay_id: getConfiguredBayId(),
+        repo_id: `${opts.repo_id ?? ""}`,
+        max_unused: opts.max_unused,
+        max_repack: opts.max_repack,
+        repoinfo: opts.repoinfo === true,
+        timeout_ms: opts.timeout_ms,
+      });
+    },
     getSeedProjectBackupShards: async (opts = {}) =>
       await getProjectBackupShardAdminStatus({
         region: opts.region,

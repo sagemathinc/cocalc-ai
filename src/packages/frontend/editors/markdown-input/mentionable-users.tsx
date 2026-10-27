@@ -6,7 +6,10 @@
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { useState } from "react";
 import { useChatEmbeddingOptions } from "@cocalc/frontend/chat/embedding-options";
-import { agentMentionSuggestions } from "@cocalc/frontend/agents/mention-suggestions";
+import {
+  agentMentionSuggestions,
+  externalAgentMentionSuggestions,
+} from "@cocalc/frontend/agents/mention-suggestions";
 import {
   MY_AGENTS_ORGANIZATION_SETTING,
   normalizeAgentWorkspaceOrganization,
@@ -78,6 +81,64 @@ export function useMentionableUsers(): (
           settings?.get?.(MY_AGENTS_ORGANIZATION_SETTING),
         ).lastOpened,
       });
+      const sourceEndpoint = directory?.agents.find(
+        (agent) =>
+          agent.endpoint.project_id === source?.projectId &&
+          agent.path === source?.path &&
+          agent.thread_id === source?.threadId,
+      )?.endpoint;
+      const external = enabled
+        ? externalAgentMentionSuggestions({
+            networks: networkDirectory?.networks ?? [],
+            sourceEndpoint,
+            selectedNetworkId,
+            query,
+            expanded,
+            paused: networkDirectory?.controls.paused,
+          })
+        : { rows: [], hasMore: false };
+      const externalAgents: Item[] = external.rows.map(
+        ({ member, handle, account_id, group, connected, paused }) => ({
+          value: serializeAgentMention({
+            version: 1,
+            naming_account_id: account_id,
+            target: { ...member.source, kind: "external" },
+            name: handle,
+          }),
+          group,
+          search: `${handle} ${member.label}`.toLowerCase(),
+          label: (
+            <span
+              title={
+                postOnly
+                  ? "Reference only; this post will not contact the agent."
+                  : "Reference an agent on another site; mentioning does not send a message."
+              }
+            >
+              <strong>@{handle}</strong>{" "}
+              <Icon name="global" aria-label="Agent on another site" />
+              <div
+                style={{
+                  fontSize: "0.9em",
+                  maxWidth: 360,
+                  whiteSpace: "normal",
+                }}
+              >
+                {member.label}
+                {!member.available
+                  ? " · Unavailable"
+                  : states?.[member.source.agent_id]
+                    ? ` · ${states[member.source.agent_id]}`
+                    : paused
+                      ? " · Communication paused"
+                      : !connected
+                        ? " · Not in a network with this agent"
+                        : ""}
+              </div>
+            </span>
+          ),
+        }),
+      );
       const agents: Item[] = suggestions.rows.map(
         ({ agent, group, connected, paused }) => ({
           value: serializeAgentMention(namedAgentReference(agent)),
@@ -166,13 +227,15 @@ export function useMentionableUsers(): (
         ...computerItems,
         ...artifacts,
         ...agents,
+        ...externalAgents,
         ...(enabled && !query && !expanded
           ? [
               {
                 value: "show-all-agent-mentions",
-                label: suggestions.hasMore
-                  ? "Search all agents…"
-                  : "Browse all agents…",
+                label:
+                  suggestions.hasMore || external.hasMore
+                    ? "Search all agents…"
+                    : "Browse all agents…",
                 onSelect: () => setExpanded(true),
               },
             ]

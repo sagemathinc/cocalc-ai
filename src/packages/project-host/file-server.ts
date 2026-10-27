@@ -86,6 +86,7 @@ import {
 } from "@cocalc/file-server/btrfs/subvolume";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import {
+  inspectRollingSnapshots,
   pruneRollingSnapshots,
   RollingSnapshotRetentionSkipped,
 } from "@cocalc/file-server/btrfs/snapshots";
@@ -178,6 +179,7 @@ import {
   assertProjectVolumeLifecycleGeneration,
   currentProjectVolumeLifecycleGeneration,
   invalidateProjectVolumeLifecycle,
+  projectVolumeLifecycleBusy,
   withCurrentProjectVolumeLifecycleLock,
   withProjectVolumeLifecycleLock,
   type ProjectVolumeLifecycleLock,
@@ -3443,6 +3445,53 @@ export async function pruneDeferredSnapshots(
       `deferred snapshot prune not applied: ${outcome ?? "project_volume_lifecycle_changed"}`,
     );
   }
+}
+
+/** A read-only look at a project's rolling snapshots, to re-observe an idle
+ * project without the full scheduled update (and its storage admission).
+ * Undefined when the full update is needed instead: the volume is missing,
+ * invalid or archiving, rolling snapshots are disabled, or a lifecycle
+ * operation holds or took the volume. */
+export async function inspectScheduledSnapshots({
+  project_id,
+  counts,
+}: {
+  project_id: string;
+  counts: Partial<SnapshotCounts>;
+}): Promise<
+  | {
+      latest_snapshot_at: string | null;
+      changed: boolean;
+      snapshot_count: number;
+      expired: number;
+    }
+  | undefined
+> {
+  // Don't wait behind a lifecycle operation (a move can take a while): the
+  // full update, queued in the snapshot lane, waits instead.
+  if (projectVolumeLifecycleBusy(project_id)) return undefined;
+  const generation = currentProjectVolumeLifecycleGeneration(project_id);
+  return await withCurrentProjectVolumeLifecycleLock(
+    project_id,
+    generation,
+    async () => {
+      const vol = await getVolumeUnchecked(project_id);
+      if (!(await exists(vol.path))) return undefined;
+      if (!(await isBtrfsSubvolume(vol.path))) return undefined;
+      if (await isSubvolumeReadonly(vol.path)) return undefined;
+      const inventory = await inspectRollingSnapshots({
+        snapshots: vol.snapshots,
+        counts,
+      });
+      if (inventory == null) return undefined;
+      return {
+        latest_snapshot_at: inventory.latest,
+        changed: inventory.changed,
+        snapshot_count: inventory.names.length,
+        expired: inventory.expired,
+      };
+    },
+  );
 }
 
 async function allSnapshotUsage({

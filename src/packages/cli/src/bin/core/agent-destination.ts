@@ -3,16 +3,16 @@ import {
   agentRpcSourceKey,
   validateAgentEndpoint,
   validateAgentRpcTarget,
-  type AgentEndpoint,
   type AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
 import { externalAgentHandle } from "@cocalc/conat/agents/external";
 import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import { readIdentityCredential, sendIdentityMessage } from "./agent-message";
 
+/** A current-turn mention: a registered agent, or one on another site. */
 export interface AgentNameBinding {
   name: string;
-  target: AgentEndpoint;
+  target: AgentRpcTarget;
 }
 
 export interface ResolvedAgentDestination {
@@ -110,18 +110,11 @@ export function resolveAgentName(
         isLabel(member.label) ||
         (byId && member.member_id === name),
   );
-  const pinned = selected.map((ref) => ref.target);
+  // Either kind, by its exact identity (UUIDs in any case).
+  const pinned = new Set(selected.map((ref) => targetKey(ref.target)));
   const candidates = inRequestedNetwork(peers, requestedNetwork);
-  const matches = pinned.length
-    ? candidates.filter(
-        ({ member }) =>
-          member.kind === "registered" &&
-          pinned.some(
-            (target) =>
-              target.agent_id === member.endpoint.agent_id &&
-              target.project_id === member.endpoint.project_id,
-          ),
-      )
+  const matches = pinned.size
+    ? candidates.filter((peer) => pinned.has(targetKey(peerTarget(peer))))
     : candidates;
   if (!matches.length)
     throw new Error(
@@ -175,7 +168,7 @@ export async function readTurnAgentReferences(): Promise<AgentNameBinding[]> {
   for (const ref of value.references) {
     if (typeof ref?.name !== "string")
       throw new Error("Invalid runtime agent name reference");
-    validateAgentEndpoint(ref.target);
+    validateAgentRpcTarget(ref.target);
   }
   return value.references;
 }
@@ -197,6 +190,10 @@ type Peer = AgentNetworkDiscovery["peers"][number];
 
 function peerTarget({ member }: Peer): AgentRpcTarget {
   return member.kind === "registered" ? member.endpoint : member.source;
+}
+
+function targetKey(target: AgentRpcTarget): string {
+  return agentRpcSourceKey(target).toLowerCase();
 }
 
 function peerName({ member }: Peer): string {

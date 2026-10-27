@@ -3,7 +3,15 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import { externalAgentHandle } from "@cocalc/conat/agents/external";
-import { resolveAgentName, resolveBroadcastTargets } from "./agent-destination";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mock } from "node:test";
+import {
+  readTurnAgentReferences,
+  resolveAgentName,
+  resolveBroadcastTargets,
+} from "./agent-destination";
 
 const source = { project_id: randomUUID(), agent_id: randomUUID() };
 const target = { project_id: randomUUID(), agent_id: randomUUID() };
@@ -93,6 +101,122 @@ test("turn references pin identity but never create authority", () => {
       ]),
     /No approved/,
   );
+});
+
+const ops0Source = {
+  kind: "external" as const,
+  account_id: randomUUID(),
+  agent_id: randomUUID(),
+  installation_id: randomUUID(),
+};
+
+function withOps0(): AgentNetworkDiscovery {
+  const value = directory();
+  value.peers.push({
+    member: {
+      kind: "external",
+      member_id: ops0Source.agent_id,
+      source: ops0Source,
+      label: "ops0 on alpha.cocalc.ai (ops project)",
+      available: true,
+      added_at: new Date().toISOString(),
+    },
+    networks: [
+      {
+        agent_network_id: network,
+        title: "Review",
+        delivery_mode: "queued",
+        generation: randomUUID(),
+      },
+    ],
+  } as any);
+  return value;
+}
+
+test("a current-turn mention of an agent on another site pins that member", () => {
+  const expected = {
+    target: ops0Source,
+    agent_network_id: network,
+    agent_network_title: "Review",
+    delivery_mode: "queued",
+  };
+  assert.deepEqual(
+    resolveAgentName("ops0", withOps0(), [
+      { name: "ops0", target: ops0Source },
+    ]),
+    expected,
+  );
+  // However its UUIDs are spelled.
+  assert.deepEqual(
+    resolveAgentName("@ops0", withOps0(), [
+      {
+        name: "ops0",
+        target: { ...ops0Source, agent_id: ops0Source.agent_id.toUpperCase() },
+      },
+    ]),
+    expected,
+  );
+  // A binding to another installation names no peer here: never authority.
+  assert.throws(
+    () =>
+      resolveAgentName("ops0", withOps0(), [
+        {
+          name: "ops0",
+          target: { ...ops0Source, installation_id: randomUUID() },
+        },
+      ]),
+    /No approved/,
+  );
+  // And another peer's mention in the same turn still resolves.
+  assert.deepEqual(
+    resolveAgentName("reviewer", withOps0(), [
+      { name: "ops0", target: ops0Source },
+      { name: "reviewer", target },
+    ]).target,
+    target,
+  );
+});
+
+test("the turn's mention file reads bindings of both kinds, and only valid ones", async () => {
+  const agent_id = randomUUID();
+  const run_id = randomUUID();
+  const dir = mkdtempSync(join(tmpdir(), "turn-mentions-"));
+  const file = join(dir, "mentions.json");
+  const credential = mock.method(
+    require("./agent-message"),
+    "readIdentityCredential",
+    async () => ({ agent_id, run_id }),
+  );
+  const saved = process.env.COCALC_AGENT_MENTION_REFERENCES_FILE;
+  process.env.COCALC_AGENT_MENTION_REFERENCES_FILE = file;
+  try {
+    const references = [
+      { name: "ops0", target: ops0Source },
+      { name: "reviewer", target },
+    ];
+    writeFileSync(file, JSON.stringify({ agent_id, run_id, references }));
+    assert.deepEqual(await readTurnAgentReferences(), references);
+    for (const bad of [
+      { ...ops0Source, installation_id: "not-a-uuid" },
+      { ...ops0Source, project_id: target.project_id },
+      { project_id: "x", agent_id: target.agent_id },
+    ]) {
+      writeFileSync(
+        file,
+        JSON.stringify({
+          agent_id,
+          run_id,
+          references: [{ name: "ops0", target: bad }],
+        }),
+      );
+      await assert.rejects(readTurnAgentReferences());
+    }
+  } finally {
+    credential.mock.restore();
+    if (saved === undefined)
+      delete process.env.COCALC_AGENT_MENTION_REFERENCES_FILE;
+    else process.env.COCALC_AGENT_MENTION_REFERENCES_FILE = saved;
+  }
 });
 
 test("broadcast targets accept names and every shape discovery prints", () => {

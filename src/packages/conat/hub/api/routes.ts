@@ -189,6 +189,8 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   // Project control reads and stop run on the owning bay's handlers.
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,
+  // the archive job and its project live on the owning bay
+  "projects.reopenStuckProjectArchive": projectFromOpts,
   "projects.getProjectAddress": projectFromOpts,
   "projects.getProjectActiveOperation": projectFromOpts,
   // Hiding is per account, but stored in each project's users map.

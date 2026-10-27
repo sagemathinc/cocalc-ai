@@ -9,6 +9,7 @@ import type {
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
 import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
+import type { ProjectBackupRepoPrunePlan } from "@cocalc/conat/hub/api/system";
 import type { CreatedProjectBootstrap } from "@cocalc/conat/hub/api/projects";
 import type { CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import type { MonthlyCollectionApi } from "@cocalc/util/monthly-collection";
@@ -2633,6 +2634,7 @@ export type HostConnectionMethod =
   | "release-seed-backup-repo-assignment"
   | "release-seed-project-app-public-subdomains"
   | "get-seed-project-backup-shards"
+  | "get-seed-project-backup-repo-prune-plan"
   | "record-project-backup"
   | "mark-project-changed"
   | "record-project-backup-index"
@@ -3389,6 +3391,19 @@ export interface InterBayHostConnectionApi {
       updated: string | null;
     }>;
   }>;
+  // Run a read-only prune plan on the seed, which owns the repositories.
+  // The calling bay has checked that the actor is an admin with a recent
+  // second factor; the seed records the run in its central log.
+  getSeedProjectBackupRepoPrunePlan: (opts: {
+    actor_account_id: string;
+    // The calling bay, as it reports itself (for the audit record).
+    source_bay_id: string;
+    repo_id: string;
+    max_unused?: string | null;
+    max_repack?: string | null;
+    repoinfo?: boolean;
+    timeout_ms?: number;
+  }) => Promise<ProjectBackupRepoPrunePlan>;
   recordProjectBackup: (
     opts: Parameters<Hosts["recordProjectBackup"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackup"]>>>;
@@ -3466,6 +3481,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getSeedProjectBackupShards",
     method: "get-seed-project-backup-shards",
+  },
+  {
+    name: "getSeedProjectBackupRepoPrunePlan",
+    method: "get-seed-project-backup-repo-prune-plan",
   },
   {
     name: "recordProjectBackup",

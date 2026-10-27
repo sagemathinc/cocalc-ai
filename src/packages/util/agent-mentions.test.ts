@@ -1,5 +1,7 @@
 import {
+  agentMentionReference,
   agentMentionReferenceMap,
+  agentMentionTargetKey,
   augmentPromptWithAgentMentions,
   extractAgentMentions,
   parseAgentMention,
@@ -73,4 +75,59 @@ test("prompt reference map rejects ambiguous display names", () => {
     reference.target.agent_id,
   );
   expect(augmentPromptWithAgentMentions("@reviewer", [])).toBe("@reviewer");
+});
+
+const external: AgentMentionReference = {
+  version: 1,
+  naming_account_id: "11111111-1111-4111-8111-111111111111",
+  target: {
+    kind: "external",
+    account_id: "66666666-6666-4666-8666-666666666666",
+    agent_id: "77777777-7777-4777-8777-777777777777",
+    installation_id: "88888888-8888-4888-8888-888888888888",
+  },
+  name: "ops0",
+};
+
+test("an agent on another site round trips as its own kind of target", () => {
+  const markup = serializeAgentMention(external);
+  expect(parseAgentMention(markup)).toEqual(external);
+  expect(
+    extractAgentMentions(`${markup} and ${serializeAgentMention(reference)}`),
+  ).toEqual([external, reference]);
+  // Not a registered agent's endpoint, and nothing else rides along.
+  expect(
+    agentMentionReference({
+      ...external,
+      target: {
+        ...external.target,
+        project_id: reference.target["project_id"],
+      },
+    }),
+  ).toEqual(external);
+  for (const target of [
+    { ...external.target, installation_id: "not-a-uuid" },
+    { kind: "remote", ...reference.target },
+    { kind: "external", account_id: external.naming_account_id },
+  ])
+    expect(agentMentionReference({ ...external, target })).toBeUndefined();
+});
+
+test("the prompt tells the agent how an agent on another site is reached", () => {
+  const prompt = augmentPromptWithAgentMentions("Ask @ops0", [external]);
+  expect(prompt).toContain('"kind":"external"');
+  expect(prompt).toContain("cocalc agent send");
+  expect(
+    augmentPromptWithAgentMentions("Ask @reviewer", [reference]),
+  ).not.toContain("another site");
+  // The same name for an agent here and one on another site is ambiguous.
+  expect(() =>
+    agentMentionReferenceMap([external, { ...reference, name: "ops0" }]),
+  ).toThrow("Ambiguous");
+  expect(
+    agentMentionTargetKey({
+      ...external.target,
+      agent_id: external.target.agent_id.toUpperCase(),
+    } as any),
+  ).toBe(agentMentionTargetKey(external.target));
 });
