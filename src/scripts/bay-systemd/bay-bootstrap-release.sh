@@ -785,6 +785,70 @@ frontend_asset_retention_cutoff() {
   esac
 }
 
+# Each deploy keeps "Required browser version" (and the recommended version,
+# since the hub enforces the smaller of the two) at most this many days old,
+# so browsers older than that are disconnected and their chunks can go.
+# 0 turns this off.
+FRONTEND_MAX_BROWSER_AGE_DAYS="${FRONTEND_MAX_BROWSER_AGE_DAYS:-30}"
+
+# The value a browser version setting is raised to so it is at least FLOOR,
+# or nothing when it stays: raise only, so a recent value, or one in the
+# future (which the hub ignores, and replacing would lower), is left alone.
+browser_version_raise_target() {
+  local value="$1" now="$2" floor="$3" clamped
+  clamped="$(clamp_browser_version "$value" "$now")"
+  if [[ "$clamped" != "$now" ]] && ((clamped < floor)); then
+    echo "$floor"
+  fi
+}
+
+# Writes one browser version setting as the bay account, and bumps
+# _last_update so running hubs reload their settings.
+write_browser_version_setting() {
+  local name="$1" value="$2"
+  [[ "$name" =~ ^version_(min|recommended)_browser$ && "$value" =~ ^[0-9]+$ ]] || return 1
+  runuser -u "$BAY_USER" -- env \
+    PGHOST="${BAY_ROOT}/run/postgres" \
+    PGPORT=5432 \
+    PGUSER="$BAY_USER" \
+    PGCONNECT_TIMEOUT=5 \
+    timeout 15 "$PSQL_BIN" -d "$BAY_USER" -XAtq -v ON_ERROR_STOP=1 -c \
+    "INSERT INTO server_settings (name, value) VALUES ('${name}', '${value}') ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value; INSERT INTO server_settings (name, value) VALUES ('_last_update', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')) ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value" \
+    >/dev/null
+}
+
+# Raises the required and recommended browser versions to at most
+# FRONTEND_MAX_BROWSER_AGE_DAYS old, logging each change. Does nothing when
+# the settings cannot be read (the retention step reports that).
+ensure_recent_browser_version() {
+  local days="$FRONTEND_MAX_BROWSER_AGE_DAYS"
+  if [[ ! "$days" =~ ^[0-9]+$ ]]; then
+    echo "WARNING: FRONTEND_MAX_BROWSER_AGE_DAYS='${days}' is not a number of days; not changing browser versions" >&2
+    return 0
+  fi
+  ((days > 0)) || return 0
+  local settings
+  settings="$(read_browser_version_settings)"
+  [[ -n "$settings" ]] || return 0
+  local now floor
+  now="$(date +%s)"
+  floor=$((now - days * 86400))
+  local name value target
+  # shellcheck disable=SC2086
+  set -- $settings
+  for name in version_min_browser version_recommended_browser; do
+    value="$1"
+    shift
+    target="$(browser_version_raise_target "$value" "$now" "$floor")"
+    [[ -n "$target" ]] || continue
+    if write_browser_version_setting "$name" "$target"; then
+      echo "browser version: raised ${name} from ${value} to ${target} (at most ${days} days old)"
+    else
+      echo "WARNING: could not raise ${name} from ${value} to ${target}" >&2
+    fi
+  done
+}
+
 prepare_frontend_asset_history() {
   local target_static="${TARGET_RELEASE}/runtime/control-plane/static"
   local current_manifest="${target_static}/frontend-build.json"
@@ -825,6 +889,7 @@ prepare_frontend_asset_history() {
       fi
     fi
   fi
+  ensure_recent_browser_version
   local cutoff cutoff_ms cutoff_source
   cutoff="$(frontend_asset_retention_cutoff "$hub_version")"
   cutoff_ms="${cutoff%% *}"

@@ -648,6 +648,67 @@ stage_hub_bundle_release >/dev/null
 [[ "$(release_hub_smc_version "$TARGET_RELEASE" "$(find_node)")" == 1792950000 ]]
 HUB_BUNDLE_PATH=""
 
+# Each deploy keeps the browser versions at most FRONTEND_MAX_BROWSER_AGE_DAYS
+# old: raise only, never lower, never touch a recent (or future) value.
+NOW_S=1793000000
+FLOOR_S=$((NOW_S - 30 * 86400))
+[[ "$(browser_version_raise_target 1790000000 "$NOW_S" "$FLOOR_S")" == "$FLOOR_S" ]]
+[[ -z "$(browser_version_raise_target $((FLOOR_S + 1)) "$NOW_S" "$FLOOR_S")" ]]
+[[ -z "$(browser_version_raise_target "$FLOOR_S" "$NOW_S" "$FLOOR_S")" ]]
+[[ "$(browser_version_raise_target - "$NOW_S" "$FLOOR_S")" == "$FLOOR_S" ]]
+[[ "$(browser_version_raise_target 0 "$NOW_S" "$FLOOR_S")" == "$FLOOR_S" ]]
+[[ "$(browser_version_raise_target oct-22 "$NOW_S" "$FLOOR_S")" == "$FLOOR_S" ]]
+# A future value (the hub ignores it) is not lowered.
+[[ -z "$(browser_version_raise_target 4102444800 "$NOW_S" "$FLOOR_S")" ]]
+[[ -z "$(browser_version_raise_target 18446744075502679816 "$NOW_S" "$FLOOR_S")" ]]
+
+# The deploy step reads both settings and writes only those it raises.
+WRITES="${TMP_ROOT}/browser-version-writes"
+write_browser_version_setting() { echo "$1=$2" >>"$WRITES"; }
+RECENT=$(($(date +%s) - 5 * 86400))
+STALE=$(($(date +%s) - 90 * 86400))
+for case_settings in "$STALE $RECENT" "$RECENT $RECENT" "- -" "4102444800 $STALE"; do
+  : >"$WRITES"
+  eval "read_browser_version_settings() { echo '$case_settings'; }"
+  ensure_recent_browser_version >"${TMP_ROOT}/browser-version.log"
+  floor_now=$(($(date +%s) - 30 * 86400))
+  case "$case_settings" in
+    "$STALE $RECENT")
+      grep -Eq "^version_min_browser=($((floor_now - 1))|${floor_now})$" "$WRITES"
+      [[ "$(wc -l <"$WRITES")" -eq 1 ]]
+      grep -q "raised version_min_browser from ${STALE} to .* (at most 30 days old)" "${TMP_ROOT}/browser-version.log"
+      ;;
+    "$RECENT $RECENT")
+      [[ ! -s "$WRITES" ]]
+      ;;
+    "- -")
+      grep -q '^version_min_browser=' "$WRITES"
+      grep -q '^version_recommended_browser=' "$WRITES"
+      ;;
+    "4102444800 $STALE")
+      [[ "$(cat "$WRITES")" == version_recommended_browser=* ]]
+      [[ "$(wc -l <"$WRITES")" -eq 1 ]]
+      ;;
+  esac
+done
+# 0 days turns it off; unreadable settings change nothing.
+: >"$WRITES"
+eval "read_browser_version_settings() { echo '$STALE $STALE'; }"
+FRONTEND_MAX_BROWSER_AGE_DAYS=0 ensure_recent_browser_version >/dev/null
+[[ ! -s "$WRITES" ]]
+read_browser_version_settings() { :; }
+ensure_recent_browser_version >/dev/null
+[[ ! -s "$WRITES" ]]
+# The writer only accepts the two settings and a number.
+unset -f write_browser_version_setting
+# shellcheck disable=SC1091
+eval "$(sed -n '/^write_browser_version_setting() {/,/^}/p' "${SCRIPT_DIR}/bay-bootstrap-release.sh")"
+if write_browser_version_setting version_min_browser "1; DROP TABLE x" 2>/dev/null ||
+  write_browser_version_setting other_setting 1792710260 2>/dev/null; then
+  echo "write_browser_version_setting accepted a bad name or value" >&2
+  exit 1
+fi
+
 VALIDATION_RELEASE="${TMP_ROOT}/validation-release"
 TARGET_RELEASE="$VALIDATION_RELEASE"
 OVERLAY_MODE="rocket-bundle"
