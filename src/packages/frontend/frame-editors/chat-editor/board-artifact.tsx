@@ -6,22 +6,18 @@
 /*
 A Sagebrush board (.board.json) published as a file artifact, shown live: the
 board and its code run in Sagebrush's /frame/board/ page, in a sandboxed frame
-with an opaque origin. The protocol (Sagebrush's design/frame.md):
+with an opaque origin.
 
-- the frame, when it listens:  { sagebrush: "ready", version: 1 }
-- this page:                   { sagebrush: "board", version: 1, text, name }
-- the frame, for a bad text:   { sagebrush: "error", version: 1, message }
+The frame itself is kept by board-frame-host.ts, outside this component, and
+laid over the placeholder rendered here. Maximizing the frame, changing the
+workbench layout, switching editor tabs or scrolling a chat card away
+remounts this component; with the same view key it takes over the same live
+frame, so the board keeps its state, including the user's edits. Refresh
+reads the file again into a new frame. The frame host also answers the
+frame's protocol, once per frame.
 
-Only messages from the frame's own window count. That window object outlives
-navigation: if the frame's document were replaced, the new document would
-pass the same test. So the board is posted once per frame element, in answer
-to its first "ready", and the frame is mounted only after the text has been
-read; Refresh reads the file again and mounts a new frame. A later document in
-the same frame gets nothing.
-
-The frame has an opaque origin, so posts to it use "*". Showing a board sends
-its complete text and name to the configured origin, as the card says. Edits
-in the frame stay there: the file is not changed.
+Showing a board sends its complete text and name to the configured origin,
+as the card says. Edits in the frame stay there: the file is not changed.
 
 The card also asks the board's host to open the board (boardOpen; bounded
 history plan H1b-4). While the host does not edit boards (ENOSYS), or when
@@ -33,7 +29,7 @@ user once per history epoch.  The saved-file view below does not depend on
 the history either.
 */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type React from "react";
 import { Alert, Button, Space } from "antd";
 import type { BoardOpenResult } from "@cocalc/conat/files/fs";
@@ -58,46 +54,87 @@ import {
   BOARD_FRAME_SANDBOX,
   BOARD_PREVIEW_LIMIT,
 } from "./board-artifact-frame";
+import {
+  attachBoardFrame,
+  createBoardFrame,
+  focusBoardFrame,
+  beginBoardLoad,
+  boardLoadFailed,
+  getBoardFrame,
+  isBoardFrameLive,
+  isLatestBoardLoad,
+  nextBoardFrame,
+  onBoardFrameCreated,
+  type BoardFrame,
+} from "./board-frame-host";
 
 export default function BoardArtifact({
   path,
   frameUrl,
+  viewKey,
   historical = false,
   onToolbarActions,
 }: {
   path: string;
   frameUrl: string;
+  // Which view this is (the artifact and the frame or card showing it): a
+  // remount with the same key keeps the same live board.
+  viewKey: string;
   historical?: boolean;
   onToolbarActions?: (actions: FileArtifactAction[]) => void;
 }) {
   const compact = onToolbarActions !== undefined;
   const { actions, project_id } = useProjectContext();
-  const frameRef = useRef<HTMLIFrameElement>(null);
-  // The text read for one frame: `id` is that frame's key.
-  const [board, setBoard] = useState<{ id: number; text: string }>();
+  // Read through a ref: a new actions object must not reload the board.
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+  const placeholderRef = useRef<HTMLDivElement>(null);
+  const key = `${viewKey}\n${path}\n${frameUrl}`;
+  const [frame, setFrame] = useState<BoardFrame | undefined>(() =>
+    getBoardFrame(key),
+  );
   const [error, setError] = useState("");
   const [frameError, setFrameError] = useState("");
+  const [shownElsewhere, setShownElsewhere] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [refresh, setRefresh] = useState(0);
+  // A Refresh failed while a board was shown: it stays, labelled as the board
+  // as last read, not the current saved file, until a read succeeds.
+  const [stale, setStale] = useState(false);
+  const frameRef = useRef(frame);
+  frameRef.current = frame;
+  useEffect(() => setStale(false), [frame]);
+  // Bumped by Refresh. The first read happens only when no live frame
+  // exists for this view.
+  const [refresh, setRefresh] = useState(frame == null ? 1 : 0);
+  // A read that found no project actions yet: read again once they come
+  // (but not for every new actions object, which would replace the frame).
+  const [waitingForActions, setWaitingForActions] = useState(false);
+  const hasActions = actions != null;
+  useEffect(() => {
+    if (hasActions && waitingForActions) {
+      setWaitingForActions(false);
+      setRefresh((r) => r + 1);
+    }
+  }, [hasActions, waitingForActions]);
   // What the board's host answered, if it edits boards (H1b-4).
   const [history, setHistory] = useState<BoardHistoryView>();
-  const boardRef = useRef(board);
-  boardRef.current = board;
-  // The frame (by key) that has been sent its board.
-  const answeredRef = useRef<number | undefined>(undefined);
   const name = path.split("/").pop() ?? path;
   const site = new URL(frameUrl).host;
 
   useEffect(() => {
+    if (refresh === 0) return;
     let cancelled = false;
     setError("");
     setFrameError("");
-    setBoard(undefined);
     setLoading(true);
+    const generation = beginBoardLoad(key);
     void (async () => {
       try {
-        const fs = actions?.fs();
-        if (!fs) throw Error("Project filesystem unavailable");
+        const fs = actionsRef.current?.fs();
+        if (!fs) {
+          if (!cancelled) setWaitingForActions(true);
+          throw Error("Project filesystem unavailable");
+        }
         const tooLarge = Error(
           `The board exceeds the ${BOARD_PREVIEW_LIMIT / 1024 / 1024} MiB preview limit. Open the file to see it.`,
         );
@@ -112,17 +149,72 @@ export default function BoardArtifact({
         if (bytes.byteLength > BOARD_PREVIEW_LIMIT) throw tooLarge;
         const text =
           typeof raw === "string" ? raw : new TextDecoder().decode(bytes);
-        if (!cancelled) setBoard({ id: refresh, text });
+        if (cancelled) return;
+        if (!isLatestBoardLoad(key, generation)) {
+          // A newer read of this view (in another place, or a newer
+          // Refresh) makes the frame: this one adopts it, never replaces it.
+          const newest = await nextBoardFrame(key);
+          if (cancelled) return;
+          if (newest == null) {
+            // That read failed or was abandoned: read it here instead.
+            setRefresh((r) => r + 1);
+            return;
+          }
+          setFrame(newest);
+          return;
+        }
+        setFrame(
+          createBoardFrame({
+            key,
+            path,
+            frameUrl,
+            sandbox: BOARD_FRAME_SANDBOX,
+            text,
+            name,
+            title: `Sagebrush board: ${name}`,
+            generation,
+          }),
+        );
       } catch (err) {
-        if (!cancelled) setError(String(err));
+        boardLoadFailed(key, generation);
+        if (!cancelled && !isLatestBoardLoad(key, generation)) {
+          // Superseded: the newest read's frame, if it makes one, is this
+          // view's too; only if it fails as well is this error shown.
+          const newest = await nextBoardFrame(key);
+          if (cancelled) return;
+          if (newest != null) {
+            setFrame(newest);
+            return;
+          }
+        }
+        if (!cancelled) {
+          setError(String(err));
+          setStale(frameRef.current != null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      // An unfinished newest read is abandoned: whoever waits for it reads
+      // the board themselves.
+      boardLoadFailed(key, generation);
     };
-  }, [actions, path, refresh]);
+  }, [key, refresh]);
+
+  // A frame any place's read makes for the view is this card's too: with
+  // none (its own read failed, say) it shows it, and with an older one (kept
+  // after its own Refresh failed) it drops the error and the stale label,
+  // since what it shows is now the newest read.
+  useEffect(() => {
+    return onBoardFrameCreated(key, (made) => {
+      setError("");
+      setStale(false);
+      setLoading(false);
+      setFrame(made);
+    });
+  }, [key]);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,34 +300,22 @@ export default function BoardArtifact({
     }
   };
 
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      const frame = frameRef.current?.contentWindow;
-      const current = boardRef.current;
-      if (!frame || !current || event.source !== frame) return;
-      const data = event.data;
-      if (data == null || typeof data !== "object" || data.version !== 1)
-        return;
-      if (data.sagebrush === "ready") {
-        // Only the frame's first document, the one its src loaded.
-        if (answeredRef.current === current.id) return;
-        answeredRef.current = current.id;
-        frame.postMessage(
-          { sagebrush: "board", version: 1, text: current.text, name },
-          "*",
-        );
-      } else if (
-        data.sagebrush === "error" &&
-        answeredRef.current === current.id
-      ) {
-        setFrameError(
-          `${data.message ?? "The board could not be shown."}`.slice(0, 500),
-        );
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [name]);
+  // Lay the live frame over the placeholder while this component shows it.
+  useLayoutEffect(() => {
+    const element = placeholderRef.current;
+    if (frame == null || element == null) return;
+    // A frame dropped before this card could attach it (claimed frames are
+    // kept, but never show a blank card): read the board again.
+    if (!isBoardFrameLive(frame)) {
+      setFrame(undefined);
+      setRefresh((r) => r + 1);
+      return;
+    }
+    return attachBoardFrame(frame, element, (state) => {
+      setFrameError(state.frameError);
+      setShownElsewhere(!state.active);
+    });
+  }, [frame]);
 
   const openInProject = () => {
     void actions?.open_file({ path }).catch((err) => setError(String(err)));
@@ -284,7 +364,11 @@ export default function BoardArtifact({
         Refresh
       </Button>
       <span role="status">
-        {loading ? "Loading current saved board..." : "Current saved board"}
+        {loading
+          ? "Loading current saved board..."
+          : stale
+            ? "Refresh failed: the board as last read, which may not be the current saved file"
+            : "Current saved board"}
       </span>
     </Space>
   );
@@ -302,8 +386,11 @@ export default function BoardArtifact({
       {toolbar}
       {historical && (
         <div role="note">
-          Published file reference; the board shown is the current saved file,
-          not a historical snapshot.
+          Published file reference; the board shown is{" "}
+          {stale
+            ? "the file as last read (Refresh failed)"
+            : "the current saved file"}
+          , not a historical snapshot.
         </div>
       )}
       {history && (
@@ -334,22 +421,42 @@ export default function BoardArtifact({
           description={frameError}
         />
       )}
-      {board && (
-        <iframe
-          key={board.id}
-          ref={frameRef}
-          src={frameUrl}
-          sandbox={BOARD_FRAME_SANDBOX}
-          title={`Sagebrush board: ${name}`}
+      {frame && (
+        // Keyboard: the frame itself lives at the end of the page; this
+        // placeholder is its focus proxy, and the marks around it are where
+        // focus returns when it leaves the frame (board-frame-host.ts).
+        <span tabIndex={-1} data-board-frame-enter="" />
+      )}
+      {frame && (
+        <div
+          ref={placeholderRef}
+          data-board-frame-placeholder=""
+          // Only the view that shows the frame is its focus proxy.
+          tabIndex={shownElsewhere ? -1 : 0}
+          role="group"
+          aria-label={`Sagebrush board: ${name}`}
+          onFocus={(e) => {
+            if (e.target === e.currentTarget && !shownElsewhere) {
+              focusBoardFrame(frame);
+            }
+          }}
           style={{
             flex: "1 1 0",
             minHeight: 420,
             width: "100%",
             border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 4,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
-        />
+        >
+          {shownElsewhere && (
+            <span role="note">This board is shown in another view.</span>
+          )}
+        </div>
       )}
+      {frame && <span tabIndex={-1} data-board-frame-exit="" />}
       <div role="note" style={{ flexShrink: 0, marginTop: 6, fontSize: "85%" }}>
         Runs on {site} in a sandboxed frame: showing it sends {site} this
         file&apos;s complete text and name. Changes made there are not saved to
