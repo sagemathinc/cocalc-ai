@@ -14,6 +14,7 @@ import { randomBytes } from "node:crypto";
 // The credential-bearing origins are fixed: there is deliberately no option
 // to point this client (and so the escrowed key) anywhere else.
 
+import type { RunpodCloud } from "@cocalc/util/gpu/runpod";
 import {
   billingRecordView,
   podView,
@@ -113,9 +114,7 @@ export interface RunpodAccountBalance {
   spendLimitPerHour?: number;
 }
 
-export type RunpodCloud = "SECURE" | "COMMUNITY";
-
-export type RunpodAvailability = "NONE" | "LOW" | "MEDIUM" | "HIGH";
+export type { RunpodAvailability, RunpodCloud } from "@cocalc/util/gpu/runpod";
 
 export class RunpodClient {
   readonly #apiKey: string;

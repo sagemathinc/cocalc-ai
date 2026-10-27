@@ -196,6 +196,7 @@ describe("RunpodClient", () => {
       cost: 0.27,
       gpuTypeId: "NVIDIA RTX A5000",
       gpuCount: 1,
+      vcpuCount: 9,
       cloud: "SECURE",
       dataCenterId: "EU-RO-1",
       image: "runpod/pytorch@sha256:abc",
@@ -204,6 +205,88 @@ describe("RunpodClient", () => {
     expect(JSON.stringify(pod)).not.toMatch(
       new RegExp(`${BOOTSTRAP}|rpa_|reg-1|tmpl-1|vol-1`),
     );
+  });
+
+  it("keeps a pod's non-secret detail: machine, storage, ports, network and live metrics", async () => {
+    const { fetch } = fakeFetch([
+      {
+        body: {
+          id: "pod_abc123",
+          status: "RUNNING",
+          actions: ["stop", "restart", "terminate", "explode"],
+          gpu: { id: "NVIDIA RTX A5000", count: 2, vcpuCount: 18, memory: 50 },
+          disk: 20,
+          mounts: {
+            persistent: { size: 30, path: "/workspace" },
+            network: [{ volumeId: "vol_xyz", path: "/data" }, { path: "/x" }],
+          },
+          ports: ["22/tcp", "8888/http", `${BOOTSTRAP}/tcp`],
+          cudaVersion: "12.8",
+          locked: false,
+          globalNetworking: {
+            enabled: true,
+            ip: "10.65.1.42",
+            internalDns: "pod_abc123.runpod.internal",
+          },
+          runtime: {
+            uptime: 3600,
+            gpus: [{ util: 94, memoryUtil: 78 }, { util: 250 }],
+            cpu: { util: 45 },
+            memory: { util: 30 },
+            ports: [
+              { private: 22, public: 40022, type: "tcp", ip: "203.0.113.7" },
+              { private: 99999, public: 1 },
+            ],
+          },
+          env: { BOOTSTRAP },
+        },
+      },
+    ]);
+    const pod = await client(fetch).getPod("pod_abc123");
+    expect(pod).toEqual({
+      id: "pod_abc123",
+      status: "RUNNING",
+      actions: ["stop", "restart", "terminate"],
+      gpuTypeId: "NVIDIA RTX A5000",
+      gpuCount: 2,
+      vcpuCount: 18,
+      memoryGb: 50,
+      containerDiskGb: 20,
+      mounts: {
+        persistent: { sizeGb: 30, path: "/workspace" },
+        network: [{ volumeId: "vol_xyz", path: "/data" }],
+      },
+      ports: ["22/tcp", "8888/http"],
+      cudaVersion: "12.8",
+      locked: false,
+      globalNetworking: {
+        enabled: true,
+        ip: "10.65.1.42",
+        internalDns: "pod_abc123.runpod.internal",
+      },
+      runtime: {
+        uptimeSeconds: 3600,
+        gpus: [{ util: 94, memoryUtil: 78 }, {}],
+        cpuUtil: 45,
+        memoryUtil: 30,
+        ports: [{ private: 22, public: 40022, type: "tcp", ip: "203.0.113.7" }],
+      },
+    });
+    expect(JSON.stringify(pod)).not.toContain(BOOTSTRAP);
+  });
+
+  it("reads a CPU pod's flavor, vCPUs and memory", () => {
+    expect(
+      podView({
+        id: "pod_cpu123",
+        cpu: { id: "cpu5c", vcpuCount: 4, memory: 16 },
+      }),
+    ).toEqual({
+      id: "pod_cpu123",
+      cpuFlavorId: "cpu5c",
+      vcpuCount: 4,
+      memoryGb: 16,
+    });
   });
 
   it("never returns provider error bodies, even with an unprefixed secret echoed", async () => {

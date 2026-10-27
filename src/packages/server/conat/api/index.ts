@@ -64,6 +64,7 @@ import * as apiKeys from "./api-keys";
 import * as growthAnalytics from "./growth-analytics";
 import * as commercialOrders from "./commercial-orders";
 import * as adminCrm from "./crm";
+import * as gpu from "./gpu";
 
 import getLogger from "@cocalc/backend/logger";
 import {
@@ -134,6 +135,7 @@ export const hubApi: HubApi = {
   growthAnalytics,
   commercialOrders,
   adminCrm,
+  gpu,
   ssh,
   reflect,
 };
@@ -562,4 +564,7 @@ const AGENT_HUB_API_METHODS = new Set([
   "compute.resizeVolume",
   "compute.setVolumeFundingMode",
   "compute.deleteVolume",
+  "gpu.catalog",
+  "gpu.availability",
+  "gpu.pods",
 ]);
