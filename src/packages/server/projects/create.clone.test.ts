@@ -944,6 +944,8 @@ describe("projects.createProject clone routing", () => {
         expect(params[4]).toBe(STAR_ROOTFS_IMAGE_ID);
         return { rowCount: 1 };
       }
+      // the membership audit context (projects/create.ts)
+      if (sql === "SELECT set_config($1, $2, true)") return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     });
 
@@ -1002,6 +1004,8 @@ describe("projects.createProject clone routing", () => {
       if (sql.includes("INSERT INTO project_rootfs_states")) {
         return { rowCount: 1 };
       }
+      // the membership audit context (projects/create.ts)
+      if (sql === "SELECT set_config($1, $2, true)") return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     });
 
@@ -1105,6 +1109,8 @@ describe("projects.createProject clone routing", () => {
       if (sql.includes("COALESCE(official, false) OR COALESCE(prepull")) {
         return { rows: [] };
       }
+      // the membership audit context (projects/create.ts)
+      if (sql === "SELECT set_config($1, $2, true)") return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     });
     resolveMembershipForAccountMock = jest.fn(async () => ({
@@ -1204,6 +1210,8 @@ describe("projects.createProject clone routing", () => {
       ) {
         return { rows: [] };
       }
+      // the membership audit context (projects/create.ts)
+      if (sql === "SELECT set_config($1, $2, true)") return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     });
     resolveMembershipForAccountMock = jest.fn(async () => ({
@@ -1368,6 +1376,8 @@ describe("projects.createProject clone routing", () => {
             ],
           };
         }
+        // the membership audit context (projects/create.ts)
+        if (sql === "SELECT set_config($1, $2, true)") return { rows: [] };
         throw new Error(`unexpected query: ${sql}`);
       });
       poolConnectMock = jest.fn(async () => ({

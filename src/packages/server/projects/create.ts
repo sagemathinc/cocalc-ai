@@ -763,18 +763,12 @@ async function createProjectImpl(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // Course managers added as collaborators of a new student project are
-    // recorded by the membership audit as added by the creator.
-    if (
-      Object.values(users ?? {}).some(
-        (user) => (user as { group?: string })?.group !== "owner",
-      )
-    ) {
-      await setProjectMembershipAuditContext(client, {
-        actor_account_id: account_id ?? null,
-        via: "project-create",
-      });
-    }
+    // The membership audit records the new project's members (the owner,
+    // and course managers of a student project) as added by the creator.
+    await setProjectMembershipAuditContext(client, {
+      actor_account_id: account_id ?? null,
+      via: "project-create",
+    });
     if (creationRequest) {
       await lockProjectCreation(client, project_id);
       if (

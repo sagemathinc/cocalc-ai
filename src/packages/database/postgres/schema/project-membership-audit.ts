@@ -16,8 +16,12 @@ trigger on projects.users so that no code path can add someone silently.
 
 A writer says who acted and how with setProjectMembershipAuditContext in the
 same transaction; a change without that context is recorded with via
-"unattributed". The rows hold account and project ids only, and expire after
-PROJECT_MEMBERSHIP_AUDIT_RETENTION. (Deleting a project row records nothing.)
+"unattributed". A new project's members, its owner included, are recorded as
+added (via "project-create" when created normally). A rehome (via
+"project-rehome") copies an existing membership to another bay and records
+nothing; the source bay keeps the history. Deleting a project row records
+nothing. The rows hold account and project ids only, and expire after
+PROJECT_MEMBERSHIP_AUDIT_RETENTION.
 
 Recording never blocks a membership change: a failure raises a warning and is
 counted in project_membership_audit_failures, which admin health reports.
@@ -29,7 +33,7 @@ export const PROJECT_MEMBERSHIP_AUDIT_TRIGGER =
   "projects_audit_membership_trigger";
 const PROJECT_MEMBERSHIP_AUDIT_FUNCTION = "projects_audit_membership";
 // Bump when the function changes, so schema sync replaces it.
-const MEMBERSHIP_AUDIT_CONTRACT = "project-membership-audit-v1";
+const MEMBERSHIP_AUDIT_CONTRACT = "project-membership-audit-v2";
 const AUDIT_CONTEXT_SETTING = "cocalc.membership_audit";
 
 export const PROJECT_MEMBERSHIP_ADDED_EVENT = "project_collaborator_added";
@@ -96,11 +100,19 @@ const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_MEM
      IF TG_OP = 'UPDATE' AND NEW.users IS NOT DISTINCT FROM OLD.users THEN
        RETURN NULL;
      END IF;
+     -- Everything below fails open: an error (even malformed users) is
+     -- counted, never raised.
+     BEGIN
      BEGIN
        ctx := NULLIF(current_setting('${AUDIT_CONTEXT_SETTING}', true), '')::jsonb;
      EXCEPTION WHEN OTHERS THEN
        ctx := NULL;
      END;
+     -- A rehome copies an existing membership to its new bay; nobody's
+     -- access changes (the source bay keeps the history).
+     IF ctx->>'via' = 'project-rehome' THEN
+       RETURN NULL;
+     END IF;
      WITH members AS (
        SELECT n.key AS account_id,
               ${GROUP_SQL("n.value")} AS grp,
@@ -112,8 +124,6 @@ const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_MEM
               CASE WHEN prev IN ('owner','collaborator','viewer') THEN prev END AS prev
          FROM members
         WHERE grp IN ('owner','collaborator','viewer')
-          -- A new project's owner is its creator, not a grant.
-          AND NOT (TG_OP = 'INSERT' AND grp = 'owner')
      )
      SELECT jsonb_object_agg(account_id, grp) FILTER (WHERE prev IS NULL),
             jsonb_object_agg(account_id, grp) FILTER (WHERE prev IS NOT NULL AND prev <> grp),
@@ -138,7 +148,6 @@ const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_MEM
        'via', COALESCE(ctx->>'via', 'unattributed'),
        'actor_account_id', ctx->'actor_account_id',
        'invite_creator_account_id', ctx->'invite_creator_account_id');
-     BEGIN
        IF added IS NOT NULL THEN
          INSERT INTO central_log(id, event, value, time, expire)
          VALUES (gen_random_uuid(), '${PROJECT_MEMBERSHIP_ADDED_EVENT}',
@@ -267,7 +276,9 @@ export async function getProjectMembershipAuditStatus(
   const state =
     trigger == null
       ? "missing"
-      : trigger.enabled === "D"
+      : // Only O (origin) and A (always) fire for ordinary writes; D is
+        // disabled and R fires only for replication sessions.
+        trigger.enabled !== "O" && trigger.enabled !== "A"
         ? "disabled"
         : trigger.current
           ? "ok"

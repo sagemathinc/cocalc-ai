@@ -41,6 +41,11 @@ async function project(users: object, course?: object) {
     "INSERT INTO projects(project_id,users,course) VALUES($1,$2::jsonb,$3::jsonb)",
     [project_id, JSON.stringify(users), course ? JSON.stringify(course) : null],
   );
+  // only the changes made by the code under test
+  await getPool().query(
+    "DELETE FROM central_log WHERE value->>'project_id'=$1",
+    [project_id],
+  );
   return project_id;
 }
 

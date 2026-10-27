@@ -59,6 +59,27 @@ async function setUsers(project_id: string, users: object, context?: object) {
   }
 }
 
+async function insertProject(
+  project_id: string,
+  users: object,
+  context?: object,
+) {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    if (context) {
+      await setProjectMembershipAuditContext(client, context as any);
+    }
+    await client.query(
+      "INSERT INTO projects(project_id,users) VALUES($1,$2::jsonb)",
+      [project_id, JSON.stringify(users)],
+    );
+    await client.query("COMMIT");
+  } finally {
+    client.release();
+  }
+}
+
 describe("project membership audit", () => {
   it("records grants and role changes with the writer's context, ids only", async () => {
     const project_id = uuid();
@@ -66,12 +87,22 @@ describe("project membership audit", () => {
     const viewer = uuid();
     const collaborator = uuid();
     const inviter = uuid();
-    // a new project's owner is its creator, not a grant
-    await getPool().query(
-      "INSERT INTO projects(project_id,users) VALUES($1,$2::jsonb)",
-      [project_id, JSON.stringify({ [owner]: { group: "owner" } })],
+    // a new project's members, its owner included, are recorded
+    await insertProject(
+      project_id,
+      { [owner]: { group: "owner" } },
+      { actor_account_id: owner, via: "project-create" },
     );
-    expect(await auditRows(project_id)).toEqual([]);
+    expect((await auditRows(project_id)).map((row) => row.value)).toEqual([
+      {
+        project_id,
+        via: "project-create",
+        actor_account_id: owner,
+        invite_creator_account_id: null,
+        added_account_ids: [owner],
+        groups: { [owner]: "owner" },
+      },
+    ]);
 
     await setUsers(
       project_id,
@@ -99,7 +130,7 @@ describe("project membership audit", () => {
       [collaborator]: { group: "collaborator" },
     });
 
-    const rows = await auditRows(project_id);
+    const rows = (await auditRows(project_id)).slice(1);
     expect(rows.map((row) => row.event)).toEqual([
       PROJECT_MEMBERSHIP_ADDED_EVENT,
       PROJECT_MEMBERSHIP_ROLE_CHANGED_EVENT,
@@ -197,9 +228,61 @@ describe("project membership audit", () => {
     );
     const rows = await auditRows(project_id);
     expect(rows.map((row) => row.value.added_account_ids)).toEqual([
-      [manager],
+      [manager, owner].sort(),
       [legacy],
     ]);
+  });
+
+  it("records every owner of a new project, not only one", async () => {
+    const project_id = uuid();
+    const creator = uuid();
+    const second = uuid();
+    await insertProject(project_id, {
+      [creator]: { group: "owner" },
+      [second]: { group: "owner" },
+    });
+    const rows = await auditRows(project_id);
+    expect(rows.map((row) => row.value.groups)).toEqual([
+      { [creator]: "owner", [second]: "owner" },
+    ]);
+    expect(rows[0].value.via).toBe("unattributed");
+  });
+
+  it("records nothing when a rehome copies a membership to this bay", async () => {
+    const project_id = uuid();
+    const owner = uuid();
+    const member = uuid();
+    const users = {
+      [owner]: { group: "owner" },
+      [member]: { group: "collaborator" },
+    };
+    await insertProject(project_id, users, { via: "project-rehome" });
+    // a later rehome back updates the existing row: still nothing
+    await setUsers(
+      project_id,
+      { [owner]: { group: "owner" } },
+      { via: "project-rehome" },
+    );
+    expect(await auditRows(project_id)).toEqual([]);
+  });
+
+  it("fails open on malformed users, and counts the failure", async () => {
+    const project_id = uuid();
+    const owner = uuid();
+    await insertProject(project_id, { [owner]: { group: "owner" } });
+    await getPool().query("DELETE FROM project_membership_audit_failures");
+    await getPool().query(
+      "UPDATE projects SET users='5'::jsonb WHERE project_id=$1",
+      [project_id],
+    );
+    const { rows } = await getPool().query(
+      "SELECT users FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    expect(rows[0].users).toBe(5);
+    const status = await getProjectMembershipAuditStatus(getPool());
+    expect(status.recent_failures).toBe(1);
+    expect(status.last_error).toContain("non-object");
   });
 
   it("never blocks a membership change, and counts the failure", async () => {
@@ -244,6 +327,17 @@ describe("project membership audit", () => {
       "disabled",
     );
     expect(await projectMembershipAuditSchemaNeedsSync(pool)).toBe(false);
+    // a replica-only trigger does not fire for ordinary writes
+    await pool.query(
+      "ALTER TABLE projects ENABLE REPLICA TRIGGER projects_audit_membership_trigger",
+    );
+    expect((await getProjectMembershipAuditStatus(pool)).state).toBe(
+      "disabled",
+    );
+    await pool.query(
+      "ALTER TABLE projects ENABLE ALWAYS TRIGGER projects_audit_membership_trigger",
+    );
+    expect((await getProjectMembershipAuditStatus(pool)).state).toBe("ok");
     await pool.query(
       "ALTER TABLE projects ENABLE TRIGGER projects_audit_membership_trigger",
     );
@@ -251,6 +345,28 @@ describe("project membership audit", () => {
       "DROP TRIGGER projects_audit_membership_trigger ON projects",
     );
     expect((await getProjectMembershipAuditStatus(pool)).state).toBe("missing");
+    expect(await projectMembershipAuditSchemaNeedsSync(pool)).toBe(true);
+    const client = await pool.connect();
+    try {
+      await ensureProjectMembershipAuditSchema(client);
+    } finally {
+      client.release();
+    }
+    expect((await getProjectMembershipAuditStatus(pool)).state).toBe("ok");
+  });
+
+  it("replaces an older installed audit function at schema sync", async () => {
+    const pool = getPool();
+    await pool.query(
+      `CREATE OR REPLACE FUNCTION projects_audit_membership()
+         RETURNS TRIGGER AS $$
+         -- project-membership-audit-v1
+         BEGIN RETURN NULL; END;
+         $$ LANGUAGE plpgsql`,
+    );
+    expect((await getProjectMembershipAuditStatus(pool)).state).toBe(
+      "outdated",
+    );
     expect(await projectMembershipAuditSchemaNeedsSync(pool)).toBe(true);
     const client = await pool.connect();
     try {
