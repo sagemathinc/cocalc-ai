@@ -70,14 +70,18 @@ export function selectTransport(
     try {
       zmq = loadNative();
     } catch (err) {
-      throw new Error(`${TRANSPORT_ENV}=native, but the native zeromq transport isn't available in this build: ${err}`);
+      throw new Error(
+        `${TRANSPORT_ENV}=native, but the native zeromq transport isn't available in this build: ${err}`,
+      );
     }
     // Jupyter closes its sockets explicitly; leaving the global zeromq context
     // in blocky mode can keep test and short-lived CLI processes alive at exit.
     zmq.context.blocky = false;
     return { name: "native", Dealer: zmq.Dealer, Subscriber: zmq.Subscriber };
   }
-  throw new Error(`${TRANSPORT_ENV}=${JSON.stringify(value)} isn't a Jupyter transport: use "js" (the default) or "native"`);
+  throw new Error(
+    `${TRANSPORT_ENV}=${JSON.stringify(value)} isn't a Jupyter transport: use "js" (the default) or "native"`,
+  );
 }
 
 /** The process's transport: chosen at the first call, and fixed after it. */

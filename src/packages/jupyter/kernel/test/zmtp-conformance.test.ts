@@ -17,7 +17,8 @@ import { getPythonKernel, closeKernels } from "./util";
 
 const MIB64 = 2 ** 26;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const tcpSockets = () => process.getActiveResourcesInfo().filter((r) => r === "TCPSocketWrap").length;
+const tcpSockets = () =>
+  process.getActiveResourcesInfo().filter((r) => r === "TCPSocketWrap").length;
 
 async function run(k, code: string, opts: any = {}) {
   const out: any[] = [];
@@ -46,12 +47,18 @@ describe("an ipykernel on this transport", () => {
 
   it("streams 64 MiB of stdout, whole", async () => {
     const out = await run(k, `print("x" * ${MIB64}, end="")`);
-    const text = out.filter((m) => m.msg_type === "stream" || m.header?.msg_type === "stream").map((m) => m.content.text).join("");
+    const text = out
+      .filter((m) => m.msg_type === "stream" || m.header?.msg_type === "stream")
+      .map((m) => m.content.text)
+      .join("");
     expect(text.length).toBe(MIB64);
   }, 120_000);
 
   it("delivers a 64 MiB display_data", async () => {
-    const out = await run(k, `from IPython.display import display\ndisplay({"text/plain": "y" * ${MIB64}}, raw=True)`);
+    const out = await run(
+      k,
+      `from IPython.display import display\ndisplay({"text/plain": "y" * ${MIB64}}, raw=True)`,
+    );
     const d = out.find((m) => m.content?.data?.["text/plain"]?.length >= MIB64);
     expect(d).toBeTruthy();
   }, 120_000);
@@ -85,7 +92,9 @@ describe("an ipykernel on this transport", () => {
     k = await getPythonKernel("zmtp-conformance-2.ipynb");
     await k.spawn();
     const out = await run(k, "1 + 1");
-    expect(out.find((m) => m.content?.data)?.content.data).toEqual({ "text/plain": "2" });
+    expect(out.find((m) => m.content?.data)?.content.data).toEqual({
+      "text/plain": "2",
+    });
     k.close();
   });
 

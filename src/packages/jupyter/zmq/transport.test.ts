@@ -22,7 +22,11 @@ describe("COCALC_JUPYTER_ZMQ", () => {
   });
 
   test("native: zeromq.js, when the build has it", () => {
-    const fake = { Dealer: class {}, Subscriber: class {}, context: { blocky: true } };
+    const fake = {
+      Dealer: class {},
+      Subscriber: class {},
+      context: { blocky: true },
+    };
     const t = selectTransport("native", () => fake);
     assert.equal(t.name, "native");
     assert.equal(t.Dealer, fake.Dealer);
@@ -31,12 +35,18 @@ describe("COCALC_JUPYTER_ZMQ", () => {
 
   test("native in a build without the addon: a clear error, not a fallback", () => {
     assert.throws(
-      () => selectTransport("native", () => { throw new Error("Cannot find module 'zeromq'"); }),
+      () =>
+        selectTransport("native", () => {
+          throw new Error("Cannot find module 'zeromq'");
+        }),
       /COCALC_JUPYTER_ZMQ=native, but the native zeromq transport isn't available in this build: Error: Cannot find module 'zeromq'/,
     );
   });
 
   test("any other value: an error naming the allowed values", () => {
-    assert.throws(() => selectTransport("zmq"), /COCALC_JUPYTER_ZMQ="zmq" isn't a Jupyter transport: use "js" \(the default\) or "native"/);
+    assert.throws(
+      () => selectTransport("zmq"),
+      /COCALC_JUPYTER_ZMQ="zmq" isn't a Jupyter transport: use "js" \(the default\) or "native"/,
+    );
   });
 });

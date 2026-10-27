@@ -70,7 +70,11 @@ class Helper {
   proc: ChildProcess;
   lines: string[] = [];
   constructor(rport: number, pport: number, hb = 0) {
-    this.proc = spawn(PY, ["-c", HELPER, String(rport), String(pport), String(hb)], { stdio: ["ignore", "pipe", "inherit"] });
+    this.proc = spawn(
+      PY,
+      ["-c", HELPER, String(rport), String(pport), String(hb)],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
     let buf = "";
     this.proc.stdout!.on("data", (d) => {
       buf += d;
@@ -84,7 +88,10 @@ class Helper {
     for (;;) {
       const l = this.lines.find((x) => x.startsWith(prefix));
       if (l != null) return l;
-      if (Date.now() - t0 > ms) throw new Error(`the helper never said ${prefix}: ${JSON.stringify(this.lines)}`);
+      if (Date.now() - t0 > ms)
+        throw new Error(
+          `the helper never said ${prefix}: ${JSON.stringify(this.lines)}`,
+        );
       await sleep(10);
     }
   }
@@ -117,9 +124,13 @@ maybe("interop with libzmq (pyzmq)", () => {
     try {
       await h.wait("ready");
       const it = d[Symbol.asyncIterator]();
-      for (let i = 0; i < 3; i++) assert.deepEqual((await it.next()).value!.map(String), [`m${i}`, "x"]);
+      for (let i = 0; i < 3; i++)
+        assert.deepEqual((await it.next()).value!.map(String), [`m${i}`, "x"]);
       await h.wait("from cocalc-client-1 m2"); // (its stdout can trail the replies)
-      assert.deepEqual(h.lines.filter((l) => l.startsWith("from")), [0, 1, 2].map((i) => `from cocalc-client-1 m${i}|x`));
+      assert.deepEqual(
+        h.lines.filter((l) => l.startsWith("from")),
+        [0, 1, 2].map((i) => `from cocalc-client-1 m${i}|x`),
+      );
     } finally {
       d.close();
       await h.kill();
@@ -135,13 +146,21 @@ maybe("interop with libzmq (pyzmq)", () => {
       s.connect(`tcp://127.0.0.1:${b}`);
       s.subscribe();
       const it = s[Symbol.asyncIterator]();
-      for (let i = 0; i < 3; i++) assert.deepEqual((await it.next()).value!.map(String), ["topic", `pub${i}`]);
+      for (let i = 0; i < 3; i++)
+        assert.deepEqual((await it.next()).value!.map(String), [
+          "topic",
+          `pub${i}`,
+        ]);
       assert.equal(await h.wait("sub"), "sub 01");
       await h.kill();
       h = new Helper(a, b);
       await h.wait("ready");
       assert.equal(await h.wait("sub", 15_000), "sub 01");
-      for (let i = 0; i < 3; i++) assert.deepEqual((await it.next()).value!.map(String), ["topic", `pub${i}`]);
+      for (let i = 0; i < 3; i++)
+        assert.deepEqual((await it.next()).value!.map(String), [
+          "topic",
+          `pub${i}`,
+        ]);
     } finally {
       s.close();
       await h.kill();

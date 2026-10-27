@@ -16,9 +16,22 @@ ZMTP_KERNELS=tslab,xpython pnpm test `pwd`/zmtp-kernels.test.ts
 import { kernel } from "../kernel";
 
 const names = (process.env.ZMTP_KERNELS ?? "").split(",").filter(Boolean);
-const CASES: Record<string, { code: string; result: string; display: string; shown: string }> = {
-  tslab: { code: "2 + 3", result: "5", display: 'import * as tslab from "tslab"; tslab.display.text("shown")', shown: "shown" },
-  xpython: { code: "2 + 3", result: "5", display: "from IPython.display import display\ndisplay('shown')", shown: "shown" },
+const CASES: Record<
+  string,
+  { code: string; result: string; display: string; shown: string }
+> = {
+  tslab: {
+    code: "2 + 3",
+    result: "5",
+    display: 'import * as tslab from "tslab"; tslab.display.text("shown")',
+    shown: "shown",
+  },
+  xpython: {
+    code: "2 + 3",
+    result: "5",
+    display: "from IPython.display import display\ndisplay('shown')",
+    shown: "shown",
+  },
 };
 
 async function run(k, code: string) {
@@ -39,7 +52,9 @@ maybe("non-Python libzmq kernels", () => {
         await k.spawn();
         const info = await k.kernel_info();
         expect(info.protocol_version).toBeTruthy();
-        console.log(`ZMTP kernel ${name}: ${info.implementation} ${info.implementation_version}, protocol ${info.protocol_version}`);
+        console.log(
+          `ZMTP kernel ${name}: ${info.implementation} ${info.implementation_version}, protocol ${info.protocol_version}`,
+        );
         const r = await run(k, c.code);
         expect(JSON.stringify(r)).toContain(c.result);
         const d = await run(k, c.display);

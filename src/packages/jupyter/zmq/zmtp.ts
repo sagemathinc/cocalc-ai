@@ -86,9 +86,15 @@ export function greeting(): Buffer {
   return g;
 }
 
-export function command(name: string, data: Buffer = Buffer.alloc(0)): Buffer[] {
+export function command(
+  name: string,
+  data: Buffer = Buffer.alloc(0),
+): Buffer[] {
   const n = Buffer.from(name, "ascii");
-  return encodeFrames([Buffer.concat([Buffer.from([n.length]), n, data])], true);
+  return encodeFrames(
+    [Buffer.concat([Buffer.from([n.length]), n, data])],
+    true,
+  );
 }
 
 export function readyCommand(props: Record<string, Buffer>): Buffer[] {
@@ -107,12 +113,18 @@ export function parseProps(body: Buffer, at: number): Map<string, Buffer> {
   const m = new Map<string, Buffer>();
   while (at < body.length) {
     const nl = body[at++];
-    if (at + nl + 4 > body.length) throw new ProtocolError("malformed metadata: a property name runs past the command");
+    if (at + nl + 4 > body.length)
+      throw new ProtocolError(
+        "malformed metadata: a property name runs past the command",
+      );
     const name = body.toString("ascii", at, at + nl);
     at += nl;
     const vl = body.readUInt32BE(at);
     at += 4;
-    if (at + vl > body.length) throw new ProtocolError("malformed metadata: a property value runs past the command");
+    if (at + vl > body.length)
+      throw new ProtocolError(
+        "malformed metadata: a property value runs past the command",
+      );
     m.set(name.toLowerCase(), body.subarray(at, at + vl));
     at += vl;
   }
@@ -262,7 +274,9 @@ export class Decoder {
     try {
       return Buffer.allocUnsafeSlow(n);
     } catch (err) {
-      throw new ProtocolError(`a frame of ${n} bytes can't be allocated: ${err}`);
+      throw new ProtocolError(
+        `a frame of ${n} bytes can't be allocated: ${err}`,
+      );
     }
   }
 
@@ -281,13 +295,21 @@ export class Decoder {
   private parseLoop(): void {
     if (!this.greeted) {
       // impossible greetings are rejected as soon as the deciding byte is in
-      if (this.avail >= 1 && this.peek(0) !== 0xff) throw new ProtocolError("not a ZMTP peer (bad signature)");
-      if (this.avail >= 10 && this.peek(9) !== 0x7f) throw new ProtocolError("not a ZMTP peer (bad signature)");
-      if (this.avail >= 11 && this.peek(10) < 3) throw new ProtocolError(`the peer speaks ZMTP ${this.peek(10)}.x (libzmq older than 4.0)`);
+      if (this.avail >= 1 && this.peek(0) !== 0xff)
+        throw new ProtocolError("not a ZMTP peer (bad signature)");
+      if (this.avail >= 10 && this.peek(9) !== 0x7f)
+        throw new ProtocolError("not a ZMTP peer (bad signature)");
+      if (this.avail >= 11 && this.peek(10) < 3)
+        throw new ProtocolError(
+          `the peer speaks ZMTP ${this.peek(10)}.x (libzmq older than 4.0)`,
+        );
       if (this.avail < 64) return;
       const g = this.take(64);
       const mech = g.toString("ascii", 12, 32).replace(/\0+$/, "");
-      if (mech !== "NULL") throw new ProtocolError(`the peer's security mechanism is ${mech}, not NULL`);
+      if (mech !== "NULL")
+        throw new ProtocolError(
+          `the peer's security mechanism is ${mech}, not NULL`,
+        );
       this.greeted = true;
       this.on.greeting(g);
     }
@@ -305,14 +327,20 @@ export class Decoder {
       if (this.frames.length === 0 && this.stopped()) return; // at a message boundary
       if (this.avail < 2) return;
       const flags = this.peek(0);
-      if (flags & 0xf8) throw new ProtocolError(`reserved frame flags set (0x${flags.toString(16)})`);
+      if (flags & 0xf8)
+        throw new ProtocolError(
+          `reserved frame flags set (0x${flags.toString(16)})`,
+        );
       let size: number;
       let hl: number;
       if (flags & 2) {
         if (this.avail < 9) return;
         let big = 0n;
         for (let i = 1; i < 9; i++) big = (big << 8n) | BigInt(this.peek(i));
-        if (big > BigInt(MAX_FRAME)) throw new ProtocolError(`a frame of ${big} bytes exceeds this Node's Buffer limit`);
+        if (big > BigInt(MAX_FRAME))
+          throw new ProtocolError(
+            `a frame of ${big} bytes exceeds this Node's Buffer limit`,
+          );
         size = Number(big);
         hl = 9;
       } else {
@@ -334,7 +362,10 @@ export class Decoder {
 
   private frame(flags: number, body: Buffer): void {
     if (flags & 4) {
-      if (body.length < 1 || 1 + body[0] > body.length) throw new ProtocolError("malformed command: its name runs past the frame");
+      if (body.length < 1 || 1 + body[0] > body.length)
+        throw new ProtocolError(
+          "malformed command: its name runs past the frame",
+        );
       const name = body.toString("ascii", 1, 1 + body[0]);
       // (a command may arrive between a message's frames: handled, the message keeps accumulating)
       this.on.command(name, body.subarray(1 + body[0]));
@@ -353,7 +384,10 @@ export class Decoder {
 }
 
 type SocketType = "DEALER" | "SUB";
-const PEER_TYPES: Record<SocketType, string[]> = { DEALER: ["ROUTER"], SUB: ["PUB", "XPUB"] };
+const PEER_TYPES: Record<SocketType, string[]> = {
+  DEALER: ["ROUTER"],
+  SUB: ["PUB", "XPUB"],
+};
 
 class Connection {
   socket: net.Socket;
@@ -395,7 +429,9 @@ class ZSocket {
   private waiting?: (r: IteratorResult<Buffer[]>) => void;
   private stoppedAtMark = false;
   private subs: Buffer[] = [];
-  private readonly opts: Required<Omit<SocketOptions, "routingId" | "log">> & { routingId?: string };
+  private readonly opts: Required<Omit<SocketOptions, "routingId" | "log">> & {
+    routingId?: string;
+  };
   private readonly log: Log;
   /** (tests) connection attempts, and those made after close */
   readonly counters = { attempts: 0, attemptsAfterClose: 0 };
@@ -414,7 +450,10 @@ class ZSocket {
     this.log = options.log ?? (() => {});
     if (options.routingId != null) {
       const id = Buffer.from(options.routingId);
-      if (id.length === 0 || id.length > 255 || id[0] === 0) throw new Error("a routing id is 1 to 255 bytes and doesn't start with a zero byte");
+      if (id.length === 0 || id.length > 255 || id[0] === 0)
+        throw new Error(
+          "a routing id is 1 to 255 bytes and doesn't start with a zero byte",
+        );
     }
   }
 
@@ -428,7 +467,8 @@ class ZSocket {
 
   connect(url: string): void {
     if (this._closed) throw new Error("socket is closed");
-    if (this.url != null) throw new Error("this socket connects to one endpoint");
+    if (this.url != null)
+      throw new Error("this socket connects to one endpoint");
     endpoint(url); // (validated now: a bad URL fails the caller)
     this.url = url;
     this.attempt();
@@ -457,7 +497,8 @@ class ZSocket {
 
   send(frames: Frame[]): void {
     if (this._closed) throw new Error("socket is closed");
-    if (this.type === "SUB") throw new Error("a SUB socket doesn't send messages");
+    if (this.type === "SUB")
+      throw new Error("a SUB socket doesn't send messages");
     const encoded = encodeFrames(frames);
     if (this.conn?.ready && this.out.length === 0) {
       this.write(this.conn, encoded);
@@ -478,7 +519,8 @@ class ZSocket {
   /** Diagnostics and tests: what this socket holds. */
   get stats() {
     const backing = new Set<ArrayBufferLike>();
-    for (let i = this.inHead; i < this.inq.length; i++) for (const f of this.inq[i] ?? []) backing.add(f.buffer);
+    for (let i = this.inHead; i < this.inq.length; i++)
+      for (const f of this.inq[i] ?? []) backing.add(f.buffer);
     this.conn?.decoder.backings(backing);
     let retainedBacking = 0;
     for (const b of backing) retainedBacking += b.byteLength;
@@ -490,7 +532,9 @@ class ZSocket {
       outQueuedBytes: this.outBytes,
       writableLength: this.conn?.socket.writableLength ?? 0,
       paused: this.stoppedAtMark,
-      liveSlots: this.inq.reduce((n, m) => n + (m ? 1 : 0), 0) + (this.conn?.decoder.liveSlots() ?? 0),
+      liveSlots:
+        this.inq.reduce((n, m) => n + (m ? 1 : 0), 0) +
+        (this.conn?.decoder.liveSlots() ?? 0),
     };
   }
 
@@ -505,9 +549,11 @@ class ZSocket {
   }
 
   private next(): Promise<IteratorResult<Buffer[]>> {
-    if (this.inHead < this.inq.length) return Promise.resolve({ done: false, value: this.dequeue() });
+    if (this.inHead < this.inq.length)
+      return Promise.resolve({ done: false, value: this.dequeue() });
     if (this._closed) return Promise.resolve({ done: true, value: undefined });
-    if (this.waiting) return Promise.reject(new Error("only one next() may wait at a time"));
+    if (this.waiting)
+      return Promise.reject(new Error("only one next() may wait at a time"));
     return new Promise((resolve) => (this.waiting = resolve));
   }
 
@@ -522,7 +568,11 @@ class ZSocket {
       this.inBytes = this.inBytes.slice(this.inHead);
       this.inHead = 0;
     }
-    if (this.stoppedAtMark && this.qCount * 2 <= this.opts.markCount && this.qBytes * 2 <= this.opts.markBytes) {
+    if (
+      this.stoppedAtMark &&
+      this.qCount * 2 <= this.opts.markCount &&
+      this.qBytes * 2 <= this.opts.markBytes
+    ) {
       // below half of both marks: parse what is retained, then read again
       setImmediate(() => this.resumeParsing());
     }
@@ -539,7 +589,9 @@ class ZSocket {
   }
 
   private atMark(): boolean {
-    return this.qCount >= this.opts.markCount || this.qBytes >= this.opts.markBytes;
+    return (
+      this.qCount >= this.opts.markCount || this.qBytes >= this.opts.markBytes
+    );
   }
 
   private enqueue(frames: Buffer[], bytes: number): void {
@@ -575,8 +627,11 @@ class ZSocket {
         greeting: () => {
           if (!live()) return;
           // (the READY each way)
-          const props: Record<string, Buffer> = { "Socket-Type": Buffer.from(this.type, "ascii") };
-          if (this.opts.routingId != null) props.Identity = Buffer.from(this.opts.routingId);
+          const props: Record<string, Buffer> = {
+            "Socket-Type": Buffer.from(this.type, "ascii"),
+          };
+          if (this.opts.routingId != null)
+            props.Identity = Buffer.from(this.opts.routingId);
           this.write(c, readyCommand(props));
         },
         command: (name, data) => {
@@ -623,7 +678,8 @@ class ZSocket {
     try {
       f();
     } catch (err) {
-      if (this.conn === c) this.fail(c, err instanceof ProtocolError ? err.message : `${err}`);
+      if (this.conn === c)
+        this.fail(c, err instanceof ProtocolError ? err.message : `${err}`);
     }
   }
 
@@ -632,7 +688,10 @@ class ZSocket {
       if (c.ready) return;
       const props = parseProps(data, 0);
       const peer = props.get("socket-type")?.toString("ascii") ?? "";
-      if (!PEER_TYPES[this.type].includes(peer)) throw new ProtocolError(`a ${this.type} socket can't talk to a ${peer || "untyped"} peer`);
+      if (!PEER_TYPES[this.type].includes(peer))
+        throw new ProtocolError(
+          `a ${this.type} socket can't talk to a ${peer || "untyped"} peer`,
+        );
       c.ready = true;
       if (c.timer) clearTimeout(c.timer);
       c.timer = undefined;
@@ -640,8 +699,11 @@ class ZSocket {
       this.flush(c);
     } else if (name === "ERROR") {
       const n = data.length ? data[0] : 0;
-      if (1 + n > data.length) throw new ProtocolError("malformed ERROR command");
-      throw new ProtocolError(`the peer refused the connection: ${data.toString("utf8", 1, 1 + n)}`);
+      if (1 + n > data.length)
+        throw new ProtocolError("malformed ERROR command");
+      throw new ProtocolError(
+        `the peer refused the connection: ${data.toString("utf8", 1, 1 + n)}`,
+      );
     } else if (name === "PING") {
       if (data.length < 2) throw new ProtocolError("malformed PING command");
       // PONG echoes the context, the bytes after the 2-byte TTL
@@ -667,9 +729,13 @@ class ZSocket {
 
   private fail(c: Connection, reason: string, quiet = false): void {
     if (this.conn !== c || this._closed) return;
-    if (!quiet || c.ready) this.log("zmtp: connection to", this.url, "ended:", reason);
+    if (!quiet || c.ready)
+      this.log("zmtp: connection to", this.url, "ended:", reason);
     this.endConnection();
-    this.reconnectTimer = setTimeout(() => this.attempt(), this.opts.reconnectIvl);
+    this.reconnectTimer = setTimeout(
+      () => this.attempt(),
+      this.opts.reconnectIvl,
+    );
   }
 
   private endConnection(): void {
@@ -700,12 +766,16 @@ export function endpoint(url: string): net.NetConnectOpts {
   const m = /^(tcp|ipc):\/\/(.+)$/.exec(url);
   if (!m) throw new Error(`not a tcp:// or ipc:// endpoint: ${url}`);
   if (m[1] === "ipc") {
-    if (process.platform === "win32") throw new Error("ipc:// endpoints aren't supported on Windows; use tcp://");
+    if (process.platform === "win32")
+      throw new Error(
+        "ipc:// endpoints aren't supported on Windows; use tcp://",
+      );
     return { path: m[2] };
   }
   const i = m[2].lastIndexOf(":");
   const port = Number(m[2].slice(i + 1));
-  if (i < 1 || !Number.isInteger(port) || port <= 0 || port > 65535) throw new Error(`a tcp:// endpoint needs host:port: ${url}`);
+  if (i < 1 || !Number.isInteger(port) || port <= 0 || port > 65535)
+    throw new Error(`a tcp:// endpoint needs host:port: ${url}`);
   const host = m[2].slice(0, i).replace(/^\[(.*)\]$/, "$1");
   return { host: host === "*" ? "127.0.0.1" : host, port };
 }

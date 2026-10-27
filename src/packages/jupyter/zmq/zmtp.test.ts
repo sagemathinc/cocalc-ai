@@ -25,12 +25,20 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- helpers
 
-const ready = (type: string, id?: string) => Z.readyCommand({ "Socket-Type": Buffer.from(type), ...(id ? { Identity: Buffer.from(id) } : {}) });
+const ready = (type: string, id?: string) =>
+  Z.readyCommand({
+    "Socket-Type": Buffer.from(type),
+    ...(id ? { Identity: Buffer.from(id) } : {}),
+  });
 const cat = (bufs: Buffer[]) => Buffer.concat(bufs);
 
 // a recorded session from a ROUTER: greeting, READY, then messages
 function session(messages: Buffer[][], type = "ROUTER"): Buffer {
-  return cat([Z.greeting(), ...ready(type), ...messages.flatMap((m) => Z.encodeFrames(m))]);
+  return cat([
+    Z.greeting(),
+    ...ready(type),
+    ...messages.flatMap((m) => Z.encodeFrames(m)),
+  ]);
 }
 
 // decode a byte stream fed in the given pieces
@@ -38,7 +46,11 @@ function decode(stream: Buffer, pieces: number[] | "bytes" = [stream.length]) {
   const got: Buffer[][] = [];
   const cmds: string[] = [];
   let greeted = 0;
-  const d = new Z.Decoder({ greeting: () => greeted++, command: (n) => cmds.push(n), message: (f) => got.push(f) });
+  const d = new Z.Decoder({
+    greeting: () => greeted++,
+    command: (n) => cmds.push(n),
+    message: (f) => got.push(f),
+  });
   const sizes = pieces === "bytes" ? Array(stream.length).fill(1) : pieces;
   let at = 0;
   for (const n of sizes) {
@@ -49,7 +61,11 @@ function decode(stream: Buffer, pieces: number[] | "bytes" = [stream.length]) {
   return { got, cmds, greeted, d };
 }
 
-const same = (a: Buffer[][], b: Buffer[][]) => assert.deepEqual(a.map((m) => m.map((f) => f.toString("hex"))), b.map((m) => m.map((f) => f.toString("hex"))));
+const same = (a: Buffer[][], b: Buffer[][]) =>
+  assert.deepEqual(
+    a.map((m) => m.map((f) => f.toString("hex"))),
+    b.map((m) => m.map((f) => f.toString("hex"))),
+  );
 
 // a seeded PRNG (mulberry32)
 function rng(seed: number) {
@@ -70,7 +86,10 @@ interface Peer {
 }
 
 // a fake ZMTP server of the given type; behavior "normal" handshakes, others misbehave
-async function server(type: "ROUTER" | "PUB" | "XPUB" | "REP", behavior: "normal" | "silent" | "partial" | "no-ready" | "http" = "normal") {
+async function server(
+  type: "ROUTER" | "PUB" | "XPUB" | "REP",
+  behavior: "normal" | "silent" | "partial" | "no-ready" | "http" = "normal",
+) {
   const peers: Peer[] = [];
   const srv = net.createServer((s) => {
     const p: Peer = {
@@ -82,8 +101,10 @@ async function server(type: "ROUTER" | "PUB" | "XPUB" | "REP", behavior: "normal
     peers.push(p);
     s.on("error", () => {});
     if (behavior === "silent") return;
-    if (behavior === "http") return void s.write("HTTP/1.1 400 Bad Request\r\n\r\n");
-    if (behavior === "partial") return void s.write(Z.greeting().subarray(0, 20));
+    if (behavior === "http")
+      return void s.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+    if (behavior === "partial")
+      return void s.write(Z.greeting().subarray(0, 20));
     s.write(Z.greeting());
     if (behavior === "no-ready") return;
     let readied = false;
@@ -110,7 +131,11 @@ async function server(type: "ROUTER" | "PUB" | "XPUB" | "REP", behavior: "normal
     port,
     url: `tcp://127.0.0.1:${port}`,
     peers,
-    close: () => new Promise<void>((r) => { for (const p of peers) p.socket.destroy(); srv.close(() => r()); }),
+    close: () =>
+      new Promise<void>((r) => {
+        for (const p of peers) p.socket.destroy();
+        srv.close(() => r());
+      }),
   };
 }
 
@@ -123,11 +148,19 @@ async function until(f: () => boolean, ms = 5000, what = "a condition") {
 }
 
 // resources other than the test runner's own: the baseline is taken before a test's sockets
-const resources = () => process.getActiveResourcesInfo().filter((r) => r !== "TTYWrap" && r !== "PipeWrap");
+const resources = () =>
+  process
+    .getActiveResourcesInfo()
+    .filter((r) => r !== "TTYWrap" && r !== "PipeWrap");
 async function settledResources(baseline: string[]) {
-  const count = (v: string[]) => v.reduce((m, k) => m.set(k, (m.get(k) ?? 0) + 1), new Map<string, number>());
+  const count = (v: string[]) =>
+    v.reduce(
+      (m, k) => m.set(k, (m.get(k) ?? 0) + 1),
+      new Map<string, number>(),
+    );
   for (let i = 0; i < 100; i++) {
-    const now = count(resources()), base = count(baseline);
+    const now = count(resources()),
+      base = count(baseline);
     if ([...now].every(([k, n]) => n <= (base.get(k) ?? 0))) return true;
     await sleep(10);
   }
@@ -154,33 +187,61 @@ describe("the codec", () => {
   });
 
   test("every split point of a recorded session, and byte by byte, decodes the same", () => {
-    const msgs = [[Buffer.from("a")], [Buffer.alloc(300, 1), Buffer.from("x")], [Buffer.from("<IDS|MSG>"), Buffer.alloc(70000, 2)]];
+    const msgs = [
+      [Buffer.from("a")],
+      [Buffer.alloc(300, 1), Buffer.from("x")],
+      [Buffer.from("<IDS|MSG>"), Buffer.alloc(70000, 2)],
+    ];
     const stream = session(msgs);
     const whole = decode(stream).got;
     same(whole, msgs);
-    for (let i = 1; i < stream.length; i += i < 400 ? 1 : 997) same(decode(stream, [i]).got, msgs);
+    for (let i = 1; i < stream.length; i += i < 400 ? 1 : 997)
+      same(decode(stream, [i]).got, msgs);
     same(decode(stream, "bytes").got, msgs);
   });
 
   test("reserved flag bits are a protocol error", () => {
-    const s = cat([Z.greeting(), ...ready("ROUTER"), Buffer.from([0x08, 1, 65])]);
+    const s = cat([
+      Z.greeting(),
+      ...ready("ROUTER"),
+      Buffer.from([0x08, 1, 65]),
+    ]);
     assert.throws(() => decode(s), /reserved frame flags/);
   });
 
   test("sizes beyond the Buffer limit are protocol errors, and an allocation failure is one too", () => {
-    for (const big of [2n ** 53n, BigInt(require("node:buffer").constants.MAX_LENGTH) + 1n, 2n ** 62n]) {
+    for (const big of [
+      2n ** 53n,
+      BigInt(require("node:buffer").constants.MAX_LENGTH) + 1n,
+      2n ** 62n,
+    ]) {
       const h = Buffer.alloc(9);
       h[0] = 2;
       h.writeBigUInt64BE(big, 1);
-      assert.throws(() => decode(cat([Z.greeting(), ...ready("ROUTER"), h, Buffer.from("x")])), Z.ProtocolError);
+      assert.throws(
+        () =>
+          decode(cat([Z.greeting(), ...ready("ROUTER"), h, Buffer.from("x")])),
+        Z.ProtocolError,
+      );
     }
   });
 
   test("malformed commands and READY metadata are protocol errors", () => {
     const g = Z.greeting();
-    assert.throws(() => decode(cat([g, ...Z.encodeFrames([Buffer.from([9, 65])], true)])), /its name runs past/);
-    assert.throws(() => Z.parseProps(Buffer.from([20, 65]), 0), /property name runs past/);
-    const v = Buffer.concat([Buffer.from([1]), Buffer.from("A"), Buffer.from([0, 0, 0, 9]), Buffer.from("x")]);
+    assert.throws(
+      () => decode(cat([g, ...Z.encodeFrames([Buffer.from([9, 65])], true)])),
+      /its name runs past/,
+    );
+    assert.throws(
+      () => Z.parseProps(Buffer.from([20, 65]), 0),
+      /property name runs past/,
+    );
+    const v = Buffer.concat([
+      Buffer.from([1]),
+      Buffer.from("A"),
+      Buffer.from([0, 0, 0, 9]),
+      Buffer.from("x"),
+    ]);
     assert.throws(() => Z.parseProps(v, 0), /property value runs past/);
   });
 
@@ -199,7 +260,13 @@ describe("the codec", () => {
   });
 
   test("a command between the frames of a multipart message is handled, and the message completes", () => {
-    const s = cat([Z.greeting(), ...ready("ROUTER"), Buffer.from([1, 1, 65]), ...Z.command("PING", Buffer.from([0, 10, 1, 2])), Buffer.from([0, 1, 66])]);
+    const s = cat([
+      Z.greeting(),
+      ...ready("ROUTER"),
+      Buffer.from([1, 1, 65]),
+      ...Z.command("PING", Buffer.from([0, 10, 1, 2])),
+      Buffer.from([0, 1, 66]),
+    ]);
     const { got, cmds } = decode(s);
     assert.deepEqual(cmds, ["READY", "PING"]);
     same(got, [[Buffer.from("A"), Buffer.from("B")]]);
@@ -231,12 +298,17 @@ describe("the fuzz (seeded)", () => {
       for (let i = 0, n = 1 + Math.floor(r() * 4); i < n; i++) {
         const m: Buffer[] = [];
         for (let j = 0, nf = 1 + Math.floor(r() * 3); j < nf; j++) {
-          const size = r() < 0.1 ? 256 + Math.floor(r() * 3000) : Math.floor(r() * 300);
+          const size =
+            r() < 0.1 ? 256 + Math.floor(r() * 3000) : Math.floor(r() * 300);
           const f = Buffer.alloc(size);
-          for (let b = 0; b < Math.min(size, 16); b++) f[b] = Math.floor(r() * 256);
+          for (let b = 0; b < Math.min(size, 16); b++)
+            f[b] = Math.floor(r() * 256);
           m.push(f);
         }
-        biggest = Math.max(biggest, m.reduce((a, f) => a + f.length + 9, 0));
+        biggest = Math.max(
+          biggest,
+          m.reduce((a, f) => a + f.length + 9, 0),
+        );
         msgs.push(m);
       }
       const stream = session(msgs);
@@ -256,16 +328,22 @@ describe("the fuzz (seeded)", () => {
         throw new Error(`${where}: ${e}`);
       }
       // parser-local: P + C, at most the message in progress plus one chunk (and a header)
-      assert.ok(d.stats.maxBuffered <= biggest + maxChunk + 64 + 9, `${where}: parser buffered ${d.stats.maxBuffered}`);
+      assert.ok(
+        d.stats.maxBuffered <= biggest + maxChunk + 64 + 9,
+        `${where}: parser buffered ${d.stats.maxBuffered}`,
+      );
       // mutated: decode or a ProtocolError, nothing else
       const bad = Buffer.from(stream);
-      for (let i = 0, n = 1 + Math.floor(r() * 4); i < n; i++) bad[Math.floor(r() * bad.length)] = Math.floor(r() * 256);
+      for (let i = 0, n = 1 + Math.floor(r() * 4); i < n; i++)
+        bad[Math.floor(r() * bad.length)] = Math.floor(r() * 256);
       try {
         decode(bad, pieces);
       } catch (e) {
-        if (!(e instanceof Z.ProtocolError)) throw new Error(`${where}: a mutated stream threw ${e}`);
+        if (!(e instanceof Z.ProtocolError))
+          throw new Error(`${where}: a mutated stream threw ${e}`);
       }
-      if (Date.now() - t0 > 2000) throw new Error(`${where}: over the 2 s per-case deadline`);
+      if (Date.now() - t0 > 2000)
+        throw new Error(`${where}: over the 2 s per-case deadline`);
     }
   });
 });
@@ -285,7 +363,11 @@ describe("the connection lifecycle", () => {
       const srv = await server("ROUTER", behavior);
       const d = new Z.Dealer({ routingId: "x", handshakeIvl: 200 });
       d.connect(srv.url);
-      await until(() => d.counters.attempts >= 2, 3000, "a retry after the deadline");
+      await until(
+        () => d.counters.attempts >= 2,
+        3000,
+        "a retry after the deadline",
+      );
       d.close();
       await srv.close();
       assert.equal(d.counters.attemptsAfterClose, 0);
@@ -315,7 +397,10 @@ describe("the connection lifecycle", () => {
     await sleep(100);
     b.close();
     await sleep(50);
-    assert.equal(a.counters.attemptsAfterClose + b.counters.attemptsAfterClose, 0);
+    assert.equal(
+      a.counters.attemptsAfterClose + b.counters.attemptsAfterClose,
+      0,
+    );
     assert.ok(await settledResources(base), JSON.stringify(resources()));
   });
 
@@ -336,7 +421,11 @@ describe("the connection lifecycle", () => {
       srv.peers[0].socket.destroy(); // the first connection ends
       await until(() => srv.peers.length === 2 && made.length === 2);
       d.send(["two"]);
-      await until(() => srv.peers[1].frames.length === 1, 3000, "the second connection");
+      await until(
+        () => srv.peers[1].frames.length === 1,
+        3000,
+        "the second connection",
+      );
       // the old connection's late data, error and close
       made[0].emit("data", cat(Z.encodeFrames(["stale"])));
       made[0].emit("error", new Error("late"));
@@ -344,7 +433,11 @@ describe("the connection lifecycle", () => {
       await sleep(50);
       assert.equal(d.stats.queuedCount, 0, "a stale message was delivered");
       d.send(["three"]);
-      await until(() => srv.peers[1].frames.length === 2, 3000, "the replacement still used");
+      await until(
+        () => srv.peers[1].frames.length === 2,
+        3000,
+        "the replacement still used",
+      );
       assert.equal(srv.peers.length, 2);
       d.close();
     } finally {
@@ -374,19 +467,32 @@ describe("delivery and flow control", () => {
     d.connect(srv.url);
     d.send(["hi"]);
     await until(() => srv.peers[0]?.frames.length === 1);
-    srv.peers[0].raw(cat(Array.from({ length: 1000 }, (_, i) => cat(Z.encodeFrames([String(i)])))));
+    srv.peers[0].raw(
+      cat(
+        Array.from({ length: 1000 }, (_, i) =>
+          cat(Z.encodeFrames([String(i)])),
+        ),
+      ),
+    );
     const seen: number[] = [];
     for await (const m of d) {
       seen.push(Number(m[0].toString()));
       if (seen.length === 1000) break;
     }
-    assert.deepEqual(seen, Array.from({ length: 1000 }, (_, i) => i));
+    assert.deepEqual(
+      seen,
+      Array.from({ length: 1000 }, (_, i) => i),
+    );
     await srv.close();
   });
 
   test("a delayed consumer: the socket pauses at the mark, nothing is lost, and the queue bound holds", async () => {
     const srv = await server("ROUTER");
-    const d = new Z.Dealer({ routingId: "x", markCount: 10, markBytes: 1 << 30 });
+    const d = new Z.Dealer({
+      routingId: "x",
+      markCount: 10,
+      markBytes: 1 << 30,
+    });
     d.connect(srv.url);
     d.send(["hi"]);
     await until(() => srv.peers[0]?.frames.length === 1);
@@ -407,26 +513,43 @@ describe("delivery and flow control", () => {
   test("a nonempty queue plus a large message completed by a 1-byte chunk: the parser stops right after it", async () => {
     const KiB = 1024;
     const srv = await server("ROUTER");
-    const d = new Z.Dealer({ routingId: "x", markCount: 1000, markBytes: 64 * KiB });
+    const d = new Z.Dealer({
+      routingId: "x",
+      markCount: 1000,
+      markBytes: 64 * KiB,
+    });
     d.connect(srv.url);
     d.send(["hi"]);
     await until(() => srv.peers[0]?.frames.length === 1);
     const p = srv.peers[0];
     for (let i = 0; i < 63; i++) p.send([Buffer.alloc(KiB, i)]); // 63 KiB queued
     await until(() => d.stats.queuedCount === 63);
-    const big = cat(Z.encodeFrames([Buffer.alloc(64 * KiB, 1), Buffer.alloc(64 * KiB, 2)])); // a 128 KiB message
+    const big = cat(
+      Z.encodeFrames([Buffer.alloc(64 * KiB, 1), Buffer.alloc(64 * KiB, 2)]),
+    ); // a 128 KiB message
     p.raw(big.subarray(0, big.length - 1));
     await sleep(100);
     assert.equal(d.stats.queuedCount, 63);
-    p.raw(cat([big.subarray(big.length - 1), ...Z.encodeFrames(["after-1"]), ...Z.encodeFrames(["after-2"])]));
+    p.raw(
+      cat([
+        big.subarray(big.length - 1),
+        ...Z.encodeFrames(["after-1"]),
+        ...Z.encodeFrames(["after-2"]),
+      ]),
+    );
     await until(() => d.stats.queuedCount === 64, 3000, "the large message");
     await sleep(100);
-    assert.equal(d.stats.queuedCount, 64, "nothing completes after the crossing message");
+    assert.equal(
+      d.stats.queuedCount,
+      64,
+      "nothing completes after the crossing message",
+    );
     assert.equal(d.stats.queuedBytes, 63 * KiB + 128 * KiB);
     assert.ok(d.stats.paused);
     assert.ok(d.stats.parserBuffered > 0, "the later messages stay unparsed");
     const it = d[Symbol.asyncIterator]();
-    for (let i = 0; i < 63; i++) assert.equal((await it.next()).value![0][0], i);
+    for (let i = 0; i < 63; i++)
+      assert.equal((await it.next()).value![0][0], i);
     const m = (await it.next()).value!;
     assert.equal(m.length, 2);
     assert.equal(m[1][0], 2);
@@ -438,15 +561,24 @@ describe("delivery and flow control", () => {
 
   test("drain/repeat: consumed slots are released, and retained backing returns to 0", async () => {
     const srv = await server("ROUTER");
-    const d = new Z.Dealer({ routingId: "x", markCount: 8, markBytes: 1 << 30 });
+    const d = new Z.Dealer({
+      routingId: "x",
+      markCount: 8,
+      markBytes: 1 << 30,
+    });
     d.connect(srv.url);
     d.send(["hi"]);
     await until(() => srv.peers[0]?.frames.length === 1);
     const it = d[Symbol.asyncIterator]();
     for (let cycle = 0; cycle < 50; cycle++) {
       for (let i = 0; i < 8; i++) srv.peers[0].send([Buffer.alloc(1 << 20, i)]);
-      for (let i = 0; i < 8; i++) assert.equal((await it.next()).value![0][0], i);
-      await until(() => d.stats.retainedBacking === 0 && d.stats.liveSlots === 0, 3000, `released after cycle ${cycle}: ${JSON.stringify(d.stats)}`);
+      for (let i = 0; i < 8; i++)
+        assert.equal((await it.next()).value![0][0], i);
+      await until(
+        () => d.stats.retainedBacking === 0 && d.stats.liveSlots === 0,
+        3000,
+        `released after cycle ${cycle}: ${JSON.stringify(d.stats)}`,
+      );
     }
     d.close();
     await srv.close();
@@ -494,7 +626,11 @@ describe("delivery and flow control", () => {
     await until(() => srv.peers[0]?.frames.length === 1);
     assert.equal(srv.peers[0].frames[0][0].toString("hex"), "01");
     srv.peers[0].socket.destroy();
-    await until(() => srv.peers[1]?.frames.length === 1, 3000, "the subscription on the new connection");
+    await until(
+      () => srv.peers[1]?.frames.length === 1,
+      3000,
+      "the subscription on the new connection",
+    );
     assert.equal(srv.peers[1].frames[0][0].toString("hex"), "01");
     s.close();
     await srv.close();
@@ -507,7 +643,11 @@ describe("delivery and flow control", () => {
     d.send(["hi"]);
     await until(() => srv.peers[0]?.frames.length === 1);
     const pongs: Buffer[] = [];
-    const dec = new Z.Decoder({ greeting: () => {}, command: (n, data) => n === "PONG" && pongs.push(Buffer.from(data)), message: () => {} });
+    const dec = new Z.Decoder({
+      greeting: () => {},
+      command: (n, data) => n === "PONG" && pongs.push(Buffer.from(data)),
+      message: () => {},
+    });
     dec.push(Z.greeting());
     srv.peers[0].socket.on("data", (b) => dec.push(b));
     srv.peers[0].raw(cat(Z.command("PING", Buffer.from([0, 50, 0xca, 0xfe]))));
@@ -533,86 +673,170 @@ describe("delivery and flow control", () => {
 
 // Each mutant is one textual replacement in zmtp.ts, compiled and loaded from
 // a temp file, and must fail its named check.  No switch in production code.
-const MUTANTS: [string, string, string, (Zm: typeof Z) => Promise<void> | void][] = [
-  ["m1: the short/LONG boundary at 254", "if (size < 256) {", "if (size < 255) {", (Zm) => {
-    assert.equal(Zm.encodeFrames([Buffer.alloc(255)])[0].length, 2);
-  }],
-  ["m2: MORE ignored", "if (!(flags & 1)) {", "if (true) {", (Zm) => {
-    const s = cat([Zm.greeting(), ...Zm.readyCommand({ "Socket-Type": Buffer.from("ROUTER") }), ...Zm.encodeFrames(["a", "b"])]);
-    const got: Buffer[][] = [];
-    new Zm.Decoder({ greeting() {}, command() {}, message: (f) => got.push(f) }).push(s);
-    assert.equal(got.length, 1);
-  }],
-  ["m3: a COMMAND frame taken as a message", "if (flags & 4) {", "if (flags & 0) {", (Zm) => {
-    const s = cat([Zm.greeting(), ...Zm.readyCommand({ "Socket-Type": Buffer.from("ROUTER") })]);
-    const cmds: string[] = [];
-    new Zm.Decoder({ greeting() {}, command: (n) => cmds.push(n), message() {} }).push(s);
-    assert.deepEqual(cmds, ["READY"]);
-  }],
-  ["m4: the subscription not resent on reconnect", "for (const s of this.subs) this.write(c, encodeFrames([s]));", "if (this.counters.attempts === 1) for (const s of this.subs) this.write(c, encodeFrames([s]));", async (Zm) => {
-    const srv = await server("XPUB");
-    const s = new Zm.Subscriber({ reconnectIvl: 20 });
-    try {
-      s.connect(srv.url);
-      s.subscribe();
-      await until(() => srv.peers[0]?.frames.length === 1);
-      srv.peers[0].socket.destroy();
-      await until(() => srv.peers[1]?.frames.length === 1, 1000, "the resent subscription");
-    } finally {
-      s.close();
-      await srv.close();
-    }
-  }],
-  ["m5: no handshake deadline", "this.fail(c, `no handshake within ${this.opts.handshakeIvl} ms`);", "void 0;", async (Zm) => {
-    const srv = await server("ROUTER", "silent");
-    const d = new Zm.Dealer({ routingId: "x", handshakeIvl: 200 });
-    try {
-      d.connect(srv.url);
-      await until(() => d.counters.attempts >= 2, 2000, "a retry after the 200 ms deadline");
-    } finally {
-      d.close();
-      await srv.close();
-    }
-  }],
-  ["m6: no generation check", "const live = () => g === this.gen && !this._closed;", "const live = () => !this._closed;", async (Zm) => {
-    const srv = await server("ROUTER");
-    const made: net.Socket[] = [];
-    const orig = rawNet.connect;
-    rawNet.connect = (...a: any[]) => { const s = (orig as any)(...a); made.push(s); return s; };
-    const d = new Zm.Dealer({ routingId: "x", reconnectIvl: 20 });
-    try {
-      d.connect(srv.url);
-      d.send(["one"]);
-      await until(() => srv.peers[0]?.frames.length === 1);
-      srv.peers[0].socket.destroy();
-      await until(() => srv.peers.length === 2 && made.length === 2);
-      d.send(["two"]);
-      await until(() => srv.peers[1].frames.length === 1, 2000);
-      made[0].emit("data", cat(Zm.encodeFrames(["stale"])));
-      await sleep(50);
-      assert.equal(d.stats.queuedCount, 0, "a stale message was delivered");
-    } finally {
-      rawNet.connect = orig;
-      d.close();
-      await srv.close();
-    }
-  }],
-  ["m7: a tiny body copied with Buffer.from (pooled)", "const dst = Buffer.allocUnsafeSlow(n);", "const dst = Buffer.from(Buffer.alloc(n));", (Zm) => {
-    const s = cat([Zm.greeting(), ...Zm.readyCommand({ "Socket-Type": Buffer.from("ROUTER") }), ...Zm.encodeFrames(["x"])]);
-    const big = Buffer.allocUnsafeSlow(65536);
-    s.copy(big);
-    const got: Buffer[][] = [];
-    new Zm.Decoder({ greeting() {}, command() {}, message: (f) => got.push(f) }).push(big.subarray(0, s.length));
-    assert.equal(got[0][0].buffer.byteLength, 1);
-  }],
+const MUTANTS: [
+  string,
+  string,
+  string,
+  (Zm: typeof Z) => Promise<void> | void,
+][] = [
+  [
+    "m1: the short/LONG boundary at 254",
+    "if (size < 256) {",
+    "if (size < 255) {",
+    (Zm) => {
+      assert.equal(Zm.encodeFrames([Buffer.alloc(255)])[0].length, 2);
+    },
+  ],
+  [
+    "m2: MORE ignored",
+    "if (!(flags & 1)) {",
+    "if (true) {",
+    (Zm) => {
+      const s = cat([
+        Zm.greeting(),
+        ...Zm.readyCommand({ "Socket-Type": Buffer.from("ROUTER") }),
+        ...Zm.encodeFrames(["a", "b"]),
+      ]);
+      const got: Buffer[][] = [];
+      new Zm.Decoder({
+        greeting() {},
+        command() {},
+        message: (f) => got.push(f),
+      }).push(s);
+      assert.equal(got.length, 1);
+    },
+  ],
+  [
+    "m3: a COMMAND frame taken as a message",
+    "if (flags & 4) {",
+    "if (flags & 0) {",
+    (Zm) => {
+      const s = cat([
+        Zm.greeting(),
+        ...Zm.readyCommand({ "Socket-Type": Buffer.from("ROUTER") }),
+      ]);
+      const cmds: string[] = [];
+      new Zm.Decoder({
+        greeting() {},
+        command: (n) => cmds.push(n),
+        message() {},
+      }).push(s);
+      assert.deepEqual(cmds, ["READY"]);
+    },
+  ],
+  [
+    "m4: the subscription not resent on reconnect",
+    "for (const s of this.subs) this.write(c, encodeFrames([s]));",
+    "if (this.counters.attempts === 1) for (const s of this.subs) this.write(c, encodeFrames([s]));",
+    async (Zm) => {
+      const srv = await server("XPUB");
+      const s = new Zm.Subscriber({ reconnectIvl: 20 });
+      try {
+        s.connect(srv.url);
+        s.subscribe();
+        await until(() => srv.peers[0]?.frames.length === 1);
+        srv.peers[0].socket.destroy();
+        await until(
+          () => srv.peers[1]?.frames.length === 1,
+          1000,
+          "the resent subscription",
+        );
+      } finally {
+        s.close();
+        await srv.close();
+      }
+    },
+  ],
+  [
+    "m5: no handshake deadline",
+    "this.fail(c, `no handshake within ${this.opts.handshakeIvl} ms`);",
+    "void 0;",
+    async (Zm) => {
+      const srv = await server("ROUTER", "silent");
+      const d = new Zm.Dealer({ routingId: "x", handshakeIvl: 200 });
+      try {
+        d.connect(srv.url);
+        await until(
+          () => d.counters.attempts >= 2,
+          2000,
+          "a retry after the 200 ms deadline",
+        );
+      } finally {
+        d.close();
+        await srv.close();
+      }
+    },
+  ],
+  [
+    "m6: no generation check",
+    "const live = () => g === this.gen && !this._closed;",
+    "const live = () => !this._closed;",
+    async (Zm) => {
+      const srv = await server("ROUTER");
+      const made: net.Socket[] = [];
+      const orig = rawNet.connect;
+      rawNet.connect = (...a: any[]) => {
+        const s = (orig as any)(...a);
+        made.push(s);
+        return s;
+      };
+      const d = new Zm.Dealer({ routingId: "x", reconnectIvl: 20 });
+      try {
+        d.connect(srv.url);
+        d.send(["one"]);
+        await until(() => srv.peers[0]?.frames.length === 1);
+        srv.peers[0].socket.destroy();
+        await until(() => srv.peers.length === 2 && made.length === 2);
+        d.send(["two"]);
+        await until(() => srv.peers[1].frames.length === 1, 2000);
+        made[0].emit("data", cat(Zm.encodeFrames(["stale"])));
+        await sleep(50);
+        assert.equal(d.stats.queuedCount, 0, "a stale message was delivered");
+      } finally {
+        rawNet.connect = orig;
+        d.close();
+        await srv.close();
+      }
+    },
+  ],
+  [
+    "m7: a tiny body copied with Buffer.from (pooled)",
+    "const dst = Buffer.allocUnsafeSlow(n);",
+    "const dst = Buffer.from(Buffer.alloc(n));",
+    (Zm) => {
+      const s = cat([
+        Zm.greeting(),
+        ...Zm.readyCommand({ "Socket-Type": Buffer.from("ROUTER") }),
+        ...Zm.encodeFrames(["x"]),
+      ]);
+      const big = Buffer.allocUnsafeSlow(65536);
+      s.copy(big);
+      const got: Buffer[][] = [];
+      new Zm.Decoder({
+        greeting() {},
+        command() {},
+        message: (f) => got.push(f),
+      }).push(big.subarray(0, s.length));
+      assert.equal(got[0][0].buffer.byteLength, 1);
+    },
+  ],
 ];
 
 function loadMutant(from: string, to: string): typeof Z {
   const src = readFileSync(join(__dirname, "zmtp.ts"), "utf8");
-  assert.equal(src.split(from).length, 2, `the mutant's text occurs once: ${from}`);
+  assert.equal(
+    src.split(from).length,
+    2,
+    `the mutant's text occurs once: ${from}`,
+  );
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const ts = require(process.env.ZMTP_TS_API ?? "typescript");
-  const js = ts.transpileModule(src.replace(from, to), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const js = ts.transpileModule(src.replace(from, to), {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
   const dir = mkdtempSync(join(tmpdir(), "zmtp-mutant-"));
   const file = join(dir, "zmtp.js");
   writeFileSync(file, js);
