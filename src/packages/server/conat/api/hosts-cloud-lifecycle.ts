@@ -726,7 +726,12 @@ export async function startHostInternalHelper({
     const workId = await enqueueCloudVmWork({
       vm_id: id,
       action: "start",
-      payload: { provider: machineCloud, intent_generation: startGeneration },
+      payload: {
+        provider: machineCloud,
+        intent_generation: startGeneration,
+        // final backups only: may start an existing preemptible instance
+        ...(billing_rescue ? { billing_rescue: true } : {}),
+      },
     });
     onWorkQueued?.(workId);
   }

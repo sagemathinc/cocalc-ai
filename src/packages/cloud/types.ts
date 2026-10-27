@@ -130,7 +130,11 @@ export interface DataDiskSnapshot {
 
 export interface CloudProvider {
   createHost(spec: HostSpec, creds: any): Promise<HostRuntime>;
-  startHost(runtime: HostRuntime, creds: any): Promise<void>;
+  startHost(
+    runtime: HostRuntime,
+    creds: any,
+    opts?: { allow_preemptible?: boolean },
+  ): Promise<void>;
   stopHost(runtime: HostRuntime, creds: any): Promise<void>;
   setPricingModel?(
     runtime: HostRuntime,

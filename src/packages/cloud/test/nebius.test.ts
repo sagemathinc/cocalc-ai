@@ -1252,4 +1252,14 @@ describe("NebiusProvider while Nebius Spot is off (#684)", () => {
     );
     expect(instancesStartMock).toHaveBeenCalledTimes(1);
   });
+
+  it("still starts a preemptible instance for a billing rescue (final backups)", async () => {
+    await new NebiusProvider().startHost(
+      { instance_id: "instance-1" } as any,
+      creds,
+      { allow_preemptible: true },
+    );
+    expect(instancesGetMock).not.toHaveBeenCalled();
+    expect(instancesStartMock).toHaveBeenCalledTimes(1);
+  });
 });

@@ -11,10 +11,7 @@ import {
 } from "@cocalc/server/hosts/metadata-patch";
 import { clearProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import { deleteHostDns, ensureHostDns, hasDns } from "./dns";
-import {
-  releaseHostContentDns,
-  syncHostContentDns,
-} from "./host-content-dns";
+import { releaseHostContentDns, syncHostContentDns } from "./host-content-dns";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
@@ -2143,7 +2140,10 @@ async function handleStart(row: any) {
           `${machine.machine_type ?? ""}`.trim(),
       });
       if (fault) throw new Error(`injected start fault: ${fault}`);
-      await entry.provider.startHost(runtimeForStart, creds);
+      await entry.provider.startHost(runtimeForStart, creds, {
+        // a billing rescue only takes final backups before a drain
+        allow_preemptible: row.payload?.billing_rescue === true,
+      });
     };
     // When the attempted Spot start (or a return to Spot) fails for lack of
     // capacity or quota, walk: standard on the desired type, then Spot and

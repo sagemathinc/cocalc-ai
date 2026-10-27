@@ -1414,9 +1414,13 @@ export class NebiusProvider implements CloudProvider {
     return runtime;
   }
 
-  async startHost(runtime: HostRuntime, creds: NebiusProviderCreds) {
+  async startHost(
+    runtime: HostRuntime,
+    creds: NebiusProviderCreds,
+    opts?: { allow_preemptible?: boolean },
+  ) {
     await using client = new NebiusClient(creds);
-    if (!NEBIUS_SPOT_OFFERED) {
+    if (!NEBIUS_SPOT_OFFERED && !opts?.allow_preemptible) {
       // an existing preemptible instance has no pricing option either
       const instance = await client.instances.get(
         GetInstanceRequest.create({ id: runtime.instance_id }),
