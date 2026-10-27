@@ -3,30 +3,35 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Normalized RunPod GPU catalog: types, prices and stock per data center.
-// Availability changes by the minute, so this is a snapshot with as_of; the
-// authority re-checks the actual price (costPerHr) when it creates a pod.
+// Normalized RunPod GPU catalog (REST v2): types, list prices, and pod
+// availability overall and per data center. Availability changes by the
+// minute, so this is a snapshot with as_of; the authority re-checks the
+// actual billed cost of a pod after creating it.
 
-import type { RunpodClient } from "./client";
+import type { RunpodAvailability, RunpodClient } from "./client";
 
-export type RunpodStockStatus = "High" | "Medium" | "Low";
+export type RunpodStockLevel = Exclude<RunpodAvailability, "NONE">;
 
 export interface RunpodGpuType {
   id: string;
-  displayName: string;
+  name: string;
   memoryGb?: number;
-  // USD per GPU-hour; absent when RunPod doesn't offer that cloud type.
+  // USD per GPU-hour list price; absent where that cloud doesn't offer it
   securePrice?: number;
   communityPrice?: number;
-  stock?: RunpodStockStatus;
-  // data center id -> stock, only where the type is currently in stock
-  dataCenters: Record<string, RunpodStockStatus>;
+  // largest GPU count on one pod, per cloud (a ceiling, not stock)
+  maxCountSecure?: number;
+  maxCountCommunity?: number;
+  availability?: RunpodAvailability;
+  // data center id -> availability, only where it is in stock
+  dataCenters: Record<string, RunpodStockLevel>;
 }
 
 export interface RunpodDataCenter {
   id: string;
   name?: string;
-  location?: string;
+  region?: string;
+  compliance: string[];
 }
 
 export interface RunpodCatalog {
@@ -40,37 +45,25 @@ export function normalizeRunpodCatalog(
   dataCenters: any[],
   now: Date = new Date(),
 ): RunpodCatalog {
-  const byType = new Map<string, Record<string, RunpodStockStatus>>();
-  const centers: RunpodDataCenter[] = [];
-  for (const dc of dataCenters ?? []) {
-    if (typeof dc?.id !== "string" || dc.listed === false) continue;
-    centers.push({
-      id: dc.id,
-      name: typeof dc.name === "string" ? dc.name : undefined,
-      location: typeof dc.location === "string" ? dc.location : undefined,
-    });
-    for (const g of dc.gpuAvailability ?? []) {
-      const stock = stockStatus(g?.stockStatus);
-      if (typeof g?.gpuTypeId !== "string" || !stock) continue;
-      const m = byType.get(g.gpuTypeId) ?? {};
-      m[dc.id] = stock;
-      byType.set(g.gpuTypeId, m);
-    }
-  }
   const types: RunpodGpuType[] = [];
   for (const t of gpuTypes ?? []) {
-    if (typeof t?.id !== "string" || t.id === "unknown") continue;
+    if (typeof t?.id !== "string" || !t.id) continue;
+    const inStock: Record<string, RunpodStockLevel> = {};
+    for (const dc of t.dataCenters ?? []) {
+      const level = stockLevel(dc?.availability);
+      if (typeof dc?.id === "string" && level) inStock[dc.id] = level;
+    }
     types.push({
       id: t.id,
-      displayName: typeof t.displayName === "string" ? t.displayName : t.id,
-      memoryGb: positive(t.memoryInGb),
-      // RunPod reports 0 for a cloud type it doesn't offer.
-      securePrice:
-        t.secureCloud === false ? undefined : positive(t.securePrice),
+      name: typeof t.name === "string" && t.name ? t.name : t.id,
+      memoryGb: positive(t.memory),
+      securePrice: t.secure === true ? positive(t.price?.secure) : undefined,
       communityPrice:
-        t.communityCloud === false ? undefined : positive(t.communityPrice),
-      stock: stockStatus(t.lowestPrice?.stockStatus),
-      dataCenters: byType.get(t.id) ?? {},
+        t.community === true ? positive(t.price?.community) : undefined,
+      maxCountSecure: positive(t.maxCount?.secure),
+      maxCountCommunity: positive(t.maxCount?.community),
+      availability: availability(t.availability),
+      dataCenters: inStock,
     });
   }
   types.sort(
@@ -79,6 +72,18 @@ export function normalizeRunpodCatalog(
         (b.securePrice ?? b.communityPrice ?? Infinity) ||
       a.id.localeCompare(b.id),
   );
+  const centers: RunpodDataCenter[] = [];
+  for (const dc of dataCenters ?? []) {
+    if (typeof dc?.id !== "string" || !dc.id) continue;
+    centers.push({
+      id: dc.id,
+      name: typeof dc.name === "string" ? dc.name : undefined,
+      region: typeof dc.region === "string" ? dc.region : undefined,
+      compliance: Array.isArray(dc.compliance)
+        ? dc.compliance.filter((c: unknown) => typeof c === "string")
+        : [],
+    });
+  }
   centers.sort((a, b) => a.id.localeCompare(b.id));
   return { as_of: now.toISOString(), gpuTypes: types, dataCenters: centers };
 }
@@ -93,8 +98,15 @@ export async function getRunpodCatalog(
   return normalizeRunpodCatalog(gpuTypes, dataCenters);
 }
 
-function stockStatus(v: unknown): RunpodStockStatus | undefined {
-  return v === "High" || v === "Medium" || v === "Low" ? v : undefined;
+function availability(v: unknown): RunpodAvailability | undefined {
+  return v === "NONE" || v === "LOW" || v === "MEDIUM" || v === "HIGH"
+    ? v
+    : undefined;
+}
+
+function stockLevel(v: unknown): RunpodStockLevel | undefined {
+  const a = availability(v);
+  return a && a !== "NONE" ? a : undefined;
 }
 
 function positive(v: unknown): number | undefined {

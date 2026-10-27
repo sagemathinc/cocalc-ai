@@ -3,68 +3,102 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Internal RunPod API client. Read-only for now: account, catalog,
-// availability, pods and billing. Writes (create/terminate) come with the
-// allowlist request builder and the key authority; see the GPU
-// bring-your-own-key design. Callers outside the authority must never get a
-// RunpodClient or the key it holds.
+// Internal RunPod client on the REST API v2 (https://api.runpod.io/v2; v1 is
+// retired 2026-11-15). Read-only for now: catalog, availability, pods and
+// pod billing. Writes come with the allowlist request builder and the key
+// authority; see the GPU bring-your-own-key design. Callers outside the
+// authority must never get a RunpodClient or the key it holds.
+//
+// The credential-bearing origins are fixed: there is deliberately no option
+// to point this client (and so the escrowed key) anywhere else.
 
-import { podView, scrubText, type RunpodPodView } from "./scrub";
+import {
+  billingRecordView,
+  podView,
+  type RunpodBillingRecord,
+  type RunpodPodView,
+} from "./views";
 
-export const RUNPOD_REST_URL = "https://rest.runpod.io/v1";
-export const RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql";
-// Cloudflare in front of rest.runpod.io rejects some default user agents
-// (error 1010), so always send our own.
+const API_ORIGIN = "https://api.runpod.io";
+// Account balance has no v2 endpoint yet; it is the only GraphQL read and is
+// isolated in getAccountBalance(). Remove when v2 exposes balance/spend
+// (GraphQL is deprecated, retiring in early 2027).
+const GRAPHQL_URL = "https://api.runpod.io/graphql";
+// Cloudflare in front of RunPod rejects some default user agents (error
+// 1010), so always send our own.
 const USER_AGENT = "cocalc-runpod/1";
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_PAGES = 50;
 
 type Fetch = typeof globalThis.fetch;
 
 export interface RunpodClientOptions {
   apiKey: string;
+  // for tests; production uses the global fetch
   fetch?: Fetch;
   timeoutMs?: number;
-  restUrl?: string;
-  graphqlUrl?: string;
 }
 
-export class RunpodApiError extends Error {
-  readonly status?: number;
-  // True when the key itself was refused: it may have been revoked or
-  // narrowed in the RunPod console.
-  readonly unauthorized: boolean;
+// What went wrong, without any provider text. Callers decide from `kind`:
+// - "auth": the key itself was rejected (401). It may have been revoked.
+// - "forbidden": a valid key lacks permission for this one action (403).
+//   This does NOT mean the key can't clean up; probe inventory/terminate.
+export type RunpodErrorKind =
+  | "auth"
+  | "forbidden"
+  | "not_found"
+  | "invalid"
+  | "conflict"
+  | "rate_limited"
+  | "provider"
+  | "network"
+  | "protocol";
 
-  constructor(message: string, status?: number) {
-    super(message);
+const MESSAGES: Record<RunpodErrorKind, string> = {
+  auth: "RunPod rejected the API key",
+  forbidden: "the RunPod API key lacks permission for this action",
+  not_found: "RunPod resource not found",
+  invalid: "RunPod rejected the request as invalid",
+  conflict: "RunPod reported a conflict",
+  rate_limited: "RunPod rate limit reached",
+  provider: "RunPod returned a server error",
+  network: "could not reach RunPod",
+  protocol: "unexpected response from RunPod",
+};
+
+// Provider bodies are never kept: an error body can echo request fields
+// such as env values, so only the status and a fixed message survive.
+export class RunpodApiError extends Error {
+  readonly kind: RunpodErrorKind;
+  readonly status?: number;
+  readonly retryAfterSeconds?: number;
+
+  constructor(
+    kind: RunpodErrorKind,
+    status?: number,
+    retryAfterSeconds?: number,
+  ) {
+    super(status ? `${MESSAGES[kind]} (${status})` : MESSAGES[kind]);
     this.name = "RunpodApiError";
+    this.kind = kind;
     this.status = status;
-    this.unauthorized = status === 401 || status === 403;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
-export interface RunpodAccount {
-  id: string;
-  clientBalance?: number;
-  currentSpendPerHr?: number;
-  spendLimit?: number;
-  underBalance?: boolean;
+export interface RunpodAccountBalance {
+  accountId: string;
+  balance?: number;
+  spendPerHour?: number;
+  spendLimitPerHour?: number;
 }
 
-export interface RunpodBillingRecord {
-  time?: string;
-  amount?: number;
-  timeBilledMs?: number;
-  diskSpaceBilledGb?: number;
-  podId?: string;
-  gpuTypeId?: string;
-}
+export type RunpodAvailability = "NONE" | "LOW" | "MEDIUM" | "HIGH";
 
 export class RunpodClient {
   readonly #apiKey: string;
   readonly #fetch: Fetch;
   readonly #timeoutMs: number;
-  readonly #restUrl: string;
-  readonly #graphqlUrl: string;
 
   constructor(opts: RunpodClientOptions) {
     const apiKey = `${opts.apiKey ?? ""}`.trim();
@@ -74,8 +108,6 @@ export class RunpodClient {
     this.#apiKey = apiKey;
     this.#fetch = opts.fetch ?? globalThis.fetch;
     this.#timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.#restUrl = opts.restUrl ?? RUNPOD_REST_URL;
-    this.#graphqlUrl = opts.graphqlUrl ?? RUNPOD_GRAPHQL_URL;
   }
 
   // Never let the key show up through util.inspect or JSON logging.
@@ -87,54 +119,49 @@ export class RunpodClient {
     return "RunpodClient {}";
   }
 
-  async getAccount(): Promise<RunpodAccount> {
-    const data = await this.graphql(
-      "query { myself { id clientBalance currentSpendPerHr spendLimit underBalance } }",
-    );
-    const me = data?.myself;
-    if (!me || typeof me.id !== "string") {
-      throw new RunpodApiError("RunPod returned no account");
-    }
-    return {
-      id: me.id,
-      clientBalance: num(me.clientBalance),
-      currentSpendPerHr: num(me.currentSpendPerHr),
-      spendLimit: num(me.spendLimit),
-      underBalance:
-        typeof me.underBalance === "boolean" ? me.underBalance : undefined,
-    };
-  }
-
-  // Raw catalog rows; normalize with catalog.ts.
+  // Raw catalog rows (GET /v2/catalog/gpus with pod availability); normalize
+  // with catalog.ts.
   async listGpuTypes(): Promise<any[]> {
-    const data = await this.graphql(
-      `query { gpuTypes { id displayName memoryInGb secureCloud communityCloud
-        securePrice communityPrice secureSpotPrice communitySpotPrice
-        lowestPrice(input: { gpuCount: 1 }) { stockStatus } } }`,
-    );
-    return Array.isArray(data?.gpuTypes) ? data.gpuTypes : [];
+    const body = await this.get("/v2/catalog/gpus", {
+      include: "AVAILABILITY",
+      product: "POD",
+    });
+    return Array.isArray(body?.gpus) ? body.gpus : [];
   }
 
   async listDataCenters(): Promise<any[]> {
-    const data = await this.graphql(
-      `query { dataCenters { id name location listed
-        gpuAvailability { gpuTypeId stockStatus } } }`,
-    );
-    return Array.isArray(data?.dataCenters) ? data.dataCenters : [];
+    const body = await this.get("/v2/catalog/datacenters");
+    return Array.isArray(body?.dataCenters) ? body.dataCenters : [];
   }
 
   async listPods(): Promise<RunpodPodView[]> {
-    const rows = await this.rest("/pods");
-    return (Array.isArray(rows) ? rows : [])
-      .map(podView)
-      .filter((p): p is RunpodPodView => p != null);
+    const pods: RunpodPodView[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const body = await this.get("/v2/pods", cursor ? { cursor } : {});
+      if (!Array.isArray(body?.pods)) throw new RunpodApiError("protocol");
+      for (const raw of body.pods) {
+        const pod = podView(raw);
+        if (pod) pods.push(pod);
+      }
+      const next = body.pagination?.nextCursor;
+      if (!body.pagination?.hasNextPage || typeof next !== "string") {
+        return pods;
+      }
+      cursor = next;
+    }
+    // An inventory that may be incomplete must not look complete: callers
+    // reconcile against it.
+    throw new RunpodApiError("protocol");
   }
 
   async getPod(podId: string): Promise<RunpodPodView | undefined> {
     try {
-      return podView(await this.rest(`/pods/${checkPodId(podId)}`));
+      return podView(await this.get(`/v2/pods/${checkPodId(podId)}`));
     } catch (err) {
-      if (err instanceof RunpodApiError && err.status === 404) return undefined;
+      if (err instanceof RunpodApiError && err.kind === "not_found") {
+        return undefined;
+      }
       throw err;
     }
   }
@@ -147,46 +174,66 @@ export class RunpodClient {
       endTime?: string;
     } = {},
   ): Promise<RunpodBillingRecord[]> {
-    const params = new URLSearchParams({
-      grouping: "podId",
+    const query: Record<string, string> = {
       bucketSize: opts.bucketSize ?? "hour",
-    });
-    if (opts.podId) params.set("podId", checkPodId(opts.podId));
-    if (opts.startTime) params.set("startTime", opts.startTime);
-    if (opts.endTime) params.set("endTime", opts.endTime);
-    const rows = await this.rest(`/billing/pods?${params}`);
-    return (Array.isArray(rows) ? rows : []).map((r: any) => ({
-      time: typeof r?.time === "string" ? r.time : undefined,
-      amount: num(r?.amount),
-      timeBilledMs: num(r?.timeBilledMs),
-      diskSpaceBilledGb: num(r?.diskSpaceBilledGb),
-      podId: typeof r?.podId === "string" ? r.podId : undefined,
-      gpuTypeId: typeof r?.gpuTypeId === "string" ? r.gpuTypeId : undefined,
-    }));
+    };
+    // RunPod requires both or neither (400 otherwise).
+    if ((opts.startTime == null) !== (opts.endTime == null)) {
+      throw new Error("startTime and endTime must be given together");
+    }
+    if (opts.podId) query.podId = checkPodId(opts.podId);
+    if (opts.startTime) query.startTime = checkTime(opts.startTime);
+    if (opts.endTime) query.endTime = checkTime(opts.endTime);
+    const body = await this.get("/v2/billing/pods", query);
+    if (!Array.isArray(body?.records)) throw new RunpodApiError("protocol");
+    return body.records
+      .map(billingRecordView)
+      .filter((r): r is RunpodBillingRecord => r != null);
   }
 
-  private async rest(path: string): Promise<any> {
-    const res = await this.request(`${this.#restUrl}${path}`, {
-      method: "GET",
-    });
-    return await this.parse(res);
-  }
-
-  private async graphql(query: string): Promise<any> {
-    const res = await this.request(this.#graphqlUrl, {
+  // Temporary GraphQL read; see GRAPHQL_URL.
+  async getAccountBalance(): Promise<RunpodAccountBalance> {
+    const res = await this.request(GRAPHQL_URL, {
       method: "POST",
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({
+        query:
+          "query { myself { id clientBalance currentSpendPerHr spendLimit } }",
+      }),
     });
     const body = await this.parse(res);
     if (Array.isArray(body?.errors) && body.errors.length > 0) {
-      const code = body.errors[0]?.extensions?.code;
-      const unauthorized = code === "UNAUTHORIZED" || code === "FORBIDDEN";
+      // A valid key without account scope answers 200 with UNAUTHORIZED; a
+      // rejected key gets HTTP 401 before this point.
       throw new RunpodApiError(
-        `RunPod GraphQL error: ${scrubText(body.errors[0]?.message ?? code)}`,
-        unauthorized ? 403 : undefined,
+        body.errors[0]?.extensions?.code === "UNAUTHORIZED"
+          ? "forbidden"
+          : "provider",
       );
     }
-    return body?.data;
+    const me = body?.data?.myself;
+    if (!me || !(typeof me.id === "string" && me.id)) {
+      throw new RunpodApiError("protocol");
+    }
+    return {
+      accountId: me.id,
+      balance: finite(me.clientBalance),
+      spendPerHour: finite(me.currentSpendPerHr),
+      spendLimitPerHour: finite(me.spendLimit),
+    };
+  }
+
+  private async get(
+    path: string,
+    query: Record<string, string> = {},
+  ): Promise<any> {
+    const qs = new URLSearchParams(query).toString();
+    const res = await this.request(
+      `${API_ORIGIN}${path}${qs ? `?${qs}` : ""}`,
+      {
+        method: "GET",
+      },
+    );
+    return await this.parse(res);
   }
 
   private async request(url: string, init: RequestInit): Promise<Response> {
@@ -199,37 +246,62 @@ export class RunpodClient {
           Accept: "application/json",
           "User-Agent": USER_AGENT,
         },
+        redirect: "error",
         signal: AbortSignal.timeout(this.#timeoutMs),
       });
-    } catch (err) {
-      // Network errors can carry the request; report only their kind.
-      const name = (err as any)?.name ?? "Error";
-      throw new RunpodApiError(`RunPod request failed (${name})`);
+    } catch {
+      // Network errors can carry the request; keep nothing from them.
+      throw new RunpodApiError("network");
     }
   }
 
   private async parse(res: Response): Promise<any> {
-    const text = await res.text();
+    const text = await res.text().catch(() => "");
     if (!res.ok) {
       throw new RunpodApiError(
-        `RunPod returned ${res.status}${text ? `: ${scrubText(text)}` : ""}`,
+        errorKind(res.status),
         res.status,
+        retryAfter(res.headers.get("retry-after")),
       );
     }
     if (!text) return undefined;
     try {
       return JSON.parse(text);
     } catch {
-      throw new RunpodApiError("RunPod returned invalid JSON", res.status);
+      throw new RunpodApiError("protocol", res.status);
     }
   }
 }
 
-function num(v: unknown): number | undefined {
+function errorKind(status: number): RunpodErrorKind {
+  if (status === 401) return "auth";
+  if (status === 403) return "forbidden";
+  if (status === 404) return "not_found";
+  if (status === 409) return "conflict";
+  if (status === 429) return "rate_limited";
+  if (status >= 400 && status < 500) return "invalid";
+  return "provider";
+}
+
+function retryAfter(v: string | null): number | undefined {
+  const n = v == null ? NaN : Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+function finite(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
 function checkPodId(podId: string): string {
-  if (!/^[a-z0-9]{6,32}$/.test(podId)) throw new Error("invalid RunPod pod id");
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(podId)) {
+    throw new Error("invalid RunPod pod id");
+  }
   return podId;
+}
+
+function checkTime(t: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(t)) {
+    throw new Error("invalid time; use an ISO 8601 UTC timestamp");
+  }
+  return t;
 }
