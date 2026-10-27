@@ -406,6 +406,8 @@ export async function getMergeApprovalStatus(opts: {
     repo: request.repo,
     pr_number: request.pr_number,
     head_sha: request.head_sha,
+    base_ref: request.base_ref,
+    base_sha: request.github_snapshot.base_sha,
     status: request.status,
     expires_at: request.expires_at,
     ...(decision == null

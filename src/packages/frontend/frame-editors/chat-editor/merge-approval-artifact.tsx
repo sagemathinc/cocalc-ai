@@ -10,7 +10,7 @@ which is labelled as the agent's. Deciding goes to the hub from this browser
 session, with fresh auth (and a second factor where the repo requires it).
 */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Space, Tag, Typography } from "antd";
 import {
   MAX_MERGE_APPROVAL_COMMENT_BYTES,
@@ -75,16 +75,30 @@ export function MergeApprovalArtifact({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const key = requestIds.join(",");
+  // Only the newest load may update the card: a slower or failed load for
+  // other request ids must never leave their decision buttons showing.
+  const latest = useRef(0);
+
+  // Different requests: drop the old ones right away.
+  useEffect(() => {
+    setViews(undefined);
+    setError("");
+  }, [key]);
 
   const load = useCallback(async () => {
+    const run = ++latest.current;
     setLoading(true);
     try {
-      setViews(await mergeApprovalsApi().get({ request_ids: requestIds }));
+      const result = await mergeApprovalsApi().get({ request_ids: requestIds });
+      if (run !== latest.current) return;
+      setViews(result);
       setError("");
     } catch (err) {
+      if (run !== latest.current) return;
+      setViews(undefined);
       setError(`${(err as any)?.message ?? err}`);
     } finally {
-      setLoading(false);
+      if (run === latest.current) setLoading(false);
     }
   }, [key]);
 

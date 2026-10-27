@@ -164,5 +164,8 @@ cocalc project chat merge-approval status <request-id>
 The hub reads the PR from GitHub and refuses unless it is open, not a draft,
 and its current head is `--head`; the card shows what the hub read, with your
 note labelled as yours. Only an approver can decide, on the card. A new push
-supersedes the request: request again for the new head. An approval card is
-not a merge: merge only after the approval, and only as your instructions say.
+supersedes the request: request again for the new head. An approval covers
+one exact merge, `head_sha` into `base_ref` at `base_sha` (both commands
+return them): before merging, check the PR still has that head and base; if
+either moved, request again. An approval card is not a merge: merge only
+after the approval, and only as your instructions say.

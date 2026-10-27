@@ -278,11 +278,16 @@ export interface MergeApprovalView {
 }
 
 // What the requesting agent can learn about its own request.
+// An approval is of one merge: head_sha into base_ref at base_sha. Before
+// merging, the agent must check the PR still has exactly these; if the head
+// or base moved, the approval doesn't cover it and a new request is needed.
 export interface MergeApprovalStatusView {
   id: string;
   repo: string;
   pr_number: number;
   head_sha: string;
+  base_ref: string;
+  base_sha: string;
   status: MergeApprovalStatus;
   expires_at: string;
   decision?: Pick<

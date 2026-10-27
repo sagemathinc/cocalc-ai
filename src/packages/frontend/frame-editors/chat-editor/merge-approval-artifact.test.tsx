@@ -230,3 +230,22 @@ test("measures the comment in bytes, as the hub does", async () => {
   fireEvent.change(comment, { target: { value: "ok" } });
   expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
 });
+
+test("shows only the current requests when the card's request ids change", async () => {
+  const OTHER = "66666666-6666-4666-8666-666666666666";
+  let resolveOld: (v: any) => void = () => {};
+  get.mockImplementationOnce(
+    () => new Promise((resolve) => (resolveOld = resolve)),
+  );
+  get.mockImplementationOnce(async () => {
+    throw new Error("not found");
+  });
+  const { rerender } = render(<MergeApprovalArtifact requestIds={[ID]} />);
+  rerender(<MergeApprovalArtifact requestIds={[OTHER]} />);
+  expect(await screen.findByText("not found")).toBeInTheDocument();
+  // The slow load for the old id finishes last, and is ignored.
+  resolveOld([view()]);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Approve head/ })).toBeNull();
+});

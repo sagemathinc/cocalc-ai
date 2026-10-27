@@ -124,6 +124,10 @@ export function registerChatMergeApprovalCommands(
             repo: request.repo,
             pr_number: request.pr_number,
             head_sha: request.head_sha,
+            // The approval is of this exact merge: before merging, check the
+            // PR still has this head and base (status returns them too).
+            base_ref: request.base_ref,
+            base_sha: request.github_snapshot?.base_sha,
             expires_at: request.expires_at,
             artifact_id: card.artifact_id,
             card_reused: card.reused,
@@ -135,7 +139,7 @@ export function registerChatMergeApprovalCommands(
   mergeApproval
     .command("status <request-id...>")
     .description(
-      "status of this project's merge approval requests: pending, approved, rejected, superseded, withdrawn or expired",
+      "status of this project's merge approval requests (pending, approved, rejected, superseded, withdrawn or expired) with the exact head and base each is for",
     )
     .action(async (ids: string[], _opts, command: Command) => {
       await deps.withContext(

@@ -30,6 +30,8 @@ function setup(existing: any[] = []) {
                 repo: "o/r",
                 pr_number: 7,
                 head_sha: HEAD,
+                base_ref: "main",
+                github_snapshot: { base_sha: "b".repeat(40) },
                 expires_at: "later",
               };
             },
