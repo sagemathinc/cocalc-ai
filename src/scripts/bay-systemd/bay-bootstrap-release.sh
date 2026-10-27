@@ -690,14 +690,16 @@ effective_required_browser_version() {
   fi
 }
 
-# The required browser version the hub will enforce for this release, or
-# nothing.
+# The required browser version the hub will enforce for this release; "none"
+# when the settings were read but the hub enforces no version; nothing when
+# they could not be read.
 read_required_browser_version() {
-  local frontend="${1:-0}" settings
+  local frontend="${1:-0}" settings version
   settings="$(read_browser_version_settings)"
   [[ -n "$settings" ]] || return 0
   # shellcheck disable=SC2086
-  effective_required_browser_version $settings "$(date +%s)" "$frontend"
+  version="$(effective_required_browser_version $settings "$(date +%s)" "$frontend")"
+  echo "${version:-none}"
 }
 
 # Inherited frontend chunks are kept only for builds a browser may still run:
@@ -719,11 +721,20 @@ frontend_asset_retention_cutoff() {
   fi
   local version
   version="$(read_required_browser_version "$frontend")"
-  if [[ -n "$version" ]]; then
-    echo "$((version * 1000 - FRONTEND_ASSET_VERSION_SLACK_MS)) required-browser-version=${version}"
-  else
-    echo "$((($(date +%s) - FRONTEND_ASSET_FALLBACK_DAYS * 86400) * 1000)) fallback-${FRONTEND_ASSET_FALLBACK_DAYS}d"
-  fi
+  local fallback="$((($(date +%s) - FRONTEND_ASSET_FALLBACK_DAYS * 86400) * 1000))"
+  case "$version" in
+    "")
+      echo "${fallback} fallback-${FRONTEND_ASSET_FALLBACK_DAYS}d:unreadable"
+      ;;
+    none)
+      # The hub disconnects no browser, by setting: a fixed window, as with an
+      # unreadable setting (the two are reported apart).
+      echo "${fallback} fallback-${FRONTEND_ASSET_FALLBACK_DAYS}d:no-enforced-version"
+      ;;
+    *)
+      echo "$((version * 1000 - FRONTEND_ASSET_VERSION_SLACK_MS)) required-browser-version=${version}"
+      ;;
+  esac
 }
 
 prepare_frontend_asset_history() {
@@ -909,39 +920,65 @@ for (const build of kept) {
     if (!currentAssets.has(asset)) retained.add(asset);
   }
 }
-const unionSize = currentAssets.size + retained.size;
-if (unionSize > MAX_ASSETS) {
-  throw new Error(
-    `frontend asset history exceeds ${MAX_ASSETS} files (${unionSize} from ${kept.length + 1} builds back to ${new Date(cutoffMs).toISOString()}, ${cutoffSource}); raise the required browser version`,
-  );
-}
-
 // Files listed only by dropped builds are removed from this release. The
 // current build's own assets are never removed, and neither is a hashed file
-// no build lists (it is counted, so a growing number shows).
+// no build lists: it is kept, counted, and counts toward the cap.
 const removable = new Set();
 for (const build of dropped) {
   for (const asset of build.assets) {
     if (!currentAssets.has(asset) && !retained.has(asset)) removable.add(asset);
   }
 }
-let removed = 0;
-let unlisted = 0;
+const toRemove = [];
+const unlistedAssets = [];
 for (const asset of hashedFiles(targetRoot)) {
   if (removable.has(asset)) {
-    fs.rmSync(path.resolve(targetRoot, asset), { force: true });
-    removed += 1;
+    toRemove.push(asset);
   } else if (!currentAssets.has(asset) && !retained.has(asset)) {
-    unlisted += 1;
+    unlistedAssets.push(asset);
   }
 }
+unlistedAssets.sort();
+const unlisted = unlistedAssets.length;
+// Every hashed file this release keeps: the hub monitor and `software smoke
+// static` check the listed ones against the same cap.
+const unionSize = currentAssets.size + retained.size + unlisted;
+if (unionSize > MAX_ASSETS) {
+  throw new Error(
+    `frontend asset history exceeds ${MAX_ASSETS} files (${unionSize} from ${kept.length + 1} builds back to ${new Date(cutoffMs).toISOString()}, ${cutoffSource}${unlisted ? `, ${unlisted} unlisted` : ""}); raise the required browser version`,
+  );
+}
+for (const asset of toRemove) {
+  fs.rmSync(path.resolve(targetRoot, asset), { force: true });
+}
+const removed = toRemove.length;
+
+// Unlisted files are recorded as a build of their own, dated with this
+// release's build: from the next deploy on they are listed, and they age out
+// with it.
+const unlistedBuild =
+  unlisted > 0
+    ? {
+        git_revision: "",
+        build_timestamp: current.build_timestamp,
+        build_date: current.build_date,
+        fingerprint: "unlisted",
+        assets: unlistedAssets,
+      }
+    : undefined;
 
 // The served history keeps the shape the hub monitor and smoke test read: the
-// current build and, as one entry, everything retained from earlier builds.
+// current build and, as one entry, everything else this release keeps.
 const builds = [current];
-if (retained.size > 0) {
-  const newest = kept.reduce((a, b) => (b.build_timestamp > a.build_timestamp ? b : a));
-  builds.push({ ...newest, assets: [...retained].sort() });
+if (retained.size + unlisted > 0) {
+  const newest =
+    kept.length > 0
+      ? kept.reduce((a, b) => (b.build_timestamp > a.build_timestamp ? b : a))
+      : unlistedBuild;
+  builds.push({
+    ...newest,
+    assets: [...new Set([...retained, ...unlistedAssets])].sort(),
+  });
 }
 const requiredBrowserVersion =
   Number(/^required-browser-version=(\d+)$/.exec(cutoffSource)?.[1]) || null;
@@ -966,7 +1003,7 @@ writeJson(path.join(targetRoot, "frontend-build-history.json"), history);
 writeJson(targetLedgerPath, {
   schema: 1,
   generated_at: history.generated_at,
-  builds: [current, ...kept],
+  builds: [current, ...kept, ...(unlistedBuild ? [unlistedBuild] : [])],
 });
 console.log(
   `frontend asset retention: cutoff=${new Date(cutoffMs).toISOString()} (${cutoffSource}) builds kept=${kept.length} dropped=${dropped.length} inherited files kept=${retained.size} removed=${removed} unlisted=${unlisted}${missing ? ` missing=${missing}` : ""}`,

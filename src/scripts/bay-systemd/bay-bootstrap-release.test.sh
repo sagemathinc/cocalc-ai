@@ -176,6 +176,11 @@ NODE
 rm -f "${ASSET_PREVIOUS}"/runtime/control-plane/static/chunk-* \
   "${ASSET_PREVIOUS}"/runtime/control-plane/static/historic-* \
   "${ASSET_PREVIOUS}"/runtime/control-plane/static/previous-*
+# A deploy stages a fresh target release: drop what earlier rounds copied in,
+# or it would count as unlisted retained files.
+rm -f "${ASSET_TARGET}"/runtime/control-plane/static/chunk-* \
+  "${ASSET_TARGET}"/runtime/control-plane/static/historic-* \
+  "${ASSET_TARGET}"/runtime/control-plane/static/previous-*
 node - "${ASSET_PREVIOUS}/runtime/control-plane/static" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
@@ -222,6 +227,10 @@ const path = require("node:path");
 const root = process.argv[2];
 const assets = Array.from({ length: 933 }, (_, i) => `fresh-${i}-0123456789abcdef.js`);
 fs.writeFileSync(path.join(root, "frontend-build.json"), JSON.stringify({ assets }));
+// This build ships exactly its manifest: no files from earlier rounds.
+for (const name of ["fresh-933-0123456789abcdef.js", "current-fedcba9876543210.js"]) {
+  fs.rmSync(path.join(root, name), { force: true });
+}
 NODE
 prepare_frontend_asset_history >"${TMP_ROOT}/near-cap.log"
 # At the cap the deploy passes, but warns that the required browser version
@@ -307,14 +316,45 @@ if (history.builds.length !== 2) throw new Error("history must keep its two-buil
 if (history.retention?.source !== "override" || history.retention.required_browser_version !== null) {
   throw new Error(`unexpected retention record: ${JSON.stringify(history.retention)}`);
 }
+// The served history lists everything kept, unlisted files included, so the
+// hub monitor and smoke test check them too.
 const retained = history.builds[1].assets.join(",");
-if (retained !== "mid-2222222222222222.js,previous-1111111111111111.js") {
+if (retained !== "mid-2222222222222222.js,previous-1111111111111111.js,unlisted-5555555555555555.js") {
   throw new Error(`unexpected retained assets: ${retained}`);
 }
 const ledger = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
 const names = ledger.builds.map((build) => build.fingerprint).join(",");
-if (names !== "current,previous,mid") throw new Error(`unexpected ledger builds: ${names}`);
+if (names !== "current,previous,mid,unlisted") throw new Error(`unexpected ledger builds: ${names}`);
+// The unlisted file is recorded with this release's build date, so the next
+// deploy keeps or drops it like any listed build.
+const unlistedBuild = ledger.builds[3];
+if (
+  unlistedBuild.build_timestamp !== ledger.builds[0].build_timestamp ||
+  unlistedBuild.assets.join(",") !== "unlisted-5555555555555555.js"
+) {
+  throw new Error(`unexpected unlisted ledger entry: ${JSON.stringify(unlistedBuild)}`);
+}
 NODE
+
+# Hashed files no build lists are kept, so they count toward the cap: here the
+# listed files are few, but with the unlisted ones the release is over it, and
+# it fails before anything is removed.
+node - "$RET_STATIC" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+for (let i = 0; i < 10997; i++) {
+  fs.writeFileSync(path.join(process.argv[2], `stray-${i}-0123456789abcdef.js`), "x");
+}
+NODE
+cp "${RET_PREV_STATIC}/old-3333333333333333.js" "${RET_STATIC}/"
+if prepare_frontend_asset_history >"${TMP_ROOT}/unlisted-cap.log" 2>&1; then
+  echo "unlisted files did not count toward the frontend asset cap" >&2
+  exit 1
+fi
+grep -q 'frontend asset history exceeds 11000 files (11002 from 3 builds.*, 10998 unlisted)' \
+  "${TMP_ROOT}/unlisted-cap.log"
+[[ -f "${RET_STATIC}/old-3333333333333333.js" ]]
+rm -f "${RET_STATIC}"/stray-* "${RET_STATIC}/old-3333333333333333.js"
 
 # A previous release without a ledger: its build and every chunk it carried
 # age together, kept while it is within the cutoff, removed once it is not.
@@ -397,9 +437,10 @@ SETTINGS_ROWS=$'version_min_browser 1792710260\nversion_recommended_browser 1792
 [[ "$(read_required_browser_version 1792700000)" == 1792700000 ]]
 SETTINGS_ROWS=$'version_min_browser 1792710260\n'
 [[ "$(read_browser_version_settings)" == "1792710260 -" ]]
-[[ -z "$(read_required_browser_version 1792900000)" ]]
+# Read, but the hub enforces no version: reported apart from unreadable.
+[[ "$(read_required_browser_version 1792900000)" == none ]]
 SETTINGS_ROWS=$'version_min_browser 4102444800\nversion_recommended_browser 4102444800\n'
-[[ -z "$(read_required_browser_version 1792900000)" ]]
+[[ "$(read_required_browser_version 1792900000)" == none ]]
 runuser() { return 2; }
 [[ -z "$(read_browser_version_settings)" ]]
 [[ -z "$(read_required_browser_version 1792900000)" ]]
@@ -411,9 +452,11 @@ PSQL_BIN=""
 read_required_browser_version() { echo "${1:-none}" >"${TMP_ROOT}/frontend-arg"; echo 1792710260; }
 [[ "$(frontend_asset_retention_cutoff 1792900000)" == "$((1792710260000 - 86400000)) required-browser-version=1792710260" ]]
 [[ "$(cat "${TMP_ROOT}/frontend-arg")" == 1792900000 ]]
+read_required_browser_version() { echo none; }
+[[ "$(frontend_asset_retention_cutoff)" == *" fallback-14d:no-enforced-version" ]]
 read_required_browser_version() { :; }
 cutoff="$(frontend_asset_retention_cutoff)"
-[[ "${cutoff#* }" == "fallback-14d" ]]
+[[ "${cutoff#* }" == "fallback-14d:unreadable" ]]
 expected=$((($(date +%s) - 14 * 86400) * 1000))
 if ((${cutoff%% *} > expected || ${cutoff%% *} < expected - 5000)); then
   echo "fallback cutoff is not 14 days ago: ${cutoff}" >&2
