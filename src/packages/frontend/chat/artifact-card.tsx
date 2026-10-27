@@ -131,7 +131,9 @@ export function ArtifactCard({
       JSON.stringify(current.actions) !== JSON.stringify(published.actions) ||
       JSON.stringify(current.github_pr) !==
         JSON.stringify(published.github_pr) ||
-      JSON.stringify(current.commit) !== JSON.stringify(published.commit));
+      JSON.stringify(current.commit) !== JSON.stringify(published.commit) ||
+      JSON.stringify(current.merge_approval) !==
+        JSON.stringify(published.merge_approval));
   const theme = current?.theme ?? s.theme;
   const title = theme?.title || s.title;
   const kind = s.merge_approval

@@ -12,9 +12,10 @@ session, with fresh auth (and a second factor where the repo requires it).
 
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Input, Space, Tag, Typography } from "antd";
-import type {
-  MergeApprovalDecisionKind,
-  MergeApprovalView,
+import {
+  MAX_MERGE_APPROVAL_COMMENT_BYTES,
+  type MergeApprovalDecisionKind,
+  type MergeApprovalView,
 } from "@cocalc/util/merge-approval";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -171,6 +172,9 @@ function MergeApprovalRequestCard({
   const [busy, setBusy] = useState<MergeApprovalDecisionKind>();
   const [error, setError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  // The hub limits UTF-8 bytes, not characters.
+  const commentBytes = new TextEncoder().encode(comment).length;
+  const commentTooLong = commentBytes > MAX_MERGE_APPROVAL_COMMENT_BYTES;
 
   async function decide(kind: MergeApprovalDecisionKind) {
     setBusy(kind);
@@ -391,15 +395,26 @@ function MergeApprovalRequestCard({
               aria-label={`Comment for ${heading}`}
               placeholder="Comment (optional)"
               value={comment}
-              maxLength={2000}
+              status={commentTooLong ? "error" : undefined}
+              aria-invalid={commentTooLong}
+              aria-describedby={`comment-limit-${request.id}`}
               autoSize={{ minRows: 1, maxRows: 4 }}
               onChange={(e) => setComment(e.target.value)}
             />
+            <Typography.Text
+              id={`comment-limit-${request.id}`}
+              type={commentTooLong ? "danger" : "secondary"}
+              aria-live="polite"
+            >
+              {commentTooLong
+                ? `The comment is too long: ${commentBytes} of ${MAX_MERGE_APPROVAL_COMMENT_BYTES} bytes.`
+                : `${commentBytes} of ${MAX_MERGE_APPROVAL_COMMENT_BYTES} bytes`}
+            </Typography.Text>
             <Space wrap>
               <Button
                 type="primary"
                 loading={busy === "approve"}
-                disabled={!!busy}
+                disabled={!!busy || commentTooLong}
                 onClick={() => void decide("approve")}
               >
                 Approve head {request.head_sha.slice(0, 12)}
@@ -407,7 +422,7 @@ function MergeApprovalRequestCard({
               <Button
                 danger
                 loading={busy === "reject"}
-                disabled={!!busy}
+                disabled={!!busy || commentTooLong}
                 onClick={() => void decide("reject")}
               >
                 Reject

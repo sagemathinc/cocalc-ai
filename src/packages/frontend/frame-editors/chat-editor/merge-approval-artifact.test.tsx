@@ -211,3 +211,22 @@ test("tells non-approvers they can't see the requests", async () => {
     ),
   ).toBeInTheDocument();
 });
+
+test("measures the comment in bytes, as the hub does", async () => {
+  render(<MergeApprovalArtifact requestIds={[ID]} />);
+  const comment = await screen.findByRole("textbox", {
+    name: "Comment for sagemathinc/cocalc-ai #1430",
+  });
+  // 1000 emoji: under 2000 characters' worth of input, but 4000 bytes.
+  fireEvent.change(comment, { target: { value: "😀".repeat(1000) } });
+  expect(
+    screen.getByText("The comment is too long: 4000 of 2048 bytes."),
+  ).toBeInTheDocument();
+  expect(comment).toHaveAttribute("aria-invalid", "true");
+  expect(
+    screen.getByRole("button", { name: `Approve head ${HEAD.slice(0, 12)}` }),
+  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+  fireEvent.change(comment, { target: { value: "ok" } });
+  expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+});
