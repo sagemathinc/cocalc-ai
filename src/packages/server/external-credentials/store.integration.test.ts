@@ -330,6 +330,33 @@ describeDb("revoking deletes CoCalc's copy of the credential", () => {
     // idempotent
     expect(await eraseRevokedExternalCredentialPayloads()).toBe(0);
   });
+
+  test("the migration waits for a row another transaction holds instead of skipping it", async () => {
+    const id = randomUUID();
+    await getPool().query(
+      `INSERT INTO external_credentials
+         (id, provider, kind, scope, owner_account_id, encrypted_payload,
+          metadata, created, updated, revoked)
+       VALUES ($1, 'openai', 'api-key', 'account', $2, 'legacy', '{}'::jsonb,
+               NOW(), NOW(), NOW())`,
+      [id, randomUUID()],
+    );
+    const holder = await getPool().connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query(
+        "SELECT id FROM external_credentials WHERE id=$1 FOR UPDATE",
+        [id],
+      );
+      const run = eraseRevokedExternalCredentialPayloads();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await holder.query("COMMIT");
+      expect(await run).toBeGreaterThanOrEqual(1);
+    } finally {
+      holder.release();
+    }
+    expect((await stored(id)).encrypted_payload).toBeNull();
+  });
 });
 
 describeDb("create limit", () => {

@@ -1285,7 +1285,9 @@ WHERE id=$1
 
 // Revoking a credential deletes its encrypted payload. Rows revoked before
 // that rule still hold one; erase those in small batches. Idempotent and
-// safe to run on every start.
+// safe to run on every start. Rows are locked in id order and waited for
+// (not skipped), so a row briefly locked by another transaction is still
+// erased in this run, and concurrent hubs can't deadlock.
 export async function eraseRevokedExternalCredentialPayloads({
   batchSize = 500,
   maxBatches = 10_000,
@@ -1299,10 +1301,12 @@ SET encrypted_payload=NULL
 WHERE id IN (
   SELECT id FROM external_credentials
   WHERE revoked IS NOT NULL AND encrypted_payload IS NOT NULL
+  ORDER BY id
   LIMIT $1
-  FOR UPDATE SKIP LOCKED
+  FOR UPDATE
 )
   AND revoked IS NOT NULL
+  AND encrypted_payload IS NOT NULL
       `,
       [batchSize],
     );
