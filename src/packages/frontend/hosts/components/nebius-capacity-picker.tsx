@@ -7,6 +7,7 @@ import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import { Alert, Flex, Radio, Space, Switch, Tag, Typography } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { NEBIUS_SPOT_OFFERED } from "@cocalc/util/consts/nebius-spot";
 import {
   getNebiusPlacementOptions,
   type NebiusPlacementOption,
@@ -85,6 +86,13 @@ export function NebiusCapacityPicker({
   );
   const fallbackRequestRef = useRef<string | undefined>(undefined);
 
+  // a selection made before Spot became unavailable moves to Standard
+  useEffect(() => {
+    if (!NEBIUS_SPOT_OFFERED && pricingModel === "spot") {
+      onPricingModelChange("on_demand");
+    }
+  }, [onPricingModelChange, pricingModel]);
+
   useEffect(() => {
     if (selected) {
       fallbackRequestRef.current = undefined;
@@ -134,7 +142,9 @@ export function NebiusCapacityPicker({
             onPricingModelChange(next);
           }}
         >
-          <Radio.Button value="spot">Spot</Radio.Button>
+          <Radio.Button value="spot" disabled={!NEBIUS_SPOT_OFFERED}>
+            Spot
+          </Radio.Button>
           <Radio.Button value="on_demand">Standard</Radio.Button>
         </Radio.Group>
         <Radio.Group
@@ -152,6 +162,11 @@ export function NebiusCapacityPicker({
         </Radio.Group>
         {pricingModel === "spot" && (
           <Text type="secondary">Nebius Spot capacity is GPU-only.</Text>
+        )}
+        {!NEBIUS_SPOT_OFFERED && (
+          <Text type="secondary">
+            Nebius Spot is unavailable for now; Standard only.
+          </Text>
         )}
         <Switch
           checked={sortByPrice}

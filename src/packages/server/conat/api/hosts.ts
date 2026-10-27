@@ -150,6 +150,7 @@ import {
 } from "@cocalc/server/cloud/providers";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { getNebiusComputeCapacityAdvice } from "@cocalc/server/compute/provider";
+import { assertNebiusSpotOffered } from "@cocalc/util/consts/nebius-spot";
 import { assertProjectHostProviderOffered } from "@cocalc/server/cloud/project-host-provider-offered";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
@@ -7602,6 +7603,9 @@ export async function updateHostMachine({
     throw new Error(`invalid pricing_model '${pricing_model}'`);
   }
   const nextPricingModel = requestedPricingModel ?? currentPricingModel;
+  if (requestedPricingModel || requestedCloud) {
+    assertNebiusSpotOffered(effectiveFundingCloud, nextPricingModel);
+  }
   const currentInterruptionRestorePolicy =
     normalizeHostInterruptionRestorePolicy(
       metadata.interruption_restore_policy,

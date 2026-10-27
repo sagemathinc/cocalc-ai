@@ -11,10 +11,7 @@ import {
 } from "@cocalc/server/hosts/metadata-patch";
 import { clearProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import { deleteHostDns, ensureHostDns, hasDns } from "./dns";
-import {
-  releaseHostContentDns,
-  syncHostContentDns,
-} from "./host-content-dns";
+import { releaseHostContentDns, syncHostContentDns } from "./host-content-dns";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
@@ -2143,7 +2140,10 @@ async function handleStart(row: any) {
           `${machine.machine_type ?? ""}`.trim(),
       });
       if (fault) throw new Error(`injected start fault: ${fault}`);
-      await entry.provider.startHost(runtimeForStart, creds);
+      await entry.provider.startHost(runtimeForStart, creds, {
+        // a billing rescue only takes final backups before a drain
+        allow_preemptible: row.payload?.billing_rescue === true,
+      });
     };
     // When the attempted Spot start (or a return to Spot) fails for lack of
     // capacity or quota, walk: standard on the desired type, then Spot and
@@ -3094,7 +3094,11 @@ async function handleStop(row: any) {
   });
 }
 
-async function handleRestart(row: any, mode: "reboot" | "hard") {
+async function handleRestart(
+  row: any,
+  mode: "reboot" | "hard",
+  payload?: { prior_status?: string },
+) {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
@@ -3115,6 +3119,35 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
     region: row.region,
   });
   const provider = entry.provider;
+  const refusal = await provider.startRefusal?.(runtime, creds);
+  if (refusal) {
+    // Checked before this worker marks it restarting or releases its DNS:
+    // nothing changed on the VM. Put back the status the host had before the
+    // restart request (running or error) and record why, so the action
+    // doesn't stay pending. last_seen stays as the request left it (null):
+    // it means a project-host heartbeat, and the app may be down, so only
+    // the next heartbeat may make the host placeable again.
+    logger.warn("handleRestart: provider refuses to restart this host", {
+      host_id: row.id,
+      provider: providerId,
+      refusal,
+    });
+    if (row.status === "restarting") {
+      await updateHostRow(row.id, {
+        status: payload?.prior_status === "error" ? "error" : "running",
+      });
+    }
+    await logCloudVmEvent({
+      vm_id: row.id,
+      action: mode === "hard" ? "hard_restart" : "restart",
+      status: "failure",
+      provider: providerId,
+      spec: machine,
+      runtime,
+      error: refusal,
+    });
+    return;
+  }
   let runtimeForRestart = runtime;
   try {
     const { baseUrl } = await resolveLaunchpadBootstrapUrl({
@@ -4241,7 +4274,7 @@ export const cloudHostHandlers: CloudVmWorkHandlers = withHostSnapshotScopes({
     if (!host) return;
     if (intentSuperseded(host, row.payload)) return;
     try {
-      await handleRestart(host, "reboot");
+      await handleRestart(host, "reboot", row.payload);
     } catch (err) {
       await markHostError(host, err);
       throw err;
@@ -4252,7 +4285,7 @@ export const cloudHostHandlers: CloudVmWorkHandlers = withHostSnapshotScopes({
     if (!host) return;
     if (intentSuperseded(host, row.payload)) return;
     try {
-      await handleRestart(host, "hard");
+      await handleRestart(host, "hard", row.payload);
     } catch (err) {
       await markHostError(host, err);
       throw err;

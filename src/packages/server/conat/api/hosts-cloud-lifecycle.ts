@@ -35,6 +35,7 @@ import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import { randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
+import { assertNebiusSpotOffered } from "@cocalc/util/consts/nebius-spot";
 import { assertProjectHostProviderOffered } from "@cocalc/server/cloud/project-host-provider-offered";
 import {
   ensureConnectorRecord,
@@ -350,6 +351,7 @@ export async function createHostInternalHelper({
   if (pricing_model != null && !normalizedPricingModel) {
     throw new Error(`invalid pricing_model '${pricing_model}'`);
   }
+  assertNebiusSpotOffered(machineCloud, normalizedPricingModel);
   const normalizedRestorePolicy = normalizeHostInterruptionRestorePolicy(
     interruption_restore_policy,
   );
@@ -574,6 +576,13 @@ export async function startHostInternalHelper({
     row.metadata?.effective_pricing_model ??
     row.metadata?.desired_pricing_model ??
     row.metadata?.pricing_model;
+  if (!billing_rescue) {
+    // billing rescue only takes final backups; it keeps working as before
+    assertNebiusSpotOffered(
+      machineCloud,
+      row.metadata?.desired_pricing_model ?? effectivePricingModel,
+    );
+  }
   const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
   if (machineCloud === "self-host" && sshTarget && owner) {
     await ensureSelfHostReverseTunnel({
@@ -719,7 +728,12 @@ export async function startHostInternalHelper({
     const workId = await enqueueCloudVmWork({
       vm_id: id,
       action: "start",
-      payload: { provider: machineCloud, intent_generation: startGeneration },
+      payload: {
+        provider: machineCloud,
+        intent_generation: startGeneration,
+        // final backups only: may start an existing preemptible instance
+        ...(billing_rescue ? { billing_rescue: true } : {}),
+      },
     });
     onWorkQueued?.(workId);
   }
@@ -812,6 +826,12 @@ export async function restartHostInternalHelper({
   const owner = metadata.owner ?? account_id;
   const machine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  assertNebiusSpotOffered(
+    machineCloud,
+    metadata.desired_pricing_model ??
+      metadata.effective_pricing_model ??
+      metadata.pricing_model,
+  );
   const provider = machineCloud ? getServerProvider(machineCloud) : undefined;
   const caps = provider?.entry.capabilities;
   const wantsHard = mode === "hard";
@@ -855,7 +875,12 @@ export async function restartHostInternalHelper({
     const workId = await enqueueCloudVmWork({
       vm_id: id,
       action: mode === "hard" ? "hard_restart" : "restart",
-      payload: { provider: machineCloud, intent_generation: restartGeneration },
+      payload: {
+        provider: machineCloud,
+        intent_generation: restartGeneration,
+        // so a restart the worker refuses can put the host back as it was
+        prior_status: row.status,
+      },
     });
     onWorkQueued?.(workId);
   }

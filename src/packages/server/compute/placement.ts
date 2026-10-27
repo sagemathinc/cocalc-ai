@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { NEBIUS_SPOT_OFFERED } from "@cocalc/util/consts/nebius-spot";
 import type {
   HostCatalog,
   HostCatalogRegion,
@@ -82,6 +83,8 @@ export function computeMachineSupportsSpot(
   },
 ): boolean {
   if (provider !== "nebius") return true;
+  // on-demand only until Nebius spot pricing is supported (#684)
+  if (!NEBIUS_SPOT_OFFERED) return false;
   return (
     Number(machine.gpu_count ?? 0) > 0 &&
     machine.provider_spec?.allowed_for_preemptibles === true

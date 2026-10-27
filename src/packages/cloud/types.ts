@@ -130,7 +130,11 @@ export interface DataDiskSnapshot {
 
 export interface CloudProvider {
   createHost(spec: HostSpec, creds: any): Promise<HostRuntime>;
-  startHost(runtime: HostRuntime, creds: any): Promise<void>;
+  startHost(
+    runtime: HostRuntime,
+    creds: any,
+    opts?: { allow_preemptible?: boolean },
+  ): Promise<void>;
   stopHost(runtime: HostRuntime, creds: any): Promise<void>;
   setPricingModel?(
     runtime: HostRuntime,
@@ -171,6 +175,9 @@ export interface CloudProvider {
   >;
   restartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   hardRestartHost?(runtime: HostRuntime, creds: any): Promise<void>;
+  // Why the provider would refuse to (re)start this instance now, if it
+  // would; checked before the caller changes anything. No side effects.
+  startRefusal?(runtime: HostRuntime, creds: any): Promise<string | undefined>;
   ensureStartupScript?(runtime: HostRuntime, creds: any): Promise<void>;
   ensureSshAccess?(runtime: HostRuntime, creds: any): Promise<void>;
   ensurePublicIngress?(

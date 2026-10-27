@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { NEBIUS_SPOT_OFFERED } from "@cocalc/util/consts/nebius-spot";
 import {
   GcpProvider,
   NebiusProvider,
@@ -1904,6 +1905,9 @@ export async function replaceProviderComputeInstance(vm: ComputeVmRow) {
 }
 
 export async function probeProviderComputeSpot(vm: ComputeVmRow) {
+  // While Nebius Spot is off (#684) there is no Spot to return to: report it
+  // unavailable, so the worker keeps the Standard VM and deletes nothing.
+  if (vm.provider === "nebius") return NEBIUS_SPOT_OFFERED;
   if (vm.provider !== "gcp") return true;
   const { config, creds } = await context();
   const subnetwork = await requireProviderComputeSubnetwork(requireGcpZone(vm));
