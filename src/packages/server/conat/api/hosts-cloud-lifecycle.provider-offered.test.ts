@@ -9,6 +9,19 @@ jest.mock("@cocalc/server/cloud/project-host-provider-offered", () => ({
     mockAssertOffered(...args),
 }));
 
+// no database here: the rest of the start fails fast after the checks
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: () => ({
+    query: async () => {
+      throw new Error("no database in this test");
+    },
+    connect: async () => {
+      throw new Error("no database in this test");
+    },
+  }),
+}));
+
 import { startHostInternalHelper } from "./hosts-cloud-lifecycle";
 
 describe("an existing host on a provider no longer offered for new hosts", () => {
@@ -35,7 +48,9 @@ describe("an existing host on a provider no longer offered for new hosts", () =>
         id: row.id,
         billing_rescue,
         loadHostForStartStop: async () => row,
-        markHostActionPending: jest.fn(),
+        markHostActionPending: jest.fn(async () => {
+          throw new Error("stop here");
+        }),
         logStatusUpdate: jest.fn(),
         parseRow: jest.fn(),
       }).catch((err) => expect(`${err}`).not.toMatch(/not offered/));
