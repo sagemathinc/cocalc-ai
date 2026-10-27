@@ -37,13 +37,20 @@ import {
 
 type Fetch = typeof globalThis.fetch;
 
+// Verification is at most three requests (organization, maybe GraphQL
+// `myself`, one page of pods) of at most 8 s each, and must finish within
+// VERIFY_DEADLINE_MS or nothing is stored; both are well under the browser's
+// VERIFY_RPC_TIMEOUT_MS (util/gpu/provider-keys), so the browser never
+// reports a failure for a key that is stored afterwards.
 const VERIFY_REQUEST_TIMEOUT_MS = 8_000;
+const VERIFY_DEADLINE_MS = 30_000;
 
 export interface GpuProviderKeyDeps {
   // for tests
   fetch?: Fetch;
   isEntitled?: (account_id: string) => Promise<boolean>;
   isHomeBay?: (account_id: string) => Promise<boolean>;
+  verifyDeadlineMs?: number;
 }
 
 function selector(account_id: string, provider: GpuProvider) {
@@ -105,9 +112,6 @@ async function verifyRunpodKey(
   apiKey: string,
   fetch?: Fetch,
 ): Promise<RunpodProviderIdentity> {
-  // At most three sequential requests; the browser's RPC waits longer than
-  // all of them together (VERIFY_RPC_TIMEOUT_MS in util/gpu/provider-keys), so it never reports a
-  // failure for a key the server then stores.
   const client = new RunpodClient({
     apiKey,
     fetch,
@@ -115,7 +119,7 @@ async function verifyRunpodKey(
   });
   try {
     const identity = await client.getProviderIdentity();
-    await client.listPods();
+    await client.canListPods();
     return identity;
   } catch (err) {
     throw verificationError(err);
@@ -204,7 +208,12 @@ export async function setGpuProviderKey(
     );
   }
   const key = normalizeRunpodKey(api_key);
+  const started = Date.now();
   const identity = await verifyRunpodKey(key, deps.fetch);
+  if (Date.now() - started > (deps.verifyDeadlineMs ?? VERIFY_DEADLINE_MS)) {
+    // The browser may have given up; storing now would surprise it.
+    throw Error("RunPod took too long to check this key. Try again shortly.");
+  }
   await upsertExternalCredentialRouted({
     selector: selector(account_id, provider),
     payload: key,

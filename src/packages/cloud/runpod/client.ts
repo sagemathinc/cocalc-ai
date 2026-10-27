@@ -220,6 +220,18 @@ export class RunpodClient {
     throw new RunpodApiError("protocol");
   }
 
+  // One request: can this key list the account's pods? A permission probe
+  // with a bounded cost, unlike listPods, which may page through many.
+  async canListPods(): Promise<void> {
+    const body = await this.get("/v2/pods");
+    if (
+      !Array.isArray(body?.pods) ||
+      typeof body.pagination?.hasNextPage !== "boolean"
+    ) {
+      throw new RunpodApiError("protocol");
+    }
+  }
+
   async getPod(podId: string): Promise<RunpodPodView | undefined> {
     let raw: any;
     try {

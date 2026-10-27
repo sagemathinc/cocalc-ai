@@ -317,4 +317,35 @@ describe("GPU provider keys", () => {
     expect(urls).toEqual(["https://api.runpod.io/v2/pods"]);
     expect(JSON.stringify(cleanup)).not.toContain(KEY);
   });
+
+  it("checks pod access with one request, however many pages there are", async () => {
+    const MORE = {
+      body: { pods: [], pagination: { hasNextPage: true, nextCursor: "c2" } },
+    };
+    const { fetch, urls } = fakeFetch([PERSONAL_ORG_403, MYSELF, MORE]);
+    await setGpuProviderKey(
+      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      { fetch, isEntitled: entitled },
+    );
+    expect(urls.filter((u) => u.includes("/v2/pods"))).toHaveLength(1);
+    expect(upsertMock).toHaveBeenCalled();
+  });
+
+  it("stores nothing when verification finishes past its deadline", async () => {
+    const slow = (async (url: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return url.endsWith("/v2/organization")
+        ? new Response(JSON.stringify(PERSONAL_ORG_403.body), { status: 403 })
+        : url.endsWith("/graphql")
+          ? new Response(JSON.stringify(MYSELF.body))
+          : new Response(JSON.stringify(NO_PODS.body));
+    }) as unknown as typeof globalThis.fetch;
+    await expect(
+      setGpuProviderKey(
+        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        { fetch: slow, isEntitled: entitled, verifyDeadlineMs: 10 },
+      ),
+    ).rejects.toThrow("too long");
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
 });

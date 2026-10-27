@@ -1,5 +1,11 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GpuProviderKeySection } from "./gpu-provider-key";
 
@@ -160,5 +166,43 @@ describe("GpuProviderKeySection", () => {
       await screen.findByText(/Connected to RunPod account user_1/),
     ).toBeTruthy();
     expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("never removes from a confirmation left open while a save starts", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue(CONNECTED);
+    let finish!: (status: any) => void;
+    mockSystem.setGpuProviderKey.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    render(<GpuProviderKeySection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Replace key" }));
+    // Overlay first: the removal confirmation is open...
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    const title = await screen.findByText(/Remove your RunPod key\?/);
+    const confirm = within(title.closest(".ant-popover") as HTMLElement);
+    // ...then, without any click outside it, Enter in the key field saves.
+    const input = screen.getByLabelText("RunPod API key");
+    fireEvent.change(input, { target: { value: KEY } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter", keyCode: 13 });
+    await waitFor(() =>
+      expect(mockSystem.setGpuProviderKey).toHaveBeenCalled(),
+    );
+    // The stale dialog is hidden, and confirming it anyway does nothing.
+    expect(title.closest(".ant-popover")?.className).toMatch(/hidden/);
+    fireEvent.click(
+      confirm.getByRole("button", { name: "Remove", hidden: true }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockSystem.deleteGpuProviderKey).not.toHaveBeenCalled();
+    finish(CONNECTED);
+    await waitFor(() =>
+      expect(
+        (
+          screen.getAllByRole("button", {
+            name: "Remove",
+          })[0] as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
   });
 });

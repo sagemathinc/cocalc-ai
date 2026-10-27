@@ -17,7 +17,7 @@ import {
   Spin,
   Typography,
 } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import {
   FreshAuthModal,
@@ -42,6 +42,10 @@ export function GpuProviderKeySection() {
   const [apiKey, setApiKey] = useState("");
   const [replacing, setReplacing] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Set synchronously, so a save and a removal can never both start, even
+  // from a confirmation that was already open.
+  const busyRef = useRef(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [error, setError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
@@ -64,7 +68,9 @@ export function GpuProviderKeySection() {
 
   const connect = async () => {
     const key = apiKey.trim();
-    if (!key) return;
+    if (!key || busyRef.current) return;
+    busyRef.current = true;
+    setConfirmRemove(false);
     setBusy(true);
     setError("");
     try {
@@ -87,11 +93,15 @@ export function GpuProviderKeySection() {
       // Show what the server actually has, e.g. after a timeout.
       await refresh();
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
   const remove = async () => {
+    setConfirmRemove(false);
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError("");
     try {
@@ -105,6 +115,7 @@ export function GpuProviderKeySection() {
     } catch (err) {
       setError(`${err}`);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -187,8 +198,9 @@ export function GpuProviderKeySection() {
               </div>
             }
             okText="Remove"
-            okButtonProps={{ danger: true }}
-            disabled={busy}
+            okButtonProps={{ danger: true, disabled: busy }}
+            open={confirmRemove && !busy}
+            onOpenChange={(open) => setConfirmRemove(open && !busyRef.current)}
             onConfirm={() => void remove()}
           >
             <Button danger disabled={busy}>

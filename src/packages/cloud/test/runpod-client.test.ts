@@ -491,4 +491,18 @@ describe("podView", () => {
       image: "ubuntu@sha256:ab",
     });
   });
+
+  it("probes pod access with exactly one request", async () => {
+    const { fetch, calls } = fakeFetch([
+      {
+        body: { pods: [], pagination: { hasNextPage: true, nextCursor: "x" } },
+      },
+    ]);
+    await client(fetch).canListPods();
+    expect(calls.map((c) => c.url)).toEqual(["https://api.runpod.io/v2/pods"]);
+    const bad = fakeFetch([{ body: { pods: "nope" } }]);
+    expect((await failure(client(bad.fetch).canListPods())).kind).toBe(
+      "protocol",
+    );
+  });
 });
