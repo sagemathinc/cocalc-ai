@@ -34,6 +34,7 @@ const BASE_TIER_TEMPLATES = {
     },
     features: {
       create_hosts: true,
+      gpu_provider_keys: true,
       project_host_tier: 10,
       private_app_hostnames_per_project: 30,
     },
@@ -660,6 +661,7 @@ const BASE_TIER_TEMPLATES = {
     },
     features: {
       create_hosts: true,
+      gpu_provider_keys: true,
       project_host_tier: 2,
       private_app_hostnames_per_project: 30,
     },

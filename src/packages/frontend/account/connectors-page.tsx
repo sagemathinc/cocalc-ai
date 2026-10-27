@@ -30,6 +30,7 @@ import { useAgentNetworkActions } from "@cocalc/frontend/agents/use-agent-networ
 import { AgentMessagingSettings } from "./agent-messaging-settings";
 import { ExternalAgentInstallations } from "@cocalc/frontend/agents/external-installations";
 import { ComputersPanel } from "./computers-panel";
+import { GpuProviderKeySection, RUNPOD_SECTION } from "./gpu-provider-key";
 import { useComputersEnabled } from "./computers-enabled";
 import { openAccountSettings } from "./settings-routing";
 import type { SettingsPageDefinition } from "./settings-page";
@@ -47,6 +48,7 @@ export const CONNECTORS_SETTINGS_PAGE = {
     COCALC_ACCESS,
     "GitHub",
     "Cloudflare",
+    RUNPOD_SECTION,
     AGENT_NETWORKS,
     "Pause all messaging",
     "Revoke all networks",
@@ -81,6 +83,7 @@ export function ConnectorsPage() {
       <CocalcAccessSection />
       <CliConnectorSection connector="github" />
       <CliConnectorSection connector="cloudflare" />
+      <GpuProviderKeySection />
       <AgentNetworksSection />
     </>
   );

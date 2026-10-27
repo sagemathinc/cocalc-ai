@@ -14,10 +14,7 @@ export type MembershipTierFieldCard =
   | "advanced";
 
 export type MembershipTierFieldStatus =
-  | "primary"
-  | "advanced"
-  | "compatibility-only"
-  | "deprecated";
+  "primary" | "advanced" | "compatibility-only" | "deprecated";
 
 export type MembershipTierFieldRisk =
   | "storefront"
@@ -39,15 +36,10 @@ export type MembershipTierFieldInputType =
   | "textarea";
 
 export type MembershipTierFieldValueType =
-  | "boolean"
-  | "json"
-  | "number"
-  | "string"
-  | "string-list";
+  "boolean" | "json" | "number" | "string" | "string-list";
 
 export type MembershipTierFieldPath =
-  | readonly [string]
-  | readonly [string, string];
+  readonly [string] | readonly [string, string];
 
 export interface MembershipTierFieldMetadata {
   id: string;
@@ -995,6 +987,17 @@ export const MEMBERSHIP_TIER_FIELDS = [
     input: "boolean",
     valueType: "boolean",
     risks: ["dedicated-host", "hard-cost", "abuse"],
+    public: true,
+  }),
+  field({
+    id: "features.gpu_provider_keys",
+    path: ["features", "gpu_provider_keys"],
+    card: "dedicated-hosts",
+    label: "Can connect GPU provider keys (RunPod)",
+    help: "Allow this tier to connect its own GPU provider API key, so CoCalc can launch and manage GPUs that the provider bills to the user directly.",
+    input: "boolean",
+    valueType: "boolean",
+    risks: ["abuse"],
     public: true,
   }),
   field({
