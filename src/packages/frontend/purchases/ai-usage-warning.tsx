@@ -21,15 +21,15 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import type { PageStyle } from "@cocalc/frontend/app/top-nav-consts";
 import { TOP_BAR_ELEMENT_CLASS } from "@cocalc/frontend/app/top-nav-consts";
 import type { AIUsageStatus as AIUsageStatusResponse } from "@cocalc/conat/hub/api/purchases";
-import { COLORS } from "@cocalc/util/theme";
-import {
-  MANAGED_EGRESS_SEVERE_THRESHOLD,
-  MANAGED_EGRESS_WARNING_THRESHOLD,
-} from "./managed-egress-warning";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { SITE_FUNDED_USAGE_WARNING_THRESHOLDS } from "@cocalc/util/ai/site-funded-codex";
 
 const { Text } = Typography;
 
 const AI_USAGE_WARNING_POLL_MS = 60_000;
+// The same levels as the usage warning shown on agent turns: 80% and 95%.
+export const [AI_USAGE_SEVERE_THRESHOLD, AI_USAGE_WARNING_THRESHOLD] =
+  SITE_FUNDED_USAGE_WARNING_THRESHOLDS.map((percent) => percent / 100);
 
 type WarningSeverity = "warning" | "severe" | "blocked";
 
@@ -59,7 +59,7 @@ function formatResetAt(resetAt?: Date | string): string | undefined {
 
 export function getAIWindowWarnings(
   status: AIUsageStatusResponse | null | undefined,
-  threshold = MANAGED_EGRESS_WARNING_THRESHOLD,
+  threshold = AI_USAGE_WARNING_THRESHOLD,
 ): AIWindowWarning[] {
   const warnings: AIWindowWarning[] = [];
   for (const window of status?.windows ?? []) {
@@ -80,7 +80,7 @@ export function getAIWindowWarnings(
       severity:
         ratio >= 1
           ? "blocked"
-          : ratio >= MANAGED_EGRESS_SEVERE_THRESHOLD
+          : ratio >= AI_USAGE_SEVERE_THRESHOLD
             ? "severe"
             : "warning",
     });
@@ -174,11 +174,16 @@ export const AIUsageWarning: React.FC<{
     return null;
   }
 
+  const severe =
+    primary.severity === "blocked" || primary.severity === "severe";
   const outerStyle = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     cursor: "pointer",
+    border: "none",
+    background: "transparent",
+    font: "inherit",
     padding: `${pageStyle.topPaddingIcons} ${pageStyle.sidePaddingIcons}`,
     height: `${pageStyle.height}px`,
   };
@@ -189,14 +194,9 @@ export const AIUsageWarning: React.FC<{
     gap: "6px",
     borderRadius: "999px",
     padding: pageStyle.isNarrow ? "4px 8px" : "5px 10px",
-    background:
-      primary.severity === "blocked" || primary.severity === "severe"
-        ? COLORS.ANTD_RED
-        : COLORS.ANTD_ORANGE,
-    color:
-      primary.severity === "blocked" || primary.severity === "severe"
-        ? "white"
-        : COLORS.GRAY_DD,
+    background: severe ? UI_COLORS.dangerBg : UI_COLORS.warningBg,
+    color: severe ? UI_COLORS.danger : UI_COLORS.warning,
+    border: `1px solid ${severe ? UI_COLORS.danger : UI_COLORS.warning}`,
     fontSize: pageStyle.isNarrow ? "11px" : "12px",
     fontWeight: 600,
     lineHeight: 1,
@@ -218,17 +218,20 @@ export const AIUsageWarning: React.FC<{
         mouseLeaveDelay={0}
         placement="bottom"
       >
-        <div
+        <button
+          type="button"
           style={outerStyle}
           onClick={() => setOpen(true)}
           className={TOP_BAR_ELEMENT_CLASS}
+          aria-haspopup="dialog"
+          aria-label={`${modalTitle}. ${getSummaryTooltip(warnings)}`}
           data-cocalc-ai-usage-warning
         >
-          <div style={pillStyle}>
+          <span style={pillStyle}>
             <Icon name="robot" />
             <span>{getSummaryLabel(primary, pageStyle.isNarrow)}</span>
-          </div>
-        </div>
+          </span>
+        </button>
       </Tooltip>
       <Modal
         title={modalTitle}
