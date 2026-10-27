@@ -8,9 +8,10 @@ Non-Python libzmq kernels on the selected Jupyter transport: kernel_info,
 an execution with its result, and a display.  ZMTP_KERNELS names the
 kernelspecs to try (comma-separated), for example "tslab,xpython"; unset, the
 suite is skipped.  (tslab links libzmq through zeromq.js, xeus-python through
-cppzmq: two stacks besides pyzmq.)
+cppzmq, IRkernel ("ir") through pbdZMQ, IJulia ("julia") through ZMQ.jl:
+stacks besides pyzmq.)
 
-ZMTP_KERNELS=tslab,xpython pnpm test `pwd`/zmtp-kernels.test.ts
+ZMTP_KERNELS=tslab,xpython,ir,julia pnpm test `pwd`/zmtp-kernels.test.ts
 */
 
 import { kernel } from "../kernel";
@@ -30,6 +31,18 @@ const CASES: Record<
     code: "2 + 3",
     result: "5",
     display: "from IPython.display import display\ndisplay('shown')",
+    shown: "shown",
+  },
+  ir: {
+    code: "2 + 3",
+    result: "5",
+    display: 'IRdisplay::display("shown")',
+    shown: "shown",
+  },
+  julia: {
+    code: "2 + 3",
+    result: "5",
+    display: 'display("shown")',
     shown: "shown",
   },
 };
@@ -63,6 +76,6 @@ describe("non-Python libzmq kernels", () => {
       } finally {
         k.close();
       }
-    }, 120_000);
+    }, 300_000); // (a first IJulia start compiles for minutes)
   }
 });
