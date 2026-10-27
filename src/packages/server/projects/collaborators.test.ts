@@ -453,19 +453,12 @@ describe("project collaborators local bay access", () => {
       }),
     ).resolves.toBeUndefined();
 
+    // The membership audit records the removal with who did it (support
+    // #20986).
     expect(removeCollaboratorFromProject).toHaveBeenCalledWith({
       account_id: TARGET_ACCOUNT_ID,
       project_id: PROJECT_ID,
-    });
-    // A real removal is recorded with who did it (support #20986).
-    expect(centralLogMock).toHaveBeenCalledWith({
-      event: "project_collaborator_removed",
-      value: {
-        via: "collaborator",
-        project_id: PROJECT_ID,
-        actor_account_id: ACCOUNT_ID,
-        removed_account_ids: [TARGET_ACCOUNT_ID],
-      },
+      audit: { actor_account_id: ACCOUNT_ID, via: "collaborator" },
     });
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("SET status='canceled'"),
@@ -576,6 +569,7 @@ describe("project collaborators local bay access", () => {
     expect(removeCollaboratorFromProject).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "self" },
     });
     expect(queryMock).not.toHaveBeenCalledWith(
       expect.stringContaining("AS actor_group"),

@@ -2,7 +2,6 @@
 Add, remove and invite collaborators on projects.
 */
 
-import centralLog from "@cocalc/database/postgres/central-log";
 import {
   createHash,
   createHmac,
@@ -981,21 +980,14 @@ export async function removeCollaborator({
     });
   }
   const database = db();
-  const removed = await callback2(
-    database.remove_collaborator_from_project.bind(database),
-    opts,
-  );
-  if (removed) {
-    await centralLog({
-      event: "project_collaborator_removed",
-      value: {
-        via: opts.account_id === account_id ? "self" : "collaborator",
-        project_id: opts.project_id,
-        actor_account_id: account_id,
-        removed_account_ids: [opts.account_id],
-      },
-    }).catch(() => undefined);
-  }
+  // The membership audit records the removal (project_collaborator_removed).
+  await callback2(database.remove_collaborator_from_project.bind(database), {
+    ...opts,
+    audit: {
+      actor_account_id: account_id,
+      via: opts.account_id === account_id ? "self" : "collaborator",
+    },
+  });
   await cancelPendingInvitesFromRemovedCollaborator({
     inviter_account_id: opts.account_id,
     project_id: opts.project_id,

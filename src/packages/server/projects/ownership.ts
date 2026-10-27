@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import centralLog from "@cocalc/database/postgres/central-log";
 import { setProjectMembershipAuditContext } from "@cocalc/database/postgres/schema/project-membership-audit";
 import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
@@ -241,6 +240,11 @@ async function removeProjectMember({
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    // The membership audit records the removal (project_collaborator_removed).
+    await setProjectMembershipAuditContext(client, {
+      actor_account_id: account_id,
+      via: "self-leave",
+    });
     await assertProjectNotRehoming({
       db: client,
       project_id,
@@ -277,16 +281,6 @@ async function removeProjectMember({
   } finally {
     client.release();
   }
-  // Best-effort diagnostic record of the removal (support #20986).
-  await centralLog({
-    event: "project_collaborator_removed",
-    value: {
-      via: "self-leave",
-      project_id,
-      actor_account_id: account_id,
-      removed_account_ids: [account_id],
-    },
-  }).catch(() => undefined);
   await publishMembershipChanged({
     project_id,
     old_owner_account_id: account_id,

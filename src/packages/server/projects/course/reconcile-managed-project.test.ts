@@ -58,6 +58,14 @@ jest.mock("@cocalc/server/projects/collaborators", () => ({
     inviteCollaboratorWithoutAccountMock(...args),
 }));
 
+// The details the last membership audit context carries for this reconcile.
+function reconcileAuditDetails() {
+  const calls = queryMock.mock.calls.filter(
+    ([sql]) => sql === "SELECT set_config($1, $2, true)",
+  );
+  return JSON.parse(calls.at(-1)[1][1]).details;
+}
+
 describe("course managed project reconciliation", () => {
   const ACTOR = "11111111-1111-4111-8111-111111111111";
   const MANAGER = "22222222-2222-4222-8222-222222222222";
@@ -215,18 +223,14 @@ describe("course managed project reconciliation", () => {
     expect(queryMock.mock.calls.indexOf(auditCall)).toBeLessThan(
       queryMock.mock.calls.indexOf(update),
     );
-    // The removal is recorded with who did it and why (support #20986).
-    expect(centralLogMock).toHaveBeenCalledWith({
-      event: "project_collaborator_removed",
-      value: expect.objectContaining({
-        via: "course-reconcile",
-        project_id: PROJECT,
-        actor_account_id: ACTOR,
-        removed_account_ids: [EXTRA],
-        course_project_id: COURSE,
-        type: "student",
-      }),
+    // The removal is recorded with who did it and why (support #20986):
+    // the membership audit adds the reconcile request to its rows.
+    expect(reconcileAuditDetails()).toMatchObject({
+      course_project_id: COURSE,
+      type: "student",
+      student_deleted: false,
     });
+    expect(centralLogMock).not.toHaveBeenCalled();
     expect(inviteCollaboratorMock).toHaveBeenCalledWith({
       account_id: ACTOR,
       opts: {
@@ -521,13 +525,7 @@ describe("course managed project reconciliation", () => {
       type: "student",
       account_id: STUDENT,
     });
-    expect(centralLogMock).toHaveBeenCalledWith({
-      event: "project_collaborator_removed",
-      value: expect.objectContaining({
-        removed_account_ids: [STUDENT],
-        student_deleted: true,
-      }),
-    });
+    expect(reconcileAuditDetails()).toMatchObject({ student_deleted: true });
   });
 
   it("refuses a deletion that names a different account than the bound student", async () => {

@@ -12,12 +12,12 @@ trigger on projects.users so that no code path can add someone silently.
   viewer of the project.
 - project_collaborator_role_changed: accounts whose role changed (for example
   viewer to collaborator, or collaborator to owner in an ownership transfer).
+- project_collaborator_removed: accounts that lost access.
 
-Removals are recorded by the code that removes (project_collaborator_removed).
 A writer says who acted and how with setProjectMembershipAuditContext in the
 same transaction; a change without that context is recorded with via
 "unattributed". The rows hold account and project ids only, and expire after
-PROJECT_MEMBERSHIP_AUDIT_RETENTION, like the removal rows.
+PROJECT_MEMBERSHIP_AUDIT_RETENTION. (Deleting a project row records nothing.)
 
 Recording never blocks a membership change: a failure raises a warning and is
 counted in project_membership_audit_failures, which admin health reports.
@@ -52,6 +52,12 @@ export interface ProjectMembershipAuditContext {
   via: string;
   // For an accepted invite, who sent it.
   invite_creator_account_id?: string | null;
+  // More ids or flags for this writer, added to the rows as they are (ids
+  // only: no names, emails or content).
+  details?: Record<
+    string,
+    string | number | boolean | null | (string | number)[]
+  >;
 }
 
 // Attributes the membership changes made later in the current transaction.
@@ -66,6 +72,7 @@ export async function setProjectMembershipAuditContext(
       actor_account_id: context.actor_account_id ?? null,
       via: context.via,
       invite_creator_account_id: context.invite_creator_account_id ?? null,
+      ...(context.details ? { details: context.details } : {}),
     }),
   ]);
 }
@@ -83,6 +90,7 @@ const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_MEM
      added jsonb;
      changed jsonb;
      previous jsonb;
+     removed jsonb;
      base jsonb;
    BEGIN
      IF TG_OP = 'UPDATE' AND NEW.users IS NOT DISTINCT FROM OLD.users THEN
@@ -112,10 +120,20 @@ const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_MEM
             jsonb_object_agg(account_id, prev) FILTER (WHERE prev IS NOT NULL AND prev <> grp)
        INTO added, changed, previous
        FROM grants;
-     IF added IS NULL AND changed IS NULL THEN
+     IF TG_OP = 'UPDATE' THEN
+       SELECT jsonb_object_agg(o.key, ${GROUP_SQL("o.value")})
+         INTO removed
+         FROM jsonb_each(COALESCE(OLD.users, '{}'::jsonb)) AS o
+        WHERE ${GROUP_SQL("o.value")} IN ('owner','collaborator','viewer')
+          AND COALESCE(${GROUP_SQL("NEW.users->o.key")}, '')
+              NOT IN ('owner','collaborator','viewer');
+     END IF;
+     IF added IS NULL AND changed IS NULL AND removed IS NULL THEN
        RETURN NULL;
      END IF;
-     base := jsonb_build_object(
+     base := COALESCE(
+       CASE WHEN jsonb_typeof(ctx->'details') = 'object' THEN ctx->'details' END,
+       '{}'::jsonb) || jsonb_build_object(
        'project_id', NEW.project_id,
        'via', COALESCE(ctx->>'via', 'unattributed'),
        'actor_account_id', ctx->'actor_account_id',
@@ -138,6 +156,15 @@ const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_MEM
                    (SELECT jsonb_agg(k ORDER BY k) FROM jsonb_object_keys(changed) AS k),
                    'groups', changed,
                    'previous_groups', previous),
+                 NOW(), NOW() + INTERVAL '${PROJECT_MEMBERSHIP_AUDIT_RETENTION}');
+       END IF;
+       IF removed IS NOT NULL THEN
+         INSERT INTO central_log(id, event, value, time, expire)
+         VALUES (gen_random_uuid(), '${PROJECT_MEMBERSHIP_REMOVED_EVENT}',
+                 base || jsonb_build_object(
+                   'removed_account_ids',
+                   (SELECT jsonb_agg(k ORDER BY k) FROM jsonb_object_keys(removed) AS k),
+                   'previous_groups', removed),
                  NOW(), NOW() + INTERVAL '${PROJECT_MEMBERSHIP_AUDIT_RETENTION}');
        END IF;
      EXCEPTION WHEN OTHERS THEN

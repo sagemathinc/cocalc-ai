@@ -127,6 +127,55 @@ describe("project membership audit", () => {
     }
   });
 
+  it("records removals, with details from the writer that cannot override the record", async () => {
+    const project_id = uuid();
+    const owner = uuid();
+    const viewer = uuid();
+    const collaborator = uuid();
+    const actor = uuid();
+    await getPool().query(
+      "INSERT INTO projects(project_id,users) VALUES($1,$2::jsonb)",
+      [
+        project_id,
+        JSON.stringify({
+          [owner]: { group: "owner" },
+          [viewer]: { group: "viewer" },
+          [collaborator]: { group: "collaborator" },
+        }),
+      ],
+    );
+    await setUsers(
+      project_id,
+      { [owner]: { group: "owner" } },
+      {
+        actor_account_id: actor,
+        via: "course-reconcile",
+        details: {
+          course_project_id: actor,
+          student_deleted: true,
+          via: "spoofed",
+          project_id: "spoofed",
+        },
+      },
+    );
+    const rows = await auditRows(project_id);
+    expect(rows.map((row) => row.event)).toEqual([
+      "project_collaborator_added",
+      "project_collaborator_removed",
+    ]);
+    expect(rows[1].value).toEqual({
+      project_id,
+      via: "course-reconcile",
+      actor_account_id: actor,
+      invite_creator_account_id: null,
+      course_project_id: actor,
+      student_deleted: true,
+      removed_account_ids: [collaborator, viewer].sort(),
+      previous_groups: { [viewer]: "viewer", [collaborator]: "collaborator" },
+    });
+    expect(rows[1].thirteen_months).toBe(true);
+  });
+
   it("records collaborators added when a project is created, and legacy string entries", async () => {
     const project_id = uuid();
     const owner = uuid();

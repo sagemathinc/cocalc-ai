@@ -95,6 +95,7 @@ export async function remove_collaborators_from_projects(
 
   // Remove users from projects
   //
+  const actor_account_id_for_remove = account_id;
   for (const i in projects) {
     const project_id: string = projects[i];
     const account_id: string = accounts[i];
@@ -102,6 +103,13 @@ export async function remove_collaborators_from_projects(
     await callback2(db.remove_user_from_project, {
       project_id,
       account_id,
+      audit: {
+        actor_account_id: actor_account_id_for_remove,
+        via:
+          account_id === actor_account_id_for_remove
+            ? "self-remove"
+            : "collaborator-remove",
+      },
     });
   }
   for (const project_id of new Set(projects)) {

@@ -204,14 +204,14 @@ export const privacyPolicy: PublicPolicy = {
             <strong>Project Access Records.</strong> When someone is added to or
             removed from a project, or their role in a project changes, we
             record the project, the account whose access changed, the account
-            that made the change, the role, how the change was made (for
-            example, accepting an invitation or being added to a course), and
-            the time. These records contain account identifiers only, not names,
-            email addresses or file contents, and project members cannot delete
-            them. We use them to investigate security problems and abuse, such
-            as unauthorized access to a project, relying on our legitimate
-            interest in securing the Services, and we delete them after 13
-            months.
+            that made the change (and, for an accepted invitation, the account
+            that sent it), the role, how the change was made (for example,
+            accepting an invitation or being added to a course), and the time.
+            These records contain account identifiers only, not names, email
+            addresses or file contents, and project members cannot delete them.
+            We use them to investigate security problems and abuse, such as
+            unauthorized access to a project, relying on our legitimate interest
+            in securing the Services, and we delete them after 13 months.
           </p>
           <p>
             {" "}

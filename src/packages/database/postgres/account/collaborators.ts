@@ -73,6 +73,8 @@ export async function addUserToProject(
 export interface RemoveCollaboratorFromProjectOptions {
   project_id: string;
   account_id: string;
+  // Who removed the user and how, for the membership audit.
+  audit?: ProjectMembershipAuditContext;
 }
 
 // Returns true if a (non-owner) member was actually removed.
@@ -87,6 +89,9 @@ export async function removeCollaboratorFromProject(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    if (opts.audit != null) {
+      await setProjectMembershipAuditContext(client, opts.audit);
+    }
     await assertProjectNotRehoming({
       db: client,
       project_id: opts.project_id,
@@ -121,6 +126,8 @@ export async function removeCollaboratorFromProject(
 export interface RemoveUserFromProjectOptions {
   project_id: string;
   account_id: string;
+  // Who removed the user and how, for the membership audit.
+  audit?: ProjectMembershipAuditContext;
 }
 
 export async function removeUserFromProject(
@@ -133,6 +140,9 @@ export async function removeUserFromProject(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    if (opts.audit != null) {
+      await setProjectMembershipAuditContext(client, opts.audit);
+    }
     await assertProjectNotRehoming({
       db: client,
       project_id: opts.project_id,

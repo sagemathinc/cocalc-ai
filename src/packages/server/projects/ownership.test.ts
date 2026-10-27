@@ -448,6 +448,30 @@ describe("project ownership", () => {
     });
   });
 
+  it("attributes a collaborator leaving to themself for the membership audit", async () => {
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        projectRow({
+          [OWNER_ID]: { group: "owner" },
+          [COLLABORATOR_ID]: { group: "collaborator" },
+        }),
+      ],
+    });
+    mockLockedProject();
+    const { leaveOrDeleteProjectsForAccount } = await import("./ownership");
+    await expect(
+      leaveOrDeleteProjectsForAccount({
+        account_id: COLLABORATOR_ID,
+        project_ids: [PROJECT_ID],
+      }),
+    ).resolves.toEqual([{ project_id: PROJECT_ID, action: "removed_self" }]);
+    expect(membershipAuditContext()).toEqual({
+      actor_account_id: COLLABORATOR_ID,
+      via: "self-leave",
+      invite_creator_account_id: null,
+    });
+  });
+
   it("can hard-delete legacy soft-deleted owner-only project rows", async () => {
     poolQueryMock.mockResolvedValueOnce({
       rows: [ownerOnlyProjectRow()],

@@ -425,12 +425,22 @@ export interface PostgreSQLMethods extends EventEmitter {
   remove_collaborator_from_project(opts: {
     account_id: string;
     project_id: string;
+    audit?: {
+      actor_account_id?: string | null;
+      via: string;
+      invite_creator_account_id?: string | null;
+    };
     cb: CB<boolean>;
   }): void;
 
   remove_user_from_project(opts: {
     account_id: string;
     project_id: string;
+    audit?: {
+      actor_account_id?: string | null;
+      via: string;
+      invite_creator_account_id?: string | null;
+    };
     cb: CB;
   }): void;
 
