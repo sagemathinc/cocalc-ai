@@ -1033,3 +1033,173 @@ describe("SyncFsService", () => {
     svc.close();
   }, 10_000);
 });
+
+describe("SyncFsService snapshot retention", () => {
+  it("deletes snapshots of paths nobody watches after the ttl", async () => {
+    const store = new SyncFsWatchStore();
+    const svc = new SyncFsService(store, {
+      snapshotTtlMs: 60_000,
+      snapshotPruneIntervalMs: 3_600_000,
+    });
+    try {
+      store.setContent("/p/watched.txt", "w");
+      store.setContent("/p/closed.txt", "c");
+      (svc as any).pathStates.set("/p/watched.txt", {
+        dir: "/p",
+        lastHeartbeat: Date.now(),
+        createdAt: Date.now(),
+      });
+      await expect(svc.pruneSnapshots()).resolves.toBe(0);
+      const now = Date.now();
+      jest.spyOn(Date, "now").mockReturnValue(now + 61_000);
+      await expect(svc.pruneSnapshots()).resolves.toBe(1);
+      expect(store.get("/p/watched.txt")?.content).toBe("w");
+      expect(store.get("/p/closed.txt")).toBeUndefined();
+    } finally {
+      jest.restoreAllMocks();
+      svc.close();
+    }
+  });
+});
+
+describe("SyncFsService snapshot retention across processes", () => {
+  it("keeps the snapshot of a path another service is watching", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sync-fs-svc-shared-"));
+    const file = join(dir, "sync-fs-snapshots.sqlite");
+    const watched = join(dir, "watched.txt");
+    writeFileSync(watched, "w");
+    const opts = { snapshotTtlMs: 60_000, snapshotPruneIntervalMs: 3_600_000 };
+    const main = new SyncFsService(new SyncFsWatchStore(file), opts);
+    const worker = new SyncFsService(new SyncFsWatchStore(file), opts);
+    const store = new SyncFsWatchStore(file);
+    try {
+      await main.heartbeat(watched, true);
+      store.setContent(watched, "w");
+      store.setContent(join(dir, "closed.txt"), "c");
+      const now = Date.now();
+      jest.spyOn(Date, "now").mockReturnValue(now + 61_000);
+      // The worker watches nothing itself, but must leave main's path alone.
+      await expect(worker.pruneSnapshots()).resolves.toBe(1);
+      expect(store.get(watched)?.content).toBe("w");
+      await main.heartbeat(watched, false);
+      await expect(worker.pruneSnapshots()).resolves.toBe(1);
+      expect(store.get(watched)).toBeUndefined();
+    } finally {
+      jest.restoreAllMocks();
+      main.close();
+      worker.close();
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SyncFsService snapshot retention during a diff", () => {
+  it("keeps the snapshot of a path released while its diff runs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sync-fs-svc-busy-"));
+    const file = join(dir, "sync-fs-snapshots.sqlite");
+    const watched = join(dir, "watched.txt");
+    writeFileSync(watched, "v1");
+    const opts = { snapshotTtlMs: 60_000, snapshotPruneIntervalMs: 3_600_000 };
+    const main = new SyncFsService(new SyncFsWatchStore(file), opts);
+    const worker = new SyncFsService(new SyncFsWatchStore(file), opts);
+    const store = new SyncFsWatchStore(file);
+    try {
+      await main.heartbeat(watched, true);
+      store.setContent(watched, "v1");
+      let finishRead!: (content: string) => void;
+      const diff = (main as any).externalChange(
+        watched,
+        () => new Promise<string>((resolve) => (finishRead = resolve)),
+      );
+      await main.heartbeat(watched, false);
+      const now = Date.now();
+      jest.spyOn(Date, "now").mockReturnValue(now + 61_000);
+      await expect(main.pruneSnapshots()).resolves.toBe(0);
+      await expect(worker.pruneSnapshots()).resolves.toBe(0);
+      finishRead("v2");
+      const change = await diff;
+      // diffed against the kept baseline, not an empty one
+      expect(change.patch).toBeDefined();
+      expect(store.get(watched)?.content).toBe("v2");
+      jest.spyOn(Date, "now").mockReturnValue(now + 122_000);
+      await expect(worker.pruneSnapshots()).resolves.toBe(1);
+    } finally {
+      jest.restoreAllMocks();
+      main.close();
+      worker.close();
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SyncFsService snapshot retention during initialization", () => {
+  it("keeps the rebuilt baseline while init reads the disk, even after release", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sync-fs-svc-init-"));
+    const file = join(dir, "sync-fs-snapshots.sqlite");
+    const watched = join(dir, "watched.txt");
+    writeFileSync(watched, "on disk");
+    const opts = { snapshotTtlMs: 60_000, snapshotPruneIntervalMs: 3_600_000 };
+    const main = new SyncFsService(new SyncFsWatchStore(file), opts);
+    const worker = new SyncFsService(new SyncFsWatchStore(file), opts);
+    const store = new SyncFsWatchStore(file);
+    try {
+      // initPath: the stream has history, rebuilt as "stream-value"
+      (main as any).getStreamHeads = async () => ({
+        heads: ["h"],
+        maxVersion: 1,
+        maxTimeMs: 1,
+      });
+      (main as any).loadDocViaSyncDoc = async () => "stream-value";
+      (main as any).shouldReconcileDiskOnInit = async () => true;
+      let finishRead!: () => void;
+      const readPaused = new Promise<void>((resolve) => (finishRead = resolve));
+      let readStarted!: () => void;
+      const started = new Promise<void>((resolve) => (readStarted = resolve));
+      const appended: any[] = [];
+      (main as any).appendPatch = async (
+        _meta: any,
+        _type: any,
+        change: any,
+      ) => {
+        appended.push(change);
+        return true;
+      };
+      const safeRead = require("./safe-read");
+      const realRead = safeRead.readWatchedFileUtf8;
+      jest
+        .spyOn(safeRead, "readWatchedFileUtf8")
+        .mockImplementation(async (...args: any[]) => {
+          readStarted();
+          await readPaused;
+          return await realRead(...args);
+        });
+      const init = (main as any).initPathOnce(watched, {
+        project_id: "00000000-0000-4000-8000-000000000000",
+        syncPath: "watched.txt",
+      });
+      await started;
+      expect(store.get(watched)?.content).toBe("stream-value");
+      // released while the read is paused; much later, another process prunes
+      (main as any).releasePath(watched, "inactive");
+      const now = Date.now();
+      jest.spyOn(Date, "now").mockReturnValue(now + 61_000);
+      await expect(worker.pruneSnapshots()).resolves.toBe(0);
+      finishRead();
+      await expect(init).resolves.toBe(true);
+      // the diff was against the rebuilt baseline, not an empty one
+      expect(appended).toHaveLength(1);
+      expect(appended[0].content).toBe("on disk");
+      expect(store.get(watched)?.content).toBe("on disk");
+      jest.spyOn(Date, "now").mockReturnValue(now + 122_000);
+      await expect(worker.pruneSnapshots()).resolves.toBe(1);
+    } finally {
+      jest.restoreAllMocks();
+      main.close();
+      worker.close();
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
