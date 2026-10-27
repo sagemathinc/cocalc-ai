@@ -77,27 +77,45 @@ export function podView(raw: any): RunpodPodView | undefined {
 
 export interface RunpodBillingRecord {
   podId: string;
-  startTime?: string;
-  endTime?: string;
-  totalAmount?: number;
+  startTime: string;
+  endTime: string;
+  totalAmount: number;
   gpuAmount?: number;
   cpuAmount?: number;
   diskAmount?: number;
 }
 
+// Strict: a record missing its pod, time range or total, or with a negative
+// or non-numeric amount, is rejected (undefined) rather than read as zero.
 export function billingRecordView(raw: any): RunpodBillingRecord | undefined {
   if (raw == null || typeof raw !== "object" || !isString(raw.podId)) {
     return undefined;
   }
-  return compact({
+  if (!isTime(raw.startTime) || !isTime(raw.endTime)) return undefined;
+  if (Date.parse(raw.endTime) < Date.parse(raw.startTime)) return undefined;
+  const total = amount(raw.totalAmount);
+  if (total == null) return undefined;
+  const record: RunpodBillingRecord = {
     podId: raw.podId,
-    startTime: str(raw.startTime),
-    endTime: str(raw.endTime),
-    totalAmount: finite(raw.totalAmount),
-    gpuAmount: finite(raw.gpuAmount),
-    cpuAmount: finite(raw.cpuAmount),
-    diskAmount: finite(raw.diskAmount),
-  });
+    startTime: raw.startTime,
+    endTime: raw.endTime,
+    totalAmount: total,
+  };
+  for (const k of ["gpuAmount", "cpuAmount", "diskAmount"] as const) {
+    if (raw[k] === undefined) continue;
+    const a = amount(raw[k]);
+    if (a == null) return undefined;
+    record[k] = a;
+  }
+  return record;
+}
+
+function isTime(v: unknown): v is string {
+  return isString(v) && Number.isFinite(Date.parse(v));
+}
+
+function amount(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
 }
 
 function sshEndpoint(raw: any): RunpodSshEndpoint | undefined {

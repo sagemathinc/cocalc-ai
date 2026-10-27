@@ -66,7 +66,7 @@ describe("RunpodClient", () => {
   it("has no option to send the key to another origin", async () => {
     const { fetch, calls } = fakeFetch([
       { body: { dataCenters: [] } },
-      { body: { data: { myself: { id: "user_1" } } } },
+      { body: { data: { myself: { clientBalance: 1 } } } },
     ]);
     const c = new RunpodClient({
       apiKey: KEY,
@@ -118,8 +118,37 @@ describe("RunpodClient", () => {
   });
 
   it("treats a malformed inventory as an error, not an empty list", async () => {
-    const { fetch } = fakeFetch([{ body: { items: [] } }]);
-    expect((await failure(client(fetch).listPods())).kind).toBe("protocol");
+    const page = (body: unknown) => client(fakeFetch([{ body }]).fetch);
+    for (const body of [
+      { items: [] },
+      // missing pagination
+      { pods: [] },
+      // one unparseable row next to a valid one
+      {
+        pods: [{ id: "pod_aaaaaa" }, { name: "no id" }],
+        pagination: { hasNextPage: false },
+      },
+      // more pages promised but no cursor
+      { pods: [], pagination: { hasNextPage: true, nextCursor: null } },
+    ]) {
+      expect((await failure(page(body).listPods())).kind).toBe("protocol");
+    }
+  });
+
+  it("fails closed on a malformed single pod", async () => {
+    for (const body of [{ name: "no id" }, { id: "pod_other1" }]) {
+      const { fetch } = fakeFetch([{ body }]);
+      expect((await failure(client(fetch).getPod("pod_abc123"))).kind).toBe(
+        "protocol",
+      );
+    }
+  });
+
+  it("fails closed on malformed catalog envelopes", async () => {
+    const gpus = client(fakeFetch([{ body: { gpu: [] } }]).fetch);
+    expect((await failure(gpus.listGpuTypes("SECURE"))).kind).toBe("protocol");
+    const dcs = client(fakeFetch([{ body: {} }]).fetch);
+    expect((await failure(dcs.listDataCenters())).kind).toBe("protocol");
   });
 
   it("keeps only allowlisted pod fields", async () => {
@@ -266,7 +295,7 @@ describe("RunpodClient", () => {
               extra: 1,
             },
           ],
-          metadata: { recordCount: 1 },
+          metadata: { recordCount: 1, uniquePodCount: 1 },
         },
       },
     ]);
@@ -289,12 +318,111 @@ describe("RunpodClient", () => {
     ]);
   });
 
-  it("asks the v2 catalog for pod availability", async () => {
-    const { fetch, calls } = fakeFetch([{ body: { gpus: [] } }]);
-    await client(fetch).listGpuTypes();
-    expect(calls[0].url).toBe(
-      "https://api.runpod.io/v2/catalog/gpus?include=AVAILABILITY&product=POD",
+  it("fails closed on malformed or partial billing responses", async () => {
+    const good = {
+      podId: "pod_abc123",
+      startTime: "2026-10-27T04:00:00Z",
+      endTime: "2026-10-27T05:00:00Z",
+      totalAmount: 0.03,
+    };
+    for (const body of [
+      // missing metadata
+      { records: [good] },
+      // count mismatch: a partial page
+      { records: [good], metadata: { recordCount: 2 } },
+      // one valid and one malformed row
+      {
+        records: [good, { podId: "pod_abc123", startTime: "x" }],
+        metadata: { recordCount: 2 },
+      },
+      // missing total
+      {
+        records: [{ ...good, totalAmount: undefined }],
+        metadata: { recordCount: 1 },
+      },
+      // negative amount
+      { records: [{ ...good, gpuAmount: -1 }], metadata: { recordCount: 1 } },
+    ]) {
+      const { fetch } = fakeFetch([{ body }]);
+      expect((await failure(client(fetch).listPodBilling())).kind).toBe(
+        "protocol",
+      );
+    }
+    // a record for another pod when one was asked for
+    const { fetch } = fakeFetch([
+      {
+        body: {
+          records: [{ ...good, podId: "pod_other1" }],
+          metadata: { recordCount: 1 },
+        },
+      },
+    ]);
+    const err = await failure(
+      client(fetch).listPodBilling({ podId: "pod_abc123" }),
     );
+    expect(err.kind).toBe("protocol");
+  });
+
+  it("asks the v2 catalog for pod availability per cloud tier", async () => {
+    const { fetch, calls } = fakeFetch([
+      { body: { gpus: [] } },
+      { body: { gpus: [] } },
+    ]);
+    await client(fetch).listGpuTypes("SECURE");
+    await client(fetch).listGpuTypes("COMMUNITY");
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api.runpod.io/v2/catalog/gpus?include=AVAILABILITY&product=POD&cloud=SECURE",
+      "https://api.runpod.io/v2/catalog/gpus?include=AVAILABILITY&product=POD&cloud=COMMUNITY",
+    ]);
+  });
+
+  describe("getProviderIdentity", () => {
+    it("uses the organization the key acts for", async () => {
+      const { fetch, calls } = fakeFetch([
+        { body: { id: "org_123", name: "Physics 101" } },
+      ]);
+      expect(await client(fetch).getProviderIdentity()).toEqual({
+        kind: "organization",
+        id: "org_123",
+        name: "Physics 101",
+      });
+      expect(calls[0].url).toBe("https://api.runpod.io/v2/organization");
+    });
+
+    it("falls back to the personal account only when organizations are off", async () => {
+      const { fetch, calls } = fakeFetch([
+        {
+          status: 403,
+          body: {
+            title: "Forbidden",
+            status: 403,
+            detail: "Organizations are not enabled for this user",
+          },
+        },
+        { body: { data: { myself: { id: "user_1" } } } },
+      ]);
+      expect(await client(fetch).getProviderIdentity()).toEqual({
+        kind: "personal",
+        id: "user_1",
+      });
+      expect(calls[1].url).toBe("https://api.runpod.io/graphql");
+    });
+
+    it("does not treat any other 403 as a personal account", async () => {
+      const { fetch } = fakeFetch([
+        { status: 403, body: { title: "Forbidden", detail: "nope" } },
+      ]);
+      const err = await failure(client(fetch).getProviderIdentity());
+      expect(err.kind).toBe("forbidden");
+      expect(err.reason).toBeUndefined();
+    });
+
+    it("fails closed on an organization without an id", async () => {
+      const { fetch } = fakeFetch([{ body: { name: "x" } }]);
+      expect((await failure(client(fetch).getProviderIdentity())).kind).toBe(
+        "protocol",
+      );
+    });
   });
 
   describe("getAccountBalance (temporary GraphQL read)", () => {
@@ -314,7 +442,6 @@ describe("RunpodClient", () => {
         },
       ]);
       expect(await client(fetch).getAccountBalance()).toEqual({
-        accountId: "user_1",
         balance: 30.17,
         spendPerHour: 0.061,
         spendLimitPerHour: 80,

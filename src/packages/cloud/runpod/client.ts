@@ -66,32 +66,52 @@ const MESSAGES: Record<RunpodErrorKind, string> = {
   protocol: "unexpected response from RunPod",
 };
 
+// Known provider error details we act on, matched exactly. Anything else in
+// an error body is discarded.
+const KNOWN_REASONS = {
+  "Organizations are not enabled for this user": "organizations_not_enabled",
+} as const;
+export type RunpodErrorReason =
+  (typeof KNOWN_REASONS)[keyof typeof KNOWN_REASONS];
+
 // Provider bodies are never kept: an error body can echo request fields
-// such as env values, so only the status and a fixed message survive.
+// such as env values, so only the status, a fixed message and (for a few
+// exactly matched details) a reason code survive.
 export class RunpodApiError extends Error {
   readonly kind: RunpodErrorKind;
   readonly status?: number;
   readonly retryAfterSeconds?: number;
+  readonly reason?: RunpodErrorReason;
 
   constructor(
     kind: RunpodErrorKind,
     status?: number,
     retryAfterSeconds?: number,
+    reason?: RunpodErrorReason,
   ) {
     super(status ? `${MESSAGES[kind]} (${status})` : MESSAGES[kind]);
     this.name = "RunpodApiError";
     this.kind = kind;
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.reason = reason;
   }
 }
 
+// Who a key acts for. Keys created in a RunPod team act for that team
+// (organization); accounts without organizations are personal. Rotation and
+// cleanup compare this, never a user id.
+export type RunpodProviderIdentity =
+  | { kind: "organization"; id: string; name?: string }
+  | { kind: "personal"; id: string };
+
 export interface RunpodAccountBalance {
-  accountId: string;
   balance?: number;
   spendPerHour?: number;
   spendLimitPerHour?: number;
 }
+
+export type RunpodCloud = "SECURE" | "COMMUNITY";
 
 export type RunpodAvailability = "NONE" | "LOW" | "MEDIUM" | "HIGH";
 
@@ -119,19 +139,56 @@ export class RunpodClient {
     return "RunpodClient {}";
   }
 
-  // Raw catalog rows (GET /v2/catalog/gpus with pod availability); normalize
-  // with catalog.ts.
-  async listGpuTypes(): Promise<any[]> {
+  // Raw catalog rows (GET /v2/catalog/gpus) with pod availability for one
+  // cloud tier: availability differs by tier and RunPod defaults to SECURE.
+  // Normalize with catalog.ts.
+  async listGpuTypes(cloud: RunpodCloud): Promise<any[]> {
+    if (cloud !== "SECURE" && cloud !== "COMMUNITY") {
+      throw new Error("invalid RunPod cloud");
+    }
     const body = await this.get("/v2/catalog/gpus", {
       include: "AVAILABILITY",
       product: "POD",
+      cloud,
     });
-    return Array.isArray(body?.gpus) ? body.gpus : [];
+    if (!Array.isArray(body?.gpus)) throw new RunpodApiError("protocol");
+    return body.gpus;
   }
 
   async listDataCenters(): Promise<any[]> {
     const body = await this.get("/v2/catalog/datacenters");
-    return Array.isArray(body?.dataCenters) ? body.dataCenters : [];
+    if (!Array.isArray(body?.dataCenters)) {
+      throw new RunpodApiError("protocol");
+    }
+    return body.dataCenters;
+  }
+
+  async getProviderIdentity(): Promise<RunpodProviderIdentity> {
+    try {
+      const org = await this.get("/v2/organization");
+      if (!(typeof org?.id === "string" && org.id)) {
+        throw new RunpodApiError("protocol");
+      }
+      return {
+        kind: "organization",
+        id: org.id,
+        name: typeof org.name === "string" ? org.name : undefined,
+      };
+    } catch (err) {
+      if (
+        !(err instanceof RunpodApiError) ||
+        err.reason !== "organizations_not_enabled"
+      ) {
+        throw err;
+      }
+    }
+    // No organizations on this account: the key acts for the personal
+    // account. GraphQL until v2 exposes the personal account id.
+    const me = (await this.graphql("query { myself { id } }"))?.myself;
+    if (!(typeof me?.id === "string" && me.id)) {
+      throw new RunpodApiError("protocol");
+    }
+    return { kind: "personal", id: me.id };
   }
 
   async listPods(): Promise<RunpodPodView[]> {
@@ -139,14 +196,22 @@ export class RunpodClient {
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
       const body = await this.get("/v2/pods", cursor ? { cursor } : {});
-      if (!Array.isArray(body?.pods)) throw new RunpodApiError("protocol");
-      for (const raw of body.pods) {
-        const pod = podView(raw);
-        if (pod) pods.push(pod);
+      if (
+        !Array.isArray(body?.pods) ||
+        typeof body.pagination?.hasNextPage !== "boolean"
+      ) {
+        throw new RunpodApiError("protocol");
       }
-      const next = body.pagination?.nextCursor;
-      if (!body.pagination?.hasNextPage || typeof next !== "string") {
-        return pods;
+      for (const raw of body.pods) {
+        // A row we can't parse could be a live pod: never drop it silently.
+        const pod = podView(raw);
+        if (!pod) throw new RunpodApiError("protocol");
+        pods.push(pod);
+      }
+      if (!body.pagination.hasNextPage) return pods;
+      const next = body.pagination.nextCursor;
+      if (!(typeof next === "string" && next)) {
+        throw new RunpodApiError("protocol");
       }
       cursor = next;
     }
@@ -156,14 +221,18 @@ export class RunpodClient {
   }
 
   async getPod(podId: string): Promise<RunpodPodView | undefined> {
+    let raw: any;
     try {
-      return podView(await this.get(`/v2/pods/${checkPodId(podId)}`));
+      raw = await this.get(`/v2/pods/${checkPodId(podId)}`);
     } catch (err) {
       if (err instanceof RunpodApiError && err.kind === "not_found") {
         return undefined;
       }
       throw err;
     }
+    const pod = podView(raw);
+    if (!pod || pod.id !== podId) throw new RunpodApiError("protocol");
+    return pod;
   }
 
   async listPodBilling(
@@ -185,20 +254,44 @@ export class RunpodClient {
     if (opts.startTime) query.startTime = checkTime(opts.startTime);
     if (opts.endTime) query.endTime = checkTime(opts.endTime);
     const body = await this.get("/v2/billing/pods", query);
-    if (!Array.isArray(body?.records)) throw new RunpodApiError("protocol");
-    return body.records
-      .map(billingRecordView)
-      .filter((r): r is RunpodBillingRecord => r != null);
+    // Spend reconciliation reads this: a partial or malformed answer must
+    // fail rather than undercount.
+    if (
+      !Array.isArray(body?.records) ||
+      !Number.isInteger(body.metadata?.recordCount) ||
+      body.metadata.recordCount !== body.records.length
+    ) {
+      throw new RunpodApiError("protocol");
+    }
+    return body.records.map((raw: unknown) => {
+      const record = billingRecordView(raw);
+      if (!record || (opts.podId && record.podId !== opts.podId)) {
+        throw new RunpodApiError("protocol");
+      }
+      return record;
+    });
   }
 
-  // Temporary GraphQL read; see GRAPHQL_URL.
+  // Temporary GraphQL read; see GRAPHQL_URL. Not an identity: use
+  // getProviderIdentity() for that.
   async getAccountBalance(): Promise<RunpodAccountBalance> {
+    const me = (
+      await this.graphql(
+        "query { myself { clientBalance currentSpendPerHr spendLimit } }",
+      )
+    )?.myself;
+    if (!me || typeof me !== "object") throw new RunpodApiError("protocol");
+    return {
+      balance: finite(me.clientBalance),
+      spendPerHour: finite(me.currentSpendPerHr),
+      spendLimitPerHour: finite(me.spendLimit),
+    };
+  }
+
+  private async graphql(query: string): Promise<any> {
     const res = await this.request(GRAPHQL_URL, {
       method: "POST",
-      body: JSON.stringify({
-        query:
-          "query { myself { id clientBalance currentSpendPerHr spendLimit } }",
-      }),
+      body: JSON.stringify({ query }),
     });
     const body = await this.parse(res);
     if (Array.isArray(body?.errors) && body.errors.length > 0) {
@@ -210,16 +303,7 @@ export class RunpodClient {
           : "provider",
       );
     }
-    const me = body?.data?.myself;
-    if (!me || !(typeof me.id === "string" && me.id)) {
-      throw new RunpodApiError("protocol");
-    }
-    return {
-      accountId: me.id,
-      balance: finite(me.clientBalance),
-      spendPerHour: finite(me.currentSpendPerHr),
-      spendLimitPerHour: finite(me.spendLimit),
-    };
+    return body?.data;
   }
 
   private async get(
@@ -262,6 +346,7 @@ export class RunpodClient {
         errorKind(res.status),
         res.status,
         retryAfter(res.headers.get("retry-after")),
+        knownReason(text),
       );
     }
     if (!text) return undefined;
@@ -281,6 +366,19 @@ function errorKind(status: number): RunpodErrorKind {
   if (status === 429) return "rate_limited";
   if (status >= 400 && status < 500) return "invalid";
   return "provider";
+}
+
+function knownReason(text: string): RunpodErrorReason | undefined {
+  let detail: unknown;
+  try {
+    detail = JSON.parse(text)?.detail;
+  } catch {
+    return undefined;
+  }
+  return typeof detail === "string" &&
+    Object.prototype.hasOwnProperty.call(KNOWN_REASONS, detail)
+    ? KNOWN_REASONS[detail as keyof typeof KNOWN_REASONS]
+    : undefined;
 }
 
 function retryAfter(v: string | null): number | undefined {
