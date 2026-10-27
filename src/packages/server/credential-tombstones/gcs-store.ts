@@ -73,54 +73,82 @@ export class GcsTombstoneStore implements TombstoneObjectStore {
 
   async get(name: string): Promise<Buffer | undefined> {
     checkTombstoneName(name);
-    const object = encodeURIComponent(`${TOMBSTONE_PREFIX}${name}`);
+    const full = `${TOMBSTONE_PREFIX}${name}`;
     const res = await this.request(
-      `${API}/storage/v1/b/${this.bucket}/o/${object}?alt=media`,
+      `${API}/storage/v1/b/${this.bucket}/o/${encodeURIComponent(full)}?alt=media`,
       { method: "GET" },
     );
-    if (res.status === 404) return undefined;
-    if (!res.ok) throw new Error(`GCS get failed (${res.status})`);
-    return Buffer.from(await res.arrayBuffer());
+    if (res.ok) return Buffer.from(await res.arrayBuffer());
+    if (res.status !== 404) throw new Error(`GCS get failed (${res.status})`);
+    // A deleted or misnamed bucket also answers 404. Only an exact-prefix
+    // listing that succeeds (so the bucket exists) and finds nothing proves
+    // the object is absent. (The service account can't read bucket metadata,
+    // but it can list.)
+    const page = await this.listPage({ prefix: full, maxResults: "1" });
+    if (page.names.length === 0) return undefined;
+    // It appeared between the two calls: it exists, which is all that counts.
+    return Buffer.alloc(0);
   }
 
   async list(): Promise<string[]> {
     const names: string[] = [];
     let pageToken: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
-      const params = new URLSearchParams({
+      const result = await this.listPage({
         prefix: TOMBSTONE_PREFIX,
-        fields: "items(name),nextPageToken",
         maxResults: "1000",
+        pageToken,
       });
-      if (pageToken) params.set("pageToken", pageToken);
-      const res = await this.request(
-        `${API}/storage/v1/b/${this.bucket}/o?${params}`,
-        { method: "GET" },
-      );
-      if (!res.ok) throw new Error(`GCS list failed (${res.status})`);
-      let body: any;
-      try {
-        body = await res.json();
-      } catch {
-        throw new TombstoneIntegrityError();
-      }
-      const items = body?.items ?? [];
-      if (!Array.isArray(items)) throw new TombstoneIntegrityError();
-      for (const item of items) {
-        const full = item?.name;
-        if (typeof full !== "string" || !full.startsWith(TOMBSTONE_PREFIX)) {
-          throw new TombstoneIntegrityError();
-        }
-        names.push(full.slice(TOMBSTONE_PREFIX.length));
-      }
-      const next = body?.nextPageToken;
-      if (next == null) return names;
-      if (typeof next !== "string" || !next) {
-        throw new TombstoneIntegrityError();
-      }
-      pageToken = next;
+      names.push(...result.names);
+      if (result.nextPageToken == null) return names;
+      pageToken = result.nextPageToken;
     }
     throw new TombstoneIntegrityError();
+  }
+
+  // One page of objects.list. Anything but a well-formed answer throws: a
+  // missing bucket or an error status as an outage, a malformed body as an
+  // integrity failure. Never an empty listing by default.
+  private async listPage(opts: {
+    prefix: string;
+    maxResults: string;
+    pageToken?: string;
+  }): Promise<{ names: string[]; nextPageToken?: string }> {
+    const params = new URLSearchParams({
+      prefix: opts.prefix,
+      fields: "items(name),nextPageToken",
+      maxResults: opts.maxResults,
+    });
+    if (opts.pageToken) params.set("pageToken", opts.pageToken);
+    const res = await this.request(
+      `${API}/storage/v1/b/${this.bucket}/o?${params}`,
+      { method: "GET" },
+    );
+    if (!res.ok) throw new Error(`GCS list failed (${res.status})`);
+    let body: any;
+    try {
+      body = await res.json();
+    } catch {
+      throw new TombstoneIntegrityError();
+    }
+    if (body == null || typeof body !== "object" || Array.isArray(body)) {
+      throw new TombstoneIntegrityError();
+    }
+    // GCS omits `items` for an empty result; when present it must be a list.
+    const items = "items" in body ? body.items : [];
+    if (!Array.isArray(items)) throw new TombstoneIntegrityError();
+    const names: string[] = [];
+    for (const item of items) {
+      const full = item?.name;
+      if (typeof full !== "string" || !full.startsWith(TOMBSTONE_PREFIX)) {
+        throw new TombstoneIntegrityError();
+      }
+      names.push(full.slice(TOMBSTONE_PREFIX.length));
+    }
+    const next = body.nextPageToken;
+    if (next === undefined || next === null) return { names };
+    if (typeof next !== "string" || !next) throw new TombstoneIntegrityError();
+    return { names, nextPageToken: next };
   }
 
   private async request(

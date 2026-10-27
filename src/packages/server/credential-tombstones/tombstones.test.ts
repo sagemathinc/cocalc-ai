@@ -177,18 +177,39 @@ describe("GcsTombstoneStore", () => {
     expect(calls[0].init.redirect).toBe("error");
   });
 
-  it("gets an object, or nothing on 404, and throws on other errors", async () => {
-    const { store, calls } = fake([
-      { body: "{}" },
-      { status: 404 },
-      { status: 503 },
-    ]);
+  it("gets an object, and throws on errors other than 404", async () => {
+    const { store, calls } = fake([{ body: "{}" }, { status: 503 }]);
     expect((await store.get(name))?.toString()).toBe("{}");
-    expect(await store.get(name)).toBeUndefined();
     await expect(store.get(name)).rejects.toThrow(/503/);
     expect(calls[0].url).toContain(
       encodeURIComponent(`${TOMBSTONE_PREFIX}${name}`),
     );
+  });
+
+  it("treats a 404 as absent only if a listing proves the bucket exists", async () => {
+    const { store, calls } = fake([{ status: 404 }, { body: {} }]);
+    expect(await store.get(name)).toBeUndefined();
+    const url = new URL(calls[1].url);
+    expect(url.searchParams.get("prefix")).toBe(`${TOMBSTONE_PREFIX}${name}`);
+  });
+
+  it("treats a 404 from a missing bucket as an outage, not as 'not erased'", async () => {
+    const { store } = fake([{ status: 404 }, { status: 404 }]);
+    await expect(store.get(name)).rejects.toThrow(/list failed \(404\)/);
+    const log = new TombstoneLog(
+      fake([{ status: 404 }, { status: 404 }]).store,
+    );
+    await expect(log.isTombstoned(ID)).rejects.toBeInstanceOf(
+      TombstoneUnavailableError,
+    );
+  });
+
+  it("counts an object that appears between the two calls as present", async () => {
+    const { store } = fake([
+      { status: 404 },
+      { body: { items: [{ name: `${TOMBSTONE_PREFIX}${name}` }] } },
+    ]);
+    expect(await store.get(name)).toBeDefined();
   });
 
   it("lists every page", async () => {
@@ -214,9 +235,14 @@ describe("GcsTombstoneStore", () => {
   it("fails a malformed listing as an integrity error", async () => {
     for (const body of [
       "not json",
+      "null",
+      "[]",
+      "7",
+      { items: null },
       { items: "x" },
       { items: [{ name: "elsewhere/x" }] },
       { items: [], nextPageToken: 7 },
+      { items: [], nextPageToken: "" },
     ]) {
       const { store } = fake([{ body }]);
       await expect(store.list()).rejects.toBeInstanceOf(
