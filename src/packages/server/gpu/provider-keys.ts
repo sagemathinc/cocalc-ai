@@ -166,17 +166,17 @@ function toStatus(
 }
 
 // Summaries only: the key itself never leaves the owner's home bay.
-async function activeKeySummary(
+async function activeKeySummaries(
   account_id: string,
   provider: GpuProvider,
-): Promise<ExternalCredentialSummary | undefined> {
+): Promise<ExternalCredentialSummary[]> {
   const rows = await listAccountExternalCredentialsRouted({
     owner_account_id: account_id,
     provider,
     kind: GPU_PROVIDER_API_KEY_KIND,
     scope: "account",
   });
-  return rows.find((row) => !row.revoked);
+  return rows.filter((row) => !row.revoked);
 }
 
 export async function getGpuProviderKeyStatus(
@@ -189,9 +189,9 @@ export async function getGpuProviderKeyStatus(
   const provider = requireProvider(providerInput);
   const [entitled, record] = await Promise.all([
     (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id),
-    activeKeySummary(account_id, provider),
+    activeKeySummaries(account_id, provider),
   ]);
-  return toStatus(provider, entitled, record);
+  return toStatus(provider, entitled, record[0]);
 }
 
 // The caller has already required fresh auth for this session.
@@ -256,12 +256,20 @@ export async function deleteGpuProviderKey({
   provider: unknown;
 }): Promise<{ revoked: boolean }> {
   const provider = requireProvider(providerInput);
-  const existing = await activeKeySummary(account_id, provider);
-  if (!existing) return { revoked: false };
-  const revoked = await revokeAccountExternalCredentialRouted({
-    id: existing.id,
-    owner_account_id: account_id,
-  });
+  // Every active row: two saves racing (say, from two tabs) can each insert
+  // one, and removing the key must leave none.
+  const existing = await activeKeySummaries(account_id, provider);
+  let revoked = false;
+  for (const row of existing) {
+    if (
+      await revokeAccountExternalCredentialRouted({
+        id: row.id,
+        owner_account_id: account_id,
+      })
+    ) {
+      revoked = true;
+    }
+  }
   return { revoked };
 }
 

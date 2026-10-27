@@ -46,6 +46,16 @@ export function GpuProviderKeySection() {
   // from a confirmation that was already open.
   const busyRef = useRef(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  // After connecting, the focused button is gone: focus (and announce) the
+  // status that replaced it.
+  const connectedRef = useRef<HTMLDivElement>(null);
+  const [focusConnected, setFocusConnected] = useState(false);
+  useEffect(() => {
+    if (focusConnected && status?.connected) {
+      connectedRef.current?.focus();
+      setFocusConnected(false);
+    }
+  }, [focusConnected, status?.connected]);
   const [error, setError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
@@ -87,6 +97,7 @@ export function GpuProviderKeySection() {
       if (completed) {
         setApiKey("");
         setReplacing(false);
+        setFocusConnected(true);
       }
     } catch (err) {
       setError(`${err}`);
@@ -170,7 +181,12 @@ export function GpuProviderKeySection() {
     const account = status.provider_account;
     body = (
       <Space orientation="vertical" style={{ width: "100%" }}>
-        <Typography.Paragraph style={{ marginBottom: 0 }}>
+        <Typography.Paragraph
+          ref={connectedRef}
+          role="status"
+          tabIndex={-1}
+          style={{ marginBottom: 0 }}
+        >
           Connected to RunPod
           {account
             ? account.kind === "organization"

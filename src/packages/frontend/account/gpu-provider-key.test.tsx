@@ -66,9 +66,10 @@ describe("GpuProviderKeySection", () => {
       }),
     );
     expect(mockFreshAuth).toHaveBeenCalled();
-    expect(
-      await screen.findByText(/Connected to RunPod account user_1/),
-    ).toBeTruthy();
+    const connected = await screen.findByRole("status");
+    expect(connected.textContent).toMatch(/Connected to RunPod account user_1/);
+    // The Connect button is gone; focus moved to the announced status.
+    await waitFor(() => expect(document.activeElement).toBe(connected));
     expect(screen.queryByDisplayValue(KEY)).toBeNull();
   });
 
