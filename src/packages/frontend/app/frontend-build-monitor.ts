@@ -93,6 +93,21 @@ function update(
   for (const listener of listeners) listener(shared);
 }
 
+// A stale chunk (one this tab's build needs but the server no longer has)
+// means the frontend was updated: recommend a reload in every indicator.
+// Error boundaries catch these before window handlers see them, so they
+// report here. Returns whether the error was a stale chunk.
+export function reportStaleChunkError(error: unknown): boolean {
+  if (!isLikelyStaleChunkError(error)) return false;
+  chunkErrorSeen = true;
+  update((previous) => ({
+    ...previous,
+    reloadRecommended: true,
+    reason: previous.reason ?? "chunk-error",
+  }));
+  return true;
+}
+
 function startMonitor(): () => void {
   const cleanUrl = urlWithoutFrontendRefreshToken(window.location.href);
   if (cleanUrl != null) {
@@ -145,14 +160,7 @@ function startMonitor(): () => void {
   };
   const onConnected = () => void check();
   const onRuntimeError = (event: unknown) => {
-    if (!isLikelyStaleChunkError(event)) return;
-    chunkErrorSeen = true;
-    update((previous) => ({
-      ...previous,
-      reloadRecommended: true,
-      reason: previous.reason ?? "chunk-error",
-    }));
-    void check(true);
+    if (reportStaleChunkError(event)) void check(true);
   };
 
   const initial = window.setTimeout(
