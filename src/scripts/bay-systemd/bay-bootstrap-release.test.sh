@@ -307,6 +307,8 @@ if ! grep -q 'frontend asset retention: cutoff=.* (override) builds kept=2 dropp
   echo "retention did not log what it kept and dropped" >&2
   exit 1
 fi
+grep -q "^note: rolling the hub back does not restore pruned frontend chunks; old tabs may need a reload$" \
+  "${TMP_ROOT}/retention.log"
 node - "$RET_STATIC" "${RET_TARGET}/runtime/control-plane/frontend-asset-ledger.json" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");

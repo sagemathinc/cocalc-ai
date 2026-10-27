@@ -1099,6 +1099,13 @@ writeJson(targetLedgerPath, {
 console.log(
   `frontend asset retention: cutoff=${new Date(cutoffMs).toISOString()} (${cutoffSource}) builds kept=${kept.length} dropped=${dropped.length} inherited files kept=${retained.size} removed=${removed} unlisted=${unlisted}${missing ? ` missing=${missing}` : ""}`,
 );
+if (removed > 0) {
+  // Accepted limitation (@ops0, 10-27): a hub-only rollback keeps this
+  // release's pruned static tree.
+  console.log(
+    "note: rolling the hub back does not restore pruned frontend chunks; old tabs may need a reload",
+  );
+}
 console.log(
   `validated frontend assets: builds=${builds.length} files=${unionSize}`,
 );
