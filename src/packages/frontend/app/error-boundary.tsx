@@ -11,7 +11,7 @@ import {
   isLikelyStaleChunkError,
   reloadForFrontendBuild,
   reportStaleChunkError,
-} from "./frontend-build-monitor";
+} from "./stale-chunk";
 import { markCaughtReactError } from "./react-error-reporting";
 
 interface FallbackProps {

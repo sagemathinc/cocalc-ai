@@ -6,10 +6,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { CocalcErrorBoundary } from "./error-boundary";
-import {
-  reloadForFrontendBuild,
-  reportStaleChunkError,
-} from "./frontend-build-monitor";
+import userEvent from "@testing-library/user-event";
+import { reloadForFrontendBuild, reportStaleChunkError } from "./stale-chunk";
 import { isReactDomMutationError } from "./react-dom-mutation";
 import {
   COCALC_REACT_ERROR_EVENT,
@@ -17,11 +15,12 @@ import {
   type ReactErrorEventDetail,
 } from "./react-error-reporting";
 
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: { on: jest.fn(), removeListener: jest.fn() },
-}));
-jest.mock("./frontend-build-monitor", () => {
-  const actual = jest.requireActual("./frontend-build-monitor");
+// Public pages use this boundary: it must not pull in the webapp client.
+jest.mock("@cocalc/frontend/webapp-client", () => {
+  throw new Error("the error boundary must not import the webapp client");
+});
+jest.mock("./stale-chunk", () => {
+  const actual = jest.requireActual("./stale-chunk");
   return {
     ...actual,
     reloadForFrontendBuild: jest.fn(),
@@ -307,7 +306,12 @@ describe("CocalcErrorBoundary", () => {
     expect(screen.queryByText("Try again")).toBeNull();
     // The top bar is told too, since window handlers never see this error.
     expect(reportStaleChunkError).toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    // Reachable and usable from the keyboard.
+    const user = userEvent.setup();
+    const reload = screen.getByRole("button", { name: "Reload" });
+    await user.tab();
+    expect(document.activeElement).toBe(reload);
+    await user.keyboard("{Enter}");
     expect(reloadForFrontendBuild).toHaveBeenCalledTimes(1);
   });
 
