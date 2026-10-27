@@ -11,6 +11,12 @@ non-secret fields are here: never env, the start command, registry
 credentials or template ids.
 */
 
+// How long one GPU read may take end to end on the key owner's home bay:
+// the catalog (three parallel RunPod requests, each up to 30 s) or a pod
+// inventory of a few slow pages. Callers waiting on a read (the inter-bay
+// forward, the CLI) budget at least this much.
+export const GPU_READ_TIMEOUT_MS = 120_000;
+
 export type RunpodCloud = "SECURE" | "COMMUNITY";
 
 export type RunpodAvailability = "NONE" | "LOW" | "MEDIUM" | "HIGH";

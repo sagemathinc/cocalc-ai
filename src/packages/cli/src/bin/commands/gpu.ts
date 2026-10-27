@@ -14,6 +14,29 @@ import type {
   GpuCatalogResult,
   GpuPodsResult,
 } from "@cocalc/conat/hub/api/gpu";
+import { GPU_READ_TIMEOUT_MS } from "@cocalc/util/gpu/runpod";
+
+// A GPU read may take GPU_READ_TIMEOUT_MS on the key owner's home bay; wait a
+// little longer, so the server's own deadline (and its clear error) comes
+// first rather than the CLI abandoning a read that is still running.
+export const GPU_CLI_RPC_TIMEOUT_MS = GPU_READ_TIMEOUT_MS + 15_000;
+
+// Raise the context's timeouts for one GPU read, then restore them.
+export async function withGpuReadTimeout<T>(
+  ctx: any,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const prevTimeoutMs = ctx.timeoutMs;
+  const prevRpcTimeoutMs = ctx.rpcTimeoutMs;
+  ctx.timeoutMs = Math.max(prevTimeoutMs ?? 0, GPU_CLI_RPC_TIMEOUT_MS);
+  ctx.rpcTimeoutMs = Math.max(prevRpcTimeoutMs ?? 0, GPU_CLI_RPC_TIMEOUT_MS);
+  try {
+    return await fn();
+  } finally {
+    ctx.timeoutMs = prevTimeoutMs;
+    ctx.rpcTimeoutMs = prevRpcTimeoutMs;
+  }
+}
 
 export interface GpuCommandDeps {
   withContext: any;
@@ -94,7 +117,7 @@ export function registerGpuCommand(
     fn: (api: GpuApi, ctx: any) => Promise<unknown>,
   ) =>
     deps.withContext(command, `gpu ${label}`, async (ctx) =>
-      fn(ctx.hub.gpu, ctx),
+      withGpuReadTimeout(ctx, () => fn(ctx.hub.gpu, ctx)),
     );
 
   gpu

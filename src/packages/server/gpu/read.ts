@@ -42,10 +42,11 @@ import {
   type GpuProvider,
   isGpuProvider,
 } from "@cocalc/util/gpu/provider-keys";
-import type {
-  RunpodCatalog,
-  RunpodCloud,
-  RunpodStockLevel,
+import {
+  GPU_READ_TIMEOUT_MS,
+  type RunpodCatalog,
+  type RunpodCloud,
+  type RunpodStockLevel,
 } from "@cocalc/util/gpu/runpod";
 
 // The catalog changes by the minute, but agents may ask several times in a
@@ -70,11 +71,10 @@ export interface GpuReadDeps {
 // How long a read forwarded to the key owner's home bay may take. The
 // inter-bay default (10 s) is shorter than one RunPod request may take
 // (30 s), so a remotely homed account would fail where a local read
-// succeeds. 120 s covers the catalog (three parallel requests) and a pod
-// inventory of a few slow pages; a larger account's inventory is a step 3
-// concern (managed pods come from our own records), not a reason to wait
-// out the theoretical 50-page maximum.
-export const GPU_HOME_BAY_TIMEOUT_MS = 120_000;
+// succeeds. A larger account's inventory is a step 3 concern (managed pods
+// come from our own records), not a reason to wait out the theoretical
+// 50-page maximum.
+export const GPU_HOME_BAY_TIMEOUT_MS = GPU_READ_TIMEOUT_MS;
 
 export interface GpuRoutingDeps {
   // for tests: the home bay's API, or undefined when this is the home bay

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { Command } from "commander";
-import { registerGpuCommand } from "./gpu";
+import { GPU_READ_TIMEOUT_MS } from "@cocalc/util/gpu/runpod";
+import { GPU_CLI_RPC_TIMEOUT_MS, registerGpuCommand } from "./gpu";
 
 const CATALOG = {
   provider: "runpod",
@@ -41,40 +42,51 @@ const PODS = {
   ],
 };
 
-function harness(globals: Record<string, unknown> = {}) {
+function harness(
+  globals: Record<string, unknown> = {},
+  { fail = false }: { fail?: boolean } = {},
+) {
   const calls: Array<{ name: string; args: unknown }> = [];
   const outputs: unknown[] = [];
+  // The CLI's defaults: 600 s overall, 30 s per hub RPC.
+  const ctx: any = { globals, timeoutMs: 600_000, rpcTimeoutMs: 30_000 };
+  const seen: Array<{ timeoutMs: number; rpcTimeoutMs: number }> = [];
+  const observe = () => {
+    seen.push({ timeoutMs: ctx.timeoutMs, rpcTimeoutMs: ctx.rpcTimeoutMs });
+    if (fail) throw new Error("hub call failed");
+  };
   const program = new Command()
     .exitOverride()
     .configureOutput({ writeErr: () => {}, writeOut: () => {} });
   registerGpuCommand(program, {
     withContext: async (_cmd, _name, fn) => {
-      outputs.push(
-        await fn({
-          globals,
-          hub: {
-            gpu: {
-              catalog: async (args) => {
-                calls.push({ name: "catalog", args });
-                return CATALOG;
-              },
-              availability: async (args) => {
-                calls.push({ name: "availability", args });
-                return { provider: "runpod", as_of: "x", offers: [] };
-              },
-              pods: async (args) => {
-                calls.push({ name: "pods", args });
-                return PODS;
-              },
-            },
+      ctx.hub = {
+        gpu: {
+          catalog: async (args) => {
+            calls.push({ name: "catalog", args });
+            observe();
+            return CATALOG;
           },
-        }),
-      );
+          availability: async (args) => {
+            calls.push({ name: "availability", args });
+            observe();
+            return { provider: "runpod", as_of: "x", offers: [] };
+          },
+          pods: async (args) => {
+            calls.push({ name: "pods", args });
+            observe();
+            return PODS;
+          },
+        },
+      };
+      outputs.push(await fn(ctx));
     },
   });
   return {
     calls,
     outputs,
+    ctx,
+    seen,
     run: (...args: string[]) =>
       program.parseAsync(["gpu", ...args], { from: "user" }),
   };
@@ -174,4 +186,30 @@ it("reads one pod by id", async () => {
   await h.run("pods", "--id", "pod_abc123");
   assert.deepEqual(h.calls, [{ name: "pods", args: { pod_id: "pod_abc123" } }]);
   assert.deepEqual(h.outputs, [PODS.pods[0]]);
+});
+
+it("gives every GPU read a bounded budget beyond the server's, then restores the context", async () => {
+  assert.ok(GPU_CLI_RPC_TIMEOUT_MS > GPU_READ_TIMEOUT_MS);
+  assert.ok(GPU_CLI_RPC_TIMEOUT_MS <= 5 * 60_000);
+  const h = harness();
+  await h.run("catalog");
+  await h.run("availability", "--cloud", "SECURE");
+  await h.run("pods");
+  assert.deepEqual(
+    h.seen,
+    Array(3).fill({
+      timeoutMs: 600_000,
+      rpcTimeoutMs: GPU_CLI_RPC_TIMEOUT_MS,
+    }),
+  );
+  assert.equal(h.ctx.timeoutMs, 600_000);
+  assert.equal(h.ctx.rpcTimeoutMs, 30_000);
+});
+
+it("restores the context's timeouts when a read fails", async () => {
+  const h = harness({}, { fail: true });
+  await assert.rejects(h.run("pods"), /hub call failed/);
+  assert.equal(h.seen[0].rpcTimeoutMs, GPU_CLI_RPC_TIMEOUT_MS);
+  assert.equal(h.ctx.rpcTimeoutMs, 30_000);
+  assert.equal(h.ctx.timeoutMs, 600_000);
 });
