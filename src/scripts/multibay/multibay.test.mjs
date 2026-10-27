@@ -2688,6 +2688,56 @@ describe("stuck archive reopen across bays", () => {
   });
 });
 
+describe("project archive across bays", () => {
+  // An admin homed on the seed archives a project the attached bay owns:
+  // the call is forwarded to the owning bay and handled there. This cluster
+  // can't really archive (no backup repositories, workspace runtime), so the
+  // owning bay refuses; but not with "not found", as the seed would.
+  let admin;
+  let project_id;
+  const forwarded = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const t = await getPool().query("SELECT to_regclass('hub_api_forwarded_calls') AS t");
+       if (t.rows[0].t == null) return 0;
+       const { rows } = await getPool().query(
+         "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name='projects.archiveProject' AND source_bay_id=$1 AND account_id=$2 AND finished IS NOT NULL",
+         [${JSON.stringify(SEED)}, ${JSON.stringify(admin.account_id)}]);
+       return rows[0].n;`,
+    );
+
+  before(async () => {
+    project_id = await createProject(bob.client, "archive-across-bays");
+    admin = await createAccount(cluster, { home_bay_id: SEED, name: "vera" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(admin.account_id)}]);`,
+    );
+    admin.client = await client(admin);
+  });
+
+  it("runs on the project's owning bay for a caller homed on the other bay", async () => {
+    const before = await forwarded();
+    await assert.rejects(
+      admin.client.call("projects.archiveProject", {
+        project_id,
+        timeout: 60_000,
+      }),
+      (err) => {
+        assert.doesNotMatch(`${err?.message ?? err}`, /not found/i);
+        return true;
+      },
+    );
+    assert.equal(await forwarded(), before + 1);
+  });
+});
+
 describe("sensor budgets on the account's home bay", () => {
   // carol is homed on the attached bay; her watchers are set from the seed,
   // as when one of her agents works in a project the seed owns. The budget
