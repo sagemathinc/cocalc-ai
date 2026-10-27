@@ -239,6 +239,8 @@ describe("GpuCostDashboard", () => {
       expect(screen.queryByRole("cell", { name: "Spend row Ada" })).toBeNull(),
     );
     expect(screen.queryByText("$1.25")).toBeNull();
+    // A period change refetches spend only, not the pod list.
+    expect(mock.pods).toHaveBeenCalledTimes(1);
     resolve({
       as_of: "2026-10-27T12:00:00.000Z",
       rows: [
@@ -279,6 +281,34 @@ describe("GpuCostDashboard", () => {
       within(dialog).getByText(/live pods and their rate are unavailable/),
     ).toBeTruthy();
     expect(within(dialog).queryByText(/0 pods are live/)).toBeNull();
+  });
+
+  it("keeps the pod list and per-pod terminate when spend fails", async () => {
+    const mock = api();
+    mock.spend.mockRejectedValue(new Error("billing is down"));
+    render(<GpuCostDashboard api={mock} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load GPU spending",
+    );
+    expect(
+      await screen.findByRole("button", { name: "Terminate pod cc-7f3k9q2x" }),
+    ).toBeTruthy();
+    expect(screen.getByText("$0.77/hour")).toBeTruthy();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("keeps spend rows when pods fail", async () => {
+    const mock = api();
+    mock.pods.mockRejectedValue(new Error("inventory is down"));
+    render(<GpuCostDashboard api={mock} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load live pods",
+    );
+    expect(
+      await screen.findByRole("cell", { name: "Spend row Ada" }),
+    ).toBeTruthy();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByText("Unavailable.")).toBeTruthy();
   });
 
   it("reports load failures in an alert", async () => {

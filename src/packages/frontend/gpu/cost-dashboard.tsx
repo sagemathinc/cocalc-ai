@@ -80,12 +80,16 @@ export function GpuCostDashboard({
     key: string;
     spend: GpuSpendResult;
   }>();
-  const [loadError, setLoadError] = useState("");
+  // Pods and spend load and fail independently: a billing outage must not
+  // hide the pod list and its per-pod terminate buttons, nor the reverse.
+  const [podsError, setPodsError] = useState("");
+  const [spendError, setSpendError] = useState("");
   const [confirm, setConfirm] = useState<Confirmation>();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
-  const generation = useRef(0);
+  const podsGeneration = useRef(0);
+  const spendGeneration = useRef(0);
 
   // Callers may pass a new but equal scope object on every render.
   const scopeKey = JSON.stringify(scope);
@@ -93,38 +97,60 @@ export function GpuCostDashboard({
   const pods = podsResult?.key === scopeKey ? podsResult.pods : undefined;
   const spend = spendResult?.key === spendKey ? spendResult.spend : undefined;
 
-  const refresh = useCallback(async () => {
-    const version = ++generation.current;
-    const query: GpuPodScope = JSON.parse(scopeKey);
-    setLoadError("");
+  const refreshPods = useCallback(async () => {
+    const version = ++podsGeneration.current;
+    setPodsError("");
     try {
-      const [nextPods, nextSpend] = await Promise.all([
-        api.pods({ scope: query }),
-        api.spend({
-          scope: query,
-          since: periodSince(period, Date.now()),
-          group_by: groupBy,
-        }),
-      ]);
-      if (generation.current !== version) return;
-      setPodsResult({ key: scopeKey, pods: nextPods });
-      setSpendResult({
-        key: JSON.stringify([query, period, groupBy]),
-        spend: nextSpend,
-      });
+      const next = await api.pods({ scope: JSON.parse(scopeKey) });
+      if (podsGeneration.current === version)
+        setPodsResult({ key: scopeKey, pods: next });
     } catch (err) {
-      if (generation.current === version) setLoadError(errorText(err));
+      if (podsGeneration.current === version) setPodsError(errorText(err));
+    }
+  }, [api, scopeKey]);
+
+  const refreshSpend = useCallback(async () => {
+    const version = ++spendGeneration.current;
+    const query: GpuPodScope = JSON.parse(scopeKey);
+    setSpendError("");
+    try {
+      const next = await api.spend({
+        scope: query,
+        since: periodSince(period, Date.now()),
+        group_by: groupBy,
+      });
+      if (spendGeneration.current === version)
+        setSpendResult({
+          key: JSON.stringify([query, period, groupBy]),
+          spend: next,
+        });
+    } catch (err) {
+      if (spendGeneration.current === version) setSpendError(errorText(err));
     }
   }, [api, scopeKey, period, groupBy]);
 
   useEffect(() => {
-    void refresh();
-    const interval = setInterval(() => void refresh(), REFRESH_MS);
+    void refreshPods();
+    const interval = setInterval(() => void refreshPods(), REFRESH_MS);
     return () => {
-      generation.current++;
+      podsGeneration.current++;
       clearInterval(interval);
     };
-  }, [refresh]);
+  }, [refreshPods]);
+
+  useEffect(() => {
+    void refreshSpend();
+    const interval = setInterval(() => void refreshSpend(), REFRESH_MS);
+    return () => {
+      spendGeneration.current++;
+      clearInterval(interval);
+    };
+  }, [refreshSpend]);
+
+  function refresh() {
+    void refreshPods();
+    void refreshSpend();
+  }
 
   const live = useMemo(() => livePods(pods ?? []), [pods]);
   const rate = useMemo(() => hourlyRate(live), [live]);
@@ -147,7 +173,7 @@ export function GpuCostDashboard({
         setNotice(`Terminating pod ${confirm.pod.handle}.`);
       }
       setConfirm(undefined);
-      void refresh();
+      refresh();
     } catch (err) {
       setActionError(errorText(err));
     } finally {
@@ -157,7 +183,8 @@ export function GpuCostDashboard({
 
   const groupLabel = GROUP_BY_LABELS[groupBy];
   // Missing numbers are never shown as zero.
-  const pending = loadError ? "unavailable" : "…";
+  const podsPending = podsError ? "unavailable" : "…";
+  const spendPending = spendError ? "unavailable" : "…";
 
   return (
     <section aria-label="GPU spending" style={{ color: UI_COLORS.text }}>
@@ -170,7 +197,7 @@ export function GpuCostDashboard({
           GPU pods {scopeLabel}
         </Typography.Title>
         <Space wrap>
-          <Button onClick={() => void refresh()}>Refresh</Button>
+          <Button onClick={refresh}>Refresh</Button>
           <Button danger onClick={() => setConfirm({ kind: "all" })}>
             Terminate all
           </Button>
@@ -188,37 +215,31 @@ export function GpuCostDashboard({
           />
         )}
       </div>
-      {loadError && (
-        <Alert
-          role="alert"
-          type="error"
-          showIcon
-          style={{ marginTop: 8 }}
-          title="Couldn't load GPU spending"
-          description={loadError}
-        />
-      )}
 
       <Space wrap size="large" style={{ marginTop: 12 }}>
         <span>
           <Typography.Text type="secondary">Live pods: </Typography.Text>
-          <strong>{pods ? live.length : pending}</strong>
+          <strong>{pods ? live.length : podsPending}</strong>
         </span>
         <span>
           <Typography.Text type="secondary">Live rate: </Typography.Text>
-          <strong>{pods ? `${moneyToCurrency(rate)}/hour` : pending}</strong>
+          <strong>
+            {pods ? `${moneyToCurrency(rate)}/hour` : podsPending}
+          </strong>
         </span>
         <span>
           <Typography.Text type="secondary">
             Estimated spend ({PERIOD_LABELS[period].toLowerCase()}):{" "}
           </Typography.Text>
-          <strong>{spend ? moneyToCurrency(totals.estimated) : pending}</strong>
+          <strong>
+            {spend ? moneyToCurrency(totals.estimated) : spendPending}
+          </strong>
         </span>
         <span>
           <Typography.Text type="secondary">Billed by RunPod: </Typography.Text>
           <strong>
             {!spend
-              ? pending
+              ? spendPending
               : totals.billed == null
                 ? "not yet billed"
                 : moneyToCurrency(totals.billed)}
@@ -235,14 +256,24 @@ export function GpuCostDashboard({
       <Typography.Title level={5} style={{ marginTop: 20 }}>
         Live pods
       </Typography.Title>
+      {podsError && (
+        <Alert
+          role="alert"
+          type="error"
+          showIcon
+          style={{ marginBottom: 8 }}
+          title="Couldn't load live pods"
+          description={podsError}
+        />
+      )}
       <Table<GpuPodSummary>
         size="small"
         rowKey="id"
-        loading={pods == null && !loadError}
+        loading={pods == null && !podsError}
         dataSource={live}
         pagination={false}
         scroll={{ x: "max-content" }}
-        locale={{ emptyText: loadError ? "Unavailable." : "No live pods." }}
+        locale={{ emptyText: podsError ? "Unavailable." : "No live pods." }}
         columns={[
           { title: "Pod", dataIndex: "handle", key: "handle" },
           {
@@ -328,16 +359,26 @@ export function GpuCostDashboard({
           />
         </Space>
       </Space>
+      {spendError && (
+        <Alert
+          role="alert"
+          type="error"
+          showIcon
+          style={{ marginTop: 8 }}
+          title="Couldn't load GPU spending"
+          description={spendError}
+        />
+      )}
       <Table
         size="small"
         style={{ marginTop: 8 }}
         rowKey="key"
-        loading={spend == null && !loadError}
+        loading={spend == null && !spendError}
         dataSource={spend?.rows ?? []}
         pagination={false}
         scroll={{ x: "max-content" }}
         locale={{
-          emptyText: loadError
+          emptyText: spendError
             ? "Unavailable."
             : "No GPU spending in this period.",
         }}
