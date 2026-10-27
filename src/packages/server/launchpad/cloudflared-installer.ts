@@ -27,6 +27,11 @@ const CLOUDFLARED_SHA256: Record<string, string> = {
     "89297ebfb9e8c99c0dc013a1140601453cf3798d8306c5591651f4a3f5210be8",
 };
 
+// Whole download, including the body. The bay's systemd unit allows 120 s to
+// start; a stalled download must fail early enough to fall back to the
+// installed binary.
+const CLOUDFLARED_DOWNLOAD_TIMEOUT_MS = 45_000;
+
 export type CloudflaredDownloadSpec = {
   filename: string;
   url: string;
@@ -114,6 +119,7 @@ export async function ensureLocalCloudflaredBinary(opts: {
   logger: LoggerLike;
   // For tests: the download to use instead of this platform's release file.
   spec?: CloudflaredDownloadSpec;
+  downloadTimeoutMs?: number;
 }): Promise<string> {
   const spec = opts.spec ?? getCloudflaredDownloadSpec();
   if (!spec) {
@@ -133,7 +139,12 @@ export async function ensureLocalCloudflaredBinary(opts: {
       destination,
     });
     try {
-      await downloadCloudflared(spec, destination, opts.logger);
+      await downloadCloudflared(
+        spec,
+        destination,
+        opts.logger,
+        opts.downloadTimeoutMs ?? CLOUDFLARED_DOWNLOAD_TIMEOUT_MS,
+      );
     } catch (err) {
       (opts.logger.warn ?? opts.logger.info)(
         "cloudflared upgrade failed; keeping the installed binary",
@@ -142,7 +153,12 @@ export async function ensureLocalCloudflaredBinary(opts: {
     }
     return destination;
   }
-  await downloadCloudflared(spec, destination, opts.logger);
+  await downloadCloudflared(
+    spec,
+    destination,
+    opts.logger,
+    opts.downloadTimeoutMs ?? CLOUDFLARED_DOWNLOAD_TIMEOUT_MS,
+  );
   return destination;
 }
 
@@ -150,6 +166,7 @@ async function downloadCloudflared(
   spec: CloudflaredDownloadSpec,
   destination: string,
   logger: LoggerLike,
+  timeoutMs: number,
 ): Promise<void> {
   const binDir = dirname(destination);
   await mkdir(binDir, { recursive: true });
@@ -163,7 +180,10 @@ async function downloadCloudflared(
     destination,
   });
   try {
-    const response = await fetch(spec.url, { redirect: "follow" });
+    const response = await fetch(spec.url, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!response.ok) {
       throw new Error(
         `download failed with ${response.status} ${response.statusText}`,

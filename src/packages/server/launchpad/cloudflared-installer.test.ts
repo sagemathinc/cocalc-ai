@@ -175,9 +175,10 @@ describe("ensureLocalCloudflaredBinary", () => {
     expect(path).toBe(localCloudflaredBinaryPath(stateDir));
     expect(fetchMock).toHaveBeenCalledWith(
       `${RELEASE}/cloudflared-linux-amd64`,
-      {
+      expect.objectContaining({
         redirect: "follow",
-      },
+        signal: expect.anything(),
+      }),
     );
     expect(await installed()).toBe(current);
     expect(await leftovers()).toEqual([]);
@@ -236,6 +237,34 @@ describe("ensureLocalCloudflaredBinary", () => {
       "cloudflared upgrade failed; keeping the installed binary",
       expect.objectContaining({ installed: "2026.6.0" }),
     );
+  });
+
+  test("keeps the installed binary when the upgrade download stalls", async () => {
+    await installOld();
+    // Never answers; only the abort signal ends it.
+    fetchMock.mockImplementation(
+      (_url: string, init: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () =>
+            reject(init.signal.reason),
+          );
+        }),
+    );
+    const started = Date.now();
+    const path = await ensureLocalCloudflaredBinary({
+      stateDir,
+      logger,
+      spec: specFor(current),
+      downloadTimeoutMs: 50,
+    });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(path).toBe(localCloudflaredBinaryPath(stateDir));
+    expect(await installed()).toBe(old);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "cloudflared upgrade failed; keeping the installed binary",
+      expect.objectContaining({ installed: "2026.6.0" }),
+    );
+    expect(await leftovers()).toEqual([]);
   });
 
   test("refuses a download whose checksum does not match", async () => {
