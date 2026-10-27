@@ -335,6 +335,25 @@ describe("dedicated host spend maintenance", () => {
       dedupe_key: "host-drain:billing:host-1",
       status: "queued",
     });
+    // The drain is recorded in the enforcement state, and the host's status
+    // (which project routing follows) is not touched: a "draining" status
+    // made the drain's own moves unroutable until the next heartbeat.
+    const hostUpdates = queryMock.mock.calls.filter(([sql]) =>
+      `${sql}`.includes("UPDATE project_hosts"),
+    );
+    expect(
+      hostUpdates.some(
+        ([sql, params]) =>
+          `${sql}`.includes("status=") && params?.includes?.("draining"),
+      ),
+    ).toBe(false);
+    expect(
+      hostUpdates.some(
+        ([sql, params]) =>
+          `${sql}`.includes("SET metadata=(") &&
+          params?.[1]?.billing?.enforcement?.state === "draining",
+      ),
+    ).toBe(true);
     expect(
       notifyDedicatedHostBillingEnforcementBestEffortMock,
     ).toHaveBeenCalledWith(
@@ -1266,18 +1285,18 @@ describe("dedicated host spend maintenance", () => {
           ],
         };
       }
-      if (
-        sql.includes("UPDATE project_hosts") &&
-        sql.includes("SET status=$2")
-      ) {
+      if (sql.includes("UPDATE project_hosts")) {
+        // The rescue is recorded in the enforcement state only: the host's
+        // status, which project routing follows, is left as it is.
+        expect(sql).not.toContain("status=");
+        expect(sql).toContain("SET metadata=(");
         expect(params?.[0]).toBe("host-1");
-        expect(params?.[1]).toBe("draining");
-        expect(params?.[2].billing.enforcement).toMatchObject({
+        expect(params?.[1].billing.enforcement).toMatchObject({
           state: "draining",
           final_backup_status: "unknown",
           rescue_requested_at: expect.any(String),
         });
-        return { rows: [], rowCount: 1 };
+        return { rows: [{}], rowCount: 1 };
       }
       if (sql.includes("pg_advisory_unlock")) {
         return { rows: [] };

@@ -212,6 +212,24 @@ describe("route-project bay-aware routing", () => {
     expect(warnMock).not.toHaveBeenCalled();
   });
 
+  it("routes projects to running, active and draining hosts", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    const { materializeProjectHostTarget, ROUTABLE_HOST_STATUSES } =
+      await import("./route-project");
+    // A draining host still holds its projects until each one has moved, and
+    // a move first writes a sentinel through this route.
+    expect([...ROUTABLE_HOST_STATUSES]).toEqual([
+      "running",
+      "active",
+      "draining",
+    ]);
+    await materializeProjectHostTarget(PROJECT_ID, { fresh: true });
+    const [sql] = queryMock.mock.calls[0];
+    expect(sql).toContain(
+      "project_hosts.status IN ('running', 'active', 'draining')",
+    );
+  });
+
   it("refuses to route a project when the assigned host is not running", async () => {
     queryMock.mockResolvedValueOnce({
       rows: [
