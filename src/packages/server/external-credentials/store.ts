@@ -158,7 +158,8 @@ function selectorValues(selector: ExternalCredentialSelector) {
   ] as const;
 }
 
-function selectorLockKey(selector: ExternalCredentialSelector): string {
+// Exported for the concurrency tests, which hold this lock themselves.
+export function selectorLockKey(selector: ExternalCredentialSelector): string {
   return `external-credential:${selectorValues(selector).join(":")}`;
 }
 
