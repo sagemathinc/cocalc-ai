@@ -7,6 +7,7 @@ import type {
 import {
   assertNebiusSpotOffered,
   NEBIUS_SPOT_OFFERED,
+  NEBIUS_SPOT_UNAVAILABLE_MESSAGE,
 } from "@cocalc/util/consts/nebius-spot";
 import getLogger from "@cocalc/backend/logger";
 import { NebiusClient, type NebiusCreds } from "./client";
@@ -1531,13 +1532,16 @@ export class NebiusProvider implements CloudProvider {
     runtime: HostRuntime,
     creds: NebiusProviderCreds,
   ): Promise<string | undefined> {
+    if (NEBIUS_SPOT_OFFERED) return undefined;
     await using client = new NebiusClient(creds);
-    try {
-      await assertPreemptibleStartAllowed(client, runtime);
-    } catch (err) {
-      return `${(err as Error)?.message ?? err}`;
-    }
-    return undefined;
+    // a failed lookup throws (and the work retries); only an instance that
+    // really is preemptible is refused
+    const instance = await client.instances.get(
+      GetInstanceRequest.create({ id: runtime.instance_id }),
+    );
+    return instanceIsPreemptible(instance as any)
+      ? NEBIUS_SPOT_UNAVAILABLE_MESSAGE
+      : undefined;
   }
 
   async restartHost(runtime: HostRuntime, creds: NebiusProviderCreds) {

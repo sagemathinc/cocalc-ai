@@ -4006,65 +4006,106 @@ describe("spot recovery fallback ladder", () => {
 });
 
 describe("a restart the provider refuses (Nebius Spot while it is off)", () => {
-  it("leaves the running host untouched: no status, last_seen or DNS change", async () => {
-    const hostId = "5a1f0c2e-9b7d-4e61-8f3a-2c4d6e8f0a1b";
-    const restartHost = jest.fn(async () => undefined);
-    const stopHost = jest.fn(async () => undefined);
-    const startHost = jest.fn(async () => undefined);
-    const startRefusal = jest.fn(
-      async () =>
-        "Nebius Spot is unavailable until spot pricing support lands; use Standard pricing",
-    );
-    getProviderContextMock.mockResolvedValue({
-      entry: {
-        provider: { restartHost, stopHost, startHost, startRefusal },
-        capabilities: { supportsStop: true },
+  const hostId = "5a1f0c2e-9b7d-4e61-8f3a-2c4d6e8f0a1b";
+  const REFUSAL =
+    "Nebius Spot is unavailable until spot pricing support lands; use Standard pricing";
+  const provider = () => ({
+    restartHost: jest.fn(async () => undefined),
+    stopHost: jest.fn(async () => undefined),
+    startHost: jest.fn(async () => undefined),
+    startRefusal: jest.fn(async () => REFUSAL),
+  });
+  const seed = async (status: string, last_seen: Date | undefined) =>
+    await upsertProjectHost({
+      id: hostId,
+      name: "Nebius spot host",
+      region: "eu-north1",
+      status,
+      last_seen,
+      metadata: {
+        owner: "acct-owner",
+        desired_state: "running",
+        last_action: "restart",
+        last_action_status: "pending",
+        machine: { cloud: "nebius", machine_type: "1gpu-16vcpu-200gb" },
+        effective_pricing_model: "spot",
+        runtime: { provider: "nebius", instance_id: "instance-1" },
       },
+    } as any);
+  const run = async (action: "restart" | "hard_restart") => {
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers[action]({
+      id: `work-${action}`,
+      vm_id: hostId,
+      action,
+      payload: { provider: "nebius" },
+    } as any);
+  };
+  const read = async () =>
+    (
+      await getPool().query(
+        "SELECT status, last_seen, metadata FROM project_hosts WHERE id=$1",
+        [hostId],
+      )
+    ).rows[0];
+
+  it("settles a queued restart (status restarting, no last_seen) back to running and records why", async () => {
+    const p = provider();
+    getProviderContextMock.mockResolvedValue({
+      entry: { provider: p, capabilities: { supportsStop: true } },
       creds: {},
     });
     const contentDns = await import("./host-content-dns");
     const releaseDns = jest
       .spyOn(contentDns, "releaseHostContentDns")
       .mockResolvedValue(undefined as any);
-    const lastSeen = new Date("2026-10-27T03:00:00.000Z");
-    await upsertProjectHost({
-      id: hostId,
-      name: "Nebius spot host",
-      region: "eu-north1",
-      status: "running",
-      last_seen: lastSeen,
-      metadata: {
-        owner: "acct-owner",
-        desired_state: "running",
-        machine: { cloud: "nebius", machine_type: "1gpu-16vcpu-200gb" },
-        effective_pricing_model: "spot",
-        runtime: { provider: "nebius", instance_id: "instance-1" },
-      },
-    } as any);
-
-    const { cloudHostHandlers } = await import("./host-work");
-    for (const action of ["restart", "hard_restart"] as const) {
-      await cloudHostHandlers[action]({
-        id: `work-${action}`,
-        vm_id: hostId,
-        action,
-        payload: { provider: "nebius" },
-      } as any);
-    }
-
-    expect(startRefusal).toHaveBeenCalledTimes(2);
-    expect(restartHost).not.toHaveBeenCalled();
-    expect(stopHost).not.toHaveBeenCalled();
-    expect(startHost).not.toHaveBeenCalled();
-    expect(releaseDns).not.toHaveBeenCalled();
-    const { rows } = await getPool().query(
-      "SELECT status, last_seen FROM project_hosts WHERE id=$1",
+    // as the restart API leaves it before queueing
+    await seed("restarting", undefined);
+    await getPool().query(
+      "UPDATE project_hosts SET last_seen=NULL WHERE id=$1",
       [hostId],
     );
-    expect(rows[0].status).toBe("running");
-    expect(new Date(rows[0].last_seen).toISOString()).toBe(
-      lastSeen.toISOString(),
-    );
+
+    await run("restart");
+
+    expect(p.restartHost).not.toHaveBeenCalled();
+    expect(p.stopHost).not.toHaveBeenCalled();
+    expect(p.startHost).not.toHaveBeenCalled();
+    expect(releaseDns).not.toHaveBeenCalled();
+    const row = await read();
+    expect(row.status).toBe("running");
+    expect(row.last_seen).not.toBeNull();
+    expect(row.metadata.last_action_status).toBe("failure");
+    expect(row.metadata.last_action_error).toBe(REFUSAL);
     releaseDns.mockRestore();
+  });
+
+  it("leaves an already-running host's status and last_seen untouched", async () => {
+    const p = provider();
+    getProviderContextMock.mockResolvedValue({
+      entry: { provider: p, capabilities: { supportsStop: true } },
+      creds: {},
+    });
+    const lastSeen = new Date("2026-10-27T03:00:00.000Z");
+    await seed("running", lastSeen);
+
+    await run("hard_restart");
+
+    expect(p.restartHost).not.toHaveBeenCalled();
+    const row = await read();
+    expect(row.status).toBe("running");
+    expect(new Date(row.last_seen).toISOString()).toBe(lastSeen.toISOString());
+  });
+
+  it("(control) a failed instance lookup is not a refusal: the restart fails and can retry", async () => {
+    const p = provider();
+    p.startRefusal.mockRejectedValue(new Error("provider unavailable"));
+    getProviderContextMock.mockResolvedValue({
+      entry: { provider: p, capabilities: { supportsStop: true } },
+      creds: {},
+    });
+    await seed("restarting", undefined);
+    await expect(run("restart")).rejects.toThrow(/provider unavailable/);
+    expect(p.restartHost).not.toHaveBeenCalled();
   });
 });

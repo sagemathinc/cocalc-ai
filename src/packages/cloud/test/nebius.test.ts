@@ -1283,6 +1283,29 @@ describe("NebiusProvider while Nebius Spot is off (#684)", () => {
     expect(instancesStartMock).toHaveBeenCalledTimes(1);
   });
 
+  it("reports a start refusal only for a preemptible instance, and lets lookup errors through", async () => {
+    const provider = new NebiusProvider();
+    instancesGetMock.mockResolvedValueOnce({
+      spec: {
+        preemptible: {
+          onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+          priority: 0,
+        },
+      },
+    });
+    await expect(
+      provider.startRefusal({ instance_id: "instance-1" } as any, creds),
+    ).resolves.toMatch(/Nebius Spot is unavailable/);
+    instancesGetMock.mockResolvedValueOnce({ spec: {} });
+    await expect(
+      provider.startRefusal({ instance_id: "instance-1" } as any, creds),
+    ).resolves.toBeUndefined();
+    instancesGetMock.mockRejectedValueOnce(new Error("NOT_FOUND"));
+    await expect(
+      provider.startRefusal({ instance_id: "instance-1" } as any, creds),
+    ).rejects.toThrow("NOT_FOUND");
+  });
+
   it("still starts a preemptible instance for a billing rescue (final backups)", async () => {
     await new NebiusProvider().startHost(
       { instance_id: "instance-1" } as any,
