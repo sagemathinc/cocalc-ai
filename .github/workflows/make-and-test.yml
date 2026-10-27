@@ -12,9 +12,11 @@ on:
   push:
     branches:
       - main
+      - next
   pull_request:
     branches:
       - main
+      - next
   workflow_dispatch:
     inputs:
       debug_enabled:
@@ -386,3 +388,38 @@ jobs:
             /tmp/multibay/*/bay-*/*.log
           if-no-files-found: warn
           retention-days: 7
+
+  # The one check branch protection requires. The test lanes are planned per
+  # change, so their job names vary; this job does not. It fails unless the
+  # plan succeeded and every other job succeeded or was skipped by the plan.
+  ci-ok:
+    needs: [plan, build, typecheck, checks, test, multibay]
+    if: ${{ !cancelled() }}
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+
+    steps:
+      - name: Every job succeeded or was skipped by the plan
+        env:
+          PLAN: ${{ needs.plan.result }}
+          RESULTS: >-
+            build=${{ needs.build.result }}
+            typecheck=${{ needs.typecheck.result }}
+            checks=${{ needs.checks.result }}
+            test=${{ needs.test.result }}
+            multibay=${{ needs.multibay.result }}
+        run: |
+          status=0
+          if [[ "$PLAN" != "success" ]]; then
+            echo "::error::plan: $PLAN"
+            status=1
+          fi
+          for result in $RESULTS; do
+            case "${result#*=}" in
+              success | skipped) ;;
+              *)
+                echo "::error::${result%%=*}: ${result#*=}"
+                status=1
+                ;;
+            esac
+          done
+          exit $status
