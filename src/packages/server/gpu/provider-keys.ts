@@ -216,9 +216,12 @@ export async function setGpuProviderKey(
     // The browser may have given up; storing now would surprise it.
     throw Error("RunPod took too long to check this key. Try again shortly.");
   }
-  // A removal (say, in another tab) while this key was being checked wins:
-  // saving now would silently reconnect an account the user just
-  // disconnected. One second of slack covers clock skew with the database.
+  // A removal (say, in another tab) while this key was being checked
+  // normally wins: saving would reconnect an account the user just
+  // disconnected. This is a check, not a lock: a removal landing in the few
+  // milliseconds between it and the store below can still lose, which only
+  // stores the key this same user just pasted (accepted as low impact). One
+  // second of slack covers clock skew with the database.
   const removedSince = (
     await listAccountExternalCredentialsRouted({
       owner_account_id: account_id,
