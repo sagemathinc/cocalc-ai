@@ -50,6 +50,9 @@ export interface MergeApprovalGitHubSnapshot {
   base_ref: string;
   head_ref: string;
   head_sha: string;
+  // The base commit the files were read against: with head_sha, GitHub's
+  // compare view of exactly these commits.
+  base_sha: string;
   html_url: string;
   additions: number;
   deletions: number;
@@ -58,7 +61,17 @@ export interface MergeApprovalGitHubSnapshot {
   files: { filename: string; additions: number; deletions: number }[];
   files_truncated: boolean;
   checks: { name: string; conclusion: string | null; status: string }[];
+  // Counted over everything GitHub returned, before any list was shortened.
+  check_summary: { total: number; failing: number; pending: number };
+  // True when checks lists fewer than GitHub has (see check_summary).
+  checks_truncated: boolean;
   reviews: { author: string; state: string; commit_id: string | null }[];
+  review_summary: {
+    total: number;
+    changes_requested: number;
+    approved: number;
+  };
+  reviews_truncated: boolean;
   read_at: string;
 }
 

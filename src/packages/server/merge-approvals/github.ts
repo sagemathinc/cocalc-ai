@@ -162,7 +162,18 @@ function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-// Trim the files list until the snapshot fits the size cap.
+const FAILING_CONCLUSIONS = new Set([
+  "failure",
+  "timed_out",
+  "cancelled",
+  "action_required",
+  "startup_failure",
+  "stale",
+  "error",
+]);
+
+// Trim the lists until the snapshot fits the size cap, saying so: the
+// summaries still count everything GitHub returned.
 function fitSnapshot(
   snapshot: MergeApprovalGitHubSnapshot,
 ): MergeApprovalGitHubSnapshot {
@@ -174,18 +185,35 @@ function fitSnapshot(
         Math.floor(snapshot.files.length / 2),
       );
       snapshot.files_truncated = true;
+    } else if (snapshot.checks.length > 10 || snapshot.reviews.length > 10) {
+      // Keep failing checks and change requests first.
+      snapshot.checks_truncated ||= snapshot.checks.length > 10;
+      snapshot.reviews_truncated ||= snapshot.reviews.length > 10;
+      snapshot.checks = [...snapshot.checks]
+        .sort((a, b) => checkRank(a) - checkRank(b))
+        .slice(0, 10);
+      snapshot.reviews = [...snapshot.reviews]
+        .sort((a, b) => reviewRank(a) - reviewRank(b))
+        .slice(0, 10);
     } else if (snapshot.checks.length > 0 || snapshot.reviews.length > 0) {
-      snapshot.checks = snapshot.checks.slice(0, 10);
-      snapshot.reviews = snapshot.reviews.slice(0, 10);
-      if (size() > MAX_MERGE_APPROVAL_SNAPSHOT_BYTES) {
-        snapshot.checks = [];
-        snapshot.reviews = [];
-      }
+      snapshot.checks_truncated ||= snapshot.checks.length > 0;
+      snapshot.reviews_truncated ||= snapshot.reviews.length > 0;
+      snapshot.checks = [];
+      snapshot.reviews = [];
     } else {
       throw new MergeApprovalGitHubError("pull request snapshot is too large");
     }
   }
   return snapshot;
+}
+
+function checkRank(c: { conclusion: string | null; status: string }): number {
+  if (c.conclusion != null && FAILING_CONCLUSIONS.has(c.conclusion)) return 0;
+  return c.status === "completed" ? 2 : 1;
+}
+
+function reviewRank(r: { state: string }): number {
+  return r.state === "CHANGES_REQUESTED" ? 0 : r.state === "APPROVED" ? 1 : 2;
 }
 
 interface PullRequestTarget {
@@ -232,9 +260,11 @@ export async function readPullRequestHead({
 
 // What GitHub says about the pull request now. The files list follows the
 // PR's current head, and the App can't read commits by SHA (no Contents
-// permission), so the snapshot is read again if the head or base moved
-// while it was read, or if a complete files list doesn't add up to the PR's
-// totals: every part of it then describes the same commits.
+// permission). So the head and base are read again after every page of
+// files and at the end, and the snapshot is read again if they moved at any
+// point, or if the files don't fit the PR's totals (a complete list must add
+// up to them; a shortened one may not exceed them). The card also links to
+// GitHub's compare view of the exact base and head SHAs.
 export async function readPullRequestSnapshot(
   target: PullRequestTarget,
 ): Promise<MergeApprovalGitHubSnapshot> {
@@ -270,6 +300,13 @@ async function readSnapshotOnce({
   const pr = await github("GET", `/repos/${repo}/pulls/${pr_number}`, token);
   const { head_sha, base_sha } = pullRequestHead(pr);
 
+  const samePr = async () => {
+    const now = pullRequestHead(
+      await github("GET", `/repos/${repo}/pulls/${pr_number}`, token),
+    );
+    return now.head_sha === head_sha && now.base_sha === base_sha;
+  };
+  let unmoved = true;
   const files: MergeApprovalGitHubSnapshot["files"] = [];
   for (let page = 1; files.length < MAX_FILES; page++) {
     const batch = await github(
@@ -285,6 +322,10 @@ async function readSnapshotOnce({
         deletions: num(f?.deletions),
       });
     }
+    if (!(await samePr())) {
+      unmoved = false;
+      break;
+    }
     if (batch.length < FILES_PER_PAGE) break;
   }
   const changed_files = num(pr?.changed_files);
@@ -299,19 +340,19 @@ async function readSnapshotOnce({
     `/repos/${repo}/commits/${head_sha}/status?per_page=${MAX_CHECKS}`,
     token,
   );
+  const runList = Array.isArray(runs?.check_runs) ? runs.check_runs : [];
+  const statusList = Array.isArray(statuses?.statuses) ? statuses.statuses : [];
   const checks: MergeApprovalGitHubSnapshot["checks"] = [
-    ...(Array.isArray(runs?.check_runs) ? runs.check_runs : []).map((r) => ({
+    ...runList.map((r) => ({
       name: str(r?.name, 200),
       status: str(r?.status, 40),
       conclusion: r?.conclusion == null ? null : str(r.conclusion, 40),
     })),
-    ...(Array.isArray(statuses?.statuses) ? statuses.statuses : []).map(
-      (s) => ({
-        name: str(s?.context, 200),
-        status: s?.state === "pending" ? "pending" : "completed",
-        conclusion: s?.state === "pending" ? null : str(s?.state, 40),
-      }),
-    ),
+    ...statusList.map((s) => ({
+      name: str(s?.context, 200),
+      status: s?.state === "pending" ? "pending" : "completed",
+      conclusion: s?.state === "pending" ? null : str(s?.state, 40),
+    })),
   ];
 
   const reviewList = await github(
@@ -319,21 +360,29 @@ async function readSnapshotOnce({
     `/repos/${repo}/pulls/${pr_number}/reviews?per_page=${MAX_REVIEWS}`,
     token,
   );
-  const reviews: MergeApprovalGitHubSnapshot["reviews"] = (
-    Array.isArray(reviewList) ? reviewList : []
-  ).map((r) => ({
-    author: str(r?.user?.login, 100),
-    state: str(r?.state, 40),
-    commit_id: r?.commit_id == null ? null : str(r.commit_id, 40),
-  }));
+  const reviewRows = Array.isArray(reviewList) ? reviewList : [];
+  const reviews: MergeApprovalGitHubSnapshot["reviews"] = reviewRows.map(
+    (r) => ({
+      author: str(r?.user?.login, 100),
+      state: str(r?.state, 40),
+      commit_id: r?.commit_id == null ? null : str(r.commit_id, 40),
+    }),
+  );
 
   const additions = num(pr?.additions);
   const deletions = num(pr?.deletions);
   const complete = files.length === changed_files;
+  const fileAdditions = files.reduce((n, f) => n + f.additions, 0);
+  const fileDeletions = files.reduce((n, f) => n + f.deletions, 0);
   const consistent =
-    !complete ||
-    (files.reduce((n, f) => n + f.additions, 0) === additions &&
-      files.reduce((n, f) => n + f.deletions, 0) === deletions);
+    unmoved &&
+    files.length <= changed_files &&
+    (complete
+      ? fileAdditions === additions && fileDeletions === deletions
+      : fileAdditions <= additions && fileDeletions <= deletions);
+  // More than one page means GitHub has more than these.
+  const totalRuns = Math.max(num(runs?.total_count), runList.length);
+  const totalStatuses = Math.max(num(statuses?.total_count), statusList.length);
   const snapshot: MergeApprovalGitHubSnapshot = {
     title: str(pr?.title, 500),
     state: pr?.merged ? "merged" : str(pr?.state, 20),
@@ -342,6 +391,7 @@ async function readSnapshotOnce({
     base_ref: str(pr?.base?.ref, 255),
     head_ref: str(pr?.head?.ref, 255),
     head_sha,
+    base_sha,
     html_url: str(pr?.html_url, 500),
     additions,
     deletions,
@@ -349,7 +399,21 @@ async function readSnapshotOnce({
     files,
     files_truncated: files.length < changed_files,
     checks,
+    check_summary: {
+      total: totalRuns + totalStatuses,
+      failing: checks.filter((c) => checkRank(c) === 0).length,
+      pending: checks.filter((c) => checkRank(c) === 1).length,
+    },
+    checks_truncated:
+      totalRuns > runList.length || totalStatuses > statusList.length,
     reviews,
+    review_summary: {
+      total: reviews.length,
+      changes_requested: reviews.filter((r) => r.state === "CHANGES_REQUESTED")
+        .length,
+      approved: reviews.filter((r) => r.state === "APPROVED").length,
+    },
+    reviews_truncated: reviewRows.length >= MAX_REVIEWS,
     read_at: new Date().toISOString(),
   };
   return { snapshot, base_sha, consistent };

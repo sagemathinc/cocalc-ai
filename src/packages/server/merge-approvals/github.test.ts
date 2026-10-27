@@ -38,10 +38,14 @@ function fakeGitHub({
   pr = {},
   files = [{ filename: "a.ts", additions: 1, deletions: 2 }],
   overrides = {},
+  checkRuns,
+  reviews,
 }: {
   pr?: Record<string, unknown> | (() => Record<string, unknown>);
   files?: any[];
   overrides?: Record<string, () => Response>;
+  checkRuns?: any;
+  reviews?: any[];
 } = {}) {
   const calls: Call[] = [];
   const fetchImpl = async (url: string, init?: RequestInit) => {
@@ -85,11 +89,13 @@ function fakeGitHub({
         base,
       )
     ) {
-      return json({
-        check_runs: [
-          { name: "test", status: "completed", conclusion: "success" },
-        ],
-      });
+      return json(
+        checkRuns ?? {
+          check_runs: [
+            { name: "test", status: "completed", conclusion: "success" },
+          ],
+        },
+      );
     }
     if (
       /^\/repos\/sagemathinc\/cocalc-ai\/commits\/[0-9a-f]{40}\/status$/.test(
@@ -99,9 +105,11 @@ function fakeGitHub({
       return json({ statuses: [{ context: "ci/legacy", state: "pending" }] });
     }
     if (base === "/repos/sagemathinc/cocalc-ai/pulls/12/reviews") {
-      return json([
-        { user: { login: "codex" }, state: "COMMENTED", commit_id: HEAD },
-      ]);
+      return json(
+        reviews ?? [
+          { user: { login: "codex" }, state: "COMMENTED", commit_id: HEAD },
+        ],
+      );
     }
     return json({ message: "Not Found" }, 404);
   };
@@ -255,7 +263,8 @@ describe("merge approval GitHub App", () => {
   it("reads again when the head moves while the snapshot is read", async () => {
     let reads = 0;
     const gh = fakeGitHub({
-      // The second PR read (the check after the first snapshot) sees a push.
+      // The second PR read (the check after the first files page) sees a
+      // push that is undone again before the end.
       pr: () =>
         ++reads === 2 ? { head: { ref: "fix", sha: "d".repeat(40) } } : {},
     });
@@ -266,7 +275,9 @@ describe("merge approval GitHub App", () => {
       pr_number: 12,
     });
     expect(snap.head_sha).toBe(HEAD);
-    expect(reads).toBe(4);
+    expect(snap.base_sha).toBe(BASE);
+    // PR, page check and final check; then all three again.
+    expect(reads).toBe(6);
   });
 
   it("refuses a PR that keeps changing, or whose files don't add up", async () => {
@@ -313,5 +324,72 @@ describe("merge approval GitHub App", () => {
       draft: false,
     });
     expect(gh.calls.filter((c) => c.method === "GET")).toHaveLength(1);
+  });
+
+  it("refuses a shortened files list that exceeds the PR's totals", async () => {
+    const files = Array.from({ length: 300 }, (_, i) => ({
+      filename: `f${i}.ts`,
+      additions: 1,
+      deletions: 0,
+    }));
+    const gh = fakeGitHub({
+      files,
+      pr: { changed_files: 400, additions: 10, deletions: 0 },
+    });
+    setMergeApprovalGitHubFetchForTests(gh.fetchImpl);
+    await expect(
+      readPullRequestSnapshot({
+        config,
+        repo: "sagemathinc/cocalc-ai",
+        pr_number: 12,
+      }),
+    ).rejects.toMatchObject({ code: "head_changed" });
+  });
+
+  it("summarizes checks and reviews and says when lists are shortened", async () => {
+    const runs = Array.from({ length: 100 }, (_, i) => ({
+      name: `${"x".repeat(150)}-${i}`,
+      status: "completed",
+      conclusion: i === 77 ? "failure" : "success",
+    }));
+    const reviews = Array.from({ length: 100 }, (_, i) => ({
+      user: { login: `r${i}` },
+      state: i === 55 ? "CHANGES_REQUESTED" : "COMMENTED",
+      commit_id: HEAD,
+    }));
+    const gh = fakeGitHub({
+      checkRuns: { total_count: 140, check_runs: runs },
+      reviews,
+      files: Array.from({ length: 300 }, (_, i) => ({
+        filename: `${"d/".repeat(200)}f${i}.ts`,
+        additions: 0,
+        deletions: 0,
+      })),
+      pr: { changed_files: 300 },
+    });
+    setMergeApprovalGitHubFetchForTests(gh.fetchImpl);
+    const snap = await readPullRequestSnapshot({
+      config,
+      repo: "sagemathinc/cocalc-ai",
+      pr_number: 12,
+    });
+    expect(snap.check_summary).toEqual({ total: 141, failing: 1, pending: 1 });
+    expect(snap.checks_truncated).toBe(true);
+    expect(snap.review_summary).toEqual({
+      total: 100,
+      changes_requested: 1,
+      approved: 0,
+    });
+    expect(snap.reviews_truncated).toBe(true);
+    // Whatever was shortened, failures and change requests come first.
+    if (snap.checks.length < 101) {
+      expect(snap.checks[0]).toMatchObject({ conclusion: "failure" });
+    }
+    if (snap.reviews.length < 100) {
+      expect(snap.reviews[0]).toMatchObject({ state: "CHANGES_REQUESTED" });
+    }
+    expect(Buffer.byteLength(JSON.stringify(snap))).toBeLessThanOrEqual(
+      MAX_MERGE_APPROVAL_SNAPSHOT_BYTES,
+    );
   });
 });
