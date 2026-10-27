@@ -151,6 +151,7 @@ import {
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { getNebiusComputeCapacityAdvice } from "@cocalc/server/compute/provider";
 import { assertNebiusSpotOffered } from "@cocalc/util/consts/nebius-spot";
+import { assertProjectHostProviderOffered } from "@cocalc/server/cloud/project-host-provider-offered";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
 import {
@@ -7445,6 +7446,9 @@ export async function updateHostMachine({
   let nextRegion = row.region ?? "";
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
+  if (requestedCloud && requestedCloud !== machineCloud) {
+    await assertProjectHostProviderOffered(requestedCloud);
+  }
   const effectiveFundingCloud = requestedCloud ?? machineCloud;
   assertProjectHostDiskTypeSupported({
     cloud: effectiveFundingCloud,

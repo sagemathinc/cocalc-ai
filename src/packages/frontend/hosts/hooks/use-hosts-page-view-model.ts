@@ -714,11 +714,13 @@ export const useHostsPageViewModel = () => {
     provider: catalogProvider,
     onError: (text) => console.warn(text),
   });
+  // prices of existing hosts: by provider enablement, not by which
+  // providers are offered for new hosts
   const { catalog: gcpPricingCatalog } = useHostCatalog(hub, {
-    provider: enabledProviders.includes("gcp") ? "gcp" : undefined,
+    provider: flags.enabled.gcp ? "gcp" : undefined,
   });
   const { catalog: nebiusPricingCatalog } = useHostCatalog(hub, {
-    provider: enabledProviders.includes("nebius") ? "nebius" : undefined,
+    provider: flags.enabled.nebius ? "nebius" : undefined,
   });
   const hasSelfHostHosts = React.useMemo(
     () => hosts.some((host) => host.machine?.cloud === "self-host"),

@@ -1,6 +1,16 @@
 import getPool from "@cocalc/database/pool";
 import { pii_expire } from "./account/pii";
 import { uuid } from "@cocalc/util/misc";
+import {
+  PROJECT_MEMBERSHIP_AUDIT_EVENTS,
+  PROJECT_MEMBERSHIP_AUDIT_RETENTION,
+} from "./schema/project-membership-audit";
+
+// Project membership audit rows have a fixed retention, whatever the PII
+// retention setting (schema/project-membership-audit.ts).
+const MEMBERSHIP_AUDIT_EVENTS = new Set<string>(
+  PROJECT_MEMBERSHIP_AUDIT_EVENTS,
+);
 
 // log events, which contain personal information (email, account_id, ...)
 const PII_EVENTS = new Set([
@@ -42,7 +52,13 @@ export default async function centralLog({
   const pool = getPool();
 
   let expire;
-  if (value["ip_address"] || value["email_address"] || PII_EVENTS.has(event)) {
+  if (MEMBERSHIP_AUDIT_EVENTS.has(event)) {
+    expire = `NOW() + INTERVAL '${PROJECT_MEMBERSHIP_AUDIT_RETENTION}'`;
+  } else if (
+    value["ip_address"] ||
+    value["email_address"] ||
+    PII_EVENTS.has(event)
+  ) {
     const date = await pii_expire();
     if (date == null) {
       expire = "NOW() + INTERVAL '6 MONTHS'";

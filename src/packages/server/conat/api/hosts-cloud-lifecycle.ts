@@ -36,6 +36,7 @@ import { randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { assertNebiusSpotOffered } from "@cocalc/util/consts/nebius-spot";
+import { assertProjectHostProviderOffered } from "@cocalc/server/cloud/project-host-provider-offered";
 import {
   ensureConnectorRecord,
   createConnectorRecord,
@@ -343,6 +344,7 @@ export async function createHostInternalHelper({
   const title = normalizeProjectHostTitle(name);
   const id = randomUUID();
   const machineCloud = normalizeProviderId(machine?.cloud);
+  await assertProjectHostProviderOffered(machineCloud);
   const isSelfHost = machineCloud === "self-host";
   const shouldStartAfterCreate = !!start_after_create;
   const normalizedPricingModel = normalizeHostPricingModel(pricing_model);

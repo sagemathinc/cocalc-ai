@@ -340,12 +340,18 @@ export type ProviderCatalogSummary = Record<string, any>;
 
 export type HostProviderFlags = {
   enabled: Record<HostProvider, boolean>;
+  // whether new project hosts may use the provider; defaults to `enabled`
+  creatable?: Record<HostProvider, boolean>;
 };
 
 export type HostProviderDescriptor = {
   id: HostProvider;
   label: string;
   featureFlagKey?: string;
+  // a further setting that must be on to offer the provider for project
+  // hosts; without it the provider stays enabled for everything else (such
+  // as catalog refresh for dedicated VMs)
+  hostsFeatureFlagKey?: string;
   localOnly?: boolean;
   supports: ProviderSupports;
   storage?: ProviderStorageSupport;
@@ -3067,6 +3073,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
     id: "nebius",
     label: "Nebius AI Cloud",
     featureFlagKey: "project_hosts_nebius_enabled",
+    hostsFeatureFlagKey: "project_hosts_nebius_hosts_enabled",
     summarizeCatalog: summarizeNebiusCatalog,
     supports: {
       region: true,
@@ -3306,13 +3313,27 @@ export const getProviderEnablement = (opts: {
       enabled[entry.id] = true;
     }
   }
-  return { enabled };
+  const creatable = {} as Record<HostProvider, boolean>;
+  for (const entry of Object.values(PROVIDER_REGISTRY)) {
+    creatable[entry.id] =
+      enabled[entry.id] &&
+      (!entry.hostsFeatureFlagKey ||
+        normalizeFlag(
+          readCustomizeFlag(opts.customize, entry.hostsFeatureFlagKey),
+        ));
+  }
+  return { enabled, creatable };
 };
 
 export const isProviderEnabled = (
   provider: HostProvider,
   flags: HostProviderFlags,
 ) => !!flags.enabled[provider];
+
+export const isProviderCreatable = (
+  provider: HostProvider,
+  flags: HostProviderFlags,
+) => !!(flags.creatable ?? flags.enabled)[provider];
 
 export const getProviderDescriptor = (provider: HostProvider) =>
   PROVIDER_REGISTRY[provider];
@@ -3370,7 +3391,7 @@ export const getProviderOptionsList = (
   flags: HostProviderFlags,
 ): Array<{ value: HostProvider; label: string }> =>
   (Object.values(PROVIDER_REGISTRY) as HostProviderDescriptor[])
-    .filter((entry) => isProviderEnabled(entry.id, flags))
+    .filter((entry) => isProviderCreatable(entry.id, flags))
     .map((entry) => ({ value: entry.id, label: entry.label }));
 
 export const getRefreshProviders = (

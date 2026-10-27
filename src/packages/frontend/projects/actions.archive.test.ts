@@ -396,7 +396,7 @@ describe("ProjectsActions archive flow", () => {
       mockedWebappClient.conat_client.hub.projects.archiveProject,
     ).toHaveBeenCalledWith({
       project_id,
-      timeout: 30000,
+      timeout: 600000,
     });
     expect(setState).toHaveBeenCalledWith({
       control_status: "Stopping project before final backup...",
@@ -557,7 +557,7 @@ describe("ProjectsActions archive flow", () => {
       mockedWebappClient.conat_client.hub.projects.archiveProject,
     ).toHaveBeenCalledWith({
       project_id,
-      timeout: 30000,
+      timeout: 600000,
     });
     expect(setState).toHaveBeenCalledWith({
       control_status: "Archiving project...",
@@ -615,7 +615,7 @@ describe("ProjectsActions archive flow", () => {
       mockedWebappClient.conat_client.hub.projects.archiveProject,
     ).toHaveBeenCalledWith({
       project_id,
-      timeout: 30000,
+      timeout: 600000,
       allow_oversized_skip: true,
     });
   });
@@ -638,7 +638,7 @@ describe("ProjectsActions archive flow", () => {
       mockedWebappClient.conat_client.hub.projects.archiveProject,
     ).toHaveBeenCalledWith({
       project_id,
-      timeout: 30000,
+      timeout: 600000,
     });
   });
 
@@ -685,7 +685,7 @@ describe("ProjectsActions archive flow", () => {
       mockedWebappClient.conat_client.hub.projects.archiveProject,
     ).toHaveBeenCalledWith({
       project_id,
-      timeout: 30000,
+      timeout: 600000,
     });
     expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
       query: {
@@ -728,11 +728,13 @@ describe("ProjectsActions archive flow", () => {
     expect(setState).toHaveBeenCalledWith({
       control_status: "Archiving project from deprovisioned host...",
     });
+    // the owning bay re-checks the placement this client saw: it may be stale
     expect(
       mockedWebappClient.conat_client.hub.projects.archiveProject,
     ).toHaveBeenCalledWith({
       project_id,
-      timeout: 30000,
+      timeout: 600000,
+      require_deprovisioned_host_id: "host-1",
     });
   });
 
@@ -771,7 +773,7 @@ describe("ProjectsActions archive flow", () => {
       mockedWebappClient.conat_client.hub.projects.archiveProject,
     ).toHaveBeenCalledWith({
       project_id,
-      timeout: 30000,
+      timeout: 600000,
     });
   });
 

@@ -181,6 +181,7 @@ export type SiteSettingsKeys =
   | "project_hosts_local_enabled"
   | "project_hosts_self_host_alpha_enabled"
   | "project_hosts_nebius_enabled"
+  | "project_hosts_nebius_hosts_enabled"
   | "project_hosts_funding_mode"
   | "project_hosts_gcp_surcharge_percent"
   | "project_hosts_nebius_surcharge_percent"
@@ -1719,8 +1720,18 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Providers",
   },
   project_hosts_nebius_enabled: {
-    name: "Enable Project Hosts - Nebius Cloud",
-    desc: "Whether or not to include Nebius cloud project hosts. You must also configure credentials below.",
+    name: "Enable Nebius Cloud",
+    desc: "Whether or not to use Nebius cloud, for dedicated VMs (and, with the next setting, project hosts). You must also configure credentials below.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Project Hosts", "Cloud", "Nebius"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
+  },
+  project_hosts_nebius_hosts_enabled: {
+    name: "Offer Nebius for Project Hosts",
+    desc: "Whether users may create new project hosts on Nebius, or switch a host to Nebius. Off keeps Nebius for dedicated VMs and for existing Nebius hosts, which their owners can still start, restart, stop, deprovision and delete. Requires Nebius Cloud to be enabled.",
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
