@@ -283,6 +283,37 @@ export function isDedicatedHostLaneCurrentlyAllowed({
   );
 }
 
+// What one dedicated-host purchase contributes to the usage window
+// [start, end). A metered purchase (cost_per_hour set) counts only the part of
+// its period inside the window: once closed (cost and period_end set), its
+// cost prorated by that overlap; while open, cost_per_hour times the overlap.
+// So closing a purchase that ran for days never moves its whole cost into the
+// window it happened to end in. A fixed-cost purchase counts in full when it
+// was charged (time) inside the window.
+function dedicatedHostWindowAmountSql(start: string, end: string): string {
+  const overlapSeconds = `GREATEST(0::numeric, EXTRACT(EPOCH FROM
+      LEAST(COALESCE(period_end, NOW()), ${end}) - GREATEST(period_start, ${start})
+    )::numeric)`;
+  return `CASE
+      WHEN ${start} IS NULL THEN 0::numeric
+      WHEN cost_per_hour IS NOT NULL THEN CASE
+        -- a closed purchase with an empty period: its cost at its start
+        WHEN cost IS NOT NULL AND period_end IS NOT NULL
+         AND period_end <= period_start
+        THEN CASE WHEN period_start >= ${start} AND period_start < ${end}
+                  THEN cost ELSE 0::numeric END
+        WHEN period_start >= ${end}
+          OR COALESCE(period_end, NOW()) <= ${start} THEN 0::numeric
+        WHEN cost IS NOT NULL AND period_end IS NOT NULL
+        THEN cost * ${overlapSeconds}
+             / EXTRACT(EPOCH FROM period_end - period_start)::numeric
+        ELSE cost_per_hour * ${overlapSeconds} / 3600
+      END
+      WHEN cost IS NOT NULL AND time >= ${start} AND time < ${end} THEN cost
+      ELSE 0::numeric
+    END`;
+}
+
 export async function getDedicatedHostWindowUsageLocal(
   account_id: string,
   { client }: { client?: PoolClient } = {},
@@ -293,89 +324,25 @@ export async function getDedicatedHostWindowUsageLocal(
   });
   const window5h = windows["5h"];
   const window7d = windows["7d"];
+  const amount5h = dedicatedHostWindowAmountSql(
+    "$2::timestamptz",
+    "$3::timestamptz",
+  );
+  const amount7d = dedicatedHostWindowAmountSql(
+    "$4::timestamptz",
+    "$5::timestamptz",
+  );
   const { rows } = await (client ?? getPool()).query(
     `
       SELECT
-        COALESCE(
-          SUM(
-            CASE
-              WHEN $2::timestamptz IS NOT NULL
-               AND description->>'funding_lane' = 'prepaid'
-               AND ((cost IS NOT NULL AND time >= $2::timestamptz AND time < $3::timestamptz)
-                 OR (cost_per_hour IS NOT NULL AND period_start < $3::timestamptz
-                   AND COALESCE(period_end, NOW()) > $2::timestamptz))
-              THEN COALESCE(cost, cost_per_hour * GREATEST(
-                0::numeric,
-                EXTRACT(
-                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $3::timestamptz)
-                  - GREATEST(period_start, $2::timestamptz)
-                )::numeric / 3600
-              ))
-              ELSE 0::numeric
-            END
-          ),
-          0::numeric
-        ) AS prepaid_5h_usd,
-        COALESCE(
-          SUM(
-            CASE
-              WHEN $4::timestamptz IS NOT NULL
-               AND description->>'funding_lane' = 'prepaid'
-               AND ((cost IS NOT NULL AND time >= $4::timestamptz AND time < $5::timestamptz)
-                 OR (cost_per_hour IS NOT NULL AND period_start < $5::timestamptz
-                   AND COALESCE(period_end, NOW()) > $4::timestamptz))
-              THEN COALESCE(cost, cost_per_hour * GREATEST(
-                0::numeric,
-                EXTRACT(
-                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $5::timestamptz)
-                  - GREATEST(period_start, $4::timestamptz)
-                )::numeric / 3600
-              ))
-              ELSE 0::numeric
-            END
-          ),
-          0::numeric
-        ) AS prepaid_7d_usd,
-        COALESCE(
-          SUM(
-            CASE
-              WHEN $2::timestamptz IS NOT NULL
-               AND description->>'funding_lane' = 'credit'
-               AND ((cost IS NOT NULL AND time >= $2::timestamptz AND time < $3::timestamptz)
-                 OR (cost_per_hour IS NOT NULL AND period_start < $3::timestamptz
-                   AND COALESCE(period_end, NOW()) > $2::timestamptz))
-              THEN COALESCE(cost, cost_per_hour * GREATEST(
-                0::numeric,
-                EXTRACT(
-                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $3::timestamptz)
-                  - GREATEST(period_start, $2::timestamptz)
-                )::numeric / 3600
-              ))
-              ELSE 0::numeric
-            END
-          ),
-          0::numeric
-        ) AS credit_5h_usd,
-        COALESCE(
-          SUM(
-            CASE
-              WHEN $4::timestamptz IS NOT NULL
-               AND description->>'funding_lane' = 'credit'
-               AND ((cost IS NOT NULL AND time >= $4::timestamptz AND time < $5::timestamptz)
-                 OR (cost_per_hour IS NOT NULL AND period_start < $5::timestamptz
-                   AND COALESCE(period_end, NOW()) > $4::timestamptz))
-              THEN COALESCE(cost, cost_per_hour * GREATEST(
-                0::numeric,
-                EXTRACT(
-                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $5::timestamptz)
-                  - GREATEST(period_start, $4::timestamptz)
-                )::numeric / 3600
-              ))
-              ELSE 0::numeric
-            END
-          ),
-          0::numeric
-        ) AS credit_7d_usd
+        COALESCE(SUM(CASE WHEN description->>'funding_lane' = 'prepaid'
+          THEN ${amount5h} ELSE 0::numeric END), 0::numeric) AS prepaid_5h_usd,
+        COALESCE(SUM(CASE WHEN description->>'funding_lane' = 'prepaid'
+          THEN ${amount7d} ELSE 0::numeric END), 0::numeric) AS prepaid_7d_usd,
+        COALESCE(SUM(CASE WHEN description->>'funding_lane' = 'credit'
+          THEN ${amount5h} ELSE 0::numeric END), 0::numeric) AS credit_5h_usd,
+        COALESCE(SUM(CASE WHEN description->>'funding_lane' = 'credit'
+          THEN ${amount7d} ELSE 0::numeric END), 0::numeric) AS credit_7d_usd
       FROM purchases
       WHERE account_id = $1
         AND service = $6
