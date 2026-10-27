@@ -195,6 +195,7 @@ function MergeApprovalRequestCard({
   const diffUrl = compareUrl(request.repo, snap.base_sha, request.head_sha);
   const checkSummary = snap.check_summary ?? {
     total: snap.checks.length,
+    counted: snap.checks.length,
     failing: 0,
     pending: 0,
   };
@@ -276,6 +277,9 @@ function MergeApprovalRequestCard({
           <dd>
             {checkSummary.total} total, {checkSummary.failing} failing,{" "}
             {checkSummary.pending} pending
+            {(checkSummary.counted ?? checkSummary.total) < checkSummary.total
+              ? ` (counted over the first ${checkSummary.counted})`
+              : ""}
           </dd>
           <dt>Reviews</dt>
           <dd>

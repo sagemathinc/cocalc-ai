@@ -60,7 +60,7 @@ function view(overrides: any = {}) {
         files: [{ filename: "a.ts", additions: 10, deletions: 2 }],
         files_truncated: false,
         checks: [{ name: "test", status: "completed", conclusion: "success" }],
-        check_summary: { total: 1, failing: 0, pending: 0 },
+        check_summary: { total: 1, counted: 1, failing: 0, pending: 0 },
         checks_truncated: false,
         reviews: [],
         review_summary: { total: 0, changes_requested: 0, approved: 0 },
@@ -113,7 +113,7 @@ test("warns about failing checks and change requests, even when not listed", asy
     ...v.request.github_snapshot,
     checks: [],
     checks_truncated: true,
-    check_summary: { total: 140, failing: 2, pending: 0 },
+    check_summary: { total: 1400, counted: 1000, failing: 2, pending: 0 },
     reviews: [],
     reviews_truncated: true,
     review_summary: { total: 100, changes_requested: 1, approved: 0 },
@@ -126,6 +126,7 @@ test("warns about failing checks and change requests, even when not listed", asy
   expect(
     screen.getByText(/Not all checks and reviews are listed/),
   ).toBeInTheDocument();
+  expect(screen.getByText(/counted over the first 1000/)).toBeInTheDocument();
 });
 
 test("approves the exact head with a comment, by keyboard", async () => {
