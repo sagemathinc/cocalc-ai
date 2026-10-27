@@ -3118,16 +3118,18 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
   const refusal = await provider.startRefusal?.(runtime, creds);
   if (refusal) {
     // Checked before this worker marks it restarting or releases its DNS:
-    // the host is still running. Settle what the restart request stored
-    // (status restarting, no last_seen) and record why, so the action
-    // doesn't stay pending.
+    // the VM is still up. Settle the status the restart request stored
+    // (restarting) and record why, so the action doesn't stay pending.
+    // last_seen stays as the request left it (null): it means a project-host
+    // heartbeat, and the app may be down, so only the next heartbeat may
+    // make the host placeable again.
     logger.warn("handleRestart: provider refuses to restart this host", {
       host_id: row.id,
       provider: providerId,
       refusal,
     });
     if (row.status === "restarting") {
-      await updateHostRow(row.id, { status: "running", last_seen: new Date() });
+      await updateHostRow(row.id, { status: "running" });
     }
     await logCloudVmEvent({
       vm_id: row.id,

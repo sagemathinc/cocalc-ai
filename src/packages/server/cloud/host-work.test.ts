@@ -4049,7 +4049,7 @@ describe("a restart the provider refuses (Nebius Spot while it is off)", () => {
       )
     ).rows[0];
 
-  it("settles a queued restart (status restarting, no last_seen) back to running and records why", async () => {
+  it("settles a queued restart (status restarting, no last_seen) to running without inventing a heartbeat, and records why", async () => {
     const p = provider();
     getProviderContextMock.mockResolvedValue({
       entry: { provider: p, capabilities: { supportsStop: true } },
@@ -4074,10 +4074,38 @@ describe("a restart the provider refuses (Nebius Spot while it is off)", () => {
     expect(releaseDns).not.toHaveBeenCalled();
     const row = await read();
     expect(row.status).toBe("running");
-    expect(row.last_seen).not.toBeNull();
+    // no heartbeat happened, so the host must not look healthy for placement
+    expect(row.last_seen).toBeNull();
     expect(row.metadata.last_action_status).toBe("failure");
     expect(row.metadata.last_action_error).toBe(REFUSAL);
     releaseDns.mockRestore();
+  });
+
+  it("an errored, disconnected host stays without a heartbeat after the refusal", async () => {
+    const p = provider();
+    getProviderContextMock.mockResolvedValue({
+      entry: { provider: p, capabilities: { supportsStop: true } },
+      creds: {},
+    });
+    // restart is allowed from error; the API then stores restarting and
+    // clears last_seen before queueing
+    await seed("error", new Date("2026-10-27T01:00:00.000Z"));
+    await getPool().query(
+      "UPDATE project_hosts SET status='restarting', last_seen=NULL WHERE id=$1",
+      [hostId],
+    );
+
+    await run("restart");
+
+    expect(p.restartHost).not.toHaveBeenCalled();
+    const row = await read();
+    expect(row.last_seen).toBeNull();
+    const fresh = await getPool().query(
+      "SELECT 1 FROM project_hosts WHERE id=$1 AND status='running' AND last_seen > NOW() - interval '2 minutes'",
+      [hostId],
+    );
+    expect(fresh.rowCount).toBe(0);
+    expect(row.metadata.last_action_status).toBe("failure");
   });
 
   it("leaves an already-running host's status and last_seen untouched", async () => {
