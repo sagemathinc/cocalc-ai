@@ -47,6 +47,9 @@ import type {
 } from "./types";
 
 const REFRESH_MS = 15_000;
+// Data older than this is last known, not live, even with no error: a refresh
+// can hang instead of failing.
+const STALE_MS = 2 * REFRESH_MS;
 
 type Confirmation = { kind: "all" } | { kind: "pod"; pod: GpuPodSummary };
 
@@ -56,6 +59,13 @@ function errorText(err: unknown): string {
 
 function formatTime(value: string | number): string {
   return new Date(value).toLocaleString();
+}
+
+// Last-known values are shown with their age, never as live.
+function asOf(value: string, at: number | undefined): string {
+  return at == null
+    ? value
+    : `${value} (as of ${formatTime(at)}; not updating)`;
 }
 
 function usePolling(
@@ -134,15 +144,24 @@ export function GpuCostDashboard({
   const podsError = podsFailure?.key === scopeKey ? podsFailure.message : "";
   const spendError = spendFailure?.key === spendKey ? spendFailure.message : "";
   // Fresh: loaded for this query and not followed by a failed refresh.
-  const podsFresh = pods != null && !podsError;
-  const spendFresh = spend != null && !spendError;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(timer);
+  }, []);
+  const podsAged = podsLoaded != null && now - podsLoaded.at > STALE_MS;
+  const spendAged = spendLoaded != null && now - spendLoaded.at > STALE_MS;
+  const podsFresh = pods != null && !podsError && !podsAged;
+  const spendFresh = spend != null && !spendError && !spendAged;
 
   const refreshPods = useCallback(async () => {
     const version = ++podsGeneration.current;
     try {
       const next = await api.pods({ scope: JSON.parse(scopeKey) });
       if (podsGeneration.current !== version) return;
-      setPodsResult({ key: scopeKey, pods: next, at: Date.now() });
+      const at = Date.now();
+      setPodsResult({ key: scopeKey, pods: next, at });
+      setNow(at);
       setPodsFailure(undefined);
     } catch (err) {
       if (podsGeneration.current === version)
@@ -161,7 +180,9 @@ export function GpuCostDashboard({
         group_by: groupBy,
       });
       if (spendGeneration.current !== version) return;
-      setSpendResult({ key, spend: next, at: Date.now() });
+      const at = Date.now();
+      setSpendResult({ key, spend: next, at });
+      setNow(at);
       setSpendFailure(undefined);
     } catch (err) {
       if (spendGeneration.current === version)
@@ -211,8 +232,10 @@ export function GpuCostDashboard({
 
   const groupLabel = GROUP_BY_LABELS[groupBy];
   // Missing numbers are never shown as zero.
-  const podsPending = podsError ? "unavailable" : "…";
-  const spendPending = spendError ? "unavailable" : "…";
+  const podsPending = podsError || podsAged ? "unavailable" : "…";
+  const spendPending = spendError || spendAged ? "unavailable" : "…";
+  const billedText =
+    totals.billed == null ? "not yet billed" : moneyToCurrency(totals.billed);
 
   return (
     <section aria-label="GPU spending" style={{ color: UI_COLORS.text }}>
@@ -247,12 +270,22 @@ export function GpuCostDashboard({
       <Space wrap size="large" style={{ marginTop: 12 }}>
         <span>
           <Typography.Text type="secondary">Live pods: </Typography.Text>
-          <strong>{podsFresh ? live.length : podsPending}</strong>
+          <strong>
+            {podsFresh
+              ? live.length
+              : podsLoaded
+                ? asOf(`${live.length}`, podsLoaded.at)
+                : podsPending}
+          </strong>
         </span>
         <span>
           <Typography.Text type="secondary">Live rate: </Typography.Text>
           <strong>
-            {podsFresh ? `${moneyToCurrency(rate)}/hour` : podsPending}
+            {podsFresh
+              ? `${moneyToCurrency(rate)}/hour`
+              : podsLoaded
+                ? asOf(`${moneyToCurrency(rate)}/hour`, podsLoaded.at)
+                : podsPending}
           </strong>
         </span>
         <span>
@@ -260,19 +293,23 @@ export function GpuCostDashboard({
             Estimated spend ({PERIOD_LABELS[period].toLowerCase()}):{" "}
           </Typography.Text>
           <strong>
-            {spendFresh ? moneyToCurrency(totals.estimated) : spendPending}
+            {spendFresh
+              ? moneyToCurrency(totals.estimated)
+              : spendLoaded
+                ? asOf(moneyToCurrency(totals.estimated), spendLoaded.at)
+                : spendPending}
           </strong>
         </span>
         <span>
           <Typography.Text type="secondary">Billed by RunPod: </Typography.Text>
           <strong>
-            {!spendFresh
-              ? spendPending
-              : totals.billed == null
-                ? "not yet billed"
-                : moneyToCurrency(totals.billed)}
+            {spendFresh
+              ? billedText
+              : spendLoaded
+                ? asOf(billedText, spendLoaded.at)
+                : spendPending}
           </strong>
-          {spendFresh && spend?.billed_through && (
+          {spend?.billed_through && (
             <Typography.Text type="secondary">
               {" "}
               (through {formatTime(spend.billed_through)})
@@ -294,10 +331,10 @@ export function GpuCostDashboard({
           description={podsError}
         />
       )}
-      {podsError && podsLoaded && (
+      {podsLoaded && (podsError || podsAged) && (
         <Typography.Paragraph type="secondary">
-          Showing the pods last loaded at {formatTime(podsLoaded.at)}; they may
-          be out of date.
+          Showing the pods last loaded at {formatTime(podsLoaded.at)}; not
+          updating, so they may be out of date.
         </Typography.Paragraph>
       )}
       <Table<GpuPodSummary>
@@ -403,10 +440,10 @@ export function GpuCostDashboard({
           description={spendError}
         />
       )}
-      {spendError && spendLoaded && (
+      {spendLoaded && (spendError || spendAged) && (
         <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-          Showing spending last loaded at {formatTime(spendLoaded.at)}; it may
-          be out of date.
+          Showing spending last loaded at {formatTime(spendLoaded.at)}; not
+          updating, so it may be out of date.
         </Typography.Paragraph>
       )}
       <Table
@@ -480,9 +517,11 @@ export function GpuCostDashboard({
           <p>
             This terminates every GPU pod {scopeLabel}, including pods started
             by agents and students.{" "}
-            {!podsFresh
-              ? "The number of live pods and their rate are unavailable right now."
-              : `${live.length === 1 ? "1 pod is" : `${live.length} pods are`} live now, at ${moneyToCurrency(rate)}/hour.`}
+            {podsFresh
+              ? `${live.length === 1 ? "1 pod is" : `${live.length} pods are`} live now, at ${moneyToCurrency(rate)}/hour.`
+              : podsLoaded
+                ? `The pod list may be out of date: when it was last loaded at ${formatTime(podsLoaded.at)}, ${live.length === 1 ? "1 pod was" : `${live.length} pods were`} live, at ${moneyToCurrency(rate)}/hour. Every GPU pod ${scopeLabel} will be terminated, whatever the list shows.`
+                : `The pod list is unavailable right now. Every GPU pod ${scopeLabel} will be terminated.`}
           </p>
         )}
         <p>

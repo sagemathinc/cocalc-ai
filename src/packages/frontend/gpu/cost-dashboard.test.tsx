@@ -278,7 +278,7 @@ describe("GpuCostDashboard", () => {
       "Terminate all GPU pods your RunPod key pays for?",
     );
     expect(
-      within(dialog).getByText(/live pods and their rate are unavailable/),
+      within(dialog).getByText(/pod list is unavailable right now/),
     ).toBeTruthy();
     expect(within(dialog).queryByText(/0 pods are live/)).toBeNull();
   });
@@ -337,6 +337,47 @@ describe("GpuCostDashboard", () => {
     }
   });
 
+  it("stops calling cached pods live when a refresh hangs, without overlapping requests", async () => {
+    jest.useFakeTimers();
+    try {
+      const mock = api();
+      const user = userEvent.setup({
+        advanceTimers: jest.advanceTimersByTime,
+      });
+      render(<GpuCostDashboard api={mock} />);
+      expect(
+        await screen.findByRole("cell", { name: "cc-7f3k9q2x" }),
+      ).toBeTruthy();
+      expect(screen.getByText("$0.77/hour")).toBeTruthy();
+      // The next poll never settles.
+      mock.pods.mockReturnValueOnce(new Promise(() => {}));
+      await act(async () => {
+        jest.advanceTimersByTime(15_000);
+      });
+      expect(mock.pods).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        jest.advanceTimersByTime(40_000);
+      });
+      expect(mock.pods).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("$0.77/hour")).toBeNull();
+      expect(screen.getByText(/Showing the pods last loaded at/)).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Terminate pod cc-7f3k9q2x" }),
+      ).toBeTruthy();
+      await user.click(screen.getByRole("button", { name: "Terminate all" }));
+      const dialog = await findDialog(
+        "Terminate all GPU pods your RunPod key pays for?",
+      );
+      expect(
+        within(dialog).getByText(
+          /Every GPU pod your RunPod key pays for will be terminated, whatever the list shows/,
+        ),
+      ).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("treats cached pods as last known, not live, after a failed refresh", async () => {
     const mock = api();
     const user = userEvent.setup();
@@ -355,13 +396,17 @@ describe("GpuCostDashboard", () => {
     ).toBeTruthy();
     // The summary no longer calls the old numbers live.
     expect(screen.queryByText("$0.77/hour")).toBeNull();
-    expect(screen.getAllByText("unavailable").length).toBeGreaterThanOrEqual(2);
+    expect(
+      screen.getAllByText(/\(as of .*; not updating\)/).length,
+    ).toBeGreaterThanOrEqual(2);
     await user.click(screen.getByRole("button", { name: "Terminate all" }));
     const dialog = await findDialog(
       "Terminate all GPU pods your RunPod key pays for?",
     );
     expect(
-      within(dialog).getByText(/live pods and their rate are unavailable/),
+      within(dialog).getByText(
+        /pod list may be out of date.*Every GPU pod your RunPod key pays for will be terminated/,
+      ),
     ).toBeTruthy();
     expect(within(dialog).queryByText(/pods are live now/)).toBeNull();
   });
