@@ -108,9 +108,6 @@ describe("GPU provider keys", () => {
 
   it("verifies a key with RunPod, then stores it with the account identity", async () => {
     const { fetch, urls } = fakeFetch([PERSONAL_ORG_403, MYSELF, NO_PODS]);
-    listMock.mockImplementation(async () => [
-      summary(upsertMock.mock.calls[0][0].metadata),
-    ]);
     const status = await setGpuProviderKey(
       { account_id: ACCOUNT, provider: "runpod", api_key: ` ${KEY}\n` },
       { fetch, isEntitled: entitled },
@@ -137,8 +134,10 @@ describe("GPU provider keys", () => {
       entitled: true,
       connected: true,
       provider_account: { kind: "personal", id: "user_1" },
-      connected_at: "2026-10-27T20:00:00.000Z",
+      connected_at: stored.metadata.verified_at,
     });
+    // No routed read after the write: the status comes from what was stored.
+    expect(listMock).not.toHaveBeenCalled();
     // The key is never part of what comes back.
     expect(JSON.stringify(status)).not.toContain(KEY);
   });

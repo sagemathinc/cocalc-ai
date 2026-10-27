@@ -21,8 +21,8 @@ export const GPU_PROVIDER_LABELS: Record<GpuProvider, string> = {
 export const GPU_PROVIDER_API_KEY_KIND = "gpu-provider-api-key";
 
 // How long the browser waits for setGpuProviderKey: longer than the server's
-// verification deadline (30 s, after which it stores nothing) plus storing
-// the key.
+// verification deadline (25 s, after which it stores nothing) plus storing
+// the key (at most 15 s).
 export const VERIFY_RPC_TIMEOUT_MS = 45_000;
 
 export function isGpuProvider(value: unknown): value is GpuProvider {

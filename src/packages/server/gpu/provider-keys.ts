@@ -39,11 +39,12 @@ type Fetch = typeof globalThis.fetch;
 
 // Verification is at most three requests (organization, maybe GraphQL
 // `myself`, one page of pods) of at most 8 s each, and must finish within
-// VERIFY_DEADLINE_MS or nothing is stored; both are well under the browser's
-// VERIFY_RPC_TIMEOUT_MS (util/gpu/provider-keys), so the browser never
-// reports a failure for a key that is stored afterwards.
+// VERIFY_DEADLINE_MS or nothing is stored. With the store (routed, at most
+// 15 s) that stays under the browser's VERIFY_RPC_TIMEOUT_MS (45 s, in
+// util/gpu/provider-keys), so the browser never reports a failure for a key
+// that is stored afterwards.
 const VERIFY_REQUEST_TIMEOUT_MS = 8_000;
-const VERIFY_DEADLINE_MS = 30_000;
+const VERIFY_DEADLINE_MS = 25_000;
 
 export interface GpuProviderKeyDeps {
   // for tests
@@ -214,6 +215,11 @@ export async function setGpuProviderKey(
     // The browser may have given up; storing now would surprise it.
     throw Error("RunPod took too long to check this key. Try again shortly.");
   }
+  const verified_at = new Date().toISOString();
+  const provider_account_name =
+    identity.kind === "organization" && identity.name
+      ? identity.name.slice(0, 120)
+      : undefined;
   await upsertExternalCredentialRouted({
     selector: selector(account_id, provider),
     payload: key,
@@ -221,13 +227,23 @@ export async function setGpuProviderKey(
       source: "account-settings",
       provider_account_kind: identity.kind,
       provider_account_id: identity.id,
-      ...(identity.kind === "organization" && identity.name
-        ? { provider_account_name: identity.name.slice(0, 120) }
-        : {}),
-      verified_at: new Date().toISOString(),
+      ...(provider_account_name ? { provider_account_name } : {}),
+      verified_at,
     },
   });
-  return await getGpuProviderKeyStatus({ account_id, provider }, deps);
+  // Built from what was just verified and stored: another routed read here
+  // could outlast the browser's wait after the key is already saved.
+  return {
+    provider,
+    entitled: true,
+    connected: true,
+    provider_account: {
+      kind: identity.kind,
+      id: identity.id,
+      ...(provider_account_name ? { name: provider_account_name } : {}),
+    },
+    connected_at: verified_at,
+  };
 }
 
 // The caller has already required fresh auth for this session.

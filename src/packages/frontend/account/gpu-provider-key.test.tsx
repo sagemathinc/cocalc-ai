@@ -1,11 +1,5 @@
 import React from "react";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GpuProviderKeySection } from "./gpu-provider-key";
 
@@ -168,41 +162,44 @@ describe("GpuProviderKeySection", () => {
     expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
   });
 
-  it("never removes from a confirmation left open while a save starts", async () => {
+  it("keeps the Remove confirmation keyboard-operable, and never removes while a save runs", async () => {
+    const user = userEvent.setup();
     mockSystem.getGpuProviderKeyStatus.mockResolvedValue(CONNECTED);
     let finish!: (status: any) => void;
     mockSystem.setGpuProviderKey.mockImplementation(
       () => new Promise((resolve) => (finish = resolve)),
     );
     render(<GpuProviderKeySection />);
-    fireEvent.click(await screen.findByRole("button", { name: "Replace key" }));
-    // Overlay first: the removal confirmation is open...
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-    const title = await screen.findByText(/Remove your RunPod key\?/);
-    const confirm = within(title.closest(".ant-popover") as HTMLElement);
-    // ...then, without any click outside it, Enter in the key field saves.
+    const replace = await screen.findByRole("button", { name: "Replace key" });
+    replace.focus();
+    await user.keyboard("{Enter}");
+    const remove = screen.getByRole("button", { name: "Remove" });
+    // Keyboard into the confirmation, and Escape back out to Remove.
+    remove.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("tooltip");
+    expect(within(dialog).getByText(/Remove your RunPod key\?/)).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+    expect(document.activeElement).toBe(remove);
+    // Overlay first: open it again, then (no click outside) Tab on to the
+    // key field and save with Enter.
+    await user.keyboard("{Enter}");
+    await screen.findByRole("tooltip");
     const input = screen.getByLabelText("RunPod API key");
-    fireEvent.change(input, { target: { value: KEY } });
-    fireEvent.keyDown(input, { key: "Enter", code: "Enter", keyCode: 13 });
+    while (document.activeElement !== input) await user.tab();
+    await user.keyboard(`${KEY}{Enter}`);
     await waitFor(() =>
       expect(mockSystem.setGpuProviderKey).toHaveBeenCalled(),
     );
-    // The stale dialog is hidden, and confirming it anyway does nothing.
-    expect(title.closest(".ant-popover")?.className).toMatch(/hidden/);
-    fireEvent.click(
-      confirm.getByRole("button", { name: "Remove", hidden: true }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The confirmation closed when the save started, and Remove is disabled
+    // until it finishes.
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+    expect((remove as HTMLButtonElement).disabled).toBe(true);
     expect(mockSystem.deleteGpuProviderKey).not.toHaveBeenCalled();
     finish(CONNECTED);
     await waitFor(() =>
-      expect(
-        (
-          screen.getAllByRole("button", {
-            name: "Remove",
-          })[0] as HTMLButtonElement
-        ).disabled,
-      ).toBe(false),
+      expect((remove as HTMLButtonElement).disabled).toBe(false),
     );
   });
 });
