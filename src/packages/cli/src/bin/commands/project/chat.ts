@@ -5,6 +5,7 @@ import {
   sendAgentMessage,
 } from "../../core/agent-send";
 import { registerChatAgentCommands } from "./chat-agents";
+import { registerChatMergeApprovalCommands } from "./chat-merge-approval";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { execFile } from "node:child_process";
@@ -59,6 +60,7 @@ export function registerProjectChatCommands(
 
   const chat = project.command("chat").description("project chat operations");
   registerChatAgentCommands(chat, deps);
+  registerChatMergeApprovalCommands(chat, deps);
 
   const artifact = chat
     .command("artifact")

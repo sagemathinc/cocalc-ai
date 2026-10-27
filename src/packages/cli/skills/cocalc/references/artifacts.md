@@ -148,3 +148,21 @@ operation and required fresh-auth/approval flow, retaining its audit trail.
 Do not treat mutable artifact data or agent-reported outcomes as authorization
 or proof of execution. Publish only verified outcomes; do not send messages,
 merge PRs, or otherwise mutate external services just to populate a card.
+
+### Merge Approval Cards
+
+Where a site has merge approvals enabled, an agent asks an approver to approve
+the merge of one exact pull-request head with:
+
+```bash
+cocalc project chat merge-approval request --repo owner/name --pr N \
+  --head <full sha> [--note-file note.md] [--agent-label @name] \
+  --project ... --path ... --thread-id ... --message-date ...
+cocalc project chat merge-approval status <request-id>
+```
+
+The hub reads the PR from GitHub and refuses unless it is open, not a draft,
+and its current head is `--head`; the card shows what the hub read, with your
+note labelled as yours. Only an approver can decide, on the card. A new push
+supersedes the request: request again for the new head. An approval card is
+not a merge: merge only after the approval, and only as your instructions say.
