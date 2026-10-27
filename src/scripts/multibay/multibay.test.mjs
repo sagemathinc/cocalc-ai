@@ -2709,7 +2709,13 @@ describe("project archive across bays", () => {
     );
 
   before(async () => {
-    project_id = await createProject(bob.client, "archive-across-bays");
+    // its own owner on the attached bay: shared accounts have a project limit
+    const owner = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "wren",
+    });
+    owner.client = await client(owner);
+    project_id = await createProject(owner.client, "archive-across-bays");
     admin = await createAccount(cluster, { home_bay_id: SEED, name: "vera" });
     await runInBay(
       cluster,
