@@ -19,6 +19,10 @@ import { ChatSourceContent } from "./source-file-context";
 import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import {
+  formatSiteFundedUsageWarning,
+  type SiteFundedUsageWarning,
+} from "@cocalc/util/ai/site-funded-codex";
 import CodexLogPanel from "./codex-log-panel";
 import { agentMessageDirectionFromMarkdown } from "./agent-message-presentation";
 import {
@@ -244,6 +248,48 @@ export function InlineSteerStatusRow({
 
 // Agents can think for many minutes before a step on hard problems, so only
 // a long silence is worth a warning color.
+/** The turn's warning that the account is close to an included-AI limit. */
+export function latestUsageWarning(
+  events: readonly AcpStreamMessage[] | null | undefined,
+): SiteFundedUsageWarning | undefined {
+  for (let i = (events?.length ?? 0) - 1; i >= 0; i--) {
+    const message = events![i];
+    if (message?.type !== "event" || message.event?.type !== "usage_warning") {
+      continue;
+    }
+    const { window, percent, threshold, resetAt } = message.event;
+    if ((window !== "5h" && window !== "7d") || typeof percent !== "number") {
+      return;
+    }
+    return {
+      window,
+      percent,
+      threshold: threshold === 95 ? 95 : 80,
+      ...(typeof resetAt === "string" ? { resetAt } : {}),
+    };
+  }
+}
+
+export function UsageWarningNotice({
+  warning,
+}: {
+  warning?: SiteFundedUsageWarning;
+}) {
+  if (!warning) return null;
+  return (
+    <div
+      role="status"
+      data-testid="agent-usage-warning"
+      style={{
+        marginBottom: 8,
+        color: warning.threshold >= 95 ? UI_COLORS.danger : UI_COLORS.warning,
+      }}
+    >
+      {formatSiteFundedUsageWarning(warning)}
+    </div>
+  );
+}
+
 export const STALE_ACTIVITY_MS = 15 * 60 * 1000;
 // Shorter gaps are ordinary pauses between streamed updates.
 export const QUIET_ACTIVITY_MS = 10 * 1000;
@@ -359,6 +405,8 @@ export function describeLastActivity({
 
 interface AgentMessageStatusProps {
   show: boolean;
+  /** Shown on the turn when the account is close to an included-AI limit. */
+  usageWarning?: SiteFundedUsageWarning;
   generating: boolean;
   durationLabel: string;
   lastActivityAtMs?: number;
@@ -638,6 +686,7 @@ export function AgentMessageStatus({
   backgroundTerminalProcesses = 0,
   activityToggle,
   inline = false,
+  usageWarning,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [activitySize, setActivitySize0] = useState<number>(
@@ -929,6 +978,7 @@ export function AgentMessageStatus({
           · AI usage may continue
         </div>
       ) : null}
+      <UsageWarningNotice warning={usageWarning} />
       {(!activityToggle || activityToggle.expanded) && (
         <>
           <AttachedSteerStatusList attachedSteers={attachedSteers} />

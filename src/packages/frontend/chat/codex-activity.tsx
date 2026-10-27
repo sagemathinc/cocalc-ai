@@ -26,6 +26,7 @@ import {
 } from "@cocalc/frontend/project/parse-path-line";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
+import { formatSiteFundedUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import { containingPath, humanSize, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -87,7 +88,7 @@ type ActivityEntry =
       time?: number;
       label: string;
       detail?: string;
-      level?: "info" | "error";
+      level?: "info" | "warning" | "error";
     }
   | {
       kind: "config";
@@ -970,7 +971,13 @@ function ActivityRow({
         <Space size={6} align="center">
           <TimestampTooltip timestamp={timestamp}>
             <Tag
-              color={entry.level === "error" ? "red" : "default"}
+              color={
+                entry.level === "error"
+                  ? "red"
+                  : entry.level === "warning"
+                    ? "orange"
+                    : "default"
+              }
               style={{ margin: 0 }}
             >
               {entry.label}
@@ -979,7 +986,13 @@ function ActivityRow({
           <ActivityTimestamp time={entry.time} />
           {entry.detail ? (
             <Text
-              type={entry.level === "error" ? "danger" : "secondary"}
+              type={
+                entry.level === "error"
+                  ? "danger"
+                  : entry.level === "warning"
+                    ? "warning"
+                    : "secondary"
+              }
               style={{ fontSize: secondarySize }}
             >
               {entry.detail}
@@ -1361,6 +1374,21 @@ function createEventEntry({
           ? `On · ${notes} saved ${notes === 1 ? "note" : "notes"} in context`
           : "On, but the saved notes could not be loaded for this turn",
       level: event.state === "loaded" ? "info" : "error",
+    };
+  }
+  if (
+    event?.type === "usage_warning" &&
+    (event.window === "5h" || event.window === "7d") &&
+    typeof event.percent === "number"
+  ) {
+    return {
+      kind: "status",
+      id: `usage-warning-${seq}`,
+      seq,
+      time,
+      label: "AI allowance",
+      detail: formatSiteFundedUsageWarning(event),
+      level: "warning",
     };
   }
   if (event?.type === "config") {

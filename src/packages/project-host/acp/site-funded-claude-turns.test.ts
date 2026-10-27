@@ -69,6 +69,28 @@ describe("site-funded Claude turns", () => {
     expect(deps.finish).toHaveBeenCalledTimes(1);
   });
 
+  it("returns the admission's usage warning, and none without one", async () => {
+    const { deps, turns } = setup();
+    await expect(turns.begin()).resolves.toEqual({});
+    await turns.end({ status: "committed" });
+    const usageWarning = {
+      window: "7d",
+      percent: 96,
+      threshold: 95,
+      resetAt: "2026-10-30T12:00:00.000Z",
+    };
+    deps.reserve.mockResolvedValueOnce({
+      allowed: true,
+      reservation: {
+        reservationId: "reservation-2",
+        heartbeatIntervalMs: 60_000,
+      },
+      usageWarning,
+    } as any);
+    await expect(turns.begin()).resolves.toEqual({ usageWarning });
+    await turns.close();
+  });
+
   it("refuses with the admission's reason, funding nothing", async () => {
     const { relay, deps, turns } = setup();
     deps.reserve.mockRejectedValueOnce(Error("weekly allowance used up"));

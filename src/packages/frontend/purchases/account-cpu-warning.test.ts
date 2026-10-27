@@ -7,7 +7,10 @@ import type {
   AccountUsageMeter,
   AccountUsageOverview,
 } from "@cocalc/conat/hub/api/purchases";
-import { getAccountCpuWarning } from "./account-cpu-warning";
+import {
+  getAccountAiWarning,
+  getAccountCpuWarning,
+} from "./account-cpu-warning";
 
 function makeMeter({
   id,
@@ -92,5 +95,63 @@ describe("getAccountCpuWarning", () => {
         severity: "blocked",
       }),
     );
+  });
+});
+
+describe("getAccountAiWarning", () => {
+  function aiMeter(
+    id: "ai-5h" | "ai-7d",
+    used: number,
+    severity: AccountUsageMeter["severity"] = "ok",
+  ): AccountUsageMeter {
+    return {
+      id,
+      category: "ai",
+      window: id === "ai-5h" ? "5h" : "7d",
+      label: id === "ai-5h" ? "5-hour limit" : "7-day limit",
+      help: "AI usage.",
+      unit: "units",
+      used,
+      limit: 100,
+      ratio: used / 100,
+      percent: used,
+      severity,
+      upgrade_relevant: true,
+    };
+  }
+
+  it("does not warn below 80%, even when the meter is near", () => {
+    expect(
+      getAccountAiWarning(makeOverview([aiMeter("ai-5h", 78, "near")])),
+    ).toBeUndefined();
+  });
+
+  it("warns at 80% and is severe at 95%", () => {
+    expect(
+      getAccountAiWarning(makeOverview([aiMeter("ai-5h", 80, "near")])),
+    ).toMatchObject({ percent: 80, severity: "warning" });
+    expect(
+      getAccountAiWarning(
+        makeOverview([
+          aiMeter("ai-5h", 85, "near"),
+          aiMeter("ai-7d", 96, "near"),
+        ]),
+      ),
+    ).toMatchObject({
+      percent: 96,
+      severity: "severe",
+      meter: expect.objectContaining({ id: "ai-7d" }),
+    });
+  });
+
+  it("ignores CPU meters, and CPU warnings ignore AI meters", () => {
+    const overview = makeOverview([
+      aiMeter("ai-5h", 99, "near"),
+      makeMeter({ id: "managed-cpu-5h", percent: 10, used: 10 }),
+    ]);
+    expect(getAccountCpuWarning(overview)).toBeUndefined();
+    expect(getAccountAiWarning(overview)).toMatchObject({
+      meter: expect.objectContaining({ id: "ai-5h" }),
+    });
   });
 });

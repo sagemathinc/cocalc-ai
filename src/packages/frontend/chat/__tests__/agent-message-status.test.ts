@@ -8,6 +8,7 @@ import {
   AttachedSteerStatusList,
   describeLastActivity,
   hasOpenToolWork,
+  latestUsageWarning,
   QUIET_ACTIVITY_MS,
   reconcileAvailableSubagentEvents,
   resolveActivityDurationLabel,
@@ -481,5 +482,62 @@ describe("AttachedSteerStatusList", () => {
     expect(
       card.querySelector(".cocalc-steer-guidance-content img"),
     ).not.toBeNull();
+  });
+});
+
+describe("usage warning on the turn", () => {
+  const warningEvent = (event: Record<string, unknown>) =>
+    ({ type: "event", seq: 1, event }) as any;
+
+  it("finds the turn's latest usage warning and ignores malformed ones", () => {
+    expect(latestUsageWarning(undefined)).toBeUndefined();
+    expect(
+      latestUsageWarning([
+        warningEvent({
+          type: "usage_warning",
+          window: "5h",
+          percent: 81,
+          threshold: 80,
+        }),
+        warningEvent({
+          type: "usage_warning",
+          window: "7d",
+          percent: 96,
+          threshold: 95,
+          resetAt: "2026-10-30T12:00:00.000Z",
+        }),
+        warningEvent({ type: "message", text: "hi" }),
+      ]),
+    ).toEqual({
+      window: "7d",
+      percent: 96,
+      threshold: 95,
+      resetAt: "2026-10-30T12:00:00.000Z",
+    });
+    expect(
+      latestUsageWarning([
+        warningEvent({ type: "usage_warning", window: "1y", percent: 81 }),
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("shows the warning as a notice on the turn, not a modal", () => {
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: true,
+        durationLabel: "0:01",
+        date: 1000,
+        logRefs: {},
+        activityContext: {} as any,
+        usageWarning: { window: "5h", percent: 82, threshold: 80 },
+      } as any),
+    );
+    const notice = screen.getByTestId("agent-usage-warning");
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(notice.textContent).toContain(
+      "You have used 82% of your 5-hour included AI allowance.",
+    );
+    expect(document.querySelector(".ant-modal")).toBeNull();
   });
 });

@@ -432,6 +432,15 @@ export type AcpStreamEvent =
       notes?: number;
     }
   | {
+      // The turn was admitted, but the account has used most of an included
+      // AI window (see siteFundedUsageWarning). Display only.
+      type: "usage_warning";
+      window: "5h" | "7d";
+      percent: number;
+      threshold: 80 | 95;
+      resetAt?: string;
+    }
+  | {
       type: "thinking";
       text: string;
     }

@@ -30,14 +30,72 @@ import { COLORS } from "@cocalc/util/theme";
 
 const { Text } = Typography;
 
-const ACCOUNT_CPU_WARNING_THRESHOLD = 0.75;
-const ACCOUNT_CPU_SEVERE_THRESHOLD = 0.9;
-const ACCOUNT_CPU_WARNING_POLL_MS = 60_000;
-const CPU_METER_IDS = new Set(["managed-cpu-5h", "managed-cpu-7d"]);
+const ACCOUNT_USAGE_WARNING_POLL_MS = 60_000;
 
 type AccountCpuWarningSeverity = "warning" | "severe" | "blocked";
 
+// One kind of windowed account limit the top bar warns about.
+interface UsageWarningKind {
+  id: "cpu" | "ai";
+  meterIds: Set<string>;
+  warningThreshold: number;
+  severeThreshold: number;
+  // Whether the meter's own "near" severity (75%) counts as severe.
+  meterNearIsSevere: boolean;
+  name: string;
+  formatAmount: (value: number) => string;
+  titles: Record<AccountCpuWarningSeverity, string>;
+  description: (windowLabel: string) => string;
+}
+
+function formatCpuHours(seconds: number): string {
+  const hours = seconds / 3600;
+  const digits = hours >= 10 || Number.isInteger(hours) ? 0 : 1;
+  return `${hours.toFixed(digits)} CPU-h`;
+}
+
+function formatAiUnits(units: number): string {
+  return `${Math.round(units).toLocaleString()} AI units`;
+}
+
+const CPU_WARNING: UsageWarningKind = {
+  id: "cpu",
+  meterIds: new Set(["managed-cpu-5h", "managed-cpu-7d"]),
+  warningThreshold: 0.75,
+  severeThreshold: 0.9,
+  meterNearIsSevere: true,
+  name: "CPU",
+  formatAmount: formatCpuHours,
+  titles: {
+    blocked: "CPU usage limit reached",
+    severe: "CPU usage warning",
+    warning: "CPU usage nearing limit",
+  },
+  description: (windowLabel) =>
+    `Your account has used most or all of its managed CPU allocation for the current ${windowLabel} window. Existing projects are not automatically killed, but starting additional projects may be blocked until usage resets. Stop runaway processes, wait for the window reset, or upgrade membership for a higher CPU allocation.`,
+};
+
+// The included AI allowance that site-funded agent turns draw on; the same
+// 80% and 95% levels as the warning shown on agent turns.
+const AI_WARNING: UsageWarningKind = {
+  id: "ai",
+  meterIds: new Set(["ai-5h", "ai-7d"]),
+  warningThreshold: 0.8,
+  severeThreshold: 0.95,
+  meterNearIsSevere: false,
+  name: "AI",
+  formatAmount: formatAiUnits,
+  titles: {
+    blocked: "Included AI allowance used up",
+    severe: "Included AI allowance almost used up",
+    warning: "Included AI allowance nearing limit",
+  },
+  description: (windowLabel) =>
+    `Your account has used most or all of its included AI allowance for the current ${windowLabel} window. When it runs out, AI requests and agent turns that use it are refused until the window resets. Wait for the reset, use your own API key, or upgrade membership for a larger allowance.`,
+};
+
 export interface AccountCpuWarningState {
+  kind: UsageWarningKind;
   meter: AccountUsageMeter;
   used: number;
   limit: number;
@@ -70,36 +128,47 @@ function getMeterPercent(meter: AccountUsageMeter, ratio: number): number {
 }
 
 function getSeverity(
+  kind: UsageWarningKind,
   meter: AccountUsageMeter,
   ratio: number,
 ): AccountCpuWarningSeverity {
   if (meter.severity === "over" || ratio >= 1) return "blocked";
-  if (meter.severity === "near" || ratio >= ACCOUNT_CPU_SEVERE_THRESHOLD) {
+  if (
+    (kind.meterNearIsSevere && meter.severity === "near") ||
+    ratio >= kind.severeThreshold
+  ) {
     return "severe";
   }
   return "warning";
 }
 
-export function getAccountCpuWarning(
+function getAccountUsageWarning(
+  kind: UsageWarningKind,
   overview: AccountUsageOverview | null | undefined,
-  threshold = ACCOUNT_CPU_WARNING_THRESHOLD,
+  threshold = kind.warningThreshold,
 ): AccountCpuWarningState | undefined {
   const warnings: AccountCpuWarningState[] = [];
   for (const meter of overview?.meters ?? []) {
-    if (!CPU_METER_IDS.has(meter.id)) continue;
+    if (!kind.meterIds.has(meter.id)) continue;
     const used = getFiniteNumber(meter.used);
     const limit = getFiniteNumber(meter.limit);
     if (used == null || limit == null || !(limit > 0)) continue;
     const ratio = getMeterRatio(meter);
     if (ratio == null) continue;
-    if (!(ratio >= threshold) && meter.severity !== "near") continue;
+    if (
+      !(ratio >= threshold) &&
+      !(kind.meterNearIsSevere && meter.severity === "near")
+    ) {
+      continue;
+    }
     warnings.push({
+      kind,
       meter,
       used,
       limit,
       ratio,
       percent: getMeterPercent(meter, ratio),
-      severity: getSeverity(meter, ratio),
+      severity: getSeverity(kind, meter, ratio),
     });
   }
   warnings.sort((a, b) => {
@@ -116,10 +185,17 @@ export function getAccountCpuWarning(
   return warnings[0];
 }
 
-function formatCpuHours(seconds: number): string {
-  const hours = seconds / 3600;
-  const digits = hours >= 10 || Number.isInteger(hours) ? 0 : 1;
-  return `${hours.toFixed(digits)} CPU-h`;
+export function getAccountCpuWarning(
+  overview: AccountUsageOverview | null | undefined,
+  threshold?: number,
+): AccountCpuWarningState | undefined {
+  return getAccountUsageWarning(CPU_WARNING, overview, threshold);
+}
+
+export function getAccountAiWarning(
+  overview: AccountUsageOverview | null | undefined,
+): AccountCpuWarningState | undefined {
+  return getAccountUsageWarning(AI_WARNING, overview);
 }
 
 function formatResetAt(resetAt?: Date | string): string | undefined {
@@ -144,28 +220,26 @@ function getSummaryLabel(
   warning: AccountCpuWarningState,
   isNarrow: boolean,
 ): string {
-  if (warning.severity === "blocked") return "CPU over limit";
-  if (isNarrow) return `CPU ${warning.percent}%`;
-  return `CPU ${getWindowLabel(warning.meter)} ${warning.percent}%`;
+  const { name } = warning.kind;
+  if (warning.severity === "blocked") return `${name} over limit`;
+  if (isNarrow) return `${name} ${warning.percent}%`;
+  return `${name} ${getWindowLabel(warning.meter)} ${warning.percent}%`;
 }
 
 function getSummaryTooltip(warning: AccountCpuWarningState): string {
-  return `${warning.meter.label}: ${formatCpuHours(warning.used)} of ${formatCpuHours(
+  const { formatAmount } = warning.kind;
+  return `${warning.meter.label}: ${formatAmount(warning.used)} of ${formatAmount(
     warning.limit,
   )} used (${warning.percent}%).`;
 }
 
+// The top-bar warnings for the account's windowed CPU and included-AI limits.
 export const AccountCpuWarning: React.FC<{
   pageStyle: PageStyle;
 }> = React.memo(({ pageStyle }: { pageStyle: PageStyle }) => {
   const account_id = useTypedRedux("account", "account_id");
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const [overview, setOverview] = useState<AccountUsageOverview | null>(null);
-  const [open, setOpen] = useState(false);
-  const [purchaseOpen, setPurchaseOpen] = useState(false);
-  const [dismissedWarningKey, setDismissedWarningKey] = useState<
-    string | undefined
-  >();
 
   useEffect(() => {
     if (!account_id || !is_logged_in) {
@@ -189,7 +263,7 @@ export const AccountCpuWarning: React.FC<{
     void load();
     const interval = setInterval(
       () => void load(),
-      warningPollInterval(ACCOUNT_CPU_WARNING_POLL_MS),
+      warningPollInterval(ACCOUNT_USAGE_WARNING_POLL_MS),
     );
     const refresh = () => void load();
     const updateFromFreshOverview = (event: Event) => {
@@ -217,15 +291,47 @@ export const AccountCpuWarning: React.FC<{
     };
   }, [account_id, is_logged_in]);
 
-  const warning = useMemo(() => getAccountCpuWarning(overview), [overview]);
+  const warnings = useMemo(
+    () =>
+      [getAccountCpuWarning(overview), getAccountAiWarning(overview)].filter(
+        (warning): warning is AccountCpuWarningState => warning != null,
+      ),
+    [overview],
+  );
+  if (!account_id || !is_logged_in || warnings.length === 0) {
+    return null;
+  }
+  return (
+    <>
+      {warnings.map((warning) => (
+        <UsageWarningPill
+          key={warning.kind.id}
+          warning={warning}
+          pageStyle={pageStyle}
+        />
+      ))}
+    </>
+  );
+});
+
+function UsageWarningPill({
+  warning,
+  pageStyle,
+}: {
+  warning: AccountCpuWarningState;
+  pageStyle: PageStyle;
+}) {
+  const [open, setOpen] = useState(false);
+  const [purchaseOpen, setPurchaseOpen] = useState(false);
+  const [dismissedWarningKey, setDismissedWarningKey] = useState<
+    string | undefined
+  >();
   const warningKey =
     warning?.severity === "warning"
       ? `${warning.meter.id}:${warning.severity}`
       : undefined;
   const dismissed = warningKey != null && dismissedWarningKey === warningKey;
-  if (!account_id || !is_logged_in || warning == null || dismissed) {
-    return null;
-  }
+  if (dismissed) return null;
 
   const outerStyle = {
     display: "flex",
@@ -257,12 +363,7 @@ export const AccountCpuWarning: React.FC<{
   } as const;
 
   const resetAt = warning.meter.resets_at ?? warning.meter.reset_at;
-  const modalTitle =
-    warning.severity === "blocked"
-      ? "CPU usage limit reached"
-      : warning.severity === "severe"
-        ? "CPU usage warning"
-        : "CPU usage nearing limit";
+  const modalTitle = warning.kind.titles[warning.severity];
 
   return (
     <>
@@ -276,7 +377,7 @@ export const AccountCpuWarning: React.FC<{
           style={outerStyle}
           onClick={() => setOpen(true)}
           className={TOP_BAR_ELEMENT_CLASS}
-          data-cocalc-account-cpu-warning
+          data-cocalc-account-usage-warning={warning.kind.id}
         >
           <div style={pillStyle}>
             <Icon name="tachometer-alt" />
@@ -322,14 +423,7 @@ export const AccountCpuWarning: React.FC<{
         width={760}
       >
         <Space vertical size="middle" style={{ width: "100%" }}>
-          <Text>
-            Your account has used most or all of its managed CPU allocation for
-            the current {getWindowLabel(warning.meter)} window. Existing
-            projects are not automatically killed, but starting additional
-            projects may be blocked until usage resets. Stop runaway processes,
-            wait for the window reset, or upgrade membership for a higher CPU
-            allocation.
-          </Text>
+          <Text>{warning.kind.description(getWindowLabel(warning.meter))}</Text>
           <div>
             <Space
               align="center"
@@ -339,8 +433,8 @@ export const AccountCpuWarning: React.FC<{
               <Text
                 type={warning.severity === "blocked" ? "danger" : undefined}
               >
-                {formatCpuHours(warning.used)} of{" "}
-                {formatCpuHours(warning.limit)} ({warning.percent}%)
+                {warning.kind.formatAmount(warning.used)} of{" "}
+                {warning.kind.formatAmount(warning.limit)} ({warning.percent}%)
               </Text>
             </Space>
             {(resetAt || warning.meter.reset_in) && (
@@ -380,4 +474,4 @@ export const AccountCpuWarning: React.FC<{
       />
     </>
   );
-});
+}

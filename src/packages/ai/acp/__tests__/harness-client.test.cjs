@@ -3673,3 +3673,35 @@ test("a site-funded Claude turn that is not admitted fails with the reason, and 
   assert.deepEqual(ended, ["committed"]);
   assert.equal(launches(), 1);
 });
+
+test("a site-funded Claude turn near its allowance shows the usage warning", async (t) => {
+  const usageWarning = {
+    window: "5h",
+    percent: 83,
+    threshold: 80,
+    resetAt: "2026-10-27T14:10:00.000Z",
+  };
+  const { agent, request, events } = adapter(
+    t,
+    ["--claude-adapter", "--delayed-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+    undefined,
+    {
+      beginFundedTurn: async () => ({ usageWarning }),
+      endFundedTurn: async () => {},
+    },
+  );
+  await agent.evaluate(request);
+  const warnings = events.filter(
+    (payload) =>
+      payload.type === "event" && payload.event.type === "usage_warning",
+  );
+  assert.deepEqual(
+    warnings.map((payload) => payload.event),
+    [{ type: "usage_warning", ...usageWarning }],
+  );
+  assert.equal(events.at(-1).type, "summary");
+});

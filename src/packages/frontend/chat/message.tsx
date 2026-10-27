@@ -119,6 +119,7 @@ import { SyncOutlined } from "@ant-design/icons";
 import {
   AgentMessageStatus,
   AttachedSteerStatusList,
+  latestUsageWarning,
   type AttachedSteerMessage,
 } from "./agent-message-status";
 import { recordCodexFirstResponseVisible } from "./codex-ux-latency";
@@ -900,6 +901,10 @@ export default function Message({
     subject: logSubject,
     liveStream: liveLogStream,
   } = ownTurnActivity.logRefs;
+  const usageWarning = useMemo(
+    () => latestUsageWarning(codexPreviewLog.events),
+    [codexPreviewLog.events],
+  );
   const lastCodexLoadErrorRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (codexPreviewLog.loadState !== "error") {
@@ -2428,6 +2433,7 @@ export default function Message({
           deleteLog={codexPreviewLog.deleteLog}
           activityLiveStatus={codexPreviewLog.liveStatus}
           logEvents={effectiveGenerating ? undefined : codexPreviewLog.events}
+          usageWarning={usageWarning}
           activeDescendantThreadIds={activeDescendantThreadIds}
           backgroundTerminalProcesses={backgroundTerminalProcesses}
           interruptRequested={retainedWorkStopRequested}

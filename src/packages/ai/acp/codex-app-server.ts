@@ -3178,6 +3178,12 @@ export class CodexAppServerAgent implements AcpAgent {
           siteFundedReservationId: fundedTurn?.reservation.reservationId,
         },
       });
+      if (fundedTurn?.usageWarning) {
+        await stream({
+          type: "event",
+          event: { type: "usage_warning", ...fundedTurn.usageWarning },
+        });
+      }
       logger.debug("codex app-server: resolved service tier", {
         threadId: resumeId,
         model: threadParams.model,
