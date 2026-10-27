@@ -141,6 +141,7 @@ export default function getConfig(): Configuration {
     git_revision: COCALC_GIT_REVISION,
     build_timestamp: BUILD_TS,
     build_date: BUILD_DATE,
+    smc_version: SMC_VERSION,
     fingerprint: frontendSourceFingerprint.fingerprint,
   });
 

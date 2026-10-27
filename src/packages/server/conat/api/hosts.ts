@@ -270,7 +270,11 @@ import {
 } from "@cocalc/server/ai/site-funded-codex-policy";
 import { recordSiteFundedAdmissionLocal } from "@cocalc/server/ai/site-funded-admissions";
 import { getSiteFundedProviderKeyForReservation } from "@cocalc/server/ai/site-funded-provider-keys";
-import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
+import {
+  DEFAULT_SITE_FUNDED_CODEX_POLICY,
+  formatSiteFundedLimitDetail,
+  siteFundedUsageWarning,
+} from "@cocalc/util/ai/site-funded-codex";
 import type {
   SiteFundedAdmissionOutcome,
   SiteFundedAdmissionRecord,
@@ -280,6 +284,7 @@ import type {
   SiteFundedCodexUsageEvent,
   SiteFundedCodexUsageRecordResult,
   SiteFundedProvider,
+  SiteFundedUsageWindowUse,
 } from "@cocalc/util/ai/site-funded-codex";
 import { moneyToDbString, type MoneyValue } from "@cocalc/util/money";
 import type { DedicatedHostPricingSnapshot } from "@cocalc/util/db-schema/purchases";
@@ -3762,6 +3767,26 @@ export async function recordCodexSiteUsage({
   return { usage_units };
 }
 
+function windowUse(
+  window: "5h" | "7d",
+  used: unknown,
+  limit: unknown,
+  resetsAt: unknown,
+): SiteFundedUsageWindowUse | undefined {
+  const usedNumber = Number(used);
+  const limitNumber = Number(limit);
+  if (!Number.isFinite(usedNumber) || !Number.isFinite(limitNumber)) return;
+  const reset = resetsAt == null ? NaN : new Date(resetsAt as any).valueOf();
+  return {
+    window,
+    used: usedNumber,
+    limit: limitNumber,
+    ...(Number.isFinite(reset)
+      ? { resetAt: new Date(reset).toISOString() }
+      : {}),
+  };
+}
+
 function usageLimitAndRemainingMicrousd(
   status: Awaited<ReturnType<typeof getAIUsageStatus>>,
   window: "5h" | "7d",
@@ -3769,12 +3794,19 @@ function usageLimitAndRemainingMicrousd(
   limit: number;
   remaining: number;
   creditsByFundedTurn: Record<string, number>;
+  use?: SiteFundedUsageWindowUse;
 } {
   const usage = status.windows.find((entry) => entry.window === window);
   return {
     limit: aiUsageUnitsToMicrousd(usage?.limit),
     remaining: aiUsageUnitsToMicrousd(usage?.remaining),
     creditsByFundedTurn: usage?.site_funded_credits_microusd ?? {},
+    use: windowUse(
+      window,
+      usage?.used,
+      usage?.limit,
+      usage?.resets_at ?? usage?.reset_at,
+    ),
   };
 }
 
@@ -3785,6 +3817,7 @@ function overviewLimitAndRemainingMicrousd(
   limit: number;
   remaining: number;
   creditsByFundedTurn: Record<string, number>;
+  use?: SiteFundedUsageWindowUse;
 } {
   const meter = overview.meters.find(({ id }) => id === `ai-${window}`);
   const credits = overview.site_funded_codex_credits?.windows.find(
@@ -3794,6 +3827,12 @@ function overviewLimitAndRemainingMicrousd(
     limit: aiUsageUnitsToMicrousd(meter?.limit),
     remaining: aiUsageUnitsToMicrousd(meter?.remaining),
     creditsByFundedTurn: credits?.credits_microusd ?? {},
+    use: windowUse(
+      window,
+      meter?.used,
+      meter?.limit,
+      meter?.resets_at ?? meter?.reset_at,
+    ),
   };
 }
 
@@ -4028,9 +4067,44 @@ async function admitSiteFundedCodexTurn(
     surface: siteFundedSurface(path),
   };
   const remoteSeed = remoteSiteFundedCodexSeed();
-  return remoteSeed
+  const admission = remoteSeed
     ? await remoteSeed.reserveSiteFundedCodexTurn(reservationOptions)
     : await reserveSiteFundedCodexTurnLocal(reservationOptions);
+  return withSiteFundedUsageContext(admission, [account5h.use, account7d.use]);
+}
+
+// Says how much of the account's included-AI windows is used: a warning on an
+// admitted turn at 80% and 95%, and for a refused one the reset time.
+export function withSiteFundedUsageContext(
+  admission: SiteFundedCodexAdmission,
+  windows: (SiteFundedUsageWindowUse | undefined)[],
+  now: number = Date.now(),
+): SiteFundedCodexAdmission {
+  const uses = windows.filter(
+    (use): use is SiteFundedUsageWindowUse => use != null,
+  );
+  if (admission.allowed) {
+    const usageWarning = siteFundedUsageWarning(uses);
+    return usageWarning ? { ...admission, usageWarning } : admission;
+  }
+  if (
+    admission.code !== "account_limit_5h" &&
+    admission.code !== "account_limit_7d"
+  ) {
+    return admission;
+  }
+  const use = uses.find(
+    ({ window }) =>
+      window === (admission.code === "account_limit_7d" ? "7d" : "5h"),
+  );
+  const detail = formatSiteFundedLimitDetail(use?.resetAt, now);
+  return {
+    ...admission,
+    reason: detail
+      ? admission.reason.replace(/allowance\./, `allowance.${detail}`)
+      : admission.reason,
+    ...(use?.resetAt ? { resetAt: use.resetAt } : {}),
+  };
 }
 
 /** The site key funding an active Claude turn, for the host running it. */

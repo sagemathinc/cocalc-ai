@@ -121,6 +121,7 @@ import {
   AttachedSteerStatusList,
   type AttachedSteerMessage,
 } from "./agent-message-status";
+import { latestUsageWarning } from "./usage-warning";
 import { recordCodexFirstResponseVisible } from "./codex-ux-latency";
 import { recordOnboardingOutput } from "@cocalc/frontend/monitoring/onboarding";
 import { GitCommitDrawer } from "./git-commit-drawer";
@@ -900,6 +901,10 @@ export default function Message({
     subject: logSubject,
     liveStream: liveLogStream,
   } = ownTurnActivity.logRefs;
+  const usageWarning = useMemo(
+    () => latestUsageWarning(codexPreviewLog.events),
+    [codexPreviewLog.events],
+  );
   const lastCodexLoadErrorRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (codexPreviewLog.loadState !== "error") {
@@ -2428,6 +2433,7 @@ export default function Message({
           deleteLog={codexPreviewLog.deleteLog}
           activityLiveStatus={codexPreviewLog.liveStatus}
           logEvents={effectiveGenerating ? undefined : codexPreviewLog.events}
+          usageWarning={usageWarning}
           activeDescendantThreadIds={activeDescendantThreadIds}
           backgroundTerminalProcesses={backgroundTerminalProcesses}
           interruptRequested={retainedWorkStopRequested}

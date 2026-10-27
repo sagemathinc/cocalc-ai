@@ -4827,6 +4827,12 @@ export class ChatStreamWriter {
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
+    if (event.type === "event" && event.event.type === "usage_warning") {
+      // The turn's notice that the account is near its included-AI limit is
+      // shown under the status chip while the turn runs, from this stream.
+      this.livePreviewBatcher.add(event, { flush: true });
+      return;
+    }
     if (event.type === "event" && this.livePreviewText) {
       // The complete activity stream can publish tool and reasoning events
       // independently. Flush text queued before that activity so the inline

@@ -6,12 +6,27 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { CocalcErrorBoundary } from "./error-boundary";
+import userEvent from "@testing-library/user-event";
+import { reloadForFrontendBuild, reportStaleChunkError } from "./stale-chunk";
 import { isReactDomMutationError } from "./react-dom-mutation";
 import {
   COCALC_REACT_ERROR_EVENT,
   reactRootErrorHandlers,
   type ReactErrorEventDetail,
 } from "./react-error-reporting";
+
+// Public pages use this boundary: it must not pull in the webapp client.
+jest.mock("@cocalc/frontend/webapp-client", () => {
+  throw new Error("the error boundary must not import the webapp client");
+});
+jest.mock("./stale-chunk", () => {
+  const actual = jest.requireActual("./stale-chunk");
+  return {
+    ...actual,
+    reloadForFrontendBuild: jest.fn(),
+    reportStaleChunkError: jest.fn(actual.reportStaleChunkError),
+  };
+});
 
 describe("CocalcErrorBoundary", () => {
   let consoleError: jest.SpyInstance;
@@ -269,5 +284,55 @@ describe("CocalcErrorBoundary", () => {
     );
 
     expect(await screen.findByText("Healthy route")).toBeInTheDocument();
+  });
+
+  it("offers a reload, not a retry, when a chunk of an older build is gone", async () => {
+    function StaleChunk(): never {
+      const error = new Error(
+        "Loading chunk 4242 failed. (missing: https://cocalc.example/static/4242.abcdef0123456789.js)",
+      );
+      error.name = "ChunkLoadError";
+      throw error;
+    }
+    render(
+      <CocalcErrorBoundary autoRetry scope="test.stale-chunk">
+        <StaleChunk />
+      </CocalcErrorBoundary>,
+    );
+
+    expect(
+      await screen.findByText("CoCalc was updated. Reload to continue."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Try again")).toBeNull();
+    // The top bar is told too, since window handlers never see this error.
+    expect(reportStaleChunkError).toHaveBeenCalled();
+    // Reachable and usable from the keyboard.
+    const user = userEvent.setup();
+    const reload = screen.getByRole("button", { name: "Reload" });
+    await user.tab();
+    expect(document.activeElement).toBe(reload);
+    await user.keyboard("{Enter}");
+    expect(reloadForFrontendBuild).toHaveBeenCalledTimes(1);
+  });
+
+  it("still offers Try again for other errors", async () => {
+    function Broken(): never {
+      throw new Error("something else");
+    }
+    render(
+      <CocalcErrorBoundary scope="test.other-error">
+        <Broken />
+      </CocalcErrorBoundary>,
+    );
+
+    expect(
+      await screen.findByText("This part of CoCalc could not be displayed."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Try again" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("CoCalc was updated. Reload to continue."),
+    ).toBeNull();
   });
 });

@@ -470,6 +470,10 @@ stage_source_release() {
   tar -C "$SOURCE_ROOT" \
     --exclude=./.git --exclude=./.local --exclude=./data --exclude=./.build-home \
     -cf - . | as_bay tar --no-same-owner -xf - -C "$TARGET_RELEASE"
+  record_source_hub_version
+  # Like a bundle deploy: inherited chunks of builds still in retention must be
+  # present, or the retention step would find them missing.
+  preserve_previous_static_assets
 }
 
 stage_bundle_release() {
@@ -572,6 +576,7 @@ stage_hub_bundle_release() {
     "${TARGET_RELEASE}/runtime/control-plane/http-api-dist" \
     "${TARGET_RELEASE}/runtime/migrate-schema" \
     "${TARGET_RELEASE}/scripts/bay-systemd" \
+    "${TARGET_RELEASE}/runtime/control-plane/hub-version.json" \
     "${TARGET_RELEASE}/bay-hub-manifest.json"
   run as_bay rsync -a "${extract_dir}/" "$TARGET_RELEASE/"
   as_bay rm -rf "$extract_dir"
@@ -603,6 +608,183 @@ preserve_previous_static_assets() {
     "${previous_static}/" "${target_static}/"
 }
 
+# The raw version_min_browser and version_recommended_browser site settings,
+# as "MIN REC" ("-" for one that is unset). Prints nothing when they cannot be
+# read.
+read_browser_version_settings() {
+  [[ -n "${PSQL_BIN:-}" && -d "${BAY_ROOT}/run/postgres" ]] || return 0
+  local rows
+  rows="$(
+    runuser -u "$BAY_USER" -- env \
+      PGHOST="${BAY_ROOT}/run/postgres" \
+      PGPORT=5432 \
+      PGUSER="$BAY_USER" \
+      PGCONNECT_TIMEOUT=5 \
+      timeout 15 "$PSQL_BIN" -d "$BAY_USER" -XAtq -F ' ' -c \
+      "SELECT name, value FROM server_settings WHERE name IN ('version_min_browser', 'version_recommended_browser')" \
+      2>/dev/null
+  )" || return 0
+  local name value min="-" recommended="-"
+  while read -r name value; do
+    value="${value//[[:space:]]/}"
+    case "$name" in
+      version_min_browser) min="${value:--}" ;;
+      version_recommended_browser) recommended="${value:--}" ;;
+    esac
+  done <<<"$rows"
+  echo "$min $recommended"
+}
+
+# A raw browser version setting, clamped without arithmetic until it is known
+# to be in the past (so an oversized typo cannot wrap around): 0 when it is
+# not a number of seconds, NOW when it is not in the past, else the value.
+clamp_browser_version() {
+  local value="$1" now="$2"
+  [[ "$value" =~ ^[0-9]+$ ]] || {
+    echo 0
+    return
+  }
+  value="${value#"${value%%[!0]*}"}"
+  if [[ -z "$value" ]]; then
+    echo 0
+  elif ((${#value} > ${#now})) || [[ ${#value} -eq ${#now} && ! "$value" < "$now" ]]; then
+    echo "$now"
+  else
+    echo "$value"
+  fi
+}
+
+# A browser version as the hub reads it (normalizeVersionValue in
+# util/db-schema/site-settings-public.ts): 0 unless it is a number of seconds
+# in the past.
+normalize_browser_version() {
+  local value
+  value="$(clamp_browser_version "$1" "$2")"
+  if [[ "$value" == "$2" ]]; then
+    echo 0
+  else
+    echo "$value"
+  fi
+}
+
+# The required browser version the hub enforces, given the raw settings, the
+# time and the version of the frontend it serves (server-settings.ts, then
+# buildPublicSiteSettings): min(required, recommended) normalized, bounded by
+# the normalized recommended version, itself bounded by the frontend version.
+# Prints nothing when the hub enforces no version (0).
+effective_required_browser_version() {
+  local min="$1" recommended="$2" now="$3" frontend="$4"
+  # server-settings.ts: Math.min(min || 0, recommended || 0), on values
+  # clamped to at most NOW, which keeps their order relative to past ones.
+  local raw_min raw_recommended combined
+  raw_min="$(clamp_browser_version "$min" "$now")"
+  raw_recommended="$(clamp_browser_version "$recommended" "$now")"
+  combined=$((raw_min < raw_recommended ? raw_min : raw_recommended))
+  local bounded_recommended bounded
+  bounded_recommended="$(normalize_browser_version "$recommended" "$now")"
+  frontend="$(normalize_browser_version "$frontend" "$now")"
+  if ((frontend > 0 && frontend < bounded_recommended)); then
+    bounded_recommended="$frontend"
+  fi
+  bounded="$(normalize_browser_version "$combined" "$now")"
+  if ((bounded_recommended < bounded)); then
+    bounded="$bounded_recommended"
+  fi
+  if ((bounded > 0)); then
+    echo "$bounded"
+  fi
+}
+
+# The required browser version the hub will enforce for this release; "none"
+# when the settings were read but the hub enforces no version; nothing when
+# they could not be read.
+read_required_browser_version() {
+  local frontend="${1:-0}" settings version
+  settings="$(read_browser_version_settings)"
+  [[ -n "$settings" ]] || return 0
+  # shellcheck disable=SC2086
+  version="$(effective_required_browser_version $settings "$(date +%s)" "$frontend")"
+  echo "${version:-none}"
+}
+
+# Inherited frontend chunks are kept only for builds a browser may still run:
+# those at or after the required browser version (older clients are
+# disconnected). Without a version the hub enforces, a fixed window applies,
+# never everything.
+FRONTEND_ASSET_FALLBACK_DAYS="${FRONTEND_ASSET_FALLBACK_DAYS:-14}"
+# The version is set from a build's smc-version, written around the frontend
+# build; a day of slack keeps a build whose bundle was stamped a little earlier.
+FRONTEND_ASSET_VERSION_SLACK_MS=$((24 * 3600 * 1000))
+
+# The smc-version compiled into the hub a release runs, as recorded in its
+# runtime/control-plane/hub-version.json, or nothing. Full and hub bundles
+# carry the file, a source deploy writes it from the tree it stages, a hub
+# bundle overlay drops the inherited one, and a static-only release keeps the
+# current one with its hub; a release without it predates all of that.
+release_hub_smc_version() {
+  local release="$1" node_bin="$2"
+  # As the bay account: root never reads files in the bay-owned release tree.
+  as_bay_node "$node_bin" -e '
+const fs = require("node:fs");
+const recorded = process.argv[1];
+const version = fs.existsSync(recorded)
+  ? Number(JSON.parse(fs.readFileSync(recorded, "utf8")).smc_version)
+  : undefined;
+console.log(Number.isSafeInteger(version) && version > 0 ? version : "");
+' "${release}/runtime/control-plane/hub-version.json" 2>/dev/null || true
+}
+
+# A source deploy runs the hub built from the tree it stages: record that
+# tree's smc-version as the release's hub version (nothing when it has none).
+record_source_hub_version() {
+  local node_bin
+  node_bin="$(find_node)"
+  as_bay_node "$node_bin" -e '
+const fs = require("node:fs");
+const [source, out] = process.argv.slice(1);
+fs.rmSync(out, { force: true });
+if (!fs.existsSync(source)) process.exit(0);
+const version = Number(/exports\.version\s*=\s*(\d+)/.exec(fs.readFileSync(source, "utf8"))?.[1]);
+if (Number.isSafeInteger(version) && version > 0) {
+  fs.mkdirSync(require("node:path").dirname(out), { recursive: true });
+  fs.writeFileSync(out, `${JSON.stringify({ smc_version: version })}\n`);
+}
+' "${TARGET_RELEASE}/packages/util/smc-version.js" \
+    "${TARGET_RELEASE}/runtime/control-plane/hub-version.json"
+}
+
+# The cutoff for a release whose hub was built with smc-version HUB (unix
+# seconds; the hub bounds the required version by it).
+frontend_asset_retention_cutoff() {
+  local frontend="${1:-}"
+  if [[ -n "${FRONTEND_ASSET_RETENTION_CUTOFF_MS:-}" ]]; then
+    echo "${FRONTEND_ASSET_RETENTION_CUTOFF_MS} override"
+    return
+  fi
+  local fallback="$((($(date +%s) - FRONTEND_ASSET_FALLBACK_DAYS * 86400) * 1000))"
+  if [[ ! "$frontend" =~ ^[0-9]+$ ]]; then
+    # A release that does not record its hub's smc-version (built before it
+    # was): the version the hub enforces cannot be bounded.
+    echo "${fallback} fallback-${FRONTEND_ASSET_FALLBACK_DAYS}d:unknown-hub-version"
+    return
+  fi
+  local version
+  version="$(read_required_browser_version "$frontend")"
+  case "$version" in
+    "")
+      echo "${fallback} fallback-${FRONTEND_ASSET_FALLBACK_DAYS}d:unreadable"
+      ;;
+    none)
+      # The hub disconnects no browser, by setting: a fixed window, as with an
+      # unreadable setting (the two are reported apart).
+      echo "${fallback} fallback-${FRONTEND_ASSET_FALLBACK_DAYS}d:no-enforced-version"
+      ;;
+    *)
+      echo "$((version * 1000 - FRONTEND_ASSET_VERSION_SLACK_MS)) required-browser-version=${version}"
+      ;;
+  esac
+}
+
 prepare_frontend_asset_history() {
   local target_static="${TARGET_RELEASE}/runtime/control-plane/static"
   local current_manifest="${target_static}/frontend-build.json"
@@ -611,25 +793,62 @@ prepare_frontend_asset_history() {
     exit 1
   fi
 
-  local previous_static=""
+  local previous_static="" previous_ledger=""
   if [[ -L "$CURRENT_LINK" ]]; then
     local current_release
     current_release="$(readlink -f "$CURRENT_LINK")"
     if [[ -n "$current_release" && "$current_release" != "$TARGET_RELEASE" ]]; then
       previous_static="${current_release}/runtime/control-plane/static"
+      previous_ledger="${current_release}/runtime/control-plane/frontend-asset-ledger.json"
     fi
   fi
+  local target_ledger="${TARGET_RELEASE}/runtime/control-plane/frontend-asset-ledger.json"
 
   local node_bin
   node_bin="$(find_node)"
-  as_bay_node "$node_bin" - "$target_static" "$previous_static" <<'NODE'
+  # The hub's own smc-version bounds the version it enforces: the hub this
+  # release runs (a static-only release keeps the current one). Until every
+  # worker is rolled, the hubs of the current release keep serving this
+  # release's static tree too, so the lower of the two applies, and an
+  # unknown one makes it unknown.
+  local hub_version current_hub_version
+  hub_version="$(release_hub_smc_version "$TARGET_RELEASE" "$node_bin")"
+  if [[ -L "$CURRENT_LINK" ]]; then
+    local serving_release
+    serving_release="$(readlink -f "$CURRENT_LINK")"
+    if [[ -n "$serving_release" && -d "$serving_release" && "$serving_release" != "$TARGET_RELEASE" ]]; then
+      current_hub_version="$(release_hub_smc_version "$serving_release" "$node_bin")"
+      if [[ -z "$current_hub_version" ]]; then
+        hub_version=""
+      elif [[ -n "$hub_version" ]] && ((current_hub_version < hub_version)); then
+        hub_version="$current_hub_version"
+      fi
+    fi
+  fi
+  local cutoff cutoff_ms cutoff_source
+  cutoff="$(frontend_asset_retention_cutoff "$hub_version")"
+  cutoff_ms="${cutoff%% *}"
+  cutoff_source="${cutoff#* }"
+
+  as_bay_node "$node_bin" - "$target_static" "$previous_static" \
+    "$previous_ledger" "$target_ledger" "$cutoff_ms" "$cutoff_source" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
-const [targetRoot, previousRoot] = process.argv.slice(2);
-// Every release keeps all chunks it inherited, so this bounds the retained
-// history, not one build: prod had 10067 hashed files on 10-18. Raised from
-// 10000 to 11000 until a retention policy replaces preserve-all.
+const [
+  targetRoot,
+  previousRoot,
+  previousLedgerPath,
+  targetLedgerPath,
+  cutoffArg,
+  cutoffSource,
+] = process.argv.slice(2);
+const cutoffMs = Number(cutoffArg);
+if (!Number.isFinite(cutoffMs)) {
+  throw new Error(`invalid frontend asset retention cutoff: ${cutoffArg}`);
+}
+// The union of the current build and the inherited builds still kept: the
+// hub monitor and `software smoke static` check the same cap.
 const MAX_ASSETS = 11_000;
 const HASHED_ASSET = /(?:^|[-.])[0-9a-f]{16,}(?=[-.]|$)/i;
 
@@ -642,6 +861,13 @@ function safeAsset(value) {
     throw new Error(`frontend asset is not content-addressed: ${asset}`);
   }
   return asset;
+}
+
+function smcVersion(value) {
+  const version = Number(value?.smc_version);
+  return Number.isSafeInteger(version) && version > 0
+    ? { smc_version: version }
+    : {};
 }
 
 function readManifest(root) {
@@ -694,41 +920,217 @@ function normalizeBuild(manifest, root, allowScan) {
   return {
     git_revision: `${manifest.git_revision ?? ""}`,
     build_timestamp: Number(manifest.build_timestamp) || 0,
+    ...smcVersion(manifest),
     build_date: `${manifest.build_date ?? ""}`,
     fingerprint: `${manifest.fingerprint ?? ""}`,
     assets,
   };
 }
 
+function readLedger(filename) {
+  if (!filename || !fs.existsSync(filename)) return;
+  const ledger = JSON.parse(fs.readFileSync(filename, "utf8"));
+  if (ledger?.schema !== 1 || !Array.isArray(ledger.builds)) {
+    throw new Error(`frontend asset ledger has an unsupported schema: ${filename}`);
+  }
+  return ledger.builds;
+}
+
+// Every hashed file under the target static root, however many there are.
+function hashedFiles(root, directory = root, files = []) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      hashedFiles(root, absolute, files);
+    } else if (entry.isFile() && HASHED_ASSET.test(entry.name)) {
+      files.push(path.relative(root, absolute).replaceAll("\\", "/"));
+    }
+  }
+  return files;
+}
+
+const exists = (asset) =>
+  !!fs.statSync(path.resolve(targetRoot, asset), { throwIfNoEntry: false })?.isFile();
+
 const current = normalizeBuild(readManifest(targetRoot), targetRoot, false);
-const previous = normalizeBuild(readManifest(previousRoot), previousRoot, true);
-const builds = [current];
-if (
-  previous &&
-  (previous.fingerprint !== current.fingerprint ||
-    previous.build_timestamp !== current.build_timestamp ||
-    previous.assets.some((asset) => !current.assets.includes(asset)))
-) {
-  builds.push(previous);
+
+// The inherited builds, each with its own assets: from the previous release's
+// ledger, or, for a release that predates the ledger, its own build with every
+// hashed file it carried (their builds are unknown, so they age with it).
+let inherited = [];
+let missing = 0;
+const ledgerBuilds = readLedger(previousLedgerPath);
+if (ledgerBuilds) {
+  for (const build of ledgerBuilds) {
+    const assets = [...new Set((build.assets ?? []).map(safeAsset))];
+    const present = assets.filter(exists);
+    missing += assets.length - present.length;
+    inherited.push({
+      git_revision: `${build.git_revision ?? ""}`,
+      build_timestamp: Number(build.build_timestamp) || 0,
+      ...smcVersion(build),
+      build_date: `${build.build_date ?? ""}`,
+      fingerprint: `${build.fingerprint ?? ""}`,
+      assets: present.sort(),
+    });
+  }
+} else {
+  const previous = normalizeBuild(readManifest(previousRoot), previousRoot, true);
+  if (previous) inherited.push(previous);
 }
-// The hub monitor and `software smoke static` cap the unique union of the
-// builds, so check the same here, before activation, not just each build.
-const unionSize = new Set(builds.flatMap((build) => build.assets)).size;
+// (A rebuilt or redeployed current build retains nothing extra: retained
+// assets never include the current build's own.)
+inherited = inherited.filter((build) => build.assets.length > 0);
+
+// A browser on a build reports that build's smc-version, and the hub admits it
+// when that is at least the required version: keep a build by the same test
+// when both are known. Otherwise by build time, which is never earlier than
+// the build's smc-version (so this never drops a build the hub admits).
+const requiredVersion =
+  Number(/^required-browser-version=(\d+)$/.exec(cutoffSource)?.[1]) || null;
+const retain = (build) =>
+  requiredVersion != null && build.smc_version != null
+    ? build.smc_version >= requiredVersion
+    : build.build_timestamp >= cutoffMs;
+const kept = inherited.filter(retain);
+const dropped = inherited.filter((build) => !retain(build));
+const currentAssets = new Set(current.assets);
+const retained = new Set();
+for (const build of kept) {
+  for (const asset of build.assets) {
+    if (!currentAssets.has(asset)) retained.add(asset);
+  }
+}
+// Files listed only by dropped builds are removed from this release. The
+// current build's own assets are never removed, and neither is a hashed file
+// no build lists: it is kept, counted, and counts toward the cap.
+const removable = new Set();
+for (const build of dropped) {
+  for (const asset of build.assets) {
+    if (!currentAssets.has(asset) && !retained.has(asset)) removable.add(asset);
+  }
+}
+const toRemove = [];
+const unlistedAssets = [];
+for (const asset of hashedFiles(targetRoot)) {
+  if (removable.has(asset)) {
+    toRemove.push(asset);
+  } else if (!currentAssets.has(asset) && !retained.has(asset)) {
+    unlistedAssets.push(asset);
+  }
+}
+unlistedAssets.sort();
+const unlisted = unlistedAssets.length;
+// Every hashed file this release keeps: the hub monitor and `software smoke
+// static` check the listed ones against the same cap.
+const unionSize = currentAssets.size + retained.size + unlisted;
 if (unionSize > MAX_ASSETS) {
-  throw new Error(`frontend asset history exceeds ${MAX_ASSETS} files`);
+  throw new Error(
+    `frontend asset history exceeds ${MAX_ASSETS} files (${unionSize} from ${kept.length + 1} builds back to ${new Date(cutoffMs).toISOString()}, ${cutoffSource}${unlisted ? `, ${unlisted} unlisted` : ""}); raise the required browser version`,
+  );
 }
+for (const asset of toRemove) {
+  fs.rmSync(path.resolve(targetRoot, asset), { force: true });
+}
+const removed = toRemove.length;
+
+// Unlisted files are recorded as a build of their own, dated with this
+// release's build: from the next deploy on they are listed, and they age out
+// with it.
+const unlistedBuild =
+  unlisted > 0
+    ? {
+        git_revision: "",
+        build_timestamp: current.build_timestamp,
+        build_date: current.build_date,
+        fingerprint: "unlisted",
+        assets: unlistedAssets,
+      }
+    : undefined;
+
+// The served history keeps the shape the hub monitor and smoke test read: the
+// current build and, as one entry, everything else this release keeps.
+const builds = [current];
+if (retained.size + unlisted > 0) {
+  const newest =
+    kept.length > 0
+      ? kept.reduce((a, b) => (b.build_timestamp > a.build_timestamp ? b : a))
+      : unlistedBuild;
+  builds.push({
+    ...newest,
+    assets: [...new Set([...retained, ...unlistedAssets])].sort(),
+  });
+}
+const requiredBrowserVersion = requiredVersion;
 const history = {
   schema: 1,
   generated_at: new Date().toISOString(),
   builds,
+  // Read by `software smoke static` to name the setting in its warning.
+  retention: {
+    cutoff: new Date(cutoffMs).toISOString(),
+    source: cutoffSource,
+    required_browser_version: requiredBrowserVersion,
+    max_assets: MAX_ASSETS,
+  },
 };
-const output = path.join(targetRoot, "frontend-build-history.json");
-const temporary = `${output}.tmp-${process.pid}`;
-fs.writeFileSync(temporary, `${JSON.stringify(history, null, 2)}\n`);
-fs.renameSync(temporary, output);
+// One ledger entry per build (fingerprint and timestamp), so redeploying the
+// same bundle does not append a copy each time: entries for one build are
+// merged, and one that is the current build adds only assets it lacks.
+function mergeLedgerBuilds(current, others) {
+  const key = (build) => `${build.fingerprint}\u0000${build.build_timestamp}`;
+  const currentKey = key(current);
+  const merged = new Map();
+  for (const build of others) {
+    const extra =
+      key(build) === currentKey
+        ? build.assets.filter((asset) => !currentAssets.has(asset))
+        : build.assets;
+    if (key(build) === currentKey && extra.length === 0) continue;
+    const existing = merged.get(key(build));
+    if (existing) {
+      existing.assets = [...new Set([...existing.assets, ...extra])].sort();
+    } else {
+      merged.set(key(build), { ...build, assets: [...extra].sort() });
+    }
+  }
+  return [current, ...merged.values()];
+}
+
+function writeJson(output, value) {
+  const temporary = `${output}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  fs.renameSync(temporary, output);
+}
+writeJson(path.join(targetRoot, "frontend-build-history.json"), history);
+writeJson(targetLedgerPath, {
+  schema: 1,
+  generated_at: history.generated_at,
+  builds: mergeLedgerBuilds(current, [
+    ...kept,
+    ...(unlistedBuild ? [unlistedBuild] : []),
+  ]),
+});
 console.log(
-  `validated frontend assets: builds=${builds.length} files=${builds.reduce((sum, build) => sum + build.assets.length, 0)}`,
+  `frontend asset retention: cutoff=${new Date(cutoffMs).toISOString()} (${cutoffSource}) builds kept=${kept.length} dropped=${dropped.length} inherited files kept=${retained.size} removed=${removed} unlisted=${unlisted}${missing ? ` missing=${missing}` : ""}`,
 );
+if (removed > 0) {
+  // Accepted limitation (@ops0, 10-27): a hub-only rollback keeps this
+  // release's pruned static tree.
+  console.log(
+    "note: rolling the hub back does not restore pruned frontend chunks; old tabs may need a reload",
+  );
+}
+console.log(
+  `validated frontend assets: builds=${builds.length} files=${unionSize}`,
+);
+// History only shrinks when the required browser version is raised: say so a
+// release or two before the cap blocks a deploy.
+if (unionSize >= Math.floor(MAX_ASSETS * 0.8)) {
+  console.log(
+    `WARNING: frontend asset history has ${unionSize} of ${MAX_ASSETS} files (${Math.floor((unionSize / MAX_ASSETS) * 100)}%), back to ${new Date(cutoffMs).toISOString()} (${requiredBrowserVersion ? `required browser version ${requiredBrowserVersion}` : cutoffSource}). Raise "Required browser version" in the admin site settings so older builds' chunks are dropped before a deploy is refused at ${MAX_ASSETS}.`,
+  );
+}
 NODE
 }
 
