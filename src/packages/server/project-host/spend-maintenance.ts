@@ -45,6 +45,10 @@ import {
 } from "@cocalc/util/money";
 import type { DedicatedHostBillingState } from "@cocalc/util/project-host-pricing";
 import { hostLifecycleFenced } from "@cocalc/server/hosts/maintenance";
+import {
+  HOST_MACHINE_CHANGE_IN_PROGRESS,
+  withHostMachineChangeLock,
+} from "@cocalc/server/hosts/machine-change-lock";
 import { metadataPatch } from "@cocalc/server/hosts/metadata-patch";
 import {
   BUMP_DESIRED_STATE_GENERATION,
@@ -934,17 +938,65 @@ async function requestHostDrainForBilling({
     last_action_error: null,
     last_action_at: new Date().toISOString(),
   };
-  // Queue nothing on a host a relocation took after this pass read it.
-  if (
-    !(await updateHostStatusAndBillingMetadata({
-      row,
-      status: "draining",
-      metadata: nextMetadata,
-    }))
-  ) {
-    return;
+  // Queue nothing on a host a relocation took after this pass read it, nor
+  // while a machine change holds the host (a rescue drain starts it).
+  const queued = await underHostMachineChangeLock(row.id, async () => {
+    if (
+      !(await updateHostStatusAndBillingMetadata({
+        row,
+        status: "draining",
+        metadata: nextMetadata,
+      }))
+    ) {
+      return false;
+    }
+    await queueBillingDrainLro({ row, owner, rescue });
+    return true;
+  });
+  if (!queued) return;
+  await notifyBillingEnforcementTransition({
+    row,
+    owner,
+    previous: previousEnforcement,
+    next: enforcement,
+  });
+  logger.warn("requested dedicated host drain for billing enforcement", {
+    host_id: row.id,
+    reason_code: enforcement.reason_code,
+    reason: enforcement.reason,
+  });
+}
+
+// Run a billing deprovision transition under the host's machine-change lock
+// (see machine-change-lock.ts). While a machine change holds it, nothing is
+// written or queued now, and undefined is returned: the next maintenance pass
+// tries again.
+async function underHostMachineChangeLock<T>(
+  host_id: string,
+  fn: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await withHostMachineChangeLock(host_id, fn);
+  } catch (err) {
+    if ((err as any)?.code !== HOST_MACHINE_CHANGE_IN_PROGRESS) throw err;
+    logger.info(
+      "billing deprovision deferred: a machine change is in progress for the host",
+      { host_id },
+    );
+    return undefined;
   }
-  await createLro({
+}
+
+async function queueBillingDrainLro({
+  row,
+  owner,
+  rescue,
+}: {
+  row: CandidateHostRow;
+  owner: string;
+  rescue: boolean;
+}) {
+  return await createLro({
     kind: HOST_DRAIN_LRO_KIND,
     scope_type: "host",
     scope_id: row.id,
@@ -965,17 +1017,6 @@ async function requestHostDrainForBilling({
     },
     dedupe_key: `${HOST_DRAIN_LRO_KIND}:billing:${row.id}`,
     status: "queued",
-  });
-  await notifyBillingEnforcementTransition({
-    row,
-    owner,
-    previous: previousEnforcement,
-    next: enforcement,
-  });
-  logger.warn("requested dedicated host drain for billing enforcement", {
-    host_id: row.id,
-    reason_code: enforcement.reason_code,
-    reason: enforcement.reason,
   });
 }
 
@@ -1026,24 +1067,30 @@ async function maybeRequeueBillingDeprovision({
     return;
   }
   const metadata = row.metadata ?? {};
-  if (
-    !(await updateHostBillingMetadata({
-      row,
-      metadata: {
-        ...metadata,
-        billing: {
-          ...(metadata.billing ?? {}),
-          enforcement: {
-            ...enforcement,
-            deprovision_retry_requested_at: new Date(now).toISOString(),
+  // The metadata write and the enqueue must not interleave with a machine
+  // change (which rewrites the host's metadata and refuses pending
+  // deprovisions); while one runs, this waits for the next pass.
+  const lro = await underHostMachineChangeLock(row.id, async () => {
+    if (
+      !(await updateHostBillingMetadata({
+        row,
+        metadata: {
+          ...metadata,
+          billing: {
+            ...(metadata.billing ?? {}),
+            enforcement: {
+              ...enforcement,
+              deprovision_retry_requested_at: new Date(now).toISOString(),
+            },
           },
         },
-      },
-    }))
-  ) {
-    return;
-  }
-  const lro = await queueBillingDeprovisionLro({ row, owner });
+      }))
+    ) {
+      return undefined;
+    }
+    return await queueBillingDeprovisionLro({ row, owner });
+  });
+  if (lro == null) return;
   if (Date.parse(`${lro?.created_at ?? ""}`) >= now - 60_000) {
     logger.warn("queued a billing deprovision again", { host_id: row.id });
     try {
@@ -1099,15 +1146,19 @@ async function requestHostDeprovisionForBilling({
     last_action_error: null,
     last_action_at: nowIso,
   };
-  if (
-    !(await updateHostBillingMetadata({
-      row,
-      metadata: nextMetadata,
-    }))
-  ) {
-    return;
-  }
-  await queueBillingDeprovisionLro({ row, owner });
+  const queued = await underHostMachineChangeLock(row.id, async () => {
+    if (
+      !(await updateHostBillingMetadata({
+        row,
+        metadata: nextMetadata,
+      }))
+    ) {
+      return false;
+    }
+    await queueBillingDeprovisionLro({ row, owner });
+    return true;
+  });
+  if (!queued) return;
   await notifyBillingEnforcementTransition({
     row,
     owner,
@@ -1923,3 +1974,5 @@ export function startDedicatedHostSpendMaintenance(): void {
   }, CHECK_INTERVAL_MS);
   timer.unref?.();
 }
+
+export const __test__ = { requestHostDrainForBilling };

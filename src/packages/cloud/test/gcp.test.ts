@@ -16,6 +16,7 @@ const stopMock = jest.fn();
 const deleteMock = jest.fn();
 const setSchedulingMock = jest.fn();
 const setMachineTypeMock = jest.fn();
+const setMachineResourcesMock = jest.fn();
 const setTagsMock = jest.fn();
 const setMetadataMock = jest.fn();
 const firewallGetMock = jest.fn();
@@ -51,6 +52,7 @@ jest.mock("@google-cloud/compute", () => {
     delete = deleteMock;
     setScheduling = setSchedulingMock;
     setMachineType = setMachineTypeMock;
+    setMachineResources = setMachineResourcesMock;
     setTags = setTagsMock;
     setMetadata = setMetadataMock;
     auth = {
@@ -114,6 +116,7 @@ describe("GcpProvider", () => {
     deleteMock.mockReset();
     setSchedulingMock.mockReset();
     setMachineTypeMock.mockReset();
+    setMachineResourcesMock.mockReset();
     setTagsMock.mockReset();
     setMetadataMock.mockReset();
     firewallGetMock.mockReset();
@@ -1310,6 +1313,272 @@ describe("GcpProvider", () => {
       instancesSetMachineTypeRequestResource: {
         machineType: "zones/us-west1-a/machineTypes/n2d-standard-16",
       },
+    });
+  });
+
+  describe("updateMachine (in place, keeping the boot disk)", () => {
+    const creds = {
+      project_id: "proj-1",
+      client_email: "svc@example.com",
+      private_key: "key",
+    };
+    const runtime = {
+      provider: "gcp" as const,
+      instance_id: "ph-test",
+      zone: "us-west1-a",
+      ssh_user: "ubuntu",
+      metadata: { gpu_count: 0 },
+    };
+    const T4 =
+      "projects/proj-1/zones/us-west1-a/acceleratorTypes/nvidia-tesla-t4";
+    const op = [{ latestResponse: { name: "op", status: "DONE" } }];
+    const instance = (overrides: any = {}) => [
+      {
+        status: "TERMINATED",
+        machineType: "zones/us-west1-a/machineTypes/t2d-standard-8",
+        scheduling: {
+          provisioningModel: "STANDARD",
+          onHostMaintenance: "MIGRATE",
+        },
+        disks: [
+          { boot: true, type: "PERSISTENT", source: "disks/ph-test" },
+          { type: "PERSISTENT", source: "disks/ph-test-data" },
+        ],
+        ...overrides,
+      },
+    ];
+    const disks = (bootImage = "projects/ubuntu-os-cloud/global/images/u") => {
+      diskGetMock.mockImplementation(async ({ disk }) => [
+        disk === "ph-test"
+          ? {
+              type: "zones/us-west1-a/diskTypes/pd-balanced",
+              sourceImage: bootImage,
+            }
+          : { type: "zones/us-west1-a/diskTypes/pd-balanced" },
+      ]);
+    };
+    const calls = () =>
+      [
+        ...setMachineTypeMock.mock.calls.map(
+          ([req], i) =>
+            [
+              setMachineTypeMock.mock.invocationCallOrder[i],
+              `type:${req.instancesSetMachineTypeRequestResource.machineType.split("/").pop()}`,
+            ] as const,
+        ),
+        ...setMachineResourcesMock.mock.calls.map(
+          ([req], i) =>
+            [
+              setMachineResourcesMock.mock.invocationCallOrder[i],
+              `gpus:${req.instancesSetMachineResourcesRequestResource.guestAccelerators.map((a: any) => `${a.acceleratorType.split("/").pop()}x${a.acceleratorCount}`).join(",") || "none"}`,
+            ] as const,
+        ),
+        ...authRequestMock.mock.calls.map(
+          ([req], i) =>
+            [
+              authRequestMock.mock.invocationCallOrder[i],
+              `scheduling:${req.data.onHostMaintenance}`,
+            ] as const,
+        ),
+      ]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, name]) => name);
+    beforeEach(() => {
+      waitMock.mockResolvedValue([{ status: "DONE" }]);
+      setMachineTypeMock.mockResolvedValue(op);
+      setMachineResourcesMock.mockResolvedValue(op);
+      authRequestMock.mockResolvedValue({
+        data: { name: "op", status: "DONE" },
+      });
+    });
+
+    it("changes the machine type of a stopped instance, nothing else", async () => {
+      getMock.mockResolvedValueOnce(instance());
+      disks();
+      const result = await new GcpProvider().updateMachine(
+        runtime,
+        { cpu: 16, ram_gb: 64, metadata: { machine_type: "t2d-standard-16" } },
+        creds,
+      );
+      expect(calls()).toEqual(["type:t2d-standard-16"]);
+      expect(startMock).not.toHaveBeenCalled();
+      expect(deleteMock).not.toHaveBeenCalled();
+      expect(result.metadata).toMatchObject({
+        machine_type: "t2d-standard-16",
+        gpu_count: 0,
+      });
+    });
+
+    it("adds a GPU: terminate-on-maintenance first, then the machine type, then the GPU", async () => {
+      getMock.mockResolvedValueOnce(
+        instance({
+          machineType: "zones/us-west1-a/machineTypes/n1-standard-8",
+        }),
+      );
+      disks(
+        "https://www.googleapis.com/compute/v1/projects/ubuntu-os-accelerator-images/global/images/x",
+      );
+      await new GcpProvider().updateMachine(
+        runtime,
+        {
+          cpu: 16,
+          ram_gb: 60,
+          gpu: { type: "nvidia-tesla-t4", count: 1 },
+          metadata: { machine_type: "n1-standard-16" },
+        },
+        creds,
+      );
+      expect(calls()).toEqual([
+        "scheduling:TERMINATE",
+        "type:n1-standard-16",
+        "gpus:nvidia-tesla-t4x1",
+      ]);
+    });
+
+    it("removes a GPU: detach first, then live migration back", async () => {
+      getMock.mockResolvedValueOnce(
+        instance({
+          machineType: "zones/us-west1-a/machineTypes/n1-standard-8",
+          guestAccelerators: [{ acceleratorType: T4, acceleratorCount: 1 }],
+          scheduling: {
+            provisioningModel: "STANDARD",
+            onHostMaintenance: "TERMINATE",
+          },
+        }),
+      );
+      disks();
+      const result = await new GcpProvider().updateMachine(
+        { ...runtime, metadata: { gpu_count: 1 } },
+        { cpu: 8, ram_gb: 30, metadata: { machine_type: "n1-standard-8" } },
+        creds,
+      );
+      expect(calls()).toEqual(["gpus:none", "scheduling:MIGRATE"]);
+      expect(result.metadata).toMatchObject({ gpu_count: 0 });
+    });
+
+    it("on a failure, undoes what was done and leaves the instance stopped and unchanged", async () => {
+      getMock.mockResolvedValueOnce(
+        instance({
+          machineType: "zones/us-west1-a/machineTypes/n1-standard-8",
+        }),
+      );
+      disks(
+        "https://www.googleapis.com/compute/v1/projects/ubuntu-os-accelerator-images/global/images/x",
+      );
+      setMachineResourcesMock.mockRejectedValueOnce(
+        new Error("ZONE_RESOURCE_POOL_EXHAUSTED"),
+      );
+      // read back after the revert: as it was
+      getMock.mockResolvedValueOnce(
+        instance({
+          machineType: "zones/us-west1-a/machineTypes/n1-standard-8",
+        }),
+      );
+      await expect(
+        new GcpProvider().updateMachine(
+          runtime,
+          {
+            cpu: 16,
+            ram_gb: 60,
+            gpu: { type: "nvidia-tesla-t4", count: 1 },
+            metadata: { machine_type: "n1-standard-16" },
+          },
+          creds,
+        ),
+      ).rejects.toThrow(
+        /ZONE_RESOURCE_POOL_EXHAUSTED.*left stopped and unchanged/,
+      );
+      expect(calls()).toEqual([
+        "scheduling:TERMINATE",
+        "type:n1-standard-16",
+        "gpus:nvidia-tesla-t4x1",
+        // the failed step is reverted too: it may have been accepted
+        "gpus:none",
+        "type:n1-standard-8",
+        "scheduling:MIGRATE",
+      ]);
+      expect(startMock).not.toHaveBeenCalled();
+    });
+
+    it("reverts a step GCP accepted but whose operation failed, and verifies it", async () => {
+      getMock.mockResolvedValueOnce(instance());
+      disks();
+      // the machine type change is accepted, but waiting for it fails
+      setMachineTypeMock.mockResolvedValueOnce([
+        { latestResponse: { name: "op-type", status: "RUNNING" } },
+      ]);
+      waitMock.mockRejectedValueOnce(new Error("connection reset by peer"));
+      getMock.mockResolvedValueOnce(instance());
+      await expect(
+        new GcpProvider().updateMachine(
+          runtime,
+          {
+            cpu: 16,
+            ram_gb: 64,
+            metadata: { machine_type: "t2d-standard-16" },
+          },
+          creds,
+        ),
+      ).rejects.toMatchObject({
+        unchanged: true,
+        message: expect.stringContaining("left stopped and unchanged"),
+      });
+      expect(calls()).toEqual(["type:t2d-standard-16", "type:t2d-standard-8"]);
+    });
+
+    it("doesn't claim unchanged when the instance reads back different", async () => {
+      getMock.mockResolvedValueOnce(instance());
+      disks();
+      setMachineTypeMock.mockResolvedValueOnce([
+        { latestResponse: { name: "op-type", status: "RUNNING" } },
+      ]);
+      waitMock.mockRejectedValueOnce(new Error("connection reset by peer"));
+      // the revert seemed to work, but the instance still has the new type
+      getMock.mockResolvedValueOnce(
+        instance({
+          machineType: "zones/us-west1-a/machineTypes/t2d-standard-16",
+        }),
+      );
+      await expect(
+        new GcpProvider().updateMachine(
+          runtime,
+          {
+            cpu: 16,
+            ram_gb: 64,
+            metadata: { machine_type: "t2d-standard-16" },
+          },
+          creds,
+        ),
+      ).rejects.toMatchObject({
+        unchanged: false,
+        message: expect.stringContaining("could not be confirmed"),
+      });
+    });
+
+    it("refuses, before changing anything, what needs a new instance or a running VM", async () => {
+      getMock.mockResolvedValueOnce(instance());
+      disks();
+      await expect(
+        new GcpProvider().updateMachine(
+          runtime,
+          { cpu: 8, ram_gb: 32, metadata: { machine_type: "c3-standard-8" } },
+          creds,
+        ),
+      ).rejects.toMatchObject({ code: "machine_change_requires_new_instance" });
+      getMock.mockResolvedValueOnce(instance({ status: "RUNNING" }));
+      await expect(
+        new GcpProvider().updateMachine(
+          runtime,
+          {
+            cpu: 16,
+            ram_gb: 64,
+            metadata: { machine_type: "t2d-standard-16" },
+          },
+          creds,
+        ),
+      ).rejects.toThrow(/requires a stopped instance/);
+      expect(calls()).toEqual([]);
+      expect(stopMock).not.toHaveBeenCalled();
     });
   });
 

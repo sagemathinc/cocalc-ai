@@ -146,6 +146,15 @@ export interface CloudProvider {
     machineType: string,
     creds: any,
   ): Promise<void>;
+  // Change the machine type and GPUs of a stopped instance in place, keeping
+  // its boot disk. Throws an error with code
+  // "machine_change_requires_new_instance" (before changing anything) when
+  // the provider can't make the change in place.
+  updateMachine?(
+    runtime: HostRuntime,
+    spec: Pick<HostSpec, "cpu" | "ram_gb" | "gpu" | "metadata">,
+    creds: any,
+  ): Promise<HostRuntime>;
   probeSpotAvailability?(
     spec: HostSpec,
     creds: any,
