@@ -1066,7 +1066,7 @@ function gcAlive(src: string): { frames: number; alive: number } {
       },
     );
     assert.equal(r.status, 0, r.stderr);
-    return JSON.parse(r.stdout.trim().split("\n").pop()!);
+    return JSON.parse(r.stdout.trim().split(/\r?\n/).pop()!);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
