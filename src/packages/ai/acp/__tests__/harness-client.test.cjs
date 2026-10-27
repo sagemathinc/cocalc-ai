@@ -3701,7 +3701,8 @@ test("a site-funded Claude turn near its allowance shows the usage warning", asy
   );
   assert.deepEqual(
     warnings.map((payload) => payload.event),
-    [{ type: "usage_warning", ...usageWarning }],
+    // Project-visible: no exact use or reset time.
+    [{ type: "usage_warning", window: "5h", threshold: 80 }],
   );
   assert.equal(events.at(-1).type, "summary");
 });

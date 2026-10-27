@@ -20,8 +20,8 @@ import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
-  formatSiteFundedUsageWarning,
-  type SiteFundedUsageWarning,
+  formatSiteFundedTurnUsageWarning,
+  type SiteFundedTurnUsageWarning,
 } from "@cocalc/util/ai/site-funded-codex";
 import CodexLogPanel from "./codex-log-panel";
 import { agentMessageDirectionFromMarkdown } from "./agent-message-presentation";
@@ -251,29 +251,22 @@ export function InlineSteerStatusRow({
 /** The turn's warning that the account is close to an included-AI limit. */
 export function latestUsageWarning(
   events: readonly AcpStreamMessage[] | null | undefined,
-): SiteFundedUsageWarning | undefined {
+): SiteFundedTurnUsageWarning | undefined {
   for (let i = (events?.length ?? 0) - 1; i >= 0; i--) {
     const message = events![i];
     if (message?.type !== "event" || message.event?.type !== "usage_warning") {
       continue;
     }
-    const { window, percent, threshold, resetAt } = message.event;
-    if ((window !== "5h" && window !== "7d") || typeof percent !== "number") {
-      return;
-    }
-    return {
-      window,
-      percent,
-      threshold: threshold === 95 ? 95 : 80,
-      ...(typeof resetAt === "string" ? { resetAt } : {}),
-    };
+    const { window, threshold } = message.event;
+    if (window !== "5h" && window !== "7d") return;
+    return { window, threshold: threshold === 95 ? 95 : 80 };
   }
 }
 
 export function UsageWarningNotice({
   warning,
 }: {
-  warning?: SiteFundedUsageWarning;
+  warning?: SiteFundedTurnUsageWarning;
 }) {
   if (!warning) return null;
   return (
@@ -285,7 +278,7 @@ export function UsageWarningNotice({
         color: warning.threshold >= 95 ? UI_COLORS.danger : UI_COLORS.warning,
       }}
     >
-      {formatSiteFundedUsageWarning(warning)}
+      {formatSiteFundedTurnUsageWarning(warning)}
     </div>
   );
 }
@@ -406,7 +399,7 @@ export function describeLastActivity({
 interface AgentMessageStatusProps {
   show: boolean;
   /** Shown on the turn when the account is close to an included-AI limit. */
-  usageWarning?: SiteFundedUsageWarning;
+  usageWarning?: SiteFundedTurnUsageWarning;
   generating: boolean;
   durationLabel: string;
   lastActivityAtMs?: number;

@@ -7023,11 +7023,10 @@ describe("CodexAppServerAgent", () => {
       {
         type: "event",
         event: {
+          // Project-visible: no exact use or reset time.
           type: "usage_warning",
           window: "7d",
-          percent: 95,
           threshold: 95,
-          resetAt: "2026-10-30T12:00:00.000Z",
         },
       },
     ]);

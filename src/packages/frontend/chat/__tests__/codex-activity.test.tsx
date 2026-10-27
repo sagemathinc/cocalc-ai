@@ -410,7 +410,6 @@ describe("CodexActivity terminal rows", () => {
             event: {
               type: "usage_warning",
               window: "5h",
-              percent: 84,
               threshold: 80,
             },
           } as any,
@@ -421,7 +420,7 @@ describe("CodexActivity terminal rows", () => {
     expect(screen.getByText("AI allowance")).not.toBeNull();
     expect(
       screen.getByText(
-        /You have used 84% of your 5-hour included AI allowance/,
+        /The 5-hour included AI allowance of the account running this turn is over 80% used/,
       ),
     ).not.toBeNull();
   });

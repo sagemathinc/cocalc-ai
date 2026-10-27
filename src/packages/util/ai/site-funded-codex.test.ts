@@ -8,13 +8,14 @@ import {
   DEFAULT_SITE_FUNDED_CODEX_POLICY,
   formatSiteFundedLimitDetail,
   formatSiteFundedReset,
-  formatSiteFundedUsageWarning,
+  formatSiteFundedTurnUsageWarning,
   getSiteFundedCodexPrice,
   hasSiteFundedCodexPrice,
   microusdToUsageUnits,
   SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES,
   siteFundedCodexFinalRequestHeadroomMicrousd,
   siteFundedCodexMaxRequestBodyBytes,
+  siteFundedTurnUsageWarning,
   siteFundedUsageWarning,
   usdToMicrousd,
 } from "./site-funded-codex";
@@ -199,12 +200,17 @@ describe("site-funded usage warnings", () => {
 
   it("names the limit, its use, the reset and what to do", () => {
     expect(
-      formatSiteFundedUsageWarning(
-        { window: "5h", percent: 96, threshold: 95, resetAt: in2h10m },
-        now,
-      ),
+      siteFundedTurnUsageWarning({
+        window: "5h",
+        percent: 96,
+        threshold: 95,
+        resetAt: in2h10m,
+      }),
+    ).toEqual({ window: "5h", threshold: 95 });
+    expect(
+      formatSiteFundedTurnUsageWarning({ window: "5h", threshold: 95 }),
     ).toBe(
-      "You have used 96% of your 5-hour included AI allowance. It resets in about 2 h 10 min, at Oct 27, 14:10 UTC. When it runs out, agent turns that use it are refused until it resets; to keep working, upgrade your membership or use your own API key.",
+      "The 5-hour included AI allowance of the account running this turn is over 95% used. When it runs out, its agent turns are refused until the window resets; the AI usage indicator in the top bar shows the details, and you can upgrade your membership or use your own API key.",
     );
     expect(formatSiteFundedLimitDetail(in2h10m, now)).toBe(
       " It resets in about 2 h 10 min, at Oct 27, 14:10 UTC.",

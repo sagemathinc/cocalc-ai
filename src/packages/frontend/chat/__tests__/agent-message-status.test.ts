@@ -508,15 +508,10 @@ describe("usage warning on the turn", () => {
         }),
         warningEvent({ type: "message", text: "hi" }),
       ]),
-    ).toEqual({
-      window: "7d",
-      percent: 96,
-      threshold: 95,
-      resetAt: "2026-10-30T12:00:00.000Z",
-    });
+    ).toEqual({ window: "7d", threshold: 95 });
     expect(
       latestUsageWarning([
-        warningEvent({ type: "usage_warning", window: "1y", percent: 81 }),
+        warningEvent({ type: "usage_warning", window: "1y", threshold: 80 }),
       ]),
     ).toBeUndefined();
   });
@@ -530,13 +525,13 @@ describe("usage warning on the turn", () => {
         date: 1000,
         logRefs: {},
         activityContext: {} as any,
-        usageWarning: { window: "5h", percent: 82, threshold: 80 },
+        usageWarning: { window: "5h", threshold: 80 },
       } as any),
     );
     const notice = screen.getByTestId("agent-usage-warning");
     expect(notice.getAttribute("role")).toBe("status");
     expect(notice.textContent).toContain(
-      "You have used 82% of your 5-hour included AI allowance.",
+      "The 5-hour included AI allowance of the account running this turn is over 80% used.",
     );
     expect(document.querySelector(".ant-modal")).toBeNull();
   });

@@ -26,7 +26,7 @@ import type {
   AccountUsageMeter,
   AccountUsageOverview,
 } from "@cocalc/conat/hub/api/purchases";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Text } = Typography;
 
@@ -314,7 +314,7 @@ export const AccountCpuWarning: React.FC<{
   );
 });
 
-function UsageWarningPill({
+export function UsageWarningPill({
   warning,
   pageStyle,
 }: {
@@ -333,11 +333,16 @@ function UsageWarningPill({
   const dismissed = warningKey != null && dismissedWarningKey === warningKey;
   if (dismissed) return null;
 
+  const severe =
+    warning.severity === "blocked" || warning.severity === "severe";
   const outerStyle = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     cursor: "pointer",
+    border: "none",
+    background: "transparent",
+    font: "inherit",
     padding: `${pageStyle.topPaddingIcons} ${pageStyle.sidePaddingIcons}`,
     height: `${pageStyle.height}px`,
   };
@@ -348,14 +353,9 @@ function UsageWarningPill({
     gap: "6px",
     borderRadius: "999px",
     padding: pageStyle.isNarrow ? "4px 8px" : "5px 10px",
-    background:
-      warning.severity === "blocked" || warning.severity === "severe"
-        ? COLORS.ANTD_RED
-        : COLORS.ANTD_ORANGE,
-    color:
-      warning.severity === "blocked" || warning.severity === "severe"
-        ? "white"
-        : COLORS.GRAY_DD,
+    background: severe ? UI_COLORS.dangerBg : UI_COLORS.warningBg,
+    color: severe ? UI_COLORS.danger : UI_COLORS.warning,
+    border: `1px solid ${severe ? UI_COLORS.danger : UI_COLORS.warning}`,
     fontSize: pageStyle.isNarrow ? "11px" : "12px",
     fontWeight: 600,
     lineHeight: 1,
@@ -373,17 +373,20 @@ function UsageWarningPill({
         mouseLeaveDelay={0}
         placement="bottom"
       >
-        <div
+        <button
+          type="button"
           style={outerStyle}
           onClick={() => setOpen(true)}
           className={TOP_BAR_ELEMENT_CLASS}
+          aria-haspopup="dialog"
+          aria-label={`${modalTitle}. ${getSummaryTooltip(warning)}`}
           data-cocalc-account-usage-warning={warning.kind.id}
         >
-          <div style={pillStyle}>
+          <span style={pillStyle}>
             <Icon name="tachometer-alt" />
             <span>{getSummaryLabel(warning, pageStyle.isNarrow)}</span>
-          </div>
-        </div>
+          </span>
+        </button>
       </Tooltip>
       <Modal
         title={modalTitle}

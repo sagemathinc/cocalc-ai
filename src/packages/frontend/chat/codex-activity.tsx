@@ -26,7 +26,7 @@ import {
 } from "@cocalc/frontend/project/parse-path-line";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
-import { formatSiteFundedUsageWarning } from "@cocalc/util/ai/site-funded-codex";
+import { formatSiteFundedTurnUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import { containingPath, humanSize, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -1378,8 +1378,7 @@ function createEventEntry({
   }
   if (
     event?.type === "usage_warning" &&
-    (event.window === "5h" || event.window === "7d") &&
-    typeof event.percent === "number"
+    (event.window === "5h" || event.window === "7d")
   ) {
     return {
       kind: "status",
@@ -1387,7 +1386,10 @@ function createEventEntry({
       seq,
       time,
       label: "AI allowance",
-      detail: formatSiteFundedUsageWarning(event),
+      detail: formatSiteFundedTurnUsageWarning({
+        window: event.window,
+        threshold: event.threshold === 95 ? 95 : 80,
+      }),
       level: "warning",
     };
   }

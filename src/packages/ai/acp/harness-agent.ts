@@ -3,6 +3,7 @@ import {
   HarnessError,
   disposeFailedHarness,
 } from "./harness-client";
+import { siteFundedTurnUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import type {
   HarnessBinding,
   HarnessFundedTurnEnd,
@@ -305,7 +306,10 @@ export class HarnessAgent implements AcpAgent {
       if (fundedStart.usageWarning) {
         await request.stream({
           type: "event",
-          event: { type: "usage_warning", ...fundedStart.usageWarning },
+          event: {
+            type: "usage_warning",
+            ...siteFundedTurnUsageWarning(fundedStart.usageWarning),
+          },
         });
       }
       const result = await client.prompt(

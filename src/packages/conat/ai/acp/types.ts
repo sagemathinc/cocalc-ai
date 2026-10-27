@@ -433,12 +433,11 @@ export type AcpStreamEvent =
     }
   | {
       // The turn was admitted, but the account has used most of an included
-      // AI window (see siteFundedUsageWarning). Display only.
+      // AI window. Display only, and project-visible: only the window and
+      // the level crossed, never the account's exact use or reset time.
       type: "usage_warning";
       window: "5h" | "7d";
-      percent: number;
       threshold: 80 | 95;
-      resetAt?: string;
     }
   | {
       type: "thinking";

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { siteFundedTurnUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import {
   turnFailureOf,
   withTurnFailure,
@@ -3181,7 +3182,10 @@ export class CodexAppServerAgent implements AcpAgent {
       if (fundedTurn?.usageWarning) {
         await stream({
           type: "event",
-          event: { type: "usage_warning", ...fundedTurn.usageWarning },
+          event: {
+            type: "usage_warning",
+            ...siteFundedTurnUsageWarning(fundedTurn.usageWarning),
+          },
         });
       }
       logger.debug("codex app-server: resolved service tier", {

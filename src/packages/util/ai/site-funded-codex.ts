@@ -250,17 +250,33 @@ export function formatSiteFundedReset(
   return `in about ${span}, at ${at} UTC`;
 }
 
-/** The text shown on a turn for a usage warning. */
-export function formatSiteFundedUsageWarning(
-  warning: SiteFundedUsageWarning,
-  now: number = Date.now(),
-): string {
-  const reset = formatSiteFundedReset(warning.resetAt, now);
+/**
+ * What a turn may show about a usage warning. A turn's activity is project
+ * state that every collaborator can read, so it says only which window and
+ * which level was crossed; the exact use and reset time stay account-private
+ * (the account's usage pill in the top bar).
+ */
+export type SiteFundedTurnUsageWarning = Pick<
+  SiteFundedUsageWarning,
+  "window" | "threshold"
+>;
+
+export function siteFundedTurnUsageWarning({
+  window,
+  threshold,
+}: SiteFundedUsageWarning): SiteFundedTurnUsageWarning {
+  return { window, threshold };
+}
+
+/** The notice shown on a turn for a usage warning. */
+export function formatSiteFundedTurnUsageWarning({
+  window,
+  threshold,
+}: SiteFundedTurnUsageWarning): string {
   return (
-    `You have used ${warning.percent}% of your ${WINDOW_NAME[warning.window]} included AI allowance.` +
-    (reset ? ` It resets ${reset}.` : "") +
-    ` When it runs out, agent turns that use it are refused until it resets;` +
-    ` to keep working, upgrade your membership or use your own API key.`
+    `The ${WINDOW_NAME[window]} included AI allowance of the account running this turn is over ${threshold}% used.` +
+    ` When it runs out, its agent turns are refused until the window resets;` +
+    ` the AI usage indicator in the top bar shows the details, and you can upgrade your membership or use your own API key.`
   );
 }
 
