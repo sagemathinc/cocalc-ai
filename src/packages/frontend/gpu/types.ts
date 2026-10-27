@@ -26,10 +26,14 @@ export type GpuCloud = "SECURE" | "COMMUNITY";
 
 // "mine": pods I'm responsible for; "funded": every pod my key pays for.
 export type GpuPodScope =
-  "mine" | "funded" | { grant_id: string } | { course_id: string };
+  | "mine"
+  | "funded"
+  | { grant_id: string }
+  | { course_id: string };
 
 export type GpuKillSwitchScope =
-  GpuPodScope | { beneficiary_account_id: string };
+  | GpuPodScope
+  | { beneficiary_account_id: string };
 
 export interface GpuPodSummary {
   id: string;

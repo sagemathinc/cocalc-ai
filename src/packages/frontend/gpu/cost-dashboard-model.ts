@@ -5,6 +5,7 @@
 
 import { moneyAdd, toDecimal } from "@cocalc/util/money";
 import type {
+  GpuPodScope,
   GpuPodState,
   GpuPodSummary,
   GpuSpendGroupBy,
@@ -100,4 +101,13 @@ export function podOwnerLabel(
 ): string {
   const who = pod.beneficiary_name || "You";
   return pod.agent_id ? `${who} (agent)` : who;
+}
+
+/** Completes "GPU pods ..." for a scope, so the confirmation always names the
+ * pods the kill switch will actually terminate. */
+export function defaultScopeLabel(scope: GpuPodScope): string {
+  if (scope === "funded") return "your RunPod key pays for";
+  if (scope === "mine") return "you are responsible for";
+  if ("course_id" in scope) return "in this course";
+  return "funded by this grant";
 }

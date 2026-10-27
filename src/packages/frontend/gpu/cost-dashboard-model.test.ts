@@ -1,4 +1,5 @@
 import {
+  defaultScopeLabel,
   hourlyRate,
   isLivePod,
   livePods,
@@ -91,5 +92,12 @@ describe("GPU cost dashboard model", () => {
     const now = Date.parse("2026-10-27T12:00:00.000Z");
     expect(periodSince("24h", now)).toBe("2026-10-26T12:00:00.000Z");
     expect(periodSince("7d", now)).toBe("2026-10-20T12:00:00.000Z");
+  });
+
+  it("derives a label for every scope", () => {
+    expect(defaultScopeLabel("funded")).toBe("your RunPod key pays for");
+    expect(defaultScopeLabel("mine")).toBe("you are responsible for");
+    expect(defaultScopeLabel({ course_id: "c" })).toBe("in this course");
+    expect(defaultScopeLabel({ grant_id: "g" })).toBe("funded by this grant");
   });
 });

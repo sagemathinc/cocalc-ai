@@ -27,6 +27,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { moneyToCurrency } from "@cocalc/util/money";
 import {
   GROUP_BY_LABELS,
+  defaultScopeLabel,
   PERIOD_LABELS,
   hourlyRate,
   livePods,
@@ -80,14 +81,16 @@ function usePolling(
 export function GpuCostDashboard({
   api,
   scope = "funded",
-  scopeLabel = "your RunPod key pays for",
+  scopeLabel: scopeLabelOverride,
 }: {
   api: GpuCostDashboardApi;
   // What is shown is exactly what "Terminate all" terminates.
   scope?: GpuPodScope;
-  // Completes "GPU pods ..." in headings and confirmations.
+  // Completes "GPU pods ..." in headings and confirmations; defaults to a
+  // label derived from scope.
   scopeLabel?: string;
 }) {
+  const scopeLabel = scopeLabelOverride ?? defaultScopeLabel(scope);
   const [period, setPeriod] = useState<GpuSpendPeriod>("7d");
   const [groupBy, setGroupBy] = useState<GpuSpendGroupBy>("beneficiary");
   // Each result is stored with the query it answers, and only shown while that

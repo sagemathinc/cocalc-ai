@@ -366,6 +366,28 @@ describe("GpuCostDashboard", () => {
     expect(within(dialog).queryByText(/pods are live now/)).toBeNull();
   });
 
+  it("labels a course scope as the course when no label is given", async () => {
+    const mock = api();
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} scope={{ course_id: "c2" }} />);
+    await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    expect(
+      screen.getByRole("heading", { name: "GPU pods in this course" }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/your RunPod key pays for/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Terminate all" }));
+    const dialog = await findDialog("Terminate all GPU pods in this course?");
+    expect(
+      within(dialog).getByText(/terminates every GPU pod in this course/),
+    ).toBeTruthy();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Terminate all" }),
+    );
+    expect(mock.killSwitch).toHaveBeenCalledWith({
+      scope: { course_id: "c2" },
+    });
+  });
+
   it("reports load failures in an alert", async () => {
     const mock = api();
     mock.spend.mockRejectedValue(new Error("not entitled"));
