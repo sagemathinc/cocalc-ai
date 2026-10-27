@@ -273,6 +273,20 @@ describe("the codec", () => {
     same(got, [[Buffer.from("A"), Buffer.from("B")]]);
   });
 
+  test("a frame declaring 64 MiB or 2^40 bytes, of which 10 arrive: memory follows the bytes received", () => {
+    declaredFrameCheck(Z, 2n ** 26n);
+    declaredFrameCheck(Z, 2n ** 40n);
+  });
+
+  test("a spanning body completes from many small chunks, copied once into an exact buffer", () => {
+    const body = Buffer.alloc(100_000, 7);
+    const s = session([[body]]);
+    const { got } = decode(s, Array(Math.ceil(s.length / 997)).fill(997));
+    assert.equal(got.length, 1);
+    assert.ok(got[0][0].equals(body));
+    assert.equal(got[0][0].buffer.byteLength, body.length);
+  });
+
   test("a drained chunk with a 1-byte partial header: its whole retained chunk is counted, and released on completion (astra A2-CODE-1)", () => {
     partialTailCheck(Z);
   });
@@ -344,6 +358,34 @@ function partialTailCheck(Zm: typeof Z) {
   assert.equal(d.buffered(), 0);
   assert.equal(d.liveSlots(), 0);
   assert.equal(heldBacking(d), 0);
+}
+
+// memory follows the bytes received, never the size a frame declares: a peer
+// declaring a huge frame and sending 10 bytes of it costs about 10 bytes
+function declaredFrameCheck(Zm: typeof Z, declared: bigint) {
+  const head = cat([
+    Zm.greeting(),
+    ...Zm.readyCommand({ "Socket-Type": Buffer.from("ROUTER") }),
+  ]);
+  const h = Buffer.alloc(9);
+  h[0] = 2; // LONG, last frame
+  h.writeBigUInt64BE(declared, 1);
+  const d = new Zm.Decoder({ greeting() {}, command() {}, message() {} });
+  const before = process.memoryUsage().arrayBuffers;
+  d.push(cat([head, h, Buffer.alloc(10, 1)]));
+  const grew = process.memoryUsage().arrayBuffers - before;
+  assert.ok(
+    grew < 1 << 20,
+    `nothing big was allocated: arrayBuffers grew ${grew} B for 10 B received`,
+  );
+  assert.ok(
+    heldBacking(d) <= 2 * d.buffered(),
+    `held backing ${heldBacking(d)} vs buffered ${d.buffered()}`,
+  );
+  assert.ok(
+    d.buffered() < 4096,
+    `buffered ${d.buffered()} follows the bytes received`,
+  );
 }
 
 // ---------------------------------------------------------------- 2. fuzz
@@ -949,10 +991,17 @@ const MUTANTS: [
   ],
   [
     "m8: buffered() counts only unread bytes (A2-CODE-1)",
-    "return this.framesBytes + (this.body ? this.body.length : 0) + this.held;",
-    "return this.framesBytes + (this.body ? this.body.length : 0) + this.avail;",
+    "return this.framesBytes + this.held;",
+    "return this.framesBytes + this.avail;",
     (Zm) => partialTailCheck(Zm),
     /the held chunk counts whole/,
+  ],
+  [
+    "m9: a spanning body allocated at its declared size, before its bytes arrive",
+    "this.pending = { flags, size };",
+    "this.pending = { flags, size }; (this as any).early = Buffer.allocUnsafeSlow(size);",
+    (Zm) => declaredFrameCheck(Zm, 2n ** 26n),
+    /nothing big was allocated/,
   ],
 ];
 

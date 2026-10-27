@@ -142,7 +142,9 @@ export interface DecoderEvents {
  * commands and messages out.  Linear time: a chunk list with a head index
  * and offset; each header parsed once; a body within one chunk is a subarray
  * (copied exactly when it would pin a much larger backing store), a body
- * spanning chunks is copied once.  It stops at a message boundary while
+ * spanning chunks is copied once, when all of it has arrived: until then its
+ * bytes stay in the chunk list, so memory follows the bytes received, never
+ * the size a frame declares.  It stops at a message boundary while
  * `stopped()` says so (the socket's flow control), keeping unparsed bytes.
  */
 export class Decoder {
@@ -155,10 +157,8 @@ export class Decoder {
   // the message in progress
   private frames: Buffer[] = [];
   private framesBytes = 0;
-  // a frame body spanning chunks, being filled
-  private body?: Buffer;
-  private bodyFill = 0;
-  private bodyFlags = 0;
+  // a frame whose header is parsed but whose body hasn't all arrived
+  private pending?: { flags: number; size: number };
   private parsing = false;
   readonly stats = { maxBuffered: 0 };
 
@@ -173,7 +173,7 @@ export class Decoder {
    * until that chunk is wholly consumed).
    */
   buffered(): number {
-    return this.framesBytes + (this.body ? this.body.length : 0) + this.held;
+    return this.framesBytes + this.held;
   }
 
   /** The bytes not parsed yet (part of `buffered()`). */
@@ -188,7 +188,6 @@ export class Decoder {
       if (c) into.add(c.buffer);
     }
     for (const f of this.frames) into.add(f.buffer);
-    if (this.body) into.add(this.body.buffer);
   }
 
   /** (tests) the array slots still referencing a chunk */
@@ -216,7 +215,7 @@ export class Decoder {
     this.head = this.off = this.avail = this.held = 0;
     this.frames = [];
     this.framesBytes = 0;
-    this.body = undefined;
+    this.pending = undefined;
   }
 
   private note(): void {
@@ -330,14 +329,12 @@ export class Decoder {
       this.on.greeting(g);
     }
     for (;;) {
-      if (this.body) {
-        const k = Math.min(this.avail, this.body.length - this.bodyFill);
-        this.fill(this.body, this.bodyFill, k);
-        this.bodyFill += k;
-        if (this.bodyFill < this.body.length) return;
-        const b = this.body;
-        this.body = undefined;
-        this.frame(this.bodyFlags, b);
+      if (this.pending) {
+        // (the header was parsed once; wait for the whole body, then copy it once)
+        if (this.avail < this.pending.size) return;
+        const { flags, size } = this.pending;
+        this.pending = undefined;
+        this.frame(flags, this.take(size));
         continue;
       }
       if (this.frames.length === 0 && this.stopped()) return; // at a message boundary
@@ -363,16 +360,15 @@ export class Decoder {
         size = this.peek(1);
         hl = 2;
       }
-      if (this.avail >= hl + size) {
-        this.consume(hl);
+      this.consume(hl);
+      if (this.avail >= size) {
         this.frame(flags, this.take(size));
         continue;
       }
-      // a body spanning chunks: allocated once, filled as chunks arrive
-      this.consume(hl);
-      this.body = this.allocBody(size);
-      this.bodyFill = 0;
-      this.bodyFlags = flags;
+      // the body isn't all here: nothing is allocated for bytes not yet
+      // received; they stay (counted) in the chunk list until it completes
+      this.pending = { flags, size };
+      return;
     }
   }
 
