@@ -13,6 +13,12 @@ import { randomUUID } from "crypto";
 import logger from "./logger";
 import { gcpInternalHostname } from "./gcp-internal";
 import { withDefaultGcpLabels } from "./gcp-labels";
+import {
+  MACHINE_CHANGE_REQUIRES_NEW_INSTANCE,
+  classifyInPlaceMachineChange,
+  sameAccelerators,
+  type GuestAccelerator,
+} from "./gcp-machine-change";
 import type {
   CloudProvider,
   DataDiskSnapshot,
@@ -238,6 +244,31 @@ function machineTypeFor(spec: HostSpec): string {
   if (override) return override;
   const memoryMb = Math.max(1024, Math.round(spec.ram_gb * 1024));
   return `n2-custom-${spec.cpu}-${memoryMb}`;
+}
+
+// The GPUs to attach: none for G2, whose GPUs come with the machine type.
+function guestAcceleratorsFor(
+  spec: Pick<HostSpec, "gpu" | "cpu" | "ram_gb" | "metadata">,
+  projectId: string,
+  zone: string,
+) {
+  return spec.gpu && !machineTypeFor(spec as HostSpec).startsWith("g2-")
+    ? [
+        {
+          acceleratorCount: Math.max(1, spec.gpu.count ?? 1),
+          acceleratorType: `projects/${projectId}/zones/${zone}/acceleratorTypes/${spec.gpu.type}`,
+        },
+      ]
+    : [];
+}
+
+function acceleratorsOf(list: any[] | null | undefined): GuestAccelerator[] {
+  return (list ?? [])
+    .map((entry) => ({
+      type: `${entry?.acceleratorType ?? ""}`.split("/").pop() ?? "",
+      count: Number(entry?.acceleratorCount ?? 0),
+    }))
+    .filter(({ type, count }) => type && count > 0);
 }
 
 function zoneFor(spec: HostSpec): string {
@@ -796,15 +827,11 @@ export class GcpProvider implements CloudProvider {
       }
     }
 
-    const guestAccelerators =
-      spec.gpu && !machineTypeFor(spec).startsWith("g2-")
-        ? [
-            {
-              acceleratorCount: Math.max(1, spec.gpu.count ?? 1),
-              acceleratorType: `projects/${credentials.projectId}/zones/${zone}/acceleratorTypes/${spec.gpu.type}`,
-            },
-          ]
-        : [];
+    const guestAccelerators = guestAcceleratorsFor(
+      spec,
+      credentials.projectId,
+      zone,
+    );
     const scheduling =
       spec.pricing_model === "spot"
         ? spotScheduling()
@@ -1490,6 +1517,244 @@ export class GcpProvider implements CloudProvider {
     });
   }
 
+  /**
+   * Change the machine type and GPUs of a stopped instance in place, keeping
+   * its boot disk: scheduling first when GPUs need onHostMaintenance=TERMINATE,
+   * then GPUs off, machine type, GPUs on, and live migration back when no GPU
+   * is left. A change GCP can't make in place (see gcp-machine-change.ts)
+   * throws MACHINE_CHANGE_REQUIRES_NEW_INSTANCE before anything is changed.
+   * On a failure, the steps already done are undone, so the instance is left
+   * stopped and as it was.
+   */
+  async updateMachine(
+    runtime: HostRuntime,
+    spec: Pick<HostSpec, "cpu" | "ram_gb" | "gpu" | "metadata">,
+    creds: any,
+  ): Promise<HostRuntime> {
+    const credentials = parseCredentials(creds ?? {});
+    const zone = runtime.zone;
+    if (!zone) {
+      throw new Error("gcp.updateMachine requires zone");
+    }
+    const client = new InstancesClient(credentials);
+    const ids = {
+      project: credentials.projectId,
+      zone,
+      instance: runtime.instance_id,
+    };
+    const [instance] = await client.get(ids);
+    const status = `${instance?.status ?? ""}`.trim().toUpperCase();
+    if (status !== "TERMINATED") {
+      throw new Error(
+        `gcp.updateMachine requires a stopped instance (status ${status || "unknown"})`,
+      );
+    }
+    const currentType = `${instance?.machineType ?? ""}`.split("/").pop() ?? "";
+    const targetType = machineTypeFor(spec as HostSpec);
+    const currentAccelerators = acceleratorsOf(instance?.guestAccelerators);
+    const targetAccelerators = acceleratorsOf(
+      guestAcceleratorsFor(spec, credentials.projectId, zone),
+    );
+
+    const diskClient = new DisksClient(credentials);
+    const diskTypes: string[] = [];
+    let bootSourceImage = "";
+    for (const disk of instance?.disks ?? []) {
+      if (`${disk?.type ?? ""}`.toUpperCase() === "SCRATCH") {
+        diskTypes.push("local-ssd");
+        continue;
+      }
+      const name = `${disk?.source ?? ""}`.split("/").pop();
+      if (!name) continue;
+      const [info] = await diskClient.get({
+        project: credentials.projectId,
+        zone,
+        disk: name,
+      });
+      diskTypes.push(`${info?.type ?? ""}`.split("/").pop() ?? "");
+      if (disk?.boot) bootSourceImage = `${info?.sourceImage ?? ""}`;
+    }
+    const verdict = classifyInPlaceMachineChange({
+      currentMachineType: currentType,
+      targetMachineType: targetType,
+      currentAccelerators,
+      targetAccelerators,
+      diskTypes,
+      bootImageHasGpuDrivers: bootSourceImage.includes(
+        "/projects/ubuntu-os-accelerator-images/",
+      ),
+    });
+    if (!verdict.ok) {
+      throw Object.assign(
+        new Error(
+          `this machine change needs a new instance: ${verdict.reason}`,
+        ),
+        { code: MACHINE_CHANGE_REQUIRES_NEW_INSTANCE },
+      );
+    }
+
+    const pricingModel = pricingModelFromInstance(instance);
+    const currentHasGpu = currentAccelerators.length > 0;
+    const targetHasGpu = targetAccelerators.length > 0;
+    const terminateOnMaintenance =
+      `${instance?.scheduling?.onHostMaintenance ?? ""}`.toUpperCase() ===
+      "TERMINATE";
+    const wait = async (response: any) =>
+      await waitUntilOperationComplete({ response, zone, credentials });
+    const setAccelerators = async (accelerators: GuestAccelerator[]) => {
+      const [response] = await client.setMachineResources({
+        ...ids,
+        instancesSetMachineResourcesRequestResource: {
+          guestAccelerators: accelerators.map(({ type, count }) => ({
+            acceleratorCount: count,
+            acceleratorType: `projects/${credentials.projectId}/zones/${zone}/acceleratorTypes/${type}`,
+          })),
+        },
+      });
+      await wait(response);
+    };
+    const setType = async (machineType: string) => {
+      const [response] = await client.setMachineType({
+        ...ids,
+        instancesSetMachineTypeRequestResource: {
+          machineType: `zones/${zone}/machineTypes/${machineType}`,
+        },
+      });
+      await wait(response);
+    };
+    // Spot scheduling always terminates on maintenance; standard scheduling
+    // live-migrates unless the instance has GPUs.
+    const setStandardScheduling = async (gpu: boolean) =>
+      await setStandardSchedulingViaRest({ client, credentials, runtime, gpu });
+
+    logger.info("gcp.updateMachine", {
+      instance_id: runtime.instance_id,
+      zone,
+      from: { machine_type: currentType, accelerators: currentAccelerators },
+      to: { machine_type: targetType, accelerators: targetAccelerators },
+    });
+    const undo: { step: string; run: () => Promise<void> }[] = [];
+    // The revert is registered before the step runs: a step can fail after
+    // GCP accepted it (e.g. while waiting for the operation), so a failed
+    // step is reverted too. Every revert sets an original value, so it is
+    // harmless if the step never took effect.
+    const step = async (
+      name: string,
+      run: () => Promise<void>,
+      revert: () => Promise<void>,
+    ) => {
+      undo.push({ step: name, run: revert });
+      await run();
+    };
+    try {
+      if (
+        targetHasGpu &&
+        pricingModel === "on_demand" &&
+        !terminateOnMaintenance
+      ) {
+        await step(
+          "scheduling",
+          () => setStandardScheduling(true),
+          () => setStandardScheduling(false),
+        );
+      }
+      const acceleratorsChange = !sameAccelerators(
+        currentAccelerators,
+        targetAccelerators,
+      );
+      if (acceleratorsChange && currentHasGpu) {
+        await step(
+          "detach-gpus",
+          () => setAccelerators([]),
+          () => setAccelerators(currentAccelerators),
+        );
+      }
+      if (targetType !== currentType) {
+        await step(
+          "machine-type",
+          () => setType(targetType),
+          () => setType(currentType),
+        );
+      }
+      if (acceleratorsChange && targetHasGpu) {
+        await step(
+          "attach-gpus",
+          () => setAccelerators(targetAccelerators),
+          () => setAccelerators([]),
+        );
+      }
+      if (
+        !targetHasGpu &&
+        currentHasGpu &&
+        pricingModel === "on_demand" &&
+        terminateOnMaintenance
+      ) {
+        await step(
+          "scheduling",
+          () => setStandardScheduling(false),
+          () => setStandardScheduling(true),
+        );
+      }
+    } catch (err) {
+      const failedToRevert: string[] = [];
+      for (const { step: name, run } of [...undo].reverse()) {
+        try {
+          await run();
+        } catch (revertErr) {
+          failedToRevert.push(name);
+          logger.warn("gcp.updateMachine: unable to revert a step", {
+            instance_id: runtime.instance_id,
+            step: name,
+            err: `${revertErr}`,
+          });
+        }
+      }
+      // Only claim the instance is unchanged after reading it back.
+      let unchanged = false;
+      if (failedToRevert.length === 0) {
+        try {
+          const [after] = await client.get(ids);
+          unchanged =
+            (`${after?.machineType ?? ""}`.split("/").pop() ?? "") ===
+              currentType &&
+            sameAccelerators(
+              acceleratorsOf(after?.guestAccelerators),
+              currentAccelerators,
+            ) &&
+            (`${after?.scheduling?.onHostMaintenance ?? ""}`.toUpperCase() ===
+              "TERMINATE") ===
+              terminateOnMaintenance;
+        } catch (readErr) {
+          logger.warn("gcp.updateMachine: unable to verify the revert", {
+            instance_id: runtime.instance_id,
+            err: `${readErr}`,
+          });
+        }
+      }
+      throw Object.assign(
+        new Error(
+          `gcp.updateMachine failed: ${err instanceof Error ? err.message : err}; ${
+            unchanged
+              ? "the instance was left stopped and unchanged"
+              : failedToRevert.length > 0
+                ? `the instance is stopped, but these steps could not be reverted: ${failedToRevert.join(", ")}`
+                : "the instance is stopped, but it could not be confirmed to be unchanged"
+          }`,
+        ),
+        // Whether the instance was read back and is exactly as it was.
+        { unchanged },
+      );
+    }
+    return {
+      ...runtime,
+      metadata: {
+        ...(runtime.metadata ?? {}),
+        machine_type: targetType,
+        gpu_count: targetAccelerators.reduce((n, { count }) => n + count, 0),
+      },
+    };
+  }
+
   async regionalQuotaHeadroom(
     region: string,
     creds: any,
@@ -1604,15 +1869,11 @@ export class GcpProvider implements CloudProvider {
         subnetwork,
       },
     ];
-    const guestAccelerators =
-      spec.gpu && !machineTypeFor(spec).startsWith("g2-")
-        ? [
-            {
-              acceleratorCount: Math.max(1, spec.gpu.count ?? 1),
-              acceleratorType: `projects/${credentials.projectId}/zones/${zone}/acceleratorTypes/${spec.gpu.type}`,
-            },
-          ]
-        : [];
+    const guestAccelerators = guestAcceleratorsFor(
+      spec,
+      credentials.projectId,
+      zone,
+    );
     try {
       const [response] = await client.insert({
         project: credentials.projectId,

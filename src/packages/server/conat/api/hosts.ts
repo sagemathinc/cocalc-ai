@@ -67,10 +67,13 @@ import type {
   MembershipEffectiveLimits,
 } from "@cocalc/conat/hub/api/purchases";
 import {
+  MACHINE_CHANGE_REQUIRES_NEW_INSTANCE,
   normalizeProviderId,
   type HostSpec,
   type ProviderId,
 } from "@cocalc/cloud";
+import { hostMachineShape } from "@cocalc/server/cloud/host-util";
+import { withHostMachineChangeLock } from "@cocalc/server/hosts/machine-change-lock";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
@@ -150,6 +153,8 @@ import {
 } from "@cocalc/server/cloud/providers";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { getNebiusComputeCapacityAdvice } from "@cocalc/server/compute/provider";
+import { assertNebiusSpotOffered } from "@cocalc/util/consts/nebius-spot";
+import { assertProjectHostProviderOffered } from "@cocalc/server/cloud/project-host-provider-offered";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
 import {
@@ -265,7 +270,11 @@ import {
 } from "@cocalc/server/ai/site-funded-codex-policy";
 import { recordSiteFundedAdmissionLocal } from "@cocalc/server/ai/site-funded-admissions";
 import { getSiteFundedProviderKeyForReservation } from "@cocalc/server/ai/site-funded-provider-keys";
-import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
+import {
+  DEFAULT_SITE_FUNDED_CODEX_POLICY,
+  formatSiteFundedLimitDetail,
+  siteFundedUsageWarning,
+} from "@cocalc/util/ai/site-funded-codex";
 import type {
   SiteFundedAdmissionOutcome,
   SiteFundedAdmissionRecord,
@@ -275,6 +284,7 @@ import type {
   SiteFundedCodexUsageEvent,
   SiteFundedCodexUsageRecordResult,
   SiteFundedProvider,
+  SiteFundedUsageWindowUse,
 } from "@cocalc/util/ai/site-funded-codex";
 import { moneyToDbString, type MoneyValue } from "@cocalc/util/money";
 import type { DedicatedHostPricingSnapshot } from "@cocalc/util/db-schema/purchases";
@@ -1622,6 +1632,17 @@ export async function getBackupConfigLocal({
   });
 }
 
+// Project hosts not yet upgraded still enforce the retired rolling
+// created-turn limits, and fall back to 500 (5 hours) and 2000 (7 days) when
+// the hub sends none. Send them a value no account reaches. Remove once
+// every project host runs a release without those limits. Added at the
+// host-facing boundary too, since a bay not yet upgraded may answer for
+// another bay's host.
+export const RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS = {
+  acp_max_created_5h_per_account: 1_000_000_000,
+  acp_max_created_7d_per_account: 1_000_000_000,
+};
+
 export async function getProjectOwnerEffectiveLimits({
   host_id,
   project_id,
@@ -1637,12 +1658,15 @@ export async function getProjectOwnerEffectiveLimits({
   }
   const ownership = await resolveProjectBay(project_id);
   if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .hostConnection(ownership.bay_id)
-      .getProjectOwnerEffectiveLimits({
-        host_id,
-        project_id,
-      });
+    return {
+      ...(await getInterBayBridge()
+        .hostConnection(ownership.bay_id)
+        .getProjectOwnerEffectiveLimits({
+          host_id,
+          project_id,
+        })),
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+    };
   }
   return await getProjectOwnerEffectiveLimitsLocal({ project_id });
 }
@@ -1666,14 +1690,16 @@ export async function getProjectOwnerEffectiveLimitsLocal({
     return {
       acp_max_queued_per_account: 0,
       acp_max_queued_per_thread: 0,
-      acp_max_created_5h_per_account: 0,
-      acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
     };
   }
   const resolution = await resolveMembershipForAccount(account_id);
-  return resolution.effective_limits ?? {};
+  return {
+    ...(resolution.effective_limits ?? {}),
+    ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+  };
 }
 
 export async function getAccountEffectiveLimits({
@@ -1697,12 +1723,15 @@ export async function getAccountEffectiveLimits({
   const homeBayId =
     `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
   if (homeBayId !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .hostConnection(homeBayId)
-      .getAccountEffectiveLimits({
-        host_id,
-        account_id: accountId,
-      });
+    return {
+      ...(await getInterBayBridge()
+        .hostConnection(homeBayId)
+        .getAccountEffectiveLimits({
+          host_id,
+          account_id: accountId,
+        })),
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+    };
   }
   return await getAccountEffectiveLimitsLocal({ account_id: accountId });
 }
@@ -1722,14 +1751,16 @@ export async function getAccountEffectiveLimitsLocal({
     return {
       acp_max_queued_per_account: 0,
       acp_max_queued_per_thread: 0,
-      acp_max_created_5h_per_account: 0,
-      acp_max_created_7d_per_account: 0,
       acp_max_running_per_account: 0,
       acp_max_running_per_project: 0,
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
     };
   }
   const resolution = await resolveMembershipForAccount(accountId);
-  return resolution.effective_limits ?? {};
+  return {
+    ...(resolution.effective_limits ?? {}),
+    ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+  };
 }
 
 function nonnegativeInteger(value: unknown): number {
@@ -3739,6 +3770,26 @@ export async function recordCodexSiteUsage({
   return { usage_units };
 }
 
+function windowUse(
+  window: "5h" | "7d",
+  used: unknown,
+  limit: unknown,
+  resetsAt: unknown,
+): SiteFundedUsageWindowUse | undefined {
+  const usedNumber = Number(used);
+  const limitNumber = Number(limit);
+  if (!Number.isFinite(usedNumber) || !Number.isFinite(limitNumber)) return;
+  const reset = resetsAt == null ? NaN : new Date(resetsAt as any).valueOf();
+  return {
+    window,
+    used: usedNumber,
+    limit: limitNumber,
+    ...(Number.isFinite(reset)
+      ? { resetAt: new Date(reset).toISOString() }
+      : {}),
+  };
+}
+
 function usageLimitAndRemainingMicrousd(
   status: Awaited<ReturnType<typeof getAIUsageStatus>>,
   window: "5h" | "7d",
@@ -3746,12 +3797,19 @@ function usageLimitAndRemainingMicrousd(
   limit: number;
   remaining: number;
   creditsByFundedTurn: Record<string, number>;
+  use?: SiteFundedUsageWindowUse;
 } {
   const usage = status.windows.find((entry) => entry.window === window);
   return {
     limit: aiUsageUnitsToMicrousd(usage?.limit),
     remaining: aiUsageUnitsToMicrousd(usage?.remaining),
     creditsByFundedTurn: usage?.site_funded_credits_microusd ?? {},
+    use: windowUse(
+      window,
+      usage?.used,
+      usage?.limit,
+      usage?.resets_at ?? usage?.reset_at,
+    ),
   };
 }
 
@@ -3762,6 +3820,7 @@ function overviewLimitAndRemainingMicrousd(
   limit: number;
   remaining: number;
   creditsByFundedTurn: Record<string, number>;
+  use?: SiteFundedUsageWindowUse;
 } {
   const meter = overview.meters.find(({ id }) => id === `ai-${window}`);
   const credits = overview.site_funded_codex_credits?.windows.find(
@@ -3771,6 +3830,12 @@ function overviewLimitAndRemainingMicrousd(
     limit: aiUsageUnitsToMicrousd(meter?.limit),
     remaining: aiUsageUnitsToMicrousd(meter?.remaining),
     creditsByFundedTurn: credits?.credits_microusd ?? {},
+    use: windowUse(
+      window,
+      meter?.used,
+      meter?.limit,
+      meter?.resets_at ?? meter?.reset_at,
+    ),
   };
 }
 
@@ -4005,9 +4070,44 @@ async function admitSiteFundedCodexTurn(
     surface: siteFundedSurface(path),
   };
   const remoteSeed = remoteSiteFundedCodexSeed();
-  return remoteSeed
+  const admission = remoteSeed
     ? await remoteSeed.reserveSiteFundedCodexTurn(reservationOptions)
     : await reserveSiteFundedCodexTurnLocal(reservationOptions);
+  return withSiteFundedUsageContext(admission, [account5h.use, account7d.use]);
+}
+
+// Says how much of the account's included-AI windows is used: a warning on an
+// admitted turn at 80% and 95%, and for a refused one the reset time.
+export function withSiteFundedUsageContext(
+  admission: SiteFundedCodexAdmission,
+  windows: (SiteFundedUsageWindowUse | undefined)[],
+  now: number = Date.now(),
+): SiteFundedCodexAdmission {
+  const uses = windows.filter(
+    (use): use is SiteFundedUsageWindowUse => use != null,
+  );
+  if (admission.allowed) {
+    const usageWarning = siteFundedUsageWarning(uses);
+    return usageWarning ? { ...admission, usageWarning } : admission;
+  }
+  if (
+    admission.code !== "account_limit_5h" &&
+    admission.code !== "account_limit_7d"
+  ) {
+    return admission;
+  }
+  const use = uses.find(
+    ({ window }) =>
+      window === (admission.code === "account_limit_7d" ? "7d" : "5h"),
+  );
+  const detail = formatSiteFundedLimitDetail(use?.resetAt, now);
+  return {
+    ...admission,
+    reason: detail
+      ? admission.reason.replace(/allowance\./, `allowance.${detail}`)
+      : admission.reason,
+    ...(use?.resetAt ? { resetAt: use.resetAt } : {}),
+  };
 }
 
 /** The site key funding an active Claude turn, for the host running it. */
@@ -6563,7 +6663,119 @@ function assertProjectHostDiskTypeSupported({
   }
 }
 
-async function createHostLro({
+// What a pending machine change was going from and to (no secrets, no ids).
+function machineChangeSummary(machine: HostMachine) {
+  return {
+    machine_type: machine.machine_type ?? null,
+    gpu_type: machine.gpu_type ?? null,
+    gpu_count: machine.gpu_count ?? 0,
+  };
+}
+
+async function setMachineChangePending(
+  host_id: string,
+  marker: Record<string, any> | null,
+): Promise<void> {
+  if (marker == null) {
+    await pool().query(
+      `UPDATE project_hosts SET metadata = metadata - 'machine_change_pending', updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+      [host_id],
+    );
+    return;
+  }
+  await pool().query(
+    `UPDATE project_hosts SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{machine_change_pending}', $2::jsonb), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+    [host_id, JSON.stringify(marker)],
+  );
+}
+
+// A request that changes nothing, on a host whose machine change did not
+// finish, settles it: the VM is set to the host's recorded machine (a no-op
+// if it already is) and the pending mark is cleared.
+async function settleUnfinishedMachineChange(row: any): Promise<Host> {
+  const metadata = row.metadata ?? {};
+  const machine: HostMachine = metadata.machine ?? {};
+  const machineCloud = normalizeProviderId(machine.cloud);
+  const runtime = metadata.runtime ?? {};
+  const hasVm = row.status !== "deprovisioned" && !!runtime.instance_id;
+  if (hasVm && row.status !== "off") {
+    throw new Error(
+      "stop the host before settling its unfinished machine change",
+    );
+  }
+  if (hasVm && machineCloud === "gcp") {
+    const { entry, creds } = await getProviderContext(machineCloud, {
+      region: row.region,
+    });
+    if (entry.provider.updateMachine) {
+      const settled = await entry.provider.updateMachine(
+        runtime,
+        hostMachineShape({
+          ...row,
+          metadata: { ...metadata, machine, gpu: machineHasGpu(machine) },
+        }),
+        creds,
+      );
+      await pool().query(
+        `UPDATE project_hosts SET metadata = jsonb_set(metadata - 'machine_change_pending', '{runtime}', $2::jsonb), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+        [row.id, JSON.stringify(settled)],
+      );
+    }
+  } else {
+    await setMachineChangePending(row.id, null);
+  }
+  const { rows } = await pool().query(
+    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+    [row.id],
+  );
+  if (!rows[0]) throw new Error("host not found");
+  return parseRow(rows[0]);
+}
+
+function assertNoUnfinishedMachineChange(row: {
+  status?: string | null;
+  metadata?: any;
+}) {
+  // Without a VM (deprovisioned) the next start provisions one from the row,
+  // so there is nothing that could differ.
+  const hasVm =
+    row.status !== "deprovisioned" && !!row.metadata?.runtime?.instance_id;
+  if (hasVm && row.metadata?.machine_change_pending) {
+    throw Object.assign(
+      new Error(
+        "a machine change for this host did not finish; apply the change again, or submit the host's current settings unchanged to settle it, before starting the host",
+      ),
+      { code: "host_machine_change_unfinished" },
+    );
+  }
+}
+
+// Host operations that must not run while a machine change is being applied
+// to the host's VM, nor be queued while one is.
+const HOST_MACHINE_CHANGE_CONFLICTING_LRO_KINDS: readonly string[] = [
+  HOST_START_LRO_KIND,
+  HOST_STOP_LRO_KIND,
+  HOST_RESTART_LRO_KIND,
+  // a billing rescue drain starts the host
+  HOST_DRAIN_LRO_KIND,
+  HOST_RELOCATE_LRO_KIND,
+  HOST_DEPROVISION_LRO_KIND,
+  HOST_DELETE_LRO_KIND,
+  HOST_FORCE_DEPROVISION_LRO_KIND,
+];
+
+async function createHostLro(
+  opts: Parameters<typeof createHostLroUnlocked>[0],
+): Promise<HostLroResponse> {
+  if (HOST_MACHINE_CHANGE_CONFLICTING_LRO_KINDS.includes(opts.kind)) {
+    return await withHostMachineChangeLock(opts.row.id, () =>
+      createHostLroUnlocked(opts),
+    );
+  }
+  return await createHostLroUnlocked(opts);
+}
+
+async function createHostLroUnlocked({
   kind,
   row,
   account_id,
@@ -6706,6 +6918,7 @@ export async function startHost({
   await assertHostOwnedHere(id);
   const row = await loadHostForStartStop(id, actor);
   assertHostNotUnderMaintenance(row);
+  assertNoUnfinishedMachineChange(row);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
   assertHostBillingEnforcementAllowsStart(row.metadata);
   const auth = await maybeRequireFreshAuthForInteractiveHostAction({
@@ -6754,7 +6967,15 @@ export async function startHostInternal({
     id,
     billing_rescue,
     onWorkQueued,
-    loadHostForStartStop,
+    // Internal starts (billing rescue, drains, recovery) also refuse a host
+    // whose machine change did not finish.
+    loadHostForStartStop: async (
+      ...args: Parameters<typeof loadHostForStartStop>
+    ) => {
+      const row = await loadHostForStartStop(...args);
+      assertNoUnfinishedMachineChange(row);
+      return row;
+    },
     markHostActionPending,
     logStatusUpdate,
     parseRow,
@@ -7358,7 +7579,20 @@ export async function setHostStar({
   );
 }
 
-export async function updateHostMachine({
+type UpdateHostMachineArgs = Parameters<typeof updateHostMachineLocked>[0];
+
+// Serialized per host from reading the row to writing it back: an in-place
+// machine change calls the cloud provider in between, and a concurrent change
+// (or a start or delete queued meanwhile) must not interleave with it.
+export async function updateHostMachine(
+  args: UpdateHostMachineArgs,
+): Promise<Host> {
+  return await withHostMachineChangeLock(args.id, () =>
+    updateHostMachineLocked(args),
+  );
+}
+
+async function updateHostMachineLocked({
   account_id,
   browser_id,
   session_hash,
@@ -7458,6 +7692,9 @@ export async function updateHostMachine({
   let nextRegion = row.region ?? "";
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
+  if (requestedCloud && requestedCloud !== machineCloud) {
+    await assertProjectHostProviderOffered(requestedCloud);
+  }
   const effectiveFundingCloud = requestedCloud ?? machineCloud;
   assertProjectHostDiskTypeSupported({
     cloud: effectiveFundingCloud,
@@ -7612,6 +7849,9 @@ export async function updateHostMachine({
     throw new Error(`invalid pricing_model '${pricing_model}'`);
   }
   const nextPricingModel = requestedPricingModel ?? currentPricingModel;
+  if (requestedPricingModel || requestedCloud) {
+    assertNebiusSpotOffered(effectiveFundingCloud, nextPricingModel);
+  }
   const currentInterruptionRestorePolicy =
     normalizeHostInterruptionRestorePolicy(
       metadata.interruption_restore_policy,
@@ -8042,6 +8282,9 @@ export async function updateHostMachine({
   }
 
   if (!changed) {
+    if (metadata.machine_change_pending) {
+      return await settleUnfinishedMachineChange(row);
+    }
     return parseRow(row);
   }
 
@@ -8150,7 +8393,13 @@ export async function updateHostMachine({
   }
 
   if (isDeprovisioned) {
-    const nextMetadata = { ...metadata, machine: nextMachine };
+    // No VM: a machine change that didn't finish no longer matters.
+    const { machine_change_pending: _noVm, ...withoutPending } =
+      metadata as Record<string, any>;
+    const nextMetadata: Record<string, any> = {
+      ...withoutPending,
+      machine: nextMachine,
+    };
     if (machine_type) {
       nextMetadata.size = machine_type;
     }
@@ -8223,6 +8472,33 @@ export async function updateHostMachine({
         instance_id: normalizeName(prefix, baseName),
         zone,
       };
+    }
+  }
+  // On GCP a stopped host's machine is changed in place (keeping its boot
+  // disk) rather than recreated at the next start; see below.
+  const inPlaceMachineChange =
+    requiresReprovision &&
+    !metadata.reprovision_required &&
+    machineCloud === "gcp" &&
+    !!runtime.instance_id &&
+    !storageModeChanged &&
+    !diskTypeChanged;
+  if (inPlaceMachineChange) {
+    // Disks only grow and can't be undone, so a disk change can't be rolled
+    // back if the machine change then fails: one or the other per request.
+    const currentDisk = Number(machine.disk_gb);
+    if (
+      (nextDisk != null && nextDisk !== currentDisk) ||
+      sharedScratchResizeGb != null ||
+      sharedScratchEnsureGb != null ||
+      deleteSharedScratch
+    ) {
+      throw Object.assign(
+        new Error(
+          "change the machine and the disks in separate requests: first one, then the other",
+        ),
+        { code: "host_machine_and_disk_change" },
+      );
     }
   }
   const instanceName =
@@ -8453,10 +8729,86 @@ export async function updateHostMachine({
     metadata.runtime = runtime;
   }
 
-  const nextMetadata = {
-    ...metadata,
+  // On GCP, change the stopped instance in place and keep its boot disk.
+  // Only a change GCP can't make in place still recreates the VM at the next
+  // start (reprovision, which keeps just the data disk).
+  let machineChangedInPlace = false;
+  let machineChangeNote: string | undefined;
+  // Puts the VM back to the row's current machine if the final write fails.
+  let revertMachineChange: (() => Promise<void>) | undefined;
+  if (inPlaceMachineChange) {
+    const pending = await listActiveHostLrosForKinds({
+      host_id: row.id,
+      kinds: HOST_MACHINE_CHANGE_CONFLICTING_LRO_KINDS,
+    });
+    if (pending.length > 0) {
+      throw Object.assign(
+        new Error(
+          `host has a pending operation (${Array.from(
+            new Set(pending.map((op) => op.kind)),
+          )
+            .sort()
+            .join(", ")}); wait for it to finish before changing the machine`,
+        ),
+        { code: "host_operation_pending" },
+      );
+    }
+    const { entry, creds } = await getProviderContext(machineCloud, {
+      region: row.region,
+    });
+    const updateMachine = entry.provider.updateMachine?.bind(entry.provider);
+    if (updateMachine) {
+      // The target GPU state, as saved below: the old metadata.gpu is a
+      // legacy default that would bring back a removed GPU.
+      const shapeOf = (m: HostMachine) =>
+        hostMachineShape({
+          ...row,
+          metadata: { ...metadata, machine: m, gpu: machineHasGpu(m) },
+        });
+      // Recorded before the VM is touched and cleared by the final write, so
+      // the row says so if the VM may differ from it; startHost refuses
+      // while it is set, and the next machine change clears it.
+      await setMachineChangePending(row.id, {
+        from: machineChangeSummary(machine),
+        to: machineChangeSummary(nextMachine),
+        at: new Date().toISOString(),
+      });
+      const previousRuntime = runtime;
+      try {
+        runtime = await updateMachine(runtime, shapeOf(nextMachine), creds);
+        metadata.runtime = runtime;
+        machineChangedInPlace = true;
+        revertMachineChange = async () => {
+          await updateMachine(previousRuntime, shapeOf(machine), creds);
+        };
+      } catch (err) {
+        const unchanged =
+          (err as any)?.code === MACHINE_CHANGE_REQUIRES_NEW_INSTANCE ||
+          (err as any)?.unchanged === true;
+        if (unchanged) {
+          await setMachineChangePending(row.id, null).catch(() => undefined);
+        }
+        if ((err as any)?.code !== MACHINE_CHANGE_REQUIRES_NEW_INSTANCE) {
+          throw err;
+        }
+        machineChangeNote = err instanceof Error ? err.message : `${err}`;
+      }
+    }
+  }
+
+  // An unfinished machine change is settled only when this request makes the
+  // VM match the row: the change was applied in place, or the VM will be
+  // recreated from the row at the next start. Any other update (pricing,
+  // auto-grow, ...) keeps the mark and leaves the VM alone.
+  const recreateAtNextStart = requiresReprovision && !machineChangedInPlace;
+  const { machine_change_pending: _finishedMachineChange, ...settledMetadata } =
+    metadata as Record<string, any>;
+  const nextMetadata: Record<string, any> = {
+    ...(machineChangedInPlace || recreateAtNextStart
+      ? settledMetadata
+      : metadata),
     machine: nextMachine,
-    ...(requiresReprovision ? { reprovision_required: true } : {}),
+    ...(recreateAtNextStart ? { reprovision_required: true } : {}),
     ...(machineChanged ? { gpu: machineHasGpu(nextMachine) } : {}),
     ...(resizeWarning
       ? {
@@ -8509,10 +8861,64 @@ export async function updateHostMachine({
   } else {
     delete nextMetadata.billing;
   }
-  await pool().query(
-    `UPDATE project_hosts SET region=$2, metadata=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [row.id, nextRegion, nextMetadata],
-  );
+  try {
+    await pool().query(
+      `UPDATE project_hosts SET region=$2, metadata=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+      [row.id, nextRegion, nextMetadata],
+    );
+  } catch (err) {
+    if (!revertMachineChange) throw err;
+    // The VM has the new machine. Whether the row recorded it is unknown: the
+    // write may have committed and only its acknowledgement been lost. The
+    // final write is what removes the pending mark, so read the row again.
+    let committed: boolean | undefined;
+    try {
+      const { rows: durable } = await pool().query(
+        `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+        [row.id],
+      );
+      if (durable[0]) {
+        committed = durable[0].metadata?.machine_change_pending == null;
+      }
+    } catch {
+      committed = undefined;
+    }
+    if (committed !== true) {
+      // Only a write known not to have committed is compensated: reverting
+      // after a write that did commit would leave the row with the new
+      // machine, no pending mark, and an old VM. When it's unknown, the VM is
+      // left as it is; the pending mark (still set unless the write
+      // committed) keeps the host from starting until the change is settled.
+      let reverted = false;
+      if (committed === false) {
+        try {
+          await revertMachineChange();
+          reverted = true;
+          await setMachineChangePending(row.id, null).catch(() => undefined);
+        } catch (revertErr) {
+          logger.warn(
+            "updateHostMachine: unable to revert the machine change",
+            {
+              host_id: row.id,
+              err: `${revertErr}`,
+            },
+          );
+        }
+      }
+      throw Object.assign(
+        new Error(
+          `unable to record the machine change (${err instanceof Error ? err.message : err}); ${
+            reverted
+              ? "the VM was changed back to the host's settings"
+              : committed === false
+                ? "the VM could not be changed back and may differ from the host settings"
+                : "it is not known whether the host settings were updated, so the VM was left with the new machine"
+          }. Apply the change again, or submit the host's current settings unchanged to settle it, before starting the host.`,
+        ),
+        { code: "host_machine_change_unfinished", cause: err },
+      );
+    }
+  }
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
     [row.id],
@@ -8548,6 +8954,14 @@ export async function updateHostMachine({
     spec: {
       before: beforeSpec,
       after: buildConfigSpec(nextMachine, nextRegion),
+      ...(machineChangedInPlace
+        ? { machine_change: "in_place" }
+        : requiresReprovision
+          ? {
+              machine_change: "recreate_at_next_start",
+              ...(machineChangeNote ? { reason: machineChangeNote } : {}),
+            }
+          : {}),
     },
   });
   if (reconcileSharedScratchMount) {

@@ -1,4 +1,6 @@
 import { delay } from "awaiting";
+import type { SiteFundedTurnUsageWarning } from "@cocalc/util/ai/site-funded-codex";
+import { latestUsageWarning } from "./usage-warning";
 import {
   useCallback,
   useEffect,
@@ -115,6 +117,8 @@ export interface CodexLiveActivityStatusResult {
   lastActivityAtMs?: number;
   liveStatus: CodexLiveLogStatus;
   activeDescendantThreadIds: string[];
+  /** The turn's notice that the account is near an included-AI limit. */
+  usageWarning?: SiteFundedTurnUsageWarning;
 }
 
 export type CodexLiveLogStatus =
@@ -1128,6 +1132,8 @@ export function useCodexLiveActivityStatus({
   const [activeDescendantThreadIds, setActiveDescendantThreadIds] = useState<
     string[]
   >([]);
+  const [usageWarning, setUsageWarning] =
+    useState<SiteFundedTurnUsageWarning>();
   const [liveReconnectToken, setLiveReconnectToken] = useState(0);
   const mountedRef = useRef<boolean>(true);
   const liveConnectedRef = useRef<boolean>(false);
@@ -1202,6 +1208,8 @@ export function useCodexLiveActivityStatus({
       immediate: boolean = false,
     ) => {
       const events = normalizeLiveStreamPayload(payload);
+      const warning = latestUsageWarning(events);
+      if (warning) setUsageWarning(warning);
       if (
         updateActiveSubagentThreads(activeSubagentThreadsRef.current, events)
       ) {
@@ -1224,6 +1232,7 @@ export function useCodexLiveActivityStatus({
     setLastActivityAtMs(undefined);
     activeSubagentThreadsRef.current.clear();
     setActiveDescendantThreadIds([]);
+    setUsageWarning(undefined);
     latestPendingActivityAtMsRef.current = undefined;
     if (flushTimerRef.current != null) {
       clearTimeout(flushTimerRef.current);
@@ -1287,6 +1296,8 @@ export function useCodexLiveActivityStatus({
                 activeSubagentThreadsRef.current,
                 replay,
               );
+              const replayWarning = latestUsageWarning(replay);
+              if (replayWarning) setUsageWarning(replayWarning);
               setActiveDescendantThreadIds(
                 activeSubagentThreadIds(activeSubagentThreadsRef.current),
               );
@@ -1421,6 +1432,8 @@ export function useCodexLiveActivityStatus({
               activeSubagentThreadsRef.current,
               initial,
             );
+            const initialWarning = latestUsageWarning(initial);
+            if (initialWarning) setUsageWarning(initialWarning);
             setActiveDescendantThreadIds(
               activeSubagentThreadIds(activeSubagentThreadsRef.current),
             );
@@ -1512,5 +1525,10 @@ export function useCodexLiveActivityStatus({
     setLiveConnectionState,
   ]);
 
-  return { activeDescendantThreadIds, lastActivityAtMs, liveStatus };
+  return {
+    activeDescendantThreadIds,
+    lastActivityAtMs,
+    liveStatus,
+    usageWarning,
+  };
 }

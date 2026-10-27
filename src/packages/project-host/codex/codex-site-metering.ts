@@ -562,6 +562,7 @@ export async function beginSiteFundedCodexTurn({
     return {
       reservation: currentAdmission.reservation,
       policy: currentAdmission.reservation.policy,
+      usageWarning: currentAdmission.usageWarning,
       providerBaseUrl: proxySession.baseUrl,
       providerToken: proxySession.token,
       finish,

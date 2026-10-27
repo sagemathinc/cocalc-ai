@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { NEBIUS_SPOT_OFFERED } from "@cocalc/util/consts/nebius-spot";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import net from "node:net";
@@ -1448,6 +1449,7 @@ export function shouldReplaceNebiusSpotInterruption(
   >,
 ): boolean {
   return (
+    NEBIUS_SPOT_OFFERED &&
     vm.provider === "nebius" &&
     vm.desired_pricing_model === "spot" &&
     vm.effective_pricing_model === "spot" &&

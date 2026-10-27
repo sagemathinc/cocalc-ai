@@ -257,6 +257,8 @@ describe("projects.createProject start LRO", () => {
       if (sql === "SELECT state FROM projects WHERE project_id=$1") {
         return { rows: [{ state: { state: "running" } }] };
       }
+      // the membership audit context (projects/create.ts)
+      if (sql === "SELECT set_config($1, $2, true)") return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     });
     poolConnectMock = jest.fn(async () => ({
@@ -410,6 +412,8 @@ describe("projects.createProject start LRO", () => {
       if (sql.startsWith("INSERT INTO projects ")) {
         return { rowCount: 1 };
       }
+      // the membership audit context (projects/create.ts)
+      if (sql === "SELECT set_config($1, $2, true)") return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     });
     const createProject = (await import("./create")).default;

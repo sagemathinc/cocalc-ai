@@ -175,8 +175,21 @@ describe("Nebius Spot interruption recovery", () => {
     },
   } as any;
 
-  it("replaces an interrupted instance to obtain a fresh placement", () => {
-    expect(shouldReplaceNebiusSpotInterruption(interrupted)).toBe(true);
+  it("does not replace an interrupted instance with another Spot one while Nebius Spot is off (#684)", () => {
+    expect(shouldReplaceNebiusSpotInterruption(interrupted)).toBe(false);
+  });
+
+  it("(when Nebius Spot is offered) replaces an interrupted instance to obtain a fresh placement", () => {
+    jest.isolateModules(() => {
+      jest.doMock("@cocalc/util/consts/nebius-spot", () => ({
+        ...jest.requireActual("@cocalc/util/consts/nebius-spot"),
+        NEBIUS_SPOT_OFFERED: true,
+      }));
+      const { shouldReplaceNebiusSpotInterruption: replace } =
+        require("./worker") as typeof import("./worker");
+      expect(replace(interrupted)).toBe(true);
+    });
+    jest.dontMock("@cocalc/util/consts/nebius-spot");
   });
 
   it("does not replace unrelated recovery or GCP instances", () => {

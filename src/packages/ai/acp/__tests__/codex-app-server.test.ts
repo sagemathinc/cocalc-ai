@@ -6944,6 +6944,12 @@ describe("CodexAppServerAgent", () => {
         providerBaseUrl: "http://host.containers.internal:1234/v1",
         providerToken: "proxy-token",
         finish,
+        usageWarning: {
+          window: "7d" as const,
+          percent: 95,
+          threshold: 95 as const,
+          resetAt: "2026-10-30T12:00:00.000Z",
+        },
       },
     }));
     setCodexProjectSpawner({
@@ -7007,6 +7013,23 @@ describe("CodexAppServerAgent", () => {
         }),
       ]),
     );
+    // The account is near its weekly allowance: the turn says so.
+    expect(
+      streamPayloads.filter(
+        (payload) =>
+          payload.type === "event" && payload.event?.type === "usage_warning",
+      ),
+    ).toEqual([
+      {
+        type: "event",
+        event: {
+          // Project-visible: no exact use or reset time.
+          type: "usage_warning",
+          window: "7d",
+          threshold: 95,
+        },
+      },
+    ]);
     expect(finish).toHaveBeenCalledWith({
       status: "committed",
       outcome: "turn completed",

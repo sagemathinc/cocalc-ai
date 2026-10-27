@@ -30,6 +30,12 @@ describe("hub API routes", () => {
         { opts: { project_id: PROJECT } },
       ]),
     ).toBe(PROJECT);
+    // archiving runs on the project's owning bay
+    expect(
+      hubApiRouteKey(getHubApiRoute("projects.archiveProject")!, [
+        { project_id: PROJECT, timeout: 30000 },
+      ]),
+    ).toBe(PROJECT);
     // a document's edit history lives with its project
     for (const name of ["sync.history", "sync.purgeHistory"]) {
       expect(

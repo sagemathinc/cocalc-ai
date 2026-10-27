@@ -6,6 +6,7 @@ import {
   initAcpDatabase,
 } from "../../sqlite/acp-database";
 import {
+  AcpAdmissionDeniedError,
   acpAdmissionLimitsFromEffectiveLimits,
   admitAcpJobExecution,
   admitAcpJobCreation,
@@ -1438,8 +1439,6 @@ describe("acp job queue ordering", () => {
     const decision = admitAcpJobCreation(secondRequest, {
       queuedPerAccount: 1,
       queuedPerThread: 100,
-      created5hPerAccount: 100,
-      created7dPerAccount: 100,
       runningPerAccount: 100,
       runningPerProject: 100,
     });
@@ -1450,12 +1449,37 @@ describe("acp job queue ordering", () => {
       maximum: 1,
     });
     expect(() => throwIfAcpAdmissionDenied(decision)).toThrow(
-      "ACP turn limit reached",
+      "Agent turn limit reached: 1 agent turn waiting to run for this account, and the limit is 1.",
     );
+    let error: unknown;
+    try {
+      throwIfAcpAdmissionDenied(decision);
+    } catch (err) {
+      error = err;
+    }
+    // Shown as text: no class name, and it says where an admin changes it.
+    expect(`${error}`).toMatch(/^Agent turn limit reached: /);
+    expect(`${error}`).toContain(
+      '"Queued ACP turns / account" (usage_limits.acp_max_queued_per_account)',
+    );
+    expect(`${error}`).toContain("entitlement override");
+    // With a limit of 0 there is nothing to wait for: say so.
+    const zero = `${new AcpAdmissionDeniedError({ ...decision, current: 0, maximum: 0 } as any)}`;
+    expect(zero).toContain(
+      "Agent turns are not allowed here: the limit on agent turns waiting to run for this account is 0.",
+    );
+    // An unverified email gives every limit 0: an admin cannot fix that.
+    expect(zero).toContain(
+      "If this account's email address is not verified yet, verify it;",
+    );
+    expect(zero).toContain(
+      'otherwise ask an admin to raise "Queued ACP turns / account"',
+    );
+    expect(zero).not.toContain("Wait for");
     expect(countQueuedAcpJobsForAccount(firstRequest.account_id)).toBe(1);
   });
 
-  it("denies new job creation before insert when thread or created caps are reached", () => {
+  it("denies new job creation at the thread cap, but never for turns created over time", () => {
     const firstRequest = makeRequest({
       userMessageId: "user-admit-thread-1",
       assistantMessageId: "assistant-admit-thread-1",
@@ -1472,8 +1496,6 @@ describe("acp job queue ordering", () => {
       admitAcpJobCreation(secondRequest, {
         queuedPerAccount: 100,
         queuedPerThread: 1,
-        created5hPerAccount: 100,
-        created7dPerAccount: 100,
         runningPerAccount: 100,
         runningPerProject: 100,
       }),
@@ -1486,37 +1508,25 @@ describe("acp job queue ordering", () => {
       thread_id: firstRequest.chat.thread_id,
     });
 
+    // Turns already created count against nothing: only queued and running
+    // turns are limited.
+    for (let i = 0; i < 5; i += 1) {
+      enqueueAcpJob(
+        makeRequest({
+          userMessageId: `user-admit-many-${i}`,
+          assistantMessageId: `assistant-admit-many-${i}`,
+          assistantDate: `2026-03-08T00:00:11.${300 + i}Z`,
+        }),
+      );
+    }
     expect(
       admitAcpJobCreation(secondRequest, {
         queuedPerAccount: 100,
         queuedPerThread: 100,
-        created5hPerAccount: 1,
-        created7dPerAccount: 100,
         runningPerAccount: 100,
         runningPerProject: 100,
       }),
-    ).toMatchObject({
-      ok: false,
-      limit: "created_5h_per_account",
-      current: 1,
-      maximum: 1,
-    });
-
-    expect(
-      admitAcpJobCreation(secondRequest, {
-        queuedPerAccount: 100,
-        queuedPerThread: 100,
-        created5hPerAccount: 100,
-        created7dPerAccount: 1,
-        runningPerAccount: 100,
-        runningPerProject: 100,
-      }),
-    ).toMatchObject({
-      ok: false,
-      limit: "created_7d_per_account",
-      current: 1,
-      maximum: 1,
-    });
+    ).toEqual({ ok: true });
   });
 
   it("denies running admission when account or project caps are reached", () => {
@@ -1552,8 +1562,6 @@ describe("acp job queue ordering", () => {
       admitAcpJobExecution(second, {
         queuedPerAccount: 100,
         queuedPerThread: 100,
-        created5hPerAccount: 100,
-        created7dPerAccount: 100,
         runningPerAccount: 100,
         runningPerProject: 1,
       }),
@@ -1568,8 +1576,6 @@ describe("acp job queue ordering", () => {
       admitAcpJobExecution(second, {
         queuedPerAccount: 100,
         queuedPerThread: 100,
-        created5hPerAccount: 100,
-        created7dPerAccount: 100,
         runningPerAccount: 1,
         runningPerProject: 100,
       }),
@@ -1598,7 +1604,7 @@ describe("acp job queue ordering", () => {
     };
 
     expect(() => throwIfAcpAdmissionDenied(decision, "claim")).toThrow(
-      "ACP turn limit reached",
+      "Agent turn limit reached: 2 agent turns running at once for this account, and the limit is 2.",
     );
     await Promise.resolve();
 
@@ -1633,8 +1639,6 @@ describe("acp job queue ordering", () => {
       admitAcpJobCreation(recoveryRequest, {
         queuedPerAccount: 0,
         queuedPerThread: 0,
-        created5hPerAccount: 0,
-        created7dPerAccount: 0,
         runningPerAccount: 0,
         runningPerProject: 0,
       }),
@@ -1669,8 +1673,6 @@ describe("acp job queue ordering", () => {
       admitAcpJobCreation(request, {
         queuedPerAccount: 0,
         queuedPerThread: 0,
-        created5hPerAccount: 0,
-        created7dPerAccount: 0,
         runningPerAccount: 0,
         runningPerProject: 0,
       }),
@@ -1699,8 +1701,6 @@ describe("acp job queue ordering", () => {
     const limits = {
       queuedPerAccount: 1,
       queuedPerThread: 1,
-      created5hPerAccount: 100,
-      created7dPerAccount: 100,
       runningPerAccount: 100,
       runningPerProject: 100,
     };
@@ -1710,7 +1710,7 @@ describe("acp job queue ordering", () => {
       limit: "queued_per_account",
     });
     expect(
-      admitAcpJobCreation(humanRequest, limits, Date.now(), {
+      admitAcpJobCreation(humanRequest, limits, {
         supersedesQueuedRecoveries: true,
       }),
     ).toEqual({ ok: true });
@@ -1720,8 +1720,6 @@ describe("acp job queue ordering", () => {
     const defaults = {
       queuedPerAccount: 1000,
       queuedPerThread: 100,
-      created5hPerAccount: 500,
-      created7dPerAccount: 2000,
       runningPerAccount: 50,
       runningPerProject: 50,
     };
@@ -1732,8 +1730,6 @@ describe("acp job queue ordering", () => {
         acpAdmissionLimitsFromEffectiveLimits({
           acp_max_queued_per_account: 12,
           acp_max_queued_per_thread: 3,
-          acp_max_created_5h_per_account: 20,
-          acp_max_created_7d_per_account: 70,
           acp_max_running_per_account: 4,
           acp_max_running_per_project: 2,
           acp_max_active_automations_per_project: 3,
@@ -1742,8 +1738,6 @@ describe("acp job queue ordering", () => {
     ).toEqual({
       queuedPerAccount: 12,
       queuedPerThread: 3,
-      created5hPerAccount: 20,
-      created7dPerAccount: 70,
       runningPerAccount: 4,
       runningPerProject: 2,
     });

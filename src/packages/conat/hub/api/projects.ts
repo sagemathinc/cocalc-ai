@@ -2459,6 +2459,10 @@ export interface Projects {
     // The user confirmed that files over the backup file size limit, which
     // the archive cannot include, may be lost.
     allow_oversized_skip?: boolean;
+    // Archive only if the project is still placed on this host and the host
+    // is deprovisioned, checked on the owning bay (the caller skipped its
+    // host-side checks because it saw that host deprovisioned).
+    require_deprovisioned_host_id?: string;
   }) => Promise<void>;
   // Admin only: reopen a project stuck in state "archiving" under an
   // automatic archive job that cannot finish. Refused unless the project's

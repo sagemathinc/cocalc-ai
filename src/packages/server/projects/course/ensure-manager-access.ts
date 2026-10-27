@@ -12,6 +12,7 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { isValidUUID } from "@cocalc/util/misc";
+import { setProjectMembershipAuditContext } from "@cocalc/database/postgres/schema/project-membership-audit";
 
 const logger = getLogger("projects:course:ensure-manager-access");
 const COURSE_PROJECT_TYPES = new Set(["student", "shared", "nbgrader"]);
@@ -219,6 +220,10 @@ export async function ensureCourseManagerAccessLocal({
     const client = await getPool().connect();
     try {
       await client.query("BEGIN");
+      await setProjectMembershipAuditContext(client, {
+        actor_account_id: account_id ?? null,
+        via: "course-manager-access",
+      });
       await addManagersToProject({
         client,
         project_id,

@@ -86,6 +86,7 @@ import {
   sortRegionOptionsByPreference,
 } from "../hosts/utils/region-ranking";
 import { normalizeSpotRecoveryPolicy } from "../hosts/utils/spot-recovery-policy";
+import { NEBIUS_SPOT_OFFERED } from "@cocalc/util/consts/nebius-spot";
 import {
   vmCreateCli,
   vmCreateCliProblem,
@@ -1135,7 +1136,9 @@ export function VmCreateModal({
               onChange={(nextProvider: "gcp" | "nebius") => {
                 const nextCatalog = providerCatalog(catalog, nextProvider);
                 const pricing_model =
-                  nextProvider === "nebius" ? "spot" : "on_demand";
+                  nextProvider === "nebius" && NEBIUS_SPOT_OFFERED
+                    ? "spot"
+                    : "on_demand";
                 const nextSelection: ProviderSelection = {
                   ...selection,
                   architecture: "x86_64",
@@ -3429,7 +3432,7 @@ export function ProjectComputeVms({
             defaultCatalog,
             {
               ...defaultSelection,
-              pricing_model: "spot",
+              pricing_model: NEBIUS_SPOT_OFFERED ? "spot" : "on_demand",
               disk_gb: Math.max(Number(defaultSelection.disk_gb ?? 0), 40),
             },
             "gpu",
@@ -3440,7 +3443,8 @@ export function ProjectComputeVms({
             "cpu",
           )[0])
         : undefined;
-    const pricingModel = nebiusDefault?.gpuCount ? "spot" : "on_demand";
+    const pricingModel =
+      nebiusDefault?.gpuCount && NEBIUS_SPOT_OFFERED ? "spot" : "on_demand";
     const region =
       defaultProvider === "gcp"
         ? regionFromZone(zone)

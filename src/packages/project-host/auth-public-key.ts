@@ -1,5 +1,5 @@
 import { createPublicKey } from "crypto";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdir, writeFile } from "fs/promises";
 import { dirname } from "path";
 import getLogger from "@cocalc/backend/logger";
 import {
@@ -10,6 +10,9 @@ import {
 const logger = getLogger("project-host:auth-public-key");
 
 let distributedPublicKey: string | undefined;
+// The key last written (or being written) to projectHostAuthTokenPublicKeyPath.
+let persistedPublicKey: string | undefined;
+let persistChain: Promise<void> = Promise.resolve();
 
 function normalizePublicKey(publicKey: string): string {
   const keyObj = createPublicKey(publicKey);
@@ -17,28 +20,55 @@ function normalizePublicKey(publicKey: string): string {
   return `${pem}`.trim();
 }
 
+// The hub publishes every host's keys to every host, so this runs often with
+// the same key. Write the file only when the key changes, and asynchronously:
+// a synchronous open-with-truncate on the host's btrfs filesystem waits for
+// the running transaction commit, which stalled the whole event loop.
 export function setProjectHostAuthPublicKey(publicKey?: string) {
   const value = `${publicKey ?? ""}`.trim();
   if (!value) {
     return;
   }
+  let normalized: string;
   try {
-    distributedPublicKey = normalizePublicKey(value);
-    mkdirSync(dirname(projectHostAuthTokenPublicKeyPath), {
-      recursive: true,
-      mode: 0o700,
-    });
-    writeFileSync(
-      projectHostAuthTokenPublicKeyPath,
-      `${distributedPublicKey}\n`,
-      { mode: 0o644 },
-    );
+    normalized = normalizePublicKey(value);
   } catch (err) {
     logger.warn("ignoring invalid distributed project-host auth public key", {
       err,
       path: projectHostAuthTokenPublicKeyPath,
     });
+    return;
   }
+  distributedPublicKey = normalized;
+  if (normalized === persistedPublicKey) {
+    return;
+  }
+  persistedPublicKey = normalized;
+  persistChain = persistChain.then(async () => {
+    try {
+      await mkdir(dirname(projectHostAuthTokenPublicKeyPath), {
+        recursive: true,
+        mode: 0o700,
+      });
+      await writeFile(projectHostAuthTokenPublicKeyPath, `${normalized}\n`, {
+        mode: 0o644,
+      });
+    } catch (err) {
+      // Try again the next time the key arrives.
+      if (persistedPublicKey === normalized) {
+        persistedPublicKey = undefined;
+      }
+      logger.warn("unable to save the project-host auth public key", {
+        err,
+        path: projectHostAuthTokenPublicKeyPath,
+      });
+    }
+  });
+}
+
+/** Resolves once every requested write of the public key has finished. */
+export async function flushProjectHostAuthPublicKey(): Promise<void> {
+  await persistChain;
 }
 
 export function getProjectHostAuthPublicKey(): string {

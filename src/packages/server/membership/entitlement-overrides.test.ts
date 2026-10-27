@@ -148,6 +148,21 @@ describe("admin entitlement overrides", () => {
     expect(result.effective_limits?.credit_spend_limit_7d_usd).toBe(50);
   });
 
+  it("drops the retired created-turn limits from stored overrides", () => {
+    // Overrides saved before these limits were removed still load; the
+    // retired keys have no effect.
+    const normalized = override({
+      usage_limits: {
+        acp_max_created_5h_per_account: { mode: "set", value: 2500 },
+        acp_max_created_7d_per_account: { mode: "set", value: 10000 },
+        acp_max_running_per_account: { mode: "set", value: 8 },
+      },
+    });
+    expect(normalized.usage_limits).toEqual({
+      acp_max_running_per_account: { mode: "set", value: 8 },
+    });
+  });
+
   it("rejects unknown keys so JSON typos do not silently do nothing", () => {
     expect(() =>
       override({

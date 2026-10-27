@@ -4,6 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import { setProjectMembershipAuditContext } from "@cocalc/database/postgres/schema/project-membership-audit";
 import { dstream } from "@cocalc/backend/conat/sync";
 import getPool from "@cocalc/database/pool";
 import { drainAccountProjectIndexProjection } from "@cocalc/database/postgres/account-project-index-projector";
@@ -737,6 +738,9 @@ export async function acceptProjectRehome({
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    // Copying the membership to this bay changes nobody's access: the
+    // membership audit records nothing (the source bay keeps the history).
+    await setProjectMembershipAuditContext(client, { via: "project-rehome" });
     await upsertProjectRowForRehome({
       db: client,
       project,

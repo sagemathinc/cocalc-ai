@@ -6,6 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { FileArtifact, fileArtifactPreviewSupported } from "./file-artifact";
+import { resetBoardFrames } from "./board-frame-host";
 
 const readFile = jest.fn();
 const stat = jest.fn();
@@ -57,6 +58,8 @@ const artifact: any = {
   title: "Policy",
   file: { path: "/home/user/policy.md" },
 };
+
+afterEach(() => resetBoardFrames());
 
 test("selected feedback pins original file contents across refresh", async () => {
   const onComment = jest.fn().mockResolvedValue(undefined);
@@ -319,9 +322,11 @@ test("a board waits for the site's settings and goes only where they say", async
   };
   rerender(view());
   const frame = await screen.findByTitle("Sagebrush board: plan.board.json");
-  expect(frame.getAttribute("src")).toBe(
-    "https://boards.example.org/frame/board/",
-  );
+  expect(
+    frame
+      .getAttribute("src")!
+      .startsWith("https://boards.example.org/frame/board/#sb-nonce="),
+  ).toBe(true);
   expect(document.querySelectorAll("iframe")).toHaveLength(1);
   mockCustomize = {};
 });
@@ -338,7 +343,11 @@ test("a card whose site setting changes answers the new renderer", async () => {
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
-          data: { sagebrush: "ready", version: 1 },
+          data: {
+            sagebrush: "ready",
+            version: 1,
+            nonce: new URL(frame.src).hash.replace(/^#sb-nonce=/, ""),
+          },
           source: frame.contentWindow as Window,
         }),
       );
@@ -358,9 +367,12 @@ test("a card whose site setting changes answers the new renderer", async () => {
     sagebrush_origin: "https://two.example.org",
   };
   rerender(view());
+  // The first frame may stay alive, hidden, for its own view's return.
   const second = (await waitFor(() => {
-    const f = screen.getByTitle(title) as HTMLIFrameElement;
-    expect(f.getAttribute("src")).toBe("https://two.example.org/frame/board/");
+    const f = (screen.getAllByTitle(title) as HTMLIFrameElement[]).find(
+      (frame) => frame.src.startsWith("https://two.example.org/frame/board/#"),
+    );
+    expect(f).toBeDefined();
     return f;
   })) as HTMLIFrameElement;
   const posted = jest.fn();

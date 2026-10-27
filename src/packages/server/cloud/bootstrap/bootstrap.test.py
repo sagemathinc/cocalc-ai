@@ -3513,11 +3513,15 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 Path.iterdir = lambda self: iter(
                     [
                         Path("/mnt/cocalc/data/sync-fs.sqlite"),
+                        Path("/mnt/cocalc/data/sync-fs-snapshots.sqlite"),
+                        Path("/mnt/cocalc/data/sync-fs-snapshots.sqlite-wal"),
                         Path("/mnt/cocalc/data/daemon.pid"),
                     ]
                 )  # type: ignore[method-assign]
                 Path.is_file = lambda self: str(self) in {  # type: ignore[method-assign]
                     "/mnt/cocalc/data/sync-fs.sqlite",
+                    "/mnt/cocalc/data/sync-fs-snapshots.sqlite",
+                    "/mnt/cocalc/data/sync-fs-snapshots.sqlite-wal",
                     "/mnt/cocalc/data/daemon.pid",
                 }
 
@@ -3526,6 +3530,8 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                         "/mnt/cocalc/data/cache",
                         "/mnt/cocalc/data/logs",
                         "/mnt/cocalc/data/sync-fs.sqlite",
+                        "/mnt/cocalc/data/sync-fs-snapshots.sqlite",
+                        "/mnt/cocalc/data/sync-fs-snapshots.sqlite-wal",
                         "/mnt/cocalc/data/daemon.pid",
                     }
 
@@ -3572,6 +3578,8 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                         "chown",
                         "missing-runtime-user:missing-runtime-user",
                         "/mnt/cocalc/data/sync-fs.sqlite",
+                        "/mnt/cocalc/data/sync-fs-snapshots.sqlite",
+                        "/mnt/cocalc/data/sync-fs-snapshots.sqlite-wal",
                         "/mnt/cocalc/data/daemon.pid",
                     ],
                     "repair host data file ownership",

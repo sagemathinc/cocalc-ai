@@ -240,22 +240,6 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Maximum queued durable Codex/ACP turns in a single thread.",
     },
-    acp_max_created_5h_per_account: {
-      label: "ACP created turns, 5-hour window",
-      unit: "turns",
-      adminDescription:
-        "Rolling 5-hour creation limit for durable Codex/ACP turns caused by this account.",
-      userDescription:
-        "Durable Codex/ACP turns you can create over a rolling 5-hour window.",
-    },
-    acp_max_created_7d_per_account: {
-      label: "ACP created turns, 7-day window",
-      unit: "turns",
-      adminDescription:
-        "Rolling 7-day creation limit for durable Codex/ACP turns caused by this account.",
-      userDescription:
-        "Durable Codex/ACP turns you can create over a rolling 7-day window.",
-    },
     acp_max_running_per_account: {
       label: "ACP running turns per account",
       unit: "turns",

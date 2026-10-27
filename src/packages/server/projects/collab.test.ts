@@ -93,6 +93,49 @@ describe("project collaborator write access", () => {
     expect(db.add_user_to_project).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       account_id: ACCOUNT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "course-self-add" },
+    });
+  });
+
+  it("attributes removals for the membership audit", async () => {
+    const { remove_collaborators_from_projects } = await import("./collab");
+    const db = {
+      remove_user_from_project: jest.fn(async () => undefined),
+    } as any;
+    await remove_collaborators_from_projects(
+      db,
+      ACCOUNT_ID,
+      [TARGET_ACCOUNT_ID, ACCOUNT_ID],
+      [PROJECT_ID, PROJECT_ID],
+    );
+    expect(db.remove_user_from_project).toHaveBeenNthCalledWith(1, {
+      project_id: PROJECT_ID,
+      account_id: TARGET_ACCOUNT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "collaborator-remove" },
+    });
+    expect(db.remove_user_from_project).toHaveBeenNthCalledWith(2, {
+      project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "self-remove" },
+    });
+  });
+
+  it("attributes a direct add of someone else to the adding admin", async () => {
+    const { add_collaborators_to_projects } = await import("./collab");
+    const db = {
+      user_is_collaborator: jest.fn(async () => false),
+      add_user_to_project: jest.fn(async () => undefined),
+    } as any;
+    await add_collaborators_to_projects(
+      db,
+      ACCOUNT_ID,
+      [TARGET_ACCOUNT_ID],
+      [PROJECT_ID],
+    );
+    expect(db.add_user_to_project).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      account_id: TARGET_ACCOUNT_ID,
+      audit: { actor_account_id: ACCOUNT_ID, via: "admin-add" },
     });
   });
 });

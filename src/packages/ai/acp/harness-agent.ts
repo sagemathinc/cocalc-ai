@@ -3,9 +3,11 @@ import {
   HarnessError,
   disposeFailedHarness,
 } from "./harness-client";
+import { siteFundedTurnUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import type {
   HarnessBinding,
   HarnessFundedTurnEnd,
+  HarnessFundedTurnStart,
   HarnessLauncher,
 } from "./harness-client";
 import type {
@@ -289,8 +291,9 @@ export class HarnessAgent implements AcpAgent {
         connectorContext =
           (await client.beginConnectorTurn(request.chat)) || undefined;
       }
+      let fundedStart: HarnessFundedTurnStart;
       try {
-        await client.beginFundedTurn(request.chat);
+        fundedStart = await client.beginFundedTurn(request.chat);
         fundedClient = client;
       } catch (error) {
         // Not admitted (no allowance left, say): this turn fails with the
@@ -299,6 +302,15 @@ export class HarnessAgent implements AcpAgent {
           new HarnessError("rejected", `${(error as Error)?.message ?? error}`),
           { fundedTurnRefused: true },
         );
+      }
+      if (fundedStart.usageWarning) {
+        await request.stream({
+          type: "event",
+          event: {
+            type: "usage_warning",
+            ...siteFundedTurnUsageWarning(fundedStart.usageWarning),
+          },
+        });
       }
       const result = await client.prompt(
         harnessPrompt(

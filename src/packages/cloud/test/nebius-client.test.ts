@@ -31,7 +31,8 @@ it("closes the real SDK's service-account renewal timers", async () => {
     await sdk
       .getAuthorizationProvider()!
       .authenticator()
-      .authenticate({ add() {} } as any);
+      // an empty gRPC Metadata: the SDK reads existing values before adding
+      .authenticate({ add() {}, set() {}, get: () => [] } as any);
     // Let the initial background renewal finish and schedule its next timer.
     await new Promise((resolve) => setTimeout(resolve, 20));
     const renewer = fetch.mock.contexts[0] as any;

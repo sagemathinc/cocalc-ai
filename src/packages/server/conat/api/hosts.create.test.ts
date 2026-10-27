@@ -630,6 +630,11 @@ describe("hosts.createHost", () => {
   });
 
   it("normalizes Nebius shared scratch fields on create", async () => {
+    // Nebius project hosts are offered only behind both settings
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_nebius_enabled: true,
+      project_hosts_nebius_hosts_enabled: true,
+    }));
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       const accountResult = maybeHandleAccountDirectoryQuery(sql, params);
       if (accountResult != null) {
@@ -698,6 +703,11 @@ describe("hosts.createHost", () => {
   });
 
   it("rejects shared scratch disks above the backend cap on create", async () => {
+    // Nebius project hosts are offered only behind both settings
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_nebius_enabled: true,
+      project_hosts_nebius_hosts_enabled: true,
+    }));
     const { createHost } = await import("./hosts");
     await expect(
       createHost({
@@ -715,6 +725,30 @@ describe("hosts.createHost", () => {
         },
       }),
     ).rejects.toThrow("shared_disk_gb must be at most 10,044 GB");
+    expect(estimateDedicatedHostRateMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_hosts"),
+      expect.anything(),
+    );
+  });
+
+  it("refuses a new Nebius project host unless Nebius is offered for project hosts", async () => {
+    const { createHost } = await import("./hosts");
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        name: "nebius-host",
+        region: "us-central1",
+        size: "cpu-standard-v3",
+        machine: {
+          cloud: "nebius",
+          disk_gb: 100,
+          disk_type: "ssd",
+          storage_mode: "persistent",
+        },
+      }),
+    ).rejects.toThrow("Nebius is not offered for project hosts");
     expect(estimateDedicatedHostRateMock).not.toHaveBeenCalled();
     expect(queryMock).not.toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO project_hosts"),

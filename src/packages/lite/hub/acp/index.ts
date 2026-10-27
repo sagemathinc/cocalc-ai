@@ -359,7 +359,9 @@ import {
 } from "@cocalc/backend/chat-store/sqlite-offload";
 import {
   clearAcpWorkerHeartbeat,
+  clearAcpWorkerHeartbeatSync,
   recordAcpWorkerHeartbeat,
+  sweepStaleAcpWorkerHeartbeats,
   ensureAcpWorkerRunning,
   startAcpWorkerSupervisor,
 } from "./worker-manager";
@@ -4825,6 +4827,12 @@ export class ChatStreamWriter {
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
+    if (event.type === "event" && event.event.type === "usage_warning") {
+      // The turn's notice that the account is near its included-AI limit is
+      // shown under the status chip while the turn runs, from this stream.
+      this.livePreviewBatcher.add(event, { flush: true });
+      return;
+    }
     if (event.type === "event" && this.livePreviewText) {
       // The complete activity stream can publish tool and reasoning events
       // independently. Flush text queued before that activity so the inline
@@ -7545,6 +7553,10 @@ export async function runDetachedAcpQueueWorker(
 ): Promise<void> {
   initializeAcpRuntime(client);
   acpExecutionOwnedByCurrentProcess = true;
+  // A worker stopped by a signal exits without reaching the cleanup below;
+  // remove its heartbeat file anyway, and those left by earlier workers.
+  process.once("exit", () => clearAcpWorkerHeartbeatSync(process.pid));
+  void sweepStaleAcpWorkerHeartbeats().catch(() => {});
   startAcpInterruptPoller();
   startAcpSteerPoller();
   if (typeof (client as any)?.waitUntilSignedIn === "function") {
@@ -12163,7 +12175,6 @@ async function enqueueChatAcpTurn({
     admitAcpJobCreation(
       request,
       await resolveAcpAdmissionLimits(acpAdmissionContextFromRequest(request)),
-      Date.now(),
       { supersedesQueuedRecoveries: true },
     ),
     "chat",

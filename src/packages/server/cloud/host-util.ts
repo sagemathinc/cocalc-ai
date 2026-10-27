@@ -350,9 +350,15 @@ export async function getNebiusMinimumBootDiskGb(opts: {
   );
 }
 
-export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
+// The CPUs, memory, GPUs and machine type a host's VM should have: the
+// part of buildHostSpec a machine change needs, without its lookups.
+export function hostMachineShape(row: HostRow): Pick<
+  HostSpec,
+  "cpu" | "ram_gb" | "gpu"
+> & {
+  metadata: { machine_type?: string };
+} {
   const metadata = row.metadata ?? {};
-  const activePricingModel = effectivePricingModel(row);
   const machine: HostMachine = metadata.machine ?? {};
   const size = metadata.size ?? (row as any).size ?? "small";
   let { cpu, ram_gb } = sizeToResources(size);
@@ -370,6 +376,26 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
   if (Number.isFinite(ramOverride) && ramOverride > 0) {
     ram_gb = ramOverride;
   }
+  const gpuType = machine.gpu_type;
+  const gpu =
+    gpuType && gpuType !== "none"
+      ? {
+          type: gpuType,
+          count: Math.max(1, machine.gpu_count ?? 1),
+        }
+      : gpuType
+        ? undefined
+        : metadata.gpu
+          ? { type: "nvidia-l4", count: 1 }
+          : undefined;
+  return { cpu, ram_gb, gpu, metadata: { machine_type: machine.machine_type } };
+}
+
+export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
+  const metadata = row.metadata ?? {};
+  const activePricingModel = effectivePricingModel(row);
+  const machine: HostMachine = metadata.machine ?? {};
+  const { cpu, ram_gb, gpu } = hostMachineShape(row);
   const disk_gb = machine.disk_gb ?? 100;
   const disk_type = ["ssd", "balanced", "standard", "ssd_io_m3"].includes(
     machine.disk_type ?? "",
@@ -386,18 +412,6 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     ? (machine.shared_disk_type as HostSpec["shared_disk_type"])
     : undefined;
   const storage_mode = machine.storage_mode;
-  const gpuType = machine.gpu_type;
-  const gpu =
-    gpuType && gpuType !== "none"
-      ? {
-          type: gpuType,
-          count: Math.max(1, machine.gpu_count ?? 1),
-        }
-      : gpuType
-        ? undefined
-        : metadata.gpu
-          ? { type: "nvidia-l4", count: 1 }
-          : undefined;
   const sshPublicKeys = await getHostSshPublicKeys();
   const ssh_user = machine.metadata?.ssh_user ?? "ubuntu";
   const baseName = row.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase();

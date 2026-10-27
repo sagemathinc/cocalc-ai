@@ -37,26 +37,40 @@ const catalog = {
 };
 
 describe("managed compute placement", () => {
-  it("allows Nebius Spot only for explicitly supported GPU machines", () => {
+  it("offers no Nebius Spot until spot pricing is supported (#684)", () => {
     expect(
       computeMachineSupportsSpot("nebius", {
         gpu_count: 1,
         provider_spec: { allowed_for_preemptibles: true },
-      }),
-    ).toBe(true);
-    expect(
-      computeMachineSupportsSpot("nebius", {
-        gpu_count: 0,
-        provider_spec: { allowed_for_preemptibles: true },
-      }),
-    ).toBe(false);
-    expect(
-      computeMachineSupportsSpot("nebius", {
-        gpu_count: 1,
-        provider_spec: {},
       }),
     ).toBe(false);
     expect(computeMachineSupportsSpot("gcp", { gpu_count: 0 })).toBe(true);
+  });
+
+  it("(when Nebius Spot is offered) allows it only for explicitly supported GPU machines", () => {
+    jest.isolateModules(() => {
+      jest.doMock("@cocalc/util/consts/nebius-spot", () => ({
+        NEBIUS_SPOT_OFFERED: true,
+      }));
+      const { computeMachineSupportsSpot: supportsSpot } =
+        require("./placement") as typeof import("./placement");
+      expect(
+        supportsSpot("nebius", {
+          gpu_count: 1,
+          provider_spec: { allowed_for_preemptibles: true },
+        }),
+      ).toBe(true);
+      expect(
+        supportsSpot("nebius", {
+          gpu_count: 0,
+          provider_spec: { allowed_for_preemptibles: true },
+        }),
+      ).toBe(false);
+      expect(supportsSpot("nebius", { gpu_count: 1, provider_spec: {} })).toBe(
+        false,
+      );
+    });
+    jest.dontMock("@cocalc/util/consts/nebius-spot");
   });
 
   it("resolves reused Nebius presets by provider platform", () => {

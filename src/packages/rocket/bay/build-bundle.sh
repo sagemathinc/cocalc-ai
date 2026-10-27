@@ -223,6 +223,17 @@ ncc_build "$ROOT/packages/rocket/bin/bay-sqlite-mirror.js" \
   -o "$OUT/runtime/sqlite-mirror" \
   --license licenses.txt
 
+echo "- Record the hub's frontend version (bay deploy asset retention)"
+node -e '
+const fs = require("node:fs");
+const [source, out] = process.argv.slice(1);
+const version = Number(/exports\.version\s*=\s*(\d+)/.exec(fs.readFileSync(source, "utf8"))?.[1]);
+if (!Number.isSafeInteger(version) || version <= 0) {
+  throw new Error(`no smc-version in ${source}`);
+}
+fs.writeFileSync(out, `${JSON.stringify({ smc_version: version })}\n`);
+' "$ROOT/packages/util/smc-version.js" "$OUT/runtime/control-plane/hub-version.json"
+
 echo "- Copy bay systemd scaffold"
 mkdir -p "$OUT/scripts"
 cp -a "$ROOT/scripts/bay-systemd" "$OUT/scripts/"

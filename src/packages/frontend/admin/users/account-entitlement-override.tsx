@@ -393,32 +393,6 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
         .acp_max_queued_per_thread.adminDescription,
   },
   {
-    id: "acp_created_5h_per_account",
-    section: "usage_limits",
-    key: "acp_max_created_5h_per_account",
-    label:
-      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
-        .acp_max_created_5h_per_account.label,
-    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
-      .acp_max_created_5h_per_account.unit,
-    description:
-      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
-        .acp_max_created_5h_per_account.adminDescription,
-  },
-  {
-    id: "acp_created_7d_per_account",
-    section: "usage_limits",
-    key: "acp_max_created_7d_per_account",
-    label:
-      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
-        .acp_max_created_7d_per_account.label,
-    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
-      .acp_max_created_7d_per_account.unit,
-    description:
-      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
-        .acp_max_created_7d_per_account.adminDescription,
-  },
-  {
     id: "acp_running_per_account",
     section: "usage_limits",
     key: "acp_max_running_per_account",
@@ -578,8 +552,6 @@ const NOTIFICATION_EMAIL_FIELD_IDS = new Set([
 const ACP_FIELD_IDS = new Set([
   "acp_queued_per_account",
   "acp_queued_per_thread",
-  "acp_created_5h_per_account",
-  "acp_created_7d_per_account",
   "acp_running_per_account",
   "acp_running_per_project",
   "acp_active_automations_per_project",

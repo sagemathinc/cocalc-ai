@@ -398,6 +398,33 @@ describe("CodexActivity terminal rows", () => {
     expect(screen.getByText("/home/user/demo")).not.toBeNull();
   });
 
+  it("renders a usage warning as a status row", () => {
+    render(
+      React.createElement(CodexActivity, {
+        expanded: true,
+        events: [
+          {
+            type: "event",
+            seq: 1,
+            time: 1000,
+            event: {
+              type: "usage_warning",
+              window: "5h",
+              threshold: 80,
+            },
+          } as any,
+        ],
+      }),
+    );
+
+    expect(screen.getByText("AI allowance")).not.toBeNull();
+    expect(
+      screen.getByText(
+        /The 5-hour included AI allowance of the account running this turn is over 80% used/,
+      ),
+    ).not.toBeNull();
+  });
+
   it('renders "No output." after the terminal block', () => {
     const { container } = render(
       React.createElement(TerminalRow, {

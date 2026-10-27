@@ -3,6 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  assertNebiusSpotOffered,
+  NEBIUS_SPOT_OFFERED,
+  NEBIUS_SPOT_UNAVAILABLE_MESSAGE,
+} from "@cocalc/util/consts/nebius-spot";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import type { ComputeProjectSshRequest } from "@cocalc/conat/inter-bay/api";
@@ -1025,7 +1030,9 @@ export async function createVm(
   const spotSupported = computeMachineSupportsSpot(provider, machine);
   if (pricingModel === "spot" && !spotSupported) {
     throw new Error(
-      `Nebius machine '${machine.machine_type}' does not support Spot capacity`,
+      provider === "nebius" && !NEBIUS_SPOT_OFFERED
+        ? NEBIUS_SPOT_UNAVAILABLE_MESSAGE
+        : `Nebius machine '${machine.machine_type}' does not support Spot capacity`,
     );
   }
   const ttlMinutes =
@@ -2577,6 +2584,8 @@ async function requestState(opts: {
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
   if (opts.desired_state === "running") {
+    // a VM created earlier may still be Nebius Spot
+    assertNebiusSpotOffered(vm.provider, vm.desired_pricing_model);
     if (hasCourseVmFunding(vm)) {
       if (!vm.stopped_at) await requireCourseVmService(vm);
     } else
@@ -2984,7 +2993,9 @@ async function setVmMachineTypeLocal(opts: {
   const spotSupported = computeMachineSupportsSpot(vm.provider, machine);
   if (vm.desired_pricing_model === "spot" && !spotSupported) {
     throw new Error(
-      `Nebius machine '${machine.machine_type}' does not support Spot capacity`,
+      vm.provider === "nebius" && !NEBIUS_SPOT_OFFERED
+        ? NEBIUS_SPOT_UNAVAILABLE_MESSAGE
+        : `Nebius machine '${machine.machine_type}' does not support Spot capacity`,
     );
   }
   const rateInput = {
@@ -3139,6 +3150,14 @@ async function setVmPricingModelLocal(opts: {
   }
   if (vm.desired_pricing_model === opts.pricing_model) {
     return await publicVm(vm);
+  }
+  if (
+    opts.pricing_model === "spot" &&
+    vm.provider === "nebius" &&
+    !NEBIUS_SPOT_OFFERED
+  ) {
+    // a VM created earlier may still record spot_supported: true
+    throw new Error(NEBIUS_SPOT_UNAVAILABLE_MESSAGE);
   }
   if (
     opts.pricing_model === "spot" &&

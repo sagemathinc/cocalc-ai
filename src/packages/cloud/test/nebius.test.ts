@@ -31,6 +31,26 @@ const allocationsDeleteMock = jest.fn();
 const projectsGetMock = jest.fn();
 const resourceAdviceListMock = jest.fn();
 const clientDisposeMock = jest.fn();
+const instancesStartMock = jest.fn();
+
+// These tests exercise the provider as it works once Nebius Spot is offered
+// again (#684); the "while Nebius Spot is off" tests below turn it off.
+let mockNebiusSpotOffered = true;
+jest.mock("@cocalc/util/consts/nebius-spot", () => {
+  const actual = jest.requireActual("@cocalc/util/consts/nebius-spot");
+  return {
+    ...actual,
+    get NEBIUS_SPOT_OFFERED() {
+      return mockNebiusSpotOffered;
+    },
+    assertNebiusSpotOffered: (provider: unknown, pricing: unknown) => {
+      if (mockNebiusSpotOffered) return;
+      if (`${provider}`.toLowerCase() === "nebius" && pricing === "spot") {
+        throw new Error(actual.NEBIUS_SPOT_UNAVAILABLE_MESSAGE);
+      }
+    },
+  };
+});
 
 jest.mock("../nebius/client", () => {
   class NebiusClient {
@@ -46,6 +66,7 @@ jest.mock("../nebius/client", () => {
       delete: instancesDeleteMock,
       get: instancesGetMock,
       list: instancesListMock,
+      start: instancesStartMock,
       stop: instancesStopMock,
       update: instancesUpdateMock,
     };
@@ -1172,5 +1193,126 @@ describe("normalizeNebiusInstanceStatus", () => {
     expect(normalizeNebiusInstanceStatus("STOPPED")).toBe("stopped");
     expect(normalizeNebiusInstanceStatus("ERROR")).toBe("error");
     expect(normalizeNebiusInstanceStatus(undefined)).toBe("error");
+  });
+});
+
+describe("NebiusProvider while Nebius Spot is off (#684)", () => {
+  const creds = {
+    parentId: "project-1",
+    serviceAccountId: "svc-1",
+    publicKeyId: "pub-1",
+    privateKeyPem: "key",
+    sshPublicKey: "ssh-ed25519 AAAA",
+    subnetId: "subnet-1",
+  };
+  beforeEach(() => {
+    mockNebiusSpotOffered = false;
+    instancesCreateMock.mockReset();
+    instancesListMock.mockReset();
+    instancesGetMock.mockReset();
+    instancesStartMock.mockReset();
+    instancesStartMock.mockResolvedValue(instanceOp("instance-1"));
+  });
+  afterEach(() => {
+    mockNebiusSpotOffered = true;
+  });
+
+  it("refuses to create a preemptible instance, before any Nebius call", async () => {
+    await expect(
+      new NebiusProvider().createHost(
+        buildSpec({ pricing_model: "spot" }),
+        creds,
+      ),
+    ).rejects.toThrow(/Nebius Spot is unavailable/);
+    expect(instancesListMock).not.toHaveBeenCalled();
+    expect(instancesCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to start an existing preemptible instance, but starts an on-demand one", async () => {
+    instancesGetMock.mockResolvedValueOnce({
+      spec: {
+        preemptible: {
+          onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+          priority: 0,
+        },
+      },
+    });
+    await expect(
+      new NebiusProvider().startHost(
+        { instance_id: "instance-1" } as any,
+        creds,
+      ),
+    ).rejects.toThrow(/Nebius Spot is unavailable/);
+    expect(instancesStartMock).not.toHaveBeenCalled();
+
+    instancesGetMock.mockResolvedValueOnce({ spec: {} });
+    await new NebiusProvider().startHost(
+      { instance_id: "instance-1" } as any,
+      creds,
+    );
+    expect(instancesStartMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to restart an existing preemptible instance, without stopping it", async () => {
+    instancesStopMock.mockReset();
+    instancesGetMock.mockResolvedValueOnce({
+      spec: {
+        preemptible: {
+          onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+          priority: 0,
+        },
+      },
+    });
+    await expect(
+      new NebiusProvider().restartHost(
+        { instance_id: "instance-1" } as any,
+        creds,
+      ),
+    ).rejects.toThrow(/Nebius Spot is unavailable/);
+    expect(instancesStopMock).not.toHaveBeenCalled();
+    expect(instancesStartMock).not.toHaveBeenCalled();
+
+    // (control) an on-demand instance restarts as before
+    instancesStopMock.mockResolvedValue(instanceOp("instance-1"));
+    instancesGetMock.mockResolvedValueOnce({ spec: {} });
+    await new NebiusProvider().restartHost(
+      { instance_id: "instance-1" } as any,
+      creds,
+    );
+    expect(instancesStopMock).toHaveBeenCalledTimes(1);
+    expect(instancesStartMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a start refusal only for a preemptible instance, and lets lookup errors through", async () => {
+    const provider = new NebiusProvider();
+    instancesGetMock.mockResolvedValueOnce({
+      spec: {
+        preemptible: {
+          onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+          priority: 0,
+        },
+      },
+    });
+    await expect(
+      provider.startRefusal({ instance_id: "instance-1" } as any, creds),
+    ).resolves.toMatch(/Nebius Spot is unavailable/);
+    instancesGetMock.mockResolvedValueOnce({ spec: {} });
+    await expect(
+      provider.startRefusal({ instance_id: "instance-1" } as any, creds),
+    ).resolves.toBeUndefined();
+    instancesGetMock.mockRejectedValueOnce(new Error("NOT_FOUND"));
+    await expect(
+      provider.startRefusal({ instance_id: "instance-1" } as any, creds),
+    ).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("still starts a preemptible instance for a billing rescue (final backups)", async () => {
+    await new NebiusProvider().startHost(
+      { instance_id: "instance-1" } as any,
+      creds,
+      { allow_preemptible: true },
+    );
+    expect(instancesGetMock).not.toHaveBeenCalled();
+    expect(instancesStartMock).toHaveBeenCalledTimes(1);
   });
 });

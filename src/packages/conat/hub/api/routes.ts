@@ -190,6 +190,7 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,
   // the archive job and its project live on the owning bay
+  "projects.archiveProject": projectFromOpts,
   "projects.reopenStuckProjectArchive": projectFromOpts,
   "projects.getProjectAddress": projectFromOpts,
   "projects.getProjectActiveOperation": projectFromOpts,

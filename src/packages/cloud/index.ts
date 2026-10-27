@@ -1,6 +1,10 @@
 export * from "./types";
 export * from "./gcp-internal";
 export { GcpProvider } from "./gcp";
+export {
+  MACHINE_CHANGE_REQUIRES_NEW_INSTANCE,
+  classifyInPlaceMachineChange,
+} from "./gcp-machine-change";
 export { LocalProvider } from "./local";
 export { SelfHostProvider } from "./self-host/provider";
 export * as Hyperstack from "./hyperstack";

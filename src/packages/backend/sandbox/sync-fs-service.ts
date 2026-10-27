@@ -82,6 +82,9 @@ export type SyncFsServiceOptions = {
   pruneIntervalMs?: number;
   maxActivePaths?: number;
   docReadyTimeoutMs?: number;
+  // Snapshots of paths nobody watches are deleted after this long.
+  snapshotTtlMs?: number;
+  snapshotPruneIntervalMs?: number;
 };
 
 const logger = getLogger("sandbox:sync-fs-service");
@@ -89,6 +92,12 @@ const logger = getLogger("sandbox:sync-fs-service");
 const DEFAULT_HEARTBEAT_TTL_MS = 60_000;
 const DEFAULT_MAX_ACTIVE_PATHS = 256;
 const DEFAULT_DOC_READY_TIMEOUT_MS = 15_000;
+const DEFAULT_SNAPSHOT_TTL_MS = 10 * 60_000;
+// Deleting a snapshot frees its overflow pages synchronously, so delete a few
+// at a time and let other work run in between.
+const SNAPSHOT_PRUNE_BATCH = 25;
+const SNAPSHOT_PRUNE_BATCH_BYTES = 16 * 1024 * 1024;
+const SNAPSHOT_PRUNE_PAUSE_MS = 100;
 const STREAM_HEAD_FORMAT_VERSION = 2;
 const MAX_RECENT_RELEASES = 32;
 const DEBOUNCE_MS = 250; // coalesce rapid events
@@ -320,6 +329,13 @@ export class SyncFsService extends EventEmitter {
   private readonly maxActivePaths: number;
   private readonly docReadyTimeoutMs: number;
   private pruneTimer?: NodeJS.Timeout;
+  private readonly snapshotTtlMs: number;
+  private readonly snapshotPruneIntervalMs: number;
+  private snapshotPruneTimer?: NodeJS.Timeout;
+  private snapshotPruneRunning = false;
+  // Paths with a diff against their snapshot in progress: it may have been
+  // released meanwhile, but its snapshot must survive until the diff is done.
+  private busyPaths: Map<string, number> = new Map();
   private readonly counters = {
     heartbeatActive: 0,
     heartbeatInactive: 0,
@@ -362,6 +378,20 @@ export class SyncFsService extends EventEmitter {
     );
     this.pruneTimer = setInterval(this.pruneStale, this.pruneIntervalMs);
     this.pruneTimer.unref?.();
+    this.snapshotTtlMs = Math.max(
+      1_000,
+      opts?.snapshotTtlMs ??
+        envNumber("COCALC_SYNC_FS_SNAPSHOT_TTL_MS", DEFAULT_SNAPSHOT_TTL_MS),
+    );
+    this.snapshotPruneIntervalMs = Math.max(
+      1_000,
+      opts?.snapshotPruneIntervalMs ?? this.snapshotTtlMs,
+    );
+    this.snapshotPruneTimer = setInterval(
+      () => void this.pruneSnapshots(),
+      this.snapshotPruneIntervalMs,
+    );
+    this.snapshotPruneTimer.unref?.();
     activeServices.add(this);
   }
 
@@ -512,6 +542,10 @@ export class SyncFsService extends EventEmitter {
     const string_id = state?.string_id;
     const createdAt = state?.createdAt ?? Date.now();
     this.pathStates.delete(path);
+    if (!this.busyPaths.has(path)) {
+      // otherwise when the diff in progress is done (externalChange)
+      this.unmarkWatching(path);
+    }
     this.clearSuppress(path);
     const timer = this.debounceTimers.get(path);
     if (timer != null) {
@@ -637,7 +671,7 @@ export class SyncFsService extends EventEmitter {
         diskContent = "";
         forceDiff = true;
       }
-      const change = await this.store.handleExternalChange(
+      const change = await this.externalChange(
         path,
         async () => diskContent,
         false,
@@ -666,7 +700,10 @@ export class SyncFsService extends EventEmitter {
     if (existing != null) {
       return await existing;
     }
-    const run = this.initPath(path, meta).finally(() => {
+    // Busy from rebuilding the baseline through reading the disk and diffing.
+    const run = this.withBusyPath(path, () =>
+      this.initPath(path, meta),
+    ).finally(() => {
       if (this.initInFlight.get(path) === run) {
         this.initInFlight.delete(path);
       }
@@ -681,6 +718,10 @@ export class SyncFsService extends EventEmitter {
     if (this.pruneTimer != null) {
       clearInterval(this.pruneTimer);
       this.pruneTimer = undefined;
+    }
+    if (this.snapshotPruneTimer != null) {
+      clearInterval(this.snapshotPruneTimer);
+      this.snapshotPruneTimer = undefined;
     }
     this.watcherInFlight.clear();
     this.initInFlight.clear();
@@ -702,6 +743,7 @@ export class SyncFsService extends EventEmitter {
     }
     this.suppressOnce.clear();
     this.streamInfo.clear();
+    this.unmarkWatching();
     this.store.close();
     this.removeAllListeners();
   }
@@ -758,7 +800,7 @@ export class SyncFsService extends EventEmitter {
     const meta = this.pathStates.get(path)?.meta;
     const codec = this.resolveCodec(meta);
     try {
-      const computed = await this.store.handleExternalChange(
+      const computed = await this.externalChange(
         path,
         async () => "",
         true,
@@ -814,6 +856,9 @@ export class SyncFsService extends EventEmitter {
         meta: normalizedMeta,
         string_id: normalizedMeta?.string_id,
       });
+      if (existingState == null) {
+        this.markWatching(path, now);
+      }
       if (
         previousStringId != null &&
         previousStringId !== normalizedMeta?.string_id &&
@@ -883,7 +928,7 @@ export class SyncFsService extends EventEmitter {
         const codec = this.resolveCodec(meta);
         if (event === "unlink") {
           try {
-            const change = await this.store.handleExternalChange(
+            const change = await this.externalChange(
               path,
               async () => "",
               true,
@@ -922,7 +967,7 @@ export class SyncFsService extends EventEmitter {
             // treat this as an external mutation.
             this.clearSuppress(path);
           }
-          const change = await this.store.handleExternalChange(
+          const change = await this.externalChange(
             path,
             async () => {
               return (
@@ -1111,6 +1156,120 @@ export class SyncFsService extends EventEmitter {
       stringCols,
     });
   }
+
+  // Run fn with `path` busy: its snapshot is in use (being rebuilt, read
+  // or diffed), so no process may prune it, even if the path is released
+  // meanwhile. Shared with other processes through `watching`.
+  private async withBusyPath<T>(
+    path: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const n = this.busyPaths.get(path) ?? 0;
+    this.busyPaths.set(path, n + 1);
+    if (n === 0 && !this.pathStates.has(path)) {
+      this.markWatching(path, Date.now());
+    }
+    try {
+      return await fn();
+    } finally {
+      const left = (this.busyPaths.get(path) ?? 1) - 1;
+      if (left > 0) {
+        this.busyPaths.set(path, left);
+      } else {
+        this.busyPaths.delete(path);
+        if (!this.pathStates.has(path)) {
+          this.unmarkWatching(path);
+        }
+      }
+    }
+  }
+
+  // store.handleExternalChange, with the path busy meanwhile.
+  private async externalChange(
+    path: string,
+    loader: () => Promise<string>,
+    deleted?: boolean,
+    codec?: DocCodec,
+    forceDiff?: boolean,
+  ): Promise<ExternalChange> {
+    return await this.withBusyPath(path, () =>
+      this.store.handleExternalChange(path, loader, deleted, codec, forceDiff),
+    );
+  }
+
+  // Shared with other processes through the store, so that their snapshot
+  // pruning leaves our watched paths alone. Failures only delay that sharing
+  // until the next refresh; they must not break watching.
+  private markWatching(path: string, now: number): void {
+    try {
+      this.store.markWatching(this.clientId, path, now);
+    } catch (err) {
+      logger.warn("sync-fs unable to record watched path", {
+        path,
+        err: `${err}`,
+      });
+    }
+  }
+
+  private unmarkWatching(path?: string): void {
+    try {
+      this.store.unmarkWatching(this.clientId, path);
+    } catch (err) {
+      logger.debug("sync-fs unable to forget watched path", {
+        path,
+        err: `${err}`,
+      });
+    }
+  }
+
+  /**
+   * Delete the stored snapshots of paths that are not watched and have not
+   * been updated for snapshotTtlMs. Every new watch replaces the snapshot from
+   * the patch stream first (initPath), so they would never be read again;
+   * without this the store kept every file ever opened on the host.
+   */
+  pruneSnapshots = async (): Promise<number> => {
+    if (this.snapshotPruneRunning || this.closed) return 0;
+    this.snapshotPruneRunning = true;
+    let total = 0;
+    try {
+      // Other processes using the same store (the ACP worker) refresh their
+      // watches on the same schedule; one not seen for three intervals died.
+      const watchedSince = Date.now() - 3 * this.snapshotPruneIntervalMs;
+      this.store.refreshWatching({
+        owner: this.clientId,
+        paths: new Set([...this.pathStates.keys(), ...this.busyPaths.keys()]),
+        expireBefore: watchedSince,
+      });
+      while (!this.closed) {
+        const keep = new Set([
+          ...this.pathStates.keys(),
+          ...this.initInFlight.keys(),
+          ...this.busyPaths.keys(),
+        ]);
+        const { deleted, more } = this.store.pruneSnapshots({
+          olderThan: Date.now() - this.snapshotTtlMs,
+          keep,
+          watchedSince,
+          maxRows: SNAPSHOT_PRUNE_BATCH,
+          maxBytes: SNAPSHOT_PRUNE_BATCH_BYTES,
+        });
+        total += deleted;
+        if (!more || deleted === 0) break;
+        await new Promise((resolve) =>
+          setTimeout(resolve, SNAPSHOT_PRUNE_PAUSE_MS),
+        );
+      }
+    } catch (err) {
+      logger.warn("sync-fs snapshot prune failed", { err: `${err}` });
+    } finally {
+      this.snapshotPruneRunning = false;
+    }
+    if (total > 0) {
+      logger.debug("sync-fs pruned unwatched snapshots", { deleted: total });
+    }
+    return total;
+  };
 
   private pruneStale = (): void => {
     const now = Date.now();

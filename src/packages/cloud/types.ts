@@ -130,7 +130,11 @@ export interface DataDiskSnapshot {
 
 export interface CloudProvider {
   createHost(spec: HostSpec, creds: any): Promise<HostRuntime>;
-  startHost(runtime: HostRuntime, creds: any): Promise<void>;
+  startHost(
+    runtime: HostRuntime,
+    creds: any,
+    opts?: { allow_preemptible?: boolean },
+  ): Promise<void>;
   stopHost(runtime: HostRuntime, creds: any): Promise<void>;
   setPricingModel?(
     runtime: HostRuntime,
@@ -142,6 +146,15 @@ export interface CloudProvider {
     machineType: string,
     creds: any,
   ): Promise<void>;
+  // Change the machine type and GPUs of a stopped instance in place, keeping
+  // its boot disk. Throws an error with code
+  // "machine_change_requires_new_instance" (before changing anything) when
+  // the provider can't make the change in place.
+  updateMachine?(
+    runtime: HostRuntime,
+    spec: Pick<HostSpec, "cpu" | "ram_gb" | "gpu" | "metadata">,
+    creds: any,
+  ): Promise<HostRuntime>;
   probeSpotAvailability?(
     spec: HostSpec,
     creds: any,
@@ -171,6 +184,9 @@ export interface CloudProvider {
   >;
   restartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   hardRestartHost?(runtime: HostRuntime, creds: any): Promise<void>;
+  // Why the provider would refuse to (re)start this instance now, if it
+  // would; checked before the caller changes anything. No side effects.
+  startRefusal?(runtime: HostRuntime, creds: any): Promise<string | undefined>;
   ensureStartupScript?(runtime: HostRuntime, creds: any): Promise<void>;
   ensureSshAccess?(runtime: HostRuntime, creds: any): Promise<void>;
   ensurePublicIngress?(

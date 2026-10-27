@@ -4,6 +4,7 @@ import type { HostProvider } from "../types";
 import {
   getProviderOptionsList,
   getRefreshProviders,
+  isProviderCreatable,
   isProviderEnabled,
   type HostProviderFlags,
 } from "../providers/registry";
@@ -42,7 +43,7 @@ export const useHostProviders = ({
       | HostProvider
       | undefined;
     const provider = selectedProvider ?? currentProvider;
-    if (provider && !isProviderEnabled(provider, flags)) {
+    if (provider && !isProviderCreatable(provider, flags)) {
       form.setFieldsValue({ provider: providerOptions[0]?.value ?? "none" });
     } else if (!provider) {
       form.setFieldsValue({ provider: providerOptions[0]?.value ?? "none" });

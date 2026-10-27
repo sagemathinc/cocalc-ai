@@ -172,12 +172,6 @@ export function normalizeMembershipEffectiveLimits(
     acp_max_queued_per_thread: normalizeNonNegativeInteger(
       usageLimits?.acp_max_queued_per_thread,
     ),
-    acp_max_created_5h_per_account: normalizeNonNegativeInteger(
-      usageLimits?.acp_max_created_5h_per_account,
-    ),
-    acp_max_created_7d_per_account: normalizeNonNegativeInteger(
-      usageLimits?.acp_max_created_7d_per_account,
-    ),
     acp_max_running_per_account: normalizeNonNegativeInteger(
       usageLimits?.acp_max_running_per_account,
     ),

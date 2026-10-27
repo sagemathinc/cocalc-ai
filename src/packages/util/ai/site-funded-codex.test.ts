@@ -6,12 +6,17 @@
 import {
   computeSiteFundedCodexRequestCost,
   DEFAULT_SITE_FUNDED_CODEX_POLICY,
+  formatSiteFundedLimitDetail,
+  formatSiteFundedReset,
+  formatSiteFundedTurnUsageWarning,
   getSiteFundedCodexPrice,
   hasSiteFundedCodexPrice,
   microusdToUsageUnits,
   SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES,
   siteFundedCodexFinalRequestHeadroomMicrousd,
   siteFundedCodexMaxRequestBodyBytes,
+  siteFundedTurnUsageWarning,
+  siteFundedUsageWarning,
   usdToMicrousd,
 } from "./site-funded-codex";
 
@@ -134,5 +139,82 @@ describe("site-funded Codex accounting", () => {
       SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES,
     );
     expect(siteFundedCodexFinalRequestHeadroomMicrousd(policy)).toBe(2_774);
+  });
+});
+
+describe("site-funded usage warnings", () => {
+  const now = Date.parse("2026-10-27T12:00:00Z");
+  const in2h10m = "2026-10-27T14:10:00Z";
+
+  it("does not warn below 80% or for a window without a limit", () => {
+    expect(
+      siteFundedUsageWarning([
+        { window: "5h", used: 79.9, limit: 100 },
+        { window: "7d", used: 50, limit: 0 },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("warns at 80% and at 95%", () => {
+    expect(
+      siteFundedUsageWarning([{ window: "5h", used: 80, limit: 100 }]),
+    ).toEqual({ window: "5h", percent: 80, threshold: 80 });
+    expect(
+      siteFundedUsageWarning([
+        { window: "7d", used: 950, limit: 1000, resetAt: in2h10m },
+      ]),
+    ).toEqual({ window: "7d", percent: 95, threshold: 95, resetAt: in2h10m });
+  });
+
+  it("picks the higher threshold, then the fuller window", () => {
+    expect(
+      siteFundedUsageWarning([
+        { window: "5h", used: 90, limit: 100 },
+        { window: "7d", used: 96, limit: 100 },
+      ]),
+    ).toMatchObject({ window: "7d", threshold: 95 });
+    expect(
+      siteFundedUsageWarning([
+        { window: "5h", used: 88, limit: 100 },
+        { window: "7d", used: 82, limit: 100 },
+      ]),
+    ).toMatchObject({ window: "5h", percent: 88 });
+  });
+
+  it("caps the percent of an overdrawn window at 100", () => {
+    expect(
+      siteFundedUsageWarning([{ window: "5h", used: 130, limit: 100 }]),
+    ).toMatchObject({ percent: 100, threshold: 95 });
+  });
+
+  it("formats the reset time in UTC", () => {
+    expect(formatSiteFundedReset(in2h10m, now)).toBe(
+      "in about 2 h 10 min, at Oct 27, 14:10 UTC",
+    );
+    expect(formatSiteFundedReset("2026-10-30T12:00:00Z", now)).toBe(
+      "in about 3 d, at Oct 30, 12:00 UTC",
+    );
+    expect(formatSiteFundedReset(undefined, now)).toBe("");
+    expect(formatSiteFundedReset("not a date", now)).toBe("");
+  });
+
+  it("names the limit, its use, the reset and what to do", () => {
+    expect(
+      siteFundedTurnUsageWarning({
+        window: "5h",
+        percent: 96,
+        threshold: 95,
+        resetAt: in2h10m,
+      }),
+    ).toEqual({ window: "5h", threshold: 95 });
+    expect(
+      formatSiteFundedTurnUsageWarning({ window: "5h", threshold: 95 }),
+    ).toBe(
+      "The 5-hour included AI allowance of the account running this turn is over 95% used. When it runs out, that account's agent turns are refused until the window resets. The account's owner can see the details in their top bar, and can upgrade their membership or use their own API key.",
+    );
+    expect(formatSiteFundedLimitDetail(in2h10m, now)).toBe(
+      " It resets in about 2 h 10 min, at Oct 27, 14:10 UTC.",
+    );
+    expect(formatSiteFundedLimitDetail(undefined, now)).toBe("");
   });
 });

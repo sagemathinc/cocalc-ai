@@ -506,20 +506,6 @@ export function buildEntitlementOverrideSchemaDoc() {
           descriptions.usage_limits.acp_max_queued_per_thread.adminDescription,
       }),
       fieldDoc({
-        path: "usage_limits.acp_max_created_5h_per_account",
-        ...descriptions.usage_limits.acp_max_created_5h_per_account,
-        description:
-          descriptions.usage_limits.acp_max_created_5h_per_account
-            .adminDescription,
-      }),
-      fieldDoc({
-        path: "usage_limits.acp_max_created_7d_per_account",
-        ...descriptions.usage_limits.acp_max_created_7d_per_account,
-        description:
-          descriptions.usage_limits.acp_max_created_7d_per_account
-            .adminDescription,
-      }),
-      fieldDoc({
         path: "usage_limits.acp_max_running_per_account",
         ...descriptions.usage_limits.acp_max_running_per_account,
         description:

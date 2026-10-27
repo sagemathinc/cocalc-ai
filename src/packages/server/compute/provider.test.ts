@@ -14,6 +14,7 @@ import {
   providerComputeStatusWithPresence,
   providerComputeSshHost,
   providerInstanceIdIsProvisional,
+  probeProviderComputeSpot,
 } from "./provider";
 import type { ComputeVmRow, ComputeVolumeRow } from "./types";
 
@@ -313,5 +314,14 @@ describe("gcpInstanceIdForEgress", () => {
         deleted_at: new Date(),
       } as ComputeVmRow),
     ).toThrow("no GCP numeric instance id");
+  });
+});
+
+describe("probeProviderComputeSpot while Nebius Spot is off (#684)", () => {
+  it("reports no Nebius Spot capacity, so a return to Spot keeps the Standard VM", async () => {
+    // returns before any provider call: nothing is deleted or replaced
+    await expect(
+      probeProviderComputeSpot({ provider: "nebius" } as ComputeVmRow),
+    ).resolves.toBe(false);
   });
 });

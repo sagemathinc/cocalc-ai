@@ -1,4 +1,6 @@
 import callHub from "@cocalc/conat/hub/call-hub";
+import { agent as agentContract } from "@cocalc/conat/hub/api/agent";
+import { authFirstRequireHostWithAccountTarget } from "@cocalc/conat/hub/api/util";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { getMasterConatClient } from "../master-status";
 
@@ -28,41 +30,24 @@ async function forwardHost(
   });
 }
 
+export function hostAgentMethods(): string[] {
+  return Object.keys(agentContract).filter(
+    (name) => agentContract[name] === authFirstRequireHostWithAccountTarget,
+  );
+}
+
 export function wireHostsApi(): void {
   if (!hubApi.hosts) {
     (hubApi as any).hosts = {};
   }
   if (!hubApi.agent) (hubApi as any).agent = {};
-  hubApi.agent.issueIdentity = (opts) =>
-    forwardHost("agent.issueIdentity", [opts]);
-  hubApi.agent.getMentionIdentity = (opts) =>
-    forwardHost("agent.getMentionIdentity", [opts]);
-  hubApi.agent.getMentionMember = (opts) =>
-    forwardHost("agent.getMentionMember", [opts]);
-  hubApi.agent.endIdentityRun = (opts) =>
-    forwardHost("agent.endIdentityRun", [opts]);
-  hubApi.agent.resolvePaymentSelection = (opts) =>
-    forwardHost("agent.resolvePaymentSelection", [opts]);
-  hubApi.agent.reportRuntime = (opts) =>
-    forwardHost("agent.reportRuntime", [opts]);
-  hubApi.agent.credentialUpdatedAt = (opts) =>
-    forwardHost("agent.credentialUpdatedAt", [opts]);
-  hubApi.agent.reportStatus = (opts) =>
-    forwardHost("agent.reportStatus", [opts]);
-  hubApi.agent.describeNetworkSelf = (opts) =>
-    forwardHost("agent.describeNetworkSelf", [opts]);
-  hubApi.agent.authorizeRpcAdmission = (opts) =>
-    forwardHost("agent.authorizeRpcAdmission", [opts]);
-  hubApi.agent.authorizeRpcExecution = (opts) =>
-    forwardHost("agent.authorizeRpcExecution", [opts]);
-  hubApi.agent.authorizeSensorExecution = (opts) =>
-    forwardHost("agent.authorizeSensorExecution", [opts]);
-  hubApi.agent.beginCocalcConnectorTurn = (opts) =>
-    forwardHost("agent.beginCocalcConnectorTurn", [opts]);
-  hubApi.agent.renewCocalcConnectorTurn = (opts) =>
-    forwardHost("agent.renewCocalcConnectorTurn", [opts]);
-  hubApi.agent.endCocalcConnectorTurn = (opts) =>
-    forwardHost("agent.endCocalcConnectorTurn", [opts]);
+  // Every agent method only a host may call goes to the hub as this host.
+  // Derived from the API contract, so a new one can't be left unforwarded
+  // (the lite hub has no local version: the call would throw).
+  for (const name of hostAgentMethods()) {
+    (hubApi.agent as any)[name] = (opts) =>
+      forwardHost(`agent.${name}`, [opts]);
+  }
 
   hubApi.hosts.issueProjectHostAgentAuthToken = async (opts: {
     host_id?: string;

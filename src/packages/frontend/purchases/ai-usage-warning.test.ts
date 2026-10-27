@@ -5,10 +5,10 @@
 
 import type { AIUsageStatus } from "@cocalc/conat/hub/api/purchases";
 import {
-  MANAGED_EGRESS_SEVERE_THRESHOLD,
-  MANAGED_EGRESS_WARNING_THRESHOLD,
-} from "./managed-egress-warning";
-import { getAIWindowWarnings } from "./ai-usage-warning";
+  AI_USAGE_SEVERE_THRESHOLD,
+  AI_USAGE_WARNING_THRESHOLD,
+  getAIWindowWarnings,
+} from "./ai-usage-warning";
 
 function makeStatus({
   used5h = 0,
@@ -41,7 +41,7 @@ function makeStatus({
 describe("getAIWindowWarnings", () => {
   it("returns no warnings below the threshold", () => {
     const status = makeStatus({
-      used5h: Math.floor(1000 * (MANAGED_EGRESS_WARNING_THRESHOLD - 0.01)),
+      used5h: Math.floor(1000 * (AI_USAGE_WARNING_THRESHOLD - 0.01)),
       limit5h: 1000,
     });
     expect(getAIWindowWarnings(status)).toEqual([]);
@@ -49,23 +49,32 @@ describe("getAIWindowWarnings", () => {
 
   it("returns warning and severe states", () => {
     const status = makeStatus({
-      used5h: Math.ceil(1000 * MANAGED_EGRESS_WARNING_THRESHOLD),
+      used5h: Math.ceil(1000 * AI_USAGE_WARNING_THRESHOLD),
       limit5h: 1000,
-      used7d: Math.ceil(5000 * MANAGED_EGRESS_SEVERE_THRESHOLD),
+      used7d: Math.ceil(5000 * AI_USAGE_SEVERE_THRESHOLD),
       limit7d: 5000,
     });
     expect(getAIWindowWarnings(status)).toEqual([
       expect.objectContaining({
         window: "7d",
         severity: "severe",
-        percent: 90,
+        percent: 95,
       }),
       expect.objectContaining({
         window: "5h",
         severity: "warning",
-        percent: 75,
+        percent: 80,
       }),
     ]);
+  });
+
+  it("warns at 80% and is severe at 95%, as on agent turns", () => {
+    expect([AI_USAGE_WARNING_THRESHOLD, AI_USAGE_SEVERE_THRESHOLD]).toEqual([
+      0.8, 0.95,
+    ]);
+    expect(
+      getAIWindowWarnings(makeStatus({ used5h: 79, limit5h: 100 })),
+    ).toEqual([]);
   });
 
   it("prefers blocked windows first", () => {

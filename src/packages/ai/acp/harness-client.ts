@@ -55,6 +55,7 @@ import type {
   HarnessSessionControls,
   HarnessSessionSettings,
 } from "@cocalc/util/ai/harness-controls";
+import type { SiteFundedUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import {
   isSupportedClaudeSubscriptionPlan,
@@ -66,6 +67,12 @@ function unsupportedCallback(method: string): () => Promise<never> {
     throw RequestError.methodNotFound(method);
   };
 }
+
+/** What admitting a funded turn reported, shown on the turn. */
+export type HarnessFundedTurnStart = {
+  /** The account is close to an included-AI window limit. */
+  usageWarning?: SiteFundedUsageWarning;
+};
 
 /** How a funded turn ended, for its settlement. */
 export type HarnessFundedTurnEnd = {
@@ -107,7 +114,7 @@ export interface HarnessProcess {
    * Site-funded Claude: admit and fund one turn (it throws, with the reason,
    * when the turn is not admitted), and settle it when the turn ends.
    */
-  beginFundedTurn?(chat?: AcpChatContext): Promise<void>;
+  beginFundedTurn?(chat?: AcpChatContext): Promise<HarnessFundedTurnStart>;
   endFundedTurn?(end: HarnessFundedTurnEnd): Promise<void>;
   /**
    * The running turn's publication context, or undefined between turns. A
@@ -522,8 +529,10 @@ export class AcpHarnessClient {
   }
 
   /** Admit and fund this turn, if the launcher funds turns (site-funded). */
-  async beginFundedTurn(chat?: AcpChatContext): Promise<void> {
-    await this.process.beginFundedTurn?.(chat);
+  async beginFundedTurn(
+    chat?: AcpChatContext,
+  ): Promise<HarnessFundedTurnStart> {
+    return (await this.process.beginFundedTurn?.(chat)) ?? {};
   }
 
   /** Settle the current funded turn. */

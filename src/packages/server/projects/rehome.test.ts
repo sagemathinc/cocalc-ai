@@ -455,6 +455,18 @@ describe("project rehome", () => {
     });
 
     expect(clientQueryMock).toHaveBeenCalledWith("BEGIN");
+    // copying the membership is not a grant: the membership audit skips it
+    expect(clientQueryMock).toHaveBeenCalledWith(
+      "SELECT set_config($1, $2, true)",
+      [
+        "cocalc.membership_audit",
+        JSON.stringify({
+          actor_account_id: null,
+          via: "project-rehome",
+          invite_creator_account_id: null,
+        }),
+      ],
+    );
     expect(clientQueryMock).toHaveBeenCalledWith(
       expect.stringContaining("ON CONFLICT (project_id) DO UPDATE"),
       [PROJECT_ID, "bay-0", "Project", {}, false],

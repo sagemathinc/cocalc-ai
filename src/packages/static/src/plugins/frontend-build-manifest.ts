@@ -8,6 +8,9 @@ type FrontendBuildManifest = {
   git_revision: string;
   build_timestamp: number;
   build_date: string;
+  // The frontend version browsers report (smc-version), which the hub compares
+  // with the required browser version; the bay deploy retains chunks by it.
+  smc_version?: number;
   fingerprint: string;
   assets?: string[];
 };

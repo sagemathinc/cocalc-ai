@@ -113,10 +113,25 @@ describe("wireHostsApi", () => {
     });
   });
 
-  it("forwards the connector turn lifecycle through the authenticated host", async () => {
+  it("forwards every host-only agent method through the authenticated host", async () => {
     const { hubApi } = await import("@cocalc/lite/hub/api");
-    const { wireHostsApi } = await import("./hosts");
+    const { hostAgentMethods, wireHostsApi } = await import("./hosts");
     wireHostsApi();
+    const methods = hostAgentMethods();
+    // The CLI connector turn and the delivery reports were once left out:
+    // the call threw on the host and the turn ran without its tokens.
+    expect(methods).toEqual(
+      expect.arrayContaining([
+        "beginCliConnectorTurn",
+        "beginCocalcConnectorTurn",
+        "renewCocalcConnectorTurn",
+        "endCocalcConnectorTurn",
+        "reportRpcTurnFailure",
+        "authorizeRpcReportExecution",
+        "issueIdentity",
+        "authorizeRpcExecution",
+      ]),
+    );
     const opts = {
       account_id: "target-account",
       agent_id: "native-agent",
@@ -124,12 +139,8 @@ describe("wireHostsApi", () => {
       run_id: "active-run",
       turn_id: "active-turn",
     };
-    for (const method of [
-      "beginCocalcConnectorTurn",
-      "renewCocalcConnectorTurn",
-      "endCocalcConnectorTurn",
-    ] as const) {
-      await hubApi.agent[method](opts as any);
+    for (const method of methods) {
+      await (hubApi.agent as any)[method](opts);
       expect(callHubMock).toHaveBeenLastCalledWith({
         client: { id: "master-client" },
         name: `agent.${method}`,
@@ -137,7 +148,15 @@ describe("wireHostsApi", () => {
         host_id: process.env.PROJECT_HOST_ID,
       });
     }
-    expect(callHubMock).toHaveBeenCalledTimes(3);
+    expect(callHubMock).toHaveBeenCalledTimes(methods.length);
+  });
+
+  it("forwards no agent method a host may not call", async () => {
+    const { hostAgentMethods } = await import("./hosts");
+    const methods = hostAgentMethods();
+    for (const method of ["execute", "run", "nameAgent", "manageSensor"]) {
+      expect(methods).not.toContain(method);
+    }
   });
 
   it("forwards issueProjectHostAgentAuthToken through the master host scope", async () => {

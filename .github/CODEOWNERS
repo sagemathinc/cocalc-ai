@@ -1,0 +1,4 @@
+# Every file is owned by William. With "Require review from Code Owners" on
+# main, a release PR (release-pr/<name> -> main) merges only after his
+# approval on GitHub. Agent and machine accounts must never be listed here.
+* @williamstein

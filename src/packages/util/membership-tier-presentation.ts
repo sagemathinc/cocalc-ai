@@ -394,18 +394,6 @@ function buildMembershipTierDetailGroups({
   });
   add({
     group: "ai-automation",
-    key: "acp_max_created_5h_per_account",
-    label: "Agent turns created, rolling 5 hours",
-    value: formatLimitCount(usageLimits.acp_max_created_5h_per_account),
-  });
-  add({
-    group: "ai-automation",
-    key: "acp_max_created_7d_per_account",
-    label: "Agent turns created, rolling 7 days",
-    value: formatLimitCount(usageLimits.acp_max_created_7d_per_account),
-  });
-  add({
-    group: "ai-automation",
     key: "acp_max_running_per_account",
     label: "Running agent turns per account",
     value: formatLimitCount(usageLimits.acp_max_running_per_account),

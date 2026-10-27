@@ -125,8 +125,6 @@ export interface MembershipUsageLimits {
   course_max_students_and_pending_invites?: number;
   acp_max_queued_per_account?: number;
   acp_max_queued_per_thread?: number;
-  acp_max_created_5h_per_account?: number;
-  acp_max_created_7d_per_account?: number;
   acp_max_running_per_account?: number;
   acp_max_running_per_project?: number;
   acp_max_active_automations_per_project?: number;
@@ -232,8 +230,6 @@ export interface AccountUsageLimitOverrides {
   course_max_students_and_pending_invites?: NumericLimitRule;
   acp_max_queued_per_account?: NumericLimitRule;
   acp_max_queued_per_thread?: NumericLimitRule;
-  acp_max_created_5h_per_account?: NumericLimitRule;
-  acp_max_created_7d_per_account?: NumericLimitRule;
   acp_max_running_per_account?: NumericLimitRule;
   acp_max_running_per_project?: NumericLimitRule;
   acp_max_active_automations_per_project?: NumericLimitRule;
