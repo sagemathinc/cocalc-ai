@@ -734,6 +734,43 @@ describe("projects.createProject clone routing", () => {
     expect(poolConnectMock).not.toHaveBeenCalled();
   });
 
+  it.each(["draining", "stopped_billing_blocked"])(
+    "refuses explicit placement on a host whose billing enforcement is %s",
+    async (state) => {
+      const defaultQuery = queryMock;
+      queryMock = jest.fn(async (sql: string, params: any[]) => {
+        const result = await defaultQuery(sql, params);
+        if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+          return {
+            rows: result.rows.map((row) => ({
+              ...row,
+              metadata: {
+                ...row.metadata,
+                billing: { enforcement: { state } },
+              },
+            })),
+          };
+        }
+        return result;
+      });
+      const createProject = (await import("./create")).default;
+      // A drain moves only the projects it found when it started, so a
+      // project placed here now would be left on a host about to stop.
+      await expect(
+        createProject({
+          account_id: ACCOUNT_ID,
+          host_id: HOST_ID,
+          start: false,
+        }),
+      ).rejects.toThrow(`billing enforcement is ${state}`);
+      expect(
+        queryMock.mock.calls.some(([sql]) =>
+          `${sql}`.startsWith("INSERT INTO projects "),
+        ),
+      ).toBe(false);
+    },
+  );
+
   it("resolves a managed rootfs image id to the runtime image during project creation", async () => {
     const createProject = (await import("./create")).default;
 

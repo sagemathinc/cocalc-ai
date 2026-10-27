@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { billingEnforcementBlocksPlacement } from "@cocalc/server/project-host/spend-enforcement";
 import { setProjectMembershipAuditContext } from "@cocalc/database/postgres/schema/project-membership-audit";
 import { isValidUUID } from "@cocalc/util/misc";
 import { v4 } from "uuid";
@@ -227,6 +228,13 @@ function isHostRunningAndOnline(row: any): {
   }
   if (Date.now() - lastSeenMs > HOST_OPERATIONAL_HEARTBEAT_WINDOW_MS) {
     return { ok: false, reason: "heartbeat is stale" };
+  }
+  // Like automatic placement (selectActiveHost): a host being drained,
+  // stopped or deprovisioned for billing takes no new projects. Its drain
+  // moves only the projects it found when it started.
+  const billingState = billingEnforcementBlocksPlacement(row.metadata);
+  if (billingState) {
+    return { ok: false, reason: `billing enforcement is ${billingState}` };
   }
   return { ok: true };
 }
