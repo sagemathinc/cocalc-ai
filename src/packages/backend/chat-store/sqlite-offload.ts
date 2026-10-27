@@ -1645,22 +1645,25 @@ export async function searchChatArtifacts(
           "actions",
           "app",
           "terminal",
+          "merge-approval",
         ].includes(data.kind)
           ? data.kind
           : undefined) ??
-        (data.terminal
-          ? "terminal"
-          : data.app
-            ? "app"
-            : data.file
-              ? "file"
-              : data.commit
-                ? "commit"
-                : data.github_pr
-                  ? "github-pr"
-                  : data.actions
-                    ? "actions"
-                    : "markdown"),
+        (data.merge_approval
+          ? "merge-approval"
+          : data.terminal
+            ? "terminal"
+            : data.app
+              ? "app"
+              : data.file
+                ? "file"
+                : data.commit
+                  ? "commit"
+                  : data.github_pr
+                    ? "github-pr"
+                    : data.actions
+                      ? "actions"
+                      : "markdown"),
       message_id:
         typeof publication.message_id === "string"
           ? publication.message_id.slice(0, 200)

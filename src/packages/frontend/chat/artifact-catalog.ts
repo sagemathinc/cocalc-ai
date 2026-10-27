@@ -41,19 +41,21 @@ export function artifactCatalog(syncdb: any): ArtifactCatalogEntry[] {
       const data = current ?? publication.snapshot;
       const kind =
         current?.kind ??
-        (data.terminal
-          ? "terminal"
-          : data.app
-            ? "app"
-            : data.file
-              ? "file"
-              : data.commit
-                ? "commit"
-                : data.github_pr
-                  ? "github-pr"
-                  : data.actions
-                    ? "actions"
-                    : "markdown");
+        (data.merge_approval
+          ? "merge-approval"
+          : data.terminal
+            ? "terminal"
+            : data.app
+              ? "app"
+              : data.file
+                ? "file"
+                : data.commit
+                  ? "commit"
+                  : data.github_pr
+                    ? "github-pr"
+                    : data.actions
+                      ? "actions"
+                      : "markdown");
       const title = data.theme?.title || data.title;
       entries.set(key, {
         publication,
@@ -72,6 +74,7 @@ export function artifactCatalog(syncdb: any): ArtifactCatalogEntry[] {
               data.actions ??
               data.app ??
               data.terminal ??
+              data.merge_approval ??
               "",
           ),
         ]

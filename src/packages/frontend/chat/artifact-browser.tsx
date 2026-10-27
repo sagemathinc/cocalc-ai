@@ -76,6 +76,7 @@ const kinds = [
   "commit",
   "app",
   "terminal",
+  "merge-approval",
 ];
 
 export function ArtifactResults({

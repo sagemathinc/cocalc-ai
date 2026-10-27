@@ -178,6 +178,7 @@ export function ReadonlyArtifactCards({
                         commit: current.commit,
                         app: current.app,
                         terminal: current.terminal,
+                        merge_approval: current.merge_approval,
                         theme: current.theme,
                       }}
                     />

@@ -8,6 +8,7 @@ import {
   artifactFeedbackPrompt,
   validateArtifactApp,
   validateArtifactTerminal,
+  validateArtifactMergeApproval,
   validateArtifactFile,
   withoutArtifactStorageDate,
 } from "../artifacts";
@@ -93,6 +94,42 @@ test("terminal publications show a terminal session and cannot mix object types"
       operation_id: "mixed",
       terminal,
       app: { id: "cocalc-browser" },
+    }),
+  ).toThrow(/mix/);
+});
+
+test("merge approval cards hold only distinct request ids", () => {
+  const id = "55555555-5555-4555-8555-555555555555";
+  expect(validateArtifactMergeApproval({ request_ids: [id] })).toEqual({
+    request_ids: [id],
+  });
+  for (const request_ids of [
+    [],
+    ["not-a-uuid"],
+    [id, id],
+    Array.from(
+      { length: 21 },
+      (_, i) => `55555555-5555-4555-8555-${`${i}`.padStart(12, "0")}`,
+    ),
+  ]) {
+    expect(() => validateArtifactMergeApproval({ request_ids })).toThrow(
+      "request_ids",
+    );
+  }
+  const db = store();
+  const merge_approval = { request_ids: [id] };
+  const first = publishArtifact(db, { ...input, merge_approval });
+  expect(first.artifact.kind).toBe("merge-approval");
+  expect(first.publication.snapshot.merge_approval).toEqual(merge_approval);
+  expect(readArtifact(db, input).artifact.merge_approval).toEqual(
+    merge_approval,
+  );
+  expect(() =>
+    publishArtifact(db, {
+      ...input,
+      operation_id: "mixed",
+      merge_approval,
+      terminal: { path: "/home/user/.a.term" },
     }),
   ).toThrow(/mix/);
 });

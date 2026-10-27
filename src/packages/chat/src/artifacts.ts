@@ -9,10 +9,13 @@ import { validateArtifactApp } from "./artifact-app";
 import type { ArtifactApp } from "./artifact-app";
 import { validateArtifactTerminal } from "./artifact-terminal";
 import type { ArtifactTerminal } from "./artifact-terminal";
+import { validateArtifactMergeApproval } from "./artifact-merge-approval";
+import type { ArtifactMergeApproval } from "./artifact-merge-approval";
 export * from "./artifact-appearance";
 export * from "./artifact-commit";
 export * from "./artifact-app";
 export * from "./artifact-terminal";
+export * from "./artifact-merge-approval";
 export * from "./artifact-github";
 import {
   validateProposedActions,
@@ -85,11 +88,13 @@ export interface ArtifactRecord extends ArtifactTarget {
     | "actions"
     | "commit"
     | "app"
-    | "terminal";
+    | "terminal"
+    | "merge-approval";
   theme?: EntityTheme;
   commit?: ArtifactCommit;
   app?: ArtifactApp;
   terminal?: ArtifactTerminal;
+  merge_approval?: ArtifactMergeApproval;
   actions?: ProposedAction[];
   github_pr?: ArtifactGitHubPR;
   file?: ArtifactFile;
@@ -110,6 +115,7 @@ export interface ArtifactPublication extends ArtifactTarget {
     commit?: ArtifactCommit;
     app?: ArtifactApp;
     terminal?: ArtifactTerminal;
+    merge_approval?: ArtifactMergeApproval;
     title: string;
     markdown: string;
     file?: ArtifactFile;
@@ -246,6 +252,7 @@ export function validateArtifact(value: unknown): ArtifactRecord {
       "commit",
       "app",
       "terminal",
+      "merge-approval",
     ].includes(row.kind)
   ) {
     throw Error("unsupported or missing artifact");
@@ -275,6 +282,9 @@ export function validateArtifact(value: unknown): ArtifactRecord {
     ...(row.kind === "terminal"
       ? { terminal: validateArtifactTerminal(row.terminal) }
       : {}),
+    ...(row.kind === "merge-approval"
+      ? { merge_approval: validateArtifactMergeApproval(row.merge_approval) }
+      : {}),
     title: text(row.title, "title", 256),
     input: text(row.input, "Markdown", ARTIFACT_TEXT_LIMIT),
   };
@@ -296,6 +306,7 @@ export function validateArtifactPublication(
       row.snapshot?.commit,
       row.snapshot?.app,
       row.snapshot?.terminal,
+      row.snapshot?.merge_approval,
     ].filter((x) => x !== undefined).length > 1
   )
     throw Error("artifact publication cannot mix object types");
@@ -340,6 +351,13 @@ export function validateArtifactPublication(
       ...(row.snapshot?.terminal === undefined
         ? {}
         : { terminal: validateArtifactTerminal(row.snapshot.terminal) }),
+      ...(row.snapshot?.merge_approval === undefined
+        ? {}
+        : {
+            merge_approval: validateArtifactMergeApproval(
+              row.snapshot.merge_approval,
+            ),
+          }),
     },
   });
 }
@@ -361,6 +379,8 @@ export function artifactBase(record: ArtifactRecord): string {
     return JSON.stringify([record.title, record.input, record.app]);
   if (record.kind === "terminal")
     return JSON.stringify([record.title, record.input, record.terminal]);
+  if (record.kind === "merge-approval")
+    return JSON.stringify([record.title, record.input, record.merge_approval]);
   return JSON.stringify(
     record.kind === "file"
       ? [record.title, record.input, record.file]
@@ -378,6 +398,7 @@ export interface PublishArtifactInput extends ArtifactTarget {
   commit?: ArtifactCommit;
   app?: ArtifactApp;
   terminal?: ArtifactTerminal;
+  merge_approval?: ArtifactMergeApproval;
   actions?: ProposedAction[];
   operation_id: string;
   message_id: string;
@@ -415,6 +436,7 @@ export function publishArtifact(
       input.commit,
       input.app,
       input.terminal,
+      input.merge_approval,
     ].filter((x) => x !== undefined).length > 1
   )
     throw Error("artifact cannot mix object types");
@@ -423,23 +445,26 @@ export function publishArtifact(
     artifact_id: input.artifact_id,
     schema_version: 1,
     kind:
-      input.terminal !== undefined
-        ? "terminal"
-        : input.app !== undefined
-          ? "app"
-          : input.commit !== undefined
-            ? "commit"
-            : input.actions !== undefined
-              ? "actions"
-              : input.github_pr !== undefined
-                ? "github-pr"
-                : input.file === undefined
-                  ? "markdown"
-                  : "file",
+      input.merge_approval !== undefined
+        ? "merge-approval"
+        : input.terminal !== undefined
+          ? "terminal"
+          : input.app !== undefined
+            ? "app"
+            : input.commit !== undefined
+              ? "commit"
+              : input.actions !== undefined
+                ? "actions"
+                : input.github_pr !== undefined
+                  ? "github-pr"
+                  : input.file === undefined
+                    ? "markdown"
+                    : "file",
     github_pr: input.github_pr,
     commit: input.commit,
     app: input.app,
     terminal: input.terminal,
+    merge_approval: input.merge_approval,
     theme,
     actions: input.actions,
     file: input.file,
@@ -460,6 +485,9 @@ export function publishArtifact(
       ...(artifact.commit ? { commit: artifact.commit } : {}),
       ...(artifact.app ? { app: artifact.app } : {}),
       ...(artifact.terminal ? { terminal: artifact.terminal } : {}),
+      ...(artifact.merge_approval
+        ? { merge_approval: artifact.merge_approval }
+        : {}),
       ...(artifact.file ? { file: artifact.file } : {}),
       ...(artifact.github_pr ? { github_pr: artifact.github_pr } : {}),
       ...(artifact.actions ? { actions: artifact.actions } : {}),

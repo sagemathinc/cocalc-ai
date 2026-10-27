@@ -43,6 +43,7 @@ import ContextualReply, {
   LocalCommentButton,
 } from "@cocalc/frontend/chat/contextual-reply";
 import { GitHubPRArtifact } from "./github-pr-artifact";
+import { MergeApprovalArtifact } from "./merge-approval-artifact";
 import { ActionListArtifact } from "./action-list-artifact";
 import { CommitArtifact } from "./commit-artifact";
 import { ArtifactIdentity } from "@cocalc/frontend/chat/artifact-card";
@@ -180,15 +181,18 @@ function ResolvedWorkbenchSurface(props: WorkbenchProps) {
                 title={record.title}
                 theme={theme}
                 icon={
-                  record.kind === "terminal"
-                    ? "terminal"
-                    : record.kind === "app"
-                      ? "global"
-                      : record.kind === "github-pr" || record.kind === "commit"
-                        ? "git"
-                        : record.kind === "actions"
-                          ? "tasks"
-                          : "file"
+                  record.kind === "merge-approval"
+                    ? "check-circle"
+                    : record.kind === "terminal"
+                      ? "terminal"
+                      : record.kind === "app"
+                        ? "global"
+                        : record.kind === "github-pr" ||
+                            record.kind === "commit"
+                          ? "git"
+                          : record.kind === "actions"
+                            ? "tasks"
+                            : "file"
                 }
               />
             ) : (
@@ -408,11 +412,13 @@ function WorkbenchDocument(props: WorkbenchProps) {
         commit: pub.snapshot.commit,
         app: pub.snapshot.app,
         terminal: pub.snapshot.terminal,
+        merge_approval: pub.snapshot.merge_approval,
         theme: pub.snapshot.theme,
       };
       if (pub.snapshot.commit) artifact.kind = "commit";
       if (pub.snapshot.app) artifact.kind = "app";
       if (pub.snapshot.terminal) artifact.kind = "terminal";
+      if (pub.snapshot.merge_approval) artifact.kind = "merge-approval";
     }
   } catch {
     return <Alert type="warning" title="Artifact unavailable" />;
@@ -511,6 +517,17 @@ function WorkbenchDocument(props: WorkbenchProps) {
           localComments={!source}
         />
       </ContextualReply>
+    );
+  if (artifact.kind === "merge-approval" && artifact.merge_approval)
+    return (
+      <MergeApprovalArtifact
+        key={`${artifact.thread_id}:${artifact.artifact_id}`}
+        requestIds={artifact.merge_approval.request_ids}
+        // Decisions live in the hub, not in this document: a historical
+        // version shows the same requests, read-only.
+        readOnly={read_only || historical}
+        fontSize={font_size}
+      />
     );
   if (artifact.kind === "terminal" && artifact.terminal)
     return (

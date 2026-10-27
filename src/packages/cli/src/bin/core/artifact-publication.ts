@@ -37,6 +37,7 @@ export function prepareArtifactPublication({
         "commit",
         "app",
         "terminal",
+        "merge_approval",
         "theme",
         "base",
       ].includes(key)
