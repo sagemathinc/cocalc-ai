@@ -1,4 +1,8 @@
 import getLogger from "@cocalc/backend/logger";
+import {
+  BILLING_ENFORCEMENT_NO_PLACEMENT_STATES,
+  billingEnforcementBlocksPlacement,
+} from "./spend-enforcement";
 import getPool from "@cocalc/database/pool";
 import type { Host, HostPressureZone } from "@cocalc/conat/hub/api/hosts";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
@@ -166,6 +170,18 @@ type HostRegistryRow = {
   metadata?: any;
   delegated_access_role?: HostAccessRole | null;
 };
+
+// Shared-pool hosts another bay offers for placement. Like local automatic
+// selection, skip hosts being drained, stopped or deprovisioned for billing:
+// their bay refuses the project, and creation should fall back instead.
+export function remoteSharedPoolCandidateRows(
+  hosts: Host[],
+): HostRegistryRow[] {
+  return hosts
+    .filter((host) => host.tier != null && host.can_place !== false)
+    .map(hostToRegistryRow)
+    .filter((row) => !billingEnforcementBlocksPlacement(row.metadata));
+}
 
 function hostToRegistryRow(host: Host): HostRegistryRow {
   return {
@@ -872,7 +888,7 @@ export async function selectActiveHost({
       "metadata #>> '{runtime_synthetic_probe,quarantined}' IS DISTINCT FROM 'true'",
       "metadata #>> '{public_route_probe,quarantined}' IS DISTINCT FROM 'true'",
       "(metadata #>> '{metrics,current,io_containment,policy_mode}' IS DISTINCT FROM 'enforce' OR (metadata #>> '{metrics,current,io_containment,capability}' = 'validated' AND COALESCE(metadata #>> '{metrics,current,io_containment,last_reconcile_error}', '') = ''))",
-      "COALESCE(metadata #>> '{billing,enforcement,state}', 'ok') NOT IN ('at_risk', 'draining', 'stopped_billing_blocked', 'deprovision_pending', 'deprovisioned_recoverable')",
+      `COALESCE(metadata #>> '{billing,enforcement,state}', 'ok') NOT IN (${BILLING_ENFORCEMENT_NO_PLACEMENT_STATES.map((state) => `'${state}'`).join(", ")})`,
     ];
     if (exclude_host_id) {
       params.push(exclude_host_id);
@@ -929,11 +945,7 @@ export async function selectActiveHost({
                 account_id,
                 catalog: true,
               });
-            remoteRows.push(
-              ...hosts
-                .filter((host) => host.tier != null && host.can_place !== false)
-                .map(hostToRegistryRow),
-            );
+            remoteRows.push(...remoteSharedPoolCandidateRows(hosts));
           } catch (err) {
             log.warn("selectActiveHost: failed remote shared-pool host scan", {
               bay_id: candidateBayId,

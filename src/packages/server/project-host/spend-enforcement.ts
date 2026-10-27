@@ -15,6 +15,28 @@ import type { DedicatedHostFundingLane } from "./spend";
 export const DEDICATED_HOST_BILLING_WARNING_RUNWAY_HOURS = 2;
 export const DEDICATED_HOST_BILLING_DRAIN_RUNWAY_HOURS = 1;
 export const DEDICATED_HOST_BILLING_DISK_GRACE_HOURS = 72;
+
+// Billing-enforcement states in which a host takes no new projects, whether
+// placed automatically or by host id: it is being drained, stopped or
+// deprovisioned for billing, and a project placed now would not be moved.
+export const BILLING_ENFORCEMENT_NO_PLACEMENT_STATES = [
+  "at_risk",
+  "draining",
+  "stopped_billing_blocked",
+  "deprovision_pending",
+  "deprovisioned_recoverable",
+] as const;
+
+export function billingEnforcementBlocksPlacement(
+  metadata: any,
+): string | undefined {
+  const state = `${metadata?.billing?.enforcement?.state ?? ""}`.trim();
+  return (
+    BILLING_ENFORCEMENT_NO_PLACEMENT_STATES as readonly string[]
+  ).includes(state)
+    ? state
+    : undefined;
+}
 // A billing-blocked host without a confirmed final backup gets one rescue drain
 // after its grace period. If that fails, its disk is deleted anyway this long
 // after the host stopped, and at least BILLING_RESCUE_REVIEW_MS after the

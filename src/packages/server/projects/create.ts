@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { billingEnforcementBlocksPlacement } from "@cocalc/server/project-host/spend-enforcement";
 import { setProjectMembershipAuditContext } from "@cocalc/database/postgres/schema/project-membership-audit";
 import { isValidUUID } from "@cocalc/util/misc";
 import { v4 } from "uuid";
@@ -228,7 +229,35 @@ function isHostRunningAndOnline(row: any): {
   if (Date.now() - lastSeenMs > HOST_OPERATIONAL_HEARTBEAT_WINDOW_MS) {
     return { ok: false, reason: "heartbeat is stale" };
   }
+  // Like automatic placement (selectActiveHost): a host being drained,
+  // stopped or deprovisioned for billing takes no new projects. Its drain
+  // moves only the projects it found when it started.
+  const billingState = billingEnforcementBlocksPlacement(row.metadata);
+  if (billingState) {
+    return { ok: false, reason: `billing enforcement is ${billingState}` };
+  }
   return { ok: true };
+}
+
+// A billing drain writes its enforcement state to the host row, then lists
+// the host's projects. Holding a share lock on that row while inserting the
+// project orders the two: either this check sees the drain's state, or the
+// drain's write waits for this insert to commit and its listing includes it.
+async function assertHostAcceptsProjectInTransaction(
+  client: { query: (sql: string, params?: any[]) => Promise<any> },
+  host_id: string,
+): Promise<void> {
+  const { rows } = await client.query(
+    "SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL FOR SHARE",
+    [host_id],
+  );
+  if (!rows[0]) throw Error(`host ${host_id} not found`);
+  const billingState = billingEnforcementBlocksPlacement(rows[0].metadata);
+  if (billingState) {
+    throw Error(
+      `host ${host_id} is unavailable for new projects (billing enforcement is ${billingState})`,
+    );
+  }
 }
 
 function isRemoteHostRunningAndOnline(row: {
@@ -781,6 +810,9 @@ async function createProjectImpl(
         await client.query("COMMIT");
         return { project_id };
       }
+    }
+    if (host_id) {
+      await assertHostAcceptsProjectInTransaction(client, host_id);
     }
     await client.query(
       "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region, owning_bay_id, course) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9, $10, $11)",
