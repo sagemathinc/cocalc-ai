@@ -78,6 +78,8 @@ export default async function getCustomize(
       support: settings.support,
       supportVideoCall: settings.support_video_call,
       project_hosts_nebius_enabled: settings.project_hosts_nebius_enabled,
+      project_hosts_nebius_hosts_enabled:
+        settings.project_hosts_nebius_hosts_enabled,
       "project_hosts_google-cloud_enabled": (settings as any)[
         "project_hosts_google-cloud_enabled"
       ],
