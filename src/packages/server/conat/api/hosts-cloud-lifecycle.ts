@@ -873,7 +873,12 @@ export async function restartHostInternalHelper({
     const workId = await enqueueCloudVmWork({
       vm_id: id,
       action: mode === "hard" ? "hard_restart" : "restart",
-      payload: { provider: machineCloud, intent_generation: restartGeneration },
+      payload: {
+        provider: machineCloud,
+        intent_generation: restartGeneration,
+        // so a restart the worker refuses can put the host back as it was
+        prior_status: row.status,
+      },
     });
     onWorkQueued?.(workId);
   }

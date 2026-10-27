@@ -4032,13 +4032,16 @@ describe("a restart the provider refuses (Nebius Spot while it is off)", () => {
         runtime: { provider: "nebius", instance_id: "instance-1" },
       },
     } as any);
-  const run = async (action: "restart" | "hard_restart") => {
+  const run = async (
+    action: "restart" | "hard_restart",
+    payload: Record<string, any> = {},
+  ) => {
     const { cloudHostHandlers } = await import("./host-work");
     await cloudHostHandlers[action]({
       id: `work-${action}`,
       vm_id: hostId,
       action,
-      payload: { provider: "nebius" },
+      payload: { provider: "nebius", ...payload },
     } as any);
   };
   const read = async () =>
@@ -4066,7 +4069,7 @@ describe("a restart the provider refuses (Nebius Spot while it is off)", () => {
       [hostId],
     );
 
-    await run("restart");
+    await run("restart", { prior_status: "running" });
 
     expect(p.restartHost).not.toHaveBeenCalled();
     expect(p.stopHost).not.toHaveBeenCalled();
@@ -4081,7 +4084,7 @@ describe("a restart the provider refuses (Nebius Spot while it is off)", () => {
     releaseDns.mockRestore();
   });
 
-  it("an errored, disconnected host stays without a heartbeat after the refusal", async () => {
+  it("an errored, disconnected host goes back to error without a heartbeat after the refusal", async () => {
     const p = provider();
     getProviderContextMock.mockResolvedValue({
       entry: { provider: p, capabilities: { supportsStop: true } },
@@ -4095,10 +4098,11 @@ describe("a restart the provider refuses (Nebius Spot while it is off)", () => {
       [hostId],
     );
 
-    await run("restart");
+    await run("restart", { prior_status: "error" });
 
     expect(p.restartHost).not.toHaveBeenCalled();
     const row = await read();
+    expect(row.status).toBe("error");
     expect(row.last_seen).toBeNull();
     const fresh = await getPool().query(
       "SELECT 1 FROM project_hosts WHERE id=$1 AND status='running' AND last_seen > NOW() - interval '2 minutes'",
