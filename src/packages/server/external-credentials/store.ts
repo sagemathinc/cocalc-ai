@@ -1284,34 +1284,40 @@ WHERE id=$1
 }
 
 // Revoking a credential deletes its encrypted payload. Rows revoked before
-// that rule still hold one; erase those in small batches. Idempotent and
-// safe to run on every start. Rows are locked in id order and waited for
-// (not skipped), so a row briefly locked by another transaction is still
-// erased in this run, and concurrent hubs can't deadlock.
+// that rule still hold one; erase those. Idempotent and safe to run on every
+// start. Each row is erased by its own single-row UPDATE: it waits for a row
+// another transaction holds (so nothing is skipped), and holding only one
+// row lock at a time it can't deadlock with credential operations or other
+// hubs.
 export async function eraseRevokedExternalCredentialPayloads({
   batchSize = 500,
   maxBatches = 10_000,
 }: { batchSize?: number; maxBatches?: number } = {}): Promise<number> {
   let erased = 0;
+  let after = "00000000-0000-0000-0000-000000000000";
   for (let i = 0; i < maxBatches; i++) {
-    const { rowCount } = await pool().query(
+    const { rows } = await pool().query<{ id: string }>(
       `
+SELECT id FROM external_credentials
+WHERE revoked IS NOT NULL AND encrypted_payload IS NOT NULL AND id > $1
+ORDER BY id
+LIMIT $2
+      `,
+      [after, batchSize],
+    );
+    if (rows.length === 0) break;
+    for (const { id } of rows) {
+      const { rowCount } = await pool().query(
+        `
 UPDATE external_credentials
 SET encrypted_payload=NULL
-WHERE id IN (
-  SELECT id FROM external_credentials
-  WHERE revoked IS NOT NULL AND encrypted_payload IS NOT NULL
-  ORDER BY id
-  LIMIT $1
-  FOR UPDATE
-)
-  AND revoked IS NOT NULL
-  AND encrypted_payload IS NOT NULL
-      `,
-      [batchSize],
-    );
-    erased += rowCount ?? 0;
-    if (!rowCount) break;
+WHERE id=$1 AND revoked IS NOT NULL AND encrypted_payload IS NOT NULL
+        `,
+        [id],
+      );
+      erased += rowCount ?? 0;
+    }
+    after = rows[rows.length - 1].id;
   }
   return erased;
 }

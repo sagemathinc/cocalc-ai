@@ -331,7 +331,7 @@ describeDb("revoking deletes CoCalc's copy of the credential", () => {
     expect(await eraseRevokedExternalCredentialPayloads()).toBe(0);
   });
 
-  test("the migration waits for a row another transaction holds instead of skipping it", async () => {
+  test("the cleanup waits for a row another transaction holds instead of skipping it", async () => {
     const id = randomUUID();
     await getPool().query(
       `INSERT INTO external_credentials

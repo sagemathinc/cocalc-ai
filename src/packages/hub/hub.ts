@@ -390,7 +390,7 @@ async function startServer(): Promise<void> {
     logger.info("starting cloud VM reconcile loop...");
     startCloudVmReconciler();
     // One-time cleanup, run by every API hub (Launchpad and Rocket alike;
-    // idempotent, and concurrent hubs skip each other's rows): revoked
+    // idempotent; it erases one row per statement, so concurrent hubs only wait briefly): revoked
     // credentials keep no encrypted payload.
     eraseRevokedExternalCredentialPayloads()
       .then((erased) => {
