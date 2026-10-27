@@ -45,6 +45,9 @@ export type SiteMasterKeyPurpose =
   | "secret-settings:v1"
   | "project-backup-repo-secrets:v1"
   | "project-secrets:v1"
+  // Escrowed GPU provider API keys (bring-your-own-key); see
+  // server/gpu-byok/credential-envelope.ts.
+  | "gpu-provider-credentials:v1"
   // Sealed bay configuration in R2; derived identically by
   // src/scripts/bay-systemd/libexec/bay-config-escrow.mjs, which must run with
   // no dependencies on a fresh machine during a restore.
