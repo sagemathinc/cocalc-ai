@@ -392,10 +392,13 @@ jobs:
   # The one check branch protection requires. The test lanes are planned per
   # change, so their job names vary; this job does not. It fails unless the
   # plan succeeded and every other job succeeded or was skipped by the plan.
+  # always(), not !cancelled(): GitHub counts a skipped required check as
+  # passed, so cancelling a failing run must still produce a failing ci-ok.
   ci-ok:
     needs: [plan, build, typecheck, checks, test, multibay]
-    if: ${{ !cancelled() }}
+    if: ${{ always() }}
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 5
     permissions: {}
 
     steps:
