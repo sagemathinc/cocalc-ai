@@ -849,14 +849,18 @@ SQL
   return 2
 }
 
-# This bay's COCALC_CLUSTER_ROLE (standalone, seed or attached), from its
-# topology env (standalone when unset).
+# This bay's COCALC_CLUSTER_ROLE as its services get it: the env files in
+# the order the units load them (systemd/*.service), the last value winning,
+# standalone when unset or empty (getConfiguredClusterRole); a later empty
+# assignment overrides an earlier value, as in systemd.
 bay_cluster_role() {
-  local file role=""
-  for file in "${ENV_DIR:-/etc/cocalc}/bay-topology.env" "${ENV_DIR:-/etc/cocalc}/bay.env"; do
-    [[ -f "$file" ]] || continue
-    role="$(sed -n 's/^COCALC_CLUSTER_ROLE=//p' "$file" | tail -n1 | tr -d "\"'[:space:]")"
-    [[ -n "$role" ]] && break
+  local dir="${ENV_DIR:-/etc/cocalc}" file role=""
+  for file in bay.env bay-workers.env bay-overlay.env bay-topology.env \
+    bay-secrets.env bay-local.env; do
+    [[ -r "${dir}/${file}" ]] || continue
+    grep -q '^COCALC_CLUSTER_ROLE=' "${dir}/${file}" || continue
+    role="$(sed -n 's/^COCALC_CLUSTER_ROLE=//p' "${dir}/${file}" | tail -n1 |
+      tr -d "\"'[:space:]")"
   done
   echo "${role:-standalone}"
 }
@@ -876,10 +880,17 @@ ensure_recent_browser_version() {
   # and propagates them; a direct write here would bypass that.
   local role
   role="$(bay_cluster_role)"
-  if [[ "$role" != standalone ]]; then
-    echo "NOTE: this bay's cluster role is '${role}': site settings belong to the seed bay, so the browser versions are not changed here; keep them at most ${days} days old in the admin site settings"
-    return 0
-  fi
+  case "$role" in
+    standalone) ;;
+    seed | attached)
+      echo "NOTE: this bay's cluster role is '${role}': site settings belong to the seed bay, so the browser versions are not changed here; keep them at most ${days} days old in the admin site settings"
+      return 0
+      ;;
+    *)
+      echo "WARNING: unknown COCALC_CLUSTER_ROLE '${role}'; not changing browser versions" >&2
+      return 0
+      ;;
+  esac
   local settings
   settings="$(read_browser_version_settings)"
   [[ -n "$settings" ]] || return 0

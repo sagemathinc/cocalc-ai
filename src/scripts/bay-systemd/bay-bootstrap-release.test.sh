@@ -735,7 +735,29 @@ echo "COCALC_CLUSTER_ROLE=standalone" >"${ENV_DIR}/bay-topology.env"
 : >"$WRITES"
 ensure_recent_browser_version >/dev/null
 [[ -s "$WRITES" ]]
-rm -f "${ENV_DIR}/bay-topology.env"
+# The role is the one the services get: the units' file order, the last
+# value winning, so the operator's bay-local.env overrides the topology.
+echo "COCALC_CLUSTER_ROLE=attached" >"${ENV_DIR}/bay-local.env"
+[[ "$(bay_cluster_role)" == attached ]]
+: >"$WRITES"
+ensure_recent_browser_version >/dev/null
+[[ ! -s "$WRITES" ]]
+# A later empty assignment is unset (standalone), as the hub reads it.
+echo "COCALC_CLUSTER_ROLE=seed" >"${ENV_DIR}/bay-topology.env"
+echo "COCALC_CLUSTER_ROLE=" >"${ENV_DIR}/bay-local.env"
+[[ "$(bay_cluster_role)" == standalone ]]
+# bay.env comes first, so the topology overrides it.
+rm -f "${ENV_DIR}/bay-local.env"
+echo "COCALC_CLUSTER_ROLE=attached" >"${ENV_DIR}/bay.env"
+[[ "$(bay_cluster_role)" == seed ]]
+# An unknown role fails closed, with a warning.
+echo "COCALC_CLUSTER_ROLE=sede" >"${ENV_DIR}/bay-topology.env"
+: >"$WRITES"
+ensure_recent_browser_version >/dev/null 2>"${TMP_ROOT}/browser-version.err"
+[[ ! -s "$WRITES" ]]
+grep -q "unknown COCALC_CLUSTER_ROLE 'sede'" "${TMP_ROOT}/browser-version.err"
+rm -f "${ENV_DIR}/bay-topology.env" "${ENV_DIR}/bay.env"
+[[ "$(bay_cluster_role)" == standalone ]]
 : >"$WRITES"
 read_browser_version_settings() { :; }
 ensure_recent_browser_version >/dev/null
