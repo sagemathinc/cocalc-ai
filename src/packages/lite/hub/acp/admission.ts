@@ -1,16 +1,12 @@
 import type { AcpJobRequest, AcpRequest } from "@cocalc/conat/ai/acp/types";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import {
-  countCreatedAcpJobsForAccountSince,
   countQueuedAcpJobsForAccount,
   countQueuedAcpJobsForThread,
   countRunningAcpJobsForAccount,
   countRunningAcpJobsForProject,
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
-
-const FIVE_HOURS_MS = 5 * 60 * 60_000;
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60_000;
 
 function envLimit(name: string, fallback: number): number {
   const raw = `${process.env[name] ?? ""}`.trim();
@@ -19,19 +15,18 @@ function envLimit(name: string, fallback: number): number {
   return Number.isFinite(value) ? Math.floor(value) : fallback;
 }
 
+// There is no limit on how many turns are created over time: the queued and
+// running (concurrency) limits throttle usage enough. (The rolling 5-hour and
+// 7-day created-turn limits were removed.)
 export type AcpAdmissionLimitName =
   | "queued_per_account"
   | "queued_per_thread"
-  | "created_5h_per_account"
-  | "created_7d_per_account"
   | "running_per_account"
   | "running_per_project";
 
 export type AcpAdmissionLimits = {
   queuedPerAccount: number;
   queuedPerThread: number;
-  created5hPerAccount: number;
-  created7dPerAccount: number;
   runningPerAccount: number;
   runningPerProject: number;
 };
@@ -96,6 +91,11 @@ export class AcpAdmissionDeniedError extends Error {
     this.name = "AcpAdmissionDeniedError";
     this.denial = denial;
   }
+
+  // People see this error as text: the message alone, without the class name.
+  toString(): string {
+    return this.message;
+  }
 }
 
 let acpAdmissionLimitsProvider: AcpAdmissionLimitsProvider | undefined;
@@ -117,11 +117,6 @@ export function getDefaultAcpAdmissionLimits(): AcpAdmissionLimits {
   return {
     queuedPerAccount: envLimit("COCALC_ACP_MAX_QUEUED_PER_ACCOUNT", 1000),
     queuedPerThread: envLimit("COCALC_ACP_MAX_QUEUED_PER_THREAD", 100),
-    created5hPerAccount: envLimit("COCALC_ACP_MAX_CREATED_5H_PER_ACCOUNT", 500),
-    created7dPerAccount: envLimit(
-      "COCALC_ACP_MAX_CREATED_7D_PER_ACCOUNT",
-      2000,
-    ),
     runningPerAccount: envLimit("COCALC_ACP_MAX_RUNNING_PER_ACCOUNT", 50),
     runningPerProject: envLimit("COCALC_ACP_MAX_RUNNING_PER_PROJECT", 50),
   };
@@ -144,12 +139,6 @@ export function mergeAcpAdmissionLimits(
       normalizedLimit(overrides.queuedPerAccount) ?? base.queuedPerAccount,
     queuedPerThread:
       normalizedLimit(overrides.queuedPerThread) ?? base.queuedPerThread,
-    created5hPerAccount:
-      normalizedLimit(overrides.created5hPerAccount) ??
-      base.created5hPerAccount,
-    created7dPerAccount:
-      normalizedLimit(overrides.created7dPerAccount) ??
-      base.created7dPerAccount,
     runningPerAccount:
       normalizedLimit(overrides.runningPerAccount) ?? base.runningPerAccount,
     runningPerProject:
@@ -170,18 +159,6 @@ export function acpAdmissionLimitsFromEffectiveLimits(
     effectiveLimits.acp_max_queued_per_thread,
   );
   if (queuedPerThread != null) limits.queuedPerThread = queuedPerThread;
-  const created5hPerAccount = normalizedLimit(
-    effectiveLimits.acp_max_created_5h_per_account,
-  );
-  if (created5hPerAccount != null) {
-    limits.created5hPerAccount = created5hPerAccount;
-  }
-  const created7dPerAccount = normalizedLimit(
-    effectiveLimits.acp_max_created_7d_per_account,
-  );
-  if (created7dPerAccount != null) {
-    limits.created7dPerAccount = created7dPerAccount;
-  }
   const runningPerAccount = normalizedLimit(
     effectiveLimits.acp_max_running_per_account,
   );
@@ -261,7 +238,6 @@ function recoveryParentId(request: AcpJobRequest): string {
 export function admitAcpJobCreation(
   request: AcpJobRequest,
   limits: AcpAdmissionLimits = getDefaultAcpAdmissionLimits(),
-  now = Date.now(),
   opts: { supersedesQueuedRecoveries?: boolean } = {},
 ): AcpAdmissionDecision {
   return admitAcpJobCreationIdentity(
@@ -274,14 +250,12 @@ export function admitAcpJobCreation(
       supersedes_queued_recoveries: opts.supersedesQueuedRecoveries === true,
     },
     limits,
-    now,
   );
 }
 
 function admitAcpJobCreationIdentity(
   identity: AcpCreationAdmissionIdentity,
   limits: AcpAdmissionLimits = getDefaultAcpAdmissionLimits(),
-  now = Date.now(),
 ): AcpAdmissionDecision {
   if (`${identity.recovery_parent_op_id ?? ""}`.trim()) {
     return { ok: true };
@@ -334,42 +308,6 @@ function admitAcpJobCreationIdentity(
         project_id,
         path,
         thread_id,
-      });
-    }
-  }
-
-  const created5h = finiteLimit(limits.created5hPerAccount);
-  if (account_id && created5h != null) {
-    const current = countCreatedAcpJobsForAccountSince({
-      account_id,
-      since: now - FIVE_HOURS_MS,
-    });
-    if (current >= created5h) {
-      return denied({
-        ok: false,
-        limit: "created_5h_per_account",
-        current,
-        maximum: created5h,
-        account_id,
-        project_id,
-      });
-    }
-  }
-
-  const created7d = finiteLimit(limits.created7dPerAccount);
-  if (account_id && created7d != null) {
-    const current = countCreatedAcpJobsForAccountSince({
-      account_id,
-      since: now - SEVEN_DAYS_MS,
-    });
-    if (current >= created7d) {
-      return denied({
-        ok: false,
-        limit: "created_7d_per_account",
-        current,
-        maximum: created7d,
-        account_id,
-        project_id,
       });
     }
   }
@@ -446,6 +384,60 @@ export function recordAcpAdmissionDenial(
   });
 }
 
-function formatAcpAdmissionDenial(denial: AcpAdmissionDenial): string {
-  return `ACP turn limit reached: ${denial.limit} is ${denial.current}/${denial.maximum}`;
+// What each limit counts and the setting that controls it, as an admin finds
+// it: the membership tier field (Admin > Membership tiers > Codex / ACP) or
+// the same key as an account entitlement override.
+const ADMISSION_LIMIT_TEXT: Record<
+  AcpAdmissionLimitName,
+  { counted: string; setting: string; key: string; env: string }
+> = {
+  queued_per_account: {
+    counted: "waiting to run for this account",
+    setting: "Queued ACP turns / account",
+    key: "acp_max_queued_per_account",
+    env: "COCALC_ACP_MAX_QUEUED_PER_ACCOUNT",
+  },
+  queued_per_thread: {
+    counted: "waiting to run in this chat thread",
+    setting: "Queued ACP turns / thread",
+    key: "acp_max_queued_per_thread",
+    env: "COCALC_ACP_MAX_QUEUED_PER_THREAD",
+  },
+  running_per_account: {
+    counted: "running at once for this account",
+    setting: "Running ACP turns / account",
+    key: "acp_max_running_per_account",
+    env: "COCALC_ACP_MAX_RUNNING_PER_ACCOUNT",
+  },
+  running_per_project: {
+    counted: "running at once in this project",
+    setting: "Running ACP turns / project",
+    key: "acp_max_running_per_project",
+    env: "COCALC_ACP_MAX_RUNNING_PER_PROJECT",
+  },
+};
+
+export function formatAcpAdmissionDenial(denial: AcpAdmissionDenial): string {
+  const text = ADMISSION_LIMIT_TEXT[denial.limit];
+  if (text == null) {
+    return `Agent turn limit reached (${denial.limit}): ${denial.current} of ${denial.maximum}.`;
+  }
+  const where =
+    `"${text.setting}" (usage_limits.${text.key}) ` +
+    `in the account's membership tier, or as an entitlement override for this account; ` +
+    `without either, the server default ${text.env} applies.`;
+  if (denial.maximum <= 0) {
+    // Waiting cannot help: nothing is allowed at all. An account whose email
+    // address is not verified yet gets 0 for every limit, so say that first.
+    return (
+      `Agent turns are not allowed here: the limit on agent turns ${text.counted} is 0. ` +
+      `If this account's email address is not verified yet, verify it; ` +
+      `otherwise ask an admin to raise ${where}`
+    );
+  }
+  const turns = denial.current == 1 ? "agent turn" : "agent turns";
+  return (
+    `Agent turn limit reached: ${denial.current} ${turns} ${text.counted}, and the limit is ${denial.maximum}. ` +
+    `Wait for some of them to finish. An admin can change the limit with ${where}`
+  );
 }

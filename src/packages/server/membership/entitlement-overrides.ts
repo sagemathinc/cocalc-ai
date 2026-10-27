@@ -77,8 +77,6 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "course_max_students_and_pending_invites",
   "acp_max_queued_per_account",
   "acp_max_queued_per_thread",
-  "acp_max_created_5h_per_account",
-  "acp_max_created_7d_per_account",
   "acp_max_running_per_account",
   "acp_max_running_per_project",
   "acp_max_active_automations_per_project",
@@ -296,18 +294,6 @@ const OVERRIDE_EFFECT_FIELDS = [
   },
   {
     section: "usage_limits",
-    key: "acp_max_created_5h_per_account",
-    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
-      .acp_max_created_5h_per_account,
-  },
-  {
-    section: "usage_limits",
-    key: "acp_max_created_7d_per_account",
-    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
-      .acp_max_created_7d_per_account,
-  },
-  {
-    section: "usage_limits",
     key: "acp_max_running_per_account",
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
       .acp_max_running_per_account,
@@ -521,11 +507,21 @@ function normalizeAiLimits(value: unknown): AiLimitOverrides | undefined {
   return aiLimits;
 }
 
+// Usage limits that no longer exist. Stored overrides may still contain them:
+// they are dropped rather than refused, so those overrides keep loading.
+const RETIRED_USAGE_LIMIT_KEYS = new Set([
+  "acp_max_created_5h_per_account",
+  "acp_max_created_7d_per_account",
+]);
+
 function normalizeUsageLimits(
-  value: unknown,
+  raw: unknown,
 ): AccountUsageLimitOverrides | undefined {
-  if (value == null) return undefined;
-  if (!isObject(value)) throw Error("usage_limits must be an object");
+  if (raw == null) return undefined;
+  if (!isObject(raw)) throw Error("usage_limits must be an object");
+  const value = Object.fromEntries(
+    Object.entries(raw).filter(([key]) => !RETIRED_USAGE_LIMIT_KEYS.has(key)),
+  );
   assertNoUnknownKeys(
     value,
     new Set([

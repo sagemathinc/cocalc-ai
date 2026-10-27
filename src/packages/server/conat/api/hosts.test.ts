@@ -139,7 +139,19 @@ jest.mock("node:child_process", () => {
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
+  // Per-host machine-change locks: a non-waiting lock per key.
+  withSessionAdvisoryLock: async ({ lockKey, fn }: any) => {
+    if (heldHostLocks.has(lockKey)) return undefined;
+    heldHostLocks.add(lockKey);
+    try {
+      return await fn();
+    } finally {
+      heldHostLocks.delete(lockKey);
+    }
+  },
 }));
+
+const heldHostLocks = new Set<string>();
 
 jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   ...jest.requireActual("@cocalc/server/conat/project-remote-access"),
@@ -1022,6 +1034,7 @@ beforeEach(() => {
     input: opts.input ?? null,
   }));
   listLroMock = jest.fn(async () => []);
+  heldHostLocks.clear();
   updateLroMock = jest.fn(async ({ op_id, status, error }: any) => ({
     op_id,
     kind: "host-start",
@@ -2508,6 +2521,514 @@ describe("hosts browser fresh auth gating", () => {
         status: "success",
       }),
     );
+  });
+
+  describe("machine changes on a stopped GCP host", () => {
+    const initialMetadata = () => ({
+      owner: ACCOUNT_ID,
+      runtime: {
+        provider: "gcp",
+        instance_id: "cocalc-host-1",
+        zone: "us-west1-a",
+        metadata: { machine_type: "t2d-standard-8", gpu_count: 0 },
+      },
+      machine: {
+        cloud: "gcp",
+        zone: "us-west1-a",
+        disk_gb: 200,
+        disk_type: "balanced",
+        machine_type: "t2d-standard-8",
+        metadata: { cpu: 8, ram_gb: 32 },
+      },
+      pricing_model: "on_demand",
+    });
+    const setup = (updateMachine: jest.Mock) => {
+      getProviderContextMock = jest.fn(async () => ({
+        entry: { provider: { updateMachine } },
+        creds: { token: "provider-creds" },
+      }));
+      const saved: {
+        metadata?: any;
+        pending: (string | null)[];
+        failFinalWrite?: boolean;
+        // what a re-read of the row finds after the final write failed
+        durable?: "committed" | "not-committed" | "unreadable";
+        settledRuntime?: any;
+      } = { pending: [] };
+      queryMock = jest.fn(async (sql: string, params?: any[]) => {
+        if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+          return {
+            rows: [
+              {
+                id: HOST_ID,
+                name: "host-name",
+                region: "us-west1",
+                status: "off",
+                metadata: saved.metadata ?? initialMetadata(),
+              },
+            ],
+          };
+        }
+        if (sql.includes("'{machine_change_pending}'")) {
+          saved.pending.push(params?.[1]);
+          return { rowCount: 1, rows: [] };
+        }
+        if (sql.includes("SELECT metadata FROM project_hosts")) {
+          if (saved.durable === "unreadable") {
+            throw new Error("connection refused");
+          }
+          return {
+            rows: [
+              {
+                metadata:
+                  saved.durable === "committed"
+                    ? { machine: { machine_type: "t2d-standard-16" } }
+                    : { machine_change_pending: { at: "now" } },
+              },
+            ],
+          };
+        }
+        if (sql.includes("jsonb_set(metadata - 'machine_change_pending'")) {
+          saved.pending.push(null);
+          saved.settledRuntime = JSON.parse(params?.[1]);
+          return { rowCount: 1, rows: [] };
+        }
+        if (sql.includes("metadata - 'machine_change_pending'")) {
+          saved.pending.push(null);
+          return { rowCount: 1, rows: [] };
+        }
+        if (sql.includes("UPDATE project_hosts SET region=$2")) {
+          if (saved.failFinalWrite) {
+            throw new Error("connection terminated unexpectedly");
+          }
+          saved.metadata = params?.[2];
+          return { rowCount: 1, rows: [] };
+        }
+        if (sql.includes("FROM account_impersonation_sessions")) {
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      return saved;
+    };
+
+    it("changes the instance in place and keeps the boot disk", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => ({
+        ...runtime,
+        metadata: { ...runtime.metadata, machine_type: "t2d-standard-16" },
+      }));
+      const saved = setup(updateMachine);
+      const { updateHostMachine } = await import("./hosts");
+      await updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        machine_type: "t2d-standard-16",
+      });
+
+      expect(updateMachine).toHaveBeenCalledWith(
+        expect.objectContaining({ instance_id: "cocalc-host-1" }),
+        expect.objectContaining({
+          metadata: { machine_type: "t2d-standard-16" },
+        }),
+        { token: "provider-creds" },
+      );
+      expect(saved.metadata.reprovision_required).toBeUndefined();
+      expect(saved.metadata.machine.machine_type).toBe("t2d-standard-16");
+      expect(saved.metadata.runtime.metadata.machine_type).toBe(
+        "t2d-standard-16",
+      );
+      expect(logCloudVmEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "update_config",
+          spec: expect.objectContaining({ machine_change: "in_place" }),
+        }),
+      );
+    });
+
+    it("recreates at the next start only when GCP can't change it in place", async () => {
+      const updateMachine = jest.fn(async () => {
+        throw Object.assign(
+          new Error(
+            "this machine change needs a new instance: the target machine type c3-standard-8 is not a first or second generation x86 series",
+          ),
+          { code: "machine_change_requires_new_instance" },
+        );
+      });
+      const saved = setup(updateMachine);
+      const { updateHostMachine } = await import("./hosts");
+      await updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        machine_type: "c3-standard-8",
+      });
+
+      expect(saved.metadata.reprovision_required).toBe(true);
+      expect(saved.metadata.machine.machine_type).toBe("c3-standard-8");
+      expect(logCloudVmEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          spec: expect.objectContaining({
+            machine_change: "recreate_at_next_start",
+            reason: expect.stringContaining("c3-standard-8"),
+          }),
+        }),
+      );
+    });
+
+    it("removes a GPU instead of falling back to the legacy default GPU", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      const base = initialMetadata();
+      saved.metadata = {
+        ...base,
+        gpu: true,
+        machine: {
+          ...base.machine,
+          machine_type: "n1-standard-8",
+          gpu_type: "nvidia-tesla-t4",
+          gpu_count: 1,
+        },
+      };
+      const { updateHostMachine } = await import("./hosts");
+      await updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        gpu_type: "none",
+      });
+
+      expect(updateMachine).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          gpu: undefined,
+          metadata: { machine_type: "n1-standard-8" },
+        }),
+        { token: "provider-creds" },
+      );
+      expect(saved.metadata.gpu).toBe(false);
+      expect(saved.metadata.reprovision_required).toBeUndefined();
+    });
+
+    it("refuses a second change while one is being applied", async () => {
+      let finish!: () => void;
+      const updateMachine = jest.fn(
+        (runtime: any) =>
+          new Promise((resolve) => {
+            finish = () => resolve(runtime);
+          }),
+      );
+      setup(updateMachine);
+      const { updateHostMachine } = await import("./hosts");
+      const first = updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        machine_type: "t2d-standard-16",
+      });
+      for (let i = 0; i < 50 && updateMachine.mock.calls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(updateMachine).toHaveBeenCalledTimes(1);
+      await expect(
+        updateHostMachine({
+          account_id: ACCOUNT_ID,
+          session_hash: "session-hash",
+          id: HOST_ID,
+          machine_type: "t2d-standard-4",
+        }),
+      ).rejects.toMatchObject({ code: "host_machine_change_in_progress" });
+      finish();
+      await first;
+      expect(updateMachine).toHaveBeenCalledTimes(1);
+      expect(heldHostLocks.size).toBe(0);
+    });
+
+    it("refuses while a start or delete is pending for the host", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      listLroMock = jest.fn(async () => [
+        { op_id: "op-1", kind: "host-delete", status: "queued" },
+      ]);
+      const { updateHostMachine } = await import("./hosts");
+      await expect(
+        updateHostMachine({
+          account_id: ACCOUNT_ID,
+          session_hash: "session-hash",
+          id: HOST_ID,
+          machine_type: "t2d-standard-16",
+        }),
+      ).rejects.toMatchObject({ code: "host_operation_pending" });
+      expect(updateMachine).not.toHaveBeenCalled();
+      expect(saved.metadata).toBeUndefined();
+      expect(heldHostLocks.size).toBe(0);
+    });
+
+    it("records the change as pending before touching the VM, and clears it", async () => {
+      const order: string[] = [];
+      const updateMachine = jest.fn(async (runtime: any) => {
+        order.push("updateMachine");
+        return runtime;
+      });
+      const saved = setup(updateMachine);
+      const query = queryMock;
+      queryMock = jest.fn(async (sql: string, params?: any[]) => {
+        if (sql.includes("'{machine_change_pending}'")) order.push("pending");
+        if (sql.includes("UPDATE project_hosts SET region=$2"))
+          order.push("final");
+        return await query(sql, params);
+      });
+      const { updateHostMachine } = await import("./hosts");
+      await updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        machine_type: "t2d-standard-16",
+      });
+      expect(order).toEqual(["pending", "updateMachine", "final"]);
+      expect(JSON.parse(saved.pending[0]!)).toMatchObject({
+        from: { machine_type: "t2d-standard-8" },
+        to: { machine_type: "t2d-standard-16" },
+      });
+      expect(saved.metadata.machine_change_pending).toBeUndefined();
+    });
+
+    it("changes the VM back when the change can't be recorded", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      saved.failFinalWrite = true;
+      saved.durable = "not-committed";
+      const { updateHostMachine } = await import("./hosts");
+      await expect(
+        updateHostMachine({
+          account_id: ACCOUNT_ID,
+          session_hash: "session-hash",
+          id: HOST_ID,
+          machine_type: "t2d-standard-16",
+        }),
+      ).rejects.toMatchObject({
+        code: "host_machine_change_unfinished",
+        message: expect.stringContaining("the VM was changed back"),
+      });
+      expect(updateMachine).toHaveBeenCalledTimes(2);
+      expect(updateMachine.mock.calls[1][1]).toMatchObject({
+        metadata: { machine_type: "t2d-standard-8" },
+      });
+      // changed back, so the pending mark is cleared too
+      expect(saved.pending).toHaveLength(2);
+      expect(saved.pending[1]).toBeNull();
+    });
+
+    it("doesn't change the VM back when the final write did commit", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      saved.failFinalWrite = true;
+      saved.durable = "committed";
+      const { updateHostMachine } = await import("./hosts");
+      await updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        machine_type: "t2d-standard-16",
+      });
+      expect(updateMachine).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves the VM and the pending mark when it can't tell whether the write committed", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      saved.failFinalWrite = true;
+      saved.durable = "unreadable";
+      const { updateHostMachine } = await import("./hosts");
+      await expect(
+        updateHostMachine({
+          account_id: ACCOUNT_ID,
+          session_hash: "session-hash",
+          id: HOST_ID,
+          machine_type: "t2d-standard-16",
+        }),
+      ).rejects.toMatchObject({
+        code: "host_machine_change_unfinished",
+        message: expect.stringContaining("not known"),
+      });
+      expect(updateMachine).toHaveBeenCalledTimes(1);
+      expect(saved.pending).toHaveLength(1);
+    });
+
+    it("settles an unfinished change from a request that changes nothing", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => ({
+        ...runtime,
+        metadata: { ...runtime.metadata, settled: true },
+      }));
+      const saved = setup(updateMachine);
+      saved.metadata = {
+        ...initialMetadata(),
+        machine_change_pending: {
+          from: { machine_type: "t2d-standard-8" },
+          to: { machine_type: "t2d-standard-16" },
+          at: "2026-10-27T00:00:00.000Z",
+        },
+      };
+      const { updateHostMachine } = await import("./hosts");
+      await updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+      });
+      expect(updateMachine).toHaveBeenCalledWith(
+        expect.objectContaining({ instance_id: "cocalc-host-1" }),
+        expect.objectContaining({
+          metadata: { machine_type: "t2d-standard-8" },
+        }),
+        { token: "provider-creds" },
+      );
+      expect(saved.pending).toEqual([null]);
+      expect(saved.settledRuntime.metadata.settled).toBe(true);
+    });
+
+    it("keeps the pending mark through an update that doesn't touch the machine", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      saved.metadata = {
+        ...initialMetadata(),
+        machine_change_pending: { at: "2026-10-27T00:00:00.000Z" },
+      };
+      const { updateHostMachine } = await import("./hosts");
+      await updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        auto_grow_enabled: true,
+      });
+      expect(updateMachine).not.toHaveBeenCalled();
+      expect(saved.metadata.machine_change_pending).toEqual({
+        at: "2026-10-27T00:00:00.000Z",
+      });
+    });
+
+    it("settles the pending mark of a deprovisioned host without a VM", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      const base = initialMetadata();
+      saved.metadata = {
+        ...base,
+        runtime: undefined,
+        machine_change_pending: { at: "2026-10-27T00:00:00.000Z" },
+      };
+      const query = queryMock;
+      queryMock = jest.fn(async (sql: string, params?: any[]) => {
+        if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+          const result = await query(sql, params);
+          return {
+            rows: result.rows.map((r: any) => ({
+              ...r,
+              status: "deprovisioned",
+            })),
+          };
+        }
+        return await query(sql, params);
+      });
+      const { updateHostMachine, startHost } = await import("./hosts");
+      await updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+      });
+      expect(updateMachine).not.toHaveBeenCalled();
+      expect(saved.pending).toEqual([null]);
+      // and a deprovisioned host isn't blocked from starting by a mark
+      await expect(
+        startHost({ account_id: ACCOUNT_ID, id: HOST_ID }),
+      ).rejects.not.toMatchObject({ code: "host_machine_change_unfinished" });
+    });
+
+    it("won't start a host internally whose machine change didn't finish", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      saved.metadata = {
+        ...initialMetadata(),
+        machine_change_pending: { at: "2026-10-27T00:00:00.000Z" },
+      };
+      const { startHostInternal } = await import("./hosts");
+      await expect(
+        startHostInternal({ account_id: ACCOUNT_ID, id: HOST_ID }),
+      ).rejects.toMatchObject({ code: "host_machine_change_unfinished" });
+    });
+
+    it("clears the pending mark when the provider left the VM unchanged", async () => {
+      const updateMachine = jest.fn(async () => {
+        throw Object.assign(new Error("gcp.updateMachine failed: quota"), {
+          unchanged: true,
+        });
+      });
+      const saved = setup(updateMachine);
+      const { updateHostMachine } = await import("./hosts");
+      await expect(
+        updateHostMachine({
+          account_id: ACCOUNT_ID,
+          session_hash: "session-hash",
+          id: HOST_ID,
+          machine_type: "t2d-standard-16",
+        }),
+      ).rejects.toThrow(/quota/);
+      expect(saved.pending).toHaveLength(2);
+      expect(saved.pending[1]).toBeNull();
+    });
+
+    it("won't start a host whose machine change didn't finish", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      saved.metadata = {
+        ...initialMetadata(),
+        machine_change_pending: {
+          from: { machine_type: "t2d-standard-8" },
+          to: { machine_type: "t2d-standard-16" },
+          at: "2026-10-27T00:00:00.000Z",
+        },
+      };
+      const { startHost } = await import("./hosts");
+      await expect(
+        startHost({ account_id: ACCOUNT_ID, id: HOST_ID }),
+      ).rejects.toMatchObject({ code: "host_machine_change_unfinished" });
+      expect(createLroMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a disk change in the same request as a machine change", async () => {
+      const updateMachine = jest.fn(async (runtime: any) => runtime);
+      const saved = setup(updateMachine);
+      const { updateHostMachine } = await import("./hosts");
+      await expect(
+        updateHostMachine({
+          account_id: ACCOUNT_ID,
+          session_hash: "session-hash",
+          id: HOST_ID,
+          machine_type: "t2d-standard-16",
+          disk_gb: 300,
+        }),
+      ).rejects.toMatchObject({ code: "host_machine_and_disk_change" });
+      expect(updateMachine).not.toHaveBeenCalled();
+      expect(saved.pending).toHaveLength(0);
+      expect(saved.metadata).toBeUndefined();
+    });
+
+    it("leaves the host unchanged when the in-place change fails", async () => {
+      const updateMachine = jest.fn(async () => {
+        throw new Error(
+          "gcp.updateMachine failed: ZONE_RESOURCE_POOL_EXHAUSTED; the instance was left stopped and unchanged",
+        );
+      });
+      const saved = setup(updateMachine);
+      const { updateHostMachine } = await import("./hosts");
+      await expect(
+        updateHostMachine({
+          account_id: ACCOUNT_ID,
+          session_hash: "session-hash",
+          id: HOST_ID,
+          machine_type: "t2d-standard-16",
+        }),
+      ).rejects.toThrow(/left stopped and unchanged/);
+      expect(saved.metadata).toBeUndefined();
+    });
   });
 
   it("blocks live shared scratch growth when the new rate has no billing runway", async () => {
@@ -6625,7 +7146,10 @@ describe("hosts.resolveHostConnection", () => {
         max_snapshots_per_project: 8,
       },
     }));
-    const { getProjectOwnerEffectiveLimits } = await import("./hosts");
+    const {
+      getProjectOwnerEffectiveLimits,
+      RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
+    } = await import("./hosts");
     await expect(
       getProjectOwnerEffectiveLimits({
         host_id: REMOTE_HOST_ID,
@@ -6634,6 +7158,7 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       max_backups_per_project: 5,
       max_snapshots_per_project: 8,
+      ...RETIRED_CREATED_TURN_LIMITS_FOR_OLD_HOSTS,
     });
   });
 
@@ -6642,9 +7167,12 @@ describe("hosts.resolveHostConnection", () => {
       bay_id: "bay-7",
       epoch: 2,
     }));
+    // An owning bay not yet upgraded still sends the stored created-turn caps.
     hostConnectionGetProjectOwnerEffectiveLimitsMock = jest.fn(async () => ({
       max_backups_per_project: 5,
       max_snapshots_per_project: 8,
+      acp_max_created_5h_per_account: 500,
+      acp_max_created_7d_per_account: 2000,
     }));
     const { getProjectOwnerEffectiveLimits } = await import("./hosts");
     await expect(
@@ -6655,6 +7183,9 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       max_backups_per_project: 5,
       max_snapshots_per_project: 8,
+      // Overwritten for hosts not yet upgraded.
+      acp_max_created_5h_per_account: 1_000_000_000,
+      acp_max_created_7d_per_account: 1_000_000_000,
     });
     expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
     expect(
@@ -6684,6 +7215,10 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       acp_max_queued_per_account: 12,
       acp_max_running_per_account: 3,
+      // Hosts not yet upgraded must not fall back to their old 500/2000
+      // created-turn defaults.
+      acp_max_created_5h_per_account: 1_000_000_000,
+      acp_max_created_7d_per_account: 1_000_000_000,
     });
     expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
       account_id: "actor-1",
@@ -6696,9 +7231,12 @@ describe("hosts.resolveHostConnection", () => {
       home_bay_id: "bay-7",
       epoch: 2,
     }));
+    // A home bay not yet upgraded still sends the stored created-turn caps.
     hostConnectionGetAccountEffectiveLimitsMock = jest.fn(async () => ({
       acp_max_queued_per_account: 12,
       acp_max_running_per_account: 3,
+      acp_max_created_5h_per_account: 500,
+      acp_max_created_7d_per_account: 2000,
     }));
     const { getAccountEffectiveLimits } = await import("./hosts");
     await expect(
@@ -6709,6 +7247,8 @@ describe("hosts.resolveHostConnection", () => {
     ).resolves.toEqual({
       acp_max_queued_per_account: 12,
       acp_max_running_per_account: 3,
+      acp_max_created_5h_per_account: 1_000_000_000,
+      acp_max_created_7d_per_account: 1_000_000_000,
     });
     expect(hostConnectionGetAccountEffectiveLimitsMock).toHaveBeenCalledWith({
       host_id: REMOTE_HOST_ID,
@@ -7855,6 +8395,57 @@ describe("hosts.listHosts bootstrap normalization", () => {
     expect(hosts[0].metrics?.current?.running_project_count).toBe(3);
     expect(hosts[0].metrics?.current?.assigned_project_count).toBe(12);
   });
+
+  it.each([
+    [undefined, true],
+    ["ok", true],
+    ["draining", false],
+    ["stopped_billing_blocked", false],
+  ])(
+    "reports a pool host with billing enforcement %s as placeable=%s",
+    async (state, placeable) => {
+      isAdminMock = jest.fn(async () => false);
+      resolveMembershipForAccountMock = jest.fn(async () => ({
+        entitlements: { features: { project_host_tier: 0 } },
+      }));
+      queryMock = jest.fn(async (sql: string) => {
+        if (sql.includes("SELECT * FROM project_hosts")) {
+          return {
+            rows: [
+              {
+                id: HOST_ID,
+                name: "tier-pool-host",
+                region: "us-west1",
+                status: "running",
+                last_seen: new Date(),
+                tier: 0,
+                deleted: null,
+                metadata: {
+                  owner: "other-owner",
+                  runtime_health: { status: "ready", ready: true },
+                  machine: { cloud: "gcp", machine_type: "t2d-standard-2" },
+                  ...(state ? { billing: { enforcement: { state } } } : {}),
+                },
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      });
+
+      const { listHosts } = await import("./hosts");
+      const hosts = await listHosts({ account_id: ACCOUNT_ID, catalog: true });
+      expect(hosts).toHaveLength(1);
+      // The pool view is redacted: other bays see only can_place.
+      expect(hosts[0].billing_enforcement).toBeUndefined();
+      expect(hosts[0].can_place).toBe(placeable);
+      if (!placeable) {
+        expect(hosts[0].reason_unavailable).toBe(
+          `Host billing enforcement is ${state}`,
+        );
+      }
+    },
+  );
 });
 
 describe("hosts.refreshHostCloudState", () => {

@@ -35,6 +35,7 @@ import initProjectControl from "@cocalc/server/projects/control";
 import { start as startHubRegister } from "@cocalc/server/metrics/hub_register";
 import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
+import { eraseRevokedExternalCredentialPayloads } from "@cocalc/server/external-credentials/store";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
@@ -388,6 +389,31 @@ async function startServer(): Promise<void> {
     startCloudCatalogWorker();
     logger.info("starting cloud VM reconcile loop...");
     startCloudVmReconciler();
+    // Revoked credentials keep no encrypted payload. Every API hub
+    // (Launchpad and Rocket alike) erases leftovers at startup and then
+    // hourly for a day, which also covers rows revoked by an older hub during
+    // a rolling upgrade; after that, revocation itself keeps them empty.
+    // Idempotent, one row per statement.
+    const eraseRevokedPayloads = () =>
+      eraseRevokedExternalCredentialPayloads()
+        .then((erased) => {
+          if (erased > 0) {
+            logger.info(`erased payloads of ${erased} revoked credentials`);
+          }
+        })
+        .catch((err) =>
+          logger.warn(`erasing revoked credential payloads failed: ${err}`),
+        );
+    eraseRevokedPayloads();
+    let erasePasses = 0;
+    const eraseTimer = setInterval(
+      () => {
+        eraseRevokedPayloads();
+        if (++erasePasses >= 24) clearInterval(eraseTimer);
+      },
+      60 * 60 * 1000,
+    );
+    eraseTimer.unref?.();
   }
 
   if (program.all || program.mentions) {
