@@ -82,6 +82,8 @@ function rng(seed: number) {
 interface Peer {
   socket: net.Socket;
   frames: Buffer[][];
+  // the prefixes of the SUBSCRIBE commands received
+  subscribes: Buffer[];
   send(frames: (Buffer | string)[]): void;
   raw(b: Buffer): void;
 }
@@ -96,6 +98,7 @@ async function server(
     const p: Peer = {
       socket: s,
       frames: [],
+      subscribes: [],
       send: (f) => s.write(cat(Z.encodeFrames(f))),
       raw: (b) => s.write(b),
     };
@@ -114,7 +117,8 @@ async function server(
         readied = true;
         s.write(cat(ready(type)));
       },
-      command: () => {},
+      command: (n, data) =>
+        n === "SUBSCRIBE" && p.subscribes.push(Buffer.from(data)),
       message: (f) => p.frames.push(f),
     });
     s.on("data", (b) => {
@@ -417,7 +421,7 @@ describe("the fuzz (seeded)", () => {
       const stream = session(msgs);
       const pieces: number[] = [];
       let maxChunk = 0;
-      for (let left = stream.length; left > 0;) {
+      for (let left = stream.length; left > 0; ) {
         const n = Math.min(left, 1 + Math.floor(r() * 500));
         pieces.push(n);
         maxChunk = Math.max(maxChunk, n);
@@ -771,20 +775,39 @@ describe("delivery and flow control", () => {
     await srv.close();
   });
 
+  test("a SUB subscribes with ZMTP 3.1's SUBSCRIBE command, never 3.0's [0x01, prefix] message", async () => {
+    const srv = await server("XPUB");
+    const s = new Z.Subscriber();
+    s.subscribe("before"); // queued until READY
+    s.connect(srv.url);
+    await until(() => srv.peers[0]?.subscribes.length === 1);
+    s.subscribe("after"); // on the ready connection
+    await until(() => srv.peers[0].subscribes.length === 2);
+    assert.deepEqual(
+      srv.peers[0].subscribes.map((b) => b.toString()),
+      ["before", "after"],
+    );
+    await sleep(50);
+    assert.equal(srv.peers[0].frames.length, 0, "no subscription message");
+    s.close();
+    await srv.close();
+  });
+
   test("a SUB resends its subscription on every connection", async () => {
     const srv = await server("XPUB");
     const s = new Z.Subscriber({ reconnectIvl: 20 });
     s.connect(srv.url);
     s.subscribe();
-    await until(() => srv.peers[0]?.frames.length === 1);
-    assert.equal(srv.peers[0].frames[0][0].toString("hex"), "01");
+    await until(() => srv.peers[0]?.subscribes.length === 1);
+    assert.equal(srv.peers[0].subscribes[0].length, 0);
     srv.peers[0].socket.destroy();
     await until(
-      () => srv.peers[1]?.frames.length === 1,
+      () => srv.peers[1]?.subscribes.length === 1,
       3000,
       "the subscription on the new connection",
     );
-    assert.equal(srv.peers[1].frames[0][0].toString("hex"), "01");
+    assert.equal(srv.peers[1].subscribes[0].length, 0);
+    assert.equal(srv.peers[1].frames.length, 0);
     s.close();
     await srv.close();
   });
@@ -950,18 +973,18 @@ const MUTANTS: [
   ],
   [
     "m4: the subscription not resent on reconnect",
-    "for (const s of this.subs) this.write(c, encodeFrames([s]));",
-    "if (this.counters.attempts === 1) for (const s of this.subs) this.write(c, encodeFrames([s]));",
+    'for (const s of this.subs) this.write(c, command("SUBSCRIBE", s));',
+    'if (this.counters.attempts === 1) for (const s of this.subs) this.write(c, command("SUBSCRIBE", s));',
     async (Zm) => {
       const srv = await server("XPUB");
       const s = new Zm.Subscriber({ reconnectIvl: 20 });
       try {
         s.connect(srv.url);
         s.subscribe();
-        await until(() => srv.peers[0]?.frames.length === 1);
+        await until(() => srv.peers[0]?.subscribes.length === 1);
         srv.peers[0].socket.destroy();
         await until(
-          () => srv.peers[1]?.frames.length === 1,
+          () => srv.peers[1]?.subscribes.length === 1,
           1000,
           "the resent subscription",
         );

@@ -526,9 +526,8 @@ class ZSocket {
   subscribe(prefix: string | Buffer = ""): void {
     if (this.type !== "SUB") throw new Error("only a SUB socket subscribes");
     const p = typeof prefix === "string" ? Buffer.from(prefix, "utf8") : prefix;
-    const msg = Buffer.concat([Buffer.from([1]), p]);
-    this.subs.push(msg);
-    if (this.conn?.ready) this.write(this.conn, encodeFrames([msg]));
+    this.subs.push(Buffer.from(p));
+    if (this.conn?.ready) this.write(this.conn, command("SUBSCRIBE", p));
   }
 
   /** Diagnostics and tests: what this socket holds. */
@@ -725,7 +724,8 @@ class ZSocket {
       c.ready = true;
       if (c.timer) clearTimeout(c.timer);
       c.timer = undefined;
-      for (const s of this.subs) this.write(c, encodeFrames([s]));
+      // ZMTP 3.1 (RFC 37): a SUBSCRIBE command, not 3.0's [0x01, prefix] message
+      for (const s of this.subs) this.write(c, command("SUBSCRIBE", s));
       this.flush(c);
     } else if (name === "ERROR") {
       const n = data.length ? data[0] : 0;
