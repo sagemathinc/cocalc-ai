@@ -641,6 +641,35 @@ describe("the one scheduler (H1c §5)", () => {
     for (const w of [...idle, ...blocked]) unregisterTrashWorkForTests(w);
   });
 
+  it("however many streams are blocked, the others keep the 4 background steps", () => {
+    const ran: string[] = [];
+    const worker = (name: string) => ({
+      trashGeneration: 0,
+      isClosing: () => false,
+      runTrashStep: () => {
+        ran.push(name);
+        return false;
+      },
+    });
+    const idle = worker("idle");
+    const blocked = Array.from({ length: 8 }, (_, i) => worker(`b${i}`));
+    registerTrashWorkForTests(idle);
+    for (const w of blocked) registerTrashWorkForTests(w, true);
+    for (let tick = 0; tick < 8; tick++) {
+      ran.length = 0;
+      runTrashTickForTests();
+      expect(ran).toHaveLength(8);
+      expect(ran.filter((name) => name == "idle")).toHaveLength(1);
+    }
+    // slots the others leave unused still go to blocked streams
+    unregisterTrashWorkForTests(idle);
+    ran.length = 0;
+    runTrashTickForTests();
+    expect(ran).toHaveLength(8);
+    expect(new Set(ran).size).toBe(8);
+    for (const w of blocked) unregisterTrashWorkForTests(w);
+  });
+
   it("a lone blocked stream gets all 4 foreground steps; two get 2 each (LIMIT-H1C-IMPL-2)", () => {
     const ran: string[] = [];
     const worker = (name: string) => ({

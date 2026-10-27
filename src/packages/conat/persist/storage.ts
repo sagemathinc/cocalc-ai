@@ -533,8 +533,17 @@ function trashTick() {
   for (let i = 0; blocked.length > 0 && i < TRASH_FOREGROUND_STEPS; i++) {
     picked.push(blocked[i % blocked.length]);
   }
-  // then one step each for the others, round-robin
-  for (const w of rotate(all, trashRound)) {
+  // then one step each for the others, round-robin: never blocked ones, so
+  // the background keeps its slots however many streams are blocked
+  for (const w of rotate(
+    all.filter((w) => !trashBlocked.has(w)),
+    trashRound,
+  )) {
+    if (picked.length >= TRASH_STEPS_PER_TICK) break;
+    picked.push(w);
+  }
+  // slots the others leave go to blocked streams not yet picked
+  for (const w of blocked) {
     if (picked.length >= TRASH_STEPS_PER_TICK) break;
     if (!picked.includes(w)) picked.push(w);
   }
