@@ -417,7 +417,7 @@ describe("the fuzz (seeded)", () => {
       const stream = session(msgs);
       const pieces: number[] = [];
       let maxChunk = 0;
-      for (let left = stream.length; left > 0; ) {
+      for (let left = stream.length; left > 0;) {
         const n = Math.min(left, 1 + Math.floor(r() * 500));
         pieces.push(n);
         maxChunk = Math.max(maxChunk, n);
@@ -806,6 +806,69 @@ describe("delivery and flow control", () => {
     srv.peers[0].raw(cat(Z.command("PING", Buffer.from([0, 50, 0xca, 0xfe]))));
     await until(() => pongs.length === 1);
     assert.equal(pongs[0].toString("hex"), "cafe");
+    d.close();
+    await srv.close();
+  });
+
+  // a PING with a TTL of n deciseconds
+  const ping = (n: number) =>
+    cat(Z.command("PING", Buffer.from([n >> 8, n & 0xff])));
+
+  test("a PING's TTL is enforced: silence past it closes and reconnects; 0 turns it off", async () => {
+    const srv = await server("ROUTER");
+    const d = new Z.Dealer({ routingId: "x", reconnectIvl: 20 });
+    d.connect(srv.url);
+    d.send(["hi"]);
+    await until(() => srv.peers[0]?.frames.length === 1);
+    srv.peers[0].raw(ping(0));
+    await sleep(300);
+    assert.equal(d.counters.attempts, 1, "TTL 0: no deadline");
+    srv.peers[0].raw(ping(1)); // 100 ms
+    await until(() => d.counters.attempts >= 2, 3000, "the TTL to close");
+    assert.equal(srv.peers.length, 2);
+    d.close();
+    await srv.close();
+  });
+
+  test("traffic within the TTL keeps the connection", async () => {
+    const srv = await server("ROUTER");
+    const d = new Z.Dealer({ routingId: "x", reconnectIvl: 20 });
+    d.connect(srv.url);
+    d.send(["hi"]);
+    await until(() => srv.peers[0]?.frames.length === 1);
+    srv.peers[0].raw(ping(2)); // 200 ms
+    const it = d[Symbol.asyncIterator]();
+    for (let i = 0; i < 8; i++) {
+      await sleep(80);
+      srv.peers[0].send([String(i)]); // messages, not PINGs, rearm it
+      assert.equal((await it.next()).value![0].toString(), String(i));
+    }
+    assert.equal(d.counters.attempts, 1);
+    d.close();
+    await srv.close();
+  });
+
+  test("a socket paused at the mark doesn't take the peer's silence for death", async () => {
+    const srv = await server("ROUTER");
+    const d = new Z.Dealer({
+      routingId: "x",
+      reconnectIvl: 20,
+      markCount: 2,
+      markBytes: 1 << 30,
+    });
+    d.connect(srv.url);
+    d.send(["hi"]);
+    await until(() => srv.peers[0]?.frames.length === 1);
+    srv.peers[0].raw(ping(1)); // 100 ms
+    for (let i = 0; i < 4; i++) srv.peers[0].send([String(i)]);
+    await until(() => d.stats.paused, 3000, "the pause");
+    await sleep(400);
+    assert.equal(d.counters.attempts, 1, "paused: no TTL close");
+    const it = d[Symbol.asyncIterator]();
+    for (let i = 0; i < 4; i++)
+      assert.equal((await it.next()).value![0].toString(), String(i));
+    // reading again: the peer stays silent, so the TTL closes it now
+    await until(() => d.counters.attempts >= 2, 3000, "the TTL after resume");
     d.close();
     await srv.close();
   });

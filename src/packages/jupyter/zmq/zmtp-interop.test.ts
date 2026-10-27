@@ -38,6 +38,8 @@ r = ctx.socket(zmq.ROUTER)
 if hb:
     r.setsockopt(zmq.HEARTBEAT_IVL, hb)
     r.setsockopt(zmq.HEARTBEAT_TIMEOUT, 10 * hb)
+    # the TTL its PINGs carry, which our side enforces
+    r.setsockopt(zmq.HEARTBEAT_TTL, 10 * hb)
 r.bind("tcp://127.0.0.1:%d" % rport)
 p = ctx.socket(zmq.XPUB)
 p.bind("tcp://127.0.0.1:%d" % pport)
@@ -179,7 +181,7 @@ maybe("interop with libzmq (pyzmq)", () => {
     }
   });
 
-  test(`${MIB} MiB frames each way, with libzmq heartbeats (PING) during the transfer`, async () => {
+  test(`${MIB} MiB frames each way, with libzmq heartbeats (PING, with a TTL) during the transfer`, async () => {
     const [a, b] = await freePorts(2);
     const h = new Helper(a, b, 20);
     const d = new Z.Dealer({ routingId: "big" });
@@ -192,9 +194,10 @@ maybe("interop with libzmq (pyzmq)", () => {
       assert.equal(r[0].toString(), "big");
       assert.equal(r[1].length, n);
       assert.equal(await h.wait("got-big"), `got-big ${n}`);
-      await sleep(300); // heartbeats keep flowing; the connection stays
+      await sleep(600); // heartbeats keep flowing; the connection stays
       d.send(["after", "hb"]);
       await h.wait("from big after|hb");
+      assert.equal(d.counters.attempts, 1, "the TTL never closed it");
     } finally {
       d.close();
       await h.kill();

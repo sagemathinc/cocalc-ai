@@ -406,6 +406,9 @@ class Connection {
   decoder: Decoder;
   ready = false;
   timer?: ReturnType<typeof setTimeout>;
+  // the TTL the peer's last PING asked for (0: none), and its deadline
+  ttl = 0;
+  ttlTimer?: ReturnType<typeof setTimeout>;
   constructor(socket: net.Socket, decoder: Decoder) {
     this.socket = socket;
     this.decoder = decoder;
@@ -608,7 +611,10 @@ class ZSocket {
     const c = this.conn;
     if (!c) return;
     this.guard(c, () => c.decoder.parse());
-    if (!this.stoppedAtMark && this.conn === c) c.socket.resume();
+    if (!this.stoppedAtMark && this.conn === c) {
+      c.socket.resume();
+      this.armTtl(c); // (a full TTL from when reading starts again)
+    }
   }
 
   private atMark(): boolean {
@@ -685,6 +691,7 @@ class ZSocket {
     });
     socket.on("data", (d: Buffer) => {
       if (!live()) return;
+      this.armTtl(c);
       this.guard(c, () => c.decoder.push(d));
     });
     socket.on("error", (err) => {
@@ -729,10 +736,28 @@ class ZSocket {
       );
     } else if (name === "PING") {
       if (data.length < 2) throw new ProtocolError("malformed PING command");
+      // RFC 37: with a TTL (deciseconds) above 0, close when nothing more
+      // arrives within it, as libzmq does; 0 turns it off
+      c.ttl = data.readUInt16BE(0) * 100;
+      this.armTtl(c);
       // PONG echoes the context, the bytes after the 2-byte TTL
       this.write(c, command("PONG", data.subarray(2)));
     }
     // PONG, SUBSCRIBE, CANCEL, and unknown commands: nothing to do
+  }
+
+  // (re)starts the peer's TTL deadline: on its PING and on any data after it
+  private armTtl(c: Connection): void {
+    if (c.ttlTimer) clearTimeout(c.ttlTimer);
+    c.ttlTimer = undefined;
+    if (c.ttl <= 0) return;
+    c.ttlTimer = setTimeout(() => {
+      if (this.conn !== c) return;
+      // paused at the mark we read nothing, so silence says nothing about
+      // the peer: wait for the queue to drain
+      if (this.stoppedAtMark) return this.armTtl(c);
+      this.fail(c, `no traffic within the peer's heartbeat TTL of ${c.ttl} ms`);
+    }, c.ttl);
   }
 
   private flush(c: Connection): void {
@@ -767,6 +792,7 @@ class ZSocket {
     this.conn = undefined;
     this.gen++; // every callback of the old connection is now stale
     if (c.timer) clearTimeout(c.timer);
+    if (c.ttlTimer) clearTimeout(c.ttlTimer);
     c.decoder.clear();
     c.socket.destroy();
   }
