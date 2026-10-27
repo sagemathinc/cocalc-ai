@@ -179,6 +179,7 @@ export interface Customize {
   support?: string;
   supportVideoCall?: string;
   project_hosts_nebius_enabled?: boolean;
+  project_hosts_nebius_hosts_enabled?: boolean;
   "project_hosts_google-cloud_enabled"?: boolean;
   project_hosts_gcp_surcharge_percent?: number;
   project_hosts_nebius_surcharge_percent?: number;

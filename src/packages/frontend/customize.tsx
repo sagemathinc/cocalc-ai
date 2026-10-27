@@ -187,6 +187,7 @@ export interface CustomizeState {
   _is_configured: boolean;
   configuration_load_error?: string;
   project_hosts_nebius_enabled?: boolean;
+  project_hosts_nebius_hosts_enabled?: boolean;
   project_hosts_self_host_alpha_enabled?: boolean;
   launcher_default_quick_create?: List<string>;
   project_rootfs_default_image?: string;

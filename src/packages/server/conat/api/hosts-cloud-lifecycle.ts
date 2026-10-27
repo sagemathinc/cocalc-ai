@@ -35,6 +35,7 @@ import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import { randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
+import { assertProjectHostProviderOffered } from "@cocalc/server/cloud/project-host-provider-offered";
 import {
   ensureConnectorRecord,
   createConnectorRecord,
@@ -342,6 +343,7 @@ export async function createHostInternalHelper({
   const title = normalizeProjectHostTitle(name);
   const id = randomUUID();
   const machineCloud = normalizeProviderId(machine?.cloud);
+  await assertProjectHostProviderOffered(machineCloud);
   const isSelfHost = machineCloud === "self-host";
   const shouldStartAfterCreate = !!start_after_create;
   const normalizedPricingModel = normalizeHostPricingModel(pricing_model);
@@ -568,6 +570,7 @@ export async function startHostInternalHelper({
   const owner = metadata.owner ?? account_id;
   const machine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  await assertProjectHostProviderOffered(machineCloud);
   const effectivePricingModel =
     row.metadata?.effective_pricing_model ??
     row.metadata?.desired_pricing_model ??

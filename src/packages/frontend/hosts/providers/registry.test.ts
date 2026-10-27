@@ -18,6 +18,7 @@ import {
   getProviderEnablement,
   getProviderOptions,
   getProviderOptionsList,
+  getRefreshProviders,
   getProviderPriceEstimate,
   isNebiusSpotSupported,
 } from "./registry";
@@ -475,6 +476,45 @@ describe("provider enablement", () => {
     );
     expect(providers).not.toContain("self-host");
     expect(providers).toContain("gcp");
+  });
+
+  it("offers Nebius for project hosts only when its project-host setting is on", () => {
+    const withoutHosts = getProviderEnablement({
+      customize: {
+        get: (key: string) => key !== "project_hosts_nebius_hosts_enabled",
+      },
+      showLocal: false,
+      isAdmin: true,
+    });
+    // still enabled (catalog refresh serves dedicated VMs), but not offered
+    expect(withoutHosts.enabled.nebius).toBe(true);
+    expect(
+      getProviderOptionsList(withoutHosts).map((option) => option.value),
+    ).not.toContain("nebius");
+    expect(
+      getRefreshProviders(withoutHosts).map((option) => option.value),
+    ).toContain("nebius");
+
+    const withHosts = getProviderEnablement({
+      customize: enabledCustomize,
+      showLocal: false,
+      isAdmin: true,
+    });
+    expect(
+      getProviderOptionsList(withHosts).map((option) => option.value),
+    ).toContain("nebius");
+
+    // and never without Nebius itself
+    const nebiusOff = getProviderEnablement({
+      customize: {
+        get: (key: string) => key !== "project_hosts_nebius_enabled",
+      },
+      showLocal: false,
+      isAdmin: true,
+    });
+    expect(
+      getProviderOptionsList(nebiusOff).map((option) => option.value),
+    ).not.toContain("nebius");
   });
 });
 
