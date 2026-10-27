@@ -27,6 +27,7 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
 
 import {
   deleteGpuProviderKey,
+  getRunpodCleanupForAccount,
   getRunpodClientForAccount,
   getGpuProviderKeyStatus,
   isGpuProviderKeysEntitled,
@@ -262,19 +263,10 @@ describe("GPU provider keys", () => {
   });
 
   it("builds a RunPod client from the local store, or nothing without a key", async () => {
-    expect(
-      await getRunpodClientForAccount(
-        ACCOUNT,
-        { purpose: "operate" },
-        { ...home, isEntitled: entitled },
-      ),
-    ).toBeUndefined();
+    const deps = { ...home, isEntitled: entitled };
+    expect(await getRunpodClientForAccount(ACCOUNT, deps)).toBeUndefined();
     localGetMock.mockResolvedValue(storedRecord({}));
-    const client = await getRunpodClientForAccount(
-      ACCOUNT,
-      { purpose: "operate" },
-      { ...home, isEntitled: entitled },
-    );
+    const client = await getRunpodClientForAccount(ACCOUNT, deps);
     expect(client).toBeDefined();
     expect(JSON.stringify(client)).not.toContain(KEY);
     expect(localGetMock).toHaveBeenCalledWith({
@@ -284,26 +276,45 @@ describe("GPU provider keys", () => {
 
   it("never reads the key away from the owner's home bay", async () => {
     localGetMock.mockResolvedValue(storedRecord({}));
-    for (const purpose of ["operate", "cleanup"] as const) {
-      await expect(
-        getRunpodClientForAccount(
-          ACCOUNT,
-          { purpose },
-          { isHomeBay: async () => false, isEntitled: entitled },
-        ),
-      ).rejects.toThrow("home bay");
-    }
+    const away = { isHomeBay: async () => false, isEntitled: entitled };
+    await expect(getRunpodClientForAccount(ACCOUNT, away)).rejects.toThrow(
+      "home bay",
+    );
+    await expect(getRunpodCleanupForAccount(ACCOUNT, away)).rejects.toThrow(
+      "home bay",
+    );
     expect(localGetMock).not.toHaveBeenCalled();
   });
 
-  it("requires the live entitlement to operate, but not to clean up", async () => {
+  it("requires the live entitlement for full access, but not for cleanup", async () => {
     localGetMock.mockResolvedValue(storedRecord({}));
     const lapsed = { ...home, isEntitled: async () => false };
-    await expect(
-      getRunpodClientForAccount(ACCOUNT, { purpose: "operate" }, lapsed),
-    ).rejects.toThrow("membership");
-    expect(
-      await getRunpodClientForAccount(ACCOUNT, { purpose: "cleanup" }, lapsed),
-    ).toBeDefined();
+    await expect(getRunpodClientForAccount(ACCOUNT, lapsed)).rejects.toThrow(
+      "membership",
+    );
+    expect(localGetMock).not.toHaveBeenCalled();
+    expect(await getRunpodCleanupForAccount(ACCOUNT, lapsed)).toBeDefined();
+  });
+
+  it("gives cleanup only inventory and billing, with no client to reach through", async () => {
+    localGetMock.mockResolvedValue(storedRecord({}));
+    const { fetch, urls } = fakeFetch([NO_PODS]);
+    const cleanup = (await getRunpodCleanupForAccount(ACCOUNT, {
+      ...home,
+      fetch,
+    }))!;
+    expect(Object.keys(cleanup).sort()).toEqual([
+      "getPod",
+      "getProviderIdentity",
+      "listPodBilling",
+      "listPods",
+    ]);
+    expect(Object.isFrozen(cleanup)).toBe(true);
+    expect(cleanup).not.toBeInstanceOf(
+      (await import("@cocalc/cloud/runpod/client")).RunpodClient,
+    );
+    expect(await cleanup.listPods()).toEqual([]);
+    expect(urls).toEqual(["https://api.runpod.io/v2/pods"]);
+    expect(JSON.stringify(cleanup)).not.toContain(KEY);
   });
 });

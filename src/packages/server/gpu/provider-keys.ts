@@ -238,37 +238,66 @@ async function isAccountHomeBay(account_id: string): Promise<boolean> {
   );
 }
 
-// A RunPod client acting with the account's own key, for the server code
-// that launches, inspects or cleans up GPUs on its behalf.
-//
-// Custody: this runs only on the key owner's home bay, and reads the key
-// from the local store; anywhere else it throws. A GPU operation for an
-// account on another bay must be routed to that bay as a whole; the key
-// never crosses the inter-bay bridge.
-//
-// Purpose: "operate" (launch, start, inspect) also requires the owner's
-// live gpu_provider_keys entitlement. "cleanup" (inventory, terminate,
-// delete storage) doesn't, so a lapsed membership can still be cleaned up.
-//
-// Never log or return the client's key; RunpodClient hides it from inspect
-// and JSON.
-export async function getRunpodClientForAccount(
+async function readLocalKey(
   account_id: string,
-  { purpose }: { purpose: "operate" | "cleanup" },
-  deps: GpuProviderKeyDeps = {},
-): Promise<RunpodClient | undefined> {
+  deps: GpuProviderKeyDeps,
+): Promise<string | undefined> {
   if (!(await (deps.isHomeBay ?? isAccountHomeBay)(account_id))) {
     throw Error("GPU provider keys are used only on the key owner's home bay");
-  }
-  if (
-    purpose === "operate" &&
-    !(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))
-  ) {
-    throw Error("Your membership doesn't include using a GPU provider key.");
   }
   const record = await getExternalCredential({
     selector: selector(account_id, "runpod"),
   });
   if (!record || record.revoked || !record.payload) return undefined;
-  return new RunpodClient({ apiKey: record.payload, fetch: deps.fetch });
+  return record.payload;
+}
+
+// Custody (both functions below): they run only on the key owner's home bay
+// and read the key from the local store; anywhere else they throw. A GPU
+// operation for an account on another bay is routed to that bay as a whole,
+// so the key never crosses the inter-bay bridge. Never log or return a key;
+// RunpodClient hides it from inspect and JSON.
+
+// Full RunPod access with the account's own key, for launching, starting
+// and inspecting GPUs. Requires the owner's live gpu_provider_keys
+// entitlement.
+export async function getRunpodClientForAccount(
+  account_id: string,
+  deps: GpuProviderKeyDeps = {},
+): Promise<RunpodClient | undefined> {
+  if (!(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))) {
+    throw Error("Your membership doesn't include using a GPU provider key.");
+  }
+  const apiKey = await readLocalKey(account_id, deps);
+  return apiKey ? new RunpodClient({ apiKey, fetch: deps.fetch }) : undefined;
+}
+
+// What cleanup may do with an account's key: find the pods and storage it
+// manages, check billing, and (from step 3) terminate them. Nothing here can
+// create or start anything, so it needs no entitlement: a lapsed membership
+// or a removed key can still be cleaned up. The client itself stays private
+// to these closures.
+export interface RunpodCleanupCapability {
+  getProviderIdentity(): Promise<RunpodProviderIdentity>;
+  listPods(): ReturnType<RunpodClient["listPods"]>;
+  getPod(podId: string): ReturnType<RunpodClient["getPod"]>;
+  listPodBilling(
+    ...args: Parameters<RunpodClient["listPodBilling"]>
+  ): ReturnType<RunpodClient["listPodBilling"]>;
+}
+
+export async function getRunpodCleanupForAccount(
+  account_id: string,
+  deps: GpuProviderKeyDeps = {},
+): Promise<RunpodCleanupCapability | undefined> {
+  const apiKey = await readLocalKey(account_id, deps);
+  if (!apiKey) return undefined;
+  const client = new RunpodClient({ apiKey, fetch: deps.fetch });
+  return Object.freeze({
+    getProviderIdentity: () => client.getProviderIdentity(),
+    listPods: () => client.listPods(),
+    getPod: (podId: string) => client.getPod(podId),
+    listPodBilling: (...args: Parameters<RunpodClient["listPodBilling"]>) =>
+      client.listPodBilling(...args),
+  });
 }
