@@ -294,4 +294,72 @@ describe("merge approval integrity triggers", () => {
       "cannot be truncated",
     );
   });
+
+  it("refuse the test reset outside a test database", async () => {
+    const saved = process.env.COCALC_TEST_USE_PGLITE;
+    delete process.env.COCALC_TEST_USE_PGLITE;
+    try {
+      const { rows } = await q("SELECT current_database() AS name");
+      if (rows[0].name !== "smc_ephemeral_testing_database") {
+        await expect(
+          truncateTablesForTestReset(getPool(), ["merge_approval_requests"]),
+        ).rejects.toThrow("only runs on the test database");
+      }
+    } finally {
+      if (saved != null) process.env.COCALC_TEST_USE_PGLITE = saved;
+    }
+  });
+
+  it("detect a same-named trigger of the wrong shape, and sync replaces it", async () => {
+    const reinstall = async () => {
+      const client = await getPool().connect();
+      try {
+        await ensureMergeApprovalIntegritySchema(client);
+      } finally {
+        client.release();
+      }
+    };
+    // Same name and function, but only AFTER INSERT: updates would pass.
+    await q(
+      "DROP TRIGGER merge_approval_decisions_integrity_trigger ON merge_approval_decisions",
+    );
+    await q(
+      `CREATE TRIGGER merge_approval_decisions_integrity_trigger
+         AFTER INSERT ON merge_approval_decisions
+         FOR EACH ROW EXECUTE FUNCTION merge_approval_decisions_integrity()`,
+    );
+    await expect(assertMergeApprovalIntegrity(getPool())).rejects.toThrow(
+      "merge_approval_decisions_integrity_trigger is mismatched",
+    );
+    await expect(
+      mergeApprovalIntegritySchemaNeedsSync(getPool()),
+    ).resolves.toBe(true);
+    await reinstall();
+    await expect(assertMergeApprovalIntegrity(getPool())).resolves.toBe(
+      undefined,
+    );
+
+    // Right events, but a different function that only carries the marker.
+    await q(
+      `CREATE OR REPLACE FUNCTION impostor_integrity() RETURNS trigger
+       LANGUAGE plpgsql AS $$
+       -- merge-approval-integrity-v1
+       BEGIN RETURN NEW; END; $$`,
+    );
+    await q(
+      "DROP TRIGGER merge_approval_relays_integrity_trigger ON merge_approval_relays",
+    );
+    await q(
+      `CREATE TRIGGER merge_approval_relays_integrity_trigger
+         BEFORE INSERT OR UPDATE OR DELETE ON merge_approval_relays
+         FOR EACH ROW EXECUTE FUNCTION impostor_integrity()`,
+    );
+    await expect(assertMergeApprovalIntegrity(getPool())).rejects.toThrow(
+      "merge_approval_relays_integrity_trigger is mismatched",
+    );
+    await reinstall();
+    await expect(assertMergeApprovalIntegrity(getPool())).resolves.toBe(
+      undefined,
+    );
+  });
 });

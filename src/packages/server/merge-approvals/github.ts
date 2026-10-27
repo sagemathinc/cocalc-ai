@@ -234,6 +234,7 @@ function commitSha(value: unknown, what: string): string {
 export interface PullRequestHead {
   head_sha: string;
   base_sha: string;
+  base_ref: string;
   state: string;
   draft: boolean;
 }
@@ -242,6 +243,7 @@ function pullRequestHead(pr: any): PullRequestHead {
   return {
     head_sha: commitSha(pr?.head?.sha, "head"),
     base_sha: commitSha(pr?.base?.sha, "base"),
+    base_ref: str(pr?.base?.ref, 255),
     state: pr?.merged ? "merged" : str(pr?.state, 20),
     draft: pr?.draft === true,
   };

@@ -17,11 +17,21 @@ enforced in the database so that no code path, however wrong, can rewrite one:
   be recorded first. Requests are deleted only after the retention period.
 - None of the tables can be truncated.
 
+These triggers guard against application bugs and compromised application
+code paths. They don't guard against someone holding the table-owner role,
+who can disable or drop them; that is why approvals are also recorded on
+GitHub (the relayed review and status) and checked by the weekly
+reconcile.
+
 Installed by schema sync; a change to these functions bumps the contract so
 that sync replaces them.
 */
 
 import type { Client } from "@cocalc/database/pool";
+import { isPgliteEnabled } from "@cocalc/database/pool/pglite";
+
+// The only databases truncateTablesForTestReset works on.
+const TEST_DATABASE = "smc_ephemeral_testing_database";
 
 const CONTRACT = "merge-approval-integrity-v1";
 const RETENTION = "13 months";
@@ -32,6 +42,21 @@ const TABLES = [
   "merge_approval_relays",
 ] as const;
 
+// pg_trigger.tgtype bits (PostgreSQL's TRIGGER_TYPE_*).
+const TRIGGER_ROW = 1;
+const TRIGGER_BEFORE = 2;
+const TRIGGER_INSERT = 4;
+const TRIGGER_DELETE = 8;
+const TRIGGER_UPDATE = 16;
+const TRIGGER_TRUNCATE = 32;
+const ROW_BEFORE_IUD =
+  TRIGGER_ROW |
+  TRIGGER_BEFORE |
+  TRIGGER_INSERT |
+  TRIGGER_DELETE |
+  TRIGGER_UPDATE;
+const STATEMENT_BEFORE_TRUNCATE = TRIGGER_BEFORE | TRIGGER_TRUNCATE;
+
 export const MERGE_APPROVAL_TRIGGERS = [
   {
     table: "merge_approval_requests",
@@ -39,6 +64,7 @@ export const MERGE_APPROVAL_TRIGGERS = [
     fn: "merge_approval_requests_integrity",
     when: "BEFORE INSERT OR UPDATE OR DELETE",
     level: "ROW",
+    tgtype: ROW_BEFORE_IUD,
   },
   {
     table: "merge_approval_decisions",
@@ -46,6 +72,7 @@ export const MERGE_APPROVAL_TRIGGERS = [
     fn: "merge_approval_decisions_integrity",
     when: "BEFORE INSERT OR UPDATE OR DELETE",
     level: "ROW",
+    tgtype: ROW_BEFORE_IUD,
   },
   {
     table: "merge_approval_relays",
@@ -53,6 +80,7 @@ export const MERGE_APPROVAL_TRIGGERS = [
     fn: "merge_approval_relays_integrity",
     when: "BEFORE INSERT OR UPDATE OR DELETE",
     level: "ROW",
+    tgtype: ROW_BEFORE_IUD,
   },
   // Row triggers don't see TRUNCATE.
   ...TABLES.map((table) => ({
@@ -61,6 +89,7 @@ export const MERGE_APPROVAL_TRIGGERS = [
     fn: "merge_approval_refuse_truncate",
     when: "BEFORE TRUNCATE",
     level: "STATEMENT",
+    tgtype: STATEMENT_BEFORE_TRUNCATE,
   })),
 ] as const;
 
@@ -198,25 +227,38 @@ $$;
 `,
 ];
 
+type TriggerState = "ok" | "missing" | "mismatched" | "disabled" | "outdated";
+
+// A trigger counts only if it is exactly the one sync creates: on this table,
+// BEFORE the right events at the right level, calling the right function, with
+// no WHEN clause or column list, enabled, and with the current function body.
 async function triggerState(
   db: Pick<Client, "query">,
-  table: string,
-  trigger: string,
-): Promise<"ok" | "missing" | "disabled" | "outdated"> {
+  { table, trigger, fn, tgtype }: (typeof MERGE_APPROVAL_TRIGGERS)[number],
+): Promise<TriggerState> {
   const { rows } = await db.query<{
     enabled: string | null;
+    shape: boolean | null;
     current: boolean | null;
   }>(
     `SELECT t.tgenabled::text AS enabled,
-            position($3 IN pg_get_functiondef(t.tgfoid)) > 0 AS current
+            (t.tgtype = $4
+             AND p.proname = $3 AND p.pronargs = 0
+             AND p.pronamespace = c.relnamespace
+             AND t.tgqual IS NULL
+             AND cardinality(t.tgattr::int2[]) = 0) AS shape,
+            position($5 IN pg_get_functiondef(t.tgfoid)) > 0 AS current
        FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+       JOIN pg_proc p ON p.oid = t.tgfoid
       WHERE t.tgname=$1
         AND t.tgrelid=to_regclass($2)
         AND NOT t.tgisinternal`,
-    [trigger, table, CONTRACT],
+    [trigger, table, fn, tgtype, CONTRACT],
   );
   const row = rows[0];
   if (row == null) return "missing";
+  if (!row.shape) return "mismatched";
   if (row.enabled !== "O" && row.enabled !== "A") return "disabled";
   return row.current ? "ok" : "outdated";
 }
@@ -227,8 +269,15 @@ export async function ensureMergeApprovalIntegritySchema(
   for (const sql of FUNCTIONS_SQL) {
     await db.query(sql);
   }
-  for (const { table, trigger, fn, when, level } of MERGE_APPROVAL_TRIGGERS) {
-    if ((await triggerState(db, table, trigger)) === "missing") {
+  for (const spec of MERGE_APPROVAL_TRIGGERS) {
+    const { table, trigger, fn, when, level } = spec;
+    const state = await triggerState(db, spec);
+    if (state === "mismatched") {
+      // Not the trigger sync creates (wrong events, level, function, ...):
+      // replace it.
+      await db.query(`DROP TRIGGER ${trigger} ON ${table}`);
+    }
+    if (state === "missing" || state === "mismatched") {
       await db.query(
         `CREATE TRIGGER ${trigger} ${when} ON ${table}
            FOR EACH ${level} EXECUTE FUNCTION ${fn}()`,
@@ -242,9 +291,11 @@ export async function ensureMergeApprovalIntegritySchema(
 export async function mergeApprovalIntegritySchemaNeedsSync(
   db: Pick<Client, "query">,
 ): Promise<boolean> {
-  for (const { table, trigger } of MERGE_APPROVAL_TRIGGERS) {
-    const state = await triggerState(db, table, trigger);
-    if (state === "missing" || state === "outdated") return true;
+  for (const spec of MERGE_APPROVAL_TRIGGERS) {
+    const state = await triggerState(db, spec);
+    if (state === "missing" || state === "mismatched" || state === "outdated") {
+      return true;
+    }
   }
   return false;
 }
@@ -252,12 +303,25 @@ export async function mergeApprovalIntegritySchemaNeedsSync(
 // Test databases only: their reset truncates every table, which these
 // triggers refuse. Truncates the given tables in one transaction with the
 // truncate guards disabled just for it, so they are back on whether or not
-// it succeeds. Production code never truncates them.
+// it succeeds. It refuses anywhere but the ephemeral test database or a
+// PGlite test run (Lite also runs on PGlite, so PGlite alone isn't enough).
 export async function truncateTablesForTestReset(
   db: Pick<Client, "query">,
   tableNames: string[],
 ): Promise<void> {
   if (tableNames.length === 0) return;
+  const pgliteTest =
+    isPgliteEnabled() && process.env.COCALC_TEST_USE_PGLITE === "1";
+  if (!pgliteTest) {
+    const { rows } = await db.query<{ name: string }>(
+      "SELECT current_database() AS name",
+    );
+    if (rows[0]?.name !== TEST_DATABASE) {
+      throw new Error(
+        `truncateTablesForTestReset only runs on the test database (${TEST_DATABASE})`,
+      );
+    }
+  }
   const { rows } = await db.query<{ table: string; trigger: string }>(
     `SELECT c.relname AS table, t.tgname AS trigger
        FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
@@ -290,8 +354,9 @@ export async function truncateTablesForTestReset(
 export async function assertMergeApprovalIntegrity(
   db: Pick<Client, "query">,
 ): Promise<void> {
-  for (const { table, trigger } of MERGE_APPROVAL_TRIGGERS) {
-    const state = await triggerState(db, table, trigger);
+  for (const spec of MERGE_APPROVAL_TRIGGERS) {
+    const { trigger } = spec;
+    const state = await triggerState(db, spec);
     if (state !== "ok") {
       throw new Error(
         `merge approvals are unavailable: integrity trigger ${trigger} is ${state}`,

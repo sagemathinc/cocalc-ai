@@ -157,6 +157,18 @@ export async function requestMergeApproval(
           throw codeError(`pull request #${pr_number} changed; try again`, 409);
         }
         assertCurrentHead(pr_number, head_sha, now.head_sha);
+        // The snapshot (files, diffstat, the pinned compare link) is of
+        // base_sha...head_sha into base_ref: a new base commit or a retarget
+        // makes it describe a different merge.
+        if (
+          now.base_sha !== snapshot.base_sha ||
+          now.base_ref !== snapshot.base_ref
+        ) {
+          throw codeError(
+            `pull request #${pr_number} base changed while it was being read; try again`,
+            "base_changed",
+          );
+        }
       },
     },
   );

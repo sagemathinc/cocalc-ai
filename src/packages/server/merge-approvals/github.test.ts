@@ -321,6 +321,7 @@ describe("merge approval GitHub App", () => {
     ).resolves.toEqual({
       head_sha: HEAD,
       base_sha: BASE,
+      base_ref: "main",
       state: "open",
       draft: false,
     });

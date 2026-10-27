@@ -75,6 +75,7 @@ function prSnapshot(overrides = {}) {
     base_ref: "main",
     head_ref: "b",
     head_sha: HEAD,
+    base_sha: "b".repeat(40),
     html_url: "u",
     additions: 0,
     deletions: 0,
@@ -123,6 +124,7 @@ beforeEach(() => {
   headMock.mockReset().mockResolvedValue({
     head_sha: HEAD,
     base_sha: "b".repeat(40),
+    base_ref: "main",
     state: "open",
     draft: false,
   });
@@ -202,6 +204,23 @@ describe("requestMergeApproval", () => {
     await expect(requestMergeApproval(agentRequest())).rejects.toThrow(
       "changed; try again",
     );
+    // A new base commit, or a retarget, between the read and the lock.
+    for (const moved of [
+      { base_sha: "e".repeat(40) },
+      { base_ref: "release" },
+    ]) {
+      headMock.mockResolvedValue({
+        head_sha: HEAD,
+        base_sha: "b".repeat(40),
+        base_ref: "main",
+        state: "open",
+        draft: false,
+        ...moved,
+      });
+      await expect(requestMergeApproval(agentRequest())).rejects.toMatchObject({
+        code: "base_changed",
+      });
+    }
   });
 
   it("refuses anything but an agent session", async () => {
