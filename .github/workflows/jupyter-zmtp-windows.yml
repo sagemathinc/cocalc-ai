@@ -32,11 +32,12 @@ jobs:
         run: |
           python -m pip install pyzmq==27.1.0
           python -c "import zmq; print('libzmq', zmq.zmq_version(), 'pyzmq', zmq.__version__)"
-          mkdir -p "$RUNNER_TEMP/ts" && cd "$RUNNER_TEMP/ts" && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund typescript@5.9.3 @types/node@24 @types/jest@30
+          mkdir -p "$RUNNER_TEMP/ts" && cd "$RUNNER_TEMP/ts" && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund typescript@5.9.3 @types/node@24.19.2 @types/jest@30.0.0
       - name: Compile and run the ZMTP tests
         shell: bash
         env:
           PYTHON: python
+          ZMTP_REQUIRE_PYZMQ: "1"
           ZMTP_TS_API: ${{ runner.temp }}/ts/node_modules/typescript
         run: |
           out="$RUNNER_TEMP/zmtp"

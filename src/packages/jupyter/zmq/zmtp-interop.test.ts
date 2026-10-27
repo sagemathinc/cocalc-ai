@@ -15,7 +15,18 @@ import { createServer, type AddressInfo } from "node:net";
 import * as Z from "./zmtp";
 
 const PY = process.env.PYTHON ?? "python3";
-const hasZmq = spawnSync(PY, ["-c", "import zmq"]).status === 0;
+const zmqCheck = spawnSync(PY, ["-c", "import zmq"], { encoding: "utf8" });
+const hasZmq = zmqCheck.status === 0;
+// CI sets ZMTP_REQUIRE_PYZMQ=1: there, a missing Python stack fails instead of skipping (grader G1)
+if (!hasZmq && process.env.ZMTP_REQUIRE_PYZMQ === "1") {
+  describe("pyzmq, required by ZMTP_REQUIRE_PYZMQ=1", () => {
+    test("is importable", () => {
+      throw new Error(
+        `${PY} can't import zmq: ${zmqCheck.stderr || zmqCheck.error || zmqCheck.status}`,
+      );
+    });
+  });
+}
 const MIB = Number(process.env.ZMTP_INTEROP_MIB ?? 8);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

@@ -301,6 +301,8 @@ jobs:
           COCALC_TEST_REPORT_DIR: ${{ github.workspace }}/src/.cache/test-reports
           TEST_PACKAGES: ${{ matrix.packages }}
           TEST_SHARD: ${{ matrix.shard }}
+          # (the rest lane has the Python stack: the Jupyter transport's suites fail, not skip, without it)
+          ZMTP_REQUIRE_PYZMQ: ${{ matrix.lane == 'rest' && '1' || '' }}
         run: |
           if [[ "${{ matrix.lane }}" == "rest" ]]; then
             source venv/bin/activate
@@ -319,8 +321,10 @@ jobs:
         if: matrix.lane == 'rest' && contains(format(',{0},', matrix.packages), ',jupyter,')
         env:
           COCALC_JUPYTER_ZMQ: native
+          ZMTP_REQUIRE_PYZMQ: "1"
         run: |
           source venv/bin/activate
+          jupyter --version > /dev/null && python -c "import zmq"
           cd src/packages/jupyter
           pnpm exec jest --maxWorkers=1 kernel/test zmq/transport.test.ts zmq/sockets-behavior.test.ts
 

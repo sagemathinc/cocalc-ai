@@ -10,6 +10,18 @@ function hasJupyter() {
   return result.status === 0;
 }
 
+// Without jupyter the kernel suites are skipped, except where ZMTP_REQUIRE_PYZMQ=1 (CI)
+// requires the Python stack: there a missing jupyter is an error, not a silent skip.
+function jupyterTestsIgnored() {
+  if (hasJupyter()) return [];
+  if (process.env.ZMTP_REQUIRE_PYZMQ === "1") {
+    throw new Error(
+      "ZMTP_REQUIRE_PYZMQ=1, but `jupyter --version` fails: the kernel suites can't run",
+    );
+  }
+  return JUPYTER_INTEGRATION_TESTS;
+}
+
 module.exports = {
   preset: "ts-jest",
   transform: {
@@ -19,5 +31,5 @@ module.exports = {
   testMatch: ["**/?(*.)+(spec|test).ts?(x)"],
   setupFiles: ["./test/setup.js"],
   setupFilesAfterEnv: ["./test/setup-after-env.js"],
-  testPathIgnorePatterns: hasJupyter() ? [] : JUPYTER_INTEGRATION_TESTS,
+  testPathIgnorePatterns: jupyterTestsIgnored(),
 };

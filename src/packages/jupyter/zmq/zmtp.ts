@@ -150,6 +150,7 @@ export class Decoder {
   private head = 0;
   private off = 0;
   private avail = 0; // unparsed bytes
+  private held = 0; // the retained chunks' bytes, consumed prefixes included
   private greeted = false;
   // the message in progress
   private frames: Buffer[] = [];
@@ -166,9 +167,18 @@ export class Decoder {
     private stopped: () => boolean = () => false,
   ) {}
 
-  /** P + C: the message in progress and the unparsed bytes (logical). */
+  /**
+   * P + C: the message in progress, and the bytes of every chunk still held,
+   * including the consumed prefix of the chunk at the cursor (it is retained
+   * until that chunk is wholly consumed).
+   */
   buffered(): number {
-    return this.framesBytes + (this.body ? this.body.length : 0) + this.avail;
+    return this.framesBytes + (this.body ? this.body.length : 0) + this.held;
+  }
+
+  /** The bytes not parsed yet (part of `buffered()`). */
+  unread(): number {
+    return this.avail;
   }
 
   /** The distinct backing stores this decoder references. */
@@ -190,15 +200,20 @@ export class Decoder {
 
   push(chunk: Buffer): void {
     if (chunk.length === 0) return;
+    // a chunk that is a small view of a larger backing store (a pooled or
+    // sliced read) is copied exactly, once, so that a held chunk's backing is
+    // at most twice its bytes (each received byte is copied at most once)
+    if (chunk.length * 2 < chunk.buffer.byteLength) chunk = exactCopy(chunk);
     this.chunks.push(chunk);
     this.avail += chunk.length;
+    this.held += chunk.length;
     this.parse();
   }
 
   /** Release everything (the connection ended). */
   clear(): void {
     this.chunks = [];
-    this.head = this.off = this.avail = 0;
+    this.head = this.off = this.avail = this.held = 0;
     this.frames = [];
     this.framesBytes = 0;
     this.body = undefined;
@@ -231,6 +246,7 @@ export class Decoder {
         return;
       }
       n -= left;
+      this.held -= c.length;
       this.chunks[this.head++] = undefined;
       this.off = 0;
     }
@@ -528,6 +544,7 @@ class ZSocket {
       queuedBytes: this.qBytes,
       queuedCount: this.qCount,
       parserBuffered: this.conn ? this.conn.decoder.buffered() : 0,
+      parserUnread: this.conn ? this.conn.decoder.unread() : 0,
       retainedBacking,
       outQueuedBytes: this.outBytes,
       writableLength: this.conn?.socket.writableLength ?? 0,

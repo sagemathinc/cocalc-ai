@@ -16,6 +16,7 @@ import * as net from "node:net";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const rawNet = require("node:net");
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Z from "./zmtp";
@@ -272,6 +273,24 @@ describe("the codec", () => {
     same(got, [[Buffer.from("A"), Buffer.from("B")]]);
   });
 
+  test("a drained chunk with a 1-byte partial header: its whole retained chunk is counted, and released on completion (astra A2-CODE-1)", () => {
+    partialTailCheck(Z);
+  });
+
+  test("a received chunk that is a small view of a larger backing store is held at most twice its bytes", () => {
+    const s = session([[Buffer.alloc(100, 9)]]);
+    const big = Buffer.allocUnsafeSlow(1 << 20);
+    s.copy(big, 4096);
+    const view = big.subarray(4096, 4096 + s.length - 3); // ends inside the last frame
+    const d = new Z.Decoder({ greeting() {}, command() {}, message() {} });
+    d.push(view);
+    assert.ok(d.buffered() > 0);
+    assert.ok(
+      heldBacking(d) <= 2 * d.buffered(),
+      `backing ${heldBacking(d)} vs buffered ${d.buffered()}`,
+    );
+  });
+
   test("a tiny body never retains a pooled or larger backing store", () => {
     const big = Buffer.allocUnsafeSlow(65536);
     const s = session([[Buffer.from("x")]]);
@@ -284,6 +303,48 @@ describe("the codec", () => {
     assert.equal(g2[0][0].buffer.byteLength, 100);
   });
 });
+
+// astra A2-CODE-1: a held chunk counts whole, consumed prefix included
+function heldBacking(d: Z.Decoder): number {
+  const set = new Set<ArrayBufferLike>();
+  d.backings(set);
+  let n = 0;
+  for (const b of set) n += b.byteLength;
+  return n;
+}
+
+function partialTailCheck(Zm: typeof Z) {
+  const head = cat([
+    Zm.greeting(),
+    ...Zm.readyCommand({ "Socket-Type": Buffer.from("ROUTER") }),
+    ...Zm.encodeFrames([Buffer.alloc(8192, 5)]),
+  ]);
+  const chunk = Buffer.allocUnsafeSlow(head.length + 1); // exact and unpooled
+  head.copy(chunk);
+  chunk[head.length] = 0; // the next frame's flags byte, alone
+  const got: Buffer[][] = [];
+  const d = new Zm.Decoder({
+    greeting() {},
+    command() {},
+    message: (f) => got.push(f),
+  });
+  d.push(chunk);
+  assert.equal(got.length, 1);
+  got.length = 0; // delivered and dropped: nothing queued, nothing in progress
+  assert.equal(d.unread(), 1);
+  assert.equal(d.buffered(), chunk.length, "the held chunk counts whole");
+  assert.ok(
+    heldBacking(d) <= 2 * d.buffered(),
+    `backing ${heldBacking(d)} vs buffered ${d.buffered()}`,
+  );
+  // the rest of the frame arrives: the old chunk is released
+  d.push(Buffer.from([3, 65, 66, 67]));
+  assert.equal(got.length, 1);
+  assert.equal(got[0][0].toString(), "ABC");
+  assert.equal(d.buffered(), 0);
+  assert.equal(d.liveSlots(), 0);
+  assert.equal(heldBacking(d), 0);
+}
 
 // ---------------------------------------------------------------- 2. fuzz
 
@@ -378,8 +439,16 @@ describe("the connection lifecycle", () => {
   test("an HTTP listener is rejected at its first byte, long before the deadline", async () => {
     const srv = await server("ROUTER", "http");
     const d = new Z.Dealer({ routingId: "x" });
+    const t0 = Date.now();
     d.connect(srv.url);
     await until(() => d.counters.attempts >= 2, 2000, "a retry");
+    await sleep(300);
+    // no hot loop against a foreign listener: about one attempt per reconnect interval
+    const bound = Math.floor((Date.now() - t0) / Z.RECONNECT_IVL) + 2;
+    assert.ok(
+      d.counters.attempts <= bound,
+      `${d.counters.attempts} attempts, bound ${bound}`,
+    );
     d.close();
     await srv.close();
   });
@@ -393,8 +462,14 @@ describe("the connection lifecycle", () => {
     a.close();
     await srv.close();
     const b = new Z.Dealer({ routingId: "y", reconnectIvl: 10_000 });
-    b.connect("tcp://127.0.0.1:1"); // refused: in its backoff
-    await sleep(100);
+    b.connect("tcp://127.0.0.1:1"); // refused, then in its backoff
+    // (on Windows a refusal takes ~2 s of SYN retries: wait for it, so this is the backoff)
+    await until(
+      () => b.stats.writableLength === 0 && (b as any).conn == null,
+      5000,
+      "the refusal",
+    );
+    await sleep(50);
     b.close();
     await sleep(50);
     assert.equal(
@@ -487,7 +562,7 @@ describe("delivery and flow control", () => {
     assert.equal(d.closed, false);
     d.close();
     await srv.close();
-  });
+  }, 30_000);
 
   test("a delayed consumer: the socket pauses at the mark, nothing is lost, and the queue bound holds", async () => {
     const srv = await server("ROUTER");
@@ -511,7 +586,7 @@ describe("delivery and flow control", () => {
     }
     d.close();
     await srv.close();
-  });
+  }, 30_000);
 
   test("a nonempty queue plus a large message completed by a 1-byte chunk: the parser stops right after it", async () => {
     const KiB = 1024;
@@ -560,7 +635,7 @@ describe("delivery and flow control", () => {
     assert.equal((await it.next()).value![0].toString(), "after-2");
     d.close();
     await srv.close();
-  });
+  }, 30_000);
 
   test("drain/repeat: consumed slots are released, and retained backing returns to 0", async () => {
     const srv = await server("ROUTER");
@@ -585,7 +660,40 @@ describe("delivery and flow control", () => {
     }
     d.close();
     await srv.close();
-  });
+  }, 30_000);
+
+  test("drain with a partial header left: the reported bound holds on real backing, then everything is released", async () => {
+    const srv = await server("ROUTER");
+    const d = new Z.Dealer({ routingId: "x" });
+    d.connect(srv.url);
+    d.send(["hi"]);
+    await until(() => srv.peers[0]?.frames.length === 1);
+    const msgs = cat(
+      Array.from({ length: 4 }, (_, i) =>
+        cat(Z.encodeFrames([Buffer.alloc(8192, i)])),
+      ),
+    );
+    srv.peers[0].raw(cat([msgs, Buffer.from([0])])); // four messages and one header byte
+    await until(() => d.stats.queuedCount === 4);
+    const it = d[Symbol.asyncIterator]();
+    for (let i = 0; i < 4; i++) assert.equal((await it.next()).value![0][0], i);
+    const st = d.stats;
+    assert.equal(st.queuedCount, 0);
+    assert.equal(st.parserUnread, 1);
+    assert.ok(
+      st.retainedBacking <= 2 * (st.queuedBytes + st.parserBuffered),
+      JSON.stringify(st),
+    );
+    srv.peers[0].raw(Buffer.from([2, 0x6f, 0x6b]));
+    assert.equal((await it.next()).value![0].toString(), "ok");
+    await until(
+      () => d.stats.retainedBacking === 0 && d.stats.liveSlots === 0,
+      3000,
+      "the release",
+    );
+    d.close();
+    await srv.close();
+  }, 30_000);
 
   test("close with a pending next(): done, and everything released", async () => {
     const srv = await server("ROUTER");
@@ -681,14 +789,20 @@ const MUTANTS: [
   string,
   string,
   (Zm: typeof Z) => Promise<void> | void,
+  RegExp, // the failure the mutant must cause: its own check's message (grader G3)
 ][] = [
   [
     "m1: the short/LONG boundary at 254",
     "if (size < 256) {",
     "if (size < 255) {",
     (Zm) => {
-      assert.equal(Zm.encodeFrames([Buffer.alloc(255)])[0].length, 2);
+      assert.equal(
+        Zm.encodeFrames([Buffer.alloc(255)])[0].length,
+        2,
+        "a 255-byte frame has a 2-byte header",
+      );
     },
+    /a 255-byte frame has a 2-byte header/,
   ],
   [
     "m2: MORE ignored",
@@ -706,8 +820,9 @@ const MUTANTS: [
         command() {},
         message: (f) => got.push(f),
       }).push(s);
-      assert.equal(got.length, 1);
+      assert.equal(got.length, 1, "two frames make one message");
     },
+    /two frames make one message/,
   ],
   [
     "m3: a COMMAND frame taken as a message",
@@ -724,8 +839,9 @@ const MUTANTS: [
         command: (n) => cmds.push(n),
         message() {},
       }).push(s);
-      assert.deepEqual(cmds, ["READY"]);
+      assert.deepEqual(cmds, ["READY"], "READY is a command");
     },
+    /READY is a command/,
   ],
   [
     "m4: the subscription not resent on reconnect",
@@ -749,6 +865,7 @@ const MUTANTS: [
         await srv.close();
       }
     },
+    /timed out waiting for the resent subscription/,
   ],
   [
     "m5: no handshake deadline",
@@ -769,6 +886,7 @@ const MUTANTS: [
         await srv.close();
       }
     },
+    /timed out waiting for a retry after the 200 ms deadline/,
   ],
   [
     "m6: no generation check",
@@ -801,6 +919,7 @@ const MUTANTS: [
         await srv.close();
       }
     },
+    /a stale message was delivered/,
   ],
   [
     "m7: a tiny body copied with Buffer.from (pooled)",
@@ -820,8 +939,20 @@ const MUTANTS: [
         command() {},
         message: (f) => got.push(f),
       }).push(big.subarray(0, s.length));
-      assert.equal(got[0][0].buffer.byteLength, 1);
+      assert.equal(
+        got[0][0].buffer.byteLength,
+        1,
+        "the body's backing is exact",
+      );
     },
+    /the body's backing is exact/,
+  ],
+  [
+    "m8: buffered() counts only unread bytes (A2-CODE-1)",
+    "return this.framesBytes + (this.body ? this.body.length : 0) + this.held;",
+    "return this.framesBytes + (this.body ? this.body.length : 0) + this.avail;",
+    (Zm) => partialTailCheck(Zm),
+    /the held chunk counts whole/,
   ],
 ];
 
@@ -851,20 +982,131 @@ function loadMutant(from: string, to: string): typeof Z {
   }
 }
 
+// §d.4, grader G2: nothing the transport holds outlives delivery, as the GC sees it (not
+// only zmtp.ts's own counters).  A child node with --expose-gc fills and drains a Dealer
+// with large (spanning) and small (single-chunk) frames, drops every delivered message,
+// collects, and counts the frames' backing stores still alive through WeakRefs.
+const GC_CHILD = String.raw`
+const net = require("node:net");
+const Z = require(process.argv[1]); // (node -e: the first argument)
+const cat = (b) => Buffer.concat(b);
+(async () => {
+  const srv = net.createServer((s) => {
+    s.on("error", () => {});
+    s.write(Z.greeting());
+    const d = new Z.Decoder({
+      greeting: () => s.write(cat(Z.readyCommand({ "Socket-Type": Buffer.from("ROUTER") }))),
+      command() {},
+      message: () => {
+        const big = Array.from({ length: 8 }, (_, i) => cat(Z.encodeFrames([Buffer.alloc(1 << 20, i)])));
+        const small = Array.from({ length: 200 }, (_, i) => cat(Z.encodeFrames(["s" + i, Buffer.alloc(100, i)])));
+        s.write(cat([...big, ...small]));
+      },
+    });
+    s.on("data", (b) => d.push(b));
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const dealer = new Z.Dealer({ routingId: "gc" });
+  dealer.connect("tcp://127.0.0.1:" + srv.address().port);
+  dealer.send(["go"]);
+  const refs = [];
+  const it = dealer[Symbol.asyncIterator]();
+  // (in its own function: an async frame can keep its last loop value alive)
+  async function recv() {
+    for (let i = 0; i < 208; i++) {
+      const m = (await it.next()).value;
+      for (const f of m) refs.push(new WeakRef(f.buffer));
+    }
+  }
+  await recv();
+  for (let i = 0; i < 5; i++) {
+    await new Promise((r) => setImmediate(r));
+    global.gc();
+  }
+  const alive = refs.filter((r) => r.deref() !== undefined).length;
+  dealer.close();
+  srv.close();
+  console.log(JSON.stringify({ frames: refs.length, alive, stats: dealer.stats }));
+})().catch((e) => { console.error(e); process.exit(1); });
+`;
+
+function transpiled(src: string): { file: string; dir: string } {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ts = require(process.env.ZMTP_TS_API ?? "typescript");
+  const js = ts.transpileModule(src, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const dir = mkdtempSync(join(tmpdir(), "zmtp-"));
+  const file = join(dir, "zmtp.js");
+  writeFileSync(file, js);
+  return { file, dir };
+}
+
+function gcAlive(src: string): { frames: number; alive: number } {
+  const { file, dir } = transpiled(src);
+  try {
+    const r = spawnSync(
+      process.execPath,
+      ["--expose-gc", "-e", GC_CHILD, file],
+      {
+        encoding: "utf8",
+        timeout: 60_000,
+      },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout.trim().split("\n").pop()!);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe("garbage collection (grader G2)", () => {
+  const SRC = () => readFileSync(join(__dirname, "zmtp.ts"), "utf8");
+
+  test("after a fill and drain, no delivered frame's backing store is kept alive", () => {
+    const out = gcAlive(SRC());
+    assert.equal(out.frames, 8 + 400);
+    assert.equal(
+      out.alive,
+      0,
+      `still alive after gc: ${out.alive} of ${out.frames}`,
+    );
+  }, 60_000);
+
+  test("the check sees a reference zmtp.ts's own counters can't: a hidden copy of the last message", () => {
+    const from = "    this.inq[this.inHead] = undefined;\n";
+    const src = SRC();
+    assert.equal(src.split(from).length, 2);
+    const out = gcAlive(
+      src.replace(from, from + "    (this as any).lastDelivered = m;\n"),
+    );
+    assert.ok(out.alive > 0, "the leak was not seen");
+  }, 60_000);
+});
+
 describe("mutants (fail-first evidence)", () => {
   test("the unmutated module passes every mutant's check", async () => {
     for (const [, , , check] of MUTANTS) await check(Z);
   });
-  for (const [name, from, to, check] of MUTANTS) {
-    test(`${name}: fails its check`, async () => {
+  for (const [name, from, to, check, expected] of MUTANTS) {
+    test(`${name}: fails its own check`, async () => {
       const Zm = loadMutant(from, to);
-      let failed = false;
+      let error: unknown;
       try {
         await check(Zm);
-      } catch {
-        failed = true;
+      } catch (e) {
+        error = e;
       }
-      assert.ok(failed, `${name} survived`);
-    });
+      assert.ok(error, `${name} survived`);
+      // only its own check's failure counts, not a timeout or setup error elsewhere
+      assert.match(
+        String((error as any)?.message ?? error),
+        expected,
+        `${name} failed for another reason: ${error}`,
+      );
+    }, 30_000);
   }
 });
