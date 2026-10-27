@@ -336,6 +336,29 @@ if (
 }
 NODE
 
+# Redeploying the same bundle does not grow the ledger: its previous entry for
+# the current build is merged, not appended again.
+for round in 1 2; do
+  cp "${RET_TARGET}/runtime/control-plane/frontend-asset-ledger.json" \
+    "${RET_PREVIOUS}/runtime/control-plane/frontend-asset-ledger.json"
+  preserve_previous_static_assets
+  prepare_frontend_asset_history >/dev/null
+done
+node - "${RET_TARGET}/runtime/control-plane/frontend-asset-ledger.json" <<'NODE'
+const fs = require("node:fs");
+const ledger = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const names = ledger.builds.map((build) => build.fingerprint).join(",");
+if (names !== "current,previous,mid,unlisted") {
+  throw new Error(`a redeploy changed the ledger's builds: ${names}`);
+}
+NODE
+cp "${RET_PREVIOUS}/runtime/control-plane/frontend-asset-ledger.json" "${TMP_ROOT}/ledger-redeploy.json"
+printf '{"schema":1,"builds":[%s,%s,%s]}\n' \
+  "{\"fingerprint\":\"previous\",\"build_timestamp\":$((NOW_MS - 2 * DAY_MS)),\"assets\":[\"previous-1111111111111111.js\"]}" \
+  "{\"fingerprint\":\"mid\",\"build_timestamp\":$((NOW_MS - 5 * DAY_MS)),\"assets\":[\"mid-2222222222222222.js\"]}" \
+  "{\"fingerprint\":\"old\",\"build_timestamp\":$((NOW_MS - 20 * DAY_MS)),\"assets\":[\"old-3333333333333333.js\",\"shared-4444444444444444.js\",\"gone-6666666666666666.js\"]}" \
+  >"${RET_PREVIOUS}/runtime/control-plane/frontend-asset-ledger.json"
+
 # Hashed files no build lists are kept, so they count toward the cap: here the
 # listed files are few, but with the unlisted ones the release is over it, and
 # it fails before anything is removed.

@@ -994,6 +994,29 @@ const history = {
     max_assets: MAX_ASSETS,
   },
 };
+// One ledger entry per build (fingerprint and timestamp), so redeploying the
+// same bundle does not append a copy each time: entries for one build are
+// merged, and one that is the current build adds only assets it lacks.
+function mergeLedgerBuilds(current, others) {
+  const key = (build) => `${build.fingerprint}\u0000${build.build_timestamp}`;
+  const currentKey = key(current);
+  const merged = new Map();
+  for (const build of others) {
+    const extra =
+      key(build) === currentKey
+        ? build.assets.filter((asset) => !currentAssets.has(asset))
+        : build.assets;
+    if (key(build) === currentKey && extra.length === 0) continue;
+    const existing = merged.get(key(build));
+    if (existing) {
+      existing.assets = [...new Set([...existing.assets, ...extra])].sort();
+    } else {
+      merged.set(key(build), { ...build, assets: [...extra].sort() });
+    }
+  }
+  return [current, ...merged.values()];
+}
+
 function writeJson(output, value) {
   const temporary = `${output}.tmp-${process.pid}`;
   fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
@@ -1003,7 +1026,10 @@ writeJson(path.join(targetRoot, "frontend-build-history.json"), history);
 writeJson(targetLedgerPath, {
   schema: 1,
   generated_at: history.generated_at,
-  builds: [current, ...kept, ...(unlistedBuild ? [unlistedBuild] : [])],
+  builds: mergeLedgerBuilds(current, [
+    ...kept,
+    ...(unlistedBuild ? [unlistedBuild] : []),
+  ]),
 });
 console.log(
   `frontend asset retention: cutoff=${new Date(cutoffMs).toISOString()} (${cutoffSource}) builds kept=${kept.length} dropped=${dropped.length} inherited files kept=${retained.size} removed=${removed} unlisted=${unlisted}${missing ? ` missing=${missing}` : ""}`,
