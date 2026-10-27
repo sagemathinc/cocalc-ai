@@ -8376,6 +8376,57 @@ describe("hosts.listHosts bootstrap normalization", () => {
     expect(hosts[0].metrics?.current?.running_project_count).toBe(3);
     expect(hosts[0].metrics?.current?.assigned_project_count).toBe(12);
   });
+
+  it.each([
+    [undefined, true],
+    ["ok", true],
+    ["draining", false],
+    ["stopped_billing_blocked", false],
+  ])(
+    "reports a pool host with billing enforcement %s as placeable=%s",
+    async (state, placeable) => {
+      isAdminMock = jest.fn(async () => false);
+      resolveMembershipForAccountMock = jest.fn(async () => ({
+        entitlements: { features: { project_host_tier: 0 } },
+      }));
+      queryMock = jest.fn(async (sql: string) => {
+        if (sql.includes("SELECT * FROM project_hosts")) {
+          return {
+            rows: [
+              {
+                id: HOST_ID,
+                name: "tier-pool-host",
+                region: "us-west1",
+                status: "running",
+                last_seen: new Date(),
+                tier: 0,
+                deleted: null,
+                metadata: {
+                  owner: "other-owner",
+                  runtime_health: { status: "ready", ready: true },
+                  machine: { cloud: "gcp", machine_type: "t2d-standard-2" },
+                  ...(state ? { billing: { enforcement: { state } } } : {}),
+                },
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      });
+
+      const { listHosts } = await import("./hosts");
+      const hosts = await listHosts({ account_id: ACCOUNT_ID, catalog: true });
+      expect(hosts).toHaveLength(1);
+      // The pool view is redacted: other bays see only can_place.
+      expect(hosts[0].billing_enforcement).toBeUndefined();
+      expect(hosts[0].can_place).toBe(placeable);
+      if (!placeable) {
+        expect(hosts[0].reason_unavailable).toBe(
+          `Host billing enforcement is ${state}`,
+        );
+      }
+    },
+  );
 });
 
 describe("hosts.refreshHostCloudState", () => {
