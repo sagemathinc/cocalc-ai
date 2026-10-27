@@ -470,6 +470,7 @@ stage_source_release() {
   tar -C "$SOURCE_ROOT" \
     --exclude=./.git --exclude=./.local --exclude=./data --exclude=./.build-home \
     -cf - . | as_bay tar --no-same-owner -xf - -C "$TARGET_RELEASE"
+  record_source_hub_version
   # Like a bundle deploy: inherited chunks of builds still in retention must be
   # present, or the retention step would find them missing.
   preserve_previous_static_assets
@@ -575,6 +576,7 @@ stage_hub_bundle_release() {
     "${TARGET_RELEASE}/runtime/control-plane/http-api-dist" \
     "${TARGET_RELEASE}/runtime/migrate-schema" \
     "${TARGET_RELEASE}/scripts/bay-systemd" \
+    "${TARGET_RELEASE}/runtime/control-plane/hub-version.json" \
     "${TARGET_RELEASE}/bay-hub-manifest.json"
   run as_bay rsync -a "${extract_dir}/" "$TARGET_RELEASE/"
   as_bay rm -rf "$extract_dir"
@@ -714,26 +716,41 @@ FRONTEND_ASSET_FALLBACK_DAYS="${FRONTEND_ASSET_FALLBACK_DAYS:-14}"
 # build; a day of slack keeps a build whose bundle was stamped a little earlier.
 FRONTEND_ASSET_VERSION_SLACK_MS=$((24 * 3600 * 1000))
 
-# The smc-version compiled into the hub a release runs, or nothing when the
-# release does not say: the recorded runtime/control-plane/hub-version.json
-# when there is one (written by full and hub bundles; a static-only release
-# keeps the current one), else a source tree's packages/util/smc-version.js
-# (a source tree never has the recorded file).
+# The smc-version compiled into the hub a release runs, as recorded in its
+# runtime/control-plane/hub-version.json, or nothing. Full and hub bundles
+# carry the file, a source deploy writes it from the tree it stages, a hub
+# bundle overlay drops the inherited one, and a static-only release keeps the
+# current one with its hub; a release without it predates all of that.
 release_hub_smc_version() {
   local release="$1" node_bin="$2"
   # As the bay account: root never reads files in the bay-owned release tree.
   as_bay_node "$node_bin" -e '
 const fs = require("node:fs");
-const [recorded, source] = process.argv.slice(1);
-let version;
-if (fs.existsSync(recorded)) {
-  version = Number(JSON.parse(fs.readFileSync(recorded, "utf8")).smc_version);
-} else if (fs.existsSync(source)) {
-  version = Number(/exports\.version\s*=\s*(\d+)/.exec(fs.readFileSync(source, "utf8"))?.[1]);
-}
+const recorded = process.argv[1];
+const version = fs.existsSync(recorded)
+  ? Number(JSON.parse(fs.readFileSync(recorded, "utf8")).smc_version)
+  : undefined;
 console.log(Number.isSafeInteger(version) && version > 0 ? version : "");
-' "${release}/runtime/control-plane/hub-version.json" \
-    "${release}/packages/util/smc-version.js" 2>/dev/null || true
+' "${release}/runtime/control-plane/hub-version.json" 2>/dev/null || true
+}
+
+# A source deploy runs the hub built from the tree it stages: record that
+# tree's smc-version as the release's hub version (nothing when it has none).
+record_source_hub_version() {
+  local node_bin
+  node_bin="$(find_node)"
+  as_bay_node "$node_bin" -e '
+const fs = require("node:fs");
+const [source, out] = process.argv.slice(1);
+fs.rmSync(out, { force: true });
+if (!fs.existsSync(source)) process.exit(0);
+const version = Number(/exports\.version\s*=\s*(\d+)/.exec(fs.readFileSync(source, "utf8"))?.[1]);
+if (Number.isSafeInteger(version) && version > 0) {
+  fs.mkdirSync(require("node:path").dirname(out), { recursive: true });
+  fs.writeFileSync(out, `${JSON.stringify({ smc_version: version })}\n`);
+}
+' "${TARGET_RELEASE}/packages/util/smc-version.js" \
+    "${TARGET_RELEASE}/runtime/control-plane/hub-version.json"
 }
 
 # The cutoff for a release whose hub was built with smc-version HUB (unix
