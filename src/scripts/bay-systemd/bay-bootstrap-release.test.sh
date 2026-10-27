@@ -524,11 +524,27 @@ printf '{"schema":1,"fingerprint":"now","build_timestamp":%s,"smc_version":17927
 # The hub this release runs (as a static-only release keeps the current one)
 # was built with an older smc-version than the new frontend.
 printf '{"smc_version":1792750000}\n' >"${SMC_TARGET}/runtime/control-plane/hub-version.json"
+# The currently serving release's hub is newer here, so the target's bounds.
+printf '{"smc_version":1792760000}\n' >"${SMC_PREVIOUS}/runtime/control-plane/hub-version.json"
 read_required_browser_version() { echo "$1" >"${TMP_ROOT}/smc-frontend-arg"; echo 1792710260; }
 preserve_previous_static_assets
 prepare_frontend_asset_history >"${TMP_ROOT}/smc.log"
 # The bound passed on is the hub's smc-version, not the new frontend's.
 [[ "$(cat "${TMP_ROOT}/smc-frontend-arg")" == 1792750000 ]]
+# During a rollout the current release's hub workers keep serving this static
+# tree until rolled: when their hub is older, its version bounds retention.
+printf '{"smc_version":1792740000}\n' >"${SMC_PREVIOUS}/runtime/control-plane/hub-version.json"
+preserve_previous_static_assets
+prepare_frontend_asset_history >/dev/null
+[[ "$(cat "${TMP_ROOT}/smc-frontend-arg")" == 1792740000 ]]
+# A current release that does not record its hub makes the bound unknown.
+rm -f "${SMC_PREVIOUS}/runtime/control-plane/hub-version.json"
+preserve_previous_static_assets
+prepare_frontend_asset_history >"${TMP_ROOT}/smc-unknown.log"
+grep -q "fallback-14d:unknown-hub-version" "${TMP_ROOT}/smc-unknown.log"
+printf '{"smc_version":1792760000}\n' >"${SMC_PREVIOUS}/runtime/control-plane/hub-version.json"
+preserve_previous_static_assets
+prepare_frontend_asset_history >"${TMP_ROOT}/smc.log"
 grep -q 'required-browser-version=1792710260) builds kept=2 dropped=2' "${TMP_ROOT}/smc.log"
 for asset in admitted-aaaaaaaaaaaaaaaa.js newnosmc-dddddddddddddddd.js now-eeeeeeeeeeeeeeee.js; do
   if [[ ! -f "${SMC_STATIC}/${asset}" ]]; then

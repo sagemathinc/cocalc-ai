@@ -807,9 +807,24 @@ prepare_frontend_asset_history() {
   local node_bin
   node_bin="$(find_node)"
   # The hub's own smc-version bounds the version it enforces: the hub this
-  # release runs (a static-only release keeps the current one).
-  local hub_version
+  # release runs (a static-only release keeps the current one). Until every
+  # worker is rolled, the hubs of the current release keep serving this
+  # release's static tree too, so the lower of the two applies, and an
+  # unknown one makes it unknown.
+  local hub_version current_hub_version
   hub_version="$(release_hub_smc_version "$TARGET_RELEASE" "$node_bin")"
+  if [[ -L "$CURRENT_LINK" ]]; then
+    local serving_release
+    serving_release="$(readlink -f "$CURRENT_LINK")"
+    if [[ -n "$serving_release" && -d "$serving_release" && "$serving_release" != "$TARGET_RELEASE" ]]; then
+      current_hub_version="$(release_hub_smc_version "$serving_release" "$node_bin")"
+      if [[ -z "$current_hub_version" ]]; then
+        hub_version=""
+      elif [[ -n "$hub_version" ]] && ((current_hub_version < hub_version)); then
+        hub_version="$current_hub_version"
+      fi
+    fi
+  fi
   local cutoff cutoff_ms cutoff_source
   cutoff="$(frontend_asset_retention_cutoff "$hub_version")"
   cutoff_ms="${cutoff%% *}"
