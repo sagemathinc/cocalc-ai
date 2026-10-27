@@ -385,6 +385,7 @@ describe("merge approval GitHub App", () => {
       total: 150,
       changes_requested: 1,
       approved: 0,
+      complete: true,
     });
     // All pages were read, so a list is marked shortened exactly when the
     // size cap shortened it.
@@ -400,5 +401,26 @@ describe("merge approval GitHub App", () => {
     expect(Buffer.byteLength(JSON.stringify(snap))).toBeLessThanOrEqual(
       MAX_MERGE_APPROVAL_SNAPSHOT_BYTES,
     );
+  });
+
+  it("marks review counts as partial past the page cap", async () => {
+    const reviews = Array.from({ length: 1100 }, (_, i) => ({
+      user: { login: `r${i}` },
+      state: i === 1050 ? "CHANGES_REQUESTED" : "COMMENTED",
+      commit_id: HEAD,
+    }));
+    const gh = fakeGitHub({ reviews });
+    setMergeApprovalGitHubFetchForTests(gh.fetchImpl);
+    const snap = await readPullRequestSnapshot({
+      config,
+      repo: "sagemathinc/cocalc-ai",
+      pr_number: 12,
+    });
+    expect(snap.review_summary).toMatchObject({
+      total: 1000,
+      changes_requested: 0,
+      complete: false,
+    });
+    expect(snap.reviews_truncated).toBe(true);
   });
 });

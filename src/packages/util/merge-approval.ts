@@ -73,10 +73,13 @@ export interface MergeApprovalGitHubSnapshot {
   // True when checks lists fewer than GitHub has (see check_summary).
   checks_truncated: boolean;
   reviews: { author: string; state: string; commit_id: string | null }[];
+  // complete is false when GitHub had more reviews than were read: the
+  // numbers are then lower bounds.
   review_summary: {
     total: number;
     changes_requested: number;
     approved: number;
+    complete: boolean;
   };
   reviews_truncated: boolean;
   read_at: string;

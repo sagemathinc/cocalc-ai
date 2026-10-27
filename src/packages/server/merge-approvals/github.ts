@@ -434,6 +434,7 @@ async function readSnapshotOnce({
       changes_requested: reviews.filter((r) => r.state === "CHANGES_REQUESTED")
         .length,
       approved: reviews.filter((r) => r.state === "APPROVED").length,
+      complete: !reviewPages.more,
     },
     reviews_truncated: reviewPages.more,
     read_at: new Date().toISOString(),
