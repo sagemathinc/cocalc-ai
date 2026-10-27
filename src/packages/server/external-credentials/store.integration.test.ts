@@ -12,6 +12,7 @@ import {
   CODEX_SUBSCRIPTION_KIND,
   createExternalCredential,
   ensureDefaultExternalCredential,
+  eraseRevokedExternalCredentialPayloads,
   getExternalCredential,
   hasExternalCredential,
   listExternalCredentials,
@@ -214,6 +215,147 @@ describeDb("conditional external credential update", () => {
         metadata: {},
       }),
     ).resolves.toBe(true);
+  });
+});
+
+describeDb("revoking deletes CoCalc's copy of the credential", () => {
+  const accountId = randomUUID();
+  const selector = {
+    provider: "anthropic",
+    kind: "api-key",
+    scope: "account" as const,
+    owner_account_id: accountId,
+  };
+  const stored = async (id: string) =>
+    (
+      await getPool().query(
+        "SELECT encrypted_payload, revoked FROM external_credentials WHERE id=$1",
+        [id],
+      )
+    ).rows[0];
+
+  beforeAll(async () => {
+    await syncSchema({ external_credentials: SCHEMA.external_credentials });
+  });
+
+  test("revoke nulls the encrypted payload in the same update", async () => {
+    const { id } = await createExternalCredential({
+      selector,
+      payload: "sk-ant-REMOVE-ME",
+    });
+    expect((await stored(id)).encrypted_payload).toBe("sk-ant-REMOVE-ME");
+    expect(
+      await revokeExternalCredential({ id, owner_account_id: accountId }),
+    ).toBe(true);
+    const row = await stored(id);
+    expect(row.revoked).not.toBeNull();
+    expect(row.encrypted_payload).toBeNull();
+    expect(await getExternalCredential({ selector })).toBeUndefined();
+  });
+
+  test("a revoked row can still be revived with a new payload", async () => {
+    const { id } = await createExternalCredential({ selector, payload: "old" });
+    await revokeExternalCredential({ id, owner_account_id: accountId });
+    await expect(
+      updateExternalCredentialById({
+        id,
+        selector,
+        payload: "new",
+        metadata: {},
+        revive: true,
+      }),
+    ).resolves.toBe(true);
+    expect((await stored(id)).encrypted_payload).toBe("new");
+  });
+
+  test("a conditional revive can't match the erased payload", async () => {
+    const { id } = await createExternalCredential({ selector, payload: "old" });
+    await revokeExternalCredential({ id, owner_account_id: accountId });
+    await expect(
+      updateExternalCredentialById({
+        id,
+        selector,
+        payload: "new",
+        metadata: {},
+        revive: true,
+        expectedPayloadSha256: createHash("sha256")
+          .update("old", "utf8")
+          .digest("hex"),
+      }),
+    ).rejects.toThrow(EXTERNAL_CREDENTIAL_CONFLICT);
+  });
+
+  test("an erased payload doesn't match the hash of an empty string", async () => {
+    const { id } = await createExternalCredential({ selector, payload: "old" });
+    await revokeExternalCredential({ id, owner_account_id: accountId });
+    await expect(
+      updateExternalCredentialById({
+        id,
+        selector,
+        payload: "new",
+        metadata: {},
+        revive: true,
+        expectedPayloadSha256: createHash("sha256")
+          .update("", "utf8")
+          .digest("hex"),
+      }),
+    ).rejects.toThrow(EXTERNAL_CREDENTIAL_CONFLICT);
+    expect((await stored(id)).encrypted_payload).toBeNull();
+  });
+
+  test("the migration erases payloads of rows revoked before this rule", async () => {
+    const legacy = randomUUID();
+    const legacy2 = randomUUID();
+    const active = randomUUID();
+    for (const [id, revoked] of [
+      [legacy, true],
+      [legacy2, true],
+      [active, false],
+    ] as const) {
+      await getPool().query(
+        `INSERT INTO external_credentials
+           (id, provider, kind, scope, owner_account_id, encrypted_payload,
+            metadata, created, updated, revoked)
+         VALUES ($1, 'openai', 'api-key', 'account', $2, $3, '{}'::jsonb,
+                 NOW(), NOW(), CASE WHEN $4 THEN NOW() ELSE NULL END)`,
+        [id, randomUUID(), `payload-${id}`, revoked],
+      );
+    }
+    expect(await eraseRevokedExternalCredentialPayloads({ batchSize: 1 })).toBe(
+      2,
+    );
+    expect((await stored(legacy)).encrypted_payload).toBeNull();
+    expect((await stored(legacy2)).encrypted_payload).toBeNull();
+    expect((await stored(active)).encrypted_payload).toBe(`payload-${active}`);
+    // idempotent
+    expect(await eraseRevokedExternalCredentialPayloads()).toBe(0);
+  });
+
+  test("the cleanup waits for a row another transaction holds instead of skipping it", async () => {
+    const id = randomUUID();
+    await getPool().query(
+      `INSERT INTO external_credentials
+         (id, provider, kind, scope, owner_account_id, encrypted_payload,
+          metadata, created, updated, revoked)
+       VALUES ($1, 'openai', 'api-key', 'account', $2, 'legacy', '{}'::jsonb,
+               NOW(), NOW(), NOW())`,
+      [id, randomUUID()],
+    );
+    const holder = await getPool().connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query(
+        "SELECT id FROM external_credentials WHERE id=$1 FOR UPDATE",
+        [id],
+      );
+      const run = eraseRevokedExternalCredentialPayloads();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await holder.query("COMMIT");
+      expect(await run).toBeGreaterThanOrEqual(1);
+    } finally {
+      holder.release();
+    }
+    expect((await stored(id)).encrypted_payload).toBeNull();
   });
 });
 

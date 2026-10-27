@@ -71,7 +71,8 @@ type ExternalCredentialRow = {
   owner_account_id: string | null;
   project_id: string | null;
   organization_id: string | null;
-  encrypted_payload: string;
+  // NULL once revoked: removing a credential deletes CoCalc's copy.
+  encrypted_payload: string | null;
   metadata: Record<string, any> | null;
   created: Date;
   updated: Date;
@@ -288,8 +289,10 @@ async function encryptPayload(
 
 async function decryptPayload(
   selector: ExternalCredentialSelector,
-  encrypted_payload: string,
+  encrypted_payload: string | null,
 ): Promise<string> {
+  // A revoked credential has no payload left.
+  if (encrypted_payload == null) return "";
   const result = await decryptSecretStorageValue(
     credentialAadName(selector),
     encrypted_payload,
@@ -473,7 +476,7 @@ export async function createExternalCredential({
       await client.query(
         `
 UPDATE external_credentials
-SET revoked=NOW(), updated=NOW()
+SET revoked=NOW(), updated=NOW(), encrypted_payload=NULL
 WHERE ${ownershipClause(1)}
   AND revoked IS NULL
   AND metadata ? $7::text
@@ -656,6 +659,11 @@ FOR UPDATE
       if (rows.length === 0) {
         await client.query("ROLLBACK");
         return false;
+      }
+      // An erased (revoked) payload matches no expectation, not even "".
+      if (rows[0].encrypted_payload == null) {
+        await client.query("ROLLBACK");
+        throw new Error(EXTERNAL_CREDENTIAL_CONFLICT);
       }
       const stored = await decryptPayload(
         normalized,
@@ -1256,7 +1264,7 @@ LIMIT 1
     const { rowCount } = await client.query(
       `
 UPDATE external_credentials
-SET revoked=NOW(), updated=NOW()
+SET revoked=NOW(), updated=NOW(), encrypted_payload=NULL
 WHERE id=$1
   AND ($2::uuid IS NULL OR owner_account_id = $2::uuid)
   AND revoked IS NULL
@@ -1273,4 +1281,43 @@ WHERE id=$1
   } finally {
     client.release();
   }
+}
+
+// Revoking a credential deletes its encrypted payload. Rows revoked before
+// that rule still hold one; erase those. Idempotent and safe to run on every
+// start. Each row is erased by its own single-row UPDATE: it waits for a row
+// another transaction holds (so nothing is skipped), and holding only one
+// row lock at a time it can't deadlock with credential operations or other
+// hubs.
+export async function eraseRevokedExternalCredentialPayloads({
+  batchSize = 500,
+  maxBatches = 10_000,
+}: { batchSize?: number; maxBatches?: number } = {}): Promise<number> {
+  let erased = 0;
+  let after = "00000000-0000-0000-0000-000000000000";
+  for (let i = 0; i < maxBatches; i++) {
+    const { rows } = await pool().query<{ id: string }>(
+      `
+SELECT id FROM external_credentials
+WHERE revoked IS NOT NULL AND encrypted_payload IS NOT NULL AND id > $1
+ORDER BY id
+LIMIT $2
+      `,
+      [after, batchSize],
+    );
+    if (rows.length === 0) break;
+    for (const { id } of rows) {
+      const { rowCount } = await pool().query(
+        `
+UPDATE external_credentials
+SET encrypted_payload=NULL
+WHERE id=$1 AND revoked IS NOT NULL AND encrypted_payload IS NOT NULL
+        `,
+        [id],
+      );
+      erased += rowCount ?? 0;
+    }
+    after = rows[rows.length - 1].id;
+  }
+  return erased;
 }
