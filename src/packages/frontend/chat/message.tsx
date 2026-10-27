@@ -119,9 +119,9 @@ import { SyncOutlined } from "@ant-design/icons";
 import {
   AgentMessageStatus,
   AttachedSteerStatusList,
-  latestUsageWarning,
   type AttachedSteerMessage,
 } from "./agent-message-status";
+import { latestUsageWarning } from "./usage-warning";
 import { recordCodexFirstResponseVisible } from "./codex-ux-latency";
 import { recordOnboardingOutput } from "@cocalc/frontend/monitoring/onboarding";
 import { GitCommitDrawer } from "./git-commit-drawer";

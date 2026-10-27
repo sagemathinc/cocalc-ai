@@ -8,13 +8,13 @@ import {
   AttachedSteerStatusList,
   describeLastActivity,
   hasOpenToolWork,
-  latestUsageWarning,
   QUIET_ACTIVITY_MS,
   reconcileAvailableSubagentEvents,
   resolveActivityDurationLabel,
   resolveLiveRunStartMs,
   STALE_ACTIVITY_MS,
 } from "../agent-message-status";
+import { latestUsageWarning } from "../usage-warning";
 
 describe("reconcileAvailableSubagentEvents", () => {
   it("identifies generic activity before lazy log loading", () => {

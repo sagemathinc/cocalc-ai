@@ -248,21 +248,6 @@ export function InlineSteerStatusRow({
 
 // Agents can think for many minutes before a step on hard problems, so only
 // a long silence is worth a warning color.
-/** The turn's warning that the account is close to an included-AI limit. */
-export function latestUsageWarning(
-  events: readonly AcpStreamMessage[] | null | undefined,
-): SiteFundedTurnUsageWarning | undefined {
-  for (let i = (events?.length ?? 0) - 1; i >= 0; i--) {
-    const message = events![i];
-    if (message?.type !== "event" || message.event?.type !== "usage_warning") {
-      continue;
-    }
-    const { window, threshold } = message.event;
-    if (window !== "5h" && window !== "7d") return;
-    return { window, threshold: threshold === 95 ? 95 : 80 };
-  }
-}
-
 export function UsageWarningNotice({
   warning,
 }: {
