@@ -603,6 +603,63 @@ preserve_previous_static_assets() {
     "${previous_static}/" "${target_static}/"
 }
 
+# The required browser version (site setting version_min_browser, unix
+# seconds) as the hub enforces it: the smaller of it and the recommended
+# version. Prints nothing when it cannot be read.
+read_required_browser_version() {
+  [[ -n "${PSQL_BIN:-}" && -d "${BAY_ROOT}/run/postgres" ]] || return 0
+  local rows
+  rows="$(
+    runuser -u "$BAY_USER" -- env \
+      PGHOST="${BAY_ROOT}/run/postgres" \
+      PGPORT=5432 \
+      PGUSER="$BAY_USER" \
+      PGCONNECT_TIMEOUT=5 \
+      timeout 15 "$PSQL_BIN" -d "$BAY_USER" -XAtq -F ' ' -c \
+      "SELECT name, value FROM server_settings WHERE name IN ('version_min_browser', 'version_recommended_browser')" \
+      2>/dev/null
+  )" || return 0
+  local name value min="" recommended=""
+  while read -r name value; do
+    value="${value//[[:space:]]/}"
+    [[ "$value" =~ ^[0-9]+$ ]] || continue
+    case "$name" in
+      version_min_browser) min="$value" ;;
+      version_recommended_browser) recommended="$value" ;;
+    esac
+  done <<<"$rows"
+  [[ -n "$min" && -n "$recommended" ]] || return 0
+  if ((recommended < min)); then
+    min="$recommended"
+  fi
+  if ((min > 0)); then
+    echo "$min"
+  fi
+}
+
+# Inherited frontend chunks are kept only for builds a browser may still run:
+# those at or after the required browser version (older clients are
+# disconnected). Without a readable setting, a fixed window applies, never
+# everything.
+FRONTEND_ASSET_FALLBACK_DAYS="${FRONTEND_ASSET_FALLBACK_DAYS:-14}"
+# The version is set from a build's smc-version, written around the frontend
+# build; a day of slack keeps a build whose bundle was stamped a little earlier.
+FRONTEND_ASSET_VERSION_SLACK_MS=$((24 * 3600 * 1000))
+
+frontend_asset_retention_cutoff() {
+  if [[ -n "${FRONTEND_ASSET_RETENTION_CUTOFF_MS:-}" ]]; then
+    echo "${FRONTEND_ASSET_RETENTION_CUTOFF_MS} override"
+    return
+  fi
+  local version
+  version="$(read_required_browser_version)"
+  if [[ -n "$version" ]]; then
+    echo "$((version * 1000 - FRONTEND_ASSET_VERSION_SLACK_MS)) required-browser-version=${version}"
+  else
+    echo "$((($(date +%s) - FRONTEND_ASSET_FALLBACK_DAYS * 86400) * 1000)) fallback-${FRONTEND_ASSET_FALLBACK_DAYS}d"
+  fi
+}
+
 prepare_frontend_asset_history() {
   local target_static="${TARGET_RELEASE}/runtime/control-plane/static"
   local current_manifest="${target_static}/frontend-build.json"
@@ -611,25 +668,43 @@ prepare_frontend_asset_history() {
     exit 1
   fi
 
-  local previous_static=""
+  local previous_static="" previous_ledger=""
   if [[ -L "$CURRENT_LINK" ]]; then
     local current_release
     current_release="$(readlink -f "$CURRENT_LINK")"
     if [[ -n "$current_release" && "$current_release" != "$TARGET_RELEASE" ]]; then
       previous_static="${current_release}/runtime/control-plane/static"
+      previous_ledger="${current_release}/runtime/control-plane/frontend-asset-ledger.json"
     fi
   fi
+  local target_ledger="${TARGET_RELEASE}/runtime/control-plane/frontend-asset-ledger.json"
+
+  local cutoff cutoff_ms cutoff_source
+  cutoff="$(frontend_asset_retention_cutoff)"
+  cutoff_ms="${cutoff%% *}"
+  cutoff_source="${cutoff#* }"
 
   local node_bin
   node_bin="$(find_node)"
-  as_bay_node "$node_bin" - "$target_static" "$previous_static" <<'NODE'
+  as_bay_node "$node_bin" - "$target_static" "$previous_static" \
+    "$previous_ledger" "$target_ledger" "$cutoff_ms" "$cutoff_source" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
-const [targetRoot, previousRoot] = process.argv.slice(2);
-// Every release keeps all chunks it inherited, so this bounds the retained
-// history, not one build: prod had 10067 hashed files on 10-18. Raised from
-// 10000 to 11000 until a retention policy replaces preserve-all.
+const [
+  targetRoot,
+  previousRoot,
+  previousLedgerPath,
+  targetLedgerPath,
+  cutoffArg,
+  cutoffSource,
+] = process.argv.slice(2);
+const cutoffMs = Number(cutoffArg);
+if (!Number.isFinite(cutoffMs)) {
+  throw new Error(`invalid frontend asset retention cutoff: ${cutoffArg}`);
+}
+// The union of the current build and the inherited builds still kept: the
+// hub monitor and `software smoke static` check the same cap.
 const MAX_ASSETS = 11_000;
 const HASHED_ASSET = /(?:^|[-.])[0-9a-f]{16,}(?=[-.]|$)/i;
 
@@ -700,34 +775,124 @@ function normalizeBuild(manifest, root, allowScan) {
   };
 }
 
-const current = normalizeBuild(readManifest(targetRoot), targetRoot, false);
-const previous = normalizeBuild(readManifest(previousRoot), previousRoot, true);
-const builds = [current];
-if (
-  previous &&
-  (previous.fingerprint !== current.fingerprint ||
-    previous.build_timestamp !== current.build_timestamp ||
-    previous.assets.some((asset) => !current.assets.includes(asset)))
-) {
-  builds.push(previous);
+function readLedger(filename) {
+  if (!filename || !fs.existsSync(filename)) return;
+  const ledger = JSON.parse(fs.readFileSync(filename, "utf8"));
+  if (ledger?.schema !== 1 || !Array.isArray(ledger.builds)) {
+    throw new Error(`frontend asset ledger has an unsupported schema: ${filename}`);
+  }
+  return ledger.builds;
 }
-// The hub monitor and `software smoke static` cap the unique union of the
-// builds, so check the same here, before activation, not just each build.
-const unionSize = new Set(builds.flatMap((build) => build.assets)).size;
+
+// Every hashed file under the target static root, however many there are.
+function hashedFiles(root, directory = root, files = []) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      hashedFiles(root, absolute, files);
+    } else if (entry.isFile() && HASHED_ASSET.test(entry.name)) {
+      files.push(path.relative(root, absolute).replaceAll("\\", "/"));
+    }
+  }
+  return files;
+}
+
+const exists = (asset) =>
+  !!fs.statSync(path.resolve(targetRoot, asset), { throwIfNoEntry: false })?.isFile();
+
+const current = normalizeBuild(readManifest(targetRoot), targetRoot, false);
+
+// The inherited builds, each with its own assets: from the previous release's
+// ledger, or, for a release that predates the ledger, its own build with every
+// hashed file it carried (their builds are unknown, so they age with it).
+let inherited = [];
+let missing = 0;
+const ledgerBuilds = readLedger(previousLedgerPath);
+if (ledgerBuilds) {
+  for (const build of ledgerBuilds) {
+    const assets = [...new Set((build.assets ?? []).map(safeAsset))];
+    const present = assets.filter(exists);
+    missing += assets.length - present.length;
+    inherited.push({
+      git_revision: `${build.git_revision ?? ""}`,
+      build_timestamp: Number(build.build_timestamp) || 0,
+      build_date: `${build.build_date ?? ""}`,
+      fingerprint: `${build.fingerprint ?? ""}`,
+      assets: present.sort(),
+    });
+  }
+} else {
+  const previous = normalizeBuild(readManifest(previousRoot), previousRoot, true);
+  if (previous) inherited.push(previous);
+}
+// (A rebuilt or redeployed current build retains nothing extra: retained
+// assets never include the current build's own.)
+inherited = inherited.filter((build) => build.assets.length > 0);
+
+const kept = inherited.filter((build) => build.build_timestamp >= cutoffMs);
+const dropped = inherited.filter((build) => build.build_timestamp < cutoffMs);
+const currentAssets = new Set(current.assets);
+const retained = new Set();
+for (const build of kept) {
+  for (const asset of build.assets) {
+    if (!currentAssets.has(asset)) retained.add(asset);
+  }
+}
+const unionSize = currentAssets.size + retained.size;
 if (unionSize > MAX_ASSETS) {
-  throw new Error(`frontend asset history exceeds ${MAX_ASSETS} files`);
+  throw new Error(
+    `frontend asset history exceeds ${MAX_ASSETS} files (${unionSize} from ${kept.length + 1} builds back to ${new Date(cutoffMs).toISOString()}, ${cutoffSource}); raise the required browser version`,
+  );
+}
+
+// Files listed only by dropped builds are removed from this release. The
+// current build's own assets are never removed, and neither is a hashed file
+// no build lists (it is counted, so a growing number shows).
+const removable = new Set();
+for (const build of dropped) {
+  for (const asset of build.assets) {
+    if (!currentAssets.has(asset) && !retained.has(asset)) removable.add(asset);
+  }
+}
+let removed = 0;
+let unlisted = 0;
+for (const asset of hashedFiles(targetRoot)) {
+  if (removable.has(asset)) {
+    fs.rmSync(path.resolve(targetRoot, asset), { force: true });
+    removed += 1;
+  } else if (!currentAssets.has(asset) && !retained.has(asset)) {
+    unlisted += 1;
+  }
+}
+
+// The served history keeps the shape the hub monitor and smoke test read: the
+// current build and, as one entry, everything retained from earlier builds.
+const builds = [current];
+if (retained.size > 0) {
+  const newest = kept.reduce((a, b) => (b.build_timestamp > a.build_timestamp ? b : a));
+  builds.push({ ...newest, assets: [...retained].sort() });
 }
 const history = {
   schema: 1,
   generated_at: new Date().toISOString(),
   builds,
 };
-const output = path.join(targetRoot, "frontend-build-history.json");
-const temporary = `${output}.tmp-${process.pid}`;
-fs.writeFileSync(temporary, `${JSON.stringify(history, null, 2)}\n`);
-fs.renameSync(temporary, output);
+function writeJson(output, value) {
+  const temporary = `${output}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  fs.renameSync(temporary, output);
+}
+writeJson(path.join(targetRoot, "frontend-build-history.json"), history);
+writeJson(targetLedgerPath, {
+  schema: 1,
+  generated_at: history.generated_at,
+  builds: [current, ...kept],
+});
 console.log(
-  `validated frontend assets: builds=${builds.length} files=${builds.reduce((sum, build) => sum + build.assets.length, 0)}`,
+  `frontend asset retention: cutoff=${new Date(cutoffMs).toISOString()} (${cutoffSource}) builds kept=${kept.length} dropped=${dropped.length} inherited files kept=${retained.size} removed=${removed} unlisted=${unlisted}${missing ? ` missing=${missing}` : ""}`,
+);
+console.log(
+  `validated frontend assets: builds=${builds.length} files=${unionSize}`,
 );
 NODE
 }
