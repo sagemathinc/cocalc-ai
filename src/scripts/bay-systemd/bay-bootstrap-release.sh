@@ -823,9 +823,12 @@ write_browser_version_setting() {
 WITH up AS (
   INSERT INTO server_settings (name, value) VALUES (:'name', :'value')
   ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
-  WHERE server_settings.value IS NULL
-    OR btrim(server_settings.value) !~ '^[0-9]+$'
-    OR btrim(server_settings.value)::numeric < (:'value')::numeric
+  -- CASE, not OR: only CASE fixes the order, so the cast never sees text.
+  WHERE CASE
+    WHEN server_settings.value IS NULL
+      OR btrim(server_settings.value) !~ '^[0-9]+$' THEN true
+    ELSE btrim(server_settings.value)::numeric < (:'value')::numeric
+  END
   RETURNING 1
 ), touched AS (
   INSERT INTO server_settings (name, value)
