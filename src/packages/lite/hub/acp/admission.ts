@@ -392,25 +392,25 @@ const ADMISSION_LIMIT_TEXT: Record<
   { counted: string; setting: string; key: string; env: string }
 > = {
   queued_per_account: {
-    counted: "agent turns waiting to run for this account",
+    counted: "waiting to run for this account",
     setting: "Queued ACP turns / account",
     key: "acp_max_queued_per_account",
     env: "COCALC_ACP_MAX_QUEUED_PER_ACCOUNT",
   },
   queued_per_thread: {
-    counted: "agent turns waiting to run in this chat thread",
+    counted: "waiting to run in this chat thread",
     setting: "Queued ACP turns / thread",
     key: "acp_max_queued_per_thread",
     env: "COCALC_ACP_MAX_QUEUED_PER_THREAD",
   },
   running_per_account: {
-    counted: "agent turns running at once for this account",
+    counted: "running at once for this account",
     setting: "Running ACP turns / account",
     key: "acp_max_running_per_account",
     env: "COCALC_ACP_MAX_RUNNING_PER_ACCOUNT",
   },
   running_per_project: {
-    counted: "agent turns running at once in this project",
+    counted: "running at once in this project",
     setting: "Running ACP turns / project",
     key: "acp_max_running_per_project",
     env: "COCALC_ACP_MAX_RUNNING_PER_PROJECT",
@@ -427,14 +427,17 @@ export function formatAcpAdmissionDenial(denial: AcpAdmissionDenial): string {
     `in the account's membership tier, or as an entitlement override for this account; ` +
     `without either, the server default ${text.env} applies.`;
   if (denial.maximum <= 0) {
-    // Waiting cannot help: nothing is allowed at all.
+    // Waiting cannot help: nothing is allowed at all. An account whose email
+    // address is not verified yet gets 0 for every limit, so say that first.
     return (
-      `Agent turns are not allowed here: the limit on ${text.counted} is 0. ` +
-      `Ask an admin to raise ${where}`
+      `Agent turns are not allowed here: the limit on agent turns ${text.counted} is 0. ` +
+      `If this account's email address is not verified yet, verify it; ` +
+      `otherwise ask an admin to raise ${where}`
     );
   }
+  const turns = denial.current == 1 ? "agent turn" : "agent turns";
   return (
-    `Agent turn limit reached: ${denial.current} ${text.counted}, and the limit is ${denial.maximum}. ` +
+    `Agent turn limit reached: ${denial.current} ${turns} ${text.counted}, and the limit is ${denial.maximum}. ` +
     `Wait for some of them to finish. An admin can change the limit with ${where}`
   );
 }

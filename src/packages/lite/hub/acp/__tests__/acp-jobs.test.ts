@@ -1449,7 +1449,7 @@ describe("acp job queue ordering", () => {
       maximum: 1,
     });
     expect(() => throwIfAcpAdmissionDenied(decision)).toThrow(
-      "Agent turn limit reached: 1 agent turns waiting to run for this account, and the limit is 1.",
+      "Agent turn limit reached: 1 agent turn waiting to run for this account, and the limit is 1.",
     );
     let error: unknown;
     try {
@@ -1464,11 +1464,18 @@ describe("acp job queue ordering", () => {
     );
     expect(`${error}`).toContain("entitlement override");
     // With a limit of 0 there is nothing to wait for: say so.
-    expect(
-      `${new AcpAdmissionDeniedError({ ...decision, current: 0, maximum: 0 } as any)}`,
-    ).toMatch(
-      /^Agent turns are not allowed here: the limit on agent turns waiting to run for this account is 0\. Ask an admin to raise "Queued ACP turns \/ account"/,
+    const zero = `${new AcpAdmissionDeniedError({ ...decision, current: 0, maximum: 0 } as any)}`;
+    expect(zero).toContain(
+      "Agent turns are not allowed here: the limit on agent turns waiting to run for this account is 0.",
     );
+    // An unverified email gives every limit 0: an admin cannot fix that.
+    expect(zero).toContain(
+      "If this account's email address is not verified yet, verify it;",
+    );
+    expect(zero).toContain(
+      'otherwise ask an admin to raise "Queued ACP turns / account"',
+    );
+    expect(zero).not.toContain("Wait for");
     expect(countQueuedAcpJobsForAccount(firstRequest.account_id)).toBe(1);
   });
 
