@@ -23,7 +23,7 @@ function fakeFetch(
     if (!next) throw new Error("unexpected request");
     const text =
       typeof next.body === "string" ? next.body : JSON.stringify(next.body);
-    return new Response(text, {
+    return new Response(next.status === 204 ? null : text, {
       status: next.status ?? 200,
       headers: next.headers,
     });
@@ -506,35 +506,38 @@ describe("podView", () => {
     );
   });
 
-  it("probes write access with one empty update of a random, nonexistent pod", async () => {
-    const notFound = {
-      status: 404,
-      body: { detail: "pod not found", status: 404, title: "Not Found" },
-    };
-    const ok = fakeFetch([notFound]);
+  it("probes write access by creating and deleting a private template", async () => {
+    const ok = fakeFetch([
+      { status: 201, body: { id: "tpl_1", name: "x" } },
+      { status: 204, body: "" },
+    ]);
     await client(ok.fetch).canWritePods();
-    expect(ok.calls).toHaveLength(1);
-    expect(ok.calls[0].url).toMatch(
-      /^https:\/\/api\.runpod\.io\/v2\/pods\/cc0probe[0-9a-f]{12}$/,
-    );
-    expect(ok.calls[0].init.method).toBe("PATCH");
-    expect(ok.calls[0].init.body).toBe("{}");
+    expect(ok.calls.map((c) => [c.init.method, c.url])).toEqual([
+      ["POST", "https://api.runpod.io/v2/templates"],
+      ["DELETE", "https://api.runpod.io/v2/templates/tpl_1"],
+    ]);
+    const sent = JSON.parse(`${ok.calls[0].init.body}`);
+    expect(sent.name).toMatch(/^cc-permission-probe-[0-9a-f]{12}$/);
+    expect(sent.image).toBe("busybox:latest");
+    // Read Only keys are refused at the create (measured 10-27).
     const readOnly = fakeFetch([
       { status: 403, body: { detail: "Forbidden" } },
     ]);
     expect((await failure(client(readOnly.fetch).canWritePods())).kind).toBe(
       "forbidden",
     );
-    // Anything but "pod not found" fails closed: a 200, or some other 404.
-    const ok200 = fakeFetch([{ body: { id: "x" } }]);
-    expect((await failure(client(ok200.fetch).canWritePods())).kind).toBe(
+    // A create without an id fails closed.
+    const odd = fakeFetch([{ status: 201, body: {} }]);
+    expect((await failure(client(odd.fetch).canWritePods())).kind).toBe(
       "protocol",
     );
-    const route404 = fakeFetch([
-      { status: 404, body: { detail: "route not found" } },
+    // A failed delete is retried once, and the key still counts as writable.
+    const retry = fakeFetch([
+      { status: 201, body: { id: "tpl_2" } },
+      { status: 500, body: "" },
+      { status: 204, body: "" },
     ]);
-    expect((await failure(client(route404.fetch).canWritePods())).kind).toBe(
-      "not_found",
-    );
+    await client(retry.fetch).canWritePods();
+    expect(retry.calls).toHaveLength(3);
   });
 });

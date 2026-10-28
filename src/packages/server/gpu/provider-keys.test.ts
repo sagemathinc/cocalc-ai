@@ -47,11 +47,10 @@ const PERSONAL_ORG_403 = {
 };
 const MYSELF = { body: { data: { myself: { id: "user_1" } } } };
 const NO_PODS = { body: { pods: [], pagination: { hasNextPage: false } } };
-// Measured 10-27: a key that may change pods gets this for a random id.
-const WRITE_OK = {
-  status: 404,
-  body: { detail: "pod not found", status: 404, title: "Not Found" },
-};
+// Measured 10-27: a key that may change pods can create (and delete) a
+// private template.
+const TEMPLATE_CREATED = { status: 201, body: { id: "tpl_1" } };
+const TEMPLATE_DELETED = { status: 204, body: "" };
 
 function fakeFetch(responses: Array<{ status?: number; body: unknown }>) {
   const urls: string[] = [];
@@ -59,9 +58,12 @@ function fakeFetch(responses: Array<{ status?: number; body: unknown }>) {
     urls.push(url);
     const next = responses.shift();
     if (!next) throw new Error("unexpected request");
-    return new Response(JSON.stringify(next.body), {
-      status: next.status ?? 200,
-    });
+    return new Response(
+      next.status === 204 ? null : JSON.stringify(next.body),
+      {
+        status: next.status ?? 200,
+      },
+    );
   }) as unknown as typeof globalThis.fetch;
   return { fetch, urls };
 }
@@ -116,7 +118,8 @@ describe("GPU provider keys", () => {
       PERSONAL_ORG_403,
       MYSELF,
       NO_PODS,
-      WRITE_OK,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
     ]);
     const status = await setGpuProviderKey(
       { account_id: ACCOUNT, provider: "runpod", api_key: ` ${KEY}\n` },
@@ -126,9 +129,8 @@ describe("GPU provider keys", () => {
       "https://api.runpod.io/v2/organization",
       "https://api.runpod.io/graphql",
       "https://api.runpod.io/v2/pods",
-      expect.stringMatching(
-        /^https:\/\/api\.runpod\.io\/v2\/pods\/cc0probe[0-9a-f]{12}$/,
-      ),
+      "https://api.runpod.io/v2/templates",
+      "https://api.runpod.io/v2/templates/tpl_1",
     ]);
     const stored = upsertMock.mock.calls[0][0];
     expect(stored.selector).toEqual({
@@ -163,7 +165,8 @@ describe("GPU provider keys", () => {
     const { fetch } = fakeFetch([
       { body: { id: "org_9", name: "Physics 101" } },
       NO_PODS,
-      WRITE_OK,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
     ]);
     await setGpuProviderKey(
       { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
@@ -343,7 +346,8 @@ describe("GPU provider keys", () => {
       PERSONAL_ORG_403,
       MYSELF,
       MORE,
-      WRITE_OK,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
     ]);
     await setGpuProviderKey(
       { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
@@ -362,7 +366,11 @@ describe("GPU provider keys", () => {
           ? new Response(JSON.stringify(MYSELF.body))
           : url.endsWith("/v2/pods")
             ? new Response(JSON.stringify(NO_PODS.body))
-            : new Response(JSON.stringify(WRITE_OK.body), { status: 404 });
+            : url.endsWith("/v2/templates")
+              ? new Response(JSON.stringify(TEMPLATE_CREATED.body), {
+                  status: 201,
+                })
+              : new Response(null, { status: 204 });
     }) as unknown as typeof globalThis.fetch;
     await expect(
       setGpuProviderKey(
@@ -390,7 +398,13 @@ describe("GPU provider keys", () => {
   });
 
   it("doesn't save a key if the key was removed while it was being checked", async () => {
-    const { fetch } = fakeFetch([PERSONAL_ORG_403, MYSELF, NO_PODS, WRITE_OK]);
+    const { fetch } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      NO_PODS,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
+    ]);
     // Another tab removes the old key during verification.
     listMock.mockImplementation(async ({ includeRevoked }) =>
       includeRevoked ? [{ ...summary({}), revoked: new Date() }] : [],
@@ -405,7 +419,13 @@ describe("GPU provider keys", () => {
   });
 
   it("an older removal doesn't block a new save", async () => {
-    const { fetch } = fakeFetch([PERSONAL_ORG_403, MYSELF, NO_PODS, WRITE_OK]);
+    const { fetch } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      NO_PODS,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
+    ]);
     listMock.mockResolvedValue([
       { ...summary({}), revoked: new Date(Date.now() - 60_000) },
     ]);

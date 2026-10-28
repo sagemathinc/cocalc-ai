@@ -234,28 +234,35 @@ export class RunpodClient {
     }
   }
 
-  // One request: may this key change pods? RunPod has no endpoint that lists
-  // a key's permissions, so this sends an empty update for a random pod id
-  // that cannot exist. Measured 10-27: a key with write access gets 404 "pod
-  // not found"; a key without it is refused (403). An empty update changes
-  // nothing even if the id did exist. Anything else fails closed.
+  // May this key change the account's resources? RunPod has no endpoint that
+  // lists a key's permissions, and it reports "not found" or a validation
+  // error before it checks permissions, so probing a resource that doesn't
+  // exist proves nothing. This creates a free, private template with a
+  // random name and deletes it at once. Measured 10-27: a Read Only key gets
+  // 403 on the create; a key with "All" permissions gets 201, then 204 on the
+  // delete. Anything else fails closed. A delete that fails leaves only a
+  // free private template; it is retried once.
   async canWritePods(): Promise<void> {
-    const id = `cc0probe${randomBytes(6).toString("hex")}`;
-    const res = await this.request(`${API_ORIGIN}/v2/pods/${id}`, {
-      method: "PATCH",
-      body: "{}",
+    const name = `cc-permission-probe-${randomBytes(6).toString("hex")}`;
+    const res = await this.request(`${API_ORIGIN}/v2/templates`, {
+      method: "POST",
+      body: JSON.stringify({ name, image: "busybox:latest" }),
     });
-    const text = await res.text().catch(() => "");
-    if (res.status === 404 && /pod not found/i.test(text)) return;
-    if (!res.ok) {
-      throw new RunpodApiError(
-        errorKind(res.status),
-        res.status,
-        retryAfter(res.headers.get("retry-after")),
-        knownReason(text),
-      );
+    const created = await this.parse(res);
+    const id = typeof created?.id === "string" ? created.id : undefined;
+    if (!id) throw new RunpodApiError("protocol", res.status);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const del = await this.request(
+          `${API_ORIGIN}/v2/templates/${encodeURIComponent(id)}`,
+          { method: "DELETE" },
+        );
+        await this.parse(del);
+        return;
+      } catch {
+        // the key can write (the create worked); retry the cleanup once
+      }
     }
-    throw new RunpodApiError("protocol", res.status);
   }
 
   async getPod(podId: string): Promise<RunpodPodView | undefined> {
