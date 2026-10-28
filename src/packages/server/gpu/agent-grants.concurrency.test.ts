@@ -45,6 +45,7 @@ describeRealPostgres("agent GPU grants under concurrency", () => {
       "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
     );
     await syncSchema({
+      external_credentials: SCHEMA.external_credentials,
       gpu_key_fences: SCHEMA.gpu_key_fences,
       gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
@@ -303,6 +304,68 @@ describeRealPostgres("agent GPU grants under concurrency", () => {
     const { rows } = await query(
       "SELECT count(*)::int AS n FROM gpu_budget_layers WHERE scope_kind = 'agent' AND grant_id = $1",
       [s.grant.grant_id],
+    );
+    expect(rows[0].n).toBe(1);
+  });
+
+  it("launch first: the kill switch waits, then marks its pod and revokes the grant", async () => {
+    const s = await setup();
+    const { held, go } = s.pauseNextLaunch();
+    const launching = s.launch();
+    await held;
+    const killing = pods.killSwitchLocal(
+      { account_id: s.account_id },
+      { isHomeBay: async () => true },
+    );
+    await waitForLockWaiters(query, 1);
+    go();
+    const pod = await launching;
+    await killing;
+    const { rows } = await query(
+      "SELECT desired_state FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0].desired_state).toBe("terminated");
+    expect((await layerOf(s.grant.grant_id)).state).toBe("revoked");
+  });
+
+  it("kill first: the launch waits, then is refused", async () => {
+    const s = await setup();
+    const fence = heldFence();
+    const killing = pods.killSwitchLocal(
+      { account_id: s.account_id },
+      {
+        isHomeBay: async () => true,
+        accountWriteFence: fence.accountWriteFence,
+      },
+    );
+    await fence.held;
+    const launching = s.launch();
+    await waitForLockWaiters(query, 1);
+    fence.go();
+    await killing;
+    await approvalRequired(launching);
+    expect(s.created).toEqual([]);
+  });
+
+  it("concurrent identical or changed asks leave exactly one approvable request", async () => {
+    const s = await setup();
+    // the grant is used up first, so every launch below asks again
+    await s.launch();
+    const asks = await Promise.allSettled(
+      Array.from({ length: 6 }, () => s.launch()),
+    );
+    const ids = new Set(
+      asks.map((r) => {
+        if (r.status !== "rejected") throw Error("launched without approval");
+        expect(r.reason).toBeInstanceOf(grants.GpuAgentApprovalRequired);
+        return r.reason.request_id;
+      }),
+    );
+    expect(ids.size).toBe(1);
+    const { rows } = await query(
+      "SELECT count(*)::int AS n FROM gpu_agent_requests WHERE account_id = $1 AND state = 'pending'",
+      [s.account_id],
     );
     expect(rows[0].n).toBe(1);
   });

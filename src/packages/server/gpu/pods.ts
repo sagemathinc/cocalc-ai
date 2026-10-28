@@ -72,6 +72,7 @@ import {
   lockUsableGrant,
   NoUsableAgentGrant,
   requestAgentLaunch,
+  revokeAgentGrantsForKillSwitch,
   type GpuAgentPrincipal,
 } from "@cocalc/server/gpu/agent-grants";
 import {
@@ -266,7 +267,7 @@ export function podSummary(row: PodRow): GpuPodSummary {
   };
   if (row.provider_pod_id) s.provider_pod_id = row.provider_pod_id;
   if (row.project_id) s.project_id = row.project_id;
-  if (row.agent_id) s.agent_id = row.agent_id;
+  if (row.agent_id) s.agent_id = visibleAgentId(row.agent_id);
   if (row.data_center_id) s.data_center_id = row.data_center_id;
   if (row.cost_per_hr != null) s.cost_per_hr = `${row.cost_per_hr}`;
   if (row.terminated_at) s.terminated_at = iso(row.terminated_at);
@@ -524,9 +525,18 @@ type GpuAgentPrincipalWire = Omit<GpuAgentPrincipal, "expires_at"> & {
 // An agent sees only the managed pods it launched in its own project (its
 // principal key, so a chat session sees only that session's pods). Human
 // launches and other agents' pods are never in scope for it.
+// What an agent may see and reach: the pods it launched in its project, in
+// this run (a registered agent's later run is a different principal; for a
+// chat session the run is the session).
 export interface GpuAgentScope {
   project_id: string;
   agent_id: string;
+  run_id: string;
+}
+
+// A chat session's key is derived from its token's fingerprint: never shown.
+function visibleAgentId(agent_id: string): string {
+  return agent_id.startsWith("session:") ? "chat-session" : agent_id;
 }
 
 function agentScopeSql(
@@ -535,8 +545,8 @@ function agentScopeSql(
 ): { sql: string; values: unknown[] } {
   if (!agent) return { sql: "", values: [] };
   return {
-    sql: ` AND project_id = $${first} AND agent_id = $${first + 1}`,
-    values: [agent.project_id, agent.agent_id],
+    sql: ` AND project_id = $${first} AND agent_id = $${first + 1} AND turn_id = $${first + 2}`,
+    values: [agent.project_id, agent.agent_id, agent.run_id ?? null],
   };
 }
 
@@ -685,15 +695,21 @@ export async function launchGpuPodLocal(
   } catch (err) {
     if (!(err instanceof NoUsableAgentGrant) || !agent || !approval) throw err;
     // Nothing was written; ask the human, in a transaction of its own.
-    throw await inTransaction((db) =>
-      requestAgentLaunch(db, {
+    throw await inTransaction(async (db) => {
+      // serializes this agent's asks with each other and with approvals
+      await (deps.accountWriteFence ?? lockGpuAccountFence)(
+        db,
+        account_id,
+        "ask for a GPU approval",
+      );
+      return await requestAgentLaunch(db, {
         principal: agent.principal,
         operation_id: agent.operation_id,
         payload: approval.payload,
         payload_hash: approval.payload_hash,
         now: new Date((deps.now ?? Date.now)()),
-      }),
-    );
+      });
+    });
   }
   const { client } = intent;
   let row = intent.row;
@@ -1713,7 +1729,7 @@ function eventView(row: any): GpuPodEvent {
     action: row.action,
   };
   if (row.actor_account_id) e.actor_account_id = row.actor_account_id;
-  if (row.agent_id) e.agent_id = row.agent_id;
+  if (row.agent_id) e.agent_id = visibleAgentId(row.agent_id);
   if (row.details) e.details = row.details;
   return e;
 }
@@ -1906,6 +1922,9 @@ export async function killSwitchLocal(
       account_id,
       "stop GPU pods",
     );
+    // agents' approvals end with it (next in the lock order: grants, then
+    // key fences and layers): nothing an agent was allowed survives a resume
+    await revokeAgentGrantsForKillSwitch(db, { account_id, project_id });
     const { rows } = await db.query(
       `UPDATE gpu_pods SET desired_state = 'terminated', reason = $3, updated = now()
         WHERE key_owner_account_id = $1

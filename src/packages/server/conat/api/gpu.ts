@@ -52,7 +52,15 @@ async function agentPrincipal(
 }
 
 function scopeOf(p: GpuAgentPrincipal | undefined) {
-  return p ? { agent: { project_id: p.project_id, agent_id: p.agent_id } } : {};
+  return p
+    ? {
+        agent: {
+          project_id: p.project_id,
+          agent_id: p.agent_id,
+          run_id: p.run_id,
+        },
+      }
+    : {};
 }
 
 export const catalog: GpuApi["catalog"] = async (opts = {}) =>

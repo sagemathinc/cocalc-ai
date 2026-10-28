@@ -85,8 +85,10 @@ registered agent), until it ends.
   `--operation` if you gave one. Any change is a different launch and needs
   a new approval. A second pod needs a second approval too.
 - `pods`, `who`, `connect` and `terminate` show and reach only the pods this
-  session launched. You can always terminate them.
-- If the human revokes the approval, CoCalc terminates the pod it launched.
+  session (or this run) launched. You can always terminate them.
+- If the human revokes the approval, or presses the kill switch, CoCalc
+  terminates the pod it launched; after a kill switch, every launch needs a
+  new approval.
   When your session ends, no new launch is possible, but the pod runs to its
   maximum runtime: terminate it yourself when the work is done.
 

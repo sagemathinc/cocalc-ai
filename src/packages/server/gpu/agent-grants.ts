@@ -228,11 +228,16 @@ export async function requestAgentLaunch(
     );
   }
   // A different payload for the same operation supersedes the older one, so
-  // the human never approves a launch the agent no longer means.
+  // the human never approves a launch the agent no longer means; one past
+  // its expiry just ends. (The caller holds the account fence, so identical
+  // concurrent asks find one another; a unique index backs that up.)
   await db.query(
-    `UPDATE gpu_agent_requests SET state = 'superseded', decided_at = $7
+    `UPDATE gpu_agent_requests
+        SET state = CASE WHEN expires_at <= $7 THEN 'expired' ELSE 'superseded' END,
+            decided_at = $7
       WHERE account_id = $1 AND project_id = $2 AND agent_id = $3 AND run_id = $4
-        AND operation_id = $5 AND payload_hash <> $6 AND state = 'pending'`,
+        AND operation_id = $5 AND state = 'pending'
+        AND (payload_hash <> $6 OR expires_at <= $7)`,
     [
       principal.account_id,
       principal.project_id,
@@ -495,13 +500,25 @@ export async function revokeAgentGrantLocal(
   }
   if (grant.state === "revoked") return grantView(grant);
   await lockKeyFence(db, grant.credential_id);
+  await revokeLockedGrant(db, grant, opts.account_id, now, {});
+  return grantView({ ...grant, state: "revoked" });
+}
+
+// The grant row is locked (and its key fence, the next in the lock order).
+async function revokeLockedGrant(
+  db: Db,
+  grant: { grant_id: string; layer_id: string },
+  by_account_id: string,
+  now: Date,
+  details: Record<string, unknown>,
+): Promise<void> {
   await db.query(`SELECT id FROM gpu_budget_layers WHERE id = $1 FOR UPDATE`, [
     grant.layer_id,
   ]);
   await db.query(
     `UPDATE gpu_agent_grants SET state = 'revoked', revoked_at = $2,
        revoked_by_account_id = $3 WHERE grant_id = $1`,
-    [grant_id, now, opts.account_id],
+    [grant.grant_id, now, by_account_id],
   );
   await db.query(
     `UPDATE gpu_budget_layers SET state = 'revoked', revoked_reason = 'owner',
@@ -513,9 +530,50 @@ export async function revokeAgentGrantLocal(
   await db.query(
     `INSERT INTO gpu_budget_events (id, layer_id, at, actor_account_id, action, after)
      VALUES ($1, $2, now(), $3, 'revoke', $4)`,
-    [randomUUID(), grant.layer_id, opts.account_id, { grant_id }],
+    [
+      randomUUID(),
+      grant.layer_id,
+      by_account_id,
+      { grant_id: grant.grant_id, ...details },
+    ],
   );
-  return grantView({ ...grant, state: "revoked" });
+}
+
+// The kill switch (all of the account's agents, or one project's): every
+// active grant is revoked, so its pods go and `gpu resume` brings none back,
+// and every pending request ends, so no approval after the kill revives one.
+// The human approves again. Call right after the account fence, in the kill
+// switch's transaction.
+export async function revokeAgentGrantsForKillSwitch(
+  db: Db,
+  opts: { account_id: string; project_id: string | null; now?: Date },
+): Promise<{ grants: number; requests: number }> {
+  const now = opts.now ?? new Date();
+  const { rows: grants } = await db.query(
+    `SELECT grant_id, layer_id, credential_id FROM gpu_agent_grants
+      WHERE account_id = $1 AND ($2::uuid IS NULL OR project_id = $2::uuid)
+        AND state = 'active'
+      ORDER BY grant_id
+      FOR UPDATE`,
+    [opts.account_id, opts.project_id],
+  );
+  const fences = [...new Set(grants.map((g: any) => g.credential_id))].sort();
+  for (const credential_id of fences)
+    await lockKeyFence(db, `${credential_id}`);
+  for (const grant of grants) {
+    await revokeLockedGrant(db, grant, opts.account_id, now, {
+      reason: "kill_switch",
+      project_id: opts.project_id,
+    });
+  }
+  const { rowCount } = await db.query(
+    `UPDATE gpu_agent_requests SET state = 'denied', decided_at = $3,
+       decided_by_account_id = $1
+      WHERE account_id = $1 AND ($2::uuid IS NULL OR project_id = $2::uuid)
+        AND state = 'pending'`,
+    [opts.account_id, opts.project_id, now],
+  );
+  return { grants: grants.length, requests: rowCount ?? 0 };
 }
 
 // The end of a run: admission closes, the layer stays active for its pods.

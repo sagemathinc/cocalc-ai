@@ -138,6 +138,9 @@ describeDb("GPU budgets", () => {
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
       gpu_worker_leases: SCHEMA.gpu_worker_leases,
       gpu_worker_overrides: SCHEMA.gpu_worker_overrides,
+      // the kill switch revokes agents' approvals (6b)
+      gpu_agent_requests: SCHEMA.gpu_agent_requests,
+      gpu_agent_grants: SCHEMA.gpu_agent_grants,
       external_credentials: SCHEMA.external_credentials,
     });
     // the reaper has just completed a sweep (admission requires it)

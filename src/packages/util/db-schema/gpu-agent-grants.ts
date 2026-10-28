@@ -65,6 +65,11 @@ Table({
   rules: {
     primary_key: "request_id",
     pg_indexes: ["account_id", "project_id", "expires_at"],
+    // at most one pending request per agent run and operation: the human
+    // never sees two approvable copies of one launch
+    pg_unique_indexes: [
+      "(account_id, project_id, agent_id, run_id, operation_id) WHERE state = 'pending'",
+    ],
   },
   fields: {
     request_id: { type: "uuid", not_null: true },

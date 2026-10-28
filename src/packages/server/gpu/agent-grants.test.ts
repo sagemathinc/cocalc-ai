@@ -34,6 +34,7 @@ import {
 } from "./pods";
 import { gpuSshInfoLocal } from "./hostkey";
 import { runGpuReaperSweep } from "./reaper";
+import { resumeGpuLaunchesLocal } from "./budget-api";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -258,6 +259,58 @@ describeDb("agent GPU launches", () => {
       [first.request_id]: "superseded",
       [second.request_id]: "pending",
     });
+  });
+
+  it("ends a pending request past its expiry when the agent asks again", async () => {
+    const { account_id, deps } = setup();
+    const agent = { principal: principal(account_id), operation_id: "op-1" };
+    const launch = () =>
+      launchGpuPodLocal(
+        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        deps,
+      );
+    const first = await askedFor(launch());
+    await getPool().query(
+      "UPDATE gpu_agent_requests SET expires_at = now() - interval '1 minute' WHERE request_id = $1",
+      [first.request_id],
+    );
+    const second = await askedFor(launch());
+    expect(second.request_id).not.toBe(first.request_id);
+    const { rows } = await getPool().query(
+      "SELECT request_id, state FROM gpu_agent_requests WHERE account_id = $1",
+      [account_id],
+    );
+    expect(
+      Object.fromEntries(rows.map((r: any) => [r.request_id, r.state])),
+    ).toEqual({
+      [first.request_id]: "expired",
+      [second.request_id]: "pending",
+    });
+  });
+
+  it("keeps at most one pending request per agent run and operation", async () => {
+    const { account_id, deps } = setup();
+    const p = principal(account_id);
+    const ask = await askedFor(
+      launchGpuPodLocal(
+        {
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent: { principal: p, operation_id: "op-1" },
+        },
+        deps,
+      ),
+    );
+    await expect(
+      getPool().query(
+        `INSERT INTO gpu_agent_requests (request_id, account_id, project_id, agent_id, run_id,
+           operation_id, payload, payload_hash, state, created, expires_at)
+         SELECT $1, account_id, project_id, agent_id, run_id, operation_id, payload,
+           payload_hash, 'pending', now(), expires_at FROM gpu_agent_requests WHERE request_id = $2`,
+        [randomUUID(), ask.request_id],
+      ),
+    ).rejects.toThrow(/duplicate|unique/);
   });
 
   it("approves exactly the reviewed request, with fresh auth, idempotently", async () => {
@@ -659,19 +712,46 @@ describeDb("agent GPU launches", () => {
       { account_id, project_id: PROJECT, spec: SPEC },
       deps,
     );
-    const scope = { project_id: PROJECT, agent_id: p.agent_id };
-    const other = {
+    const scope = {
       project_id: PROJECT,
-      agent_id: `session:${"c".repeat(64)}`,
+      agent_id: p.agent_id,
+      run_id: p.run_id,
     };
-    expect(
-      (await listManagedGpuPodsLocal({ account_id, agent: scope }, deps)).map(
-        (x) => x.handle,
+    const otherKey = `session:${"c".repeat(64)}`;
+    const other = { project_id: PROJECT, agent_id: otherKey, run_id: otherKey };
+    // the same agent in a later run is a different principal
+    const laterRun = { ...scope, run_id: "a-later-run" };
+    const listed = await listManagedGpuPodsLocal(
+      { account_id, agent: scope },
+      deps,
+    );
+    expect(listed.map((x) => x.handle)).toEqual([mine.handle]);
+    // the session's key never leaves the server, to the agent or the human
+    expect(listed[0].agent_id).toBe("chat-session");
+    const seen = JSON.stringify([
+      listed,
+      await listManagedGpuPodsLocal({ account_id }, deps),
+      await whoGpuPodLocal({ account_id, query: mine.handle }, deps),
+    ]);
+    expect(seen).not.toContain("session:");
+    expect(seen).not.toContain("a".repeat(64));
+    for (const nobody of [other, laterRun]) {
+      expect(
+        await listManagedGpuPodsLocal({ account_id, agent: nobody }, deps),
+      ).toEqual([]);
+      await expect(
+        gpuSshInfoLocal(
+          { account_id, pod_id: mine.handle, agent: nobody },
+          deps,
+        ),
+      ).rejects.toThrow("No such GPU pod");
+    }
+    await expect(
+      terminateGpuPodLocal(
+        { account_id, pod_id: mine.handle, agent: laterRun },
+        deps,
       ),
-    ).toEqual([mine.handle]);
-    expect(
-      await listManagedGpuPodsLocal({ account_id, agent: other }, deps),
-    ).toEqual([]);
+    ).rejects.toThrow("No such GPU pod");
     expect(
       await whoGpuPodLocal(
         { account_id, query: human.handle, agent: scope },
@@ -770,42 +850,143 @@ describeDb("agent GPU launches", () => {
     expect(rp.client.terminatePod).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses an approved agent launch while the kill switch's pause is on, leaving the grant unused", async () => {
-    const { account_id, rp, deps, approveDeps, credential_id } = setup();
-    // the kill switch pauses the connected key
+  // an approved grant for a chat session (its key connected, so the kill
+  // switch pauses it), and one pending request in the same project
+  async function killSetup(project_id = PROJECT) {
+    const s = setup();
     await getPool().query(
       "INSERT INTO external_credentials (id, provider, kind, scope, owner_account_id, encrypted_payload, created, updated) VALUES ($1, 'runpod', 'gpu-provider-api-key', 'account', $2, 'x', now(), now())",
-      [credential_id, account_id],
+      [s.credential_id, s.account_id],
     );
-    const agent = { principal: principal(account_id), operation_id: "op-1" };
-    const ask = await askedFor(
-      launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
-        deps,
-      ),
-    );
+    const ask = async (c: string, project: string) => {
+      const key = `session:${c.repeat(64)}`;
+      const agent = {
+        principal: principal(s.account_id, {
+          agent_id: key,
+          run_id: key,
+          project_id: project,
+        }),
+        operation_id: "op-1",
+      };
+      const req = await askedFor(
+        launchGpuPodLocal(
+          { account_id: s.account_id, project_id: project, spec: SPEC, agent },
+          s.deps,
+        ),
+      );
+      return { agent, req };
+    };
+    const approved = await ask("1", project_id);
     const grant = await approveAgentRequestLocal(
       {
-        account_id,
-        request_id: ask.request_id,
-        expected_hash: ask.payload_hash,
+        account_id: s.account_id,
+        request_id: approved.req.request_id,
+        expected_hash: approved.req.payload_hash,
         fresh_auth_verified: true,
       },
-      approveDeps,
+      s.approveDeps,
     );
-    expect((await killSwitchLocal({ account_id }, deps)).paused).toBe(true);
-    await expect(
+    const pending = await ask("2", project_id);
+    const launch = (agent = approved.agent) =>
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
-        deps,
-      ),
-    ).rejects.toThrow("paused by your kill switch");
-    expect(rp.client.createPod).not.toHaveBeenCalled();
+        {
+          account_id: s.account_id,
+          project_id: agent.principal.project_id,
+          spec: SPEC,
+          agent,
+        },
+        s.deps,
+      );
+    const approve = (req = pending.req) =>
+      approveAgentRequestLocal(
+        {
+          account_id: s.account_id,
+          request_id: req.request_id,
+          expected_hash: req.payload_hash,
+          fresh_auth_verified: true,
+        },
+        s.approveDeps,
+      );
+    const grantState = async (grant_id = grant.grant_id) =>
+      (
+        await getPool().query(
+          "SELECT g.state, g.launches_used, l.state AS layer FROM gpu_agent_grants g JOIN gpu_budget_layers l ON l.id = g.layer_id WHERE g.grant_id = $1",
+          [grant_id],
+        )
+      ).rows[0];
+    return { ...s, ask, grant, pending, launch, approve, grantState };
+  }
+
+  it("the kill switch revokes an agent's grant, and its pause refuses even a new approval's launch", async () => {
+    const k = await killSetup();
     expect(
-      await count(
-        "SELECT launches_used AS n FROM gpu_agent_grants WHERE grant_id = $1",
-        [grant.grant_id],
-      ),
-    ).toBe(0);
+      (await killSwitchLocal({ account_id: k.account_id }, k.deps)).paused,
+    ).toBe(true);
+    expect(await k.grantState()).toEqual({
+      state: "revoked",
+      launches_used: 0,
+      layer: "revoked",
+    });
+    const { rows } = await getPool().query(
+      "SELECT after FROM gpu_budget_events WHERE action = 'revoke' AND after->>'grant_id' = $1",
+      [k.grant.grant_id],
+    );
+    expect(rows.map((r: any) => r.after.reason)).toEqual(["kill_switch"]);
+    // the old grant is gone: the agent asks again
+    const again = await askedFor(k.launch());
+    // approved during the pause, the launch is still refused at the key's
+    // fence, and the new grant stays unused
+    const fresh = await k.approve(again);
+    await expect(k.launch()).rejects.toThrow("paused by your kill switch");
+    expect(k.rp.client.createPod).not.toHaveBeenCalled();
+    expect((await k.grantState(fresh.grant_id)).launches_used).toBe(0);
+  });
+
+  it("after kill and resume, the old grant stays revoked: the human approves again", async () => {
+    const k = await killSetup();
+    await killSwitchLocal({ account_id: k.account_id }, k.deps);
+    await resumeGpuLaunchesLocal(
+      { account_id: k.account_id, fresh_auth_verified: true },
+      { accountWriteFence: fence },
+    );
+    // the same launch asks again: a new request, nothing launched
+    const again = await askedFor(k.launch());
+    expect(again.request_id).not.toBe(k.grant.request_id);
+    expect(k.rp.client.createPod).not.toHaveBeenCalled();
+    expect((await k.grantState()).state).toBe("revoked");
+    // and only a new approval launches it
+    await k.approve(again);
+    await k.launch();
+    expect(k.rp.client.createPod).toHaveBeenCalledTimes(1);
+  });
+
+  it("a request pending at the kill can't be approved after it", async () => {
+    const k = await killSetup();
+    await killSwitchLocal({ account_id: k.account_id }, k.deps);
+    await expect(k.approve()).rejects.toThrow("the agent has to ask again");
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_agent_requests WHERE request_id = $1",
+      [k.pending.req.request_id],
+    );
+    expect(rows[0].state).toBe("denied");
+  });
+
+  it("a project's kill switch revokes only that project's grants and requests", async () => {
+    const k = await killSetup();
+    // another project's approved grant and pending request
+    const other = await k.ask("3", OTHER_PROJECT);
+    const otherGrant = await k.approve(other.req);
+    const otherPending = await k.ask("4", OTHER_PROJECT);
+    const r = await killSwitchLocal(
+      { account_id: k.account_id, project_id: PROJECT, pause: false },
+      k.deps,
+    );
+    expect(r.paused).toBe(false);
+    expect((await k.grantState()).state).toBe("revoked");
+    await expect(k.approve()).rejects.toThrow("the agent has to ask again");
+    expect((await k.grantState(otherGrant.grant_id)).state).toBe("active");
+    await k.approve(otherPending.req);
+    await k.launch(other.agent);
+    expect(k.rp.client.createPod).toHaveBeenCalledTimes(1);
   });
 });
