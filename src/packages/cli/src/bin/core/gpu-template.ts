@@ -29,7 +29,8 @@ export interface GpuLaunchPlan {
   template?: GpuTemplate;
   // the offer the GPU was picked from, or priced by
   offer?: GpuOffer;
-  // list price x GPUs x maximum runtime, when a price is known
+  // GPUs and disk at list price for the whole maximum runtime, when a
+  // price is known (maxLaunchCostUsd)
   max_cost_usd?: number;
 }
 
@@ -107,13 +108,13 @@ export async function planGpuLaunch(
   if (template) plan.template = template;
   if (offer) {
     plan.offer = offer;
-    // rounded up to the cent: it is a bound (less float noise)
-    const usd = maxLaunchCostUsd(
-      offer.price_per_gpu_hour!,
-      plan.spec.gpu_count,
-      plan.spec.max_runtime_minutes,
-    );
-    plan.max_cost_usd = Math.ceil(usd * 100 - 1e-9) / 100;
+    plan.max_cost_usd = maxLaunchCostUsd({
+      price_per_gpu_hour: offer.price_per_gpu_hour!,
+      gpu_count: plan.spec.gpu_count,
+      max_runtime_minutes: plan.spec.max_runtime_minutes,
+      container_disk_gb: plan.spec.container_disk_gb ?? 0,
+      volume_gb: plan.spec.volume_gb ?? 0,
+    });
   }
   return plan;
 }

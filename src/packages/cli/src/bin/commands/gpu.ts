@@ -295,7 +295,7 @@ export function registerGpuCommand(
     )
     .option(
       "--dry-run",
-      "show the spec, the GPU offer and the most it can cost, without launching",
+      "show the spec, the GPU offer and the most it can cost (GPUs and disk at list price for the whole max runtime), without launching",
     )
     .option(
       "--no-connect",

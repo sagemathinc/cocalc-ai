@@ -97,12 +97,25 @@ export function specFromTemplate(
   return spec;
 }
 
-// The most a launch can cost at list price: price per GPU-hour, times the
-// GPU count, times the maximum runtime (the pod is gone by then).
-export function maxLaunchCostUsd(
-  price_per_gpu_hour: number,
-  gpu_count: number,
-  max_runtime_minutes: number,
-): number {
-  return (price_per_gpu_hour * gpu_count * max_runtime_minutes) / 60;
+// Storage, which RunPod bills per second on top of the GPUs while a pod
+// exists: container and volume disk are $0.10/GB/month while running and a
+// volume $0.20/GB/month while stopped (RunPod's pod pricing, 10-28). For a
+// bound, every GB is counted at $0.20 over the shortest month (28 days).
+export const STORAGE_USD_PER_GB_HOUR_BOUND = 0.2 / (28 * 24);
+
+// The most a launch can cost at list price: its GPUs and all its disk for
+// the whole maximum runtime (the pod is gone by then), rounded up to the cent.
+export function maxLaunchCostUsd(opts: {
+  price_per_gpu_hour: number;
+  gpu_count: number;
+  max_runtime_minutes: number;
+  container_disk_gb: number;
+  volume_gb: number;
+}): number {
+  const hours = opts.max_runtime_minutes / 60;
+  const perHour =
+    opts.price_per_gpu_hour * opts.gpu_count +
+    (opts.container_disk_gb + opts.volume_gb) * STORAGE_USD_PER_GB_HOUR_BOUND;
+  // less float noise, so an exact cent amount stays as it is
+  return Math.ceil(hours * perHour * 100 - 1e-9) / 100;
 }

@@ -1,6 +1,7 @@
 import { normalizeGpuLaunchSpec } from "./launch-spec";
 import {
   GPU_TEMPLATES,
+  STORAGE_USD_PER_GB_HOUR_BOUND,
   getGpuTemplate,
   maxLaunchCostUsd,
   specFromTemplate,
@@ -50,7 +51,33 @@ describe("GPU templates", () => {
     expect(getGpuTemplate("nope")).toBeUndefined();
   });
 
-  it("bounds the cost by list price, GPU count and maximum runtime", () => {
-    expect(maxLaunchCostUsd(0.4, 2, 90)).toBeCloseTo(1.2);
+  it("bounds the cost by the GPUs and all disk for the whole runtime, rounded up", () => {
+    const cost = (o: Partial<Parameters<typeof maxLaunchCostUsd>[0]>) =>
+      maxLaunchCostUsd({
+        price_per_gpu_hour: 0,
+        gpu_count: 1,
+        max_runtime_minutes: 60,
+        container_disk_gb: 0,
+        volume_gb: 0,
+        ...o,
+      });
+    // GPUs only: 0.40 x 2 x 1.5 h
+    expect(
+      cost({ price_per_gpu_hour: 0.4, gpu_count: 2, max_runtime_minutes: 90 }),
+    ).toBe(1.2);
+    // the default 20 GB disk alone, for an hour: 20 x 0.20/672 = $0.006
+    expect(cost({ container_disk_gb: 20 })).toBe(0.01);
+    expect(STORAGE_USD_PER_GB_HOUR_BOUND).toBeCloseTo(0.2 / 672, 12);
+    // llm-kernel's 80 GB disk for 2 h moves the bound past GPU-only
+    // (0.44 x 2 h = 0.88): 2 x (0.44 + 80 x 0.20/672) = 0.9276
+    expect(
+      cost({
+        price_per_gpu_hour: 0.44,
+        max_runtime_minutes: 120,
+        container_disk_gb: 80,
+      }),
+    ).toBe(0.93);
+    // a volume counts too: 520 GB for an hour = $0.155
+    expect(cost({ container_disk_gb: 20, volume_gb: 500 })).toBe(0.16);
   });
 });

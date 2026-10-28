@@ -42,7 +42,8 @@ it("picks the cheapest GPU in stock with the template's memory, and bounds the c
   assert.equal(small.spec.gpu_type_id, "NVIDIA RTX 2000 Ada Generation");
   assert.equal(small.spec.max_runtime_minutes, 60);
   assert.equal(small.spec.cloud, "SECURE");
-  assert.equal(small.max_cost_usd, 0.24);
+  // the GPU hour plus its 20 GB disk: 0.24 + 20 x 0.20/672 = 0.2460
+  assert.equal(small.max_cost_usd, 0.25);
   assert.deepEqual(a.calls[0], { cloud: "SECURE", min_count: 1 });
 
   // explicit choices win over the template; no price, no offer
@@ -53,8 +54,8 @@ it("picks the cheapest GPU in stock with the template's memory, and bounds the c
   assert.equal(big.spec.gpu_type_id, "NVIDIA A40");
   assert.equal(big.spec.gpu_count, 2);
   assert.equal(big.spec.container_disk_gb, 80);
-  // 0.44 x 2 x 45/60, rounded up to the cent
-  assert.equal(big.max_cost_usd, 0.66);
+  // 0.75 h x (0.44 x 2 + 80 GB x 0.20/672) = 0.6779; GPUs alone: 0.66
+  assert.equal(big.max_cost_usd, 0.68);
   assert.deepEqual(a.calls[1], { cloud: "SECURE", min_count: 2 });
 });
 
@@ -83,7 +84,18 @@ it("prices a given GPU only when asked, and needs a GPU and runtime without a te
     spec: { gpu_type_id: "NVIDIA RTX A4000", max_runtime_minutes: 30 },
     price: true,
   });
+  // 0.5 h x (0.25 + 20 GB x 0.20/672) = 0.1280
   assert.equal(priced.max_cost_usd, 0.13);
+  // with a 100 GB volume: 0.5 h x (0.25 + 120 GB x 0.20/672) = 0.1429
+  const withVolume = await planGpuLaunch(a, {
+    spec: {
+      gpu_type_id: "NVIDIA RTX A4000",
+      max_runtime_minutes: 30,
+      volume_gb: 100,
+    },
+    price: true,
+  });
+  assert.equal(withVolume.max_cost_usd, 0.15);
   assert.deepEqual(a.calls[0], {
     cloud: "SECURE",
     min_count: 1,

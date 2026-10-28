@@ -651,7 +651,8 @@ it("a kernel template launches with a key made here, then connects and registers
   assert.match(launch.args.spec.ssh_public_key, /^ssh-ed25519 /);
   const out = outputs[0];
   assert.equal(out.handle, handle);
-  assert.equal(out.max_cost_usd, 0.25);
+  // the GPU hour and the 20 GB disk, rounded up
+  assert.equal(out.max_cost_usd, 0.26);
   assert.equal(out.connect.kernel, `reflect-${handle}`);
   assert.equal(reflect.at(-1)![2], "add");
 });

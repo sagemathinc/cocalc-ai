@@ -11,8 +11,9 @@ money.
 
 - **Never ask for, print, store or handle a RunPod API key.** Only the user
   connects one, in Settings. If no key is connected, say so and stop.
-- **State the most a launch can cost before launching**, from
-  `launch --dry-run`, and launch only what the user asked for.
+- **State the most a launch can cost before launching**: `max_cost_usd`
+  from `launch --dry-run`, the GPUs and all disk at list price for the whole
+  maximum runtime. Launch only what the user asked for.
 - **Always use the shortest sensible `--max-runtime`.** A pod is terminated
   at its deadline at the latest, and terminating it sooner is better.
 - **Terminate the pod as soon as the work is done:**
