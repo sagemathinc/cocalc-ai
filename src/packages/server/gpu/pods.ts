@@ -301,6 +301,16 @@ export const CLEARED_HOSTKEY_FIELDS = {
   host_key_fingerprint: null,
 } as const;
 
+// The fields of a transition, plus the cleared host-key fields if it leaves
+// the registrable state.
+export function withHostkeyClearedOnExit(
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  return UNREGISTRABLE_STATES.has(fields.state as string)
+    ? { ...fields, ...CLEARED_HOSTKEY_FIELDS }
+    : fields;
+}
+
 // One state change and its event, in one transaction: an event never
 // describes a change that didn't happen, and a change never lacks its event.
 // `where` adds conditions (compare-and-set); undefined means it didn't apply.
@@ -310,9 +320,7 @@ async function transition(
   where: string,
   event?: PodEvent,
 ): Promise<PodRow | undefined> {
-  if (UNREGISTRABLE_STATES.has(fields.state as string)) {
-    fields = { ...fields, ...CLEARED_HOSTKEY_FIELDS };
-  }
+  fields = withHostkeyClearedOnExit(fields);
   return await inTransaction(async (db) => {
     const keys = Object.keys(fields);
     const sets = keys.map((k, i) => `${k} = $${i + 2}`);
