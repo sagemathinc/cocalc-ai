@@ -19,6 +19,7 @@ export type TableAuthorityKey =
   | "seed"
   | "account_id"
   | "owner_account_id"
+  | "key_owner_account_id"
   | "payer_account_id"
   | "sender_account_id"
   | "recipient_account_id"
@@ -610,6 +611,18 @@ export const TABLE_OWNERSHIP = {
     notes:
       "Fixed-window agent memory rate counters shared by load-balanced hubs in the home bay. Losing rows only resets the current window.",
     rebuild: "No rebuild: counters restart empty.",
+  }),
+
+  ...entries(["gpu_pods", "gpu_pod_events"], {
+    ownership: "account-home",
+    authority: "key_owner_account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Project a GPU pod was launched for; only an attribution reference, the row lives on the key owner's home bay.",
+    },
+    notes:
+      "GPU bring-your-own-key pod records and their append-only events, on the home bay of the account whose provider key launched the pod (gpu_pod_events rows follow their pod). Reads and writes route there with the key operations (server/gpu). Rehome is unsupported until the pods and the key move together.",
   }),
 
   ...entries(["external_credentials"], {
