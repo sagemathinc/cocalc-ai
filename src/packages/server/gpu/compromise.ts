@@ -59,6 +59,7 @@ import {
 } from "@cocalc/server/gpu/key-events";
 
 import type { GpuCompromiseStatus } from "@cocalc/util/gpu/types";
+import { raiseAlert, resolveAlert } from "@cocalc/server/gpu/alerts";
 
 const log = getLogger("server:gpu:compromise");
 
@@ -375,6 +376,28 @@ async function closeCompromise(
       undefined,
       { kind: "cleanup" },
     );
+    // RunPod rejects the key now; the owner checks the account once
+    const observed_at = new Date();
+    await resolveAlert(
+      {
+        credential_id,
+        kind: "compromise_awaiting_revocation",
+        observed_at,
+        by: "compromise_closed",
+      },
+      db,
+    );
+    await raiseAlert(
+      {
+        key_owner_account_id: account_id,
+        credential_id,
+        kind: "compromise_check_pods",
+        severity: "warning",
+        dedupe_key: "key",
+        observed_at,
+      },
+      db,
+    );
   });
 }
 
@@ -441,6 +464,18 @@ export async function reportCompromisedLocal(
       credential_id,
       cause: "compromised",
     });
+    // open until the close (RunPod rejects the key and nothing is left)
+    await raiseAlert(
+      {
+        key_owner_account_id: account_id,
+        credential_id,
+        kind: "compromise_awaiting_revocation",
+        severity: "warning",
+        dedupe_key: "key",
+        observed_at: new Date(),
+      },
+      db,
+    );
     await recordKeyEvent(
       {
         credential_id,

@@ -14,7 +14,10 @@ import {
   getGpuPods,
 } from "@cocalc/server/gpu/read";
 import {
+  acknowledgeGpuAlert,
   getGpuBudget,
+  listGpuAlerts,
+  releaseQuarantined as releaseQuarantinedImpl,
   resumeGpuLaunches,
   setGpuBudget as setGpuBudgetImpl,
 } from "@cocalc/server/gpu/budget-api";
@@ -128,6 +131,35 @@ export async function sshInfo(
 ): ReturnType<GpuApi["sshInfo"]> {
   return await gpuSshInfo({
     account_id: opts?.account_id,
+    pod_id: opts?.pod_id,
+  });
+}
+
+export async function alerts(
+  opts: Parameters<GpuApi["alerts"]>[0],
+): ReturnType<GpuApi["alerts"]> {
+  return await listGpuAlerts({
+    account_id: opts?.account_id,
+    include_resolved: opts?.include_resolved,
+  });
+}
+
+export async function acknowledgeAlert(
+  opts: Parameters<GpuApi["acknowledgeAlert"]>[0],
+): ReturnType<GpuApi["acknowledgeAlert"]> {
+  return await acknowledgeGpuAlert({
+    account_id: opts?.account_id,
+    id: opts?.id,
+  });
+}
+
+export async function releaseQuarantined(
+  opts: Parameters<GpuApi["releaseQuarantined"]>[0],
+): ReturnType<GpuApi["releaseQuarantined"]> {
+  return await releaseQuarantinedImpl({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
     pod_id: opts?.pod_id,
   });
 }

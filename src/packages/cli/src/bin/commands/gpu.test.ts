@@ -151,6 +151,21 @@ function harness(
             observe();
             return { resumed: 1 };
           },
+          alerts: async (args) => {
+            calls.push({ name: "alerts", args });
+            observe();
+            return [ALERT];
+          },
+          acknowledgeAlert: async (args) => {
+            calls.push({ name: "acknowledgeAlert", args });
+            observe();
+            return { ...ALERT, resolved_at: "2026-10-28T21:00:00.000Z" };
+          },
+          releaseQuarantined: async (args) => {
+            calls.push({ name: "releaseQuarantined", args });
+            observe();
+            return { pod_id: "p1", released_usd: "1.5", warning: "w" };
+          },
           reportCompromised: async (args) => {
             calls.push({ name: "reportCompromised", args });
             observe();
@@ -992,4 +1007,47 @@ it("a local cleanup failure after the terminate doesn't change what is reported"
     t.run(dry2.next),
     /more than --max-cost \$0\.26; terminating it failed: run cocalc gpu terminate cc-\S+\./,
   );
+});
+
+const ALERT = {
+  id: "00000000-1000-4000-8000-0000000000bb",
+  credential_id: "00000000-1000-4000-8000-0000000000cc",
+  kind: "unmanaged_pod",
+  severity: "warning",
+  message: "Terminate it at RunPod, then acknowledge this alert.",
+  details: { handle: "cocalc-gpu-abc" },
+  opened: "2026-10-28T20:00:00.000Z",
+  last_seen: "2026-10-28T20:00:00.000Z",
+  resolved_at: null,
+  resolved_by: null,
+  acknowledged_at: null,
+  acknowledgeable: true,
+};
+
+it("lists alerts (and recent resolved ones), acknowledges one, and releases a quarantined hold", async () => {
+  const h = harness();
+  await h.run("alerts");
+  await h.run("alerts", "--all");
+  await h.run("alerts", "ack", ALERT.id);
+  await h.run("release-quarantined", "cocalc-gpu-abc");
+  assert.deepEqual(h.calls, [
+    { name: "alerts", args: {} },
+    { name: "alerts", args: { include_resolved: true } },
+    { name: "acknowledgeAlert", args: { id: ALERT.id } },
+    { name: "releaseQuarantined", args: { pod_id: "cocalc-gpu-abc" } },
+  ]);
+  assert.deepEqual(h.outputs[0], [
+    {
+      id: ALERT.id,
+      severity: "warning",
+      kind: "unmanaged_pod",
+      opened: ALERT.opened,
+      last_seen: ALERT.last_seen,
+      resolved: null,
+      acknowledgeable: "yes",
+      pod: "cocalc-gpu-abc",
+      message: ALERT.message,
+    },
+  ]);
+  assert.equal((h.outputs[2] as any).resolved, "2026-10-28T21:00:00.000Z");
 });

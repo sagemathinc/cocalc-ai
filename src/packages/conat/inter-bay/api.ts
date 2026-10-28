@@ -702,10 +702,7 @@ export interface AccountDirectoryTouchRequest {
 
 // Who started an account deletion; recorded in the account audit log.
 export type AccountDeletionInitiator =
-  | "self"
-  | "admin"
-  | "ephemeral-expiry"
-  | "system";
+  "self" | "admin" | "ephemeral-expiry" | "system";
 
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
@@ -1215,9 +1212,7 @@ export interface AccountLocalGetDedicatedHostAdmissionSnapshotRequest {
 export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
   account_id: string;
   funding_mode_override?:
-    | "account-prepaid"
-    | "account-postpaid"
-    | "site-funded";
+    "account-prepaid" | "account-postpaid" | "site-funded";
 }
 
 export interface AccountLocalReconcileDedicatedHostPurchaseSessionRequest {
@@ -1272,11 +1267,7 @@ export interface AccountLocalRecordDedicatedHostMeteredUsageResult {
 }
 
 export type ProjectRuntimeSlotState =
-  | "starting"
-  | "running"
-  | "released"
-  | "expired"
-  | "failed";
+  "starting" | "running" | "released" | "expired" | "failed";
 
 export interface ProjectRuntimeSlotWire {
   sponsor_account_id: string;
@@ -2909,11 +2900,7 @@ export type AccountLocalMethod =
   | "public-directory-share-grant-temporary-viewer-access"
   | "public-directory-share-get-temporary-viewer-read-policy";
 export type AuthTokenMethod =
-  | "requires-token"
-  | "validate"
-  | "redeem"
-  | "disable"
-  | "delete";
+  "requires-token" | "validate" | "redeem" | "disable" | "delete";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod =
   | "get-load"
@@ -4208,6 +4195,22 @@ export interface InterBayGpuApi {
     account_id: string;
     pod_id: unknown;
   }) => Promise<import("@cocalc/util/gpu/types").GpuPodSshInfo>;
+  // The key owner's GPU alerts (5d), and acknowledging one.
+  gpuAlerts: (opts: {
+    account_id: string;
+    include_resolved: boolean;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuAlert[]>;
+  gpuAcknowledgeAlert: (opts: {
+    account_id: string;
+    id: unknown;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuAlert>;
+  // Release a pod's quarantined holds (the forwarding bay checked fresh
+  // auth).
+  gpuReleaseQuarantined: (opts: {
+    account_id: string;
+    pod_id: unknown;
+    fresh_auth_verified: boolean;
+  }) => Promise<{ pod_id: string; released_usd: string; warning: string }>;
   // A pod's one-time host-key report, forwarded whole to the token's
   // authority bay. No account: the token is the only credential.
   gpuRegisterHostKey: (opts: {
@@ -8272,6 +8275,11 @@ export function createInterBayAccountLocalClient({
     gpuAllowStaleWorkers: async (opts) =>
       await gpuClient.gpuAllowStaleWorkers(opts),
     gpuSshInfo: async (opts) => await gpuClient.gpuSshInfo(opts),
+    gpuAlerts: async (opts) => await gpuClient.gpuAlerts(opts),
+    gpuAcknowledgeAlert: async (opts) =>
+      await gpuClient.gpuAcknowledgeAlert(opts),
+    gpuReleaseQuarantined: async (opts) =>
+      await gpuClient.gpuReleaseQuarantined(opts),
     gpuRegisterHostKey: async (opts) =>
       await gpuClient.gpuRegisterHostKey(opts),
     computeFundingGetCourseSummary: async (opts) =>
@@ -8864,6 +8872,11 @@ export function createInterBayAccountLocalHandler({
         gpuAllowStaleWorkers: async (opts) =>
           await impl.gpuAllowStaleWorkers(opts),
         gpuSshInfo: async (opts) => await impl.gpuSshInfo(opts),
+        gpuAlerts: async (opts) => await impl.gpuAlerts(opts),
+        gpuAcknowledgeAlert: async (opts) =>
+          await impl.gpuAcknowledgeAlert(opts),
+        gpuReleaseQuarantined: async (opts) =>
+          await impl.gpuReleaseQuarantined(opts),
         gpuRegisterHostKey: async (opts) => await impl.gpuRegisterHostKey(opts),
       },
     }),

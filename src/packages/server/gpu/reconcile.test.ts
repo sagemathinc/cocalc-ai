@@ -17,7 +17,12 @@ import { SCHEMA } from "@cocalc/util/db-schema";
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
 import { lockGpuAccountFence } from "./account-fence";
-import { launchGpuPodLocal } from "./pods";
+import {
+  AMBIGUOUS_WINDOW_MS,
+  launchGpuPodLocal,
+  listManagedGpuPodsLocal,
+  releaseQuarantinedLocal,
+} from "./pods";
 import {
   reconcileKey,
   runReconcileSweep,
@@ -26,6 +31,7 @@ import {
 import { INVENTORY_STALE_MS } from "./budgets";
 import { freshInventoryForTests } from "./test-inventory";
 import { allowStaleWorkersLocal } from "./admin";
+import { resumeGpuLaunchesLocal } from "./budget-api";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -212,7 +218,9 @@ describeDb("GPU inventory reconciler", () => {
       }),
     ]);
     expect((await fence(s.credential_id)).paused_reason).toBe("unknown_pod");
-    await expect(s.launch()).rejects.toThrow(/paused until an alert/);
+    await expect(s.launch()).rejects.toThrow(
+      /needs you\. See cocalc gpu alerts/,
+    );
     // the listing stops showing it, but RunPod still has it: stays open
     s.pods.delete("pod_strange1");
     s.byId.set("pod_strange1", { id: "pod_strange1" });
@@ -226,6 +234,26 @@ describeDb("GPU inventory reconciler", () => {
     expect((await alerts(s.credential_id))[0]).toEqual(
       expect.objectContaining({ resolved_by: "gone_at_provider" }),
     );
+    expect((await fence(s.credential_id)).paused_reason).toBe("unknown_pod");
+  });
+
+  it("resume lifts the safety pause; the alert stays open until its pod is gone", async () => {
+    const s = setup();
+    await s.launch();
+    s.pods.set("pod_strange2", { id: "pod_strange2", name: "someone-else" });
+    await s.pass();
+    await expect(s.launch()).rejects.toThrow(/See cocalc gpu alerts/);
+    await resumeGpuLaunchesLocal(
+      { account_id: s.account_id, fresh_auth_verified: true },
+      { accountWriteFence: s.deps.accountWriteFence } as any,
+    );
+    expect((await s.launch()).state).toBe("running");
+    expect((await alerts(s.credential_id))[0]).toEqual(
+      expect.objectContaining({ kind: "unknown_pod", resolved_at: null }),
+    );
+    // seen again by the next pass: it pauses again (the owner decides)
+    s.advance(11 * MINUTE);
+    await s.pass();
     expect((await fence(s.credential_id)).paused_reason).toBe("unknown_pod");
   });
 
@@ -357,6 +385,58 @@ describeDb("GPU inventory reconciler", () => {
     s2.pods.set("pod_twin2", { id: "pod_twin2", name: h2 });
     expect((await s2.pass()).unknown_pods).toBe(2);
     expect((await row(p2.id)).state).toBe("ambiguous");
+  });
+
+  it("a hold the owner released for a pod that then shows up is held again in full, with a critical alert", async () => {
+    const s = setup();
+    let handle = "";
+    s.client.createPod.mockImplementationOnce(async (body: any) => {
+      handle = body.name;
+      throw new RunpodApiError("provider", 503);
+    });
+    const pod = await s.launch();
+    // CoCalc gives the create up (no pod by that name), holding its budget
+    // (past the window, and past the lookup's backoff)
+    s.advance(AMBIGUOUS_WINDOW_MS + 5 * MINUTE);
+    await listManagedGpuPodsLocal({ account_id: s.account_id }, s.deps);
+    expect((await row(pod.id)).state).toBe("failed");
+    expect((await alerts(s.credential_id)).map((a: any) => a.kind)).toEqual([
+      "quarantined_reservation",
+    ]);
+    const held = async () =>
+      (
+        await getPool().query(
+          "SELECT reserved_usd FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+          [s.credential_id],
+        )
+      ).rows[0].reserved_usd;
+    const before = Number(await held());
+    expect(before).toBeGreaterThan(0);
+    await releaseQuarantinedLocal(
+      { account_id: s.account_id, pod_id: pod.id, fresh_auth_verified: true },
+      s.deps,
+    );
+    expect(Number(await held())).toBe(0);
+    // it existed after all
+    s.pods.set("pod_after1", { id: "pod_after1", name: handle, cost: 0.5 });
+    s.advance(11 * MINUTE);
+    await s.pass();
+    expect(await row(pod.id)).toEqual(
+      expect.objectContaining({
+        state: "running",
+        provider_pod_id: "pod_after1",
+      }),
+    );
+    expect(Number(await held())).toBeCloseTo(before);
+    expect(await alerts(s.credential_id)).toContainEqual(
+      expect.objectContaining({
+        kind: "unknown_pod",
+        severity: "critical",
+        dedupe_key: "pod_after1",
+        resolved_at: null,
+      }),
+    );
+    expect((await fence(s.credential_id)).paused_reason).toBe("unknown_pod");
   });
 
   it("launches refuse without a recent complete inventory", async () => {

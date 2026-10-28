@@ -26,12 +26,12 @@ import { randomUUID } from "node:crypto";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
-  GPU_ALERT_KINDS,
-  GPU_ALERT_SEVERITIES,
-} from "@cocalc/util/db-schema/gpu-budgets";
+  GpuAlert,
+  GpuAlertKind,
+  GpuAlertSeverity,
+} from "@cocalc/util/gpu/types";
 
-export type GpuAlertKind = (typeof GPU_ALERT_KINDS)[number];
-export type GpuAlertSeverity = (typeof GPU_ALERT_SEVERITIES)[number];
+export type { GpuAlertKind, GpuAlertSeverity };
 
 type Db = Pick<PoolClient, "query">;
 
@@ -125,20 +125,23 @@ export async function onKeyGone(
   );
 }
 
-export interface GpuAlertView {
-  id: string;
-  credential_id: string;
-  kind: GpuAlertKind;
-  severity: GpuAlertSeverity;
-  details: Record<string, unknown> | null;
-  opened: string;
-  last_seen: string;
-  resolved_at: string | null;
-  resolved_by: string | null;
-  acknowledged_at: string | null;
-  // the owner can end it by acknowledging
-  acknowledgeable: boolean;
-}
+// What each kind tells the owner (details carry the specifics).
+const MESSAGES: Record<GpuAlertKind, string> = {
+  unknown_pod:
+    "A pod CoCalc didn't start is on the RunPod account of your key. If you don't recognize it, terminate it at RunPod and consider reporting the key compromised (cocalc gpu report-compromised). New launches with this key are paused until you resume them (cocalc gpu resume).",
+  unmanaged_pod:
+    "A pod CoCalc launched was left running when the key was removed anyway: CoCalc can't see or stop it, and your GPU limits no longer cover it. Terminate it at RunPod, then acknowledge this alert.",
+  key_rejected:
+    "RunPod rejects this key, so CoCalc can't check or stop pods on its account. Connect a working key, or remove this one. New launches are paused until you resume them.",
+  quarantined_reservation:
+    "CoCalc doesn't know whether RunPod created this pod, so its share of your budget stays held. If you've checked at RunPod that it doesn't exist (or terminated it), release the hold with cocalc gpu release-quarantined.",
+  compromise_awaiting_revocation:
+    "You reported this key compromised. CoCalc keeps terminating every pod on its RunPod account until you delete the key on RunPod's Credentials page.",
+  compromise_check_pods:
+    "CoCalc removed the compromised key and stopped watching its RunPod account. Check RunPod's Pods page once and terminate any pod you don't recognize, then acknowledge this alert.",
+};
+
+export type GpuAlertView = GpuAlert;
 
 function view(r: any): GpuAlertView {
   const iso = (d: any) => (d == null ? null : new Date(d).toISOString());
@@ -147,6 +150,10 @@ function view(r: any): GpuAlertView {
     credential_id: r.credential_id,
     kind: r.kind,
     severity: r.severity,
+    message:
+      r.kind === "unknown_pod" && r.details?.unverifiable === true
+        ? "A pod CoCalc didn't start was on the RunPod account of a key that has since been removed or replaced, so CoCalc can't check it anymore. Look at RunPod's Pods page, terminate it if it's still there, then acknowledge this alert."
+        : (MESSAGES[r.kind as GpuAlertKind] ?? ""),
     details: r.details ?? null,
     opened: iso(r.opened)!,
     last_seen: iso(r.last_seen)!,

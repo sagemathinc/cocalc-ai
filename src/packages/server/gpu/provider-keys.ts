@@ -41,6 +41,7 @@ import {
   recordKeyEvent,
   type GpuKeyEventActor,
 } from "@cocalc/server/gpu/key-events";
+import { onKeyGone, raiseAlert } from "@cocalc/server/gpu/alerts";
 import {
   carryKeyBudget,
   ensureKeyBudget,
@@ -473,6 +474,8 @@ export async function closeKeyFence(
       WHERE credential_id = $1 AND state <> 'closed'`,
     [credential_id],
   );
+  // what can't be checked without the key stays open, for the owner
+  await onKeyGone({ credential_id, by: action }, db);
   await recordKeyEvent(
     {
       credential_id,
@@ -801,6 +804,22 @@ export async function deleteGpuProviderKeyLocal(
             account_id,
             credential_id,
           });
+      // the owner must terminate them at RunPod: an alert each, now
+      const observed_at = new Date();
+      for (const handle of unmanaged) {
+        await raiseAlert(
+          {
+            key_owner_account_id: account_id,
+            credential_id,
+            kind: "unmanaged_pod",
+            severity: "warning",
+            dedupe_key: handle,
+            details: { handle, ...(rejected ? { key_rejected: true } : {}) },
+            observed_at,
+          },
+          db,
+        );
+      }
       await closeKeyFence(db, account_id, credential_id, "forced_removal", {
         unmanaged,
         rejected,

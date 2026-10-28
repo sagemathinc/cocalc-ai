@@ -15,6 +15,7 @@ import type { GpuProvider } from "@cocalc/util/gpu/provider-keys";
 import type {
   GpuBudget,
   GpuBudgetChange,
+  GpuAlert,
   GpuAttribution,
   GpuCompromiseStatus,
   GpuLaunchSpec,
@@ -59,6 +60,12 @@ export const gpu = {
   // what `cocalc gpu connect` needs: the live SSH endpoint and the host key
   // the pod registered; account-only, like pods
   sshInfo: authFirstRequireAccount,
+  // the owner's GPU alerts (5d); acknowledging only ends what CoCalc can't
+  // check, so it needs no fresh auth
+  alerts: authFirstRequireAccount,
+  acknowledgeAlert: authFirstRequireAccount,
+  // loosens the budget: fresh auth on the caller's own session
+  releaseQuarantined: authFirstRequireAccountWithBoundSession,
 };
 
 interface GpuReadOpts {
@@ -183,7 +190,8 @@ export interface GpuApi {
     session_hash?: string | null;
     confirm_cocalc_only: boolean;
   }) => Promise<GpuCompromiseStatus>;
-  // Lift the kill switch's pause: fresh authentication.
+  // Lift the kill switch's pause and a safety pause (alerts stay open):
+  // fresh authentication.
   resume: (opts?: {
     account_id?: string;
     browser_id?: string | null;
@@ -210,4 +218,23 @@ export interface GpuApi {
     account_id?: string;
     pod_id: string;
   }) => Promise<GpuPodSshInfo>;
+  // What CoCalc found that needs the key owner (5d): open alerts, or with
+  // include_resolved the recent ones too.
+  alerts: (opts?: {
+    account_id?: string;
+    include_resolved?: boolean;
+  }) => Promise<GpuAlert[]>;
+  // End an alert only the owner can end (acknowledgeable: true).
+  acknowledgeAlert: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<GpuAlert>;
+  // Release the budget held for a pod whose create CoCalc couldn't confirm
+  // (or that a forced removal left unmanaged): fresh authentication.
+  releaseQuarantined: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    pod_id: string;
+  }) => Promise<{ pod_id: string; released_usd: string; warning: string }>;
 }

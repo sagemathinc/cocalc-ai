@@ -15,6 +15,7 @@ import type {
   GpuPodsResult,
 } from "@cocalc/conat/hub/api/gpu";
 import type {
+  GpuAlert,
   GpuBudgetChange,
   GpuLaunchSpec,
   GpuPodSummary,
@@ -621,10 +622,51 @@ export function registerGpuCommand(
   gpu
     .command("resume")
     .description(
-      "lift the kill switch's pause on new launches; needs you to sign in again, from Settings in the browser",
+      "lift the pause on new launches (the kill switch's, or the one an alert raised: see gpu alerts first); needs you to sign in again, from Settings in the browser",
     )
     .action(async (_opts, command: Command) =>
       run(command, "resume", async (api) => await api.resume({})),
+    );
+
+  const alerts = gpu
+    .command("alerts")
+    .description(
+      "what CoCalc found on your RunPod account that needs you (a pod it didn't start, a key RunPod rejects, a held budget, ...); each says what to do",
+    )
+    .option("--all", "also recently resolved alerts")
+    .action(async (opts, command: Command) =>
+      run(command, "alerts", async (api, ctx) => {
+        const result = await api.alerts({
+          ...(opts.all ? { include_resolved: true } : {}),
+        });
+        if (isJson(ctx)) return result;
+        return result.map(alertRow);
+      }),
+    );
+  alerts
+    .command("ack <id>")
+    .description(
+      "acknowledge an alert only you can end (acknowledgeable: yes), once you've done what it says",
+    )
+    .action(async (id: string, _opts, command: Command) =>
+      run(command, "alerts ack", async (api, ctx) => {
+        const result = await api.acknowledgeAlert({ id });
+        return isJson(ctx) ? result : alertRow(result);
+      }),
+    );
+
+  gpu
+    .command("release-quarantined <pod>")
+    .description(
+      "release the budget held for a pod CoCalc couldn't confirm RunPod created (or that a forced key removal left unmanaged), once you've checked at RunPod that it doesn't exist or terminated it; needs you to sign in again, from Settings in the browser",
+    )
+    .action(async (pod: string, _opts, command: Command) =>
+      run(
+        command,
+        "release-quarantined",
+        async (api) => await api.releaseQuarantined({ pod_id: pod }),
+        GPU_POD_WRITE_RPC_TIMEOUT_MS,
+      ),
     );
 
   gpu
@@ -649,6 +691,23 @@ export function registerGpuCommand(
     );
 
   return gpu;
+}
+
+export function alertRow(a: GpuAlert) {
+  return {
+    id: a.id,
+    severity: a.severity,
+    kind: a.kind,
+    opened: a.opened,
+    last_seen: a.last_seen,
+    resolved: a.resolved_at ?? null,
+    acknowledgeable: a.acknowledgeable ? "yes" : "no",
+    pod:
+      (a.details?.provider_pod_id as string | undefined) ??
+      (a.details?.handle as string | undefined) ??
+      null,
+    message: a.message,
+  };
 }
 
 // The CLI's options as a launch spec; the server checks it against the

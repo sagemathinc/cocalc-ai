@@ -77,6 +77,7 @@ describeDb("gpu.budget and gpu.setBudget", () => {
     );
     await syncSchema({
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_alerts: SCHEMA.gpu_alerts,
       gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
@@ -127,6 +128,43 @@ describeDb("gpu.budget and gpu.setBudget", () => {
       [b.layer_id],
     );
     expect(rows.map((r) => r.action)).toEqual(["create"]);
+  });
+
+  it("says whether launches are paused, by what, and whether the RunPod account is still being checked", async () => {
+    const { account_id, deps } = setup();
+    const b = await getGpuBudgetLocal({ account_id }, deps);
+    expect(b).toEqual(
+      expect.objectContaining({
+        paused: false,
+        kill_switch: false,
+        paused_reason: null,
+        inventory: "complete",
+      }),
+    );
+    const set = (sql: string) =>
+      getPool().query(
+        `UPDATE gpu_key_fences SET ${sql} WHERE credential_id = (SELECT credential_id FROM gpu_budget_layers WHERE id = $1)`,
+        [b.layer_id],
+      );
+    await set("kill_switch_at = now()");
+    expect(await getGpuBudgetLocal({ account_id }, deps)).toEqual(
+      expect.objectContaining({
+        paused: true,
+        kill_switch: true,
+        paused_reason: null,
+      }),
+    );
+    await set(
+      "kill_switch_at = NULL, paused_reason = 'unknown_pod', last_inventory_at = NULL",
+    );
+    expect(await getGpuBudgetLocal({ account_id }, deps)).toEqual(
+      expect.objectContaining({
+        paused: true,
+        kill_switch: false,
+        paused_reason: "unknown_pod",
+        inventory: "checking",
+      }),
+    );
   });
 
   it("chooses the key only under the account fence", async () => {

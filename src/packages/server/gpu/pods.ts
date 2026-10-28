@@ -58,6 +58,7 @@ import {
   enlargeAtBind,
   ensureKeyBudget,
   insertReservations,
+  endQuarantineAlert,
   lockBudgetsForPod,
   settleReservations,
 } from "@cocalc/server/gpu/budgets";
@@ -1011,8 +1012,9 @@ async function resolveAmbiguous(
           action: "state",
           details: { state: "failed", resolved: "not_found" },
         },
-        // an empty lookup isn't proof: hold the reservation until the
-        // reconciler has seen a full inventory without the handle
+        // an empty lookup isn't proof: the reservation stays held until the
+        // pod shows up (reconcileBindPod) or the owner releases it
+        // (releaseQuarantined); a listing never proves it absent
         { settle: "quarantine" },
       )) ?? (await loadPod(row.id))
     );
@@ -1629,6 +1631,8 @@ export async function reconcileBindPod(
             );
           }
         }
+        // its holds are a live pod's again
+        await endQuarantineAlert(db, b.id, "pod_seen");
         let out: PodRow = b;
         if (pod.cost != null) {
           const fits = await enlargeAtBind(db, {
@@ -1877,6 +1881,84 @@ export async function markCredentialPodsUnmanaged(
     await recordEvent(pod.id, actor, "unmanaged", {}, db);
   }
   return pods.map((p) => p.handle);
+}
+
+// ---- releasing quarantined holds (5d) ----
+
+export const RELEASE_QUARANTINED_WARNING =
+  "If this pod does exist at RunPod, it may be running and billing there, and your GPU budget no longer holds money for it. If CoCalc sees it later, it manages it again and holds its money in full.";
+
+// The owner says a pod whose create CoCalc couldn't confirm (or that a
+// forced removal left unmanaged) doesn't exist, or is gone: its quarantined
+// holds are released, all at once, with one audited event. Fresh
+// authentication (checked by the bay the owner is signed in to): it loosens
+// the budget. Nothing is asked of RunPod. Only quarantined holds: a pod with
+// a live hold isn't quarantined.
+export async function releaseQuarantinedLocal(
+  opts: {
+    account_id?: string;
+    pod_id?: unknown;
+    fresh_auth_verified?: boolean;
+  },
+  deps: GpuPodDeps = {},
+): Promise<{ pod_id: string; released_usd: string; warning: string }> {
+  const account_id = requireAccount(opts.account_id);
+  if (opts.fresh_auth_verified !== true) {
+    throw Object.assign(
+      Error("Releasing a held GPU budget needs you to sign in again."),
+      { code: "fresh_auth_required" },
+    );
+  }
+  await requireHomeBay(account_id, deps);
+  const row = await findPod(account_id, opts.pod_id);
+  // only the key owner's budget is held, so only they release it
+  if (!row || row.key_owner_account_id !== account_id) {
+    throw Error("No such GPU pod launched with your key.");
+  }
+  let released = "0";
+  // its one event, recorded after `after` with the amount filled in
+  const details: Record<string, unknown> = {};
+  const done = await transition(
+    row.id,
+    {},
+    `AND (state = 'failed' OR unmanaged_at IS NOT NULL)
+     AND EXISTS (SELECT 1 FROM gpu_pod_reservations r
+                  WHERE r.pod_id = gpu_pods.id AND r.state = 'quarantined')
+     AND NOT EXISTS (SELECT 1 FROM gpu_pod_reservations r
+                      WHERE r.pod_id = gpu_pods.id AND r.state = 'active')`,
+    {
+      actor: { kind: "key_owner", account_id },
+      action: "quarantine_released",
+      details,
+    },
+    {
+      after: async (db, b) => {
+        // the budget locks are held (transition takes them for `after`)
+        const { rows } = await db.query(
+          `SELECT COALESCE(SUM(reserved_usd), 0) AS held FROM gpu_pod_reservations
+            WHERE pod_id = $1 AND state = 'quarantined'`,
+          [b.id],
+        );
+        released = moneyToDbString(rows[0].held);
+        await settleReservations(
+          db,
+          { pod_id: b.id, credential_id: b.credential_id },
+          { kind: "release" },
+        );
+        details.released_usd = released;
+      },
+    },
+  );
+  if (!done) {
+    throw Error(
+      "This pod has no held budget to release: it is live, ended normally, or was already released.",
+    );
+  }
+  return {
+    pod_id: row.id,
+    released_usd: released,
+    warning: RELEASE_QUARANTINED_WARNING,
+  };
 }
 
 // ---- the kill switch ----

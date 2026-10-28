@@ -18,10 +18,22 @@ import { isValidUUID } from "@cocalc/util/misc";
 import type { GpuBudget, GpuBudgetChange } from "@cocalc/util/gpu/types";
 import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
 import { recordKeyEvent } from "@cocalc/server/gpu/key-events";
-import { inTransaction } from "@cocalc/server/gpu/pods";
+import {
+  inTransaction,
+  releaseQuarantinedLocal,
+} from "@cocalc/server/gpu/pods";
+import {
+  acknowledgeAlertLocal,
+  listAlertsLocal,
+  type GpuAlertView,
+} from "@cocalc/server/gpu/alerts";
 import type { PoolClient } from "@cocalc/database/pool";
 import { getRunpodLaunchAccessForAccount } from "@cocalc/server/gpu/provider-keys";
-import { ensureKeyBudget, lockKeyFence } from "@cocalc/server/gpu/budgets";
+import {
+  ensureKeyBudget,
+  INVENTORY_STALE_MS,
+  lockKeyFence,
+} from "@cocalc/server/gpu/budgets";
 import {
   createInterBayAccountLocalClient,
   type InterBayGpuApi,
@@ -84,7 +96,16 @@ async function requireKey(account_id: string, deps: GpuBudgetDeps) {
   return credential_id;
 }
 
-function view(layer: any, live: { pods: number; gpus: number }): GpuBudget {
+function view(
+  layer: any,
+  live: {
+    pods: number;
+    gpus: number;
+    kill_switch_at: Date | null;
+    paused_reason: string | null;
+    last_inventory_at: Date | null;
+  },
+): GpuBudget {
   const available = toDecimal(layer.authorized_usd)
     .minus(layer.spent_usd)
     .minus(layer.reserved_usd)
@@ -112,16 +133,37 @@ function view(layer: any, live: { pods: number; gpus: number }): GpuBudget {
     ends_at: new Date(layer.ends_at).toISOString(),
     live_pods: live.pods,
     live_gpus: live.gpus,
+    paused: live.kill_switch_at != null || live.paused_reason != null,
+    kill_switch: live.kill_switch_at != null,
+    paused_reason: live.paused_reason ?? null,
+    inventory:
+      live.last_inventory_at != null &&
+      Date.now() - new Date(live.last_inventory_at).getTime() <=
+        INVENTORY_STALE_MS
+        ? "complete"
+        : "checking",
   };
 }
 
+// The layer's live holds, and its key's pauses and inventory.
 async function liveHolds(db, layer_id: string) {
   const { rows } = await db.query(
     `SELECT COALESCE(SUM(pod_slots), 0)::int AS pods, COALESCE(SUM(gpu_count), 0)::int AS gpus
        FROM gpu_pod_reservations WHERE layer_id = $1 AND state IN ('active', 'quarantined')`,
     [layer_id],
   );
-  return rows[0];
+  const { rows: fence } = await db.query(
+    `SELECT f.kill_switch_at, f.paused_reason, f.last_inventory_at
+       FROM gpu_budget_layers l JOIN gpu_key_fences f ON f.credential_id = l.credential_id
+      WHERE l.id = $1`,
+    [layer_id],
+  );
+  return {
+    ...rows[0],
+    kill_switch_at: fence[0]?.kill_switch_at ?? null,
+    paused_reason: fence[0]?.paused_reason ?? null,
+    last_inventory_at: fence[0]?.last_inventory_at ?? null,
+  };
 }
 
 // Under the account fence that key replacement and removal take, the key is
@@ -360,10 +402,11 @@ export async function setGpuBudget(
   return await setGpuBudgetLocal(forwarded as any, deps);
 }
 
-// Resuming launches after the kill switch paused them widens what the key
-// may do, so it needs fresh authentication, always (checked on the signed-in
-// bay, as for setGpuBudget). Only the kill switch's own pause is lifted; a
-// safety pause (paused_reason, an alert's) stays.
+// Resuming launches widens what the key may do, so it needs fresh
+// authentication, always (checked on the signed-in bay, as for
+// setGpuBudget). It is the human override for both pauses: the kill
+// switch's and a safety pause (paused_reason, raised with an alert). The
+// alerts themselves stay open until their own condition ends (STEP5D).
 export async function resumeGpuLaunchesLocal(
   opts: { account_id?: string; fresh_auth_verified?: boolean },
   deps: GpuBudgetDeps = {},
@@ -382,9 +425,16 @@ export async function resumeGpuLaunchesLocal(
       "resume GPU launches",
     );
     const { rows } = await db.query(
-      `UPDATE gpu_key_fences SET kill_switch_at = NULL, updated = now()
-        WHERE key_owner_account_id = $1 AND kill_switch_at IS NOT NULL
-        RETURNING credential_id`,
+      `UPDATE gpu_key_fences f
+          SET kill_switch_at = NULL, paused_reason = NULL, paused_at = NULL,
+              updated = now()
+         FROM (SELECT credential_id, kill_switch_at, paused_reason FROM gpu_key_fences
+                WHERE key_owner_account_id = $1
+                  AND (kill_switch_at IS NOT NULL OR paused_reason IS NOT NULL)
+                FOR UPDATE) old
+        WHERE f.credential_id = old.credential_id
+        RETURNING f.credential_id, old.kill_switch_at IS NOT NULL AS kill_switch,
+                  old.paused_reason`,
       [account_id],
     );
     for (const r of rows) {
@@ -394,6 +444,10 @@ export async function resumeGpuLaunchesLocal(
           key_owner_account_id: account_id,
           actor: { kind: "user", account_id },
           action: "resumed",
+          details: {
+            kill_switch: r.kill_switch,
+            ...(r.paused_reason ? { paused_reason: r.paused_reason } : {}),
+          },
         },
         db,
       );
@@ -421,4 +475,63 @@ export async function resumeGpuLaunches(
   const home = await (deps.homeClient ?? budgetHomeClient)(account_id);
   if (home) return await home.gpuResume(forwarded);
   return await resumeGpuLaunchesLocal(forwarded, deps);
+}
+
+// ---- alerts and held budgets (5d) ----
+
+// The key owner's GPU alerts (open ones, or all from the last ones), read on
+// their home bay.
+export async function listGpuAlerts(
+  opts: { account_id?: string; include_resolved?: boolean },
+  deps: GpuBudgetDeps = {},
+): Promise<GpuAlertView[]> {
+  const account_id = requireAccount(opts.account_id);
+  const forwarded = {
+    account_id,
+    include_resolved: opts.include_resolved === true,
+  };
+  const home = await (deps.homeClient ?? budgetHomeClient)(account_id);
+  if (home) return await home.gpuAlerts(forwarded);
+  return await listAlertsLocal(forwarded);
+}
+
+// Acknowledging only ends an alert the owner alone can end (what CoCalc
+// can't check); it widens nothing, so it needs no fresh authentication.
+export async function acknowledgeGpuAlert(
+  opts: { account_id?: string; id?: unknown },
+  deps: GpuBudgetDeps = {},
+): Promise<GpuAlertView> {
+  const account_id = requireAccount(opts.account_id);
+  const forwarded = { account_id, id: opts.id };
+  const home = await (deps.homeClient ?? budgetHomeClient)(account_id);
+  if (home) return await home.gpuAcknowledgeAlert(forwarded);
+  return await acknowledgeAlertLocal(forwarded);
+}
+
+// Releasing a quarantined hold loosens the budget: fresh authentication,
+// on the caller's own session (checked here), then the home bay releases.
+export async function releaseQuarantined(
+  opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    pod_id?: unknown;
+  },
+  deps: GpuBudgetDeps = {},
+): Promise<{ pod_id: string; released_usd: string; warning: string }> {
+  const account_id = requireAccount(opts.account_id);
+  await (deps.freshAuth ?? requireDangerousSessionAuth)({
+    account_id,
+    browser_id: opts.browser_id,
+    session_hash: opts.session_hash,
+    require_second_factor: false,
+  });
+  const forwarded = {
+    account_id,
+    pod_id: opts.pod_id,
+    fresh_auth_verified: true,
+  };
+  const home = await (deps.homeClient ?? budgetHomeClient)(account_id);
+  if (home) return await home.gpuReleaseQuarantined(forwarded);
+  return await releaseQuarantinedLocal(forwarded);
 }

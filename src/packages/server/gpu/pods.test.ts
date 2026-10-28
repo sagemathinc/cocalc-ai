@@ -105,6 +105,7 @@ async function syncGpuTables() {
   );
   await syncSchema({
     gpu_key_fences: SCHEMA.gpu_key_fences,
+    gpu_alerts: SCHEMA.gpu_alerts,
     gpu_budget_layers: SCHEMA.gpu_budget_layers,
     gpu_budget_events: SCHEMA.gpu_budget_events,
     gpu_pods: SCHEMA.gpu_pods,

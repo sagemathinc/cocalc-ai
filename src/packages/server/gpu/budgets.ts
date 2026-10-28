@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "@cocalc/database/pool";
 import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
+import { raiseAlert, resolveAlert } from "@cocalc/server/gpu/alerts";
 
 type Db = Pick<PoolClient, "query">;
 type Dec = ReturnType<typeof toDecimal>;
@@ -377,7 +378,7 @@ export async function admitLaunch(
   }
   if (fence.paused_reason) {
     refuse(
-      "New GPU launches with this key are paused until an alert is resolved. Check gpu alerts.",
+      "New GPU launches with this key are paused because CoCalc found something on your RunPod account that needs you. See cocalc gpu alerts; once you've dealt with it, resume launches with cocalc gpu resume (it asks you to sign in again).",
     );
   }
   await requireFreshInventory(db, fence, {
@@ -633,6 +634,10 @@ export async function settleReservations(
   // the caller holds lockBudgetsForPod (row locks are re-entrant)
   void credential_id;
   const reservations = await lockReservations(db, pod_id);
+  // the owner hears about holds that stay (and when they end), in the same
+  // transaction as the change
+  let quarantined = toDecimal(0);
+  let unquarantined = false;
   for (const r of reservations) {
     if (r.state === "settled") continue;
     if (settlement.kind === "quarantine") {
@@ -642,8 +647,10 @@ export async function settleReservations(
           [r.id],
         );
       }
+      quarantined = quarantined.plus(r.reserved_usd);
       continue;
     }
+    if (r.state === "quarantined") unquarantined = true;
     const estimate = toDecimal(r.reserved_usd);
     const actual = toDecimal(
       settlement.kind === "actual" ? settlement.actual_usd : 0,
@@ -671,6 +678,59 @@ export async function settleReservations(
       [r.layer_id, moneyToDbString(estimate), moneyToDbString(actual)],
     );
   }
+  if (settlement.kind === "quarantine" && quarantined.gt(0)) {
+    await alertQuarantined(db, pod_id, quarantined);
+  } else if (unquarantined) {
+    await endQuarantineAlert(db, pod_id, "settled");
+  }
+}
+
+// One info alert per pod whose holds are quarantined (dedupe: the pod id).
+async function alertQuarantined(db: Db, pod_id: string, held: Dec) {
+  const { rows } = await db.query(
+    "SELECT handle, credential_id, key_owner_account_id FROM gpu_pods WHERE id = $1",
+    [pod_id],
+  );
+  if (!rows[0]) return;
+  await raiseAlert(
+    {
+      key_owner_account_id: rows[0].key_owner_account_id,
+      credential_id: rows[0].credential_id,
+      kind: "quarantined_reservation",
+      severity: "info",
+      dedupe_key: pod_id,
+      details: {
+        pod_id,
+        handle: rows[0].handle,
+        held_usd: moneyToDbString(held),
+      },
+      observed_at: new Date(),
+    },
+    db,
+  );
+}
+
+// The pod's holds left quarantine (settled, released, or active again).
+export async function endQuarantineAlert(
+  db: Db,
+  pod_id: string,
+  by: string,
+): Promise<void> {
+  const { rows } = await db.query(
+    "SELECT credential_id FROM gpu_pods WHERE id = $1",
+    [pod_id],
+  );
+  if (!rows[0]) return;
+  await resolveAlert(
+    {
+      credential_id: rows[0].credential_id,
+      kind: "quarantined_reservation",
+      dedupe_key: pod_id,
+      observed_at: new Date(),
+      by,
+    },
+    db,
+  );
 }
 
 // What a pod that ran cost: runtime x the bound hourly cost. When RunPod
