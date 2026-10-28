@@ -21,7 +21,7 @@ import {
   type RunpodProviderIdentity,
 } from "@cocalc/cloud/runpod/client";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
-import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
+import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
 import {
   createInterBayAccountLocalClient,
   type InterBayGpuApi,
@@ -70,6 +70,11 @@ export interface GpuProviderKeyDeps {
   isHomeBay?: (account_id: string) => Promise<boolean>;
   // pods launched with this account's key that aren't finished
   unfinishedPods?: (account_id: string) => Promise<number>;
+  // does RunPod reject the stored key (deleted or revoked at RunPod)?
+  storedKeyRejected?: (
+    account_id: string,
+    deps: GpuProviderKeyDeps,
+  ) => Promise<boolean>;
   // the account fence shared with launches (default: a transaction holding
   // the account rehome fence)
   keyFence?: <T>(
@@ -300,6 +305,27 @@ async function countUnfinishedPods(
   return rows[0]?.n ?? 0;
 }
 
+// Does RunPod reject the stored key itself (401)? Only that counts: a
+// network error, a timeout or any other answer is "don't know".
+async function storedKeyRejectedByRunpod(
+  account_id: string,
+  deps: GpuProviderKeyDeps,
+): Promise<boolean> {
+  const key = await readLocalKey(account_id, deps).catch(() => undefined);
+  if (!key) return false;
+  const client = new RunpodClient({
+    apiKey: key.apiKey,
+    fetch: deps.fetch,
+    timeoutMs: VERIFY_REQUEST_TIMEOUT_MS,
+  });
+  try {
+    await client.getProviderIdentity();
+    return false;
+  } catch (err) {
+    return err instanceof RunpodApiError && err.kind === "auth";
+  }
+}
+
 // Key replacement and removal run under the same account fence a launch
 // holds while it reads the key and records its intent (pods.ts), so the
 // count of unfinished pods can't change between the check and the change.
@@ -310,7 +336,7 @@ async function underKeyFence<T>(
   const db = await getPool().connect();
   try {
     await db.query("BEGIN");
-    await lockAccountRehomeFence({ db, account_id });
+    await lockGpuAccountFence(db, account_id, "change a GPU provider key");
     const result = await fn(db);
     await db.query("COMMIT");
     return result;
@@ -332,8 +358,19 @@ async function requireNoUnfinishedPods(
     account_id,
   );
   if (n === 0) return;
+  // A key RunPod rejects (deleted or revoked at RunPod) can't reach those
+  // pods anyway, so refusing would only leave the connector stuck. Any other
+  // failure to ask RunPod keeps the refusal.
+  if (
+    await (deps.storedKeyRejected ?? storedKeyRejectedByRunpod)(
+      account_id,
+      deps,
+    )
+  ) {
+    return;
+  }
   throw Error(
-    `${n} GPU pod${n === 1 ? " was" : "s were"} launched with your current RunPod key and ${n === 1 ? "isn't" : "aren't"} finished, so the key can't be ${doing === "replace" ? "replaced" : "removed"} yet: CoCalc would lose the way to terminate ${n === 1 ? "it" : "them"}. Terminate ${n === 1 ? "it" : "them"} first (cocalc gpu pods, then cocalc gpu terminate). If you need to cut the key off now, delete it at RunPod and terminate the pods there.`,
+    `${n} GPU pod${n === 1 ? " was" : "s were"} launched with your current RunPod key and ${n === 1 ? "isn't" : "aren't"} finished, so the key can't be ${doing === "replace" ? "replaced" : "removed"} yet: CoCalc would lose the way to terminate ${n === 1 ? "it" : "them"}. Terminate ${n === 1 ? "it" : "them"} first (cocalc gpu pods, then cocalc gpu terminate). If you need to cut the key off now, delete it at RunPod and terminate the pods there; once RunPod rejects the key, CoCalc lets you ${doing} it here.`,
   );
 }
 

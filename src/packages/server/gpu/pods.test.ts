@@ -9,6 +9,7 @@
 import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
+import { lockGpuAccountFence } from "./account-fence";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
@@ -77,6 +78,14 @@ function deps(account_id: string, rp = fakeRunpod()) {
       }),
       getCleanup: async () =>
         ({ ...rp.client, credential_id: CREDENTIAL }) as any,
+      // the real fence, on the account row it needs (same transaction)
+      accountWriteFence: async (db: any, id: string, action: string) => {
+        await db.query(
+          "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+          [id],
+        );
+        await lockGpuAccountFence(db, id, action);
+      },
     },
     account_id,
   };
@@ -135,6 +144,9 @@ describe("pod handles, fingerprints and the create body", () => {
 
 describeDb("GPU pods", () => {
   beforeAll(async () => {
+    await getPool().query(
+      "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
+    );
     await syncSchema({
       gpu_pods: SCHEMA.gpu_pods,
       gpu_pod_events: SCHEMA.gpu_pod_events,
@@ -880,6 +892,9 @@ describeDb("GPU pods", () => {
 
 describeDb("GPU pods left behind and seen again", () => {
   beforeAll(async () => {
+    await getPool().query(
+      "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
+    );
     await syncSchema({
       gpu_pods: SCHEMA.gpu_pods,
       gpu_pod_events: SCHEMA.gpu_pod_events,

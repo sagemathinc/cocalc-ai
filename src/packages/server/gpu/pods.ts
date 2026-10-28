@@ -41,7 +41,7 @@ import {
   type InterBayGpuApi,
 } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
+import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -68,6 +68,8 @@ export interface GpuPodDeps {
   homeClient?: (account_id: string) => Promise<InterBayGpuApi | undefined>;
   newHandle?: () => string;
   now?: () => number;
+  // for tests: the account fence (default: lockGpuAccountFence)
+  accountWriteFence?: typeof lockGpuAccountFence;
 }
 
 // ---- handles and fingerprints ----
@@ -523,8 +525,14 @@ async function insertIntent({
     const handle = (deps.newHandle ?? newPodHandle)();
     try {
       return await inTransaction(async (db) => {
-        // the fence key mutation takes too (provider-keys.ts)
-        await lockAccountRehomeFence({ db, account_id });
+        // the fence key mutation takes too (provider-keys.ts), with the
+        // authoritative checks made under it: not being rehomed, still homed
+        // on this bay
+        await (deps.accountWriteFence ?? lockGpuAccountFence)(
+          db,
+          account_id,
+          "launch a GPU",
+        );
         const { client, credential_id } = await loadLaunchAccess(
           account_id,
           deps,

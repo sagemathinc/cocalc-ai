@@ -618,4 +618,32 @@ describe("GPU provider keys", () => {
     );
     expect(upsertMock).toHaveBeenCalled();
   });
+
+  it("lets a key RunPod already rejects be removed or replaced, even with unfinished pods", async () => {
+    listMock.mockResolvedValue([summary({})]);
+    unfinished = 1;
+    localGetMock.mockResolvedValue(storedRecord({}));
+    // RunPod answers 401 for the stored key (deleted at RunPod)
+    const { fetch } = fakeFetch([{ status: 401, body: { detail: "nope" } }]);
+    expect(
+      await deleteGpuProviderKeyLocal(
+        { account_id: ACCOUNT, provider: "runpod" },
+        { ...home, fetch },
+      ),
+    ).toEqual({ revoked: true });
+  });
+
+  it("keeps refusing when RunPod can't be asked about the stored key", async () => {
+    listMock.mockResolvedValue([summary({})]);
+    unfinished = 1;
+    localGetMock.mockResolvedValue(storedRecord({}));
+    const { fetch } = fakeFetch([{ status: 503, body: {} }]);
+    await expect(
+      deleteGpuProviderKeyLocal(
+        { account_id: ACCOUNT, provider: "runpod" },
+        { ...home, fetch },
+      ),
+    ).rejects.toThrow("can't be removed yet");
+    expect(revokeMock).not.toHaveBeenCalled();
+  });
 });

@@ -41,6 +41,10 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     const { SCHEMA } = await import("@cocalc/util/db-schema");
     const { syncSchema } =
       await import("@cocalc/database/postgres/schema/sync");
+    // what the account write fence checks (home bay, not rehoming)
+    await getPool().query(
+      "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
+    );
     await syncSchema({
       external_credentials: SCHEMA.external_credentials,
       gpu_pods: SCHEMA.gpu_pods,
@@ -67,6 +71,10 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
 
   async function setup() {
     const account_id = randomUUID();
+    // homed on this bay (no home_bay_id means the local bay)
+    await getPool().query("INSERT INTO accounts (account_id) VALUES ($1)", [
+      account_id,
+    ]);
     await store.upsertExternalCredential({
       selector: {
         provider: "runpod",
@@ -269,5 +277,104 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       [s.account_id],
     );
     expect(rows[0].n).toBe(0);
+  });
+
+  // Holds the account fence in its own transaction (as a rehome would),
+  // moves the account to another bay meanwhile, then lets go.
+  async function cutoverWhileWaiting(account_id: string, waiters: number) {
+    const db = await getPool().connect();
+    await db.query("BEGIN");
+    await db.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+      ["account-rehome", account_id],
+    );
+    return {
+      db,
+      async cutover() {
+        await waitForLockWaiters(query, waiters);
+        await db.query(
+          "UPDATE accounts SET home_bay_id = 'bay-elsewhere' WHERE account_id = $1",
+          [account_id],
+        );
+        await db.query("COMMIT");
+        db.release();
+      },
+    };
+  }
+
+  it("a launch that waited behind a rehome cutover is refused under the fence, reading no key", async () => {
+    const s = await setup();
+    const rehome = await cutoverWhileWaiting(s.account_id, 1);
+    const read = jest.fn();
+    const launching = pods.launchGpuPodLocal(
+      {
+        account_id: s.account_id,
+        project_id: "00000000-1000-4000-8000-0000000000aa",
+        spec: {
+          gpu_type_id: "NVIDIA GeForce RTX 4090",
+          image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+          max_runtime_minutes: 60,
+        },
+      },
+      {
+        // passed before waiting: the account was homed here then
+        isHomeBay: async () => true,
+        isProjectCollaborator: async () => true,
+        getLaunchAccess: async (a) => {
+          read();
+          return await keys.getRunpodLaunchAccessForAccount(a, s.keyDeps);
+        },
+      },
+    );
+    await rehome.cutover();
+    await expect(launching).rejects.toThrow(
+      "account is homed on bay-elsewhere",
+    );
+    expect(read).not.toHaveBeenCalled();
+    expect(s.used).toEqual([]);
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_pods WHERE key_owner_account_id = $1",
+      [s.account_id],
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
+  it("a key removal that waited behind a rehome cutover is refused, leaving the key", async () => {
+    const s = await setup();
+    const rehome = await cutoverWhileWaiting(s.account_id, 1);
+    const removing = keys.deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      s.keyDeps,
+    );
+    await rehome.cutover();
+    await expect(removing).rejects.toThrow("account is homed on bay-elsewhere");
+    expect(await storedKey(s.account_id)).toBe(OLD);
+  });
+
+  it("launches and key changes are refused while the account's rehome is frozen", async () => {
+    const s = await setup();
+    await getPool().query(
+      "CREATE TABLE IF NOT EXISTS account_financial_handoffs (account_id UUID, state TEXT)",
+    );
+    await getPool().query(
+      "INSERT INTO account_financial_handoffs (account_id, state) VALUES ($1, 'frozen')",
+      [s.account_id],
+    );
+    try {
+      await expect(launch(s)).rejects.toThrow("rehome is frozen");
+      await expect(
+        keys.deleteGpuProviderKeyLocal(
+          { account_id: s.account_id, provider: "runpod" },
+          s.keyDeps,
+        ),
+      ).rejects.toThrow("rehome is frozen");
+      expect(s.used).toEqual([]);
+      expect(await storedKey(s.account_id)).toBe(OLD);
+    } finally {
+      await getPool().query(
+        "DELETE FROM account_financial_handoffs WHERE account_id = $1",
+        [s.account_id],
+      );
+    }
   });
 });
