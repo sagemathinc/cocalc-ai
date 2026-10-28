@@ -306,7 +306,7 @@ export async function reconcileOnce(options: ReconcileOptions = {}) {
     // A start or stop that wrote the row after this tick began is newer than
     // the probe. Writing the probed state over it would show a stopped project
     // as running and then report its runtime lost. The next tick probes again.
-    if ((getProject(info.project_id)?.state_updated_at ?? 0) > now) {
+    if ((getProject(info.project_id)?.state_updated_at ?? 0) >= now) {
       continue;
     }
     const row: any = {

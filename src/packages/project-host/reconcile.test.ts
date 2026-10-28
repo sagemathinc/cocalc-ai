@@ -13,8 +13,18 @@ import { closeDatabase } from "@cocalc/lite/hub/sqlite/database";
 import { reconcileOnce, resetReconcileStateForTests } from "./reconcile";
 import { getMountPoint } from "./file-server";
 import { setProjectStateReporter } from "./project-state-reporter";
-import { getProject, upsertProject } from "./sqlite/projects";
+import {
+  getProject,
+  upsertProject as upsertProjectRow,
+} from "./sqlite/projects";
 import { resetProjectRuntimeLifecycleForTesting } from "./runtime-lifecycle";
+
+// Rows a test sets up predate the reconcile tick it runs next. Reconcile skips
+// a row whose state was written at or after the tick began, which a fast test
+// would otherwise hit within the same millisecond.
+function upsertProject(row: Parameters<typeof upsertProjectRow>[0]) {
+  upsertProjectRow({ updated_at: Date.now() - 60_000, ...row });
+}
 
 const mockSpawn = jest.fn();
 const mockFence = jest.fn();
@@ -395,10 +405,9 @@ describe("reconcileOnce", () => {
     expect(getProject(project_id)?.state).toBe("running");
   });
 
-  it("does not overwrite a stop that lands while the probe runs", async () => {
-    upsertProject({ project_id, state: "running" });
-    // The probe sees the container running; the stop removes it and records
-    // the project stopped before the (slow) probe returns.
+  // The probe sees the container running; the stop removes it and records the
+  // project stopped before the (slow) probe returns.
+  function stopWhileProbeRuns(delayMs: number) {
     mockSpawn.mockImplementationOnce(() => {
       const child = new EventEmitter() as EventEmitter & {
         stdout: PassThrough;
@@ -407,17 +416,18 @@ describe("reconcileOnce", () => {
       child.stdout = new PassThrough();
       child.stderr = new PassThrough();
       setTimeout(() => {
-        upsertProject({ project_id, state: "opened" });
+        upsertProjectRow({ project_id, state: "opened" });
         child.stdout.write(`project-${project_id}|running|\n`);
         child.stdout.end();
         child.stderr.end();
         child.emit("exit", 0);
-      }, 5);
+      }, delayMs);
       return child;
     });
-    await reconcileOnce();
-    expect(getProject(project_id)?.state).toBe("opened");
+  }
 
+  async function expectStopKept() {
+    expect(getProject(project_id)?.state).toBe("opened");
     await reconcileOnce();
     await reconcileOnce();
     expect(getProject(project_id)).toMatchObject({
@@ -425,6 +435,26 @@ describe("reconcileOnce", () => {
       runtime_exit_reason: null,
     });
     expect(mockFence).not.toHaveBeenCalled();
+  }
+
+  it("does not overwrite a stop that lands while the probe runs", async () => {
+    upsertProject({ project_id, state: "running" });
+    stopWhileProbeRuns(5);
+    await reconcileOnce();
+    await expectStopKept();
+  });
+
+  it("does not overwrite a stop recorded in the millisecond the tick began", async () => {
+    upsertProject({ project_id, state: "running" });
+    const now = jest.spyOn(Date, "now").mockReturnValue(Date.now());
+    try {
+      stopWhileProbeRuns(0);
+      await reconcileOnce();
+      expect(getProject(project_id)?.state_updated_at).toBe(Date.now());
+    } finally {
+      now.mockRestore();
+    }
+    await expectStopKept();
   });
 
   it("retries failed fencing without losing the active project marker", async () => {
