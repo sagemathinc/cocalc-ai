@@ -4021,7 +4021,7 @@ describe("outgoing support tickets across bays", () => {
     };
     let plan;
     let lastError;
-    for (const deadline = Date.now() + 60_000; Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline;) {
       try {
         plan = await runInBay(
           cluster,
@@ -4929,5 +4929,51 @@ describe("GPU pods are recorded and managed on the key owner's home bay", () => 
       desired: "terminated",
       actions: ["terminate", "who_lookup"],
     });
+  });
+});
+
+describe("GPU budgets are read and changed on the key owner's home bay", () => {
+  // bob's key was removed above, so his home bay (the attached bay) answers
+  // that no key is connected; the seed must forward rather than answer.
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const budgets = server("gpu/budget-api.js");
+       const account_id = ${JSON.stringify(bob.account_id)};
+       ${body}`,
+    );
+  }
+
+  it("forwards budget reads and changes from the seed to the home bay", async () => {
+    const r = await onSeed(
+      `const out = [];
+       try { await budgets.getGpuBudget({ account_id }); out.push("read"); }
+       catch (e) { out.push(String(e?.message ?? e)); }
+       try { await budgets.setGpuBudget({ account_id, change: { max_concurrent_pods: 1 } }); out.push("set"); }
+       catch (e) { out.push(String(e?.message ?? e)); }
+       const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const local = (await getPool().query("SELECT count(*)::int AS n FROM gpu_budget_layers WHERE key_owner_account_id = $1", [account_id])).rows[0].n;
+       return { out, local };`,
+    );
+    for (const m of r.out) {
+      assert.match(
+        m,
+        /No RunPod API key is connected|membership doesn't include/,
+      );
+    }
+    assert.equal(r.local, 0);
+  });
+
+  it("refuses to run the home bay's part anywhere else", async () => {
+    const r = await onSeed(
+      `const out = [];
+       for (const f of ["getGpuBudgetLocal", "setGpuBudgetLocal"]) {
+         try { await budgets[f]({ account_id, change: { max_concurrent_pods: 1 } }); out.push("ran"); }
+         catch (e) { out.push(String(e?.message ?? e)); }
+       }
+       return out;`,
+    );
+    for (const m of r) assert.match(m, /homed on|home bay/);
   });
 });
