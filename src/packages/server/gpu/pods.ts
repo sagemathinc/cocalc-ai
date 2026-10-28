@@ -163,7 +163,7 @@ function storedSpec(spec: GpuLaunchSpec) {
   return { ...rest, env: Object.keys(env ?? {}) };
 }
 
-interface PodRow {
+export interface PodRow {
   id: string;
   handle: string;
   key_owner_account_id: string;
@@ -179,6 +179,7 @@ interface PodRow {
   cloud: "SECURE" | "COMMUNITY";
   data_center_id: string | null;
   cost_per_hr: string | null;
+  reap_attempts: number;
   public_ip: string | null;
   running_since: Date | null;
   state: GpuPodSummary["state"];
@@ -225,7 +226,7 @@ export function podSummary(row: PodRow): GpuPodSummary {
   return s;
 }
 
-interface Actor {
+export interface Actor {
   kind: GpuActorKind;
   account_id?: string;
   agent_id?: string;
@@ -293,7 +294,7 @@ interface TransitionOptions {
   after?: (db: PoolClient, row: PodRow) => Promise<PodRow | void>;
 }
 
-async function transition(
+export async function transition(
   id: string,
   fields: Record<string, unknown>,
   where: string,
@@ -932,34 +933,46 @@ function isStale(row: { updated: Date }, deps: GpuPodDeps): boolean {
   );
 }
 
-async function resolveAmbiguousForAccount(
+// Resolve this account's records that need it, oldest first and within
+// a batch: crash-left intents and creates, ambiguous creates, and pods that
+// must go but whose termination RunPod didn't confirm. A listing and a
+// terminate do this, and so does the reaper (as actor "reaper"). A failing
+// pod backs off (reap_after), so one bad pod can't stall the rest.
+export async function resolvePendingForAccount(
   account_id: string,
   deps: GpuPodDeps,
+  { actor = { kind: "cleanup" } as Actor, limit = 100 } = {},
 ): Promise<void> {
-  const staleBefore = new Date((deps.now ?? Date.now)() - STALE_CREATE_MS);
-  const actor: Actor = { kind: "cleanup" };
+  const nowMs = (deps.now ?? Date.now)();
+  const now = new Date(nowMs);
+  const staleBefore = new Date(nowMs - STALE_CREATE_MS);
   // Left behind by a crash: an intent was never sent (no pod can exist), and
   // a create in flight may have made one, so it is resolved by its handle.
   const { rows: stale } = await getPool().query(
     `SELECT id, state FROM gpu_pods
       WHERE key_owner_account_id = $1 AND state IN ('intent', 'creating')
-        AND updated < $2`,
-    [account_id, staleBefore],
+        AND updated < $2
+      ORDER BY created LIMIT $3`,
+    [account_id, staleBefore, limit],
   );
   for (const r of stale) {
     await resolveStaleCreate(r.id, r.state, actor);
   }
+  const ready = "AND (reap_after IS NULL OR reap_after <= $2)";
   // Pods that must go but whose termination RunPod didn't confirm.
   const { rows: pending } = await getPool().query(
     `SELECT * FROM gpu_pods
       WHERE key_owner_account_id = $1 AND desired_state = 'terminated'
         AND state IN ('running', 'stopped', 'terminating')
-        AND provider_pod_id IS NOT NULL`,
-    [account_id],
+        AND provider_pod_id IS NOT NULL ${ready}
+      ORDER BY created LIMIT $3`,
+    [account_id, now, limit],
   );
   const { rows } = await getPool().query(
-    `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND state = 'ambiguous'`,
-    [account_id],
+    `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1
+        AND state = 'ambiguous' ${ready}
+      ORDER BY created LIMIT $3`,
+    [account_id, now, limit],
   );
   if (rows.length === 0 && pending.length === 0) return;
   const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
@@ -967,18 +980,38 @@ async function resolveAmbiguousForAccount(
   ).catch(() => undefined);
   if (!c) return;
   // Only pods launched with the key now connected: another key may act for
-  // another RunPod account, where these pods don't exist (step 5 keeps the
+  // another RunPod account, where these pods don't exist (5c keeps the
   // launching key until its pods end).
   const ours = (row: PodRow) => row.credential_id === c.credential_id;
+  const attempt = async (row: PodRow, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch {
+      // back off: 1, 2, 4, ... minutes, at most 30
+      const minutes = Math.min(2 ** (row.reap_attempts ?? 0), 30);
+      await getPool().query(
+        `UPDATE gpu_pods SET reap_attempts = reap_attempts + 1,
+           reap_after = $2::timestamptz + make_interval(mins => $3)
+         WHERE id = $1`,
+        [row.id, now, minutes],
+      );
+    }
+  };
   for (const row of (pending as PodRow[]).filter(ours)) {
-    const terminating = await recordTerminating(row, actor);
-    if (!terminating) continue;
-    await terminateBound(terminating, c, actor).catch(() => {});
+    await attempt(row, async () => {
+      // recorded as terminating before RunPod is asked, as on every path
+      const terminating = await recordTerminating(row, actor);
+      if (!terminating) return;
+      await terminateBound(terminating, c, actor);
+    });
   }
   for (const row of (rows as PodRow[]).filter(ours)) {
-    await resolveAmbiguous(row, c, { kind: "cleanup" }, deps).catch(() => {});
+    await attempt(row, () => resolveAmbiguous(row, c, actor, deps));
   }
 }
+
+const resolveAmbiguousForAccount = (account_id: string, deps: GpuPodDeps) =>
+  resolvePendingForAccount(account_id, deps);
 
 // ---- terminate ----
 

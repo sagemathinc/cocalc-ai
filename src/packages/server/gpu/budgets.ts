@@ -182,6 +182,35 @@ export async function lockKeyFence(
   return rows[0];
 }
 
+// Launches need the reaper to have *completed* a sweep recently: it is what
+// terminates pods at their limits. If it hasn't, launches fail closed, unless
+// an admin made an explicit, time-limited override for this key owner (which
+// never bypasses a budget check).
+export const REAPER_STALE_MS = 5 * 60_000;
+
+export async function requireFreshWorkers(
+  db: Db,
+  { key_owner_account_id, now }: { key_owner_account_id: string; now: Date },
+): Promise<void> {
+  const { rows } = await db.query(
+    `SELECT last_completed_at FROM gpu_worker_leases WHERE name = 'reaper'`,
+  );
+  const last = rows[0]?.last_completed_at;
+  if (last && now.getTime() - new Date(last).getTime() <= REAPER_STALE_MS) {
+    return;
+  }
+  const { rows: overrides } = await db.query(
+    `SELECT 1 FROM gpu_worker_overrides
+      WHERE key_owner_account_id = $1 AND revoked_at IS NULL AND expires_at > $2
+      LIMIT 1`,
+    [key_owner_account_id, now],
+  );
+  if (overrides.length > 0) return;
+  refuse(
+    "GPU launches are paused because CoCalc's GPU cleanup worker (which terminates pods at their limits) hasn't completed a check recently. Try again in a few minutes.",
+  );
+}
+
 // Check and reserve on every applicable layer. Call inside the intent's
 // transaction, after the account rehome fence and before the pod row; then
 // insertReservations() with the new pod's id.
@@ -191,6 +220,10 @@ export async function admitLaunch(
 ): Promise<Admission> {
   const now = req.now ?? new Date();
   const fence = await lockKeyFence(db, req.credential_id);
+  await requireFreshWorkers(db, {
+    key_owner_account_id: req.key_owner_account_id,
+    now,
+  });
   if (fence.state !== "active") {
     refuse(
       fence.state === "draining"

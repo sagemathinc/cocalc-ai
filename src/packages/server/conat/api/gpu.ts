@@ -17,6 +17,7 @@ import {
   getGpuBudget,
   setGpuBudget as setGpuBudgetImpl,
 } from "@cocalc/server/gpu/budget-api";
+import { allowStaleWorkers } from "@cocalc/server/gpu/admin";
 import {
   launchGpuPod,
   terminateGpuPod,
@@ -71,5 +72,18 @@ export async function setBudget(
     session_hash: opts?.session_hash,
     change: opts?.change,
     expected_version: opts?.expected_version,
+  });
+}
+
+export async function adminAllowStaleWorkers(
+  opts: Parameters<GpuApi["adminAllowStaleWorkers"]>[0],
+): ReturnType<GpuApi["adminAllowStaleWorkers"]> {
+  return await allowStaleWorkers({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+    target_account_id: opts?.target_account_id,
+    hours: opts?.hours,
+    reason: opts?.reason,
   });
 }

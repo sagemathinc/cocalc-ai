@@ -35,6 +35,7 @@ import initProjectControl from "@cocalc/server/projects/control";
 import { start as startHubRegister } from "@cocalc/server/metrics/hub_register";
 import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
+import { initGpuReaper } from "@cocalc/server/gpu/reaper";
 import { eraseRevokedExternalCredentialPayloads } from "@cocalc/server/external-credentials/store";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
@@ -426,6 +427,7 @@ async function startServer(): Promise<void> {
     // upgrades of projects.
     initPurchasesMaintenanceLoop();
     initEphemeralMaintenance();
+    initGpuReaper();
     initDeletedAccountRetention();
     initSalesloftMaintenance();
     initDeleteExpiredLoop();

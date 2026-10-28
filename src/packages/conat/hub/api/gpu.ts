@@ -45,6 +45,7 @@ export const gpu = {
   who: authFirstRequireAccount,
   budget: authFirstRequireAccount,
   setBudget: authFirstRequireAccount,
+  adminAllowStaleWorkers: authFirstRequireAccount,
 };
 
 interface GpuReadOpts {
@@ -149,6 +150,16 @@ export interface GpuApi {
     change: GpuBudgetChange;
     expected_version?: number;
   }) => Promise<GpuBudget>;
+  // Admins only, fresh auth: let one account launch for up to 24 hours
+  // although the GPU reaper/reconciler is stale (never bypasses budgets).
+  adminAllowStaleWorkers: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    target_account_id: string;
+    hours: number;
+    reason: string;
+  }) => Promise<{ id: string; account_id: string; expires_at: string }>;
   // query: a pod id, handle, RunPod pod id or IP address
   who: (opts: {
     account_id?: string;

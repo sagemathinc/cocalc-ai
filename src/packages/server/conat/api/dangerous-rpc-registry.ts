@@ -28,6 +28,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "an ordinary CLI/agent operation on the caller's own RunPod key with the allowlisted spec. STACK GATE: the gpu-byok branch must not reach staging or main before step 5 enforces budgets, the max runtime (reaper) and the kill switch; until then this waiver is acceptable only because nothing outside the branch can call it",
   },
+  "gpu.adminAllowStaleWorkers": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin override of the fail-closed GPU worker check: scoped to one account, at most 24 h, with a reason, kept as an audit row",
+  },
   "gpu.setBudget": {
     decision: "fresh-auth-required",
     reason:
