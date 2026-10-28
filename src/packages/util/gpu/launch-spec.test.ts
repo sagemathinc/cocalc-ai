@@ -1,7 +1,8 @@
 import { GPU_LAUNCH_IMAGES, normalizeGpuLaunchSpec } from "./launch-spec";
 
 const IMAGE = GPU_LAUNCH_IMAGES[0];
-const SSH_KEY = `ssh-ed25519 ${"A".repeat(68)} cc-7f3k9q2x`;
+const SSH_KEY =
+  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl cc-7f3k9q2x";
 const base = {
   gpu_type_id: "NVIDIA GeForce RTX 4090",
   image: IMAGE,
@@ -77,8 +78,17 @@ describe("normalizeGpuLaunchSpec", () => {
     [{ env: { A: "x".repeat(1025) } }, "must be text"],
     [{ env: ["A=1"] }, "env must map"],
     [{ ssh_public_key: "ssh-rsa AAAA" }, "ssh-ed25519"],
+    [{ ssh_public_key: `${SSH_KEY}\n${SSH_KEY}` }, "one ssh-ed25519"],
+    // shaped like a key, but not the ed25519 wire format
+    [{ ssh_public_key: `ssh-ed25519 ${"A".repeat(68)}` }, "one ssh-ed25519"],
+    // truncated
     [
-      { ssh_public_key: `${SSH_KEY}\nssh-ed25519 ${"B".repeat(68)}` },
+      { ssh_public_key: SSH_KEY.split(" ").slice(0, 2).join(" ").slice(0, -8) },
+      "one ssh-ed25519",
+    ],
+    // padding that doesn't belong
+    [
+      { ssh_public_key: SSH_KEY.split(" ").slice(0, 2).join(" ") + "==" },
       "one ssh-ed25519",
     ],
   ])("rejects %j", (change, message) => {

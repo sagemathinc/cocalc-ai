@@ -18,7 +18,7 @@ routed entry points at the bottom forward the whole operation there.
 */
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
   RunpodApiError,
   type RunpodClient,
@@ -73,14 +73,16 @@ export interface GpuPodDeps {
 
 const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
 
+// cc- + 16 base32 characters: 80 random bits, so handles stay unique over
+// years of records (a collision is retried anyway).
 export function newPodHandle(): string {
-  const bytes = randomBytes(8);
+  const bytes = randomBytes(16);
   let s = "cc-";
   for (const b of bytes) s += BASE32[b & 31];
   return s;
 }
 
-const HANDLE = /^cc-[a-z2-7]{8}$/;
+const HANDLE = /^cc-[a-z2-7]{16}$/;
 
 // As `ssh-keygen -lf` prints it: SHA256 of the key blob, unpadded base64.
 export function sshKeyFingerprint(publicKey: string): string {
@@ -195,13 +197,15 @@ interface Actor {
   agent_id?: string;
 }
 
+// A standalone event (a lookup, a duplicate terminated at RunPod).
 async function recordEvent(
   pod_id: string,
   actor: Actor,
   action: GpuPodAction,
   details?: Record<string, unknown>,
+  db: Pick<PoolClient, "query"> = getPool(),
 ): Promise<void> {
-  await getPool().query(
+  await db.query(
     `INSERT INTO gpu_pod_events (id, pod_id, at, actor_kind, actor_account_id, agent_id, action, details)
      VALUES ($1, $2, now(), $3, $4, $5, $6, $7)`,
     [
@@ -216,20 +220,57 @@ async function recordEvent(
   );
 }
 
-async function updatePod(
+async function inTransaction<T>(
+  fn: (db: PoolClient) => Promise<T>,
+): Promise<T> {
+  const db = await getPool().connect();
+  try {
+    await db.query("BEGIN");
+    const result = await fn(db);
+    await db.query("COMMIT");
+    return result;
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
+}
+
+interface PodEvent {
+  actor: Actor;
+  action: GpuPodAction;
+  details?: Record<string, unknown>;
+}
+
+// One state change and its event, in one transaction: an event never
+// describes a change that didn't happen, and a change never lacks its event.
+// `where` adds conditions (compare-and-set); undefined means it didn't apply.
+async function transition(
   id: string,
   fields: Record<string, unknown>,
-  where = "",
-  whereParams: unknown[] = [],
+  where: string,
+  event?: PodEvent,
 ): Promise<PodRow | undefined> {
-  const keys = Object.keys(fields);
-  const sets = keys.map((k, i) => `${k} = $${i + 2}`);
-  const params = [id, ...keys.map((k) => fields[k]), ...whereParams];
+  return await inTransaction(async (db) => {
+    const keys = Object.keys(fields);
+    const sets = keys.map((k, i) => `${k} = $${i + 2}`);
+    const { rows } = await db.query(
+      `UPDATE gpu_pods SET ${[...sets, "updated = now()"].join(", ")}
+        WHERE id = $1 ${where} RETURNING *`,
+      [id, ...keys.map((k) => fields[k])],
+    );
+    if (rows[0] && event) {
+      await recordEvent(id, event.actor, event.action, event.details, db);
+    }
+    return rows[0];
+  });
+}
+
+async function loadPod(id: string): Promise<PodRow> {
   const { rows } = await getPool().query(
-    `UPDATE gpu_pods SET ${[...sets, "updated = now()"].join(", ")}
-      WHERE id = $1 ${where.replace(/\$W(\d+)/g, (_, n) => `$${keys.length + 1 + Number(n)}`)}
-      RETURNING *`,
-    params,
+    "SELECT * FROM gpu_pods WHERE id = $1",
+    [id],
   );
   return rows[0];
 }
@@ -367,106 +408,202 @@ export async function launchGpuPodLocal(
   const { client, credential_id } = access;
   const actor: Actor = { kind: "user", account_id };
 
-  // 1. The intent, before anything reaches RunPod.
-  const id = randomUUID();
-  const handle = (deps.newHandle ?? newPodHandle)();
-  const now = (deps.now ?? Date.now)();
-  const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
-  const { rows } = await getPool().query(
-    `INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider,
-       beneficiary_account_id, project_id, spec, gpu_type_id, gpu_count, cloud,
-       data_center_id, state, desired_state, max_runtime_minutes, deadline,
-       ssh_key_fingerprint, created, updated)
-     VALUES ($1, $2, $3, $4, 'runpod', $3, $5, $6, $7, $8, $9, $10, 'intent',
-       'running', $11, $12, $13, now(), now())
-     RETURNING *`,
-    [
-      id,
-      handle,
-      account_id,
-      credential_id,
-      project_id,
-      storedSpec(spec),
-      spec.gpu_type_id,
-      spec.gpu_count,
-      spec.cloud ?? "SECURE",
-      spec.data_center_id ?? null,
-      spec.max_runtime_minutes,
-      deadline,
-      spec.ssh_public_key ? sshKeyFingerprint(spec.ssh_public_key) : null,
-    ],
-  );
-  let row: PodRow = rows[0];
-  await recordEvent(id, actor, "create", {
-    handle,
+  // 1. The intent and its event, before anything reaches RunPod.
+  let row = await insertIntent({
+    account_id,
     project_id,
-    gpu_type_id: spec.gpu_type_id,
-    gpu_count: spec.gpu_count,
-    cloud: spec.cloud,
-    max_runtime_minutes: spec.max_runtime_minutes,
+    credential_id,
+    spec,
+    actor,
+    deps,
   });
 
-  // 2. The create.
-  row = (await updatePod(id, { state: "creating" })) ?? row;
+  // 2. The create. A terminate that arrived first wins.
+  const creating = await transition(
+    row.id,
+    { state: "creating" },
+    "AND state = 'intent' AND desired_state <> 'terminated'",
+  );
+  if (!creating) {
+    const failed = await transition(
+      row.id,
+      {
+        state: "failed",
+        reason: "Terminated before it was created.",
+        terminated_at: new Date(),
+      },
+      "AND state = 'intent'",
+      { actor, action: "state", details: { state: "failed" } },
+    );
+    return podSummary(failed ?? (await loadPod(row.id)));
+  }
+  row = creating;
   let created: RunpodPodView;
   try {
     created = await client.createPod(buildRunpodCreateBody(row, spec));
   } catch (err) {
     if (refused(err)) {
       const reason = refusalReason(err);
-      row =
-        (await updatePod(id, {
-          state: "failed",
-          reason,
-          terminated_at: new Date(),
-        })) ?? row;
-      await recordEvent(id, actor, "state", { state: "failed" });
+      await transition(
+        row.id,
+        { state: "failed", reason, terminated_at: new Date() },
+        "AND state = 'creating'",
+        { actor, action: "state", details: { state: "failed" } },
+      );
       throw Error(reason);
     }
     // Maybe made: find it by its handle before anyone tries again.
-    row = (await updatePod(id, { state: "ambiguous" })) ?? row;
-    await recordEvent(id, actor, "state", { state: "ambiguous" });
-    return podSummary(await resolveAmbiguous(row, client, actor));
+    row =
+      (await transition(
+        row.id,
+        { state: "ambiguous" },
+        "AND state = 'creating'",
+        { actor, action: "state", details: { state: "ambiguous" } },
+      )) ?? (await loadPod(row.id));
+    return podSummary(await resolveAmbiguous(row, client, actor, deps));
   }
 
-  // 3. Bind.
-  return podSummary(await bind(row, created, client, actor));
+  // 3. Bind. If recording fails, the pod still has its handle: mark the
+  // record ambiguous so it is found by name, and say so.
+  try {
+    return podSummary(await bind(row, created, client, actor));
+  } catch {
+    await transition(
+      row.id,
+      { state: "ambiguous" },
+      "AND state = 'creating' AND provider_pod_id IS NULL",
+      { actor, action: "state", details: { state: "ambiguous" } },
+    ).catch(() => {});
+    throw Error(
+      `RunPod created pod ${row.handle}, but CoCalc couldn't record it yet. It will be found by that name; check gpu pods.`,
+    );
+  }
 }
 
-// Record RunPod's pod for this handle. If a terminate arrived meanwhile, the
-// pod is terminated at once.
+const HANDLE_ATTEMPTS = 3;
+
+async function insertIntent({
+  account_id,
+  project_id,
+  credential_id,
+  spec,
+  actor,
+  deps,
+}: {
+  account_id: string;
+  project_id: string;
+  credential_id: string;
+  spec: GpuLaunchSpec;
+  actor: Actor;
+  deps: GpuPodDeps;
+}): Promise<PodRow> {
+  const now = (deps.now ?? Date.now)();
+  const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
+  for (let attempt = 1; ; attempt++) {
+    const id = randomUUID();
+    const handle = (deps.newHandle ?? newPodHandle)();
+    try {
+      return await inTransaction(async (db) => {
+        const { rows } = await db.query(
+          `INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider,
+             beneficiary_account_id, project_id, spec, gpu_type_id, gpu_count, cloud,
+             data_center_id, state, desired_state, max_runtime_minutes, deadline,
+             ssh_key_fingerprint, created, updated)
+           VALUES ($1, $2, $3, $4, 'runpod', $3, $5, $6, $7, $8, $9, $10, 'intent',
+             'running', $11, $12, $13, now(), now())
+           RETURNING *`,
+          [
+            id,
+            handle,
+            account_id,
+            credential_id,
+            project_id,
+            storedSpec(spec),
+            spec.gpu_type_id,
+            spec.gpu_count,
+            spec.cloud ?? "SECURE",
+            spec.data_center_id ?? null,
+            spec.max_runtime_minutes,
+            deadline,
+            spec.ssh_public_key ? sshKeyFingerprint(spec.ssh_public_key) : null,
+          ],
+        );
+        await recordEvent(
+          id,
+          actor,
+          "create",
+          {
+            handle,
+            project_id,
+            gpu_type_id: spec.gpu_type_id,
+            gpu_count: spec.gpu_count,
+            cloud: spec.cloud,
+            max_runtime_minutes: spec.max_runtime_minutes,
+          },
+          db,
+        );
+        return rows[0];
+      });
+    } catch (err: any) {
+      // A handle collision (80 random bits: vanishingly rare) gets a new one.
+      if (err?.code === "23505" && attempt < HANDLE_ATTEMPTS) continue;
+      throw err;
+    }
+  }
+}
+
+// Record RunPod's pod for this handle, only if no pod is bound yet. If the
+// record moved on meanwhile (another resolution bound it, or it was given
+// up), the pod is either already ours (nothing to do) or would be untracked
+// (it is terminated). If a terminate arrived meanwhile, the pod is
+// terminated at once.
 async function bind(
   row: PodRow,
   pod: RunpodPodView,
   client: Pick<RunpodClient, "terminatePod">,
   actor: Actor,
 ): Promise<PodRow> {
-  const bound =
-    (await updatePod(
-      row.id,
-      {
-        provider_pod_id: pod.id,
-        state: "running",
-        cost_per_hr: pod.cost ?? null,
-        data_center_id: pod.dataCenterId ?? row.data_center_id,
-        public_ip: pod.sshDirect?.host ?? null,
-      },
-      "AND state IN ('creating', 'ambiguous')",
-    )) ?? row;
-  await recordEvent(row.id, actor, "bind", {
-    provider_pod_id: pod.id,
-    cost_per_hr: pod.cost,
-  });
-  if (bound.desired_state === "terminated") {
-    return await terminateBound(bound, client, actor);
+  const bound = await transition(
+    row.id,
+    {
+      provider_pod_id: pod.id,
+      state: "running",
+      cost_per_hr: pod.cost ?? null,
+      data_center_id: pod.dataCenterId ?? row.data_center_id,
+      public_ip: pod.sshDirect?.host ?? null,
+    },
+    "AND state IN ('creating', 'ambiguous') AND provider_pod_id IS NULL",
+    {
+      actor,
+      action: "bind",
+      details: { provider_pod_id: pod.id, cost_per_hr: pod.cost },
+    },
+  );
+  if (bound) {
+    if (bound.desired_state === "terminated") {
+      return await terminateBound(bound, client, actor);
+    }
+    return bound;
   }
-  return bound;
+  const current = await loadPod(row.id);
+  if (current.provider_pod_id === pod.id) return current;
+  await client.terminatePod(pod.id);
+  await recordEvent(row.id, actor, "terminate", {
+    provider_pod_id: pod.id,
+    duplicate: true,
+  });
+  return current;
 }
+
+// How long an empty lookup by handle is not taken as proof that no pod was
+// made: RunPod's listing may lag a create whose reply was lost.
+export const AMBIGUOUS_WINDOW_MS = 15 * 60_000;
 
 async function resolveAmbiguous(
   row: PodRow,
   client: Pick<RunpodClient, "findPodsByName" | "terminatePod">,
   actor: Actor,
+  deps: GpuPodDeps,
 ): Promise<PodRow> {
   let found: RunpodPodView[];
   try {
@@ -476,8 +613,10 @@ async function resolveAmbiguous(
     return row;
   }
   if (found.length === 0) {
-    const failed =
-      (await updatePod(
+    const age = (deps.now ?? Date.now)() - new Date(row.created).getTime();
+    if (age < AMBIGUOUS_WINDOW_MS) return row;
+    return (
+      (await transition(
         row.id,
         {
           state: "failed",
@@ -485,16 +624,19 @@ async function resolveAmbiguous(
           terminated_at: new Date(),
         },
         "AND state = 'ambiguous'",
-      )) ?? row;
-    await recordEvent(row.id, actor, "state", {
-      state: "failed",
-      resolved: "not_found",
-    });
-    return failed;
+        {
+          actor,
+          action: "state",
+          details: { state: "failed", resolved: "not_found" },
+        },
+      )) ?? (await loadPod(row.id))
+    );
   }
-  // One name, so at most one pod; more would be RunPod retrying a create.
-  // Keep the first and terminate the rest, which nothing else records.
-  const [keep, ...extra] = found;
+  // One name, so normally one pod; more would be RunPod retrying a create.
+  // Keep the oldest and terminate the rest, which nothing else records.
+  const [keep, ...extra] = [...found].sort((a, b) =>
+    `${a.createdAt ?? ""}${a.id}`.localeCompare(`${b.createdAt ?? ""}${b.id}`),
+  );
   for (const pod of extra) {
     await client.terminatePod(pod.id);
     await recordEvent(row.id, actor, "terminate", {
@@ -505,6 +647,26 @@ async function resolveAmbiguous(
   return await bind(row, keep, client, actor);
 }
 
+// Resolve this account's ambiguous records now (a listing or terminate does
+// this; the step 5 reconciler will too). Best effort.
+async function resolveAmbiguousForAccount(
+  account_id: string,
+  deps: GpuPodDeps,
+): Promise<void> {
+  const { rows } = await getPool().query(
+    `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND state = 'ambiguous'`,
+    [account_id],
+  );
+  if (rows.length === 0) return;
+  const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
+    account_id,
+  ).catch(() => undefined);
+  if (!c) return;
+  for (const row of rows as PodRow[]) {
+    await resolveAmbiguous(row, c, { kind: "cleanup" }, deps).catch(() => {});
+  }
+}
+
 // ---- terminate ----
 
 async function terminateBound(
@@ -513,13 +675,14 @@ async function terminateBound(
   actor: Actor,
 ): Promise<PodRow> {
   await client.terminatePod(row.provider_pod_id!);
-  const done =
-    (await updatePod(row.id, {
-      state: "terminated",
-      terminated_at: new Date(),
-    })) ?? row;
-  await recordEvent(row.id, actor, "state", { state: "terminated" });
-  return done;
+  return (
+    (await transition(
+      row.id,
+      { state: "terminated", terminated_at: new Date() },
+      "AND state <> 'terminated'",
+      { actor, action: "state", details: { state: "terminated" } },
+    )) ?? (await loadPod(row.id))
+  );
 }
 
 export async function terminateGpuPodLocal(
@@ -534,17 +697,15 @@ export async function terminateGpuPodLocal(
     kind: row.key_owner_account_id === account_id ? "key_owner" : "user",
     account_id,
   };
-  if (row.state === "terminated" || row.state === "failed") {
-    return { state: row.state };
-  }
-  // Recorded first: a create still in flight sees it when it binds.
-  let current =
-    (await updatePod(
-      row.id,
-      { desired_state: "terminated" },
-      "AND state NOT IN ('terminated', 'failed')",
-    )) ?? row;
-  await recordEvent(row.id, actor, "terminate", {});
+  // Recorded first, with its event: a create still in flight sees it when it
+  // binds, and an unresolved record keeps it until it is resolved.
+  let current = await transition(
+    row.id,
+    { desired_state: "terminated" },
+    "AND state NOT IN ('terminated', 'failed')",
+    { actor, action: "terminate" },
+  );
+  if (!current) return { state: (await loadPod(row.id)).state };
   if (current.state === "intent" || current.state === "creating") {
     return { state: current.state };
   }
@@ -559,13 +720,19 @@ export async function terminateGpuPodLocal(
   }
   try {
     if (current.state === "ambiguous") {
-      current = await resolveAmbiguous(current, c, actor);
-      if (current.state === "terminated" || current.state === "failed") {
+      current = await resolveAmbiguous(current, c, actor, deps);
+      // Terminated on binding, given up as never made, or still unknown
+      // (then the terminate stays recorded for when it is resolved).
+      if (!current.provider_pod_id || current.state === "terminated") {
         return { state: current.state };
       }
     }
-    if (!current.provider_pod_id) return { state: current.state };
-    current = (await updatePod(row.id, { state: "terminating" })) ?? current;
+    current =
+      (await transition(
+        row.id,
+        { state: "terminating" },
+        "AND state IN ('running', 'stopped', 'terminating')",
+      )) ?? current;
     return { state: (await terminateBound(current, c, actor)).state };
   } catch (err) {
     if (err instanceof RunpodApiError) {
@@ -585,6 +752,7 @@ export async function listManagedGpuPodsLocal(
 ): Promise<GpuPodSummary[]> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
+  await resolveAmbiguousForAccount(account_id, deps);
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE ${MINE}
        ${opts.include_ended ? "AND created > now() - interval '30 days'" : "AND state = ANY($2)"}

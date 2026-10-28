@@ -4850,7 +4850,7 @@ describe("GPU pods are recorded and managed on the key owner's home bay", () => 
   // A pod record for bob on his home bay (the attached bay), as a launch
   // leaves it before RunPod answers. Every call below starts on the seed.
   const POD_ID = "00000000-1000-4000-8000-00000000f001";
-  const HANDLE = "cc-mbay2345";
+  const HANDLE = "cc-mbay2345mbay2345";
   async function onSeed(body) {
     return await runInBay(
       cluster,

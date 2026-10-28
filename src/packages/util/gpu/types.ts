@@ -12,8 +12,9 @@ Words:
 - key owner: the account whose provider key is used and billed;
 - beneficiary: the account responsible for a pod (set at launch, never
   changed);
-- handle: the opaque pod name sent to the provider, such as cc-7f3k9q2x; it
-  never contains ids.
+- handle: the opaque pod name sent to the provider, cc- and 16 base32
+  characters (80 random bits), such as cc-7f3k9q2xa4mbn6wd; it never
+  contains ids.
 */
 
 import type { RunpodCloud } from "./runpod";

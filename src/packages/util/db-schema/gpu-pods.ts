@@ -47,11 +47,11 @@ Table({
     id: { type: "uuid", not_null: true },
     handle: {
       type: "string",
-      pg_type: "varchar(16)",
+      pg_type: "varchar(24)",
       not_null: true,
       unique: true,
-      pg_check: "CHECK (handle ~ '^cc-[a-z2-7]{8}$')",
-      desc: "Opaque pod name sent to the provider, e.g. cc-7f3k9q2x.",
+      pg_check: "CHECK (handle ~ '^cc-[a-z2-7]{16}$')",
+      desc: "Opaque pod name sent to the provider: cc- and 80 random bits in base32.",
     },
     key_owner_account_id: {
       type: "uuid",

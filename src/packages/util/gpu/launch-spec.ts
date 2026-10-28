@@ -64,8 +64,35 @@ const GPU_TYPE_ID = /^[A-Za-z0-9][A-Za-z0-9 ._()-]{1,63}$/;
 const DATA_CENTER_ID = /^[A-Za-z0-9][A-Za-z0-9-]{1,31}$/;
 const PORT = /^([1-9][0-9]{0,4})\/(tcp|http)$/;
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
-const ED25519_PUBLIC_KEY =
-  /^ssh-ed25519 [A-Za-z0-9+/]{68}(?:=){0,2}(?: [^\s]{0,64})?$/;
+const ED25519_PUBLIC_KEY_LINE =
+  /^ssh-ed25519 ([A-Za-z0-9+/]+={0,2})(?: [^\s]{0,64})?$/;
+
+// A real ssh-ed25519 public key: canonical base64 of exactly the wire blob
+// string("ssh-ed25519") + string(32-byte key).
+export function isEd25519PublicKey(line: string): boolean {
+  const m = ED25519_PUBLIC_KEY_LINE.exec(line);
+  if (!m) return false;
+  let bytes: number[];
+  try {
+    bytes = Array.from(atob(m[1]), (c) => c.charCodeAt(0));
+  } catch {
+    return false;
+  }
+  // canonical: re-encoding gives the same text
+  if (btoa(String.fromCharCode(...bytes)) !== m[1]) return false;
+  if (bytes.length !== 4 + 11 + 4 + 32) return false;
+  const u32 = (i: number) =>
+    ((bytes[i] << 24) |
+      (bytes[i + 1] << 16) |
+      (bytes[i + 2] << 8) |
+      bytes[i + 3]) >>>
+    0;
+  return (
+    u32(0) === 11 &&
+    String.fromCharCode(...bytes.slice(4, 15)) === "ssh-ed25519" &&
+    u32(15) === 32
+  );
+}
 
 export function normalizeGpuLaunchSpec(input: unknown): GpuLaunchSpec {
   if (input == null || typeof input !== "object" || Array.isArray(input)) {
@@ -138,7 +165,7 @@ export function normalizeGpuLaunchSpec(input: unknown): GpuLaunchSpec {
   let ssh_public_key: string | undefined;
   if (spec.ssh_public_key != null) {
     ssh_public_key = `${spec.ssh_public_key}`.trim();
-    if (!ED25519_PUBLIC_KEY.test(ssh_public_key)) {
+    if (!isEd25519PublicKey(ssh_public_key)) {
       fail("ssh_public_key must be one ssh-ed25519 public key.");
     }
   }

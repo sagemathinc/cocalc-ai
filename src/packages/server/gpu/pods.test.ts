@@ -13,6 +13,7 @@ import { SCHEMA } from "@cocalc/util/db-schema";
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
 import {
+  AMBIGUOUS_WINDOW_MS,
   buildRunpodCreateBody,
   launchGpuPodLocal,
   listManagedGpuPodsLocal,
@@ -91,7 +92,7 @@ describe("pod handles, fingerprints and the create body", () => {
     const seen = new Set<string>();
     for (let i = 0; i < 200; i++) {
       const h = newPodHandle();
-      expect(h).toMatch(/^cc-[a-z2-7]{8}$/);
+      expect(h).toMatch(/^cc-[a-z2-7]{16}$/);
       seen.add(h);
     }
     expect(seen.size).toBe(200);
@@ -235,7 +236,41 @@ describeDb("GPU pods", () => {
     expect(rp.client.findPodsByName).toHaveBeenCalledWith(pod.handle);
   });
 
-  it("resolves an unclear create by the handle: no pod was made", async () => {
+  it("keeps an empty lookup ambiguous while RunPod's listing may lag, and binds the pod when it shows up", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    let handle = "";
+    rp.client.createPod.mockImplementationOnce(async (body: any) => {
+      handle = body.name;
+      throw new RunpodApiError("provider", 503);
+    });
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    // Not visible yet: not proof that no pod was made.
+    expect(pod.state).toBe("ambiguous");
+    // A terminate is kept for when it is resolved.
+    expect(
+      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+    ).toEqual({ state: "ambiguous" });
+    // The pod appears late; the next listing resolves the record, binds it
+    // and, as terminate was asked for, terminates it.
+    rp.pods.set("pod_late01", { id: "pod_late01", name: handle });
+    await listManagedGpuPodsLocal({ account_id }, d);
+    const [ended] = await listManagedGpuPodsLocal(
+      { account_id, include_ended: true },
+      d,
+    );
+    expect(ended).toEqual(
+      expect.objectContaining({
+        state: "terminated",
+        provider_pod_id: "pod_late01",
+      }),
+    );
+    expect(rp.pods.size).toBe(0);
+  });
+
+  it("gives up an unclear create only after the consistency window", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     rp.client.createPod.mockRejectedValueOnce(
       new RunpodApiError("provider", 503),
@@ -244,14 +279,22 @@ describeDb("GPU pods", () => {
       { account_id, project_id: PROJECT, spec: SPEC },
       d,
     );
-    expect(pod.state).toBe("failed");
-    expect(pod.reason).toMatch(/didn't create/);
+    expect(pod.state).toBe("ambiguous");
+    const later = { ...d, now: () => Date.now() + AMBIGUOUS_WINDOW_MS + 1 };
+    expect(await listManagedGpuPodsLocal({ account_id }, later)).toEqual([]);
+    const [failed] = await listManagedGpuPodsLocal(
+      { account_id, include_ended: true },
+      later,
+    );
+    expect(failed.state).toBe("failed");
+    expect(failed.reason).toMatch(/didn't create/);
   });
 
-  it("keeps an unclear create ambiguous while RunPod can't be asked", async () => {
+  it("binds once when two resolutions race, and terminates a pod the record doesn't hold", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
+    let handle = "";
     rp.client.createPod.mockImplementationOnce(async (body: any) => {
-      rp.pods.set("pod_later", { id: "pod_later", name: body.name });
+      handle = body.name;
       throw new RunpodApiError("network");
     });
     rp.client.findPodsByName.mockRejectedValueOnce(
@@ -262,28 +305,100 @@ describeDb("GPU pods", () => {
       d,
     );
     expect(pod.state).toBe("ambiguous");
-    expect(pod.handle).toMatch(/^cc-/);
-    // A terminate resolves it first, then ends the pod it finds.
-    expect(
-      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
-    ).toEqual({ state: "terminated" });
-    expect(rp.client.terminatePod).toHaveBeenCalledWith("pod_later");
-    expect(rp.pods.size).toBe(0);
+    rp.pods.set("pod_race01", { id: "pod_race01", name: handle });
+    // two listings resolve the same record at once
+    await Promise.all([
+      listManagedGpuPodsLocal({ account_id }, d),
+      listManagedGpuPodsLocal({ account_id }, d),
+    ]);
+    const binds = (await events(pod.id)).filter((e) => e.action === "bind");
+    expect(binds).toHaveLength(1);
+    expect(rp.pods.has("pod_race01")).toBe(true);
   });
 
-  it("terminates duplicate pods with the same handle", async () => {
+  it("terminates the losing pod when two resolutions see different pods", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
-    rp.client.createPod.mockImplementationOnce(async (body: any) => {
-      rp.pods.set("pod_dup001", { id: "pod_dup001", name: body.name });
-      rp.pods.set("pod_dup002", { id: "pod_dup002", name: body.name });
-      throw new RunpodApiError("protocol");
-    });
+    rp.client.createPod.mockRejectedValueOnce(new RunpodApiError("network"));
+    rp.client.findPodsByName.mockRejectedValueOnce(
+      new RunpodApiError("network"),
+    );
     const pod = await launchGpuPodLocal(
       { account_id, project_id: PROJECT, spec: SPEC },
       d,
     );
-    expect(pod.provider_pod_id).toBe("pod_dup001");
-    expect([...rp.pods.keys()]).toEqual(["pod_dup001"]);
+    expect(pod.state).toBe("ambiguous");
+    rp.pods.set("pod_aaaaaa", { id: "pod_aaaaaa", name: pod.handle });
+    rp.pods.set("pod_bbbbbb", { id: "pod_bbbbbb", name: pod.handle });
+    // each lookup sees only one of them (a listing taken mid-retry)
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    // (mocks are taken in call order: the slow listing starts first)
+    rp.client.findPodsByName
+      .mockImplementationOnce(async () => {
+        await gate;
+        return [rp.pods.get("pod_bbbbbb")];
+      })
+      .mockImplementationOnce(async () => [rp.pods.get("pod_aaaaaa")]);
+    const slow = listManagedGpuPodsLocal({ account_id }, d);
+    await listManagedGpuPodsLocal({ account_id }, d);
+    release();
+    await slow;
+    const [row] = await listManagedGpuPodsLocal({ account_id }, d);
+    expect(row.provider_pod_id).toBe("pod_aaaaaa");
+    expect([...rp.pods.keys()]).toEqual(["pod_aaaaaa"]);
+    const ev = await events(pod.id);
+    expect(ev.filter((e) => e.action === "bind")).toHaveLength(1);
+    expect(ev).toContainEqual(
+      expect.objectContaining({
+        action: "terminate",
+        details: { provider_pod_id: "pod_bbbbbb", duplicate: true },
+      }),
+    );
+  });
+
+  it("never records a state change without its event, or the reverse", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    const before = (await events(pod.id)).length;
+    // the event can't be written (the table is away): the terminate is not
+    // recorded either, and nothing is sent to RunPod
+    await getPool().query(
+      "ALTER TABLE gpu_pod_events RENAME TO gpu_pod_events_away",
+    );
+    try {
+      await expect(
+        terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+      ).rejects.toThrow();
+    } finally {
+      await getPool().query(
+        "ALTER TABLE gpu_pod_events_away RENAME TO gpu_pod_events",
+      );
+    }
+    const { rows } = await getPool().query(
+      "SELECT desired_state, state FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0]).toEqual({ desired_state: "running", state: "running" });
+    expect((await events(pod.id)).length).toBe(before);
+    expect(rp.client.terminatePod).not.toHaveBeenCalled();
+  });
+
+  it("retries a handle collision with a new handle", async () => {
+    const { deps: d, account_id } = deps(randomUUID());
+    const first = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    const handles = [first.handle, newPodHandle()];
+    const second = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      { ...d, newHandle: () => handles.shift()! },
+    );
+    expect(second.handle).not.toBe(first.handle);
+    expect(second.state).toBe("running");
   });
 
   it("terminates by id, handle or RunPod id, once, recording who", async () => {
