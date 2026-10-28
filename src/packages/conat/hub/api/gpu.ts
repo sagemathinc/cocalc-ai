@@ -17,6 +17,7 @@ import type {
   GpuBudgetChange,
   GpuAttribution,
   GpuLaunchSpec,
+  GpuPodSshInfo,
   GpuPodSummary,
 } from "@cocalc/util/gpu/types";
 import type {
@@ -28,6 +29,7 @@ import type {
 import {
   authFirstRequireAccount,
   authFirstRequireAccountOrBoundAgentProject,
+  authFirstRequireAccountWithBoundSession,
 } from "./util";
 
 // Agents may read the catalog and stock for the account they act for, from
@@ -44,8 +46,13 @@ export const gpu = {
   terminate: authFirstRequireAccount,
   who: authFirstRequireAccount,
   budget: authFirstRequireAccount,
-  setBudget: authFirstRequireAccount,
-  adminAllowStaleWorkers: authFirstRequireAccount,
+  // its fresh-auth check uses the caller's own session, never a nominated one
+  setBudget: authFirstRequireAccountWithBoundSession,
+  // like setBudget: the fresh-auth check uses the caller's own session
+  adminAllowStaleWorkers: authFirstRequireAccountWithBoundSession,
+  // what `cocalc gpu connect` needs: the live SSH endpoint and the host key
+  // the pod registered; account-only, like pods
+  sshInfo: authFirstRequireAccount,
 };
 
 interface GpuReadOpts {
@@ -165,4 +172,10 @@ export interface GpuApi {
     account_id?: string;
     query: string;
   }) => Promise<GpuAttribution[]>;
+  // pod_id: a pod id, handle or RunPod pod id. ready is false until the pod
+  // runs and has registered its host key; then host, port, user and the key.
+  sshInfo: (opts: {
+    account_id?: string;
+    pod_id: string;
+  }) => Promise<GpuPodSshInfo>;
 }

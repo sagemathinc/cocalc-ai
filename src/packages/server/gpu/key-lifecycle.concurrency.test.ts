@@ -275,6 +275,52 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     expect(await storedKey(s.account_id)).toBe(OLD);
   });
 
+  it("a key replaced in place between pricing and the fence refuses the launch", async () => {
+    const s = await setup();
+    let reads = 0;
+    const launching = pods.launchGpuPodLocal(
+      {
+        account_id: s.account_id,
+        project_id: "00000000-1000-4000-8000-0000000000aa",
+        spec: {
+          gpu_type_id: "NVIDIA GeForce RTX 4090",
+          image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+          max_runtime_minutes: 60,
+        },
+      },
+      {
+        isHomeBay: async () => true,
+        isProjectCollaborator: async () => true,
+        getLaunchAccess: async (account_id) => {
+          const access = await keys.getRunpodLaunchAccessForAccount(
+            account_id,
+            s.keyDeps,
+          );
+          // right after pricing read the old key, it is replaced in place
+          // (the record keeps its id)
+          if (++reads === 1) {
+            await keys.setGpuProviderKeyLocal(
+              { account_id, provider: "runpod", api_key: NEW },
+              s.keyDeps,
+            );
+          }
+          return access;
+        },
+        listPrice: async () => 0.5,
+      },
+    );
+    await expect(launching).rejects.toThrow(
+      "Your RunPod API key changed during the launch",
+    );
+    expect(s.used).toEqual([]);
+    expect(await storedKey(s.account_id)).toBe(NEW);
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_pods WHERE key_owner_account_id = $1",
+      [s.account_id],
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
   it("removal first: the launch waits, then finds no key and records nothing", async () => {
     const s = await setup();
     const g = gate();

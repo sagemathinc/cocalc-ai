@@ -63,6 +63,7 @@ function setup() {
     getLaunchAccess: async () => ({ client: client as any, credential_id }),
     getCleanup: async () => ({ ...client, credential_id }) as any,
     listPrice: async () => 0.5,
+    siteUrl: async () => "https://cocalc.test",
     // the real fence, on the account row it needs (same transaction)
     accountWriteFence: async (db: any, id: string, action: string) => {
       await db.query(

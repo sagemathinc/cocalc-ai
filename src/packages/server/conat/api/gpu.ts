@@ -23,6 +23,7 @@ import {
   terminateGpuPod,
   whoGpuPod,
 } from "@cocalc/server/gpu/pods";
+import { gpuSshInfo } from "@cocalc/server/gpu/hostkey";
 
 export const catalog: GpuApi["catalog"] = async (opts = {}) =>
   await getGpuCatalog(opts);
@@ -85,5 +86,14 @@ export async function adminAllowStaleWorkers(
     target_account_id: opts?.target_account_id,
     hours: opts?.hours,
     reason: opts?.reason,
+  });
+}
+
+export async function sshInfo(
+  opts: Parameters<GpuApi["sshInfo"]>[0],
+): ReturnType<GpuApi["sshInfo"]> {
+  return await gpuSshInfo({
+    account_id: opts?.account_id,
+    pod_id: opts?.pod_id,
   });
 }

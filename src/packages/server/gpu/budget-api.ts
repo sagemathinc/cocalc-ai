@@ -16,7 +16,9 @@ import { randomUUID } from "node:crypto";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { GpuBudget, GpuBudgetChange } from "@cocalc/util/gpu/types";
-import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
+import { inTransaction } from "@cocalc/server/gpu/pods";
+import type { PoolClient } from "@cocalc/database/pool";
 import { getRunpodLaunchAccessForAccount } from "@cocalc/server/gpu/provider-keys";
 import { ensureKeyBudget, lockKeyFence } from "@cocalc/server/gpu/budgets";
 import {
@@ -33,7 +35,8 @@ export interface GpuBudgetDeps {
   homeClient?: (account_id: string) => Promise<InterBayGpuApi | undefined>;
   freshAuth?: typeof requireDangerousSessionAuth;
   credentialId?: (account_id: string) => Promise<string | undefined>;
-  accountFence?: typeof withAccountRehomeWriteFence;
+  // for tests: the account fence (default: lockGpuAccountFence)
+  accountWriteFence?: typeof lockGpuAccountFence;
   isHomeBay?: (account_id: string) => Promise<boolean>;
 }
 
@@ -120,16 +123,40 @@ async function liveHolds(db, layer_id: string) {
   return rows[0];
 }
 
+// Under the account fence that key replacement and removal take, the key is
+// chosen there too: a budget is never read or changed for a key replaced or
+// removed meanwhile.
+async function withKeyUnderFence<T>({
+  account_id,
+  action,
+  deps,
+  fn,
+}: {
+  account_id: string;
+  action: string;
+  deps: GpuBudgetDeps;
+  fn: (db: PoolClient, credential_id: string) => Promise<T>;
+}): Promise<T> {
+  return await inTransaction(async (db) => {
+    await (deps.accountWriteFence ?? lockGpuAccountFence)(
+      db,
+      account_id,
+      action,
+    );
+    return await fn(db, await requireKey(account_id, deps));
+  });
+}
+
 export async function getGpuBudgetLocal(
   opts: { account_id?: string },
   deps: GpuBudgetDeps = {},
 ): Promise<GpuBudget> {
   const account_id = requireAccount(opts.account_id);
-  const credential_id = await requireKey(account_id, deps);
-  return await (deps.accountFence ?? withAccountRehomeWriteFence)({
+  return await withKeyUnderFence({
     account_id,
     action: "read a GPU budget",
-    fn: async (db) => {
+    deps,
+    fn: async (db, credential_id) => {
       await ensureKeyBudget(db, {
         credential_id,
         key_owner_account_id: account_id,
@@ -211,11 +238,11 @@ export async function setGpuBudgetLocal(
   if (opts.change == null || typeof opts.change !== "object") {
     throw Error("Give the budget changes.");
   }
-  const credential_id = await requireKey(account_id, deps);
-  return await (deps.accountFence ?? withAccountRehomeWriteFence)({
+  return await withKeyUnderFence({
     account_id,
     action: "change a GPU budget",
-    fn: async (db) => {
+    deps,
+    fn: async (db, credential_id) => {
       await ensureKeyBudget(db, {
         credential_id,
         key_owner_account_id: account_id,
@@ -291,8 +318,10 @@ export async function getGpuBudget(
 }
 
 // Fresh authentication is checked here, on the bay the user is signed in
-// to, when the caller offers it (a browser session); the home bay decides
-// whether the change needs it.
+// to, for the caller's own session (bound by the hub transform); the home
+// bay decides whether the change needs it. A session that isn't fresh is
+// not an error here: lowering limits needs none, and the home bay refuses a
+// raise without it.
 export async function setGpuBudget(
   opts: {
     account_id?: string;
@@ -306,13 +335,18 @@ export async function setGpuBudget(
   const account_id = requireAccount(opts.account_id);
   let fresh_auth_verified = false;
   if (opts.browser_id || opts.session_hash) {
-    await (deps.freshAuth ?? requireDangerousSessionAuth)({
-      account_id,
-      browser_id: opts.browser_id,
-      session_hash: opts.session_hash,
-      require_second_factor: false,
-    });
-    fresh_auth_verified = true;
+    try {
+      await (deps.freshAuth ?? requireDangerousSessionAuth)({
+        account_id,
+        browser_id: opts.browser_id,
+        session_hash: opts.session_hash,
+        require_second_factor: false,
+      });
+      fresh_auth_verified = true;
+    } catch {
+      // not fresh (or not checkable): only a raise needs it
+      fresh_auth_verified = false;
+    }
   }
   const forwarded = {
     account_id,

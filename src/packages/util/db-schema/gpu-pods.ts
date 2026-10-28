@@ -34,6 +34,9 @@ Table({
       "state",
       "machine_id",
       "public_ip",
+      // clearStaleHostkeyTokens
+      "hostkey_expires",
+      "hostkey_consumed_at",
     ],
     pg_constraints: [
       {
@@ -143,6 +146,21 @@ Table({
       pg_type: "varchar(512)",
       desc: "The pod's SSH host public key, from its one-time registration.",
     },
+    // The one-time host-key registration token (see server/gpu/hostkey.ts).
+    // Only its verifier is stored. All four are cleared, with the host key,
+    // when the pod leaves the registrable state.
+    hostkey_token_id: {
+      type: "uuid",
+      unique: true,
+      desc: "Id of the pod's one-time host-key registration token.",
+    },
+    hostkey_verifier: {
+      type: "string",
+      pg_type: "varchar(64)",
+      desc: "SHA-256 verifier of the registration token; never the token.",
+    },
+    hostkey_expires: { type: "timestamp" },
+    hostkey_consumed_at: { type: "timestamp" },
     created: { type: "timestamp", not_null: true, pg_default: "now()" },
     updated: { type: "timestamp", not_null: true, pg_default: "now()" },
     terminated_at: { type: "timestamp" },

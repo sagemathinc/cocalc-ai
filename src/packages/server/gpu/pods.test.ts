@@ -20,6 +20,7 @@ import {
   listManagedGpuPodsLocal,
   newPodHandle,
   recordSeenAddresses,
+  providerStartTime,
   STALE_CREATE_MS,
   sshKeyFingerprint,
   terminateGpuPodLocal,
@@ -91,6 +92,7 @@ function deps(account_id: string, rp = fakeRunpod()) {
         );
         await lockGpuAccountFence(db, id, action);
       },
+      siteUrl: async () => "https://cocalc.test",
     },
     account_id,
   };
@@ -152,6 +154,7 @@ describe("pod handles, fingerprints and the create body", () => {
           volume_gb: 50,
           ports: ["8888/http"],
         },
+        { url: "https://cocalc.test/gpu/pod-host-key", token: "ccr1.t" },
       ),
     ).toEqual({
       name: "cc-7f3k9q2x",
@@ -162,8 +165,28 @@ describe("pod handles, fingerprints and the create body", () => {
       disk: 30,
       mounts: { persistent: { size: 50, path: "/workspace" } },
       ports: ["8888/http", "22/tcp"],
-      env: { EPOCHS: "3", PUBLIC_KEY: SSH_KEY },
+      // the key without its comment, and the one-time registration
+      env: {
+        EPOCHS: "3",
+        PUBLIC_KEY: SSH_KEY.split(" ").slice(0, 2).join(" "),
+        CC_HOSTKEY_URL: "https://cocalc.test/gpu/pod-host-key",
+        CC_HOSTKEY_TOKEN: "ccr1.t",
+      },
+      // hardens sshd before it starts, then runs the image's own start
+      entrypoint: ["/bin/bash", "-c"],
+      cmd: [expect.stringContaining("exec '/start.sh'")],
     });
+  });
+
+  it("won't make a body for an SSH pod without its registration", () => {
+    expect(() =>
+      buildRunpodCreateBody({ handle: "cc-7f3k9q2x" }, SPEC),
+    ).toThrow("host-key registration");
+    // a pod without SSH keeps the image's own start
+    const { ssh_public_key: _k, ...noSsh } = SPEC;
+    const body = buildRunpodCreateBody({ handle: "cc-7f3k9q2x" }, noSsh);
+    expect(body.cmd).toBeUndefined();
+    expect(body.env).toEqual({ EPOCHS: "3" });
   });
 });
 
@@ -188,6 +211,22 @@ describeDb("GPU pods", () => {
       [account_id],
     );
     expect(rows[0].n).toBe(0);
+  });
+
+  it("refuses a launch whose key was replaced in place between pricing and the fence", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const credential_id = randomUUID();
+    // the same record (an in-place replacement keeps its id), rewritten
+    let reads = 0;
+    d.getLaunchAccess = async () => ({
+      client: rp.client as any,
+      credential_id,
+      revision: `r${++reads}`,
+    });
+    await expect(
+      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+    ).rejects.toThrow("Your RunPod API key changed during the launch");
+    expect(rp.client.createPod).not.toHaveBeenCalled();
   });
 
   it("records the intent, creates the pod by its handle, and binds it", async () => {
@@ -747,7 +786,11 @@ describeDb("GPU pods", () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     rp.client.createPod.mockImplementationOnce(async (body: any) => {
       rp.pods.set("pod_dupaaa", { id: "pod_dupaaa", name: body.name });
-      rp.pods.set("pod_dupbbb", { id: "pod_dupbbb", name: body.name });
+      rp.pods.set("pod_dupbbb", {
+        id: "pod_dupbbb",
+        name: body.name,
+        cost: 0.9,
+      });
       throw new RunpodApiError("protocol");
     });
     // the duplicate's first terminate fails
@@ -772,9 +815,35 @@ describeDb("GPU pods", () => {
     );
     expect(rows[0].handle).not.toBe(pod.handle);
     // the next listing retries it
+    // it ran for 20 minutes before it was found
+    await getPool().query(
+      "UPDATE gpu_pods SET running_since = now() - interval '20 minutes' WHERE provider_pod_id = 'pod_dupbbb'",
+    );
     const live = await listManagedGpuPodsLocal({ account_id }, d);
     expect(rp.pods.has("pod_dupbbb")).toBe(false);
     expect(live.map((p) => p.provider_pod_id)).toEqual(["pod_dupaaa"]);
+    // its spend is settled onto the canonical pod's layer: 20 min at $0.90/h,
+    // all of it overrun of a zero hold; the canonical pod's hold is untouched
+    const { rows: dup } = await getPool().query(
+      `SELECT r.* FROM gpu_pod_reservations r JOIN gpu_pods p ON p.id = r.pod_id
+        WHERE p.provider_pod_id = 'pod_dupbbb'`,
+    );
+    expect(dup).toHaveLength(1);
+    expect(dup[0].state).toBe("settled");
+    expect(Number(dup[0].reserved_usd)).toBe(0);
+    expect(Number(dup[0].spent_usd)).toBeCloseTo(0.3, 3);
+    expect(Number(dup[0].overrun_usd)).toBeCloseTo(0.3, 3);
+    const { rows: layer } = await getPool().query(
+      "SELECT spent_usd, reserved_usd FROM gpu_budget_layers WHERE id = $1",
+      [dup[0].layer_id],
+    );
+    expect(Number(layer[0].spent_usd)).toBeCloseTo(0.3, 3);
+    const { rows: canon } = await getPool().query(
+      "SELECT reserved_usd, state FROM gpu_pod_reservations WHERE pod_id = $1",
+      [pod.id],
+    );
+    expect(canon[0].state).toBe("active");
+    expect(Number(layer[0].reserved_usd)).toBe(Number(canon[0].reserved_usd));
   });
 
   it("never terminates the pod another resolver just bound", async () => {
@@ -1103,5 +1172,52 @@ describe("routing", () => {
       project_id: PROJECT,
       spec: SPEC,
     });
+  });
+});
+
+describe("providerStartTime", () => {
+  const created = new Date("2026-10-28T06:00:00Z");
+  const now = new Date("2026-10-28T06:20:00Z");
+  it("uses RunPod's startedAt, else createdAt, bounded by the intent and now", () => {
+    expect(
+      providerStartTime(
+        {
+          startedAt: "2026-10-28T06:05:00Z",
+          createdAt: "2026-10-28T06:01:00Z",
+        },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe("2026-10-28T06:05:00.000Z");
+    expect(
+      providerStartTime(
+        { createdAt: "2026-10-28T06:01:00Z" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe("2026-10-28T06:01:00.000Z");
+    // before the intent existed, or in the future: clamped
+    expect(
+      providerStartTime(
+        { startedAt: "2026-10-27T00:00:00Z" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe(created.toISOString());
+    expect(
+      providerStartTime(
+        { startedAt: "2026-10-29T00:00:00Z" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe(now.toISOString());
+    // nothing usable: from the intent (it may have run all along)
+    expect(
+      providerStartTime(
+        { startedAt: "garbage" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe(created.toISOString());
   });
 });

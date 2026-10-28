@@ -15,6 +15,8 @@ it.each([
   "gpuBudget",
   "gpuSetBudget",
   "gpuAllowStaleWorkers",
+  "gpuSshInfo",
+  "gpuRegisterHostKey",
 ] as const)(
   "routes %s to the key owner's home bay on the account-local gpu subject",
   async (method) => {

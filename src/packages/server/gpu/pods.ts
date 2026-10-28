@@ -17,7 +17,7 @@ Everything here runs on the key owner's home bay (the *Local functions); the
 routed entry points at the bottom forward the whole operation there.
 */
 
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
   RunpodApiError,
@@ -62,12 +62,27 @@ import {
 } from "@cocalc/server/gpu/budgets";
 import { getRunpodCatalog } from "@cocalc/cloud/runpod/catalog";
 import { GPU_POD_WRITE_TIMEOUT_MS } from "@cocalc/util/gpu/runpod";
+import { parseEd25519PublicKey } from "@cocalc/util/gpu/ssh-key";
+import siteURL from "@cocalc/database/settings/site-url";
+import { CLEARED_HOSTKEY_FIELDS } from "@cocalc/server/gpu/hostkey-clear";
+import {
+  HOSTKEY_TOKEN_TTL_MS,
+  newHostkeyToken,
+} from "@cocalc/server/gpu/hostkey-token";
+import {
+  POD_REGISTRATION_TOKEN_ENV,
+  POD_REGISTRATION_URL_ENV,
+  podStartCommand,
+} from "@cocalc/server/gpu/pod-start";
 
 export interface GpuPodDeps {
   // for tests
   getLaunchAccess?: (
     account_id: string,
-  ) => Promise<{ client: RunpodClient; credential_id: string } | undefined>;
+  ) => Promise<
+    | { client: RunpodClient; credential_id: string; revision?: string }
+    | undefined
+  >;
   getCleanup?: (
     account_id: string,
   ) => Promise<RunpodCleanupCapability | undefined>;
@@ -81,6 +96,8 @@ export interface GpuPodDeps {
   now?: () => number;
   // for tests: the account fence (default: lockGpuAccountFence)
   accountWriteFence?: typeof lockGpuAccountFence;
+  // the site's public URL, for the pod's host-key registration
+  siteUrl?: () => Promise<string>;
   // list price per GPU-hour for this type and cloud (default: RunPod's
   // catalog read with the key); undefined when RunPod doesn't list one
   listPrice?: (
@@ -117,26 +134,42 @@ export function newPodHandle(): string {
 const HANDLE = /^cc-[a-z2-7]{16}$/;
 
 // As `ssh-keygen -lf` prints it: SHA256 of the key blob, unpadded base64.
+// The key is strictly parsed (one ssh-ed25519 wire blob), so this throws on
+// anything else.
 export function sshKeyFingerprint(publicKey: string): string {
-  const blob = Buffer.from(publicKey.trim().split(/\s+/)[1] ?? "", "base64");
-  return `SHA256:${createHash("sha256").update(blob).digest("base64").replace(/=+$/, "")}`;
+  return parseEd25519PublicKey(publicKey).fingerprint;
 }
 
 // ---- the RunPod create body ----
 
+// Where a pod that takes SSH reports its host key, once.
+export interface PodRegistration {
+  url: string;
+  token: string;
+}
+
 // The only place a create body is made, and only from the normalized spec.
-// The server sets the name, the SSH key and (step 4) the start script.
+// The server sets the name, the SSH key and the start script.
 export function buildRunpodCreateBody(
   pod: { handle: string },
   spec: GpuLaunchSpec,
+  registration?: PodRegistration,
 ): RunpodCreatePodBody {
   const ports = [...(spec.ports ?? [])];
   const env: Record<string, string> = { ...(spec.env ?? {}) };
+  let command: { entrypoint: string[]; cmd: string[] } | undefined;
   if (spec.ssh_public_key) {
+    if (registration == null) {
+      throw Error("a pod that takes SSH needs its host-key registration");
+    }
     // The image installs PUBLIC_KEY as the only authorized key; startSsh
     // stays unset so the account's own SSH keys are never added.
-    env.PUBLIC_KEY = spec.ssh_public_key;
+    env.PUBLIC_KEY = parseEd25519PublicKey(spec.ssh_public_key).line;
+    env[POD_REGISTRATION_URL_ENV] = registration.url;
+    env[POD_REGISTRATION_TOKEN_ENV] = registration.token;
     if (!ports.includes("22/tcp")) ports.push("22/tcp");
+    // Hardens sshd before it starts, then reports the host key once.
+    command = podStartCommand();
   }
   const body: RunpodCreatePodBody = {
     name: pod.handle,
@@ -150,6 +183,10 @@ export function buildRunpodCreateBody(
   if (spec.data_center_id) body.dataCenterIds = [spec.data_center_id];
   if (spec.volume_gb) {
     body.mounts = { persistent: { size: spec.volume_gb, path: "/workspace" } };
+  }
+  if (command) {
+    body.entrypoint = command.entrypoint;
+    body.cmd = command.cmd;
   }
   return body;
 }
@@ -255,7 +292,7 @@ async function recordEvent(
   );
 }
 
-async function inTransaction<T>(
+export async function inTransaction<T>(
   fn: (db: PoolClient) => Promise<T>,
 ): Promise<T> {
   const db = await getPool().connect();
@@ -276,6 +313,30 @@ interface PodEvent {
   actor: Actor;
   action: GpuPodAction;
   details?: Record<string, unknown>;
+}
+
+// Every move out of the registrable state ("running") also clears the
+// host-key registration token and the registered host key, in the same
+// statement: a pod that is stopping, stopped, gone or failed can neither
+// register nor keep a usable host key. (gpu_pod_events keeps the
+// fingerprint.)
+const UNREGISTRABLE_STATES = new Set([
+  "stopped",
+  "terminating",
+  "terminated",
+  "failed",
+]);
+
+export { CLEARED_HOSTKEY_FIELDS };
+
+// The fields of a transition, plus the cleared host-key fields if it leaves
+// the registrable state.
+export function withHostkeyClearedOnExit(
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  return UNREGISTRABLE_STATES.has(fields.state as string)
+    ? { ...fields, ...CLEARED_HOSTKEY_FIELDS }
+    : fields;
 }
 
 // One state change and its event, in one transaction: an event never
@@ -305,6 +366,7 @@ export async function transition(
   if (terminal && !opts.settle) {
     throw Error("a pod's terminal state must settle its reservations");
   }
+  fields = withHostkeyClearedOnExit(fields);
   return await inTransaction(async (db) => {
     if (opts.settle || opts.after) {
       const { rows: pre } = await db.query(
@@ -333,6 +395,10 @@ export async function transition(
               kind: "actual",
               actual_usd: actualCost({
                 cost_per_hr: row.cost_per_hr,
+                reserved_hourly_usd:
+                  row.cost_per_hr == null
+                    ? await reservedHourly(db, id)
+                    : undefined,
                 running_since: row.running_since,
                 ended_at: row.terminated_at ?? new Date(),
               }),
@@ -402,7 +468,7 @@ function refusalReason(err: unknown): string {
 
 // ---- access ----
 
-async function requireHomeBay(account_id: string, deps: GpuPodDeps) {
+export async function requireHomeBay(account_id: string, deps: GpuPodDeps) {
   const here = deps.isHomeBay
     ? await deps.isHomeBay(account_id)
     : (await accountHomeBay(account_id)) === getConfiguredBayId();
@@ -419,7 +485,7 @@ async function accountHomeBay(account_id: string): Promise<string> {
   return `${home_bay_id ?? ""}`.trim() || getConfiguredBayId();
 }
 
-function requireAccount(account_id: unknown): string {
+export function requireAccount(account_id: unknown): string {
   if (typeof account_id !== "string" || !isValidUUID(account_id)) {
     throw Error("must be signed in");
   }
@@ -437,7 +503,7 @@ async function isProjectCollaborator(account_id: string, project_id: string) {
 // the ones it is responsible for. (Course staff come with classes, step 7.)
 const MINE = `(key_owner_account_id = $1 OR beneficiary_account_id = $1)`;
 
-async function findPod(
+export async function findPod(
   account_id: string,
   pod: unknown,
 ): Promise<PodRow | undefined> {
@@ -483,6 +549,20 @@ export async function launchGpuPodLocal(
   const actor: Actor = { kind: "user", account_id };
   const cloud = spec.cloud ?? "SECURE";
 
+  // A pod that takes SSH reports its host key once, with this token; only
+  // its verifier is stored. The token is minted on this (the key owner's
+  // home) bay, which stays its authority until it expires.
+  let registration: PodRegistration | undefined;
+  let token: ReturnType<typeof newHostkeyToken> | undefined;
+  if (spec.ssh_public_key) {
+    const site = `${await (deps.siteUrl ?? siteURL)()}`.replace(/\/+$/, "");
+    if (!site.startsWith("https://")) {
+      throw Error("SSH to GPU pods needs the site to be on HTTPS.");
+    }
+    token = newHostkeyToken(getConfiguredBayId());
+    registration = { url: `${site}/gpu/pod-host-key`, token: token.token };
+  }
+
   // The estimate the budget reserves: RunPod's list price for the pod. It is
   // read outside the transaction, so no network call is made under the
   // fence; the launch then uses the key read under the fence, which must be
@@ -523,9 +603,10 @@ export async function launchGpuPodLocal(
     project_id,
     spec,
     hourly_usd,
-    priced_credential_id: priced.credential_id,
+    priced,
     actor,
     deps,
+    token,
   });
   const { client } = intent;
   let row = intent.row;
@@ -554,7 +635,9 @@ export async function launchGpuPodLocal(
   row = creating;
   let created: RunpodPodView;
   try {
-    created = await client.createPod(buildRunpodCreateBody(row, spec));
+    created = await client.createPod(
+      buildRunpodCreateBody(row, spec, registration),
+    );
   } catch (err) {
     if (refused(err)) {
       const reason = refusalReason(err);
@@ -601,8 +684,10 @@ const HANDLE_ATTEMPTS = 3;
 async function loadLaunchAccess(
   account_id: string,
   deps: GpuPodDeps,
-): Promise<{ client: RunpodClient; credential_id: string }> {
-  let access: Awaited<ReturnType<typeof getRunpodLaunchAccessForAccount>>;
+): Promise<{ client: RunpodClient; credential_id: string; revision?: string }> {
+  let access:
+    | { client: RunpodClient; credential_id: string; revision?: string }
+    | undefined;
   try {
     access = await (deps.getLaunchAccess ?? getRunpodLaunchAccessForAccount)(
       account_id,
@@ -626,19 +711,22 @@ async function insertIntent({
   project_id,
   spec,
   hourly_usd,
-  priced_credential_id,
+  priced,
   actor,
   deps,
+  token,
 }: {
   account_id: string;
   project_id: string;
   spec: GpuLaunchSpec;
   hourly_usd: string;
   // the key the estimate was priced with: the key read under the fence must
-  // be the same one
-  priced_credential_id: string;
+  // be the same one, unchanged (same record and same revision: an in-place
+  // replacement keeps the record id)
+  priced: { credential_id: string; revision?: string };
   actor: Actor;
   deps: GpuPodDeps;
+  token?: { token_id: string; verifier: string };
 }): Promise<{ row: PodRow; client: RunpodClient }> {
   const now = (deps.now ?? Date.now)();
   const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
@@ -656,11 +744,14 @@ async function insertIntent({
           account_id,
           "launch a GPU",
         );
-        const { client, credential_id } = await loadLaunchAccess(
+        const { client, credential_id, revision } = await loadLaunchAccess(
           account_id,
           deps,
         );
-        if (credential_id !== priced_credential_id) {
+        if (
+          credential_id !== priced.credential_id ||
+          revision !== priced.revision
+        ) {
           throw Error(
             "Your RunPod API key changed during the launch. Try again.",
           );
@@ -687,9 +778,10 @@ async function insertIntent({
           `INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider,
              beneficiary_account_id, project_id, spec, gpu_type_id, gpu_count, cloud,
              data_center_id, state, desired_state, max_runtime_minutes, deadline,
-             ssh_key_fingerprint, created, updated)
+             ssh_key_fingerprint, hostkey_token_id, hostkey_verifier,
+             hostkey_expires, created, updated)
            VALUES ($1, $2, $3, $4, 'runpod', $3, $5, $6, $7, $8, $9, $10, 'intent',
-             'running', $11, $12, $13, now(), now())
+             'running', $11, $12, $13, $14, $15, $16, now(), now())
            RETURNING *`,
           [
             id,
@@ -705,6 +797,9 @@ async function insertIntent({
             spec.max_runtime_minutes,
             deadline,
             spec.ssh_public_key ? sshKeyFingerprint(spec.ssh_public_key) : null,
+            token?.token_id ?? null,
+            token?.verifier ?? null,
+            token ? new Date(now + HOSTKEY_TOKEN_TTL_MS) : null,
           ],
         );
         await insertReservations(db, id, admission, spec.gpu_count);
@@ -734,6 +829,37 @@ async function insertIntent({
   }
 }
 
+// When the pod started being billed: RunPod's startedAt (else its
+// createdAt), bounded by the intent's creation (no pod exists before it) and
+// now. Without a usable provider time, the intent's creation: an ambiguous
+// create found by name later may have run all along.
+export function providerStartTime(
+  pod: Pick<RunpodPodView, "startedAt" | "createdAt">,
+  row: Pick<PodRow, "created">,
+  now: Date = new Date(),
+): Date {
+  const earliest = new Date(row.created).getTime();
+  for (const t of [pod.startedAt, pod.createdAt]) {
+    const ms = t ? Date.parse(t) : NaN;
+    if (Number.isFinite(ms)) {
+      return new Date(Math.min(Math.max(ms, earliest), now.getTime()));
+    }
+  }
+  return new Date(Math.min(earliest, now.getTime()));
+}
+
+// The pod's reserved list rate, standing in when RunPod reported no cost.
+async function reservedHourly(
+  db: Pick<PoolClient, "query">,
+  pod_id: string,
+): Promise<string | null> {
+  const { rows } = await db.query(
+    "SELECT MAX(hourly_usd) AS hourly FROM gpu_pod_reservations WHERE pod_id = $1",
+    [pod_id],
+  );
+  return rows[0]?.hourly ?? null;
+}
+
 // Record RunPod's pod for this handle, only if no pod is bound yet. If the
 // record moved on meanwhile (another resolution bound it, or it was given
 // up), the pod is either already ours (nothing to do) or would be untracked
@@ -750,7 +876,7 @@ async function bind(
     {
       provider_pod_id: pod.id,
       state: "running",
-      running_since: new Date(),
+      running_since: providerStartTime(pod, row),
       cost_per_hr: pod.cost ?? null,
       data_center_id: pod.dataCenterId ?? row.data_center_id,
       public_ip: pod.sshDirect?.host ?? null,
@@ -824,7 +950,7 @@ async function bind(
   }
   const current = await loadPod(row.id);
   if (current.provider_pod_id === pod.id) return current;
-  await terminateDuplicate(row, pod.id, client, actor);
+  await terminateDuplicate(row, pod, client, actor);
   return current;
 }
 
@@ -882,7 +1008,7 @@ async function resolveAmbiguous(
           ),
   );
   for (const pod of extra) {
-    await terminateDuplicate(row, pod.id, client, actor);
+    await terminateDuplicate(row, pod, client, actor);
   }
   return await bind(row, keep, client, actor);
 }
@@ -1018,23 +1144,36 @@ const resolveAmbiguousForAccount = (account_id: string, deps: GpuPodDeps) =>
 // A second RunPod pod under one handle (RunPod retried a create): it is
 // recorded as a pod of its own, terminating, before RunPod is asked, so a
 // failed terminate is retried like any other pending termination.
+//
+// Its spend is real, so it is budgeted: under the budget locks of the pod it
+// duplicates, it gets a hold on each of that pod's layers. The holds reserve
+// nothing (nothing is refused: the spend already exists), and its RunPod
+// cost and start time are recorded, so terminating it settles what it
+// actually cost onto those layers (as an overrun of its zero hold).
 async function terminateDuplicate(
   of: PodRow,
-  provider_pod_id: string,
+  pod: RunpodPodView,
   client: Pick<RunpodClient, "terminatePod">,
   actor: Actor,
 ): Promise<void> {
+  const provider_pod_id = pod.id;
   const dup = await inTransaction(async (db) => {
+    await lockBudgetsForPod(db, {
+      pod_id: of.id,
+      credential_id: of.credential_id,
+      key_owner_account_id: of.key_owner_account_id,
+    });
     const id = randomUUID();
     const { rows } = await db.query(
       `INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider,
          provider_pod_id, beneficiary_account_id, project_id, agent_id, spec,
          gpu_type_id, gpu_count, cloud, data_center_id, state, desired_state,
-         max_runtime_minutes, deadline, reason, created, updated)
+         max_runtime_minutes, deadline, reason, cost_per_hr, running_since,
+         created, updated)
        SELECT $1, $2, key_owner_account_id, credential_id, provider, $3,
          beneficiary_account_id, project_id, agent_id, spec, gpu_type_id, gpu_count,
          cloud, data_center_id, 'terminating', 'terminated', max_runtime_minutes,
-         now(), $4, now(), now()
+         now(), $4, $6, $7, now(), now()
          FROM gpu_pods WHERE id = $5
        ON CONFLICT (provider, provider_pod_id) DO NOTHING
        RETURNING *`,
@@ -1044,9 +1183,19 @@ async function terminateDuplicate(
         provider_pod_id,
         `A duplicate RunPod made for ${of.handle}; terminated.`,
         of.id,
+        pod.cost ?? null,
+        providerStartTime(pod, of),
       ],
     );
     if (!rows[0]) return undefined; // already recorded
+    await db.query(
+      `INSERT INTO gpu_pod_reservations (id, pod_id, layer_id, state, reserved_usd,
+         hourly_usd, gpu_count, pod_slots, created, updated)
+       SELECT gen_random_uuid(), $1, layer_id, 'active', 0, hourly_usd, gpu_count,
+         0, now(), now()
+         FROM gpu_pod_reservations WHERE pod_id = $2`,
+      [id, of.id],
+    );
     await recordEvent(
       id,
       actor,
@@ -1320,7 +1469,7 @@ function eventView(row: any): GpuPodEvent {
 
 // ---- routed entry points (hub API) ----
 
-async function gpuPodHomeClient(
+export async function gpuPodHomeClient(
   account_id: string,
 ): Promise<InterBayGpuApi | undefined> {
   const dest_bay = await accountHomeBay(account_id);

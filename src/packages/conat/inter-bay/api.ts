@@ -4178,6 +4178,21 @@ export interface InterBayGpuApi {
     hours: number;
     reason: string;
   }) => Promise<{ id: string; account_id: string; expires_at: string }>;
+  gpuSshInfo: (opts: {
+    account_id: string;
+    pod_id: unknown;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuPodSshInfo>;
+  // A pod's one-time host-key report, forwarded whole to the token's
+  // authority bay. No account: the token is the only credential.
+  gpuRegisterHostKey: (opts: {
+    token: {
+      authority_bay_id: string;
+      token_id: string;
+      secret: string;
+    };
+    pod_id: string;
+    host_public_key: string;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuHostKeyResult>;
 }
 
 export interface InterBayAccountLocalApi
@@ -8226,6 +8241,9 @@ export function createInterBayAccountLocalClient({
     gpuSetBudget: async (opts) => await gpuClient.gpuSetBudget(opts),
     gpuAllowStaleWorkers: async (opts) =>
       await gpuClient.gpuAllowStaleWorkers(opts),
+    gpuSshInfo: async (opts) => await gpuClient.gpuSshInfo(opts),
+    gpuRegisterHostKey: async (opts) =>
+      await gpuClient.gpuRegisterHostKey(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -8811,6 +8829,8 @@ export function createInterBayAccountLocalHandler({
         gpuSetBudget: async (opts) => await impl.gpuSetBudget(opts),
         gpuAllowStaleWorkers: async (opts) =>
           await impl.gpuAllowStaleWorkers(opts),
+        gpuSshInfo: async (opts) => await impl.gpuSshInfo(opts),
+        gpuRegisterHostKey: async (opts) => await impl.gpuRegisterHostKey(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({

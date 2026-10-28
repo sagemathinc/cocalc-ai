@@ -518,20 +518,26 @@ export async function settleReservations(
   }
 }
 
-// What a pod that ran cost: runtime x the bound hourly cost.
+// What a pod that ran cost: runtime x the bound hourly cost. When RunPod
+// didn't report the pod's cost, the reserved list rate stands in (fail
+// closed: a pod known to have run never settles at zero) until billing
+// replaces it.
 export function actualCost({
   cost_per_hr,
+  reserved_hourly_usd,
   running_since,
   ended_at,
 }: {
   cost_per_hr: string | null;
+  reserved_hourly_usd?: string | null;
   running_since: Date | null;
   ended_at: Date;
 }): string {
-  if (cost_per_hr == null || running_since == null) return "0";
+  const rate = cost_per_hr ?? reserved_hourly_usd ?? null;
+  if (rate == null || running_since == null) return "0";
   const ms = Math.max(
     0,
     new Date(ended_at).getTime() - new Date(running_since).getTime(),
   );
-  return moneyToDbString(toDecimal(cost_per_hr).times(ms).dividedBy(3_600_000));
+  return moneyToDbString(toDecimal(rate).times(ms).dividedBy(3_600_000));
 }
