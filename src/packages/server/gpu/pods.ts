@@ -744,13 +744,8 @@ async function resolveAmbiguousForAccount(
   // launching key until its pods end).
   const ours = (row: PodRow) => row.credential_id === c.credential_id;
   for (const row of (pending as PodRow[]).filter(ours)) {
-    // recorded as terminating before RunPod is asked, as on every path
-    const terminating =
-      (await transition(
-        row.id,
-        { state: "terminating" },
-        "AND state IN ('running', 'stopped')",
-      ).catch(() => undefined)) ?? row;
+    const terminating = await recordTerminating(row, actor);
+    if (!terminating) continue;
     await terminateBound(terminating, c, actor).catch(() => {});
   }
   for (const row of (rows as PodRow[]).filter(ours)) {
@@ -759,6 +754,34 @@ async function resolveAmbiguousForAccount(
 }
 
 // ---- terminate ----
+
+// Record a pod as terminating before RunPod is asked to terminate it. The
+// row to act on, or undefined when RunPod must not be asked now: recording
+// failed (a later pass retries), or the record moved on to something other
+// than a pending termination.
+async function recordTerminating(
+  row: PodRow,
+  actor: Actor,
+): Promise<PodRow | undefined> {
+  let updated: PodRow | undefined;
+  try {
+    updated = await transition(
+      row.id,
+      { state: "terminating" },
+      "AND state IN ('running', 'stopped') AND desired_state = 'terminated'",
+      { actor, action: "state", details: { state: "terminating" } },
+    );
+  } catch {
+    return undefined;
+  }
+  if (updated) return updated;
+  const current = await loadPod(row.id).catch(() => undefined);
+  return current?.state === "terminating" &&
+    current.desired_state === "terminated" &&
+    current.provider_pod_id
+    ? current
+    : undefined;
+}
 
 async function terminateBound(
   row: PodRow,

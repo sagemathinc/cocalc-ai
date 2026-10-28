@@ -517,6 +517,45 @@ describeDb("GPU pods", () => {
     expect(rp.client.terminatePod).not.toHaveBeenCalled();
   });
 
+  it("asks RunPod to terminate only after recording it, and retries an already-terminating pod", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    // a pending termination, as a failed terminate leaves it
+    await getPool().query(
+      "UPDATE gpu_pods SET desired_state = 'terminated' WHERE id = $1",
+      [pod.id],
+    );
+    rp.client.terminatePod.mockClear();
+    // recording "terminating" fails (no events table): RunPod isn't asked
+    await getPool().query(
+      "ALTER TABLE gpu_pod_events RENAME TO gpu_pod_events_away",
+    );
+    try {
+      await listManagedGpuPodsLocal({ account_id }, d).catch(() => {});
+    } finally {
+      await getPool().query(
+        "ALTER TABLE gpu_pod_events_away RENAME TO gpu_pod_events",
+      );
+    }
+    expect(rp.client.terminatePod).not.toHaveBeenCalled();
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0].state).toBe("running");
+    // already terminating (recorded earlier): retried
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'terminating' WHERE id = $1",
+      [pod.id],
+    );
+    await listManagedGpuPodsLocal({ account_id }, d);
+    expect(rp.client.terminatePod).toHaveBeenCalledWith(pod.provider_pod_id);
+    expect(rp.pods.size).toBe(0);
+  });
+
   it("keeps each account's pods to itself", async () => {
     const owner = deps(randomUUID());
     const other = deps(randomUUID(), owner.rp);
