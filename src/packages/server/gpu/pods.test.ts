@@ -814,8 +814,12 @@ describeDb("GPU pods", () => {
       }),
     );
     expect(rows[0].handle).not.toBe(pod.handle);
-    // the next listing retries it
-    // it ran for 20 minutes before it was found
+    // while its terminate is pending it is a live pod: with the default
+    // 2 pods at once, the canonical pod and it leave no room for another
+    await expect(
+      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+    ).rejects.toThrow("at most 2 pods at once");
+    // it ran for 20 minutes before it was found; the next listing retries it
     await getPool().query(
       "UPDATE gpu_pods SET running_since = now() - interval '20 minutes' WHERE provider_pod_id = 'pod_dupbbb'",
     );

@@ -1147,9 +1147,11 @@ const resolveAmbiguousForAccount = (account_id: string, deps: GpuPodDeps) =>
 //
 // Its spend is real, so it is budgeted: under the budget locks of the pod it
 // duplicates, it gets a hold on each of that pod's layers. The holds reserve
-// nothing (nothing is refused: the spend already exists), and its RunPod
-// cost and start time are recorded, so terminating it settles what it
-// actually cost onto those layers (as an overrun of its zero hold).
+// no money (nothing is refused: the spend already exists), but they count
+// its pod and GPUs until it settles: it is live until RunPod confirms its
+// termination. Its RunPod cost and start time are recorded, so terminating
+// it settles what it actually cost onto those layers (as an overrun of its
+// zero hold).
 async function terminateDuplicate(
   of: PodRow,
   pod: RunpodPodView,
@@ -1192,7 +1194,7 @@ async function terminateDuplicate(
       `INSERT INTO gpu_pod_reservations (id, pod_id, layer_id, state, reserved_usd,
          hourly_usd, gpu_count, pod_slots, created, updated)
        SELECT gen_random_uuid(), $1, layer_id, 'active', 0, hourly_usd, gpu_count,
-         0, now(), now()
+         1, now(), now()
          FROM gpu_pod_reservations WHERE pod_id = $2`,
       [id, of.id],
     );
