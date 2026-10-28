@@ -318,8 +318,10 @@ export async function getGpuBudget(
 }
 
 // Fresh authentication is checked here, on the bay the user is signed in
-// to, when the caller offers it (a browser session); the home bay decides
-// whether the change needs it.
+// to, for the caller's own session (bound by the hub transform); the home
+// bay decides whether the change needs it. A session that isn't fresh is
+// not an error here: lowering limits needs none, and the home bay refuses a
+// raise without it.
 export async function setGpuBudget(
   opts: {
     account_id?: string;
@@ -333,13 +335,18 @@ export async function setGpuBudget(
   const account_id = requireAccount(opts.account_id);
   let fresh_auth_verified = false;
   if (opts.browser_id || opts.session_hash) {
-    await (deps.freshAuth ?? requireDangerousSessionAuth)({
-      account_id,
-      browser_id: opts.browser_id,
-      session_hash: opts.session_hash,
-      require_second_factor: false,
-    });
-    fresh_auth_verified = true;
+    try {
+      await (deps.freshAuth ?? requireDangerousSessionAuth)({
+        account_id,
+        browser_id: opts.browser_id,
+        session_hash: opts.session_hash,
+        require_second_factor: false,
+      });
+      fresh_auth_verified = true;
+    } catch {
+      // not fresh (or not checkable): only a raise needs it
+      fresh_auth_verified = false;
+    }
   }
   const forwarded = {
     account_id,

@@ -28,6 +28,7 @@ import type {
 import {
   authFirstRequireAccount,
   authFirstRequireAccountOrBoundAgentProject,
+  authFirstRequireAccountWithBoundSession,
 } from "./util";
 
 // Agents may read the catalog and stock for the account they act for, from
@@ -44,7 +45,8 @@ export const gpu = {
   terminate: authFirstRequireAccount,
   who: authFirstRequireAccount,
   budget: authFirstRequireAccount,
-  setBudget: authFirstRequireAccount,
+  // its fresh-auth check uses the caller's own session, never a nominated one
+  setBudget: authFirstRequireAccountWithBoundSession,
 };
 
 interface GpuReadOpts {

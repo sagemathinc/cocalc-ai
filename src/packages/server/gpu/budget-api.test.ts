@@ -255,17 +255,17 @@ describe("setGpuBudget on the signed-in bay", () => {
     );
   });
 
-  it("fails when the offered fresh auth doesn't check out", async () => {
+  it("forwards a session that isn't fresh as unverified, so a lowering still works and the home bay refuses a raise", async () => {
     const freshAuth = jest.fn(async () => {
       throw Error("fresh authentication required");
     });
-    const remote = { gpuSetBudget: jest.fn() };
-    await expect(
-      setGpuBudget(
-        { account_id, browser_id: "b", change: { authorized_usd: 50 } },
-        { freshAuth, homeClient: async () => remote as any },
-      ),
-    ).rejects.toThrow("fresh authentication required");
-    expect(remote.gpuSetBudget).not.toHaveBeenCalled();
+    const remote = { gpuSetBudget: jest.fn(async () => ({}) as any) };
+    await setGpuBudget(
+      { account_id, session_hash: "h", change: { max_concurrent_pods: 1 } },
+      { freshAuth, homeClient: async () => remote as any },
+    );
+    expect(remote.gpuSetBudget).toHaveBeenCalledWith(
+      expect.objectContaining({ fresh_auth_verified: false }),
+    );
   });
 });
