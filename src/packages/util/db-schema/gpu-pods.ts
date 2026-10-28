@@ -15,6 +15,7 @@ import { Table } from "./types";
 import {
   GPU_ACTOR_KINDS,
   GPU_POD_ACTIONS,
+  GPU_POD_BILLING_STATES,
   GPU_POD_DESIRED_STATES,
   GPU_POD_STATES,
 } from "@cocalc/util/gpu/types";
@@ -37,6 +38,8 @@ Table({
       // clearStaleHostkeyTokens
       "hostkey_expires",
       "hostkey_consumed_at",
+      // the billing worker's queue
+      "billing_state",
     ],
     pg_constraints: [
       {
@@ -166,18 +169,68 @@ Table({
     terminated_at: { type: "timestamp" },
     // the reaper's backoff for a failing step on this pod
     reap_after: { type: "timestamp" },
-    // set by a forced key removal (5c): the key is gone, so CoCalc can no
-    // longer reach the pod. Orthogonal to state (the pod may still run and
-    // bill at RunPod); excluded from admission, slots and the reaper.
     // The reconciler's latest sighting of the pod at RunPod (a pass's
     // observed_at): a "not found" asked before it doesn't end the pod.
     provider_seen_at: { type: "timestamp" },
+    // set by a forced key removal (5c): the key is gone, so CoCalc can no
+    // longer reach the pod. Orthogonal to state (the pod may still run and
+    // bill at RunPod); excluded from admission, slots and the reaper.
     unmanaged_at: { type: "timestamp" },
     reap_attempts: { type: "integer", not_null: true, pg_default: "0" },
     running_since: {
       type: "timestamp",
       desc: "When RunPod's pod was bound (runtime and cost start here).",
     },
+    // Provider billing (5d-2a): one claim per pod (billing_next_at, claimed
+    // before any provider call; billing_attempts drives the backoff), and
+    // the result applied to every layer's reservation at once.
+    billing_state: {
+      type: "string",
+      pg_type: "varchar(16)",
+      not_null: true,
+      pg_default: "'estimated'",
+      pg_check: oneOf("billing_state", GPU_POD_BILLING_STATES),
+    },
+    billing_next_at: { type: "timestamp" },
+    billing_attempts: { type: "integer", not_null: true, pg_default: "0" },
+    billed_at: { type: "timestamp" },
+    billed_usd: { type: "string", pg_type: "NUMERIC(20,10)" },
+  },
+});
+
+// Each pod's states over time (5d-2a), written with every state change in
+// the same transaction (and opened when the pod is inserted): the observed
+// state ledger that compute and disk spend are integrated over. One open
+// interval per pod; an interval never ends before it starts.
+Table({
+  name: "gpu_pod_state_intervals",
+  rules: {
+    primary_key: "id",
+    pg_indexes: ["pod_id", "key_owner_account_id"],
+    pg_unique_indexes: ["(pod_id) WHERE ended IS NULL"],
+    pg_constraints: [
+      {
+        name: "gpu_pod_state_intervals_order",
+        type: "check",
+        expression: "ended IS NULL OR ended >= started",
+      },
+    ],
+  },
+  fields: {
+    id: { type: "uuid", not_null: true },
+    pod_id: { type: "uuid", not_null: true },
+    // the pod's key owner (rehome checks it, as for every GPU row)
+    key_owner_account_id: { type: "uuid", not_null: true },
+    state: {
+      type: "string",
+      pg_type: "varchar(16)",
+      not_null: true,
+      pg_check: oneOf("state", GPU_POD_STATES),
+    },
+    // when the state began: the provider's time when trustworthy, else
+    // when CoCalc observed it (never before the open interval's start)
+    started: { type: "timestamp", not_null: true },
+    ended: { type: "timestamp" },
   },
 });
 

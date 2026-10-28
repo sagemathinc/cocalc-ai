@@ -79,6 +79,9 @@ describeDb("gpu.spend", () => {
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pods: SCHEMA.gpu_pods,
+      gpu_pod_state_intervals: SCHEMA.gpu_pod_state_intervals,
+      gpu_admin_alerts: SCHEMA.gpu_admin_alerts,
+      gpu_worker_runs: SCHEMA.gpu_worker_runs,
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
     });
   });

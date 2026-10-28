@@ -40,6 +40,10 @@ type Db = Pick<PoolClient, "query">;
 const ACKNOWLEDGED_KINDS = new Set<GpuAlertKind>([
   "unmanaged_pod",
   "compromise_check_pods",
+  // 5d-2a: facts about money already spent, for the owner to look at
+  "spend_drift",
+  "billing_missing",
+  "over_budget",
 ]);
 
 export interface GpuAlertInput {
@@ -181,6 +185,12 @@ const MESSAGES: Record<GpuAlertKind, string> = {
     "CoCalc doesn't know whether RunPod created this pod, so its share of your budget stays held. If you've checked at RunPod that it doesn't exist (or terminated it), release the hold with cocalc gpu release-quarantined.",
   compromise_awaiting_revocation:
     "You reported this key compromised. CoCalc keeps terminating every pod on its RunPod account until you delete the key on RunPod's Credentials page.",
+  spend_drift:
+    "RunPod billed a pod well above CoCalc's estimate for it. Your GPU budget now counts what RunPod billed. If you don't expect this, check the pod at RunPod. When the difference is large, new launches pause until you resume them (cocalc gpu resume).",
+  billing_missing:
+    "RunPod's billing never fully covered a pod CoCalc ran with this key, so CoCalc kept its own estimate as the pod's spend (normally a little above what RunPod bills). You can compare it with RunPod's billing page.",
+  over_budget:
+    "RunPod's billing pushed spending past what this GPU budget authorizes. New launches it covers are refused until you raise the budget or a new period starts.",
   compromise_check_pods:
     "CoCalc removed the compromised key and stopped watching its RunPod account. Check RunPod's Pods page once and terminate any pod you don't recognize, then acknowledge this alert.",
 };

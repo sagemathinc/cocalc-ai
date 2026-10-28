@@ -50,6 +50,18 @@ export const GPU_POD_LIVE_STATES: readonly GpuPodState[] = [
   "terminating",
 ];
 
+// A pod's provider billing (5d-2a): its settled spend is CoCalc's estimate
+// until RunPod's billing records prove the whole lifetime (billed), or fail
+// to within 48 hours (missing: the estimate stays). n/a: never created at
+// RunPod, nothing to bill.
+export const GPU_POD_BILLING_STATES = [
+  "estimated",
+  "billed",
+  "missing",
+  "n/a",
+] as const;
+export type GpuPodBillingState = (typeof GPU_POD_BILLING_STATES)[number];
+
 export const GPU_POD_DESIRED_STATES = [
   "running",
   "stopped",
