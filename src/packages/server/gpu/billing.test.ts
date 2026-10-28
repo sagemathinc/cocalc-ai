@@ -546,6 +546,11 @@ describeDb("GPU billing reconciliation", () => {
       undefined,
       { settle: "quarantine" },
     );
+    // RunPod may have created it: still billing's to resolve, a sweep
+    // leaves it alone
+    expect((await row(p.id)).billing_state).toBe("estimated");
+    await runBillingSweep({ getBilling: async () => undefined });
+    expect((await row(p.id)).billing_state).toBe("estimated");
     await releaseQuarantinedLocal(
       { account_id: s.account_id, pod_id: p.id, fresh_auth_verified: true },
       s.deps,

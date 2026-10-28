@@ -236,4 +236,150 @@ describeRealPostgres("GPU billing and the state ledger, concurrently", () => {
     expect(sends.filter((id) => id === rows[0].id).length).toBe(1);
     expect(rows[0].emailed_at).not.toBeNull();
   });
+
+  it("an escalation revokes a lower alert's claim: the stale sender can't mark it emailed", async () => {
+    const { raiseAdminAlert, projectAdminAlertEmails } =
+      await import("./admin-alerts");
+    const key = randomUUID();
+    const raise = (severity: "warning" | "critical") =>
+      raiseAdminAlert({
+        kind: "billing_inconsistent",
+        severity,
+        dedupe_key: key,
+      });
+    await raise("warning");
+    const { rows: ids } = await getPool().query(
+      "SELECT id FROM gpu_admin_alerts WHERE dedupe_key = $1",
+      [key],
+    );
+    const id = ids[0].id;
+    const recipients = async () => [
+      { account_id: "a1", email_address: "a1@example.com" },
+    ];
+    const sent: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let sending!: () => void;
+    const started = new Promise<void>((r) => (sending = r));
+    const old = projectAdminAlertEmails({
+      recipients,
+      send: async (a: any) => {
+        if (a.id !== id) return;
+        sent.push(a.severity);
+        sending();
+        await gate;
+      },
+    });
+    await started;
+    await raise("critical");
+    release();
+    await old;
+    const state = async () =>
+      (
+        await getPool().query(
+          "SELECT severity, emailed_at, emailed_to, email_claim FROM gpu_admin_alerts WHERE id = $1",
+          [id],
+        )
+      ).rows[0];
+    // the old claim's writes matched nothing; the hub moved on, claimed
+    // the critical alert afresh and sent it
+    expect(sent).toEqual(["warning", "critical"]);
+    expect(await state()).toMatchObject({
+      severity: "critical",
+      emailed_to: ["a1"],
+      email_claim: null,
+    });
+    expect((await state()).emailed_at).not.toBeNull();
+    // and it is done: nothing more to send
+    await projectAdminAlertEmails({
+      recipients,
+      send: async (a: any) => {
+        if (a.id === id) sent.push(a.severity);
+      },
+    });
+    expect(sent).toEqual(["warning", "critical"]);
+  });
+
+  it("a slow but healthy sender keeps its claim; a hung send is cut off; an expired claim is taken over", async () => {
+    const { raiseAdminAlert, projectAdminAlertEmails } =
+      await import("./admin-alerts");
+    const key = randomUUID();
+    await raiseAdminAlert({
+      kind: "billing_inconsistent",
+      severity: "critical",
+      dedupe_key: key,
+    });
+    const { rows: ids } = await getPool().query(
+      "SELECT id FROM gpu_admin_alerts WHERE dedupe_key = $1",
+      [key],
+    );
+    const id = ids[0].id;
+    const state = async () =>
+      (
+        await getPool().query(
+          "SELECT emailed_at, email_attempts, emailed_to, email_claim FROM gpu_admin_alerts WHERE id = $1",
+          [id],
+        )
+      ).rows[0];
+    const admins = ["a1", "a2", "a3"].map((a) => ({
+      account_id: a,
+      email_address: `${a}@example.com`,
+    }));
+    const claimMs = 1000;
+    // a hung send: cut off inside the claim, a failed attempt, claim freed
+    const hung = await projectAdminAlertEmails({
+      recipients: async () => admins.slice(0, 1),
+      claimMs,
+      send: async (a: any) => {
+        if (a.id === id) await new Promise(() => {});
+      },
+    });
+    expect(hung.failed).toBeGreaterThanOrEqual(1);
+    expect(await state()).toMatchObject({
+      emailed_at: null,
+      email_attempts: 1,
+      email_claim: null,
+    });
+    // a claim left by a dead hub is taken over once it expires
+    await getPool().query(
+      `UPDATE gpu_admin_alerts SET email_attempts = 0, email_claim = $2,
+              email_claimed_until = now() + interval '1 hour' WHERE id = $1`,
+      [id, randomUUID()],
+    );
+    const sent: string[] = [];
+    const send = async (a: any, to: string) => {
+      if (a.id !== id) return;
+      sent.push(to);
+      await new Promise((r) => setTimeout(r, 400));
+    };
+    await projectAdminAlertEmails({
+      recipients: async () => admins,
+      claimMs,
+      send,
+    });
+    expect(sent).toEqual([]);
+    await getPool().query(
+      "UPDATE gpu_admin_alerts SET email_claimed_until = now() - interval '1 second' WHERE id = $1",
+      [id],
+    );
+    // three sends of 400 ms outlast the 1 s claim; it is renewed before
+    // each, so a second hub polling all along never duplicates one
+    let done = false;
+    const first = projectAdminAlertEmails({
+      recipients: async () => admins,
+      claimMs,
+      send,
+    }).finally(() => (done = true));
+    while (!done) {
+      await projectAdminAlertEmails({
+        recipients: async () => admins,
+        claimMs,
+        send,
+      });
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    await first;
+    expect(sent.sort()).toEqual(admins.map((a) => a.email_address));
+    expect((await state()).emailed_at).not.toBeNull();
+  });
 });

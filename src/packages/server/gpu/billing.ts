@@ -448,8 +448,7 @@ export async function reconcileKeyBilling(
         });
       }
       if (tooLate) {
-        await markMissing(pod);
-        out.missing += 1;
+        if (await markMissing(pod)) out.missing += 1;
       } else if (proof.kind === "incomplete") {
         out.not_yet += 1;
       }
@@ -463,9 +462,9 @@ export async function reconcileKeyBilling(
 
 // Never proven within 48 h: the estimate stays as the pod's spend, and the
 // owner is told once per key.
-async function markMissing(pod: PodRow): Promise<void> {
-  // the state and the owner's alert commit together
-  await transition(
+async function markMissing(pod: PodRow): Promise<boolean> {
+  // the state and the owner's alert commit together (false: a stale pass)
+  const marked = await transition(
     pod.id,
     { billing_state: "missing" },
     `AND billing_state = 'estimated' ${sameEnd(pod)}`,
@@ -487,6 +486,7 @@ async function markMissing(pod: PodRow): Promise<void> {
       },
     },
   );
+  return marked != null;
 }
 
 // The earliest settlement time in [since, until) among the owner's
@@ -557,13 +557,6 @@ export async function runBillingSweep(
   let keys = 0;
   let billed = 0;
   try {
-    // idempotent backfill: ended pods RunPod never created can't be billed
-    // (a later bind reopens them to estimated)
-    await getPool().query(
-      `UPDATE gpu_pods SET billing_state = 'n/a'
-        WHERE billing_state = 'estimated' AND provider_pod_id IS NULL
-          AND state IN ('terminated', 'failed')`,
-    );
     const queue = await dueKeys(at());
     let next = 0;
     const worker = async () => {

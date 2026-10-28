@@ -55,7 +55,12 @@ export async function raiseAdminAlert(
                    email_attempts = CASE WHEN ${RANK("EXCLUDED.severity")} > ${RANK("gpu_admin_alerts.severity")}
                                          THEN 0 ELSE gpu_admin_alerts.email_attempts END,
                    emailed_to = CASE WHEN ${RANK("EXCLUDED.severity")} > ${RANK("gpu_admin_alerts.severity")}
-                                     THEN NULL ELSE gpu_admin_alerts.emailed_to END`,
+                                     THEN NULL ELSE gpu_admin_alerts.emailed_to END,
+                   -- and revokes any hub's claim on the lower one
+                   email_claim = CASE WHEN ${RANK("EXCLUDED.severity")} > ${RANK("gpu_admin_alerts.severity")}
+                                      THEN NULL ELSE gpu_admin_alerts.email_claim END,
+                   email_claimed_until = CASE WHEN ${RANK("EXCLUDED.severity")} > ${RANK("gpu_admin_alerts.severity")}
+                                              THEN NULL ELSE gpu_admin_alerts.email_claimed_until END`,
     [
       randomUUID(),
       a.kind,
@@ -68,8 +73,10 @@ export async function raiseAdminAlert(
   );
 }
 
+// at most this many alerts per projection
 const EMAIL_BATCH = 20;
-// how long a hub holds an alert's email while it sends it
+// how long a hub holds an alert's email; renewed before every send, and
+// each send is cut off well inside it
 const EMAIL_CLAIM_MS = 5 * 60_000;
 
 export interface AdminAlertEmail {
@@ -80,72 +87,117 @@ export interface AdminAlertEmail {
   details: Record<string, unknown> | null;
 }
 
+class ClaimLost extends Error {}
+
 // The email projection: every open alert not yet emailed goes to every
 // admin, retried with backoff (attempts x 5 min, at most an hour) until it
 // has gone to all of them.
-// - Each alert is claimed first (a durable claim, across hubs: one sends,
-//   the others skip it until the claim expires).
+// - Alerts are claimed one at a time, just before they are sent (a durable
+//   claim, across hubs: one sends, the others skip it until it expires).
+// - Before each send the claim is renewed and the alert re-read, so what
+//   goes out is its current version, and each send is bounded inside the
+//   claim. An escalation revokes the claim: the old sender's next write
+//   matches nothing and it stops; the escalated alert is sent afresh.
 // - Delivery is recorded per recipient (emailed_to): a retry never mails an
 //   admin who already got it.
 // - emailed_at is set once every current admin has it.
 export async function projectAdminAlertEmails({
   recipients,
   send,
+  claimMs = EMAIL_CLAIM_MS,
 }: {
   recipients: () => Promise<{ account_id: string; email_address: string }[]>;
   send: (alert: AdminAlertEmail, to: string) => Promise<void>;
+  claimMs?: number;
 }): Promise<{ sent: number; failed: number }> {
-  const claim = randomUUID();
-  const { rows } = await getPool().query(
-    `UPDATE gpu_admin_alerts
-        SET email_claim = $1,
-            email_claimed_until = now() + make_interval(secs => $2)
-      WHERE id IN (
-        SELECT id FROM gpu_admin_alerts
-         WHERE emailed_at IS NULL AND resolved_at IS NULL
-           AND last_seen + make_interval(mins => LEAST(5 * email_attempts, 60)) <= now()
-           AND (email_claimed_until IS NULL OR email_claimed_until < now())
-         ORDER BY opened LIMIT $3
-         FOR UPDATE SKIP LOCKED)
-      RETURNING id, kind, severity, opened, details, emailed_to`,
-    [claim, EMAIL_CLAIM_MS / 1000, EMAIL_BATCH],
-  );
-  if (rows.length === 0) return { sent: 0, failed: 0 };
-  const admins = await recipients();
+  let admins: { account_id: string; email_address: string }[] | undefined;
   let sent = 0;
   let failed = 0;
-  for (const alert of rows) {
-    const done = new Set<string>(alert.emailed_to ?? []);
+  const owned = async (sql: string, args: unknown[]) => {
+    const { rows } = await getPool().query(sql, args);
+    if (rows.length === 0) throw new ClaimLost();
+    return rows[0];
+  };
+  for (let n = 0; n < EMAIL_BATCH; n++) {
+    const claim = randomUUID();
+    const { rows } = await getPool().query(
+      `UPDATE gpu_admin_alerts
+          SET email_claim = $1,
+              email_claimed_until = now() + make_interval(secs => $2)
+        WHERE id = (
+          SELECT id FROM gpu_admin_alerts
+           WHERE emailed_at IS NULL AND resolved_at IS NULL
+             AND last_seen + make_interval(mins => LEAST(5 * email_attempts, 60)) <= now()
+             AND (email_claimed_until IS NULL OR email_claimed_until < now())
+           ORDER BY opened LIMIT 1
+           FOR UPDATE SKIP LOCKED)
+        RETURNING id`,
+      [claim, claimMs / 1000],
+    );
+    if (rows.length === 0) break;
+    const id = rows[0].id;
+    admins ??= await recipients();
     let ok = true;
-    for (const a of admins) {
-      if (done.has(a.account_id)) continue;
-      try {
-        await send(alert, a.email_address);
-        await getPool().query(
+    try {
+      for (const a of admins) {
+        // renew, and send what the alert is now
+        const alert = await owned(
+          `UPDATE gpu_admin_alerts
+              SET email_claimed_until = now() + make_interval(secs => $3)
+            WHERE id = $1 AND email_claim = $2 AND resolved_at IS NULL
+            RETURNING id, kind, severity, opened, details, emailed_to`,
+          [id, claim, claimMs / 1000],
+        );
+        if ((alert.emailed_to ?? []).includes(a.account_id)) continue;
+        try {
+          await within(send(alert, a.email_address), claimMs / 2);
+        } catch (err) {
+          ok = false;
+          failed += 1;
+          log.warn("emailing a GPU admin alert failed", alert.kind, `${err}`);
+          continue;
+        }
+        sent += 1;
+        await owned(
           `UPDATE gpu_admin_alerts
               SET emailed_to = array_append(COALESCE(emailed_to, '{}'), $3)
-            WHERE id = $1 AND email_claim = $2`,
-          [alert.id, claim, a.account_id],
+            WHERE id = $1 AND email_claim = $2
+            RETURNING id`,
+          [id, claim, a.account_id],
         );
-        sent += 1;
-      } catch (err) {
-        ok = false;
-        failed += 1;
-        log.warn("emailing a GPU admin alert failed", alert.kind, `${err}`);
       }
+      await owned(
+        ok
+          ? `UPDATE gpu_admin_alerts SET emailed_at = now(), email_claim = NULL,
+                    email_claimed_until = NULL
+              WHERE id = $1 AND email_claim = $2 RETURNING id`
+          : `UPDATE gpu_admin_alerts SET email_attempts = email_attempts + 1,
+                    email_claim = NULL, email_claimed_until = NULL
+              WHERE id = $1 AND email_claim = $2 RETURNING id`,
+        [id, claim],
+      );
+    } catch (err) {
+      if (!(err instanceof ClaimLost)) throw err;
+      // escalated, resolved or taken over: its new owner (or the next
+      // projection) sends it
+      log.warn("lost the claim on a GPU admin alert's email", id);
     }
-    await getPool().query(
-      ok
-        ? `UPDATE gpu_admin_alerts SET emailed_at = now(), email_claim = NULL,
-                  email_claimed_until = NULL
-            WHERE id = $1 AND email_claim = $2`
-        : `UPDATE gpu_admin_alerts SET email_attempts = email_attempts + 1,
-                  email_claim = NULL, email_claimed_until = NULL
-            WHERE id = $1 AND email_claim = $2`,
-      [alert.id, claim],
-    );
   }
   return { sent, failed };
+}
+
+async function within<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(Error("email send timed out")), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // The admins, with an email address (uncached).
