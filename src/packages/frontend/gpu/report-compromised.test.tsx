@@ -39,8 +39,9 @@ describe("ReportCompromisedKey", () => {
       provider_pods: 3,
       warning: "Delete the key on RunPod's Credentials page now.",
     });
+    const onReported = jest.fn();
     const user = userEvent.setup();
-    render(<ReportCompromisedKey report={report} />);
+    render(<ReportCompromisedKey report={report} onReported={onReported} />);
     await user.click(
       screen.getByRole("button", { name: "My key may be compromised" }),
     );
@@ -61,6 +62,12 @@ describe("ReportCompromisedKey", () => {
     await user.click(ok);
     expect(report).toHaveBeenCalledWith({ confirm_cocalc_only: true });
     expect(mockFreshAuth).toHaveBeenCalledTimes(1);
+    // the caller refreshes the key's state (a closed report removes it)
+    await waitFor(() =>
+      expect(onReported).toHaveBeenCalledWith(
+        expect.objectContaining({ managed_pods: 2 }),
+      ),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Delete the key on RunPod's Credentials page now.",

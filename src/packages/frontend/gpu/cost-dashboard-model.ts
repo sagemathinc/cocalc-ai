@@ -111,6 +111,7 @@ export function spendRowLabel(
         return "You";
       return labels.names?.[row.key] || "Unknown person";
     case "agent":
+      if (row.key === "chat-session") return "Chat sessions";
       return row.key ? `Agent ${row.key.slice(0, 8)}` : "No agent (a person)";
     case "project":
       return row.key

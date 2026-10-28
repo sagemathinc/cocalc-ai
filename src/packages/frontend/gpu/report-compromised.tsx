@@ -98,8 +98,12 @@ export function CompromiseStatus({ status }: { status: GpuCompromiseStatus }) {
 
 export function ReportCompromisedKey({
   report,
+  onReported,
 }: {
   report: ReportCompromised;
+  // after each report: the key may now be gone (closed), so the caller
+  // refreshes what it shows about the key
+  onReported?: (status: GpuCompromiseStatus) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -119,6 +123,7 @@ export function ReportCompromisedKey({
       });
       if (completed && result) {
         setStatus(result);
+        onReported?.(result);
         setOpen(false);
         setConfirmed(false);
       }

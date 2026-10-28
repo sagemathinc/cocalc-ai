@@ -372,7 +372,10 @@ export function GpuProviderKeySection() {
       )}
       {/* Also while the membership lapsed: its pods may still be running. */}
       {status?.connected && account_id && (
-        <RunpodDashboardSection account_id={account_id} />
+        <RunpodDashboardSection
+          account_id={account_id}
+          onKeyChanged={() => void refresh()}
+        />
       )}
       <FreshAuthModal {...freshAuthModalProps} />
     </Panel>

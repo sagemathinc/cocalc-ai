@@ -15,7 +15,8 @@ const describeDb =
 
 const NOW = Date.parse("2026-10-28T12:00:00Z");
 const HOUR = 3_600_000;
-const deps = { now: () => NOW };
+// the PGlite tests run as the owner's home bay
+const deps = { now: () => NOW, isHomeBay: async () => true };
 
 describe("spendWindow", () => {
   it("defaults to the last 30 days, and bounds the period", () => {
@@ -59,6 +60,15 @@ describe("getGpuSpend on the signed-in bay", () => {
 
   it("requires a signed-in account", async () => {
     await expect(getGpuSpend({})).rejects.toThrow("must be signed in");
+  });
+
+  it("reads spend only on the key owner's home bay, never an empty answer elsewhere", async () => {
+    await expect(
+      getGpuSpendLocal(
+        { account_id: randomUUID() },
+        { now: () => NOW, isHomeBay: async () => false },
+      ),
+    ).rejects.toThrow("only on the key owner's home bay");
   });
 });
 
@@ -351,5 +361,67 @@ describeDb("gpu.spend", () => {
     await expect(
       getGpuSpendLocal({ account_id: owner, group_by: "course" }, deps),
     ).rejects.toThrow("group_by must be one of");
+  });
+
+  it("counts live pods and holds only for a period that contains now", async () => {
+    const owner = randomUUID();
+    const key = await keyLayer(owner);
+    const live = await pod(owner, key.credential_id, {
+      running_since: new Date(NOW - HOUR),
+      state: "running",
+    });
+    await reservation(live.id, key.layer_id, { state: "active" });
+    const held = await pod(owner, key.credential_id, { state: "terminating" });
+    await reservation(held.id, key.layer_id, {
+      state: "quarantined",
+      reserved_usd: "4",
+    });
+    const future = await getGpuSpendLocal(
+      {
+        account_id: owner,
+        since: new Date(NOW + 24 * HOUR).toISOString(),
+        until: new Date(NOW + 48 * HOUR).toISOString(),
+      },
+      deps,
+    );
+    expect(future.rows).toEqual([]);
+    expect(future.totals).toEqual({
+      spent_usd: "0.0000000000",
+      live_estimate_usd: "0.0000000000",
+      held_usd: "0.0000000000",
+    });
+  });
+
+  it("never returns a chat session's fingerprint-derived agent id", async () => {
+    const owner = randomUUID();
+    const key = await keyLayer(owner);
+    const FINGERPRINT = "f1n9erpr1nt0000000000000000000000";
+    for (const agent_id of [
+      `session:${FINGERPRINT}`,
+      "session:another0000000000000000000000",
+      "agent-1",
+    ]) {
+      const p = await pod(owner, key.credential_id, { agent_id });
+      await reservation(p.id, key.layer_id, { spent_usd: "1" });
+    }
+    const result = await getGpuSpendLocal(
+      { account_id: owner, group_by: "agent" },
+      deps,
+    );
+    const json = JSON.stringify(result);
+    expect(json).not.toContain("session:");
+    expect(json).not.toContain(FINGERPRINT);
+    expect(result.rows.map((r) => [r.key, r.spent_usd, r.pods])).toEqual([
+      ["chat-session", "2.0000000000", 2],
+      ["agent-1", "1.0000000000", 1],
+    ]);
+    // the other groupings never carry agent ids at all
+    for (const group_by of ["beneficiary", "project", "pod"]) {
+      const other = await getGpuSpendLocal(
+        { account_id: owner, group_by },
+        deps,
+      );
+      expect(JSON.stringify(other)).not.toContain("session:");
+    }
   });
 });

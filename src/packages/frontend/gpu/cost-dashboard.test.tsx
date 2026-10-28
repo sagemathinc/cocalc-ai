@@ -105,18 +105,16 @@ function api(
         state: "terminated",
       }),
     ]),
-    spend: jest
-      .fn()
-      .mockResolvedValue(
-        spendResult([
-          {
-            key: GRACE,
-            spent_usd: "1.25",
-            live_estimate_usd: "0.5",
-            pods_live: 1,
-          },
-        ]),
-      ),
+    spend: jest.fn().mockResolvedValue(
+      spendResult([
+        {
+          key: GRACE,
+          spent_usd: "1.25",
+          live_estimate_usd: "0.5",
+          pods_live: 1,
+        },
+      ]),
+    ),
     budget: jest.fn().mockResolvedValue({
       layer_id: "l",
       version: 1,
@@ -613,6 +611,22 @@ describe("GpuCostDashboard", () => {
       within(dialog).getByRole("button", { name: "Terminate all" }),
     );
     expect(mock.killSwitch).toHaveBeenCalledWith();
+  });
+
+  it("never shows the previous account's pods after the viewer changes", async () => {
+    const first = api();
+    const { rerender } = render(
+      <GpuCostDashboard api={first} viewerAccountId={GRACE} />,
+    );
+    await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    // another account: its pods haven't loaded yet
+    const second = api();
+    second.pods.mockReturnValue(new Promise(() => {}));
+    rerender(<GpuCostDashboard api={second} viewerAccountId={ALAN} />);
+    await waitFor(() =>
+      expect(screen.queryByRole("cell", { name: "cc-7f3k9q2x" })).toBeNull(),
+    );
+    expect(second.pods).toHaveBeenCalledTimes(1);
   });
 
   it("reports load failures in an alert", async () => {

@@ -115,6 +115,9 @@ describe("GPU cost dashboard model", () => {
     expect(spendRowLabel({ key: "" }, "agent", labels)).toBe(
       "No agent (a person)",
     );
+    expect(spendRowLabel({ key: "chat-session" }, "agent", labels)).toBe(
+      "Chat sessions",
+    );
     expect(spendRowLabel({ key: "proj-1" }, "project", labels)).toBe("Thesis");
     expect(spendRowLabel({ key: "proj-2abcdef" }, "project", labels)).toBe(
       "Project proj-2ab",

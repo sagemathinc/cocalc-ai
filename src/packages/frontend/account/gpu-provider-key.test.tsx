@@ -34,8 +34,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => "00000000-1000-4000-8000-000000000001",
 }));
 jest.mock("@cocalc/frontend/gpu/runpod-dashboard-section", () => ({
-  RunpodDashboardSection: ({ account_id }) => (
-    <div>GPU dashboard for {account_id}</div>
+  RunpodDashboardSection: ({ account_id, onKeyChanged }) => (
+    <div>
+      GPU dashboard for {account_id}
+      <button onClick={onKeyChanged}>Report a key change</button>
+    </div>
   ),
 }));
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
@@ -322,5 +325,18 @@ describe("GpuProviderKeySection", () => {
     render(<GpuProviderKeySection />);
     await screen.findByLabelText("RunPod API key");
     expect(screen.queryByText(/GPU dashboard/)).toBeNull();
+  });
+
+  it("re-reads the key's status when the dashboard reports a change (e.g. a closed compromise)", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValueOnce(CONNECTED);
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValueOnce(DISCONNECTED);
+    render(<GpuProviderKeySection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Report a key change" }),
+    );
+    // CoCalc's copy is gone: the key form is back, the dashboard is gone
+    expect(await screen.findByLabelText("RunPod API key")).toBeTruthy();
+    expect(screen.queryByText(/GPU dashboard/)).toBeNull();
+    expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
   });
 });

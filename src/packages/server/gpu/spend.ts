@@ -31,6 +31,7 @@ import {
 } from "@cocalc/util/gpu/types";
 import type { InterBayGpuApi } from "@cocalc/conat/inter-bay/api";
 import { actualCost } from "@cocalc/server/gpu/budgets";
+import { requireHomeBay } from "@cocalc/server/gpu/pods";
 import { budgetHomeClient } from "@cocalc/server/gpu/budget-api";
 
 const DAY_MS = 86_400_000;
@@ -39,10 +40,14 @@ export const SPEND_MAX_DAYS = 400;
 // groups returned; totals always cover every group
 export const SPEND_MAX_ROWS = 500;
 
-// the pod column each grouping reads (never from the caller)
+// the pod column each grouping reads (never from the caller). A chat
+// session's agent id is derived from its token's fingerprint: it never leaves
+// the database, and all chat sessions group as "chat-session", as in the pod
+// views.
 const GROUP_COLUMN: Record<GpuSpendGroupBy, string> = {
   beneficiary: "p.beneficiary_account_id::text",
-  agent: "COALESCE(p.agent_id, '')",
+  agent:
+    "CASE WHEN p.agent_id LIKE 'session:%' THEN 'chat-session' ELSE COALESCE(p.agent_id, '') END",
   project: "COALESCE(p.project_id::text, '')",
   pod: "p.id::text",
 };
@@ -51,6 +56,7 @@ export interface GpuSpendDeps {
   // for tests
   now?: () => number;
   homeClient?: (account_id: string) => Promise<InterBayGpuApi | undefined>;
+  isHomeBay?: (account_id: string) => Promise<boolean>;
 }
 
 function requireAccount(account_id: unknown): string {
@@ -109,6 +115,8 @@ export async function getGpuSpendLocal(
 ): Promise<GpuSpendResult> {
   const account_id = requireAccount(opts.account_id);
   const group_by = requireGroupBy(opts.group_by);
+  // the rows are only there: anywhere else this would quietly read nothing
+  await requireHomeBay(account_id, { isHomeBay: deps.isHomeBay });
   const now = (deps.now ?? Date.now)();
   const { since, until } = spendWindow(opts, now);
   const column = GROUP_COLUMN[group_by];
@@ -148,8 +156,9 @@ export async function getGpuSpendLocal(
     if (group_by === "pod") g.label = row.handle;
   }
 
-  // Open reservations count only for a period that reaches now.
-  if (until >= now) {
+  // Open reservations are what is live or held now: they count only for a
+  // period that contains now (never a past or future-only one).
+  if (since <= now && now <= until) {
     const { rows: open } = await db.query(
       `SELECT ${column} AS key, p.id::text AS pod_id, p.handle, p.cost_per_hr,
               p.running_since, r.state, r.reserved_usd, r.hourly_usd

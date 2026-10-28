@@ -4981,6 +4981,74 @@ describe("GPU budgets are read and changed on the key owner's home bay", () => {
   });
 });
 
+describe("GPU spend is read on the key owner's home bay", () => {
+  // bob's key layer, a finished pod and its settled reservation, on his home
+  // bay (the attached bay) only. Every read below starts on the seed, which
+  // has no record of them.
+  const POD_ID = "00000000-1000-4000-8000-00000000f003";
+  const HANDLE = "cc-spnd2345spnd2345";
+  const CREDENTIAL_ID = "00000000-1000-4000-8000-00000000f103";
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const spend = server("gpu/spend.js");
+       const account_id = ${JSON.stringify(bob.account_id)};
+       ${body}`,
+    );
+  }
+
+  before(async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const { ensureKeyBudget } = server("gpu/budgets.js");
+       const owner = ${JSON.stringify(bob.account_id)};
+       const credential_id = ${JSON.stringify(CREDENTIAL_ID)};
+       await ensureKeyBudget(getPool(), { credential_id, key_owner_account_id: owner });
+       const { rows } = await getPool().query(
+         "SELECT id FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+         [credential_id],
+       );
+       await getPool().query(
+         "INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider, beneficiary_account_id, spec, gpu_type_id, gpu_count, cloud, state, desired_state, max_runtime_minutes, deadline) VALUES ($1, $2, $3, $4, 'runpod', $3, '{}', 'NVIDIA RTX A4000', 1, 'SECURE', 'terminated', 'terminated', 30, now() + interval '30 minutes')",
+         [${JSON.stringify(POD_ID)}, ${JSON.stringify(HANDLE)}, owner, credential_id],
+       );
+       await getPool().query(
+         "INSERT INTO gpu_pod_reservations (id, pod_id, layer_id, state, reserved_usd, hourly_usd, gpu_count, pod_slots, spent_usd, released_usd, overrun_usd, settled_at, created, updated) VALUES (gen_random_uuid(), $1, $2, 'settled', 1, 1, 1, 1, 0.75, 0.25, 0, now() - interval '1 hour', now(), now())",
+         [${JSON.stringify(POD_ID)}, rows[0].id],
+       );`,
+    );
+  });
+
+  it("totals bob's spend from the seed, which has no record of it", async () => {
+    const r = await onSeed(
+      `const result = await spend.getGpuSpend({ account_id, group_by: "pod" });
+       const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const local = (await getPool().query("SELECT count(*)::int AS n FROM gpu_pod_reservations WHERE pod_id = $1", [${JSON.stringify(POD_ID)}])).rows[0].n;
+       return { rows: result.rows.map((row) => [row.key, row.label, row.spent_usd]), spent: result.totals.spent_usd, local };`,
+    );
+    assert.deepEqual(r, {
+      rows: [[POD_ID, HANDLE, "0.7500000000"]],
+      spent: "0.7500000000",
+      local: 0,
+    });
+  });
+
+  it("refuses to read spend anywhere but the home bay", async () => {
+    const r = await onSeed(
+      `try { await spend.getGpuSpendLocal({ account_id }); return "ran"; }
+       catch (e) { return String(e?.message ?? e); }`,
+    );
+    // never an empty answer from the wrong bay
+    assert.match(
+      r,
+      /only on the key owner's home bay|homed on|account \S+ not found/,
+    );
+  });
+});
+
 describe("a pod's host key is registered on the bay that minted its token", () => {
   // The pod reports to whichever bay its load balancer picks; that bay
   // forwards to the token's bay (bay-1, bob's home), the only one that can

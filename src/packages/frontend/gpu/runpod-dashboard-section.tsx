@@ -39,7 +39,14 @@ function projectTitle(project_id: string): string | undefined {
   return typeof title === "string" && title ? title : undefined;
 }
 
-export function RunpodDashboardSection({ account_id }: { account_id: string }) {
+export function RunpodDashboardSection({
+  account_id,
+  onKeyChanged,
+}: {
+  account_id: string;
+  // the key's state may have changed (e.g. a compromise report closed it)
+  onKeyChanged?: () => void;
+}) {
   const api = useMemo(
     () =>
       hubGpuDashboardApi({
@@ -51,10 +58,14 @@ export function RunpodDashboardSection({ account_id }: { account_id: string }) {
       }),
     [account_id],
   );
+  // Keyed by account: nothing of another account's survives a switch.
   return (
-    <div style={{ marginTop: 20 }}>
+    <div style={{ marginTop: 20 }} key={account_id}>
       <GpuCostDashboard api={api} viewerAccountId={account_id} />
-      <ReportCompromisedKey report={api.reportCompromised} />
+      <ReportCompromisedKey
+        report={api.reportCompromised}
+        onReported={() => onKeyChanged?.()}
+      />
     </div>
   );
 }

@@ -134,7 +134,9 @@ export function GpuCostDashboard({
   // read it from a ref and depend only on the scope's value.
   const apiRef = useRef(api);
   apiRef.current = api;
-  const scopeKey = JSON.stringify(api.scope);
+  // the viewer is part of every cache key: another account's data is never
+  // shown under this one
+  const scopeKey = JSON.stringify([api.scope, viewerAccountId ?? null]);
   const scopeLabel = scopeLabelOverride ?? defaultScopeLabel(api.scope);
   const [period, setPeriod] = useState<GpuSpendPeriod>("7d");
   const [groupBy, setGroupBy] = useState<GpuSpendGroupBy>("beneficiary");
