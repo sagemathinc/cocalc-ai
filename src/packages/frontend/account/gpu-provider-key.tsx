@@ -245,6 +245,12 @@ export function GpuProviderKeySection() {
           )}
           .
         </Typography.Paragraph>
+        {status.entitled && status.inventory === "checking" && (
+          <Typography.Text type="secondary">
+            Checking your RunPod account… GPU launches with this key start once
+            CoCalc has seen the pods on it (usually within a few minutes).
+          </Typography.Text>
+        )}
         <Space>
           {!replacing && status.entitled && (
             <Button disabled={busy} onClick={() => setReplacing(true)}>

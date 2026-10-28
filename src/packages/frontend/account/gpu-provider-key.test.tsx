@@ -78,6 +78,27 @@ describe("GpuProviderKeySection", () => {
     expect(screen.queryByDisplayValue(KEY)).toBeNull();
   });
 
+  it("says the RunPod account is still being checked until the first inventory", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue({
+      ...CONNECTED,
+      inventory: "checking",
+    });
+    render(<GpuProviderKeySection />);
+    expect(
+      await screen.findByText(/Checking your RunPod account/),
+    ).toBeTruthy();
+  });
+
+  it("says nothing about checking once the inventory is complete", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue({
+      ...CONNECTED,
+      inventory: "complete",
+    });
+    render(<GpuProviderKeySection />);
+    await screen.findByRole("status");
+    expect(screen.queryByText(/Checking your RunPod account/)).toBeNull();
+  });
+
   it("tells members without the feature where to get it, with no key form", async () => {
     mockSystem.getGpuProviderKeyStatus.mockResolvedValue({
       ...DISCONNECTED,

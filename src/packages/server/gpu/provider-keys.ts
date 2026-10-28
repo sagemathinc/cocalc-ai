@@ -41,7 +41,11 @@ import {
   recordKeyEvent,
   type GpuKeyEventActor,
 } from "@cocalc/server/gpu/key-events";
-import { carryKeyBudget, ensureKeyBudget } from "@cocalc/server/gpu/budgets";
+import {
+  carryKeyBudget,
+  ensureKeyBudget,
+  INVENTORY_STALE_MS,
+} from "@cocalc/server/gpu/budgets";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   GPU_PROVIDER_API_KEY_KIND,
@@ -105,6 +109,60 @@ export interface GpuProviderKeyDeps {
   markUnmanaged?: (credential_id: string) => Promise<string[]>;
   drainMs?: number;
   drainPollMs?: number;
+  // the bounded inventory pass a connect runs for its new key (for tests);
+  // true if it completed
+  connectInventory?: (k: {
+    account_id: string;
+    credential_id: string;
+    deadline: number;
+  }) => Promise<boolean>;
+}
+
+// A connect checks the new key's RunPod account once, inside the request
+// (STEP5D): launches need a complete inventory, and this one usually
+// satisfies the first launch. Counted from the start of the whole connect;
+// its own RunPod client gives up on a call after 5 s, so the request stays
+// well inside SET_KEY_HOME_BAY_TIMEOUT_MS. Not done in time: "checking",
+// and the reconciler's next sweep takes the new key first.
+export const CONNECT_INVENTORY_MS = 15_000;
+export const CONNECT_INVENTORY_CALL_MS = 5_000;
+
+async function connectInventory(
+  {
+    account_id,
+    credential_id,
+    deadline,
+  }: { account_id: string; credential_id: string; deadline: number },
+  deps: GpuProviderKeyDeps,
+): Promise<boolean> {
+  // loaded here: reconcile.ts reads keys through this module
+  const { reconcileKey } = await import("@cocalc/server/gpu/reconcile");
+  const outcome = await reconcileKey(
+    { credential_id, key_owner_account_id: account_id, deadline },
+    {
+      getReconcile: (a) =>
+        getRunpodCleanupForAccount(a, {
+          ...deps,
+          runpodTimeoutMs: CONNECT_INVENTORY_CALL_MS,
+        }),
+    },
+  );
+  return outcome.complete === true;
+}
+
+// "complete" while the key's last complete inventory is recent enough for
+// launches
+async function inventoryState(
+  credential_id: string,
+): Promise<"complete" | "checking"> {
+  const { rows } = await getPool().query(
+    `SELECT last_inventory_at FROM gpu_key_fences WHERE credential_id = $1`,
+    [credential_id],
+  );
+  const last = rows[0]?.last_inventory_at;
+  return last && Date.now() - new Date(last).getTime() <= INVENTORY_STALE_MS
+    ? "complete"
+    : "checking";
 }
 
 async function gpuKeyHomeClient(
@@ -284,7 +342,9 @@ export async function getGpuProviderKeyStatusLocal(
     (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id),
     activeKeySummaries(account_id, provider),
   ]);
-  return toStatus(provider, entitled, record[0]);
+  const status = toStatus(provider, entitled, record[0]);
+  if (!status.connected) return status;
+  return { ...status, inventory: await inventoryState(record[0].id) };
 }
 
 // The caller has already required fresh auth for this session.
@@ -433,6 +493,8 @@ export async function setGpuProviderKeyLocal(
   }: { account_id: string; provider: unknown; api_key: unknown },
   deps: GpuProviderKeyDeps = {},
 ): Promise<GpuProviderKeyStatus> {
+  // the connect's whole time counts from here (the inventory pass's too)
+  const operationStarted = Date.now();
   const provider = requireProvider(providerInput);
   await requireHomeBay(account_id, deps);
   if (!(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))) {
@@ -479,6 +541,7 @@ export async function setGpuProviderKeyLocal(
   // read the old key between this check and the store. Every connect is a
   // new credential (a new id, fence and budget layer): the old one, if any,
   // is revoked first and its fence closed.
+  let credential_id: string | undefined;
   await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
     const [current] = await activeKeySummaries(account_id, provider);
     if (current) await requireReplaceable(account_id, current.id, deps, db);
@@ -487,7 +550,7 @@ export async function setGpuProviderKeyLocal(
     // One transaction: the old key is revoked and its fence closed, the new
     // one stored with a new id, and its fence and layer (with the carried
     // caps) created; or none of it happens.
-    await upsertExternalCredential({
+    ({ id: credential_id } = await upsertExternalCredential({
       selector: selector(account_id, provider),
       payload: key,
       metadata: {
@@ -526,8 +589,19 @@ export async function setGpuProviderKeyLocal(
           );
         }
       },
-    });
+    }));
   });
+  // The key is stored: whatever the inventory pass does, the connect stands.
+  let complete = false;
+  if (credential_id) {
+    complete = await (
+      deps.connectInventory ?? ((k) => connectInventory(k, deps))
+    )({
+      account_id,
+      credential_id,
+      deadline: operationStarted + CONNECT_INVENTORY_MS,
+    }).catch(() => false);
+  }
   // Built from what was just verified and stored, with no further read.
   return {
     provider,
@@ -539,6 +613,7 @@ export async function setGpuProviderKeyLocal(
       ...(provider_account_name ? { name: provider_account_name } : {}),
     },
     connected_at: verified_at,
+    inventory: complete ? "complete" : "checking",
   };
 }
 
