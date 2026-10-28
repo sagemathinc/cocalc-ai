@@ -64,7 +64,9 @@ export function GpuAlertsStrip({
   alerts: GpuAlert[];
   // absent for viewers who can't act (course staff)
   onAcknowledge?: (alert: GpuAlert) => Promise<void>;
-  onRelease?: (alert: GpuAlert, pod_id: string) => Promise<void>;
+  // resolves true once the hold is released; false (e.g. fresh auth was
+  // cancelled) keeps the confirmation open
+  onRelease?: (alert: GpuAlert, pod_id: string) => Promise<boolean>;
   busy?: boolean;
 }) {
   const [releasing, setReleasing] = useState<{
@@ -75,12 +77,11 @@ export function GpuAlertsStrip({
   const [error, setError] = useState("");
   if (alerts.length === 0) return null;
 
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<unknown>): Promise<boolean> {
     setWorking(true);
     setError("");
     try {
-      await action();
-      return true;
+      return (await action()) !== false;
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
       return false;

@@ -90,7 +90,7 @@ describe("GpuAlertsStrip", () => {
     const onRelease = jest
       .fn()
       .mockRejectedValueOnce(new Error("fresh auth failed"))
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(true);
     const user = userEvent.setup();
     render(<GpuAlertsStrip alerts={[QUARANTINED]} onRelease={onRelease} />);
     await user.click(
@@ -111,6 +111,37 @@ describe("GpuAlertsStrip", () => {
       expect.objectContaining({ id: "q1" }),
       "pod-1",
     );
+  });
+
+  it("is keyboard operable: Escape cancels the release without releasing, and focus returns", async () => {
+    const onRelease = jest.fn().mockResolvedValue(true);
+    const user = userEvent.setup();
+    render(<GpuAlertsStrip alerts={[QUARANTINED]} onRelease={onRelease} />);
+    const trigger = screen.getByRole("button", {
+      name: "Release the hold for cc-held0001",
+    });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(onRelease).not.toHaveBeenCalled();
+  });
+
+  it("keeps the confirmation open when the release didn't happen", async () => {
+    const onRelease = jest.fn().mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<GpuAlertsStrip alerts={[QUARANTINED]} onRelease={onRelease} />);
+    await user.click(
+      screen.getByRole("button", { name: "Release the hold for cc-held0001" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Release hold" }),
+    );
+    expect(onRelease).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
   it("shows no actions to a viewer who can't act", () => {

@@ -51,7 +51,13 @@ export function hubGpuDashboardApi({
     account_ids: string[],
   ) => Promise<Record<string, string | undefined>>;
   projectTitle?: (project_id: string) => string | undefined;
-}): GpuCostDashboardApi & { reportCompromised: ReportCompromised } {
+}): GpuCostDashboardApi &
+  Required<
+    Pick<
+      GpuCostDashboardApi,
+      "alerts" | "acknowledgeAlert" | "releaseQuarantined"
+    >
+  > & { reportCompromised: ReportCompromised } {
   return {
     scope: "funded",
     pods: async () => {

@@ -34,6 +34,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => "00000000-1000-4000-8000-000000000001",
 }));
 jest.mock("@cocalc/frontend/gpu/runpod-dashboard-section", () => ({
+  RunpodAlertsSection: ({ account_id }) => (
+    <div>GPU alerts for {account_id}</div>
+  ),
   RunpodDashboardSection: ({ account_id, onKeyChanged }) => (
     <div>
       GPU dashboard for {account_id}
@@ -385,5 +388,15 @@ describe("GpuProviderKeySection", () => {
     expect(await screen.findByLabelText("RunPod API key")).toBeTruthy();
     expect(screen.queryByText(/GPU dashboard/)).toBeNull();
     expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the GPU alerts without a key, e.g. pods a forced removal left running", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue(DISCONNECTED);
+    render(<GpuProviderKeySection />);
+    await screen.findByLabelText("RunPod API key");
+    expect(
+      screen.getByText("GPU alerts for 00000000-1000-4000-8000-000000000001"),
+    ).toBeTruthy();
+    expect(screen.queryByText(/GPU dashboard/)).toBeNull();
   });
 });

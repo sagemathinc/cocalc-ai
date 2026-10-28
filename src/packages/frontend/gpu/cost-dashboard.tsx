@@ -181,8 +181,21 @@ export function GpuCostDashboard({
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
-  // the pause the kill switch just reported, until the budget is read again
-  const [killPaused, setKillPaused] = useState(false);
+  // What this session's kill switch or Resume just did to the pause. It wins
+  // over the cached budget until a budget read started after it succeeds
+  // (reads started before are discarded by the generation), so neither a
+  // stale "not paused" after Terminate all nor a stale "paused" after Resume
+  // shows, even if that read fails.
+  const [pauseOverride, setPauseOverride] = useState<boolean>();
+  // side reads that failed for this scope: shown, never taken as "nothing"
+  const [budgetFailure, setBudgetFailure] = useState<{
+    key: string;
+    message: string;
+  }>();
+  const [alertsFailure, setAlertsFailure] = useState<{
+    key: string;
+    message: string;
+  }>();
   const [resumeError, setResumeError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const podsGeneration = useRef(0);
@@ -196,7 +209,11 @@ export function GpuCostDashboard({
   const budget =
     budgetResult?.key === scopeKey ? budgetResult.budget : undefined;
   const alerts = alertsResult?.key === scopeKey ? alertsResult.alerts : [];
-  const paused = budget?.paused ?? killPaused;
+  const paused = pauseOverride ?? budget?.paused === true;
+  const budgetError =
+    budgetFailure?.key === scopeKey ? budgetFailure.message : "";
+  const alertsError =
+    alertsFailure?.key === scopeKey ? alertsFailure.message : "";
   const podsError = podsFailure?.key === scopeKey ? podsFailure.message : "";
   const spendError = spendFailure?.key === spendKey ? spendFailure.message : "";
   // Fresh: loaded for this query, recently, and not followed by a failure.
@@ -213,9 +230,15 @@ export function GpuCostDashboard({
   const refreshPods = useCallback(async () => {
     const version = ++podsGeneration.current;
     const current = apiRef.current;
-    // the budget and alerts are side reads: their failure never hides the pods
-    const budgetRead = current.budget?.().catch(() => undefined);
-    const alertsRead = current.alerts?.().catch(() => undefined);
+    // The budget and alerts are side reads: their failure never hides the
+    // pods, and is shown rather than taken as "no pause, no alerts".
+    const settle = <T,>(p?: Promise<T>) =>
+      p?.then(
+        (value) => ({ ok: true as const, value }),
+        (err) => ({ ok: false as const, message: errorText(err) }),
+      );
+    const budgetRead = settle(current.budget?.());
+    const alertsRead = settle(current.alerts?.());
     try {
       const next = await current.pods();
       if (podsGeneration.current !== version) return;
@@ -229,12 +252,24 @@ export function GpuCostDashboard({
     }
     const b = await budgetRead;
     if (b != null && podsGeneration.current === version) {
-      setBudgetResult({ key: scopeKey, budget: b });
-      setKillPaused(false);
+      if (b.ok) {
+        setBudgetResult({ key: scopeKey, budget: b.value });
+        setBudgetFailure(undefined);
+        setPauseOverride(undefined);
+      } else {
+        setBudgetFailure({ key: scopeKey, message: b.message });
+      }
     }
     const a = await alertsRead;
-    if (a != null && podsGeneration.current === version)
-      setAlertsResult({ key: scopeKey, alerts: a });
+    if (a != null && podsGeneration.current === version) {
+      if (a.ok) {
+        setAlertsResult({ key: scopeKey, alerts: a.value });
+        setAlertsFailure(undefined);
+      } else {
+        // the last alerts loaded stay shown
+        setAlertsFailure({ key: scopeKey, message: a.message });
+      }
+    }
   }, [scopeKey]);
 
   const refreshSpend = useCallback(async () => {
@@ -291,7 +326,7 @@ export function GpuCostDashboard({
     try {
       if (confirm.kind === "all") {
         const result = await apiRef.current.killSwitch();
-        setKillPaused(result.paused);
+        setPauseOverride(result.paused);
         setNotice(
           [
             `Marked ${plural(result.marked, "pod")} for termination.`,
@@ -326,7 +361,7 @@ export function GpuCostDashboard({
         await resumeApi();
       });
       if (completed) {
-        setKillPaused(false);
+        setPauseOverride(false);
         setNotice("New launches are allowed again.");
         refresh();
       }
@@ -345,9 +380,10 @@ export function GpuCostDashboard({
     refresh();
   }
 
-  async function release(_alert: GpuAlert, pod_id: string) {
+  // True only when the hold was released (false if fresh auth was cancelled).
+  async function release(_alert: GpuAlert, pod_id: string): Promise<boolean> {
     const releaseApi = apiRef.current.releaseQuarantined;
-    if (!releaseApi) return;
+    if (!releaseApi) return false;
     let result: Awaited<ReturnType<typeof releaseApi>> | undefined;
     const completed = await runFreshAuthAction(async () => {
       result = await releaseApi({ pod_id });
@@ -356,7 +392,9 @@ export function GpuCostDashboard({
       setNotice(`Released ${moneyToCurrency(result.released_usd)} held.`);
       setReleaseWarning(result.warning ?? "");
       refresh();
+      return true;
     }
+    return false;
   }
 
   const groupLabel = GROUP_BY_LABELS[groupBy];
@@ -400,6 +438,38 @@ export function GpuCostDashboard({
           />
         )}
       </div>
+      {alertsError && (
+        <Alert
+          role="alert"
+          type="warning"
+          showIcon
+          style={{ marginTop: 8 }}
+          title="Couldn't load your GPU alerts"
+          description={
+            <>
+              {alertsError}.{" "}
+              {alerts.length > 0
+                ? "Showing the alerts last loaded."
+                : "There may be alerts that aren't shown here."}
+            </>
+          }
+        />
+      )}
+      {budgetError && (
+        <Alert
+          role="alert"
+          type="warning"
+          showIcon
+          style={{ marginTop: 8 }}
+          title="Couldn't load your GPU budget and pause state"
+          description={
+            <>
+              {budgetError}. New launches may be paused without it showing here.
+              Terminate all still works.
+            </>
+          }
+        />
+      )}
       <GpuAlertsStrip
         alerts={alerts}
         busy={busy}
@@ -432,8 +502,14 @@ export function GpuCostDashboard({
                 {budget.kill_switch
                   ? " (and Terminate all paused them too)"
                   : ""}
-                : <a href={`#${ALERTS_ANCHOR}`}>see the alerts</a>. Resuming
-                doesn&apos;t close them. You&apos;ll be asked to sign in again.
+                :{" "}
+                {alerts.length > 0 ? (
+                  <a href={`#${ALERTS_ANCHOR}`}>see the alerts</a>
+                ) : (
+                  "the alerts couldn't be loaded; check them with cocalc gpu alerts"
+                )}
+                . Resuming doesn&apos;t close them. You&apos;ll be asked to sign
+                in again.
               </>
             ) : (
               "Terminate all paused launches with this key. Resume when you are ready (you'll be asked to sign in again)."
