@@ -450,6 +450,7 @@ export function DirectConversationView({
           gap: 8,
           padding: "8px 12px",
           borderBottom: `1px solid ${UI_COLORS.border}`,
+          flex: "none",
         }}
       >
         <Button
@@ -514,7 +515,13 @@ export function DirectConversationView({
         <div ref={bottom} />
       </div>
       <div
-        style={{ borderTop: `1px solid ${UI_COLORS.border}`, padding: 8 }}
+        // The composer never shrinks (Send stays visible); the messages
+        // above scroll instead.
+        style={{
+          borderTop: `1px solid ${UI_COLORS.border}`,
+          padding: 8,
+          flex: "none",
+        }}
         aria-label="Write a message"
       >
         <MarkdownInput

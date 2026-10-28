@@ -563,7 +563,14 @@ describeDb("direct conversations", () => {
     expect(body).not.toContain("https://attacker.example");
     expect(body).not.toContain("](");
     expect(body).not.toContain("<img");
-    expect(body).toContain("\\[image\\]");
+    expect(body).toContain("&#91;image&#93;");
+  });
+
+  test("notification text has no math delimiters: parentheses, brackets and dollars stay literal", async () => {
+    await request("Hi (bay-1), see [this] for $5 and \\(x\\)");
+    const body = mockNotify.mock.calls[0][0].payload_json.body_markdown;
+    expect(body).not.toMatch(/\\[([$]|\$/);
+    expect(body).toContain("Hi &#40;bay&#45;1&#41;");
   });
 
   test("only members can read or write", async () => {
