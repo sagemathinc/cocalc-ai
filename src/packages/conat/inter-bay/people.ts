@@ -39,6 +39,8 @@ export interface InterBayPeopleApi {
     project_id: string;
     path: string;
     title: string;
+    // Who it is with besides the creator; an older owner ignores it.
+    member_ids?: string[];
   }): Promise<Conversation>;
   touch(opts: {
     account_id: string;

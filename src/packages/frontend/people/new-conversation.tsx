@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useCallback, useMemo, useState } from "react";
-import { Alert, Form, Input, Modal, Radio } from "antd";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Alert, Form, Input, Modal, Radio, Select } from "antd";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { Conversation } from "@cocalc/util/people";
 import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
@@ -32,6 +32,26 @@ export function useCollaboratorProjects(personId?: string) {
   }, [project_map, account_id, personId]);
 }
 
+// The other owners and collaborators of a project, by name: who a
+// conversation in it can be with.
+export function useProjectPeople(project_id?: string) {
+  const project_map = useTypedRedux("projects", "project_map");
+  const account_id = useTypedRedux("account", "account_id");
+  return useMemo(() => {
+    const users = project_id
+      ? project_map?.getIn([project_id, "users"])
+      : undefined;
+    const result: { account_id: string; name: string }[] = [];
+    (users as any)?.forEach((user, id: string) => {
+      if (id === account_id) return;
+      if (!isProjectCollaboratorRole(user?.get?.("group"))) return;
+      const name = redux.getStore("users")?.get_name(id) ?? "";
+      result.push({ account_id: id, name: name.trim() || "Unknown person" });
+    });
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }, [project_map, account_id, project_id]);
+}
+
 export function NewConversationModal({
   open,
   personId,
@@ -52,6 +72,20 @@ export function NewConversationModal({
     [personId],
   );
   const [project_id, setProjectId] = useState<string>();
+  const people = useProjectPeople(project_id);
+  // Who it is with besides you; started from a person, them.
+  const [member_ids, setMemberIds] = useState<string[]>(
+    personId ? [personId] : [],
+  );
+  useEffect(() => {
+    if (open) setMemberIds(personId ? [personId] : []);
+  }, [open, personId]);
+  // Only people in the chosen project can be in it.
+  useEffect(() => {
+    if (!project_id) return;
+    const inProject = new Set(people.map((p) => p.account_id));
+    setMemberIds((ids) => ids.filter((id) => inProject.has(id)));
+  }, [project_id, people]);
   const [title, setTitle] = useState("");
   const [mode, setMode] = useState<"new" | "existing">("new");
   const [path, setPath] = useState("");
@@ -68,8 +102,13 @@ export function NewConversationModal({
     try {
       const conversation =
         mode === "new"
-          ? await createConversation({ project_id, title })
-          : await peopleApi().addConversation({ project_id, path, title });
+          ? await createConversation({ project_id, title, member_ids })
+          : await peopleApi().addConversation({
+              project_id,
+              path,
+              title,
+              member_ids,
+            });
       conversationsChanged();
       setTitle("");
       setPath("");
@@ -114,6 +153,28 @@ export function NewConversationModal({
             }
             value={project_id ?? null}
             onChange={setProjectId}
+          />
+        </Form.Item>
+        <Form.Item
+          label="With"
+          htmlFor="people-new-conversation-with"
+          extra="They are notified of new messages and see it in For you."
+        >
+          <Select
+            id="people-new-conversation-with"
+            aria-label="With"
+            mode="multiple"
+            disabled={!project_id}
+            placeholder={
+              project_id ? "Choose people" : "Choose a project first"
+            }
+            value={member_ids}
+            onChange={setMemberIds}
+            optionFilterProp="label"
+            options={people.map((p) => ({
+              value: p.account_id,
+              label: p.name,
+            }))}
           />
         </Form.Item>
         <Form.Item label="Title" htmlFor="people-new-conversation-title">

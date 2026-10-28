@@ -38,6 +38,11 @@ Table({
       pg_type: "UUID[]",
       desc: "Bounded list of recent human senders, most recent first.",
     },
+    member_ids: {
+      type: "array",
+      pg_type: "UUID[]",
+      desc: "Who the conversation is with: its creator and the people it was started with. They follow it from the start. Each must be a collaborator when added.",
+    },
   },
 });
 

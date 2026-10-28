@@ -33,6 +33,7 @@ import type { ListedConversation } from "@cocalc/util/people";
 import { peopleApi, conversationsChanged } from "./api";
 import { waitForChatReady } from "./create";
 import { ReferencePicker } from "./reference-picker";
+import { conversationPeople } from "./scope";
 import type { ChatInputControl } from "@cocalc/frontend/chat/input";
 import { serializePeopleReference } from "@cocalc/util/people-references";
 import { PageHeader } from "@cocalc/frontend/components/page-header";
@@ -395,7 +396,7 @@ function ConversationHeader({
           </div>
         )}
         <AvatarStack
-          entries={conversation.participant_ids.map((account_id) => ({
+          entries={conversationPeople(conversation).map((account_id) => ({
             account_id,
           }))}
           size={22}

@@ -43,13 +43,17 @@ export async function waitForChatReady(chat: ChatActions): Promise<void> {
 }
 
 // A new conversation is a new .chat file with one human-only thread, then a
-// record pointing at it. If recording fails, the file is harmless.
+// record pointing at it. If recording fails, the file is harmless. The people
+// it is with (member_ids, besides you) follow its thread from the start, so
+// the first message notifies them without an @mention.
 export async function createConversation({
   project_id,
   title,
+  member_ids = [],
 }: {
   project_id: string;
   title: string;
+  member_ids?: string[];
 }): Promise<Conversation> {
   title = normalizeConversationTitle(title);
   await ensureProjectReduxRuntime();
@@ -63,7 +67,13 @@ export async function createConversation({
   const chat = initChat(project_id, path, { instanceKey });
   try {
     await waitForChatReady(chat);
-    chat.createEmptyThread({ name: title, threadAgent: { mode: "human" } });
+    const me = redux.getStore("account").get_account_id();
+    const thread_id = chat.createEmptyThread({
+      name: title,
+      threadAgent: { mode: "human" },
+      followers: [me, ...member_ids],
+    });
+    if (!thread_id) throw Error("could not start the conversation");
     await chat.syncdb?.save();
     await chat.save_to_disk();
   } finally {
@@ -73,6 +83,7 @@ export async function createConversation({
     project_id,
     path,
     title,
+    member_ids,
   });
   conversationsChanged();
   return conversation;

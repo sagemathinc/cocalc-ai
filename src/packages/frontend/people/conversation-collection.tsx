@@ -21,7 +21,7 @@ import type {
 } from "@cocalc/util/people";
 import { AliasDialog } from "./alias-dialog";
 import { conversationsChanged, peopleApi } from "./api";
-import { isMentioned, isUnread } from "./scope";
+import { conversationPeople, isMentioned, isUnread } from "./scope";
 
 const VISUALLY_HIDDEN = {
   position: "absolute",
@@ -295,7 +295,7 @@ function People({ c }: { c: ListedConversation }) {
   return (
     <span style={{ display: "inline-flex", minWidth: 0 }}>
       <AvatarStack
-        entries={c.participant_ids.map((id) => ({ account_id: id }))}
+        entries={conversationPeople(c).map((id) => ({ account_id: id }))}
         size={20}
         maxAvatars={4}
       />
@@ -484,7 +484,7 @@ function CompactRow(props: ItemProps) {
             {project}
           </span>
           <AvatarStack
-            entries={c.participant_ids.map((id) => ({ account_id: id }))}
+            entries={conversationPeople(c).map((id) => ({ account_id: id }))}
             size={18}
             maxAvatars={3}
           />

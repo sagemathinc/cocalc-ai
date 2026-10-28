@@ -203,13 +203,14 @@ export const peopleControl: InterBayPeopleApi = {
     return await getConversation(opts);
   },
 
-  async createRecord({ account_id, project_id, path, title }) {
+  async createRecord({ account_id, project_id, path, title, member_ids }) {
     await assertOwner(project_id);
     return await createConversationRecord({
       account_id,
       project_id,
       path,
       title,
+      member_ids,
     });
   },
 
@@ -468,10 +469,16 @@ export const peopleApi: PeopleApi = {
     ).getRecord({ account_id: account_id!, project_id, conversation_id });
   },
 
-  async addConversation({ account_id, project_id, path, title }) {
+  async addConversation({ account_id, project_id, path, title, member_ids }) {
     const c = await (
       await owner(project_id)
-    ).createRecord({ account_id: account_id!, project_id, path, title });
+    ).createRecord({
+      account_id: account_id!,
+      project_id,
+      path,
+      title,
+      member_ids,
+    });
     await markReadBestEffort(account_id!, c);
     return c;
   },

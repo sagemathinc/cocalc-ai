@@ -91,6 +91,62 @@ test("adding the same file twice returns one conversation", async () => {
   expect(a.path).toBe("/home/user/notes/team.chat");
 });
 
+test("members: the creator first, then who it is with, each a collaborator", async () => {
+  const c = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "with-bob.chat",
+    title: "With Bob",
+    member_ids: [bob, alice, bob.toUpperCase()],
+  });
+  expect(c.member_ids).toEqual([alice, bob]);
+  // Nobody has written yet.
+  expect(c.participant_ids).toEqual([]);
+  expect(
+    (
+      await getConversation({
+        account_id: bob,
+        project_id,
+        conversation_id: c.conversation_id,
+      })
+    )?.member_ids,
+  ).toEqual([alice, bob]);
+  // Without members, the creator alone.
+  const solo = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "solo.chat",
+    title: "Solo",
+  });
+  expect(solo.member_ids).toEqual([alice]);
+  // Someone outside the project can't be in it, nor can a viewer.
+  await setUsers(project_id, {
+    [alice]: "owner",
+    [bob]: "collaborator",
+    [viewer]: "viewer",
+  });
+  for (const outsider of [viewer, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"]) {
+    await expect(
+      createConversationRecord({
+        account_id: alice,
+        project_id,
+        path: "outsider.chat",
+        title: "Outsider",
+        member_ids: [outsider],
+      }),
+    ).rejects.toThrow("must be a collaborator");
+  }
+  await expect(
+    createConversationRecord({
+      account_id: alice,
+      project_id,
+      path: "bad.chat",
+      title: "Bad",
+      member_ids: ["not-a-uuid"],
+    }),
+  ).rejects.toThrow("invalid member");
+});
+
 test("at capacity, existing registrations are unchanged but new paths fail", async () => {
   await getPool().query(
     `INSERT INTO project_conversations

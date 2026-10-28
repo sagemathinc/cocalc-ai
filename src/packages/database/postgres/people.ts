@@ -27,10 +27,11 @@ import {
   normalizeAlias,
   normalizeConversationPath,
   normalizeConversationTitle,
+  normalizeMemberIds,
 } from "@cocalc/util/people";
 
 const COLUMNS = `conversation_id, project_id, path, title, created_by, created,
-  last_activity, last_sender_id, participant_ids`;
+  last_activity, last_sender_id, participant_ids, member_ids`;
 
 // Same rule as project collaborator access: owner or collaborator of a
 // project that is not deleted. Viewers are not conversation participants.
@@ -56,6 +57,7 @@ function toConversation(row: any): Conversation {
     last_activity: new Date(row.last_activity).valueOf(),
     last_sender_id: row.last_sender_id ?? null,
     participant_ids: row.participant_ids ?? [],
+    member_ids: row.member_ids ?? [],
   };
 }
 
@@ -72,22 +74,50 @@ async function assertCollaborator(
   }
 }
 
+// The members who are not owners or collaborators of the project.
+async function nonCollaborators(
+  project_id: string,
+  member_ids: string[],
+): Promise<string[]> {
+  const { rows } = await getPool().query(
+    `SELECT m.id FROM unnest($2::uuid[]) AS m(id)
+     WHERE NOT EXISTS (
+       SELECT 1 FROM projects p
+       WHERE p.project_id = $1
+         AND p.deleted IS NOT TRUE
+         AND p.users -> m.id::text ->> 'group' IN ('owner', 'collaborator')
+     )`,
+    [project_id, member_ids],
+  );
+  return rows.map((row) => row.id);
+}
+
 // Idempotent on (project_id, path): adding a file that is already a
-// conversation returns the existing record unchanged.
+// conversation returns the existing record unchanged. member_ids are who it
+// is with besides the creator; each must be a collaborator.
 export async function createConversationRecord({
   account_id,
   project_id,
   path,
   title,
+  member_ids,
 }: {
   account_id: string;
   project_id: string;
   path: string;
   title: string;
+  member_ids?: string[];
 }): Promise<Conversation> {
   path = normalizeConversationPath(path);
   title = normalizeConversationTitle(title);
+  const members = normalizeMemberIds(account_id, member_ids);
   await assertCollaborator(account_id, project_id);
+  const outside = await nonCollaborators(project_id, members);
+  if (outside.length > 0) {
+    throw Error(
+      "everyone in the conversation must be a collaborator on this project",
+    );
+  }
   const { rows: registered } = await getPool().query(
     `SELECT ${COLUMNS} FROM project_conversations
      WHERE project_id = $1 AND path = $2`,
@@ -104,11 +134,11 @@ export async function createConversationRecord({
   const { rows } = await getPool().query(
     `INSERT INTO project_conversations
        (conversation_id, project_id, path, title, created_by, created,
-        last_activity, participant_ids)
-     VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), ARRAY[]::uuid[])
+        last_activity, participant_ids, member_ids)
+     VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), ARRAY[]::uuid[], $6::uuid[])
      ON CONFLICT (project_id, path) DO NOTHING
      RETURNING ${COLUMNS}`,
-    [randomUUID(), project_id, path, title, account_id],
+    [randomUUID(), project_id, path, title, account_id, members],
   );
   if (rows[0] != null) return toConversation(rows[0]);
   const existing = await getPool().query(
