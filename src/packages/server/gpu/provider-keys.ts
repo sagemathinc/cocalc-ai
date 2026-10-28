@@ -99,6 +99,8 @@ export interface GpuProviderKeyDeps {
   credentialPods?: (
     credential_id: string,
   ) => Promise<{ id: string; handle: string }[]>;
+  // the per-request timeout of the RunPod client a cleanup capability uses
+  runpodTimeoutMs?: number;
   drain?: (account_id: string, guard: () => Promise<void>) => Promise<unknown>;
   markUnmanaged?: (credential_id: string) => Promise<string[]>;
   drainMs?: number;
@@ -557,7 +559,12 @@ export interface GpuKeyRemoval {
 
 // How long a removal request waits for RunPod to confirm its pods are gone
 // (the browser waits KEY_HOME_BAY_TIMEOUT_MS for the home bay).
-export const KEY_REMOVAL_DRAIN_MS = 20_000;
+export const KEY_REMOVAL_DRAIN_MS = 15_000;
+// Each RunPod call the removal makes: short enough that the 4 s probe, the
+// drain and one call still in flight at its end return within the browser's
+// KEY_HOME_BAY_TIMEOUT_MS (30 s), so it always gets the remaining pods (and
+// "Remove anyway") rather than a timeout.
+export const KEY_REMOVAL_CALL_TIMEOUT_MS = 5_000;
 
 // The caller has already required fresh auth for this session (removal,
 // forced or not, needs it).
@@ -659,7 +666,17 @@ export async function deleteGpuProviderKeyLocal(
     const drain =
       deps.drain ??
       ((a: string, guard: () => Promise<void>) =>
-        pods.resolvePendingForAccount(a, {}, { guard }));
+        pods.resolvePendingForAccount(
+          a,
+          {
+            getCleanup: (acct) =>
+              getRunpodCleanupForAccount(acct, {
+                ...deps,
+                runpodTimeoutMs: KEY_REMOVAL_CALL_TIMEOUT_MS,
+              }),
+          },
+          { guard },
+        ));
     const deadline = Date.now() + (deps.drainMs ?? KEY_REMOVAL_DRAIN_MS);
     // the resolver stops at the deadline too, before its next pod (one slow
     // RunPod call can't turn into a whole batch of them)
@@ -824,7 +841,11 @@ export async function getRunpodCleanupForAccount(
 ): Promise<RunpodCleanupCapability | undefined> {
   const key = await readLocalKey(account_id, deps);
   if (!key) return undefined;
-  const client = new RunpodClient({ apiKey: key.apiKey, fetch: deps.fetch });
+  const client = new RunpodClient({
+    apiKey: key.apiKey,
+    fetch: deps.fetch,
+    ...(deps.runpodTimeoutMs ? { timeoutMs: deps.runpodTimeoutMs } : {}),
+  });
   return Object.freeze({
     credential_id: key.id,
     getProviderIdentity: () => client.getProviderIdentity(),

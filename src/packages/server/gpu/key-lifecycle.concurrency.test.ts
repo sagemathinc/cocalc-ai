@@ -104,6 +104,8 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     });
     // One fake RunPod for verification and creates; records the key used.
     const used: string[] = [];
+    // RunPod stops answering terminates (until the caller aborts)
+    const stall = { terminate: false };
     const fetch = (async (url: string, init: any) => {
       const auth = `${init?.headers?.Authorization ?? ""}`.replace(
         "Bearer ",
@@ -119,6 +121,17 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
           id: `pod_${randomUUID().slice(0, 8)}`,
           name: body.name,
         });
+      }
+      if (
+        stall.terminate &&
+        init?.method === "DELETE" &&
+        path.startsWith("/v2/pods/")
+      ) {
+        return await new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () =>
+            reject(init.signal.reason ?? Error("aborted")),
+          ),
+        );
       }
       if (path === "/v2/organization") {
         return json(403, {
@@ -141,7 +154,7 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       isEntitled: async () => true,
       isHomeBay: async () => true,
     };
-    return { account_id, used, fetch, keyDeps };
+    return { account_id, used, fetch, keyDeps, stall };
   }
 
   function launch(
@@ -708,5 +721,22 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     );
     expect(log.map((l) => l.action)).not.toContain("compromised");
     expect(await storedKey(s.account_id)).toBeUndefined();
+  });
+
+  it("a removal whose RunPod terminates stall still answers in time, with the remaining pods", async () => {
+    const s = await setup();
+    const pod = await launch(s);
+    s.stall.terminate = true;
+    const started = Date.now();
+    const result = await keys.deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      { ...s.keyDeps, drainMs: 1_000, drainPollMs: 100 },
+    );
+    // the stalled call was cut at the removal's per-call timeout, not
+    // RunPod's 30 s default
+    expect(Date.now() - started).toBeLessThan(
+      keys.KEY_REMOVAL_CALL_TIMEOUT_MS + 4_000,
+    );
+    expect(result).toEqual({ revoked: false, remaining: [pod.handle] });
   });
 });
