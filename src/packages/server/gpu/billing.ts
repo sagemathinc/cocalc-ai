@@ -36,7 +36,8 @@ import {
 } from "@cocalc/server/gpu/provider-keys";
 import { raiseAlert } from "@cocalc/server/gpu/alerts";
 import {
-  emailAdminsAboutAlert,
+  adminRecipients,
+  emailAdminAboutAlert,
   projectAdminAlertEmails,
   raiseAdminAlert,
 } from "@cocalc/server/gpu/admin-alerts";
@@ -134,6 +135,15 @@ export function proveBilling(
 
 class BillingInconsistent extends Error {}
 
+// The ended incarnation a pass claimed: still ended, at the same time. A
+// pod bound back or revived since is another incarnation, and the pass's
+// result is stale (a no-op, never an inconsistency).
+function sameEnd(pod: PodRow): string {
+  return `AND state IN ('terminated', 'failed') AND terminated_at = '${new Date(
+    pod.terminated_at!,
+  ).toISOString()}'::timestamptz`;
+}
+
 // Apply a complete bill to every layer's settled reservation of the pod, in
 // one transaction under the budget locks (transition takes them). Throws
 // BillingInconsistent (nothing applied) when the layers disagree.
@@ -150,7 +160,7 @@ async function applyBilling(
       billed_at: new Date(),
       billed_usd,
     },
-    "AND billing_state = 'estimated'",
+    `AND billing_state = 'estimated' ${sameEnd(pod)}`,
     { actor: BILLING_ACTOR, action: "billed", details },
     {
       after: async (db, b) => {
@@ -160,6 +170,10 @@ async function applyBilling(
             WHERE r.pod_id = $1 ORDER BY r.id`,
           [b.id],
         );
+        // no reservation at all is malformed state, not a free pod
+        if (rs.length === 0) {
+          throw new BillingInconsistent("the pod has no reservations");
+        }
         if (rs.some((r: any) => r.state !== "settled")) {
           throw new BillingInconsistent("not every reservation is settled");
         }
@@ -291,8 +305,9 @@ async function claimPod(pod: PodRow, now: Date): Promise<PodRow | undefined> {
             billing_next_at = $2::timestamptz + make_interval(secs => $3)
       WHERE id = $1 AND billing_state = 'estimated'
         AND (billing_next_at IS NULL OR billing_next_at <= $2)
+        AND state IN ('terminated', 'failed') AND terminated_at = $4
       RETURNING *`,
-    [pod.id, now, billingBackoffMs(attempt) / 1000],
+    [pod.id, now, billingBackoffMs(attempt) / 1000, pod.terminated_at],
   );
   return rows[0];
 }
@@ -449,22 +464,29 @@ export async function reconcileKeyBilling(
 // Never proven within 48 h: the estimate stays as the pod's spend, and the
 // owner is told once per key.
 async function markMissing(pod: PodRow): Promise<void> {
-  const done = await transition(
+  // the state and the owner's alert commit together
+  await transition(
     pod.id,
     { billing_state: "missing" },
-    "AND billing_state = 'estimated'",
+    `AND billing_state = 'estimated' ${sameEnd(pod)}`,
     { actor: BILLING_ACTOR, action: "billed", details: { missing: true } },
+    {
+      after: async (db) => {
+        await raiseAlert(
+          {
+            key_owner_account_id: pod.key_owner_account_id,
+            credential_id: pod.credential_id,
+            kind: "billing_missing",
+            severity: "warning",
+            dedupe_key: "key",
+            details: { latest_pod_id: pod.id, handle: pod.handle },
+            observed_at: new Date(),
+          },
+          db,
+        );
+      },
+    },
   );
-  if (!done) return;
-  await raiseAlert({
-    key_owner_account_id: pod.key_owner_account_id,
-    credential_id: pod.credential_id,
-    kind: "billing_missing",
-    severity: "warning",
-    dedupe_key: "key",
-    details: { latest_pod_id: pod.id, handle: pod.handle },
-    observed_at: new Date(),
-  });
 }
 
 // The earliest settlement time in [since, until) among the owner's
@@ -481,7 +503,7 @@ export async function billedThrough(
        JOIN gpu_pods p ON p.id = r.pod_id
       WHERE l.key_owner_account_id = $1 AND r.state = 'settled'
         AND r.settled_at >= $2 AND r.settled_at < $3
-        AND p.billing_state = 'estimated'`,
+        AND p.billing_state = 'estimated' AND p.provider_pod_id IS NOT NULL`,
     [key_owner_account_id, since, until],
   );
   return rows[0]?.first ? new Date(rows[0].first) : until;
@@ -535,6 +557,13 @@ export async function runBillingSweep(
   let keys = 0;
   let billed = 0;
   try {
+    // idempotent backfill: ended pods RunPod never created can't be billed
+    // (a later bind reopens them to estimated)
+    await getPool().query(
+      `UPDATE gpu_pods SET billing_state = 'n/a'
+        WHERE billing_state = 'estimated' AND provider_pod_id IS NULL
+          AND state IN ('terminated', 'failed')`,
+    );
     const queue = await dueKeys(at());
     let next = 0;
     const worker = async () => {
@@ -586,7 +615,11 @@ export function initGpuBilling(): void {
   // admin alerts' email projection (every bay's hub: the rows are local)
   every(
     "admin-alert-email",
-    () => projectAdminAlertEmails(emailAdminsAboutAlert),
+    () =>
+      projectAdminAlertEmails({
+        recipients: adminRecipients,
+        send: emailAdminAboutAlert,
+      }),
     5 * MINUTE,
   );
 }

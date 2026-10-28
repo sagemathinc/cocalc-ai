@@ -17,7 +17,14 @@ import { SCHEMA } from "@cocalc/util/db-schema";
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
 import { lockGpuAccountFence } from "./account-fence";
-import { launchGpuPodLocal, terminateGpuPodLocal, transition } from "./pods";
+import {
+  launchGpuPodLocal,
+  reconcileBindPod,
+  releaseQuarantinedLocal,
+  reviveEndedPod,
+  terminateGpuPodLocal,
+  transition,
+} from "./pods";
 import {
   BILLING_MISSING_AFTER_MS,
   billedThrough,
@@ -446,6 +453,32 @@ describeDb("GPU billing reconciliation", () => {
     ]);
   });
 
+  it("a pod with no reservations is malformed: nothing applied, a critical admin alert", async () => {
+    const s = setup();
+    const pod = await s.endedPod();
+    await getPool().query(
+      "DELETE FROM gpu_pod_reservations WHERE pod_id = $1",
+      [pod.id],
+    );
+    s.setBilling(
+      records(
+        pod.provider_pod_id,
+        new Date(pod.running_since),
+        new Date(pod.terminated_at),
+        0.01,
+      ),
+    );
+    expect((await s.pass(pod, 3)).invalid).toBe(1);
+    expect((await row(pod.id)).billing_state).toBe("estimated");
+    const { rows } = await getPool().query(
+      "SELECT kind, severity FROM gpu_admin_alerts WHERE dedupe_key = $1",
+      [pod.id],
+    );
+    expect(rows).toEqual([
+      { kind: "billing_inconsistent", severity: "critical" },
+    ]);
+  });
+
   it("a zero estimate is still billed; a never-created pod is n/a", async () => {
     const s = setup();
     const pod = await s.endedPod();
@@ -485,6 +518,155 @@ describeDb("GPU billing reconciliation", () => {
       [refused.account_id],
     );
     expect(rows.map((r: any) => r.billing_state)).toEqual(["n/a"]);
+  });
+
+  it("a released quarantine RunPod later shows is bound back with billing reopened", async () => {
+    const s = setup();
+    let handle = "";
+    s.deps.getLaunchAccess = async () =>
+      ({
+        client: {
+          createPod: async (body: any) => {
+            handle = body.name;
+            throw new RunpodApiError("provider", 503);
+          },
+          findPodsByName: async () => [],
+        } as any,
+        credential_id: s.credential_id,
+      }) as any;
+    const p = await launchGpuPodLocal(
+      { account_id: s.account_id, project_id: PROJECT, spec: SPEC },
+      s.deps,
+    );
+    expect(p.state).toBe("ambiguous");
+    await transition(
+      p.id,
+      { state: "failed", terminated_at: new Date() },
+      "AND state = 'ambiguous'",
+      undefined,
+      { settle: "quarantine" },
+    );
+    await releaseQuarantinedLocal(
+      { account_id: s.account_id, pod_id: p.id, fresh_auth_verified: true },
+      s.deps,
+    );
+    expect((await row(p.id)).billing_state).toBe("n/a");
+    await reconcileBindPod(
+      await row(p.id),
+      { id: "pod_bound1", name: handle, cost: 0.5 } as any,
+      { kind: "reconciler" },
+      new Date(),
+    );
+    const r = await row(p.id);
+    expect(r).toEqual(
+      expect.objectContaining({ state: "running", billing_state: "estimated" }),
+    );
+  });
+
+  it("an owner alert's severity only goes up while it is open (a revived pod billed again critically)", async () => {
+    const s = setup();
+    const pod = await s.endedPod();
+    const bill = (amount: number) =>
+      s.setBilling(
+        records(
+          pod.provider_pod_id,
+          new Date(pod.running_since),
+          new Date(pod.terminated_at),
+          0,
+        ).map((r, i) => (i === 0 ? { ...r, totalAmount: amount } : r)),
+      );
+    bill(1);
+    await s.pass(pod, 3);
+    expect(
+      (await alerts(s.credential_id)).find((a: any) => a.kind === "spend_drift")
+        .severity,
+    ).toBe("warning");
+    // revived, ended again, and billed far above: the open alert escalates
+    await reviveEndedPod(await row(pod.id), { kind: "reconciler" }, new Date());
+    await transition(
+      pod.id,
+      { state: "terminated", terminated_at: new Date() },
+      "",
+      undefined,
+      { settle: "actual" },
+    );
+    const again = await row(pod.id);
+    s.setBilling(
+      records(
+        again.provider_pod_id,
+        new Date(again.running_since),
+        new Date(again.terminated_at),
+        0,
+      ).map((r, i) => (i === 0 ? { ...r, totalAmount: 60 } : r)),
+    );
+    await s.pass(again, 3);
+    const drift = (await alerts(s.credential_id)).filter(
+      (a: any) => a.kind === "spend_drift",
+    );
+    expect(drift.map((a: any) => a.severity)).toEqual(["critical"]);
+  });
+
+  it("a billed pod revived after its end has billing reopened", async () => {
+    const s = setup();
+    const pod = await s.endedPod();
+    s.setBilling(
+      records(
+        pod.provider_pod_id,
+        new Date(pod.running_since),
+        new Date(pod.terminated_at),
+        0.01,
+      ),
+    );
+    await s.pass(pod, 3);
+    expect((await row(pod.id)).billing_state).toBe("billed");
+    await reviveEndedPod(await row(pod.id), { kind: "reconciler" }, new Date());
+    expect(await row(pod.id)).toEqual(
+      expect.objectContaining({
+        state: "terminating",
+        billing_state: "estimated",
+        billed_usd: null,
+        billing_attempts: 0,
+      }),
+    );
+  });
+
+  it("a pass that claimed an end before the pod was revived is a stale no-op", async () => {
+    const s = setup();
+    const pod = await s.endedPod();
+    const all = records(
+      pod.provider_pod_id,
+      new Date(pod.running_since),
+      new Date(pod.terminated_at),
+      0.01,
+    );
+    // RunPod answers after the pod was revived (another pass saw it live)
+    s.billingCap.listPodBilling.mockImplementationOnce(async () => {
+      await reviveEndedPod(
+        await row(pod.id),
+        { kind: "reconciler" },
+        new Date(),
+      );
+      return all;
+    });
+    expect(await s.pass(pod, 3)).toEqual(
+      expect.objectContaining({ claimed: 1, billed: 0, invalid: 0 }),
+    );
+    const r = await row(pod.id);
+    expect(r).toEqual(
+      expect.objectContaining({
+        state: "terminating",
+        billing_state: "estimated",
+      }),
+    );
+    const { rows } = await getPool().query(
+      "SELECT 1 FROM gpu_admin_alerts WHERE dedupe_key = $1",
+      [pod.id],
+    );
+    expect(rows).toEqual([]);
+    // ...and 48 h later the same stale pass can't mark the live pod missing
+    s.billingCap.listPodBilling.mockResolvedValueOnce([]);
+    await s.pass(pod, BILLING_MISSING_AFTER_MS / HOUR + 1);
+    expect((await row(pod.id)).billing_state).toBe("estimated");
   });
 
   it("billedThrough: the first settlement still at its estimate, or until", async () => {
@@ -608,6 +790,46 @@ describeDb("GPU billing reconciliation", () => {
       ]);
     });
 
+    it("an admin alert's severity only goes up, and an escalation is emailed again", async () => {
+      const key = randomUUID();
+      await raiseAdminAlert({
+        kind: "billing_inconsistent",
+        severity: "warning",
+        dedupe_key: key,
+      });
+      await getPool().query(
+        "UPDATE gpu_admin_alerts SET emailed_at = now(), email_attempts = 2 WHERE dedupe_key = $1",
+        [key],
+      );
+      await raiseAdminAlert({
+        kind: "billing_inconsistent",
+        severity: "critical",
+        dedupe_key: key,
+      });
+      const { rows } = await getPool().query(
+        "SELECT severity, emailed_at, email_attempts FROM gpu_admin_alerts WHERE dedupe_key = $1",
+        [key],
+      );
+      expect(rows).toEqual([
+        { severity: "critical", emailed_at: null, email_attempts: 0 },
+      ]);
+      // a later warning doesn't lower it (or re-email it)
+      await getPool().query(
+        "UPDATE gpu_admin_alerts SET emailed_at = now() WHERE dedupe_key = $1",
+        [key],
+      );
+      await raiseAdminAlert({
+        kind: "billing_inconsistent",
+        severity: "warning",
+        dedupe_key: key,
+      });
+      const { rows: after } = await getPool().query(
+        "SELECT severity, emailed_at IS NOT NULL AS emailed FROM gpu_admin_alerts WHERE dedupe_key = $1",
+        [key],
+      );
+      expect(after).toEqual([{ severity: "critical", emailed: true }]);
+    });
+
     it("only an admin reads admin alerts", async () => {
       await expect(
         listAdminAlertsLocal(
@@ -642,25 +864,46 @@ describeDb("GPU billing reconciliation", () => {
         [key],
       );
       expect(rows.length).toBe(1);
-      const failing = jest.fn(async () => {
-        throw Error("smtp down");
-      });
-      expect((await projectAdminAlertEmails(failing)).failed).toBeGreaterThan(
-        0,
-      );
+      // two admins; the second's mail fails the first time
+      const admins = [
+        { account_id: "a1", email_address: "a1@example.com" },
+        { account_id: "a2", email_address: "a2@example.com" },
+      ];
+      const sent: string[] = [];
+      let failA2 = true;
+      // (other tests' alerts share this database: count this one's)
+      const send = async (alert: any, to: string) => {
+        if (alert.id !== rows[0].id) return;
+        if (to === "a2@example.com" && failA2) throw Error("smtp down");
+        sent.push(to);
+      };
+      expect(
+        (
+          await projectAdminAlertEmails({
+            recipients: async () => admins,
+            send,
+          })
+        ).failed,
+      ).toBeGreaterThan(0);
       const { rows: a } = await getPool().query(
-        "SELECT emailed_at, email_attempts FROM gpu_admin_alerts WHERE dedupe_key = $1",
+        "SELECT emailed_at, email_attempts, emailed_to FROM gpu_admin_alerts WHERE dedupe_key = $1",
         [key],
       );
-      expect(a[0]).toEqual({ emailed_at: null, email_attempts: 1 });
-      // backoff: retried once 5 min have passed
+      expect(a[0]).toEqual({
+        emailed_at: null,
+        email_attempts: 1,
+        emailed_to: ["a1"],
+      });
+      // backoff: retried once 5 min have passed, only to the admin who
+      // didn't get it
       await getPool().query(
         "UPDATE gpu_admin_alerts SET last_seen = now() - interval '10 minutes' WHERE dedupe_key = $1",
         [key],
       );
-      const sent: string[] = [];
-      await projectAdminAlertEmails(async (x) => void sent.push(x.id));
-      expect(sent).toContain(rows[0].id);
+      failA2 = false;
+      await projectAdminAlertEmails({ recipients: async () => admins, send });
+      expect(sent.filter((x) => x === "a1@example.com").length).toBe(1);
+      expect(sent.filter((x) => x === "a2@example.com").length).toBe(1);
       const { rows: b } = await getPool().query(
         "SELECT emailed_at FROM gpu_admin_alerts WHERE dedupe_key = $1",
         [key],

@@ -207,4 +207,33 @@ describeRealPostgres("GPU billing and the state ledger, concurrently", () => {
       }
     }
   });
+
+  it("two hubs projecting admin alert emails at once send each alert once", async () => {
+    const { raiseAdminAlert, projectAdminAlertEmails } =
+      await import("./admin-alerts");
+    const key = randomUUID();
+    await raiseAdminAlert({
+      kind: "billing_inconsistent",
+      severity: "critical",
+      dedupe_key: key,
+    });
+    const sends: string[] = [];
+    const project = () =>
+      projectAdminAlertEmails({
+        recipients: async () => [
+          { account_id: "a1", email_address: "a1@example.com" },
+        ],
+        send: async (a: { id: string }) => {
+          sends.push(a.id);
+          await new Promise((r) => setTimeout(r, 100));
+        },
+      });
+    await Promise.all([project(), project(), project()]);
+    const { rows } = await getPool().query(
+      "SELECT id, emailed_at FROM gpu_admin_alerts WHERE dedupe_key = $1",
+      [key],
+    );
+    expect(sends.filter((id) => id === rows[0].id).length).toBe(1);
+    expect(rows[0].emailed_at).not.toBeNull();
+  });
 });

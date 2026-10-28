@@ -219,9 +219,9 @@ describeDb("gpu.spend", () => {
       }),
     ]);
     expect(result.totals.spent_usd).toBe("2.5000000000");
-    // RunPod hasn't billed these pods yet (5d-2a): billed through the first
-    // settlement still at its estimate
-    expect(result.billed_through).toBe("2026-10-28T11:00:00.000Z");
+    // these fixture pods have no RunPod id, so billing can't reconcile them
+    // and they don't hold billed_through back (5d-2a): it reaches until
+    expect(result.billed_through).toBe("2026-10-28T12:00:00.000Z");
   });
 
   it("estimates live pods from running_since, as settlement will, and shows holds apart", async () => {

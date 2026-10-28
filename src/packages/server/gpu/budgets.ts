@@ -694,6 +694,15 @@ export async function settleReservations(
       [r.layer_id, moneyToDbString(estimate), moneyToDbString(actual)],
     );
   }
+  // released and never created at RunPod: nothing for billing to reconcile
+  // (every release path settles here; a later bind reopens it)
+  if (settlement.kind === "release") {
+    await db.query(
+      `UPDATE gpu_pods SET billing_state = 'n/a'
+        WHERE id = $1 AND provider_pod_id IS NULL AND billing_state = 'estimated'`,
+      [pod_id],
+    );
+  }
   if (settlement.kind === "quarantine" && quarantined.gt(0)) {
     await alertQuarantined(db, pod_id, quarantined);
   } else if (unquarantined) {

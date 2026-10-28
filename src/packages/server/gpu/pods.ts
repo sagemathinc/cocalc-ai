@@ -445,13 +445,6 @@ export async function transition(
             }
           : { kind: opts.settle },
       );
-      // never created at RunPod: nothing for billing to reconcile
-      if (opts.settle === "release" && !row.provider_pod_id) {
-        await db.query(
-          "UPDATE gpu_pods SET billing_state = 'n/a' WHERE id = $1 AND billing_state = 'estimated'",
-          [id],
-        );
-      }
     }
     if (opts.after) row = (await opts.after(db, row)) || row;
     if (event) {
@@ -460,6 +453,16 @@ export async function transition(
     return row;
   });
 }
+
+// A pod that is live again (bound back, or revived after an end) gets its
+// billing reopened: it will be reconciled after its next end.
+const BILLING_REOPENED = {
+  billing_state: "estimated",
+  billing_next_at: null,
+  billing_attempts: 0,
+  billed_at: null,
+  billed_usd: null,
+};
 
 // ---- the state ledger (5d-2a) ----
 
@@ -1817,6 +1820,8 @@ export async function reviveEndedPod(
       state: "terminating",
       desired_state: "terminated",
       terminated_at: null,
+      // live again: whatever billing resolved for the old end no longer holds
+      ...BILLING_REOPENED,
       provider_seen_at: asked,
       reason:
         "RunPod still had this pod after CoCalc recorded it as ended, so CoCalc is terminating it.",
@@ -1906,6 +1911,8 @@ export async function reconcileBindPod(
       data_center_id: pod.dataCenterId ?? row.data_center_id,
       public_ip: pod.sshDirect?.host ?? null,
       terminated_at: null,
+      // live again: whatever billing resolved for the old end no longer holds
+      ...BILLING_REOPENED,
       provider_seen_at: observed_at,
     },
     // (and only while its key is live: a pass that finishes after the key

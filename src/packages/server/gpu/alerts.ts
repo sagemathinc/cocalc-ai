@@ -74,6 +74,11 @@ export async function raiseAlert(
            AND r.resolved_at IS NOT NULL AND r.resolved_observed_at >= $8::timestamptz)
      ON CONFLICT (credential_id, kind, dedupe_key) WHERE resolved_at IS NULL
      DO UPDATE SET last_seen = GREATEST(gpu_alerts.last_seen, EXCLUDED.last_seen),
+                   -- severity only goes up while the alert is open
+                   severity = CASE
+                     WHEN array_position(ARRAY['info','warning','critical']::text[], EXCLUDED.severity::text)
+                        > array_position(ARRAY['info','warning','critical']::text[], gpu_alerts.severity::text)
+                     THEN EXCLUDED.severity ELSE gpu_alerts.severity END,
                    details = COALESCE(gpu_alerts.details, '{}'::jsonb)
                              || COALESCE(EXCLUDED.details, '{}'::jsonb)`,
     [

@@ -570,6 +570,11 @@ Table({
     resolved_by: { type: "string", pg_type: "varchar(40)" },
     emailed_at: { type: "timestamp" },
     email_attempts: { type: "integer", not_null: true, pg_default: "0" },
+    // the admins it was emailed to (a retry skips them)
+    emailed_to: { type: "array", pg_type: "TEXT[]" },
+    // the hub sending its email now (one at a time, across hubs)
+    email_claim: { type: "string", pg_type: "varchar(64)" },
+    email_claimed_until: { type: "timestamp" },
   },
 });
 

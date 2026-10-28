@@ -24,6 +24,9 @@ const TITLES: Record<GpuAlertKind, string> = {
   quarantined_reservation: "Budget held for a pod CoCalc couldn't confirm",
   compromise_awaiting_revocation: "Delete your compromised key at RunPod",
   compromise_check_pods: "Check your RunPod account for pods",
+  spend_drift: "RunPod billed a pod well above CoCalc's estimate",
+  billing_missing: "RunPod's billing never fully covered a pod",
+  over_budget: "Billing pushed spending past a GPU budget",
 };
 
 const SEVERITY_LABELS = {
