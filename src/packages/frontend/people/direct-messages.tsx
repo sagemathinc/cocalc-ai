@@ -524,18 +524,23 @@ export function DirectConversationView({
         }}
         aria-label="Write a message"
       >
-        <MarkdownInput
-          value={draft}
-          onChange={setDraft}
-          enableUpload
-          onUploadStart={() => setUploads((n) => n + 1)}
-          onUploadEnd={() => setUploads((n) => Math.max(0, n - 1))}
-          onShiftEnter={(value) => void send(value)}
-          placeholder="Write a message (Shift+Enter to send)"
-          autoGrow
-          autoGrowMaxHeight={240}
-          compact
-        />
+        {/* The upload drop zone is height: 100%; inside the composer (a
+            flex item) that resolved to the whole composer and pushed Send
+            out of view. An auto-height block makes it size to the editor. */}
+        <div>
+          <MarkdownInput
+            value={draft}
+            onChange={setDraft}
+            enableUpload
+            onUploadStart={() => setUploads((n) => n + 1)}
+            onUploadEnd={() => setUploads((n) => Math.max(0, n - 1))}
+            onShiftEnter={(value) => void send(value)}
+            placeholder="Write a message (Shift+Enter to send)"
+            autoGrow
+            autoGrowMaxHeight={240}
+            compact
+          />
+        </div>
         <div
           style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}
         >
