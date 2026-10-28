@@ -329,20 +329,11 @@ export const directControl: InterBayDirectApi = {
     pair_key,
     body,
   }) {
-    if (pair_key != null) {
-      const [a, b] = member_ids;
-      if (member_ids.length !== 2 || directPairKey(a, b) !== pair_key) {
-        throw Error("invalid pair");
-      }
-      // A pair always lives on one bay.
-      if ((await homeBay([a, b].sort()[0])) !== bay()) {
-        throw Error("stale pair route");
-      }
-    }
     requireUuid(conversation_id, "conversation_id");
-    // Validate the whole envelope here too: the starter is a member and
-    // active, states cover exactly the members, and this bay is the right
-    // owner (a pair's fixed bay, or the starter's home for a group).
+    // Validate the whole envelope here, from canonical values only: the
+    // starter is a member and active, states cover exactly the members, and
+    // whether this is a pair (two people, no title) is derived here, never
+    // taken from the caller.
     const members = normalizeDirectMembers(account_id, member_ids);
     if (
       members.length !== member_ids.length ||
@@ -350,28 +341,45 @@ export const directControl: InterBayDirectApi = {
     ) {
       throw Error("invalid members");
     }
+    const canonicalTitle = normalizeDirectTitle(title);
+    if ((title ?? null) !== canonicalTitle) throw Error("invalid title");
     const keys = Object.keys(member_states ?? {});
     if (
       keys.length !== members.length ||
       !members.every((id) => keys.includes(id)) ||
-      member_states[account_id] !== "active" ||
+      member_states[members[0]] !== "active" ||
       !Object.values(member_states).every(
         (state) => state === "active" || state === "requested",
       )
     ) {
       throw Error("invalid member states");
     }
-    if (pair_key == null && (await homeBay(account_id)) !== bay()) {
-      throw Error("stale account-home route");
+    const expectedPairKey =
+      members.length === 2 && canonicalTitle == null
+        ? directPairKey(members[0], members[1])
+        : null;
+    if ((pair_key ?? null) !== expectedPairKey) throw Error("invalid pair");
+    // The right owner: a pair's one bay (the smaller account's home), or the
+    // starter's home for a group.
+    const expectedOwner =
+      expectedPairKey != null
+        ? await homeBay([...members].sort()[0])
+        : await homeBay(members[0]);
+    if (expectedOwner !== bay()) {
+      throw Error(
+        expectedPairKey != null
+          ? "stale pair route"
+          : "stale account-home route",
+      );
     }
     const { created, conversation } = await createDirectConversationRecord({
       conversation_id,
       owner_bay_id: bay(),
-      created_by: account_id,
-      member_ids,
+      created_by: members[0],
+      member_ids: members,
       member_states,
-      title,
-      pair_key,
+      title: canonicalTitle,
+      pair_key: expectedPairKey,
       body: body == null ? null : normalizeDirectBody(body),
     });
     if (created) await deliverNow(conversation.conversation_id);

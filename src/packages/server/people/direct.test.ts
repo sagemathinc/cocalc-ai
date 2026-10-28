@@ -66,6 +66,7 @@ import {
   getDirectConversationRecord,
   upsertDirectIndex,
 } from "@cocalc/database/postgres/direct-conversations";
+import { directPairKey } from "@cocalc/util/direct-conversations";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -641,6 +642,35 @@ describeDb("direct conversations", () => {
         pair_key: "not-a-pair",
       }),
     ).rejects.toThrow("invalid pair");
+    // Whether it's a pair is derived from the canonical envelope, never
+    // taken from the caller: two people and no title is a pair, with its key.
+    const pair_key = directPairKey(ada, bea);
+    await expect(
+      directControl.create({ ...base, title: null, pair_key: null }),
+    ).rejects.toThrow("invalid pair");
+    await expect(directControl.create({ ...base, pair_key })).rejects.toThrow(
+      "invalid pair",
+    );
+    await expect(
+      directControl.create({ ...base, title: "  Group  " }),
+    ).rejects.toThrow("invalid title");
+    // A pair belongs on the smaller account's home bay only.
+    mockHomes[ada] = "bay-1";
+    mockHomes[bea] = "bay-1";
+    await expect(
+      directControl.create({ ...base, title: null, pair_key }),
+    ).rejects.toThrow("stale pair route");
+    delete mockHomes[ada];
+    delete mockHomes[bea];
+    // Canonical member ids are what is stored, whatever the caller's casing.
+    const { created, conversation } = await directControl.create({
+      ...base,
+      member_ids: [ada, bea.toUpperCase()],
+      title: null,
+      pair_key,
+    });
+    expect(created).toBe(true);
+    expect(conversation.member_ids).toEqual([ada, bea]);
   });
 
   test("limits: empty messages, banned senders", async () => {
