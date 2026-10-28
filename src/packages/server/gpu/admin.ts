@@ -12,7 +12,8 @@ bypasses only that staleness check, never a budget check.
 */
 
 import { randomUUID } from "node:crypto";
-import getPool from "@cocalc/database/pool";
+import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
+import { inTransaction } from "@cocalc/server/gpu/pods";
 import { isValidUUID } from "@cocalc/util/misc";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
@@ -38,6 +39,8 @@ export interface GpuAdminDeps {
   freshAuth?: typeof requireDangerousSessionAuth;
   homeClient?: (account_id: string) => Promise<InterBayGpuApi | undefined>;
   now?: () => number;
+  // for tests: the account fence (default: lockGpuAccountFence)
+  accountWriteFence?: typeof lockGpuAccountFence;
 }
 
 function checkInputs(opts: {
@@ -72,11 +75,20 @@ export async function allowStaleWorkersLocal(
   const now = new Date((deps.now ?? Date.now)());
   const expires = new Date(now.getTime() + hours * 3_600_000);
   const id = randomUUID();
-  await getPool().query(
-    `INSERT INTO gpu_worker_overrides (id, key_owner_account_id, admin_account_id, reason, created, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, account_id, opts.admin_account_id, reason, now, expires],
-  );
+  // under the account fence launches take, with the home-bay check made
+  // under it: an account moving to another bay can't leave this behind
+  await inTransaction(async (db) => {
+    await (deps.accountWriteFence ?? lockGpuAccountFence)(
+      db,
+      account_id,
+      "allow GPU launches while workers are stale",
+    );
+    await db.query(
+      `INSERT INTO gpu_worker_overrides (id, key_owner_account_id, admin_account_id, reason, created, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, account_id, opts.admin_account_id, reason, now, expires],
+    );
+  });
   return { id, account_id, expires_at: expires.toISOString() };
 }
 

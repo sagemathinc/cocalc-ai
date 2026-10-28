@@ -89,6 +89,15 @@ function setup() {
   };
 }
 
+// the real fence, on the account row it needs (same transaction)
+async function fenceWithAccount(db: any, id: string, action: string) {
+  await db.query(
+    "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+    [id],
+  );
+  await lockGpuAccountFence(db, id, action);
+}
+
 async function row(id: string) {
   const { rows } = await getPool().query(
     "SELECT * FROM gpu_pods WHERE id = $1",
@@ -288,6 +297,7 @@ describeDb("GPU reaper", () => {
         isAdmin: async () => true,
         freshAuth: async () => ({}) as any,
         homeClient: async () => undefined,
+        accountWriteFence: fenceWithAccount,
       },
     );
     expect(override.account_id).toBe(s.account_id);
@@ -316,6 +326,7 @@ describeDb("GPU reaper", () => {
       isAdmin: async () => true,
       freshAuth: async () => ({}) as any,
       homeClient: async () => undefined,
+      accountWriteFence: fenceWithAccount,
     };
     await expect(
       allowStaleWorkers(base, { ...ok, isAdmin: async () => false }),
@@ -343,14 +354,38 @@ describeDb("GPU reaper", () => {
     ).rejects.toThrow();
     expect(
       (
-        await allowStaleWorkersLocal({
-          admin_account_id: base.account_id,
-          account_id: target,
-          hours: 24,
-          reason: base.reason,
-        })
+        await allowStaleWorkersLocal(
+          {
+            admin_account_id: base.account_id,
+            account_id: target,
+            hours: 24,
+            reason: base.reason,
+          },
+          { accountWriteFence: fenceWithAccount },
+        )
       ).account_id,
     ).toBe(target);
+  });
+
+  it("writes an override only on the account's home bay, under its fence", async () => {
+    const target = randomUUID();
+    await getPool().query(
+      "INSERT INTO accounts (account_id, home_bay_id) VALUES ($1, 'bay-elsewhere')",
+      [target],
+    );
+    await expect(
+      allowStaleWorkersLocal({
+        admin_account_id: randomUUID(),
+        account_id: target,
+        hours: 1,
+        reason: "a good enough reason",
+      }),
+    ).rejects.toThrow(/homed on bay-elsewhere/);
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_worker_overrides WHERE key_owner_account_id = $1",
+      [target],
+    );
+    expect(rows[0].n).toBe(0);
   });
 
   it("terminates a Community kernel pod that never got a public SSH port", async () => {
