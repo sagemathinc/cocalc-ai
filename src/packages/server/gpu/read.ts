@@ -434,13 +434,26 @@ export async function getGpuPodsLocal(
       };
     }
     const ids = new Set(bound.map((r) => r.provider_pod_id!));
-    pods =
-      podId != null && bound.length === 1
-        ? await runpod(async () => {
-            const pod = await c.getPod(bound[0].provider_pod_id!);
-            return pod ? [pod] : [];
-          })
-        : (await runpod(() => c.listPods())).filter((p) => ids.has(p.id));
+    try {
+      pods =
+        podId != null && bound.length === 1
+          ? await runpod(async () => {
+              const pod = await c.getPod(bound[0].provider_pod_id!);
+              return pod ? [pod] : [];
+            })
+          : (await runpod(() => c.listPods())).filter((p) => ids.has(p.id));
+    } catch (err) {
+      // e.g. a key revoked at RunPod: the records matter most then. The
+      // error is readError's (our words, never provider text).
+      return {
+        provider,
+        as_of,
+        scope,
+        pods: [],
+        records: selected,
+        live_error: `${(err as Error)?.message ?? err}`,
+      };
+    }
     await (deps.recordAddresses ?? recordSeenAddresses)(selected, pods).catch(
       () => {},
     );

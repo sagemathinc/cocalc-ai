@@ -454,6 +454,37 @@ describe("gpu.pods", () => {
     expect(result.live_error).toMatch(/No RunPod API key is connected/);
   });
 
+  it("still returns the managed records when RunPod rejects the key, with no provider text", async () => {
+    const record = {
+      id: "00000000-1000-4000-8000-000000000099",
+      handle: "cc-7f3k9q2xa4mbn6wd",
+      provider: "runpod",
+      provider_pod_id: "pod_abc123",
+      state: "running",
+      desired_state: "running",
+    } as any;
+    const rp = fakeRunpod({
+      "/v2/pods": {
+        status: 401,
+        body: { detail: `invalid key ${KEY} (secret provider text)` },
+      },
+    });
+    const result = await getGpuPods(
+      { account_id: ACCOUNT },
+      { ...rp, listManaged: async () => [record] },
+    );
+    expect(result.records).toEqual([record]);
+    expect(result.pods).toEqual([]);
+    expect(result.live_error).toMatch(/RunPod rejected your API key/);
+    const text = JSON.stringify(result);
+    expect(text).not.toContain(KEY);
+    expect(text).not.toContain("secret provider text");
+    // the account-wide listing still fails hard
+    await expect(
+      getGpuPods({ account_id: ACCOUNT, scope: "account" }, rp),
+    ).rejects.toThrow("RunPod rejected your API key");
+  });
+
   it("hides why the key could not be loaded", async () => {
     await expect(
       getGpuPods(
