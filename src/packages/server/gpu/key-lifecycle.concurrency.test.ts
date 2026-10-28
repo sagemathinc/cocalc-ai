@@ -53,7 +53,13 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       gpu_pods: SCHEMA.gpu_pods,
       gpu_pod_events: SCHEMA.gpu_pod_events,
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
+      gpu_worker_leases: SCHEMA.gpu_worker_leases,
+      gpu_worker_overrides: SCHEMA.gpu_worker_overrides,
     });
+    // a reaper that has just completed a pass (launches need one)
+    await getPool().query(
+      "INSERT INTO gpu_worker_leases (name, last_completed_at) VALUES ('reaper', now() + interval '10 years') ON CONFLICT (name) DO UPDATE SET last_completed_at = EXCLUDED.last_completed_at",
+    );
     keys = await import("./provider-keys");
     pods = await import("./pods");
     store = await import("@cocalc/server/external-credentials/store");

@@ -14,7 +14,7 @@ import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
-import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { lockGpuAccountFence } from "./account-fence";
 import { launchGpuPodLocal, listManagedGpuPodsLocal } from "./pods";
 import {
   LAPSE_GRACE_MS,
@@ -63,12 +63,13 @@ function setup() {
     getLaunchAccess: async () => ({ client: client as any, credential_id }),
     getCleanup: async () => ({ ...client, credential_id }) as any,
     listPrice: async () => 0.5,
-    accountFence: async (opts: any) => {
-      await getPool().query(
+    // the real fence, on the account row it needs (same transaction)
+    accountWriteFence: async (db: any, id: string, action: string) => {
+      await db.query(
         "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
-        [opts.account_id],
+        [id],
       );
-      return await withAccountRehomeWriteFence(opts);
+      await lockGpuAccountFence(db, id, action);
     },
     isEntitled: async () => entitled,
     now: () => clock,
