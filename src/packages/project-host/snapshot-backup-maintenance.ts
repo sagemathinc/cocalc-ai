@@ -935,7 +935,10 @@ const DEFAULT_SNAPSHOT_LIMIT = 250;
 export interface SnapshotReobservationStats {
   /** Re-observed read-only and reported. */
   observed: number;
-  /** Needed the full update (changed, at the limit, volume unavailable). */
+  /** Of those observed: changed, but the next snapshot is not due yet. */
+  interval_wait: number;
+  /** Needed the full update (changed and due, at the limit, volume
+   * unavailable). */
   fallback: number;
   /** Re-observed with expired snapshots, left to the deferred prune. */
   prune_queued: number;
@@ -951,6 +954,7 @@ export interface SnapshotReobservationStats {
 
 const reobservationStats: SnapshotReobservationStats = {
   observed: 0,
+  interval_wait: 0,
   fallback: 0,
   prune_queued: 0,
   dropped: 0,
@@ -2116,11 +2120,25 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             project_id,
             counts,
           });
-          // Only an unchanged project under its limit can be confirmed by
-          // reading; anything else needs the full update.
+          // Changed since its latest snapshot (a running project's own log
+          // and pid files are enough), but its next snapshot is not due yet:
+          // the full update would only report that it waits for the
+          // interval, so report that from here, never "unchanged". The
+          // snapshot lane takes the snapshot when it is due.
+          const intervalDueAt =
+            inspected?.changed && inspected.latest_snapshot_at != null
+              ? snapshotDueAt(
+                  { ...row, last_snapshot: inspected.latest_snapshot_at },
+                  schedule,
+                )
+              : undefined;
+          const intervalWaiting =
+            intervalDueAt != null && intervalDueAt > Date.now();
+          // Otherwise only an unchanged project under its limit can be
+          // confirmed by reading; anything else needs the full update.
           if (
             inspected == null ||
-            inspected.changed ||
+            (inspected.changed && !intervalWaiting) ||
             inspected.snapshot_count >=
               (row.max_snapshots_per_project ?? DEFAULT_SNAPSHOT_LIMIT)
           ) {
@@ -2156,11 +2174,20 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             storage_service_class: row.storage_service_class,
             observed_at: new Date().toISOString(),
             outcome: "skipped",
-            reason: "no_content_change",
+            // As the full update reports these two cases.
+            reason: intervalWaiting
+              ? "snapshot_interval_wait"
+              : "no_content_change",
             latest_snapshot_at: inspected.latest_snapshot_at,
-            reconciled_change_at: row.last_changed ?? row.last_edited,
-            schedule_revision: row.snapshot_schedule_revision,
-            due_at: null,
+            reconciled_change_at: intervalWaiting
+              ? null
+              : (row.last_changed ?? row.last_edited),
+            schedule_revision: intervalWaiting
+              ? null
+              : row.snapshot_schedule_revision,
+            due_at: intervalWaiting
+              ? new Date(intervalDueAt!).toISOString()
+              : null,
             attempt_due_at: null,
             duration_ms: reobservationMs,
             stage_durations_ms: {
@@ -2172,6 +2199,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             consecutive_failures: row.snapshot_failures ?? 0,
           });
           reobservationStats.observed++;
+          if (intervalWaiting) {
+            reobservationStats.interval_wait++;
+            onFutureDue?.(project_id, intervalDueAt!);
+          }
           return false;
         };
         let fallback = false;

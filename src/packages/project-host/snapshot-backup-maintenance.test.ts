@@ -3514,6 +3514,63 @@ describe("deferred snapshot prunes", () => {
       ]);
     });
 
+    it("reports a changed project whose next snapshot is not due as waiting, never as unchanged", async () => {
+      // Prod asia-3, 2026-10-28: a running free project's own runtime files
+      // (its log and pid file) move the btrfs generation, so every daily
+      // re-observation fell back to the full update, which busy storage
+      // deferred, and the observation went stale.
+      const recentSnapshot = new Date(Date.now() - 2 * 60 * 60_000);
+      const dueAt = new Date(recentSnapshot.getTime() + 24 * 60 * 60_000);
+      listProjectMaintenanceSchedulesMock.mockResolvedValue([
+        idleRow({
+          last_edited: new Date(Date.now() - 60 * 60_000).toISOString(),
+          last_snapshot: recentSnapshot.toISOString(),
+          // A free project's schedule: daily snapshots, no frequent ones.
+          snapshots: { frequent: 0, daily: 1, weekly: 3, monthly: 4 },
+        }),
+      ]);
+      inspectScheduledSnapshotsMock.mockResolvedValue({
+        latest_snapshot_at: recentSnapshot.toISOString(),
+        changed: true,
+        snapshot_count: 5,
+        expired: 0,
+      });
+      admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
+        admitted: false,
+        would_defer: true,
+        starvation_override: false,
+        reason: "io_pressure_recovery",
+        operation_id: operation_kind,
+        release: releaseStorageOperationMock,
+      }));
+      const {
+        getSnapshotReobservationStats,
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-reobserve",
+      });
+      await settle();
+      expect(admitStorageOperationMock).not.toHaveBeenCalled();
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(snapshotReports()).toEqual([
+        expect.objectContaining({
+          project_id: "proj-idle",
+          outcome: "skipped",
+          reason: "snapshot_interval_wait",
+          latest_snapshot_at: recentSnapshot.toISOString(),
+          reconciled_change_at: null,
+          schedule_revision: null,
+          due_at: dueAt.toISOString(),
+        }),
+      ]);
+      expect(getSnapshotReobservationStats()).toMatchObject({
+        observed: 1,
+        interval_wait: 1,
+        fallback: 0,
+      });
+    });
+
     it("leaves expired snapshots to the deferred prune, which never takes a recovery slot", async () => {
       inspectScheduledSnapshotsMock.mockResolvedValue({
         latest_snapshot_at: lastSnapshot,
@@ -3566,6 +3623,8 @@ describe("deferred snapshot prunes", () => {
     });
 
     it.each([
+      // The bay records no change since the latest snapshot, so none is
+      // due: a change only the host sees needs the full update.
       ["changed", { changed: true, snapshot_count: 5, expired: 0 }],
       ["at its limit", { changed: false, snapshot_count: 8, expired: 0 }],
       ["unavailable", undefined],
