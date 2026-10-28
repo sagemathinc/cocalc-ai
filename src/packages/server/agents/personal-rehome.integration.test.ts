@@ -5,6 +5,7 @@ import { AgentStore } from "./store";
 import {
   COMPUTER_STATE_TABLES,
   EXTERNAL_AGENT_STATE_TABLES,
+  GPU_AGENT_STATE_TABLES,
   GPU_STATE_TABLES,
   PERSONAL_AGENT_STATE_TABLES,
   assertNoPersonalStateForRehome,
@@ -20,6 +21,7 @@ describeDb("Agent Network account rehome fence", () => {
     ...EXTERNAL_AGENT_STATE_TABLES,
     ...COMPUTER_STATE_TABLES,
     ...GPU_STATE_TABLES,
+    ...GPU_AGENT_STATE_TABLES,
   ];
   beforeAll(async () => {
     await syncSchema({
@@ -107,6 +109,21 @@ describeDb("Agent Network account rehome fence", () => {
     await db.query(
       "INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated) VALUES ($1, $2, 'active', now(), now())",
       [randomUUID(), account],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "GPU pods, GPU budgets",
+    );
+  });
+
+  test("an agent's GPU request blocks a rehome, even without a grant", async () => {
+    const account = randomUUID();
+    await assertNoPersonalStateForRehome(db, account);
+    const key = `session:${"a".repeat(64)}`;
+    await db.query(
+      `INSERT INTO gpu_agent_requests (request_id, account_id, project_id, agent_id, run_id,
+         operation_id, payload, payload_hash, state, created, expires_at)
+       VALUES ($1, $2, $3, $4, $4, 'op-1', '{}', $5, 'denied', now(), now())`,
+      [randomUUID(), account, randomUUID(), key, "b".repeat(64)],
     );
     await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
       "GPU pods, GPU budgets",
