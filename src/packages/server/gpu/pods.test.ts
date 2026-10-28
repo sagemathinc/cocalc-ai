@@ -556,6 +556,106 @@ describeDb("GPU pods", () => {
     expect(rp.pods.size).toBe(0);
   });
 
+  // Fail only the event that records "terminating", so earlier writes (the
+  // bind, the terminate request) succeed and this step alone fails.
+  async function failTerminatingEvents<T>(fn: () => Promise<T>): Promise<T> {
+    await getPool().query(`
+      CREATE OR REPLACE FUNCTION gpu_test_fail_terminating() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.details->>'state' = 'terminating' THEN
+          RAISE EXCEPTION 'event write failed (test)';
+        END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql`);
+    await getPool().query(
+      "CREATE TRIGGER gpu_test_fail_terminating BEFORE INSERT ON gpu_pod_events FOR EACH ROW EXECUTE FUNCTION gpu_test_fail_terminating()",
+    );
+    try {
+      return await fn();
+    } finally {
+      await getPool().query(
+        "DROP TRIGGER gpu_test_fail_terminating ON gpu_pod_events",
+      );
+    }
+  }
+
+  it("a direct terminate asks RunPod only once terminating is recorded", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    rp.client.terminatePod.mockClear();
+    await failTerminatingEvents(async () => {
+      await expect(
+        terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+      ).rejects.toThrow("couldn't record the termination yet");
+    });
+    expect(rp.client.terminatePod).not.toHaveBeenCalled();
+    const { rows } = await getPool().query(
+      "SELECT state, desired_state FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0]).toEqual({ state: "running", desired_state: "terminated" });
+    // retried later: terminated
+    expect(
+      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+    ).toEqual({ state: "terminated" });
+    expect(rp.pods.size).toBe(0);
+  });
+
+  it("a raced bind asks RunPod only once terminating is recorded", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const create = rp.client.createPod.getMockImplementation()!;
+    rp.client.createPod.mockImplementationOnce(async (body: any) => {
+      await gate;
+      return await create(body);
+    });
+    const launching = launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    let pod;
+    for (let i = 0; i < 100 && !pod; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      [pod] = await listManagedGpuPodsLocal({ account_id }, d);
+    }
+    await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d);
+    rp.client.terminatePod.mockClear();
+    const result = await failTerminatingEvents(async () => {
+      release();
+      return await launching;
+    });
+    expect(rp.client.terminatePod).not.toHaveBeenCalled();
+    expect([result.state, result.desired_state]).toEqual([
+      "running",
+      "terminated",
+    ]);
+    // the next listing records it and terminates the pod
+    await listManagedGpuPodsLocal({ account_id }, d);
+    expect(rp.pods.size).toBe(0);
+  });
+
+  it("a CAS miss acts only on a durably terminating record", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    // already terminating (recorded by someone else): retried
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'terminating', desired_state = 'terminated' WHERE id = $1",
+      [pod.id],
+    );
+    rp.client.terminatePod.mockClear();
+    expect(
+      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+    ).toEqual({ state: "terminated" });
+    expect(rp.client.terminatePod).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps each account's pods to itself", async () => {
     const owner = deps(randomUUID());
     const other = deps(randomUUID(), owner.rp);

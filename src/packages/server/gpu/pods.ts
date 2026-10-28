@@ -584,13 +584,11 @@ async function bind(
     if (bound.desired_state === "terminated") {
       // Marked terminating first: if RunPod doesn't confirm, the record
       // still says the pod must go, and the next listing (or terminate, or
-      // the step 5 reaper) retries.
-      const terminating =
-        (await transition(
-          bound.id,
-          { state: "terminating" },
-          "AND state = 'running'",
-        )) ?? bound;
+      // the step 5 reaper) retries. If even that can't be recorded, RunPod
+      // isn't asked now: the record stays running with the terminate
+      // pending, for the next pass.
+      const terminating = await recordTerminating(bound, actor);
+      if (!terminating) return await loadPod(bound.id);
       try {
         return await terminateBound(terminating, client, actor);
       } catch {
@@ -857,13 +855,13 @@ export async function terminateGpuPodLocal(
         return { state: current.state };
       }
     }
-    current =
-      (await transition(
-        row.id,
-        { state: "terminating" },
-        "AND state IN ('running', 'stopped', 'terminating')",
-      )) ?? current;
-    return { state: (await terminateBound(current, c, actor)).state };
+    const terminating = await recordTerminating(current, actor);
+    if (!terminating) {
+      throw Error(
+        "CoCalc couldn't record the termination yet, so RunPod wasn't asked. It stays pending and will be retried; try again shortly.",
+      );
+    }
+    return { state: (await terminateBound(terminating, c, actor)).state };
   } catch (err) {
     if (err instanceof RunpodApiError) {
       throw Error(
