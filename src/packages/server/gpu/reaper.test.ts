@@ -729,4 +729,24 @@ describeDb("GPU reaper", () => {
     expect(result).toEqual(expect.objectContaining({ ran: true }));
     expect((await row(pod.id)).state).toBe("running");
   });
+
+  it("backs off an ambiguous create whose RunPod lookup fails", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'ambiguous', provider_pod_id = NULL WHERE id = $1",
+      [pod.id],
+    );
+    s.client.findPodsByName.mockRejectedValue(
+      new RunpodApiError("provider", 503),
+    );
+    const result = await runGpuReaperSweep(s.deps);
+    expect(result).toEqual(expect.objectContaining({ complete: true }));
+    // one lookup, then backed off: not repeated pass after pass
+    expect(s.client.findPodsByName).toHaveBeenCalledTimes(1);
+    const r = await row(pod.id);
+    expect(r.state).toBe("ambiguous");
+    expect(r.reap_attempts).toBe(1);
+    expect(new Date(r.reap_after).getTime()).toBe(s.deps.now() + 60_000);
+  });
 });

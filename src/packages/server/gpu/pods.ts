@@ -1178,7 +1178,14 @@ export async function resolvePendingForAccount(
     });
   }
   for (const row of (rows as PodRow[]).filter(ours)) {
-    await attempt(row, () => resolveAmbiguous(row, c, actor, deps));
+    await attempt(row, async () => {
+      // still unresolved (RunPod's inventory couldn't be read, and the
+      // window hasn't closed): a failed attempt, backed off like any other
+      const after = await resolveAmbiguous(row, c, actor, deps);
+      if (after?.state === "ambiguous") {
+        throw Error("the ambiguous create is still unresolved");
+      }
+    });
   }
   // a full batch may have more behind it: the caller passes again
   return {

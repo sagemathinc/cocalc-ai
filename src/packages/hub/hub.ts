@@ -416,6 +416,10 @@ async function startServer(): Promise<void> {
       60 * 60 * 1000,
     );
     eraseTimer.unref?.();
+    // The GPU reaper runs on every API hub: its lease lets one sweep run at a
+    // time on the bay, and launches fail closed unless a sweep completed
+    // recently, so it must run wherever the API does.
+    initGpuReaper();
     // GPU pods' host-key registration verifiers are retired a window after
     // use or expiry (a report never sweeps other rows). Indexed and
     // idempotent, so every API hub can run it.
@@ -445,7 +449,6 @@ async function startServer(): Promise<void> {
     // upgrades of projects.
     initPurchasesMaintenanceLoop();
     initEphemeralMaintenance();
-    initGpuReaper();
     initDeletedAccountRetention();
     initSalesloftMaintenance();
     initDeleteExpiredLoop();
