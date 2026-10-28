@@ -40,6 +40,7 @@ import {
   emailAdminAboutAlert,
   projectAdminAlertEmails,
   raiseAdminAlert,
+  resolveAdminAlert,
 } from "@cocalc/server/gpu/admin-alerts";
 import {
   acquireWorkerLease,
@@ -232,6 +233,15 @@ async function applyBilling(
           }
         }
         await drift(db, b, toDecimal(estimate_usd), billed);
+        // billed after all: an earlier inconsistency about it is over
+        await resolveAdminAlert(
+          {
+            kind: "billing_inconsistent",
+            dedupe_key: b.id,
+            resolved_by: "billing",
+          },
+          db,
+        );
       },
     },
   );

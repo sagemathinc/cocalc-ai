@@ -5159,3 +5159,66 @@ describe("a pod's host key is registered on the bay that minted its token", () =
     });
   });
 });
+
+describe("GPU admin alerts are read from every bay through one hub", () => {
+  // Each bay keeps its own alerts; an admin on the seed sees both, each
+  // tagged with its bay, and can ask for one bay only.
+  const KEYS = { [SEED]: randomUUID(), [ATTACHED]: randomUUID() };
+  let admin;
+
+  before(async () => {
+    admin = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "gpu-alerts-admin",
+    });
+    for (const bay of [SEED, ATTACHED]) {
+      await runInBay(
+        cluster,
+        bay,
+        `const getPool = require("@cocalc/database/pool").default;
+         await getPool().query(
+           "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+           [${JSON.stringify(admin.account_id)}]);
+         await server("gpu/admin-alerts.js").raiseAdminAlert({
+           kind: "billing_inconsistent",
+           severity: "warning",
+           dedupe_key: ${JSON.stringify(KEYS[bay])},
+         });`,
+      );
+    }
+    admin.client = await client(admin);
+  });
+
+  const ours = (alerts) =>
+    alerts
+      .filter((a) => Object.values(KEYS).includes(a.dedupe_key))
+      .map((a) => [a.bay_id, a.dedupe_key])
+      .sort();
+
+  it("lists both bays' alerts, each tagged with its bay", async () => {
+    const r = await admin.client.call("gpu.adminAlerts", {});
+    assert.deepEqual(r.errors, []);
+    assert.deepEqual(ours(r.alerts), [
+      [SEED, KEYS[SEED]],
+      [ATTACHED, KEYS[ATTACHED]],
+    ]);
+  });
+
+  it("reads only the selected bay, and refuses an unknown one", async () => {
+    const r = await admin.client.call("gpu.adminAlerts", {
+      bay_id: ATTACHED,
+    });
+    assert.deepEqual(ours(r.alerts), [[ATTACHED, KEYS[ATTACHED]]]);
+    await assert.rejects(
+      admin.client.call("gpu.adminAlerts", { bay_id: "bay-nope" }),
+      /unknown or unavailable bay/,
+    );
+  });
+
+  it("refuses an account that isn't an admin", async () => {
+    await assert.rejects(
+      bob.client.call("gpu.adminAlerts", {}),
+      /Only an admin/,
+    );
+  });
+});

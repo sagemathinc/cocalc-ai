@@ -174,6 +174,13 @@ async function alerts(credential_id: string) {
 }
 
 const n = (v: unknown) => Number(v ?? 0);
+const resolution = async (pod_id: string) =>
+  (
+    await getPool().query(
+      "SELECT resolved_at IS NOT NULL AS resolved, resolved_by FROM gpu_admin_alerts WHERE kind = 'billing_inconsistent' AND dedupe_key = $1",
+      [pod_id],
+    )
+  ).rows;
 
 describeDb("GPU billing reconciliation", () => {
   beforeAll(async () => {
@@ -404,6 +411,12 @@ describeDb("GPU billing reconciliation", () => {
     expect(rows).toEqual([
       { kind: "billing_inconsistent", severity: "warning" },
     ]);
+    // a later complete answer bills it and ends the alert, in one commit
+    s.setBilling(all);
+    expect((await s.pass(pod, 4)).billed).toBe(1);
+    expect(await resolution(pod.id)).toEqual([
+      { resolved: true, resolved_by: "billing" },
+    ]);
   });
 
   it("layers that disagree on a pod's spend: nothing applied, and the admin alert survives the rollback", async () => {
@@ -450,6 +463,15 @@ describeDb("GPU billing reconciliation", () => {
     );
     expect(rows).toEqual([
       { kind: "billing_inconsistent", severity: "critical" },
+    ]);
+    // repaired: the next pass bills it and ends the critical alert
+    await getPool().query(
+      "DELETE FROM gpu_pod_reservations WHERE layer_id = $1",
+      [projectLayer],
+    );
+    expect((await s.pass(pod, 4)).billed).toBe(1);
+    expect(await resolution(pod.id)).toEqual([
+      { resolved: true, resolved_by: "billing" },
     ]);
   });
 
@@ -644,6 +666,11 @@ describeDb("GPU billing reconciliation", () => {
       new Date(pod.terminated_at),
       0.01,
     );
+    await raiseAdminAlert({
+      kind: "billing_inconsistent",
+      severity: "warning",
+      dedupe_key: pod.id,
+    });
     // RunPod answers after the pod was revived (another pass saw it live)
     s.billingCap.listPodBilling.mockImplementationOnce(async () => {
       await reviveEndedPod(
@@ -663,11 +690,10 @@ describeDb("GPU billing reconciliation", () => {
         billing_state: "estimated",
       }),
     );
-    const { rows } = await getPool().query(
-      "SELECT 1 FROM gpu_admin_alerts WHERE dedupe_key = $1",
-      [pod.id],
-    );
-    expect(rows).toEqual([]);
+    // an earlier inconsistency stays open: the stale pass billed nothing
+    expect(await resolution(pod.id)).toEqual([
+      { resolved: false, resolved_by: null },
+    ]);
     // ...and 48 h later the same stale pass can't mark the live pod missing
     s.billingCap.listPodBilling.mockResolvedValueOnce([]);
     await s.pass(pod, BILLING_MISSING_AFTER_MS / HOUR + 1);

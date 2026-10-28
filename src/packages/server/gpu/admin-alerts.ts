@@ -77,6 +77,22 @@ export async function raiseAdminAlert(
   );
 }
 
+// End an open alert (in the transaction that proved it no longer holds);
+// a hub still emailing it loses its claim.
+export async function resolveAdminAlert(
+  a: { kind: GpuAdminAlertKind; dedupe_key: string; resolved_by: string },
+  db: Db = getPool(),
+): Promise<boolean> {
+  const { rowCount } = await db.query(
+    `UPDATE gpu_admin_alerts
+        SET resolved_at = now(), resolved_by = $3,
+            email_claim = NULL, email_claimed_until = NULL
+      WHERE kind = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+    [a.kind, a.dedupe_key.slice(0, 128), a.resolved_by.slice(0, 40)],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 // at most this many alerts per projection
 const EMAIL_BATCH = 20;
 // how long a hub holds an alert's email; renewed before every send, and
