@@ -533,4 +533,69 @@ describeRealPostgres("GPU reconcile passes that overlap", () => {
     );
     expect(settled.map((r: any) => r.state)).toEqual(["settled"]);
   });
+
+  it("the other order: a 404's end commits first, then a newer sighting confirmed live by id makes the pod CoCalc's again, to terminate", async () => {
+    const s = await setup();
+    const t0 = Date.now();
+    const row = await s.podRow();
+    const layerHeld = async () =>
+      Number(
+        (
+          await getPool().query(
+            "SELECT reserved_usd FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+            [s.credential_id],
+          )
+        ).rows[0].reserved_usd,
+      );
+    const heldBefore = await layerHeld();
+    expect(heldBefore).toBeGreaterThan(0);
+    // the older "not found" lands first: ended and settled
+    expect(
+      (
+        await pods.endPodGoneAtProvider(
+          row,
+          { kind: "reconciler" },
+          new Date(t0 - MINUTE),
+        )
+      )?.state,
+    ).toBe("terminated");
+    expect(await layerHeld()).toBe(0);
+    // a newer listing shows it, but RunPod says by id it's gone: the
+    // listing lags; nothing changes
+    await s.pass(t0 + MINUTE, {
+      listPods: async () => [s.ours],
+      getPod: async () => undefined,
+    });
+    expect((await s.podRow()).state).toBe("terminated");
+    // nor if RunPod has it by id only as TERMINATED
+    await s.pass(t0 + 2 * MINUTE, {
+      listPods: async () => [s.ours],
+      getPod: async (id: string) => ({ id, status: "TERMINATED" }),
+    });
+    expect((await s.podRow()).state).toBe("terminated");
+    // a newer listing shows it and RunPod has it by id: CoCalc's again
+    await s.pass(t0 + 12 * MINUTE, {
+      listPods: async () => [s.ours],
+      getPod: async (id: string) => ({ id, name: s.ours.name }),
+    });
+    const after = await s.podRow();
+    expect(after).toEqual(
+      expect.objectContaining({
+        state: "terminating",
+        desired_state: "terminated",
+        terminated_at: null,
+      }),
+    );
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_pod_reservations WHERE pod_id = $1",
+      [row.id],
+    );
+    expect(rows.map((r: any) => r.state)).toEqual(["active"]);
+    expect(await layerHeld()).toBeCloseTo(heldBefore);
+    const { rows: ev } = await getPool().query(
+      "SELECT details FROM gpu_pod_events WHERE pod_id = $1 AND details->>'seen_after_end' = 'true'",
+      [row.id],
+    );
+    expect(ev.length).toBe(1);
+  });
 });

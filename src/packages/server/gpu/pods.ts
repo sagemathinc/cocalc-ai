@@ -1681,6 +1681,78 @@ export async function recordSeenAddresses(
 // The reconciler reads RunPod and records what it sees; it never asks RunPod
 // to terminate anything. These two are its only pod-state changes.
 
+// A pod's holds are a live pod's again (its budget locks are held): a
+// quarantined hold is still on its layer, so only its state changes; a
+// settled one (released, or ended) is held again in full, and what it had
+// spent is the live pod's again. True if any had been settled.
+async function holdAgain(db: PoolClient, pod_id: string): Promise<boolean> {
+  let settled = false;
+  const { rows: reservations } = await db.query(
+    "SELECT * FROM gpu_pod_reservations WHERE pod_id = $1 ORDER BY id",
+    [pod_id],
+  );
+  for (const r of reservations) {
+    if (r.state === "quarantined") {
+      await db.query(
+        "UPDATE gpu_pod_reservations SET state = 'active', updated = now() WHERE id = $1",
+        [r.id],
+      );
+    } else if (r.state === "settled") {
+      settled = true;
+      await db.query(
+        `UPDATE gpu_pod_reservations
+            SET state = 'active', spent_usd = 0, released_usd = 0, overrun_usd = 0,
+                settled_at = NULL, updated = now()
+          WHERE id = $1`,
+        [r.id],
+      );
+      await db.query(
+        `UPDATE gpu_budget_layers
+            SET reserved_usd = reserved_usd + $2, spent_usd = spent_usd - $3, updated = now()
+          WHERE id = $1`,
+        [r.layer_id, r.reserved_usd, r.spent_usd ?? 0],
+      );
+    }
+  }
+  return settled;
+}
+
+// A pod CoCalc recorded as ended that RunPod, asked by id at `asked` (after
+// the end), still has: the "not found" or termination it ended on was older
+// than this answer, so it is CoCalc's again, to terminate. Its holds are held
+// again in full (its budget shows it, and refuses launches, until it
+// settles) and it is marked terminating, so the reaper terminates it at
+// RunPod and settles what it actually cost. Only while its key is live
+// (the fence is locked first); undefined if the record moved on.
+export async function reviveEndedPod(
+  row: PodRow,
+  actor: Actor,
+  asked: Date,
+): Promise<PodRow | undefined> {
+  return await transition(
+    row.id,
+    {
+      state: "terminating",
+      desired_state: "terminated",
+      terminated_at: null,
+      provider_seen_at: asked,
+      reason:
+        "RunPod still had this pod after CoCalc recorded it as ended, so CoCalc is terminating it.",
+    },
+    `AND state = 'terminated' AND provider_pod_id IS NOT NULL AND unmanaged_at IS NULL
+     AND terminated_at < '${asked.toISOString()}'::timestamptz
+     AND EXISTS (SELECT 1 FROM gpu_key_fences f
+                  WHERE f.credential_id = gpu_pods.credential_id
+                    AND f.state IN ('active', 'draining'))`,
+    {
+      actor,
+      action: "state",
+      details: { state: "terminating", seen_after_end: true },
+    },
+    { after: async (db, b) => void (await holdAgain(db, b.id)) },
+  );
+}
+
 // RunPod says (by id, getPod 404) that a bound pod no longer exists: the
 // record ends as if CoCalc had terminated it (wanted terminated, then
 // terminated, with its actual settlement and the same events), in ONE
@@ -1772,36 +1844,7 @@ export async function reconcileBindPod(
     {
       after: async (db, b) => {
         // the budget locks are held (transition takes them for `after`)
-        const { rows: reservations } = await db.query(
-          "SELECT * FROM gpu_pod_reservations WHERE pod_id = $1 ORDER BY id",
-          [b.id],
-        );
-        for (const r of reservations) {
-          if (r.state === "quarantined") {
-            // still held on its layer: only its state changes
-            await db.query(
-              "UPDATE gpu_pod_reservations SET state = 'active', updated = now() WHERE id = $1",
-              [r.id],
-            );
-          } else if (r.state === "settled") {
-            // released (the owner's audited release, or a failed create):
-            // hold it again in full
-            released = true;
-            await db.query(
-              `UPDATE gpu_pod_reservations
-                  SET state = 'active', spent_usd = 0, released_usd = 0, overrun_usd = 0,
-                      settled_at = NULL, updated = now()
-                WHERE id = $1`,
-              [r.id],
-            );
-            await db.query(
-              `UPDATE gpu_budget_layers
-                  SET reserved_usd = reserved_usd + $2, spent_usd = spent_usd - $3, updated = now()
-                WHERE id = $1`,
-              [r.layer_id, r.reserved_usd, r.spent_usd ?? 0],
-            );
-          }
-        }
+        released = await holdAgain(db, b.id);
         // its holds are a live pod's again
         await endQuarantineAlert(db, b.id, "pod_seen");
         let out: PodRow = b;

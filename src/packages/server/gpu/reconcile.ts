@@ -33,6 +33,7 @@ import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import type { RunpodPodView } from "@cocalc/util/gpu/runpod";
 import {
   endPodGoneAtProvider,
+  reviveEndedPod,
   podSummary,
   reconcileBindPod,
   recordSeenAddresses,
@@ -183,7 +184,10 @@ export async function reconcileKey(
       beforePage: bounded,
       onPage: async (page) => {
         await bounded();
-        unknown += await matchInventory(k, page, bounded, "sightings");
+        unknown += await matchInventory(k, page, bounded, "sightings", {
+          c: c!,
+          now: () => new Date(clock()),
+        });
       },
     });
     // the last page may have come back after the pass's time ran out
@@ -306,6 +310,8 @@ async function matchInventory(
   // record knows (by id or handle). "handles": the complete listing's pods
   // named like a record's handle (bind, duplicates, creates in flight).
   part: "sightings" | "handles",
+  // for "sightings": asking RunPod about a listed pod CoCalc recorded as ended
+  check?: { c: ReconcileCapability; now: () => Date },
 ): Promise<number> {
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE credential_id = $1
@@ -406,6 +412,23 @@ async function matchInventory(
       );
       if (raised) await pauseKey(credential_id, "unknown_pod", db);
     });
+  }
+  // Listed, but CoCalc recorded it as ended: a listing may lag a
+  // termination, so RunPod is asked by id. Only a live answer, newer than
+  // the end, makes it CoCalc's again (to terminate, its budget held again).
+  if (part === "sightings" && check) {
+    for (const pod of seen) {
+      const row = byProviderId.get(pod.id)!;
+      if (row.state !== "terminated" || row.unmanaged_at) continue;
+      await bounded();
+      const asked = check.now();
+      const live = await check.c.getPod(pod.id);
+      await bounded();
+      // (a stopped pod still exists, and bills; a TERMINATED one doesn't)
+      if (live !== undefined && live.status !== "TERMINATED") {
+        await reviveEndedPod(row, RECONCILER, asked);
+      }
+    }
   }
   if (seen.length > 0) {
     await bounded();
