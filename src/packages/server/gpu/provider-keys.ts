@@ -224,8 +224,9 @@ export async function setGpuProviderKey(
   // normally wins: saving would reconnect an account the user just
   // disconnected. This is a check, not a lock: a removal landing in the few
   // milliseconds between it and the store below can still lose, which only
-  // stores the key this same user just pasted (accepted as low impact). One
-  // second of slack covers clock skew with the database.
+  // stores the key this same user just pasted (accepted as low impact). It
+  // counts only removals after this save started, so a removal just before
+  // it never blocks it; clock skew with the database is milliseconds.
   const removedSince = (
     await listAccountExternalCredentialsRouted({
       owner_account_id: account_id,
@@ -234,9 +235,7 @@ export async function setGpuProviderKey(
       scope: "account",
       includeRevoked: true,
     })
-  ).some(
-    (row) => row.revoked && new Date(row.revoked).getTime() >= started - 1_000,
-  );
+  ).some((row) => row.revoked && new Date(row.revoked).getTime() > started);
   if (removedSince) {
     throw Error(
       "Your RunPod key was removed while this one was being checked, so it wasn't saved. Paste it again to connect it.",

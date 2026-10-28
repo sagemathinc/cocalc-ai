@@ -435,4 +435,22 @@ describe("GPU provider keys", () => {
     );
     expect(upsertMock).toHaveBeenCalled();
   });
+
+  it("a removal just before the save started doesn't block it", async () => {
+    const { fetch } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      NO_PODS,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
+    ]);
+    listMock.mockResolvedValue([
+      { ...summary({}), revoked: new Date(Date.now() - 200) },
+    ]);
+    await setGpuProviderKey(
+      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      { fetch, isEntitled: entitled },
+    );
+    expect(upsertMock).toHaveBeenCalled();
+  });
 });
