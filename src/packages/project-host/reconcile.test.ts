@@ -395,6 +395,38 @@ describe("reconcileOnce", () => {
     expect(getProject(project_id)?.state).toBe("running");
   });
 
+  it("does not overwrite a stop that lands while the probe runs", async () => {
+    upsertProject({ project_id, state: "running" });
+    // The probe sees the container running; the stop removes it and records
+    // the project stopped before the (slow) probe returns.
+    mockSpawn.mockImplementationOnce(() => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+      };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      setTimeout(() => {
+        upsertProject({ project_id, state: "opened" });
+        child.stdout.write(`project-${project_id}|running|\n`);
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("exit", 0);
+      }, 5);
+      return child;
+    });
+    await reconcileOnce();
+    expect(getProject(project_id)?.state).toBe("opened");
+
+    await reconcileOnce();
+    await reconcileOnce();
+    expect(getProject(project_id)).toMatchObject({
+      state: "opened",
+      runtime_exit_reason: null,
+    });
+    expect(mockFence).not.toHaveBeenCalled();
+  });
+
   it("retries failed fencing without losing the active project marker", async () => {
     upsertProject({ project_id, state: "running" });
     mockPodmanPs(`project-${project_id}|exited|\n`);
