@@ -340,11 +340,14 @@ test("recovery polling never overlaps a stalled privileged query, and abandons i
   finish[0]();
   await jest.advanceTimersByTimeAsync(0);
   expect(confirmed).not.toHaveBeenCalled();
-  // No other query starts until the abandoned one has exited.
-  await jest.advanceTimersByTimeAsync(60_000);
+  // No other query starts while the abandoned one may still run: here it
+  // exits 20 s after SIGTERM.
+  await jest.advanceTimersByTimeAsync(20_000);
   expect(mockExecFile).toHaveBeenCalledTimes(1);
   queries[0].emit("exit", null, "SIGTERM");
-  await jest.advanceTimersByTimeAsync(30_000);
+  expect(queries[0].kill).not.toHaveBeenCalledWith("SIGKILL");
+  // The next 30 s check asks again.
+  await jest.advanceTimersByTimeAsync(20_000);
   expect(mockExecFile).toHaveBeenCalledTimes(2);
   finish[1]();
   queries[1].emit("exit", 0, null);
@@ -352,6 +355,47 @@ test("recovery polling never overlaps a stalled privileged query, and abandons i
   expect(confirmed).toHaveBeenCalledTimes(1);
   await jest.advanceTimersByTimeAsync(60_000);
   expect(mockExecFile).toHaveBeenCalledTimes(2);
+});
+
+test("an abandoned recheck that ignores SIGTERM cannot stop recovery for good", async () => {
+  jest.useFakeTimers();
+  const confirmed = jest.fn();
+  const { child, result, frame, scope } = fixture(confirmed);
+  frame({ type: "scope", scope });
+  child.emit("close", 1);
+  await result;
+  const finish: (() => void)[] = [];
+  const queries: (EventEmitter & { kill: jest.Mock })[] = [];
+  mockExecFile.mockImplementation((_command, _args, _options, callback) => {
+    const stdin = new PassThrough();
+    stdin.on("data", (data) => {
+      finish.push(() =>
+        callback(
+          null,
+          JSON.stringify({ confirmed: JSON.parse(data.toString()).jobs }),
+        ),
+      );
+    });
+    const query = Object.assign(new EventEmitter(), { stdin, kill: jest.fn() });
+    queries.push(query);
+    return query;
+  });
+  // Abandoned at 50 s; it never exits (stuck in the kernel).
+  await jest.advanceTimersByTimeAsync(50_000);
+  expect(queries[0].kill).toHaveBeenCalledWith("SIGTERM");
+  await jest.advanceTimersByTimeAsync(29_999);
+  expect(queries[0].kill).not.toHaveBeenCalledWith("SIGKILL");
+  expect(mockExecFile).toHaveBeenCalledTimes(1);
+  // After the 30 s grace: sudo is killed and recovery resumes at the next
+  // check.
+  await jest.advanceTimersByTimeAsync(1);
+  expect(queries[0].kill).toHaveBeenCalledWith("SIGKILL");
+  await jest.advanceTimersByTimeAsync(10_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(2);
+  finish[1]();
+  queries[1].emit("exit", 0, null);
+  await jest.advanceTimersByTimeAsync(0);
+  expect(confirmed).toHaveBeenCalledTimes(1);
 });
 
 test("a proof whose callback throws does not lose the other proofs", async () => {

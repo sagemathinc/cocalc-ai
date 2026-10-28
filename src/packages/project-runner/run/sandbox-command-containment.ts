@@ -20,6 +20,11 @@ const FORCE_KILL_MS = 45_000;
 // One confirmation round trip, beyond execFile's own 30 s timeout: a call
 // that never settles must not stop recovery for good.
 const CONFIRM_WATCHDOG_MS = 45_000;
+// How long an abandoned recheck may take to exit after SIGTERM. A read-only
+// helper still alive then is stuck in the kernel: sudo is killed and
+// recovery resumes. Such a helper can at most hold the lifecycle lock, which
+// makes later rechecks fail closed (they prove nothing), never prove wrongly.
+const CONFIRM_EXIT_GRACE_MS = 30_000;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const SCOPE = new RegExp(`^job-(\\d+)-(\\d+)-(\\d+)-(\\d+)-(\\d+)-(${UUID})$`);
 // Fixed admission refusals from the helper; its free-form diagnostics stay private.
@@ -84,9 +89,10 @@ async function recover(): Promise<void> {
   // Resolves when sudo has exited, i.e. after the root helper did.
   let exited: Promise<void> | undefined;
   let abandoned = false;
+  let query: ReturnType<typeof execFile> | undefined;
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
-      const child = execFile(
+      const child = (query = execFile(
         "sudo",
         ["-n", HELPER, "confirm-project-job-cleanup"],
         { cwd: "/", timeout: 30_000, maxBuffer: 65536 },
@@ -94,7 +100,7 @@ async function recover(): Promise<void> {
           error
             ? reject(Error("Cleanup confirmation unavailable"))
             : resolve(stdout),
-      );
+      ));
       exited =
         typeof child.once === "function"
           ? new Promise((done) => child.once("exit", () => done()))
@@ -102,7 +108,7 @@ async function recover(): Promise<void> {
       watchdog = setTimeout(() => {
         // Its reply no longer counts. sudo relays SIGTERM to the read-only
         // helper (SIGKILL would orphan it); the next query waits until it has
-        // exited, so queries never overlap.
+        // exited (or the bounded grace below), so queries do not overlap.
         abandoned = true;
         reject(Error("Cleanup confirmation did not finish"));
         child.kill?.("SIGTERM");
@@ -164,7 +170,20 @@ async function recover(): Promise<void> {
     clearTimeout(watchdog);
     if (abandoned && exited) {
       logger.warn("job cleanup recheck abandoned; waiting for it to exit");
-      await exited;
+      let grace: ReturnType<typeof setTimeout> | undefined;
+      const stuck = await Promise.race([
+        exited.then(() => false),
+        new Promise<boolean>((done) => {
+          grace = setTimeout(() => done(true), CONFIRM_EXIT_GRACE_MS);
+        }),
+      ]);
+      clearTimeout(grace);
+      if (stuck) {
+        logger.error(
+          "job cleanup recheck did not exit after SIGTERM; killing sudo and resuming recovery",
+        );
+        query?.kill?.("SIGKILL");
+      }
     }
     recovering = false;
     if (!recoveries.size) {
