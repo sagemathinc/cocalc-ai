@@ -646,4 +646,75 @@ describe("GPU provider keys", () => {
     ).rejects.toThrow("can't be removed yet");
     expect(revokeMock).not.toHaveBeenCalled();
   });
+
+  describe("replacing a key RunPod already rejects, with unfinished pods", () => {
+    const verify = () =>
+      fakeFetch([
+        PERSONAL_ORG_403,
+        MYSELF, // the new key acts for personal account user_1
+        NO_PODS,
+        TEMPLATE_CREATED,
+        TEMPLATE_DELETED,
+      ]);
+    const rejected = { storedKeyRejected: async () => true };
+
+    it("allows it for the same RunPod account (old pods stay reachable)", async () => {
+      unfinished = 1;
+      listMock.mockResolvedValue([
+        summary({
+          provider_account_kind: "personal",
+          provider_account_id: "user_1",
+        }),
+      ]);
+      const { fetch } = verify();
+      await setGpuProviderKeyLocal(
+        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        { ...home, ...rejected, fetch, isEntitled: entitled },
+      );
+      expect(upsertMock).toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        {
+          provider_account_kind: "personal",
+          provider_account_id: "user_other",
+        },
+      ],
+      [
+        {
+          provider_account_kind: "organization",
+          provider_account_id: "user_1",
+        },
+      ],
+      [{}],
+    ])(
+      "refuses it for another or unknown RunPod account (%j)",
+      async (metadata) => {
+        unfinished = 1;
+        listMock.mockResolvedValue([summary(metadata)]);
+        const { fetch } = verify();
+        await expect(
+          setGpuProviderKeyLocal(
+            { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+            { ...home, ...rejected, fetch, isEntitled: entitled },
+          ),
+        ).rejects.toThrow("different RunPod account");
+        expect(upsertMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("still allows removing it", async () => {
+      unfinished = 1;
+      listMock.mockResolvedValue([
+        summary({ provider_account_id: "user_other" }),
+      ]);
+      expect(
+        await deleteGpuProviderKeyLocal(
+          { account_id: ACCOUNT, provider: "runpod" },
+          { ...home, ...rejected },
+        ),
+      ).toEqual({ revoked: true });
+    });
+  });
 });

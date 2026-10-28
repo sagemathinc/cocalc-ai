@@ -377,4 +377,44 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       );
     }
   });
+
+  it("removing a rejected key and connecting another gives a new identity that can't act on the old pods", async () => {
+    const s = await setup();
+    const pod = await launch(s);
+    const before = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    // the old key was deleted at RunPod: removal is allowed despite the pod
+    expect(
+      await keys.deleteGpuProviderKeyLocal(
+        { account_id: s.account_id, provider: "runpod" },
+        { ...s.keyDeps, storedKeyRejected: async () => true },
+      ),
+    ).toEqual({ revoked: true });
+    await keys.setGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", api_key: NEW },
+      s.keyDeps,
+    );
+    const after = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    expect(after).not.toBe(before);
+    // the old pod's record is left alone, never acted on with the new key
+    await expect(
+      pods.terminateGpuPodLocal(
+        { account_id: s.account_id, pod_id: pod.handle },
+        {
+          isHomeBay: async () => true,
+          getCleanup: (a) => keys.getRunpodCleanupForAccount(a, s.keyDeps),
+        },
+      ),
+    ).rejects.toThrow("since been replaced");
+    const { rows } = await getPool().query(
+      "SELECT state, credential_id FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0]).toEqual({ state: "running", credential_id: before });
+  });
 });

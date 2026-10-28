@@ -353,6 +353,13 @@ async function requireNoUnfinishedPods(
   deps: GpuProviderKeyDeps,
   doing: "replace" | "remove",
   db?: Pick<PoolClient, "query">,
+  // for a replacement: the stored key's metadata and the new key's verified
+  // identity (undefined before verification: then a rejected old key defers
+  // the decision to the check under the fence)
+  replacement?: {
+    stored?: Record<string, any>;
+    identity?: RunpodProviderIdentity;
+  },
 ): Promise<void> {
   const n = await (deps.unfinishedPods ?? ((a) => countUnfinishedPods(a, db)))(
     account_id,
@@ -367,10 +374,24 @@ async function requireNoUnfinishedPods(
       deps,
     )
   ) {
-    return;
+    // Removing is always fine then: a later connect gets a new credential
+    // id, which can't act on these pods. Replacing in place keeps the id, so
+    // it is allowed only for the same RunPod account; otherwise the new key
+    // would look like the one that launched these pods.
+    if (doing === "remove" || replacement?.identity == null) return;
+    const stored = replacement.stored ?? {};
+    if (
+      stored.provider_account_kind === replacement.identity.kind &&
+      stored.provider_account_id === replacement.identity.id
+    ) {
+      return;
+    }
+    throw Error(
+      `The new key is for a different RunPod account than the one your ${n} unfinished GPU pod${n === 1 ? " was" : "s were"} launched with, so it can't replace the old key in place. Remove the old key first (CoCalc allows that now, since RunPod rejects it), then connect the new one; terminate the old pods at RunPod.`,
+    );
   }
   throw Error(
-    `${n} GPU pod${n === 1 ? " was" : "s were"} launched with your current RunPod key and ${n === 1 ? "isn't" : "aren't"} finished, so the key can't be ${doing === "replace" ? "replaced" : "removed"} yet: CoCalc would lose the way to terminate ${n === 1 ? "it" : "them"}. Terminate ${n === 1 ? "it" : "them"} first (cocalc gpu pods, then cocalc gpu terminate). If you need to cut the key off now, delete it at RunPod and terminate the pods there; once RunPod rejects the key, CoCalc lets you ${doing} it here.`,
+    `${n} GPU pod${n === 1 ? " was" : "s were"} launched with your current RunPod key and ${n === 1 ? "isn't" : "aren't"} finished, so the key can't be ${doing === "replace" ? "replaced" : "removed"} yet: CoCalc would lose the way to terminate ${n === 1 ? "it" : "them"}. Terminate ${n === 1 ? "it" : "them"} first (cocalc gpu pods, then cocalc gpu terminate). If you need to cut the key off now, delete it at RunPod and terminate the pods there; once RunPod rejects the key, CoCalc lets you remove it here (or replace it with a key for the same RunPod account).`,
   );
 }
 
@@ -427,8 +448,12 @@ export async function setGpuProviderKeyLocal(
   // Checked again and stored under the fence launches take: no launch can
   // read the old key between this check and the store.
   await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
-    if ((await activeKeySummaries(account_id, provider)).length > 0) {
-      await requireNoUnfinishedPods(account_id, deps, "replace", db);
+    const [current] = await activeKeySummaries(account_id, provider);
+    if (current) {
+      await requireNoUnfinishedPods(account_id, deps, "replace", db, {
+        stored: current.metadata,
+        identity,
+      });
     }
     await upsertExternalCredential({
       selector: selector(account_id, provider),
