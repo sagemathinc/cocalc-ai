@@ -281,6 +281,8 @@ export interface Actor {
   kind: GpuActorKind;
   account_id?: string;
   agent_id?: string;
+  // the agent's run: who did it, never what it may reach
+  run_id?: string;
 }
 
 // A standalone event (a lookup, a duplicate terminated at RunPod).
@@ -292,14 +294,15 @@ async function recordEvent(
   db: Pick<PoolClient, "query"> = getPool(),
 ): Promise<void> {
   await db.query(
-    `INSERT INTO gpu_pod_events (id, pod_id, at, actor_kind, actor_account_id, agent_id, action, details)
-     VALUES ($1, $2, now(), $3, $4, $5, $6, $7)`,
+    `INSERT INTO gpu_pod_events (id, pod_id, at, actor_kind, actor_account_id, agent_id, turn_id, action, details)
+     VALUES ($1, $2, now(), $3, $4, $5, $6, $7, $8)`,
     [
       randomUUID(),
       pod_id,
       actor.kind,
       actor.account_id ?? null,
       actor.agent_id ?? null,
+      actor.run_id ?? null,
       action,
       details ?? null,
     ],
@@ -527,10 +530,12 @@ type GpuAgentPrincipalWire = Omit<GpuAgentPrincipal, "expires_at"> & {
 // launches and other agents' pods are never in scope for it.
 // What an agent may see and reach: the pods it launched in its project. A
 // later run of the same agent may clean up an earlier run's pods (STEP6
-// "later cleanup"); for a chat session the agent is the session.
+// "later cleanup"); for a chat session the agent is the session. run_id
+// only attributes what it does (events); it never narrows or widens scope.
 export interface GpuAgentScope {
   project_id: string;
   agent_id: string;
+  run_id?: string;
 }
 
 // A chat session's key is derived from its token's fingerprint: never shown.
@@ -620,7 +625,12 @@ export async function launchGpuPodLocal(
     throw Error("project not found or access denied");
   }
   const actor: Actor = agent
-    ? { kind: "agent", account_id, agent_id: agent.principal.agent_id }
+    ? {
+        kind: "agent",
+        account_id,
+        agent_id: agent.principal.agent_id,
+        run_id: agent.principal.run_id,
+      }
     : { kind: "user", account_id };
   const cloud = spec.cloud ?? "SECURE";
 
@@ -1547,7 +1557,12 @@ export async function terminateGpuPodLocal(
   const row = await findPod(account_id, opts.pod_id, opts.agent);
   if (!row) throw Error("No such GPU pod.");
   const actor: Actor = opts.agent
-    ? { kind: "agent", account_id, agent_id: opts.agent.agent_id }
+    ? {
+        kind: "agent",
+        account_id,
+        agent_id: opts.agent.agent_id,
+        run_id: opts.agent.run_id,
+      }
     : {
         kind: row.key_owner_account_id === account_id ? "key_owner" : "user",
         account_id,
@@ -1715,7 +1730,12 @@ export async function whoGpuPodLocal(
     await recordEvent(
       row.id,
       opts.agent
-        ? { kind: "agent", account_id, agent_id: opts.agent.agent_id }
+        ? {
+            kind: "agent",
+            account_id,
+            agent_id: opts.agent.agent_id,
+            run_id: opts.agent.run_id,
+          }
         : { kind: "user", account_id },
       "who_lookup",
       {
@@ -1736,6 +1756,7 @@ function eventView(row: any): GpuPodEvent {
   };
   if (row.actor_account_id) e.actor_account_id = row.actor_account_id;
   if (row.agent_id) e.agent_id = visibleAgentId(row.agent_id);
+  if (row.turn_id) e.run_id = visibleAgentId(row.turn_id);
   if (row.details) e.details = row.details;
   return e;
 }

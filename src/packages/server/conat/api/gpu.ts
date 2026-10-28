@@ -57,6 +57,8 @@ function scopeOf(p: GpuAgentPrincipal | undefined) {
         agent: {
           project_id: p.project_id,
           agent_id: p.agent_id,
+          // attribution only
+          run_id: p.run_id,
         },
       }
     : {};

@@ -779,6 +779,69 @@ describeDb("agent GPU launches", () => {
         deps,
       ),
     ).rejects.toThrow("No such GPU pod");
+    // a registered agent's later run may clean up its earlier run's pods
+    // (STEP6 "later cleanup"); the run only names who did it
+    const reg = principal(account_id, {
+      agent_id: "agent:11111111-1000-4000-8000-000000000001",
+      run_id: "run-1",
+    });
+    const regAsk = await askedFor(
+      launchGpuPodLocal(
+        {
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent: { principal: reg, operation_id: "op-r" },
+        },
+        deps,
+      ),
+    );
+    await approveAgentRequestLocal(
+      {
+        account_id,
+        request_id: regAsk.request_id,
+        expected_hash: regAsk.payload_hash,
+        fresh_auth_verified: true,
+      },
+      approveDeps,
+    );
+    await getPool().query(
+      "UPDATE gpu_budget_layers SET max_concurrent_pods = 3 WHERE credential_id = (SELECT credential_id FROM gpu_pods WHERE id = $1) AND scope_kind = 'key'",
+      [mine.id],
+    );
+    const regPod = await launchGpuPodLocal(
+      {
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+        agent: { principal: reg, operation_id: "op-r" },
+      },
+      deps,
+    );
+    const run2 = {
+      project_id: PROJECT,
+      agent_id: reg.agent_id,
+      run_id: "run-2",
+    };
+    expect(
+      (await listManagedGpuPodsLocal({ account_id, agent: run2 }, deps)).map(
+        (x) => x.handle,
+      ),
+    ).toEqual([regPod.handle]);
+    await terminateGpuPodLocal(
+      { account_id, pod_id: regPod.handle, agent: run2 },
+      deps,
+    );
+    const runs = await getPool().query(
+      "SELECT action, turn_id FROM gpu_pod_events WHERE pod_id = $1 AND actor_kind = 'agent' ORDER BY at, id",
+      [regPod.id],
+    );
+    expect(runs.rows.find((r: any) => r.action === "create")?.turn_id).toBe(
+      "run-1",
+    );
+    expect(
+      runs.rows.filter((r: any) => r.turn_id === "run-2").length,
+    ).toBeGreaterThan(0);
     // the same session can, after its run (no grant needed)
     expect(
       (

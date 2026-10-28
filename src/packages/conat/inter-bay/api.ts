@@ -4171,17 +4171,17 @@ export interface InterBayGpuApi {
   gpuTerminate: (opts: {
     account_id: string;
     pod_id: unknown;
-    agent?: { project_id: string; agent_id: string };
+    agent?: { project_id: string; agent_id: string; run_id?: string };
   }) => Promise<{ state: import("@cocalc/util/gpu/types").GpuPodState }>;
   gpuWho: (opts: {
     account_id: string;
     query: unknown;
-    agent?: { project_id: string; agent_id: string };
+    agent?: { project_id: string; agent_id: string; run_id?: string };
   }) => Promise<import("@cocalc/util/gpu/types").GpuAttribution[]>;
   gpuManagedPods: (opts: {
     account_id: string;
     include_ended?: boolean;
-    agent?: { project_id: string; agent_id: string };
+    agent?: { project_id: string; agent_id: string; run_id?: string };
   }) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]>;
   // The human's side of agent launches (step 6b). fresh_auth_verified: the
   // forwarding bay checked the caller's fresh authentication.
@@ -4252,7 +4252,7 @@ export interface InterBayGpuApi {
   gpuSshInfo: (opts: {
     account_id: string;
     pod_id: unknown;
-    agent?: { project_id: string; agent_id: string };
+    agent?: { project_id: string; agent_id: string; run_id?: string };
   }) => Promise<import("@cocalc/util/gpu/types").GpuPodSshInfo>;
   // A pod's one-time host-key report, forwarded whole to the token's
   // authority bay. No account: the token is the only credential.
