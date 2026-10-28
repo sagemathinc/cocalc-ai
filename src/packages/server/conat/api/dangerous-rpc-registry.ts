@@ -4,7 +4,9 @@
  */
 
 export type DangerousRpcFreshAuthDecision =
-  "fresh-auth-required" | "fresh-auth-not-required" | "internal-auth-only";
+  | "fresh-auth-required"
+  | "fresh-auth-not-required"
+  | "internal-auth-only";
 
 export type DangerousRpcDecision = {
   decision: DangerousRpcFreshAuthDecision;
@@ -75,6 +77,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason:
       "lets an agent spend on the account's RunPod key: approves exactly the reviewed request (request_id + payload hash), checked in approveAgentRequest",
+  },
+  "gpu.denyAgentRequest": {
+    decision: "fresh-auth-not-required",
+    reason: "only narrows: declines an agent's pending GPU request",
   },
   "gpu.revokeAgentGrant": {
     decision: "fresh-auth-not-required",

@@ -76,6 +76,7 @@ import { GPU_POD_WRITE_TIMEOUT_MS } from "@cocalc/util/gpu/runpod";
 import { parseEd25519PublicKey } from "@cocalc/util/gpu/ssh-key";
 import siteURL from "@cocalc/database/settings/site-url";
 import { CLEARED_HOSTKEY_FIELDS } from "@cocalc/server/gpu/hostkey-clear";
+import { notifyAgentRequestsChanged } from "@cocalc/server/gpu/agent-notify";
 import {
   agentLaunchPayload,
   consumeGrantLaunch,
@@ -836,7 +837,7 @@ async function launchPod(
         if (!(err instanceof NoUsableAgentGrant) || !agent || !approval)
           throw err;
         // Nothing was written; ask the human, in a transaction of its own.
-        throw await inTransaction(async (db) => {
+        const ask = await inTransaction(async (db) => {
           // serializes this agent's asks with each other and with approvals
           await (deps.accountWriteFence ?? lockGpuAccountFence)(
             db,
@@ -851,6 +852,9 @@ async function launchPod(
             now: new Date((deps.now ?? Date.now)()),
           });
         });
+        // the owner's open project shows the request (approval banner)
+        notifyAgentRequestsChanged(account_id, [project_id]);
+        throw ask;
       }
       let row = intent.row;
 
@@ -2525,7 +2529,7 @@ async function killSwitchPods(
   }
   const pause = project_id == null && opts.pause !== false;
   const actor: Actor = { kind: "user", account_id };
-  const { marked, paused } = await inTransaction(async (db) => {
+  const { marked, paused, agentProjects } = await inTransaction(async (db) => {
     await (deps.accountWriteFence ?? lockGpuAccountFence)(
       db,
       account_id,
@@ -2533,7 +2537,10 @@ async function killSwitchPods(
     );
     // agents' approvals end with it (next in the lock order: grants, then
     // key fences and layers): nothing an agent was allowed survives a resume
-    await revokeAgentGrantsForKillSwitch(db, { account_id, project_id });
+    const revokedAgents = await revokeAgentGrantsForKillSwitch(db, {
+      account_id,
+      project_id,
+    });
     const { rows } = await db.query(
       `UPDATE gpu_pods SET desired_state = 'terminated', reason = $3, updated = now()
         WHERE key_owner_account_id = $1
@@ -2604,8 +2611,13 @@ async function killSwitchPods(
         WHERE credential_id = ANY($1::uuid[])`,
       [fences.map((f) => f.credential_id)],
     );
-    return { marked: rows.length, paused: paused[0]?.paused === true };
+    return {
+      marked: rows.length,
+      paused: paused[0]?.paused === true,
+      agentProjects: revokedAgents.project_ids,
+    };
   });
+  notifyAgentRequestsChanged(account_id, agentProjects);
   // Best effort, bounded: what isn't done in time the reaper finishes, and
   // the caller gets the remaining count well within its RPC deadline.
   const deadline =

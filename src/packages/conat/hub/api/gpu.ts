@@ -56,6 +56,7 @@ export const gpu = {
   // fresh auth, with the caller's own session, never a nominated one
   approveAgentRequest: authFirstRequireAccountWithBoundSession,
   revokeAgentGrant: authFirstRequireAccount,
+  denyAgentRequest: authFirstRequireAccount,
   budget: authFirstRequireAccount,
   spend: authFirstRequireAccount,
   // its fresh-auth check uses the caller's own session, never a nominated one
@@ -84,6 +85,11 @@ export const gpu = {
   accountChecks: authFirstRequireAccount,
   confirmAccountChecks: authFirstRequireAccountWithBoundSession,
 };
+
+// The project detail field a browser refetches agent GPU requests on: sent
+// to the key owner when a request is made, approved, denied, revoked or
+// ends.
+export const GPU_AGENT_REQUESTS_PROJECT_DETAIL_FIELD = "gpu_agent_requests";
 
 // Set only by the account-or-gpu-agent policy, from verified auth.
 export interface GpuAgentAuth {
@@ -248,6 +254,12 @@ export interface GpuApi {
     state: string;
     expires_at: string;
   }>;
+  // Decline a pending request: nothing is approved, and the agent has to
+  // ask again. Narrowing, so no fresh authentication.
+  denyAgentRequest: (opts: {
+    account_id?: string;
+    request_id: string;
+  }) => Promise<{ request_id: string; state: string }>;
   // No new launch, and the grant's running pods are terminated.
   revokeAgentGrant: (opts: {
     account_id?: string;

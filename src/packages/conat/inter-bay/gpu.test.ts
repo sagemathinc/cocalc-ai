@@ -15,6 +15,7 @@ it.each([
   "gpuAgentRequests",
   "gpuApproveAgentRequest",
   "gpuRevokeAgentGrant",
+  "gpuDenyAgentRequest",
   "gpuBudget",
   "gpuSpend",
   "gpuSetBudget",

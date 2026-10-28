@@ -263,6 +263,9 @@ describe("hub API argument transforms", () => {
 
   it("keeps GPU approval and revocation for the human", async () => {
     expect(getHubApiPrincipalPolicies()["gpu.agentRequests"]).toBe("account");
+    expect(getHubApiPrincipalPolicies()["gpu.denyAgentRequest"]).toBe(
+      "account",
+    );
     expect(getHubApiPrincipalPolicies()["gpu.revokeAgentGrant"]).toBe(
       "account",
     );
@@ -281,6 +284,7 @@ describe("hub API argument transforms", () => {
       "gpu.agentRequests",
       "gpu.approveAgentRequest",
       "gpu.revokeAgentGrant",
+      "gpu.denyAgentRequest",
       "gpu.alerts",
       "gpu.acknowledgeAlert",
       "gpu.releaseQuarantined",

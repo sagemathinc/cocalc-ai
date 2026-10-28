@@ -40,6 +40,7 @@ import {
   approveAgentRequest as approveAgentRequestImpl,
   getAgentRequests,
   revokeAgentGrant as revokeAgentGrantImpl,
+  denyAgentRequest as denyAgentRequestImpl,
 } from "@cocalc/server/gpu/agent-api";
 import { resolveGpuAgentPrincipal } from "@cocalc/server/gpu/agent-identity";
 import type { GpuAgentPrincipal } from "@cocalc/server/gpu/agent-grants";
@@ -311,6 +312,15 @@ export async function revokeAgentGrant(
   return await revokeAgentGrantImpl({
     account_id: opts?.account_id,
     grant_id: opts?.grant_id,
+  });
+}
+
+export async function denyAgentRequest(
+  opts: Parameters<GpuApi["denyAgentRequest"]>[0],
+): ReturnType<GpuApi["denyAgentRequest"]> {
+  return await denyAgentRequestImpl({
+    account_id: opts?.account_id,
+    request_id: opts?.request_id,
   });
 }
 

@@ -37,6 +37,14 @@ import { runGpuReaperSweep } from "./reaper";
 import { resumeGpuLaunchesLocal } from "./budget-api";
 import { freshInventoryForTests } from "./test-inventory";
 import { testKeyUse } from "./key-use-testing";
+import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
+import { GPU_AGENT_REQUESTS_PROJECT_DETAIL_FIELD } from "@cocalc/conat/hub/api/gpu";
+import { denyAgentRequestLocal } from "./agent-api";
+
+// Notifications to the owner's browsers (6b-2) are recorded, never sent.
+jest.mock("@cocalc/server/account/feed", () => ({
+  publishAccountFeedEventBestEffort: jest.fn(async () => {}),
+}));
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -1257,5 +1265,117 @@ describeDb("agent GPU launches", () => {
     await k.approve(otherPending.req);
     await k.launch(other.agent);
     expect(k.rp.client.createPod).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the human decline a pending request; approving it then fails, and the agent asks anew", async () => {
+    const { account_id, deps, approveDeps } = setup();
+    const agent = { principal: principal(account_id), operation_id: "op-1" };
+    const launch = () =>
+      launchGpuPodLocal(
+        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        deps,
+      );
+    const ask = await askedFor(launch());
+    // only the owner can decline it
+    await expect(
+      denyAgentRequestLocal(
+        { account_id: randomUUID(), request_id: ask.request_id },
+        { accountWriteFence: fence },
+      ),
+    ).rejects.toThrow("No such GPU request");
+    expect(
+      await denyAgentRequestLocal(
+        { account_id, request_id: ask.request_id },
+        { accountWriteFence: fence },
+      ),
+    ).toEqual({ request_id: ask.request_id, state: "denied" });
+    // idempotent
+    expect(
+      (
+        await denyAgentRequestLocal(
+          { account_id, request_id: ask.request_id },
+          { accountWriteFence: fence },
+        )
+      ).state,
+    ).toBe("denied");
+    await expect(
+      approveAgentRequestLocal(
+        {
+          account_id,
+          request_id: ask.request_id,
+          expected_hash: ask.payload_hash,
+          fresh_auth_verified: true,
+        },
+        approveDeps,
+      ),
+    ).rejects.toThrow("the agent has to ask again");
+    const again = await askedFor(launch());
+    expect(again.request_id).not.toBe(ask.request_id);
+    // an approved request isn't declined: its approval is revoked instead
+    await approveAgentRequestLocal(
+      {
+        account_id,
+        request_id: again.request_id,
+        expected_hash: again.payload_hash,
+        fresh_auth_verified: true,
+      },
+      approveDeps,
+    );
+    await expect(
+      denyAgentRequestLocal(
+        { account_id, request_id: again.request_id },
+        { accountWriteFence: fence },
+      ),
+    ).rejects.toThrow("revoke its approval instead");
+  });
+
+  it("tells only the key owner's browsers to look again, for the project, on every change", async () => {
+    const publish = publishAccountFeedEventBestEffort as jest.Mock;
+    const k = await killSetup();
+    const sent = () =>
+      publish.mock.calls
+        .map(([opts]) => opts)
+        .filter((o: any) => o.event.project_id === PROJECT);
+    const expectNotified = (before: number) => {
+      const calls = sent().slice(before);
+      expect(calls.length).toBeGreaterThan(0);
+      for (const o of calls) {
+        expect(o.account_id).toBe(k.account_id);
+        expect(o.event).toMatchObject({
+          type: "project.detail.invalidate",
+          account_id: k.account_id,
+          project_id: PROJECT,
+          fields: [GPU_AGENT_REQUESTS_PROJECT_DETAIL_FIELD],
+        });
+        // nothing but "look again": no request, payload or key
+        expect(Object.keys(o.event).sort()).toEqual(
+          ["account_id", "fields", "project_id", "ts", "type"].sort(),
+        );
+      }
+    };
+    // killSetup asked twice and approved once
+    expect(sent().length).toBeGreaterThanOrEqual(3);
+    let n = sent().length;
+    await denyAgentRequestLocal(
+      { account_id: k.account_id, request_id: k.pending.req.request_id },
+      { accountWriteFence: fence },
+    );
+    expectNotified(n);
+    n = sent().length;
+    await revokeAgentGrantLocal(
+      { account_id: k.account_id, grant_id: k.grant.grant_id },
+      { accountWriteFence: fence },
+    );
+    expectNotified(n);
+    // the kill switch, for the projects whose approvals it ended
+    const other = await k.ask("5", PROJECT);
+    n = sent().length;
+    await killSwitchLocal({ account_id: k.account_id }, k.deps);
+    expectNotified(n);
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_agent_requests WHERE request_id = $1",
+      [other.req.request_id],
+    );
+    expect(rows[0].state).toBe("denied");
   });
 });

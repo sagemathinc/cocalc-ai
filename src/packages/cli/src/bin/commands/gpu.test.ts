@@ -228,6 +228,11 @@ function harness(
             observe();
             return { grant_id: "g1", state: "active" };
           },
+          denyAgentRequest: async (args) => {
+            calls.push({ name: "denyAgentRequest", args });
+            observe();
+            return { request_id: "r1", state: "denied" };
+          },
           revokeAgentGrant: async (args) => {
             calls.push({ name: "revokeAgentGrant", args });
             observe();
@@ -1141,12 +1146,14 @@ it("gpu agent approve needs the reviewed hash; revoke takes the grant", async ()
   assert.deepEqual(h.calls, []);
   await h.run("agent", "approve", "r1", "--hash", "b".repeat(64));
   await h.run("agent", "revoke", "g1");
+  await h.run("agent", "deny", "r2");
   assert.deepEqual(h.calls, [
     {
       name: "approveAgentRequest",
       args: { request_id: "r1", expected_hash: "b".repeat(64) },
     },
     { name: "revokeAgentGrant", args: { grant_id: "g1" } },
+    { name: "denyAgentRequest", args: { request_id: "r2" } },
   ]);
 });
 
