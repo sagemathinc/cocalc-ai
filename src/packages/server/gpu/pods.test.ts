@@ -18,6 +18,8 @@ import {
   launchGpuPodLocal,
   listManagedGpuPodsLocal,
   newPodHandle,
+  recordSeenAddresses,
+  STALE_CREATE_MS,
   sshKeyFingerprint,
   terminateGpuPodLocal,
   whoGpuPodLocal,
@@ -531,6 +533,103 @@ describeDb("GPU pods", () => {
         { ...d, getLaunchAccess: async () => undefined },
       ),
     ).rejects.toThrow("No RunPod API key is connected");
+  });
+});
+
+describeDb("GPU pods left behind and seen again", () => {
+  beforeAll(async () => {
+    await syncSchema({
+      gpu_pods: SCHEMA.gpu_pods,
+      gpu_pod_events: SCHEMA.gpu_pod_events,
+    });
+  });
+
+  it("resolves records a crash left in intent or creating", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    // two launches whose server died: one before sending, one mid-create
+    // (RunPod made that pod)
+    const a = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    const b = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    rp.pods.clear();
+    rp.pods.set("pod_crash1", { id: "pod_crash1", name: b.handle });
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'intent', provider_pod_id = NULL, updated = now() - interval '1 hour' WHERE id = $1",
+      [a.id],
+    );
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'creating', provider_pod_id = NULL, updated = now() - interval '1 hour' WHERE id = $1",
+      [b.id],
+    );
+    expect(STALE_CREATE_MS).toBeLessThan(60 * 60_000);
+    const live = await listManagedGpuPodsLocal({ account_id }, d);
+    expect(live.map((p) => [p.id, p.state, p.provider_pod_id])).toEqual([
+      [b.id, "running", "pod_crash1"],
+    ]);
+    const [ended] = await listManagedGpuPodsLocal(
+      { account_id, include_ended: true },
+      d,
+    ).then((all) => all.filter((p) => p.id === a.id));
+    expect(ended.state).toBe("failed");
+  });
+
+  it("leaves a fresh intent or create alone", async () => {
+    const { deps: d, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'creating', provider_pod_id = NULL WHERE id = $1",
+      [pod.id],
+    );
+    const [row] = await listManagedGpuPodsLocal({ account_id }, d);
+    expect(row.state).toBe("creating");
+  });
+
+  it("keeps old live pods when ended ones are included", async () => {
+    const { deps: d, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    await getPool().query(
+      "UPDATE gpu_pods SET created = now() - interval '40 days' WHERE id = $1",
+      [pod.id],
+    );
+    const all = await listManagedGpuPodsLocal(
+      { account_id, include_ended: true },
+      d,
+    );
+    expect(all.map((p) => p.id)).toEqual([pod.id]);
+  });
+
+  it("records each new IP once, and who finds the pod by an earlier IP", async () => {
+    const { deps: d, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    const view = (ip: string) => ({
+      id: pod.provider_pod_id!,
+      sshDirect: { host: ip, port: 22, username: "root" },
+      runtime: { ports: [{ private: 22, public: 40022, type: "tcp", ip }] },
+    });
+    await recordSeenAddresses([pod], [view("203.0.113.7")] as any);
+    await recordSeenAddresses([pod], [view("203.0.113.7")] as any);
+    await recordSeenAddresses([pod], [view("198.51.100.9")] as any);
+    const seen = (await events(pod.id)).filter((e) => e.action === "ip_seen");
+    expect(seen.map((e) => e.details.public_ip)).toEqual([
+      "203.0.113.7",
+      "198.51.100.9",
+    ]);
+    const [hit] = await whoGpuPodLocal({ account_id, query: "203.0.113.7" }, d);
+    expect(hit.pod.id).toBe(pod.id);
   });
 });
 

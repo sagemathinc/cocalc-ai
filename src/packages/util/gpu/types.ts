@@ -72,6 +72,9 @@ export const GPU_POD_ACTIONS = [
   "state",
   "budget_stop",
   "who_lookup",
+  // a new public IP seen for the pod: {public_ip, ports}, so attribution by
+  // IP can match the time
+  "ip_seen",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 

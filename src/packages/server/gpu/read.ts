@@ -33,7 +33,10 @@ import {
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { listManagedGpuPodsLocal } from "@cocalc/server/gpu/pods";
+import {
+  listManagedGpuPodsLocal,
+  recordSeenAddresses,
+} from "@cocalc/server/gpu/pods";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
@@ -62,6 +65,7 @@ const MAX_CACHED_ACCOUNTS = 1000;
 // what is still running and billing.
 export interface GpuReadDeps {
   listManaged?: typeof listManagedGpuPodsLocal;
+  recordAddresses?: typeof recordSeenAddresses;
   // for tests
   getClient?: (account_id: string) => Promise<RunpodClient | undefined>;
   getCleanup?: (
@@ -423,6 +427,9 @@ export async function getGpuPodsLocal(
             return pod ? [pod] : [];
           })
         : (await runpod(() => c.listPods())).filter((p) => ids.has(p.id));
+    await (deps.recordAddresses ?? recordSeenAddresses)(selected, pods).catch(
+      () => {},
+    );
   }
   return { provider, as_of, scope, pods, records: selected };
 }

@@ -147,6 +147,7 @@ interface PodRow {
   cloud: "SECURE" | "COMMUNITY";
   data_center_id: string | null;
   cost_per_hr: string | null;
+  public_ip: string | null;
   state: GpuPodSummary["state"];
   desired_state: GpuPodSummary["desired_state"];
   max_runtime_minutes: number;
@@ -649,10 +650,44 @@ async function resolveAmbiguous(
 
 // Resolve this account's ambiguous records now (a listing or terminate does
 // this; the step 5 reconciler will too). Best effort.
+// How long a record may stay in intent or creating before it counts as left
+// behind by a crash (a create request takes at most 30 s).
+export const STALE_CREATE_MS = 2 * 60_000;
+
 async function resolveAmbiguousForAccount(
   account_id: string,
   deps: GpuPodDeps,
 ): Promise<void> {
+  const staleBefore = new Date((deps.now ?? Date.now)() - STALE_CREATE_MS);
+  const actor: Actor = { kind: "cleanup" };
+  // Left behind by a crash: an intent was never sent (no pod can exist), and
+  // a create in flight may have made one, so it is resolved by its handle.
+  const { rows: stale } = await getPool().query(
+    `SELECT id, state FROM gpu_pods
+      WHERE key_owner_account_id = $1 AND state IN ('intent', 'creating')
+        AND updated < $2`,
+    [account_id, staleBefore],
+  );
+  for (const r of stale) {
+    if (r.state === "intent") {
+      await transition(
+        r.id,
+        {
+          state: "failed",
+          reason: "CoCalc stopped before this pod was created.",
+          terminated_at: new Date(),
+        },
+        "AND state = 'intent'",
+        { actor, action: "state", details: { state: "failed", stale: true } },
+      );
+    } else {
+      await transition(r.id, { state: "ambiguous" }, "AND state = 'creating'", {
+        actor,
+        action: "state",
+        details: { state: "ambiguous", stale: true },
+      });
+    }
+  }
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND state = 'ambiguous'`,
     [account_id],
@@ -746,6 +781,48 @@ export async function terminateGpuPodLocal(
 
 // ---- reads ----
 
+// RunPod reports a pod's public address only once it runs, so a record's IP
+// is refreshed from live views (pods, pods --id), with an ip_seen event per
+// new address: attribution by IP can then match the time. Best effort.
+export async function recordSeenAddresses(
+  records: GpuPodSummary[],
+  pods: RunpodPodView[],
+): Promise<void> {
+  const byProviderId = new Map(
+    records
+      .filter((r) => r.provider_pod_id)
+      .map((r) => [r.provider_pod_id!, r]),
+  );
+  for (const pod of pods) {
+    const record = byProviderId.get(pod.id);
+    const ip = pod.sshDirect?.host;
+    if (!record || !ip) continue;
+    await inTransaction(async (db) => {
+      const { rows } = await db.query(
+        `UPDATE gpu_pods SET public_ip = $2, updated = now()
+          WHERE id = $1 AND public_ip IS DISTINCT FROM $2 RETURNING id`,
+        [record.id, ip],
+      );
+      if (rows[0]) {
+        await recordEvent(
+          record.id,
+          { kind: "cleanup" },
+          "ip_seen",
+          {
+            public_ip: ip,
+            ports: (pod.runtime?.ports ?? []).map((p) => ({
+              private: p.private,
+              public: p.public,
+              type: p.type,
+            })),
+          },
+          db,
+        );
+      }
+    });
+  }
+}
+
 export async function listManagedGpuPodsLocal(
   opts: { account_id?: string; include_ended?: boolean },
   deps: GpuPodDeps = {},
@@ -755,9 +832,10 @@ export async function listManagedGpuPodsLocal(
   await resolveAmbiguousForAccount(account_id, deps);
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE ${MINE}
-       ${opts.include_ended ? "AND created > now() - interval '30 days'" : "AND state = ANY($2)"}
+       AND (state = ANY($2)
+            ${opts.include_ended ? "OR created > now() - interval '30 days'" : ""})
      ORDER BY created DESC LIMIT 500`,
-    opts.include_ended ? [account_id] : [account_id, GPU_POD_LIVE_STATES],
+    [account_id, GPU_POD_LIVE_STATES],
   );
   return rows.map(podSummary);
 }
@@ -778,7 +856,9 @@ export async function whoGpuPodLocal(
     `SELECT * FROM gpu_pods
       WHERE ${MINE}
         AND (id::text = $2 OR handle = $2 OR provider_pod_id = $2
-             OR public_ip = $2)
+             OR public_ip = $2
+             OR id IN (SELECT pod_id FROM gpu_pod_events
+                        WHERE action = 'ip_seen' AND details->>'public_ip' = $2))
       ORDER BY created DESC LIMIT 50`,
     [account_id, q],
   );
