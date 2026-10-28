@@ -808,6 +808,170 @@ describeDb("GPU budgets", () => {
       expect(r.state).toBe("settled");
     });
 
+    it("closes when the owner deletes the key at RunPod and the listing itself is rejected", async () => {
+      const s = setup();
+      await s.launch();
+      const a = account(s);
+      const report = {
+        account_id: s.account_id,
+        confirm_cocalc_only: true,
+        fresh_auth_verified: true,
+      };
+      expect(await reportCompromisedLocal(report, a.deps)).toEqual(
+        expect.objectContaining({ closed: false }),
+      );
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual(
+        expect.objectContaining({ awaiting_provider_revocation: true }),
+      );
+      // deleted at RunPod: every call with the key is rejected, the listing
+      // first
+      a.cleanup.listPods.mockRejectedValue(new RunpodApiError("auth", 401));
+      a.cleanup.getProviderIdentity.mockRejectedValue(
+        new RunpodApiError("auth", 401),
+      );
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual({ closed: true, provider_pods: 0, managed_pods: 0 });
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("closed");
+      const { rows: cred } = await getPool().query(
+        "SELECT revoked IS NOT NULL AS revoked FROM external_credentials WHERE id = $1",
+        [s.credential_id],
+      );
+      expect(cred[0].revoked).toBe(true);
+    });
+
+    it("a rejected listing doesn't close while CoCalc has an unfinished pod on the key; other listing failures never close", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      s.rp.client.terminatePod.mockRejectedValue(
+        new RunpodApiError("provider", 503),
+      );
+      a.cleanup.listPods.mockRejectedValue(new RunpodApiError("auth", 401));
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      expect(result).toEqual({
+        closed: false,
+        provider_rejected: true,
+        managed_pods: 1,
+      });
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("compromised");
+      expect(
+        (
+          await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [
+            pod.id,
+          ])
+        ).rows[0].state,
+      ).not.toBe("terminated");
+      a.cleanup.listPods.mockRejectedValue(new RunpodApiError("provider", 503));
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual({ closed: false, listing_failed: true });
+    });
+
+    it("a pod bound after the listing began isn't ended for being absent from it", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      const { rows: bound } = await getPool().query(
+        "SELECT provider_pod_id FROM gpu_pods WHERE id = $1",
+        [pod.id],
+      );
+      const provider_pod_id = bound[0].provider_pod_id;
+      // still creating when the pass starts
+      await getPool().query(
+        "UPDATE gpu_pods SET provider_pod_id = NULL, state = 'creating' WHERE id = $1",
+        [pod.id],
+      );
+      const report = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        { ...a.deps, resolvePending: async () => {} },
+      );
+      expect(report.closed).toBe(false);
+      // RunPod's snapshot is taken before its create reply; the launch binds
+      // the new pod meanwhile
+      a.cleanup.listPods.mockImplementationOnce(async () => {
+        await getPool().query(
+          "UPDATE gpu_pods SET provider_pod_id = $2, state = 'running' WHERE id = $1",
+          [pod.id, provider_pod_id],
+        );
+        return [];
+      });
+      await runCompromiseCleanup(s.account_id, s.credential_id, {
+        ...a.deps,
+        resolvePending: async () => {},
+      });
+      const { rows } = await getPool().query(
+        "SELECT state, terminated_at FROM gpu_pods WHERE id = $1",
+        [pod.id],
+      );
+      expect(rows[0].state).not.toBe("terminated");
+      expect(rows[0].terminated_at).toBeNull();
+      // the next pass, with its normal path, terminates it at RunPod
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect(s.rp.pods.has(provider_pod_id)).toBe(false);
+    });
+
+    it("removal first, report second: the removal yields to the compromise cleanup and keeps the key", async () => {
+      const s = setup();
+      await s.launch();
+      const a = account(s);
+      const removal = deleteGpuProviderKeyLocal(
+        { account_id: s.account_id, provider: "runpod" },
+        {
+          isHomeBay: async () => true,
+          storedKeyRejected: async () => false,
+          // the report comes in while the removal drains (and its cleanup
+          // pass terminates the pod)
+          drain: async () => {
+            await reportCompromisedLocal(
+              {
+                account_id: s.account_id,
+                confirm_cocalc_only: true,
+                fresh_auth_verified: true,
+              },
+              a.deps,
+            ).catch(() => {});
+          },
+          drainMs: 0,
+        },
+      );
+      expect(await removal).toEqual({
+        revoked: false,
+        warning: expect.stringContaining("reported compromised"),
+      });
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("compromised");
+      const { rows: cred } = await getPool().query(
+        "SELECT revoked IS NULL AS active FROM external_credentials WHERE id = $1",
+        [s.credential_id],
+      );
+      expect(cred[0].active).toBe(true);
+    });
+
     it("refuses if the key changed before the report took the fence", async () => {
       const s = setup();
       await s.stored;

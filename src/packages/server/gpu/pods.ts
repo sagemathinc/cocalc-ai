@@ -1642,9 +1642,13 @@ export async function markCredentialPodsToTerminate(
 // bound pods: they are gone at RunPod, so they end through the normal
 // terminating -> terminated path (settling their actual cost), as a
 // terminate RunPod confirmed would.
+// boundBefore: the provider ids CoCalc had bound before the listing began.
+// Only those can be ended: a pod bound after it may have been created after
+// RunPod's snapshot (its absence means nothing yet).
 export async function endPodsAbsentFromInventory(
   credential_id: string,
   present: Set<string>,
+  boundBefore: Set<string>,
   actor: Actor = { kind: "cleanup" },
 ): Promise<number> {
   const { rows } = await getPool().query(
@@ -1656,6 +1660,7 @@ export async function endPodsAbsentFromInventory(
   let ended = 0;
   for (const row of rows as PodRow[]) {
     if (present.has(row.provider_pod_id!)) continue;
+    if (!boundBefore.has(row.provider_pod_id!)) continue;
     const terminating = await recordTerminating(row, actor);
     if (!terminating) continue;
     // RunPod already has no such pod: its terminate is a no-op here

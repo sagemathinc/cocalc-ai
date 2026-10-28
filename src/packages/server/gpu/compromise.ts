@@ -77,6 +77,8 @@ export interface GpuCompromiseStatus {
   managed_pods?: number;
   // the last pass couldn't list the account (it retries)
   listing_failed?: boolean;
+  // RunPod rejects the key, but CoCalc still has unfinished pods on it
+  provider_rejected?: boolean;
 }
 
 export interface GpuCompromiseDeps {
@@ -124,32 +126,65 @@ export async function runCompromiseCleanup(
   await (deps.resolvePending ?? ((a) => resolvePendingForAccount(a, {})))(
     account_id,
   ).catch(() => {});
+  // CoCalc's pods bound before the listing starts: only these can be ended
+  // for being absent from it (one bound later may have been created after
+  // RunPod took the snapshot; the next pass sees it)
+  const boundBefore = await boundCredentialPods(credential_id);
   let listed: Awaited<ReturnType<RunpodCleanupCapability["listPods"]>>;
   try {
     listed = await c.listPods();
   } catch (err) {
+    // RunPod rejects the key outright (the owner deleted it there): the same
+    // end as the identity check below, once CoCalc has no unfinished pod on
+    // it. Any other failure says nothing about the account: fail closed.
+    if (err instanceof RunpodApiError && err.kind === "auth") {
+      const left = await unfinishedCredentialPods(credential_id);
+      if (left.length > 0) {
+        return {
+          closed: false,
+          provider_rejected: true,
+          managed_pods: left.length,
+        };
+      }
+      return await revokeAndClose(account_id, credential_id, deps);
+    }
     log.warn("listing a compromised key's RunPod account failed", `${err}`);
     return { closed: false, listing_failed: true };
   }
   const { rows: managed } = await getPool().query(
-    "SELECT provider_pod_id FROM gpu_pods WHERE credential_id = $1 AND provider_pod_id IS NOT NULL",
+    "SELECT provider_pod_id, state FROM gpu_pods WHERE credential_id = $1 AND provider_pod_id IS NOT NULL",
     [credential_id],
   );
-  const known = new Set(managed.map((r) => r.provider_pod_id));
+  // CoCalc's unfinished pods end through their normal paths; one it records
+  // as ended but RunPod still lists is terminated again (quietly: it is
+  // CoCalc's, and terminating is idempotent)
+  const live = new Set<string>();
+  const ended = new Set<string>();
+  for (const r of managed) {
+    (FINISHED.has(r.state) ? ended : live).add(r.provider_pod_id);
+  }
   const deadline = Date.now() + (deps.passMs ?? REQUEST_PASS_MS);
   let cut = false;
-  // the listing is complete: CoCalc's pods it doesn't show are gone
+  // the listing is complete: CoCalc's pods bound before it that it doesn't
+  // show are gone
   await endPodsAbsentFromInventory(
     credential_id,
     new Set(listed.map((p) => p.id)),
+    boundBefore,
   );
   for (const pod of listed) {
-    if (known.has(pod.id)) continue;
+    if (live.has(pod.id)) continue;
     if (Date.now() >= deadline) {
       cut = true;
       break;
     }
     await deps.guard?.();
+    if (ended.has(pod.id)) {
+      await c.terminatePod(pod.id).catch((err) => {
+        log.warn("terminating an ended pod again failed", pod.id, `${err}`);
+      });
+      continue;
+    }
     // a pod CoCalc didn't start: record it the first time it is seen, and
     // terminate it every pass until it is gone
     const { rows: seen } = await getPool().query(
@@ -206,12 +241,20 @@ export async function runCompromiseCleanup(
       managed_pods: 0,
     };
   }
-  // RunPod rejects the key and nothing is left: revoke CoCalc's copy, then
-  // close the fence. In that order: if closing fails, the fence stays
-  // compromised with its key revoked, and the next sweep closes it
-  // (closeRevokedCompromises); the key is never left active outside the
-  // reaper's view. (Nothing can change between: a compromised fence admits
-  // nothing and can't be replaced.)
+  return await revokeAndClose(account_id, credential_id, deps);
+}
+
+// RunPod rejects the key and nothing is left: revoke CoCalc's copy, then
+// close the fence. In that order: if closing fails, the fence stays
+// compromised with its key revoked, and the next sweep closes it
+// (closeRevokedCompromises); the key is never left active outside the
+// reaper's view. (Nothing can change between: a compromised fence admits
+// nothing and can't be replaced.)
+async function revokeAndClose(
+  account_id: string,
+  credential_id: string,
+  deps: GpuCompromiseDeps,
+): Promise<GpuCompromiseStatus> {
   await revokeExternalCredential({
     id: credential_id,
     owner_account_id: account_id,
@@ -221,6 +264,20 @@ export async function runCompromiseCleanup(
   });
   await closeCompromise(account_id, credential_id, deps);
   return { closed: true, provider_pods: 0, managed_pods: 0 };
+}
+
+const FINISHED = new Set(["terminated", "failed"]);
+
+async function boundCredentialPods(
+  credential_id: string,
+): Promise<Set<string>> {
+  const { rows } = await getPool().query(
+    `SELECT provider_pod_id FROM gpu_pods
+      WHERE credential_id = $1 AND provider_pod_id IS NOT NULL
+        AND state NOT IN ('terminated', 'failed') AND unmanaged_at IS NULL`,
+    [credential_id],
+  );
+  return new Set(rows.map((r) => r.provider_pod_id));
 }
 
 async function closeCompromise(

@@ -663,6 +663,19 @@ export async function deleteGpuProviderKeyLocal(
   const outcome = await (deps.keyFence ?? underKeyFence)(
     account_id,
     async (db): Promise<GpuKeyRemoval> => {
+      // a compromise report that came in while this drained takes over: its
+      // cleanup keeps the key (to watch the account) until RunPod rejects it
+      const { rows } = await db.query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [credential_id],
+      );
+      if (rows[0]?.state === "compromised" && !force) {
+        return {
+          revoked: false,
+          warning:
+            "This key was reported compromised while it was being removed: CoCalc keeps cleaning up its RunPod account, and removes the key itself once you revoke it at RunPod.",
+        };
+      }
       const left = await unfinished(db);
       if (left.length === 0) {
         await closeKeyFence(db, account_id, credential_id, "removed");

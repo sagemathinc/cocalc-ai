@@ -119,6 +119,8 @@ export interface KeyLayerCaps {
   max_concurrent_pods: number | null;
   max_gpu_count: number | null;
   max_runtime_minutes: number | null;
+  // the previous layer's end, when it ends before a new layer's default
+  ends_at?: Date;
 }
 
 export async function ensureKeyBudget(
@@ -153,8 +155,11 @@ export async function ensureKeyBudget(
     }
   }
   const d = { ...DEFAULT_KEY_LAYER, ...(initial ?? {}) };
-  const ends = new Date(now);
+  let ends = new Date(now);
   ends.setFullYear(ends.getFullYear() + d.years);
+  if (initial?.ends_at != null && initial.ends_at < ends) {
+    ends = new Date(initial.ends_at);
+  }
   const { rows } = await db.query(
     `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind,
        authorized_usd, max_hourly_usd, max_concurrent_pods, max_gpu_count,
@@ -239,6 +244,9 @@ export async function carryKeyBudget(
       prior.max_runtime_minutes,
       d.max_runtime_minutes,
     ),
+    // a deliberately shortened budget stays as short (ensureKeyBudget keeps
+    // the earlier of it and the default)
+    ends_at: new Date(prior.ends_at),
   };
 }
 

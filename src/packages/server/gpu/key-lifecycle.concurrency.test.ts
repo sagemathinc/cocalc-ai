@@ -504,6 +504,8 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     expect(rows[0]).toEqual({ state: "running", credential_id: before });
   });
 
+  const SHORT_END = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+
   it("a replacement is a new credential: the old key is revoked and its fence closed, and only its remaining money carries over", async () => {
     const s = await setup();
     const pod = await launch(s);
@@ -517,8 +519,8 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       [pod.id],
     );
     await getPool().query(
-      "UPDATE gpu_budget_layers SET spent_usd = 15, reserved_usd = 0 WHERE credential_id = $1 AND scope_kind = 'key'",
-      [before],
+      "UPDATE gpu_budget_layers SET spent_usd = 15, reserved_usd = 0, ends_at = $2 WHERE credential_id = $1 AND scope_kind = 'key'",
+      [before, SHORT_END],
     );
     await keys.setGpuProviderKeyLocal(
       { account_id: s.account_id, provider: "runpod", api_key: NEW },
@@ -538,10 +540,12 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       Object.fromEntries(fences.map((f) => [f.credential_id, f.state])),
     ).toEqual({ [before]: "closed", [after]: "active" });
     const { rows: layer } = await getPool().query(
-      "SELECT authorized_usd FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+      "SELECT authorized_usd, ends_at FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
       [after],
     );
     expect(Number(layer[0].authorized_usd)).toBe(5);
+    // a budget its owner shortened stays as short
+    expect(new Date(layer[0].ends_at).getTime()).toBe(SHORT_END.getTime());
     const { rows: log } = await getPool().query(
       "SELECT action, details FROM gpu_key_events WHERE credential_id = $1",
       [before],

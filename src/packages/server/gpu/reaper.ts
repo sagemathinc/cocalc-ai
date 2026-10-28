@@ -199,7 +199,8 @@ async function checkEntitlements(
          FROM gpu_key_fences f
         WHERE f.credential_id::text > $2
           AND EXISTS (SELECT 1 FROM gpu_pods p WHERE p.credential_id = f.credential_id
-                        AND p.state NOT IN ('terminated', 'failed'))
+                        AND p.state NOT IN ('terminated', 'failed')
+                        AND p.unmanaged_at IS NULL)
         ORDER BY f.credential_id::text LIMIT $1`,
       [BATCH, after],
     );
