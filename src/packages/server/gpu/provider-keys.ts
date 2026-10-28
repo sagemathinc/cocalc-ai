@@ -37,13 +37,17 @@ import {
 
 type Fetch = typeof globalThis.fetch;
 
-// Verification is at most four requests (organization, maybe GraphQL
-// `myself`, one page of pods, a write-permission probe) of at most 6 s each, and must finish within
-// VERIFY_DEADLINE_MS or nothing is stored. With the store (routed, at most
-// 15 s) that stays under the browser's VERIFY_RPC_TIMEOUT_MS (45 s, in
-// util/gpu/provider-keys), so the browser never reports a failure for a key
-// that is stored afterwards.
-const VERIFY_REQUEST_TIMEOUT_MS = 6_000;
+// Verification is at most seven requests (organization, maybe GraphQL
+// `myself`, one page of pods, then a template created and deleted to prove
+// write access; an unclear create adds a lookup by name, and a delete may be
+// retried once) of at most 4 s each. Cleanup after a failed probe can run
+// past 25 s, but verification must succeed within
+// VERIFY_DEADLINE_MS or nothing is stored. The store after that has no
+// deadline of its own (it may wait on the database and the selector lock);
+// the browser's VERIFY_RPC_TIMEOUT_MS (90 s, in util/gpu/provider-keys) is
+// ample headroom in practice, and a store that is later still shows up at
+// the next status load.
+const VERIFY_REQUEST_TIMEOUT_MS = 4_000;
 const VERIFY_DEADLINE_MS = 25_000;
 
 export interface GpuProviderKeyDeps {
@@ -215,6 +219,27 @@ export async function setGpuProviderKey(
   if (Date.now() - started > (deps.verifyDeadlineMs ?? VERIFY_DEADLINE_MS)) {
     // The browser may have given up; storing now would surprise it.
     throw Error("RunPod took too long to check this key. Try again shortly.");
+  }
+  // A removal (say, in another tab) while this key was being checked
+  // normally wins: saving would reconnect an account the user just
+  // disconnected. This is a check, not a lock: a removal landing in the few
+  // milliseconds between it and the store below can still lose, which only
+  // stores the key this same user just pasted (accepted as low impact). It
+  // counts only removals after this save started, so a removal just before
+  // it never blocks it; clock skew with the database is milliseconds.
+  const removedSince = (
+    await listAccountExternalCredentialsRouted({
+      owner_account_id: account_id,
+      provider,
+      kind: GPU_PROVIDER_API_KEY_KIND,
+      scope: "account",
+      includeRevoked: true,
+    })
+  ).some((row) => row.revoked && new Date(row.revoked).getTime() > started);
+  if (removedSince) {
+    throw Error(
+      "Your RunPod key was removed while this one was being checked, so it wasn't saved. Paste it again to connect it.",
+    );
   }
   const verified_at = new Date().toISOString();
   const provider_account_name =

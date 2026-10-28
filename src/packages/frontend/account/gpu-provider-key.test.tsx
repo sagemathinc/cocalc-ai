@@ -62,7 +62,7 @@ describe("GpuProviderKeySection", () => {
         api_key: KEY,
         browser_id: "browser-1",
         // longer than the server's worst-case verification
-        timeout: 45_000,
+        timeout: 90_000,
       }),
     );
     expect(mockFreshAuth).toHaveBeenCalled();
@@ -221,5 +221,40 @@ describe("GpuProviderKeySection", () => {
     expect(await screen.findByLabelText("RunPod API key")).toBeTruthy();
     expect(screen.getByRole("alert")).toBeTruthy();
     expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("after a removal, announces it and moves focus there", async () => {
+    const user = userEvent.setup();
+    mockSystem.getGpuProviderKeyStatus
+      .mockResolvedValueOnce(CONNECTED)
+      .mockResolvedValue(DISCONNECTED);
+    mockSystem.deleteGpuProviderKey.mockResolvedValue({ revoked: true });
+    render(<GpuProviderKeySection />);
+    const remove = await screen.findByRole("button", { name: "Remove" });
+    remove.focus();
+    await user.keyboard("{Enter}");
+    await user.click(
+      within(await screen.findByRole("tooltip")).getByRole("button", {
+        name: "Remove",
+      }),
+    );
+    const notice = await screen.findByText(/key was removed from CoCalc/);
+    expect(notice.getAttribute("role")).toBe("status");
+    await waitFor(() => expect(document.activeElement).toBe(notice));
+  });
+
+  it("shows a stored key as inactive after the membership lapses, with Remove only", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue({
+      ...CONNECTED,
+      entitled: false,
+    });
+    render(<GpuProviderKeySection />);
+    expect(
+      await screen.findByText(/no longer includes RunPod GPUs/),
+    ).toBeTruthy();
+    expect(screen.getByText(/Inactive key for RunPod/)).toBeTruthy();
+    expect(screen.queryByText(/^Connected to RunPod/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Replace key" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
   });
 });
