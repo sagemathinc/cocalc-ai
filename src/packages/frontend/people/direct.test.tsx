@@ -68,7 +68,11 @@ jest.mock("./collaborators", () => ({
 }));
 
 import { parsePeopleRoute } from "./route";
-import { DirectConversationView, DirectList } from "./direct-messages";
+import {
+  DirectConversationView,
+  DirectList,
+  DirectMessagesTab,
+} from "./direct-messages";
 import { NewDirectModal } from "./new-direct";
 import {
   directAttentionCount,
@@ -207,6 +211,44 @@ test("a conversation shows its messages, marks them read and sends with Shift+En
   await waitFor(() =>
     expect(screen.getByLabelText("Your message")).toBeTruthy(),
   );
+});
+
+test("switching accounts never leaves the previous account's messages on screen", async () => {
+  mockApi.listDirect.mockResolvedValue({ conversations: [listed("c1")] });
+  mockApi.getDirect.mockResolvedValueOnce({
+    conversation: listed("c1"),
+    messages: [
+      {
+        message_id: "m1",
+        conversation_id: "c1",
+        sender_id: bea,
+        sent: 3000,
+        body: "private for Ada",
+      },
+    ],
+  });
+  const view = render(
+    <DirectMessagesTab
+      conversation_id="c1"
+      onOpen={() => {}}
+      onClose={() => {}}
+    />,
+  );
+  await waitFor(() => expect(screen.getByText("private for Ada")).toBeTruthy());
+  // Someone else signs in on the same route; their request fails.
+  mockAccount = cy;
+  mockApi.getDirect.mockRejectedValue(Error("conversation not found"));
+  view.rerender(
+    <DirectMessagesTab
+      conversation_id="c1"
+      onOpen={() => {}}
+      onClose={() => {}}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getAllByRole("alert").length).toBeGreaterThan(0),
+  );
+  expect(screen.queryByText("private for Ada")).toBeNull();
 });
 
 test("a request's messages are plain text until accepted: no image loads", async () => {

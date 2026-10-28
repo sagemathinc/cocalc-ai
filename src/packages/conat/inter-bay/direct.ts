@@ -23,6 +23,18 @@ import type {
 // is the authority before touching its tables.
 export interface InterBayDirectApi {
   // owner
+  // From the starter's home bay, after its consent and quota checks: create
+  // the conversation here, or (for a pair) return the existing one.
+  create(opts: {
+    // Chosen by the starter's home bay (its quota claim is keyed by it).
+    conversation_id: string;
+    account_id: string;
+    member_ids: string[];
+    member_states: Record<string, DirectMemberState>;
+    title: string | null;
+    pair_key: string | null;
+    body: string | null;
+  }): Promise<{ created: boolean; conversation: DirectConversation }>;
   messages(opts: {
     account_id: string;
     conversation_id: string;
@@ -67,6 +79,10 @@ export interface InterBayDirectApi {
   }): Promise<void>;
   isBlocked(opts: { account_id: string; sender_id: string }): Promise<boolean>;
   block(opts: {
+    account_id: string;
+    blocked_account_id: string;
+  }): Promise<void>;
+  unblock(opts: {
     account_id: string;
     blocked_account_id: string;
   }): Promise<void>;

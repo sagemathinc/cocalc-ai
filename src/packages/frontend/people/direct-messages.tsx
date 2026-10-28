@@ -332,10 +332,23 @@ export function DirectConversationView({
   const [sending, setSending] = useState(false);
   const [uploads, setUploads] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
+  // Responses for an earlier load (or after unmounting) are dropped; the
+  // view is also keyed by account, so another account starts empty.
+  const generation = useRef(0);
+  const alive = useRef(true);
+  useEffect(
+    () => () => {
+      alive.current = false;
+      generation.current++;
+    },
+    [],
+  );
 
   const load = useCallback(async () => {
+    const current = ++generation.current;
     try {
       const result = await peopleApi().getDirect({ conversation_id });
+      if (current !== generation.current) return;
       setConversation(result.conversation);
       // Everything loaded so far (earlier pages, a message just sent),
       // updated by this page.
@@ -354,6 +367,7 @@ export function DirectConversationView({
           .catch(() => {});
       }
     } catch (err) {
+      if (current !== generation.current) return;
       setError(`${err}`);
     }
   }, [conversation_id]);
@@ -371,6 +385,7 @@ export function DirectConversationView({
     const before = messages[0]?.sent;
     if (before == null) return;
     const result = await peopleApi().getDirect({ conversation_id, before });
+    if (!alive.current) return;
     setMessages((current) => mergeMessages(current, result.messages));
     setMore(result.messages.length >= DIRECT_MESSAGES_PAGE);
   }
@@ -383,15 +398,16 @@ export function DirectConversationView({
         conversation_id,
         body: value,
       });
+      if (!alive.current) return;
       setMessages((current) => mergeMessages(current, [message]));
       setDraft("");
       setError("");
       directChanged();
       void load();
     } catch (err) {
-      setError(`${err}`);
+      if (alive.current) setError(`${err}`);
     } finally {
-      setSending(false);
+      if (alive.current) setSending(false);
     }
   }
 
@@ -543,6 +559,7 @@ export function DirectMessagesTab({
   onClose: () => void;
 }) {
   const { conversations, error, loading } = useDirectConversations(true);
+  const account_id = useTypedRedux("account", "account_id");
   const open = conversation_id != null;
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 12 }}>
@@ -579,7 +596,7 @@ export function DirectMessagesTab({
           }}
         >
           <DirectConversationView
-            key={conversation_id}
+            key={`${account_id}:${conversation_id}`}
             conversation_id={conversation_id}
             onClose={onClose}
           />

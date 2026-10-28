@@ -49,6 +49,16 @@ export interface DirectConversation {
   last_sender_id: string | null;
   preview: string;
   title: string | null;
+  // Bumped by every change on the owning bay; home bays ignore anything
+  // older than what they have, so updates arriving out of order can't undo
+  // a newer one.
+  revision: number;
+}
+
+// The one key of a two-person, untitled conversation: there is only one per
+// pair, stored on the home bay of the smaller account id.
+export function directPairKey(a: string, b: string): string {
+  return [a.toLowerCase(), b.toLowerCase()].sort().join(":");
 }
 
 // A conversation in one member's list: the shared record plus their own

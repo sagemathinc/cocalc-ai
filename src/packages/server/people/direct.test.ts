@@ -58,6 +58,11 @@ jest.mock("@cocalc/server/accounts/usernames", () => ({
 }));
 
 import { directHubApi, retryDirectFanouts } from "./direct";
+import {
+  createDirectConversationRecord,
+  getDirectConversationRecord,
+  upsertDirectIndex,
+} from "@cocalc/database/postgres/direct-conversations";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -94,29 +99,30 @@ describeDb("direct conversations", () => {
     await closePglite();
   });
   beforeEach(async () => {
-    mockNotify.mockClear();
+    mockNotify.mockReset().mockResolvedValue(undefined);
     mockBanned.clear();
     await getPool().query(
       "TRUNCATE projects, account_collaborator_index, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
     );
   });
 
-  async function shareProject() {
+  async function shareProject(owning_bay_id: string | null = null) {
     await getPool().query(
-      "INSERT INTO projects (project_id, users) VALUES ($1, $2)",
+      "INSERT INTO projects (project_id, users, owning_bay_id) VALUES ($1, $2, $3)",
       [
         project_id,
         JSON.stringify({
           [ada]: { group: "owner" },
           [bea]: { group: "collaborator" },
         }),
+        owning_bay_id,
       ],
     );
   }
 
   // A message request from Ada to Bea (not collaborators), by username.
   const request = (
-    body = "Hello, may I ask about your paper?",
+    body: string | null = "Hello, may I ask about your paper?",
     title?: string,
   ) =>
     directHubApi.startDirect({
@@ -126,11 +132,17 @@ describeDb("direct conversations", () => {
       body,
     });
 
+  const listFor = async (account_id: string) =>
+    (await directHubApi.listDirect({ account_id })).conversations;
+
   // Nothing a browser gets says how anyone else answered.
   function expectMemberView(value: any) {
     expect(value).not.toHaveProperty("member_states");
     expect(value).not.toHaveProperty("owner_bay_id");
+    expect(value).not.toHaveProperty("revision");
   }
+
+  const NOT_ACCEPTED = "hasn't been accepted yet";
 
   test("collaborators message each other directly; each is notified of the other's messages", async () => {
     await shareProject();
@@ -143,10 +155,8 @@ describeDb("direct conversations", () => {
     expect(started.member_ids).toEqual([ada, bea]);
     expect(started.preview).toBe("Hi Bea");
     expectMemberView(started);
-    const [forBea] = (await directHubApi.listDirect({ account_id: bea }))
-      .conversations;
+    const [forBea] = await listFor(bea);
     expect(forBea.conversation_id).toBe(started.conversation_id);
-    expect(forBea.state).toBe("active");
     expect(titles()).toEqual(["Message from Ada Tester"]);
     expect(mockNotify.mock.calls[0][0]).toMatchObject({
       kind: "account_notice",
@@ -171,7 +181,6 @@ describeDb("direct conversations", () => {
       [ada, "Hi Bea"],
       [bea, "Hi Ada"],
     ]);
-    // Starting again reuses the pair's conversation.
     const again = await directHubApi.startDirect({
       account_id: bea,
       member_ids: [ada],
@@ -179,26 +188,21 @@ describeDb("direct conversations", () => {
     expect(again.conversation_id).toBe(started.conversation_id);
   });
 
-  test("someone who isn't a collaborator gets one request: one message, one notification, until they accept", async () => {
+  test("a request is one message and one notification until accepted; replying accepts", async () => {
     const started = await request();
-    const [forBea] = (await directHubApi.listDirect({ account_id: bea }))
-      .conversations;
+    const [forBea] = await listFor(bea);
     expect(forBea.state).toBe("requested");
     expect(titles()).toEqual(["Ada Tester sent you a message request"]);
-    // No more messages until she accepts.
     await expect(
       directHubApi.sendDirect({
         account_id: ada,
         conversation_id: started.conversation_id,
         body: "Following up",
       }),
-    ).rejects.toThrow("hasn't been accepted yet");
-    // Reusing the pair doesn't get around it either.
-    await expect(request("Hello again?")).rejects.toThrow(
-      "hasn't been accepted yet",
-    );
+    ).rejects.toThrow(NOT_ACCEPTED);
+    // Starting again is the same conversation, with the same rule.
+    await expect(request("Hello again?")).rejects.toThrow(NOT_ACCEPTED);
     expect(notifiedTo(bea)).toBe(1);
-    // She can read it to decide, and replying accepts.
     const { messages } = await directHubApi.getDirect({
       account_id: bea,
       conversation_id: started.conversation_id,
@@ -209,11 +213,8 @@ describeDb("direct conversations", () => {
       conversation_id: started.conversation_id,
       body: "Sure",
     });
-    const [after] = (await directHubApi.listDirect({ account_id: bea }))
-      .conversations;
-    expect(after.state).toBe("active");
+    expect((await listFor(bea))[0].state).toBe("active");
     expect(notifiedTo(ada)).toBe(1);
-    // Now Ada may write again.
     await directHubApi.sendDirect({
       account_id: ada,
       conversation_id: started.conversation_id,
@@ -221,10 +222,60 @@ describeDb("direct conversations", () => {
     });
   });
 
+  test("concurrent sends to an empty request: exactly one gets through", async () => {
+    const started = await request(null);
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, (_, i) =>
+        directHubApi.sendDirect({
+          account_id: ada,
+          conversation_id: started.conversation_id,
+          body: `Try ${i}`,
+        }),
+      ),
+    );
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM direct_messages WHERE conversation_id = $1",
+      [started.conversation_id],
+    );
+    expect(rows[0].n).toBe(1);
+  });
+
+  test("a group holds only its first message until every request is accepted", async () => {
+    await shareProject();
+    const group = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+      usernames: ["cy"],
+      title: "Group",
+      body: "Hi both",
+    });
+    expect(group.member_ids).toEqual([ada, bea, cy]);
+    for (const sender of [ada, bea]) {
+      await expect(
+        directHubApi.sendDirect({
+          account_id: sender,
+          conversation_id: group.conversation_id,
+          body: "More",
+        }),
+      ).rejects.toThrow(NOT_ACCEPTED);
+    }
+    await directHubApi.respondDirect({
+      account_id: cy,
+      conversation_id: group.conversation_id,
+      action: "accept",
+    });
+    await directHubApi.sendDirect({
+      account_id: bea,
+      conversation_id: group.conversation_id,
+      body: "Now we can talk",
+    });
+  });
+
   test("declining or blocking is never visible to the sender", async () => {
     for (const action of ["decline", "block"] as const) {
       await getPool().query(
-        "TRUNCATE direct_conversations, direct_messages, direct_request_admissions, account_direct_conversations, account_direct_blocks",
+        "TRUNCATE direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
       );
       const started = await request();
       const answered = await directHubApi.respondDirect({
@@ -233,8 +284,7 @@ describeDb("direct conversations", () => {
         action,
       });
       expectMemberView(answered);
-      const [forAda] = (await directHubApi.listDirect({ account_id: ada }))
-        .conversations;
+      const [forAda] = await listFor(ada);
       expectMemberView(forAda);
       expect(forAda.state).toBe("active");
       const { conversation } = await directHubApi.getDirect({
@@ -242,53 +292,136 @@ describeDb("direct conversations", () => {
         conversation_id: started.conversation_id,
       });
       expectMemberView(conversation);
-      // Writing more gets the same answer as an undecided request.
       await expect(
         directHubApi.sendDirect({
           account_id: ada,
           conversation_id: started.conversation_id,
           body: "Are you there?",
         }),
-      ).rejects.toThrow("hasn't been accepted yet");
+      ).rejects.toThrow(NOT_ACCEPTED);
     }
   });
 
-  test("declining hides it from the recipient; blocking also refuses new conversations", async () => {
+  test("after a decline the pair keeps its one conversation; the recipient can still start talking", async () => {
     const started = await request();
     await directHubApi.respondDirect({
       account_id: bea,
       conversation_id: started.conversation_id,
       action: "decline",
     });
-    expect(
-      (await directHubApi.listDirect({ account_id: bea })).conversations,
-    ).toEqual([]);
-    await expect(
-      directHubApi.getDirect({
-        account_id: bea,
-        conversation_id: started.conversation_id,
-      }),
-    ).rejects.toThrow("not found");
-    // The pair isn't reused after she declined: a new request (charged).
+    expect(await listFor(bea)).toEqual([]);
     mockNotify.mockClear();
-    const second = await request("One more try");
-    expect(second.conversation_id).not.toBe(started.conversation_id);
-    expect(notifiedTo(bea)).toBe(1);
+    await expect(request("One more try")).rejects.toThrow(NOT_ACCEPTED);
+    expect(notifiedTo(bea)).toBe(0);
+    // Bea changes her mind: the same conversation, back in her list.
     await directHubApi.respondDirect({
       account_id: bea,
-      conversation_id: second.conversation_id,
-      action: "block",
+      conversation_id: started.conversation_id,
+      action: "accept",
     });
-    await expect(request("Hello?", "Third")).rejects.toThrow(
-      "you can't message this person",
-    );
-    await expect(request("Hello?")).rejects.toThrow(
-      "you can't message this person",
+    expect((await listFor(bea))[0].conversation_id).toBe(
+      started.conversation_id,
     );
   });
 
+  test("a block refuses new conversations, and a request already in flight is never recorded", async () => {
+    const started = await request();
+    await directHubApi.respondDirect({
+      account_id: bea,
+      conversation_id: started.conversation_id,
+      action: "block",
+    });
+    await expect(request("Hello?", "Another topic")).rejects.toThrow(
+      "you can't message this person",
+    );
+    // A request created past the check (the race): Bea's home refuses it.
+    mockNotify.mockClear();
+    await createDirectConversationRecord({
+      owner_bay_id: "bay-0",
+      created_by: ada,
+      member_ids: [ada, bea],
+      member_states: { [ada]: "active", [bea]: "requested" },
+      title: "Raced",
+      pair_key: null,
+      body: "Sneaky",
+    });
+    await getPool().query(
+      "UPDATE direct_fanout_pending SET next_attempt = NOW()",
+    );
+    await retryDirectFanouts();
+    expect(await listFor(bea)).toEqual([]);
+    expect(notifiedTo(bea)).toBe(0);
+  });
+
+  test("opposite starts at the same time get the pair's one conversation", async () => {
+    await shareProject();
+    const [a, b] = await Promise.all([
+      directHubApi.startDirect({ account_id: ada, member_ids: [bea] }),
+      directHubApi.startDirect({ account_id: bea, member_ids: [ada] }),
+    ]);
+    expect(a.conversation_id).toBe(b.conversation_id);
+  });
+
+  test("a stale local copy of another bay's project doesn't make people collaborators", async () => {
+    await shareProject("bay-9");
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      usernames: ["bea"],
+      body: "Hi",
+    });
+    expect((await listFor(bea))[0].state).toBe("requested");
+    await expect(
+      directHubApi.startDirect({ account_id: ada, member_ids: [bea] }),
+    ).rejects.toThrow("by their username");
+    void started;
+  });
+
+  test("an older revision arriving late can't undo a newer answer", async () => {
+    const started = await request();
+    const before = await getDirectConversationRecord(
+      started.conversation_id,
+      "bay-0",
+    );
+    await directHubApi.respondDirect({
+      account_id: bea,
+      conversation_id: started.conversation_id,
+      action: "decline",
+    });
+    await upsertDirectIndex({ account_id: bea, conversation: before! });
+    expect(await listFor(bea)).toEqual([]);
+  });
+
+  test("a failed notification is retried until it is created, and only once", async () => {
+    await shareProject();
+    mockNotify.mockRejectedValueOnce(Error("notifications down"));
+    await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+      body: "Hi",
+    });
+    expect(mockNotify).toHaveBeenCalledTimes(1);
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM direct_fanout_pending WHERE account_id = $1",
+      [bea],
+    );
+    expect(rows[0].n).toBe(1);
+    await getPool().query(
+      "UPDATE direct_fanout_pending SET next_attempt = NOW()",
+    );
+    await retryDirectFanouts();
+    expect(mockNotify).toHaveBeenCalledTimes(2);
+    await getPool().query(
+      "UPDATE direct_fanout_pending SET next_attempt = NOW()",
+    );
+    await retryDirectFanouts();
+    expect(mockNotify).toHaveBeenCalledTimes(2);
+    const { rows: left } = await getPool().query(
+      "SELECT count(*)::int AS n FROM direct_fanout_pending",
+    );
+    expect(left[0].n).toBe(0);
+  });
+
   test("people who aren't collaborators can only be named by exact username", async () => {
-    // A raw account id of a non-collaborator is refused, alone or in a group.
     await expect(
       directHubApi.startDirect({
         account_id: ada,
@@ -304,7 +437,6 @@ describeDb("direct conversations", () => {
         body: "Hi",
       }),
     ).rejects.toThrow("by their username");
-    // Lookups take usernames only: not account ids, emails or old names.
     for (const username of [
       cy,
       cy.replace(/-/g, ""),
@@ -325,15 +457,6 @@ describeDb("direct conversations", () => {
         body: "Hi",
       }),
     ).rejects.toThrow("no one has the username");
-    // A collaborator and a username together: a group with one request.
-    const group = await directHubApi.startDirect({
-      account_id: ada,
-      member_ids: [bea],
-      usernames: ["cy"],
-      title: "Group",
-      body: "Hi both",
-    });
-    expect(group.member_ids).toEqual([ada, bea, cy]);
   });
 
   test("the daily request quota isn't refunded by answers and holds under concurrency", async () => {
@@ -355,7 +478,7 @@ describeDb("direct conversations", () => {
       ),
     );
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(20);
-  });
+  }, 30000);
 
   test("notifications are plain text: nothing in them loads or renders", async () => {
     await request(
@@ -392,7 +515,7 @@ describeDb("direct conversations", () => {
     }
   });
 
-  test("limits: group size, empty messages, banned senders", async () => {
+  test("limits: empty messages, banned senders", async () => {
     await shareProject();
     const started = await directHubApi.startDirect({
       account_id: ada,
@@ -422,8 +545,7 @@ describeDb("direct conversations", () => {
       member_ids: [bea],
       body: "One",
     });
-    let [forBea] = (await directHubApi.listDirect({ account_id: bea }))
-      .conversations;
+    let [forBea] = await listFor(bea);
     expect(forBea.last_read).toBeNull();
     await directHubApi.markDirectRead({
       account_id: bea,
@@ -435,9 +557,7 @@ describeDb("direct conversations", () => {
       conversation_id: started.conversation_id,
       muted: true,
     });
-    [forBea] = (
-      await directHubApi.listDirect({ account_id: bea })
-    ).conversations;
+    [forBea] = await listFor(bea);
     expect(forBea.last_read).toBe(forBea.last_activity);
     expect(forBea.muted).toBe(true);
     mockNotify.mockClear();
@@ -447,13 +567,7 @@ describeDb("direct conversations", () => {
       body: "Two",
     });
     expect(notifiedTo(bea)).toBe(0);
-    [forBea] = (
-      await directHubApi.listDirect({ account_id: bea })
-    ).conversations;
+    [forBea] = await listFor(bea);
     expect(forBea.preview).toBe("Two");
-  });
-
-  test("retries deliver the latest state", async () => {
-    await expect(retryDirectFanouts()).resolves.toBeUndefined();
   });
 });

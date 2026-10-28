@@ -3,36 +3,53 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Direct conversations: routing, consent and delivery. The record and
-// messages live on the owning bay (the creator's home bay when started); each
-// member's home bay keeps an index row, updated by fan-out from the owning
-// bay, and decides whether to notify its member. See
-// @cocalc/util/direct-conversations.
+// Direct conversations: routing, consent and delivery (see
+// @cocalc/util/direct-conversations).
+//
+// - The record and messages live on the owning bay: the starter's home bay
+//   for a group, and for a two-person conversation always the home bay of
+//   the smaller account id, where a unique pair key makes it the only one.
+// - Every change bumps the record's revision and, in the same transaction,
+//   queues delivery to each member's home bay (an outbox), cleared once
+//   delivered and retried until then.
+// - Each member's home bay keeps an index row, applies only newer revisions,
+//   and decides (and records, so retries are safe) whether to notify.
+// - Consent: collaborators are active at once; anyone else, named only by
+//   exact username, gets a message request: one message and one
+//   notification until they accept. Requests are charged against the
+//   starter's daily quota on their home bay. Browsers see only their own
+//   standing, never whether someone declined or blocked.
 
+import { randomUUID } from "node:crypto";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import {
   createInterBayDirectClient,
   type InterBayDirectApi,
 } from "@cocalc/conat/inter-bay/direct";
 import {
-  addDirectMessage,
+  admitDirectRequest,
+  releaseDirectRequest,
+  sendDirectMessage,
   areCollaborators,
-  countDirectMessagesFrom,
   blockDirectSender,
   clearDirectFanout,
   createDirectConversationRecord,
-  dueDirectFanouts,
-  findDirectPair,
   getDirectConversationRecord,
   getDirectIndex,
+  getDirectMessage,
   isDirectBlocked,
   listDirectIndex,
   listDirectMessages,
   markDirectRead,
+  pendingDirectFanouts,
   recordDirectFanoutFailure,
+  recordDirectNotified,
   setDirectMemberState,
   setDirectMuted,
+  unblockDirectSender,
   upsertDirectIndex,
+  type DirectFanoutRow,
+  type DirectIndexRow,
 } from "@cocalc/database/postgres/direct-conversations";
 import {
   createNotificationEventGraph,
@@ -49,14 +66,15 @@ import {
 } from "@cocalc/server/accounts/security-state";
 import { resolveUsernameOwner } from "@cocalc/server/accounts/usernames";
 import {
+  directPairKey,
   directPreview,
   directRoute,
+  escapeMarkdown,
+  memberView,
   normalizeDirectBody,
   normalizeDirectMembers,
   normalizeDirectTitle,
   normalizeDirectUsername,
-  escapeMarkdown,
-  memberView,
   type DirectConversation,
   type DirectMemberState,
   type DirectMessage,
@@ -114,6 +132,7 @@ async function assertCanSend(account_id: string): Promise<void> {
 async function memberRecord(
   account_id: string,
   conversation_id: string,
+  { allowLeft = false }: { allowLeft?: boolean } = {},
 ): Promise<{ conversation: DirectConversation; state: DirectMemberState }> {
   requireUuid(conversation_id, "conversation_id");
   const conversation = await getDirectConversationRecord(
@@ -124,37 +143,63 @@ async function memberRecord(
     throw Error("conversation not found");
   }
   const state = conversation.member_states[account_id] ?? "active";
-  if (state === "declined" || state === "blocked") {
+  if (!allowLeft && (state === "declined" || state === "blocked")) {
     throw Error("conversation not found");
   }
   return { conversation, state };
 }
 
-// Tell every member's home bay; what can't be delivered now is retried.
-async function fanout(
-  conversation: DirectConversation,
-  message?: Pick<DirectMessage, "message_id" | "sender_id" | "body">,
-): Promise<void> {
+// Deliver what the outbox holds for a conversation (or everything due).
+// Each row is cleared only once its member's home bay has it.
+async function deliver(rows: DirectFanoutRow[]): Promise<void> {
   await Promise.all(
-    conversation.member_ids.map(async (account_id) => {
+    rows.map(async (row) => {
       try {
+        const conversation = await getDirectConversationRecord(
+          row.conversation_id,
+          bay(),
+        );
+        if (conversation == null) {
+          await clearDirectFanout(row);
+          return;
+        }
+        const message =
+          row.message_id == null
+            ? null
+            : await getDirectMessage(row.message_id);
         await (
-          await home(account_id)
-        ).upsertIndex({ account_id, conversation, message: message ?? null });
+          await home(row.account_id)
+        ).upsertIndex({
+          account_id: row.account_id,
+          conversation,
+          message:
+            message == null
+              ? null
+              : {
+                  message_id: message.message_id,
+                  sender_id: message.sender_id,
+                  body: message.body,
+                },
+        });
+        await clearDirectFanout({ ...row, revision: conversation.revision });
       } catch (err) {
-        logger.warn("direct conversation fan-out failed; will retry", {
-          conversation_id: conversation.conversation_id,
-          account_id,
+        logger.warn("direct conversation delivery failed; will retry", {
+          conversation_id: row.conversation_id,
+          account_id: row.account_id,
           err: `${err}`,
         });
         await recordDirectFanoutFailure({
-          conversation_id: conversation.conversation_id,
-          account_id,
+          conversation_id: row.conversation_id,
+          account_id: row.account_id,
           error: `${err}`,
         }).catch(() => {});
       }
     }),
   );
+}
+
+async function deliverNow(conversation_id: string): Promise<void> {
+  await deliver(await pendingDirectFanouts({ conversation_id }));
 }
 
 let retryTimer: ReturnType<typeof setInterval> | undefined;
@@ -169,27 +214,7 @@ export function startDirectFanoutRetries(): void {
 }
 
 export async function retryDirectFanouts(): Promise<void> {
-  for (const { conversation_id, account_id } of await dueDirectFanouts()) {
-    const conversation = await getDirectConversationRecord(
-      conversation_id,
-      bay(),
-    );
-    if (conversation == null) {
-      await clearDirectFanout(conversation_id, account_id);
-      continue;
-    }
-    try {
-      // The latest state; missed messages are not notified late.
-      await (await home(account_id)).upsertIndex({ account_id, conversation });
-      await clearDirectFanout(conversation_id, account_id);
-    } catch (err) {
-      await recordDirectFanoutFailure({
-        conversation_id,
-        account_id,
-        error: `${err}`,
-      });
-    }
-  }
+  await deliver(await pendingDirectFanouts({ due: true }));
 }
 
 async function names(account_ids: string[]): Promise<Map<string, string>> {
@@ -207,42 +232,50 @@ async function names(account_ids: string[]): Promise<Map<string, string>> {
   return result;
 }
 
-// On the member's home bay: a new message reached them.
-async function notify({
-  account_id,
-  previous,
-  current,
-  message,
-}: {
-  account_id: string;
-  previous: ListedDirectConversation | null;
-  current: ListedDirectConversation;
-  message: Pick<DirectMessage, "message_id" | "sender_id" | "body">;
-}): Promise<void> {
-  if (message.sender_id === account_id || current.muted) return;
-  // A request notifies once, when it arrives; nothing more until accepted.
-  const request = current.state === "requested";
-  if (request && previous != null) return;
-  if (current.state !== "active" && !request) return;
+// On the member's home bay: should this message notify them? A request
+// notifies once; otherwise each message from someone else, unless muted,
+// and only once (the row records what it notified, so retries don't repeat).
+function notificationFor(
+  account_id: string,
+  row: DirectIndexRow,
+  message: Pick<DirectMessage, "message_id" | "sender_id">,
+): "request" | "message" | null {
+  if (message.sender_id === account_id || row.muted) return null;
+  if (row.notified_message_id === message.message_id) return null;
+  if (row.state === "requested") {
+    return row.request_notified ? null : "request";
+  }
+  return row.state === "active" ? "message" : null;
+}
+
+async function notify(
+  account_id: string,
+  row: DirectIndexRow,
+  message: Pick<DirectMessage, "message_id" | "sender_id" | "body">,
+): Promise<void> {
+  const kind = notificationFor(account_id, row, message);
+  if (kind == null) return;
   const sender =
     (await names([message.sender_id])).get(message.sender_id) ?? "Someone";
   const summary = {
-    title: request
-      ? `${sender} sent you a message request`
-      : `Message from ${sender}`,
+    title:
+      kind === "request"
+        ? `${sender} sent you a message request`
+        : `Message from ${sender}`,
     // Plain text, escaped: nothing in it renders as Markdown or loads.
     body_markdown: escapeMarkdown(directPreview(message.body)),
     severity: "info",
     origin_label: "Messages",
     notice_type: "direct_message",
-    action_label: request ? "Review request" : "Open conversation",
-    action_link: `/people/${directRoute(current.conversation_id)}`,
-    conversation_id: current.conversation_id,
+    action_label: kind === "request" ? "Review request" : "Open conversation",
+    action_link: `/people/${directRoute(row.conversation_id)}`,
+    conversation_id: row.conversation_id,
   };
   const homes = await resolveNotificationTargetHomeBays({
     account_ids: [account_id],
     default_bay_id: bay(),
   });
+  // Idempotent by its dedupe key: safe to repeat on a retry.
   await createNotificationEventGraph({
     kind: "account_notice",
     source_bay_id: bay(),
@@ -259,20 +292,26 @@ async function notify({
       },
     ],
   });
+  await recordDirectNotified({
+    account_id,
+    conversation_id: row.conversation_id,
+    message_id: message.message_id,
+    request: kind === "request",
+  });
 }
 
-// An exact, current username's account (not an account id, not a redirect
-// from an old name), or null.
+// An exact, current username's account (not an account id, email, or a
+// redirect from an old name), or null.
 async function resolveDirectUsername(value: unknown): Promise<string | null> {
   const username = normalizeDirectUsername(value);
   if (username == null) return null;
   try {
-    const owner = await resolveUsernameOwner(username);
-    if (!owner?.account_id || owner.redirect) return null;
-    if (`${owner.username ?? ""}`.toLowerCase() !== username.toLowerCase()) {
+    const found = await resolveUsernameOwner(username);
+    if (!found?.account_id || found.redirect) return null;
+    if (`${found.username ?? ""}`.toLowerCase() !== username.toLowerCase()) {
       return null;
     }
-    return owner.account_id;
+    return found.account_id;
   } catch {
     return null;
   }
@@ -280,6 +319,40 @@ async function resolveDirectUsername(value: unknown): Promise<string | null> {
 
 export const directControl: InterBayDirectApi = {
   // ---- owner ----
+  async create({
+    conversation_id,
+    account_id,
+    member_ids,
+    member_states,
+    title,
+    pair_key,
+    body,
+  }) {
+    if (pair_key != null) {
+      const [a, b] = member_ids;
+      if (member_ids.length !== 2 || directPairKey(a, b) !== pair_key) {
+        throw Error("invalid pair");
+      }
+      // A pair always lives on one bay.
+      if ((await homeBay([a, b].sort()[0])) !== bay()) {
+        throw Error("stale pair route");
+      }
+    }
+    requireUuid(conversation_id, "conversation_id");
+    const { created, conversation } = await createDirectConversationRecord({
+      conversation_id,
+      owner_bay_id: bay(),
+      created_by: account_id,
+      member_ids,
+      member_states,
+      title,
+      pair_key,
+      body: body == null ? null : normalizeDirectBody(body),
+    });
+    if (created) await deliverNow(conversation.conversation_id);
+    return { created, conversation };
+  },
+
   async messages({ account_id, conversation_id, before }) {
     const { conversation } = await memberRecord(account_id, conversation_id);
     const messages = await listDirectMessages({ conversation_id, before });
@@ -289,48 +362,26 @@ export const directControl: InterBayDirectApi = {
   async send({ account_id, conversation_id, body }) {
     await assertCanSend(account_id);
     body = normalizeDirectBody(body);
-    const { conversation: current, state } = await memberRecord(
-      account_id,
-      conversation_id,
-    );
-    // Until someone else in it has accepted, a request is its first message
-    // only: no flood of messages to people who haven't agreed. (The same
-    // answer whether they declined or haven't decided.)
-    const othersActive = current.member_ids.some(
-      (id) =>
-        id !== account_id &&
-        (current.member_states[id] ?? "active") === "active",
-    );
-    if (
-      state === "active" &&
-      !othersActive &&
-      (await countDirectMessagesFrom(conversation_id, account_id)) > 0
-    ) {
-      throw Error("your message request hasn't been accepted yet");
-    }
-    // Replying to a request accepts it.
-    if (state === "requested") {
-      await setDirectMemberState({
-        conversation_id,
-        account_id,
-        state: "active",
-        owner_bay_id: bay(),
-      });
-    }
-    const { message, conversation } = await addDirectMessage({
+    requireUuid(conversation_id, "conversation_id");
+    // Standing, replying-accepts and the consent rule are decided on the
+    // locked row, together with the insert.
+    const { message } = await sendDirectMessage({
       conversation_id,
       sender_id: account_id,
       body,
       owner_bay_id: bay(),
     });
-    await fanout(conversation, message);
+    await deliverNow(conversation_id);
     return message;
   },
 
   async respond({ account_id, conversation_id, action }) {
+    // Accepting also works after declining or blocking (starting to talk to
+    // them again).
     const { conversation: before } = await memberRecord(
       account_id,
       conversation_id,
+      { allowLeft: action === "accept" },
     );
     const state: DirectMemberState =
       action === "accept"
@@ -342,11 +393,17 @@ export const directControl: InterBayDirectApi = {
             : (() => {
                 throw Error(`invalid action: ${action}`);
               })();
-    if (action === "block" && before.created_by !== account_id) {
+    if (before.created_by !== account_id) {
       // Blocks live on the blocker's home bay.
-      await (
-        await home(account_id)
-      ).block({ account_id, blocked_account_id: before.created_by });
+      const mine = await home(account_id);
+      if (action === "block") {
+        await mine.block({ account_id, blocked_account_id: before.created_by });
+      } else if (action === "accept") {
+        await mine.unblock({
+          account_id,
+          blocked_account_id: before.created_by,
+        });
+      }
     }
     const conversation = await setDirectMemberState({
       conversation_id,
@@ -355,12 +412,14 @@ export const directControl: InterBayDirectApi = {
       owner_bay_id: bay(),
     });
     if (conversation == null) throw Error("conversation not found");
-    await fanout(conversation);
+    await deliverNow(conversation_id);
     return conversation;
   },
 
   async standings({ account_id, conversation_id }) {
-    const { conversation } = await memberRecord(account_id, conversation_id);
+    const { conversation } = await memberRecord(account_id, conversation_id, {
+      allowLeft: true,
+    });
     return conversation.member_states;
   },
 
@@ -373,12 +432,12 @@ export const directControl: InterBayDirectApi = {
     const collaborators = new Set<string>();
     for (const id of member_ids ?? []) {
       requireUuid(id, "member_ids");
-      if (!(await areCollaborators(account_id, id))) {
+      if (!(await areCollaborators(account_id, id, bay()))) {
         throw Error(
           "add people who aren't your collaborators by their username",
         );
       }
-      collaborators.add(id);
+      collaborators.add(id.toLowerCase());
     }
     const byUsername: string[] = [];
     for (const name of usernames ?? []) {
@@ -394,6 +453,7 @@ export const directControl: InterBayDirectApi = {
     ]);
     const normalizedTitle = normalizeDirectTitle(title);
     const text = body == null || `${body}`.trim() === "" ? null : body;
+    if (text != null) normalizeDirectBody(text);
     const states: Record<string, DirectMemberState> = {
       [account_id]: "active",
     };
@@ -406,56 +466,76 @@ export const directControl: InterBayDirectApi = {
         throw Error(CANNOT_MESSAGE);
       }
       states[other] =
-        collaborators.has(other) || (await areCollaborators(account_id, other))
+        collaborators.has(other) ||
+        (await areCollaborators(account_id, other, bay()))
           ? "active"
           : "requested";
     }
-    // One conversation per pair (untitled): reuse it while the other person
-    // is still in it (by its owning bay's record, not this list).
-    if (members.length === 2 && normalizedTitle == null) {
-      const existing = await findDirectPair(account_id, members[1]);
-      if (existing != null && existing.state === "active") {
-        const standing = (
-          await owner(existing.owner_bay_id).standings({
-            account_id,
-            conversation_id: existing.conversation_id,
-          })
-        )[members[1]];
-        if (standing === "active" || standing === "requested") {
-          if (text != null) {
-            await owner(existing.owner_bay_id).send({
-              account_id,
-              conversation_id: existing.conversation_id,
-              body: text,
-            });
-          }
-          return (await getDirectIndex(account_id, existing.conversation_id))!;
-        }
+    const pair = members.length === 2 && normalizedTitle == null;
+    const pair_key = pair ? directPairKey(members[0], members[1]) : null;
+    const ownerBay = pair ? await homeBay([...members].sort()[0]) : bay();
+    const requests = Object.values(states).filter(
+      (s) => s === "requested",
+    ).length;
+
+    const conversation_id = randomUUID();
+    // A request is charged before it is created, and released if nothing
+    // was (the pair already had its conversation, or creating failed).
+    if (requests > 0) {
+      await admitDirectRequest({
+        account_id,
+        conversation_id,
+        recipients: requests,
+      });
+    }
+    let result: { created: boolean; conversation: DirectConversation };
+    try {
+      result = await owner(ownerBay).create({
+        conversation_id,
+        account_id,
+        member_ids: members,
+        member_states: states,
+        title: normalizedTitle,
+        pair_key,
+        body: text,
+      });
+    } catch (err) {
+      if (requests > 0) await releaseDirectRequest(conversation_id);
+      throw err;
+    }
+    if (requests > 0 && !result.created) {
+      await releaseDirectRequest(conversation_id);
+    }
+    const { created, conversation } = result;
+    if (!created) {
+      // The pair's conversation exists: rejoin it if this account had left
+      // it, then send (with the usual first-message rule).
+      const mine = conversation.member_states[account_id] ?? "active";
+      if (mine === "declined" || mine === "blocked") {
+        await owner(ownerBay).respond({
+          account_id,
+          conversation_id: conversation.conversation_id,
+          action: "accept",
+        });
+      }
+      if (text != null) {
+        await owner(ownerBay).send({
+          account_id,
+          conversation_id: conversation.conversation_id,
+          body: text,
+        });
       }
     }
-    let conversation = await createDirectConversationRecord({
-      owner_bay_id: bay(),
-      created_by: account_id,
-      member_ids: members,
-      member_states: states,
-      title: normalizedTitle,
-    });
-    let message: DirectMessage | undefined;
-    if (text != null) {
-      ({ message, conversation } = await addDirectMessage({
-        conversation_id: conversation.conversation_id,
-        sender_id: account_id,
-        body: normalizeDirectBody(text),
-        owner_bay_id: bay(),
-      }));
-    }
-    await fanout(conversation, message);
-    const listed = await getDirectIndex(
-      account_id,
-      conversation.conversation_id,
+    // Normally delivered by now; if this bay's own copy is still pending,
+    // answer from the record (the outbox delivers it later).
+    return (
+      (await getDirectIndex(account_id, conversation.conversation_id)) ?? {
+        ...conversation,
+        state: conversation.member_states[account_id] ?? "active",
+        last_read: null,
+        muted: false,
+      }
     );
-    if (listed == null) throw Error("conversation was not recorded");
-    return listed;
   },
 
   async list({ account_id }) {
@@ -474,21 +554,18 @@ export const directControl: InterBayDirectApi = {
     if (!conversation.member_ids.includes(account_id)) {
       throw Error("not a member");
     }
-    const { previous, current } = await upsertDirectIndex({
-      account_id,
-      conversation,
-    });
-    if (message != null) {
-      try {
-        await notify({ account_id, previous, current, message });
-      } catch (err) {
-        logger.warn("direct message notification failed", {
-          account_id,
-          conversation_id: conversation.conversation_id,
-          err: `${err}`,
-        });
-      }
+    // A request from someone this member blocked is never recorded or
+    // notified, even if the block landed after the starter checked it.
+    if (
+      (conversation.member_states[account_id] ?? "active") === "requested" &&
+      (await isDirectBlocked(account_id, conversation.created_by))
+    ) {
+      return;
     }
+    const row = await upsertDirectIndex({ account_id, conversation });
+    // A failure here is retried by the owning bay (the notification is
+    // idempotent and recorded once created).
+    if (message != null) await notify(account_id, row, message);
   },
 
   async isBlocked({ account_id, sender_id }) {
@@ -500,6 +577,12 @@ export const directControl: InterBayDirectApi = {
     await assertHome(account_id);
     requireUuid(blocked_account_id, "blocked_account_id");
     await blockDirectSender(account_id, blocked_account_id);
+  },
+
+  async unblock({ account_id, blocked_account_id }) {
+    await assertHome(account_id);
+    requireUuid(blocked_account_id, "blocked_account_id");
+    await unblockDirectSender(account_id, blocked_account_id);
   },
 
   async markRead({ account_id, conversation_id, read_through }) {
@@ -523,6 +606,18 @@ async function listedOrThrow(
   ).getIndex({ account_id, conversation_id });
   if (listed == null) throw Error("conversation not found");
   return listed;
+}
+
+function asMember(
+  listed: ListedDirectConversation,
+  conversation: DirectConversation,
+  account_id: string,
+): MemberDirectConversation {
+  return memberView({
+    ...listed,
+    ...conversation,
+    state: conversation.member_states[account_id] ?? listed.state,
+  });
 }
 
 // Everything returned to a browser goes through memberView: the caller's own
@@ -584,11 +679,7 @@ export const directHubApi = {
       listed.owner_bay_id,
     ).messages({ account_id: account_id!, conversation_id, before });
     return {
-      conversation: memberView({
-        ...listed,
-        ...conversation,
-        state: conversation.member_states[account_id!] ?? listed.state,
-      }),
+      conversation: asMember(listed, conversation, account_id!),
       messages,
     };
   },
@@ -601,7 +692,7 @@ export const directHubApi = {
     account_id?: string;
     conversation_id: string;
     body: string;
-  }) {
+  }): Promise<DirectMessage> {
     const listed = await listedOrThrow(account_id!, conversation_id);
     return await owner(listed.owner_bay_id).send({
       account_id: account_id!,
@@ -625,11 +716,7 @@ export const directHubApi = {
       conversation_id,
       action,
     });
-    return memberView({
-      ...listed,
-      ...conversation,
-      state: conversation.member_states[account_id!] ?? listed.state,
-    });
+    return asMember(listed, conversation, account_id!);
   },
 
   async markDirectRead({

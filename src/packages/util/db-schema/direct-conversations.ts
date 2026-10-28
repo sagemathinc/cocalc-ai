@@ -14,6 +14,13 @@ Table({
   rules: {
     primary_key: "conversation_id",
     pg_indexes: ["created_by, created"],
+    pg_custom_indexes: [
+      {
+        name: "direct_conversations_pair",
+        unique: true,
+        query: "(pair_key) WHERE pair_key IS NOT NULL",
+      },
+    ],
   },
   fields: {
     conversation_id: { type: "uuid", desc: "Conversation identity." },
@@ -39,6 +46,14 @@ Table({
       desc: "The start of the latest message, for lists.",
     },
     title: { type: "string", desc: "Optional title (group conversations)." },
+    pair_key: {
+      type: "string",
+      desc: "For a two-person untitled conversation: its pair, unique (directPairKey).",
+    },
+    revision: {
+      type: "integer",
+      desc: "Bumped by every change; home bays apply only newer revisions.",
+    },
   },
 });
 
@@ -57,8 +72,9 @@ Table({
   },
 });
 
-// Every conversation started with a message request, kept for the daily
-// quota: a later accept, decline or block doesn't give it back.
+// Every conversation started with a message request, on the starter's home
+// bay, kept for the daily quota: a later accept, decline or block doesn't
+// give it back.
 Table({
   name: "direct_request_admissions",
   rules: {
@@ -76,16 +92,23 @@ Table({
   },
 });
 
-// Index updates for a member's home bay that could not be delivered yet; the
-// owning bay retries them.
+// The owning bay's outbox: written in the same transaction as each change, so
+// every member's home bay hears of it even if the process stops right after;
+// cleared once delivered.
 Table({
   name: "direct_fanout_pending",
   rules: {
     primary_key: ["conversation_id", "account_id"],
+    pg_indexes: ["next_attempt"],
   },
   fields: {
     conversation_id: { type: "uuid", desc: "Conversation to deliver." },
     account_id: { type: "uuid", desc: "Member whose home bay needs it." },
+    revision: { type: "integer", desc: "Revision to deliver (at least)." },
+    message_id: {
+      type: "uuid",
+      desc: "Latest message not yet delivered, for the member's notification.",
+    },
     attempts: { type: "integer", desc: "Delivery attempts so far." },
     next_attempt: { type: "timestamp", desc: "Earliest next attempt." },
     last_error: { type: "string", desc: "Last delivery error." },
@@ -123,6 +146,18 @@ Table({
       desc: "Activity time this member has read through.",
     },
     muted: { type: "boolean", desc: "This member muted it." },
+    revision: {
+      type: "integer",
+      desc: "Owning bay revision of this copy; older updates are ignored.",
+    },
+    notified_message_id: {
+      type: "uuid",
+      desc: "Last message this member was notified of (notifications are retried until recorded).",
+    },
+    request_notified: {
+      type: "boolean",
+      desc: "This member was notified of the message request (only once).",
+    },
     updated: { type: "timestamp", desc: "Last change to this row." },
   },
 });
