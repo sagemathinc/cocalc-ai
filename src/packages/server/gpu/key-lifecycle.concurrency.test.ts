@@ -105,7 +105,7 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     // One fake RunPod for verification and creates; records the key used.
     const used: string[] = [];
     // RunPod stops answering terminates (until the caller aborts)
-    const stall = { terminate: false };
+    const stall = { terminate: false, identity: false };
     const fetch = (async (url: string, init: any) => {
       const auth = `${init?.headers?.Authorization ?? ""}`.replace(
         "Bearer ",
@@ -127,6 +127,18 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
         init?.method === "DELETE" &&
         path.startsWith("/v2/pods/")
       ) {
+        return await new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () =>
+            reject(init.signal.reason ?? Error("aborted")),
+          ),
+        );
+      }
+      // a personal account's identity takes two requests: a slow
+      // organization answer, then a GraphQL call that never answers
+      if (stall.identity && path === "/v2/organization") {
+        await new Promise((r) => setTimeout(r, 2_500));
+      }
+      if (stall.identity && path === "/graphql") {
         return await new Promise((_resolve, reject) =>
           init?.signal?.addEventListener("abort", () =>
             reject(init.signal.reason ?? Error("aborted")),
@@ -736,6 +748,26 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     // RunPod's 30 s default
     expect(Date.now() - started).toBeLessThan(
       keys.KEY_REMOVAL_CALL_TIMEOUT_MS + 4_000,
+    );
+    expect(result).toEqual({ revoked: false, remaining: [pod.handle] });
+  });
+
+  it("a slow rejection probe comes out of the removal's drain, not on top of it", async () => {
+    const s = await setup();
+    const pod = await launch(s);
+    s.stall.terminate = true;
+    s.stall.identity = true;
+    const drainMs = 3_000;
+    const started = Date.now();
+    const result = await keys.deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      { ...s.keyDeps, drainMs, drainPollMs: 100 },
+    );
+    // the probe alone outlasts the drain (2.5 s, then the 4 s GraphQL
+    // timeout), so no terminate starts after it: done without the 5 s of a
+    // stalled call on top
+    expect(Date.now() - started).toBeLessThan(
+      drainMs + keys.KEY_REMOVAL_CALL_TIMEOUT_MS,
     );
     expect(result).toEqual({ revoked: false, remaining: [pod.handle] });
   });

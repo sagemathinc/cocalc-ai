@@ -557,13 +557,14 @@ export interface GpuKeyRemoval {
   warning?: string;
 }
 
-// How long a removal request waits for RunPod to confirm its pods are gone
-// (the browser waits KEY_HOME_BAY_TIMEOUT_MS for the home bay).
-export const KEY_REMOVAL_DRAIN_MS = 15_000;
-// Each RunPod call the removal makes: short enough that the 4 s probe, the
-// drain and one call still in flight at its end return within the browser's
-// KEY_HOME_BAY_TIMEOUT_MS (30 s), so it always gets the remaining pods (and
+// How long a removal request waits for RunPod to confirm its pods are gone,
+// counted from the start of the removal (the rejection probe's time comes
+// out of it). The browser waits KEY_HOME_BAY_TIMEOUT_MS (30 s) for the home
+// bay: the drain, plus one RunPod call still in flight at its end, plus the
+// fenced database work, must fit, so it always gets the remaining pods (and
 // "Remove anyway") rather than a timeout.
+export const KEY_REMOVAL_DRAIN_MS = 15_000;
+// Each RunPod call the removal's drain makes.
 export const KEY_REMOVAL_CALL_TIMEOUT_MS = 5_000;
 
 // The caller has already required fresh auth for this session (removal,
@@ -597,6 +598,7 @@ export async function deleteGpuProviderKeyLocal(
   deps: GpuProviderKeyDeps = {},
 ): Promise<GpuKeyRemoval> {
   const provider = requireProvider(providerInput);
+  const started = Date.now();
   await requireHomeBay(account_id, deps);
   const force = forceInput === true;
   // The store keeps one active key per selector, so there is at most one.
@@ -677,7 +679,7 @@ export async function deleteGpuProviderKeyLocal(
           },
           { guard },
         ));
-    const deadline = Date.now() + (deps.drainMs ?? KEY_REMOVAL_DRAIN_MS);
+    const deadline = started + (deps.drainMs ?? KEY_REMOVAL_DRAIN_MS);
     // the resolver stops at the deadline too, before its next pod (one slow
     // RunPod call can't turn into a whole batch of them)
     const guard = async () => {
