@@ -578,6 +578,69 @@ describeDb("GPU pods left behind and seen again", () => {
     expect(ended.state).toBe("failed");
   });
 
+  it("terminates a crash-left create's pod without any listing first", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    // the server died mid-create; RunPod made the pod
+    rp.pods.clear();
+    rp.pods.set("pod_crash2", { id: "pod_crash2", name: pod.handle });
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'creating', provider_pod_id = NULL, updated = now() - interval '1 hour' WHERE id = $1",
+      [pod.id],
+    );
+    rp.client.terminatePod.mockClear();
+    expect(
+      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+    ).toEqual({ state: "terminated" });
+    expect(rp.client.findPodsByName).toHaveBeenCalledWith(pod.handle);
+    expect(rp.client.terminatePod).toHaveBeenCalledWith("pod_crash2");
+    expect(rp.pods.size).toBe(0);
+  });
+
+  it("fails a crash-left intent on terminate, with no RunPod call", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'intent', provider_pod_id = NULL, updated = now() - interval '1 hour' WHERE id = $1",
+      [pod.id],
+    );
+    rp.client.findPodsByName.mockClear();
+    rp.client.terminatePod.mockClear();
+    expect(
+      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+    ).toEqual({ state: "failed" });
+    expect(rp.client.findPodsByName).not.toHaveBeenCalled();
+    expect(rp.client.terminatePod).not.toHaveBeenCalled();
+  });
+
+  it("leaves a fresh create in flight on terminate", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'creating', provider_pod_id = NULL WHERE id = $1",
+      [pod.id],
+    );
+    rp.client.findPodsByName.mockClear();
+    expect(
+      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+    ).toEqual({ state: "creating" });
+    expect(rp.client.findPodsByName).not.toHaveBeenCalled();
+    const { rows } = await getPool().query(
+      "SELECT desired_state FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0].desired_state).toBe("terminated");
+  });
+
   it("leaves a fresh intent or create alone", async () => {
     const { deps: d, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(

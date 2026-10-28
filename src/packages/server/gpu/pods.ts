@@ -654,6 +654,44 @@ async function resolveAmbiguous(
 // behind by a crash (a create request takes at most 30 s).
 export const STALE_CREATE_MS = 2 * 60_000;
 
+// A record a crash left behind: an intent was never sent (no pod can exist,
+// so it fails), and a create in flight may have made a pod (it becomes
+// ambiguous, to be resolved by its handle). Undefined if it moved on.
+async function resolveStaleCreate(
+  id: string,
+  state: "intent" | "creating",
+  actor: Actor,
+): Promise<PodRow | undefined> {
+  if (state === "intent") {
+    return await transition(
+      id,
+      {
+        state: "failed",
+        reason: "CoCalc stopped before this pod was created.",
+        terminated_at: new Date(),
+      },
+      "AND state = 'intent'",
+      { actor, action: "state", details: { state: "failed", stale: true } },
+    );
+  }
+  return await transition(
+    id,
+    { state: "ambiguous" },
+    "AND state = 'creating'",
+    {
+      actor,
+      action: "state",
+      details: { state: "ambiguous", stale: true },
+    },
+  );
+}
+
+function isStale(row: { updated: Date }, deps: GpuPodDeps): boolean {
+  return (
+    new Date(row.updated).getTime() < (deps.now ?? Date.now)() - STALE_CREATE_MS
+  );
+}
+
 async function resolveAmbiguousForAccount(
   account_id: string,
   deps: GpuPodDeps,
@@ -669,24 +707,7 @@ async function resolveAmbiguousForAccount(
     [account_id, staleBefore],
   );
   for (const r of stale) {
-    if (r.state === "intent") {
-      await transition(
-        r.id,
-        {
-          state: "failed",
-          reason: "CoCalc stopped before this pod was created.",
-          terminated_at: new Date(),
-        },
-        "AND state = 'intent'",
-        { actor, action: "state", details: { state: "failed", stale: true } },
-      );
-    } else {
-      await transition(r.id, { state: "ambiguous" }, "AND state = 'creating'", {
-        actor,
-        action: "state",
-        details: { state: "ambiguous", stale: true },
-      });
-    }
+    await resolveStaleCreate(r.id, r.state, actor);
   }
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND state = 'ambiguous'`,
@@ -742,7 +763,15 @@ export async function terminateGpuPodLocal(
   );
   if (!current) return { state: (await loadPod(row.id)).state };
   if (current.state === "intent" || current.state === "creating") {
-    return { state: current.state };
+    // A create still in flight sees the terminate when it binds. One a crash
+    // left behind (judged by the record before this terminate touched it)
+    // is resolved now: a never-sent intent fails; a create becomes ambiguous
+    // and goes through the lookup by handle below.
+    if (!isStale(row, deps)) return { state: current.state };
+    current =
+      (await resolveStaleCreate(current.id, current.state, actor)) ??
+      (await loadPod(row.id));
+    if (current.state !== "ambiguous") return { state: current.state };
   }
   // Cleanup access: works after a membership lapse.
   const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
