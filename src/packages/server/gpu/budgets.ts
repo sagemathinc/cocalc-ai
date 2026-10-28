@@ -173,9 +173,13 @@ export async function ensureKeyBudget(
 export async function lockKeyFence(
   db: Db,
   credential_id: string,
-): Promise<{ state: string; paused_reason: string | null }> {
+): Promise<{
+  state: string;
+  paused_reason: string | null;
+  kill_switch_at: Date | null;
+}> {
   const { rows } = await db.query(
-    `SELECT state, paused_reason FROM gpu_key_fences WHERE credential_id = $1 FOR UPDATE`,
+    `SELECT state, paused_reason, kill_switch_at FROM gpu_key_fences WHERE credential_id = $1 FOR UPDATE`,
     [credential_id],
   );
   if (!rows[0]) refuse("This RunPod key has no GPU budget yet.");
@@ -229,6 +233,11 @@ export async function admitLaunch(
       fence.state === "draining"
         ? "This RunPod key is being removed; no new GPUs can be launched with it."
         : "This RunPod key was reported compromised; no new GPUs can be launched with it.",
+    );
+  }
+  if (fence.kill_switch_at) {
+    refuse(
+      "New GPU launches are paused by your kill switch. Resume them with cocalc gpu resume (it asks you to sign in again).",
     );
   }
   if (fence.paused_reason) {

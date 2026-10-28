@@ -16,7 +16,10 @@ const bannedMock = jest.fn();
 const resolveProjectBayMock = jest.fn();
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-const PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+const PRIVATE_KEY = privateKey.export({
+  type: "pkcs8",
+  format: "pem",
+}) as string;
 const PUBLIC_KEY = publicKey.export({ type: "spki", format: "pem" }) as string;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -111,7 +114,9 @@ beforeEach(() => {
   });
 });
 
-function issue(opts: Partial<Parameters<typeof issueProjectContentUrlLocal>[0]> = {}) {
+function issue(
+  opts: Partial<Parameters<typeof issueProjectContentUrlLocal>[0]> = {},
+) {
   return issueProjectContentUrlLocal({
     account_id: ACCOUNT,
     project_id: PROJECT,
@@ -124,7 +129,8 @@ function issue(opts: Partial<Parameters<typeof issueProjectContentUrlLocal>[0]> 
 describe("issueProjectContentUrlLocal", () => {
   it("returns a link the host accepts for exactly this project, host and account", async () => {
     const result = await issue();
-    if (!("url" in result)) throw new Error(`unavailable: ${result.unavailable}`);
+    if (!("url" in result))
+      throw new Error(`unavailable: ${result.unavailable}`);
     const url = new URL(result.url);
     expect(url.protocol).toBe("https:");
     expect(url.hostname).toBe(`${LABELS}.${DOMAIN}`);
@@ -267,10 +273,17 @@ describe("revokeProjectContentLinksLocal", () => {
   const syncHost = jest.fn(async (_project_id: string) => {});
   beforeEach(() => syncHost.mockReset());
   const revoke = (account_id = ACCOUNT) =>
-    revokeProjectContentLinksLocal({ account_id, project_id: PROJECT, syncHost });
+    revokeProjectContentLinksLocal({
+      account_id,
+      project_id: PROJECT,
+      syncHost,
+    });
 
   it("bumps the epoch, pushes it to the host, and new links carry it", async () => {
-    await expect(revoke()).resolves.toEqual({ content_epoch: 1, host_synced: true });
+    await expect(revoke()).resolves.toEqual({
+      content_epoch: 1,
+      host_synced: true,
+    });
     // It also moves the hosts' catch-up cursor, so a failed push is re-sent.
     const update = queryMock.mock.calls.find(([sql]) =>
       `${sql}`.includes("UPDATE projects"),
@@ -292,7 +305,10 @@ describe("revokeProjectContentLinksLocal", () => {
 
   it("still revokes when the host can't be reached right now", async () => {
     syncHost.mockRejectedValue(new Error("host offline"));
-    await expect(revoke()).resolves.toEqual({ content_epoch: 1, host_synced: false });
+    await expect(revoke()).resolves.toEqual({
+      content_epoch: 1,
+      host_synced: false,
+    });
   });
 
   it.each([
@@ -310,13 +326,15 @@ describe("revokeProjectContentLinksLocal", () => {
 
 describe("contentDirForFile", () => {
   it("is the file's own directory", () => {
-    expect(contentDirForFile("/home/user/cs101-collect/hw1/student-1/page.html")).toBe(
-      "/home/user/cs101-collect/hw1/student-1",
-    );
+    expect(
+      contentDirForFile("/home/user/cs101-collect/hw1/student-1/page.html"),
+    ).toBe("/home/user/cs101-collect/hw1/student-1");
     expect(contentDirForFile("//home//user/a.html")).toBe("/home/user");
     expect(contentDirForFile("/a.html")).toBe("/");
     expect(() => contentDirForFile("x/a.html")).toThrow("invalid path");
-    expect(() => contentDirForFile("/home/user/../a.html")).toThrow("invalid path");
+    expect(() => contentDirForFile("/home/user/../a.html")).toThrow(
+      "invalid path",
+    );
   });
 });
 
@@ -336,19 +354,16 @@ describe("encodeContentFilePath", () => {
     ["NUL", "/a\0b"],
     ["relative", "home/user/a.html"],
     ["too long", `/${"x".repeat(5000)}`],
-  ])(
-    "rejects %s",
-    (_label, path) => {
-      expect(() => encodeContentFilePath(path)).toThrow("invalid path");
-    },
-  );
+  ])("rejects %s", (_label, path) => {
+    expect(() => encodeContentFilePath(path)).toThrow("invalid path");
+  });
 });
 
 describe("normalizeProjectAppPath", () => {
   it("keeps an app path and its query", () => {
-    expect(normalizeProjectAppPath(PROJECT, `/${PROJECT}/port/8000/a%20b/?x=1&y=/z`)).toBe(
-      `/${PROJECT}/port/8000/a%20b/?x=1&y=/z`,
-    );
+    expect(
+      normalizeProjectAppPath(PROJECT, `/${PROJECT}/port/8000/a%20b/?x=1&y=/z`),
+    ).toBe(`/${PROJECT}/port/8000/a%20b/?x=1&y=/z`);
   });
 
   it("refuses paths that could name something else", () => {
@@ -370,13 +385,17 @@ describe("normalizeProjectAppPath", () => {
       `/${PROJECT}/port/8000/${"x".repeat(9000)}`,
       undefined,
     ]) {
-      expect(() => normalizeProjectAppPath(PROJECT, path)).toThrow("invalid app path");
+      expect(() => normalizeProjectAppPath(PROJECT, path)).toThrow(
+        "invalid app path",
+      );
     }
   });
 });
 
 describe("issueProjectAppUrlLocal", () => {
-  function issueApp(opts: Partial<Parameters<typeof issueProjectAppUrlLocal>[0]> = {}) {
+  function issueApp(
+    opts: Partial<Parameters<typeof issueProjectAppUrlLocal>[0]> = {},
+  ) {
     return issueProjectAppUrlLocal({
       account_id: ACCOUNT,
       project_id: PROJECT,
@@ -388,7 +407,8 @@ describe("issueProjectAppUrlLocal", () => {
 
   it("returns a single-use link for this app's own origin", async () => {
     const result = await issueApp();
-    if (!("url" in result)) throw new Error(`unavailable: ${result.unavailable}`);
+    if (!("url" in result))
+      throw new Error(`unavailable: ${result.unavailable}`);
     const url = new URL(result.url);
     expect(url.hostname).toBe(
       `ap8000-22222222222242228222222222222222.h-33333333333343338333333333333333.${DOMAIN}`,
@@ -403,7 +423,12 @@ describe("issueProjectAppUrlLocal", () => {
       public_key: PUBLIC_KEY,
       now_ms: NOW,
     });
-    expect(claims).toMatchObject({ sub: ACCOUNT, scope: "app", key: "p8000", epoch: 0 });
+    expect(claims).toMatchObject({
+      sub: ACCOUNT,
+      scope: "app",
+      key: "p8000",
+      epoch: 0,
+    });
     expect(result.expires_at).toBe(NOW + 120 * 1000);
     // Not valid for another app of the project.
     expect(() =>
@@ -424,14 +449,18 @@ describe("issueProjectAppUrlLocal", () => {
     expect(new URL(proxy.url).hostname.startsWith("ap8000-")).toBe(true);
     const server = await issueApp({ path: `/${PROJECT}/server/jupyterlab/` });
     if (!("url" in server)) throw new Error("unavailable");
-    expect(new URL(server.url).hostname.startsWith(
-      `a${projectAppKey({ kind: "server", name: "jupyterlab" })}-`,
-    )).toBe(true);
+    expect(
+      new URL(server.url).hostname.startsWith(
+        `a${projectAppKey({ kind: "server", name: "jupyterlab" })}-`,
+      ),
+    ).toBe(true);
     const app = await issueApp({ path: `/${PROJECT}/myapp/`, app_id: "myapp" });
     if (!("url" in app)) throw new Error("unavailable");
-    expect(new URL(app.url).hostname.startsWith(
-      `a${projectAppKey({ kind: "app", id: "myapp" })}-`,
-    )).toBe(true);
+    expect(
+      new URL(app.url).hostname.startsWith(
+        `a${projectAppKey({ kind: "app", id: "myapp" })}-`,
+      ),
+    ).toBe(true);
   });
 
   it("issues frame links: /_af/, a frame-scoped capability", async () => {
@@ -458,9 +487,9 @@ describe("issueProjectAppUrlLocal", () => {
     await expect(issueApp({ path: `/${PROJECT}/myapp/` })).rejects.toThrow(
       "not an app route",
     );
-    await expect(issueApp({ path: `/${PROJECT}/files/a.html` })).rejects.toThrow(
-      "invalid app path",
-    );
+    await expect(
+      issueApp({ path: `/${PROJECT}/files/a.html` }),
+    ).rejects.toThrow("invalid app path");
   });
 
   it("is off without a content domain and refuses non-collaborators", async () => {

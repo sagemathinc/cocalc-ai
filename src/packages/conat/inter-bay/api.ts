@@ -4170,6 +4170,18 @@ export interface InterBayGpuApi {
     expected_version?: number;
     fresh_auth_verified: boolean;
   }) => Promise<import("@cocalc/util/gpu/types").GpuBudget>;
+  // The owner's kill switch: stop live pods (all, or one project's), and
+  // optionally pause new launches.
+  gpuKillSwitch: (opts: {
+    account_id: string;
+    project_id?: unknown;
+    pause?: unknown;
+  }) => Promise<{ marked: number; remaining: number; paused: boolean }>;
+  // Lift the kill switch's pause (the forwarding bay checked fresh auth).
+  gpuResume: (opts: {
+    account_id: string;
+    fresh_auth_verified: boolean;
+  }) => Promise<{ resumed: number }>;
   // An admin's override of the stale-worker launch check (the forwarding
   // bay checked that the caller is an admin, with fresh auth).
   gpuAllowStaleWorkers: (opts: {
@@ -8239,6 +8251,8 @@ export function createInterBayAccountLocalClient({
     gpuManagedPods: async (opts) => await gpuClient.gpuManagedPods(opts),
     gpuBudget: async (opts) => await gpuClient.gpuBudget(opts),
     gpuSetBudget: async (opts) => await gpuClient.gpuSetBudget(opts),
+    gpuKillSwitch: async (opts) => await gpuClient.gpuKillSwitch(opts),
+    gpuResume: async (opts) => await gpuClient.gpuResume(opts),
     gpuAllowStaleWorkers: async (opts) =>
       await gpuClient.gpuAllowStaleWorkers(opts),
     gpuSshInfo: async (opts) => await gpuClient.gpuSshInfo(opts),
@@ -8827,6 +8841,8 @@ export function createInterBayAccountLocalHandler({
         gpuManagedPods: async (opts) => await impl.gpuManagedPods(opts),
         gpuBudget: async (opts) => await impl.gpuBudget(opts),
         gpuSetBudget: async (opts) => await impl.gpuSetBudget(opts),
+        gpuKillSwitch: async (opts) => await impl.gpuKillSwitch(opts),
+        gpuResume: async (opts) => await impl.gpuResume(opts),
         gpuAllowStaleWorkers: async (opts) =>
           await impl.gpuAllowStaleWorkers(opts),
         gpuSshInfo: async (opts) => await impl.gpuSshInfo(opts),

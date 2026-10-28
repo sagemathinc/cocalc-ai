@@ -20,8 +20,10 @@ import {
   launchGpuPodLocal,
   listManagedGpuPodsLocal,
   terminateGpuPodLocal,
+  killSwitchLocal,
 } from "./pods";
 import { DEFAULT_KEY_LAYER } from "./budgets";
+import { resumeGpuLaunchesLocal } from "./budget-api";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -390,5 +392,97 @@ describeDb("GPU budgets", () => {
     expect(r.state).toBe("settled");
     expect(n(r.spent_usd)).toBe(0);
     expect(n((await keyLayer(credential_id)).reserved_usd)).toBe(0);
+  });
+
+  describe("the kill switch", () => {
+    it("terminates every live pod and pauses launches until a fresh-auth resume", async () => {
+      const s = setup();
+      const a = await s.launch();
+      const b = await s.launch();
+      const result = await killSwitchLocal(
+        { account_id: s.account_id },
+        s.deps,
+      );
+      expect(result).toEqual({ marked: 2, remaining: 0, paused: true });
+      for (const pod of [a, b]) {
+        expect(s.rp.pods.has(pod.provider_pod_id!)).toBe(false);
+      }
+      await expect(s.launch()).rejects.toThrow("paused by your kill switch");
+      await expect(
+        resumeGpuLaunchesLocal({ account_id: s.account_id }, s.deps as any),
+      ).rejects.toThrow("sign in again");
+      expect(
+        await resumeGpuLaunchesLocal(
+          { account_id: s.account_id, fresh_auth_verified: true },
+          s.deps as any,
+        ),
+      ).toEqual({ resumed: 1 });
+      expect((await s.launch()).state).toBe("running");
+    });
+
+    it("stops only one project's pods, never pausing the key", async () => {
+      const s = setup();
+      const other = "00000000-1000-4000-8000-0000000000bb";
+      const here = await s.launch();
+      const there = await launchGpuPodLocal(
+        { account_id: s.account_id, project_id: other, spec: SPEC },
+        s.deps,
+      );
+      expect(
+        await killSwitchLocal(
+          { account_id: s.account_id, project_id: PROJECT },
+          s.deps,
+        ),
+      ).toEqual({ marked: 1, remaining: 0, paused: false });
+      expect(s.rp.pods.has(here.provider_pod_id!)).toBe(false);
+      expect(s.rp.pods.has(there.provider_pod_id!)).toBe(true);
+      await expect(
+        killSwitchLocal(
+          { account_id: s.account_id, project_id: PROJECT, pause: true },
+          s.deps,
+        ),
+      ).rejects.toThrow("whole key");
+      // launches still work
+      expect((await s.launch()).state).toBe("running");
+    });
+
+    it("leaves a safety pause alone, and retries what RunPod didn't confirm", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      await getPool().query(
+        "UPDATE gpu_key_fences SET paused_reason = 'unknown_pod' WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      s.rp.client.terminatePod.mockRejectedValueOnce(
+        new RunpodApiError("provider", 503),
+      );
+      expect(
+        await killSwitchLocal({ account_id: s.account_id }, s.deps),
+      ).toEqual({ marked: 1, remaining: 1, paused: true });
+      // resume lifts the kill switch's pause only
+      await resumeGpuLaunchesLocal(
+        { account_id: s.account_id, fresh_auth_verified: true },
+        s.deps as any,
+      );
+      const { rows } = await getPool().query(
+        "SELECT paused_reason, kill_switch_at FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0]).toEqual({
+        paused_reason: "unknown_pod",
+        kill_switch_at: null,
+      });
+      // a second kill switch marks nothing new but retries the terminate
+      await getPool().query(
+        "UPDATE gpu_pods SET reap_after = NULL WHERE id = $1",
+        [pod.id],
+      );
+      expect(
+        await killSwitchLocal(
+          { account_id: s.account_id, pause: false },
+          s.deps,
+        ),
+      ).toEqual({ marked: 0, remaining: 0, paused: false });
+    });
   });
 });

@@ -84,6 +84,9 @@ Table({
     // key); admission refuses while any is set.
     paused_reason: { type: "string", pg_type: "varchar(64)" },
     paused_at: { type: "timestamp" },
+    // the owner's kill switch paused new launches (independent of the
+    // safety pause above, which only its own alert lifts)
+    kill_switch_at: { type: "timestamp" },
     // first seen without the gpu_provider_keys entitlement (the reaper
     // terminates its pods 7 days later); cleared when it returns
     entitlement_lapsed_at: { type: "timestamp" },

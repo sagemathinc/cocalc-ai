@@ -120,7 +120,9 @@ describe("hosts teardown helpers", () => {
       expect(alertAdmin).not.toHaveBeenCalled();
       expect(updateHostDeprovisionedRecord).toHaveBeenCalledWith(
         expect.objectContaining({
-          nextMetadata: expect.not.objectContaining({ content_dns: expect.anything() }),
+          nextMetadata: expect.not.objectContaining({
+            content_dns: expect.anything(),
+          }),
         }),
       );
     });

@@ -445,6 +445,38 @@ export function registerGpuCommand(
     );
 
   gpu
+    .command("kill")
+    .description(
+      "the kill switch: terminate every pod CoCalc started with your RunPod key and pause new launches until gpu resume (--no-pause to not); with --project, only that project's pods, without pausing",
+    )
+    .option("--project <project-id>", "only this project's pods")
+    .option(
+      "--no-pause",
+      "don't pause new launches (the account kill switch pauses by default)",
+    )
+    .action(async (opts, command: Command) =>
+      run(
+        command,
+        "kill",
+        async (api) =>
+          await api.killSwitch({
+            ...(opts.project ? { project_id: opts.project } : {}),
+            ...(opts.project ? {} : { pause: opts.pause !== false }),
+          }),
+        GPU_POD_WRITE_RPC_TIMEOUT_MS,
+      ),
+    );
+
+  gpu
+    .command("resume")
+    .description(
+      "lift the kill switch's pause on new launches; needs you to sign in again, from Settings in the browser",
+    )
+    .action(async (_opts, command: Command) =>
+      run(command, "resume", async (api) => await api.resume({})),
+    );
+
+  gpu
     .command("who <query>")
     .description(
       "who is responsible for a pod, and what was done to it: a handle, RunPod pod id or IP address",

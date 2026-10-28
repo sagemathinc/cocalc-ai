@@ -79,6 +79,8 @@ export const GPU_POD_ACTIONS = [
   "ip_seen",
   // the pod reported its SSH host key (or a report was refused with an alert)
   "host_key",
+  // the owner's kill switch stopped it
+  "kill_switch",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 

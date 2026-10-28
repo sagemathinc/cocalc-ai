@@ -1576,6 +1576,99 @@ export async function terminateGpuPod(
   return await terminateGpuPodLocal({ ...opts, account_id }, deps);
 }
 
+// ---- the kill switch ----
+
+export interface GpuKillSwitchResult {
+  // pods newly marked to terminate
+  marked: number;
+  // pods still not confirmed terminated by RunPod (the reaper retries)
+  remaining: number;
+  // new launches paused by the kill switch
+  paused: boolean;
+}
+
+// Stop every live pod CoCalc started with the owner's key (optionally only
+// one project's). The account kill switch also pauses new launches (unless
+// pause: false) until the owner resumes; a project's never does.
+// It only narrows, so it needs no fresh auth. Marked under the account fence,
+// so no launch admitted before it can slip past; then terminated at once,
+// best effort (the reaper finishes what RunPod doesn't confirm).
+export async function killSwitchLocal(
+  opts: { account_id?: string; project_id?: unknown; pause?: unknown },
+  deps: GpuPodDeps = {},
+): Promise<GpuKillSwitchResult> {
+  const account_id = requireAccount(opts.account_id);
+  await requireHomeBay(account_id, deps);
+  let project_id: string | null = null;
+  if (opts.project_id != null && opts.project_id !== "") {
+    project_id = `${opts.project_id}`;
+    if (!isValidUUID(project_id)) throw Error("Give a valid project id.");
+  }
+  // The account kill switch pauses new launches unless told not to; one
+  // project's never pauses the whole key (there's no per-project pause).
+  if (project_id != null && opts.pause === true) {
+    throw Error(
+      "The kill switch pauses launches for the whole key; stop the project's pods without pausing, or use the account kill switch.",
+    );
+  }
+  const pause = project_id == null && opts.pause !== false;
+  const actor: Actor = { kind: "user", account_id };
+  const marked = await inTransaction(async (db) => {
+    await (deps.accountWriteFence ?? lockGpuAccountFence)(
+      db,
+      account_id,
+      "stop GPU pods",
+    );
+    const { rows } = await db.query(
+      `UPDATE gpu_pods SET desired_state = 'terminated', reason = $3, updated = now()
+        WHERE key_owner_account_id = $1
+          AND ($2::uuid IS NULL OR project_id = $2::uuid)
+          AND state NOT IN ('terminated', 'failed')
+          AND desired_state <> 'terminated'
+        RETURNING id`,
+      [account_id, project_id, "Stopped by the kill switch."],
+    );
+    for (const { id } of rows) {
+      await recordEvent(id, actor, "kill_switch", { project_id }, db);
+    }
+    if (pause) {
+      // its own field: a safety pause (an alert's) is left alone
+      await db.query(
+        `UPDATE gpu_key_fences SET kill_switch_at = now(), updated = now()
+          WHERE key_owner_account_id = $1 AND kill_switch_at IS NULL`,
+        [account_id],
+      );
+    }
+    return rows.length;
+  });
+  await resolvePendingForAccount(account_id, deps).catch(() => {});
+  const { rows } = await getPool().query(
+    `SELECT count(*)::int AS n FROM gpu_pods
+      WHERE key_owner_account_id = $1
+        AND ($2::uuid IS NULL OR project_id = $2::uuid)
+        AND desired_state = 'terminated'
+        AND state NOT IN ('terminated', 'failed')`,
+    [account_id, project_id],
+  );
+  return { marked, remaining: rows[0].n, paused: pause };
+}
+
+export async function killSwitch(
+  opts: { account_id?: string; project_id?: unknown; pause?: unknown },
+  deps: GpuPodDeps = {},
+): Promise<GpuKillSwitchResult> {
+  const account_id = requireAccount(opts.account_id);
+  const home = await (deps.homeClient ?? gpuPodHomeClient)(account_id);
+  if (home) {
+    return await home.gpuKillSwitch({
+      account_id,
+      project_id: opts.project_id,
+      pause: opts.pause,
+    });
+  }
+  return await killSwitchLocal({ ...opts, account_id }, deps);
+}
+
 export async function whoGpuPod(
   opts: { account_id?: string; query?: unknown },
   deps: GpuPodDeps = {},
