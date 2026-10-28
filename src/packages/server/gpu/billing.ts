@@ -506,8 +506,9 @@ export async function billedThrough(
   key_owner_account_id: string,
   since: Date,
   until: Date,
+  db: Pick<PoolClient, "query"> = getPool(),
 ): Promise<Date> {
-  const { rows } = await getPool().query(
+  const { rows } = await db.query(
     `SELECT MIN(r.settled_at) AS first FROM gpu_pod_reservations r
        JOIN gpu_budget_layers l ON l.id = r.layer_id AND l.scope_kind = 'key'
        JOIN gpu_pods p ON p.id = r.pod_id

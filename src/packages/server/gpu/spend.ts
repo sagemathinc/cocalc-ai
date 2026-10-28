@@ -121,7 +121,6 @@ export async function getGpuSpendLocal(
   const now = (deps.now ?? Date.now)();
   const { since, until } = spendWindow(opts, now);
   const column = GROUP_COLUMN[group_by];
-  const db = getPool();
   const groups = new Map<string, Sums>();
   const group = (key: string): Sums => {
     let g = groups.get(key);
@@ -138,9 +137,15 @@ export async function getGpuSpendLocal(
     return g;
   };
 
-  // Settled in the period, summed in the database.
-  const { rows: settled } = await db.query(
-    `SELECT ${column} AS key, MAX(p.handle) AS handle,
+  // One snapshot: the totals and billed_through must agree (billing may
+  // commit between two separate reads).
+  const db = await getPool().connect();
+  let billed_through: Date;
+  try {
+    await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    // Settled in the period, summed in the database.
+    const { rows: settled } = await db.query(
+      `SELECT ${column} AS key, MAX(p.handle) AS handle,
             SUM(r.spent_usd) AS spent, array_agg(DISTINCT p.id::text) AS pods
        FROM gpu_pod_reservations r
        JOIN gpu_budget_layers l ON l.id = r.layer_id AND l.scope_kind = 'key'
@@ -148,46 +153,61 @@ export async function getGpuSpendLocal(
       WHERE l.key_owner_account_id = $1 AND r.state = 'settled'
         AND r.settled_at >= $2 AND r.settled_at < $3
       GROUP BY 1`,
-    [account_id, new Date(since), new Date(until)],
-  );
-  for (const row of settled) {
-    const g = group(row.key);
-    g.spent = g.spent.plus(row.spent ?? 0);
-    for (const id of row.pods ?? []) g.pods.add(id);
-    if (group_by === "pod") g.label = row.handle;
-  }
+      [account_id, new Date(since), new Date(until)],
+    );
+    for (const row of settled) {
+      const g = group(row.key);
+      g.spent = g.spent.plus(row.spent ?? 0);
+      for (const id of row.pods ?? []) g.pods.add(id);
+      if (group_by === "pod") g.label = row.handle;
+    }
 
-  // Open reservations are what is live or held now: they count only for a
-  // period that contains now (never a past or future-only one).
-  if (since <= now && now <= until) {
-    const { rows: open } = await db.query(
-      `SELECT ${column} AS key, p.id::text AS pod_id, p.handle, p.cost_per_hr,
+    // Open reservations are what is live or held now: they count only for a
+    // period that contains now (never a past or future-only one).
+    if (since <= now && now <= until) {
+      const { rows: open } = await db.query(
+        `SELECT ${column} AS key, p.id::text AS pod_id, p.handle, p.cost_per_hr,
               p.running_since, r.state, r.reserved_usd, r.hourly_usd
          FROM gpu_pod_reservations r
          JOIN gpu_budget_layers l ON l.id = r.layer_id AND l.scope_kind = 'key'
          JOIN gpu_pods p ON p.id = r.pod_id
         WHERE l.key_owner_account_id = $1
           AND r.state IN ('active', 'quarantined')`,
-      [account_id],
-    );
-    for (const row of open) {
-      const g = group(row.key);
-      g.pods.add(row.pod_id);
-      if (group_by === "pod") g.label = row.handle;
-      if (row.state === "quarantined") {
-        g.held = g.held.plus(row.reserved_usd ?? 0);
-        continue;
-      }
-      g.live_pods.add(row.pod_id);
-      g.live = g.live.plus(
-        actualCost({
-          cost_per_hr: row.cost_per_hr,
-          reserved_hourly_usd: row.hourly_usd,
-          running_since: row.running_since,
-          ended_at: new Date(now),
-        }),
+        [account_id],
       );
+      for (const row of open) {
+        const g = group(row.key);
+        g.pods.add(row.pod_id);
+        if (group_by === "pod") g.label = row.handle;
+        if (row.state === "quarantined") {
+          g.held = g.held.plus(row.reserved_usd ?? 0);
+          continue;
+        }
+        g.live_pods.add(row.pod_id);
+        g.live = g.live.plus(
+          actualCost({
+            cost_per_hr: row.cost_per_hr,
+            reserved_hourly_usd: row.hourly_usd,
+            running_since: row.running_since,
+            ended_at: new Date(now),
+          }),
+        );
+      }
     }
+    // everything settled before this is RunPod's billed amount (or the
+    // estimate, where billing never proved a pod: 5d-2a)
+    billed_through = await billedThrough(
+      account_id,
+      new Date(since),
+      new Date(Math.min(until, now)),
+      db,
+    );
+    await db.query("COMMIT");
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
   }
 
   const all: (GpuSpendRow & { total: ReturnType<typeof toDecimal> })[] = [];
@@ -212,13 +232,6 @@ export async function getGpuSpendLocal(
     });
   }
   all.sort((a, b) => b.total.comparedTo(a.total) || a.key.localeCompare(b.key));
-  // everything settled before this is RunPod's billed amount (or the
-  // estimate, where billing never proved a pod: 5d-2a)
-  const billed_through = await billedThrough(
-    account_id,
-    new Date(since),
-    new Date(Math.min(until, now)),
-  );
   return {
     as_of: new Date(now).toISOString(),
     since: new Date(since).toISOString(),
