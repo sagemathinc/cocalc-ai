@@ -555,22 +555,20 @@ describeDb("direct conversations", () => {
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(20);
   }, 30000);
 
-  test("notifications are plain text: nothing in them loads or renders", async () => {
+  test("notifications carry plain text, never Markdown", async () => {
     await request(
-      "![probe](https://attacker.example/pixel) and [link](https://x.example) <img src=x>",
+      "![probe](https://attacker.example/pixel) and [link](https://x.example) <img src=x> http://2130706433:3000/admin [x] \\(x\\) $y$",
     );
-    const body = mockNotify.mock.calls[0][0].payload_json.body_markdown;
-    expect(body).not.toContain("https://attacker.example");
-    expect(body).not.toContain("](");
-    expect(body).not.toContain("<img");
-    expect(body).toContain("&#91;image&#93;");
-  });
-
-  test("notification text has no math delimiters: parentheses, brackets and dollars stay literal", async () => {
-    await request("Hi (bay-1), see [this] for $5 and \\(x\\)");
-    const body = mockNotify.mock.calls[0][0].payload_json.body_markdown;
-    expect(body).not.toMatch(/\\[([$]|\$/);
-    expect(body).toContain("Hi &#40;bay&#45;1&#41;");
+    const payload = mockNotify.mock.calls[0][0].payload_json;
+    // No Markdown at all: the notification row and email show body_text
+    // literally (see notification-row-plain-text.test.tsx).
+    expect(payload.body_markdown).toBeUndefined();
+    expect(payload.body_text).not.toContain("https://attacker.example");
+    expect(payload.body_text).not.toContain("<img");
+    expect(payload.body_text).toContain("[image]");
+    expect(payload.body_text).toContain(
+      "http://2130706433:3000/admin [x] \\(x\\) $y$",
+    );
   });
 
   test("only members can read or write", async () => {

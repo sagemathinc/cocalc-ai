@@ -22,6 +22,8 @@ export type MentionInfo = TypedMap<{
   time: Date;
   title?: string;
   body_markdown?: string;
+  // Shown literally, never parsed as Markdown (e.g. an unaccepted message).
+  body_text?: string;
   origin_label?: string;
   notice_type?: string;
   request_id?: string;

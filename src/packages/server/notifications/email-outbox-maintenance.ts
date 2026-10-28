@@ -88,18 +88,29 @@ function firstNonEmpty(...values: unknown[]): string {
   return "";
 }
 
+// A notification may carry plain text instead of Markdown (e.g. a message
+// from someone not yet accepted): it is shown literally, never parsed.
+function notificationPlainBody(row: NotificationEmailOutboxRow): string {
+  const summary = row.summary_json?.summary ?? {};
+  const eventPayload = row.summary_json?.event_payload ?? {};
+  return firstNonEmpty(summary.body_text, eventPayload.body_text);
+}
+
 function notificationBodyText(row: NotificationEmailOutboxRow): string {
   const summary = row.summary_json?.summary ?? {};
   const eventPayload = row.summary_json?.event_payload ?? {};
+  const plain = notificationPlainBody(row);
   const bodyMarkdown = firstNonEmpty(
     summary.body_markdown,
     eventPayload.body_markdown,
     summary.description,
     eventPayload.description,
   );
-  const body = renderNotificationEmailMarkdownText(
-    bodyMarkdown || "You have a CoCalc notification.",
-  );
+  const body =
+    plain ||
+    renderNotificationEmailMarkdownText(
+      bodyMarkdown || "You have a CoCalc notification.",
+    );
   const path = firstNonEmpty(
     summary.display_path,
     summary.path,
@@ -109,6 +120,10 @@ function notificationBodyText(row: NotificationEmailOutboxRow): string {
 }
 
 function notificationBodyHtml(row: NotificationEmailOutboxRow): string {
+  const plain = notificationPlainBody(row);
+  if (plain) {
+    return `<p>${escapeNotificationEmailHtml(plain).replace(/\n/g, "<br>")}</p>`;
+  }
   const summary = row.summary_json?.summary ?? {};
   const eventPayload = row.summary_json?.event_payload ?? {};
   const bodyMarkdown = firstNonEmpty(

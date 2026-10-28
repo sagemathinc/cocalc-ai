@@ -70,7 +70,6 @@ import {
   directPairKey,
   directPreview,
   directRoute,
-  escapeMarkdown,
   memberView,
   normalizeDirectBody,
   normalizeDirectMembers,
@@ -263,8 +262,9 @@ async function notify(
       kind === "request"
         ? `${sender} sent you a message request`
         : `Message from ${sender}`,
-    // Plain text, escaped: nothing in it renders as Markdown or loads.
-    body_markdown: escapeMarkdown(directPreview(message.body)),
+    // Plain text, shown as text everywhere (never parsed as Markdown, so
+    // nothing in it links, loads or renders): the sender may not be accepted.
+    body_text: directPreview(message.body),
     severity: "info",
     origin_label: "Messages",
     notice_type: "direct_message",

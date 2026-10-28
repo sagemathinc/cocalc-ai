@@ -185,16 +185,6 @@ export function isDirectRequest(
   return c.state === "requested";
 }
 
-// Markdown that shows a plain-text preview literally (used for notification
-// bodies). Punctuation becomes HTML character references, not backslash
-// escapes: "\(" and "\[" are math delimiters, and "$" starts math too.
-export function escapeMarkdown(text: string): string {
-  return text.replace(
-    /[\\`*_{}[\]()#+\-.!|<>~$&]/g,
-    (c) => `&#${c.charCodeAt(0)};`,
-  );
-}
-
 const UUID_LIKE =
   /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 

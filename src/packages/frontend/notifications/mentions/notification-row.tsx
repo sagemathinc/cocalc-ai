@@ -103,6 +103,7 @@ export function NotificationRow(props: Props) {
     fragment_id,
     title,
     body_markdown,
+    body_text,
     origin_label,
     notice_type,
     request_id,
@@ -459,7 +460,18 @@ export function NotificationRow(props: Props) {
               <TimeAgo date={(latestTime ?? time).getTime()} />.
             </div>
           ) : null}
-          {body_markdown ? (
+          {body_text ? (
+            <div
+              style={{
+                ...MARKDOWN_STYLE,
+                margin: IS_MOBILE ? "4px 0" : "4px 10px",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {body_text}
+            </div>
+          ) : body_markdown ? (
             <StaticMarkdown
               style={{
                 ...MARKDOWN_STYLE,

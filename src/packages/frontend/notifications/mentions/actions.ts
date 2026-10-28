@@ -93,6 +93,7 @@ function buildNotificationMention(
     time,
     title: summary.title,
     body_markdown: summary.body_markdown,
+    body_text: summary.body_text,
     origin_label: summary.origin_label,
     notice_type: summary.notice_type,
     request_id: summary.request_id,
