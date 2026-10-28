@@ -14,22 +14,28 @@ import type {
   GpuCatalogResult,
   GpuPodsResult,
 } from "@cocalc/conat/hub/api/gpu";
-import { GPU_READ_TIMEOUT_MS } from "@cocalc/util/gpu/runpod";
+import type { GpuLaunchSpec, GpuPodSummary } from "@cocalc/util/gpu/types";
+import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
+import {
+  GPU_POD_WRITE_RPC_TIMEOUT_MS,
+  GPU_READ_TIMEOUT_MS,
+} from "@cocalc/util/gpu/runpod";
 
 // A GPU read may take GPU_READ_TIMEOUT_MS on the key owner's home bay; wait a
 // little longer, so the server's own deadline (and its clear error) comes
 // first rather than the CLI abandoning a read that is still running.
 export const GPU_CLI_RPC_TIMEOUT_MS = GPU_READ_TIMEOUT_MS + 15_000;
 
-// Raise the context's timeouts for one GPU read, then restore them.
+// Raise the context's timeouts for one GPU call, then restore them.
 export async function withGpuReadTimeout<T>(
   ctx: any,
   fn: () => Promise<T>,
+  timeoutMs = GPU_CLI_RPC_TIMEOUT_MS,
 ): Promise<T> {
   const prevTimeoutMs = ctx.timeoutMs;
   const prevRpcTimeoutMs = ctx.rpcTimeoutMs;
-  ctx.timeoutMs = Math.max(prevTimeoutMs ?? 0, GPU_CLI_RPC_TIMEOUT_MS);
-  ctx.rpcTimeoutMs = Math.max(prevRpcTimeoutMs ?? 0, GPU_CLI_RPC_TIMEOUT_MS);
+  ctx.timeoutMs = Math.max(prevTimeoutMs ?? 0, timeoutMs);
+  ctx.rpcTimeoutMs = Math.max(prevRpcTimeoutMs ?? 0, timeoutMs);
   try {
     return await fn();
   } finally {
@@ -88,6 +94,30 @@ export function dataCenterRows(result: GpuCatalogResult) {
   }));
 }
 
+// The pods CoCalc started, with RunPod's live status where it has one.
+export function managedPodRows(result: GpuPodsResult) {
+  const live = new Map(result.pods.map((p) => [p.id, p]));
+  return (result.records ?? []).map((r) => podRecordRow(r, live));
+}
+
+export function podRecordRow(
+  r: GpuPodSummary,
+  live = new Map<string, { status?: string }>(),
+) {
+  return {
+    handle: r.handle,
+    state: r.state,
+    status: (r.provider_pod_id && live.get(r.provider_pod_id)?.status) || null,
+    gpu: r.gpu_type_id,
+    count: r.gpu_count,
+    cost_per_hr: r.cost_per_hr ?? null,
+    cloud: r.cloud,
+    deadline: r.deadline,
+    pod_id: r.provider_pod_id ?? null,
+    reason: r.reason ?? null,
+  };
+}
+
 export function podRows(result: GpuPodsResult) {
   return result.pods.map((p) => ({
     id: p.id,
@@ -115,9 +145,10 @@ export function registerGpuCommand(
     command: Command,
     label: string,
     fn: (api: GpuApi, ctx: any) => Promise<unknown>,
+    timeoutMs = GPU_CLI_RPC_TIMEOUT_MS,
   ) =>
     deps.withContext(command, `gpu ${label}`, async (ctx) =>
-      withGpuReadTimeout(ctx, () => fn(ctx.hub.gpu, ctx)),
+      withGpuReadTimeout(ctx, () => fn(ctx.hub.gpu, ctx), timeoutMs),
     );
 
   gpu
@@ -187,20 +218,161 @@ export function registerGpuCommand(
   gpu
     .command("pods")
     .description(
-      "your pods (--id: one pod read live, with SSH endpoints and utilization)",
+      "the pods CoCalc started for you (--id: one pod read live, with SSH endpoints and utilization; --all: every pod in your RunPod account)",
     )
-    .option("--id <pod-id>", "one pod")
+    .option("--id <pod>", "one pod: its handle or RunPod pod id")
+    .option("--ended", "also pods that ended in the last 30 days")
+    .option(
+      "--all",
+      "every pod in your RunPod account, including ones CoCalc didn't start",
+    )
     .action(async (opts, command: Command) =>
       run(command, "pods", async (api, ctx) => {
-        const result = await api.pods(opts.id ? { pod_id: opts.id } : {});
+        const result = await api.pods({
+          ...(opts.id ? { pod_id: opts.id } : {}),
+          ...(opts.all ? { scope: "account" as const } : {}),
+          ...(opts.ended ? { include_ended: true } : {}),
+        });
         if (isJson(ctx)) return result;
-        if (opts.id) {
-          if (result.pods.length === 0) throw new Error("no such pod");
-          return result.pods[0];
+        if (opts.all) {
+          if (opts.id) {
+            if (result.pods.length === 0) throw new Error("no such pod");
+            return result.pods[0];
+          }
+          return podRows(result);
         }
-        return podRows(result);
+        if (opts.id) {
+          const record = result.records?.[0];
+          if (!record) throw new Error("no such pod");
+          return { ...record, live: result.pods[0] ?? null };
+        }
+        return managedPodRows(result);
+      }),
+    );
+
+  gpu
+    .command("launch")
+    .description(
+      "start a pod on your RunPod key; it is terminated after --max-runtime minutes at the latest (once budgets land; until then, terminate it yourself)",
+    )
+    .requiredOption("--gpu <id>", 'GPU type id, e.g. "NVIDIA GeForce RTX 4090"')
+    .requiredOption(
+      "--max-runtime <minutes>",
+      "maximum runtime in minutes (5 to 1440)",
+      positiveNumber("--max-runtime", true),
+    )
+    .option(
+      "--project <project-id>",
+      "the project it is for (default: this project)",
+    )
+    .option(
+      "--count <n>",
+      "GPUs on the pod (default 1)",
+      positiveNumber("--count", true),
+    )
+    .option("--cloud <cloud>", "SECURE (default) or COMMUNITY")
+    .option("--data-center <id>", "data center id, e.g. US-TX-3")
+    .option("--image <image>", "container image (one of the allowed images)")
+    .option(
+      "--disk <gb>",
+      "container disk in GB (default 20)",
+      positiveNumber("--disk", true),
+    )
+    .option(
+      "--volume <gb>",
+      "persistent volume at /workspace, in GB",
+      positiveNumber("--volume", true),
+    )
+    .option(
+      "--port <port>",
+      'exposed port, e.g. "8888/http" (repeatable)',
+      collect,
+    )
+    .option(
+      "--env <NAME=value>",
+      "non-secret environment variable (repeatable)",
+      (v: string, a: string[] = []) => [...a, v],
+    )
+    .option("--ssh-public-key <key>", "the pod's own ssh-ed25519 public key")
+    .action(async (opts, command: Command) =>
+      run(
+        command,
+        "launch",
+        async (api, ctx) => {
+          const project_id = opts.project ?? process.env.COCALC_PROJECT_ID;
+          if (!project_id) {
+            throw new Error("--project is required outside a project");
+          }
+          const pod = await api.launch({
+            project_id,
+            spec: launchSpecFromOptions(opts),
+          });
+          return isJson(ctx) ? pod : podRecordRow(pod);
+        },
+        GPU_POD_WRITE_RPC_TIMEOUT_MS,
+      ),
+    );
+
+  gpu
+    .command("terminate <pod>")
+    .description(
+      "terminate a pod CoCalc started (its handle or RunPod pod id); this ends its billing, including storage",
+    )
+    .action(async (pod: string, _opts, command: Command) =>
+      run(
+        command,
+        "terminate",
+        async (api) => await api.terminate({ pod_id: pod }),
+        GPU_POD_WRITE_RPC_TIMEOUT_MS,
+      ),
+    );
+
+  gpu
+    .command("who <query>")
+    .description(
+      "who is responsible for a pod, and what was done to it: a handle, RunPod pod id, machine id or IP address",
+    )
+    .action(async (query: string, _opts, command: Command) =>
+      run(command, "who", async (api, ctx) => {
+        const result = await api.who({ query });
+        if (isJson(ctx)) return result;
+        return result.map(({ pod, events }) => ({
+          ...podRecordRow(pod),
+          beneficiary: pod.beneficiary_account_id,
+          key_owner: pod.key_owner_account_id,
+          project: pod.project_id ?? null,
+          events: events
+            .map((e) => `${e.at} ${e.actor_kind} ${e.action}`)
+            .join("; "),
+        }));
       }),
     );
 
   return gpu;
+}
+
+// The CLI's options as a launch spec; the server checks it against the
+// allowlist.
+export function launchSpecFromOptions(opts: any): GpuLaunchSpec {
+  const spec: GpuLaunchSpec = {
+    gpu_type_id: opts.gpu,
+    gpu_count: opts.count ?? 1,
+    image: opts.image ?? GPU_LAUNCH_IMAGES[0],
+    max_runtime_minutes: opts.maxRuntime,
+  };
+  if (opts.cloud) spec.cloud = `${opts.cloud}`.toUpperCase() as any;
+  if (opts.dataCenter) spec.data_center_id = opts.dataCenter;
+  if (opts.disk != null) spec.container_disk_gb = opts.disk;
+  if (opts.volume != null) spec.volume_gb = opts.volume;
+  if (opts.port) spec.ports = opts.port;
+  if (opts.env) {
+    spec.env = {};
+    for (const kv of opts.env as string[]) {
+      const i = kv.indexOf("=");
+      if (i <= 0) throw new Error(`--env must be NAME=value, not ${kv}`);
+      spec.env[kv.slice(0, i)] = kv.slice(i + 1);
+    }
+  }
+  if (opts.sshPublicKey) spec.ssh_public_key = opts.sshPublicKey;
+  return spec;
 }

@@ -122,6 +122,13 @@ export function buildRunpodCreateBody(
 
 // ---- records ----
 
+// The spec as stored: env values and the SSH key stay out of the record (the
+// key is kept as its fingerprint).
+function storedSpec(spec: GpuLaunchSpec) {
+  const { ssh_public_key: _key, env, ...rest } = spec;
+  return { ...rest, env: Object.keys(env ?? {}) };
+}
+
 interface PodRow {
   id: string;
   handle: string;
@@ -379,8 +386,7 @@ export async function launchGpuPodLocal(
       account_id,
       credential_id,
       project_id,
-      // the spec as stored: env values stay out of the record
-      { ...spec, env: Object.keys(spec.env ?? {}) },
+      storedSpec(spec),
       spec.gpu_type_id,
       spec.gpu_count,
       spec.cloud ?? "SECURE",
