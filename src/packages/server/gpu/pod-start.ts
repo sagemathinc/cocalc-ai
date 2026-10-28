@@ -137,14 +137,20 @@ ${sshd} -t >/dev/null 2>&1 || cc_fail "sshd -t rejected the config"
   case "$cc_blob" in ""|*[!A-Za-z0-9+/=]*) exit 1 ;; esac
   cc_body="{\\"pod_id\\":\\"$RUNPOD_POD_ID\\",\\"host_public_key\\":\\"ssh-ed25519 $cc_blob\\"}"
   t=0; delay=${delay0}
+  cc_retry() { sleep "$delay"; t=$((t + delay)); [ "$delay" -lt 30 ] && delay=$((delay * 2)); }
   while [ "$t" -le ${post} ]; do
-    code="$(printf 'Authorization: Bearer %s\\n' "\${${POD_REGISTRATION_TOKEN_ENV}:-}" |
-      ${curl} -sS --proto =https --max-time 20 -o /dev/null -w '%{http_code}' \\
+    # the fixed answer word, then the status on the last line
+    resp="$(printf 'Authorization: Bearer %s\\n' "\${${POD_REGISTRATION_TOKEN_ENV}:-}" |
+      ${curl} -sS --proto =https --max-time 20 --max-filesize 4096 -w '\\n%{http_code}' \\
         -H @- -H 'Content-Type: application/json' --data-binary "$cc_body" \\
-        "\${${POD_REGISTRATION_URL_ENV}:-}" 2>/dev/null)" || code=000
+        "\${${POD_REGISTRATION_URL_ENV}:-}" 2>/dev/null)" || true
+    code="\${resp##*$'\\n'}"
+    case "$code" in [0-9][0-9][0-9]) ;; *) code=000 ;; esac
     case "$code" in
       200) break ;;
-      409|429|000|5??) sleep "$delay"; t=$((t + delay)); [ "$delay" -lt 30 ] && delay=$((delay * 2)) ;;
+      # only "not bound yet" is worth waiting for; a key mismatch is final
+      409) case "$resp" in *'"not_bound"'*) cc_retry ;; *) break ;; esac ;;
+      429|000|5??) cc_retry ;;
       *) break ;;
     esac
   done

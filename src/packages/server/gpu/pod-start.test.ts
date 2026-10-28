@@ -75,14 +75,17 @@ function sandbox(
 esac`,
   );
   exe(join(bin, "pgrep"), "exit 0");
-  // curl: record argv and stdin; answer the next queued code.
+  // curl: record argv and stdin; answer the next queued "code" or
+  // "code:word" like the endpoint (the word as JSON, then -w's status line).
   writeFileSync(join(out, "codes"), (opts.codes ?? ["200"]).join("\n") + "\n");
   exe(
     join(bin, "curl"),
     `n=$(ls "${out}" | grep -c '^call.*[.]argv$')
 printf '%s\\n' "$@" > "${out}/call$n.argv"
 cat > "${out}/call$n.stdin"
-sed -n "$((n + 1))p" "${out}/codes"`,
+line=$(sed -n "$((n + 1))p" "${out}/codes")
+case "$line" in *:*) printf '{"result":"%s"}' "\${line#*:}" ;; esac
+printf '\\n%s' "\${line%%:*}"`,
   );
   // /start.sh: record the environment it got.
   exe(join(bin, "start"), `env > "${out}/start.env"`);
@@ -163,9 +166,17 @@ describe("pod start script", () => {
   });
 
   it("retries while the pod isn't bound yet, then stops at 200", async () => {
-    const s = sandbox({ codes: ["409", "000", "200", "200"] });
+    const s = sandbox({ codes: ["409:not_bound", "000", "200", "200"] });
     expect(s.run().status).toBe(0);
     expect(await calls(s.out, 3)).toHaveLength(3);
+  });
+
+  it("stops at a key mismatch: a 409 other than not_bound is final", async () => {
+    for (const final of ["409:key_mismatch", "409"]) {
+      const s = sandbox({ codes: [final, "200"] });
+      expect(s.run().status).toBe(0);
+      expect(await calls(s.out, 1, 3000)).toHaveLength(1);
+    }
   });
 
   it("stops at a refusal and never retries it", async () => {
