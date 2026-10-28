@@ -662,7 +662,7 @@ it("a kernel template launches with a key made here, then connects and registers
 // A program whose hub records launches, with offers in stock and pod keys in
 // a temporary home; `cocalc gpu ...` command lines run as a shell would
 // split them.
-async function launchHarness() {
+async function launchHarness({ billed }: { billed?: string } = {}) {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -721,7 +721,16 @@ async function launchHarness() {
                 calls.push({ name: "launch", args });
                 // a new handle per pod, so each pod's key is its own
                 handle = `cc-${"abcdefghijklmnop".slice(0, 15)}${"abcdefghijklmnopqrstuvwxyz"[launches++]}`;
-                return { ...RECORD, handle, state: "running" };
+                return {
+                  ...RECORD,
+                  handle,
+                  state: "running",
+                  cost_per_hr: billed ?? "0.25",
+                };
+              },
+              terminate: async (args) => {
+                calls.push({ name: "terminate", args });
+                return { state: "terminating" };
               },
               sshInfo: async (args) => {
                 calls.push({ name: "sshInfo", args });
@@ -801,4 +810,27 @@ it("a dry run's next is exactly its launch: every option, the project, SSH and c
   // the odd env value survived the shell
   const first = (await h.run(cases[0])).spec.env;
   assert.equal(first.NOTE, `a b; $(echo no) "q" 'x'`);
+});
+
+it("terminates a pod at once if RunPod bills it above --max-cost", async () => {
+  const PROJECT = "00000000-1000-4000-8000-0000000000bb";
+  // listed at 0.25/h (bound 0.26), billed at 0.40/h: bound 0.41
+  const h = await launchHarness({ billed: "0.40" });
+  const dry = await h.run(
+    `cocalc gpu launch --dry-run --project ${PROJECT} --template pytorch-ssh --gpu "NVIDIA RTX A4000"`,
+  );
+  assert.equal(dry.max_cost_usd, 0.26);
+  await assert.rejects(
+    h.run(dry.next),
+    /billed cc-\S+ at \$0\.4\/h, so it could cost up to \$0\.41, more than --max-cost \$0\.26; it was terminated/,
+  );
+  const terminated = h.calls.find((c) => c.name === "terminate");
+  assert.ok(terminated);
+  // within the bound: kept
+  const ok = await launchHarness({ billed: "0.25" });
+  const dry2 = await ok.run(
+    `cocalc gpu launch --dry-run --project ${PROJECT} --template pytorch-ssh --gpu "NVIDIA RTX A4000"`,
+  );
+  await ok.run(dry2.next);
+  assert.ok(!ok.calls.some((c) => c.name === "terminate"));
 });

@@ -15,7 +15,8 @@ money.
   from `launch --dry-run`, the GPUs and all disk at list price for the whole
   maximum runtime. Then launch exactly that, with the dry run's `next`
   command: it pins the GPU and adds `--max-cost`, so the launch is refused if
-  prices or stock changed. Launch only what the user asked for.
+  prices or stock changed, and the pod is terminated at once if RunPod bills
+  it above the bound. Launch only what the user asked for.
 - **The bound holds only if the pod ends by its maximum runtime. You end
   it:** don't count on CoCalc to terminate it at the deadline. Launch with
   the dry run's `next`, then, before starting any work, set a watcher for a

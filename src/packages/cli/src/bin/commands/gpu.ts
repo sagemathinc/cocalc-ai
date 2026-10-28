@@ -31,7 +31,7 @@ import {
   planGpuLaunch,
   templateRows,
 } from "../core/gpu-template";
-import { GPU_TEMPLATES } from "@cocalc/util/gpu/templates";
+import { GPU_TEMPLATES, maxLaunchCostUsd } from "@cocalc/util/gpu/templates";
 import {
   GPU_POD_WRITE_RPC_TIMEOUT_MS,
   GPU_READ_TIMEOUT_MS,
@@ -412,6 +412,32 @@ export function registerGpuCommand(
               await discardLaunchKey(key, deps.connect);
             } else {
               await adoptLaunchedKey(key, pod.handle, deps.connect);
+            }
+          }
+          // The price was checked before the launch; RunPod's actual rate is
+          // known only now. Above --max-cost, the pod goes at once.
+          if (opts.maxCost != null && pod.state !== "failed") {
+            const hourly = Number(pod.cost_per_hr);
+            const bound = Number.isFinite(hourly)
+              ? maxLaunchCostUsd({
+                  price_per_gpu_hour: hourly / spec.gpu_count,
+                  gpu_count: spec.gpu_count,
+                  max_runtime_minutes: spec.max_runtime_minutes,
+                  container_disk_gb: spec.container_disk_gb ?? 0,
+                  volume_gb: spec.volume_gb ?? 0,
+                })
+              : undefined;
+            if (bound != null && bound > opts.maxCost) {
+              let ended = "it was terminated";
+              try {
+                await api.terminate({ pod_id: pod.handle });
+                if (key) await disconnectGpuPod(pod.handle, deps.connect);
+              } catch {
+                ended = `terminating it failed: run cocalc gpu terminate ${pod.handle}`;
+              }
+              throw new Error(
+                `RunPod billed ${pod.handle} at $${hourly}/h, so it could cost up to $${bound.toFixed(2)}, more than --max-cost $${opts.maxCost.toFixed(2)}; ${ended}.`,
+              );
             }
           }
           const shown: Record<string, unknown> = isJson(ctx)
