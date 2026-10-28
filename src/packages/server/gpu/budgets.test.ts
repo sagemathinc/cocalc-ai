@@ -440,15 +440,16 @@ describeDb("GPU budgets", () => {
       const s = setup();
       await s.launch();
       await s.launch();
-      // each terminate takes longer than the whole bound
+      // each terminate takes longer than the whole bound (which also covers
+      // the kill switch's own fenced work, slow on a loaded machine)
       const terminate = s.rp.client.terminatePod.getMockImplementation()!;
       s.rp.client.terminatePod.mockImplementation(async (id: string) => {
-        await new Promise((r) => setTimeout(r, 150));
+        await new Promise((r) => setTimeout(r, 2_500));
         return await terminate(id);
       });
       const result = await killSwitchLocal(
         { account_id: s.account_id },
-        { ...s.deps, killSwitchResolveMs: 100 },
+        { ...s.deps, killSwitchResolveMs: 1_500 },
       );
       expect(s.rp.client.terminatePod).toHaveBeenCalledTimes(1);
       expect(result).toEqual(
@@ -1481,6 +1482,48 @@ describeDb("GPU budgets", () => {
       await pass();
       expect((await row(second.id)).state).toBe("terminated");
       expect((await row(first.id)).state).not.toBe("terminated");
+    });
+
+    it("a sweep doesn't make one compromised key wait for another's slow pass", async () => {
+      const slow = setup();
+      const fast = setup();
+      await slow.stored;
+      await fast.stored;
+      for (const s of [slow, fast]) {
+        await getPool().query(
+          `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
+           VALUES ($1, $2, 'compromised', now(), now())
+           ON CONFLICT (credential_id) DO UPDATE SET state = 'compromised'`,
+          [s.credential_id, s.account_id],
+        );
+      }
+      let release!: () => void;
+      const hung = new Promise<void>((r) => (release = r));
+      const seen: string[] = [];
+      const cleanup = (s: ReturnType<typeof setup>, hang: boolean) => ({
+        ...s.rp.client,
+        credential_id: s.credential_id,
+        getProviderIdentity: async () => ({ kind: "personal", id: "u" }),
+        listPods: async () => {
+          seen.push(s.account_id);
+          if (hang) await hung;
+          return [];
+        },
+      });
+      const sweep = continueCompromiseCleanups(async () => {}, {
+        resolvePending: async () => {},
+        getCleanup: async (account_id: string) =>
+          (account_id === slow.account_id
+            ? cleanup(slow, true)
+            : cleanup(fast, false)) as any,
+      });
+      // the fast key's pass runs while the slow one is still listing
+      for (let i = 0; i < 50 && !seen.includes(fast.account_id); i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(seen).toContain(fast.account_id);
+      release();
+      await sweep;
     });
 
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {

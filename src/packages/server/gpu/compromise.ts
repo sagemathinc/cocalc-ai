@@ -526,12 +526,29 @@ export async function continueCompromiseCleanups(
        JOIN external_credentials c ON c.id = f.credential_id
       WHERE f.state = 'compromised' AND c.revoked IS NULL`,
   );
-  for (const r of rows) {
-    await guard();
-    await runCompromiseCleanup(r.key_owner_account_id, r.credential_id, {
-      ...deps,
-      guard,
-    }).catch((err) => log.warn("a compromise cleanup pass failed", `${err}`));
-  }
+  // Several at once (each key has its own fence and pass bound): a slow
+  // account never makes the others wait for their turn.
+  let next = 0;
+  const worker = async () => {
+    while (next < rows.length) {
+      const r = rows[next++];
+      await guard();
+      await runCompromiseCleanup(r.key_owner_account_id, r.credential_id, {
+        ...deps,
+        guard,
+      }).catch((err) => {
+        log.warn("a compromise cleanup pass failed", `${err}`);
+      });
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(COMPROMISE_CONCURRENCY, rows.length) },
+      worker,
+    ),
+  );
   return rows.length;
 }
+
+// how many compromised keys one sweep cleans up at the same time
+export const COMPROMISE_CONCURRENCY = 8;
