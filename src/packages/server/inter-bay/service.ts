@@ -1281,6 +1281,10 @@ async function startAccountLocalService(): Promise<void> {
       await (
         await import("@cocalc/server/gpu/budget-api")
       ).setGpuBudgetLocal(opts as any),
+    gpuAllowStaleWorkers: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/admin")
+      ).allowStaleWorkersLocal(opts),
     gpuManagedPods: async (opts) =>
       await (
         await import("@cocalc/server/gpu/pods")

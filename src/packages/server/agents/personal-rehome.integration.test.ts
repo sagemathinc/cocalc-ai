@@ -108,7 +108,26 @@ describeDb("Agent Network account rehome fence", () => {
       [randomUUID(), account],
     );
     await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
-      "GPU pods or GPU budgets",
+      "GPU pods, GPU budgets",
+    );
+  });
+
+  test("an admin GPU override blocks a rehome, even once revoked (its audit history stays home)", async () => {
+    const account = randomUUID();
+    const override = randomUUID();
+    await db.query(
+      "INSERT INTO gpu_worker_overrides (id, key_owner_account_id, admin_account_id, reason, created, expires_at) VALUES ($1, $2, $2, 'a good enough reason', now(), now() + interval '1 hour')",
+      [override, account],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "admin GPU override",
+    );
+    await db.query(
+      "UPDATE gpu_worker_overrides SET revoked_at = now() WHERE id = $1",
+      [override],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "admin GPU override",
     );
   });
 });

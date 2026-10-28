@@ -84,6 +84,9 @@ Table({
     // key); admission refuses while any is set.
     paused_reason: { type: "string", pg_type: "varchar(64)" },
     paused_at: { type: "timestamp" },
+    // first seen without the gpu_provider_keys entitlement (the reaper
+    // terminates its pods 7 days later); cleared when it returns
+    entitlement_lapsed_at: { type: "timestamp" },
     ...timestamps(),
   },
 });
@@ -329,5 +332,58 @@ Table({
     overrun_usd: usd("overrun_usd", true),
     settled_at: { type: "timestamp" },
     ...timestamps(),
+  },
+});
+
+// One row per background GPU worker on this bay (the reaper; the reconciler
+// in 5d): a lease so only one hub runs it, and the watermark of its last
+// *completed* sweep, which launch admission requires to be recent.
+Table({
+  name: "gpu_worker_leases",
+  rules: { primary_key: "name" },
+  fields: {
+    name: {
+      type: "string",
+      pg_type: "varchar(32)",
+      not_null: true,
+      pg_check: "CHECK (name IN ('reaper','reconciler'))",
+    },
+    holder: { type: "string", pg_type: "varchar(128)" },
+    expires_at: { type: "timestamp" },
+    last_started_at: { type: "timestamp" },
+    last_completed_at: { type: "timestamp" },
+    last_error: { type: "string", pg_type: "varchar(500)" },
+  },
+});
+
+// An admin's explicit, scoped, time-limited permission to launch although a
+// GPU worker is stale. It never bypasses a budget check.
+Table({
+  name: "gpu_worker_overrides",
+  rules: {
+    primary_key: "id",
+    pg_indexes: ["key_owner_account_id", "expires_at"],
+    pg_constraints: [
+      {
+        name: "gpu_worker_overrides_window",
+        type: "check",
+        expression:
+          "expires_at > created AND expires_at <= created + interval '24 hours'",
+      },
+    ],
+  },
+  fields: {
+    id: { type: "uuid", not_null: true },
+    key_owner_account_id: { type: "uuid", not_null: true },
+    admin_account_id: { type: "uuid", not_null: true },
+    reason: {
+      type: "string",
+      pg_type: "varchar(500)",
+      not_null: true,
+      pg_check: "CHECK (length(btrim(reason)) >= 10)",
+    },
+    created: { type: "timestamp", not_null: true, pg_default: "now()" },
+    expires_at: { type: "timestamp", not_null: true },
+    revoked_at: { type: "timestamp" },
   },
 });

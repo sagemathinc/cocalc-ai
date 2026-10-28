@@ -32,14 +32,16 @@ export const COMPUTER_STATE_TABLES = [
   "computer_pairing_requests",
 ] as const;
 
-// GPU state of a key owner (BYOK pods, budget layers and the key's fence),
-// keyed by key_owner_account_id. Its pods run on the owner's own RunPod
-// account and are managed only from the home bay, so it must not be left
-// behind by a rehome.
+// GPU state of a key owner (BYOK pods, budget layers, the key's fence and
+// admins' stale-worker overrides, history included: all account-home audit
+// records), keyed by key_owner_account_id.
+// Its pods run on the owner's own RunPod account and are managed only from
+// the home bay, so it must not be left behind by a rehome.
 export const GPU_STATE_TABLES = [
   "gpu_pods",
   "gpu_budget_layers",
   "gpu_key_fences",
+  "gpu_worker_overrides",
 ] as const;
 
 export type PersonalAuthorityDb = {
@@ -114,7 +116,7 @@ export async function assertNoPersonalStateForRehome(
       ).rows.length
     )
       throw new Error(
-        "Account rehome is unavailable while this account has GPU pods or GPU budgets on its own RunPod key. GPU state portability is not supported yet; keep this account on its current home bay.",
+        "Account rehome is unavailable while this account has GPU pods, GPU budgets or an admin GPU override on its own RunPod key. GPU state portability is not supported yet; keep this account on its current home bay.",
       );
   }
 }

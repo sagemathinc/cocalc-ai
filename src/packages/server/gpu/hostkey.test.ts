@@ -179,11 +179,17 @@ describeDb("pod host-key registration", () => {
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
+      gpu_worker_leases: SCHEMA.gpu_worker_leases,
+      gpu_worker_overrides: SCHEMA.gpu_worker_overrides,
       gpu_pods: SCHEMA.gpu_pods,
       gpu_pod_events: SCHEMA.gpu_pod_events,
       external_credentials: SCHEMA.external_credentials,
       accounts: SCHEMA.accounts,
     });
+    // a reaper that has just completed a pass (launches need one)
+    await getPool().query(
+      "INSERT INTO gpu_worker_leases (name, last_completed_at) VALUES ('reaper', now() + interval '10 years') ON CONFLICT (name) DO UPDATE SET last_completed_at = EXCLUDED.last_completed_at",
+    );
   });
 
   it("gives the pod a token, stores only its verifier, and registers the key once", async () => {

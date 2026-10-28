@@ -48,6 +48,8 @@ export const gpu = {
   budget: authFirstRequireAccount,
   // its fresh-auth check uses the caller's own session, never a nominated one
   setBudget: authFirstRequireAccountWithBoundSession,
+  // like setBudget: the fresh-auth check uses the caller's own session
+  adminAllowStaleWorkers: authFirstRequireAccountWithBoundSession,
   // what `cocalc gpu connect` needs: the live SSH endpoint and the host key
   // the pod registered; account-only, like pods
   sshInfo: authFirstRequireAccount,
@@ -155,6 +157,16 @@ export interface GpuApi {
     change: GpuBudgetChange;
     expected_version?: number;
   }) => Promise<GpuBudget>;
+  // Admins only, fresh auth: let one account launch for up to 24 hours
+  // although the GPU reaper/reconciler is stale (never bypasses budgets).
+  adminAllowStaleWorkers: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    target_account_id: string;
+    hours: number;
+    reason: string;
+  }) => Promise<{ id: string; account_id: string; expires_at: string }>;
   // query: a pod id, handle, RunPod pod id or IP address
   who: (opts: {
     account_id?: string;

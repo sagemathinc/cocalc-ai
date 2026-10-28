@@ -619,6 +619,7 @@ export const TABLE_OWNERSHIP = {
       "gpu_budget_layers",
       "gpu_budget_events",
       "gpu_pod_reservations",
+      "gpu_worker_overrides",
     ],
     {
       ownership: "account-home",
@@ -634,6 +635,15 @@ export const TABLE_OWNERSHIP = {
         "GPU bring-your-own-key budgets: per-key fences, budget layers and their events, and pod reservations, on the home bay of the account whose provider key pays (reservation and event rows follow their layer). Rehome is refused while any GPU rows exist (assertNoPersonalStateForRehome).",
     },
   ),
+
+  ...entries(["gpu_worker_leases"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "rebuildable",
+    notes:
+      "Per-bay lease and completed-sweep watermark of the GPU reaper/reconciler. Launch admission on this bay requires a recent watermark.",
+    rebuild: "No rebuild: the next sweep writes it; launches wait until then.",
+  }),
 
   ...entries(["gpu_pods", "gpu_pod_events"], {
     ownership: "account-home",

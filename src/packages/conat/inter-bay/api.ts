@@ -4170,6 +4170,14 @@ export interface InterBayGpuApi {
     expected_version?: number;
     fresh_auth_verified: boolean;
   }) => Promise<import("@cocalc/util/gpu/types").GpuBudget>;
+  // An admin's override of the stale-worker launch check (the forwarding
+  // bay checked that the caller is an admin, with fresh auth).
+  gpuAllowStaleWorkers: (opts: {
+    admin_account_id: string;
+    account_id: string;
+    hours: number;
+    reason: string;
+  }) => Promise<{ id: string; account_id: string; expires_at: string }>;
   gpuSshInfo: (opts: {
     account_id: string;
     pod_id: unknown;
@@ -8231,6 +8239,8 @@ export function createInterBayAccountLocalClient({
     gpuManagedPods: async (opts) => await gpuClient.gpuManagedPods(opts),
     gpuBudget: async (opts) => await gpuClient.gpuBudget(opts),
     gpuSetBudget: async (opts) => await gpuClient.gpuSetBudget(opts),
+    gpuAllowStaleWorkers: async (opts) =>
+      await gpuClient.gpuAllowStaleWorkers(opts),
     gpuSshInfo: async (opts) => await gpuClient.gpuSshInfo(opts),
     gpuRegisterHostKey: async (opts) =>
       await gpuClient.gpuRegisterHostKey(opts),
@@ -8817,6 +8827,8 @@ export function createInterBayAccountLocalHandler({
         gpuManagedPods: async (opts) => await impl.gpuManagedPods(opts),
         gpuBudget: async (opts) => await impl.gpuBudget(opts),
         gpuSetBudget: async (opts) => await impl.gpuSetBudget(opts),
+        gpuAllowStaleWorkers: async (opts) =>
+          await impl.gpuAllowStaleWorkers(opts),
         gpuSshInfo: async (opts) => await impl.gpuSshInfo(opts),
         gpuRegisterHostKey: async (opts) => await impl.gpuRegisterHostKey(opts),
       },

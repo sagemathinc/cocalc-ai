@@ -164,6 +164,9 @@ Table({
     created: { type: "timestamp", not_null: true, pg_default: "now()" },
     updated: { type: "timestamp", not_null: true, pg_default: "now()" },
     terminated_at: { type: "timestamp" },
+    // the reaper's backoff for a failing step on this pod
+    reap_after: { type: "timestamp" },
+    reap_attempts: { type: "integer", not_null: true, pg_default: "0" },
     running_since: {
       type: "timestamp",
       desc: "When RunPod's pod was bound (runtime and cost start here).",
