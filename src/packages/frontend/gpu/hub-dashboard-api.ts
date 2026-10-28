@@ -24,6 +24,9 @@ type GpuHub = Pick<
   | "killSwitch"
   | "resume"
   | "reportCompromised"
+  | "alerts"
+  | "acknowledgeAlert"
+  | "releaseQuarantined"
 >;
 
 // The hub transport reads `timeout` from the first argument; the server
@@ -81,6 +84,13 @@ export function hubGpuDashboardApi({
     reportCompromised: async ({ confirm_cocalc_only }) =>
       await gpu.reportCompromised(
         withTimeout({ confirm_cocalc_only, browser_id: browserId ?? null }),
+      ),
+    alerts: async () => await gpu.alerts(withTimeout({})),
+    acknowledgeAlert: async ({ id }) =>
+      await gpu.acknowledgeAlert(withTimeout({ id })),
+    releaseQuarantined: async ({ pod_id }) =>
+      await gpu.releaseQuarantined(
+        withTimeout({ pod_id, browser_id: browserId ?? null }),
       ),
     names,
     projectTitle,

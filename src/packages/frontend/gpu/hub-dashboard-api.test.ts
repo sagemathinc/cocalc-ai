@@ -36,6 +36,13 @@ function hub() {
       .mockResolvedValue({ marked: 1, remaining: 0, paused: true }),
     resume: jest.fn().mockResolvedValue({ resumed: 1 }),
     reportCompromised: jest.fn().mockResolvedValue({ closed: false }),
+    alerts: jest.fn().mockResolvedValue([]),
+    acknowledgeAlert: jest.fn().mockResolvedValue({ id: "a1" }),
+    releaseQuarantined: jest.fn().mockResolvedValue({
+      pod_id: "p",
+      released_usd: "1",
+      warning: "",
+    }),
   };
 }
 
@@ -99,6 +106,16 @@ describe("hubGpuDashboardApi", () => {
     expect(gpu.killSwitch).toHaveBeenCalledWith(t);
     await api.resume!();
     expect(gpu.resume).toHaveBeenCalledWith({ browser_id: "browser-1", ...t });
+    await api.alerts!();
+    expect(gpu.alerts).toHaveBeenCalledWith(t);
+    await api.acknowledgeAlert!({ id: "a1" });
+    expect(gpu.acknowledgeAlert).toHaveBeenCalledWith({ id: "a1", ...t });
+    await api.releaseQuarantined!({ pod_id: "p" });
+    expect(gpu.releaseQuarantined).toHaveBeenCalledWith({
+      pod_id: "p",
+      browser_id: "browser-1",
+      ...t,
+    });
     await api.reportCompromised({ confirm_cocalc_only: true });
     expect(gpu.reportCompromised).toHaveBeenCalledWith({
       confirm_cocalc_only: true,
