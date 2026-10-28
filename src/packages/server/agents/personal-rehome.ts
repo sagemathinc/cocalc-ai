@@ -43,6 +43,7 @@ export const GPU_STATE_TABLES = [
   "gpu_budget_layers",
   "gpu_key_fences",
   "gpu_worker_overrides",
+  "gpu_key_events",
 ] as const;
 
 export type PersonalAuthorityDb = {

@@ -112,6 +112,7 @@ describeDb("GPU budgets", () => {
     );
     await syncSchema({
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pods: SCHEMA.gpu_pods,
@@ -418,6 +419,15 @@ describeDb("GPU budgets", () => {
         ),
       ).toEqual({ resumed: 1 });
       expect((await s.launch()).state).toBe("running");
+      // both recorded in the key's security log
+      const { rows: log } = await getPool().query(
+        "SELECT action, actor_kind FROM gpu_key_events WHERE credential_id = $1 ORDER BY at",
+        [s.credential_id],
+      );
+      expect(log).toEqual([
+        { action: "kill_switch", actor_kind: "user" },
+        { action: "resumed", actor_kind: "user" },
+      ]);
     });
 
     it("stops only one project's pods, never pausing the key", async () => {

@@ -17,6 +17,7 @@ import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { GpuBudget, GpuBudgetChange } from "@cocalc/util/gpu/types";
 import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
+import { recordKeyEvent } from "@cocalc/server/gpu/key-events";
 import { inTransaction } from "@cocalc/server/gpu/pods";
 import type { PoolClient } from "@cocalc/database/pool";
 import { getRunpodLaunchAccessForAccount } from "@cocalc/server/gpu/provider-keys";
@@ -386,6 +387,17 @@ export async function resumeGpuLaunchesLocal(
         RETURNING credential_id`,
       [account_id],
     );
+    for (const r of rows) {
+      await recordKeyEvent(
+        {
+          credential_id: r.credential_id,
+          key_owner_account_id: account_id,
+          actor: { kind: "user", account_id },
+          action: "resumed",
+        },
+        db,
+      );
+    }
     return { resumed: rows.length };
   });
 }

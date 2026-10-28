@@ -43,6 +43,7 @@ import {
 } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
+import { recordKeyEvent } from "@cocalc/server/gpu/key-events";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -1630,6 +1631,22 @@ export async function killSwitchLocal(
     );
     for (const { id } of rows) {
       await recordEvent(id, actor, "kill_switch", { project_id }, db);
+    }
+    const { rows: fences } = await db.query(
+      "SELECT credential_id FROM gpu_key_fences WHERE key_owner_account_id = $1",
+      [account_id],
+    );
+    for (const f of fences) {
+      await recordKeyEvent(
+        {
+          credential_id: f.credential_id,
+          key_owner_account_id: account_id,
+          actor: { kind: "user", account_id },
+          action: "kill_switch",
+          details: { project_id, marked: rows.length, paused: pause },
+        },
+        db,
+      );
     }
     if (pause) {
       // its own field: a safety pause (an alert's) is left alone

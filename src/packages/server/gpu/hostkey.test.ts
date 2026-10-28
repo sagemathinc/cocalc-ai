@@ -176,6 +176,7 @@ describeDb("pod host-key registration", () => {
   beforeAll(async () => {
     await syncSchema({
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
