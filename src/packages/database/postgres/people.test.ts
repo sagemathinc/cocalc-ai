@@ -147,6 +147,62 @@ test("members: the creator first, then who it is with, each a collaborator", asy
   ).rejects.toThrow("invalid member");
 });
 
+test("people added at the same time are all kept", async () => {
+  const carol = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  await setUsers(project_id, {
+    [alice]: "owner",
+    [bob]: "collaborator",
+    [carol]: "collaborator",
+  });
+  const created = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "together.chat",
+    title: "Together",
+  });
+  // Hold each member UPDATE until both callers have read the record and
+  // reached it, then let them run: the race that loses one of them.
+  const pool = getPool();
+  const query = pool.query.bind(pool);
+  const held: (() => void)[] = [];
+  const spy = jest.spyOn(pool, "query").mockImplementation(((
+    sql: any,
+    ...rest: any[]
+  ) => {
+    if (
+      typeof sql === "string" &&
+      /^\s*UPDATE project_conversations (c )?SET member_ids/.test(sql)
+    ) {
+      return new Promise((resolve, reject) => {
+        held.push(() => query(sql, ...rest).then(resolve, reject));
+        if (held.length === 2) held.forEach((run) => run());
+      });
+    }
+    return query(sql, ...rest);
+  }) as any);
+  try {
+    await Promise.all(
+      [bob, carol].map((member) =>
+        createConversationRecord({
+          account_id: alice,
+          project_id,
+          path: "together.chat",
+          title: "Together",
+          member_ids: [member],
+        }),
+      ),
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(held).toHaveLength(2);
+  const { rows } = await getPool().query(
+    "SELECT member_ids FROM project_conversations WHERE conversation_id = $1",
+    [created.conversation_id],
+  );
+  expect([...rows[0].member_ids].sort()).toEqual([alice, bob, carol].sort());
+});
+
 test("adding a registered file with people adds them, never dropping any", async () => {
   // Registered without members (as by an owning bay before members existed).
   const before = await createConversationRecord({

@@ -157,23 +157,47 @@ export async function createConversationRecord({
   return await addMembers(toConversation(existing.rows[0]), requested);
 }
 
+// The stored members followed by the requested ones, each once, in order.
+// Records from before members existed count their creator. Evaluated inside
+// the UPDATE, so a concurrent addition is never lost: the second UPDATE waits
+// for the first and recomputes from its result.
+const MERGED_MEMBERS = `(
+  SELECT array_agg(m.id ORDER BY m.ord) FROM (
+    SELECT id, min(ord) AS ord
+      FROM unnest(
+        COALESCE(NULLIF(c.member_ids, '{}'), ARRAY[c.created_by]) || $3::uuid[]
+      ) WITH ORDINALITY AS t(id, ord)
+     GROUP BY id
+  ) m
+)`;
+
 // Add requested members (already checked to be collaborators) to an existing
-// record. Records from before members existed count their creator.
+// record, atomically.
 async function addMembers(
   c: Conversation,
   member_ids?: string[],
 ): Promise<Conversation> {
   if (!member_ids?.length) return c;
-  const current = c.member_ids?.length ? c.member_ids : [c.created_by];
-  const merged = normalizeMemberIds(current[0], [...current, ...member_ids]);
-  if (c.member_ids?.length && merged.length === current.length) return c;
   const { rows } = await getPool().query(
-    `UPDATE project_conversations SET member_ids = $3::uuid[]
-     WHERE project_id = $1 AND conversation_id = $2
+    `UPDATE project_conversations c SET member_ids = ${MERGED_MEMBERS}
+     WHERE c.project_id = $1 AND c.conversation_id = $2
+       AND cardinality(${MERGED_MEMBERS}) <= $4
      RETURNING ${COLUMNS}`,
-    [c.project_id, c.conversation_id, merged],
+    [
+      c.project_id,
+      c.conversation_id,
+      member_ids,
+      MAX_CONVERSATION_PARTICIPANTS,
+    ],
   );
-  return rows[0] == null ? c : toConversation(rows[0]);
+  if (rows[0] != null) return toConversation(rows[0]);
+  const { rows: current } = await getPool().query(
+    `SELECT ${COLUMNS} FROM project_conversations
+     WHERE project_id = $1 AND conversation_id = $2`,
+    [c.project_id, c.conversation_id],
+  );
+  if (current[0] == null) return c;
+  throw Error(`at most ${MAX_CONVERSATION_PARTICIPANTS} members`);
 }
 
 // Only projects where account_id is currently a collaborator contribute rows,
