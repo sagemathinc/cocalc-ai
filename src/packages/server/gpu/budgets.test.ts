@@ -865,7 +865,7 @@ describeDb("GPU budgets", () => {
       });
     });
 
-    it("ends a pod a complete listing no longer shows, through the normal terminated path", async () => {
+    it("a pod RunPod no longer has ends through its normal terminate path, never for being absent from a listing", async () => {
       const s = setup();
       const pod = await s.launch();
       const a = account(s);
@@ -874,7 +874,7 @@ describeDb("GPU budgets", () => {
         new RunpodApiError("provider", 503),
       );
       a.cleanup.listPods.mockResolvedValue([]);
-      const result = await reportCompromisedLocal(
+      await reportCompromisedLocal(
         {
           account_id: s.account_id,
           confirm_cocalc_only: true,
@@ -882,20 +882,19 @@ describeDb("GPU budgets", () => {
         },
         a.deps,
       );
-      expect(result).toEqual({
-        closed: false,
-        awaiting_provider_revocation: true,
-        warning: expect.stringContaining("RunPod's Pods page"),
-        provider_pods: 0,
-        managed_pods: 0,
-      });
-      expect(
+      const state = async () =>
         (
           await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [
             pod.id,
           ])
-        ).rows[0].state,
-      ).toBe("terminated");
+        ).rows[0].state;
+      // a listing (which may have shifted as it was paged) proves nothing
+      expect(await state()).not.toBe("terminated");
+      // its terminate goes through (RunPod's "not found" counts as done): it
+      // ends, settled, on the next pass
+      s.rp.client.terminatePod.mockResolvedValue(undefined);
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect(await state()).toBe("terminated");
       const [r] = await reservations(pod.id);
       expect(r.state).toBe("settled");
     });
@@ -982,53 +981,6 @@ describeDb("GPU budgets", () => {
       expect(
         await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
       ).toEqual({ closed: false, listing_failed: true });
-    });
-
-    it("a pod bound after the listing began isn't ended for being absent from it", async () => {
-      const s = setup();
-      const pod = await s.launch();
-      const a = account(s);
-      const { rows: bound } = await getPool().query(
-        "SELECT provider_pod_id FROM gpu_pods WHERE id = $1",
-        [pod.id],
-      );
-      const provider_pod_id = bound[0].provider_pod_id;
-      // still creating when the pass starts
-      await getPool().query(
-        "UPDATE gpu_pods SET provider_pod_id = NULL, state = 'creating' WHERE id = $1",
-        [pod.id],
-      );
-      const report = await reportCompromisedLocal(
-        {
-          account_id: s.account_id,
-          confirm_cocalc_only: true,
-          fresh_auth_verified: true,
-        },
-        { ...a.deps, resolvePending: async () => {} },
-      );
-      expect(report.closed).toBe(false);
-      // RunPod's snapshot is taken before its create reply; the launch binds
-      // the new pod meanwhile
-      a.cleanup.listPods.mockImplementationOnce(async () => {
-        await getPool().query(
-          "UPDATE gpu_pods SET provider_pod_id = $2, state = 'running' WHERE id = $1",
-          [pod.id, provider_pod_id],
-        );
-        return [];
-      });
-      await runCompromiseCleanup(s.account_id, s.credential_id, {
-        ...a.deps,
-        resolvePending: async () => {},
-      });
-      const { rows } = await getPool().query(
-        "SELECT state, terminated_at FROM gpu_pods WHERE id = $1",
-        [pod.id],
-      );
-      expect(rows[0].state).not.toBe("terminated");
-      expect(rows[0].terminated_at).toBeNull();
-      // the next pass, with its normal path, terminates it at RunPod
-      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
-      expect(s.rp.pods.has(provider_pod_id)).toBe(false);
     });
 
     it("retries a backed-off managed pod on every compromise pass", async () => {
@@ -1151,13 +1103,9 @@ describeDb("GPU budgets", () => {
             pod.id,
           ])
         ).rows[0].state;
-      // not ended for its absence, and RunPod's identity never asked
+      // not ended, and RunPod's identity never asked
       expect(await state()).not.toBe("terminated");
       expect(a.cleanup.getProviderIdentity).not.toHaveBeenCalled();
-      // the next pass, in time, ends it as absent
-      a.cleanup.listPods.mockResolvedValueOnce([]);
-      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
-      expect(await state()).toBe("terminated");
     });
 
     it("acts on no identity answer that came back after the pass's time ran out", async () => {
@@ -1401,51 +1349,6 @@ describeDb("GPU budgets", () => {
       );
       expect((await ids(first.id)).state).not.toBe("terminated");
       expect((await ids(second.id)).state).toBe("terminated");
-    });
-
-    it("ends pods absent from the inventory one at a time under the pass's guard", async () => {
-      const s = setup();
-      const first = await s.launch();
-      const second = await s.launch();
-      const a = account(s);
-      // marked to terminate (as a report leaves them)
-      await getPool().query(
-        "UPDATE gpu_pods SET desired_state = 'terminated' WHERE id = ANY($1)",
-        [[first.id, second.id]],
-      );
-      // RunPod won't terminate them, and its complete listing shows neither
-      s.rp.client.terminatePod.mockRejectedValue(
-        new RunpodApiError("provider", 503),
-      );
-      a.cleanup.listPods.mockResolvedValue([]);
-      const states = async () =>
-        (
-          await getPool().query(
-            "SELECT state FROM gpu_pods WHERE id = ANY($1) ORDER BY created",
-            [[first.id, second.id]],
-          )
-        ).rows.map((r) => r.state);
-      // the lease is lost once the first has ended
-      await expect(
-        runCompromiseCleanup(s.account_id, s.credential_id, {
-          ...a.deps,
-          resolvePending: async () => {},
-          guard: async () => {
-            if ((await states()).includes("terminated")) {
-              throw Error("lease lost");
-            }
-          },
-        }),
-      ).rejects.toThrow("lease lost");
-      expect((await states()).filter((x) => x === "terminated")).toHaveLength(
-        1,
-      );
-      // the next pass ends the other
-      await runCompromiseCleanup(s.account_id, s.credential_id, {
-        ...a.deps,
-        resolvePending: async () => {},
-      });
-      expect(await states()).toEqual(["terminated", "terminated"]);
     });
 
     it("a slow failure that uses up the pass doesn't keep the next pod waiting: later passes take the longest-waiting first", async () => {

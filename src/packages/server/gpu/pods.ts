@@ -1702,41 +1702,6 @@ export async function markCredentialPodsToTerminate(
   return rows.length;
 }
 
-// A complete inventory of the key's RunPod account doesn't list these
-// bound pods: they are gone at RunPod, so they end through the normal
-// terminating -> terminated path (settling their actual cost), as a
-// terminate RunPod confirmed would.
-// boundBefore: the provider ids CoCalc had bound before the listing began.
-// Only those can be ended: a pod bound after it may have been created after
-// RunPod's snapshot (its absence means nothing yet).
-export async function endPodsAbsentFromInventory(
-  credential_id: string,
-  present: Set<string>,
-  boundBefore: Set<string>,
-  actor: Actor = { kind: "cleanup" },
-  // a bounded pass's guard, before each record it ends
-  guard?: () => Promise<void>,
-): Promise<number> {
-  const { rows } = await getPool().query(
-    `SELECT * FROM gpu_pods
-      WHERE credential_id = $1 AND provider_pod_id IS NOT NULL
-        AND state NOT IN ('terminated', 'failed') AND unmanaged_at IS NULL`,
-    [credential_id],
-  );
-  let ended = 0;
-  for (const row of rows as PodRow[]) {
-    if (present.has(row.provider_pod_id!)) continue;
-    if (!boundBefore.has(row.provider_pod_id!)) continue;
-    await guard?.();
-    const terminating = await recordTerminating(row, actor);
-    if (!terminating) continue;
-    // RunPod already has no such pod: its terminate is a no-op here
-    await terminateBound(terminating, { terminatePod: async () => {} }, actor);
-    ended += 1;
-  }
-  return ended;
-}
-
 // A forced removal: the credential's remaining pods leave CoCalc's
 // management. Their state is left as it is (they may still run and bill at
 // RunPod; nothing claims they stopped), their reservations are quarantined
