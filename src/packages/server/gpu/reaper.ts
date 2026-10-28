@@ -360,7 +360,7 @@ async function resolveOwners(
         const { full } = await resolvePendingForAccount(
           key_owner_account_id,
           deps,
-          { actor: REAPER },
+          { actor: REAPER, guard: renew },
         );
         await renew();
         if (!full) {

@@ -1076,7 +1076,17 @@ function isStale(row: { updated: Date }, deps: GpuPodDeps): boolean {
 export async function resolvePendingForAccount(
   account_id: string,
   deps: GpuPodDeps,
-  { actor = { kind: "cleanup" } as Actor, limit = 100 } = {},
+  {
+    actor = { kind: "cleanup" } as Actor,
+    limit = 100,
+    guard,
+  }: {
+    actor?: Actor;
+    limit?: number;
+    // called before each record is acted on: the reaper renews its lease
+    // here, and a throw stops the pass
+    guard?: () => Promise<void>;
+  } = {},
 ): Promise<{ full: boolean }> {
   const nowMs = (deps.now ?? Date.now)();
   const now = new Date(nowMs);
@@ -1091,6 +1101,7 @@ export async function resolvePendingForAccount(
     [account_id, staleBefore, limit],
   );
   for (const r of stale) {
+    await guard?.();
     await resolveStaleCreate(r.id, r.state, actor);
   }
   const ready = "AND (reap_after IS NULL OR reap_after <= $2)";
@@ -1113,7 +1124,7 @@ export async function resolvePendingForAccount(
   await getPool().query(
     `UPDATE gpu_pods
         SET reap_attempts = reap_attempts + 1,
-            reap_after = $2::timestamptz + make_interval(mins => LEAST(power(2, reap_attempts)::int, 30))
+            reap_after = $2::timestamptz + make_interval(mins => LEAST(power(2, LEAST(reap_attempts, 5))::int, 30))
       WHERE key_owner_account_id = $1
         AND ($3::uuid IS NULL OR credential_id <> $3::uuid)
         AND ((desired_state = 'terminated' AND state IN ('running', 'stopped', 'terminating')
@@ -1143,6 +1154,8 @@ export async function resolvePendingForAccount(
   );
   const ours = (row: PodRow) => row.credential_id === c.credential_id;
   const attempt = async (row: PodRow, fn: () => Promise<unknown>) => {
+    // outside the try: a guard that throws stops the pass, not this pod
+    await guard?.();
     try {
       await fn();
     } catch {

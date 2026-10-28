@@ -654,4 +654,50 @@ describeDb("GPU reaper", () => {
     expect(r.reap_attempts).toBe(1);
     expect(new Date(r.reap_after).getTime()).toBeGreaterThan(s.deps.now());
   });
+
+  it("stops before the next record once its lease is lost mid-pass", async () => {
+    const s = setup();
+    const a = await s.launch();
+    const b = await s.launch();
+    // both must go, and RunPod is slow: the first terminate outlasts the lease
+    await getPool().query(
+      "UPDATE gpu_pods SET desired_state = 'terminated', state = 'terminating' WHERE id = ANY($1)",
+      [[a.id, b.id]],
+    );
+    s.client.terminatePod.mockImplementationOnce(async (id: string) => {
+      s.advance(6 * 60_000);
+      expect(
+        await acquireWorkerLease(
+          "reaper",
+          "hub-other:run",
+          new Date(s.deps.now()),
+        ),
+      ).toBe(true);
+      s.pods.delete(id);
+    });
+    await expect(runGpuReaperSweep(s.deps)).rejects.toThrow("lease was lost");
+    // the second record was never acted on
+    expect(s.client.terminatePod).toHaveBeenCalledTimes(1);
+    const { rows } = await getPool().query(
+      "SELECT holder FROM gpu_worker_leases WHERE name = 'reaper'",
+    );
+    expect(rows[0].holder).toBe("hub-other:run");
+  });
+
+  it("backs off unactionable work after many attempts without overflowing", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    await getPool().query(
+      "UPDATE gpu_pods SET desired_state = 'terminated', state = 'terminating', reap_attempts = 31 WHERE id = $1",
+      [pod.id],
+    );
+    const result = await runGpuReaperSweep({
+      ...s.deps,
+      getCleanup: async () => undefined,
+    });
+    expect(result).toEqual(expect.objectContaining({ complete: true }));
+    const r = await row(pod.id);
+    expect(r.reap_attempts).toBe(32);
+    expect(new Date(r.reap_after).getTime()).toBe(s.deps.now() + 30 * 60_000);
+  });
 });
