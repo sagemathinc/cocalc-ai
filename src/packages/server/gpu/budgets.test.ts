@@ -647,11 +647,15 @@ describeDb("GPU budgets", () => {
       };
       const deps = {
         getCleanup: async () => cleanup as any,
-        resolvePending: (a: string) =>
-          resolvePendingForAccount(a, {
-            ...s.deps,
-            getCleanup: async () => cleanup as any,
-          }),
+        resolvePending: (a: string, guard: () => Promise<void>) =>
+          resolvePendingForAccount(
+            a,
+            {
+              ...s.deps,
+              getCleanup: async () => cleanup as any,
+            },
+            { guard },
+          ),
       };
       return {
         cleanup,
@@ -963,6 +967,27 @@ describeDb("GPU budgets", () => {
       // the next pass retries it at once
       await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
       expect((await row()).state).toBe("terminated");
+    });
+
+    it("bounds the whole pass, resolving CoCalc's own pods included", async () => {
+      const s = setup();
+      await s.launch();
+      const a = account(s);
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        { ...a.deps, passMs: 0 },
+      );
+      // out of time before the first pod: nothing terminated, nothing listed
+      expect(result).toEqual({ closed: false, managed_pods: 1 });
+      expect(s.rp.client.terminatePod).not.toHaveBeenCalled();
+      expect(a.cleanup.listPods).not.toHaveBeenCalled();
+      // the next pass, with time, continues
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect(s.rp.client.terminatePod).toHaveBeenCalled();
     });
 
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {

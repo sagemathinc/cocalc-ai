@@ -78,7 +78,10 @@ export interface GpuCompromiseDeps {
   getCleanup?: (
     account_id: string,
   ) => Promise<RunpodCleanupCapability | undefined>;
-  resolvePending?: (account_id: string) => Promise<unknown>;
+  resolvePending?: (
+    account_id: string,
+    guard: () => Promise<void>,
+  ) => Promise<unknown>;
   keyFence?: typeof underKeyFence;
   homeClient?: (account_id: string) => Promise<InterBayGpuApi | undefined>;
   freshAuth?: typeof requireDangerousSessionAuth;
@@ -124,9 +127,25 @@ export async function runCompromiseCleanup(
         AND unmanaged_at IS NULL AND reap_after IS NOT NULL`,
     [credential_id],
   );
-  await (deps.resolvePending ?? ((a) => resolvePendingForAccount(a, {})))(
-    account_id,
-  ).catch(() => {});
+  // the whole pass, resolving included, is bounded: past the deadline it
+  // stops (the next pass continues)
+  const deadline = Date.now() + (deps.passMs ?? REQUEST_PASS_MS);
+  let cut = false;
+  const bounded = async () => {
+    await deps.guard?.();
+    if (Date.now() >= deadline) {
+      cut = true;
+      throw Error("compromise pass deadline");
+    }
+  };
+  await (
+    deps.resolvePending ??
+    ((a, guard) => resolvePendingForAccount(a, {}, { guard }))
+  )(account_id, bounded).catch(() => {});
+  if (cut) {
+    const left = await unfinishedCredentialPods(credential_id);
+    return { closed: false, managed_pods: left.length };
+  }
   // CoCalc's pods bound before the listing starts: only these can be ended
   // for being absent from it (one bound later may have been created after
   // RunPod took the snapshot; the next pass sees it)
@@ -165,8 +184,6 @@ export async function runCompromiseCleanup(
   for (const r of managed) {
     (FINISHED.has(r.state) ? ended : live).add(r.provider_pod_id);
   }
-  const deadline = Date.now() + (deps.passMs ?? REQUEST_PASS_MS);
-  let cut = false;
   // the listing is complete: CoCalc's pods bound before it that it doesn't
   // show are gone
   await endPodsAbsentFromInventory(

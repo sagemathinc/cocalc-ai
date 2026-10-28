@@ -522,6 +522,10 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       "UPDATE gpu_budget_layers SET spent_usd = 15, reserved_usd = 0, ends_at = $2 WHERE credential_id = $1 AND scope_kind = 'key'",
       [before, SHORT_END],
     );
+    await getPool().query(
+      "UPDATE gpu_key_fences SET kill_switch_at = now() WHERE credential_id = $1",
+      [before],
+    );
     await keys.setGpuProviderKeyLocal(
       { account_id: s.account_id, provider: "runpod", api_key: NEW },
       s.keyDeps,
@@ -544,6 +548,12 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       [after],
     );
     expect(Number(layer[0].authorized_usd)).toBe(5);
+    // the kill switch's pause outlives the rotation
+    const { rows: fence } = await getPool().query(
+      "SELECT kill_switch_at FROM gpu_key_fences WHERE credential_id = $1",
+      [after],
+    );
+    expect(fence[0].kill_switch_at).not.toBeNull();
     // a budget its owner shortened stays as short
     expect(new Date(layer[0].ends_at).getTime()).toBe(SHORT_END.getTime());
     const { rows: log } = await getPool().query(

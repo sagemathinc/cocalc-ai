@@ -513,6 +513,16 @@ export async function setGpuProviderKeyLocal(
           key_owner_account_id: account_id,
           ...(caps ? { initial: caps } : {}),
         });
+        // a kill switch's pause outlives the key it was pressed on: lifting
+        // it is resume's (with fresh authentication), not a rotation's
+        if (previous.length > 0) {
+          await client.query(
+            `UPDATE gpu_key_fences SET kill_switch_at = (
+                SELECT max(kill_switch_at) FROM gpu_key_fences WHERE credential_id = ANY($2::uuid[]))
+              WHERE credential_id = $1 AND kill_switch_at IS NULL`,
+            [id, previous],
+          );
+        }
       },
     });
   });
