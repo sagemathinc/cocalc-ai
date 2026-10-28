@@ -599,11 +599,7 @@ async function bind(
   }
   const current = await loadPod(row.id);
   if (current.provider_pod_id === pod.id) return current;
-  await client.terminatePod(pod.id);
-  await recordEvent(row.id, actor, "terminate", {
-    provider_pod_id: pod.id,
-    duplicate: true,
-  });
+  await terminateDuplicate(row, pod.id, client, actor);
   return current;
 }
 
@@ -650,11 +646,7 @@ async function resolveAmbiguous(
     `${a.createdAt ?? ""}${a.id}`.localeCompare(`${b.createdAt ?? ""}${b.id}`),
   );
   for (const pod of extra) {
-    await client.terminatePod(pod.id);
-    await recordEvent(row.id, actor, "terminate", {
-      provider_pod_id: pod.id,
-      duplicate: true,
-    });
+    await terminateDuplicate(row, pod.id, client, actor);
   }
   return await bind(row, keep, client, actor);
 }
@@ -752,6 +744,67 @@ async function resolveAmbiguousForAccount(
 }
 
 // ---- terminate ----
+
+// A second RunPod pod under one handle (RunPod retried a create): it is
+// recorded as a pod of its own, terminating, before RunPod is asked, so a
+// failed terminate is retried like any other pending termination.
+async function terminateDuplicate(
+  of: PodRow,
+  provider_pod_id: string,
+  client: Pick<RunpodClient, "terminatePod">,
+  actor: Actor,
+): Promise<void> {
+  const dup = await inTransaction(async (db) => {
+    const id = randomUUID();
+    const { rows } = await db.query(
+      `INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider,
+         provider_pod_id, beneficiary_account_id, project_id, agent_id, spec,
+         gpu_type_id, gpu_count, cloud, data_center_id, state, desired_state,
+         max_runtime_minutes, deadline, reason, created, updated)
+       SELECT $1, $2, key_owner_account_id, credential_id, provider, $3,
+         beneficiary_account_id, project_id, agent_id, spec, gpu_type_id, gpu_count,
+         cloud, data_center_id, 'terminating', 'terminated', max_runtime_minutes,
+         now(), $4, now(), now()
+         FROM gpu_pods WHERE id = $5
+       ON CONFLICT (provider, provider_pod_id) DO NOTHING
+       RETURNING *`,
+      [
+        id,
+        newPodHandle(),
+        provider_pod_id,
+        `A duplicate RunPod made for ${of.handle}; terminated.`,
+        of.id,
+      ],
+    );
+    if (!rows[0]) return undefined; // already recorded
+    await recordEvent(
+      id,
+      actor,
+      "create",
+      { duplicate_of: of.id, provider_pod_id },
+      db,
+    );
+    await recordEvent(
+      of.id,
+      actor,
+      "terminate",
+      { provider_pod_id, duplicate: true },
+      db,
+    );
+    return rows[0] as PodRow;
+  });
+  const row =
+    dup ??
+    ((
+      await getPool().query(
+        "SELECT * FROM gpu_pods WHERE provider = 'runpod' AND provider_pod_id = $1",
+        [provider_pod_id],
+      )
+    ).rows[0] as PodRow | undefined);
+  if (!row || row.state === "terminated") return;
+  // Retried by the next listing (or the reaper) if RunPod doesn't confirm.
+  await terminateBound(row, client, actor).catch(() => {});
+}
 
 // Record a pod as terminating before RunPod is asked to terminate it. The
 // row to act on, or undefined when RunPod must not be asked now: recording

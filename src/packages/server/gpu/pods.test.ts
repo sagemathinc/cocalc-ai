@@ -656,6 +656,40 @@ describeDb("GPU pods", () => {
     expect(rp.client.terminatePod).toHaveBeenCalledTimes(1);
   });
 
+  it("records a duplicate pod before terminating it, and retries a failed terminate", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    rp.client.createPod.mockImplementationOnce(async (body: any) => {
+      rp.pods.set("pod_dupaaa", { id: "pod_dupaaa", name: body.name });
+      rp.pods.set("pod_dupbbb", { id: "pod_dupbbb", name: body.name });
+      throw new RunpodApiError("protocol");
+    });
+    // the duplicate's first terminate fails
+    rp.client.terminatePod.mockRejectedValueOnce(
+      new RunpodApiError("provider", 503),
+    );
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    expect(pod.provider_pod_id).toBe("pod_dupaaa");
+    expect(rp.pods.has("pod_dupbbb")).toBe(true);
+    // the duplicate is a record of its own, pending termination
+    const { rows } = await getPool().query(
+      "SELECT state, desired_state, handle FROM gpu_pods WHERE provider_pod_id = 'pod_dupbbb'",
+    );
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        state: "terminating",
+        desired_state: "terminated",
+      }),
+    );
+    expect(rows[0].handle).not.toBe(pod.handle);
+    // the next listing retries it
+    const live = await listManagedGpuPodsLocal({ account_id }, d);
+    expect(rp.pods.has("pod_dupbbb")).toBe(false);
+    expect(live.map((p) => p.provider_pod_id)).toEqual(["pod_dupaaa"]);
+  });
+
   it("keeps each account's pods to itself", async () => {
     const owner = deps(randomUUID());
     const other = deps(randomUUID(), owner.rp);
