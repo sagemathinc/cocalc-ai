@@ -14,6 +14,7 @@ import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
 import { parseHostkeyToken } from "./hostkey-token";
 import { gpuSshInfoLocal, registerHostKeyLocal } from "./hostkey";
 import { launchGpuPodLocal, terminateGpuPodLocal } from "./pods";
+import { lockGpuAccountFence } from "./account-fence";
 import { deleteGpuProviderKeyLocal } from "./provider-keys";
 import {
   clearHostkeysForCredential,
@@ -112,6 +113,14 @@ async function launched() {
     getCleanup: async () =>
       ({ ...rp.client, credential_id: CREDENTIAL }) as any,
     siteUrl: async () => "https://cocalc.test",
+    // the real fence, on the account row it needs (same transaction)
+    accountWriteFence: async (db: any, id: string, action: string) => {
+      await db.query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [id],
+      );
+      await lockGpuAccountFence(db, id, action);
+    },
   };
   const pod = await launchGpuPodLocal(
     {
@@ -145,12 +154,30 @@ async function hostKeyEvents(id: string) {
   ).rows;
 }
 
+// Removing a key is refused while its pods aren't finished (#1456), and a
+// finished pod has no token or host key left. These tests skip that count:
+// they check what the clear itself guarantees, for 5c's cleanup-only removal
+// and for any pod the count could miss.
+// PGlite has one connection, so the account fence (a transaction held
+// while the revoke opens its own) is real only on a real PostgreSQL.
+const REMOVE_DEPS = {
+  isHomeBay: async () => true,
+  unfinishedPods: async () => 0,
+  ...(process.env.COCALC_TEST_REAL_PG === "1"
+    ? {}
+    : {
+        keyFence: async <T>(_account_id: string, fn: (db: any) => Promise<T>) =>
+          await fn(undefined),
+      }),
+};
+
 describeDb("pod host-key registration", () => {
   beforeAll(async () => {
     await syncSchema({
       gpu_pods: SCHEMA.gpu_pods,
       gpu_pod_events: SCHEMA.gpu_pod_events,
       external_credentials: SCHEMA.external_credentials,
+      accounts: SCHEMA.accounts,
     });
   });
 
@@ -355,7 +382,7 @@ describeDb("pod host-key registration", () => {
     expect(
       await deleteGpuProviderKeyLocal(
         { account_id: pending.account_id, provider: "runpod" },
-        { isHomeBay: async () => true },
+        REMOVE_DEPS,
       ),
     ).toEqual({ revoked: true });
     for (const id of [pending.pod.id, registered.pod.id]) {
@@ -389,7 +416,7 @@ describeDb("pod host-key registration", () => {
       deleteGpuProviderKeyLocal(
         { account_id, provider: "runpod" },
         {
-          isHomeBay: async () => true,
+          ...REMOVE_DEPS,
           clearHostkeys: async (opts, client) => {
             await clearHostkeysForCredential(opts, client);
             throw new Error("boom");
@@ -408,7 +435,7 @@ describeDb("pod host-key registration", () => {
     expect(
       await deleteGpuProviderKeyLocal(
         { account_id, provider: "runpod" },
-        { isHomeBay: async () => true },
+        REMOVE_DEPS,
       ),
     ).toEqual({ revoked: true });
     expect((await row(pod.id)).hostkey_verifier).toBeNull();
