@@ -2143,6 +2143,116 @@ describe("host reads across bays", () => {
   });
 });
 
+describe("a host's calls about a project on another bay", () => {
+  // A host on the attached bay runs a project the seed owns. The host calls
+  // the hub on its own bay, as a host; each call runs on the project's bay.
+  const host_id = randomUUID();
+  let project_id;
+
+  const asHost = async (name, opts, as_host = host_id) =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { conat } = require("@cocalc/backend/conat");
+       const callHub = require("@cocalc/conat/hub/call-hub").default;
+       return (await callHub({
+         client: conat(),
+         host_id: ${JSON.stringify(as_host)},
+         name: ${JSON.stringify(name)},
+         args: [${JSON.stringify(opts)}],
+         timeout: 30_000,
+       })) ?? null;`,
+    );
+  const onSeed = async (sql, params) =>
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(${JSON.stringify(sql)}, ${JSON.stringify(params)});
+       return rows;`,
+    );
+  const forwarded = async (name) =>
+    (
+      await onSeed(
+        "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND finished IS NOT NULL",
+        [name, ATTACHED],
+      )
+    )[0].n;
+
+  before(async () => {
+    project_id = await createProject(alice.client, "hosted-elsewhere");
+    assert.equal(await owningBay(project_id), SEED);
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO project_hosts (id, name, status, metadata, created, updated, bay_id) VALUES ($1, 'remote-runner', 'running', $2, NOW(), NOW(), $3)",
+         [${JSON.stringify(host_id)}, ${JSON.stringify({ owner: alice.account_id })}, ${JSON.stringify(ATTACHED)}]);`,
+    );
+    await onSeed("UPDATE projects SET host_id=$1 WHERE project_id=$2", [
+      host_id,
+      project_id,
+    ]);
+  });
+
+  it("reads the project's start metadata on the project's bay", async () => {
+    const count = await forwarded("hosts.getProjectStartMetadata");
+    const metadata = await asHost("hosts.getProjectStartMetadata", {
+      project_id,
+    });
+    assert.equal(metadata?.title, "hosted-elsewhere");
+    assert.equal(await forwarded("hosts.getProjectStartMetadata"), count + 1);
+    // Another host does not run it: the project's bay refuses.
+    await assert.rejects(
+      asHost("hosts.getProjectStartMetadata", { project_id }, randomUUID()),
+      /is not assigned to host/,
+    );
+  });
+
+  it("records activity and changes on the project's bay", async () => {
+    const [{ last_edited: editedBefore }] = await onSeed(
+      "SELECT last_edited FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    await asHost("hosts.touchProject", { project_id });
+    await asHost("hosts.markProjectChanged", { project_id, generation: 7 });
+    const [row] = await onSeed(
+      "SELECT last_edited, last_changed_generation::INT AS generation FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    assert.ok(
+      new Date(row.last_edited) > new Date(editedBefore ?? 0),
+      "touched on the project's bay",
+    );
+    assert.equal(row.generation, 7);
+    assert.equal(await forwarded("hosts.touchProject"), 1);
+    assert.equal(await forwarded("hosts.markProjectChanged"), 1);
+  });
+
+  it("keeps the project's backup index on the project's bay", async () => {
+    const backup_id = randomUUID();
+    await asHost("hosts.recordProjectBackupIndex", {
+      project_id,
+      backup_id,
+      backup_time: new Date().toISOString(),
+      status: "complete",
+    });
+    const listed = await asHost("hosts.getProjectBackupIndexes", {
+      project_id,
+    });
+    assert.ok(
+      listed.some((index) => index.backup_id === backup_id),
+      JSON.stringify(listed),
+    );
+    await asHost("hosts.deleteProjectBackupIndex", { project_id, backup_id });
+    const after = await asHost("hosts.getProjectBackupIndexes", {
+      project_id,
+    });
+    assert.ok(!after.some((index) => index.backup_id === backup_id));
+  });
+});
+
 describe("course reconfiguration across bays", () => {
   // bob's project, on the attached bay, is the course; alice, a collaborator
   // homed on the seed, reconfigures it. The operation lives on the course

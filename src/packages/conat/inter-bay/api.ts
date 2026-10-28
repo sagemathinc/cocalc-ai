@@ -2625,7 +2625,6 @@ export type HostConnectionMethod =
   | "update-api-relay-usage"
   | "update-api-relay-account-usage"
   | "list"
-  | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
   | "get-account-effective-limits"
@@ -2635,12 +2634,6 @@ export type HostConnectionMethod =
   | "release-seed-project-app-public-subdomains"
   | "get-seed-project-backup-shards"
   | "get-seed-project-backup-repo-prune-plan"
-  | "record-project-backup"
-  | "mark-project-changed"
-  | "record-project-backup-index"
-  | "get-project-backup-indexes"
-  | "sync-project-backup-indexes"
-  | "delete-project-backup-index"
   | "ensure-host-owner-ssh-trust"
   | "rehome-host"
   | "prepare-host-rehome"
@@ -3307,9 +3300,6 @@ export interface InterBayHostConnectionApi {
   }) => ReturnType<Hosts["resolveProjectApiRelayTarget"]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
-  getProjectStartMetadata: (
-    opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
   getBackupConfig: (
     opts: Parameters<Hosts["getBackupConfig"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getBackupConfig"]>>>;
@@ -3404,24 +3394,6 @@ export interface InterBayHostConnectionApi {
     repoinfo?: boolean;
     timeout_ms?: number;
   }) => Promise<ProjectBackupRepoPrunePlan>;
-  recordProjectBackup: (
-    opts: Parameters<Hosts["recordProjectBackup"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackup"]>>>;
-  markProjectChanged: (
-    opts: Parameters<Hosts["markProjectChanged"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["markProjectChanged"]>>>;
-  recordProjectBackupIndex: (
-    opts: Parameters<Hosts["recordProjectBackupIndex"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackupIndex"]>>>;
-  getProjectBackupIndexes: (
-    opts: Parameters<Hosts["getProjectBackupIndexes"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["getProjectBackupIndexes"]>>>;
-  syncProjectBackupIndexes: (
-    opts: Parameters<Hosts["syncProjectBackupIndexes"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["syncProjectBackupIndexes"]>>>;
-  deleteProjectBackupIndex: (
-    opts: Parameters<Hosts["deleteProjectBackupIndex"]>[0],
-  ) => Promise<Awaited<ReturnType<Hosts["deleteProjectBackupIndex"]>>>;
   ensureHostOwnerSshTrust: (
     opts: HostOwnerSshTrustRequest,
   ) => Promise<HostOwnerSshTrustResponse>;
@@ -3446,10 +3418,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
     method: "update-api-relay-account-usage",
   },
   { name: "list", method: "list" },
-  {
-    name: "getProjectStartMetadata",
-    method: "get-project-start-metadata",
-  },
   {
     name: "getBackupConfig",
     method: "get-backup-config",
@@ -3485,30 +3453,6 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getSeedProjectBackupRepoPrunePlan",
     method: "get-seed-project-backup-repo-prune-plan",
-  },
-  {
-    name: "recordProjectBackup",
-    method: "record-project-backup",
-  },
-  {
-    name: "markProjectChanged",
-    method: "mark-project-changed",
-  },
-  {
-    name: "recordProjectBackupIndex",
-    method: "record-project-backup-index",
-  },
-  {
-    name: "getProjectBackupIndexes",
-    method: "get-project-backup-indexes",
-  },
-  {
-    name: "syncProjectBackupIndexes",
-    method: "sync-project-backup-indexes",
-  },
-  {
-    name: "deleteProjectBackupIndex",
-    method: "delete-project-backup-index",
   },
   {
     name: "ensureHostOwnerSshTrust",

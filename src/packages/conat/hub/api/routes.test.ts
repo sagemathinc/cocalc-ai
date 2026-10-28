@@ -13,9 +13,15 @@ import {
 const PROJECT = "6b0f0b1e-2a1f-4b7e-8d7c-0c2f8a9b1c3d";
 
 describe("hub API routes", () => {
-  it("routes only real methods that accounts can call", () => {
+  it("routes only real methods that accounts or project hosts can call", () => {
+    // A project host calls the hub on its own bay about the projects it
+    // runs: those calls are routed to each project's bay like account calls.
     for (const name of getHubApiRoutedMethods()) {
-      expect([name, getHubApiPrincipalPolicy(name)]).toEqual([name, "account"]);
+      const policy = getHubApiPrincipalPolicy(name);
+      expect([name, policy]).toEqual([
+        name,
+        name.startsWith("hosts.") && policy === "host" ? "host" : "account",
+      ]);
     }
   });
 

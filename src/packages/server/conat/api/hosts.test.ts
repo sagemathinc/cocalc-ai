@@ -53,15 +53,9 @@ let hostConnectionRemoveHostSshAuthorizedKeyMock: jest.Mock;
 let hostConnectionListHostRuntimeDeploymentsMock: jest.Mock;
 let hostConnectionSetHostRuntimeDeploymentsMock: jest.Mock;
 let hostConnectionGetHostManagedComponentStatusMock: jest.Mock;
-let hostConnectionGetProjectStartMetadataMock: jest.Mock;
 let hostConnectionGetBackupConfigMock: jest.Mock;
 let hostConnectionGetProjectOwnerEffectiveLimitsMock: jest.Mock;
 let hostConnectionGetAccountEffectiveLimitsMock: jest.Mock;
-let hostConnectionRecordProjectBackupMock: jest.Mock;
-let hostConnectionRecordProjectBackupIndexMock: jest.Mock;
-let hostConnectionGetProjectBackupIndexesMock: jest.Mock;
-let hostConnectionSyncProjectBackupIndexesMock: jest.Mock;
-let hostConnectionDeleteProjectBackupIndexMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let resolveProjectReferenceAllowRemoteMock: jest.Mock;
@@ -498,24 +492,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionSetHostRuntimeDeploymentsMock(...args),
       getHostManagedComponentStatus: (...args: any[]) =>
         hostConnectionGetHostManagedComponentStatusMock(...args),
-      getProjectStartMetadata: (...args: any[]) =>
-        hostConnectionGetProjectStartMetadataMock(...args),
       getBackupConfig: (...args: any[]) =>
         hostConnectionGetBackupConfigMock(...args),
       getProjectOwnerEffectiveLimits: (...args: any[]) =>
         hostConnectionGetProjectOwnerEffectiveLimitsMock(...args),
       getAccountEffectiveLimits: (...args: any[]) =>
         hostConnectionGetAccountEffectiveLimitsMock(...args),
-      recordProjectBackup: (...args: any[]) =>
-        hostConnectionRecordProjectBackupMock(...args),
-      recordProjectBackupIndex: (...args: any[]) =>
-        hostConnectionRecordProjectBackupIndexMock(...args),
-      getProjectBackupIndexes: (...args: any[]) =>
-        hostConnectionGetProjectBackupIndexesMock(...args),
-      syncProjectBackupIndexes: (...args: any[]) =>
-        hostConnectionSyncProjectBackupIndexesMock(...args),
-      deleteProjectBackupIndex: (...args: any[]) =>
-        hostConnectionDeleteProjectBackupIndexMock(...args),
     })),
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
@@ -1402,15 +1384,9 @@ beforeEach(() => {
   hostConnectionListHostRuntimeDeploymentsMock = jest.fn(async () => []);
   hostConnectionSetHostRuntimeDeploymentsMock = jest.fn(async () => []);
   hostConnectionGetHostManagedComponentStatusMock = jest.fn(async () => []);
-  hostConnectionGetProjectStartMetadataMock = jest.fn();
   hostConnectionGetBackupConfigMock = jest.fn();
   hostConnectionGetProjectOwnerEffectiveLimitsMock = jest.fn();
   hostConnectionGetAccountEffectiveLimitsMock = jest.fn();
-  hostConnectionRecordProjectBackupMock = jest.fn(async () => undefined);
-  hostConnectionRecordProjectBackupIndexMock = jest.fn(async () => undefined);
-  hostConnectionGetProjectBackupIndexesMock = jest.fn(async () => []);
-  hostConnectionSyncProjectBackupIndexesMock = jest.fn(async () => undefined);
-  hostConnectionDeleteProjectBackupIndexMock = jest.fn(async () => undefined);
   getBackupConfigLocalInternalMock = jest.fn();
   getProjectBackupIndexesLocalInternalMock = jest.fn(async () => []);
   syncProjectBackupIndexesLocalInternalMock = jest.fn(async () => undefined);
@@ -6956,11 +6932,6 @@ describe("hosts.resolveHostConnection", () => {
       last_seen: "2026-04-10T00:00:00.000Z",
       online: true,
     }));
-    hostConnectionGetProjectStartMetadataMock = jest.fn(async () => ({
-      title: "Remote project",
-      image: "ghcr.io/example/project:latest",
-      run_quota: { disk_quota: 10 },
-    }));
     queryMock = jest.fn(async () => ({ rows: [] }));
   });
 
@@ -7154,7 +7125,10 @@ describe("hosts.resolveHostConnection", () => {
     expect(resolveHostBayMock).toHaveBeenCalledTimes(1);
   });
 
-  it("routes project start metadata lookup to the owning bay when the local host bay misses", async () => {
+  it("answers project start metadata only from here: routed to the project's bay", async () => {
+    // The edge routes this call to the project's owning bay (see
+    // @cocalc/conat/hub/api/routes); a bay without the project assigned to
+    // the host says so rather than forwarding again.
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-7",
       epoch: 2,
@@ -7165,16 +7139,8 @@ describe("hosts.resolveHostConnection", () => {
         host_id: REMOTE_HOST_ID,
         project_id: REMOTE_PROJECT_ID,
       }),
-    ).resolves.toEqual({
-      title: "Remote project",
-      image: "ghcr.io/example/project:latest",
-      run_quota: { disk_quota: 10 },
-    });
-    expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
-    expect(hostConnectionGetProjectStartMetadataMock).toHaveBeenCalledWith({
-      host_id: REMOTE_HOST_ID,
-      project_id: REMOTE_PROJECT_ID,
-    });
+    ).rejects.toThrow("is not assigned to host");
+    expect(resolveProjectBayMock).not.toHaveBeenCalled();
   });
 
   it("routes backup config lookup to the owning bay when the project is remote", async () => {
@@ -7344,7 +7310,7 @@ describe("hosts.resolveHostConnection", () => {
     expect(resolveMembershipForAccountMock).not.toHaveBeenCalled();
   });
 
-  it("routes project backup recording to the owning bay when the project is remote", async () => {
+  it("records a project backup here: routed to the project's bay", async () => {
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-7",
       epoch: 2,
@@ -7358,13 +7324,13 @@ describe("hosts.resolveHostConnection", () => {
         time,
       }),
     ).resolves.toBeUndefined();
-    expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
-    expect(hostConnectionRecordProjectBackupMock).toHaveBeenCalledWith({
+    expect(resolveProjectBayMock).not.toHaveBeenCalled();
+    expect(recordProjectBackupLocalInternalMock).toHaveBeenCalledWith({
       host_id: REMOTE_HOST_ID,
       project_id: REMOTE_PROJECT_ID,
       time,
+      generation: undefined,
     });
-    expect(recordProjectBackupLocalInternalMock).not.toHaveBeenCalled();
   });
 });
 

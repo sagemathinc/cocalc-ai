@@ -460,19 +460,12 @@ import {
   getBackupConfigLocal,
   getAccountEffectiveLimitsLocal,
   getProjectOwnerEffectiveLimitsLocal,
-  getProjectStartMetadataLocal,
   recordAcpAdmissionDenialLocal,
   recordServiceAdmissionDenialLocal,
   recordServiceAdmissionNearLimitLocal,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
-  markProjectChanged as markProjectChangedLocal,
-  recordProjectBackupIndexLocal,
-  recordProjectBackupLocal,
   resolveHostConnectionLocal,
-  getProjectBackupIndexesLocal,
-  syncProjectBackupIndexesLocal,
-  deleteProjectBackupIndexLocal,
 } from "@cocalc/server/conat/api/hosts";
 import { runAuditedProjectBackupRepoPrunePlan } from "@cocalc/server/project-backup/repo-prune-plan";
 import {
@@ -2732,18 +2725,6 @@ async function startHostConnectionService(): Promise<void> {
         // before issuing this cluster-internal request.
         trusted_admin_view: true,
       }),
-    getProjectStartMetadata: async ({ host_id, project_id }) => {
-      const metadata = await getProjectStartMetadataLocal({
-        host_id,
-        project_id,
-      });
-      if (!metadata) {
-        throw new Error(
-          `project ${project_id} is not assigned to host ${host_id} or is unavailable`,
-        );
-      }
-      return metadata;
-    },
     getBackupConfig: async ({
       host_id,
       project_id,
@@ -2821,59 +2802,6 @@ async function startHostConnectionService(): Promise<void> {
       await recordServiceAdmissionDenialLocal(opts),
     recordServiceAdmissionNearLimit: async (opts) =>
       await recordServiceAdmissionNearLimitLocal(opts),
-    recordProjectBackup: async ({ host_id, project_id, time, generation }) =>
-      await recordProjectBackupLocal({
-        host_id,
-        project_id,
-        time,
-        generation,
-      }),
-    markProjectChanged: async ({
-      host_id,
-      project_id,
-      changed_at,
-      generation,
-    }) =>
-      await markProjectChangedLocal({
-        host_id,
-        project_id,
-        changed_at,
-        generation,
-      }),
-    recordProjectBackupIndex: async ({
-      host_id,
-      project_id,
-      backup_id,
-      backup_time,
-      status,
-      storage_backend,
-      object_key,
-      compression,
-      sqlite_bytes,
-      object_bytes,
-      sha256,
-      error,
-    }) =>
-      await recordProjectBackupIndexLocal({
-        host_id,
-        project_id,
-        backup_id,
-        backup_time,
-        status,
-        storage_backend,
-        object_key,
-        compression,
-        sqlite_bytes,
-        object_bytes,
-        sha256,
-        error,
-      }),
-    getProjectBackupIndexes: async ({ host_id, project_id }) =>
-      await getProjectBackupIndexesLocal({ host_id, project_id }),
-    syncProjectBackupIndexes: async ({ host_id, project_id, backup_ids }) =>
-      await syncProjectBackupIndexesLocal({ host_id, project_id, backup_ids }),
-    deleteProjectBackupIndex: async ({ host_id, project_id, backup_id }) =>
-      await deleteProjectBackupIndexLocal({ host_id, project_id, backup_id }),
     ensureHostOwnerSshTrust: async ({ account_id, host_id, host }) =>
       await ensureHostOwnerSshTrustOnBay({
         account_id,
