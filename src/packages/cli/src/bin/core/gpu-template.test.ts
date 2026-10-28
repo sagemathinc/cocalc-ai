@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { planGpuLaunch, templateRows } from "./gpu-template";
+import {
+  pinnedLaunchCommand,
+  planGpuLaunch,
+  templateRows,
+} from "./gpu-template";
 
 const offer = (
   gpu_type_id: string,
@@ -126,4 +130,62 @@ it("prices a given GPU only when asked, and needs a GPU and runtime without a te
 it("lists the templates", () => {
   const rows = templateRows();
   assert.ok(rows.some((r) => r.id === "pytorch-kernel" && r.kernel));
+});
+
+it("holds a launch to --max-cost, and pins a dry run's choice in its next command", async () => {
+  const cheap = api([offer("NVIDIA RTX A4000", 16, 0.25)]);
+  const dry = await planGpuLaunch(cheap, {
+    template: "pytorch-kernel",
+    spec: {},
+    price: true,
+  });
+  assert.equal(dry.max_cost_usd, 0.26);
+  const next = pinnedLaunchCommand(dry, { template: "pytorch-kernel" })!;
+  assert.equal(
+    next,
+    'cocalc gpu launch --template pytorch-kernel --gpu "NVIDIA RTX A4000" --max-runtime 60 --max-cost 0.26',
+  );
+  // the same launch later, at the stated bound: fine
+  const ok = await planGpuLaunch(cheap, {
+    template: "pytorch-kernel",
+    spec: { gpu_type_id: "NVIDIA RTX A4000", max_runtime_minutes: 60 },
+    max_cost_usd: 0.26,
+  });
+  assert.equal(ok.spec.gpu_type_id, "NVIDIA RTX A4000");
+  // the price rose since the dry run: refused
+  await assert.rejects(
+    planGpuLaunch(api([offer("NVIDIA RTX A4000", 16, 0.4)]), {
+      template: "pytorch-kernel",
+      spec: { gpu_type_id: "NVIDIA RTX A4000", max_runtime_minutes: 60 },
+      max_cost_usd: 0.26,
+    }),
+    /could cost up to \$0\.41, more than --max-cost \$0\.26/,
+  );
+  // no price known: refused, the bound can't be checked
+  await assert.rejects(
+    planGpuLaunch(api([]), {
+      spec: { gpu_type_id: "NVIDIA RTX A4000", max_runtime_minutes: 60 },
+      max_cost_usd: 1,
+    }),
+    /can't be held to --max-cost/,
+  );
+  // without --gpu, the cheapest pick is held to it too
+  await assert.rejects(
+    planGpuLaunch(api([offer("NVIDIA L40S", 48, 0.86)]), {
+      template: "llm-kernel",
+      spec: {},
+      max_cost_usd: 1,
+    }),
+    /more than --max-cost/,
+  );
+  // no price, no pinned command
+  assert.equal(
+    pinnedLaunchCommand(
+      await planGpuLaunch(api([]), {
+        spec: { gpu_type_id: "NVIDIA RTX A4000", max_runtime_minutes: 60 },
+      }),
+      {},
+    ),
+    undefined,
+  );
 });

@@ -13,9 +13,14 @@ money.
   connects one, in Settings. If no key is connected, say so and stop.
 - **State the most a launch can cost before launching**: `max_cost_usd`
   from `launch --dry-run`, the GPUs and all disk at list price for the whole
-  maximum runtime. Launch only what the user asked for.
-- **Always use the shortest sensible `--max-runtime`.** A pod is terminated
-  at its deadline at the latest, and terminating it sooner is better.
+  maximum runtime. Then launch exactly that, with the dry run's `next`
+  command: it pins the GPU and adds `--max-cost`, so the launch is refused if
+  prices or stock changed. Launch only what the user asked for.
+- **The bound holds only if the pod ends by its maximum runtime. You end
+  it:** don't count on CoCalc to terminate it at the deadline. Before
+  launching, set a watcher for a few minutes before the deadline (see
+  Waiting), and terminate the pod then if the work isn't done.
+- **Always use the shortest sensible `--max-runtime`.**
 - **Terminate the pod as soon as the work is done:**
   `cocalc gpu terminate <handle>`.
 - **Stop and tell the user, and launch nothing, when you see:**
@@ -35,8 +40,9 @@ money.
 ```bash
 cocalc gpu templates                     # built-in starting points
 cocalc gpu availability --cloud SECURE   # what is in stock now, cheapest first
-cocalc gpu launch --template pytorch-kernel --dry-run   # the GPU, spec and max cost
-cocalc gpu launch --template pytorch-kernel             # launch, SSH, kernel
+cocalc gpu launch --template pytorch-kernel --dry-run   # the GPU, spec, max cost, next
+cocalc gpu launch --template pytorch-kernel --gpu "NVIDIA RTX A4000" --max-runtime 60 --max-cost 0.26
+                                         # the dry run's next: launch, SSH, kernel
 cocalc gpu pods                          # the pods CoCalc started
 cocalc gpu terminate cc-...              # end it (and its billing)
 ```
@@ -55,9 +61,10 @@ cocalc gpu terminate cc-...              # end it (and its billing)
   plus `--ssh` to make the pod's SSH key in this project.
 - **SSH:** after `connect`, `ssh <handle>` reaches the pod with its host key
   pinned. Only the project that launched the pod has its key.
-- **Waiting:** don't poll the pod. Use `connect --wait`, or a sensor such as
-  `cocalc sensor watch at --at <deadline> --note "terminate cc-..."` to come
-  back before the deadline.
+- **Waiting:** don't poll the pod. Use `connect --wait`. For the deadline,
+  set `cocalc sensor watch at --at <a few minutes before the deadline> --note "terminate cc-..."`
+  right after the launch, and terminate the pod when it wakes you if the work
+  isn't done.
 
 ## Facts
 

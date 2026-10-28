@@ -60,6 +60,8 @@ export async function planGpuLaunch(
     spec: Partial<GpuLaunchSpec>;
     // look up a price even when the GPU is given (for --dry-run)
     price?: boolean;
+    // refuse unless the bound is known and at most this (--max-cost)
+    max_cost_usd?: number;
   },
 ): Promise<GpuLaunchPlan> {
   let template: GpuTemplate | undefined;
@@ -99,7 +101,7 @@ export async function planGpuLaunch(
       );
     }
     spec.gpu_type_id = offer.gpu_type_id;
-  } else if (opts.price) {
+  } else if (opts.price || opts.max_cost_usd != null) {
     offer = cheapest(
       (await api.availability({ ...filter, gpu: [spec.gpu_type_id] })).offers,
     );
@@ -116,5 +118,33 @@ export async function planGpuLaunch(
       volume_gb: plan.spec.volume_gb ?? 0,
     });
   }
+  if (opts.max_cost_usd != null) {
+    if (plan.max_cost_usd == null) {
+      throw new Error(
+        `No list price for ${plan.spec.gpu_type_id} on ${cloud} cloud now, so the launch can't be held to --max-cost.`,
+      );
+    }
+    if (plan.max_cost_usd > opts.max_cost_usd) {
+      throw new Error(
+        `This launch could cost up to $${plan.max_cost_usd.toFixed(2)}, more than --max-cost $${opts.max_cost_usd.toFixed(2)} (prices or stock changed?). Run --dry-run again.`,
+      );
+    }
+  }
   return plan;
+}
+
+// The launch a dry run describes, pinned: the same GPU, and refused if it
+// would now cost more than the stated bound.
+export function pinnedLaunchCommand(
+  plan: GpuLaunchPlan,
+  args: { template?: string },
+): string | undefined {
+  if (plan.max_cost_usd == null) return undefined;
+  const parts = ["cocalc gpu launch"];
+  if (args.template) parts.push(`--template ${args.template}`);
+  parts.push(`--gpu ${JSON.stringify(plan.spec.gpu_type_id)}`);
+  parts.push(`--max-runtime ${plan.spec.max_runtime_minutes}`);
+  if (plan.spec.gpu_count !== 1) parts.push(`--count ${plan.spec.gpu_count}`);
+  parts.push(`--max-cost ${plan.max_cost_usd.toFixed(2)}`);
+  return parts.join(" ");
 }

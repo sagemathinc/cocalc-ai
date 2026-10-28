@@ -551,6 +551,8 @@ it("lists templates, and a template dry run shows the GPU and the most it can co
   assert.equal(dry.spec.gpu_type_id, "NVIDIA RTX A4000");
   assert.equal(dry.spec.max_runtime_minutes, 60);
   assert.equal(dry.max_cost_usd, null);
+  // no price, so no pinned next command
+  assert.equal(dry.next, null);
   // nothing was launched
   assert.ok(!h.calls.some((c) => c.name === "launch"));
 });

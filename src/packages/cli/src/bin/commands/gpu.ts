@@ -26,7 +26,11 @@ import {
   settleLaunchKey,
   type GpuConnectDeps,
 } from "../core/gpu-connect";
-import { planGpuLaunch, templateRows } from "../core/gpu-template";
+import {
+  pinnedLaunchCommand,
+  planGpuLaunch,
+  templateRows,
+} from "../core/gpu-template";
 import { GPU_TEMPLATES } from "@cocalc/util/gpu/templates";
 import {
   GPU_POD_WRITE_RPC_TIMEOUT_MS,
@@ -298,6 +302,11 @@ export function registerGpuCommand(
       "show the spec, the GPU offer and the most it can cost (GPUs and disk at list price for the whole max runtime), without launching",
     )
     .option(
+      "--max-cost <usd>",
+      "refuse the launch if it could cost more than this (GPUs and disk at list price for the whole max runtime), e.g. the amount a dry run showed",
+      positiveNumber("--max-cost"),
+    )
+    .option(
       "--no-connect",
       "with a kernel template: don't wait for the pod and set up its kernel (run cocalc gpu connect later)",
     )
@@ -361,6 +370,7 @@ export function registerGpuCommand(
             template: opts.template,
             spec: explicitSpecFromOptions(opts),
             price: !!opts.dryRun,
+            max_cost_usd: opts.maxCost,
           });
           const spec = plan.spec;
           const ssh = !!opts.ssh || !!plan.template?.ssh;
@@ -374,6 +384,9 @@ export function registerGpuCommand(
               kernel,
               offer: plan.offer ?? null,
               max_cost_usd: plan.max_cost_usd ?? null,
+              // the same GPU, held to this bound
+              next:
+                pinnedLaunchCommand(plan, { template: opts.template }) ?? null,
             };
           }
           // The private key stays here; the launch gets only the public key.
