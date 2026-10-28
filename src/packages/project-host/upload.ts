@@ -10,6 +10,8 @@ import formidable from "formidable";
 import getLogger from "@cocalc/backend/logger";
 import { writeFile as writeFileToProject } from "@cocalc/conat/files/write";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import { forwardUploadChunkStream } from "@cocalc/backend/upload-chunk-forward";
+export { forwardUploadChunkStream };
 
 const logger = getLogger("project-host:upload");
 
@@ -35,41 +37,6 @@ const errors: { [key: string]: string[] } = {};
 const finished: { [key: string]: { state: boolean; cb: () => void } } = {};
 const stateMeta: { [key: string]: { created: number; touched: number } } = {};
 const streams: Record<string, PassThrough | undefined> = {};
-
-export function forwardUploadChunkStream({
-  chunkStream,
-  totalStream,
-  onError,
-  onDone,
-}: {
-  chunkStream: PassThrough;
-  totalStream: PassThrough;
-  onError: (err: unknown) => void;
-  onDone: () => void;
-}): void {
-  const finish = () => {
-    try {
-      onDone();
-    } catch (err) {
-      logger.warn("upload chunk completion callback failed", { err: `${err}` });
-    }
-  };
-  void (async () => {
-    for await (const data of chunkStream) {
-      totalStream.write(data);
-    }
-  })().then(finish, (err) => {
-    totalStream.destroy();
-    try {
-      onError(err);
-    } catch (callbackErr) {
-      logger.warn("upload chunk error callback failed", {
-        err: `${callbackErr}`,
-      });
-    }
-    finish();
-  });
-}
 
 function waitForReady(register: (cb: () => void) => void): Promise<void> {
   return new Promise<void>((resolve) => register(resolve));
