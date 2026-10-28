@@ -1565,6 +1565,47 @@ describeDb("GPU budgets", () => {
       expect(s.rp.pods.size).toBe(0);
     });
 
+    it("doesn't take a listing it changed while paging as complete: no pod is ended for being skipped", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      s.rp.pods.set("pod_thief001", { id: "pod_thief001", name: "x" });
+      // marked to terminate, as a report leaves it (RunPod won't confirm yet)
+      await getPool().query(
+        "UPDATE gpu_pods SET desired_state = 'terminated' WHERE id = $1",
+        [pod.id],
+      );
+      // offset pagination, one pod per page, the thief's pod first: deleting
+      // it shifts CoCalc's pod behind the cursor
+      const current = () =>
+        [...s.rp.pods.values()].sort((x, y) =>
+          x.id === "pod_thief001" ? -1 : y.id === "pod_thief001" ? 1 : 0,
+        );
+      a.cleanup.listPods.mockImplementation(async (opts?: any) => {
+        const out: any[] = [];
+        for (let offset = 0; offset < current().length; offset++) {
+          await opts?.beforePage?.();
+          const page = [current()[offset]];
+          out.push(...page);
+          await opts?.onPage?.(page);
+        }
+        return out;
+      });
+      await runCompromiseCleanup(s.account_id, s.credential_id, {
+        ...a.deps,
+        resolvePending: async () => {},
+      });
+      expect(s.rp.pods.has("pod_thief001")).toBe(false);
+      // CoCalc's pod, skipped by the shifted cursor, still runs: not ended
+      // as absent (its own terminate path still owns it)
+      const { rows } = await getPool().query(
+        "SELECT state, provider_pod_id FROM gpu_pods WHERE id = $1",
+        [pod.id],
+      );
+      expect(rows[0].state).not.toBe("terminated");
+      expect(s.rp.pods.has(rows[0].provider_pod_id)).toBe(true);
+    });
+
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {
       const s = setup();
       await s.stored;

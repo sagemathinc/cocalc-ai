@@ -192,6 +192,10 @@ export async function runCompromiseCleanup(
   // their normal paths; one it records as ended but RunPod still lists is
   // terminated again (quietly: it is CoCalc's, and terminating is
   // idempotent); any other pod CoCalc didn't start.
+  // Terminating while paging can shift RunPod's cursor past pods not yet
+  // listed, so a listing during which this pass acted is not a trustworthy
+  // complete inventory: absence is reconciled only by a pass that didn't.
+  let acted = false;
   const onPage = async (page: RunpodPodView[]) => {
     const { rows: managed } = await getPool().query(
       "SELECT provider_pod_id, state FROM gpu_pods WHERE credential_id = $1 AND provider_pod_id = ANY($2)",
@@ -204,6 +208,7 @@ export async function runCompromiseCleanup(
       const known = state.get(pod.id);
       if (known != null && !FINISHED.has(known)) continue;
       await bounded();
+      acted = true;
       if (known != null) {
         await c.terminatePod(pod.id).catch((err) => {
           log.warn("terminating an ended pod again failed", pod.id, `${err}`);
@@ -253,16 +258,18 @@ export async function runCompromiseCleanup(
   if (cut) return await cutShort();
   // the listing is complete: CoCalc's pods bound before it that it doesn't
   // show are gone
-  await endPodsAbsentFromInventory(
-    credential_id,
-    new Set(listed.map((p) => p.id)),
-    boundBefore,
-    { kind: "cleanup" },
-    bounded,
-  ).catch((e) => {
-    if (!cut) throw e;
-  });
-  if (cut) return await cutShort();
+  if (!acted) {
+    await endPodsAbsentFromInventory(
+      credential_id,
+      new Set(listed.map((p) => p.id)),
+      boundBefore,
+      { kind: "cleanup" },
+      bounded,
+    ).catch((e) => {
+      if (!cut) throw e;
+    });
+    if (cut) return await cutShort();
+  }
   const left = await unfinishedCredentialPods(credential_id);
   if (cut || listed.length > 0 || left.length > 0) {
     return {
