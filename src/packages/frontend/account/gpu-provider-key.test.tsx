@@ -1,8 +1,8 @@
 import React from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { KEY_RPC_TIMEOUT_MS } from "@cocalc/util/gpu/provider-keys";
-import { GpuProviderKeySection } from "./gpu-provider-key";
+import { CHECKING_POLL_MS, GpuProviderKeySection } from "./gpu-provider-key";
 
 const mockSystem = {
   getGpuProviderKeyStatus: jest.fn(),
@@ -87,6 +87,32 @@ describe("GpuProviderKeySection", () => {
     expect(
       await screen.findByText(/Checking your RunPod account/),
     ).toBeTruthy();
+  });
+
+  it("looks again while the RunPod account is being checked, and stops once it's done", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    try {
+      mockSystem.getGpuProviderKeyStatus
+        .mockResolvedValueOnce({ ...CONNECTED, inventory: "checking" })
+        .mockResolvedValue({ ...CONNECTED, inventory: "complete" });
+      render(<GpuProviderKeySection />);
+      expect(
+        await screen.findByText(/Checking your RunPod account/),
+      ).toBeTruthy();
+      await act(async () => {
+        jest.advanceTimersByTime(CHECKING_POLL_MS);
+      });
+      await waitFor(() =>
+        expect(screen.queryByText(/Checking your RunPod account/)).toBeNull(),
+      );
+      expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        jest.advanceTimersByTime(3 * CHECKING_POLL_MS);
+      });
+      expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("says nothing about checking once the inventory is complete", async () => {

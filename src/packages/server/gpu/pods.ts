@@ -1546,14 +1546,19 @@ export async function recordSeenAddresses(
 // that sends nothing: RunPod has already shown the pod is gone. Undefined if
 // the record moved on meanwhile.
 const GONE_AT_PROVIDER = { terminatePod: async () => {} };
+//
+// `asked`: when RunPod was asked. A sighting recorded after it (another
+// pass's listing, newer than this answer's question) wins: nothing ends.
 export async function endPodGoneAtProvider(
   row: PodRow,
   actor: Actor,
+  asked: Date,
 ): Promise<PodRow | undefined> {
   let current = await transition(
     row.id,
     { desired_state: "terminated" },
-    "AND state IN ('running', 'stopped', 'terminating') AND unmanaged_at IS NULL",
+    `AND state IN ('running', 'stopped', 'terminating') AND unmanaged_at IS NULL
+     AND (provider_seen_at IS NULL OR provider_seen_at < '${asked.toISOString()}'::timestamptz)`,
     { actor, action: "terminate", details: { gone_at_provider: true } },
   );
   if (!current) return undefined;
@@ -1575,6 +1580,7 @@ export async function reconcileBindPod(
   row: PodRow,
   pod: RunpodPodView,
   actor: Actor,
+  observed_at: Date,
 ): Promise<{ row?: PodRow; released: boolean }> {
   let released = false;
   const bound = await transition(
@@ -1587,8 +1593,18 @@ export async function reconcileBindPod(
       data_center_id: pod.dataCenterId ?? row.data_center_id,
       public_ip: pod.sshDirect?.host ?? null,
       terminated_at: null,
+      provider_seen_at: observed_at,
     },
-    "AND state IN ('ambiguous', 'failed') AND provider_pod_id IS NULL AND unmanaged_at IS NULL",
+    // (and only while its key is live: a pass that finishes after the key
+    // was removed or replaced binds nothing. transition takes the account
+    // rehome lock (the same one key changes hold, through their close) and
+    // then the key's fence row before this UPDATE, whose own snapshot then
+    // sees the fence as committed: a close either finished first, or waits
+    // and then finds this pod unfinished)
+    `AND state IN ('ambiguous', 'failed') AND provider_pod_id IS NULL AND unmanaged_at IS NULL
+     AND EXISTS (SELECT 1 FROM gpu_key_fences f
+                  WHERE f.credential_id = gpu_pods.credential_id
+                    AND f.state IN ('active', 'draining'))`,
     {
       actor,
       action: "bind",

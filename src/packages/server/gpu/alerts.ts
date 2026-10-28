@@ -70,7 +70,8 @@ export async function raiseAlert(
            AND r.resolved_at IS NOT NULL AND r.resolved_observed_at >= $8::timestamptz)
      ON CONFLICT (credential_id, kind, dedupe_key) WHERE resolved_at IS NULL
      DO UPDATE SET last_seen = GREATEST(gpu_alerts.last_seen, EXCLUDED.last_seen),
-                   details = COALESCE(EXCLUDED.details, gpu_alerts.details)`,
+                   details = COALESCE(gpu_alerts.details, '{}'::jsonb)
+                             || COALESCE(EXCLUDED.details, '{}'::jsonb)`,
     [
       randomUUID(),
       a.key_owner_account_id,
@@ -83,6 +84,40 @@ export async function raiseAlert(
     ],
   );
   return (rowCount ?? 0) > 0;
+}
+
+// Run `fn` only while the key's fence is live (active or draining), holding
+// it (FOR UPDATE: overlapping passes take turns, and pausing needs the row
+// anyway) until `fn` commits. A reconcile pass may finish after the
+// key was removed, replaced or reported compromised: closing the fence takes
+// the same row, so either this commits first (and the close then converts
+// or resolves what it wrote) or the close does (and this writes nothing).
+// Undefined if the fence isn't live.
+export async function underLiveFence<T>(
+  credential_id: string,
+  fn: (db: PoolClient) => Promise<T>,
+): Promise<T | undefined> {
+  const db = await getPool().connect();
+  try {
+    await db.query("BEGIN");
+    const { rows } = await db.query(
+      `SELECT 1 FROM gpu_key_fences
+        WHERE credential_id = $1 AND state IN ('active', 'draining') FOR UPDATE`,
+      [credential_id],
+    );
+    if (rows.length === 0) {
+      await db.query("ROLLBACK");
+      return undefined;
+    }
+    const result = await fn(db);
+    await db.query("COMMIT");
+    return result;
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
 }
 
 // Resolve one open alert, if nothing saw its condition after `observed_at`.
@@ -115,7 +150,7 @@ export async function resolveAlert(
 
 // The key was removed or replaced: what can't be checked any more stays
 // open as an acknowledgeable warning (never "resolved"); a rejected key is
-// moot.
+// moot, for good (no later sighting reopens it).
 export async function onKeyGone(
   { credential_id, by }: { credential_id: string; by: string },
   db: Db = getPool(),
@@ -127,7 +162,8 @@ export async function onKeyGone(
     [credential_id],
   );
   await db.query(
-    `UPDATE gpu_alerts SET resolved_at = now(), resolved_by = $2
+    `UPDATE gpu_alerts SET resolved_at = now(), resolved_by = $2,
+            resolved_observed_at = 'infinity'
       WHERE credential_id = $1 AND kind = 'key_rejected' AND resolved_at IS NULL`,
     [credential_id, by.slice(0, 40)],
   );

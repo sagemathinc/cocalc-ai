@@ -70,9 +70,12 @@ function setup() {
   let clock = Date.now();
   const reconcile = {
     credential_id,
+    // one page, handed over as it arrives (as the client does)
     listPods: jest.fn(async (opts: any = {}) => {
       await opts.beforePage?.();
-      return [...pods.values()];
+      const page = [...pods.values()];
+      await opts.onPage?.(page);
+      return page;
     }),
     getPod: jest.fn(async (id: string) =>
       byId.has(id) ? byId.get(id) : pods.get(id),
@@ -776,5 +779,109 @@ describeDb("GPU inventory reconciler", () => {
     expect(Date.now() - started).toBeLessThan(2_000);
     expect((await fence(s.credential_id)).last_inventory_at).toBeNull();
     await expect(s.launch()).rejects.toThrow(/waiting for CoCalc to check/);
+  });
+
+  it("an unknown pod on an early page is acted on even if a later page never comes: alert and pause, no complete inventory", async () => {
+    const s = setup();
+    await s.launch();
+    await getPool().query(
+      "UPDATE gpu_key_fences SET last_inventory_at = NULL WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    s.reconcile.listPods.mockImplementationOnce(async (opts: any) => {
+      await opts.beforePage?.();
+      await opts.onPage?.([{ id: "pod_page1x", name: "miner" }]);
+      // page 2 hangs until the pass's time is up
+      s.advance(RECONCILE_KEY_PASS_MS + 1);
+      await opts.beforePage?.();
+      return [];
+    });
+    expect(await s.pass()).toEqual({ claimed: true, cut: true });
+    expect(await alerts(s.credential_id)).toEqual([
+      expect.objectContaining({
+        kind: "unknown_pod",
+        dedupe_key: "pod_page1x",
+      }),
+    ]);
+    const f = await fence(s.credential_id);
+    expect(f.paused_reason).toBe("unknown_pod");
+    expect(f.last_inventory_at).toBeNull();
+  });
+
+  it("after a resume, an unknown pod the listing omits but RunPod still has pauses again", async () => {
+    const s = setup();
+    await s.launch();
+    s.pods.set("pod_hidden1", { id: "pod_hidden1", name: "x" });
+    await s.pass();
+    await resumeGpuLaunchesLocal(
+      { account_id: s.account_id, fresh_auth_verified: true },
+      { accountWriteFence: s.deps.accountWriteFence } as any,
+    );
+    expect((await fence(s.credential_id)).paused_reason).toBeNull();
+    // the listing shifts past it, but it is there by id
+    s.pods.delete("pod_hidden1");
+    s.byId.set("pod_hidden1", { id: "pod_hidden1", name: "x" });
+    s.advance(11 * MINUTE);
+    expect((await s.pass()).complete).toBe(true);
+    expect((await fence(s.credential_id)).paused_reason).toBe("unknown_pod");
+    const [a] = await alerts(s.credential_id);
+    expect(a.resolved_at).toBeNull();
+  });
+
+  it("a flooded inventory can't outlast the pass: past its time each pod's action stops, and nothing is complete", async () => {
+    const s = setup();
+    await s.launch();
+    await getPool().query(
+      "UPDATE gpu_key_fences SET last_inventory_at = NULL WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    const flood = Array.from({ length: 40 }, (_, i) => ({
+      id: `pod_flood${String(i).padStart(3, "0")}`,
+      name: `f${i}`,
+    }));
+    s.reconcile.listPods.mockImplementationOnce(async (opts: any) => {
+      await opts.beforePage?.();
+      await opts.onPage?.(flood);
+      return flood;
+    });
+    // every guarded step takes a second of the pass's 30
+    const outcome = await s.pass({
+      guard: async () => {
+        s.advance(1000);
+      },
+    });
+    expect(outcome).toEqual({ claimed: true, cut: true });
+    const n = (await alerts(s.credential_id)).length;
+    expect(n).toBeGreaterThan(0);
+    expect(n).toBeLessThan(40);
+    expect((await fence(s.credential_id)).last_inventory_at).toBeNull();
+  });
+
+  it("a pass whose lease is lost stops at its next step and marks nothing complete", async () => {
+    const s = setup();
+    await s.launch();
+    await getPool().query(
+      "UPDATE gpu_key_fences SET last_inventory_at = NULL WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    const flood = Array.from({ length: 10 }, (_, i) => ({
+      id: `pod_lease${String(i).padStart(3, "0")}`,
+      name: `l${i}`,
+    }));
+    s.reconcile.listPods.mockImplementationOnce(async (opts: any) => {
+      await opts.beforePage?.();
+      await opts.onPage?.(flood);
+      return flood;
+    });
+    let steps = 0;
+    await expect(
+      s.pass({
+        guard: async () => {
+          if (++steps > 4) throw Error("the reconciler lease was lost");
+        },
+      }),
+    ).rejects.toThrow("lease was lost");
+    expect((await alerts(s.credential_id)).length).toBeLessThan(10);
+    expect((await fence(s.credential_id)).last_inventory_at).toBeNull();
   });
 });

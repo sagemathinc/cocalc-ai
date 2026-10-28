@@ -27,7 +27,7 @@ overlap (another hub, the request-time pass at connect) are safe.
 
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import type { RunpodPodView } from "@cocalc/util/gpu/runpod";
@@ -44,7 +44,11 @@ import {
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
 import { sanitizeProviderName } from "@cocalc/server/gpu/key-events";
-import { raiseAlert, resolveAlert } from "@cocalc/server/gpu/alerts";
+import {
+  raiseAlert,
+  resolveAlert,
+  underLiveFence,
+} from "@cocalc/server/gpu/alerts";
 import {
   INVENTORY_STALE_MS,
   setInventoryWaker,
@@ -110,8 +114,9 @@ class PassCut extends Error {}
 // by id to resolve it. An id that isn't safe to keep as is gets a key no
 // check ever resolves (it stays open for the owner to look at).
 const UNCHECKABLE = "uncheckable-id";
+// (the grammar getPod accepts)
 function podAlertKey(id: string): string {
-  return sanitizeProviderName(id) === id && id !== UNCHECKABLE
+  return /^[A-Za-z0-9_-]{6,64}$/.test(id) && id !== UNCHECKABLE
     ? id
     : UNCHECKABLE;
 }
@@ -168,20 +173,32 @@ export async function reconcileKey(
   }
   try {
     await bounded();
-    // read-only: nothing is terminated while it pages
-    const listed = await c.listPods({ beforePage: bounded });
+    // Read-only: nothing is terminated while it pages. What a page shows
+    // is acted on as it arrives (a sighting needs no complete listing), so
+    // a slow or flooded account still raises its alerts; only what needs
+    // the whole inventory waits (a handle's pod: bind, or duplicates).
+    const k = { credential_id, key_owner_account_id, observed_at };
+    let unknown = 0;
+    const listed = await c.listPods({
+      beforePage: bounded,
+      onPage: async (page) => {
+        await bounded();
+        unknown += await matchInventory(k, page, bounded, "sightings");
+      },
+    });
     // the last page may have come back after the pass's time ran out
     await bounded();
-    const unknown = await matchInventory(
-      { credential_id, key_owner_account_id, observed_at },
-      listed,
-    );
+    // Everything after the listing is bounded too: each pod's action, and
+    // the end (a large inventory, or a lost lease, stops the pass here).
+    unknown += await matchInventory(k, listed, bounded, "handles");
     await confirmAbsences(
       { credential_id, key_owner_account_id, observed_at },
       c,
       new Set(listed.map((p) => p.id)),
       bounded,
+      () => new Date(clock()),
     );
+    await bounded();
     // complete: the watermark moves (forward only), and so does the cursor
     await getPool().query(
       `UPDATE gpu_key_fences
@@ -195,12 +212,17 @@ export async function reconcileKey(
       attempts: 0,
     });
     // the reconciliation capability works: a rejected-key alert ends
-    await resolveAlert({
-      credential_id,
-      kind: "key_rejected",
-      observed_at,
-      by: "complete_inventory",
-    });
+    await underLiveFence(credential_id, (db) =>
+      resolveAlert(
+        {
+          credential_id,
+          kind: "key_rejected",
+          observed_at,
+          by: "complete_inventory",
+        },
+        db,
+      ),
+    );
     return { claimed: true, complete: true, unknown_pods: unknown };
   } catch (err) {
     if (err instanceof PassCut) return await fail({ claimed: true, cut: true });
@@ -208,16 +230,22 @@ export async function reconcileKey(
       err instanceof RunpodApiError &&
       (err.kind === "auth" || err.kind === "forbidden")
     ) {
-      const raised = await raiseAlert({
-        key_owner_account_id,
-        credential_id,
-        kind: "key_rejected",
-        severity: "critical",
-        dedupe_key: "key",
-        details: { status: err.kind === "auth" ? 401 : 403 },
-        observed_at,
+      // (nothing, if the key was removed or replaced meanwhile)
+      await underLiveFence(credential_id, async (db) => {
+        const raised = await raiseAlert(
+          {
+            key_owner_account_id,
+            credential_id,
+            kind: "key_rejected",
+            severity: "critical",
+            dedupe_key: "key",
+            details: { status: err.kind === "auth" ? 401 : 403 },
+            observed_at,
+          },
+          db,
+        );
+        if (raised) await pauseKey(credential_id, "key_rejected", db);
       });
-      if (raised) await pauseKey(credential_id, "key_rejected");
       return await fail({ claimed: true, rejected: true });
     }
     // a lost lease: the next holder continues
@@ -245,10 +273,15 @@ async function recordOutcome(
 }
 
 // The safety pause: admission refuses until the owner resumes (fresh auth).
-async function pauseKey(credential_id: string, reason: string): Promise<void> {
-  await getPool().query(
+async function pauseKey(
+  credential_id: string,
+  reason: string,
+  db: Pick<PoolClient, "query">,
+): Promise<void> {
+  await db.query(
     `UPDATE gpu_key_fences SET paused_reason = $2, paused_at = now(), updated = now()
-      WHERE credential_id = $1 AND paused_reason IS NULL`,
+      WHERE credential_id = $1 AND paused_reason IS NULL
+        AND state IN ('active', 'draining')`,
     [credential_id, reason],
   );
 }
@@ -268,12 +301,25 @@ async function matchInventory(
     observed_at: Date;
   },
   listed: RunpodPodView[],
+  bounded: () => Promise<void>,
+  // "sightings": one page, as it arrives: pods bound by id, and pods no
+  // record knows (by id or handle). "handles": the complete listing's pods
+  // named like a record's handle (bind, duplicates, creates in flight).
+  part: "sightings" | "handles",
 ): Promise<number> {
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE credential_id = $1
         AND (provider_pod_id = ANY($2) OR handle = ANY($3))`,
     [credential_id, listed.map((p) => p.id), listed.map((p) => p.name ?? "")],
   );
+  // Every listed pod CoCalc has bound was seen live at observed_at: one
+  // statement, forward only. A "not found" asked before this can't end it.
+  if (part === "sightings")
+    await getPool().query(
+      `UPDATE gpu_pods SET provider_seen_at = GREATEST(COALESCE(provider_seen_at, $3), $3)
+      WHERE credential_id = $1 AND provider_pod_id = ANY($2)`,
+      [credential_id, listed.map((p) => p.id), observed_at],
+    );
   const byProviderId = new Map<string, PodRow>();
   const byHandle = new Map<string, PodRow>();
   for (const r of rows as PodRow[]) {
@@ -289,10 +335,13 @@ async function matchInventory(
   const seen: RunpodPodView[] = [];
   for (const pod of listed) {
     if (byProviderId.has(pod.id)) {
-      seen.push(pod);
+      if (part === "sightings") seen.push(pod);
       continue;
     }
     const record = pod.name ? byHandle.get(pod.name) : undefined;
+    // a pod named like a record waits for the complete listing; any other
+    // is decided on its page
+    if ((record != null) !== (part === "handles")) continue;
     if (record && !record.provider_pod_id) {
       if (record.state === "intent" || record.state === "creating") {
         // its create is still in flight: the launch binds it
@@ -302,50 +351,64 @@ async function matchInventory(
         (record.state === "ambiguous" || record.state === "failed") &&
         handleCount.get(pod.name!) === 1
       ) {
+        await bounded();
         const { row, released } = await reconcileBindPod(
           record,
           pod,
           RECONCILER,
+          observed_at,
         );
         if (row && released) {
           // its holds had been released: spend went unaccounted meanwhile
-          await raiseAlert({
-            key_owner_account_id,
-            credential_id,
-            kind: "unknown_pod",
-            severity: "critical",
-            dedupe_key: podAlertKey(pod.id),
-            details: {
-              provider_pod_id: podAlertKey(pod.id),
-              handle: record.handle,
-              released_then_seen: true,
-            },
-            observed_at,
+          await underLiveFence(credential_id, async (db) => {
+            await raiseAlert(
+              {
+                key_owner_account_id,
+                credential_id,
+                kind: "unknown_pod",
+                severity: "critical",
+                dedupe_key: podAlertKey(pod.id),
+                details: {
+                  provider_pod_id: podAlertKey(pod.id),
+                  handle: record.handle,
+                  released_then_seen: true,
+                },
+                observed_at,
+              },
+              db,
+            );
+            // bound just now: it is live, whatever any alert says
+            await pauseKey(credential_id, "unknown_pod", db);
           });
-          // bound just now: it is live, whatever any alert says
-          await pauseKey(credential_id, "unknown_pod");
         }
         continue;
       }
     }
     // a pod CoCalc didn't start (or more than one under a record's handle)
     unknown += 1;
-    const raised = await raiseAlert({
-      key_owner_account_id,
-      credential_id,
-      kind: "unknown_pod",
-      severity: "critical",
-      dedupe_key: podAlertKey(pod.id),
-      details: {
-        provider_pod_id: podAlertKey(pod.id),
-        name: sanitizeProviderName(pod.name),
-      },
-      observed_at,
+    await bounded();
+    // only while the key is live; not if a newer pass showed it gone
+    await underLiveFence(credential_id, async (db) => {
+      const raised = await raiseAlert(
+        {
+          key_owner_account_id,
+          credential_id,
+          kind: "unknown_pod",
+          severity: "critical",
+          dedupe_key: podAlertKey(pod.id),
+          details: {
+            provider_pod_id: podAlertKey(pod.id),
+            name: sanitizeProviderName(pod.name),
+          },
+          observed_at,
+        },
+        db,
+      );
+      if (raised) await pauseKey(credential_id, "unknown_pod", db);
     });
-    // (not if a newer pass showed it gone meanwhile)
-    if (raised) await pauseKey(credential_id, "unknown_pod");
   }
   if (seen.length > 0) {
+    await bounded();
     await recordSeenAddresses(
       seen.map((p) => podSummary(byProviderId.get(p.id)!)),
       seen,
@@ -356,15 +419,18 @@ async function matchInventory(
 
 // Bound, unfinished records the listing didn't show, and open unknown-pod
 // alerts whose pod it didn't show: a listing proves nothing, so each is
-// checked by id. Only RunPod's 404 ends the record or the alert.
+// checked by id. Only RunPod's 404 ends the record or the alert, and only if
+// nothing saw it live after it was asked; a pod RunPod still has is a
+// sighting like a listed one (an unknown pod's alert and pause are renewed).
 async function confirmAbsences(
   {
     credential_id,
-    observed_at,
+    key_owner_account_id,
   }: { credential_id: string; key_owner_account_id: string; observed_at: Date },
   c: ReconcileCapability,
   present: Set<string>,
   bounded: () => Promise<void>,
+  now: () => Date,
 ): Promise<void> {
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE credential_id = $1 AND provider_pod_id IS NOT NULL
@@ -374,30 +440,63 @@ async function confirmAbsences(
   for (const row of rows as PodRow[]) {
     if (present.has(row.provider_pod_id!)) continue;
     await bounded();
+    const asked = now();
     const pod = await c.getPod(row.provider_pod_id!);
     // an answer that came back after the pass's time is not acted on
     await bounded();
-    if (pod === undefined) await endPodGoneAtProvider(row, RECONCILER);
+    if (pod === undefined) {
+      await endPodGoneAtProvider(row, RECONCILER, asked);
+    } else {
+      await getPool().query(
+        `UPDATE gpu_pods SET provider_seen_at = GREATEST(COALESCE(provider_seen_at, $2), $2)
+          WHERE id = $1`,
+        [row.id, asked],
+      );
+    }
   }
   const { rows: alerts } = await getPool().query(
-    `SELECT dedupe_key FROM gpu_alerts WHERE credential_id = $1
+    `SELECT dedupe_key, details FROM gpu_alerts WHERE credential_id = $1
         AND kind = 'unknown_pod' AND resolved_at IS NULL`,
     [credential_id],
   );
   for (const a of alerts) {
     if (present.has(a.dedupe_key) || a.dedupe_key === UNCHECKABLE) continue;
     await bounded();
+    const asked = now();
     const pod = await c.getPod(a.dedupe_key);
     await bounded();
-    if (pod === undefined) {
-      await resolveAlert({
-        credential_id,
-        kind: "unknown_pod",
-        dedupe_key: a.dedupe_key,
-        observed_at,
-        by: "gone_at_provider",
-      });
-    }
+    await underLiveFence(credential_id, async (db) => {
+      if (pod === undefined) {
+        await resolveAlert(
+          {
+            credential_id,
+            kind: "unknown_pod",
+            dedupe_key: a.dedupe_key,
+            observed_at: asked,
+            by: "gone_at_provider",
+          },
+          db,
+        );
+        return;
+      }
+      // still there: seen again (after a resume, this pauses again)
+      if (
+        await raiseAlert(
+          {
+            key_owner_account_id,
+            credential_id,
+            kind: "unknown_pod",
+            severity: "critical",
+            dedupe_key: a.dedupe_key,
+            details: a.details ?? undefined,
+            observed_at: asked,
+          },
+          db,
+        )
+      ) {
+        await pauseKey(credential_id, "unknown_pod", db);
+      }
+    });
   }
 }
 

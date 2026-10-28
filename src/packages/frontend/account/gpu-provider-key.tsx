@@ -18,6 +18,8 @@ import {
   Typography,
 } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+export const CHECKING_POLL_MS = 15_000;
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import {
   FreshAuthModal,
@@ -88,6 +90,14 @@ export function GpuProviderKeySection() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // While CoCalc is still checking the key's RunPod account (launches wait
+  // for it), look again now and then, so the page says when it's done.
+  useEffect(() => {
+    if (!status?.connected || status.inventory !== "checking") return;
+    const timer = setTimeout(() => void refresh(), CHECKING_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [status, refresh]);
 
   const connect = async () => {
     const key = apiKey.trim();

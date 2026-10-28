@@ -74,15 +74,22 @@ describeRealPostgres("GPU reconcile passes that overlap", () => {
     }
   });
 
-  async function setup() {
+  async function setup({ ambiguous = false } = {}) {
     const account_id = randomUUID();
     const credential_id = randomUUID();
     const client = {
-      createPod: async (body: any) => ({
-        id: `pod_${randomUUID().slice(0, 8)}`,
-        name: body.name,
-        cost: 0.5,
-      }),
+      createPod: async (body: any) => {
+        if (ambiguous) {
+          const { RunpodApiError } =
+            await import("@cocalc/cloud/runpod/client");
+          throw new RunpodApiError("provider", 503);
+        }
+        return {
+          id: `pod_${randomUUID().slice(0, 8)}`,
+          name: body.name,
+          cost: 0.5,
+        };
+      },
       terminatePod: async () => {},
       findPodsByName: async () => [],
     };
@@ -112,12 +119,13 @@ describeRealPostgres("GPU reconcile passes that overlap", () => {
       },
       deps,
     );
-    const provider_pod_id = (
-      await getPool().query(
-        "SELECT provider_pod_id FROM gpu_pods WHERE id = $1",
-        [pod.id],
-      )
-    ).rows[0].provider_pod_id;
+    const provider_pod_id =
+      (
+        await getPool().query(
+          "SELECT provider_pod_id FROM gpu_pods WHERE id = $1",
+          [pod.id],
+        )
+      ).rows[0].provider_pod_id ?? "pod_none";
     // passes observe from here on (the seed put the watermark far ahead)
     await getPool().query(
       "UPDATE gpu_key_fences SET last_inventory_at = NULL WHERE credential_id = $1",
@@ -134,7 +142,18 @@ describeRealPostgres("GPU reconcile passes that overlap", () => {
         },
         {
           now: () => at,
-          getReconcile: async () => ({ credential_id, ...cap }) as any,
+          getReconcile: async () =>
+            ({
+              credential_id,
+              getPod: cap.getPod,
+              // one page, handed over as it arrives (as the client does)
+              listPods: async (opts: any = {}) => {
+                await opts.beforePage?.();
+                const page = await cap.listPods();
+                await opts.onPage?.(page);
+                return page;
+              },
+            }) as any,
         },
       );
     const alert = async (dedupe_key: string) =>
@@ -151,7 +170,44 @@ describeRealPostgres("GPU reconcile passes that overlap", () => {
           [credential_id],
         )
       ).rows[0];
-    return { account_id, credential_id, ours, pass, alert, keyFence };
+    const podRow = async () =>
+      (await getPool().query("SELECT * FROM gpu_pods WHERE id = $1", [pod.id]))
+        .rows[0];
+    // what a key change does under its fence: close the key's fence
+    // (onKeyGone included), holding the account fence until `release`
+    const closeUnderFence = async (release: Promise<void>) => {
+      const keys = await import("./provider-keys");
+      const db = await getPool().connect();
+      try {
+        await db.query("BEGIN");
+        await deps.accountWriteFence(db, account_id, "remove a key");
+        const { rows } = await db.query(
+          `SELECT count(*)::int AS n FROM gpu_pods WHERE credential_id = $1
+              AND state NOT IN ('terminated', 'failed', 'ambiguous') AND unmanaged_at IS NULL`,
+          [credential_id],
+        );
+        await keys.closeKeyFence(db, account_id, credential_id, "removed");
+        await release;
+        await db.query("COMMIT");
+        return rows[0].n as number;
+      } catch (err) {
+        await db.query("ROLLBACK");
+        throw err;
+      } finally {
+        db.release();
+      }
+    };
+    return {
+      account_id,
+      credential_id,
+      ours,
+      pass,
+      alert,
+      keyFence,
+      pod,
+      podRow,
+      closeUnderFence,
+    };
   }
 
   it("an older pass's 404 can't resolve what a newer pass saw; its outcome doesn't overwrite the newer one's", async () => {
@@ -277,5 +333,157 @@ describeRealPostgres("GPU reconcile passes that overlap", () => {
     };
     const [x, y] = await Promise.all([s.pass(t, cap), s.pass(t, cap)]);
     expect([x.claimed, y.claimed].sort()).toEqual([false, true]);
+  });
+
+  it("a pass that finishes after the key was removed writes no alert and no pause", async () => {
+    const s = await setup();
+    const t0 = Date.now();
+    const stranger = { id: "pod_strangerD", name: "x" };
+    await s.pass(t0, {
+      listPods: async () => [s.ours, stranger],
+      getPod: async () => undefined,
+    });
+    await getPool().query(
+      "UPDATE gpu_key_fences SET paused_reason = NULL WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    // a pass claims while the key is live, and its listing is slow
+    const late = gate<any[]>();
+    const listing = gate();
+    const a = s.pass(t0 + 11 * MINUTE, {
+      listPods: async () => {
+        listing.open();
+        return await late.p;
+      },
+      getPod: async () => undefined,
+    });
+    await listing.p;
+    // the key is removed (its unknown pod becomes the owner's to check)
+    await s.closeUnderFence(Promise.resolve());
+    // the pass's stale sighting lands, and a second stranger
+    late.open([s.ours, stranger, { id: "pod_strangerE", name: "y" }]);
+    await a;
+    const [converted] = await s.alert(stranger.id);
+    expect(converted.resolved_at).toBeNull();
+    const { rows } = await getPool().query(
+      "SELECT severity, details FROM gpu_alerts WHERE credential_id = $1 AND dedupe_key = $2",
+      [s.credential_id, stranger.id],
+    );
+    expect(rows[0]).toEqual({
+      severity: "warning",
+      details: expect.objectContaining({ unverifiable: true }),
+    });
+    expect(await s.alert("pod_strangerE")).toEqual([]);
+    const f = await s.keyFence();
+    expect(f.state).toBe("closed");
+    expect(f.paused_reason).toBeNull();
+  });
+
+  it("a late 401 after the key was removed doesn't reopen key_rejected", async () => {
+    const s = await setup();
+    const t0 = Date.now();
+    const { RunpodApiError } = await import("@cocalc/cloud/runpod/client");
+    await s.pass(t0, {
+      listPods: async () => {
+        throw new RunpodApiError("auth", 401);
+      },
+      getPod: async () => undefined,
+    });
+    expect((await s.alert("key"))[0].resolved_at).toBeNull();
+    const late = gate();
+    const listing = gate();
+    const a = s.pass(t0 + 3 * MINUTE, {
+      listPods: async () => {
+        listing.open();
+        await late.p;
+        throw new RunpodApiError("auth", 401);
+      },
+      getPod: async () => undefined,
+    });
+    await listing.p;
+    await s.closeUnderFence(Promise.resolve());
+    late.open();
+    await a;
+    const rows = await s.alert("key");
+    expect(rows.length).toBe(1);
+    expect(rows[0].resolved_by).toBe("removed");
+  });
+
+  it("a key close and a bind are ordered: close first binds nothing; bind first, the close sees the live pod", async () => {
+    // close first: the bind waits for the account fence, then binds nothing
+    const a = await setup({ ambiguous: true });
+    expect((await a.podRow()).state).toBe("ambiguous");
+    const release = gate();
+    const closing = a.closeUnderFence(release.p);
+    // the closer holds the account fence; the bind queues behind it
+    await new Promise((r) => setTimeout(r, 100));
+    const bind = pods.reconcileBindPod(
+      await a.podRow(),
+      { id: "pod_bindA", name: a.pod.handle, cost: 0.5 } as any,
+      { kind: "reconciler" },
+      new Date(),
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    release.open();
+    expect(await closing).toBe(0);
+    expect((await bind).row).toBeUndefined();
+    expect((await a.podRow()).state).toBe("ambiguous");
+    // bind first: the closer, under the same fence, finds the pod live
+    const b = await setup({ ambiguous: true });
+    const bound = await pods.reconcileBindPod(
+      await b.podRow(),
+      { id: "pod_bindB", name: b.pod.handle, cost: 0.5 } as any,
+      { kind: "reconciler" },
+      new Date(),
+    );
+    expect(bound.row?.state).toBe("running");
+    expect(await b.closeUnderFence(Promise.resolve())).toBe(1);
+  });
+
+  it("a 404 asked before a newer sighting doesn't end the pod; one asked after it does", async () => {
+    const s = await setup();
+    const t0 = Date.now();
+    // A asks RunPod about our pod (omitted from its listing) at t0+1m...
+    const answer = gate<undefined>();
+    const asked = gate();
+    let clockA = t0;
+    const a = reconcile.reconcileKey(
+      {
+        credential_id: s.credential_id,
+        key_owner_account_id: s.account_id,
+        // (its clock moves a minute while it lists)
+        deadline: t0 + 5 * MINUTE,
+      },
+      {
+        now: () => clockA,
+        getReconcile: async () =>
+          ({
+            credential_id: s.credential_id,
+            listPods: async () => {
+              clockA = t0 + MINUTE;
+              return [];
+            },
+            getPod: async () => {
+              asked.open();
+              return await answer.p;
+            },
+          }) as any,
+      },
+    );
+    await asked.p;
+    // ...B lists it live, observing at t0+2m (after A asked)
+    await s.pass(t0 + 2 * MINUTE, {
+      listPods: async () => [s.ours],
+      getPod: async () => undefined,
+    });
+    answer.open(undefined);
+    await a;
+    expect((await s.podRow()).state).toBe("running");
+    // a 404 asked after the latest sighting ends it (RunPod says it's gone)
+    await s.pass(t0 + 13 * MINUTE, {
+      listPods: async () => [],
+      getPod: async () => undefined,
+    });
+    expect((await s.podRow()).state).toBe("terminated");
   });
 });
