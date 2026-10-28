@@ -142,10 +142,12 @@ export async function runCompromiseCleanup(
     deps.resolvePending ??
     ((a, guard) => resolvePendingForAccount(a, {}, { guard }))
   )(account_id, bounded).catch(() => {});
-  if (cut) {
-    const left = await unfinishedCredentialPods(credential_id);
-    return { closed: false, managed_pods: left.length };
-  }
+  // out of time: nothing more this pass (the next one continues)
+  const cutShort = async (): Promise<GpuCompromiseStatus> => ({
+    closed: false,
+    managed_pods: (await unfinishedCredentialPods(credential_id)).length,
+  });
+  if (cut) return await cutShort();
   // CoCalc's pods bound before the listing starts: only these can be ended
   // for being absent from it (one bound later may have been created after
   // RunPod took the snapshot; the next pass sees it)
@@ -156,14 +158,16 @@ export async function runCompromiseCleanup(
     // account large)
     listed = await c.listPods({ beforePage: bounded });
   } catch (err) {
-    if (cut) {
-      const left = await unfinishedCredentialPods(credential_id);
-      return { closed: false, managed_pods: left.length };
-    }
+    if (cut) return await cutShort();
     // RunPod rejects the key outright (the owner deleted it there): the same
     // end as the identity check below, once CoCalc has no unfinished pod on
     // it. Any other failure says nothing about the account: fail closed.
     if (err instanceof RunpodApiError && err.kind === "auth") {
+      // the answer may have come after the pass's time (or lease) ran out
+      await bounded().catch((e) => {
+        if (!cut) throw e;
+      });
+      if (cut) return await cutShort();
       const left = await unfinishedCredentialPods(credential_id);
       if (left.length > 0) {
         return {
@@ -178,6 +182,13 @@ export async function runCompromiseCleanup(
     log.warn("listing a compromised key's RunPod account failed", `${err}`);
     return { closed: false, listing_failed: true };
   }
+  // The last (or only) page may have come back after the pass's time ran
+  // out, or its lease was lost meanwhile: act on the listing only within
+  // both (a lost lease throws; the next holder continues).
+  await bounded().catch((e) => {
+    if (!cut) throw e;
+  });
+  if (cut) return await cutShort();
   const { rows: managed } = await getPool().query(
     "SELECT provider_pod_id, state FROM gpu_pods WHERE credential_id = $1 AND provider_pod_id IS NOT NULL",
     [credential_id],

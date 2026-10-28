@@ -1017,6 +1017,43 @@ describeDb("GPU budgets", () => {
       expect(a.cleanup.getProviderIdentity).not.toHaveBeenCalled();
     });
 
+    it("acts on no listing that came back after the pass's time ran out", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      // CoCalc's pod won't terminate, and RunPod's only page is slow: it
+      // starts in time and comes back (complete, without the pod) too late
+      s.rp.client.terminatePod.mockRejectedValue(
+        new RunpodApiError("provider", 503),
+      );
+      a.cleanup.listPods.mockImplementationOnce(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+        return [];
+      });
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        { ...a.deps, passMs: 150 },
+      );
+      expect(result).toEqual({ closed: false, managed_pods: 1 });
+      const state = async () =>
+        (
+          await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [
+            pod.id,
+          ])
+        ).rows[0].state;
+      // not ended for its absence, and RunPod's identity never asked
+      expect(await state()).not.toBe("terminated");
+      expect(a.cleanup.getProviderIdentity).not.toHaveBeenCalled();
+      // the next pass, in time, ends it as absent
+      a.cleanup.listPods.mockResolvedValueOnce([]);
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect(await state()).toBe("terminated");
+    });
+
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {
       const s = setup();
       await s.stored;
