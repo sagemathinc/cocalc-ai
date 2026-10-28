@@ -20,6 +20,7 @@ import {
   RunpodClient,
   type RunpodProviderIdentity,
 } from "@cocalc/cloud/runpod/client";
+import getPool from "@cocalc/database/pool";
 import {
   createInterBayAccountLocalClient,
   type InterBayGpuApi,
@@ -66,6 +67,8 @@ export interface GpuProviderKeyDeps {
   fetch?: Fetch;
   isEntitled?: (account_id: string) => Promise<boolean>;
   isHomeBay?: (account_id: string) => Promise<boolean>;
+  // pods launched with this account's key that aren't finished
+  unfinishedPods?: (account_id: string) => Promise<number>;
   verifyDeadlineMs?: number;
   // the home bay's API, or undefined when this is the home bay
   homeClient?: (
@@ -273,6 +276,32 @@ export async function setGpuProviderKey(
   return await setGpuProviderKeyLocal({ account_id, provider, api_key }, deps);
 }
 
+// Pods launched with the account's key that may still exist at RunPod. While
+// there are any, the key can be neither replaced nor removed: the stored key
+// keeps its id when replaced, and a key for another RunPod account (or no
+// key) couldn't reach those pods, so CoCalc could no longer terminate them.
+// Step 5c replaces this with draining and a cleanup-only copy of the key.
+async function countUnfinishedPods(account_id: string): Promise<number> {
+  const { rows } = await getPool().query(
+    `SELECT count(*)::int AS n FROM gpu_pods
+      WHERE key_owner_account_id = $1 AND state NOT IN ('terminated', 'failed')`,
+    [account_id],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+async function requireNoUnfinishedPods(
+  account_id: string,
+  deps: GpuProviderKeyDeps,
+  doing: "replace" | "remove",
+): Promise<void> {
+  const n = await (deps.unfinishedPods ?? countUnfinishedPods)(account_id);
+  if (n === 0) return;
+  throw Error(
+    `${n} GPU pod${n === 1 ? " was" : "s were"} launched with your current RunPod key and ${n === 1 ? "isn't" : "aren't"} finished, so the key can't be ${doing === "replace" ? "replaced" : "removed"} yet: CoCalc would lose the way to terminate ${n === 1 ? "it" : "them"}. Terminate ${n === 1 ? "it" : "them"} first (cocalc gpu pods, then cocalc gpu terminate). If you need to cut the key off now, delete it at RunPod and terminate the pods there.`,
+  );
+}
+
 export async function setGpuProviderKeyLocal(
   {
     account_id,
@@ -289,6 +318,8 @@ export async function setGpuProviderKeyLocal(
     );
   }
   const key = normalizeRunpodKey(api_key);
+  const replacing = (await activeKeySummaries(account_id, provider)).length > 0;
+  if (replacing) await requireNoUnfinishedPods(account_id, deps, "replace");
   const started = Date.now();
   const identity = await verifyRunpodKey(key, deps.fetch);
   if (Date.now() - started > (deps.verifyDeadlineMs ?? VERIFY_DEADLINE_MS)) {
@@ -370,6 +401,7 @@ export async function deleteGpuProviderKeyLocal(
   // lock), so there is at most one to revoke.
   const [existing] = await activeKeySummaries(account_id, provider);
   if (!existing) return { revoked: false };
+  await requireNoUnfinishedPods(account_id, deps, "remove");
   const revoked = await revokeExternalCredential({
     id: existing.id,
     owner_account_id: account_id,

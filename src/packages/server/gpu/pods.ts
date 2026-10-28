@@ -641,9 +641,17 @@ async function resolveAmbiguous(
     );
   }
   // One name, so normally one pod; more would be RunPod retrying a create.
-  // Keep the oldest and terminate the rest, which nothing else records.
+  // Keep the pod the record is already bound to (another resolver may have
+  // bound it meanwhile), else the oldest; the rest are duplicates.
+  const bound = (await loadPod(row.id))?.provider_pod_id;
   const [keep, ...extra] = [...found].sort((a, b) =>
-    `${a.createdAt ?? ""}${a.id}`.localeCompare(`${b.createdAt ?? ""}${b.id}`),
+    a.id === bound
+      ? -1
+      : b.id === bound
+        ? 1
+        : `${a.createdAt ?? ""}${a.id}`.localeCompare(
+            `${b.createdAt ?? ""}${b.id}`,
+          ),
   );
   for (const pod of extra) {
     await terminateDuplicate(row, pod.id, client, actor);
@@ -793,15 +801,21 @@ async function terminateDuplicate(
     );
     return rows[0] as PodRow;
   });
+  // On a conflict, the existing record is acted on only if it is this
+  // cleanup's own (an earlier attempt for the same key owner and key, still
+  // terminating). A canonical pod another resolver just bound, or anyone
+  // else's record, is left alone.
   const row =
     dup ??
     ((
       await getPool().query(
-        "SELECT * FROM gpu_pods WHERE provider = 'runpod' AND provider_pod_id = $1",
-        [provider_pod_id],
+        `SELECT * FROM gpu_pods WHERE provider = 'runpod' AND provider_pod_id = $1
+            AND key_owner_account_id = $2 AND credential_id = $3
+            AND state = 'terminating' AND desired_state = 'terminated'`,
+        [provider_pod_id, of.key_owner_account_id, of.credential_id],
       )
     ).rows[0] as PodRow | undefined);
-  if (!row || row.state === "terminated") return;
+  if (!row) return;
   // Retried by the next listing (or the reaper) if RunPod doesn't confirm.
   await terminateBound(row, client, actor).catch(() => {});
 }

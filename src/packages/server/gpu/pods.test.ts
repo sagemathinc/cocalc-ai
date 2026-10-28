@@ -690,6 +690,75 @@ describeDb("GPU pods", () => {
     expect(live.map((p) => p.provider_pod_id)).toEqual(["pod_dupaaa"]);
   });
 
+  it("never terminates the pod another resolver just bound", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    rp.client.createPod.mockRejectedValueOnce(new RunpodApiError("network"));
+    rp.client.findPodsByName.mockRejectedValueOnce(
+      new RunpodApiError("network"),
+    );
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    rp.pods.set("pod_racea1", { id: "pod_racea1", name: pod.handle });
+    rp.pods.set("pod_raceb1", { id: "pod_raceb1", name: pod.handle });
+    // one resolver sees only B and binds it first; the other sees A and B,
+    // and by its order would keep A
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    rp.client.findPodsByName
+      .mockImplementationOnce(async () => {
+        await gate;
+        return [rp.pods.get("pod_racea1"), rp.pods.get("pod_raceb1")];
+      })
+      .mockImplementationOnce(async () => [rp.pods.get("pod_raceb1")]);
+    const slow = listManagedGpuPodsLocal({ account_id }, d);
+    await listManagedGpuPodsLocal({ account_id }, d);
+    release();
+    await slow;
+    const [row] = await listManagedGpuPodsLocal({ account_id }, d);
+    expect(row.provider_pod_id).toBe("pod_raceb1");
+    expect(row.state).toBe("running");
+    expect([...rp.pods.keys()]).toEqual(["pod_raceb1"]);
+  });
+
+  it("never acts on another account's record that conflicts with a duplicate", async () => {
+    const owner = deps(randomUUID());
+    // X's pod, live, with RunPod id pod_shared1
+    owner.rp.client.createPod.mockImplementationOnce(async (body: any) => {
+      const p = { id: "pod_shared1", name: body.name, cost: 0.5 };
+      owner.rp.pods.set(p.id, p);
+      return p;
+    });
+    const x = await launchGpuPodLocal(
+      { account_id: owner.account_id, project_id: PROJECT, spec: SPEC },
+      owner.deps,
+    );
+    // Y's unclear create; Y's lookup (wrongly) also returns pod_shared1
+    const other = deps(randomUUID());
+    other.rp.client.createPod.mockRejectedValueOnce(
+      new RunpodApiError("network"),
+    );
+    other.rp.client.findPodsByName.mockRejectedValueOnce(
+      new RunpodApiError("network"),
+    );
+    const y = await launchGpuPodLocal(
+      { account_id: other.account_id, project_id: PROJECT, spec: SPEC },
+      other.deps,
+    );
+    other.rp.pods.set("pod_aaaaaa", { id: "pod_aaaaaa", name: y.handle });
+    other.rp.pods.set("pod_shared1", { id: "pod_shared1", name: y.handle });
+    await listManagedGpuPodsLocal({ account_id: other.account_id }, other.deps);
+    expect(other.rp.client.terminatePod).not.toHaveBeenCalledWith(
+      "pod_shared1",
+    );
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_pods WHERE id = $1",
+      [x.id],
+    );
+    expect(rows[0].state).toBe("running");
+  });
+
   it("keeps each account's pods to itself", async () => {
     const owner = deps(randomUUID());
     const other = deps(randomUUID(), owner.rp);

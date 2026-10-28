@@ -25,6 +25,15 @@ jest.mock("@cocalc/server/bay-directory", () => ({
   resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBay(...args),
 }));
 
+// unfinished GPU pods for the account (gpu_pods), per test
+let unfinished = 0;
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: () => ({
+    query: async () => ({ rows: [{ n: unfinished }] }),
+  }),
+}));
+
 jest.mock("@cocalc/server/membership/resolve", () => ({
   resolveMembershipForAccount: (...args: any[]) => membershipMock(...args),
 }));
@@ -107,6 +116,7 @@ function summary(metadata: Record<string, any>) {
 const home = { isHomeBay: async () => true };
 
 beforeEach(() => {
+  unfinished = 0;
   upsertMock.mockReset().mockResolvedValue({ id: "cred-1", created: true });
   listMock.mockReset().mockResolvedValue([]);
   localGetMock.mockReset().mockResolvedValue(undefined);
@@ -164,10 +174,11 @@ describe("GPU provider keys", () => {
       provider_account: { kind: "personal", id: "user_1" },
       connected_at: stored.metadata.verified_at,
     });
-    // One routed read before the write (for removals since the check
-    // started), none after it: the status comes from what was stored.
-    expect(listMock).toHaveBeenCalledTimes(1);
-    expect(listMock.mock.invocationCallOrder[0]).toBeLessThan(
+    // Two reads before the write (is a key being replaced; removals since
+    // the check started), none after it: the status comes from what was
+    // stored.
+    expect(listMock).toHaveBeenCalledTimes(2);
+    expect(listMock.mock.invocationCallOrder[1]).toBeLessThan(
       upsertMock.mock.invocationCallOrder[0],
     );
     // The key is never part of what comes back.
@@ -560,5 +571,50 @@ describe("GPU provider keys", () => {
     for (const m of [listMock, upsertMock, revokeMock, localGetMock]) {
       expect(m).not.toHaveBeenCalled();
     }
+  });
+
+  it("refuses to replace or remove a key while pods launched with it aren't finished", async () => {
+    listMock.mockResolvedValue([summary({})]);
+    unfinished = 2;
+    const { fetch, urls } = fakeFetch([]);
+    await expect(
+      setGpuProviderKeyLocal(
+        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        { ...home, fetch, isEntitled: entitled },
+      ),
+    ).rejects.toThrow("2 GPU pods were launched with your current RunPod key");
+    expect(urls).toEqual([]); // refused before RunPod is asked
+    await expect(
+      deleteGpuProviderKeyLocal(
+        { account_id: ACCOUNT, provider: "runpod" },
+        home,
+      ),
+    ).rejects.toThrow("can't be removed yet");
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(revokeMock).not.toHaveBeenCalled();
+    // once they're finished, removal works
+    unfinished = 0;
+    expect(
+      await deleteGpuProviderKeyLocal(
+        { account_id: ACCOUNT, provider: "runpod" },
+        home,
+      ),
+    ).toEqual({ revoked: true });
+  });
+
+  it("doesn't block connecting a first key", async () => {
+    unfinished = 1; // e.g. pods from a key removed at RunPod's side
+    const { fetch } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      NO_PODS,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
+    ]);
+    await setGpuProviderKeyLocal(
+      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      { ...home, fetch, isEntitled: entitled },
+    );
+    expect(upsertMock).toHaveBeenCalled();
   });
 });
