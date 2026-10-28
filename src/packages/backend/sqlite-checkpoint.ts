@@ -57,12 +57,26 @@ interface Registration {
   // Since when checkpoints have run but left frames behind (a reader holding
   // an old snapshot, or writers outpacing the worker).
   incompleteSince?: number;
+  // The last failure logged, to log a repeating one only now and then.
+  lastFailureLogged?: { error: string; at: number };
 }
+
+// SQLITE_READONLY: the worker's own connection cannot write the file.
+const SQLITE_READONLY = 8;
+// A repeating checkpoint failure is logged again after this long.
+const FAILURE_LOG_INTERVAL_MS = 10 * 60_000;
+// Files the worker cannot write. In a project, the runtime creates its
+// databases as root and then runs as the project user: a connection opened
+// before that writes, a new one (the worker's) is read-only. Their
+// connections keep checkpointing inline, as SQLite does by default.
+const inlineOnly = new Set<string>();
 
 export interface CheckpointResult {
   file: string;
   at: number;
   error?: string;
+  // SQLite's primary result code for a failed checkpoint.
+  errcode?: number;
   busy?: number;
   log?: number;
   checkpointed?: number;
@@ -95,7 +109,7 @@ parentPort.on("message", (msg) => {
       const db = connections.get(file);
       connections.delete(file);
       try { db?.close(); } catch {}
-      parentPort.postMessage({ file, at, error: String(err && err.message ? err.message : err) });
+      parentPort.postMessage({ file, at, error: String(err && err.message ? err.message : err), errcode: err?.errcode });
     }
   }
 });
@@ -145,11 +159,21 @@ function ensureWorker(): Pick<Worker, "postMessage"> {
           since: new Date(reg.incompleteSince).toISOString(),
         });
       }
+    } else if (((result.errcode ?? 0) & 0xff) === SQLITE_READONLY) {
+      returnToInlineCheckpoints(reg, result.error);
     } else {
-      logger.warn("sqlite WAL checkpoint failed in the worker", {
-        file: reg.file,
-        error: result.error,
-      });
+      const last = reg.lastFailureLogged;
+      if (
+        last == null ||
+        last.error !== result.error ||
+        result.at - last.at >= FAILURE_LOG_INTERVAL_MS
+      ) {
+        reg.lastFailureLogged = { error: result.error, at: result.at };
+        logger.warn("sqlite WAL checkpoint failed in the worker", {
+          file: reg.file,
+          error: result.error,
+        });
+      }
     }
   });
   w.on("error", (err) => {
@@ -200,6 +224,20 @@ function setInlineFallback(reg: Registration, on: boolean): void {
   } else {
     logger.info("sqlite WAL checkpoint worker recovered", { file: reg.file });
   }
+}
+
+// The worker cannot write this file: give checkpoints back to its own
+// connections for good, and say so once.
+function returnToInlineCheckpoints(reg: Registration, error?: string): void {
+  inlineOnly.add(reg.file);
+  for (const db of reg.dbs) {
+    setAutocheckpoint(reg, db, true);
+  }
+  forgetWalCheckpoints(reg.file);
+  logger.info(
+    "sqlite WAL checkpoint worker cannot write this database; its connections checkpoint inline",
+    { file: reg.file, error },
+  );
 }
 
 async function walBytes(file: string): Promise<number> {
@@ -266,6 +304,7 @@ export function deferWalCheckpoints(
   }
   if (process.env.COCALC_SQLITE_INLINE_CHECKPOINTS === "1") return false;
   if (isTestRuntime() && !enableInTests) return false;
+  if (inlineOnly.has(file)) return false;
   let reg = registrations.get(file);
   if (reg == null) {
     reg = {

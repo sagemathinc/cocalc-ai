@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -249,6 +249,42 @@ describe("deferWalCheckpoints", () => {
     c.close();
     expect(walCheckpointStatus(file)).toBeUndefined();
   }, 30_000);
+
+  // Projects, 2026-10-28: the runtime creates its database as root and then
+  // runs as the project user, so the worker's new connection is read-only.
+  // It logged "attempt to write a readonly database" every 5 s in every
+  // project, flooding the host journal.
+  (process.getuid?.() === 0 ? it.skip : it)(
+    "gives checkpoints back to a database the worker cannot write",
+    async () => {
+      const file = join(dir, "readonly.db");
+      const db = openDb(file);
+      expect(deferWalCheckpoints(db, file, { enableInTests: true })).toBe(true);
+      expect(autocheckpoint(db)).toBe(0);
+      // This connection was opened while the files were writable; a new one
+      // (the worker's) can only read them.
+      for (const suffix of ["", "-wal", "-shm"]) {
+        await chmod(`${file}${suffix}`, 0o444);
+      }
+      await runCheckpointPass();
+      await eventually(() => walCheckpointStatus(file) == null);
+      // Inline checkpoints again, as SQLite does by default, and the file
+      // stays that way: later connections do not defer either.
+      expect(autocheckpoint(db)).toBe(1000);
+      const again = openDb(file);
+      expect(deferWalCheckpoints(again, file, { enableInTests: true })).toBe(
+        false,
+      );
+      // The original connection still writes and checkpoints.
+      writeMany(db, 10);
+      expect(
+        (db.prepare("PRAGMA wal_checkpoint(PASSIVE)").get() as any).busy,
+      ).toBe(0);
+      again.close();
+      db.close();
+    },
+    30_000,
+  );
 
   it("forgets a connection before it closes", () => {
     const file = join(dir, "e.db");
