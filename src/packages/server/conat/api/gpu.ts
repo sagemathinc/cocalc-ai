@@ -24,6 +24,10 @@ import {
 import { allowStaleWorkers } from "@cocalc/server/gpu/admin";
 import { listAdminAlertsLocal } from "@cocalc/server/gpu/admin-alerts";
 import {
+  confirmAccountChecks as confirmGpuAccountChecks,
+  getAccountChecks,
+} from "@cocalc/server/gpu/account-watch";
+import {
   killSwitch as gpuKillSwitch,
   launchGpuPod,
   terminateGpuPod,
@@ -156,6 +160,23 @@ export async function resume(
     account_id: opts?.account_id,
     browser_id: opts?.browser_id,
     session_hash: opts?.session_hash,
+  });
+}
+
+export async function accountChecks(
+  opts: Parameters<GpuApi["accountChecks"]>[0],
+): ReturnType<GpuApi["accountChecks"]> {
+  return await getAccountChecks({ account_id: opts?.account_id });
+}
+
+export async function confirmAccountChecks(
+  opts: Parameters<GpuApi["confirmAccountChecks"]>[0],
+): ReturnType<GpuApi["confirmAccountChecks"]> {
+  return await confirmGpuAccountChecks({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+    confirm: opts?.confirm,
   });
 }
 

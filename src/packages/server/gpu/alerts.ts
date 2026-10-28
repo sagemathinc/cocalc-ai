@@ -173,7 +173,9 @@ export async function onKeyGone(
   await db.query(
     `UPDATE gpu_alerts SET resolved_at = now(), resolved_by = $2,
             resolved_observed_at = 'infinity'
-      WHERE credential_id = $1 AND kind = 'key_rejected' AND resolved_at IS NULL`,
+      WHERE credential_id = $1 AND resolved_at IS NULL
+        AND kind IN ('key_rejected', 'account_spend_rate', 'account_balance_drop',
+                     'account_checks_disabled')`,
     [credential_id, by.slice(0, 40)],
   );
 }
@@ -198,6 +200,12 @@ const MESSAGES: Record<GpuAlertKind, string> = {
     "RunPod's billing pushed spending past what this GPU budget authorizes. New launches it covers are refused until you raise the budget or a new period starts.",
   compromise_check_pods:
     "CoCalc removed the compromised key and stopped watching its RunPod account. Check RunPod's Pods page once and terminate any pod you don't recognize, then acknowledge this alert.",
+  account_spend_rate:
+    "Your RunPod account is spending well faster than the pods CoCalc runs with this key explain. If you didn't start anything else on it, check RunPod's Pods page now. When the difference is large, new launches pause until you resume them (cocalc gpu resume). If you also use this RunPod account outside CoCalc, withdraw the account confirmation (cocalc gpu account-checks --withdraw).",
+  account_balance_drop:
+    "Your RunPod balance dropped well more than the pods CoCalc runs with this key explain. If you didn't use the account otherwise, check RunPod's Pods and billing pages. When the difference is large, new launches pause until you resume them (cocalc gpu resume). If you also use this RunPod account outside CoCalc, withdraw the account confirmation (cocalc gpu account-checks --withdraw).",
+  account_checks_disabled:
+    "You confirmed this RunPod account is used only by you, for CoCalc, but another key connected to CoCalc uses it too, so CoCalc can't compare the account's spending with your pods. The checks resume once only one key uses the account.",
 };
 
 export type GpuAlertView = GpuAlert;

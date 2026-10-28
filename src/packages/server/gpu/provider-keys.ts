@@ -929,6 +929,8 @@ export interface RunpodCleanupCapability {
   findPodsByName(
     ...args: Parameters<RunpodClient["findPodsByName"]>
   ): ReturnType<RunpodClient["findPodsByName"]>;
+  // the account's balance and spend rate (5d-2b's account checks)
+  getAccountBalance(): ReturnType<RunpodClient["getAccountBalance"]>;
 }
 
 export async function getRunpodCleanupForAccount(
@@ -953,5 +955,6 @@ export async function getRunpodCleanupForAccount(
     terminatePod: (podId: string) => client.terminatePod(podId),
     findPodsByName: (...args: Parameters<RunpodClient["findPodsByName"]>) =>
       client.findPodsByName(...args),
+    getAccountBalance: () => client.getAccountBalance(),
   });
 }

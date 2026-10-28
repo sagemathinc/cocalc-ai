@@ -54,6 +54,7 @@ import {
   INVENTORY_STALE_MS,
   setInventoryWaker,
 } from "@cocalc/server/gpu/budgets";
+import { watchProviderAccount } from "@cocalc/server/gpu/account-watch";
 import {
   acquireWorkerLease,
   every,
@@ -90,7 +91,9 @@ const RECONCILER: Actor = { kind: "reconciler" };
 export type ReconcileCapability = Pick<
   RunpodCleanupCapability,
   "credential_id" | "listPods" | "getPod"
->;
+> &
+  // the account checks (5d-2b), for a confirmed account
+  Partial<Pick<RunpodCleanupCapability, "getAccountBalance">>;
 
 export interface ReconcileDeps {
   now?: () => number;
@@ -258,6 +261,26 @@ export async function reconcileKey(
         db,
       ),
     );
+    // The account checks, in what is left of the pass (only for an account
+    // its owner confirmed). A failure here never undoes the inventory.
+    const balance = raw.getAccountBalance;
+    if (balance) {
+      try {
+        await bounded();
+        await watchProviderAccount(
+          { credential_id, key_owner_account_id },
+          {
+            getAccountBalance: () => within(raw.getAccountBalance!()),
+            now: clock,
+          },
+        );
+      } catch (err) {
+        if (err instanceof LeaseLost) throw err;
+        if (!(err instanceof PassCut)) {
+          log.warn("checking a RunPod account failed", `${err}`);
+        }
+      }
+    }
     return { claimed: true, complete: true, unknown_pods: unknown };
   } catch (err) {
     if (err instanceof PassCut) return await fail({ claimed: true, cut: true });

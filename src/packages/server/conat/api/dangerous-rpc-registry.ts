@@ -41,6 +41,16 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "terminates every pod in the owner's RunPod account and removes the key; checked in reportCompromised",
   },
+  "gpu.accountChecks": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "read-only: whether the owner's RunPod account checks are on, never key material",
+  },
+  "gpu.confirmAccountChecks": {
+    decision: "fresh-auth-required",
+    reason:
+      "turns the RunPod account checks on (they can pause launches) or off (withdrawing a safety check); checked in confirmAccountChecks",
+  },
   "gpu.resume": {
     decision: "fresh-auth-required",
     reason:

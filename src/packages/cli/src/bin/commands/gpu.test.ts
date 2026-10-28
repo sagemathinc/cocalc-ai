@@ -188,6 +188,20 @@ function harness(
             observe();
             return { pod_id: "p1", released_usd: "1.5", warning: "w" };
           },
+          accountChecks: async (args) => {
+            calls.push({ name: "accountChecks", args });
+            observe();
+            return { state: "off", confirmed_at: null, last_checked_at: null };
+          },
+          confirmAccountChecks: async (args) => {
+            calls.push({ name: "confirmAccountChecks", args });
+            observe();
+            return {
+              state: "on",
+              confirmed_at: "2026-10-28T21:00:00.000Z",
+              last_checked_at: null,
+            };
+          },
           reportCompromised: async (args) => {
             calls.push({ name: "reportCompromised", args });
             observe();
@@ -489,6 +503,19 @@ it("the kill switch pauses by default for the account, never for a project, and 
     managed_pods: 0,
     warning: "check RunPod's Pods page once",
   });
+});
+
+it("account-checks shows the state, confirms or withdraws, never both", async () => {
+  const h = harness();
+  await h.run("account-checks");
+  await h.run("account-checks", "--confirm");
+  await h.run("account-checks", "--withdraw");
+  assert.deepEqual(h.calls, [
+    { name: "accountChecks", args: {} },
+    { name: "confirmAccountChecks", args: { confirm: true } },
+    { name: "confirmAccountChecks", args: { confirm: false } },
+  ]);
+  await assert.rejects(h.run("account-checks", "--confirm", "--withdraw"));
 });
 
 it("shows and changes the budget; none removes a limit", async () => {

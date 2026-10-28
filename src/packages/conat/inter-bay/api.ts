@@ -4232,6 +4232,16 @@ export interface InterBayGpuApi {
     confirm_cocalc_only: boolean;
     fresh_auth_verified: boolean;
   }) => Promise<import("@cocalc/util/gpu/types").GpuCompromiseStatus>;
+  // The provider-account checks (5d-2b), and confirming or withdrawing them
+  // (the forwarding bay checked fresh auth).
+  gpuAccountChecks: (opts: {
+    account_id: string;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuAccountChecks>;
+  gpuConfirmAccountChecks: (opts: {
+    account_id: string;
+    confirm: unknown;
+    fresh_auth_verified: boolean;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuAccountChecks>;
   // Lift the kill switch's pause (the forwarding bay checked fresh auth).
   gpuResume: (opts: {
     account_id: string;
@@ -8335,6 +8345,9 @@ export function createInterBayAccountLocalClient({
     gpuSetBudget: async (opts) => await gpuClient.gpuSetBudget(opts),
     gpuKillSwitch: async (opts) => await gpuClient.gpuKillSwitch(opts),
     gpuResume: async (opts) => await gpuClient.gpuResume(opts),
+    gpuAccountChecks: async (opts) => await gpuClient.gpuAccountChecks(opts),
+    gpuConfirmAccountChecks: async (opts) =>
+      await gpuClient.gpuConfirmAccountChecks(opts),
     gpuReportCompromised: async (opts) =>
       await gpuClient.gpuReportCompromised(opts),
     gpuAllowStaleWorkers: async (opts) =>
@@ -8938,6 +8951,9 @@ export function createInterBayAccountLocalHandler({
         gpuSetBudget: async (opts) => await impl.gpuSetBudget(opts),
         gpuKillSwitch: async (opts) => await impl.gpuKillSwitch(opts),
         gpuResume: async (opts) => await impl.gpuResume(opts),
+        gpuAccountChecks: async (opts) => await impl.gpuAccountChecks(opts),
+        gpuConfirmAccountChecks: async (opts) =>
+          await impl.gpuConfirmAccountChecks(opts),
         gpuReportCompromised: async (opts) =>
           await impl.gpuReportCompromised(opts),
         gpuAllowStaleWorkers: async (opts) =>

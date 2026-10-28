@@ -19,6 +19,7 @@ import type {
   GpuBudgetChange,
   GpuAlert,
   GpuAttribution,
+  GpuAccountChecks,
   GpuCompromiseStatus,
   GpuLaunchSpec,
   GpuPodSshInfo,
@@ -76,6 +77,11 @@ export const gpu = {
   releaseQuarantined: authFirstRequireAccountWithBoundSession,
   // CoCalc admins only (checked by the server): this bay's GPU admin alerts
   adminAlerts: authFirstRequireAccount,
+  // the provider-account checks (5d-2b): reading them, and confirming or
+  // withdrawing that the RunPod account is the owner's alone (fresh auth on
+  // the caller's own session; a human decision, never an agent's)
+  accountChecks: authFirstRequireAccount,
+  confirmAccountChecks: authFirstRequireAccountWithBoundSession,
 };
 
 // Set only by the account-or-gpu-agent policy, from verified auth.
@@ -300,6 +306,17 @@ export interface GpuApi {
     session_hash?: string | null;
     confirm_cocalc_only: boolean;
   }) => Promise<GpuCompromiseStatus>;
+  // The provider-account checks (5d-2b): compare the RunPod account's own
+  // spend rate and balance with CoCalc's pods, only for an account the owner
+  // confirms is used only by them, only for CoCalc. confirm: true confirms it
+  // for the connected key (fresh authentication); false withdraws it.
+  accountChecks: (opts?: { account_id?: string }) => Promise<GpuAccountChecks>;
+  confirmAccountChecks: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    confirm: boolean;
+  }) => Promise<GpuAccountChecks>;
   // Lift the kill switch's pause and a safety pause (alerts stay open):
   // fresh authentication.
   resume: (opts?: {
