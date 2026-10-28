@@ -5,8 +5,11 @@
 
 import { db } from "@cocalc/database";
 import getPool from "@cocalc/database/pool";
+import type { PoolClient } from "@cocalc/database/pool";
+import { lockAccountCollaboratorProjection } from "@cocalc/database/postgres/account-collaborator-index";
 import {
   applyProjectEventToAccountCollaboratorIndex,
+  applyRemoteProjectToAccountCollaboratorIndex,
   loadLatestCollaboratorProjectionEvent,
   retryAccountCollaboratorIndexDeadlock,
 } from "@cocalc/database/postgres/account-collaborator-index-projector";
@@ -155,13 +158,96 @@ function sortKeyForFeedProject(opts: {
   );
 }
 
+// The project's users in this account's index before a change, read under
+// the collaborator projection lock so the comparison is current.
+async function indexedProjectUsers(
+  db: PoolClient,
+  account_id: string,
+  project_id: string,
+): Promise<Record<string, any> | null> {
+  const { rows } = await db.query(
+    `SELECT users_summary FROM account_project_index
+      WHERE account_id = $1 AND project_id = $2
+      FOR UPDATE`,
+    [account_id, project_id],
+  );
+  return rows[0]?.users_summary ?? null;
+}
+
+// Apply a change to the account's project index and, in the same
+// transaction, to its collaborators (the owning bay maintains those only for
+// its own accounts). Feed events are published after commit.
+async function withHomeBayProjectChange(
+  account_id: string,
+  project_id: string,
+  change: (db: PoolClient) => Promise<Record<string, any> | null>,
+  event_ts: number,
+): Promise<AccountFeedEvent[]> {
+  return await retryAccountCollaboratorIndexDeadlock(async () => {
+    const client = await getPool().connect();
+    try {
+      await client.query("BEGIN");
+      await lockAccountCollaboratorProjection(client, [account_id]);
+      const previous_users = await indexedProjectUsers(
+        client,
+        account_id,
+        project_id,
+      );
+      const current_users = await change(client);
+      const { feed_events } =
+        await applyRemoteProjectToAccountCollaboratorIndex({
+          db: client,
+          bay_id: getConfiguredBayId() || DEFAULT_BAY_ID,
+          account_id,
+          previous_users,
+          current_users,
+          event_ts,
+        });
+      await client.query("COMMIT");
+      return feed_events;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
+}
+
 export async function applyAccountProjectFeedUpsertOnHomeBay(
   event: AccountFeedProjectUpsertEvent,
 ): Promise<void> {
   const updated_at = new Date(event.ts);
   const last_activity_at =
     parseDate(event.project.last_active?.[event.account_id]) ?? null;
-  await getPool().query(
+  const collaboratorEvents = await withHomeBayProjectChange(
+    event.account_id,
+    event.project.project_id,
+    async (db) => {
+      await upsertIndexedProject(db, event, updated_at, last_activity_at);
+      return event.project.users ?? {};
+    },
+    event.ts,
+  );
+  await publishAccountFeedEventBestEffort({
+    account_id: event.account_id,
+    event,
+  });
+  for (const collaboratorEvent of collaboratorEvents) {
+    await publishAccountFeedEventBestEffort({
+      account_id: event.account_id,
+      event: collaboratorEvent,
+    });
+  }
+}
+
+async function upsertIndexedProject(
+  db: PoolClient,
+  event: AccountFeedProjectUpsertEvent,
+  updated_at: Date,
+  last_activity_at: Date | null,
+): Promise<void> {
+  await db.query(
     `INSERT INTO account_project_index
       (account_id, project_id, owning_bay_id, host_id, rootfs_image_id, title, description,
         theme, labels, users_summary, state_summary, last_edited, last_backup, last_activity_at,
@@ -211,25 +297,35 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
       updated_at,
     ],
   );
-  await publishAccountFeedEventBestEffort({
-    account_id: event.account_id,
-    event,
-  });
 }
 
 export async function applyAccountProjectFeedRemoveOnHomeBay(
   event: AccountFeedProjectRemoveEvent,
 ): Promise<void> {
-  await getPool().query(
-    `DELETE FROM account_project_index
-      WHERE account_id = $1
-        AND project_id = $2`,
-    [event.account_id, event.project_id],
+  const collaboratorEvents = await withHomeBayProjectChange(
+    event.account_id,
+    event.project_id,
+    async (db) => {
+      await db.query(
+        `DELETE FROM account_project_index
+          WHERE account_id = $1
+            AND project_id = $2`,
+        [event.account_id, event.project_id],
+      );
+      return null;
+    },
+    event.ts,
   );
   await publishAccountFeedEventBestEffort({
     account_id: event.account_id,
     event,
   });
+  for (const collaboratorEvent of collaboratorEvents) {
+    await publishAccountFeedEventBestEffort({
+      account_id: event.account_id,
+      event: collaboratorEvent,
+    });
+  }
 }
 
 async function forwardRemoteProjectFeedEventsBestEffort(

@@ -1214,6 +1214,86 @@ describe("project collaborators local bay access", () => {
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
+  it("off mode adds collaborators from other bays' projects after the local ones", async () => {
+    delete process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS;
+    const REMOTE = "66666666-6666-4666-8666-666666666666";
+    queryMock = jest.fn(async () => ({
+      rows: [
+        { account_id: TARGET_ACCOUNT_ID, name: "Local", shared_projects: 2 },
+      ],
+    }));
+    listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => [
+      { account_id: TARGET_ACCOUNT_ID, name: "Projected", shared_projects: 3 },
+      { account_id: REMOTE, name: "Other Bay", shared_projects: 1 },
+    ]);
+    const { listMyCollaborators } = await import("./collaborators");
+    await expect(
+      listMyCollaborators({ account_id: ACCOUNT_ID, limit: 20 }),
+    ).resolves.toEqual([
+      expect.objectContaining({ account_id: TARGET_ACCOUNT_ID, name: "Local" }),
+      expect.objectContaining({ account_id: REMOTE, name: "Other Bay" }),
+    ]);
+    // One this bay has no name for gets it from the cluster directory.
+    listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => [
+      {
+        account_id: REMOTE,
+        name: null,
+        first_name: null,
+        last_name: null,
+        shared_projects: 1,
+      },
+    ]);
+    getClusterAccountsByIdsMock = jest.fn(async () => [
+      { account_id: REMOTE, first_name: "Ada", last_name: "Tester" },
+    ]);
+    await expect(
+      listMyCollaborators({ account_id: ACCOUNT_ID, limit: 20 }),
+    ).resolves.toEqual([
+      expect.objectContaining({ account_id: TARGET_ACCOUNT_ID, name: "Local" }),
+      expect.objectContaining({
+        account_id: REMOTE,
+        name: "Ada Tester",
+        first_name: "Ada",
+        last_name: "Tester",
+      }),
+    ]);
+    // Without the index, the local list as before.
+    listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => {
+      throw Error("no index");
+    });
+    await expect(
+      listMyCollaborators({ account_id: ACCOUNT_ID, limit: 20 }),
+    ).resolves.toEqual([
+      expect.objectContaining({ account_id: TARGET_ACCOUNT_ID, name: "Local" }),
+    ]);
+  });
+
+  it.each(["prefer", "only"])(
+    "%s mode names projected collaborators this bay has no name for",
+    async (mode) => {
+      process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS = mode;
+      const REMOTE = "66666666-6666-4666-8666-666666666666";
+      listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => [
+        {
+          account_id: REMOTE,
+          name: null,
+          first_name: null,
+          last_name: null,
+          shared_projects: 1,
+        },
+      ]);
+      getClusterAccountsByIdsMock = jest.fn(async () => [
+        { account_id: REMOTE, first_name: "Ada", last_name: "Tester" },
+      ]);
+      const { listMyCollaborators } = await import("./collaborators");
+      await expect(
+        listMyCollaborators({ account_id: ACCOUNT_ID, limit: 20 }),
+      ).resolves.toEqual([
+        expect.objectContaining({ account_id: REMOTE, name: "Ada Tester" }),
+      ]);
+    },
+  );
+
   it("uses projection-only collaborator reads in only mode", async () => {
     process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS = "only";
     listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => []);

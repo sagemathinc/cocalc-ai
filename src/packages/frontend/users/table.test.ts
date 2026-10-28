@@ -7,6 +7,7 @@ import { fromJS, Map } from "immutable";
 import { EventEmitter } from "events";
 
 const getSharedAccountDStream = jest.fn();
+const listMyCollaborators = jest.fn();
 let signedIn = false;
 let accountId: string | undefined;
 let userMap = Map<string, any>();
@@ -69,6 +70,11 @@ jest.mock("../webapp-client", () => ({
     conat_client: {
       on: jest.fn(),
       dstream: jest.fn(),
+      hub: {
+        projects: {
+          listMyCollaborators: (...args: any[]) => listMyCollaborators(...args),
+        },
+      },
     },
   },
 }));
@@ -105,6 +111,7 @@ describe("users table helpers", () => {
   beforeEach(async () => {
     jest.resetModules();
     getSharedAccountDStream.mockReset();
+    listMyCollaborators.mockReset();
     signedIn = false;
     accountId = undefined;
     userMap = Map<string, any>();
@@ -188,6 +195,142 @@ describe("users table helpers", () => {
     expect(merged.getIn(["acct-new-collab", "display_name"])).toBe(
       "New Collab",
     );
+  });
+
+  it("adds collaborators from other bays that the snapshot lacks", async () => {
+    signedIn = true;
+    accountId = "acct-me";
+    userMap = fromJS({
+      "acct-local": { first_name: "Local", collaborator: true },
+    }) as Map<string, any>;
+    listMyCollaborators.mockResolvedValue([
+      { account_id: "acct-local", name: "Changed", shared_projects: 1 },
+      {
+        account_id: "acct-remote",
+        first_name: "Ada",
+        last_name: "Tester",
+        last_active: new Date("2026-10-28T00:00:00Z"),
+        shared_projects: 1,
+      },
+      { account_id: "acct-me", name: "Me", shared_projects: 1 },
+    ]);
+    const { addOtherBayCollaborators } = await import("./table");
+    await addOtherBayCollaborators();
+    // The other bay's collaborator, by name, as a collaborator.
+    expect(userMap.getIn(["acct-remote", "collaborator"])).toBe(true);
+    expect(userMap.getIn(["acct-remote", "display_name"])).toBe("Ada Tester");
+    expect(userMap.getIn(["acct-remote", "last_active"])).toEqual(
+      new Date("2026-10-28T00:00:00Z"),
+    );
+    // Snapshot rows and the account itself are left alone.
+    expect(userMap.getIn(["acct-local", "first_name"])).toBe("Local");
+    expect(userMap.getIn(["acct-local", "name"])).toBeUndefined();
+    expect(userMap.has("acct-me")).toBe(false);
+  });
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  }
+  const remoteRow = (account_id: string) => ({
+    account_id,
+    first_name: "Other",
+    last_name: "Bay",
+    shared_projects: 1,
+  });
+
+  it("drops a pending other-bay response after sign-out", async () => {
+    signedIn = true;
+    accountId = "acct-me";
+    const pending = deferred<any[]>();
+    listMyCollaborators.mockReturnValue(pending.promise);
+    const { addOtherBayCollaborators } = await import("./table");
+    const done = addOtherBayCollaborators();
+    // Signed out (the store is cleared) before the answer arrives.
+    signedIn = false;
+    accountId = undefined;
+    userMap = Map<string, any>();
+    pending.resolve([remoteRow("acct-remote")]);
+    await done;
+    expect(userMap.has("acct-remote")).toBe(false);
+  });
+
+  it("keeps one account's pending response out of another's store", async () => {
+    signedIn = true;
+    accountId = "acct-a";
+    const forA = deferred<any[]>();
+    const forB = deferred<any[]>();
+    listMyCollaborators
+      .mockReturnValueOnce(forA.promise)
+      .mockReturnValueOnce(forB.promise);
+    const { addOtherBayCollaborators } = await import("./table");
+    const a = addOtherBayCollaborators();
+    accountId = "acct-b";
+    userMap = Map<string, any>();
+    // B's request is its own, not A's in-flight one.
+    const b = addOtherBayCollaborators();
+    expect(listMyCollaborators).toHaveBeenCalledTimes(2);
+    forA.resolve([remoteRow("acct-of-a")]);
+    forB.resolve([remoteRow("acct-of-b")]);
+    await Promise.all([a, b]);
+    expect(userMap.has("acct-of-a")).toBe(false);
+    expect(userMap.getIn(["acct-of-b", "collaborator"])).toBe(true);
+  });
+
+  it("a remove that arrives while a request is pending wins", async () => {
+    signedIn = true;
+    accountId = "acct-me";
+    const stale = deferred<any[]>();
+    listMyCollaborators
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce([]);
+    const { addOtherBayCollaborators } = await import("./table");
+    const feed = new MockFeed();
+    getSharedAccountDStream.mockResolvedValue(feed);
+    const { recreate_users_table } = await import("./table");
+    recreate_users_table();
+    await flush();
+    await flush();
+    const done = addOtherBayCollaborators();
+    // The server removed them; the event arrives before the old answer.
+    feed.emit("change", {
+      type: "collaborator.remove",
+      account_id: "acct-me",
+      collaborator_account_id: "acct-remote",
+      ts: 1,
+    });
+    stale.resolve([remoteRow("acct-remote")]);
+    await done;
+    // Asked again, and the fresh answer no longer lists them.
+    expect(listMyCollaborators).toHaveBeenCalledTimes(2);
+    expect(userMap.getIn(["acct-remote", "collaborator"])).toBeUndefined();
+  });
+
+  it("a snapshot installed while a request is pending wins", async () => {
+    signedIn = true;
+    accountId = "acct-me";
+    userMap = fromJS({
+      "acct-a": { first_name: "A", collaborator: true },
+    }) as Map<string, any>;
+    const stale = deferred<any[]>();
+    listMyCollaborators
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce([]);
+    const { addOtherBayCollaborators, mergeUsersSnapshot } =
+      await import("./table");
+    const { store } = await import("./store");
+    (store.get as jest.Mock).mockImplementation((key: string) =>
+      key === "user_map" ? userMap : undefined,
+    );
+    const done = addOtherBayCollaborators();
+    // A newer snapshot no longer lists A.
+    userMap = mergeUsersSnapshot(Map() as Map<string, Map<string, any>>);
+    expect(userMap.getIn(["acct-a", "collaborator"])).toBe(false);
+    stale.resolve([remoteRow("acct-a")]);
+    await done;
+    expect(listMyCollaborators).toHaveBeenCalledTimes(2);
+    expect(userMap.getIn(["acct-a", "collaborator"])).toBe(false);
   });
 
   it("does not create the collaborators table before account id is known", async () => {
