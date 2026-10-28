@@ -1285,6 +1285,12 @@ async function startAccountLocalService(): Promise<void> {
       await (
         await import("@cocalc/server/gpu/pods")
       ).listManagedGpuPodsLocal(opts),
+    gpuSshInfo: async (opts) =>
+      await (await import("@cocalc/server/gpu/hostkey")).gpuSshInfoLocal(opts),
+    gpuRegisterHostKey: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/hostkey")
+      ).registerHostKeyLocal(opts),
     computeOwnerResources: async (opts) =>
       (
         await import("@cocalc/server/compute/owner-resource-routing")

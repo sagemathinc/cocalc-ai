@@ -60,6 +60,8 @@ export const GPU_ACTOR_KINDS = [
   "reaper",
   "kill_switch",
   "cleanup",
+  // the pod itself, reporting its SSH host key
+  "pod",
 ] as const;
 export type GpuActorKind = (typeof GPU_ACTOR_KINDS)[number];
 
@@ -75,6 +77,8 @@ export const GPU_POD_ACTIONS = [
   // a new public IP seen for the pod: {public_ip, ports}, so attribution by
   // IP can match the time
   "ip_seen",
+  // the pod reported its SSH host key (or a report was refused with an alert)
+  "host_key",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 
@@ -138,6 +142,35 @@ export interface GpuPodEvent {
   agent_id?: string;
   action: GpuPodAction;
   details?: Record<string, unknown>;
+}
+
+// What a project needs to reach a pod over SSH (gpu.sshInfo).
+export interface GpuPodSshInfo {
+  handle: string;
+  // true once the pod is running and has registered its host key
+  ready: boolean;
+  state: string;
+  host?: string;
+  port?: number;
+  user?: string;
+  // "ssh-ed25519 <base64>", the key the pod registered
+  host_public_key?: string;
+  host_key_fingerprint?: string;
+  ssh_key_fingerprint?: string;
+}
+
+// The answer to a pod's host-key report: a status and a fixed word, never
+// request data.
+export interface GpuHostKeyResult {
+  status: 200 | 400 | 401 | 403 | 409 | 410;
+  result:
+    | "registered"
+    | "invalid"
+    | "unauthorized"
+    | "pod_mismatch"
+    | "key_mismatch"
+    | "not_bound"
+    | "gone";
 }
 
 export interface GpuAttribution {

@@ -92,6 +92,7 @@ function deps(account_id: string, rp = fakeRunpod()) {
         );
         await lockGpuAccountFence(db, id, action);
       },
+      siteUrl: async () => "https://cocalc.test",
     },
     account_id,
   };
@@ -147,6 +148,7 @@ describe("pod handles, fingerprints and the create body", () => {
           volume_gb: 50,
           ports: ["8888/http"],
         },
+        { url: "https://cocalc.test/gpu/pod-host-key", token: "ccr1.t" },
       ),
     ).toEqual({
       name: "cc-7f3k9q2x",
@@ -157,8 +159,28 @@ describe("pod handles, fingerprints and the create body", () => {
       disk: 30,
       mounts: { persistent: { size: 50, path: "/workspace" } },
       ports: ["8888/http", "22/tcp"],
-      env: { EPOCHS: "3", PUBLIC_KEY: SSH_KEY },
+      // the key without its comment, and the one-time registration
+      env: {
+        EPOCHS: "3",
+        PUBLIC_KEY: SSH_KEY.split(" ").slice(0, 2).join(" "),
+        CC_HOSTKEY_URL: "https://cocalc.test/gpu/pod-host-key",
+        CC_HOSTKEY_TOKEN: "ccr1.t",
+      },
+      // hardens sshd before it starts, then runs the image's own start
+      entrypoint: ["/bin/bash", "-c"],
+      cmd: [expect.stringContaining("exec '/start.sh'")],
     });
+  });
+
+  it("won't make a body for an SSH pod without its registration", () => {
+    expect(() =>
+      buildRunpodCreateBody({ handle: "cc-7f3k9q2x" }, SPEC),
+    ).toThrow("host-key registration");
+    // a pod without SSH keeps the image's own start
+    const { ssh_public_key: _k, ...noSsh } = SPEC;
+    const body = buildRunpodCreateBody({ handle: "cc-7f3k9q2x" }, noSsh);
+    expect(body.cmd).toBeUndefined();
+    expect(body.env).toEqual({ EPOCHS: "3" });
   });
 });
 

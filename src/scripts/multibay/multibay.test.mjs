@@ -13,7 +13,7 @@
 // MULTIBAY_KEEP=1 keeps the cluster's directory (logs, databases) afterwards.
 
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -4976,4 +4976,113 @@ describe("GPU budgets are read and changed on the key owner's home bay", () => {
     );
     for (const m of r) assert.match(m, /homed on|home bay/);
   });
+});
+
+describe("a pod's host key is registered on the bay that minted its token", () => {
+  // The pod reports to whichever bay its load balancer picks; that bay
+  // forwards to the token's bay (bay-1, bob's home), the only one that can
+  // check it.
+  const POD_ID = "00000000-1000-4000-8000-00000000f002";
+  const HANDLE = "cc-hkey2345hkey2345";
+  const PROVIDER_POD_ID = "mbayhostkeypod1";
+  let token;
+
+  function ed25519Line() {
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32);
+    const field = (b) => {
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(b.length);
+      return Buffer.concat([len, b]);
+    };
+    const blob = Buffer.concat([field(Buffer.from("ssh-ed25519")), field(raw)]);
+    return `ssh-ed25519 ${blob.toString("base64")}`;
+  }
+  const HOST_KEY = ed25519Line();
+
+  async function reportFromSeed(host_public_key, pod_id = PROVIDER_POD_ID) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const { parseHostkeyToken } = server("gpu/hostkey-token.js");
+       const { createInterBayAccountLocalClient } = require("@cocalc/conat/inter-bay/api");
+       const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+       const t = parseHostkeyToken(${JSON.stringify(token)});
+       return await createInterBayAccountLocalClient({
+         client: getInterBayFabricClient(),
+         dest_bay: t.authority_bay_id,
+         timeout: 15000,
+       }).gpuRegisterHostKey({ token: t, pod_id: ${JSON.stringify(pod_id)}, host_public_key: ${JSON.stringify(host_public_key)} });`,
+    );
+  }
+
+  before(async () => {
+    token = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const { newHostkeyToken } = server("gpu/hostkey-token.js");
+       const { upsertExternalCredential } = server("external-credentials/store.js");
+       // the stored key that launched the pod (a report needs it active)
+       const { id: credential_id } = await upsertExternalCredential({
+         selector: { provider: "runpod", kind: "gpu-provider-api-key", scope: "account", owner_account_id: ${JSON.stringify(bob.account_id)} },
+         payload: "rpa_MULTIBAYHOSTKEY0123456789abcdefghijklmnopq",
+         metadata: { source: "multibay-test" },
+       });
+       const t = newHostkeyToken(${JSON.stringify(ATTACHED)});
+       await getPool().query(
+         "INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider, beneficiary_account_id, spec, gpu_type_id, gpu_count, cloud, state, desired_state, max_runtime_minutes, deadline, provider_pod_id, hostkey_token_id, hostkey_verifier, hostkey_expires) VALUES ($1, $2, $3, $7, 'runpod', $3, '{}', 'NVIDIA RTX A4000', 1, 'SECURE', 'running', 'running', 30, now() + interval '30 minutes', $4, $5, $6, now() + interval '30 minutes')",
+         [${JSON.stringify(POD_ID)}, ${JSON.stringify(HANDLE)}, ${JSON.stringify(bob.account_id)}, ${JSON.stringify(PROVIDER_POD_ID)}, t.token_id, t.verifier, credential_id],
+       );
+       return t.token;`,
+    );
+  });
+
+  it("answers bob's SSH lookup from his home bay, not ready before registration", async () => {
+    const r = await runInBay(
+      cluster,
+      SEED,
+      `return await server("gpu/hostkey.js").gpuSshInfo({ account_id: ${JSON.stringify(bob.account_id)}, pod_id: ${JSON.stringify(HANDLE)} });`,
+    );
+    // Not registered yet, so there is nothing to hand out (and no RunPod call).
+    assert.equal(r.handle, HANDLE);
+    assert.equal(r.state, "running");
+    assert.equal(r.ready, false);
+  });
+
+  it("refuses the token on a bay that didn't mint it", async () => {
+    const r = await runInBay(
+      cluster,
+      SEED,
+      `const { parseHostkeyToken } = server("gpu/hostkey-token.js");
+       return await server("gpu/hostkey.js").registerHostKeyLocal({ token: parseHostkeyToken(${JSON.stringify(token)}), pod_id: ${JSON.stringify(PROVIDER_POD_ID)}, host_public_key: ${JSON.stringify(HOST_KEY)} });`,
+    );
+    assert.deepEqual(r, { status: 401, result: "unauthorized" });
+  });
+
+  it("registers a report forwarded from the seed, once", async () => {
+    assert.deepEqual(await reportFromSeed(HOST_KEY), {
+      status: 200,
+      result: "registered",
+    });
+    // A retry of the same report is fine; a different key is not.
+    assert.deepEqual(await reportFromSeed(HOST_KEY), {
+      status: 200,
+      result: "registered",
+    });
+    assert.deepEqual(await reportFromSeed(ed25519Line()), {
+      status: 409,
+      result: "key_mismatch",
+    });
+    const home = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const { rows } = await getPool().query("SELECT host_public_key FROM gpu_pods WHERE id = $1", [${JSON.stringify(POD_ID)}]);
+       const ev = await getPool().query("SELECT details FROM gpu_pod_events WHERE pod_id = $1 AND action = 'host_key' ORDER BY at", [${JSON.stringify(POD_ID)}]);
+       return { key: rows[0].host_public_key, alerts: ev.rows.map((e) => e.details.alert ?? null) };`,
+    );
+    assert.deepEqual(home, { key: HOST_KEY, alerts: [null, "host_key_mismatch"] });
+  });
+
 });

@@ -1201,9 +1201,14 @@ ORDER BY updated DESC NULLS LAST, created DESC NULLS LAST
 export async function revokeExternalCredential({
   id,
   owner_account_id,
+  alsoOnRevoke,
 }: {
   id: string;
   owner_account_id?: string;
+  // Runs in the revoking transaction, under the selector lock, only when
+  // this call revokes the row: what depends on the credential ends with it,
+  // or neither happens.
+  alsoOnRevoke?: (client: PoolClient) => Promise<void>;
 }): Promise<boolean> {
   const client = await pool().connect();
   try {
@@ -1253,6 +1258,7 @@ WHERE id=$1
       `,
       [id, owner_account_id ?? null],
     );
+    if (rowCount && alsoOnRevoke) await alsoOnRevoke(client);
     await client.query("COMMIT");
     return !!rowCount;
   } catch (err) {

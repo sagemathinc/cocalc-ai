@@ -21,6 +21,16 @@ import type {
 } from "@cocalc/util/gpu/types";
 import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
 import {
+  adoptLaunchedKey,
+  connectGpuPod,
+  DEFAULT_POD_PYTHON,
+  disconnectGpuPod,
+  discardLaunchKey,
+  newLaunchKey,
+  settleLaunchKey,
+  type GpuConnectDeps,
+} from "../core/gpu-connect";
+import {
   GPU_POD_WRITE_RPC_TIMEOUT_MS,
   GPU_READ_TIMEOUT_MS,
 } from "@cocalc/util/gpu/runpod";
@@ -50,6 +60,8 @@ export async function withGpuReadTimeout<T>(
 
 export interface GpuCommandDeps {
   withContext: any;
+  // for tests: where pod keys live, and how reflect runs
+  connect?: GpuConnectDeps;
 }
 
 function collect(value: string, values: string[] = []): string[] {
@@ -297,6 +309,10 @@ export function registerGpuCommand(
       "non-secret environment variable (repeatable)",
       (v: string, a: string[] = []) => [...a, v],
     )
+    .option(
+      "--ssh",
+      "make the pod's SSH key here, so `cocalc gpu connect` can reach it from this project",
+    )
     .option("--ssh-public-key <key>", "the pod's own ssh-ed25519 public key")
     .action(async (opts, command: Command) =>
       run(
@@ -307,10 +323,29 @@ export function registerGpuCommand(
           if (!project_id) {
             throw new Error("--project is required outside a project");
           }
-          const pod = await api.launch({
-            project_id,
-            spec: launchSpecFromOptions(opts),
-          });
+          if (opts.ssh && opts.sshPublicKey) {
+            throw new Error("use --ssh or --ssh-public-key, not both");
+          }
+          const spec = launchSpecFromOptions(opts);
+          // The private key stays here; the launch gets only the public key.
+          const key = opts.ssh ? await newLaunchKey(deps.connect) : undefined;
+          if (key) spec.ssh_public_key = key.publicKey;
+          let pod: Awaited<ReturnType<typeof api.launch>>;
+          try {
+            pod = await api.launch({ project_id, spec });
+          } catch (err) {
+            // Kept without an answer (`connect` adopts it by fingerprint if
+            // the pod was made after all); otherwise adopted or removed.
+            if (key) await settleLaunchKey(api, key, err, deps.connect);
+            throw err;
+          }
+          if (key) {
+            if (pod.state === "failed") {
+              await discardLaunchKey(key, deps.connect);
+            } else {
+              await adoptLaunchedKey(key, pod.handle, deps.connect);
+            }
+          }
           return isJson(ctx) ? pod : podRecordRow(pod);
         },
         GPU_POD_WRITE_RPC_TIMEOUT_MS,
@@ -326,7 +361,52 @@ export function registerGpuCommand(
       run(
         command,
         "terminate",
-        async (api) => await api.terminate({ pod_id: pod }),
+        async (api) => {
+          const result = await api.terminate({ pod_id: pod });
+          // Forget its kernel and SSH alias here too, if this project had
+          // them. The pod is gone either way, so this never fails the command.
+          try {
+            const { handle, ssh_key_fingerprint } = await api.sshInfo({
+              pod_id: pod,
+            });
+            await disconnectGpuPod(handle, deps.connect, ssh_key_fingerprint);
+          } catch {}
+          return result;
+        },
+        GPU_POD_WRITE_RPC_TIMEOUT_MS,
+      ),
+    );
+
+  gpu
+    .command("connect <pod>")
+    .description(
+      "reach a pod launched from this project with --ssh: once it has registered its SSH host key, write the ssh alias (the pod's handle) with that key pinned, and register a remote Jupyter kernel on it",
+    )
+    .option(
+      "--wait <seconds>",
+      "how long to wait for the pod to register its host key (default 300)",
+      positiveNumber("--wait", true),
+    )
+    .option("--no-kernel", "only write the ssh alias")
+    .option(
+      "--python <path>",
+      `the pod's Python for the kernel (default ${DEFAULT_POD_PYTHON})`,
+    )
+    .action(async (pod: string, opts, command: Command) =>
+      run(
+        command,
+        "connect",
+        async (api) =>
+          await connectGpuPod(
+            api,
+            pod,
+            {
+              waitSeconds: opts.wait,
+              kernel: opts.kernel,
+              python: opts.python,
+            },
+            deps.connect,
+          ),
         GPU_POD_WRITE_RPC_TIMEOUT_MS,
       ),
     );
