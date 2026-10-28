@@ -180,6 +180,22 @@ export interface GpuPodsResult {
   live_error?: string;
 }
 
+// One bay's GPU admin alert (5d-2).
+export interface GpuAdminAlert {
+  bay_id: string;
+  id: string;
+  kind: string;
+  severity: string;
+  dedupe_key: string;
+  key_owner_account_id: string | null;
+  credential_id: string | null;
+  details: Record<string, unknown> | null;
+  opened: string;
+  last_seen: string;
+  resolved_at: string | null;
+  emailed_at: string | null;
+}
+
 export interface GpuApi {
   catalog: (opts?: GpuReadOpts) => Promise<GpuCatalogResult>;
   availability: (
@@ -323,26 +339,17 @@ export interface GpuApi {
     account_id?: string;
     id: string;
   }) => Promise<GpuAlert>;
-  // CoCalc admins: this bay's GPU admin alerts (5d-2), e.g. billing that
-  // couldn't be applied; never key material.
+  // CoCalc admins: GPU admin alerts (5d-2), e.g. billing that couldn't be
+  // applied; never key material. Every bay's, or only bay_id's; a bay that
+  // couldn't be read is listed in errors.
   adminAlerts: (opts?: {
     account_id?: string;
     include_resolved?: boolean;
-  }) => Promise<
-    {
-      id: string;
-      kind: string;
-      severity: string;
-      dedupe_key: string;
-      key_owner_account_id: string | null;
-      credential_id: string | null;
-      details: Record<string, unknown> | null;
-      opened: string;
-      last_seen: string;
-      resolved_at: string | null;
-      emailed_at: string | null;
-    }[]
-  >;
+    bay_id?: string;
+  }) => Promise<{
+    alerts: GpuAdminAlert[];
+    errors: { bay_id: string; error: string }[];
+  }>;
   // Release the budget held for a pod whose create CoCalc couldn't confirm
   // (or that a forced removal left unmanaged): fresh authentication.
   releaseQuarantined: (opts: {

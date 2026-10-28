@@ -1236,13 +1236,15 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     .description("GPU bring-your-own-key administration")
     .command("alerts")
     .description(
-      "this bay's GPU admin alerts (billing that couldn't be applied; decrypt audit): never key material",
+      "GPU admin alerts on every bay (billing that couldn't be applied; decrypt audit): never key material",
     )
     .option("--all", "also recently resolved alerts")
-    .action(async (opts: { all?: boolean }, command: Command) => {
+    .option("--bay <bay-id>", "only this bay; defaults to all bays")
+    .action(async (opts: { all?: boolean; bay?: string }, command: Command) => {
       await withContext(command, "admin gpu alerts", async (ctx) => {
         return await ctx.hub.gpu.adminAlerts({
           ...(opts.all ? { include_resolved: true } : {}),
+          ...(opts.bay?.trim() ? { bay_id: opts.bay.trim() } : {}),
         });
       });
     });

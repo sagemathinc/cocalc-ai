@@ -272,5 +272,6 @@ export async function adminAlerts(
   return await listAdminAlertsLocal({
     account_id: opts?.account_id,
     include_resolved: opts?.include_resolved,
+    bay_id: opts?.bay_id,
   });
 }

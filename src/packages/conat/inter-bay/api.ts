@@ -60,6 +60,7 @@ import type {
 } from "@cocalc/conat/hub/api/admin-crashes";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
+import type { GpuAdminAlert } from "@cocalc/conat/hub/api/gpu";
 import type {
   ScheduledCollectionExpiryRepairRequest,
   ScheduledCollectionExpiryRepairResponse,
@@ -2923,6 +2924,7 @@ export type BayOpsMethod =
   | "get-membership-analytics-events"
   | "backfill-membership-analytics-purchases"
   | "get-webapp-crashes"
+  | "get-gpu-admin-alerts"
   | "set-webapp-crash-resolution"
   | "set-server-setting"
   | "set-site-settings"
@@ -4837,6 +4839,10 @@ export interface InterBayBayOpsApi {
   setWebappCrashResolution: (
     opts: AdminCrashLocalResolutionRequest,
   ) => Promise<AdminCrashLocalResolutionResponse>;
+  // this bay's GPU admin alerts (the caller checked the admin)
+  getGpuAdminAlerts: (opts: {
+    include_resolved?: boolean;
+  }) => Promise<GpuAdminAlert[]>;
   setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
   checkCloudflareBlobEnvironment: () => Promise<{ ok: boolean }>;
   setSiteSettings: (
@@ -11551,6 +11557,15 @@ export function createInterBayBayOpsClient({
       method: "get-webapp-crashes",
     }),
   });
+  const gpuAdminAlertsClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getGpuAdminAlerts">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-gpu-admin-alerts",
+    }),
+  });
   const webappCrashResolutionClient = createServiceClient<
     Pick<InterBayBayOpsApi, "setWebappCrashResolution">
   >({
@@ -11646,6 +11661,8 @@ export function createInterBayBayOpsClient({
       await webappCrashesClient.getWebappCrashes(opts),
     setWebappCrashResolution: async (opts) =>
       await webappCrashResolutionClient.setWebappCrashResolution(opts),
+    getGpuAdminAlerts: async (opts) =>
+      await gpuAdminAlertsClient.getGpuAdminAlerts(opts),
     setServerSetting: async (opts) =>
       await setServerSettingClient.setServerSetting(opts),
     checkCloudflareBlobEnvironment: async () =>
@@ -12145,6 +12162,17 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         getWebappCrashes: async (opts) => await impl.getWebappCrashes(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getGpuAdminAlerts">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-gpu-admin-alerts",
+      }),
+      impl: {
+        getGpuAdminAlerts: async (opts) => await impl.getGpuAdminAlerts(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "setWebappCrashResolution">>({

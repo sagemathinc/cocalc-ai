@@ -342,7 +342,7 @@ describeRealPostgres("GPU billing and the state ledger, concurrently", () => {
     });
     // a claim left by a dead hub is taken over once it expires
     await getPool().query(
-      `UPDATE gpu_admin_alerts SET email_attempts = 0, email_claim = $2,
+      `UPDATE gpu_admin_alerts SET email_attempts = 0, email_next_at = NULL, email_claim = $2,
               email_claimed_until = now() + interval '1 hour' WHERE id = $1`,
       [id, randomUUID()],
     );

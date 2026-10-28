@@ -842,6 +842,10 @@ async function startBayOpsService(): Promise<void> {
     getWebappCrashes: async (opts) => await readWebappCrashesLocal(opts),
     setWebappCrashResolution: async (opts) =>
       await setWebappCrashResolutionLocal(opts),
+    getGpuAdminAlerts: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/admin-alerts")
+      ).readAdminAlertsLocal(opts),
     setServerSetting: async (opts) => {
       if (
         bay_id !== getConfiguredClusterSeedBayId() &&

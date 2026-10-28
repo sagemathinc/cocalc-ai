@@ -14,6 +14,8 @@ loses an alert. Never key material.
 import { randomUUID } from "node:crypto";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import type { GpuAdminAlert } from "@cocalc/conat/hub/api/gpu";
 import type {
   GPU_ADMIN_ALERT_KINDS,
   GPU_ALERT_SEVERITIES,
@@ -60,7 +62,9 @@ export async function raiseAdminAlert(
                    email_claim = CASE WHEN ${RANK("EXCLUDED.severity")} > ${RANK("gpu_admin_alerts.severity")}
                                       THEN NULL ELSE gpu_admin_alerts.email_claim END,
                    email_claimed_until = CASE WHEN ${RANK("EXCLUDED.severity")} > ${RANK("gpu_admin_alerts.severity")}
-                                              THEN NULL ELSE gpu_admin_alerts.email_claimed_until END`,
+                                              THEN NULL ELSE gpu_admin_alerts.email_claimed_until END,
+                   email_next_at = CASE WHEN ${RANK("EXCLUDED.severity")} > ${RANK("gpu_admin_alerts.severity")}
+                                        THEN NULL ELSE gpu_admin_alerts.email_next_at END`,
     [
       randomUUID(),
       a.kind,
@@ -90,8 +94,9 @@ export interface AdminAlertEmail {
 class ClaimLost extends Error {}
 
 // The email projection: every open alert not yet emailed goes to every
-// admin, retried with backoff (attempts x 5 min, at most an hour) until it
-// has gone to all of them.
+// admin, retried with backoff (attempts x 5 min after the failed attempt,
+// at most an hour; an escalation is due at once) until it has gone to all
+// of them.
 // - Alerts are claimed one at a time, just before they are sent (a durable
 //   claim, across hubs: one sends, the others skip it until it expires).
 // - Before each send the claim is renewed and the alert re-read, so what
@@ -127,7 +132,7 @@ export async function projectAdminAlertEmails({
         WHERE id = (
           SELECT id FROM gpu_admin_alerts
            WHERE emailed_at IS NULL AND resolved_at IS NULL
-             AND last_seen + make_interval(mins => LEAST(5 * email_attempts, 60)) <= now()
+             AND (email_next_at IS NULL OR email_next_at <= now())
              AND (email_claimed_until IS NULL OR email_claimed_until < now())
            ORDER BY opened LIMIT 1
            FOR UPDATE SKIP LOCKED)
@@ -172,6 +177,7 @@ export async function projectAdminAlertEmails({
                     email_claimed_until = NULL
               WHERE id = $1 AND email_claim = $2 RETURNING id`
           : `UPDATE gpu_admin_alerts SET email_attempts = email_attempts + 1,
+                    email_next_at = now() + make_interval(mins => LEAST(5 * (email_attempts + 1), 60)),
                     email_claim = NULL, email_claimed_until = NULL
               WHERE id = $1 AND email_claim = $2 RETURNING id`,
         [id, claim],
@@ -222,48 +228,30 @@ export async function emailAdminAboutAlert(
 ): Promise<void> {
   const { default: sendEmail } =
     await import("@cocalc/server/email/send-email");
+  const bay = getConfiguredBayId();
   const subject = `CoCalc GPU admin alert (${alert.severity}): ${alert.kind}`;
-  const text = `${subject}\nOpened: ${new Date(alert.opened).toISOString()}\nDetails: ${JSON.stringify(alert.details ?? {})}\n\nSee: cocalc admin gpu alerts`;
+  const text = `${subject}\nBay: ${bay}\nOpened: ${new Date(alert.opened).toISOString()}\nDetails: ${JSON.stringify(alert.details ?? {})}\n\nSee: cocalc admin gpu alerts --bay ${bay}`;
   const html = `<pre>${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`;
   await sendEmail({ to, subject, text, html });
 }
 
-export interface GpuAdminAlertView {
-  id: string;
-  kind: string;
-  severity: string;
-  dedupe_key: string;
-  key_owner_account_id: string | null;
-  credential_id: string | null;
-  details: Record<string, unknown> | null;
-  opened: string;
-  last_seen: string;
-  resolved_at: string | null;
-  emailed_at: string | null;
-}
+const INTER_BAY_TIMEOUT_MS = 20_000;
 
-// CoCalc admins only: this bay's GPU admin alerts (open ones, or recent).
-export async function listAdminAlertsLocal(
-  opts: { account_id?: string; include_resolved?: boolean },
-  deps: { isAdmin?: (account_id: string) => Promise<boolean> } = {},
-): Promise<GpuAdminAlertView[]> {
-  const account_id = opts.account_id;
-  const admin = account_id
-    ? await (
-        deps.isAdmin ??
-        (async (a: string) =>
-          (await import("@cocalc/server/accounts/is-admin")).default(a))
-      )(account_id)
-    : false;
-  if (!admin) throw Error("Only an admin can read GPU admin alerts.");
+// This bay's GPU admin alerts (open ones, or recent): callers check the
+// admin (the hub API, or the bay that asked over inter-bay).
+export async function readAdminAlertsLocal(opts: {
+  include_resolved?: boolean;
+}): Promise<GpuAdminAlert[]> {
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_admin_alerts
       WHERE ($1::boolean OR resolved_at IS NULL)
       ORDER BY (resolved_at IS NULL) DESC, opened DESC LIMIT 200`,
     [opts.include_resolved === true],
   );
+  const bay_id = getConfiguredBayId();
   const iso = (d: any) => (d == null ? null : new Date(d).toISOString());
   return rows.map((r: any) => ({
+    bay_id,
     id: r.id,
     kind: r.kind,
     severity: r.severity,
@@ -276,4 +264,74 @@ export async function listAdminAlertsLocal(
     resolved_at: iso(r.resolved_at),
     emailed_at: iso(r.emailed_at),
   }));
+}
+
+// CoCalc admins only: every bay's GPU admin alerts, or only bay_id's (each
+// bay keeps its own; an email names its bay).
+export async function listAdminAlertsLocal(
+  opts: { account_id?: string; include_resolved?: boolean; bay_id?: string },
+  deps: {
+    isAdmin?: (account_id: string) => Promise<boolean>;
+    bays?: () => Promise<string[]>;
+    readBay?: (
+      bay_id: string,
+      opts: { include_resolved?: boolean },
+    ) => Promise<GpuAdminAlert[]>;
+  } = {},
+): Promise<{
+  alerts: GpuAdminAlert[];
+  errors: { bay_id: string; error: string }[];
+}> {
+  const account_id = opts.account_id;
+  const admin = account_id
+    ? await (
+        deps.isAdmin ??
+        (async (a: string) =>
+          (await import("@cocalc/server/accounts/is-admin")).default(a))
+      )(account_id)
+    : false;
+  if (!admin) throw Error("Only an admin can read GPU admin alerts.");
+  const configured = await (deps.bays ?? configuredBays)();
+  const wanted = `${opts.bay_id ?? ""}`.trim();
+  if (wanted && !configured.includes(wanted)) {
+    throw Error(`unknown or unavailable bay '${wanted}'`);
+  }
+  const read = deps.readBay ?? readBay;
+  const query = { include_resolved: opts.include_resolved === true };
+  const alerts: GpuAdminAlert[] = [];
+  const errors: { bay_id: string; error: string }[] = [];
+  await Promise.all(
+    (wanted ? [wanted] : configured).map(async (bay_id) => {
+      try {
+        alerts.push(...(await read(bay_id, query)));
+      } catch (err) {
+        errors.push({ bay_id, error: `${err}`.slice(0, 500) });
+      }
+    }),
+  );
+  alerts.sort(
+    (a, b) =>
+      Number(a.resolved_at != null) - Number(b.resolved_at != null) ||
+      b.opened.localeCompare(a.opened),
+  );
+  errors.sort((a, b) => a.bay_id.localeCompare(b.bay_id));
+  return { alerts, errors };
+}
+
+async function configuredBays(): Promise<string[]> {
+  const { listConfiguredBays } = await import("@cocalc/server/bay-directory");
+  return [
+    ...new Set((await listConfiguredBays()).map(({ bay_id }) => bay_id)),
+  ].sort();
+}
+
+async function readBay(
+  bay_id: string,
+  opts: { include_resolved?: boolean },
+): Promise<GpuAdminAlert[]> {
+  if (bay_id === getConfiguredBayId()) return await readAdminAlertsLocal(opts);
+  const { getInterBayBridge } = await import("@cocalc/server/inter-bay/bridge");
+  return await getInterBayBridge()
+    .bayOps(bay_id, { timeout_ms: INTER_BAY_TIMEOUT_MS })
+    .getGpuAdminAlerts(opts);
 }

@@ -842,14 +842,98 @@ describeDb("GPU billing reconciliation", () => {
           { isAdmin: async () => false },
         ),
       ).rejects.toThrow("Only an admin");
-      expect(
-        Array.isArray(
-          await listAdminAlertsLocal(
-            { account_id: randomUUID() },
-            { isAdmin: async () => true },
-          ),
+      const local = await listAdminAlertsLocal(
+        { account_id: randomUUID() },
+        { isAdmin: async () => true, bays: async () => ["bay-0"] },
+      );
+      expect(Array.isArray(local.alerts)).toBe(true);
+      expect(local.errors).toEqual([]);
+    });
+
+    it("an admin reads every bay's alerts, or one bay's; a bay that can't answer is listed", async () => {
+      const alert = (bay_id: string, opened: string) =>
+        ({ bay_id, id: randomUUID(), opened, resolved_at: null }) as any;
+      const deps = {
+        isAdmin: async () => true,
+        bays: async () => ["bay-0", "bay-1", "bay-2"],
+        readBay: async (bay_id: string) => {
+          if (bay_id === "bay-2") throw Error("unreachable");
+          return [
+            alert(bay_id, bay_id === "bay-0" ? "2026-10-01" : "2026-10-02"),
+          ];
+        },
+      };
+      const all = await listAdminAlertsLocal(
+        { account_id: randomUUID() },
+        deps,
+      );
+      expect(all.alerts.map((a) => a.bay_id)).toEqual(["bay-1", "bay-0"]);
+      expect(all.errors).toEqual([
+        { bay_id: "bay-2", error: "Error: unreachable" },
+      ]);
+      const one = await listAdminAlertsLocal(
+        { account_id: randomUUID(), bay_id: "bay-1" },
+        deps,
+      );
+      expect(one.alerts.map((a) => a.bay_id)).toEqual(["bay-1"]);
+      await expect(
+        listAdminAlertsLocal(
+          { account_id: randomUUID(), bay_id: "bay-9" },
+          deps,
         ),
-      ).toBe(true);
+      ).rejects.toThrow("unknown or unavailable bay");
+    });
+
+    it("a failed email waits its backoff from the failed attempt, however old the alert", async () => {
+      const key = randomUUID();
+      await raiseAdminAlert({
+        kind: "billing_inconsistent",
+        severity: "warning",
+        dedupe_key: key,
+      });
+      const { rows } = await getPool().query(
+        "UPDATE gpu_admin_alerts SET last_seen = now() - interval '1 day' WHERE dedupe_key = $1 RETURNING id",
+        [key],
+      );
+      const id = rows[0].id;
+      let attempts = 0;
+      const failing = {
+        recipients: async () => [
+          { account_id: "a1", email_address: "a1@example.com" },
+        ],
+        send: async (a: any) => {
+          if (a.id !== id) return;
+          attempts += 1;
+          throw Error("smtp down");
+        },
+      };
+      await projectAdminAlertEmails(failing);
+      expect(attempts).toBe(1);
+      await projectAdminAlertEmails(failing);
+      expect(attempts).toBe(1);
+      const next = async () =>
+        (
+          await getPool().query(
+            "SELECT email_attempts, email_next_at - now() > interval '4 minutes' AS later FROM gpu_admin_alerts WHERE id = $1",
+            [id],
+          )
+        ).rows[0];
+      expect(await next()).toEqual({ email_attempts: 1, later: true });
+      // due once the delay has passed
+      await getPool().query(
+        "UPDATE gpu_admin_alerts SET email_next_at = now() - interval '1 second' WHERE id = $1",
+        [id],
+      );
+      await projectAdminAlertEmails(failing);
+      expect(attempts).toBe(2);
+      // an escalation is due at once
+      await raiseAdminAlert({
+        kind: "billing_inconsistent",
+        severity: "critical",
+        dedupe_key: key,
+      });
+      await projectAdminAlertEmails(failing);
+      expect(attempts).toBe(3);
     });
 
     it("admin alerts are deduped, and their email is retried until it goes out", async () => {
@@ -902,7 +986,7 @@ describeDb("GPU billing reconciliation", () => {
       // backoff: retried once 5 min have passed, only to the admin who
       // didn't get it
       await getPool().query(
-        "UPDATE gpu_admin_alerts SET last_seen = now() - interval '10 minutes' WHERE dedupe_key = $1",
+        "UPDATE gpu_admin_alerts SET email_next_at = now() - interval '1 second' WHERE dedupe_key = $1",
         [key],
       );
       failA2 = false;

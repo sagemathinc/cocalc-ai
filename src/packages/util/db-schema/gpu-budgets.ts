@@ -575,6 +575,8 @@ Table({
     // the hub sending its email now (one at a time, across hubs)
     email_claim: { type: "string", pg_type: "varchar(64)" },
     email_claimed_until: { type: "timestamp" },
+    // after a failed attempt, not retried before this (null: due now)
+    email_next_at: { type: "timestamp" },
   },
 });
 
