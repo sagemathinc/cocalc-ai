@@ -483,8 +483,17 @@ export async function launchGpuPodLocal(
   const cloud = spec.cloud ?? "SECURE";
 
   // The estimate the budget reserves: RunPod's list price for the pod. It is
-  // read before the fence, so no network call is made under it; the launch
-  // then uses the key read under the fence, which must be the same one.
+  // read outside the transaction, so no network call is made under the
+  // fence; the launch then uses the key read under the fence, which must be
+  // the same one. The key is read only after passing the fence once, so a
+  // launch that waited behind a rehome cutover reads no key.
+  await inTransaction((db) =>
+    (deps.accountWriteFence ?? lockGpuAccountFence)(
+      db,
+      account_id,
+      "launch a GPU",
+    ),
+  );
   const priced = await loadLaunchAccess(account_id, deps);
   let perGpu: number | undefined;
   try {

@@ -166,6 +166,24 @@ describeDb("GPU pods", () => {
     await syncGpuTables();
   });
 
+  it("refuses a launch whose key changed between pricing and the fence, recording nothing", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    // a different key at each read
+    d.getLaunchAccess = async () => ({
+      client: rp.client as any,
+      credential_id: randomUUID(),
+    });
+    await expect(
+      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+    ).rejects.toThrow("Your RunPod API key changed during the launch");
+    expect(rp.client.createPod).not.toHaveBeenCalled();
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_pods WHERE key_owner_account_id = $1",
+      [account_id],
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
   it("records the intent, creates the pod by its handle, and binds it", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
