@@ -336,10 +336,10 @@ export async function launchGpuPodLocal(
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary> {
   const account_id = requireAccount(opts.account_id);
+  await requireHomeBay(account_id, deps);
   const project_id = `${opts.project_id ?? ""}`;
   if (!isValidUUID(project_id)) throw Error("A launch needs a project.");
   const spec = normalizeGpuLaunchSpec(opts.spec);
-  await requireHomeBay(account_id, deps);
   if (
     !(await (deps.isProjectCollaborator ?? isProjectCollaborator)(
       account_id,

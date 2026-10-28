@@ -4845,3 +4845,89 @@ describe("connecting and removing a GPU key runs whole on the owner's home bay",
     assert.equal(status.connected, false);
   });
 });
+
+describe("GPU pods are recorded and managed on the key owner's home bay", () => {
+  // A pod record for bob on his home bay (the attached bay), as a launch
+  // leaves it before RunPod answers. Every call below starts on the seed.
+  const POD_ID = "00000000-1000-4000-8000-00000000f001";
+  const HANDLE = "cc-mbay2345";
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const pods = server("gpu/pods.js");
+       const account_id = ${JSON.stringify(bob.account_id)};
+       ${body}`,
+    );
+  }
+
+  before(async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       await getPool().query(
+         "INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider, beneficiary_account_id, spec, gpu_type_id, gpu_count, cloud, state, desired_state, max_runtime_minutes, deadline) VALUES ($1, $2, $3, $1, 'runpod', $3, '{}', 'NVIDIA RTX A4000', 1, 'SECURE', 'intent', 'running', 30, now() + interval '30 minutes')",
+         [${JSON.stringify(POD_ID)}, ${JSON.stringify(HANDLE)}, ${JSON.stringify(bob.account_id)}],
+       );`,
+    );
+  });
+
+  it("lists and looks up bob's pod from the seed, which has no record of it", async () => {
+    const r = await onSeed(
+      `const managed = await server("gpu/read.js").getGpuPods({ account_id });
+       const who = await pods.whoGpuPod({ account_id, query: ${JSON.stringify(HANDLE)} });
+       const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const local = (await getPool().query("SELECT count(*)::int AS n FROM gpu_pods WHERE handle = $1", [${JSON.stringify(HANDLE)}])).rows[0].n;
+       return { scope: managed.scope, handles: managed.records.map((p) => p.handle), who: who.map((w) => w.pod.handle), local };`,
+    );
+    assert.deepEqual(r, {
+      scope: "managed",
+      handles: [HANDLE],
+      who: [HANDLE],
+      local: 0,
+    });
+  });
+
+  it("refuses to manage pods anywhere but the home bay", async () => {
+    const r = await onSeed(
+      `const out = [];
+       for (const f of ["launchGpuPodLocal", "terminateGpuPodLocal", "whoGpuPodLocal", "listManagedGpuPodsLocal"]) {
+         try { await pods[f]({ account_id, pod_id: ${JSON.stringify(HANDLE)}, query: ${JSON.stringify(HANDLE)}, project_id: ${JSON.stringify(POD_ID)}, spec: {} }); out.push("ran"); }
+         catch (e) { out.push(String(e?.message ?? e)); }
+       }
+       return out;`,
+    );
+    for (const m of r) assert.match(m, /only on the key owner's home bay/);
+  });
+
+  it("checks a launch on the home bay, which refuses before calling RunPod", async () => {
+    const r = await onSeed(
+      `try {
+         await pods.launchGpuPod({ account_id, project_id: ${JSON.stringify(bob.project)}, spec: { gpu_type_id: "NVIDIA RTX A4000", image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404", max_runtime_minutes: 10 } });
+         return "launched";
+       } catch (e) { return String(e?.message ?? e); }`,
+    );
+    assert.match(r, /membership doesn't include GPUs|No RunPod API key/);
+  });
+
+  it("records a terminate on the home bay in one forwarded call", async () => {
+    const r = await onSeed(
+      `return await pods.terminateGpuPod({ account_id, pod_id: ${JSON.stringify(HANDLE)} });`,
+    );
+    // Not yet sent to RunPod: the create (here, none) would see it at bind.
+    assert.deepEqual(r, { state: "intent" });
+    const home = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const { rows } = await getPool().query("SELECT desired_state FROM gpu_pods WHERE id = $1", [${JSON.stringify(POD_ID)}]);
+       const ev = await getPool().query("SELECT action FROM gpu_pod_events WHERE pod_id = $1", [${JSON.stringify(POD_ID)}]);
+       return { desired: rows[0].desired_state, actions: ev.rows.map((e) => e.action).sort() };`,
+    );
+    assert.deepEqual(home, {
+      desired: "terminated",
+      actions: ["terminate", "who_lookup"],
+    });
+  });
+});
