@@ -53,6 +53,7 @@ import {
 import { GPU_POD_WRITE_TIMEOUT_MS } from "@cocalc/util/gpu/runpod";
 import { parseEd25519PublicKey } from "@cocalc/util/gpu/ssh-key";
 import siteURL from "@cocalc/database/settings/site-url";
+import { CLEARED_HOSTKEY_FIELDS } from "@cocalc/server/gpu/hostkey-clear";
 import {
   HOSTKEY_TOKEN_TTL_MS,
   newHostkeyToken,
@@ -292,14 +293,7 @@ const UNREGISTRABLE_STATES = new Set([
   "failed",
 ]);
 
-export const CLEARED_HOSTKEY_FIELDS = {
-  hostkey_token_id: null,
-  hostkey_verifier: null,
-  hostkey_expires: null,
-  hostkey_consumed_at: null,
-  host_public_key: null,
-  host_key_fingerprint: null,
-} as const;
+export { CLEARED_HOSTKEY_FIELDS };
 
 // The fields of a transition, plus the cleared host-key fields if it leaves
 // the registrable state.

@@ -36,6 +36,7 @@ import {
   type ExternalCredentialSummary,
 } from "@cocalc/server/external-credentials/store";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { clearHostkeysForCredential } from "@cocalc/server/gpu/hostkey-clear";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   GPU_PROVIDER_API_KEY_KIND,
@@ -87,6 +88,7 @@ export interface GpuProviderKeyDeps {
     account_id: string,
     timeout: number,
   ) => Promise<InterBayGpuApi | undefined>;
+  clearHostkeys?: typeof clearHostkeysForCredential;
 }
 
 async function gpuKeyHomeClient(
@@ -511,6 +513,13 @@ export async function deleteGpuProviderKeyLocal(
     const revoked = await revokeExternalCredential({
       id: existing.id,
       owner_account_id: account_id,
+    });
+    // After the revoke commits: from then on no token of these pods can
+    // register (the consume requires an active key), and this clears what a
+    // report racing the revoke may have written.
+    await (deps.clearHostkeys ?? clearHostkeysForCredential)({
+      account_id,
+      credential_id: existing.id,
     });
     return { revoked };
   });

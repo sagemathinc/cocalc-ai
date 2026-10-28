@@ -34,6 +34,9 @@ Table({
       "state",
       "machine_id",
       "public_ip",
+      // clearStaleHostkeyTokens
+      "hostkey_expires",
+      "hostkey_consumed_at",
     ],
     pg_constraints: [
       {

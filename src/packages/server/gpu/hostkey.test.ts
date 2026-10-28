@@ -14,6 +14,17 @@ import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
 import { parseHostkeyToken } from "./hostkey-token";
 import { gpuSshInfoLocal, registerHostKeyLocal } from "./hostkey";
 import { launchGpuPodLocal, terminateGpuPodLocal } from "./pods";
+import { deleteGpuProviderKeyLocal } from "./provider-keys";
+import { clearStaleHostkeyTokens } from "./hostkey-clear";
+import { upsertExternalCredential } from "@cocalc/server/external-credentials/store";
+
+// The key store, without the site's secret encryption.
+jest.mock("@cocalc/database/settings/secret-settings", () => ({
+  encryptSecretStorageValue: async (_name: string, value: string) => value,
+  decryptSecretStorageValue: async (_name: string, value: string) => ({
+    value,
+  }),
+}));
 
 // PGlite in CI; COCALC_TEST_REAL_PG=1 runs the same tests against a real
 // PostgreSQL (PGHOST etc.), where the race test really races.
@@ -24,7 +35,6 @@ const describeDb =
     : describe.skip;
 
 const PROJECT = "00000000-1000-4000-8000-0000000000aa";
-const CREDENTIAL = "00000000-1000-4000-8000-0000000000cc";
 const CLIENT_KEY =
   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 // Host keys: two distinct valid ed25519 blobs.
@@ -79,6 +89,16 @@ function fakeRunpod() {
 async function launched() {
   const account_id = randomUUID();
   const rp = fakeRunpod();
+  // the account's stored RunPod key, which launches the pod
+  const { id: CREDENTIAL } = await upsertExternalCredential({
+    selector: {
+      provider: "runpod",
+      kind: "gpu-provider-api-key",
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    payload: "rpa_SYNTHETICKEY0123456789abcdefghijklmnopqrstuv",
+  });
   const deps = {
     isHomeBay: async () => true,
     isProjectCollaborator: async () => true,
@@ -105,7 +125,7 @@ async function launched() {
   );
   const env = rp.bodies[0].env;
   const token = parseHostkeyToken(env.CC_HOSTKEY_TOKEN)!;
-  return { account_id, rp, deps, pod, token, env };
+  return { account_id, rp, deps, pod, token, env, credential_id: CREDENTIAL };
 }
 
 async function row(id: string) {
@@ -127,6 +147,7 @@ describeDb("pod host-key registration", () => {
     await syncSchema({
       gpu_pods: SCHEMA.gpu_pods,
       gpu_pod_events: SCHEMA.gpu_pod_events,
+      external_credentials: SCHEMA.external_credentials,
     });
   });
 
@@ -272,6 +293,107 @@ describeDb("pod host-key registration", () => {
       ).status,
     ).toBe(401);
     expect((await row(pod.id)).hostkey_verifier).toBeNull();
+  });
+
+  it("touches only its own row; stale verifiers are cleared apart, without updated", async () => {
+    const a = await launched();
+    const b = await launched();
+    // b's token went stale long ago; its row was last updated a day ago
+    await getPool().query(
+      "UPDATE gpu_pods SET hostkey_expires = now() - interval '1 hour', updated = now() - interval '1 day' WHERE id = $1",
+      [b.pod.id],
+    );
+    const before = await row(b.pod.id);
+    expect(
+      (
+        await registerHostKeyLocal({
+          token: a.token,
+          pod_id: a.pod.provider_pod_id!,
+          host_public_key: HOST_KEY,
+        })
+      ).status,
+    ).toBe(200);
+    // a report on a, or a wrong secret, doesn't sweep b
+    await registerHostKeyLocal({
+      token: { ...a.token, secret: `${"B".repeat(42)}A` },
+      pod_id: a.pod.provider_pod_id!,
+      host_public_key: HOST_KEY,
+    });
+    expect(await row(b.pod.id)).toEqual(before);
+
+    // the periodic cleanup retires b's verifier, and leaves updated alone
+    expect(await clearStaleHostkeyTokens()).toBeGreaterThanOrEqual(1);
+    const after = await row(b.pod.id);
+    expect(after.hostkey_verifier).toBeNull();
+    expect(after.hostkey_token_id).toBeNull();
+    expect(after.updated).toEqual(before.updated);
+    // a's consumed token is still answered within the window
+    expect((await row(a.pod.id)).hostkey_verifier).not.toBeNull();
+  });
+
+  it("removing the key ends every pending token and registered host key of its pods", async () => {
+    const pending = await launched();
+    // a second pod of the same account and key, already registered
+    const registered = await launched();
+    await getPool().query(
+      "UPDATE gpu_pods SET key_owner_account_id = $2, beneficiary_account_id = $2, credential_id = $3 WHERE id = $1",
+      [registered.pod.id, pending.account_id, pending.credential_id],
+    );
+    expect(
+      (
+        await registerHostKeyLocal({
+          token: registered.token,
+          pod_id: registered.pod.provider_pod_id!,
+          host_public_key: HOST_KEY,
+        })
+      ).status,
+    ).toBe(200);
+
+    expect(
+      await deleteGpuProviderKeyLocal(
+        { account_id: pending.account_id, provider: "runpod" },
+        { isHomeBay: async () => true },
+      ),
+    ).toEqual({ revoked: true });
+    for (const id of [pending.pod.id, registered.pod.id]) {
+      const r = await row(id);
+      expect(r.hostkey_token_id).toBeNull();
+      expect(r.hostkey_verifier).toBeNull();
+      expect(r.host_public_key).toBeNull();
+      expect(r.host_key_fingerprint).toBeNull();
+    }
+    expect(
+      (
+        await registerHostKeyLocal({
+          token: pending.token,
+          pod_id: pending.pod.provider_pod_id!,
+          host_public_key: HOST_KEY,
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      await gpuSshInfoLocal(
+        { account_id: pending.account_id, pod_id: registered.pod.id },
+        registered.deps,
+      ),
+    ).toEqual(expect.objectContaining({ ready: false }));
+  });
+
+  it("refuses a token whose launching key was revoked, even before it is cleared", async () => {
+    const { pod, token, credential_id } = await launched();
+    // a launch racing the removal: the token row outlives the clear
+    await getPool().query(
+      "UPDATE external_credentials SET revoked = now() WHERE id = $1",
+      [credential_id],
+    );
+    expect(
+      await registerHostKeyLocal({
+        token,
+        pod_id: pod.provider_pod_id!,
+        host_public_key: HOST_KEY,
+      }),
+    ).toEqual({ status: 410, result: "gone" });
+    expect((await row(pod.id)).host_public_key).toBeNull();
   });
 
   it("reveals nothing to a wrong secret, whatever the pod's state", async () => {

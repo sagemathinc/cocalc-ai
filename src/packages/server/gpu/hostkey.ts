@@ -23,8 +23,12 @@ Only the holder of the right secret learns why, in this order:
   not bound yet: 409 (the pod retries)
   expired or no longer running: 410
 
-The verifier is removed HOSTKEY_IDEMPOTENCY_WINDOW_MS after use or after
-expiry; from then on the token is simply unknown (401).
+Once the key that launched the pod is removed, its token can't register
+(410), and removing the key clears it (see hostkey-clear.ts).
+
+HOSTKEY_IDEMPOTENCY_WINDOW_MS after use or after expiry, the token is
+simply unknown (401): a report retires its own row's verifier then, and
+clearStaleHostkeyTokens() retires the rest periodically.
 
 Nothing here logs a token, a secret or a request.
 */
@@ -60,22 +64,6 @@ const R = (
   result,
 });
 
-// Remove verifiers a window after they stop being usable: after use (so a
-// retried lost response is still answered) or after expiry (so the holder
-// learns it expired, 410, rather than 401). Cheap; run before each lookup.
-async function sweep(client: {
-  query: (q: string, p?: any[]) => Promise<any>;
-}) {
-  await client.query(
-    `UPDATE gpu_pods
-        SET hostkey_token_id = NULL, hostkey_verifier = NULL, updated = now()
-      WHERE hostkey_verifier IS NOT NULL
-        AND COALESCE(hostkey_consumed_at, hostkey_expires)
-            <= now() - ($1::bigint * interval '1 millisecond')`,
-    [HOSTKEY_IDEMPOTENCY_WINDOW_MS],
-  );
-}
-
 async function event(
   client: { query: (q: string, p?: any[]) => Promise<any> },
   pod_id: string,
@@ -108,7 +96,8 @@ export async function registerHostKeyLocal(opts: {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    await sweep(client);
+    // Everything below is keyed by the token id (unique, indexed): a report
+    // never touches another pod's row.
     const consumed = await client.query(
       `UPDATE gpu_pods
           SET hostkey_consumed_at = now(), host_public_key = $3,
@@ -117,6 +106,8 @@ export async function registerHostKeyLocal(opts: {
           AND hostkey_consumed_at IS NULL AND hostkey_expires > now()
           AND provider_pod_id IS NOT NULL AND provider_pod_id = $5
           AND state = 'running' AND desired_state = 'running'
+          AND EXISTS (SELECT 1 FROM external_credentials ec
+                       WHERE ec.id = gpu_pods.credential_id AND ec.revoked IS NULL)
         RETURNING id`,
       [token.token_id, verifier, key.line, key.fingerprint, pod_id],
     );
@@ -131,16 +122,33 @@ export async function registerHostKeyLocal(opts: {
     // Only the holder of the right secret learns why.
     const { rows } = await client.query(
       `SELECT id, provider_pod_id, state, desired_state, host_public_key,
-              hostkey_consumed_at, hostkey_expires > now() AS live
+              hostkey_consumed_at, hostkey_expires > now() AS live,
+              COALESCE(hostkey_consumed_at, hostkey_expires)
+                <= now() - ($3::bigint * interval '1 millisecond') AS stale,
+              EXISTS (SELECT 1 FROM external_credentials ec
+                       WHERE ec.id = gpu_pods.credential_id AND ec.revoked IS NULL)
+                AS key_active
          FROM gpu_pods
         WHERE hostkey_token_id = $1 AND hostkey_verifier = $2
         FOR UPDATE`,
-      [token.token_id, verifier],
+      [token.token_id, verifier, HOSTKEY_IDEMPOTENCY_WINDOW_MS],
     );
     const row = rows[0];
     let result: HostkeyResult;
     if (row == null) {
       result = R(401, "unauthorized");
+    } else if (row.stale) {
+      // A window past use or expiry: retire this row's verifier (only this
+      // row), and the token is unknown from now on.
+      await client.query(
+        `UPDATE gpu_pods SET hostkey_token_id = NULL, hostkey_verifier = NULL
+          WHERE id = $1`,
+        [row.id],
+      );
+      result = R(401, "unauthorized");
+    } else if (!row.key_active) {
+      // The key that launched the pod was removed.
+      result = R(410, "gone");
     } else if (row.hostkey_consumed_at != null) {
       if (row.host_public_key === key.line && row.provider_pod_id === pod_id) {
         result = R(200, "registered");
