@@ -2171,13 +2171,18 @@ describe("a host's calls about a project on another bay", () => {
        const { rows } = await getPool().query(${JSON.stringify(sql)}, ${JSON.stringify(params)});
        return rows;`,
     );
-  const forwarded = async (name) =>
-    (
-      await onSeed(
-        "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND finished IS NOT NULL",
-        [name, ATTACHED],
-      )
-    )[0].n;
+  const forwarded = async (name) => {
+    const [{ t }] = await onSeed(
+      "SELECT to_regclass('hub_api_forwarded_calls') AS t",
+      [],
+    );
+    if (t == null) return 0; // nothing forwarded to the seed yet
+    const [{ n }] = await onSeed(
+      "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND finished IS NOT NULL",
+      [name, ATTACHED],
+    );
+    return n;
+  };
 
   before(async () => {
     project_id = await createProject(alice.client, "hosted-elsewhere");
