@@ -23,6 +23,25 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "gpu.launch": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "an ordinary CLI/agent operation on the caller's own RunPod key with the allowlisted spec. STACK GATE: the gpu-byok branch must not reach staging or main before step 5 enforces budgets, the max runtime (reaper) and the kill switch; until then this waiver is acceptable only because nothing outside the branch can call it",
+  },
+  "gpu.adminAllowStaleWorkers": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin override of the fail-closed GPU worker check: scoped to one account, at most 24 h, with a reason, kept as an audit row",
+  },
+  "gpu.setBudget": {
+    decision: "fresh-auth-required",
+    reason:
+      "raising a GPU budget loosens what the key may spend; checked in setGpuBudget, which lets a reduction through without it (narrowing)",
+  },
+  "gpu.terminate": {
+    decision: "fresh-auth-not-required",
+    reason: "narrowing: ends a pod the caller pays for or is responsible for",
+  },
   "computers.approveComputerRequest": {
     decision: "fresh-auth-required",
     reason:
@@ -1735,6 +1754,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "account deletion",
   },
+  "system.deleteGpuProviderKey": {
+    decision: "fresh-auth-required",
+    reason: "GPU provider external credential removal",
+  },
   "system.deleteOpenAiApiKey": {
     decision: "fresh-auth-required",
     reason: "OpenAI external credential revocation",
@@ -1882,6 +1905,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.setBayProjectOwnershipAdmission": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "system.setGpuProviderKey": {
+    decision: "fresh-auth-required",
+    reason: "GPU provider external credential mutation",
   },
   "system.setOpenAiApiKey": {
     decision: "fresh-auth-required",

@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import type {
   SiteFundedCodexPolicy,
   SiteFundedCodexReservation,
+  SiteFundedUsageWarning,
 } from "@cocalc/util/ai/site-funded-codex";
 import type { CodexPaymentSourcePreference } from "@cocalc/util/ai/codex";
 import type {
@@ -20,6 +21,8 @@ export type CodexSiteFundedTurnRequest = {
 export type CodexSiteFundedTurnRuntime = {
   reservation: SiteFundedCodexReservation;
   policy: SiteFundedCodexPolicy;
+  /** Set when the account is close to an included-AI window limit. */
+  usageWarning?: SiteFundedUsageWarning;
   providerBaseUrl: string;
   providerToken: string;
   finish: (opts: {

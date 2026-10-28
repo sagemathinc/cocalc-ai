@@ -156,6 +156,7 @@ const HUB_API_GROUPS: HubGroupName[] = [
   "commercialOrders",
   "adminCrm",
   "personalUrls",
+  "gpu",
 ];
 
 export function createHubApiForContext(

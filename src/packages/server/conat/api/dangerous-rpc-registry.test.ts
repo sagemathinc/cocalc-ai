@@ -28,6 +28,7 @@ const SOURCE_MODULES: SourceModule[] = [
   { filename: "compute.ts", hubGroup: "compute" },
   { filename: "computers.ts", hubGroup: "computers" },
   { filename: "db.ts", hubGroup: "db" },
+  { filename: "gpu.ts", hubGroup: "gpu" },
   { filename: "lro.ts", hubGroup: "lro" },
   { filename: "messages.ts", hubGroup: "messages" },
   { filename: "notifications.ts", hubGroup: "notifications" },

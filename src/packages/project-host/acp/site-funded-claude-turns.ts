@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
+import type { SiteFundedUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import {
   finishSiteFundedTurn,
   getSiteFundedClaudeKey,
@@ -28,7 +29,10 @@ export type SiteFundedTurnEnd = {
 };
 
 export interface SiteFundedClaudeTurns {
-  begin(chat?: AcpChatContext): Promise<void>;
+  /** Admits the turn; usageWarning is set when the account is close to a limit. */
+  begin(
+    chat?: AcpChatContext,
+  ): Promise<{ usageWarning?: SiteFundedUsageWarning }>;
   end(end: SiteFundedTurnEnd): Promise<void>;
   close(): Promise<void>;
 }
@@ -128,6 +132,9 @@ export function createSiteFundedClaudeTurns({
       }, reservation.heartbeatIntervalMs);
       heartbeat.unref?.();
       active = { reservationId: reservation.reservationId, heartbeat };
+      return admission.usageWarning
+        ? { usageWarning: admission.usageWarning }
+        : {};
     },
     end,
     close: async () => {

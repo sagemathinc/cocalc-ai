@@ -61,6 +61,8 @@ import "./email-auth";
 import "./email-counter";
 import "./external-credentials";
 import "./global-config";
+import "./gpu-budgets";
+import "./gpu-pods";
 import "./growth-analytics";
 import "./public-home-experiment-counts";
 import "./hub-servers";

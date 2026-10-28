@@ -13,7 +13,7 @@
 // MULTIBAY_KEEP=1 keeps the cluster's directory (logs, databases) afterwards.
 
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -4021,7 +4021,7 @@ describe("outgoing support tickets across bays", () => {
     };
     let plan;
     let lastError;
-    for (const deadline = Date.now() + 60_000; Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline;) {
       try {
         plan = await runInBay(
           cluster,
@@ -4663,5 +4663,431 @@ describe("backup prune plans run on the seed, which owns the repositories", () =
       /must be an admin/,
     );
     assert.equal((await prunePlanLog(SEED)).length, 1);
+  });
+});
+
+describe("GPU reads run whole on the key owner's home bay", () => {
+  // A fake RunPod key. Nothing here calls RunPod: every assertion is decided
+  // on a bay before any provider request.
+  const FAKE_KEY = `rpa_MULTIBAYFAKE${"0".repeat(36)}`;
+  const selector = (owner_account_id) => ({
+    provider: "runpod",
+    kind: "gpu-provider-api-key",
+    scope: "account",
+    owner_account_id,
+  });
+  // On `bay`, for `account`: the read's outcome (if a method is given),
+  // whether this bay stores the key, and whether its key helper allows it.
+  async function onBay(bay, account, method) {
+    return await runInBay(
+      cluster,
+      bay,
+      `const read = server("gpu/read.js");
+       const { getExternalCredential } = server("external-credentials/store.js");
+       const { getRunpodCleanupForAccount } = server("gpu/provider-keys.js");
+       const account_id = ${JSON.stringify(account.account_id)};
+       const out = {};
+       if (${JSON.stringify(method ?? "")}) {
+         try { await read[${JSON.stringify(method ?? "")}]({ account_id, scope: "account" }); out.read = "ok"; }
+         catch (e) { out.read = String(e?.message ?? e); }
+       }
+       const local = await getExternalCredential({ selector: ${JSON.stringify(selector(account.account_id))} });
+       out.local_key = !!local?.payload;
+       try { out.custody = (await getRunpodCleanupForAccount(account_id)) ? "key" : "no key"; }
+       catch (e) { out.custody = String(e?.message ?? e); }
+       return out;`,
+    );
+  }
+
+  before(async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { upsertExternalCredential } = server("external-credentials/store.js");
+       await upsertExternalCredential({
+         selector: ${JSON.stringify(selector(bob.account_id))},
+         payload: ${JSON.stringify(FAKE_KEY)},
+         metadata: { source: "multibay-test" },
+       });`,
+    );
+  });
+
+  it("keeps the key on its owner's home bay; the other bay has no copy and refuses", async () => {
+    const home = await onBay(ATTACHED, bob);
+    assert.equal(home.local_key, true);
+    assert.equal(home.custody, "key");
+    const other = await onBay(SEED, bob);
+    assert.equal(other.local_key, false);
+    assert.match(other.custody, /only on the key owner's home bay/);
+    assert.ok(!JSON.stringify({ home, other }).includes(FAKE_KEY));
+  });
+
+  // What the home bay's handler runs for a forwarded pod read, in the home
+  // bay's own environment, with RunPod itself stubbed (fetch, in this worker
+  // only): the stored key is read and sent to RunPod's fixed endpoint.
+  it("reads the key on the home bay and calls RunPod's fixed endpoint with it", async () => {
+    const r = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getGpuPodsLocal } = server("gpu/read.js");
+       const real = globalThis.fetch;
+       const calls = [];
+       globalThis.fetch = async (url, init) => {
+         calls.push({ url: String(url), auth: init?.headers?.Authorization === "Bearer " + ${JSON.stringify(FAKE_KEY)} });
+         return new Response(JSON.stringify({
+           pods: [{ id: "pod_mb0001", name: "cc-multibay", status: "RUNNING", env: { SECRET: "x" } }],
+           pagination: { hasNextPage: false, nextCursor: null },
+         }), { status: 200 });
+       };
+       try {
+         const result = await getGpuPodsLocal({ account_id: ${JSON.stringify(bob.account_id)}, scope: "account" });
+         return { calls, result };
+       } finally {
+         globalThis.fetch = real;
+       }`,
+    );
+    assert.deepEqual(r.calls, [
+      {
+        url: "https://api.runpod.io/v2/pods?includeClusterPods=true",
+        auth: true,
+      },
+    ]);
+    assert.equal(r.result.scope, "account");
+    assert.deepEqual(r.result.pods, [
+      { id: "pod_mb0001", name: "cc-multibay", status: "RUNNING" },
+    ]);
+    assert.ok(!JSON.stringify(r).includes(FAKE_KEY));
+  });
+
+  // Run on the wrong bay, these reads would fail to load the key ("could not
+  // be loaded"); these answers come only from the home bay.
+  it("forwards a catalog read to the home bay, which checks the entitlement", async () => {
+    const r = await onBay(SEED, bob, "getGpuCatalog");
+    assert.match(
+      r.read,
+      /Your membership doesn't include GPUs on your own key/,
+    );
+  });
+
+  it("forwards a pod read the other way, to an account's home bay on the seed", async () => {
+    const r = await onBay(ATTACHED, alice, "getGpuPods");
+    assert.match(r.read, /No RunPod API key is connected/);
+    assert.equal(r.local_key, false);
+    assert.match(r.custody, /only on the key owner's home bay/);
+  });
+});
+
+describe("connecting and removing a GPU key runs whole on the owner's home bay", () => {
+  // bob's key is stored on his home bay (the attached bay) by the GPU reads
+  // above; the seed has no copy. Every call here starts on the seed.
+  const selector = {
+    provider: "runpod",
+    kind: "gpu-provider-api-key",
+    scope: "account",
+  };
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const keys = server("gpu/provider-keys.js");
+       const account_id = ${JSON.stringify(bob.account_id)};
+       ${body}`,
+    );
+  }
+
+  it("reports the key the home bay holds", async () => {
+    const status = await onSeed(
+      `return await keys.getGpuProviderKeyStatus({ account_id, provider: "runpod" });`,
+    );
+    assert.equal(status.connected, true);
+  });
+
+  it("checks a new key on the home bay, which refuses before calling RunPod", async () => {
+    const r = await onSeed(
+      `try {
+         await keys.setGpuProviderKey({ account_id, provider: "runpod", api_key: "rpa_${"x".repeat(40)}" });
+         return "saved";
+       } catch (e) { return String(e?.message ?? e); }`,
+    );
+    assert.match(r, /membership doesn't include connecting a GPU provider key/);
+  });
+
+  it("refuses to run the home bay's part anywhere else", async () => {
+    const r = await onSeed(
+      `const out = [];
+       for (const f of ["getGpuProviderKeyStatusLocal", "setGpuProviderKeyLocal", "deleteGpuProviderKeyLocal"]) {
+         try { await keys[f]({ account_id, provider: "runpod", api_key: "x" }); out.push("ran"); }
+         catch (e) { out.push(String(e?.message ?? e)); }
+       }
+       return out;`,
+    );
+    for (const m of r) assert.match(m, /only on the key owner's home bay/);
+  });
+
+  it("removes the key on the home bay in one forwarded call", async () => {
+    const r = await onSeed(
+      `return await keys.deleteGpuProviderKey({ account_id, provider: "runpod" });`,
+    );
+    assert.deepEqual(r, { revoked: true });
+    const home = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getExternalCredential } = server("external-credentials/store.js");
+       const row = await getExternalCredential({
+         selector: ${JSON.stringify({ ...selector, owner_account_id: bob.account_id })},
+       });
+       return { active: !!row && !row.revoked };`,
+    );
+    assert.equal(home.active, false);
+    const status = await onSeed(
+      `return await keys.getGpuProviderKeyStatus({ account_id, provider: "runpod" });`,
+    );
+    assert.equal(status.connected, false);
+  });
+});
+
+describe("GPU pods are recorded and managed on the key owner's home bay", () => {
+  // A pod record for bob on his home bay (the attached bay), as a launch
+  // leaves it before RunPod answers. Every call below starts on the seed.
+  const POD_ID = "00000000-1000-4000-8000-00000000f001";
+  const HANDLE = "cc-mbay2345mbay2345";
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const pods = server("gpu/pods.js");
+       const account_id = ${JSON.stringify(bob.account_id)};
+       ${body}`,
+    );
+  }
+
+  before(async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       await getPool().query(
+         "INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider, beneficiary_account_id, spec, gpu_type_id, gpu_count, cloud, state, desired_state, max_runtime_minutes, deadline) VALUES ($1, $2, $3, $1, 'runpod', $3, '{}', 'NVIDIA RTX A4000', 1, 'SECURE', 'intent', 'running', 30, now() + interval '30 minutes')",
+         [${JSON.stringify(POD_ID)}, ${JSON.stringify(HANDLE)}, ${JSON.stringify(bob.account_id)}],
+       );`,
+    );
+  });
+
+  it("lists and looks up bob's pod from the seed, which has no record of it", async () => {
+    const r = await onSeed(
+      `const managed = await server("gpu/read.js").getGpuPods({ account_id });
+       const who = await pods.whoGpuPod({ account_id, query: ${JSON.stringify(HANDLE)} });
+       const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const local = (await getPool().query("SELECT count(*)::int AS n FROM gpu_pods WHERE handle = $1", [${JSON.stringify(HANDLE)}])).rows[0].n;
+       return { scope: managed.scope, handles: managed.records.map((p) => p.handle), who: who.map((w) => w.pod.handle), local };`,
+    );
+    assert.deepEqual(r, {
+      scope: "managed",
+      handles: [HANDLE],
+      who: [HANDLE],
+      local: 0,
+    });
+  });
+
+  it("refuses to manage pods anywhere but the home bay", async () => {
+    const r = await onSeed(
+      `const out = [];
+       for (const f of ["launchGpuPodLocal", "terminateGpuPodLocal", "whoGpuPodLocal", "listManagedGpuPodsLocal"]) {
+         try { await pods[f]({ account_id, pod_id: ${JSON.stringify(HANDLE)}, query: ${JSON.stringify(HANDLE)}, project_id: ${JSON.stringify(POD_ID)}, spec: {} }); out.push("ran"); }
+         catch (e) { out.push(String(e?.message ?? e)); }
+       }
+       return out;`,
+    );
+    for (const m of r) assert.match(m, /only on the key owner's home bay/);
+  });
+
+  it("checks a launch on the home bay, which refuses before calling RunPod", async () => {
+    const r = await onSeed(
+      `try {
+         await pods.launchGpuPod({ account_id, project_id: ${JSON.stringify(bob.project)}, spec: { gpu_type_id: "NVIDIA RTX A4000", image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404", max_runtime_minutes: 10 } });
+         return "launched";
+       } catch (e) { return String(e?.message ?? e); }`,
+    );
+    assert.match(r, /membership doesn't include GPUs|No RunPod API key/);
+  });
+
+  it("records a terminate on the home bay in one forwarded call", async () => {
+    const r = await onSeed(
+      `return await pods.terminateGpuPod({ account_id, pod_id: ${JSON.stringify(HANDLE)} });`,
+    );
+    // Not yet sent to RunPod: the create (here, none) would see it at bind.
+    assert.deepEqual(r, { state: "intent" });
+    const home = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const { rows } = await getPool().query("SELECT desired_state FROM gpu_pods WHERE id = $1", [${JSON.stringify(POD_ID)}]);
+       const ev = await getPool().query("SELECT action FROM gpu_pod_events WHERE pod_id = $1", [${JSON.stringify(POD_ID)}]);
+       return { desired: rows[0].desired_state, actions: ev.rows.map((e) => e.action).sort() };`,
+    );
+    assert.deepEqual(home, {
+      desired: "terminated",
+      actions: ["terminate", "who_lookup"],
+    });
+  });
+});
+
+describe("GPU budgets are read and changed on the key owner's home bay", () => {
+  // bob's key was removed above, so his home bay (the attached bay) answers
+  // that no key is connected; the seed must forward rather than answer.
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const budgets = server("gpu/budget-api.js");
+       const account_id = ${JSON.stringify(bob.account_id)};
+       ${body}`,
+    );
+  }
+
+  it("forwards budget reads and changes from the seed to the home bay", async () => {
+    const r = await onSeed(
+      `const out = [];
+       try { await budgets.getGpuBudget({ account_id }); out.push("read"); }
+       catch (e) { out.push(String(e?.message ?? e)); }
+       try { await budgets.setGpuBudget({ account_id, change: { max_concurrent_pods: 1 } }); out.push("set"); }
+       catch (e) { out.push(String(e?.message ?? e)); }
+       const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const local = (await getPool().query("SELECT count(*)::int AS n FROM gpu_budget_layers WHERE key_owner_account_id = $1", [account_id])).rows[0].n;
+       return { out, local };`,
+    );
+    for (const m of r.out) {
+      assert.match(
+        m,
+        /No RunPod API key is connected|membership doesn't include/,
+      );
+    }
+    assert.equal(r.local, 0);
+  });
+
+  it("refuses to run the home bay's part anywhere else", async () => {
+    const r = await onSeed(
+      `const out = [];
+       for (const f of ["getGpuBudgetLocal", "setGpuBudgetLocal"]) {
+         try { await budgets[f]({ account_id, change: { max_concurrent_pods: 1 } }); out.push("ran"); }
+         catch (e) { out.push(String(e?.message ?? e)); }
+       }
+       return out;`,
+    );
+    // the seed has no row for bob, or knows he is homed elsewhere: either
+    // way it refuses before touching any budget
+    for (const m of r)
+      assert.match(m, /homed on|home bay|account \S+ not found/);
+  });
+});
+
+describe("a pod's host key is registered on the bay that minted its token", () => {
+  // The pod reports to whichever bay its load balancer picks; that bay
+  // forwards to the token's bay (bay-1, bob's home), the only one that can
+  // check it.
+  const POD_ID = "00000000-1000-4000-8000-00000000f002";
+  const HANDLE = "cc-hkey2345hkey2345";
+  const PROVIDER_POD_ID = "mbayhostkeypod1";
+  let token;
+
+  function ed25519Line() {
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32);
+    const field = (b) => {
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(b.length);
+      return Buffer.concat([len, b]);
+    };
+    const blob = Buffer.concat([field(Buffer.from("ssh-ed25519")), field(raw)]);
+    return `ssh-ed25519 ${blob.toString("base64")}`;
+  }
+  const HOST_KEY = ed25519Line();
+
+  async function reportFromSeed(host_public_key, pod_id = PROVIDER_POD_ID) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const { parseHostkeyToken } = server("gpu/hostkey-token.js");
+       const { createInterBayAccountLocalClient } = require("@cocalc/conat/inter-bay/api");
+       const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+       const t = parseHostkeyToken(${JSON.stringify(token)});
+       return await createInterBayAccountLocalClient({
+         client: getInterBayFabricClient(),
+         dest_bay: t.authority_bay_id,
+         timeout: 15000,
+       }).gpuRegisterHostKey({ token: t, pod_id: ${JSON.stringify(pod_id)}, host_public_key: ${JSON.stringify(host_public_key)} });`,
+    );
+  }
+
+  before(async () => {
+    token = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const { newHostkeyToken } = server("gpu/hostkey-token.js");
+       const { upsertExternalCredential } = server("external-credentials/store.js");
+       // the stored key that launched the pod (a report needs it active)
+       const { id: credential_id } = await upsertExternalCredential({
+         selector: { provider: "runpod", kind: "gpu-provider-api-key", scope: "account", owner_account_id: ${JSON.stringify(bob.account_id)} },
+         payload: "rpa_MULTIBAYHOSTKEY0123456789abcdefghijklmnopq",
+         metadata: { source: "multibay-test" },
+       });
+       const t = newHostkeyToken(${JSON.stringify(ATTACHED)});
+       await getPool().query(
+         "INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider, beneficiary_account_id, spec, gpu_type_id, gpu_count, cloud, state, desired_state, max_runtime_minutes, deadline, provider_pod_id, hostkey_token_id, hostkey_verifier, hostkey_expires) VALUES ($1, $2, $3, $7, 'runpod', $3, '{}', 'NVIDIA RTX A4000', 1, 'SECURE', 'running', 'running', 30, now() + interval '30 minutes', $4, $5, $6, now() + interval '30 minutes')",
+         [${JSON.stringify(POD_ID)}, ${JSON.stringify(HANDLE)}, ${JSON.stringify(bob.account_id)}, ${JSON.stringify(PROVIDER_POD_ID)}, t.token_id, t.verifier, credential_id],
+       );
+       return t.token;`,
+    );
+  });
+
+  it("answers bob's SSH lookup from his home bay, not ready before registration", async () => {
+    const r = await runInBay(
+      cluster,
+      SEED,
+      `return await server("gpu/hostkey.js").gpuSshInfo({ account_id: ${JSON.stringify(bob.account_id)}, pod_id: ${JSON.stringify(HANDLE)} });`,
+    );
+    // Not registered yet, so there is nothing to hand out (and no RunPod call).
+    assert.equal(r.handle, HANDLE);
+    assert.equal(r.state, "running");
+    assert.equal(r.ready, false);
+  });
+
+  it("refuses the token on a bay that didn't mint it", async () => {
+    const r = await runInBay(
+      cluster,
+      SEED,
+      `const { parseHostkeyToken } = server("gpu/hostkey-token.js");
+       return await server("gpu/hostkey.js").registerHostKeyLocal({ token: parseHostkeyToken(${JSON.stringify(token)}), pod_id: ${JSON.stringify(PROVIDER_POD_ID)}, host_public_key: ${JSON.stringify(HOST_KEY)} });`,
+    );
+    assert.deepEqual(r, { status: 401, result: "unauthorized" });
+  });
+
+  it("registers a report forwarded from the seed, once", async () => {
+    assert.deepEqual(await reportFromSeed(HOST_KEY), {
+      status: 200,
+      result: "registered",
+    });
+    // A retry of the same report is fine; a different key is not.
+    assert.deepEqual(await reportFromSeed(HOST_KEY), {
+      status: 200,
+      result: "registered",
+    });
+    assert.deepEqual(await reportFromSeed(ed25519Line()), {
+      status: 409,
+      result: "key_mismatch",
+    });
+    const home = await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const { rows } = await getPool().query("SELECT host_public_key FROM gpu_pods WHERE id = $1", [${JSON.stringify(POD_ID)}]);
+       const ev = await getPool().query("SELECT details FROM gpu_pod_events WHERE pod_id = $1 AND action = 'host_key' ORDER BY at", [${JSON.stringify(POD_ID)}]);
+       return { key: rows[0].host_public_key, alerts: ev.rows.map((e) => e.details.alert ?? null) };`,
+    );
+    assert.deepEqual(home, {
+      key: HOST_KEY,
+      alerts: [null, "host_key_mismatch"],
+    });
   });
 });

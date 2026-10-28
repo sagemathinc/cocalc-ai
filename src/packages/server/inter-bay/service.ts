@@ -1244,6 +1244,57 @@ async function startAccountLocalService(): Promise<void> {
     creditTransferDeliver,
     computeFundingGetCourseSummary: computeFunding.getCourseSummary,
     computeFundingGetOwnedPools: computeFunding.getOwnedPools,
+    // Never forwards again: the key helper refuses off the home bay.
+    gpuCatalog: async (opts) =>
+      await (await import("@cocalc/server/gpu/read")).getGpuCatalogLocal(opts),
+    gpuAvailability: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/read")
+      ).getGpuAvailabilityLocal(opts),
+    gpuPods: async (opts) =>
+      await (await import("@cocalc/server/gpu/read")).getGpuPodsLocal(opts),
+    gpuKeyStatus: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/provider-keys")
+      ).getGpuProviderKeyStatusLocal(opts),
+    gpuKeySet: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/provider-keys")
+      ).setGpuProviderKeyLocal(opts),
+    gpuKeyDelete: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/provider-keys")
+      ).deleteGpuProviderKeyLocal(opts),
+    gpuLaunch: async (opts) =>
+      await (await import("@cocalc/server/gpu/pods")).launchGpuPodLocal(opts),
+    gpuTerminate: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/pods")
+      ).terminateGpuPodLocal(opts),
+    gpuWho: async (opts) =>
+      await (await import("@cocalc/server/gpu/pods")).whoGpuPodLocal(opts),
+    gpuBudget: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/budget-api")
+      ).getGpuBudgetLocal(opts),
+    gpuSetBudget: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/budget-api")
+      ).setGpuBudgetLocal(opts as any),
+    gpuAllowStaleWorkers: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/admin")
+      ).allowStaleWorkersLocal(opts),
+    gpuManagedPods: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/pods")
+      ).listManagedGpuPodsLocal(opts),
+    gpuSshInfo: async (opts) =>
+      await (await import("@cocalc/server/gpu/hostkey")).gpuSshInfoLocal(opts),
+    gpuRegisterHostKey: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/hostkey")
+      ).registerHostKeyLocal(opts),
     computeOwnerResources: async (opts) =>
       (
         await import("@cocalc/server/compute/owner-resource-routing")

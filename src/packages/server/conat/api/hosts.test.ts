@@ -743,6 +743,93 @@ describe("site-funded Codex account directory routing", () => {
     );
   });
 
+  it("warns an admitted turn when an included-AI window is at least 80% used", async () => {
+    const resets5h = new Date(Date.now() + 2 * 3600_000).toISOString();
+    overview.mockResolvedValue({
+      meters: [
+        {
+          id: "ai-5h",
+          used: 86,
+          limit: 100,
+          remaining: 14,
+          resets_at: resets5h,
+        },
+        { id: "ai-7d", used: 50, limit: 400, remaining: 350 },
+      ],
+    });
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockReturnValue(
+        (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+      );
+    jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-codex-reservations"),
+        "reserveSiteFundedCodexTurn",
+      )
+      .mockResolvedValue({ allowed: true } as any);
+
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).resolves.toEqual({
+      allowed: true,
+      usageWarning: {
+        window: "5h",
+        percent: 86,
+        threshold: 80,
+        resetAt: resets5h,
+      },
+    });
+  });
+
+  it("says when the window resets in a refusal for an exhausted allowance", async () => {
+    const resets7d = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    overview.mockResolvedValue({
+      meters: [
+        { id: "ai-5h", used: 10, limit: 100, remaining: 90 },
+        {
+          id: "ai-7d",
+          used: 400,
+          limit: 400,
+          remaining: 0,
+          resets_at: resets7d,
+        },
+      ],
+    });
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockReturnValue(
+        (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+      );
+    jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-codex-reservations"),
+        "reserveSiteFundedCodexTurn",
+      )
+      .mockResolvedValue({
+        allowed: false,
+        code: "account_limit_7d",
+        reason:
+          "You have used your weekly included AI allowance. Wait for usage to reset, upgrade your CoCalc membership, or use your own key.",
+      });
+
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    const admission = await reserveSiteFundedCodexTurn(request);
+    expect(admission).toMatchObject({
+      allowed: false,
+      code: "account_limit_7d",
+      resetAt: resets7d,
+    });
+    expect(!admission.allowed && admission.reason).toMatch(
+      /^You have used your weekly included AI allowance\. It resets in about 3 d, at .+ UTC\. Wait for usage to reset, upgrade your CoCalc membership, or use your own key\.$/,
+    );
+  });
+
   it.each([
     ["missing", undefined],
     ["negative", -1],

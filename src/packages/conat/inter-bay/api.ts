@@ -2746,6 +2746,7 @@ export type AccountDirectoryMethod =
   | "revoke-membership-claim-identity";
 export type AccountLocalMethod =
   | "compute-funding"
+  | "gpu"
   | "credit-transfers"
   | "create"
   | "delete"
@@ -4103,8 +4104,99 @@ export interface InterBayComputeFundingApi extends MonthlyCollectionApi {
 
 import type { InterBayCreditTransferApi } from "./credit-transfers";
 
+// GPU bring-your-own-key: operations that use an account's provider key run
+// whole on the key owner's home bay; the key never crosses between bays.
+// account_id is the authenticated caller.
+export interface InterBayGpuApi {
+  gpuCatalog: (
+    opts: Parameters<
+      import("@cocalc/conat/hub/api/gpu").GpuApi["catalog"]
+    >[0] & {
+      account_id: string;
+    },
+  ) => Promise<import("@cocalc/conat/hub/api/gpu").GpuCatalogResult>;
+  gpuAvailability: (
+    opts: Parameters<
+      import("@cocalc/conat/hub/api/gpu").GpuApi["availability"]
+    >[0] & { account_id: string },
+  ) => Promise<import("@cocalc/conat/hub/api/gpu").GpuAvailabilityResult>;
+  gpuPods: (
+    opts: Parameters<import("@cocalc/conat/hub/api/gpu").GpuApi["pods"]>[0] & {
+      account_id: string;
+    },
+  ) => Promise<import("@cocalc/conat/hub/api/gpu").GpuPodsResult>;
+  // Connecting, checking and removing the key itself. The bay the user is
+  // signed in to has already required fresh auth for a save or removal; the
+  // pasted key crosses once, to be verified and stored, and never comes back.
+  gpuKeyStatus: (opts: {
+    account_id: string;
+    provider: unknown;
+  }) => Promise<import("@cocalc/util/gpu/provider-keys").GpuProviderKeyStatus>;
+  gpuKeySet: (opts: {
+    account_id: string;
+    provider: unknown;
+    api_key: unknown;
+  }) => Promise<import("@cocalc/util/gpu/provider-keys").GpuProviderKeyStatus>;
+  gpuKeyDelete: (opts: {
+    account_id: string;
+    provider: unknown;
+  }) => Promise<{ revoked: boolean }>;
+  // Pods CoCalc starts with the key (step 3).
+  gpuLaunch: (opts: {
+    account_id: string;
+    project_id: unknown;
+    spec: unknown;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary>;
+  gpuTerminate: (opts: {
+    account_id: string;
+    pod_id: unknown;
+  }) => Promise<{ state: import("@cocalc/util/gpu/types").GpuPodState }>;
+  gpuWho: (opts: {
+    account_id: string;
+    query: unknown;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuAttribution[]>;
+  gpuManagedPods: (opts: {
+    account_id: string;
+    include_ended?: boolean;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]>;
+  // The key's budget (step 5). fresh_auth_verified: the forwarding bay
+  // checked the caller's fresh authentication (needed to raise limits).
+  gpuBudget: (opts: {
+    account_id: string;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuBudget>;
+  gpuSetBudget: (opts: {
+    account_id: string;
+    change: unknown;
+    expected_version?: number;
+    fresh_auth_verified: boolean;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuBudget>;
+  // An admin's override of the stale-worker launch check (the forwarding
+  // bay checked that the caller is an admin, with fresh auth).
+  gpuAllowStaleWorkers: (opts: {
+    admin_account_id: string;
+    account_id: string;
+    hours: number;
+    reason: string;
+  }) => Promise<{ id: string; account_id: string; expires_at: string }>;
+  gpuSshInfo: (opts: {
+    account_id: string;
+    pod_id: unknown;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuPodSshInfo>;
+  // A pod's one-time host-key report, forwarded whole to the token's
+  // authority bay. No account: the token is the only credential.
+  gpuRegisterHostKey: (opts: {
+    token: {
+      authority_bay_id: string;
+      token_id: string;
+      secret: string;
+    };
+    pod_id: string;
+    host_public_key: string;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuHostKeyResult>;
+}
+
 export interface InterBayAccountLocalApi
-  extends InterBayComputeFundingApi, InterBayCreditTransferApi {
+  extends InterBayComputeFundingApi, InterBayCreditTransferApi, InterBayGpuApi {
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
@@ -6668,6 +6760,10 @@ export function createInterBayAccountLocalClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({ dest_bay, method: "compute-funding" }),
   });
+  const gpuClient = createServiceClient<InterBayGpuApi>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "gpu" }),
+  });
   const createClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "create">
   >({
@@ -8131,6 +8227,23 @@ export function createInterBayAccountLocalClient({
       }),
     });
   return {
+    gpuCatalog: async (opts) => await gpuClient.gpuCatalog(opts),
+    gpuAvailability: async (opts) => await gpuClient.gpuAvailability(opts),
+    gpuPods: async (opts) => await gpuClient.gpuPods(opts),
+    gpuKeyStatus: async (opts) => await gpuClient.gpuKeyStatus(opts),
+    gpuKeySet: async (opts) => await gpuClient.gpuKeySet(opts),
+    gpuKeyDelete: async (opts) => await gpuClient.gpuKeyDelete(opts),
+    gpuLaunch: async (opts) => await gpuClient.gpuLaunch(opts),
+    gpuTerminate: async (opts) => await gpuClient.gpuTerminate(opts),
+    gpuWho: async (opts) => await gpuClient.gpuWho(opts),
+    gpuManagedPods: async (opts) => await gpuClient.gpuManagedPods(opts),
+    gpuBudget: async (opts) => await gpuClient.gpuBudget(opts),
+    gpuSetBudget: async (opts) => await gpuClient.gpuSetBudget(opts),
+    gpuAllowStaleWorkers: async (opts) =>
+      await gpuClient.gpuAllowStaleWorkers(opts),
+    gpuSshInfo: async (opts) => await gpuClient.gpuSshInfo(opts),
+    gpuRegisterHostKey: async (opts) =>
+      await gpuClient.gpuRegisterHostKey(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -8695,6 +8808,29 @@ export function createInterBayAccountLocalHandler({
         creditTransferVerifyRoot: (opts) => impl.creditTransferVerifyRoot(opts),
         creditTransferOutgoing: (opts) => impl.creditTransferOutgoing(opts),
         creditTransferDeliver: (opts) => impl.creditTransferDeliver(opts),
+      },
+    }),
+    createServiceHandler<InterBayGpuApi>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({ dest_bay: bay_id, method: "gpu" }),
+      impl: {
+        gpuCatalog: async (opts) => await impl.gpuCatalog(opts),
+        gpuAvailability: async (opts) => await impl.gpuAvailability(opts),
+        gpuPods: async (opts) => await impl.gpuPods(opts),
+        gpuKeyStatus: async (opts) => await impl.gpuKeyStatus(opts),
+        gpuKeySet: async (opts) => await impl.gpuKeySet(opts),
+        gpuKeyDelete: async (opts) => await impl.gpuKeyDelete(opts),
+        gpuLaunch: async (opts) => await impl.gpuLaunch(opts),
+        gpuTerminate: async (opts) => await impl.gpuTerminate(opts),
+        gpuWho: async (opts) => await impl.gpuWho(opts),
+        gpuManagedPods: async (opts) => await impl.gpuManagedPods(opts),
+        gpuBudget: async (opts) => await impl.gpuBudget(opts),
+        gpuSetBudget: async (opts) => await impl.gpuSetBudget(opts),
+        gpuAllowStaleWorkers: async (opts) =>
+          await impl.gpuAllowStaleWorkers(opts),
+        gpuSshInfo: async (opts) => await impl.gpuSshInfo(opts),
+        gpuRegisterHostKey: async (opts) => await impl.gpuRegisterHostKey(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({

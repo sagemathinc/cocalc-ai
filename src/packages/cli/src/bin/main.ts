@@ -211,6 +211,7 @@ import {
 import { registerHostCommand, type HostCommandDeps } from "./commands/host";
 import { registerVmCommand, type VmCommandDeps } from "./commands/vm";
 import { registerComputeFundingCommand } from "./commands/compute-funding";
+import { registerGpuCommand } from "./commands/gpu";
 import { registerUpdateCommand } from "./commands/update";
 import {
   registerProjectCommand,
@@ -3627,6 +3628,7 @@ registerHostCommand(program, hostCommandDeps);
 const vmCommandDeps = { withContext } satisfies VmCommandDeps;
 registerVmCommand(program, vmCommandDeps);
 registerComputeFundingCommand(program, { withContext });
+registerGpuCommand(program, { withContext });
 registerUpdateCommand(program);
 
 async function main() {

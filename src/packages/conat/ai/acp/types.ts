@@ -432,6 +432,14 @@ export type AcpStreamEvent =
       notes?: number;
     }
   | {
+      // The turn was admitted, but the account has used most of an included
+      // AI window. Display only, and project-visible: only the window and
+      // the level crossed, never the account's exact use or reset time.
+      type: "usage_warning";
+      window: "5h" | "7d";
+      threshold: 80 | 95;
+    }
+  | {
       type: "thinking";
       text: string;
     }

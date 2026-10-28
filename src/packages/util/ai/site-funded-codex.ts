@@ -167,10 +167,135 @@ export type SiteFundedCodexDenialCode =
   /** Every site key for the provider has reached its monthly limit. */
   | "provider_keys_exhausted";
 
+/** How much of one included-AI window an account has used. */
+export type SiteFundedUsageWindowUse = {
+  window: "5h" | "7d";
+  used: number;
+  limit: number;
+  resetAt?: string;
+};
+
+/**
+ * A turn was admitted, but the account has used most of an included-AI
+ * window: shown on the turn so the limit never comes as a surprise.
+ */
+export type SiteFundedUsageWarning = {
+  window: "5h" | "7d";
+  /** Whole percent of the window's allowance used before this turn. */
+  percent: number;
+  /** The warning level crossed. */
+  threshold: 80 | 95;
+  resetAt?: string;
+};
+
+export const SITE_FUNDED_USAGE_WARNING_THRESHOLDS = [95, 80] as const;
+
+/**
+ * The window most worth warning about (the highest threshold crossed, then
+ * the fuller window), or undefined below 80% in every window.
+ */
+export function siteFundedUsageWarning(
+  windows: SiteFundedUsageWindowUse[],
+): SiteFundedUsageWarning | undefined {
+  let best: SiteFundedUsageWarning | undefined;
+  for (const { window, used, limit, resetAt } of windows) {
+    if (!(limit > 0) || !Number.isFinite(used)) continue;
+    const fraction = Math.max(0, used) / limit;
+    const threshold = SITE_FUNDED_USAGE_WARNING_THRESHOLDS.find(
+      (t) => fraction * 100 >= t,
+    );
+    if (threshold == null) continue;
+    const percent = Math.min(100, Math.floor(fraction * 100));
+    if (
+      best == null ||
+      threshold > best.threshold ||
+      (threshold === best.threshold && percent > best.percent)
+    ) {
+      best = { window, percent, threshold, ...(resetAt ? { resetAt } : {}) };
+    }
+  }
+  return best;
+}
+
+const WINDOW_NAME: Record<"5h" | "7d", string> = {
+  "5h": "5-hour",
+  "7d": "weekly",
+};
+
+/** "in about 2 h 10 min, at Oct 27, 14:05 UTC", or "" when unknown. */
+export function formatSiteFundedReset(
+  resetAt?: string,
+  now: number = Date.now(),
+): string {
+  const time = resetAt ? Date.parse(resetAt) : NaN;
+  if (!Number.isFinite(time)) return "";
+  const minutes = Math.max(1, Math.round((time - now) / 60_000));
+  const days = Math.floor(minutes / (24 * 60));
+  const hours = Math.floor((minutes % (24 * 60)) / 60);
+  const mins = minutes % 60;
+  const span =
+    days > 0
+      ? `${days} d${hours ? ` ${hours} h` : ""}`
+      : hours > 0
+        ? `${hours} h${mins ? ` ${mins} min` : ""}`
+        : `${mins} min`;
+  const at = new Date(time).toLocaleString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return `in about ${span}, at ${at} UTC`;
+}
+
+/**
+ * What a turn may show about a usage warning. A turn's activity is project
+ * state that every collaborator can read, so it says only which window and
+ * which level was crossed; the exact use and reset time stay account-private
+ * (the account's usage pill in the top bar).
+ */
+export type SiteFundedTurnUsageWarning = Pick<
+  SiteFundedUsageWarning,
+  "window" | "threshold"
+>;
+
+export function siteFundedTurnUsageWarning({
+  window,
+  threshold,
+}: SiteFundedUsageWarning): SiteFundedTurnUsageWarning {
+  return { window, threshold };
+}
+
+/** The notice shown on a turn for a usage warning. */
+export function formatSiteFundedTurnUsageWarning({
+  window,
+  threshold,
+}: SiteFundedTurnUsageWarning): string {
+  return (
+    `The ${WINDOW_NAME[window]} included AI allowance of the account running this turn is over ${threshold}% used.` +
+    // Collaborators read this too: address the account's owner, not "you".
+    ` When it runs out, that account's agent turns are refused until the window resets.` +
+    ` The account's owner can see the details in their top bar, and can upgrade their membership or use their own API key.`
+  );
+}
+
+/** The sentence added to a refusal for an exhausted window, or "". */
+export function formatSiteFundedLimitDetail(
+  resetAt?: string,
+  now: number = Date.now(),
+): string {
+  const reset = formatSiteFundedReset(resetAt, now);
+  return reset ? ` It resets ${reset}.` : "";
+}
+
 export type SiteFundedCodexAdmission =
   | {
       allowed: true;
       reservation: SiteFundedCodexReservation;
+      /** Set when the account is close to a window limit. */
+      usageWarning?: SiteFundedUsageWarning;
     }
   | {
       allowed: false;

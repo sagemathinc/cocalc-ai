@@ -8,6 +8,7 @@ const now = new Date("2026-10-27T05:00:00.000Z");
 const h100 = {
   id: "NVIDIA H100 80GB HBM3",
   name: "H100 SXM",
+  manufacturer: "NVIDIA",
   memory: 80,
   secure: true,
   community: true,
@@ -69,7 +70,14 @@ const dataCenters = [
     region: "NORTH_AMERICA",
     compliance: ["SOC_2_TYPE_2"],
   },
-  { id: "EU-FR-1", name: "EU-FR-1", region: "EUROPE", compliance: ["GDPR", 7] },
+  {
+    id: "EU-FR-1",
+    name: "EU-FR-1",
+    region: "EUROPE",
+    compliance: ["GDPR", 7],
+    globalNetwork: true,
+    networkVolumeTypes: ["STANDARD", 3],
+  },
 ];
 
 describe("normalizeRunpodCatalog", () => {
@@ -93,6 +101,7 @@ describe("normalizeRunpodCatalog", () => {
     expect(byId("NVIDIA H100 80GB HBM3")).toEqual({
       id: "NVIDIA H100 80GB HBM3",
       name: "H100 SXM",
+      manufacturer: "NVIDIA",
       memoryGb: 80,
       secure: {
         price: 3.99,
@@ -123,13 +132,15 @@ describe("normalizeRunpodCatalog", () => {
     expect(t.community).toBeUndefined();
   });
 
-  it("lists data centers with region and compliance", () => {
+  it("lists data centers with region, compliance and networking", () => {
     expect(catalog.dataCenters).toEqual([
       {
         id: "EU-FR-1",
         name: "EU-FR-1",
         region: "EUROPE",
         compliance: ["GDPR"],
+        globalNetwork: true,
+        networkVolumeTypes: ["STANDARD"],
       },
       {
         id: "US-CA-2",

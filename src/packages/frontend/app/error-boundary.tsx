@@ -7,6 +7,11 @@ import { Component, Fragment, type ErrorInfo, type ReactNode } from "react";
 
 import { COLORS } from "@cocalc/util/theme";
 
+import {
+  isLikelyStaleChunkError,
+  reloadForFrontendBuild,
+  reportStaleChunkError,
+} from "./stale-chunk";
 import { markCaughtReactError } from "./react-error-reporting";
 
 interface FallbackProps {
@@ -63,6 +68,8 @@ export class CocalcErrorBoundary extends Component<Props, State> {
   }
 
   private shouldAutoRetry(error: unknown): boolean {
+    // A chunk the server no longer has fails again on every retry.
+    if (isLikelyStaleChunkError(error)) return false;
     const { autoRetry, scope } = this.props;
     if (typeof autoRetry === "function") {
       return autoRetry({
@@ -75,6 +82,8 @@ export class CocalcErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: unknown, _info: ErrorInfo): void {
+    // Tell the top bar too: this error never reaches the window handlers.
+    reportStaleChunkError(error);
     const autoRetry = this.shouldAutoRetry(error);
     markCaughtReactError(error, this.props.scope, {
       action: autoRetry ? "auto-retry" : "fallback",
@@ -159,6 +168,7 @@ export class CocalcErrorBoundary extends Component<Props, State> {
       if (this.props.fallback != null) {
         return this.props.fallback;
       }
+      const stale = isLikelyStaleChunkError(this.state.error);
       return (
         <div
           data-error-boundary={this.props.scope}
@@ -177,10 +187,16 @@ export class CocalcErrorBoundary extends Component<Props, State> {
             textAlign: "center",
           }}
         >
-          <strong>This part of CoCalc could not be displayed.</strong>
-          <span>The error was reported automatically.</span>
+          {stale ? (
+            <strong>CoCalc was updated. Reload to continue.</strong>
+          ) : (
+            <>
+              <strong>This part of CoCalc could not be displayed.</strong>
+              <span>The error was reported automatically.</span>
+            </>
+          )}
           <button
-            onClick={this.retry}
+            onClick={stale ? () => reloadForFrontendBuild() : this.retry}
             style={{
               background: COLORS.BLUE_D,
               border: 0,
@@ -191,7 +207,7 @@ export class CocalcErrorBoundary extends Component<Props, State> {
             }}
             type="button"
           >
-            Try again
+            {stale ? "Reload" : "Try again"}
           </button>
         </div>
       );

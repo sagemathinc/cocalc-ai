@@ -23,7 +23,7 @@ function fakeFetch(
     if (!next) throw new Error("unexpected request");
     const text =
       typeof next.body === "string" ? next.body : JSON.stringify(next.body);
-    return new Response(text, {
+    return new Response(next.status === 204 ? null : text, {
       status: next.status ?? 200,
       headers: next.headers,
     });
@@ -56,7 +56,9 @@ describe("RunpodClient", () => {
     ]);
     await client(fetch).listPods();
     const headers = calls[0].init.headers as Record<string, string>;
-    expect(calls[0].url).toBe("https://api.runpod.io/v2/pods");
+    expect(calls[0].url).toBe(
+      "https://api.runpod.io/v2/pods?includeClusterPods=true",
+    );
     expect(headers.Authorization).toBe(`Bearer ${KEY}`);
     // Cloudflare blocks some default user agents (error 1010).
     expect(headers["User-Agent"]).toMatch(/^cocalc-runpod\//);
@@ -95,7 +97,7 @@ describe("RunpodClient", () => {
     expect(() => new RunpodClient({ apiKey: "a b" })).toThrow(/required/);
   });
 
-  it("follows pagination cursors for the pod inventory", async () => {
+  it("follows pagination cursors for the whole pod inventory, cluster pods included", async () => {
     const { fetch, calls } = fakeFetch([
       {
         body: {
@@ -112,9 +114,11 @@ describe("RunpodClient", () => {
     ]);
     const pods = await client(fetch).listPods();
     expect(pods.map((p) => p.id)).toEqual(["pod_aaaaaa", "pod_bbbbbb"]);
-    expect(calls[1].url).toBe(
-      "https://api.runpod.io/v2/pods?cursor=c%2F2%3Fx%3D1",
-    );
+    // Every page asks for cluster members too.
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api.runpod.io/v2/pods?includeClusterPods=true",
+      "https://api.runpod.io/v2/pods?includeClusterPods=true&cursor=c%2F2%3Fx%3D1",
+    ]);
   });
 
   it("treats a malformed inventory as an error, not an empty list", async () => {
@@ -196,6 +200,7 @@ describe("RunpodClient", () => {
       cost: 0.27,
       gpuTypeId: "NVIDIA RTX A5000",
       gpuCount: 1,
+      vcpuCount: 9,
       cloud: "SECURE",
       dataCenterId: "EU-RO-1",
       image: "runpod/pytorch@sha256:abc",
@@ -204,6 +209,88 @@ describe("RunpodClient", () => {
     expect(JSON.stringify(pod)).not.toMatch(
       new RegExp(`${BOOTSTRAP}|rpa_|reg-1|tmpl-1|vol-1`),
     );
+  });
+
+  it("keeps a pod's non-secret detail: machine, storage, ports, network and live metrics", async () => {
+    const { fetch } = fakeFetch([
+      {
+        body: {
+          id: "pod_abc123",
+          status: "RUNNING",
+          actions: ["stop", "restart", "terminate", "explode"],
+          gpu: { id: "NVIDIA RTX A5000", count: 2, vcpuCount: 18, memory: 50 },
+          disk: 20,
+          mounts: {
+            persistent: { size: 30, path: "/workspace" },
+            network: [{ volumeId: "vol_xyz", path: "/data" }, { path: "/x" }],
+          },
+          ports: ["22/tcp", "8888/http", `${BOOTSTRAP}/tcp`],
+          cudaVersion: "12.8",
+          locked: false,
+          globalNetworking: {
+            enabled: true,
+            ip: "10.65.1.42",
+            internalDns: "pod_abc123.runpod.internal",
+          },
+          runtime: {
+            uptime: 3600,
+            gpus: [{ util: 94, memoryUtil: 78 }, { util: 250 }],
+            cpu: { util: 45 },
+            memory: { util: 30 },
+            ports: [
+              { private: 22, public: 40022, type: "tcp", ip: "203.0.113.7" },
+              { private: 99999, public: 1 },
+            ],
+          },
+          env: { BOOTSTRAP },
+        },
+      },
+    ]);
+    const pod = await client(fetch).getPod("pod_abc123");
+    expect(pod).toEqual({
+      id: "pod_abc123",
+      status: "RUNNING",
+      actions: ["stop", "restart", "terminate"],
+      gpuTypeId: "NVIDIA RTX A5000",
+      gpuCount: 2,
+      vcpuCount: 18,
+      memoryGb: 50,
+      containerDiskGb: 20,
+      mounts: {
+        persistent: { sizeGb: 30, path: "/workspace" },
+        network: [{ volumeId: "vol_xyz", path: "/data" }],
+      },
+      ports: ["22/tcp", "8888/http"],
+      cudaVersion: "12.8",
+      locked: false,
+      globalNetworking: {
+        enabled: true,
+        ip: "10.65.1.42",
+        internalDns: "pod_abc123.runpod.internal",
+      },
+      runtime: {
+        uptimeSeconds: 3600,
+        gpus: [{ util: 94, memoryUtil: 78 }, {}],
+        cpuUtil: 45,
+        memoryUtil: 30,
+        ports: [{ private: 22, public: 40022, type: "tcp", ip: "203.0.113.7" }],
+      },
+    });
+    expect(JSON.stringify(pod)).not.toContain(BOOTSTRAP);
+  });
+
+  it("reads a CPU pod's flavor, vCPUs and memory", () => {
+    expect(
+      podView({
+        id: "pod_cpu123",
+        cpu: { id: "cpu5c", vcpuCount: 4, memory: 16 },
+      }),
+    ).toEqual({
+      id: "pod_cpu123",
+      cpuFlavorId: "cpu5c",
+      vcpuCount: 4,
+      memoryGb: 16,
+    });
   });
 
   it("never returns provider error bodies, even with an unprefixed secret echoed", async () => {
@@ -490,5 +577,178 @@ describe("podView", () => {
       id: "pod_x1y2z3",
       image: "ubuntu@sha256:ab",
     });
+  });
+
+  it("probes pod access with exactly one request", async () => {
+    const { fetch, calls } = fakeFetch([
+      {
+        body: { pods: [], pagination: { hasNextPage: true, nextCursor: "x" } },
+      },
+    ]);
+    await client(fetch).canListPods();
+    expect(calls.map((c) => c.url)).toEqual(["https://api.runpod.io/v2/pods"]);
+    const bad = fakeFetch([{ body: { pods: "nope" } }]);
+    expect((await failure(client(bad.fetch).canListPods())).kind).toBe(
+      "protocol",
+    );
+  });
+
+  it("probes write access by creating and deleting a private template", async () => {
+    const ok = fakeFetch([
+      { status: 201, body: { id: "tpl_1", name: "x" } },
+      { status: 204, body: "" },
+    ]);
+    await client(ok.fetch).canWritePods();
+    expect(ok.calls.map((c) => [c.init.method, c.url])).toEqual([
+      ["POST", "https://api.runpod.io/v2/templates"],
+      ["DELETE", "https://api.runpod.io/v2/templates/tpl_1"],
+    ]);
+    const sent = JSON.parse(`${ok.calls[0].init.body}`);
+    expect(sent.name).toMatch(/^cc-permission-probe-[0-9a-f]{12}$/);
+    expect(sent.image).toBe("busybox:latest");
+    // Read Only keys are refused at the create (measured 10-27).
+    const readOnly = fakeFetch([
+      { status: 403, body: { detail: "Forbidden" } },
+    ]);
+    expect((await failure(client(readOnly.fetch).canWritePods())).kind).toBe(
+      "forbidden",
+    );
+    // A create without an id fails closed, and the probe is looked up by
+    // name and deleted in case RunPod did create it.
+    const odd = fakeFetch([
+      { status: 201, body: {} },
+      { body: [{ id: "tpl_x", name: "someone-else" }] },
+    ]);
+    expect((await failure(client(odd.fetch).canWritePods())).kind).toBe(
+      "protocol",
+    );
+    expect(odd.calls.map((c) => c.init.method)).toEqual(["POST", "GET"]);
+    // A lost reply: RunPod created the template, but we never saw its id.
+    // It is found by its random name and deleted.
+    const seen: Array<[string | undefined, string]> = [];
+    let probe = "";
+    const lostReply = (async (url: string, init: RequestInit) => {
+      seen.push([init.method, url]);
+      if (init.method === "POST") {
+        probe = JSON.parse(`${init.body}`).name;
+        return new Response("", { status: 502 });
+      }
+      if (init.method === "GET") {
+        return new Response(JSON.stringify([{ id: "tpl_lost", name: probe }]));
+      }
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof globalThis.fetch;
+    await failure(client(lostReply).canWritePods());
+    expect(seen).toEqual([
+      ["POST", "https://api.runpod.io/v2/templates"],
+      ["GET", "https://api.runpod.io/v2/templates"],
+      ["DELETE", "https://api.runpod.io/v2/templates/tpl_lost"],
+    ]);
+    // A failed delete is retried once, and the key still counts as writable.
+    const retry = fakeFetch([
+      { status: 201, body: { id: "tpl_2" } },
+      { status: 500, body: "" },
+      { status: 204, body: "" },
+    ]);
+    await client(retry.fetch).canWritePods();
+    expect(retry.calls).toHaveLength(3);
+  });
+});
+
+describe("creating and terminating pods", () => {
+  const body = {
+    name: "cc-7f3k9q2x",
+    image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+    gpu: { id: "NVIDIA GeForce RTX 4090", count: 1 },
+    cloud: "SECURE" as const,
+    disk: 20,
+    ports: ["22/tcp"],
+    env: { PUBLIC_KEY: "ssh-ed25519 AAAA test" },
+  };
+
+  it("posts exactly the given body and returns the allowlisted view", async () => {
+    const { fetch, calls } = fakeFetch([
+      {
+        status: 201,
+        body: {
+          id: "pod_abc123",
+          name: "cc-7f3k9q2x",
+          status: "PROVISIONING",
+          cost: 0.69,
+          env: { PUBLIC_KEY: "ssh-ed25519 AAAA test", BOOTSTRAP },
+        },
+      },
+    ]);
+    const pod = await client(fetch).createPod(body);
+    expect(calls[0].url).toBe("https://api.runpod.io/v2/pods");
+    expect(calls[0].init.method).toBe("POST");
+    expect(JSON.parse(calls[0].init.body as string)).toEqual(body);
+    expect(pod).toEqual(
+      expect.objectContaining({ id: "pod_abc123", name: "cc-7f3k9q2x" }),
+    );
+    expect(JSON.stringify(pod)).not.toContain(BOOTSTRAP);
+  });
+
+  it("reports a refusal by kind, with no provider text", async () => {
+    for (const [status, kind] of [
+      [400, "invalid"],
+      [402, "invalid"],
+      [422, "invalid"],
+      [403, "forbidden"],
+    ] as const) {
+      const { fetch } = fakeFetch([
+        { status, body: { detail: `echo ${BOOTSTRAP}` } },
+      ]);
+      const err = await failure(client(fetch).createPod(body));
+      expect(err.kind).toBe(kind);
+      expect(err.message).not.toContain(BOOTSTRAP);
+    }
+  });
+
+  it("treats a reply for some other pod as unreadable", async () => {
+    const { fetch } = fakeFetch([
+      { status: 201, body: { id: "pod_other", name: "cc-zzzzzzzz" } },
+    ]);
+    expect((await failure(client(fetch).createPod(body))).kind).toBe(
+      "protocol",
+    );
+  });
+
+  it("terminates with DELETE, and a pod RunPod doesn't know is already gone", async () => {
+    const { fetch, calls } = fakeFetch([
+      { status: 204, body: "" },
+      { status: 404, body: {} },
+    ]);
+    await client(fetch).terminatePod("pod_abc123");
+    await client(fetch).terminatePod("pod_gone");
+    expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+      ["DELETE", "https://api.runpod.io/v2/pods/pod_abc123"],
+      ["DELETE", "https://api.runpod.io/v2/pods/pod_gone"],
+    ]);
+  });
+
+  it("refuses to terminate on any other failure", async () => {
+    const { fetch } = fakeFetch([{ status: 500, body: {} }]);
+    expect((await failure(client(fetch).terminatePod("pod_abc123"))).kind).toBe(
+      "provider",
+    );
+  });
+
+  it("finds pods by exact name", async () => {
+    const { fetch } = fakeFetch([
+      {
+        body: {
+          pods: [
+            { id: "pod_1", name: "cc-7f3k9q2x" },
+            { id: "pod_2", name: "cc-7f3k9q2xx" },
+            { id: "pod_3", name: "mine" },
+          ],
+          pagination: { hasNextPage: false, nextCursor: null },
+        },
+      },
+    ]);
+    expect(
+      (await client(fetch).findPodsByName("cc-7f3k9q2x")).map((p) => p.id),
+    ).toEqual(["pod_1"]);
   });
 });

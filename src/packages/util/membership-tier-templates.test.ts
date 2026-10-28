@@ -110,6 +110,7 @@ describe("membership tier templates", () => {
     });
     expect(tier.features).toEqual({
       create_hosts: true,
+      gpu_provider_keys: true,
       project_host_tier: 2,
       private_app_hostnames_per_project: 30,
     });

@@ -69,6 +69,10 @@ jest.mock("@cocalc/frontend/components/api-key-scope-editor", () => ({
   EMPTY_API_KEY_SCOPE: { version: 1, account: [], projects: [] },
   ApiKeyScopeEditor: () => null,
 }));
+jest.mock("./gpu-provider-key", () => ({
+  RUNPOD_SECTION: "RunPod GPUs",
+  GpuProviderKeySection: () => <div>RunPod GPUs</div>,
+}));
 jest.mock("@cocalc/frontend/agents/external-installations", () => ({
   ExternalAgentInstallations: () => <div>External agent installations</div>,
 }));

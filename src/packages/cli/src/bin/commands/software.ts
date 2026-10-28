@@ -1699,7 +1699,25 @@ async function fetchSmokeUrl({
 type FrontendAssetHistory = {
   schema: 1;
   builds: { assets?: unknown }[];
+  // Written by the bay deploy (bay-bootstrap-release.sh).
+  retention?: { required_browser_version?: unknown };
 };
+
+// Matches the deploy guard and the hub monitor (bay-bootstrap-release.sh).
+const FRONTEND_ASSET_LIMIT = 11_000;
+
+// A warning once the retained history passes 80% of the cap: it only shrinks
+// when the required browser version is raised.
+export function frontendAssetHistoryWarning(
+  assetCount: number,
+  history: unknown,
+): string | undefined {
+  if (assetCount < Math.floor(FRONTEND_ASSET_LIMIT * 0.8)) return;
+  const version = Number(
+    (history as FrontendAssetHistory)?.retention?.required_browser_version,
+  );
+  return `WARNING: ${assetCount} of ${FRONTEND_ASSET_LIMIT} retained frontend files (${Math.floor((assetCount / FRONTEND_ASSET_LIMIT) * 100)}%)${version > 0 ? ` back to required browser version ${version}` : ""}; raise "Required browser version" in the admin site settings before a deploy is refused at ${FRONTEND_ASSET_LIMIT}`;
+}
 
 function frontendAssetsFromHistory(value: unknown): string[] {
   const history = value as FrontendAssetHistory;
@@ -1729,8 +1747,7 @@ function frontendAssetsFromHistory(value: unknown): string[] {
         );
       }
       assets.add(asset);
-      // Matches the deploy guard and the hub monitor (bay-bootstrap-release.sh).
-      if (assets.size > 11_000) {
+      if (assets.size > FRONTEND_ASSET_LIMIT) {
         throw new Error("frontend asset history exceeds 11000 files");
       }
     }
@@ -1767,7 +1784,10 @@ async function smokeFrontendAssetHistory({
   } finally {
     clearTimeout(timeout);
   }
-  const assets = frontendAssetsFromHistory(await response.json());
+  const history = await response.json();
+  const assets = frontendAssetsFromHistory(history);
+  const warning = frontendAssetHistoryWarning(assets.length, history);
+  if (warning) console.error(warning);
   const failures: string[] = [];
   let next = 0;
   const workers = Array.from(
@@ -1796,7 +1816,7 @@ async function smokeFrontendAssetHistory({
       `${failures.length}/${assets.length} retained frontend assets failed: ${failures.slice(0, 5).join("; ")}`,
     );
   }
-  return `${assets.length} current/previous content-addressed assets returned HTTP 200`;
+  return `${assets.length} current/previous content-addressed assets returned HTTP 200${warning ? `; ${warning}` : ""}`;
 }
 
 async function smokeHttpChecks({

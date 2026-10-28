@@ -998,6 +998,17 @@ export const MEMBERSHIP_TIER_FIELDS = [
     public: true,
   }),
   field({
+    id: "features.gpu_provider_keys",
+    path: ["features", "gpu_provider_keys"],
+    card: "dedicated-hosts",
+    label: "Can connect GPU provider keys (RunPod)",
+    help: "Allow this tier to connect its own GPU provider API key, so CoCalc can launch and manage GPUs that the provider bills to the user directly.",
+    input: "boolean",
+    valueType: "boolean",
+    risks: ["abuse"],
+    public: true,
+  }),
+  field({
     id: "usage_limits.prepaid_host_usage_limit_5h_usd",
     path: ["usage_limits", "prepaid_host_usage_limit_5h_usd"],
     card: "dedicated-hosts",

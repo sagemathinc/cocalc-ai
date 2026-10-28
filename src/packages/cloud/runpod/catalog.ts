@@ -9,41 +9,25 @@
 // Availability changes by the minute, so this is a snapshot with as_of; the
 // authority re-checks the actual billed cost of a pod after creating it.
 
-import type { RunpodAvailability, RunpodClient, RunpodCloud } from "./client";
+import type { RunpodClient } from "./client";
+import type {
+  RunpodAvailability,
+  RunpodCatalog,
+  RunpodCloud,
+  RunpodCloudOffer,
+  RunpodDataCenter,
+  RunpodGpuType,
+  RunpodStockLevel,
+} from "@cocalc/util/gpu/runpod";
 
-export type RunpodStockLevel = Exclude<RunpodAvailability, "NONE">;
-
-export interface RunpodCloudOffer {
-  // USD per GPU-hour list price
-  price?: number;
-  // largest GPU count on one pod (a ceiling, not stock)
-  maxCount?: number;
-  availability?: RunpodAvailability;
-  // data center id -> availability, only where it is in stock
-  dataCenters: Record<string, RunpodStockLevel>;
-}
-
-export interface RunpodGpuType {
-  id: string;
-  name: string;
-  memoryGb?: number;
-  // absent when RunPod doesn't offer the type in that cloud
-  secure?: RunpodCloudOffer;
-  community?: RunpodCloudOffer;
-}
-
-export interface RunpodDataCenter {
-  id: string;
-  name?: string;
-  region?: string;
-  compliance: string[];
-}
-
-export interface RunpodCatalog {
-  as_of: string;
-  gpuTypes: RunpodGpuType[];
-  dataCenters: RunpodDataCenter[];
-}
+// The catalog types are shared with the hub API and frontend.
+export type {
+  RunpodCatalog,
+  RunpodCloudOffer,
+  RunpodDataCenter,
+  RunpodGpuType,
+  RunpodStockLevel,
+} from "@cocalc/util/gpu/runpod";
 
 export function normalizeRunpodCatalog(
   byCloud: { secure: any[]; community: any[] },
@@ -58,6 +42,10 @@ export function normalizeRunpodCatalog(
       const type = types.get(t.id) ?? {
         id: t.id,
         name: typeof t.name === "string" && t.name ? t.name : t.id,
+        manufacturer:
+          typeof t.manufacturer === "string" && t.manufacturer
+            ? t.manufacturer
+            : undefined,
         memoryGb: positive(t.memory),
       };
       // `secure`/`community` say whether that cloud offers the type at all;
@@ -74,14 +62,21 @@ export function normalizeRunpodCatalog(
   const centers: RunpodDataCenter[] = [];
   for (const dc of dataCenters ?? []) {
     if (typeof dc?.id !== "string" || !dc.id) continue;
-    centers.push({
-      id: dc.id,
-      name: typeof dc.name === "string" ? dc.name : undefined,
-      region: typeof dc.region === "string" ? dc.region : undefined,
-      compliance: Array.isArray(dc.compliance)
-        ? dc.compliance.filter((c: unknown) => typeof c === "string")
-        : [],
-    });
+    centers.push(
+      compact({
+        id: dc.id,
+        name: typeof dc.name === "string" ? dc.name : undefined,
+        region: typeof dc.region === "string" ? dc.region : undefined,
+        compliance: Array.isArray(dc.compliance)
+          ? dc.compliance.filter((c: unknown) => typeof c === "string")
+          : [],
+        globalNetwork:
+          typeof dc.globalNetwork === "boolean" ? dc.globalNetwork : undefined,
+        networkVolumeTypes: Array.isArray(dc.networkVolumeTypes)
+          ? dc.networkVolumeTypes.filter((v: unknown) => typeof v === "string")
+          : undefined,
+      }),
+    );
   }
   centers.sort((a, b) => a.id.localeCompare(b.id));
   return { as_of: now.toISOString(), gpuTypes, dataCenters: centers };

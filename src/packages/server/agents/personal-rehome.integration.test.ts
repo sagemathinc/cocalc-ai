@@ -5,6 +5,7 @@ import { AgentStore } from "./store";
 import {
   COMPUTER_STATE_TABLES,
   EXTERNAL_AGENT_STATE_TABLES,
+  GPU_STATE_TABLES,
   PERSONAL_AGENT_STATE_TABLES,
   assertNoPersonalStateForRehome,
 } from "./personal-rehome";
@@ -18,6 +19,7 @@ describeDb("Agent Network account rehome fence", () => {
     ...PERSONAL_AGENT_STATE_TABLES,
     ...EXTERNAL_AGENT_STATE_TABLES,
     ...COMPUTER_STATE_TABLES,
+    ...GPU_STATE_TABLES,
   ];
   beforeAll(async () => {
     await syncSchema(
@@ -97,4 +99,35 @@ describeDb("Agent Network account rehome fence", () => {
       ).resolves.toBeUndefined();
     },
   );
+
+  test("an account with GPU state on its own key can't be rehomed", async () => {
+    const account = randomUUID();
+    await assertNoPersonalStateForRehome(db, account);
+    await db.query(
+      "INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated) VALUES ($1, $2, 'active', now(), now())",
+      [randomUUID(), account],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "GPU pods, GPU budgets",
+    );
+  });
+
+  test("an admin GPU override blocks a rehome, even once revoked (its audit history stays home)", async () => {
+    const account = randomUUID();
+    const override = randomUUID();
+    await db.query(
+      "INSERT INTO gpu_worker_overrides (id, key_owner_account_id, admin_account_id, reason, created, expires_at) VALUES ($1, $2, $2, 'a good enough reason', now(), now() + interval '1 hour')",
+      [override, account],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "admin GPU override",
+    );
+    await db.query(
+      "UPDATE gpu_worker_overrides SET revoked_at = now() WHERE id = $1",
+      [override],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "admin GPU override",
+    );
+  });
 });

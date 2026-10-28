@@ -7,15 +7,26 @@
 // (ours, e.g. a one-time bootstrap token, or anything the account owner
 // set), the start command, registry credentials, template and volume ids.
 // Only the fields below ever leave this package; fields RunPod adds later
-// are dropped until we allowlist them.
+// are dropped until we allowlist them. The view types are shared with the
+// hub API and frontend: see @cocalc/util/gpu/runpod.
 
-export type RunpodPodStatus =
-  | "PROVISIONING"
-  | "STARTING"
-  | "RUNNING"
-  | "EXITED"
-  | "ERROR"
-  | "TERMINATED";
+import type {
+  RunpodPodMounts,
+  RunpodPodRuntime,
+  RunpodPodView,
+  RunpodPortMapping,
+  RunpodSshEndpoint,
+} from "@cocalc/util/gpu/runpod";
+
+export type {
+  RunpodPodAction,
+  RunpodPodMounts,
+  RunpodPodRuntime,
+  RunpodPodStatus,
+  RunpodPodView,
+  RunpodPortMapping,
+  RunpodSshEndpoint,
+} from "@cocalc/util/gpu/runpod";
 
 const POD_STATUSES = new Set<string>([
   "PROVISIONING",
@@ -26,53 +37,116 @@ const POD_STATUSES = new Set<string>([
   "TERMINATED",
 ]);
 
-export interface RunpodSshEndpoint {
-  host: string;
-  port: number;
-  username: string;
-}
-
-export interface RunpodPodView {
-  id: string;
-  name?: string;
-  status?: RunpodPodStatus;
-  // USD per hour actually billed for this pod
-  cost?: number;
-  gpuTypeId?: string;
-  gpuCount?: number;
-  cloud?: "SECURE" | "COMMUNITY";
-  dataCenterId?: string;
-  image?: string;
-  // direct (public IP) and proxied SSH endpoints, when RunPod reports them
-  sshDirect?: RunpodSshEndpoint;
-  sshProxy?: RunpodSshEndpoint;
-  createdAt?: string;
-  startedAt?: string;
-}
+const POD_ACTIONS = new Set<string>(["start", "stop", "restart", "terminate"]);
 
 export function podView(raw: any): RunpodPodView | undefined {
   if (raw == null || typeof raw !== "object" || !isString(raw.id)) {
     return undefined;
   }
+  // GPU pods report vCPUs and RAM under `gpu`, CPU pods under `cpu`.
+  const machine = raw.gpu ?? raw.cpu;
   const view: RunpodPodView = {
     id: raw.id,
     name: str(raw.name),
     status: POD_STATUSES.has(raw.status) ? raw.status : undefined,
+    actions: Array.isArray(raw.actions)
+      ? raw.actions.filter((a: unknown) => POD_ACTIONS.has(a as string))
+      : undefined,
     cost: finite(raw.cost),
     gpuTypeId: str(raw.gpu?.id),
     gpuCount: positiveInt(raw.gpu?.count),
+    cpuFlavorId: raw.gpu ? undefined : str(raw.cpu?.id),
+    vcpuCount: positive(machine?.vcpuCount),
+    memoryGb: positive(machine?.memory),
+    containerDiskGb: positiveInt(raw.disk),
+    mounts: mounts(raw.mounts),
     cloud:
       raw.cloud === "SECURE" || raw.cloud === "COMMUNITY"
         ? raw.cloud
         : undefined,
     dataCenterId: str(raw.dataCenterId),
+    cudaVersion: str(raw.cudaVersion),
     image: imageName(raw.image),
+    ports: Array.isArray(raw.ports)
+      ? raw.ports.filter(
+          (p: unknown) => typeof p === "string" && /^\d{1,5}\/[a-z]+$/.test(p),
+        )
+      : undefined,
+    locked: typeof raw.locked === "boolean" ? raw.locked : undefined,
     sshDirect: sshEndpoint(raw.ssh?.direct),
     sshProxy: sshEndpoint(raw.ssh?.proxy),
+    globalNetworking:
+      typeof raw.globalNetworking?.enabled === "boolean"
+        ? compact({
+            enabled: raw.globalNetworking.enabled,
+            ip: str(raw.globalNetworking.ip),
+            internalDns: str(raw.globalNetworking.internalDns),
+          })
+        : undefined,
+    runtime: runtime(raw.runtime),
     createdAt: str(raw.createdAt),
     startedAt: str(raw.startedAt),
   };
   return compact(view);
+}
+
+function mounts(raw: any): RunpodPodMounts | undefined {
+  if (raw == null || typeof raw !== "object") return undefined;
+  const volumes = (list: unknown) =>
+    Array.isArray(list)
+      ? list
+          .filter((m) => isString(m?.volumeId))
+          .map((m) => compact({ volumeId: m.volumeId, path: str(m.path) }))
+      : undefined;
+  const p = raw.persistent;
+  const view: RunpodPodMounts = {
+    persistent:
+      positiveInt(p?.size) != null && isString(p?.path)
+        ? { sizeGb: p.size, path: p.path }
+        : undefined,
+    network: volumes(raw.network),
+    global: volumes(raw.global),
+  };
+  compact(view);
+  return Object.keys(view).length > 0 ? view : undefined;
+}
+
+function runtime(raw: any): RunpodPodRuntime | undefined {
+  if (raw == null || typeof raw !== "object") return undefined;
+  const view: RunpodPodRuntime = {
+    uptimeSeconds: nonNegativeInt(raw.uptime),
+    gpus: Array.isArray(raw.gpus)
+      ? raw.gpus.map((g: any) =>
+          compact({
+            util: percent(g?.util),
+            memoryUtil: percent(g?.memoryUtil),
+          }),
+        )
+      : undefined,
+    cpuUtil: percent(raw.cpu?.util),
+    memoryUtil: percent(raw.memory?.util),
+    ports: Array.isArray(raw.ports)
+      ? raw.ports
+          .map(portMapping)
+          .filter((p: RunpodPortMapping | undefined) => p != null)
+      : undefined,
+  };
+  return compact(view);
+}
+
+function portMapping(raw: any): RunpodPortMapping | undefined {
+  const port = (v: unknown) => {
+    const n = positiveInt(v);
+    return n != null && n <= 65535 ? n : undefined;
+  };
+  const priv = port(raw?.private);
+  if (priv == null) return undefined;
+  return compact({
+    private: priv,
+    public: port(raw.public),
+    type: str(raw.type),
+    ip: str(raw.ip),
+  });
 }
 
 export interface RunpodBillingRecord {
@@ -156,6 +230,20 @@ function finite(v: unknown): number | undefined {
 
 function positiveInt(v: unknown): number | undefined {
   return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined;
+}
+
+function nonNegativeInt(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined;
+}
+
+function positive(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+function percent(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100
+    ? v
+    : undefined;
 }
 
 function compact<T extends object>(obj: T): T {

@@ -19,6 +19,7 @@ export type TableAuthorityKey =
   | "seed"
   | "account_id"
   | "owner_account_id"
+  | "key_owner_account_id"
   | "payer_account_id"
   | "sender_account_id"
   | "recipient_account_id"
@@ -610,6 +611,50 @@ export const TABLE_OWNERSHIP = {
     notes:
       "Fixed-window agent memory rate counters shared by load-balanced hubs in the home bay. Losing rows only resets the current window.",
     rebuild: "No rebuild: counters restart empty.",
+  }),
+
+  ...entries(
+    [
+      "gpu_key_fences",
+      "gpu_budget_layers",
+      "gpu_budget_events",
+      "gpu_pod_reservations",
+      "gpu_worker_overrides",
+    ],
+    {
+      ownership: "account-home",
+      authority: "key_owner_account_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        project_id:
+          "Project a GPU budget layer is bound to; only a scope reference, the row lives on the key owner's home bay.",
+        account_id:
+          "Not used; beneficiary_account_id is an attribution reference.",
+      },
+      notes:
+        "GPU bring-your-own-key budgets: per-key fences, budget layers and their events, and pod reservations, on the home bay of the account whose provider key pays (reservation and event rows follow their layer). Rehome is refused while any GPU rows exist (assertNoPersonalStateForRehome).",
+    },
+  ),
+
+  ...entries(["gpu_worker_leases"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "rebuildable",
+    notes:
+      "Per-bay lease and completed-sweep watermark of the GPU reaper/reconciler. Launch admission on this bay requires a recent watermark.",
+    rebuild: "No rebuild: the next sweep writes it; launches wait until then.",
+  }),
+
+  ...entries(["gpu_pods", "gpu_pod_events"], {
+    ownership: "account-home",
+    authority: "key_owner_account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Project a GPU pod was launched for; only an attribution reference, the row lives on the key owner's home bay.",
+    },
+    notes:
+      "GPU bring-your-own-key pod records and their append-only events, on the home bay of the account whose provider key launched the pod (gpu_pod_events rows follow their pod). Reads and writes route there with the key operations (server/gpu). Rehome is unsupported until the pods and the key move together.",
   }),
 
   ...entries(["external_credentials"], {

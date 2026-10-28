@@ -15,7 +15,11 @@ import test from "node:test";
 
 import { Command } from "commander";
 
-import { registerSoftwareCommand, type SoftwareCommandDeps } from "./software";
+import {
+  frontendAssetHistoryWarning,
+  registerSoftwareCommand,
+  type SoftwareCommandDeps,
+} from "./software";
 import type { SoftwareR2Client } from "../core/software/remote-store";
 
 type CapturedRun = {
@@ -4545,6 +4549,20 @@ for (const overlap of [true, false]) {
     }
   });
 }
+
+test("software smoke warns once retained frontend assets pass 80% of the cap", () => {
+  assert.equal(frontendAssetHistoryWarning(8799, {}), undefined);
+  assert.match(
+    frontendAssetHistoryWarning(8800, {
+      retention: { required_browser_version: 1792710260 },
+    }) ?? "",
+    /^WARNING: 8800 of 11000 retained frontend files \(80%\) back to required browser version 1792710260; raise "Required browser version"/,
+  );
+  assert.doesNotMatch(
+    frontendAssetHistoryWarning(9000, {}) ?? "",
+    /back to required browser version/,
+  );
+});
 
 test("software smoke hub also runs Rocket host route health", async () => {
   const dir = mkdtempSync(join(tmpdir(), "software-smoke-hub-"));

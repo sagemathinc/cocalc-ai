@@ -35,7 +35,9 @@ import initProjectControl from "@cocalc/server/projects/control";
 import { start as startHubRegister } from "@cocalc/server/metrics/hub_register";
 import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
+import { initGpuReaper } from "@cocalc/server/gpu/reaper";
 import { eraseRevokedExternalCredentialPayloads } from "@cocalc/server/external-credentials/store";
+import { clearStaleHostkeyTokens } from "@cocalc/server/gpu/hostkey-clear";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
@@ -414,6 +416,27 @@ async function startServer(): Promise<void> {
       60 * 60 * 1000,
     );
     eraseTimer.unref?.();
+    // The GPU reaper runs on every API hub: its lease lets one sweep run at a
+    // time on the bay, and launches fail closed unless a sweep completed
+    // recently, so it must run wherever the API does.
+    initGpuReaper();
+    // GPU pods' host-key registration verifiers are retired a window after
+    // use or expiry (a report never sweeps other rows). Indexed and
+    // idempotent, so every API hub can run it.
+    const hostkeyTimer = setInterval(
+      () =>
+        clearStaleHostkeyTokens()
+          .then((cleared) => {
+            if (cleared > 0) {
+              logger.info(`retired ${cleared} stale GPU host-key tokens`);
+            }
+          })
+          .catch((err) =>
+            logger.warn(`retiring stale GPU host-key tokens failed: ${err}`),
+          ),
+      5 * 60 * 1000,
+    );
+    hostkeyTimer.unref?.();
   }
 
   if (program.all || program.mentions) {

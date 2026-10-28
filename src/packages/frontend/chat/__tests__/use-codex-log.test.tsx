@@ -237,19 +237,26 @@ function ActivityStatusComponent({
   logSubject?: string;
   liveLogStream?: string;
 }) {
-  const { activeDescendantThreadIds, lastActivityAtMs, liveStatus } =
-    useCodexLiveActivityStatus({
-      enabled: true,
-      projectId: "project-1",
-      logSubject,
-      liveLogStream,
-    });
+  const {
+    activeDescendantThreadIds,
+    lastActivityAtMs,
+    liveStatus,
+    usageWarning,
+  } = useCodexLiveActivityStatus({
+    enabled: true,
+    projectId: "project-1",
+    logSubject,
+    liveLogStream,
+  });
   return (
     <>
       <div data-testid="activity-last-time">{`${lastActivityAtMs ?? ""}`}</div>
       <div data-testid="activity-live-status">{liveStatus}</div>
       <div data-testid="activity-subagents">
         {activeDescendantThreadIds.join(",")}
+      </div>
+      <div data-testid="activity-usage-warning">
+        {usageWarning ? `${usageWarning.window}:${usageWarning.threshold}` : ""}
       </div>
     </>
   );
@@ -1490,6 +1497,39 @@ describe("useCodexLog", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("activity-subagents").textContent).toBe("");
+    });
+  });
+
+  it("exposes the turn's usage warning from the lightweight preview stream", async () => {
+    const stream = new FakeDstream([
+      {
+        type: "event",
+        seq: 1,
+        event: { type: "usage_warning", window: "5h", threshold: 80 },
+      },
+    ]);
+    dstreamMock.mockResolvedValue(stream);
+
+    render(<ActivityStatusComponent liveLogStream="live-stream-usage" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("activity-usage-warning").textContent).toBe(
+        "5h:80",
+      );
+    });
+
+    act(() => {
+      stream.push({
+        type: "event",
+        seq: 2,
+        event: { type: "usage_warning", window: "7d", threshold: 95 },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("activity-usage-warning").textContent).toBe(
+        "7d:95",
+      );
     });
   });
 
