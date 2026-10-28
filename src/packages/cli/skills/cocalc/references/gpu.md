@@ -78,9 +78,10 @@ registered agent), until it ends.
   request id, the GPU, the maximum runtime and the most it can cost (the dry
   run's `max_cost_usd`), and end your turn. Don't retry, and don't try a
   different launch to get around it: that makes a new request.
-- The human reviews the exact launch and its hash (`cocalc gpu agent
-  requests`) and approves it after signing in again. You can't approve
-  anything yourself.
+- The human sees the exact launch in a banner at the top of this project
+  in CoCalc (or with `cocalc gpu agent requests`), and approves or
+  declines it there, signing in again to approve. You can't approve
+  anything yourself. If they decline, don't ask again unless they say so.
 - Once approved, run **the identical command again**: same options, same
   `--operation` if you gave one. Any change is a different launch and needs
   a new approval. A second pod needs a second approval too.
