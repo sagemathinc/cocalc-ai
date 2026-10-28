@@ -526,11 +526,37 @@ describe("podView", () => {
     expect((await failure(client(readOnly.fetch).canWritePods())).kind).toBe(
       "forbidden",
     );
-    // A create without an id fails closed.
-    const odd = fakeFetch([{ status: 201, body: {} }]);
+    // A create without an id fails closed, and the probe is looked up by
+    // name and deleted in case RunPod did create it.
+    const odd = fakeFetch([
+      { status: 201, body: {} },
+      { body: [{ id: "tpl_x", name: "someone-else" }] },
+    ]);
     expect((await failure(client(odd.fetch).canWritePods())).kind).toBe(
       "protocol",
     );
+    expect(odd.calls.map((c) => c.init.method)).toEqual(["POST", "GET"]);
+    // A lost reply: RunPod created the template, but we never saw its id.
+    // It is found by its random name and deleted.
+    const seen: Array<[string | undefined, string]> = [];
+    let probe = "";
+    const lostReply = (async (url: string, init: RequestInit) => {
+      seen.push([init.method, url]);
+      if (init.method === "POST") {
+        probe = JSON.parse(`${init.body}`).name;
+        return new Response("", { status: 502 });
+      }
+      if (init.method === "GET") {
+        return new Response(JSON.stringify([{ id: "tpl_lost", name: probe }]));
+      }
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof globalThis.fetch;
+    await failure(client(lostReply).canWritePods());
+    expect(seen).toEqual([
+      ["POST", "https://api.runpod.io/v2/templates"],
+      ["GET", "https://api.runpod.io/v2/templates"],
+      ["DELETE", "https://api.runpod.io/v2/templates/tpl_lost"],
+    ]);
     // A failed delete is retried once, and the key still counts as writable.
     const retry = fakeFetch([
       { status: 201, body: { id: "tpl_2" } },

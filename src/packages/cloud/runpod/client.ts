@@ -244,13 +244,32 @@ export class RunpodClient {
   // free private template; it is retried once.
   async canWritePods(): Promise<void> {
     const name = `cc-permission-probe-${randomBytes(6).toString("hex")}`;
-    const res = await this.request(`${API_ORIGIN}/v2/templates`, {
-      method: "POST",
-      body: JSON.stringify({ name, image: "busybox:latest" }),
-    });
-    const created = await this.parse(res);
-    const id = typeof created?.id === "string" ? created.id : undefined;
-    if (!id) throw new RunpodApiError("protocol", res.status);
+    let id: string | undefined;
+    try {
+      const res = await this.request(`${API_ORIGIN}/v2/templates`, {
+        method: "POST",
+        body: JSON.stringify({ name, image: "busybox:latest" }),
+      });
+      const created = await this.parse(res);
+      id = typeof created?.id === "string" ? created.id : undefined;
+      if (!id) throw new RunpodApiError("protocol", res.status);
+    } catch (err) {
+      // A clear refusal created nothing. Anything else (a lost reply, a
+      // timeout, an odd body) may have created the template: find it by its
+      // random name and delete it.
+      const refused =
+        err instanceof RunpodApiError &&
+        (err.kind === "auth" ||
+          err.kind === "forbidden" ||
+          err.kind === "invalid");
+      if (!refused) await this.deleteTemplatesNamed(name);
+      throw err;
+    }
+    await this.deleteTemplate(id);
+  }
+
+  // Best effort, retried once: a leftover is only a free private template.
+  private async deleteTemplate(id: string): Promise<void> {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const del = await this.request(
@@ -260,8 +279,22 @@ export class RunpodClient {
         await this.parse(del);
         return;
       } catch {
-        // the key can write (the create worked); retry the cleanup once
+        // retry once
       }
+    }
+  }
+
+  private async deleteTemplatesNamed(name: string): Promise<void> {
+    try {
+      const body = await this.get("/v2/templates");
+      const rows: any[] = Array.isArray(body) ? body : (body?.templates ?? []);
+      for (const row of rows) {
+        if (row?.name === name && typeof row?.id === "string") {
+          await this.deleteTemplate(row.id);
+        }
+      }
+    } catch {
+      // best effort
     }
   }
 
