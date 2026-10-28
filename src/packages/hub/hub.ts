@@ -37,6 +37,7 @@ import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import { initGpuReaper } from "@cocalc/server/gpu/reaper";
 import { initGpuReconciler } from "@cocalc/server/gpu/reconcile";
+import { initGpuBilling } from "@cocalc/server/gpu/billing";
 import { eraseRevokedExternalCredentialPayloads } from "@cocalc/server/external-credentials/store";
 import { clearStaleHostkeyTokens } from "@cocalc/server/gpu/hostkey-clear";
 import { closeExpiredAgentGrants } from "@cocalc/server/gpu/agent-api";
@@ -424,6 +425,8 @@ async function startServer(): Promise<void> {
     initGpuReaper();
     // and the inventory of each key, which launches need recent
     initGpuReconciler();
+    // and RunPod's billing of ended pods, replacing their estimates (5d-2a)
+    initGpuBilling();
     // GPU pods' host-key registration verifiers are retired a window after
     // use or expiry (a report never sweeps other rows). Indexed and
     // idempotent, so every API hub can run it.

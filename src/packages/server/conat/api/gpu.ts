@@ -22,6 +22,7 @@ import {
   setGpuBudget as setGpuBudgetImpl,
 } from "@cocalc/server/gpu/budget-api";
 import { allowStaleWorkers } from "@cocalc/server/gpu/admin";
+import { listAdminAlertsLocal } from "@cocalc/server/gpu/admin-alerts";
 import {
   killSwitch as gpuKillSwitch,
   launchGpuPod,
@@ -262,5 +263,15 @@ export async function releaseQuarantined(
     browser_id: opts?.browser_id,
     session_hash: opts?.session_hash,
     pod_id: opts?.pod_id,
+  });
+}
+
+export async function adminAlerts(
+  opts: Parameters<GpuApi["adminAlerts"]>[0],
+): ReturnType<GpuApi["adminAlerts"]> {
+  return await listAdminAlertsLocal({
+    account_id: opts?.account_id,
+    include_resolved: opts?.include_resolved,
+    bay_id: opts?.bay_id,
   });
 }

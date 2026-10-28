@@ -51,6 +51,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "releases budget held for a pod CoCalc couldn't confirm gone; checked in releaseQuarantined",
   },
+  "gpu.adminAlerts": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "read-only, admins only (checked in listAdminAlertsLocal): GPU admin alerts from every bay (or one selected bay), never key material",
+  },
   "gpu.acknowledgeAlert": {
     decision: "fresh-auth-not-required",
     reason:

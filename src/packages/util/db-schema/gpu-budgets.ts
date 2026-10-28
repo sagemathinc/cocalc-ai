@@ -364,6 +364,20 @@ export const GPU_ALERT_KINDS = [
   "quarantined_reservation",
   "compromise_awaiting_revocation",
   "compromise_check_pods",
+  // 5d-2a: billing came in well above the estimate; billing never proved a
+  // pod's lifetime within 48 h; billing pushed a layer past its authorization
+  "spend_drift",
+  "billing_missing",
+  "over_budget",
+] as const;
+
+// What CoCalc admins must know (5d-2), apart from any one owner's alerts.
+export const GPU_ADMIN_ALERT_KINDS = [
+  // a pod's layer reservations disagreed on its spend (billing not applied)
+  "billing_inconsistent",
+  // 5d-2c: a key decrypt without a matching authorization or outcome
+  "unexplained_decrypt",
+  "decrypt_unresolved",
 ] as const;
 export const GPU_ALERT_SEVERITIES = ["info", "warning", "critical"] as const;
 
@@ -484,7 +498,9 @@ Table({
       not_null: true,
       // compromise: the cleanup of keys reported compromised (5c), apart
       // from the reaper's sweep so it never holds back its watermark
-      pg_check: "CHECK (name IN ('reaper','reconciler','compromise'))",
+      // billing: provider billing reconciliation (5d-2a)
+      pg_check:
+        "CHECK (name IN ('reaper','reconciler','compromise','billing'))",
     },
     holder: { type: "string", pg_type: "varchar(128)" },
     expires_at: { type: "timestamp" },
@@ -493,6 +509,74 @@ Table({
     last_error: { type: "string", pg_type: "varchar(500)" },
     // the last complete sweep's numbers (the reconciler: its backlog)
     last_stats: { type: "map" },
+  },
+});
+
+// Every run of a GPU worker (5d-2a): created in the transaction that takes
+// its lease, closed in the one that releases or loses it. A worker's key use
+// is tied to its run (5d-2c audits it).
+Table({
+  name: "gpu_worker_runs",
+  rules: { primary_key: "id", pg_indexes: ["token", "name", "started"] },
+  fields: {
+    id: { type: "uuid", not_null: true },
+    // the lease holder token of the sweep
+    token: { type: "string", pg_type: "varchar(200)", not_null: true },
+    name: {
+      type: "string",
+      pg_type: "varchar(32)",
+      not_null: true,
+      pg_check:
+        "CHECK (name IN ('reaper','reconciler','compromise','billing'))",
+    },
+    started: { type: "timestamp", not_null: true },
+    finished: { type: "timestamp" },
+    // finished | failed | lost
+    outcome: { type: "string", pg_type: "varchar(16)" },
+  },
+});
+
+// What CoCalc admins must know (5d-2): a durable row first (one open per
+// kind and dedupe key), and email to admins as a retryable projection of it.
+Table({
+  name: "gpu_admin_alerts",
+  rules: {
+    primary_key: "id",
+    pg_indexes: ["opened", "emailed_at"],
+    pg_unique_indexes: ["(kind, dedupe_key) WHERE resolved_at IS NULL"],
+  },
+  fields: {
+    id: { type: "uuid", not_null: true },
+    kind: {
+      type: "string",
+      pg_type: "varchar(40)",
+      not_null: true,
+      pg_check: oneOf("kind", GPU_ADMIN_ALERT_KINDS),
+    },
+    severity: {
+      type: "string",
+      pg_type: "varchar(16)",
+      not_null: true,
+      pg_check: oneOf("severity", GPU_ALERT_SEVERITIES),
+    },
+    dedupe_key: { type: "string", pg_type: "varchar(128)", not_null: true },
+    // the account and key it concerns, if any (never key material)
+    key_owner_account_id: { type: "uuid" },
+    credential_id: { type: "uuid" },
+    details: { type: "map" },
+    opened: { type: "timestamp", not_null: true, pg_default: "now()" },
+    last_seen: { type: "timestamp", not_null: true, pg_default: "now()" },
+    resolved_at: { type: "timestamp" },
+    resolved_by: { type: "string", pg_type: "varchar(40)" },
+    emailed_at: { type: "timestamp" },
+    email_attempts: { type: "integer", not_null: true, pg_default: "0" },
+    // the admins it was emailed to (a retry skips them)
+    emailed_to: { type: "array", pg_type: "TEXT[]" },
+    // the hub sending its email now (one at a time, across hubs)
+    email_claim: { type: "string", pg_type: "varchar(64)" },
+    email_claimed_until: { type: "timestamp" },
+    // after a failed attempt, not retried before this (null: due now)
+    email_next_at: { type: "timestamp" },
   },
 });
 

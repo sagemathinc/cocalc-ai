@@ -79,6 +79,9 @@ describeDb("gpu.spend", () => {
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pods: SCHEMA.gpu_pods,
+      gpu_pod_state_intervals: SCHEMA.gpu_pod_state_intervals,
+      gpu_admin_alerts: SCHEMA.gpu_admin_alerts,
+      gpu_worker_runs: SCHEMA.gpu_worker_runs,
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
     });
   });
@@ -216,7 +219,9 @@ describeDb("gpu.spend", () => {
       }),
     ]);
     expect(result.totals.spent_usd).toBe("2.5000000000");
-    expect(result.billed_through).toBeUndefined();
+    // these fixture pods have no RunPod id, so billing can't reconcile them
+    // and they don't hold billed_through back (5d-2a)
+    expect(result.billed_through).toBe("2026-10-28T12:00:00.000Z");
   });
 
   it("estimates live pods from running_since, as settlement will, and shows holds apart", async () => {

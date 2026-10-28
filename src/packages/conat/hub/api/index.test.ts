@@ -281,6 +281,7 @@ describe("hub API argument transforms", () => {
       "gpu.alerts",
       "gpu.acknowledgeAlert",
       "gpu.releaseQuarantined",
+      "gpu.adminAlerts",
     ]) {
       await expect(
         (async () =>

@@ -38,6 +38,53 @@ const QUARANTINED = alert({
 });
 
 describe("GpuAlertsStrip", () => {
+  it("titles the billing alerts (5d-2a) in words, with acknowledge where allowed", () => {
+    render(
+      <GpuAlertsStrip
+        alerts={[
+          alert({
+            id: "d1",
+            kind: "spend_drift",
+            severity: "critical",
+            message: "RunPod billed a pod well above CoCalc's estimate for it.",
+            details: { handle: "cc-drift0001" },
+            acknowledgeable: true,
+          }),
+          alert({
+            id: "m1",
+            kind: "billing_missing",
+            severity: "warning",
+            message: "RunPod's billing never fully covered a pod.",
+            details: {},
+            acknowledgeable: true,
+          }),
+          alert({
+            id: "o1",
+            kind: "over_budget",
+            severity: "warning",
+            message:
+              "RunPod's billing pushed spending past what this GPU budget authorizes.",
+            details: {},
+            acknowledgeable: true,
+          }),
+        ]}
+        onAcknowledge={async () => {}}
+      />,
+    );
+    expect(
+      screen.getByText(/RunPod billed a pod well above CoCalc's estimate$/),
+    ).toBeTruthy();
+    expect(screen.getByText(/billing never fully covered a pod$/)).toBeTruthy();
+    expect(
+      screen.getByText(/Billing pushed spending past a GPU budget/),
+    ).toBeTruthy();
+    // the critical one is announced as an alert, the others as status
+    expect(screen.getAllByRole("alert").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByRole("button", { name: /acknowledge/i }).length).toBe(
+      3,
+    );
+  });
+
   it("renders nothing without alerts", () => {
     const { container } = render(<GpuAlertsStrip alerts={[]} />);
     expect(container.textContent).toBe("");

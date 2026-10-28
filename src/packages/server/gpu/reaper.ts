@@ -66,7 +66,7 @@ export interface ReaperDeps extends GpuPodDeps {
 
 const REAPER: Actor = { kind: "reaper" };
 
-export type WorkerName = "reaper" | "reconciler" | "compromise";
+export type WorkerName = "reaper" | "reconciler" | "compromise" | "billing";
 
 // The lease is taken under a token unique to one sweep: nobody, not even
 // the same hub, takes it again until that sweep releases it or it expires.
@@ -80,15 +80,40 @@ export async function acquireWorkerLease(
     `INSERT INTO gpu_worker_leases (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
     [name],
   );
-  const { rows } = await getPool().query(
-    `UPDATE gpu_worker_leases
-        SET holder = $2, expires_at = $3::timestamptz + make_interval(secs => $4),
-            last_started_at = $3
-      WHERE name = $1 AND (holder IS NULL OR expires_at < $3)
-      RETURNING name`,
-    [name, token, now, ttlMs / 1000],
-  );
-  return rows.length > 0;
+  // The lease and its run (gpu_worker_runs, 5d-2a), in one transaction: a
+  // worker's run exists exactly while it may hold the lease.
+  const db = await getPool().connect();
+  try {
+    await db.query("BEGIN");
+    const { rows } = await db.query(
+      `UPDATE gpu_worker_leases
+          SET holder = $2, expires_at = $3::timestamptz + make_interval(secs => $4),
+              last_started_at = $3
+        WHERE name = $1 AND (holder IS NULL OR expires_at < $3)
+        RETURNING name`,
+      [name, token, now, ttlMs / 1000],
+    );
+    if (rows.length > 0) {
+      // the previous holder's run, if it never closed, lost the lease
+      await db.query(
+        `UPDATE gpu_worker_runs SET finished = $2, outcome = 'lost'
+          WHERE name = $1 AND finished IS NULL`,
+        [name, now],
+      );
+      await db.query(
+        `INSERT INTO gpu_worker_runs (id, token, name, started)
+         VALUES (gen_random_uuid(), $1, $2, $3)`,
+        [token, name, now],
+      );
+    }
+    await db.query("COMMIT");
+    return rows.length > 0;
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
 }
 
 export class LeaseLost extends Error {}
@@ -106,7 +131,16 @@ export async function renewWorkerLease(
       WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`,
     [name, token, now, ttlMs / 1000],
   );
-  if (rows.length === 0) throw new LeaseLost("the reaper lease was lost");
+  if (rows.length === 0) {
+    await getPool()
+      .query(
+        `UPDATE gpu_worker_runs SET finished = $2, outcome = 'lost'
+          WHERE token = $1 AND name = $3 AND finished IS NULL`,
+        [token, now, name],
+      )
+      .catch(() => {});
+    throw new LeaseLost("the reaper lease was lost");
+  }
 }
 
 // Release this sweep's lease; only a complete sweep that still holds an
@@ -119,20 +153,43 @@ export async function finishWorkerLease(
   error?: string,
   stats?: Record<string, unknown>,
 ): Promise<void> {
-  const { rows } = await getPool().query(
-    error == null
-      ? `UPDATE gpu_worker_leases
-            SET last_completed_at = $3, last_error = NULL, holder = NULL, expires_at = NULL,
-                last_stats = COALESCE($4::jsonb, last_stats)
-          WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`
-      : `UPDATE gpu_worker_leases
-            SET last_error = $4, holder = NULL, expires_at = NULL
-          WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`,
-    error == null
-      ? [name, token, finished, stats == null ? null : JSON.stringify(stats)]
-      : [name, token, finished, error.slice(0, 500)],
-  );
-  if (rows.length === 0) throw new LeaseLost("the reaper lease was lost");
+  // the lease and the run close together (5d-2a)
+  const db = await getPool().connect();
+  let held = false;
+  try {
+    await db.query("BEGIN");
+    const { rows } = await db.query(
+      error == null
+        ? `UPDATE gpu_worker_leases
+              SET last_completed_at = $3, last_error = NULL, holder = NULL, expires_at = NULL,
+                  last_stats = COALESCE($4::jsonb, last_stats)
+            WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`
+        : `UPDATE gpu_worker_leases
+              SET last_error = $4, holder = NULL, expires_at = NULL
+            WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`,
+      error == null
+        ? [name, token, finished, stats == null ? null : JSON.stringify(stats)]
+        : [name, token, finished, error.slice(0, 500)],
+    );
+    held = rows.length > 0;
+    await db.query(
+      `UPDATE gpu_worker_runs SET finished = $2, outcome = $3
+        WHERE token = $1 AND name = $4 AND finished IS NULL`,
+      [
+        token,
+        finished,
+        !held ? "lost" : error == null ? "finished" : "failed",
+        name,
+      ],
+    );
+    await db.query("COMMIT");
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
+  if (!held) throw new LeaseLost("the reaper lease was lost");
 }
 
 const LIVE =

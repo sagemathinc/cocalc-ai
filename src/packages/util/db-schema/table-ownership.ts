@@ -656,7 +656,17 @@ export const TABLE_OWNERSHIP = {
     rebuild: "No rebuild: the next sweep writes it; launches wait until then.",
   }),
 
-  ...entries(["gpu_pods", "gpu_pod_events"], {
+  ...entries(["gpu_worker_runs", "gpu_admin_alerts"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "rebuildable",
+    notes:
+      "Per-bay GPU worker runs (one per lease taken) and the alerts CoCalc admins must see (billing that can't be applied; 5d-2c's decrypt audit), with their email delivery state.",
+    rebuild:
+      "No rebuild: runs restart with the next sweep; an admin alert is raised again by the condition that raised it.",
+  }),
+
+  ...entries(["gpu_pods", "gpu_pod_events", "gpu_pod_state_intervals"], {
     ownership: "account-home",
     authority: "key_owner_account_id",
     portability: "unsupported",

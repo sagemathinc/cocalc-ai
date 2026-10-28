@@ -50,6 +50,18 @@ export const GPU_POD_LIVE_STATES: readonly GpuPodState[] = [
   "terminating",
 ];
 
+// A pod's provider billing (5d-2a): its settled spend is CoCalc's estimate
+// until RunPod's billing records prove the whole lifetime (billed), or fail
+// to within 48 hours (missing: the estimate stays). n/a: never created at
+// RunPod, nothing to bill.
+export const GPU_POD_BILLING_STATES = [
+  "estimated",
+  "billed",
+  "missing",
+  "n/a",
+] as const;
+export type GpuPodBillingState = (typeof GPU_POD_BILLING_STATES)[number];
+
 export const GPU_POD_DESIRED_STATES = [
   "running",
   "stopped",
@@ -68,6 +80,8 @@ export const GPU_ACTOR_KINDS = [
   "cleanup",
   // the pod itself, reporting its SSH host key
   "pod",
+  // provider billing reconciliation (5d-2a)
+  "billing",
 ] as const;
 export type GpuActorKind = (typeof GPU_ACTOR_KINDS)[number];
 
@@ -91,6 +105,9 @@ export const GPU_POD_ACTIONS = [
   "unmanaged",
   // the owner released a quarantined pod's held reservations (5d)
   "quarantine_released",
+  // RunPod's billing replaced the estimate as the pod's spend (5d-2a):
+  // {billed_usd, estimate_usd}
+  "billed",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 

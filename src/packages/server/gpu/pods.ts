@@ -369,6 +369,10 @@ type SettleKind = "actual" | "release" | "quarantine";
 
 interface TransitionOptions {
   settle?: SettleKind;
+  // when a state change really happened, for the state ledger (a provider
+  // timestamp): clamped to the open interval's start and to now. Default:
+  // now, or a bind's running_since.
+  effective_at?: Date | null;
   // runs in the transaction after the update applied; may change the row
   after?: (db: PoolClient, row: PodRow) => Promise<PodRow | void>;
 }
@@ -395,6 +399,15 @@ export async function transition(
         await lockBudgetsForPod(db, { pod_id: id, ...pre[0] });
       }
     }
+    // the state before, for the ledger (the pod row is locked from here on)
+    let before: string | undefined;
+    if (fields.state !== undefined) {
+      const { rows: b } = await db.query(
+        "SELECT state FROM gpu_pods WHERE id = $1 FOR UPDATE",
+        [id],
+      );
+      before = b[0]?.state;
+    }
     const keys = Object.keys(fields);
     const sets = keys.map((k, i) => `${k} = $${i + 2}`);
     const { rows } = await db.query(
@@ -404,6 +417,15 @@ export async function transition(
     );
     let row: PodRow | undefined = rows[0];
     if (!row) return undefined;
+    if (fields.state !== undefined && row.state !== before) {
+      await recordStateChange(db, row, {
+        effective_at:
+          opts.effective_at ??
+          (row.state === "running" && fields.running_since
+            ? (fields.running_since as Date)
+            : null),
+      });
+    }
     if (opts.settle) {
       await settleReservations(
         db,
@@ -430,6 +452,66 @@ export async function transition(
     }
     return row;
   });
+}
+
+// A pod that is live again (bound back, or revived after an end) gets its
+// billing reopened: it will be reconciled after its next end.
+const BILLING_REOPENED = {
+  billing_state: "estimated",
+  billing_next_at: null,
+  billing_attempts: 0,
+  billed_at: null,
+  billed_usd: null,
+};
+
+// ---- the state ledger (5d-2a) ----
+
+// A pod's first interval, in the transaction that inserts it. `started`:
+// when the state began (a duplicate's provider start may precede its row),
+// never after now.
+export async function openFirstStateInterval(
+  db: Pick<PoolClient, "query">,
+  pod: { id: string; key_owner_account_id: string; state: string },
+  started?: Date | null,
+): Promise<void> {
+  await db.query(
+    `INSERT INTO gpu_pod_state_intervals (id, pod_id, key_owner_account_id, state, started)
+     VALUES (gen_random_uuid(), $1, $2, $3, LEAST(COALESCE($4::timestamptz, now()), now()))`,
+    [pod.id, pod.key_owner_account_id, pod.state, started ?? null],
+  );
+}
+
+// A state change (the pod row is locked): the open interval ends and the
+// new one begins at the effective time, which is never before the open
+// interval began and never after now, so intervals never overlap and never
+// run backwards. A pod with no open interval (one recorded before the
+// ledger) gets one from the effective time, not before its creation.
+async function recordStateChange(
+  db: Pick<PoolClient, "query">,
+  row: PodRow,
+  { effective_at }: { effective_at: Date | null },
+): Promise<void> {
+  const { rows } = await db.query(
+    `UPDATE gpu_pod_state_intervals
+        SET ended = GREATEST(started, LEAST(COALESCE($2::timestamptz, now()), now()))
+      WHERE pod_id = $1 AND ended IS NULL
+      RETURNING ended`,
+    [row.id, effective_at],
+  );
+  await db.query(
+    `INSERT INTO gpu_pod_state_intervals (id, pod_id, key_owner_account_id, state, started)
+     VALUES (gen_random_uuid(), $1, $2, $3,
+             COALESCE($4::timestamptz,
+                      GREATEST($5::timestamptz, LEAST(COALESCE($6::timestamptz, now()), now()))))`,
+    [
+      row.id,
+      row.key_owner_account_id,
+      row.state,
+      rows[0]?.ended ?? null,
+      row.created,
+      effective_at,
+    ],
+  );
 }
 
 async function loadPod(id: string): Promise<PodRow> {
@@ -941,6 +1023,7 @@ async function insertIntent({
             agent?.principal.run_id ?? null,
           ],
         );
+        await openFirstStateInterval(db, rows[0]);
         await insertReservations(db, id, admission, spec.gpu_count);
         if (grant) await consumeGrantLaunch(db, grant.grant_id);
         await recordEvent(
@@ -1453,6 +1536,8 @@ async function terminateDuplicate(
       ],
     );
     if (!rows[0]) return undefined; // already recorded
+    // terminating since RunPod started it (it bills from then)
+    await openFirstStateInterval(db, rows[0], rows[0].running_since);
     // at its RunPod rate (else the pod's), for its whole allowed runtime
     const { rows: held } = await db.query(
       `INSERT INTO gpu_pod_reservations (id, pod_id, layer_id, state, reserved_usd,
@@ -1735,6 +1820,8 @@ export async function reviveEndedPod(
       state: "terminating",
       desired_state: "terminated",
       terminated_at: null,
+      // live again: whatever billing resolved for the old end no longer holds
+      ...BILLING_REOPENED,
       provider_seen_at: asked,
       reason:
         "RunPod still had this pod after CoCalc recorded it as ended, so CoCalc is terminating it.",
@@ -1749,7 +1836,11 @@ export async function reviveEndedPod(
       action: "state",
       details: { state: "terminating", seen_after_end: true },
     },
-    { after: async (db, b) => void (await holdAgain(db, b.id)) },
+    {
+      // the gap since the recorded end counts as live: RunPod still had it
+      effective_at: row.terminated_at ?? null,
+      after: async (db, b) => void (await holdAgain(db, b.id)),
+    },
   );
 }
 
@@ -1820,6 +1911,8 @@ export async function reconcileBindPod(
       data_center_id: pod.dataCenterId ?? row.data_center_id,
       public_ip: pod.sshDirect?.host ?? null,
       terminated_at: null,
+      // live again: whatever billing resolved for the old end no longer holds
+      ...BILLING_REOPENED,
       provider_seen_at: observed_at,
     },
     // (and only while its key is live: a pass that finishes after the key
