@@ -10,6 +10,7 @@ exactly what its kill switch terminates. All USD values are decimal strings.
 */
 
 import type {
+  GpuAlert,
   GpuBudget,
   GpuPodState,
   GpuPodSummary,
@@ -19,6 +20,7 @@ import type {
 } from "@cocalc/util/gpu/types";
 
 export type {
+  GpuAlert,
   GpuBudget,
   GpuPodState,
   GpuPodSummary,
@@ -62,6 +64,14 @@ export interface GpuCostDashboardApi {
   // lift the kill switch's pause (needs fresh authentication); absent for
   // scopes that never pause
   resume?(): Promise<{ resumed: number }>;
+  // what CoCalc found that needs the key owner (open alerts)
+  alerts?(): Promise<GpuAlert[]>;
+  // end an alert only the owner can end
+  acknowledgeAlert?(opts: { id: string }): Promise<GpuAlert>;
+  // release budget held for a pod CoCalc couldn't confirm (fresh auth)
+  releaseQuarantined?(opts: {
+    pod_id: string;
+  }): Promise<{ pod_id: string; released_usd: string; warning: string }>;
   // display names of accounts, for spend rows grouped by person
   names?(account_ids: string[]): Promise<Record<string, string | undefined>>;
   projectTitle?(project_id: string): string | undefined;

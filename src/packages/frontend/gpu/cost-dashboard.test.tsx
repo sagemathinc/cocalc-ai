@@ -132,12 +132,23 @@ function api(
       ends_at: "2027-10-01T00:00:00.000Z",
       live_pods: 2,
       live_gpus: 2,
+      paused: false,
+      kill_switch: false,
+      paused_reason: null,
+      inventory: "complete",
     }),
     terminate: jest.fn().mockResolvedValue({ state: "terminating" }),
     killSwitch: jest
       .fn()
       .mockResolvedValue({ marked: 2, remaining: 0, paused: true }),
     resume: jest.fn().mockResolvedValue({ resumed: 1 }),
+    alerts: jest.fn().mockResolvedValue([]),
+    acknowledgeAlert: jest.fn(async ({ id }) => ({ id }) as any),
+    releaseQuarantined: jest.fn().mockResolvedValue({
+      pod_id: "pod-1",
+      released_usd: "4",
+      warning: "If the pod still exists, terminate it at RunPod.",
+    }),
     names: jest.fn(async (ids: string[]) =>
       Object.fromEntries(ids.map((id) => [id, NAMES[id]])),
     ),
@@ -226,6 +237,9 @@ describe("GpuCostDashboard", () => {
       within(dialog).getByText(/including pods started by agents/),
     ).toBeTruthy();
     expect(mock.killSwitch).not.toHaveBeenCalled();
+    // after the kill switch, the server reports the pause
+    const base = await api().budget();
+    mock.budget.mockResolvedValue({ ...base, paused: true, kill_switch: true });
     await user.click(
       within(dialog).getByRole("button", { name: "Terminate all" }),
     );
@@ -236,15 +250,21 @@ describe("GpuCostDashboard", () => {
       ),
     ).toBeTruthy();
     // Resume, behind fresh authentication
+    expect(
+      await screen.findByText(/Terminate all paused launches with this key/),
+    ).toBeTruthy();
+    mock.budget.mockResolvedValue(base);
     await user.click(screen.getByRole("button", { name: "Resume launches" }));
     expect(mockFreshAuth).toHaveBeenCalled();
     expect(mock.resume).toHaveBeenCalledTimes(1);
     expect(
       await screen.findByText("New launches are allowed again."),
     ).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: "Resume launches" }),
-    ).toBeNull();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Resume launches" }),
+      ).toBeNull(),
+    );
   });
 
   it("says when pods are still terminating after the kill switch returns", async () => {
@@ -627,6 +647,253 @@ describe("GpuCostDashboard", () => {
       expect(screen.queryByRole("cell", { name: "cc-7f3k9q2x" })).toBeNull(),
     );
     expect(second.pods).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows CoCalc's safety pause on load, pointing at the alerts, with one Resume", async () => {
+    const mock = api();
+    const base = await api().budget();
+    mock.budget.mockResolvedValue({
+      ...base,
+      paused: true,
+      paused_reason: "unknown_pod",
+    });
+    mock.alerts.mockResolvedValue([
+      {
+        id: "a1",
+        credential_id: "c1",
+        kind: "unknown_pod",
+        severity: "critical",
+        message:
+          "A pod CoCalc didn't start is on the RunPod account of your key.",
+        details: { provider_pod_id: "rp123abc" },
+        opened: "2026-10-28T10:00:00.000Z",
+        last_seen: "2026-10-28T11:00:00.000Z",
+        resolved_at: null,
+        resolved_by: null,
+        acknowledged_at: null,
+        acknowledgeable: false,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    expect(
+      await screen.findByText(
+        "Critical: A pod CoCalc didn't start is on your RunPod account",
+      ),
+    ).toBeTruthy();
+    expect(await screen.findByText(/because it found/)).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "see the alerts" }).getAttribute("href"),
+    ).toBe("#gpu-alerts");
+    await user.click(screen.getByRole("button", { name: "Resume launches" }));
+    expect(mock.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("says launches wait while CoCalc checks the RunPod account", async () => {
+    const mock = api();
+    mock.budget.mockResolvedValue({
+      ...(await api().budget()),
+      inventory: "checking",
+    });
+    render(<GpuCostDashboard api={mock} />);
+    expect(
+      await screen.findByText("CoCalc is checking your RunPod account"),
+    ).toBeTruthy();
+  });
+
+  it("acknowledges an alert the owner can end", async () => {
+    const mock = api();
+    mock.alerts.mockResolvedValue([
+      {
+        id: "u1",
+        credential_id: "c1",
+        kind: "unmanaged_pod",
+        severity: "warning",
+        message: "A pod CoCalc launched was left running.",
+        details: { handle: "cc-unman0001" },
+        opened: "2026-10-28T10:00:00.000Z",
+        last_seen: "2026-10-28T11:00:00.000Z",
+        resolved_at: null,
+        resolved_by: null,
+        acknowledged_at: null,
+        acknowledgeable: true,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Acknowledge: A pod is running outside CoCalc's control",
+      }),
+    );
+    expect(mock.acknowledgeAlert).toHaveBeenCalledWith({ id: "u1" });
+    expect(await screen.findByText("Alert acknowledged.")).toBeTruthy();
+  });
+
+  it("links held money to its alert, and releases the hold through fresh auth", async () => {
+    const mock = api();
+    mock.spend.mockResolvedValue(
+      spendResult([{ key: GRACE, spent_usd: "1", held_usd: "4" }]),
+    );
+    mock.alerts.mockResolvedValue([
+      {
+        id: "q1",
+        credential_id: "c1",
+        kind: "quarantined_reservation",
+        severity: "info",
+        message: "CoCalc doesn't know whether RunPod created this pod.",
+        details: { pod_id: "pod-1", handle: "cc-held0001", held_usd: "4" },
+        opened: "2026-10-28T10:00:00.000Z",
+        last_seen: "2026-10-28T11:00:00.000Z",
+        resolved_at: null,
+        resolved_by: null,
+        acknowledged_at: null,
+        acknowledgeable: false,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    expect(
+      await screen.findByRole("link", { name: "see the alerts" }),
+    ).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Release the hold for cc-held0001" }),
+    );
+    const dialog = await findDialog("Release the held budget?");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Release hold" }),
+    );
+    expect(mockFreshAuth).toHaveBeenCalled();
+    expect(mock.releaseQuarantined).toHaveBeenCalledWith({ pod_id: "pod-1" });
+    expect(await screen.findByText("Released $4.00 held.")).toBeTruthy();
+    expect(
+      screen.getByText("If the pod still exists, terminate it at RunPod."),
+    ).toBeTruthy();
+  });
+
+  it("keeps showing the kill switch's pause when the budget can't be read again", async () => {
+    const mock = api();
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    // an earlier successful read said: not paused
+    expect(await screen.findByText("$15.00 left of $20.00")).toBeTruthy();
+    mock.budget.mockRejectedValue(new Error("budget unavailable"));
+    await user.click(screen.getByRole("button", { name: "Terminate all" }));
+    const dialog = await findDialog(
+      "Terminate all GPU pods your RunPod key pays for?",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Terminate all" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Resume launches" }),
+    ).toBeTruthy();
+    // the follow-up read failed; the pause is still shown
+    await waitFor(() =>
+      expect(mock.budget.mock.calls.length).toBeGreaterThan(1),
+    );
+    expect(
+      screen.getByRole("button", { name: "Resume launches" }),
+    ).toBeTruthy();
+  });
+
+  it("says so when the budget and alerts can't be read, and still shows the pods", async () => {
+    const mock = api();
+    mock.budget.mockRejectedValue(new Error("budget unavailable"));
+    mock.alerts.mockRejectedValue(new Error("alerts unavailable"));
+    render(<GpuCostDashboard api={mock} />);
+    expect(
+      await screen.findByRole("cell", { name: "cc-7f3k9q2x" }),
+    ).toBeTruthy();
+    expect(
+      await screen.findByText("Couldn't load your GPU alerts"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/There may be alerts that aren't shown/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Couldn't load your GPU budget and pause state"),
+    ).toBeTruthy();
+    expect(screen.getByText(/New launches may be paused/)).toBeTruthy();
+  });
+
+  it("keeps the last alerts loaded when a later read fails", async () => {
+    const mock = api();
+    mock.alerts.mockResolvedValue([
+      {
+        id: "u1",
+        credential_id: "c1",
+        kind: "unmanaged_pod",
+        severity: "warning",
+        message: "A pod CoCalc launched was left running.",
+        details: { handle: "cc-unman0001" },
+        opened: "2026-10-28T10:00:00.000Z",
+        last_seen: "2026-10-28T11:00:00.000Z",
+        resolved_at: null,
+        resolved_by: null,
+        acknowledged_at: null,
+        acknowledgeable: true,
+      },
+    ] as any);
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    expect(
+      await screen.findByText(
+        "Warning: A pod is running outside CoCalc's control",
+      ),
+    ).toBeTruthy();
+    mock.alerts.mockRejectedValue(new Error("alerts unavailable"));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(
+      await screen.findByText("Couldn't load your GPU alerts"),
+    ).toBeTruthy();
+    expect(screen.getByText(/Showing the alerts last loaded/)).toBeTruthy();
+    expect(
+      screen.getByText("Warning: A pod is running outside CoCalc's control"),
+    ).toBeTruthy();
+  });
+
+  it("hides the pause after Resume even if the next budget read fails", async () => {
+    const mock = api();
+    mock.budget.mockResolvedValue({
+      ...(await api().budget()),
+      paused: true,
+      kill_switch: true,
+    });
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    const resume = await screen.findByRole("button", {
+      name: "Resume launches",
+    });
+    // the read after Resume fails: the stale "paused" must not come back
+    mock.budget.mockRejectedValue(new Error("budget unavailable"));
+    await user.click(resume);
+    expect(
+      await screen.findByText("New launches are allowed again."),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Resume launches" }),
+      ).toBeNull(),
+    );
+    expect(
+      await screen.findByText("Couldn't load your GPU budget and pause state"),
+    ).toBeTruthy();
+  });
+
+  it("doesn't point at alerts that couldn't be loaded", async () => {
+    const mock = api();
+    mock.budget.mockResolvedValue({
+      ...(await api().budget()),
+      paused: true,
+      paused_reason: "unknown_pod",
+    });
+    mock.alerts.mockRejectedValue(new Error("alerts unavailable"));
+    render(<GpuCostDashboard api={mock} />);
+    expect(
+      await screen.findByText(/the alerts couldn't be loaded/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "see the alerts" })).toBeNull();
   });
 
   it("reports load failures in an alert", async () => {
