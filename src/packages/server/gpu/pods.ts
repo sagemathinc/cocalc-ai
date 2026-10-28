@@ -43,6 +43,7 @@ import {
 } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
+import { recordKeyEvent } from "@cocalc/server/gpu/key-events";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -77,6 +78,8 @@ import {
 
 export interface GpuPodDeps {
   // for tests
+  killSwitchResolveMs?: number;
+  listResolveMs?: number;
   getLaunchAccess?: (
     account_id: string,
   ) => Promise<
@@ -228,6 +231,7 @@ export interface PodRow {
   created: Date;
   updated: Date;
   terminated_at: Date | null;
+  unmanaged_at?: Date | null;
 }
 
 function iso(d: Date | null | undefined): string | undefined {
@@ -258,6 +262,7 @@ export function podSummary(row: PodRow): GpuPodSummary {
   if (row.data_center_id) s.data_center_id = row.data_center_id;
   if (row.cost_per_hr != null) s.cost_per_hr = `${row.cost_per_hr}`;
   if (row.terminated_at) s.terminated_at = iso(row.terminated_at);
+  if (row.unmanaged_at) s.unmanaged_at = iso(row.unmanaged_at);
   if (row.reason) s.reason = row.reason;
   if (row.ssh_key_fingerprint) s.ssh_key_fingerprint = row.ssh_key_fingerprint;
   return s;
@@ -972,14 +977,23 @@ async function resolveAmbiguous(
   client: Pick<RunpodClient, "findPodsByName" | "terminatePod">,
   actor: Actor,
   deps: GpuPodDeps,
+  // a bounded pass's guard: before each page of RunPod's inventory, after
+  // the lookup, and before each terminate or bind
+  beforePage?: () => Promise<void>,
 ): Promise<PodRow> {
   let found: RunpodPodView[];
   try {
-    found = await client.findPodsByName(row.handle);
+    found = await client.findPodsByName(row.handle, { beforePage });
   } catch {
-    // Still unknown; a later look (pods, terminate) tries again.
+    // if the pass's guard stopped the lookup, the caller stops too (it
+    // throws again here); otherwise still unknown, and a later look (pods,
+    // terminate) tries again
+    await beforePage?.();
     return row;
   }
+  // The last (or only) page may have come back after the pass's time or
+  // lease ran out: act on it only within both.
+  await beforePage?.();
   if (found.length === 0) {
     const age = (deps.now ?? Date.now)() - new Date(row.created).getTime();
     if (age < AMBIGUOUS_WINDOW_MS) return row;
@@ -1016,9 +1030,13 @@ async function resolveAmbiguous(
             `${b.createdAt ?? ""}${b.id}`,
           ),
   );
+  // before each provider action too (the record stays ambiguous if the pass
+  // stops here, so the next one looks again and finishes)
   for (const pod of extra) {
+    await beforePage?.();
     await terminateDuplicate(row, pod, client, actor);
   }
+  await beforePage?.();
   return await bind(row, keep, client, actor);
 }
 
@@ -1080,12 +1098,17 @@ export async function resolvePendingForAccount(
     actor = { kind: "cleanup" } as Actor,
     limit = 100,
     guard,
+    retryBackedOff = false,
   }: {
     actor?: Actor;
     limit?: number;
     // called before each record is acted on: the reaper renews its lease
     // here, and a throw stops the pass
     guard?: () => Promise<void>;
+    // a compromised key's cleanup: backed-off pods too, the longest-waiting
+    // first (never tried, then the earliest backoff), so pods a slow failure
+    // keeps holding up still get their turn on later passes
+    retryBackedOff?: boolean;
   } = {},
 ): Promise<{ full: boolean }> {
   const nowMs = (deps.now ?? Date.now)();
@@ -1096,6 +1119,7 @@ export async function resolvePendingForAccount(
   const { rows: stale } = await getPool().query(
     `SELECT id, state FROM gpu_pods
       WHERE key_owner_account_id = $1 AND state IN ('intent', 'creating')
+        AND unmanaged_at IS NULL
         AND updated < $2
       ORDER BY created LIMIT $3`,
     [account_id, staleBefore, limit],
@@ -1104,12 +1128,20 @@ export async function resolvePendingForAccount(
     await guard?.();
     await resolveStaleCreate(r.id, r.state, actor);
   }
-  const ready = "AND (reap_after IS NULL OR reap_after <= $2)";
+  const ready =
+    "AND (reap_after IS NULL OR reap_after <= $2) AND unmanaged_at IS NULL";
+  // what this pass picks ($2 stays typed when the backoff is ignored)
+  const pick = retryBackedOff
+    ? "AND $2::timestamptz IS NOT NULL AND unmanaged_at IS NULL"
+    : ready;
+  const order = retryBackedOff
+    ? "ORDER BY reap_after NULLS FIRST, created"
+    : "ORDER BY created";
   const due = await getPool().query(
     `SELECT 1 FROM gpu_pods WHERE key_owner_account_id = $1
         AND ((desired_state = 'terminated' AND state IN ('running', 'stopped', 'terminating')
               AND provider_pod_id IS NOT NULL)
-             OR state = 'ambiguous') ${ready}
+             OR state = 'ambiguous') ${pick}
       LIMIT 1`,
     [account_id, now],
   );
@@ -1142,23 +1174,37 @@ export async function resolvePendingForAccount(
       WHERE key_owner_account_id = $1 AND credential_id = $4
         AND desired_state = 'terminated'
         AND state IN ('running', 'stopped', 'terminating')
-        AND provider_pod_id IS NOT NULL ${ready}
-      ORDER BY created LIMIT $3`,
+        AND provider_pod_id IS NOT NULL ${pick}
+      ${order} LIMIT $3`,
     [account_id, now, limit, c.credential_id],
   );
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND credential_id = $4
-        AND state = 'ambiguous' ${ready}
-      ORDER BY created LIMIT $3`,
+        AND state = 'ambiguous' ${pick}
+      ${order} LIMIT $3`,
     [account_id, now, limit, c.credential_id],
   );
   const ours = (row: PodRow) => row.credential_id === c.credential_id;
+  // the guard, also run inside a record (an inventory lookup's pages): its
+  // throw stops the pass there too, without counting against the pod
+  let stopped: unknown;
+  const inner = guard
+    ? async () => {
+        try {
+          await guard();
+        } catch (err) {
+          stopped = err;
+          throw err;
+        }
+      }
+    : undefined;
   const attempt = async (row: PodRow, fn: () => Promise<unknown>) => {
     // outside the try: a guard that throws stops the pass, not this pod
     await guard?.();
     try {
       await fn();
     } catch {
+      if (stopped !== undefined) throw stopped;
       // back off: 1, 2, 4, ... minutes, at most 30
       const minutes = Math.min(2 ** (row.reap_attempts ?? 0), 30);
       await getPool().query(
@@ -1181,7 +1227,7 @@ export async function resolvePendingForAccount(
     await attempt(row, async () => {
       // still unresolved (RunPod's inventory couldn't be read, and the
       // window hasn't closed): a failed attempt, backed off like any other
-      const after = await resolveAmbiguous(row, c, actor, deps);
+      const after = await resolveAmbiguous(row, c, actor, deps, inner);
       if (after?.state === "ambiguous") {
         throw Error("the ambiguous create is still unresolved");
       }
@@ -1194,8 +1240,31 @@ export async function resolvePendingForAccount(
   };
 }
 
-const resolveAmbiguousForAccount = (account_id: string, deps: GpuPodDeps) =>
-  resolvePendingForAccount(account_id, deps);
+// A pod listing resolves what it can first, briefly: short RunPod calls and
+// a short bound, so the listing answers well within its RPC timeout (the
+// reaper finishes the rest).
+export const LIST_RESOLVE_MS = 10_000;
+const LIST_RESOLVE_CALL_TIMEOUT_MS = 5_000;
+const resolveAmbiguousForAccount = (account_id: string, deps: GpuPodDeps) => {
+  const deadline = Date.now() + (deps.listResolveMs ?? LIST_RESOLVE_MS);
+  return resolvePendingForAccount(
+    account_id,
+    {
+      ...deps,
+      getCleanup:
+        deps.getCleanup ??
+        ((a: string) =>
+          getRunpodCleanupForAccount(a, {
+            runpodTimeoutMs: LIST_RESOLVE_CALL_TIMEOUT_MS,
+          })),
+    },
+    {
+      guard: async () => {
+        if (Date.now() >= deadline) throw Error("pod listing resolve deadline");
+      },
+    },
+  ).catch(() => ({ full: false }));
+};
 
 // ---- terminate ----
 
@@ -1574,6 +1643,252 @@ export async function terminateGpuPod(
   const home = await (deps.homeClient ?? gpuPodHomeClient)(account_id);
   if (home) return await home.gpuTerminate({ account_id, pod_id: opts.pod_id });
   return await terminateGpuPodLocal({ ...opts, account_id }, deps);
+}
+
+// ---- removing a key (5c) ----
+
+// A credential's pods CoCalc still manages and that aren't finished.
+export async function unfinishedCredentialPods(
+  credential_id: string,
+  db: Pick<PoolClient, "query"> = getPool(),
+): Promise<{ id: string; handle: string }[]> {
+  const { rows } = await db.query(
+    `SELECT id, handle FROM gpu_pods
+      WHERE credential_id = $1 AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL
+      ORDER BY created`,
+    [credential_id],
+  );
+  return rows;
+}
+
+// Mark every unfinished pod of a credential to terminate, now (backoff
+// cleared), for a key removal or a compromise.
+export async function markCredentialPodsToTerminate(
+  db: PoolClient,
+  {
+    account_id,
+    credential_id,
+    cause,
+  }: {
+    account_id: string;
+    credential_id: string;
+    cause: "key_removal" | "compromised";
+  },
+): Promise<number> {
+  const actor: Actor = { kind: "user", account_id };
+  // newly marked ones get an event; a repeat only clears the backoff
+  const { rows } = await db.query(
+    `UPDATE gpu_pods SET desired_state = 'terminated', reason = $2, updated = now()
+      WHERE credential_id = $1 AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL AND desired_state <> 'terminated'
+      RETURNING id`,
+    [
+      credential_id,
+      cause === "key_removal"
+        ? "Its RunPod key is being removed."
+        : "Its RunPod key was reported compromised.",
+    ],
+  );
+  for (const { id } of rows) {
+    await recordEvent(id, actor, "terminate", { cause }, db);
+  }
+  await db.query(
+    `UPDATE gpu_pods SET reap_after = NULL
+      WHERE credential_id = $1 AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL AND reap_after IS NOT NULL`,
+    [credential_id],
+  );
+  return rows.length;
+}
+
+// A forced removal: the credential's remaining pods leave CoCalc's
+// management. Their state is left as it is (they may still run and bill at
+// RunPod; nothing claims they stopped), their reservations are quarantined
+// (cost unknown; 5d settles them if billing shows it), and each gets an
+// event. Called under the account fence, before the key is revoked.
+export async function markCredentialPodsUnmanaged(
+  db: PoolClient,
+  { account_id, credential_id }: { account_id: string; credential_id: string },
+): Promise<string[]> {
+  const actor: Actor = { kind: "user", account_id };
+  const pods = await unfinishedCredentialPods(credential_id, db);
+  for (const pod of pods) {
+    await lockBudgetsForPod(db, {
+      pod_id: pod.id,
+      credential_id,
+      key_owner_account_id: account_id,
+    });
+    await settleReservations(
+      db,
+      { pod_id: pod.id, credential_id },
+      { kind: "quarantine" },
+    );
+    await db.query(
+      `UPDATE gpu_pods SET unmanaged_at = now(), updated = now() WHERE id = $1`,
+      [pod.id],
+    );
+    await recordEvent(pod.id, actor, "unmanaged", {}, db);
+  }
+  return pods.map((p) => p.handle);
+}
+
+// ---- the kill switch ----
+
+export interface GpuKillSwitchResult {
+  // pods newly marked to terminate
+  marked: number;
+  // pods still not confirmed terminated by RunPod (the reaper retries)
+  remaining: number;
+  // whether new launches are paused by the kill switch now (persisted state)
+  paused: boolean;
+}
+
+// Stop every live pod CoCalc started with the owner's key (optionally only
+// one project's). The account kill switch also pauses new launches (unless
+// pause: false) until the owner resumes; a project's never does.
+// It only narrows, so it needs no fresh auth. Marked under the account fence,
+// so no launch admitted before it can slip past; then terminated at once,
+// best effort (the reaper finishes what RunPod doesn't confirm).
+// How long the kill switch itself terminates pods before returning (one
+// RunPod call, at most 30 s, may still be in flight then): inside the home
+// bay's 120 s and the CLI's 150 s write deadlines.
+export const KILL_SWITCH_RESOLVE_MS = 60_000;
+
+export async function killSwitchLocal(
+  opts: { account_id?: string; project_id?: unknown; pause?: unknown },
+  deps: GpuPodDeps = {},
+): Promise<GpuKillSwitchResult> {
+  const started = Date.now();
+  const account_id = requireAccount(opts.account_id);
+  await requireHomeBay(account_id, deps);
+  let project_id: string | null = null;
+  if (opts.project_id != null && opts.project_id !== "") {
+    project_id = `${opts.project_id}`;
+    if (!isValidUUID(project_id)) throw Error("Give a valid project id.");
+  }
+  // The account kill switch pauses new launches unless told not to; one
+  // project's never pauses the whole key (there's no per-project pause).
+  if (project_id != null && opts.pause === true) {
+    throw Error(
+      "The kill switch pauses launches for the whole key; stop the project's pods without pausing, or use the account kill switch.",
+    );
+  }
+  const pause = project_id == null && opts.pause !== false;
+  const actor: Actor = { kind: "user", account_id };
+  const { marked, paused } = await inTransaction(async (db) => {
+    await (deps.accountWriteFence ?? lockGpuAccountFence)(
+      db,
+      account_id,
+      "stop GPU pods",
+    );
+    const { rows } = await db.query(
+      `UPDATE gpu_pods SET desired_state = 'terminated', reason = $3, updated = now()
+        WHERE key_owner_account_id = $1
+          AND ($2::uuid IS NULL OR project_id = $2::uuid)
+          AND state NOT IN ('terminated', 'failed')
+          AND desired_state <> 'terminated'
+          AND unmanaged_at IS NULL
+        RETURNING id`,
+      [account_id, project_id, "Stopped by the kill switch."],
+    );
+    for (const { id } of rows) {
+      await recordEvent(id, actor, "kill_switch", { project_id }, db);
+    }
+    // a human pressing it again means "now": pods already marked but backed
+    // off are retried at once (without another event)
+    await db.query(
+      `UPDATE gpu_pods SET reap_after = NULL
+        WHERE key_owner_account_id = $1
+          AND ($2::uuid IS NULL OR project_id = $2::uuid)
+          AND desired_state = 'terminated'
+          AND state NOT IN ('terminated', 'failed')
+          AND unmanaged_at IS NULL
+          AND reap_after IS NOT NULL`,
+      [account_id, project_id],
+    );
+    // the connected key's fence exists from its connect (5c); make sure, so
+    // the pause always lands
+    await db.query(
+      `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
+       SELECT id, owner_account_id, 'active', now(), now() FROM external_credentials
+        WHERE owner_account_id = $1 AND kind = 'gpu-provider-api-key' AND revoked IS NULL
+       ON CONFLICT (credential_id) DO NOTHING`,
+      [account_id],
+    );
+    // the currently connected key only (a closed, draining or compromised
+    // fence admits nothing anyway)
+    const { rows: fences } = await db.query(
+      `SELECT f.credential_id FROM gpu_key_fences f
+         JOIN external_credentials c ON c.id = f.credential_id
+        WHERE f.key_owner_account_id = $1 AND f.state = 'active'
+          AND c.revoked IS NULL`,
+      [account_id],
+    );
+    for (const f of fences) {
+      await recordKeyEvent(
+        {
+          credential_id: f.credential_id,
+          key_owner_account_id: account_id,
+          actor: { kind: "user", account_id },
+          action: "kill_switch",
+          details: { project_id, marked: rows.length, paused: pause },
+        },
+        db,
+      );
+    }
+    if (pause) {
+      // its own field: a safety pause (an alert's) is left alone
+      await db.query(
+        `UPDATE gpu_key_fences SET kill_switch_at = now(), updated = now()
+          WHERE credential_id = ANY($1::uuid[]) AND kill_switch_at IS NULL`,
+        [fences.map((f) => f.credential_id)],
+      );
+    }
+    // what is actually paused now (--no-pause never lifts a pause; only a
+    // fresh-auth resume does)
+    const { rows: paused } = await db.query(
+      `SELECT bool_or(kill_switch_at IS NOT NULL) AS paused FROM gpu_key_fences
+        WHERE credential_id = ANY($1::uuid[])`,
+      [fences.map((f) => f.credential_id)],
+    );
+    return { marked: rows.length, paused: paused[0]?.paused === true };
+  });
+  // Best effort, bounded: what isn't done in time the reaper finishes, and
+  // the caller gets the remaining count well within its RPC deadline.
+  const deadline =
+    started + (deps.killSwitchResolveMs ?? KILL_SWITCH_RESOLVE_MS);
+  await resolvePendingForAccount(account_id, deps, {
+    guard: async () => {
+      if (Date.now() >= deadline) throw Error("kill switch resolve deadline");
+    },
+  }).catch(() => {});
+  const { rows } = await getPool().query(
+    `SELECT count(*)::int AS n FROM gpu_pods
+      WHERE key_owner_account_id = $1
+        AND ($2::uuid IS NULL OR project_id = $2::uuid)
+        AND desired_state = 'terminated'
+        AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL`,
+    [account_id, project_id],
+  );
+  return { marked, remaining: rows[0].n, paused };
+}
+
+export async function killSwitch(
+  opts: { account_id?: string; project_id?: unknown; pause?: unknown },
+  deps: GpuPodDeps = {},
+): Promise<GpuKillSwitchResult> {
+  const account_id = requireAccount(opts.account_id);
+  const home = await (deps.homeClient ?? gpuPodHomeClient)(account_id);
+  if (home) {
+    return await home.gpuKillSwitch({
+      account_id,
+      project_id: opts.project_id,
+      pause: opts.pause,
+    });
+  }
+  return await killSwitchLocal({ ...opts, account_id }, deps);
 }
 
 export async function whoGpuPod(

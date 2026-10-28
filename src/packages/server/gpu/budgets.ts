@@ -111,22 +111,62 @@ function layerName(layer: LayerRow): string {
 
 // The key's fence and its key layer exist (made at connect, or here at the
 // first launch). Idempotent.
+// The caps a new key layer starts with: the defaults, or for a key that
+// follows another (5c), what carryKeyBudget allows.
+export interface KeyLayerCaps {
+  authorized_usd: string;
+  max_hourly_usd: string | null;
+  max_concurrent_pods: number | null;
+  max_gpu_count: number | null;
+  max_runtime_minutes: number | null;
+  // the previous layer's window, when it ends before a new layer's default
+  // (an ended one is kept whole: it stays ended)
+  starts_at?: Date;
+  ends_at?: Date;
+}
+
 export async function ensureKeyBudget(
   db: Db,
   {
     credential_id,
     key_owner_account_id,
     now = new Date(),
-  }: { credential_id: string; key_owner_account_id: string; now?: Date },
+    initial,
+  }: {
+    credential_id: string;
+    key_owner_account_id: string;
+    now?: Date;
+    initial?: KeyLayerCaps;
+  },
 ): Promise<void> {
   await db.query(
     `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
      VALUES ($1, $2, 'active', now(), now()) ON CONFLICT (credential_id) DO NOTHING`,
     [credential_id, key_owner_account_id],
   );
-  const d = DEFAULT_KEY_LAYER;
-  const ends = new Date(now);
+  // A key's layer is created once, whoever gets there first (the connect,
+  // the first launch, a budget read): it always starts from what the
+  // account's previous key layer allowed, never looser (5c).
+  if (initial == null) {
+    const { rows: existing } = await db.query(
+      `SELECT 1 FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'`,
+      [credential_id],
+    );
+    if (existing.length === 0) {
+      initial = await carryKeyBudget(db, key_owner_account_id, credential_id);
+    }
+  }
+  const d = { ...DEFAULT_KEY_LAYER, ...(initial ?? {}) };
+  let ends = new Date(now);
   ends.setFullYear(ends.getFullYear() + d.years);
+  let starts = now;
+  if (initial?.ends_at != null && initial.ends_at < ends) {
+    ends = new Date(initial.ends_at);
+    // already ended: keep the earlier window as it was, not now..end
+    if (ends <= starts) {
+      starts = new Date(initial.starts_at ?? ends.getTime() - 1);
+    }
+  }
   const { rows } = await db.query(
     `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind,
        authorized_usd, max_hourly_usd, max_concurrent_pods, max_gpu_count,
@@ -143,7 +183,7 @@ export async function ensureKeyBudget(
       d.max_concurrent_pods,
       d.max_gpu_count,
       d.max_runtime_minutes,
-      now,
+      starts,
       ends,
     ],
   );
@@ -168,14 +208,68 @@ export async function ensureKeyBudget(
   }
 }
 
+// The caps for an account's next key (5c): never looser than what the
+// account's latest key layer allowed. Money is what that layer had left
+// (authorized - spent - reserved - released, at least 0), so a rotation
+// never restores dollars; the other caps are the tighter of it and the
+// default. With no earlier key layer, the defaults.
+export async function carryKeyBudget(
+  db: Db,
+  key_owner_account_id: string,
+  // the key the caps are for (its own layer, if any, isn't a prior one)
+  credential_id?: string,
+): Promise<KeyLayerCaps | undefined> {
+  const { rows } = await db.query(
+    `SELECT * FROM gpu_budget_layers
+      WHERE key_owner_account_id = $1 AND scope_kind = 'key'
+        AND ($2::uuid IS NULL OR credential_id <> $2::uuid)
+      ORDER BY created DESC LIMIT 1`,
+    [key_owner_account_id, credential_id ?? null],
+  );
+  const prior: LayerRow | undefined = rows[0];
+  if (!prior) return undefined;
+  const d = DEFAULT_KEY_LAYER;
+  const min = (a: Dec, b: Dec) => (a.lt(b) ? a : b);
+  const avail = available(prior);
+  const left = avail.gt(0) ? avail : toDecimal(0);
+  const money = min(left, toDecimal(d.authorized_usd));
+  const tighter = (cap: number | null, def: number) =>
+    cap == null ? def : Math.min(cap, def);
+  return {
+    authorized_usd: moneyToDbString(money),
+    max_hourly_usd: moneyToDbString(
+      prior.max_hourly_usd == null
+        ? toDecimal(d.max_hourly_usd)
+        : min(toDecimal(prior.max_hourly_usd), toDecimal(d.max_hourly_usd)),
+    ),
+    max_concurrent_pods: tighter(
+      prior.max_concurrent_pods,
+      d.max_concurrent_pods,
+    ),
+    max_gpu_count: tighter(prior.max_gpu_count, d.max_gpu_count),
+    max_runtime_minutes: tighter(
+      prior.max_runtime_minutes,
+      d.max_runtime_minutes,
+    ),
+    // a deliberately shortened budget stays as short (ensureKeyBudget keeps
+    // the earlier of it and the default)
+    starts_at: new Date(prior.starts_at),
+    ends_at: new Date(prior.ends_at),
+  };
+}
+
 // The key's fence, locked. Every budget change takes it first (after the
 // account rehome fence), so admission, settlement and drain serialize.
 export async function lockKeyFence(
   db: Db,
   credential_id: string,
-): Promise<{ state: string; paused_reason: string | null }> {
+): Promise<{
+  state: string;
+  paused_reason: string | null;
+  kill_switch_at: Date | null;
+}> {
   const { rows } = await db.query(
-    `SELECT state, paused_reason FROM gpu_key_fences WHERE credential_id = $1 FOR UPDATE`,
+    `SELECT state, paused_reason, kill_switch_at FROM gpu_key_fences WHERE credential_id = $1 FOR UPDATE`,
     [credential_id],
   );
   if (!rows[0]) refuse("This RunPod key has no GPU budget yet.");
@@ -228,7 +322,14 @@ export async function admitLaunch(
     refuse(
       fence.state === "draining"
         ? "This RunPod key is being removed; no new GPUs can be launched with it."
-        : "This RunPod key was reported compromised; no new GPUs can be launched with it.",
+        : fence.state === "closed"
+          ? "This RunPod key was removed; connect a key to launch GPUs."
+          : "This RunPod key was reported compromised; no new GPUs can be launched with it.",
+    );
+  }
+  if (fence.kill_switch_at) {
+    refuse(
+      "New GPU launches are paused by your kill switch. Resume them with cocalc gpu resume (it asks you to sign in again).",
     );
   }
   if (fence.paused_reason) {

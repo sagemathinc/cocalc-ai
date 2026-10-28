@@ -19,6 +19,8 @@ import { launchGpuPodLocal, listManagedGpuPodsLocal } from "./pods";
 import {
   LAPSE_GRACE_MS,
   acquireWorkerLease,
+  every,
+  runCompromiseSweep,
   runGpuReaperSweep,
 } from "./reaper";
 import { allowStaleWorkers, allowStaleWorkersLocal } from "./admin";
@@ -127,6 +129,7 @@ describeDb("GPU reaper", () => {
     );
     await syncSchema({
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pods: SCHEMA.gpu_pods,
@@ -134,6 +137,7 @@ describeDb("GPU reaper", () => {
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
       gpu_worker_leases: SCHEMA.gpu_worker_leases,
       gpu_worker_overrides: SCHEMA.gpu_worker_overrides,
+      external_credentials: SCHEMA.external_credentials,
     });
   });
   beforeEach(freshReaper);
@@ -779,4 +783,45 @@ describeDb("GPU reaper", () => {
     );
     expect(rows[0].entitlement_lapsed_at).toBeNull();
   });
+
+  it("runs compromise cleanups under their own lease, never touching the sweep's watermark", async () => {
+    const s = setup();
+    const before = (
+      await getPool().query(
+        "SELECT last_completed_at FROM gpu_worker_leases WHERE name = 'reaper'",
+      )
+    ).rows[0].last_completed_at;
+    expect(await runCompromiseSweep(s.deps)).toEqual(
+      expect.objectContaining({ ran: true }),
+    );
+    // one at a time per bay
+    expect(
+      await acquireWorkerLease("compromise", "hub-other:run", new Date()),
+    ).toBe(true);
+    expect(await runCompromiseSweep(s.deps)).toEqual({ ran: false });
+    const after = (
+      await getPool().query(
+        "SELECT last_completed_at FROM gpu_worker_leases WHERE name = 'reaper'",
+      )
+    ).rows[0].last_completed_at;
+    expect(new Date(after).getTime()).toBe(new Date(before).getTime());
+  });
+});
+
+it("a stuck reaper sweep doesn't hold up the compromise worker: each has its own timer", async () => {
+  // the reaper's first sweep never finishes
+  const reaper = jest.fn(() => new Promise<void>(() => {}));
+  const compromise = jest.fn(async () => {});
+  const timers = [
+    every("reaper", reaper, 20),
+    every("compromise", compromise, 20),
+  ];
+  try {
+    await new Promise((r) => setTimeout(r, 110));
+  } finally {
+    timers.forEach(clearInterval);
+  }
+  // one reaper pass at a time (still the first), while compromise passes go on
+  expect(reaper).toHaveBeenCalledTimes(1);
+  expect(compromise.mock.calls.length).toBeGreaterThanOrEqual(3);
 });

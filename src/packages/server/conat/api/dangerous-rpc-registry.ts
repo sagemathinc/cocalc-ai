@@ -33,6 +33,21 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin override of the fail-closed GPU worker check: scoped to one account, at most 24 h, with a reason, kept as an audit row",
   },
+  "gpu.killSwitch": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "narrowing: stops the caller's own pods and can pause their launches",
+  },
+  "gpu.reportCompromised": {
+    decision: "fresh-auth-required",
+    reason:
+      "terminates every pod in the owner's RunPod account and removes the key; checked in reportCompromised",
+  },
+  "gpu.resume": {
+    decision: "fresh-auth-required",
+    reason:
+      "lifts the kill switch's pause on launches; checked in resumeGpuLaunches",
+  },
   "gpu.setBudget": {
     decision: "fresh-auth-required",
     reason:

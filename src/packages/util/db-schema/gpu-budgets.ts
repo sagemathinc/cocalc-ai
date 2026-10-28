@@ -18,7 +18,13 @@
 import { Table } from "./types";
 import type { FieldSpec, Fields } from "./types";
 
-export const GPU_FENCE_STATES = ["active", "draining", "compromised"] as const;
+// closed: the key was removed (or its compromise cleanup finished); final
+export const GPU_FENCE_STATES = [
+  "active",
+  "draining",
+  "compromised",
+  "closed",
+] as const;
 export const GPU_LAYER_KINDS = [
   "key",
   "course",
@@ -84,6 +90,9 @@ Table({
     // key); admission refuses while any is set.
     paused_reason: { type: "string", pg_type: "varchar(64)" },
     paused_at: { type: "timestamp" },
+    // the owner's kill switch paused new launches (independent of the
+    // safety pause above, which only its own alert lifts)
+    kill_switch_at: { type: "timestamp" },
     // first seen without the gpu_provider_keys entitlement (the reaper
     // terminates its pods 7 days later); cleared when it returns
     entitlement_lapsed_at: { type: "timestamp" },
@@ -160,7 +169,9 @@ Table({
       {
         name: "gpu_budget_layers_authorized",
         type: "check",
-        expression: "authorized_usd > 0",
+        // 0: a key that followed an exhausted one (5c) has nothing to spend
+        // until its owner raises it
+        expression: "authorized_usd >= 0",
       },
     ],
     // One key layer per key; one course layer per key and course instance;
@@ -275,6 +286,51 @@ Table({
   },
 });
 
+// A credential's security and audit log (step 5c): removal and forced
+// removal, compromise and its cleanup (including RunPod pods CoCalc didn't
+// start), the kill switch. Append-only; details are small and bounded
+// (provider pod ids, sanitized names, counts), never provider payloads or
+// secrets. Budget changes stay in gpu_budget_events.
+export const GPU_KEY_EVENT_ACTIONS = [
+  "removal_started",
+  "removed",
+  "forced_removal",
+  "compromised",
+  "unknown_pod_seen",
+  "unknown_pod_terminated",
+  "compromise_closed",
+  "kill_switch",
+  "resumed",
+] as const;
+
+Table({
+  name: "gpu_key_events",
+  rules: {
+    primary_key: "id",
+    pg_indexes: ["credential_id", "key_owner_account_id", "at"],
+  },
+  fields: {
+    id: { type: "uuid", not_null: true },
+    credential_id: { type: "uuid", not_null: true },
+    key_owner_account_id: { type: "uuid", not_null: true },
+    at: { type: "timestamp", not_null: true, pg_default: "now()" },
+    actor_kind: {
+      type: "string",
+      pg_type: "varchar(16)",
+      not_null: true,
+      pg_check: "CHECK (actor_kind IN ('user','admin','reaper','cleanup'))",
+    },
+    actor_account_id: { type: "uuid" },
+    action: {
+      type: "string",
+      pg_type: "varchar(32)",
+      not_null: true,
+      pg_check: `CHECK (action IN (${GPU_KEY_EVENT_ACTIONS.map((a) => `'${a}'`).join(",")}))`,
+    },
+    details: { type: "map" },
+  },
+});
+
 Table({
   name: "gpu_pod_reservations",
   rules: {
@@ -346,7 +402,9 @@ Table({
       type: "string",
       pg_type: "varchar(32)",
       not_null: true,
-      pg_check: "CHECK (name IN ('reaper','reconciler'))",
+      // compromise: the cleanup of keys reported compromised (5c), apart
+      // from the reaper's sweep so it never holds back its watermark
+      pg_check: "CHECK (name IN ('reaper','reconciler','compromise'))",
     },
     holder: { type: "string", pg_type: "varchar(128)" },
     expires_at: { type: "timestamp" },

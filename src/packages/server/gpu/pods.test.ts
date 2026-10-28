@@ -362,7 +362,10 @@ describeDb("GPU pods", () => {
     );
     expect(pod.state).toBe("running");
     expect(pod.provider_pod_id).toBe("pod_lostreply");
-    expect(rp.client.findPodsByName).toHaveBeenCalledWith(pod.handle);
+    expect(rp.client.findPodsByName).toHaveBeenCalledWith(
+      pod.handle,
+      expect.anything(),
+    );
   });
 
   it("keeps an empty lookup ambiguous while RunPod's listing may lag, and binds the pod when it shows up", async () => {
@@ -1063,7 +1066,10 @@ describeDb("GPU pods left behind and seen again", () => {
     expect(
       await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
     ).toEqual({ state: "terminated" });
-    expect(rp.client.findPodsByName).toHaveBeenCalledWith(pod.handle);
+    expect(rp.client.findPodsByName).toHaveBeenCalledWith(
+      pod.handle,
+      expect.anything(),
+    );
     expect(rp.client.terminatePod).toHaveBeenCalledWith("pod_crash2");
     expect(rp.pods.size).toBe(0);
   });

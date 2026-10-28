@@ -15,15 +15,18 @@ import {
 } from "@cocalc/server/gpu/read";
 import {
   getGpuBudget,
+  resumeGpuLaunches,
   setGpuBudget as setGpuBudgetImpl,
 } from "@cocalc/server/gpu/budget-api";
 import { allowStaleWorkers } from "@cocalc/server/gpu/admin";
 import {
+  killSwitch as gpuKillSwitch,
   launchGpuPod,
   terminateGpuPod,
   whoGpuPod,
 } from "@cocalc/server/gpu/pods";
 import { gpuSshInfo } from "@cocalc/server/gpu/hostkey";
+import { reportCompromised as reportGpuKeyCompromised } from "@cocalc/server/gpu/compromise";
 
 export const catalog: GpuApi["catalog"] = async (opts = {}) =>
   await getGpuCatalog(opts);
@@ -62,6 +65,37 @@ export async function budget(
   opts: Parameters<GpuApi["budget"]>[0],
 ): ReturnType<GpuApi["budget"]> {
   return await getGpuBudget({ account_id: opts?.account_id });
+}
+
+export async function killSwitch(
+  opts: Parameters<GpuApi["killSwitch"]>[0],
+): ReturnType<GpuApi["killSwitch"]> {
+  return await gpuKillSwitch({
+    account_id: opts?.account_id,
+    project_id: opts?.project_id,
+    pause: opts?.pause,
+  });
+}
+
+export async function resume(
+  opts: Parameters<GpuApi["resume"]>[0],
+): ReturnType<GpuApi["resume"]> {
+  return await resumeGpuLaunches({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+  });
+}
+
+export async function reportCompromised(
+  opts: Parameters<GpuApi["reportCompromised"]>[0],
+): ReturnType<GpuApi["reportCompromised"]> {
+  return await reportGpuKeyCompromised({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+    confirm_cocalc_only: opts?.confirm_cocalc_only,
+  });
 }
 
 export async function setBudget(

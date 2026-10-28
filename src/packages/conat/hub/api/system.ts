@@ -3012,13 +3012,22 @@ export interface System {
     timeout?: number;
   }) => Promise<GpuProviderKeyStatus>;
 
+  // Terminates the key's pods first and keeps it until RunPod confirms
+  // (remaining: those not confirmed yet); force removes it anyway, leaving
+  // them unmanaged (they may still bill at RunPod).
   deleteGpuProviderKey: (opts: {
     account_id?: string;
     browser_id?: string | null;
     session_hash?: string | null;
     provider: GpuProvider;
+    force?: boolean;
     timeout?: number;
-  }) => Promise<{ revoked: boolean }>;
+  }) => Promise<{
+    revoked: boolean;
+    remaining?: string[];
+    unmanaged?: string[];
+    warning?: string;
+  }>;
 
   getGpuProviderKeyStatus: (opts: {
     account_id?: string;

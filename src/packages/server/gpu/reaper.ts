@@ -41,6 +41,7 @@ import {
   type GpuPodDeps,
 } from "@cocalc/server/gpu/pods";
 import { getRunpodCleanupForAccount } from "@cocalc/server/gpu/provider-keys";
+import { continueCompromiseCleanups } from "@cocalc/server/gpu/compromise";
 
 const log = getLogger("server:gpu:reaper");
 
@@ -65,10 +66,12 @@ export interface ReaperDeps extends GpuPodDeps {
 
 const REAPER: Actor = { kind: "reaper" };
 
+type WorkerName = "reaper" | "reconciler" | "compromise";
+
 // The lease is taken under a token unique to one sweep: nobody, not even
 // the same hub, takes it again until that sweep releases it or it expires.
 export async function acquireWorkerLease(
-  name: "reaper" | "reconciler",
+  name: WorkerName,
   token: string,
   now: Date,
   ttlMs = REAPER_LEASE_MS,
@@ -92,7 +95,7 @@ class LeaseLost extends Error {}
 
 // Extend this sweep's lease; a sweep that lost it stops at once.
 async function renewWorkerLease(
-  name: "reaper" | "reconciler",
+  name: WorkerName,
   token: string,
   now: Date,
   ttlMs = REAPER_LEASE_MS,
@@ -110,7 +113,7 @@ async function renewWorkerLease(
 // unexpired lease moves the watermark, to the time it finished. A sweep
 // that lost its lease writes nothing.
 async function finishWorkerLease(
-  name: "reaper" | "reconciler",
+  name: WorkerName,
   token: string,
   finished: Date,
   error?: string,
@@ -131,7 +134,7 @@ async function finishWorkerLease(
 }
 
 const LIVE =
-  "p.state NOT IN ('terminated', 'failed') AND p.desired_state <> 'terminated'";
+  "p.state NOT IN ('terminated', 'failed') AND p.desired_state <> 'terminated' AND p.unmanaged_at IS NULL";
 
 // Why a pod must go, and the SQL that finds such pods (bounded).
 const CAUSES: {
@@ -196,7 +199,8 @@ async function checkEntitlements(
          FROM gpu_key_fences f
         WHERE f.credential_id::text > $2
           AND EXISTS (SELECT 1 FROM gpu_pods p WHERE p.credential_id = f.credential_id
-                        AND p.state NOT IN ('terminated', 'failed'))
+                        AND p.state NOT IN ('terminated', 'failed')
+                        AND p.unmanaged_at IS NULL)
         ORDER BY f.credential_id::text LIMIT $1`,
       [BATCH, after],
     );
@@ -354,6 +358,7 @@ async function resolveOwners(
     const { rows } = await getPool().query(
       `SELECT DISTINCT key_owner_account_id FROM gpu_pods
         WHERE key_owner_account_id::text > $4
+          AND unmanaged_at IS NULL
           AND ((state IN ('intent', 'creating') AND updated < $3)
                OR ((state = 'ambiguous'
                     OR (desired_state = 'terminated'
@@ -439,20 +444,80 @@ export async function runGpuReaperSweep(deps: ReaperDeps = {}): Promise<{
   }
 }
 
-export function initGpuReaper(): void {
-  // one sweep at a time in this hub (the lease covers other hubs)
+// The cleanup of keys reported compromised (compromise.ts), apart from the
+// sweep: a stolen key's account can be large or keep growing, and that must
+// never hold back the watermark every launch on the bay needs. Its own
+// lease (one at a time per bay) with a heartbeat, and each account's pass
+// is bounded in time (the next run continues).
+export async function runCompromiseSweep(
+  deps: ReaperDeps = {},
+): Promise<{ ran: boolean; keys?: number }> {
+  const clock = () => new Date((deps.now ?? Date.now)());
+  const token = `${deps.holder ?? `${hostname()}:${process.pid}`}:${randomUUID()}`;
+  if (!(await acquireWorkerLease("compromise", token, clock()))) {
+    return { ran: false };
+  }
+  let lost = false;
+  const renew = async () => {
+    if (lost) throw new LeaseLost("the compromise lease was lost");
+    await renewWorkerLease("compromise", token, clock());
+  };
+  const heartbeat = setInterval(() => {
+    renewWorkerLease("compromise", token, clock()).catch(() => (lost = true));
+  }, deps.heartbeatMs ?? 60_000);
+  heartbeat.unref?.();
+  try {
+    const keys = await continueCompromiseCleanups(renew, {
+      getCleanup: deps.getCleanup,
+      passMs: COMPROMISE_PASS_MS,
+    });
+    await finishWorkerLease("compromise", token, clock());
+    return { ran: true, keys };
+  } catch (err) {
+    log.error("GPU compromise cleanup failed", `${err}`);
+    if (!(err instanceof LeaseLost) && !lost) {
+      await finishWorkerLease("compromise", token, clock(), `${err}`).catch(
+        () => {},
+      );
+    }
+    throw err;
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
+// how long one account's compromise pass may spend terminating pods
+export const COMPROMISE_PASS_MS = 60_000;
+
+// Each worker runs one pass at a time in this hub (its lease covers other
+// hubs), on its own timer: a slow reaper sweep never delays the cleanup of a
+// compromised key, nor the other way around.
+export function every(
+  name: string,
+  sweep: () => Promise<unknown>,
+  intervalMs = REAPER_INTERVAL_MS,
+): ReturnType<typeof setInterval> {
   let running = false;
   const run = async () => {
     if (running) return;
     running = true;
     try {
-      await runGpuReaperSweep();
-    } catch {
-      // logged; the watermark stays put, so launches wait (fail closed)
+      await sweep();
+    } catch (err) {
+      // logged by the sweep; it continues on the next run
+      log.debug(`${name} pass failed`, `${err}`);
     } finally {
       running = false;
     }
   };
   void run();
-  setInterval(run, REAPER_INTERVAL_MS).unref?.();
+  const timer = setInterval(run, intervalMs);
+  timer.unref?.();
+  return timer;
+}
+
+export function initGpuReaper(): void {
+  // a failed reaper pass leaves the watermark, so launches wait (fail closed)
+  every("reaper", runGpuReaperSweep);
+  every("compromise", runCompromiseSweep);
 }

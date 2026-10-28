@@ -128,7 +128,10 @@ export function podRecordRow(
 ) {
   return {
     handle: r.handle,
-    state: r.state,
+    // a forced key removal left it unmanaged: it may still bill at RunPod
+    state: r.unmanaged_at
+      ? `${r.state} (unmanaged: may still bill at RunPod)`
+      : r.state,
     status: (r.provider_pod_id && live.get(r.provider_pod_id)?.status) || null,
     gpu: r.gpu_type_id,
     count: r.gpu_count,
@@ -569,6 +572,59 @@ export function registerGpuCommand(
             : {}),
         });
       }),
+    );
+
+  gpu
+    .command("kill")
+    .description(
+      "the kill switch: terminate every pod CoCalc started with your RunPod key and pause new launches until gpu resume (--no-pause to not); with --project, only that project's pods, without pausing",
+    )
+    .option("--project <project-id>", "only this project's pods")
+    .option(
+      "--no-pause",
+      "don't pause new launches (the account kill switch pauses by default)",
+    )
+    .action(async (opts, command: Command) =>
+      run(
+        command,
+        "kill",
+        async (api) =>
+          await api.killSwitch({
+            ...(opts.project ? { project_id: opts.project } : {}),
+            ...(opts.project ? {} : { pause: opts.pause !== false }),
+          }),
+        GPU_POD_WRITE_RPC_TIMEOUT_MS,
+      ),
+    );
+
+  gpu
+    .command("report-compromised")
+    .description(
+      "report your RunPod key stolen: CoCalc stops using it and terminates EVERY pod in that RunPod account (including ones it didn't start), and keeps doing so every minute until you delete the key on RunPod's Credentials page; then it removes its copy and asks you to check RunPod's Pods page once, for pods started after its last look (if pods it launched are still left once RunPod rejects the key, follow the returned warning: terminate them at RunPod, then remove the key with \"Remove anyway\"). Needs --confirm-cocalc-only, and you to sign in again (from Settings in the browser)",
+    )
+    .option(
+      "--confirm-cocalc-only",
+      "confirm the RunPod account is used only for CoCalc",
+    )
+    .action(async (opts, command: Command) =>
+      run(
+        command,
+        "report-compromised",
+        async (api) =>
+          await api.reportCompromised({
+            confirm_cocalc_only: opts.confirmCocalcOnly === true,
+          }),
+        GPU_POD_WRITE_RPC_TIMEOUT_MS,
+      ),
+    );
+
+  gpu
+    .command("resume")
+    .description(
+      "lift the kill switch's pause on new launches; needs you to sign in again, from Settings in the browser",
+    )
+    .action(async (_opts, command: Command) =>
+      run(command, "resume", async (api) => await api.resume({})),
     );
 
   gpu

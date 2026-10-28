@@ -305,10 +305,22 @@ export async function upsertExternalCredential({
   selector,
   payload,
   metadata = {},
+  newIdentity = false,
+  alsoInTransaction,
 }: {
   selector: ExternalCredentialSelector;
   payload: string;
   metadata?: Record<string, any>;
+  // Store it as a new credential (a new id), revoking the active one(s),
+  // instead of updating the active one in place.
+  newIdentity?: boolean;
+  // Runs in this transaction, under the selector lock, after the write:
+  // what depends on the credentials (e.g. a GPU key's fence and budget)
+  // changes with them, or nothing does.
+  alsoInTransaction?: (
+    client: PoolClient,
+    change: { id: string; previous: string[] },
+  ) => Promise<void>;
 }): Promise<{ id: string; created: boolean }> {
   const normalized = normalizeSelector(selector);
   validatePayload(payload);
@@ -333,7 +345,7 @@ ORDER BY updated DESC NULLS LAST, created DESC NULLS LAST
     );
     let id: string;
     let created: boolean;
-    if (active[0]) {
+    if (active[0] && !newIdentity) {
       id = active[0].id;
       created = false;
       await client.query(
@@ -369,8 +381,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
       );
     }
     // An upserted selector has one active credential: retire any others,
-    // e.g. left by an earlier race, deleting their payloads like a revoke.
-    const others = active.slice(1).map((row) => row.id);
+    // e.g. left by an earlier race (or, for a new identity, the one it
+    // replaces), deleting their payloads like a revoke.
+    const others = (newIdentity ? active : active.slice(1)).map(
+      (row) => row.id,
+    );
     if (others.length > 0) {
       await client.query(
         `
@@ -381,6 +396,10 @@ WHERE id = ANY($1::uuid[])
         [others],
       );
     }
+    await alsoInTransaction?.(client, {
+      id,
+      previous: active.map((row) => row.id).filter((x) => x !== id),
+    });
     await client.query("COMMIT");
     return { id, created };
   } catch (err) {

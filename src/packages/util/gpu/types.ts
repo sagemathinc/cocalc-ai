@@ -79,6 +79,10 @@ export const GPU_POD_ACTIONS = [
   "ip_seen",
   // the pod reported its SSH host key (or a report was refused with an alert)
   "host_key",
+  // the owner's kill switch stopped it
+  "kill_switch",
+  // a forced key removal left it outside CoCalc's management (5c)
+  "unmanaged",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 
@@ -101,6 +105,27 @@ export interface GpuLaunchSpec {
   max_runtime_minutes: number;
   // the pod's own SSH public key; the private key stays in the project
   ssh_public_key?: string;
+}
+
+// What reporting a key compromised has done so far (5c).
+export interface GpuCompromiseStatus {
+  // the cleanup finished: RunPod rejects the key, nothing is left, and
+  // CoCalc's copy is revoked and its fence closed
+  closed: boolean;
+  // the account is clean but RunPod still accepts the key: delete it on
+  // RunPod's Credentials page; CoCalc keeps watching until then
+  awaiting_provider_revocation?: boolean;
+  // pods still in the RunPod account at the last complete listing
+  provider_pods?: number;
+  // CoCalc's pods of this key not yet confirmed terminated
+  managed_pods?: number;
+  // the last pass couldn't list the account (it retries)
+  listing_failed?: boolean;
+  // RunPod rejects the key, but CoCalc still has unfinished pods on it: it
+  // can't terminate them anymore (see warning)
+  provider_rejected?: boolean;
+  // what the owner must do now
+  warning?: string;
 }
 
 export interface GpuPodSummary {
@@ -127,6 +152,9 @@ export interface GpuPodSummary {
   created: string;
   updated: string;
   terminated_at?: string;
+  // a forced key removal left it outside CoCalc's management: it may still
+  // run and bill at RunPod (its state is the last CoCalc knew)
+  unmanaged_at?: string;
   // why it failed or was terminated, in words for the user
   reason?: string;
   // SHA256 fingerprint of ssh_public_key, as `ssh-keygen -lf` prints it

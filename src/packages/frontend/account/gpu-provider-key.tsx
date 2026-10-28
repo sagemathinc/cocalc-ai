@@ -47,6 +47,10 @@ export function GpuProviderKeySection() {
   // from a confirmation that was already open.
   const busyRef = useRef(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  // a removal waiting for RunPod to confirm its pods are gone (handles)
+  const [draining, setDraining] = useState<string[]>([]);
+  // a forced removal's warning: pods that may still bill at RunPod
+  const [unmanagedWarning, setUnmanagedWarning] = useState("");
   // After connecting, the focused button is gone: focus (and announce) the
   // status that replaced it.
   const connectedRef = useRef<HTMLDivElement>(null);
@@ -119,23 +123,32 @@ export function GpuProviderKeySection() {
     }
   };
 
-  const remove = async () => {
+  // CoCalc terminates the key's pods first and keeps the key until RunPod
+  // confirms; force removes it anyway, leaving what is left unmanaged.
+  const remove = async (force = false) => {
     setConfirmRemove(false);
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     setError("");
     try {
+      let result:
+        | { revoked: boolean; remaining?: string[]; warning?: string }
+        | undefined;
       const completed = await runFreshAuthAction(async () => {
-        await webapp_client.conat_client.hub.system.deleteGpuProviderKey({
-          provider: "runpod",
-          browser_id: webapp_client.browser_id,
-          timeout: KEY_RPC_TIMEOUT_MS,
-        });
+        result =
+          await webapp_client.conat_client.hub.system.deleteGpuProviderKey({
+            provider: "runpod",
+            browser_id: webapp_client.browser_id,
+            force,
+            timeout: KEY_RPC_TIMEOUT_MS,
+          });
       });
-      if (completed) {
+      if (completed && result) {
         await refresh();
-        setRemoved(true);
+        setDraining(result.revoked ? [] : (result.remaining ?? []));
+        setUnmanagedWarning(result.warning ?? "");
+        if (result.revoked) setRemoved(true);
       }
     } catch (err) {
       setError(`${err}`);
@@ -242,8 +255,9 @@ export function GpuProviderKeySection() {
             title="Remove your RunPod key?"
             description={
               <div style={{ maxWidth: 360 }}>
-                This deletes CoCalc&apos;s copy of the key. To fully revoke it,
-                also delete it on RunPod&apos;s Credentials page (API Keys tab).
+                CoCalc first terminates the GPU pods it started with this key,
+                then deletes its copy of the key. To fully revoke it, also
+                delete it on RunPod&apos;s Credentials page (API Keys tab).
               </div>
             }
             okText="Remove"
@@ -258,6 +272,47 @@ export function GpuProviderKeySection() {
           </Popconfirm>
         </Space>
         {replacing && status.entitled && keyForm}
+        {draining.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            title={`Terminating ${draining.length} GPU pod${draining.length === 1 ? "" : "s"} launched with this key`}
+            description={
+              <>
+                RunPod hasn&apos;t confirmed{" "}
+                {draining.length === 1 ? "it is" : "they are"} gone yet, so
+                CoCalc keeps the key (it launches nothing more with it) and
+                keeps trying. Remove again in a minute. Removing it anyway
+                leaves {draining.length === 1 ? "that pod" : "those pods"}{" "}
+                running and billing at RunPod, outside CoCalc&apos;s limits.
+              </>
+            }
+            action={
+              <Space orientation="vertical">
+                <Button disabled={busy} onClick={() => void remove()}>
+                  Remove again
+                </Button>
+                <Popconfirm
+                  title="Remove the key anyway?"
+                  description={
+                    <div style={{ maxWidth: 360 }}>
+                      CoCalc stops managing those pods: they may keep running
+                      and billing at RunPod. Terminate them and delete the key
+                      on RunPod yourself.
+                    </div>
+                  }
+                  okText="Remove anyway"
+                  okButtonProps={{ danger: true, disabled: busy }}
+                  onConfirm={() => void remove(true)}
+                >
+                  <Button danger disabled={busy}>
+                    Remove anyway
+                  </Button>
+                </Popconfirm>
+              </Space>
+            }
+          />
+        )}
       </Space>
     );
   } else if (!status.entitled) {
@@ -291,6 +346,16 @@ export function GpuProviderKeySection() {
           Your RunPod key was removed from CoCalc. To fully revoke it, also
           delete it on RunPod&apos;s Credentials page.
         </Typography.Paragraph>
+      )}
+      {unmanagedWarning && (
+        <Alert
+          role="alert"
+          type="warning"
+          showIcon
+          title="Some pods may still be billing at RunPod"
+          description={unmanagedWarning}
+          style={{ marginBottom: 12 }}
+        />
       )}
       {body}
       {error && (

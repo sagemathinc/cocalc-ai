@@ -20,8 +20,17 @@ import {
   launchGpuPodLocal,
   listManagedGpuPodsLocal,
   terminateGpuPodLocal,
+  killSwitchLocal,
+  resolvePendingForAccount,
 } from "./pods";
 import { DEFAULT_KEY_LAYER } from "./budgets";
+import { resumeGpuLaunchesLocal } from "./budget-api";
+import { deleteGpuProviderKeyLocal } from "./provider-keys";
+import {
+  continueCompromiseCleanups,
+  reportCompromisedLocal,
+  runCompromiseCleanup,
+} from "./compromise";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -58,9 +67,18 @@ function fakeRunpod(cost = 0.5) {
   return { client, pods };
 }
 
+// the stored key a fence belongs to (what the kill switch acts on)
+async function storeKey(account_id: string, credential_id: string) {
+  await getPool().query(
+    "INSERT INTO external_credentials (id, provider, kind, scope, owner_account_id, encrypted_payload, created, updated) VALUES ($1, 'runpod', 'gpu-provider-api-key', 'account', $2, 'x', now(), now())",
+    [credential_id, account_id],
+  );
+}
+
 function setup({ cost = 0.5 }: { cost?: number } = {}) {
   const account_id = randomUUID();
   const credential_id = randomUUID();
+  const stored = storeKey(account_id, credential_id);
   const rp = fakeRunpod(cost);
   const deps = {
     isHomeBay: async () => true,
@@ -77,12 +95,14 @@ function setup({ cost = 0.5 }: { cost?: number } = {}) {
       await lockGpuAccountFence(db, id, action);
     },
   };
-  const launch = (spec: object = {}) =>
-    launchGpuPodLocal(
+  const launch = async (spec: object = {}) => {
+    await stored;
+    return await launchGpuPodLocal(
       { account_id, project_id: PROJECT, spec: { ...SPEC, ...spec } },
       deps,
     );
-  return { account_id, credential_id, rp, deps, launch };
+  };
+  return { account_id, credential_id, rp, deps, launch, stored };
 }
 
 async function keyLayer(credential_id: string) {
@@ -110,6 +130,7 @@ describeDb("GPU budgets", () => {
     );
     await syncSchema({
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pods: SCHEMA.gpu_pods,
@@ -117,6 +138,7 @@ describeDb("GPU budgets", () => {
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
       gpu_worker_leases: SCHEMA.gpu_worker_leases,
       gpu_worker_overrides: SCHEMA.gpu_worker_overrides,
+      external_credentials: SCHEMA.external_credentials,
     });
     // the reaper has just completed a sweep (admission requires it)
     await getPool().query(
@@ -390,5 +412,1229 @@ describeDb("GPU budgets", () => {
     expect(r.state).toBe("settled");
     expect(n(r.spent_usd)).toBe(0);
     expect(n((await keyLayer(credential_id)).reserved_usd)).toBe(0);
+  });
+
+  describe("the kill switch", () => {
+    it("a pod listing resolves only as long as its bound", async () => {
+      const s = setup();
+      await s.launch();
+      await s.launch();
+      await getPool().query(
+        "UPDATE gpu_pods SET desired_state = 'terminated' WHERE key_owner_account_id = $1",
+        [s.account_id],
+      );
+      const terminate = s.rp.client.terminatePod.getMockImplementation()!;
+      s.rp.client.terminatePod.mockImplementation(async (id: string) => {
+        await new Promise((r) => setTimeout(r, 150));
+        return await terminate(id);
+      });
+      const listed = await listManagedGpuPodsLocal(
+        { account_id: s.account_id },
+        { ...s.deps, listResolveMs: 100 },
+      );
+      expect(s.rp.client.terminatePod).toHaveBeenCalledTimes(1);
+      expect(listed.length).toBeGreaterThan(0);
+    });
+
+    it("terminates only as long as its bound, and reports what is left for the reaper", async () => {
+      const s = setup();
+      await s.launch();
+      await s.launch();
+      // each terminate takes longer than the whole bound (which also covers
+      // the kill switch's own fenced work, slow on a loaded machine)
+      const terminate = s.rp.client.terminatePod.getMockImplementation()!;
+      s.rp.client.terminatePod.mockImplementation(async (id: string) => {
+        await new Promise((r) => setTimeout(r, 2_500));
+        return await terminate(id);
+      });
+      const result = await killSwitchLocal(
+        { account_id: s.account_id },
+        { ...s.deps, killSwitchResolveMs: 1_500 },
+      );
+      expect(s.rp.client.terminatePod).toHaveBeenCalledTimes(1);
+      expect(result).toEqual(
+        expect.objectContaining({ marked: 2, remaining: 1, paused: true }),
+      );
+    });
+
+    it("pauses a key connected but never used yet", async () => {
+      const s = setup();
+      await s.stored; // connected; no fence or layer yet
+      expect(
+        (await killSwitchLocal({ account_id: s.account_id }, s.deps)).paused,
+      ).toBe(true);
+      await expect(s.launch()).rejects.toThrow("paused by your kill switch");
+    });
+
+    it("pauses and logs only the connected key, not a closed earlier one", async () => {
+      const s = setup();
+      await s.launch();
+      const old = randomUUID();
+      await getPool().query(
+        "INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated) VALUES ($1, $2, 'closed', now(), now())",
+        [old, s.account_id],
+      );
+      await killSwitchLocal({ account_id: s.account_id }, s.deps);
+      const { rows } = await getPool().query(
+        "SELECT credential_id, kill_switch_at FROM gpu_key_fences WHERE key_owner_account_id = $1",
+        [s.account_id],
+      );
+      const byId = Object.fromEntries(
+        rows.map((r) => [r.credential_id, r.kill_switch_at]),
+      );
+      expect(byId[s.credential_id]).not.toBeNull();
+      expect(byId[old]).toBeNull();
+      const { rows: log } = await getPool().query(
+        "SELECT count(*)::int AS n FROM gpu_key_events WHERE credential_id = $1",
+        [old],
+      );
+      expect(log[0].n).toBe(0);
+    });
+
+    it("reports the persisted pause: --no-pause never lifts one, and no key means nothing paused", async () => {
+      const s = setup();
+      await s.launch();
+      expect(
+        (await killSwitchLocal({ account_id: s.account_id }, s.deps)).paused,
+      ).toBe(true);
+      expect(
+        (
+          await killSwitchLocal(
+            { account_id: s.account_id, pause: false },
+            s.deps,
+          )
+        ).paused,
+      ).toBe(true);
+      // no connected key (removed): nothing to pause
+      const none = setup();
+      await none.stored;
+      await getPool().query(
+        "UPDATE external_credentials SET revoked = now() WHERE id = $1",
+        [none.credential_id],
+      );
+      expect(
+        (await killSwitchLocal({ account_id: none.account_id }, none.deps))
+          .paused,
+      ).toBe(false);
+    });
+
+    it("terminates every live pod and pauses launches until a fresh-auth resume", async () => {
+      const s = setup();
+      const a = await s.launch();
+      const b = await s.launch();
+      const result = await killSwitchLocal(
+        { account_id: s.account_id },
+        s.deps,
+      );
+      expect(result).toEqual({ marked: 2, remaining: 0, paused: true });
+      for (const pod of [a, b]) {
+        expect(s.rp.pods.has(pod.provider_pod_id!)).toBe(false);
+      }
+      await expect(s.launch()).rejects.toThrow("paused by your kill switch");
+      await expect(
+        resumeGpuLaunchesLocal({ account_id: s.account_id }, s.deps as any),
+      ).rejects.toThrow("sign in again");
+      expect(
+        await resumeGpuLaunchesLocal(
+          { account_id: s.account_id, fresh_auth_verified: true },
+          s.deps as any,
+        ),
+      ).toEqual({ resumed: 1 });
+      expect((await s.launch()).state).toBe("running");
+      // both recorded in the key's security log
+      const { rows: log } = await getPool().query(
+        "SELECT action, actor_kind FROM gpu_key_events WHERE credential_id = $1 ORDER BY at",
+        [s.credential_id],
+      );
+      expect(log).toEqual([
+        { action: "kill_switch", actor_kind: "user" },
+        { action: "resumed", actor_kind: "user" },
+      ]);
+    });
+
+    it("stops only one project's pods, never pausing the key", async () => {
+      const s = setup();
+      const other = "00000000-1000-4000-8000-0000000000bb";
+      const here = await s.launch();
+      const there = await launchGpuPodLocal(
+        { account_id: s.account_id, project_id: other, spec: SPEC },
+        s.deps,
+      );
+      expect(
+        await killSwitchLocal(
+          { account_id: s.account_id, project_id: PROJECT },
+          s.deps,
+        ),
+      ).toEqual({ marked: 1, remaining: 0, paused: false });
+      expect(s.rp.pods.has(here.provider_pod_id!)).toBe(false);
+      expect(s.rp.pods.has(there.provider_pod_id!)).toBe(true);
+      await expect(
+        killSwitchLocal(
+          { account_id: s.account_id, project_id: PROJECT, pause: true },
+          s.deps,
+        ),
+      ).rejects.toThrow("whole key");
+      // launches still work
+      expect((await s.launch()).state).toBe("running");
+    });
+
+    it("leaves a safety pause alone, and retries what RunPod didn't confirm", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      await getPool().query(
+        "UPDATE gpu_key_fences SET paused_reason = 'unknown_pod' WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      s.rp.client.terminatePod.mockRejectedValueOnce(
+        new RunpodApiError("provider", 503),
+      );
+      expect(
+        await killSwitchLocal({ account_id: s.account_id }, s.deps),
+      ).toEqual({ marked: 1, remaining: 1, paused: true });
+      // resume lifts the kill switch's pause only
+      await resumeGpuLaunchesLocal(
+        { account_id: s.account_id, fresh_auth_verified: true },
+        s.deps as any,
+      );
+      const { rows } = await getPool().query(
+        "SELECT paused_reason, kill_switch_at FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0]).toEqual({
+        paused_reason: "unknown_pod",
+        kill_switch_at: null,
+      });
+      // a second kill switch marks nothing new but retries the backed-off
+      // terminate at once
+      expect(
+        await killSwitchLocal(
+          { account_id: s.account_id, pause: false },
+          s.deps,
+        ),
+      ).toEqual({ marked: 0, remaining: 0, paused: false });
+    });
+  });
+
+  it("a key removal's drain stops its resolver at the deadline", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    const seen: boolean[] = [];
+    const result = await deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      {
+        isHomeBay: async () => true,
+        storedKeyRejected: async () => false,
+        drainMs: 50,
+        // a resolver whose pods are slow: past the deadline, its guard stops it
+        drain: async (_a: string, guard: () => Promise<void>) => {
+          await new Promise((r) => setTimeout(r, 80));
+          seen.push(
+            await guard().then(
+              () => false,
+              () => true,
+            ),
+          );
+        },
+      },
+    );
+    expect(seen).toEqual([true]);
+    expect(result).toEqual({ revoked: false, remaining: [pod.handle] });
+  });
+
+  it("a forced key removal leaves a pod RunPod won't terminate unmanaged: quarantined, never claimed stopped", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    s.rp.client.terminatePod.mockRejectedValue(
+      new RunpodApiError("provider", 503),
+    );
+    const removal = {
+      isHomeBay: async () => true,
+      storedKeyRejected: async () => false,
+      drain: async () => {},
+      drainMs: 0,
+    };
+    // without force, the key stays while the pod drains
+    expect(
+      await deleteGpuProviderKeyLocal(
+        { account_id: s.account_id, provider: "runpod" },
+        removal,
+      ),
+    ).toEqual({ revoked: false, remaining: [pod.handle] });
+    const result = await deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", force: true },
+      removal,
+    );
+    expect(result).toEqual(
+      expect.objectContaining({ revoked: true, unmanaged: [pod.handle] }),
+    );
+    const { rows } = await getPool().query(
+      "SELECT state, desired_state, unmanaged_at, terminated_at FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0].state).toBe("running");
+    expect(rows[0].unmanaged_at).not.toBeNull();
+    expect(rows[0].terminated_at).toBeNull();
+    const [r] = await reservations(pod.id);
+    expect(r.state).toBe("quarantined");
+    const { rows: fence } = await getPool().query(
+      "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    expect(fence[0].state).toBe("closed");
+    const { rows: log } = await getPool().query(
+      "SELECT action FROM gpu_key_events WHERE credential_id = $1 ORDER BY at",
+      [s.credential_id],
+    );
+    expect(log.map((l) => l.action)).toEqual([
+      "removal_started",
+      "removal_started",
+      "forced_removal",
+    ]);
+    // outside management: the kill switch neither marks nor counts it
+    expect(await killSwitchLocal({ account_id: s.account_id }, s.deps)).toEqual(
+      expect.objectContaining({ marked: 0, remaining: 0 }),
+    );
+  });
+
+  describe("reporting a key compromised", () => {
+    // a fake RunPod account whose listing is complete unless told to fail
+    function account(s: ReturnType<typeof setup>) {
+      let listFails = false;
+      const cleanup = {
+        ...s.rp.client,
+        credential_id: s.credential_id,
+        // one page, handed to the caller as it arrives (as the client does)
+        listPods: jest.fn(async (opts?: any) => {
+          if (listFails) throw new RunpodApiError("provider", 503);
+          await opts?.beforePage?.();
+          const page = [...s.rp.pods.values()];
+          await opts?.onPage?.(page);
+          return page;
+        }),
+        // RunPod still accepts the key until the owner deletes it there
+        getProviderIdentity: jest.fn(async () => ({
+          kind: "personal",
+          id: "user_1",
+        })),
+      };
+      const deps = {
+        getCleanup: async () => cleanup as any,
+        resolvePending: (
+          a: string,
+          guard: () => Promise<void>,
+          opts?: { retryBackedOff?: boolean },
+        ) =>
+          resolvePendingForAccount(
+            a,
+            {
+              ...s.deps,
+              getCleanup: async () => cleanup as any,
+            },
+            { guard, ...opts },
+          ),
+      };
+      return {
+        cleanup,
+        deps,
+        failListing: (v: boolean) => (listFails = v),
+      };
+    }
+
+    it("needs fresh auth and the CoCalc-only confirmation", async () => {
+      const s = setup();
+      await s.stored;
+      const { deps } = account(s);
+      await expect(
+        reportCompromisedLocal(
+          { account_id: s.account_id, confirm_cocalc_only: true },
+          deps,
+        ),
+      ).rejects.toThrow("sign in again");
+      await expect(
+        reportCompromisedLocal(
+          { account_id: s.account_id, fresh_auth_verified: true },
+          deps,
+        ),
+      ).rejects.toThrow("used only for CoCalc");
+    });
+
+    it("blocks the key before asking RunPod, resumes after a failed listing, terminates pods CoCalc didn't start, and closes only on an empty account", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      s.rp.pods.set("pod_miner1", { id: "pod_miner1", name: "miner\u0000x" });
+      // the first pass can't list the account
+      a.failListing(true);
+      expect(
+        await reportCompromisedLocal(
+          {
+            account_id: s.account_id,
+            confirm_cocalc_only: true,
+            fresh_auth_verified: true,
+          },
+          a.deps,
+        ),
+      ).toEqual({
+        closed: false,
+        listing_failed: true,
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
+      const fence = async () =>
+        (
+          await getPool().query(
+            "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+            [s.credential_id],
+          )
+        ).rows[0].state;
+      expect(await fence()).toBe("compromised");
+      // no launches, and no removal without force, meanwhile
+      await expect(s.launch()).rejects.toThrow("reported compromised");
+      await expect(
+        deleteGpuProviderKeyLocal(
+          { account_id: s.account_id, provider: "runpod" },
+          { isHomeBay: async () => true },
+        ),
+      ).rejects.toThrow("still cleaning up");
+      // the next pass lists the account: CoCalc's pod and the unknown one go
+      a.failListing(false);
+      const second = await runCompromiseCleanup(
+        s.account_id,
+        s.credential_id,
+        a.deps,
+      );
+      expect(second.closed).toBe(false); // they were still listed
+      expect(s.rp.pods.size).toBe(0);
+      expect(
+        (
+          await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [
+            pod.id,
+          ])
+        ).rows[0].state,
+      ).toBe("terminated");
+      // an empty account, but RunPod still accepts the key: CoCalc keeps its
+      // copy (its only way to see and stop a thief's pods) and keeps going
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual({
+        closed: false,
+        awaiting_provider_revocation: true,
+        warning: expect.stringContaining("RunPod's Pods page"),
+        provider_pods: 0,
+        managed_pods: 0,
+      });
+      expect(await fence()).toBe("compromised");
+      // a pod the thief starts meanwhile is terminated on the next pass
+      s.rp.pods.set("pod_miner2", { id: "pod_miner2", name: "miner2" });
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect(s.rp.pods.size).toBe(0);
+      // the owner deleted the key at RunPod: now closed, CoCalc's copy revoked
+      a.cleanup.getProviderIdentity.mockRejectedValue(
+        new RunpodApiError("auth", 401),
+      );
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual({
+        closed: true,
+        provider_pods: 0,
+        managed_pods: 0,
+        // pods started after the last check are the owner's to look for
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
+      expect(await fence()).toBe("closed");
+      const { rows: cred } = await getPool().query(
+        "SELECT revoked IS NOT NULL AS revoked, encrypted_payload IS NULL AS nulled FROM external_credentials WHERE id = $1",
+        [s.credential_id],
+      );
+      expect(cred[0]).toEqual({ revoked: true, nulled: true });
+      const { rows: log } = await getPool().query(
+        "SELECT action, details FROM gpu_key_events WHERE credential_id = $1 ORDER BY at",
+        [s.credential_id],
+      );
+      expect(log.map((l) => l.action)).toEqual([
+        "compromised",
+        "unknown_pod_seen",
+        "unknown_pod_terminated",
+        "unknown_pod_seen",
+        "unknown_pod_terminated",
+        "compromise_closed",
+      ]);
+      // the provider name is sanitized and bounded
+      expect(log[1].details).toEqual({
+        provider_pod_id: "pod_miner1",
+        name: "minerx",
+      });
+    });
+
+    it("a pod RunPod no longer has ends through its normal terminate path, never for being absent from a listing", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      // RunPod won't confirm terminating it, and its listing comes back empty
+      s.rp.client.terminatePod.mockRejectedValue(
+        new RunpodApiError("provider", 503),
+      );
+      a.cleanup.listPods.mockResolvedValue([]);
+      await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      const state = async () =>
+        (
+          await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [
+            pod.id,
+          ])
+        ).rows[0].state;
+      // a listing (which may have shifted as it was paged) proves nothing
+      expect(await state()).not.toBe("terminated");
+      // its terminate goes through (RunPod's "not found" counts as done): it
+      // ends, settled, on the next pass
+      s.rp.client.terminatePod.mockResolvedValue(undefined);
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect(await state()).toBe("terminated");
+      const [r] = await reservations(pod.id);
+      expect(r.state).toBe("settled");
+    });
+
+    it("closes when the owner deletes the key at RunPod and the listing itself is rejected", async () => {
+      const s = setup();
+      await s.launch();
+      const a = account(s);
+      const report = {
+        account_id: s.account_id,
+        confirm_cocalc_only: true,
+        fresh_auth_verified: true,
+      };
+      expect(await reportCompromisedLocal(report, a.deps)).toEqual(
+        expect.objectContaining({ closed: false }),
+      );
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual(
+        expect.objectContaining({ awaiting_provider_revocation: true }),
+      );
+      // deleted at RunPod: every call with the key is rejected, the listing
+      // first
+      a.cleanup.listPods.mockRejectedValue(new RunpodApiError("auth", 401));
+      a.cleanup.getProviderIdentity.mockRejectedValue(
+        new RunpodApiError("auth", 401),
+      );
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual({
+        closed: true,
+        provider_pods: 0,
+        managed_pods: 0,
+        // pods started after the last check are the owner's to look for
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("closed");
+      const { rows: cred } = await getPool().query(
+        "SELECT revoked IS NOT NULL AS revoked FROM external_credentials WHERE id = $1",
+        [s.credential_id],
+      );
+      expect(cred[0].revoked).toBe(true);
+    });
+
+    it("a rejected listing doesn't close while CoCalc has an unfinished pod on the key; other listing failures never close", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      s.rp.client.terminatePod.mockRejectedValue(
+        new RunpodApiError("provider", 503),
+      );
+      a.cleanup.listPods.mockRejectedValue(new RunpodApiError("auth", 401));
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      expect(result).toEqual({
+        closed: false,
+        provider_rejected: true,
+        managed_pods: 1,
+        warning: expect.stringContaining("Remove anyway"),
+      });
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("compromised");
+      expect(
+        (
+          await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [
+            pod.id,
+          ])
+        ).rows[0].state,
+      ).not.toBe("terminated");
+      a.cleanup.listPods.mockRejectedValue(new RunpodApiError("provider", 503));
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual({ closed: false, listing_failed: true });
+    });
+
+    it("retries a backed-off managed pod on every compromise pass", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      s.rp.client.terminatePod.mockRejectedValueOnce(
+        new RunpodApiError("provider", 503),
+      );
+      await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      const row = async () =>
+        (
+          await getPool().query(
+            "SELECT state, reap_after FROM gpu_pods WHERE id = $1",
+            [pod.id],
+          )
+        ).rows[0];
+      // the failed terminate backed off into the future
+      expect((await row()).state).not.toBe("terminated");
+      expect(new Date((await row()).reap_after).getTime()).toBeGreaterThan(
+        Date.now(),
+      );
+      // the next pass retries it at once
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect((await row()).state).toBe("terminated");
+    });
+
+    it("bounds the whole pass, resolving CoCalc's own pods included", async () => {
+      const s = setup();
+      await s.launch();
+      const a = account(s);
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        { ...a.deps, passMs: 0 },
+      );
+      // out of time before the first pod: nothing terminated, nothing listed
+      expect(result).toEqual({
+        closed: false,
+        managed_pods: 1,
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
+      expect(s.rp.client.terminatePod).not.toHaveBeenCalled();
+      expect(a.cleanup.listPods).not.toHaveBeenCalled();
+      // the next pass, with time, continues
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect(s.rp.client.terminatePod).toHaveBeenCalled();
+    });
+
+    it("bounds the provider listing by the pass deadline too", async () => {
+      const s = setup();
+      await s.stored;
+      const a = account(s);
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      // a listing that would page on (the fake checks before each page)
+      a.cleanup.listPods.mockImplementation(async (opts?: any) => {
+        await opts?.beforePage?.();
+        return [];
+      });
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        { ...a.deps, passMs: 0 },
+      );
+      // cut: neither "awaiting revocation" nor a listing failure, and the
+      // key's identity was never checked
+      expect(result).toEqual({
+        closed: false,
+        managed_pods: 0,
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
+      expect(a.cleanup.getProviderIdentity).not.toHaveBeenCalled();
+    });
+
+    it("acts on no listing that came back after the pass's time ran out", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      // CoCalc's pod won't terminate, and RunPod's only page is slow: it
+      // starts in time and comes back (complete, without the pod) too late
+      s.rp.client.terminatePod.mockRejectedValue(
+        new RunpodApiError("provider", 503),
+      );
+      a.cleanup.listPods.mockImplementationOnce(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+        return [];
+      });
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        { ...a.deps, passMs: 150 },
+      );
+      expect(result).toEqual({
+        closed: false,
+        managed_pods: 1,
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
+      const state = async () =>
+        (
+          await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [
+            pod.id,
+          ])
+        ).rows[0].state;
+      // not ended, and RunPod's identity never asked
+      expect(await state()).not.toBe("terminated");
+      expect(a.cleanup.getProviderIdentity).not.toHaveBeenCalled();
+    });
+
+    it("acts on no identity answer that came back after the pass's time ran out", async () => {
+      const s = setup();
+      await s.stored;
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      const a = account(s);
+      // the owner deleted the key at RunPod, but RunPod's answer is slow
+      a.cleanup.listPods.mockResolvedValue([]);
+      a.cleanup.getProviderIdentity.mockImplementationOnce(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+        throw new RunpodApiError("auth", 401);
+      });
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        { ...a.deps, passMs: 150 },
+      );
+      expect(result.closed).toBe(false);
+      const fence = async () =>
+        (
+          await getPool().query(
+            "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+            [s.credential_id],
+          )
+        ).rows[0].state;
+      expect(await fence()).toBe("compromised");
+      // the next pass, in time, closes
+      a.cleanup.getProviderIdentity.mockRejectedValueOnce(
+        new RunpodApiError("auth", 401),
+      );
+      expect(
+        (await runCompromiseCleanup(s.account_id, s.credential_id, a.deps))
+          .closed,
+      ).toBe(true);
+      expect(await fence()).toBe("closed");
+    });
+
+    it("a pass whose lease was lost while RunPod answered the identity check neither revokes nor closes", async () => {
+      const s = setup();
+      await s.stored;
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      const a = account(s);
+      a.cleanup.listPods.mockResolvedValue([]);
+      // start compromised (as a report leaves it), then run a worker pass
+      await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      let lost = false;
+      a.cleanup.getProviderIdentity.mockImplementationOnce(async () => {
+        lost = true; // another hub took the lease meanwhile
+        throw new RunpodApiError("auth", 401);
+      });
+      await expect(
+        runCompromiseCleanup(s.account_id, s.credential_id, {
+          ...a.deps,
+          guard: async () => {
+            if (lost) throw Error("lease lost");
+          },
+        }),
+      ).rejects.toThrow("lease lost");
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("compromised");
+      const { rows: cred } = await getPool().query(
+        "SELECT revoked IS NULL AS active FROM external_credentials WHERE id = $1",
+        [s.credential_id],
+      );
+      expect(cred[0].active).toBe(true);
+    });
+
+    it("bounds the inventory lookup of an ambiguous create by the pass too", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      // CoCalc lost RunPod's create reply: the pod is looked up by handle
+      await getPool().query(
+        "UPDATE gpu_pods SET state = 'ambiguous', provider_pod_id = NULL WHERE id = $1",
+        [pod.id],
+      );
+      const bounded: boolean[] = [];
+      a.cleanup.findPodsByName.mockImplementation(
+        async (_name: string, opts?: any) => {
+          bounded.push(typeof opts?.beforePage === "function");
+          await opts?.beforePage?.();
+          return [];
+        },
+      );
+      await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      expect(bounded.length).toBeGreaterThan(0);
+      expect(bounded.every((b) => b)).toBe(true);
+    });
+
+    it("acts on no ambiguous-create lookup that came back after the pass's time ran out", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      await getPool().query(
+        "UPDATE gpu_pods SET state = 'ambiguous', provider_pod_id = NULL WHERE id = $1",
+        [pod.id],
+      );
+      // the only page starts in time and comes back late (with the pod)
+      const real = s.rp.client.findPodsByName.getMockImplementation()!;
+      s.rp.client.findPodsByName.mockImplementationOnce(
+        async (name: string, opts?: any) => {
+          await opts?.beforePage?.();
+          await new Promise((r) => setTimeout(r, 300));
+          return await real(name);
+        },
+      );
+      const result = await runCompromiseCleanup(s.account_id, s.credential_id, {
+        ...a.deps,
+        passMs: 150,
+      });
+      expect(result.closed).toBe(false);
+      const row = async () =>
+        (
+          await getPool().query(
+            "SELECT state, provider_pod_id FROM gpu_pods WHERE id = $1",
+            [pod.id],
+          )
+        ).rows[0];
+      // not bound, nothing terminated, and not backed off for it
+      expect(await row()).toEqual({
+        state: "ambiguous",
+        provider_pod_id: null,
+      });
+      expect(s.rp.client.terminatePod).not.toHaveBeenCalled();
+      // the next pass, in time, resolves it
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect((await row()).state).not.toBe("ambiguous");
+    });
+
+    it("stops between an ambiguous create's duplicate terminations when the pass's guard trips", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      await getPool().query(
+        "UPDATE gpu_pods SET state = 'ambiguous', provider_pod_id = NULL WHERE id = $1",
+        [pod.id],
+      );
+      // RunPod retried the create: two duplicates under the same name
+      for (const id of ["pod_dup0001", "pod_dup0002"]) {
+        s.rp.pods.set(id, {
+          id,
+          name: pod.handle,
+          createdAt: "2999-01-01T00:00:00Z",
+        });
+      }
+      // the lease is lost right after the first provider action
+      await expect(
+        runCompromiseCleanup(s.account_id, s.credential_id, {
+          ...a.deps,
+          guard: async () => {
+            if (s.rp.client.terminatePod.mock.calls.length > 0) {
+              throw Error("lease lost");
+            }
+          },
+        }),
+      ).rejects.toThrow("lease lost");
+      expect(s.rp.client.terminatePod).toHaveBeenCalledTimes(1);
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_pods WHERE id = $1",
+        [pod.id],
+      );
+      expect(rows[0].state).toBe("ambiguous");
+      // the next pass finishes: the other duplicates go, the record binds
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      const { rows: after } = await getPool().query(
+        "SELECT state, provider_pod_id FROM gpu_pods WHERE id = $1",
+        [pod.id],
+      );
+      expect(after[0].state).not.toBe("ambiguous");
+      // one pod is left at RunPod under that name: the one the record holds
+      expect([...s.rp.pods.keys()]).toEqual([after[0].provider_pod_id]);
+    });
+
+    it("reaches pods beyond the first resolver batch in the same pass, even while the first keep failing", async () => {
+      const s = setup();
+      const first = await s.launch();
+      const second = await s.launch();
+      const a = account(s);
+      const ids = async (id: string) =>
+        (
+          await getPool().query(
+            "SELECT provider_pod_id, state FROM gpu_pods WHERE id = $1",
+            [id],
+          )
+        ).rows[0];
+      const stuck = (await ids(first.id)).provider_pod_id;
+      // RunPod won't terminate the oldest pod
+      const terminate = s.rp.client.terminatePod.getMockImplementation()!;
+      s.rp.client.terminatePod.mockImplementation(async (id: string) => {
+        if (id === stuck) throw new RunpodApiError("provider", 503);
+        return await terminate(id);
+      });
+      // a batch of one, so the second pod is beyond the first batch
+      const deps = {
+        ...a.deps,
+        resolvePending: (
+          acct: string,
+          guard: () => Promise<void>,
+          opts?: { retryBackedOff?: boolean },
+        ) =>
+          resolvePendingForAccount(
+            acct,
+            { ...s.deps, getCleanup: async () => a.cleanup as any },
+            { guard, limit: 1, ...opts },
+          ),
+      };
+      await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        deps,
+      );
+      expect((await ids(first.id)).state).not.toBe("terminated");
+      expect((await ids(second.id)).state).toBe("terminated");
+    });
+
+    it("a slow failure that uses up the pass doesn't keep the next pod waiting: later passes take the longest-waiting first", async () => {
+      const s = setup();
+      const first = await s.launch();
+      const second = await s.launch();
+      const a = account(s);
+      const row = async (id: string) =>
+        (
+          await getPool().query(
+            "SELECT provider_pod_id, state FROM gpu_pods WHERE id = $1",
+            [id],
+          )
+        ).rows[0];
+      const slow = (await row(first.id)).provider_pod_id;
+      // RunPod takes the whole pass to fail the oldest pod's terminate
+      const terminate = s.rp.client.terminatePod.getMockImplementation()!;
+      s.rp.client.terminatePod.mockImplementation(async (id: string) => {
+        if (id === slow) {
+          await new Promise((r) => setTimeout(r, 150));
+          throw new RunpodApiError("provider", 503);
+        }
+        return await terminate(id);
+      });
+      await getPool().query(
+        "UPDATE gpu_pods SET desired_state = 'terminated' WHERE id = ANY($1)",
+        [[first.id, second.id]],
+      );
+      const pass = () =>
+        runCompromiseCleanup(s.account_id, s.credential_id, {
+          ...a.deps,
+          passMs: 100,
+        });
+      await pass();
+      // that pass only reached the slow pod
+      expect((await row(second.id)).state).not.toBe("terminated");
+      // the next one takes the pod that hasn't been tried yet first
+      await pass();
+      expect((await row(second.id)).state).toBe("terminated");
+      expect((await row(first.id)).state).not.toBe("terminated");
+    });
+
+    it("a sweep doesn't make one compromised key wait for another's slow pass", async () => {
+      const slow = setup();
+      const fast = setup();
+      await slow.stored;
+      await fast.stored;
+      for (const s of [slow, fast]) {
+        await getPool().query(
+          `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
+           VALUES ($1, $2, 'compromised', now(), now())
+           ON CONFLICT (credential_id) DO UPDATE SET state = 'compromised'`,
+          [s.credential_id, s.account_id],
+        );
+      }
+      let release!: () => void;
+      const hung = new Promise<void>((r) => (release = r));
+      const seen: string[] = [];
+      const cleanup = (s: ReturnType<typeof setup>, hang: boolean) => ({
+        ...s.rp.client,
+        credential_id: s.credential_id,
+        getProviderIdentity: async () => ({ kind: "personal", id: "u" }),
+        listPods: async () => {
+          seen.push(s.account_id);
+          if (hang) await hung;
+          return [];
+        },
+      });
+      const sweep = continueCompromiseCleanups(async () => {}, {
+        resolvePending: async () => {},
+        getCleanup: async (account_id: string) =>
+          (account_id === slow.account_id
+            ? cleanup(slow, true)
+            : cleanup(fast, false)) as any,
+      });
+      // the fast key's pass runs while the slow one is still listing
+      for (let i = 0; i < 50 && !seen.includes(fast.account_id); i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(seen).toContain(fast.account_id);
+      release();
+      await sweep;
+    });
+
+    it("a slow, many-page inventory still terminates pods every pass, though no pass gets through it", async () => {
+      const s = setup();
+      await s.stored;
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      const a = account(s);
+      for (const id of ["pod_thief001", "pod_thief002", "pod_thief003"]) {
+        s.rp.pods.set(id, { id, name: id });
+      }
+      // one pod per page, each page slow: a whole listing outlasts a pass
+      a.cleanup.listPods.mockImplementation(async (opts?: any) => {
+        const out: any[] = [];
+        for (const pod of [...s.rp.pods.values()]) {
+          await opts?.beforePage?.();
+          await new Promise((r) => setTimeout(r, 120));
+          out.push(pod);
+          await opts?.onPage?.([pod]);
+        }
+        return out;
+      });
+      const pass = () =>
+        runCompromiseCleanup(s.account_id, s.credential_id, {
+          ...a.deps,
+          passMs: 200,
+        });
+      const first = await pass();
+      expect(first.closed).toBe(false);
+      // cut, but not for nothing: the first page's pod is gone
+      expect(s.rp.pods.size).toBeLessThan(3);
+      for (let i = 0; i < 4 && s.rp.pods.size > 0; i++) await pass();
+      expect(s.rp.pods.size).toBe(0);
+    });
+
+    it("doesn't take a listing it changed while paging as complete: no pod is ended for being skipped", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      s.rp.pods.set("pod_thief001", { id: "pod_thief001", name: "x" });
+      // marked to terminate, as a report leaves it (RunPod won't confirm yet)
+      await getPool().query(
+        "UPDATE gpu_pods SET desired_state = 'terminated' WHERE id = $1",
+        [pod.id],
+      );
+      // offset pagination, one pod per page, the thief's pod first: deleting
+      // it shifts CoCalc's pod behind the cursor
+      const current = () =>
+        [...s.rp.pods.values()].sort((x, y) =>
+          x.id === "pod_thief001" ? -1 : y.id === "pod_thief001" ? 1 : 0,
+        );
+      a.cleanup.listPods.mockImplementation(async (opts?: any) => {
+        const out: any[] = [];
+        for (let offset = 0; offset < current().length; offset++) {
+          await opts?.beforePage?.();
+          const page = [current()[offset]];
+          out.push(...page);
+          await opts?.onPage?.(page);
+        }
+        return out;
+      });
+      await runCompromiseCleanup(s.account_id, s.credential_id, {
+        ...a.deps,
+        resolvePending: async () => {},
+      });
+      expect(s.rp.pods.has("pod_thief001")).toBe(false);
+      // CoCalc's pod, skipped by the shifted cursor, still runs: not ended
+      // as absent (its own terminate path still owns it)
+      const { rows } = await getPool().query(
+        "SELECT state, provider_pod_id FROM gpu_pods WHERE id = $1",
+        [pod.id],
+      );
+      expect(rows[0].state).not.toBe("terminated");
+      expect(s.rp.pods.has(rows[0].provider_pod_id)).toBe(true);
+    });
+
+    it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {
+      const s = setup();
+      await s.stored;
+      const a = account(s);
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      // the crash state: the removal closed the fence, then stopped before
+      // revoking CoCalc's copy
+      await getPool().query(
+        `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
+         VALUES ($1, $2, 'closed', now(), now())
+         ON CONFLICT (credential_id) DO UPDATE SET state = 'closed'`,
+        [s.credential_id, s.account_id],
+      );
+      await expect(
+        reportCompromisedLocal(
+          {
+            account_id: s.account_id,
+            confirm_cocalc_only: true,
+            fresh_auth_verified: true,
+          },
+          a.deps,
+        ),
+      ).rejects.toThrow("already removed from CoCalc");
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("closed");
+      const { rows: log } = await getPool().query(
+        "SELECT action FROM gpu_key_events WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(log).toEqual([]);
+      expect(
+        await deleteGpuProviderKeyLocal(
+          { account_id: s.account_id, provider: "runpod" },
+          { isHomeBay: async () => true },
+        ),
+      ).toEqual({ revoked: true });
+    });
+
+    it("removal first, report second: the removal yields to the compromise cleanup and keeps the key", async () => {
+      const s = setup();
+      await s.launch();
+      const a = account(s);
+      const removal = deleteGpuProviderKeyLocal(
+        { account_id: s.account_id, provider: "runpod" },
+        {
+          isHomeBay: async () => true,
+          storedKeyRejected: async () => false,
+          // the report comes in while the removal drains (and its cleanup
+          // pass terminates the pod)
+          drain: async () => {
+            await reportCompromisedLocal(
+              {
+                account_id: s.account_id,
+                confirm_cocalc_only: true,
+                fresh_auth_verified: true,
+              },
+              a.deps,
+            ).catch(() => {});
+          },
+          drainMs: 0,
+        },
+      );
+      expect(await removal).toEqual({
+        revoked: false,
+        warning: expect.stringContaining("reported compromised"),
+      });
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("compromised");
+      const { rows: cred } = await getPool().query(
+        "SELECT revoked IS NULL AS active FROM external_credentials WHERE id = $1",
+        [s.credential_id],
+      );
+      expect(cred[0].active).toBe(true);
+    });
+
+    it("refuses if the key changed before the report took the fence", async () => {
+      const s = setup();
+      await s.stored;
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      const a = account(s);
+      const stale = { ...a.cleanup, credential_id: randomUUID() };
+      await expect(
+        reportCompromisedLocal(
+          {
+            account_id: s.account_id,
+            confirm_cocalc_only: true,
+            fresh_auth_verified: true,
+          },
+          { ...a.deps, getCleanup: async () => stale as any },
+        ),
+      ).rejects.toThrow("changed while this was being reported");
+    });
+
+    it("finishes a cleanup that revoked its key but didn't close its fence", async () => {
+      const s = setup();
+      await s.launch();
+      await getPool().query(
+        "UPDATE gpu_key_fences SET state = 'compromised' WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      await getPool().query(
+        "UPDATE external_credentials SET revoked = now(), encrypted_payload = NULL WHERE id = $1",
+        [s.credential_id],
+      );
+      await getPool().query(
+        "UPDATE gpu_pods SET state = 'terminated' WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      await continueCompromiseCleanups(async () => {});
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("closed");
+    });
   });
 });

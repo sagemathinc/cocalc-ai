@@ -25,6 +25,9 @@ jest.mock("@cocalc/database/settings/secret-settings", () => ({
 
 const describeRealPostgres = postgresBinDir() ? describe : describe.skip;
 
+// lock waits are slow on a loaded machine (the full parallel run)
+jest.setTimeout(30_000);
+
 const OLD = "rpa_OLDKEY0123456789abcdefghijklmnopqrstuvwxyzAB";
 const NEW = "rpa_NEWKEY0123456789abcdefghijklmnopqrstuvwxyzAB";
 
@@ -48,6 +51,7 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     await syncSchema({
       external_credentials: SCHEMA.external_credentials,
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pods: SCHEMA.gpu_pods,
@@ -100,6 +104,8 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     });
     // One fake RunPod for verification and creates; records the key used.
     const used: string[] = [];
+    // RunPod stops answering terminates (until the caller aborts)
+    const stall = { terminate: false, identity: false };
     const fetch = (async (url: string, init: any) => {
       const auth = `${init?.headers?.Authorization ?? ""}`.replace(
         "Bearer ",
@@ -115,6 +121,29 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
           id: `pod_${randomUUID().slice(0, 8)}`,
           name: body.name,
         });
+      }
+      if (
+        stall.terminate &&
+        init?.method === "DELETE" &&
+        path.startsWith("/v2/pods/")
+      ) {
+        return await new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () =>
+            reject(init.signal.reason ?? Error("aborted")),
+          ),
+        );
+      }
+      // a personal account's identity takes two requests: a slow
+      // organization answer, then a GraphQL call that never answers
+      if (stall.identity && path === "/v2/organization") {
+        await new Promise((r) => setTimeout(r, 2_500));
+      }
+      if (stall.identity && path === "/graphql") {
+        return await new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () =>
+            reject(init.signal.reason ?? Error("aborted")),
+          ),
+        );
       }
       if (path === "/v2/organization") {
         return json(403, {
@@ -137,7 +166,7 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       isEntitled: async () => true,
       isHomeBay: async () => true,
     };
-    return { account_id, used, fetch, keyDeps };
+    return { account_id, used, fetch, keyDeps, stall };
   }
 
   function launch(
@@ -258,7 +287,7 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     expect(await storedKey(s.account_id)).toBe(NEW);
   });
 
-  it("launch first: the removal waits, then is refused", async () => {
+  it("launch first: the removal waits, then drains the pod and removes the key", async () => {
     const s = await setup();
     const g = gate();
     const held = gate();
@@ -270,9 +299,16 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     );
     await waitForLockWaiters(query, 1);
     g.open();
-    await launching;
-    await expect(removing).rejects.toThrow("can't be removed yet");
-    expect(await storedKey(s.account_id)).toBe(OLD);
+    const pod = await launching;
+    // the removal terminates the pod with the old key, then removes it
+    expect(await removing).toEqual({ revoked: true });
+    expect(s.used).toEqual([OLD]);
+    expect(await storedKey(s.account_id)).toBeUndefined();
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0].state).toBe("terminated");
   });
 
   it("a key replaced in place between pricing and the fence refuses the launch", async () => {
@@ -324,11 +360,16 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
   it("removal first: the launch waits, then finds no key and records nothing", async () => {
     const s = await setup();
     const g = gate();
+    // the removal's last check (under the fence) waits on the gate
+    let calls = 0;
     const removing = keys.deleteGpuProviderKeyLocal(
       { account_id: s.account_id, provider: "runpod" },
       {
         ...s.keyDeps,
-        unfinishedPods: pauseUnderFence(g, 1),
+        credentialPods: async (credential_id) => {
+          if (++calls === 3) await g.p;
+          return await pods.unfinishedCredentialPods(credential_id);
+        },
       },
     );
     await fenceHeld();
@@ -336,7 +377,12 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     await waitForLockWaiters(query, 1);
     g.open();
     expect(await removing).toEqual({ revoked: true });
-    await expect(launching).rejects.toThrow("No RunPod API key is connected");
+    // refused whichever fence turn it got: draining (between the removal's
+    // fenced phases, on a loaded machine), closed (before the revocation
+    // lands), or no key
+    await expect(launching).rejects.toThrow(
+      /No RunPod API key is connected|This RunPod key was removed|This RunPod key is being removed/,
+    );
     expect(s.used).toEqual([]);
     const { rows } = await getPool().query(
       "SELECT count(*)::int AS n FROM gpu_pods WHERE key_owner_account_id = $1",
@@ -452,13 +498,15 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       s.account_id,
       s.keyDeps,
     ))!.credential_id;
-    // the old key was deleted at RunPod: removal is allowed despite the pod
+    // the old key was deleted at RunPod: removing it leaves the pod unmanaged
     expect(
       await keys.deleteGpuProviderKeyLocal(
         { account_id: s.account_id, provider: "runpod" },
         { ...s.keyDeps, storedKeyRejected: async () => true },
       ),
-    ).toEqual({ revoked: true });
+    ).toEqual(
+      expect.objectContaining({ revoked: true, unmanaged: [pod.handle] }),
+    );
     await keys.setGpuProviderKeyLocal(
       { account_id: s.account_id, provider: "runpod", api_key: NEW },
       s.keyDeps,
@@ -483,5 +531,244 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       [pod.id],
     );
     expect(rows[0]).toEqual({ state: "running", credential_id: before });
+  });
+
+  const SHORT_END = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+
+  it("a replacement is a new credential: the old key is revoked and its fence closed, and only its remaining money carries over", async () => {
+    const s = await setup();
+    const pod = await launch(s);
+    const before = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    // the pod ended, having spent $15 of the key's $20
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'terminated', desired_state = 'terminated' WHERE id = $1",
+      [pod.id],
+    );
+    await getPool().query(
+      "UPDATE gpu_budget_layers SET spent_usd = 15, reserved_usd = 0, ends_at = $2 WHERE credential_id = $1 AND scope_kind = 'key'",
+      [before, SHORT_END],
+    );
+    await getPool().query(
+      "UPDATE gpu_key_fences SET kill_switch_at = now() WHERE credential_id = $1",
+      [before],
+    );
+    await keys.setGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", api_key: NEW },
+      s.keyDeps,
+    );
+    const after = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    expect(after).not.toBe(before);
+    expect(await storedKey(s.account_id)).toBe(NEW);
+    const { rows: fences } = await getPool().query(
+      "SELECT credential_id, state FROM gpu_key_fences WHERE key_owner_account_id = $1",
+      [s.account_id],
+    );
+    expect(
+      Object.fromEntries(fences.map((f) => [f.credential_id, f.state])),
+    ).toEqual({ [before]: "closed", [after]: "active" });
+    const { rows: layer } = await getPool().query(
+      "SELECT authorized_usd, ends_at FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+      [after],
+    );
+    expect(Number(layer[0].authorized_usd)).toBe(5);
+    // the kill switch's pause outlives the rotation
+    const { rows: fence } = await getPool().query(
+      "SELECT kill_switch_at FROM gpu_key_fences WHERE credential_id = $1",
+      [after],
+    );
+    expect(fence[0].kill_switch_at).not.toBeNull();
+    // a budget its owner shortened stays as short
+    expect(new Date(layer[0].ends_at).getTime()).toBe(SHORT_END.getTime());
+    const { rows: log } = await getPool().query(
+      "SELECT action, details FROM gpu_key_events WHERE credential_id = $1",
+      [before],
+    );
+    expect(log).toEqual([{ action: "removed", details: { replaced: true } }]);
+  });
+
+  it("a key whose budget already ended can be replaced; the new key's budget stays ended", async () => {
+    const s = await setup();
+    const pod = await launch(s);
+    const before = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'terminated', desired_state = 'terminated' WHERE id = $1",
+      [pod.id],
+    );
+    const day = 24 * 3600 * 1000;
+    const starts = new Date(Date.now() - 10 * day);
+    const ends = new Date(Date.now() - day);
+    await getPool().query(
+      "UPDATE gpu_budget_layers SET reserved_usd = 0, starts_at = $2, ends_at = $3 WHERE credential_id = $1 AND scope_kind = 'key'",
+      [before, starts, ends],
+    );
+    await keys.setGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", api_key: NEW },
+      s.keyDeps,
+    );
+    const after = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    expect(after).not.toBe(before);
+    const { rows: layer } = await getPool().query(
+      "SELECT starts_at, ends_at FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+      [after],
+    );
+    expect(new Date(layer[0].starts_at).getTime()).toBe(starts.getTime());
+    expect(new Date(layer[0].ends_at).getTime()).toBe(ends.getTime());
+    await expect(launch(s)).rejects.toThrow();
+  });
+
+  it("replacement first: a removal that waited acts on nothing stale; it refuses, and the new key stays", async () => {
+    const s = await setup();
+    const g = gate();
+    const replacing = keys.setGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", api_key: NEW },
+      { ...s.keyDeps, unfinishedPods: pauseUnderFence(g, 2) },
+    );
+    await fenceHeld();
+    // the removal read the old key before the replacement committed
+    const removing = keys.deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      s.keyDeps,
+    );
+    await waitForLockWaiters(query, 1);
+    g.open();
+    await replacing;
+    await expect(removing).rejects.toThrow(
+      "changed while it was being removed",
+    );
+    expect(await storedKey(s.account_id)).toBe(NEW);
+  });
+
+  it("replacement first: a compromise report that waited refuses, and the new key stays active", async () => {
+    const s = await setup();
+    const compromise = await import("./compromise");
+    const g = gate();
+    // the report captures the old key's cleanup capability first
+    const stale = await keys.getRunpodCleanupForAccount(
+      s.account_id,
+      s.keyDeps,
+    );
+    const replacing = keys.setGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", api_key: NEW },
+      { ...s.keyDeps, unfinishedPods: pauseUnderFence(g, 2) },
+    );
+    await fenceHeld();
+    const reporting = compromise.reportCompromisedLocal(
+      {
+        account_id: s.account_id,
+        confirm_cocalc_only: true,
+        fresh_auth_verified: true,
+      },
+      { getCleanup: async () => stale },
+    );
+    await waitForLockWaiters(query, 1);
+    g.open();
+    await replacing;
+    await expect(reporting).rejects.toThrow(
+      "changed while this was being reported",
+    );
+    const after = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+      [after],
+    );
+    expect(rows[0].state).toBe("active");
+  });
+
+  it("removal closes, then a report comes in before the revoke: the report refuses and claims nothing; the removal still revokes", async () => {
+    const s = await setup();
+    const compromise = await import("./compromise");
+    const before = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    const cleanup = await keys.getRunpodCleanupForAccount(
+      s.account_id,
+      s.keyDeps,
+    );
+    let reported: unknown;
+    const removal = await keys.deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      {
+        ...s.keyDeps,
+        // in the revocation, after the removal's fence committed the close
+        clearHostkeys: async () => {
+          reported = await compromise
+            .reportCompromisedLocal(
+              {
+                account_id: s.account_id,
+                confirm_cocalc_only: true,
+                fresh_auth_verified: true,
+              },
+              { getCleanup: async () => cleanup },
+            )
+            .catch((err) => err);
+        },
+      },
+    );
+    expect(removal).toEqual({ revoked: true });
+    expect(`${reported}`).toContain("already removed from CoCalc");
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+      [before],
+    );
+    expect(rows[0].state).toBe("closed");
+    const { rows: log } = await getPool().query(
+      "SELECT action FROM gpu_key_events WHERE credential_id = $1 ORDER BY at",
+      [before],
+    );
+    expect(log.map((l) => l.action)).not.toContain("compromised");
+    expect(await storedKey(s.account_id)).toBeUndefined();
+  });
+
+  it("a removal whose RunPod terminates stall still answers in time, with the remaining pods", async () => {
+    const s = await setup();
+    const pod = await launch(s);
+    s.stall.terminate = true;
+    const started = Date.now();
+    const result = await keys.deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      { ...s.keyDeps, drainMs: 1_000, drainPollMs: 100 },
+    );
+    // the stalled call was cut at the removal's per-call timeout, not
+    // RunPod's 30 s default
+    expect(Date.now() - started).toBeLessThan(
+      keys.KEY_REMOVAL_CALL_TIMEOUT_MS + 4_000,
+    );
+    expect(result).toEqual({ revoked: false, remaining: [pod.handle] });
+  });
+
+  it("a slow rejection probe comes out of the removal's drain, not on top of it", async () => {
+    const s = await setup();
+    const pod = await launch(s);
+    s.stall.terminate = true;
+    s.stall.identity = true;
+    const drainMs = 3_000;
+    const started = Date.now();
+    const result = await keys.deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      { ...s.keyDeps, drainMs, drainPollMs: 100 },
+    );
+    // the probe alone outlasts the drain (2.5 s, then the 4 s GraphQL
+    // timeout), so no terminate starts after it: done without the 5 s of a
+    // stalled call on top
+    expect(Date.now() - started).toBeLessThan(
+      drainMs + keys.KEY_REMOVAL_CALL_TIMEOUT_MS,
+    );
+    expect(result).toEqual({ revoked: false, remaining: [pod.handle] });
   });
 });

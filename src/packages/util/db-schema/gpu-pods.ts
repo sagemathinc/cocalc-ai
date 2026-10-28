@@ -166,6 +166,10 @@ Table({
     terminated_at: { type: "timestamp" },
     // the reaper's backoff for a failing step on this pod
     reap_after: { type: "timestamp" },
+    // set by a forced key removal (5c): the key is gone, so CoCalc can no
+    // longer reach the pod. Orthogonal to state (the pod may still run and
+    // bill at RunPod); excluded from admission, slots and the reaper.
+    unmanaged_at: { type: "timestamp" },
     reap_attempts: { type: "integer", not_null: true, pg_default: "0" },
     running_since: {
       type: "timestamp",

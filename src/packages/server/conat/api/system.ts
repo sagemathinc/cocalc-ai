@@ -7466,11 +7466,13 @@ export async function deleteGpuProviderKey({
   browser_id,
   session_hash,
   provider,
+  force,
 }: {
   account_id?: string;
   browser_id?: string | null;
   session_hash?: string | null;
   provider: GpuProvider;
+  force?: boolean;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
@@ -7481,7 +7483,11 @@ export async function deleteGpuProviderKey({
     session_hash,
     require_second_factor: false,
   });
-  return await deleteGpuProviderKeyImpl({ account_id, provider });
+  return await deleteGpuProviderKeyImpl({
+    account_id,
+    provider,
+    force: force === true,
+  });
 }
 
 export async function getGpuProviderKeyStatus({

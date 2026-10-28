@@ -211,10 +211,21 @@ export class RunpodClient {
 
   // Every pod in the account, including Instant Cluster members, which
   // RunPod leaves out by default: a hidden pod is hidden spend.
-  async listPods(): Promise<RunpodPodView[]> {
+  // beforePage runs before each page: a caller with a deadline throws there
+  // to stop (the listing then fails; it never returns a partial one).
+  // onPage gets each page's pods as it arrives (a caller can act on them
+  // before the whole inventory is in).
+  async listPods({
+    beforePage,
+    onPage,
+  }: {
+    beforePage?: () => Promise<void>;
+    onPage?: (pods: RunpodPodView[]) => Promise<void>;
+  } = {}): Promise<RunpodPodView[]> {
     const pods: RunpodPodView[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
+      await beforePage?.();
       const body = await this.get("/v2/pods", {
         includeClusterPods: "true",
         ...(cursor ? { cursor } : {}),
@@ -225,12 +236,15 @@ export class RunpodClient {
       ) {
         throw new RunpodApiError("protocol");
       }
+      const page: RunpodPodView[] = [];
       for (const raw of body.pods) {
         // A row we can't parse could be a live pod: never drop it silently.
         const pod = podView(raw);
         if (!pod) throw new RunpodApiError("protocol");
-        pods.push(pod);
+        page.push(pod);
       }
+      pods.push(...page);
+      await onPage?.(page);
       if (!body.pagination.hasNextPage) return pods;
       const next = body.pagination.nextCursor;
       if (!(typeof next === "string" && next)) {
@@ -353,8 +367,11 @@ export class RunpodClient {
 
   // Pods with exactly this name: how an ambiguous create is resolved. Our
   // names are random handles, unique per account.
-  async findPodsByName(name: string): Promise<RunpodPodView[]> {
-    return (await this.listPods()).filter((pod) => pod.name === name);
+  async findPodsByName(
+    name: string,
+    opts: Parameters<RunpodClient["listPods"]>[0] = {},
+  ): Promise<RunpodPodView[]> {
+    return (await this.listPods(opts)).filter((pod) => pod.name === name);
   }
 
   async getPod(podId: string): Promise<RunpodPodView | undefined> {

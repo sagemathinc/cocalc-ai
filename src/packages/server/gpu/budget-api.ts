@@ -17,6 +17,7 @@ import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { GpuBudget, GpuBudgetChange } from "@cocalc/util/gpu/types";
 import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
+import { recordKeyEvent } from "@cocalc/server/gpu/key-events";
 import { inTransaction } from "@cocalc/server/gpu/pods";
 import type { PoolClient } from "@cocalc/database/pool";
 import { getRunpodLaunchAccessForAccount } from "@cocalc/server/gpu/provider-keys";
@@ -357,4 +358,67 @@ export async function setGpuBudget(
   const home = await (deps.homeClient ?? budgetHomeClient)(account_id);
   if (home) return await home.gpuSetBudget(forwarded);
   return await setGpuBudgetLocal(forwarded as any, deps);
+}
+
+// Resuming launches after the kill switch paused them widens what the key
+// may do, so it needs fresh authentication, always (checked on the signed-in
+// bay, as for setGpuBudget). Only the kill switch's own pause is lifted; a
+// safety pause (paused_reason, an alert's) stays.
+export async function resumeGpuLaunchesLocal(
+  opts: { account_id?: string; fresh_auth_verified?: boolean },
+  deps: GpuBudgetDeps = {},
+): Promise<{ resumed: number }> {
+  const account_id = requireAccount(opts.account_id);
+  if (opts.fresh_auth_verified !== true) {
+    throw Object.assign(
+      Error("Resuming GPU launches needs you to sign in again."),
+      { code: "fresh_auth_required" },
+    );
+  }
+  return await inTransaction(async (db) => {
+    await (deps.accountWriteFence ?? lockGpuAccountFence)(
+      db,
+      account_id,
+      "resume GPU launches",
+    );
+    const { rows } = await db.query(
+      `UPDATE gpu_key_fences SET kill_switch_at = NULL, updated = now()
+        WHERE key_owner_account_id = $1 AND kill_switch_at IS NOT NULL
+        RETURNING credential_id`,
+      [account_id],
+    );
+    for (const r of rows) {
+      await recordKeyEvent(
+        {
+          credential_id: r.credential_id,
+          key_owner_account_id: account_id,
+          actor: { kind: "user", account_id },
+          action: "resumed",
+        },
+        db,
+      );
+    }
+    return { resumed: rows.length };
+  });
+}
+
+export async function resumeGpuLaunches(
+  opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+  },
+  deps: GpuBudgetDeps = {},
+): Promise<{ resumed: number }> {
+  const account_id = requireAccount(opts.account_id);
+  await (deps.freshAuth ?? requireDangerousSessionAuth)({
+    account_id,
+    browser_id: opts.browser_id,
+    session_hash: opts.session_hash,
+    require_second_factor: false,
+  });
+  const forwarded = { account_id, fresh_auth_verified: true };
+  const home = await (deps.homeClient ?? budgetHomeClient)(account_id);
+  if (home) return await home.gpuResume(forwarded);
+  return await resumeGpuLaunchesLocal(forwarded, deps);
 }

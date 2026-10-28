@@ -37,6 +37,11 @@ import {
 } from "@cocalc/server/external-credentials/store";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { clearHostkeysForCredential } from "@cocalc/server/gpu/hostkey-clear";
+import {
+  recordKeyEvent,
+  type GpuKeyEventActor,
+} from "@cocalc/server/gpu/key-events";
+import { carryKeyBudget, ensureKeyBudget } from "@cocalc/server/gpu/budgets";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   GPU_PROVIDER_API_KEY_KIND,
@@ -89,6 +94,17 @@ export interface GpuProviderKeyDeps {
     timeout: number,
   ) => Promise<InterBayGpuApi | undefined>;
   clearHostkeys?: typeof clearHostkeysForCredential;
+  // removal (for tests): the key's unfinished managed pods, a drain pass,
+  // marking what is left unmanaged, and the drain's timing
+  credentialPods?: (
+    credential_id: string,
+  ) => Promise<{ id: string; handle: string }[]>;
+  // the per-request timeout of the RunPod client a cleanup capability uses
+  runpodTimeoutMs?: number;
+  drain?: (account_id: string, guard: () => Promise<void>) => Promise<unknown>;
+  markUnmanaged?: (credential_id: string) => Promise<string[]>;
+  drainMs?: number;
+  drainPollMs?: number;
 }
 
 async function gpuKeyHomeClient(
@@ -301,7 +317,8 @@ async function countUnfinishedPods(
 ): Promise<number> {
   const { rows } = await db.query(
     `SELECT count(*)::int AS n FROM gpu_pods
-      WHERE key_owner_account_id = $1 AND state NOT IN ('terminated', 'failed')`,
+      WHERE key_owner_account_id = $1 AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL`,
     [account_id],
   );
   return rows[0]?.n ?? 0;
@@ -331,7 +348,7 @@ async function storedKeyRejectedByRunpod(
 // Key replacement and removal run under the same account fence a launch
 // holds while it reads the key and records its intent (pods.ts), so the
 // count of unfinished pods can't change between the check and the change.
-async function underKeyFence<T>(
+export async function underKeyFence<T>(
   account_id: string,
   fn: (db: PoolClient) => Promise<T>,
 ): Promise<T> {
@@ -350,50 +367,61 @@ async function underKeyFence<T>(
   }
 }
 
-async function requireNoUnfinishedPods(
+// A connected key can be replaced (a new credential, 5c) only once the old
+// one has nothing left to do: no unfinished pods, and its fence not being
+// drained or cleaned up after a compromise. No exception, not even a key
+// RunPod rejects: the new key gets a new identity, so the old pods would be
+// orphaned. Remove the old key first (removal handles pods it can't reach).
+async function requireReplaceable(
   account_id: string,
+  credential_id: string,
   deps: GpuProviderKeyDeps,
-  doing: "replace" | "remove",
-  db?: Pick<PoolClient, "query">,
-  // for a replacement: the stored key's metadata and the new key's verified
-  // identity (undefined before verification: then a rejected old key defers
-  // the decision to the check under the fence)
-  replacement?: {
-    stored?: Record<string, any>;
-    identity?: RunpodProviderIdentity;
-  },
+  db: Pick<PoolClient, "query"> = getPool(),
 ): Promise<void> {
+  const { rows } = await db.query(
+    "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+    [credential_id],
+  );
+  const state = rows[0]?.state;
+  if (state === "draining" || state === "compromised") {
+    throw Error(
+      state === "draining"
+        ? "Your RunPod key is being removed; connect a new one once the removal finishes."
+        : "Your RunPod key was reported compromised and CoCalc is still cleaning up its RunPod account; connect a new key once that finishes.",
+    );
+  }
   const n = await (deps.unfinishedPods ?? ((a) => countUnfinishedPods(a, db)))(
     account_id,
   );
   if (n === 0) return;
-  // A key RunPod rejects (deleted or revoked at RunPod) can't reach those
-  // pods anyway, so refusing would only leave the connector stuck. Any other
-  // failure to ask RunPod keeps the refusal.
-  if (
-    await (deps.storedKeyRejected ?? storedKeyRejectedByRunpod)(
-      account_id,
-      deps,
-    )
-  ) {
-    // Removing is always fine then: a later connect gets a new credential
-    // id, which can't act on these pods. Replacing in place keeps the id, so
-    // it is allowed only for the same RunPod account; otherwise the new key
-    // would look like the one that launched these pods.
-    if (doing === "remove" || replacement?.identity == null) return;
-    const stored = replacement.stored ?? {};
-    if (
-      stored.provider_account_kind === replacement.identity.kind &&
-      stored.provider_account_id === replacement.identity.id
-    ) {
-      return;
-    }
-    throw Error(
-      `The new key is for a different RunPod account than the one your ${n} unfinished GPU pod${n === 1 ? " was" : "s were"} launched with, so it can't replace the old key in place. Remove the old key first (CoCalc allows that now, since RunPod rejects it), then connect the new one; terminate the old pods at RunPod.`,
-    );
-  }
   throw Error(
-    `${n} GPU pod${n === 1 ? " was" : "s were"} launched with your current RunPod key and ${n === 1 ? "isn't" : "aren't"} finished, so the key can't be ${doing === "replace" ? "replaced" : "removed"} yet: CoCalc would lose the way to terminate ${n === 1 ? "it" : "them"}. Terminate ${n === 1 ? "it" : "them"} first (cocalc gpu pods, then cocalc gpu terminate). If you need to cut the key off now, delete it at RunPod and terminate the pods there; once RunPod rejects the key, CoCalc lets you remove it here (or replace it with a key for the same RunPod account).`,
+    `${n} GPU pod${n === 1 ? " was" : "s were"} launched with your current RunPod key and ${n === 1 ? "isn't" : "aren't"} finished, so the key can't be replaced yet. Terminate ${n === 1 ? "it" : "them"} first (cocalc gpu kill), or remove the key (which terminates them), then connect the new one.`,
+  );
+}
+
+// A removed or replaced key's fence is closed (final), with its log row.
+export async function closeKeyFence(
+  db: Pick<PoolClient, "query">,
+  account_id: string,
+  credential_id: string,
+  action: "removed" | "compromise_closed" | "forced_removal",
+  details?: Record<string, unknown>,
+  actor: GpuKeyEventActor = { kind: "user", account_id },
+): Promise<void> {
+  await db.query(
+    `UPDATE gpu_key_fences SET state = 'closed', updated = now()
+      WHERE credential_id = $1 AND state <> 'closed'`,
+    [credential_id],
+  );
+  await recordKeyEvent(
+    {
+      credential_id,
+      key_owner_account_id: account_id,
+      actor,
+      action,
+      details,
+    },
+    db,
   );
 }
 
@@ -413,8 +441,8 @@ export async function setGpuProviderKeyLocal(
     );
   }
   const key = normalizeRunpodKey(api_key);
-  const replacing = (await activeKeySummaries(account_id, provider)).length > 0;
-  if (replacing) await requireNoUnfinishedPods(account_id, deps, "replace");
+  const [prior] = await activeKeySummaries(account_id, provider);
+  if (prior) await requireReplaceable(account_id, prior.id, deps);
   const started = Date.now();
   const identity = await verifyRunpodKey(key, deps.fetch);
   if (Date.now() - started > (deps.verifyDeadlineMs ?? VERIFY_DEADLINE_MS)) {
@@ -448,15 +476,17 @@ export async function setGpuProviderKeyLocal(
       ? identity.name.slice(0, 120)
       : undefined;
   // Checked again and stored under the fence launches take: no launch can
-  // read the old key between this check and the store.
+  // read the old key between this check and the store. Every connect is a
+  // new credential (a new id, fence and budget layer): the old one, if any,
+  // is revoked first and its fence closed.
   await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
     const [current] = await activeKeySummaries(account_id, provider);
-    if (current) {
-      await requireNoUnfinishedPods(account_id, deps, "replace", db, {
-        stored: current.metadata,
-        identity,
-      });
-    }
+    if (current) await requireReplaceable(account_id, current.id, deps, db);
+    // never looser than what the account's previous key layer allowed
+    const caps = await carryKeyBudget(db, account_id);
+    // One transaction: the old key is revoked and its fence closed, the new
+    // one stored with a new id, and its fence and layer (with the carried
+    // caps) created; or none of it happens.
     await upsertExternalCredential({
       selector: selector(account_id, provider),
       payload: key,
@@ -466,6 +496,35 @@ export async function setGpuProviderKeyLocal(
         provider_account_id: identity.id,
         ...(provider_account_name ? { provider_account_name } : {}),
         verified_at,
+      },
+      newIdentity: true,
+      alsoInTransaction: async (client, { id, previous }) => {
+        for (const old of previous) {
+          await (deps.clearHostkeys ?? clearHostkeysForCredential)(
+            { account_id, credential_id: old },
+            client,
+          );
+          await closeKeyFence(client, account_id, old, "removed", {
+            replaced: true,
+          });
+        }
+        // the fence and layer exist from the start (the kill switch and
+        // the first launch both find them)
+        await ensureKeyBudget(client, {
+          credential_id: id,
+          key_owner_account_id: account_id,
+          ...(caps ? { initial: caps } : {}),
+        });
+        // a kill switch's pause outlives the key it was pressed on: lifting
+        // it is resume's (with fresh authentication), not a rotation's
+        if (previous.length > 0) {
+          await client.query(
+            `UPDATE gpu_key_fences SET kill_switch_at = (
+                SELECT max(kill_switch_at) FROM gpu_key_fences WHERE credential_id = ANY($2::uuid[]))
+              WHERE credential_id = $1 AND kill_switch_at IS NULL`,
+            [id, previous],
+          );
+        }
       },
     });
   });
@@ -483,48 +542,214 @@ export async function setGpuProviderKeyLocal(
   };
 }
 
-// The caller has already required fresh auth for this session.
+// What a removal did. A key with unfinished pods is drained first: CoCalc
+// terminates them with it, and keeps it until RunPod confirms. If some are
+// still there when the request's time is up, the key stays (being removed:
+// no new launches) and the cleanup worker keeps terminating them; removing
+// again, or forcing, finishes it.
+export interface GpuKeyRemoval {
+  revoked: boolean;
+  // pods still being terminated with the key
+  remaining?: string[];
+  // pods a forced removal left outside CoCalc's management: they may still
+  // run and bill at RunPod, and CoCalc's limits no longer cover them
+  unmanaged?: string[];
+  warning?: string;
+}
+
+// How long a removal request waits for RunPod to confirm its pods are gone,
+// counted from the start of the removal (the rejection probe's time comes
+// out of it). The browser waits KEY_HOME_BAY_TIMEOUT_MS (30 s) for the home
+// bay: the drain, plus one RunPod call still in flight at its end, plus the
+// fenced database work, must fit, so it always gets the remaining pods (and
+// "Remove anyway") rather than a timeout.
+export const KEY_REMOVAL_DRAIN_MS = 15_000;
+// Each RunPod call the removal's drain makes.
+export const KEY_REMOVAL_CALL_TIMEOUT_MS = 5_000;
+
+// The caller has already required fresh auth for this session (removal,
+// forced or not, needs it).
 export async function deleteGpuProviderKey(
-  { account_id, provider }: { account_id: string; provider: unknown },
+  {
+    account_id,
+    provider,
+    force,
+  }: { account_id: string; provider: unknown; force?: unknown },
   deps: GpuProviderKeyDeps = {},
-): Promise<{ revoked: boolean }> {
+): Promise<GpuKeyRemoval> {
   requireProvider(provider);
   const home = await homeClientFor(account_id, KEY_HOME_BAY_TIMEOUT_MS, deps);
-  if (home) return await home.gpuKeyDelete({ account_id, provider });
-  return await deleteGpuProviderKeyLocal({ account_id, provider }, deps);
+  if (home) {
+    return await home.gpuKeyDelete({
+      account_id,
+      provider,
+      force: force === true,
+    });
+  }
+  return await deleteGpuProviderKeyLocal({ account_id, provider, force }, deps);
 }
 
 export async function deleteGpuProviderKeyLocal(
   {
     account_id,
     provider: providerInput,
-  }: { account_id: string; provider: unknown },
+    force: forceInput,
+  }: { account_id: string; provider: unknown; force?: unknown },
   deps: GpuProviderKeyDeps = {},
-): Promise<{ revoked: boolean }> {
+): Promise<GpuKeyRemoval> {
   const provider = requireProvider(providerInput);
+  const started = Date.now();
   await requireHomeBay(account_id, deps);
-  // The store keeps one active key per selector (upsert holds the selector
-  // lock), so there is at most one to revoke.
-  // Under the fence launches take (see setGpuProviderKeyLocal).
-  return await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
-    const [existing] = await activeKeySummaries(account_id, provider);
-    if (!existing) return { revoked: false };
-    await requireNoUnfinishedPods(account_id, deps, "remove", db);
-    // One transaction: the key's pods lose their registration tokens and
-    // host keys exactly when the key is revoked. (A report racing it waits
-    // for the pod's row, and its consume then needs an active key.)
-    const revoked = await revokeExternalCredential({
-      id: existing.id,
+  const force = forceInput === true;
+  // The store keeps one active key per selector, so there is at most one.
+  const [existing] = await activeKeySummaries(account_id, provider);
+  if (!existing) return { revoked: false };
+  const credential_id = existing.id;
+  const pods = await import("@cocalc/server/gpu/pods");
+  const unfinished = (db?: Pick<PoolClient, "query">) =>
+    deps.credentialPods
+      ? deps.credentialPods(credential_id)
+      : pods.unfinishedCredentialPods(credential_id, db);
+
+  // 1. Under the fence launches take: the key admits nothing more, and its
+  // pods are marked to terminate. It must still be the connected key (a
+  // replacement may have won the fence first).
+  await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
+    const [current] = await activeKeySummaries(account_id, provider);
+    if (current?.id !== credential_id) {
+      throw Error(
+        "Your RunPod key changed while it was being removed; check it and try again.",
+      );
+    }
+    const { rows } = await db.query(
+      "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+      [credential_id],
+    );
+    if (rows[0]?.state === "compromised" && !force) {
+      throw Error(
+        "CoCalc is still cleaning up the RunPod account of this key, reported compromised; it removes the key itself when that finishes. Remove it now only with force (then terminate any pods and revoke the key at RunPod).",
+      );
+    }
+    await db.query(
+      `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
+       VALUES ($1, $2, 'draining', now(), now())
+       ON CONFLICT (credential_id) DO UPDATE SET state = 'draining', updated = now()
+         WHERE gpu_key_fences.state = 'active'`,
+      [credential_id, account_id],
+    );
+    const marked = await pods.markCredentialPodsToTerminate(db, {
+      account_id,
+      credential_id,
+      cause: "key_removal",
+    });
+    await recordKeyEvent(
+      {
+        credential_id,
+        key_owner_account_id: account_id,
+        actor: { kind: "user", account_id },
+        action: "removal_started",
+        details: { marked, force },
+      },
+      db,
+    );
+  });
+  // From here the key can't change (a draining key can't be replaced).
+  // A key RunPod rejects (401: deleted or revoked there) can't terminate
+  // anything, so removing it goes straight to the forced outcome.
+  const rejected =
+    (await unfinished()).length > 0 &&
+    (await (deps.storedKeyRejected ?? storedKeyRejectedByRunpod)(
+      account_id,
+      deps,
+    ));
+
+  // 2. Terminate them with the key while it is still stored (bounded).
+  if (!rejected) {
+    const drain =
+      deps.drain ??
+      ((a: string, guard: () => Promise<void>) =>
+        pods.resolvePendingForAccount(
+          a,
+          {
+            getCleanup: (acct) =>
+              getRunpodCleanupForAccount(acct, {
+                ...deps,
+                runpodTimeoutMs: KEY_REMOVAL_CALL_TIMEOUT_MS,
+              }),
+          },
+          { guard },
+        ));
+    const deadline = started + (deps.drainMs ?? KEY_REMOVAL_DRAIN_MS);
+    // the resolver stops at the deadline too, before its next pod (one slow
+    // RunPod call can't turn into a whole batch of them)
+    const guard = async () => {
+      if (Date.now() >= deadline) throw Error("key removal drain deadline");
+    };
+    for (;;) {
+      await drain(account_id, guard).catch(() => {});
+      if ((await unfinished()).length === 0 || Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, deps.drainPollMs ?? 2_000));
+    }
+  }
+
+  // 3. Under the fence: close the key's fence (it admits nothing, ever), or
+  // report what is left. The key itself is revoked after this commits, so
+  // its revocation (which clears the pods' host keys) never waits on rows
+  // this transaction holds; a retry finishes a revocation that failed.
+  const outcome = await (deps.keyFence ?? underKeyFence)(
+    account_id,
+    async (db): Promise<GpuKeyRemoval> => {
+      // a compromise report that came in while this drained takes over: its
+      // cleanup keeps the key (to watch the account) until RunPod rejects it
+      const { rows } = await db.query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [credential_id],
+      );
+      if (rows[0]?.state === "compromised" && !force) {
+        return {
+          revoked: false,
+          warning:
+            "This key was reported compromised while it was being removed: CoCalc keeps cleaning up its RunPod account, and removes the key itself once you revoke it at RunPod.",
+        };
+      }
+      const left = await unfinished(db);
+      if (left.length === 0) {
+        await closeKeyFence(db, account_id, credential_id, "removed");
+        return { revoked: true };
+      }
+      if (!force && !rejected) {
+        return { revoked: false, remaining: left.map((p) => p.handle) };
+      }
+      const unmanaged = deps.markUnmanaged
+        ? await deps.markUnmanaged(credential_id)
+        : await pods.markCredentialPodsUnmanaged(db, {
+            account_id,
+            credential_id,
+          });
+      await closeKeyFence(db, account_id, credential_id, "forced_removal", {
+        unmanaged,
+        rejected,
+      });
+      return {
+        revoked: true,
+        unmanaged,
+        warning: `${unmanaged.length} pod${unmanaged.length === 1 ? "" : "s"} launched with this key may still be running and billing at RunPod, and CoCalc's GPU limits no longer cover ${unmanaged.length === 1 ? "it" : "them"}: terminate ${unmanaged.length === 1 ? "it" : "them"} at RunPod, and revoke the key there.`,
+      };
+    },
+  );
+  if (outcome.revoked) {
+    await revokeExternalCredential({
+      id: credential_id,
       owner_account_id: account_id,
       alsoOnRevoke: async (client) => {
         await (deps.clearHostkeys ?? clearHostkeysForCredential)(
-          { account_id, credential_id: existing.id },
+          { account_id, credential_id },
           client,
         );
       },
     });
-    return { revoked };
-  });
+  }
+  return outcome;
 }
 
 async function accountHomeBay(account_id: string): Promise<string> {
@@ -599,13 +824,17 @@ export interface RunpodCleanupCapability {
   // the key that launched it (its record's credential_id)
   readonly credential_id: string;
   getProviderIdentity(): Promise<RunpodProviderIdentity>;
-  listPods(): ReturnType<RunpodClient["listPods"]>;
+  listPods(
+    ...args: Parameters<RunpodClient["listPods"]>
+  ): ReturnType<RunpodClient["listPods"]>;
   getPod(podId: string): ReturnType<RunpodClient["getPod"]>;
   listPodBilling(
     ...args: Parameters<RunpodClient["listPodBilling"]>
   ): ReturnType<RunpodClient["listPodBilling"]>;
   terminatePod(podId: string): Promise<void>;
-  findPodsByName(name: string): ReturnType<RunpodClient["findPodsByName"]>;
+  findPodsByName(
+    ...args: Parameters<RunpodClient["findPodsByName"]>
+  ): ReturnType<RunpodClient["findPodsByName"]>;
 }
 
 export async function getRunpodCleanupForAccount(
@@ -614,15 +843,21 @@ export async function getRunpodCleanupForAccount(
 ): Promise<RunpodCleanupCapability | undefined> {
   const key = await readLocalKey(account_id, deps);
   if (!key) return undefined;
-  const client = new RunpodClient({ apiKey: key.apiKey, fetch: deps.fetch });
+  const client = new RunpodClient({
+    apiKey: key.apiKey,
+    fetch: deps.fetch,
+    ...(deps.runpodTimeoutMs ? { timeoutMs: deps.runpodTimeoutMs } : {}),
+  });
   return Object.freeze({
     credential_id: key.id,
     getProviderIdentity: () => client.getProviderIdentity(),
-    listPods: () => client.listPods(),
+    listPods: (...args: Parameters<RunpodClient["listPods"]>) =>
+      client.listPods(...args),
     getPod: (podId: string) => client.getPod(podId),
     listPodBilling: (...args: Parameters<RunpodClient["listPodBilling"]>) =>
       client.listPodBilling(...args),
     terminatePod: (podId: string) => client.terminatePod(podId),
-    findPodsByName: (name: string) => client.findPodsByName(name),
+    findPodsByName: (...args: Parameters<RunpodClient["findPodsByName"]>) =>
+      client.findPodsByName(...args),
   });
 }
