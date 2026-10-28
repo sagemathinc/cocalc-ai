@@ -43,8 +43,10 @@ import {
   spendRowLabel,
 } from "./cost-dashboard-model";
 import type { GpuSpendPeriod } from "./cost-dashboard-model";
+import { ALERTS_ANCHOR, GpuAlertsStrip } from "./alerts-strip";
 import type {
   DashboardPod,
+  GpuAlert,
   GpuBudget,
   GpuCostDashboardApi,
   GpuSpendGroupBy,
@@ -156,7 +158,13 @@ export function GpuCostDashboard({
     key: string;
     budget: GpuBudget;
   }>();
+  const [alertsResult, setAlertsResult] = useState<{
+    key: string;
+    alerts: GpuAlert[];
+  }>();
   const [names, setNames] = useState<Record<string, string | undefined>>({});
+  // the owner's next steps after releasing a hold
+  const [releaseWarning, setReleaseWarning] = useState("");
   // Pods and spend load and fail independently: a spend outage must not hide
   // the pod list and its per-pod terminate buttons, nor the reverse. Errors
   // are kept per query and cleared only by a successful read, so a cached
@@ -173,8 +181,21 @@ export function GpuCostDashboard({
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
-  // the pause the kill switch reported in this session
-  const [paused, setPaused] = useState(false);
+  // What this session's kill switch or Resume just did to the pause. It wins
+  // over the cached budget until a budget read started after it succeeds
+  // (reads started before are discarded by the generation), so neither a
+  // stale "not paused" after Terminate all nor a stale "paused" after Resume
+  // shows, even if that read fails.
+  const [pauseOverride, setPauseOverride] = useState<boolean>();
+  // side reads that failed for this scope: shown, never taken as "nothing"
+  const [budgetFailure, setBudgetFailure] = useState<{
+    key: string;
+    message: string;
+  }>();
+  const [alertsFailure, setAlertsFailure] = useState<{
+    key: string;
+    message: string;
+  }>();
   const [resumeError, setResumeError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const podsGeneration = useRef(0);
@@ -187,6 +208,12 @@ export function GpuCostDashboard({
   const spend = spendLoaded?.spend;
   const budget =
     budgetResult?.key === scopeKey ? budgetResult.budget : undefined;
+  const alerts = alertsResult?.key === scopeKey ? alertsResult.alerts : [];
+  const paused = pauseOverride ?? budget?.paused === true;
+  const budgetError =
+    budgetFailure?.key === scopeKey ? budgetFailure.message : "";
+  const alertsError =
+    alertsFailure?.key === scopeKey ? alertsFailure.message : "";
   const podsError = podsFailure?.key === scopeKey ? podsFailure.message : "";
   const spendError = spendFailure?.key === spendKey ? spendFailure.message : "";
   // Fresh: loaded for this query, recently, and not followed by a failure.
@@ -203,8 +230,15 @@ export function GpuCostDashboard({
   const refreshPods = useCallback(async () => {
     const version = ++podsGeneration.current;
     const current = apiRef.current;
-    // the budget is a side read: its failure never hides the pods
-    const budgetRead = current.budget?.().catch(() => undefined);
+    // The budget and alerts are side reads: their failure never hides the
+    // pods, and is shown rather than taken as "no pause, no alerts".
+    const settle = <T,>(p?: Promise<T>) =>
+      p?.then(
+        (value) => ({ ok: true as const, value }),
+        (err) => ({ ok: false as const, message: errorText(err) }),
+      );
+    const budgetRead = settle(current.budget?.());
+    const alertsRead = settle(current.alerts?.());
     try {
       const next = await current.pods();
       if (podsGeneration.current !== version) return;
@@ -217,8 +251,25 @@ export function GpuCostDashboard({
         setPodsFailure({ key: scopeKey, message: errorText(err) });
     }
     const b = await budgetRead;
-    if (b != null && podsGeneration.current === version)
-      setBudgetResult({ key: scopeKey, budget: b });
+    if (b != null && podsGeneration.current === version) {
+      if (b.ok) {
+        setBudgetResult({ key: scopeKey, budget: b.value });
+        setBudgetFailure(undefined);
+        setPauseOverride(undefined);
+      } else {
+        setBudgetFailure({ key: scopeKey, message: b.message });
+      }
+    }
+    const a = await alertsRead;
+    if (a != null && podsGeneration.current === version) {
+      if (a.ok) {
+        setAlertsResult({ key: scopeKey, alerts: a.value });
+        setAlertsFailure(undefined);
+      } else {
+        // the last alerts loaded stay shown
+        setAlertsFailure({ key: scopeKey, message: a.message });
+      }
+    }
   }, [scopeKey]);
 
   const refreshSpend = useCallback(async () => {
@@ -275,7 +326,7 @@ export function GpuCostDashboard({
     try {
       if (confirm.kind === "all") {
         const result = await apiRef.current.killSwitch();
-        setPaused(result.paused);
+        setPauseOverride(result.paused);
         setNotice(
           [
             `Marked ${plural(result.marked, "pod")} for termination.`,
@@ -310,14 +361,40 @@ export function GpuCostDashboard({
         await resumeApi();
       });
       if (completed) {
-        setPaused(false);
+        setPauseOverride(false);
         setNotice("New launches are allowed again.");
+        refresh();
       }
     } catch (err) {
       setResumeError(errorText(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function acknowledge(alert: GpuAlert) {
+    const ack = apiRef.current.acknowledgeAlert;
+    if (!ack) return;
+    await ack({ id: alert.id });
+    setNotice("Alert acknowledged.");
+    refresh();
+  }
+
+  // True only when the hold was released (false if fresh auth was cancelled).
+  async function release(_alert: GpuAlert, pod_id: string): Promise<boolean> {
+    const releaseApi = apiRef.current.releaseQuarantined;
+    if (!releaseApi) return false;
+    let result: Awaited<ReturnType<typeof releaseApi>> | undefined;
+    const completed = await runFreshAuthAction(async () => {
+      result = await releaseApi({ pod_id });
+    });
+    if (completed && result) {
+      setNotice(`Released ${moneyToCurrency(result.released_usd)} held.`);
+      setReleaseWarning(result.warning ?? "");
+      refresh();
+      return true;
+    }
+    return false;
   }
 
   const groupLabel = GROUP_BY_LABELS[groupBy];
@@ -361,18 +438,98 @@ export function GpuCostDashboard({
           />
         )}
       </div>
+      {alertsError && (
+        <Alert
+          role="alert"
+          type="warning"
+          showIcon
+          style={{ marginTop: 8 }}
+          title="Couldn't load your GPU alerts"
+          description={
+            <>
+              {alertsError}.{" "}
+              {alerts.length > 0
+                ? "Showing the alerts last loaded."
+                : "There may be alerts that aren't shown here."}
+            </>
+          }
+        />
+      )}
+      {budgetError && (
+        <Alert
+          role="alert"
+          type="warning"
+          showIcon
+          style={{ marginTop: 8 }}
+          title="Couldn't load your GPU budget and pause state"
+          description={
+            <>
+              {budgetError}. New launches may be paused without it showing here.
+              Terminate all still works.
+            </>
+          }
+        />
+      )}
+      <GpuAlertsStrip
+        alerts={alerts}
+        busy={busy}
+        onAcknowledge={api.acknowledgeAlert ? acknowledge : undefined}
+        onRelease={api.releaseQuarantined ? release : undefined}
+      />
+      {releaseWarning && (
+        <Alert
+          role="alert"
+          type="warning"
+          showIcon
+          style={{ marginTop: 8 }}
+          title="What you need to do"
+          description={releaseWarning}
+          closable
+          onClose={() => setReleaseWarning("")}
+        />
+      )}
       {paused && api.resume && (
         <Alert
           type="warning"
           showIcon
           style={{ marginTop: 8 }}
           title="New launches are paused"
-          description="Terminate all paused launches with this key. Resume when you are ready (you'll be asked to sign in again)."
+          description={
+            budget?.paused_reason ? (
+              <>
+                CoCalc paused launches with this key because it found something
+                that needs you
+                {budget.kill_switch
+                  ? " (and Terminate all paused them too)"
+                  : ""}
+                :{" "}
+                {alerts.length > 0 ? (
+                  <a href={`#${ALERTS_ANCHOR}`}>see the alerts</a>
+                ) : (
+                  "the alerts couldn't be loaded; check them with cocalc gpu alerts"
+                )}
+                . Resuming doesn&apos;t close them. You&apos;ll be asked to sign
+                in again.
+              </>
+            ) : (
+              "Terminate all paused launches with this key. Resume when you are ready (you'll be asked to sign in again)."
+            )
+          }
           action={
             <Button disabled={busy} onClick={() => void resume()}>
               Resume launches
             </Button>
           }
+        />
+      )}
+      {budget?.inventory === "checking" && (
+        <Alert
+          role="status"
+          type="info"
+          showIcon
+          style={{ marginTop: 8 }}
+          title="CoCalc is checking your RunPod account"
+          description="New launches wait until CoCalc has a recent complete list of the pods on it. This usually takes a minute or two."
         />
       )}
       {resumeError && (
@@ -432,6 +589,12 @@ export function GpuCostDashboard({
             <strong>
               {spendValue(moneyToCurrency(spend!.totals.held_usd))}
             </strong>
+            {alerts.some((a) => a.kind === "quarantined_reservation") && (
+              <>
+                {" "}
+                <a href={`#${ALERTS_ANCHOR}`}>see the alerts</a>
+              </>
+            )}
           </span>
         )}
         {budget && (
@@ -629,9 +792,10 @@ export function GpuCostDashboard({
         <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
           As of {formatTime(spend.as_of)}.{" "}
           {spend.truncated ? "Only the largest groups are listed. " : ""}
-          Spent is what finished pods cost. Live pods are CoCalc&apos;s estimate
-          so far (cost per hour × time since the pod started running), settled
-          when they end.
+          Spent is what finished pods cost, counted in the period when each pod
+          ended (a pod that ran across periods counts where it ended). Live pods
+          are CoCalc&apos;s estimate so far (cost per hour × time since the pod
+          started running), settled when they end.
           {held.gt(0)
             ? " Held amounts belong to pods CoCalc couldn't confirm; see the alerts."
             : ""}

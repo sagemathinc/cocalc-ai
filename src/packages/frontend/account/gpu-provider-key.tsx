@@ -22,7 +22,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export const CHECKING_POLL_MS = 15_000;
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { RunpodDashboardSection } from "@cocalc/frontend/gpu/runpod-dashboard-section";
+import {
+  RunpodAlertsSection,
+  RunpodDashboardSection,
+} from "@cocalc/frontend/gpu/runpod-dashboard-section";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -387,6 +390,11 @@ export function GpuProviderKeySection() {
         />
       )}
       {/* Also while the membership lapsed: its pods may still be running. */}
+      {/* Without a key, the alerts that still need the owner (e.g. pods a
+          forced removal left running at RunPod). */}
+      {status != null && !status.connected && account_id && (
+        <RunpodAlertsSection account_id={account_id} />
+      )}
       {status?.connected && account_id && (
         <RunpodDashboardSection
           account_id={account_id}

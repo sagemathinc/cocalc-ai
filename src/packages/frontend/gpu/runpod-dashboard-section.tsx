@@ -12,6 +12,7 @@ import { MAX_GET_NAMES_ACCOUNT_IDS } from "@cocalc/util/security-limits";
 import { GpuCostDashboard } from "./cost-dashboard";
 import { hubGpuDashboardApi } from "./hub-dashboard-api";
 import { ReportCompromisedKey } from "./report-compromised";
+import { GpuAlertsOnly } from "./alerts-only";
 
 async function accountNames(
   account_ids: string[],
@@ -68,4 +69,18 @@ export function RunpodDashboardSection({
       />
     </div>
   );
+}
+
+// While no key is connected: only the alerts that still need the owner.
+export function RunpodAlertsSection({ account_id }: { account_id: string }) {
+  const api = useMemo(
+    () =>
+      hubGpuDashboardApi({
+        gpu: webapp_client.conat_client.hub.gpu,
+        viewerAccountId: account_id,
+        browserId: webapp_client.browser_id,
+      }),
+    [account_id],
+  );
+  return <GpuAlertsOnly key={account_id} api={api} />;
 }
