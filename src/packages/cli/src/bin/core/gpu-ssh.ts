@@ -332,9 +332,11 @@ export async function adoptPendingKey(
   const p = paths(opts);
   const from = p.key(name);
   const to = p.key(handle);
-  if (await exists(to)) throw new Error(`a key for ${handle} already exists`);
-  await rename(`${from}.pub`, `${to}.pub`);
-  await rename(from, to);
+  await withLock(opts, async () => {
+    if (await exists(to)) throw new Error(`a key for ${handle} already exists`);
+    await rename(`${from}.pub`, `${to}.pub`);
+    await rename(from, to);
+  });
 }
 
 // Pending keys left by a launch that was interrupted after the server
@@ -395,10 +397,12 @@ export async function writePodSsh(
   opts: GpuSshOptions = {},
 ): Promise<void> {
   const e = checkEndpoint(endpoint);
-  if (!(await exists(paths(opts).key(e.handle)))) {
-    throw new Error(`no SSH key for ${e.handle}; it is made at launch`);
-  }
+  // Checked under the lock, so a removal running at the same time can't
+  // leave an alias without its key.
   await withLock(opts, async () => {
+    if (!(await exists(paths(opts).key(e.handle)))) {
+      throw new Error(`no SSH key for ${e.handle}; it is made at launch`);
+    }
     const pods = (await readRegistry(opts)).filter(
       (pod) => pod.handle !== e.handle,
     );
@@ -418,10 +422,11 @@ export async function removePodSsh(
       (pod) => pod.handle !== handle,
     );
     await writeAll(pods, opts);
+    // the alias first, then its key: never an alias without a key
+    const key = paths(opts).key(handle);
+    await rm(key, { force: true });
+    await rm(`${key}.pub`, { force: true });
   });
-  const key = paths(opts).key(handle);
-  await rm(key, { force: true });
-  await rm(`${key}.pub`, { force: true });
 }
 
 // Whether this project holds the key pair for a pod.

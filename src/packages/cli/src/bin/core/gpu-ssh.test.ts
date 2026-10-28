@@ -239,6 +239,27 @@ it("forgets a pod that never had an alias without editing ~/.ssh/config", async 
   assert.ok(!existsSync(join(h, ".ssh", "cocalc-gpu", HANDLE)));
 });
 
+it("never leaves an alias without its key when connect and terminate race", async () => {
+  const h = home();
+  for (let i = 0; i < 20; i++) {
+    await podKey(HANDLE, h);
+    const [written] = await Promise.allSettled([
+      writePodSsh(endpoint({ port: 40000 + i }), { home: h }),
+      removePodSsh(HANDLE, { home: h }),
+    ]);
+    const aliased = (await listPodSsh({ home: h })).some(
+      (p) => p.handle === HANDLE,
+    );
+    const keyed = existsSync(join(h, ".ssh", "cocalc-gpu", HANDLE));
+    // the write either ran first (then the removal took both) or found no key
+    assert.equal(aliased, keyed, `round ${i}`);
+    if (written.status === "rejected") {
+      assert.match(String(written.reason), /no SSH key for/);
+    }
+    await removePodSsh(HANDLE, { home: h });
+  }
+});
+
 it("won't write an alias for a pod without its key", async () => {
   await assert.rejects(
     writePodSsh(endpoint(), { home: home() }),
