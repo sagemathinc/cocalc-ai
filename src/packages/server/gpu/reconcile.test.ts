@@ -502,4 +502,279 @@ describeDb("GPU inventory reconciler", () => {
       }),
     );
   });
+
+  it("a quarantined pod that shows up is live and managed again: its holds active (not settled), nothing terminated", async () => {
+    const s = setup();
+    let handle = "";
+    s.client.createPod.mockImplementationOnce(async (body: any) => {
+      handle = body.name;
+      throw new RunpodApiError("provider", 503);
+    });
+    const pod = await s.launch();
+    s.advance(AMBIGUOUS_WINDOW_MS + 5 * MINUTE);
+    await listManagedGpuPodsLocal({ account_id: s.account_id }, s.deps);
+    expect((await row(pod.id)).state).toBe("failed");
+    s.pods.set("pod_late77", { id: "pod_late77", name: handle, cost: 0.5 });
+    await s.pass();
+    expect(await row(pod.id)).toEqual(
+      expect.objectContaining({
+        state: "running",
+        provider_pod_id: "pod_late77",
+      }),
+    );
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_pod_reservations WHERE pod_id = $1",
+      [pod.id],
+    );
+    expect(rows.map((r: any) => r.state)).toEqual(["active"]);
+    // its hold alert ended; nothing else was raised, nothing terminated
+    expect(
+      (await alerts(s.credential_id)).map((a: any) => [a.kind, a.resolved_by]),
+    ).toEqual([["quarantined_reservation", "pod_seen"]]);
+    expect(s.client.terminatePod).not.toHaveBeenCalled();
+    expect((await fence(s.credential_id)).paused_reason).toBeNull();
+  });
+
+  it("a release covers every layer of the pod at once, with one event", async () => {
+    const s = setup();
+    let handle = "";
+    s.client.createPod.mockImplementationOnce(async (body: any) => {
+      handle = body.name;
+      throw new RunpodApiError("provider", 503);
+    });
+    // a project layer under the key's (as later steps create)
+    const { rows: key } = await getPool().query(
+      "SELECT id FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+      [s.credential_id],
+    );
+    if (!key[0]) await s.launch(); // makes the key layer
+    const keyLayer = (
+      await getPool().query(
+        "SELECT id FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+        [s.credential_id],
+      )
+    ).rows[0].id;
+    await getPool().query(
+      `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind, parent_id, parent_scope_kind, project_id, authorized_usd, state, starts_at, ends_at, created, updated)
+       SELECT $1, credential_id, key_owner_account_id, 'project', id, 'key', $2, 50, state, starts_at, ends_at, now(), now()
+         FROM gpu_budget_layers WHERE id = $3`,
+      [randomUUID(), PROJECT, keyLayer],
+    );
+    s.client.createPod.mockImplementationOnce(async (body: any) => {
+      handle = body.name;
+      throw new RunpodApiError("provider", 503);
+    });
+    const pod = await s.launch();
+    s.advance(AMBIGUOUS_WINDOW_MS + 5 * MINUTE);
+    await listManagedGpuPodsLocal({ account_id: s.account_id }, s.deps);
+    const held = async () =>
+      (
+        await getPool().query(
+          "SELECT l.scope_kind, r.state FROM gpu_pod_reservations r JOIN gpu_budget_layers l ON l.id = r.layer_id WHERE r.pod_id = $1 ORDER BY l.scope_kind",
+          [pod.id],
+        )
+      ).rows.map((r: any) => `${r.scope_kind}:${r.state}`);
+    expect(await held()).toEqual(["key:quarantined", "project:quarantined"]);
+    await releaseQuarantinedLocal(
+      { account_id: s.account_id, pod_id: pod.id, fresh_auth_verified: true },
+      s.deps,
+    );
+    expect(await held()).toEqual(["key:settled", "project:settled"]);
+    const { rows: ev } = await getPool().query(
+      "SELECT 1 FROM gpu_pod_events WHERE pod_id = $1 AND action = 'quarantine_released'",
+      [pod.id],
+    );
+    expect(ev.length).toBe(1);
+    // seen after all: held again on every layer
+    s.pods.set("pod_late88", { id: "pod_late88", name: handle, cost: 0.5 });
+    s.advance(11 * MINUTE);
+    await s.pass();
+    expect(await held()).toEqual(["key:active", "project:active"]);
+  });
+
+  it("403 is a rejected key too; only a complete pass resolves it, not a passing getPod", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    s.reconcile.listPods.mockRejectedValueOnce(
+      new RunpodApiError("forbidden", 403),
+    );
+    expect(await s.pass()).toEqual({ claimed: true, rejected: true });
+    // a pass whose getPod answers but which doesn't complete
+    const provider_id = (await row(pod.id)).provider_pod_id;
+    s.pods.delete(provider_id);
+    s.byId.set(provider_id, { id: provider_id });
+    s.advance(3 * MINUTE);
+    s.reconcile.getPod.mockImplementationOnce(async (id: string) => {
+      s.advance(RECONCILE_KEY_PASS_MS + 1);
+      return { id };
+    });
+    expect(await s.pass()).toEqual({ claimed: true, cut: true });
+    expect((await alerts(s.credential_id))[0].resolved_at).toBeNull();
+    s.advance(30 * MINUTE);
+    expect((await s.pass()).complete).toBe(true);
+    expect((await alerts(s.credential_id))[0].resolved_by).toBe(
+      "complete_inventory",
+    );
+  });
+
+  it("resolving one alert keeps the pause; only resume lifts it", async () => {
+    const s = setup();
+    await s.launch();
+    s.pods.set("pod_odd1", { id: "pod_odd1" });
+    s.pods.set("pod_odd2", { id: "pod_odd2" });
+    await s.pass();
+    s.pods.delete("pod_odd1");
+    s.byId.set("pod_odd1", undefined);
+    s.advance(11 * MINUTE);
+    await s.pass();
+    const open = (await alerts(s.credential_id)).filter(
+      (a: any) => a.resolved_at == null,
+    );
+    expect(open.map((a: any) => a.dedupe_key)).toEqual(["pod_odd2"]);
+    expect((await fence(s.credential_id)).paused_reason).toBe("unknown_pod");
+  });
+
+  it("an idle key is swept again and again and stays launchable; a compromised key is never swept", async () => {
+    const s = setup();
+    await s.launch();
+    // only this test's keys are due
+    await getPool().query(
+      "UPDATE gpu_key_fences SET next_reconcile_at = now() + interval '10 years' WHERE credential_id <> $1",
+      [s.credential_id],
+    );
+    // idle: no pods at RunPod (the launched one is gone; its 404 ends it)
+    s.pods.clear();
+    await getPool().query(
+      "UPDATE gpu_key_fences SET next_reconcile_at = NULL, last_inventory_at = NULL WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    const sweep = () =>
+      runReconcileSweep({
+        ...s.rdeps,
+        getReconcile: async () => s.reconcile as any,
+      });
+    for (let i = 0; i < 3; i++) {
+      await sweep();
+      const f = await fence(s.credential_id);
+      expect(new Date(f.last_inventory_at).getTime()).toBe(s.now());
+      s.advance(10 * MINUTE + 1);
+    }
+    expect((await s.launch()).state).toBe("running");
+    // compromised: no claim, no watermark, no action
+    await getPool().query(
+      "UPDATE gpu_key_fences SET state = 'compromised', next_reconcile_at = NULL WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    const before = await fence(s.credential_id);
+    s.reconcile.listPods.mockClear();
+    s.advance(11 * MINUTE);
+    await sweep();
+    expect(s.reconcile.listPods).not.toHaveBeenCalled();
+    expect(await fence(s.credential_id)).toEqual(before);
+    expect(
+      await reconcileKey(
+        {
+          credential_id: s.credential_id,
+          key_owner_account_id: s.account_id,
+          deadline: s.now() + RECONCILE_KEY_PASS_MS,
+        },
+        s.rdeps,
+      ),
+    ).toEqual({ claimed: false });
+  });
+
+  it("keys that always fail can't starve a healthy one: they back off, the oldest go first, and the backlog shows", async () => {
+    const healthy = setup();
+    await healthy.launch();
+    // ten failing keys, older (never inventoried) than the healthy one
+    const failing: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const f = setup();
+      await f.launch();
+      failing.push(f.credential_id);
+    }
+    await getPool().query(
+      "UPDATE gpu_key_fences SET next_reconcile_at = now() + interval '10 years'",
+    );
+    await getPool().query(
+      // connected an hour ago, never inventoried since
+      "UPDATE gpu_key_fences SET next_reconcile_at = NULL, last_inventory_at = NULL, created = now() - interval '1 hour' WHERE credential_id = ANY($1)",
+      [failing],
+    );
+    await getPool().query(
+      "UPDATE gpu_key_fences SET next_reconcile_at = NULL, last_inventory_at = now() - interval '1 hour' WHERE credential_id = $1",
+      [healthy.credential_id],
+    );
+    // one key at a time, each pass taking 20 s of a 90 s sweep: 4 keys a sweep
+    let clock = healthy.now();
+    const order: string[] = [];
+    const deps = {
+      now: () => clock,
+      concurrency: 1,
+      getReconcile: async (account_id: string) => {
+        clock += 20_000;
+        if (account_id === healthy.account_id) {
+          order.push("healthy");
+          return healthy.reconcile as any;
+        }
+        order.push("failing");
+        throw Error("RunPod is down for this key");
+      },
+    };
+    const sweeps: any[] = [];
+    for (let i = 0; i < 4; i++) {
+      sweeps.push(await runReconcileSweep(deps));
+      if (order.includes("healthy")) break;
+    }
+    // the never-inventoried go first, then the healthy key, within 3 sweeps
+    expect(order.slice(0, 10)).toEqual(Array(10).fill("failing"));
+    expect(order[10]).toBe("healthy");
+    expect(sweeps.length).toBeLessThanOrEqual(3);
+    // the failing keys backed off: each is due again only after its backoff
+    const { rows: backoff } = await getPool().query(
+      `SELECT reconcile_attempts,
+              EXTRACT(EPOCH FROM (next_reconcile_at - last_reconcile_attempt_at)) AS wait_s
+         FROM gpu_key_fences WHERE credential_id = ANY($1)`,
+      [failing],
+    );
+    for (const b of backoff) {
+      expect(b.reconcile_attempts).toBeGreaterThanOrEqual(1);
+      expect(Number(b.wait_s)).toBeGreaterThanOrEqual(120);
+    }
+    const { rows } = await getPool().query(
+      "SELECT last_stats FROM gpu_worker_leases WHERE name = 'reconciler'",
+    );
+    expect(rows[0].last_stats).toEqual(
+      expect.objectContaining({ backlog: true }),
+    );
+  });
+
+  it("a pass that can't finish in its time records nothing complete, and ends in time", async () => {
+    const s = setup();
+    await s.launch();
+    await getPool().query(
+      "UPDATE gpu_key_fences SET last_inventory_at = NULL WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    // RunPod never answers; the client gives up on the call (its timeout)
+    s.reconcile.listPods.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new RunpodApiError("network")), 200),
+        ),
+    );
+    const started = Date.now();
+    const outcome = await reconcileKey(
+      {
+        credential_id: s.credential_id,
+        key_owner_account_id: s.account_id,
+        deadline: Date.now() + 100,
+      },
+      { getReconcile: async () => s.reconcile as any },
+    );
+    expect(outcome).toEqual({ claimed: true, failed: true });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect((await fence(s.credential_id)).last_inventory_at).toBeNull();
+    await expect(s.launch()).rejects.toThrow(/waiting for CoCalc to check/);
+  });
 });
