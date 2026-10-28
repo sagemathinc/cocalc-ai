@@ -16,7 +16,9 @@ import { randomUUID } from "node:crypto";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { GpuBudget, GpuBudgetChange } from "@cocalc/util/gpu/types";
-import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
+import { inTransaction } from "@cocalc/server/gpu/pods";
+import type { PoolClient } from "@cocalc/database/pool";
 import { getRunpodLaunchAccessForAccount } from "@cocalc/server/gpu/provider-keys";
 import { ensureKeyBudget, lockKeyFence } from "@cocalc/server/gpu/budgets";
 import {
@@ -33,7 +35,8 @@ export interface GpuBudgetDeps {
   homeClient?: (account_id: string) => Promise<InterBayGpuApi | undefined>;
   freshAuth?: typeof requireDangerousSessionAuth;
   credentialId?: (account_id: string) => Promise<string | undefined>;
-  accountFence?: typeof withAccountRehomeWriteFence;
+  // for tests: the account fence (default: lockGpuAccountFence)
+  accountWriteFence?: typeof lockGpuAccountFence;
   isHomeBay?: (account_id: string) => Promise<boolean>;
 }
 
@@ -120,16 +123,40 @@ async function liveHolds(db, layer_id: string) {
   return rows[0];
 }
 
+// Under the account fence that key replacement and removal take, the key is
+// chosen there too: a budget is never read or changed for a key replaced or
+// removed meanwhile.
+async function withKeyUnderFence<T>({
+  account_id,
+  action,
+  deps,
+  fn,
+}: {
+  account_id: string;
+  action: string;
+  deps: GpuBudgetDeps;
+  fn: (db: PoolClient, credential_id: string) => Promise<T>;
+}): Promise<T> {
+  return await inTransaction(async (db) => {
+    await (deps.accountWriteFence ?? lockGpuAccountFence)(
+      db,
+      account_id,
+      action,
+    );
+    return await fn(db, await requireKey(account_id, deps));
+  });
+}
+
 export async function getGpuBudgetLocal(
   opts: { account_id?: string },
   deps: GpuBudgetDeps = {},
 ): Promise<GpuBudget> {
   const account_id = requireAccount(opts.account_id);
-  const credential_id = await requireKey(account_id, deps);
-  return await (deps.accountFence ?? withAccountRehomeWriteFence)({
+  return await withKeyUnderFence({
     account_id,
     action: "read a GPU budget",
-    fn: async (db) => {
+    deps,
+    fn: async (db, credential_id) => {
       await ensureKeyBudget(db, {
         credential_id,
         key_owner_account_id: account_id,
@@ -211,11 +238,11 @@ export async function setGpuBudgetLocal(
   if (opts.change == null || typeof opts.change !== "object") {
     throw Error("Give the budget changes.");
   }
-  const credential_id = await requireKey(account_id, deps);
-  return await (deps.accountFence ?? withAccountRehomeWriteFence)({
+  return await withKeyUnderFence({
     account_id,
     action: "change a GPU budget",
-    fn: async (db) => {
+    deps,
+    fn: async (db, credential_id) => {
       await ensureKeyBudget(db, {
         credential_id,
         key_owner_account_id: account_id,

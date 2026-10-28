@@ -67,7 +67,10 @@ export interface GpuPodDeps {
   // for tests
   getLaunchAccess?: (
     account_id: string,
-  ) => Promise<{ client: RunpodClient; credential_id: string } | undefined>;
+  ) => Promise<
+    | { client: RunpodClient; credential_id: string; revision?: string }
+    | undefined
+  >;
   getCleanup?: (
     account_id: string,
   ) => Promise<RunpodCleanupCapability | undefined>;
@@ -254,7 +257,7 @@ async function recordEvent(
   );
 }
 
-async function inTransaction<T>(
+export async function inTransaction<T>(
   fn: (db: PoolClient) => Promise<T>,
 ): Promise<T> {
   const db = await getPool().connect();
@@ -522,7 +525,7 @@ export async function launchGpuPodLocal(
     project_id,
     spec,
     hourly_usd,
-    priced_credential_id: priced.credential_id,
+    priced,
     actor,
     deps,
   });
@@ -600,8 +603,10 @@ const HANDLE_ATTEMPTS = 3;
 async function loadLaunchAccess(
   account_id: string,
   deps: GpuPodDeps,
-): Promise<{ client: RunpodClient; credential_id: string }> {
-  let access: Awaited<ReturnType<typeof getRunpodLaunchAccessForAccount>>;
+): Promise<{ client: RunpodClient; credential_id: string; revision?: string }> {
+  let access:
+    | { client: RunpodClient; credential_id: string; revision?: string }
+    | undefined;
   try {
     access = await (deps.getLaunchAccess ?? getRunpodLaunchAccessForAccount)(
       account_id,
@@ -625,7 +630,7 @@ async function insertIntent({
   project_id,
   spec,
   hourly_usd,
-  priced_credential_id,
+  priced,
   actor,
   deps,
 }: {
@@ -634,8 +639,9 @@ async function insertIntent({
   spec: GpuLaunchSpec;
   hourly_usd: string;
   // the key the estimate was priced with: the key read under the fence must
-  // be the same one
-  priced_credential_id: string;
+  // be the same one, unchanged (same record and same revision: an in-place
+  // replacement keeps the record id)
+  priced: { credential_id: string; revision?: string };
   actor: Actor;
   deps: GpuPodDeps;
 }): Promise<{ row: PodRow; client: RunpodClient }> {
@@ -655,11 +661,14 @@ async function insertIntent({
           account_id,
           "launch a GPU",
         );
-        const { client, credential_id } = await loadLaunchAccess(
+        const { client, credential_id, revision } = await loadLaunchAccess(
           account_id,
           deps,
         );
-        if (credential_id !== priced_credential_id) {
+        if (
+          credential_id !== priced.credential_id ||
+          revision !== priced.revision
+        ) {
           throw Error(
             "Your RunPod API key changed during the launch. Try again.",
           );

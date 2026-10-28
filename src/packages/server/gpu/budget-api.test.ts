@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
-import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { lockGpuAccountFence } from "./account-fence";
 import {
   getGpuBudgetLocal,
   planBudgetChange,
@@ -88,12 +88,13 @@ describeDb("gpu.budget and gpu.setBudget", () => {
     const credential_id = randomUUID();
     const deps = {
       credentialId: async () => credential_id,
-      accountFence: async (opts: any) => {
-        await getPool().query(
+      // the real fence, on the account row it needs (same transaction)
+      accountWriteFence: async (db: any, id: string, action: string) => {
+        await db.query(
           "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
-          [opts.account_id],
+          [id],
         );
-        return await withAccountRehomeWriteFence(opts);
+        await lockGpuAccountFence(db, id, action);
       },
     };
     return { account_id, credential_id, deps };
@@ -116,6 +117,28 @@ describeDb("gpu.budget and gpu.setBudget", () => {
       [b.layer_id],
     );
     expect(rows.map((r) => r.action)).toEqual(["create"]);
+  });
+
+  it("chooses the key only under the account fence", async () => {
+    const { account_id, deps } = setup();
+    const order: string[] = [];
+    const d = {
+      ...deps,
+      credentialId: async () => {
+        order.push("key");
+        return await deps.credentialId();
+      },
+      accountWriteFence: async (db: any, id: string, action: string) => {
+        order.push("fence");
+        await deps.accountWriteFence(db, id, action);
+      },
+    };
+    await getGpuBudgetLocal({ account_id }, d);
+    await setGpuBudgetLocal(
+      { account_id, change: { max_concurrent_pods: 1 } },
+      d,
+    );
+    expect(order).toEqual(["fence", "key", "fence", "key"]);
   });
 
   it("lowers without fresh auth, refuses a raise without it, and records both changes", async () => {
@@ -178,11 +201,11 @@ describeDb("gpu.budget and gpu.setBudget", () => {
   });
 
   it("says when no key is connected", async () => {
-    const { account_id } = setup();
+    const { account_id, deps } = setup();
     await expect(
       getGpuBudgetLocal(
         { account_id },
-        { credentialId: async () => undefined },
+        { ...deps, credentialId: async () => undefined },
       ),
     ).rejects.toThrow("No RunPod API key is connected");
   });

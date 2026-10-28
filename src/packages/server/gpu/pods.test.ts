@@ -184,6 +184,22 @@ describeDb("GPU pods", () => {
     expect(rows[0].n).toBe(0);
   });
 
+  it("refuses a launch whose key was replaced in place between pricing and the fence", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const credential_id = randomUUID();
+    // the same record (an in-place replacement keeps its id), rewritten
+    let reads = 0;
+    d.getLaunchAccess = async () => ({
+      client: rp.client as any,
+      credential_id,
+      revision: `r${++reads}`,
+    });
+    await expect(
+      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+    ).rejects.toThrow("Your RunPod API key changed during the launch");
+    expect(rp.client.createPod).not.toHaveBeenCalled();
+  });
+
   it("records the intent, creates the pod by its handle, and binds it", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
