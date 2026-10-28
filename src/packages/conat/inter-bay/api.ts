@@ -4185,6 +4185,17 @@ export interface InterBayGpuApi {
     project_id?: unknown;
     pause?: unknown;
   }) => Promise<{ marked: number; remaining: number; paused: boolean }>;
+  // Report the key compromised (5c; the forwarding bay checked fresh auth).
+  gpuReportCompromised: (opts: {
+    account_id: string;
+    confirm_cocalc_only: boolean;
+    fresh_auth_verified: boolean;
+  }) => Promise<{
+    closed: boolean;
+    provider_pods?: number;
+    managed_pods?: number;
+    listing_failed?: boolean;
+  }>;
   // Lift the kill switch's pause (the forwarding bay checked fresh auth).
   gpuResume: (opts: {
     account_id: string;
@@ -8261,6 +8272,8 @@ export function createInterBayAccountLocalClient({
     gpuSetBudget: async (opts) => await gpuClient.gpuSetBudget(opts),
     gpuKillSwitch: async (opts) => await gpuClient.gpuKillSwitch(opts),
     gpuResume: async (opts) => await gpuClient.gpuResume(opts),
+    gpuReportCompromised: async (opts) =>
+      await gpuClient.gpuReportCompromised(opts),
     gpuAllowStaleWorkers: async (opts) =>
       await gpuClient.gpuAllowStaleWorkers(opts),
     gpuSshInfo: async (opts) => await gpuClient.gpuSshInfo(opts),
@@ -8851,6 +8864,8 @@ export function createInterBayAccountLocalHandler({
         gpuSetBudget: async (opts) => await impl.gpuSetBudget(opts),
         gpuKillSwitch: async (opts) => await impl.gpuKillSwitch(opts),
         gpuResume: async (opts) => await impl.gpuResume(opts),
+        gpuReportCompromised: async (opts) =>
+          await impl.gpuReportCompromised(opts),
         gpuAllowStaleWorkers: async (opts) =>
           await impl.gpuAllowStaleWorkers(opts),
         gpuSshInfo: async (opts) => await impl.gpuSshInfo(opts),

@@ -343,7 +343,7 @@ async function storedKeyRejectedByRunpod(
 // Key replacement and removal run under the same account fence a launch
 // holds while it reads the key and records its intent (pods.ts), so the
 // count of unfinished pods can't change between the check and the change.
-async function underKeyFence<T>(
+export async function underKeyFence<T>(
   account_id: string,
   fn: (db: PoolClient) => Promise<T>,
 ): Promise<T> {
@@ -395,7 +395,7 @@ async function requireReplaceable(
 }
 
 // A removed or replaced key's fence is closed (final), with its log row.
-async function closeKeyFence(
+export async function closeKeyFence(
   db: Pick<PoolClient, "query">,
   account_id: string,
   credential_id: string,

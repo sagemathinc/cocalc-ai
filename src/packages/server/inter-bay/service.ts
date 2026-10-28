@@ -1283,6 +1283,10 @@ async function startAccountLocalService(): Promise<void> {
       ).setGpuBudgetLocal(opts as any),
     gpuKillSwitch: async (opts) =>
       await (await import("@cocalc/server/gpu/pods")).killSwitchLocal(opts),
+    gpuReportCompromised: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/compromise")
+      ).reportCompromisedLocal(opts),
     gpuResume: async (opts) =>
       await (
         await import("@cocalc/server/gpu/budget-api")

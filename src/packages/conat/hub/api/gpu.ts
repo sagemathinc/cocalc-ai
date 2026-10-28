@@ -51,6 +51,8 @@ export const gpu = {
   killSwitch: authFirstRequireAccount,
   // widens: fresh auth on the caller's own session
   resume: authFirstRequireAccountWithBoundSession,
+  // destructive across the whole RunPod account: fresh auth, own session
+  reportCompromised: authFirstRequireAccountWithBoundSession,
   // like setBudget: the fresh-auth check uses the caller's own session
   adminAllowStaleWorkers: authFirstRequireAccountWithBoundSession,
   // what `cocalc gpu connect` needs: the live SSH endpoint and the host key
@@ -168,6 +170,22 @@ export interface GpuApi {
     project_id?: string;
     pause?: boolean;
   }) => Promise<{ marked: number; remaining: number; paused: boolean }>;
+  // Report the RunPod key compromised: fresh authentication, and the
+  // owner's confirmation that the RunPod account is used only for CoCalc.
+  // CoCalc stops launching with the key, terminates EVERY pod in that RunPod
+  // account (including ones it didn't start), and removes the key once a
+  // complete listing shows none left; it keeps trying until then.
+  reportCompromised: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    confirm_cocalc_only: boolean;
+  }) => Promise<{
+    closed: boolean;
+    provider_pods?: number;
+    managed_pods?: number;
+    listing_failed?: boolean;
+  }>;
   // Lift the kill switch's pause: fresh authentication.
   resume: (opts?: {
     account_id?: string;

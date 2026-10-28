@@ -135,6 +135,7 @@ describeDb("GPU reaper", () => {
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
       gpu_worker_leases: SCHEMA.gpu_worker_leases,
       gpu_worker_overrides: SCHEMA.gpu_worker_overrides,
+      external_credentials: SCHEMA.external_credentials,
     });
   });
   beforeEach(freshReaper);

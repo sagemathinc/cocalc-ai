@@ -26,6 +26,7 @@ import {
   whoGpuPod,
 } from "@cocalc/server/gpu/pods";
 import { gpuSshInfo } from "@cocalc/server/gpu/hostkey";
+import { reportCompromised as reportGpuKeyCompromised } from "@cocalc/server/gpu/compromise";
 
 export const catalog: GpuApi["catalog"] = async (opts = {}) =>
   await getGpuCatalog(opts);
@@ -83,6 +84,17 @@ export async function resume(
     account_id: opts?.account_id,
     browser_id: opts?.browser_id,
     session_hash: opts?.session_hash,
+  });
+}
+
+export async function reportCompromised(
+  opts: Parameters<GpuApi["reportCompromised"]>[0],
+): ReturnType<GpuApi["reportCompromised"]> {
+  return await reportGpuKeyCompromised({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+    confirm_cocalc_only: opts?.confirm_cocalc_only,
   });
 }
 

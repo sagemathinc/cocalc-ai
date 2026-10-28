@@ -38,6 +38,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "narrowing: stops the caller's own pods and can pause their launches",
   },
+  "gpu.reportCompromised": {
+    decision: "fresh-auth-required",
+    reason:
+      "terminates every pod in the owner's RunPod account and removes the key; checked in reportCompromised",
+  },
   "gpu.resume": {
     decision: "fresh-auth-required",
     reason:

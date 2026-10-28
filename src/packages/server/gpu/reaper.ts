@@ -41,6 +41,7 @@ import {
   type GpuPodDeps,
 } from "@cocalc/server/gpu/pods";
 import { getRunpodCleanupForAccount } from "@cocalc/server/gpu/provider-keys";
+import { continueCompromiseCleanups } from "@cocalc/server/gpu/compromise";
 
 const log = getLogger("server:gpu:reaper");
 
@@ -419,6 +420,11 @@ export async function runGpuReaperSweep(deps: ReaperDeps = {}): Promise<{
       (await markForTermination(now, renew, unknown)) +
       (await checkCommunitySsh(now, deps, renew));
     const { accounts, complete } = await resolveOwners(now, deps, renew);
+    // keys reported compromised: list and terminate everything in their
+    // RunPod account until it is empty (compromise.ts)
+    await continueCompromiseCleanups(renew, {
+      getCleanup: deps.getCleanup,
+    });
     if (lost) throw new LeaseLost("the reaper lease was lost");
     await finishWorkerLease(
       "reaper",

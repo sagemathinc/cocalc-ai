@@ -21,10 +21,12 @@ import {
   listManagedGpuPodsLocal,
   terminateGpuPodLocal,
   killSwitchLocal,
+  resolvePendingForAccount,
 } from "./pods";
 import { DEFAULT_KEY_LAYER } from "./budgets";
 import { resumeGpuLaunchesLocal } from "./budget-api";
 import { deleteGpuProviderKeyLocal } from "./provider-keys";
+import { reportCompromisedLocal, runCompromiseCleanup } from "./compromise";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -605,5 +607,158 @@ describeDb("GPU budgets", () => {
     expect(await killSwitchLocal({ account_id: s.account_id }, s.deps)).toEqual(
       expect.objectContaining({ marked: 0, remaining: 0 }),
     );
+  });
+
+  describe("reporting a key compromised", () => {
+    // a fake RunPod account whose listing is complete unless told to fail
+    function account(s: ReturnType<typeof setup>) {
+      let listFails = false;
+      const cleanup = {
+        ...s.rp.client,
+        credential_id: s.credential_id,
+        listPods: jest.fn(async () => {
+          if (listFails) throw new RunpodApiError("provider", 503);
+          return [...s.rp.pods.values()];
+        }),
+      };
+      const deps = {
+        getCleanup: async () => cleanup as any,
+        resolvePending: (a: string) =>
+          resolvePendingForAccount(a, {
+            ...s.deps,
+            getCleanup: async () => cleanup as any,
+          }),
+      };
+      return {
+        cleanup,
+        deps,
+        failListing: (v: boolean) => (listFails = v),
+      };
+    }
+
+    it("needs fresh auth and the CoCalc-only confirmation", async () => {
+      const s = setup();
+      await s.stored;
+      const { deps } = account(s);
+      await expect(
+        reportCompromisedLocal(
+          { account_id: s.account_id, confirm_cocalc_only: true },
+          deps,
+        ),
+      ).rejects.toThrow("sign in again");
+      await expect(
+        reportCompromisedLocal(
+          { account_id: s.account_id, fresh_auth_verified: true },
+          deps,
+        ),
+      ).rejects.toThrow("used only for CoCalc");
+    });
+
+    it("blocks the key before asking RunPod, resumes after a failed listing, terminates pods CoCalc didn't start, and closes only on an empty account", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      s.rp.pods.set("pod_miner1", { id: "pod_miner1", name: "miner\u0000x" });
+      // the first pass can't list the account
+      a.failListing(true);
+      expect(
+        await reportCompromisedLocal(
+          {
+            account_id: s.account_id,
+            confirm_cocalc_only: true,
+            fresh_auth_verified: true,
+          },
+          a.deps,
+        ),
+      ).toEqual({ closed: false, listing_failed: true });
+      const fence = async () =>
+        (
+          await getPool().query(
+            "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+            [s.credential_id],
+          )
+        ).rows[0].state;
+      expect(await fence()).toBe("compromised");
+      // no launches, and no removal without force, meanwhile
+      await expect(s.launch()).rejects.toThrow("reported compromised");
+      await expect(
+        deleteGpuProviderKeyLocal(
+          { account_id: s.account_id, provider: "runpod" },
+          { isHomeBay: async () => true },
+        ),
+      ).rejects.toThrow("still cleaning up");
+      // the next pass lists the account: CoCalc's pod and the unknown one go
+      a.failListing(false);
+      const second = await runCompromiseCleanup(
+        s.account_id,
+        s.credential_id,
+        a.deps,
+      );
+      expect(second.closed).toBe(false); // they were still listed
+      expect(s.rp.pods.size).toBe(0);
+      expect(
+        (
+          await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [
+            pod.id,
+          ])
+        ).rows[0].state,
+      ).toBe("terminated");
+      // an empty account and no unfinished pod: closed, key revoked
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual({ closed: true, provider_pods: 0, managed_pods: 0 });
+      expect(await fence()).toBe("closed");
+      const { rows: cred } = await getPool().query(
+        "SELECT revoked IS NOT NULL AS revoked, encrypted_payload IS NULL AS nulled FROM external_credentials WHERE id = $1",
+        [s.credential_id],
+      );
+      expect(cred[0]).toEqual({ revoked: true, nulled: true });
+      const { rows: log } = await getPool().query(
+        "SELECT action, details FROM gpu_key_events WHERE credential_id = $1 ORDER BY at",
+        [s.credential_id],
+      );
+      expect(log.map((l) => l.action)).toEqual([
+        "compromised",
+        "unknown_pod_seen",
+        "unknown_pod_terminated",
+        "compromise_closed",
+      ]);
+      // the provider name is sanitized and bounded
+      expect(log[1].details).toEqual({
+        provider_pod_id: "pod_miner1",
+        name: "minerx",
+      });
+    });
+
+    it("doesn't close while a pod of the key is unfinished, even if RunPod lists none", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      // RunPod won't confirm terminating it, and its listing comes back empty
+      s.rp.client.terminatePod.mockRejectedValue(
+        new RunpodApiError("provider", 503),
+      );
+      a.cleanup.listPods.mockResolvedValue([]);
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      expect(result).toEqual({
+        closed: false,
+        provider_pods: 0,
+        managed_pods: 1,
+      });
+      expect(
+        (
+          await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [
+            pod.id,
+          ])
+        ).rows[0].state,
+      ).not.toBe("terminated");
+    });
   });
 });
