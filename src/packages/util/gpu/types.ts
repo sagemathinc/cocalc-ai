@@ -75,6 +75,8 @@ export const GPU_POD_ACTIONS = [
   // a new public IP seen for the pod: {public_ip, ports}, so attribution by
   // IP can match the time
   "ip_seen",
+  // the pod reported its SSH host key (or a report was refused with an alert)
+  "host_key",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 
