@@ -350,6 +350,65 @@ describeDb("GPU reaper", () => {
     ).toBe(target);
   });
 
+  it("terminates a Community kernel pod that never got a public SSH port", async () => {
+    const s = setup();
+    const key =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl t";
+    const live = await launchGpuPodLocal(
+      {
+        account_id: s.account_id,
+        project_id: PROJECT,
+        spec: { ...SPEC, cloud: "COMMUNITY", ssh_public_key: key },
+      },
+      s.deps,
+    );
+    const getPod = jest.fn(async (id: string) => ({ id }));
+    const deps = {
+      ...s.deps,
+      getCleanup: async () =>
+        ({ ...s.client, getPod, credential_id: s.credential_id }) as any,
+    };
+    s.advance(5 * 60_000);
+    await runGpuReaperSweep(deps);
+    expect(getPod).not.toHaveBeenCalled();
+    s.advance(6 * 60_000);
+    await runGpuReaperSweep(deps);
+    expect(getPod).toHaveBeenCalledWith(live.provider_pod_id);
+    const r = await row(live.id);
+    expect(r.state).toBe("terminated");
+    expect(r.reason).toMatch(/try Secure Cloud/);
+  });
+
+  it("keeps a Community pod once its public SSH port shows up", async () => {
+    const s = setup();
+    const key =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl t";
+    const live = await launchGpuPodLocal(
+      {
+        account_id: s.account_id,
+        project_id: PROJECT,
+        spec: { ...SPEC, cloud: "COMMUNITY", ssh_public_key: key },
+      },
+      s.deps,
+    );
+    const deps = {
+      ...s.deps,
+      getCleanup: async () =>
+        ({
+          ...s.client,
+          getPod: async (id: string) => ({
+            id,
+            sshDirect: { host: "203.0.113.5", port: 40022, username: "root" },
+          }),
+          credential_id: s.credential_id,
+        }) as any,
+    };
+    s.advance(11 * 60_000);
+    await runGpuReaperSweep(deps);
+    const r = await row(live.id);
+    expect([r.state, r.public_ip]).toEqual(["running", "203.0.113.5"]);
+  });
+
   it("resolves crash-left records for every key owner", async () => {
     const s = setup();
     const pod = await s.launch();

@@ -25,17 +25,23 @@ import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
 import { isGpuProviderKeysEntitled } from "@cocalc/server/gpu/provider-keys";
 import {
+  recordSeenAddresses,
   resolvePendingForAccount,
   transition,
   type Actor,
   type GpuPodDeps,
 } from "@cocalc/server/gpu/pods";
+import { getRunpodCleanupForAccount } from "@cocalc/server/gpu/provider-keys";
 
 const log = getLogger("server:gpu:reaper");
 
 export const REAPER_INTERVAL_MS = 60_000;
 export const REAPER_LEASE_MS = 5 * 60_000;
 export const LAPSE_GRACE_MS = 7 * 24 * 60 * 60_000;
+// Community Cloud doesn't always give a pod a public port (measured 10-27):
+// a pod with its own SSH key (kernel-capable) that has none this long after
+// it started is terminated, rather than billing for nothing.
+export const COMMUNITY_SSH_DEADLINE_MS = 10 * 60_000;
 const BATCH = 100;
 
 export interface ReaperDeps extends GpuPodDeps {
@@ -184,6 +190,49 @@ async function markForTermination(now: Date): Promise<number> {
   return marked;
 }
 
+async function checkCommunitySsh(now: Date, deps: ReaperDeps): Promise<number> {
+  const { rows } = await getPool().query(
+    `SELECT p.* FROM gpu_pods p
+      WHERE ${LIVE} AND p.state = 'running' AND p.cloud = 'COMMUNITY'
+        AND p.ssh_key_fingerprint IS NOT NULL AND p.public_ip IS NULL
+        AND p.running_since <= $1::timestamptz - make_interval(secs => $2)
+      LIMIT ${BATCH}`,
+    [now, COMMUNITY_SSH_DEADLINE_MS / 1000],
+  );
+  let marked = 0;
+  for (const p of rows) {
+    const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
+      p.key_owner_account_id,
+    ).catch(() => undefined);
+    if (!c || c.credential_id !== p.credential_id) continue;
+    const live = await c.getPod(p.provider_pod_id).catch(() => null);
+    if (live === null) continue; // couldn't ask: next sweep
+    if (live?.sshDirect?.host) {
+      await recordSeenAddresses(
+        [{ id: p.id, provider_pod_id: p.provider_pod_id } as any],
+        [live],
+      );
+      continue;
+    }
+    const row = await transition(
+      p.id,
+      {
+        desired_state: "terminated",
+        reason:
+          "No public SSH port appeared within 10 minutes on Community Cloud; try Secure Cloud.",
+      },
+      "AND desired_state <> 'terminated' AND state NOT IN ('terminated', 'failed')",
+      {
+        actor: REAPER,
+        action: "terminate",
+        details: { cause: "community_no_ssh" },
+      },
+    );
+    if (row) marked += 1;
+  }
+  return marked;
+}
+
 export async function runGpuReaperSweep(
   deps: ReaperDeps = {},
 ): Promise<{ ran: boolean; marked?: number; accounts?: number }> {
@@ -194,7 +243,8 @@ export async function runGpuReaperSweep(
   }
   try {
     await checkEntitlements(now, deps);
-    const marked = await markForTermination(now);
+    const marked =
+      (await markForTermination(now)) + (await checkCommunitySsh(now, deps));
     const { rows } = await getPool().query(
       `SELECT DISTINCT key_owner_account_id FROM gpu_pods
         WHERE state IN ('intent', 'creating', 'ambiguous')
