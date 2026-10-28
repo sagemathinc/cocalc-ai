@@ -122,7 +122,10 @@ export function podRecordRow(
 ) {
   return {
     handle: r.handle,
-    state: r.state,
+    // a forced key removal left it unmanaged: it may still bill at RunPod
+    state: r.unmanaged_at
+      ? `${r.state} (unmanaged: may still bill at RunPod)`
+      : r.state,
     status: (r.provider_pod_id && live.get(r.provider_pod_id)?.status) || null,
     gpu: r.gpu_type_id,
     count: r.gpu_count,

@@ -229,6 +229,7 @@ export interface PodRow {
   created: Date;
   updated: Date;
   terminated_at: Date | null;
+  unmanaged_at?: Date | null;
 }
 
 function iso(d: Date | null | undefined): string | undefined {
@@ -259,6 +260,7 @@ export function podSummary(row: PodRow): GpuPodSummary {
   if (row.data_center_id) s.data_center_id = row.data_center_id;
   if (row.cost_per_hr != null) s.cost_per_hr = `${row.cost_per_hr}`;
   if (row.terminated_at) s.terminated_at = iso(row.terminated_at);
+  if (row.unmanaged_at) s.unmanaged_at = iso(row.unmanaged_at);
   if (row.reason) s.reason = row.reason;
   if (row.ssh_key_fingerprint) s.ssh_key_fingerprint = row.ssh_key_fingerprint;
   return s;

@@ -131,6 +131,9 @@ export interface GpuPodSummary {
   created: string;
   updated: string;
   terminated_at?: string;
+  // a forced key removal left it outside CoCalc's management: it may still
+  // run and bill at RunPod (its state is the last CoCalc knew)
+  unmanaged_at?: string;
   // why it failed or was terminated, in words for the user
   reason?: string;
   // SHA256 fingerprint of ssh_public_key, as `ssh-keygen -lf` prints it
