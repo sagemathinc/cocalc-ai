@@ -67,6 +67,14 @@ import { parseEd25519PublicKey } from "@cocalc/util/gpu/ssh-key";
 import siteURL from "@cocalc/database/settings/site-url";
 import { CLEARED_HOSTKEY_FIELDS } from "@cocalc/server/gpu/hostkey-clear";
 import {
+  agentLaunchPayload,
+  consumeGrantLaunch,
+  lockUsableGrant,
+  NoUsableAgentGrant,
+  requestAgentLaunch,
+  type GpuAgentPrincipal,
+} from "@cocalc/server/gpu/agent-grants";
+import {
   HOSTKEY_TOKEN_TTL_MS,
   newHostkeyToken,
 } from "@cocalc/server/gpu/hostkey-token";
@@ -535,6 +543,9 @@ export async function launchGpuPodLocal(
     account_id?: string;
     project_id?: unknown;
     spec?: unknown;
+    // An agent's launch (step 6b): its verified principal and its own
+    // idempotency key. It needs an approved grant for exactly this launch.
+    agent?: { principal: GpuAgentPrincipal; operation_id: string };
   },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary> {
@@ -542,6 +553,17 @@ export async function launchGpuPodLocal(
   await requireHomeBay(account_id, deps);
   const project_id = `${opts.project_id ?? ""}`;
   if (!isValidUUID(project_id)) throw Error("A launch needs a project.");
+  const agent = opts.agent;
+  if (
+    agent &&
+    (agent.principal.account_id !== account_id ||
+      agent.principal.project_id !== project_id)
+  ) {
+    throw Error("An agent can launch only in its own project.");
+  }
+  if (agent && !/^[A-Za-z0-9._:-]{1,128}$/.test(agent.operation_id ?? "")) {
+    throw Error("An agent's GPU launch needs an operation id.");
+  }
   const spec = normalizeGpuLaunchSpec(opts.spec);
   if (
     !(await (deps.isProjectCollaborator ?? isProjectCollaborator)(
@@ -551,7 +573,9 @@ export async function launchGpuPodLocal(
   ) {
     throw Error("project not found or access denied");
   }
-  const actor: Actor = { kind: "user", account_id };
+  const actor: Actor = agent
+    ? { kind: "agent", account_id, agent_id: agent.principal.agent_id }
+    : { kind: "user", account_id };
   const cloud = spec.cloud ?? "SECURE";
 
   // A pod that takes SSH reports its host key once, with this token; only
@@ -597,22 +621,43 @@ export async function launchGpuPodLocal(
     );
   }
   const hourly_usd = moneyToDbString(toDecimal(perGpu).times(spec.gpu_count));
+  // what an agent's human approves, exactly
+  const approval = agent ? agentLaunchPayload(spec, perGpu) : undefined;
 
   // 1. The budget reservation, the intent and its event, in one transaction,
   // before anything reaches RunPod. The key is read under the account fence
   // that key replacement and removal also take, so no launch can use a key
   // that is being replaced or removed. A launch that doesn't fit writes
   // nothing.
-  const intent = await insertIntent({
-    account_id,
-    project_id,
-    spec,
-    hourly_usd,
-    priced,
-    actor,
-    deps,
-    token,
-  });
+  let intent: Awaited<ReturnType<typeof insertIntent>>;
+  try {
+    intent = await insertIntent({
+      account_id,
+      project_id,
+      spec,
+      hourly_usd,
+      priced,
+      actor,
+      deps,
+      token,
+      agent:
+        agent && approval
+          ? { ...agent, payload_hash: approval.payload_hash }
+          : undefined,
+    });
+  } catch (err) {
+    if (!(err instanceof NoUsableAgentGrant) || !agent || !approval) throw err;
+    // Nothing was written; ask the human, in a transaction of its own.
+    throw await inTransaction((db) =>
+      requestAgentLaunch(db, {
+        principal: agent.principal,
+        operation_id: agent.operation_id,
+        payload: approval.payload,
+        payload_hash: approval.payload_hash,
+        now: new Date((deps.now ?? Date.now)()),
+      }),
+    );
+  }
   const { client } = intent;
   let row = intent.row;
 
@@ -720,6 +765,7 @@ async function insertIntent({
   actor,
   deps,
   token,
+  agent,
 }: {
   account_id: string;
   project_id: string;
@@ -732,6 +778,11 @@ async function insertIntent({
   actor: Actor;
   deps: GpuPodDeps;
   token?: { token_id: string; verifier: string };
+  agent?: {
+    principal: GpuAgentPrincipal;
+    operation_id: string;
+    payload_hash: string;
+  };
 }): Promise<{ row: PodRow; client: RunpodClient }> {
   const now = (deps.now ?? Date.now)();
   const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
@@ -749,10 +800,27 @@ async function insertIntent({
           account_id,
           "launch a GPU",
         );
+        // An agent's grant comes next in the lock order (before the key's
+        // fence and layers): exactly this launch, this run, unexpired, unused.
+        const grant = agent
+          ? await lockUsableGrant(
+              db,
+              agent.principal,
+              agent.payload_hash,
+              agent.operation_id,
+              new Date(now),
+            )
+          : undefined;
+        if (agent && !grant) throw new NoUsableAgentGrant();
         const { client, credential_id, revision } = await loadLaunchAccess(
           account_id,
           deps,
         );
+        if (grant && grant.credential_id !== credential_id) {
+          throw Error(
+            "Your RunPod key changed since this agent's launch was approved; the agent has to ask again.",
+          );
+        }
         if (
           credential_id !== priced.credential_id ||
           revision !== priced.revision
@@ -771,6 +839,7 @@ async function insertIntent({
           key_owner_account_id: account_id,
           beneficiary_account_id: account_id,
           project_id,
+          grant_id: grant?.grant_id,
           gpu_type_id: spec.gpu_type_id,
           gpu_count: spec.gpu_count,
           cloud: spec.cloud ?? "SECURE",
@@ -784,9 +853,9 @@ async function insertIntent({
              beneficiary_account_id, project_id, spec, gpu_type_id, gpu_count, cloud,
              data_center_id, state, desired_state, max_runtime_minutes, deadline,
              ssh_key_fingerprint, hostkey_token_id, hostkey_verifier,
-             hostkey_expires, created, updated)
+             hostkey_expires, agent_id, turn_id, created, updated)
            VALUES ($1, $2, $3, $4, 'runpod', $3, $5, $6, $7, $8, $9, $10, 'intent',
-             'running', $11, $12, $13, $14, $15, $16, now(), now())
+             'running', $11, $12, $13, $14, $15, $16, $17, $18, now(), now())
            RETURNING *`,
           [
             id,
@@ -805,9 +874,12 @@ async function insertIntent({
             token?.token_id ?? null,
             token?.verifier ?? null,
             token ? new Date(now + HOSTKEY_TOKEN_TTL_MS) : null,
+            agent?.principal.agent_id ?? null,
+            agent?.principal.run_id ?? null,
           ],
         );
         await insertReservations(db, id, admission, spec.gpu_count);
+        if (grant) await consumeGrantLaunch(db, grant.grant_id);
         await recordEvent(
           id,
           actor,

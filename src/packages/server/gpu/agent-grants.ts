@@ -132,17 +132,19 @@ function requireUuid(v: unknown, what: string): string {
 
 // ---- the agent's side ----
 
-// A grant this principal may launch with now, for exactly this payload,
-// locked. Call inside the launch transaction, right after the account fence.
+// A grant this principal may launch with now, for exactly this payload and
+// operation, locked. Call inside the launch transaction, right after the account fence.
 export async function lockUsableGrant(
   db: Db,
   principal: GpuAgentPrincipal,
   payload_hash: string,
   operation_id: string,
   now: Date,
-): Promise<{ grant_id: string; layer_id: string } | undefined> {
+): Promise<
+  { grant_id: string; layer_id: string; credential_id: string } | undefined
+> {
   const { rows } = await db.query(
-    `SELECT g.grant_id, g.layer_id FROM gpu_agent_grants g
+    `SELECT g.grant_id, g.layer_id, g.credential_id FROM gpu_agent_grants g
       WHERE g.account_id = $1 AND g.project_id = $2 AND g.agent_id = $3
         AND g.run_id = $4 AND g.payload_hash = $5 AND g.operation_id = $6
         AND g.state = 'active' AND g.expires_at > $7
@@ -551,4 +553,10 @@ export async function closeExpiredAgentGrant(
     ],
   );
   return true;
+}
+
+// Thrown inside the launch transaction when no grant admits the launch; the
+// caller records the request in a transaction of its own.
+export class NoUsableAgentGrant extends Error {
+  readonly code = "gpu_agent_no_grant";
 }
