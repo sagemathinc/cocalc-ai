@@ -15,8 +15,13 @@ import { parseHostkeyToken } from "./hostkey-token";
 import { gpuSshInfoLocal, registerHostKeyLocal } from "./hostkey";
 import { launchGpuPodLocal, terminateGpuPodLocal } from "./pods";
 
+// PGlite in CI; COCALC_TEST_REAL_PG=1 runs the same tests against a real
+// PostgreSQL (PGHOST etc.), where the race test really races.
 const describeDb =
-  process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
+  process.env.COCALC_TEST_USE_PGLITE === "1" ||
+  process.env.COCALC_TEST_REAL_PG === "1"
+    ? describe
+    : describe.skip;
 
 const PROJECT = "00000000-1000-4000-8000-0000000000aa";
 const CREDENTIAL = "00000000-1000-4000-8000-0000000000cc";
@@ -379,7 +384,7 @@ describeDb("pod host-key registration", () => {
   });
 
   it("never leaves a terminated pod with a key, whichever of terminate and register wins", async () => {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 20; i++) {
       const { pod, token, account_id, deps } = await launched();
       const [reg] = await Promise.all([
         registerHostKeyLocal({
