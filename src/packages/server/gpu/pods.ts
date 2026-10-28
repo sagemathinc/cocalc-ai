@@ -899,6 +899,15 @@ async function bind(
             max_runtime_minutes: b.max_runtime_minutes,
           });
           if (!fits) {
+            // until RunPod confirms the termination, the pod holds its real
+            // price on every layer, so no launch can use what it spends
+            await enlargeAtBind(db, {
+              pod_id: b.id,
+              credential_id: b.credential_id,
+              actual_hourly_usd: moneyToDbString(pod.cost),
+              max_runtime_minutes: b.max_runtime_minutes,
+              force: true,
+            });
             const { rows } = await db.query(
               `UPDATE gpu_pods SET desired_state = 'terminated', reason = $2, updated = now()
                 WHERE id = $1 RETURNING *`,
@@ -1113,12 +1122,12 @@ async function resolveAmbiguousForAccount(
 // failed terminate is retried like any other pending termination.
 //
 // Its spend is real, so it is budgeted: under the budget locks of the pod it
-// duplicates, it gets a hold on each of that pod's layers. The holds reserve
-// no money (nothing is refused: the spend already exists), but they count
-// its pod and GPUs until it settles: it is live until RunPod confirms its
+// duplicates, it gets a hold on each of that pod's layers: its pod, GPUs
+// and RunPod rate for its whole allowed runtime. Nothing is refused (the
+// spend already exists), even past the caps, so the layers refuse new
+// launches until it settles: it is live until RunPod confirms its
 // termination. Its RunPod cost and start time are recorded, so terminating
-// it settles what it actually cost onto those layers (as an overrun of its
-// zero hold).
+// it settles what it actually cost onto those layers.
 async function terminateDuplicate(
   of: PodRow,
   pod: RunpodPodView,
@@ -1157,14 +1166,23 @@ async function terminateDuplicate(
       ],
     );
     if (!rows[0]) return undefined; // already recorded
-    await db.query(
+    // at its RunPod rate (else the pod's), for its whole allowed runtime
+    const { rows: held } = await db.query(
       `INSERT INTO gpu_pod_reservations (id, pod_id, layer_id, state, reserved_usd,
          hourly_usd, gpu_count, pod_slots, created, updated)
-       SELECT gen_random_uuid(), $1, layer_id, 'active', 0, hourly_usd, gpu_count,
-         1, now(), now()
-         FROM gpu_pod_reservations WHERE pod_id = $2`,
-      [id, of.id],
+       SELECT gen_random_uuid(), $1, layer_id, 'active',
+         COALESCE($3::numeric, hourly_usd) * $4::numeric / 60,
+         COALESCE($3::numeric, hourly_usd), gpu_count, 1, now(), now()
+         FROM gpu_pod_reservations WHERE pod_id = $2
+       RETURNING layer_id, reserved_usd`,
+      [id, of.id, pod.cost ?? null, of.max_runtime_minutes],
     );
+    for (const h of held) {
+      await db.query(
+        `UPDATE gpu_budget_layers SET reserved_usd = reserved_usd + $2, updated = now() WHERE id = $1`,
+        [h.layer_id, h.reserved_usd],
+      );
+    }
     await recordEvent(
       id,
       actor,

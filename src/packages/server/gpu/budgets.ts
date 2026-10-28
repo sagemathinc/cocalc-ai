@@ -382,11 +382,16 @@ export async function enlargeAtBind(
     credential_id,
     actual_hourly_usd,
     max_runtime_minutes,
+    force = false,
   }: {
     pod_id: string;
     credential_id: string;
     actual_hourly_usd: string;
     max_runtime_minutes: number;
+    // hold the real price even past the caps: for a pod that doesn't fit
+    // and is being terminated, so its layers show it (and refuse new
+    // launches) until it settles
+    force?: boolean;
   },
 ): Promise<boolean> {
   // the caller holds lockBudgetsForPod (row locks are re-entrant)
@@ -403,6 +408,7 @@ export async function enlargeAtBind(
       [r.layer_id],
     );
     const layer: LayerRow = rows[0];
+    if (force) continue;
     if (estimate.minus(r.reserved_usd).gt(available(layer))) return false;
     if (layer.max_hourly_usd != null) {
       const { rows: h } = await db.query(

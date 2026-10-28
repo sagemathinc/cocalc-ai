@@ -327,6 +327,29 @@ describeDb("GPU budgets", () => {
     );
   });
 
+  it("holds an over-price pod at its real price until its termination is confirmed", async () => {
+    const b = setup({ cost: 0.8 });
+    await b.launch();
+    await getPool().query(
+      "UPDATE gpu_budget_layers SET max_hourly_usd = 1.4 WHERE credential_id = $1",
+      [b.credential_id],
+    );
+    // the second pod doesn't fit at RunPod's price, and its terminate fails
+    b.rp.client.terminatePod.mockRejectedValueOnce(Error("RunPod is down"));
+    const second = await b.launch();
+    expect(second.desired_state).toBe("terminated");
+    expect(b.rp.pods.has(second.provider_pod_id!)).toBe(true);
+    const [r] = await reservations(second.id);
+    expect(n(r.hourly_usd)).toBe(0.8);
+    // even with more room per hour, the live pod's real price counts:
+    // 0.8 + 0.8 + 0.5 > $2/h
+    await getPool().query(
+      "UPDATE gpu_budget_layers SET max_hourly_usd = 2 WHERE credential_id = $1",
+      [b.credential_id],
+    );
+    await expect(b.launch()).rejects.toThrow(/at most \$2\.00\/h/);
+  });
+
   it("launches nothing while the key's fence isn't active or is paused", async () => {
     const { credential_id, launch, rp } = setup();
     await launch(); // makes the fence

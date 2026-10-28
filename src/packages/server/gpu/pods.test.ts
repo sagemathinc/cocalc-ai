@@ -813,6 +813,13 @@ describeDb("GPU pods", () => {
     await expect(
       launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
     ).rejects.toThrow("at most 2 pods at once");
+    // it holds its RunPod rate ($0.90/h) for its whole allowed hour
+    const { rows: pending } = await getPool().query(
+      `SELECT r.reserved_usd, r.hourly_usd FROM gpu_pod_reservations r
+         JOIN gpu_pods p ON p.id = r.pod_id WHERE p.provider_pod_id = 'pod_dupbbb'`,
+    );
+    expect(Number(pending[0].hourly_usd)).toBeCloseTo(0.9, 6);
+    expect(Number(pending[0].reserved_usd)).toBeCloseTo(0.9, 6);
     // it ran for 20 minutes before it was found; the next listing retries it
     await getPool().query(
       "UPDATE gpu_pods SET running_since = now() - interval '20 minutes' WHERE provider_pod_id = 'pod_dupbbb'",
@@ -821,16 +828,16 @@ describeDb("GPU pods", () => {
     expect(rp.pods.has("pod_dupbbb")).toBe(false);
     expect(live.map((p) => p.provider_pod_id)).toEqual(["pod_dupaaa"]);
     // its spend is settled onto the canonical pod's layer: 20 min at $0.90/h,
-    // all of it overrun of a zero hold; the canonical pod's hold is untouched
+    // the rest of its hold returns; the canonical pod's hold is untouched
     const { rows: dup } = await getPool().query(
       `SELECT r.* FROM gpu_pod_reservations r JOIN gpu_pods p ON p.id = r.pod_id
         WHERE p.provider_pod_id = 'pod_dupbbb'`,
     );
     expect(dup).toHaveLength(1);
     expect(dup[0].state).toBe("settled");
-    expect(Number(dup[0].reserved_usd)).toBe(0);
     expect(Number(dup[0].spent_usd)).toBeCloseTo(0.3, 3);
-    expect(Number(dup[0].overrun_usd)).toBeCloseTo(0.3, 3);
+    expect(Number(dup[0].released_usd)).toBeCloseTo(0.6, 3);
+    expect(Number(dup[0].overrun_usd)).toBe(0);
     const { rows: layer } = await getPool().query(
       "SELECT spent_usd, reserved_usd FROM gpu_budget_layers WHERE id = $1",
       [dup[0].layer_id],
