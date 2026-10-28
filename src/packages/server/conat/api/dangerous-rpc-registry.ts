@@ -4,9 +4,7 @@
  */
 
 export type DangerousRpcFreshAuthDecision =
-  | "fresh-auth-required"
-  | "fresh-auth-not-required"
-  | "internal-auth-only";
+  "fresh-auth-required" | "fresh-auth-not-required" | "internal-auth-only";
 
 export type DangerousRpcDecision = {
   decision: DangerousRpcFreshAuthDecision;
@@ -46,7 +44,17 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "gpu.resume": {
     decision: "fresh-auth-required",
     reason:
-      "lifts the kill switch's pause on launches; checked in resumeGpuLaunches",
+      "lifts the kill switch's pause and a safety pause on launches; checked in resumeGpuLaunches",
+  },
+  "gpu.releaseQuarantined": {
+    decision: "fresh-auth-required",
+    reason:
+      "releases budget held for a pod CoCalc couldn't confirm gone; checked in releaseQuarantined",
+  },
+  "gpu.acknowledgeAlert": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "only ends an alert the owner alone can end (what CoCalc can't check); widens nothing",
   },
   "gpu.approveAgentRequest": {
     decision: "fresh-auth-required",

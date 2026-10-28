@@ -169,6 +169,9 @@ Table({
     // set by a forced key removal (5c): the key is gone, so CoCalc can no
     // longer reach the pod. Orthogonal to state (the pod may still run and
     // bill at RunPod); excluded from admission, slots and the reaper.
+    // The reconciler's latest sighting of the pod at RunPod (a pass's
+    // observed_at): a "not found" asked before it doesn't end the pod.
+    provider_seen_at: { type: "timestamp" },
     unmanaged_at: { type: "timestamp" },
     reap_attempts: { type: "integer", not_null: true, pg_default: "0" },
     running_since: {

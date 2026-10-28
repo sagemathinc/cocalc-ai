@@ -21,6 +21,7 @@ import {
   clearStaleHostkeyTokens,
 } from "./hostkey-clear";
 import { upsertExternalCredential } from "@cocalc/server/external-credentials/store";
+import { freshInventoryForTests } from "./test-inventory";
 
 // The key store, without the site's secret encryption.
 jest.mock("@cocalc/database/settings/secret-settings", () => ({
@@ -178,6 +179,7 @@ describeDb("pod host-key registration", () => {
   beforeAll(async () => {
     await syncSchema({
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_alerts: SCHEMA.gpu_alerts,
       gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
@@ -193,6 +195,8 @@ describeDb("pod host-key registration", () => {
     await getPool().query(
       "INSERT INTO gpu_worker_leases (name, last_completed_at) VALUES ('reaper', now() + interval '10 years') ON CONFLICT (name) DO UPDATE SET last_completed_at = EXCLUDED.last_completed_at",
     );
+    // and every key has a recent complete inventory (likewise)
+    await freshInventoryForTests();
   });
 
   it("gives the pod a token, stores only its verifier, and registers the key once", async () => {

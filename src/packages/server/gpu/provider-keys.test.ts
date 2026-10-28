@@ -65,6 +65,8 @@ import {
   VERIFY_RPC_TIMEOUT_MS,
 } from "@cocalc/util/gpu/provider-keys";
 import {
+  CONNECT_INVENTORY_CALL_MS,
+  CONNECT_INVENTORY_MS,
   deleteGpuProviderKey,
   deleteGpuProviderKeyLocal,
   getGpuProviderKeyStatusLocal,
@@ -195,6 +197,8 @@ describe("GPU provider keys", () => {
       connected: true,
       provider_account: { kind: "personal", id: "user_1" },
       connected_at: stored.metadata.verified_at,
+      // its first inventory pass (no answer from this fake): not yet
+      inventory: "checking",
     });
     // Reads before the write (is a key being replaced, before and again
     // under the fence; removals since the check started), none after it:
@@ -205,6 +209,59 @@ describe("GPU provider keys", () => {
     );
     // The key is never part of what comes back.
     expect(JSON.stringify(status)).not.toContain(KEY);
+  });
+
+  it("checks the new key's RunPod account once, counted from the start of the connect", async () => {
+    const { fetch } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      NO_PODS,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
+    ]);
+    const before = Date.now();
+    const connectInventory = jest.fn(async () => true);
+    const status = await setGpuProviderKey(
+      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      { fetch, isEntitled: entitled, connectInventory },
+    );
+    expect(status.inventory).toBe("complete");
+    expect(connectInventory).toHaveBeenCalledTimes(1);
+    const arg = (connectInventory.mock.calls[0] as any)[0];
+    expect(arg).toEqual(
+      expect.objectContaining({ account_id: ACCOUNT, credential_id: "cred-1" }),
+    );
+    // the deadline counts from before the identity probe, not after it
+    expect(arg.deadline).toBeGreaterThanOrEqual(before + CONNECT_INVENTORY_MS);
+    expect(arg.deadline).toBeLessThanOrEqual(Date.now() + CONNECT_INVENTORY_MS);
+    // its time and the probe's stay well inside the forwarded request's
+    expect(CONNECT_INVENTORY_MS + CONNECT_INVENTORY_CALL_MS).toBeLessThan(
+      SET_KEY_HOME_BAY_TIMEOUT_MS / 2,
+    );
+  });
+
+  it("a connect whose inventory pass fails still stands, as checking", async () => {
+    const { fetch } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      NO_PODS,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
+    ]);
+    const status = await setGpuProviderKey(
+      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      {
+        fetch,
+        isEntitled: entitled,
+        connectInventory: async () => {
+          throw Error("the database went away");
+        },
+      },
+    );
+    expect(status).toEqual(
+      expect.objectContaining({ connected: true, inventory: "checking" }),
+    );
+    expect(upsertMock).toHaveBeenCalledTimes(1);
   });
 
   it("records an organization's name", async () => {

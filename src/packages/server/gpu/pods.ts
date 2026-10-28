@@ -58,6 +58,7 @@ import {
   enlargeAtBind,
   ensureKeyBudget,
   insertReservations,
+  endQuarantineAlert,
   lockBudgetsForPod,
   settleReservations,
 } from "@cocalc/server/gpu/budgets";
@@ -1145,8 +1146,9 @@ async function resolveAmbiguous(
           action: "state",
           details: { state: "failed", resolved: "not_found" },
         },
-        // an empty lookup isn't proof: hold the reservation until the
-        // reconciler has seen a full inventory without the handle
+        // an empty lookup isn't proof: the reservation stays held until the
+        // pod shows up (reconcileBindPod) or the owner releases it
+        // (releaseQuarantined); a listing never proves it absent
         { settle: "quarantine" },
       )) ?? (await loadPod(row.id))
     );
@@ -1674,6 +1676,227 @@ export async function recordSeenAddresses(
   }
 }
 
+// ---- the reconciler's record changes (5d) ----
+//
+// The reconciler reads RunPod and records what it sees; it never asks RunPod
+// to terminate anything. These two are its only pod-state changes.
+
+// A pod's holds are a live pod's again (its budget locks are held): a
+// quarantined hold is still on its layer, so only its state changes; a
+// settled one (released, or ended) is held again in full, and what it had
+// spent is the live pod's again. True if any had been settled.
+async function holdAgain(db: PoolClient, pod_id: string): Promise<boolean> {
+  let settled = false;
+  const { rows: reservations } = await db.query(
+    "SELECT * FROM gpu_pod_reservations WHERE pod_id = $1 ORDER BY id",
+    [pod_id],
+  );
+  for (const r of reservations) {
+    if (r.state === "quarantined") {
+      await db.query(
+        "UPDATE gpu_pod_reservations SET state = 'active', updated = now() WHERE id = $1",
+        [r.id],
+      );
+    } else if (r.state === "settled") {
+      settled = true;
+      await db.query(
+        `UPDATE gpu_pod_reservations
+            SET state = 'active', spent_usd = 0, released_usd = 0, overrun_usd = 0,
+                settled_at = NULL, updated = now()
+          WHERE id = $1`,
+        [r.id],
+      );
+      await db.query(
+        `UPDATE gpu_budget_layers
+            SET reserved_usd = reserved_usd + $2, spent_usd = spent_usd - $3, updated = now()
+          WHERE id = $1`,
+        [r.layer_id, r.reserved_usd, r.spent_usd ?? 0],
+      );
+    }
+  }
+  return settled;
+}
+
+// A pod CoCalc recorded as ended that RunPod, asked by id at `asked` (after
+// the end), still has: the "not found" or termination it ended on was older
+// than this answer, so it is CoCalc's again, to terminate. Its holds are held
+// again in full (its budget shows it, and refuses launches, until it
+// settles) and it is marked terminating, so the reaper terminates it at
+// RunPod and settles what it actually cost. Only while its key is live
+// (the fence is locked first); undefined if the record moved on.
+export async function reviveEndedPod(
+  row: PodRow,
+  actor: Actor,
+  asked: Date,
+): Promise<PodRow | undefined> {
+  return await transition(
+    row.id,
+    {
+      state: "terminating",
+      desired_state: "terminated",
+      terminated_at: null,
+      provider_seen_at: asked,
+      reason:
+        "RunPod still had this pod after CoCalc recorded it as ended, so CoCalc is terminating it.",
+    },
+    `AND state = 'terminated' AND provider_pod_id IS NOT NULL AND unmanaged_at IS NULL
+     AND terminated_at < '${asked.toISOString()}'::timestamptz
+     AND EXISTS (SELECT 1 FROM gpu_key_fences f
+                  WHERE f.credential_id = gpu_pods.credential_id
+                    AND f.state IN ('active', 'draining'))`,
+    {
+      actor,
+      action: "state",
+      details: { state: "terminating", seen_after_end: true },
+    },
+    { after: async (db, b) => void (await holdAgain(db, b.id)) },
+  );
+}
+
+// RunPod says (by id, getPod 404) that a bound pod no longer exists: the
+// record ends as if CoCalc had terminated it (wanted terminated, then
+// terminated, with its actual settlement and the same events), in ONE
+// transaction, and nothing is sent to RunPod (it has already shown the pod
+// is gone). `asked`: when RunPod was asked. A sighting recorded after it
+// (another pass's listing, newer than this answer's question) wins and
+// nothing changes; one that commits while this runs is re-checked by the
+// UPDATE itself. Undefined if the record moved on meanwhile.
+export async function endPodGoneAtProvider(
+  row: PodRow,
+  actor: Actor,
+  asked: Date,
+): Promise<PodRow | undefined> {
+  return await transition(
+    row.id,
+    {
+      state: "terminated",
+      desired_state: "terminated",
+      terminated_at: new Date(),
+    },
+    `AND state IN ('running', 'stopped', 'terminating') AND unmanaged_at IS NULL
+     AND (provider_seen_at IS NULL OR provider_seen_at < '${asked.toISOString()}'::timestamptz)`,
+    {
+      actor,
+      action: "state",
+      details: { state: "terminated", gone_at_provider: true },
+    },
+    {
+      settle: "actual",
+      after: async (db, ended) => {
+        // the terminate this stands for, recorded first (same transaction)
+        await recordEvent(
+          ended.id,
+          actor,
+          "terminate",
+          { gone_at_provider: true },
+          db,
+        );
+      },
+    },
+  );
+}
+
+// A RunPod pod named exactly like an ambiguous or failed (quarantined or
+// released) record's handle: the pod is live, so the record becomes live and
+// managed again. Its quarantined holds go back to active, adding only what
+// RunPod's real price needs beyond them; holds the owner released are
+// reserved again in full. Nothing settles while it runs, and nothing is
+// terminated here: a pod that doesn't fit is marked to terminate, for the
+// reaper. Returns the record and whether its holds had been released.
+export async function reconcileBindPod(
+  row: PodRow,
+  pod: RunpodPodView,
+  actor: Actor,
+  observed_at: Date,
+): Promise<{ row?: PodRow; released: boolean }> {
+  let released = false;
+  const bound = await transition(
+    row.id,
+    {
+      provider_pod_id: pod.id,
+      state: "running",
+      running_since: providerStartTime(pod, row),
+      cost_per_hr: pod.cost ?? null,
+      data_center_id: pod.dataCenterId ?? row.data_center_id,
+      public_ip: pod.sshDirect?.host ?? null,
+      terminated_at: null,
+      provider_seen_at: observed_at,
+    },
+    // (and only while its key is live: a pass that finishes after the key
+    // was removed or replaced binds nothing. transition takes the account
+    // rehome lock (the same one key changes hold, through their close) and
+    // then the key's fence row before this UPDATE, whose own snapshot then
+    // sees the fence as committed: a close either finished first, or waits
+    // and then finds this pod unfinished)
+    `AND state IN ('ambiguous', 'failed') AND provider_pod_id IS NULL AND unmanaged_at IS NULL
+     AND EXISTS (SELECT 1 FROM gpu_key_fences f
+                  WHERE f.credential_id = gpu_pods.credential_id
+                    AND f.state IN ('active', 'draining'))`,
+    {
+      actor,
+      action: "bind",
+      details: {
+        provider_pod_id: pod.id,
+        cost_per_hr: pod.cost,
+        reconciled: true,
+      },
+    },
+    {
+      after: async (db, b) => {
+        // the budget locks are held (transition takes them for `after`)
+        released = await holdAgain(db, b.id);
+        // its holds are a live pod's again
+        await endQuarantineAlert(db, b.id, "pod_seen");
+        let out: PodRow = b;
+        if (pod.cost != null) {
+          const fits = await enlargeAtBind(db, {
+            pod_id: b.id,
+            credential_id: b.credential_id,
+            actual_hourly_usd: moneyToDbString(pod.cost),
+            max_runtime_minutes: b.max_runtime_minutes,
+          });
+          if (!fits) {
+            await enlargeAtBind(db, {
+              pod_id: b.id,
+              credential_id: b.credential_id,
+              actual_hourly_usd: moneyToDbString(pod.cost),
+              max_runtime_minutes: b.max_runtime_minutes,
+              force: true,
+            });
+            const { rows } = await db.query(
+              `UPDATE gpu_pods SET desired_state = 'terminated', reason = $2, updated = now()
+                WHERE id = $1 RETURNING *`,
+              [
+                b.id,
+                "RunPod's price for this pod is more than your GPU budget allows, so it is being terminated.",
+              ],
+            );
+            out = rows[0];
+            await recordEvent(
+              b.id,
+              actor,
+              "budget_stop",
+              { cost_per_hr: pod.cost },
+              db,
+            );
+          }
+        }
+        if (b.public_ip) {
+          await recordEvent(
+            b.id,
+            actor,
+            "ip_seen",
+            { public_ip: b.public_ip, ports: pod.runtime?.ports ?? null },
+            db,
+          );
+        }
+        return out;
+      },
+    },
+  );
+  return { row: bound, released };
+}
+
 export async function listManagedGpuPodsLocal(
   opts: { account_id?: string; include_ended?: boolean; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
@@ -1898,6 +2121,84 @@ export async function markCredentialPodsUnmanaged(
     await recordEvent(pod.id, actor, "unmanaged", {}, db);
   }
   return pods.map((p) => p.handle);
+}
+
+// ---- releasing quarantined holds (5d) ----
+
+export const RELEASE_QUARANTINED_WARNING =
+  "If this pod does exist at RunPod, it may be running and billing there, and your GPU budget no longer holds money for it. If CoCalc sees it later, it manages it again and holds its money in full.";
+
+// The owner says a pod whose create CoCalc couldn't confirm (or that a
+// forced removal left unmanaged) doesn't exist, or is gone: its quarantined
+// holds are released, all at once, with one audited event. Fresh
+// authentication (checked by the bay the owner is signed in to): it loosens
+// the budget. Nothing is asked of RunPod. Only quarantined holds: a pod with
+// a live hold isn't quarantined.
+export async function releaseQuarantinedLocal(
+  opts: {
+    account_id?: string;
+    pod_id?: unknown;
+    fresh_auth_verified?: boolean;
+  },
+  deps: GpuPodDeps = {},
+): Promise<{ pod_id: string; released_usd: string; warning: string }> {
+  const account_id = requireAccount(opts.account_id);
+  if (opts.fresh_auth_verified !== true) {
+    throw Object.assign(
+      Error("Releasing a held GPU budget needs you to sign in again."),
+      { code: "fresh_auth_required" },
+    );
+  }
+  await requireHomeBay(account_id, deps);
+  const row = await findPod(account_id, opts.pod_id);
+  // only the key owner's budget is held, so only they release it
+  if (!row || row.key_owner_account_id !== account_id) {
+    throw Error("No such GPU pod launched with your key.");
+  }
+  let released = "0";
+  // its one event, recorded after `after` with the amount filled in
+  const details: Record<string, unknown> = {};
+  const done = await transition(
+    row.id,
+    {},
+    `AND (state = 'failed' OR unmanaged_at IS NOT NULL)
+     AND EXISTS (SELECT 1 FROM gpu_pod_reservations r
+                  WHERE r.pod_id = gpu_pods.id AND r.state = 'quarantined')
+     AND NOT EXISTS (SELECT 1 FROM gpu_pod_reservations r
+                      WHERE r.pod_id = gpu_pods.id AND r.state = 'active')`,
+    {
+      actor: { kind: "key_owner", account_id },
+      action: "quarantine_released",
+      details,
+    },
+    {
+      after: async (db, b) => {
+        // the budget locks are held (transition takes them for `after`)
+        const { rows } = await db.query(
+          `SELECT COALESCE(SUM(reserved_usd), 0) AS held FROM gpu_pod_reservations
+            WHERE pod_id = $1 AND state = 'quarantined'`,
+          [b.id],
+        );
+        released = moneyToDbString(rows[0].held);
+        await settleReservations(
+          db,
+          { pod_id: b.id, credential_id: b.credential_id },
+          { kind: "release" },
+        );
+        details.released_usd = released;
+      },
+    },
+  );
+  if (!done) {
+    throw Error(
+      "This pod has no held budget to release: it is live, ended normally, or was already released.",
+    );
+  }
+  return {
+    pod_id: row.id,
+    released_usd: released,
+    warning: RELEASE_QUARANTINED_WARNING,
+  };
 }
 
 // ---- the kill switch ----

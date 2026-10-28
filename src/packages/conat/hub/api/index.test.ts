@@ -266,10 +266,21 @@ describe("hub API argument transforms", () => {
     expect(getHubApiPrincipalPolicies()["gpu.approveAgentRequest"]).not.toMatch(
       /agent/,
     );
+    // and the owner's alerts and held budgets (5d)
+    expect(getHubApiPrincipalPolicies()["gpu.alerts"]).toBe("account");
+    expect(getHubApiPrincipalPolicies()["gpu.acknowledgeAlert"]).toBe(
+      "account",
+    );
+    expect(getHubApiPrincipalPolicies()["gpu.releaseQuarantined"]).not.toMatch(
+      /agent/,
+    );
     for (const name of [
       "gpu.agentRequests",
       "gpu.approveAgentRequest",
       "gpu.revokeAgentGrant",
+      "gpu.alerts",
+      "gpu.acknowledgeAlert",
+      "gpu.releaseQuarantined",
     ]) {
       await expect(
         (async () =>

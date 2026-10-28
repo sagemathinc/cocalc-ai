@@ -27,6 +27,7 @@ import {
   whoGpuPodLocal,
   launchGpuPod,
 } from "./pods";
+import { freshInventoryForTests } from "./test-inventory";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -104,6 +105,7 @@ async function syncGpuTables() {
   );
   await syncSchema({
     gpu_key_fences: SCHEMA.gpu_key_fences,
+    gpu_alerts: SCHEMA.gpu_alerts,
     gpu_budget_layers: SCHEMA.gpu_budget_layers,
     gpu_budget_events: SCHEMA.gpu_budget_events,
     gpu_pods: SCHEMA.gpu_pods,
@@ -116,6 +118,8 @@ async function syncGpuTables() {
   await getPool().query(
     "INSERT INTO gpu_worker_leases (name, last_completed_at) VALUES ('reaper', now() + interval '10 years') ON CONFLICT (name) DO UPDATE SET last_completed_at = EXCLUDED.last_completed_at",
   );
+  // and every key has a recent complete inventory (likewise)
+  await freshInventoryForTests();
 }
 
 async function events(pod_id: string) {

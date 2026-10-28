@@ -24,6 +24,7 @@ import {
   runGpuReaperSweep,
 } from "./reaper";
 import { allowStaleWorkers, allowStaleWorkersLocal } from "./admin";
+import { freshInventoryForTests } from "./test-inventory";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -120,6 +121,8 @@ async function freshReaper() {
   await getPool().query(
     "INSERT INTO gpu_worker_leases (name, holder, expires_at, last_completed_at) VALUES ('reaper', NULL, NULL, now() + interval '10 years') ON CONFLICT (name) DO UPDATE SET holder = NULL, expires_at = NULL, last_completed_at = EXCLUDED.last_completed_at",
   );
+  // and every key has a recent complete inventory (likewise)
+  await freshInventoryForTests();
 }
 
 describeDb("GPU reaper", () => {
@@ -129,6 +132,7 @@ describeDb("GPU reaper", () => {
     );
     await syncSchema({
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_alerts: SCHEMA.gpu_alerts,
       gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,

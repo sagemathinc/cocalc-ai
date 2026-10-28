@@ -17,6 +17,10 @@ Words:
   contains ids.
 */
 
+import type {
+  GPU_ALERT_KINDS,
+  GPU_ALERT_SEVERITIES,
+} from "@cocalc/util/db-schema/gpu-budgets";
 import type { RunpodCloud } from "./runpod";
 
 export const GPU_POD_STATES = [
@@ -58,6 +62,8 @@ export const GPU_ACTOR_KINDS = [
   "agent",
   "key_owner",
   "reaper",
+  // the inventory reconciler (5d): it reads RunPod and records, never terminates
+  "reconciler",
   "kill_switch",
   "cleanup",
   // the pod itself, reporting its SSH host key
@@ -83,6 +89,8 @@ export const GPU_POD_ACTIONS = [
   "kill_switch",
   // a forced key removal left it outside CoCalc's management (5c)
   "unmanaged",
+  // the owner released a quarantined pod's held reservations (5d)
+  "quarantine_released",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 
@@ -231,6 +239,15 @@ export interface GpuBudget {
   ends_at: string;
   live_pods: number;
   live_gpus: number;
+  // New launches with the key are paused: by the owner's kill switch,
+  // and/or by CoCalc for an alert (paused_reason, e.g. "unknown_pod"; see
+  // gpu.alerts). gpu.resume lifts both.
+  paused: boolean;
+  kill_switch: boolean;
+  paused_reason: string | null;
+  // "checking" until CoCalc has a recent complete check of the pods on the
+  // RunPod account (launches wait for it)
+  inventory: "complete" | "checking";
 }
 
 // What gpu.setBudget may change. Lowering needs only the owner; raising
@@ -242,6 +259,29 @@ export interface GpuBudgetChange {
   max_gpu_count?: number | null;
   max_runtime_minutes?: number | null;
   ends_at?: string;
+}
+
+// What CoCalc found on a key's RunPod account that needs its owner (5d).
+// Each kind ends its own way: never because a listing didn't show something.
+export type GpuAlertKind = (typeof GPU_ALERT_KINDS)[number];
+export type GpuAlertSeverity = (typeof GPU_ALERT_SEVERITIES)[number];
+
+export interface GpuAlert {
+  id: string;
+  credential_id: string;
+  kind: GpuAlertKind;
+  severity: GpuAlertSeverity;
+  // what it means and what to do
+  message: string;
+  // e.g. the RunPod pod id, a handle, the held amount
+  details: Record<string, unknown> | null;
+  opened: string;
+  last_seen: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  acknowledged_at: string | null;
+  // the owner ends it by acknowledging (gpu.acknowledgeAlert)
+  acknowledgeable: boolean;
 }
 
 // gpu.spend: what the pods on the owner's keys cost, from the key layer's

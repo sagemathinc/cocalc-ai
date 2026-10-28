@@ -18,6 +18,8 @@ import {
   Typography,
 } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+export const CHECKING_POLL_MS = 15_000;
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { RunpodDashboardSection } from "@cocalc/frontend/gpu/runpod-dashboard-section";
@@ -91,6 +93,14 @@ export function GpuProviderKeySection() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // While CoCalc is still checking the key's RunPod account (launches wait
+  // for it), look again now and then, so the page says when it's done.
+  useEffect(() => {
+    if (!status?.connected || status.inventory !== "checking") return;
+    const timer = setTimeout(() => void refresh(), CHECKING_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [status, refresh]);
 
   const connect = async () => {
     const key = apiKey.trim();
@@ -248,6 +258,12 @@ export function GpuProviderKeySection() {
           )}
           .
         </Typography.Paragraph>
+        {status.entitled && status.inventory === "checking" && (
+          <Typography.Text type="secondary">
+            Checking your RunPod account… GPU launches with this key start once
+            CoCalc has seen the pods on it (usually within a few minutes).
+          </Typography.Text>
+        )}
         <Space>
           {!replacing && status.entitled && (
             <Button disabled={busy} onClick={() => setReplacing(true)}>

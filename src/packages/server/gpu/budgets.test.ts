@@ -31,6 +31,9 @@ import {
   reportCompromisedLocal,
   runCompromiseCleanup,
 } from "./compromise";
+import { freshInventoryForTests } from "./test-inventory";
+import { acknowledgeAlertLocal, listAlertsLocal, raiseAlert } from "./alerts";
+import { releaseQuarantinedLocal } from "./pods";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -130,6 +133,7 @@ describeDb("GPU budgets", () => {
     );
     await syncSchema({
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_alerts: SCHEMA.gpu_alerts,
       gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
@@ -147,6 +151,8 @@ describeDb("GPU budgets", () => {
     await getPool().query(
       "INSERT INTO gpu_worker_leases (name, last_completed_at) VALUES ('reaper', now() + interval '10 years') ON CONFLICT (name) DO UPDATE SET last_completed_at = EXCLUDED.last_completed_at",
     );
+    // and every key has a recent complete inventory (likewise)
+    await freshInventoryForTests();
   });
 
   it("gives a new key the default budget and reserves list price x GPUs x runtime", async () => {
@@ -581,7 +587,7 @@ describeDb("GPU budgets", () => {
       expect((await s.launch()).state).toBe("running");
     });
 
-    it("leaves a safety pause alone, and retries what RunPod didn't confirm", async () => {
+    it("resume lifts a safety pause too, and the kill switch retries what RunPod didn't confirm", async () => {
       const s = setup();
       const pod = await s.launch();
       await getPool().query(
@@ -594,7 +600,7 @@ describeDb("GPU budgets", () => {
       expect(
         await killSwitchLocal({ account_id: s.account_id }, s.deps),
       ).toEqual({ marked: 1, remaining: 1, paused: true });
-      // resume lifts the kill switch's pause only
+      // resume is the human override for both pauses
       await resumeGpuLaunchesLocal(
         { account_id: s.account_id, fresh_auth_verified: true },
         s.deps as any,
@@ -604,9 +610,16 @@ describeDb("GPU budgets", () => {
         [s.credential_id],
       );
       expect(rows[0]).toEqual({
-        paused_reason: "unknown_pod",
+        paused_reason: null,
         kill_switch_at: null,
       });
+      const { rows: ev } = await getPool().query(
+        "SELECT details FROM gpu_key_events WHERE credential_id = $1 AND action = 'resumed'",
+        [s.credential_id],
+      );
+      expect(ev).toEqual([
+        { details: { kill_switch: true, paused_reason: "unknown_pod" } },
+      ]);
       // a second kill switch marks nothing new but retries the backed-off
       // terminate at once
       expect(
@@ -697,6 +710,166 @@ describeDb("GPU budgets", () => {
     expect(await killSwitchLocal({ account_id: s.account_id }, s.deps)).toEqual(
       expect.objectContaining({ marked: 0, remaining: 0 }),
     );
+  });
+
+  it("a forced removal tells the owner: an alert per unmanaged pod and its held budget; what can't be checked anymore becomes theirs to acknowledge", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    // an unknown pod the reconciler had seen on this key
+    await raiseAlert({
+      key_owner_account_id: s.account_id,
+      credential_id: s.credential_id,
+      kind: "unknown_pod",
+      severity: "critical",
+      dedupe_key: "pod_strange9",
+      observed_at: new Date(),
+    });
+    s.rp.client.terminatePod.mockRejectedValue(
+      new RunpodApiError("provider", 503),
+    );
+    await deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", force: true },
+      {
+        isHomeBay: async () => true,
+        storedKeyRejected: async () => false,
+        drain: async () => {},
+        drainMs: 0,
+      },
+    );
+    const open = await listAlertsLocal({ account_id: s.account_id });
+    const byKind = Object.fromEntries(open.map((a) => [a.kind, a]));
+    expect(Object.keys(byKind).sort()).toEqual([
+      "quarantined_reservation",
+      "unknown_pod",
+      "unmanaged_pod",
+    ]);
+    expect(byKind.unmanaged_pod).toEqual(
+      expect.objectContaining({
+        severity: "warning",
+        acknowledgeable: true,
+        details: { handle: pod.handle },
+        message: expect.stringContaining("Terminate it at RunPod"),
+      }),
+    );
+    // the key is gone, so CoCalc can't check the unknown pod anymore
+    expect(byKind.unknown_pod).toEqual(
+      expect.objectContaining({
+        severity: "warning",
+        acknowledgeable: true,
+        details: { unverifiable: true },
+      }),
+    );
+    expect(byKind.quarantined_reservation).toEqual(
+      expect.objectContaining({
+        severity: "info",
+        acknowledgeable: false,
+        details: expect.objectContaining({ pod_id: pod.id }),
+      }),
+    );
+    // a held budget isn't acknowledged away: it is released
+    await expect(
+      acknowledgeAlertLocal({
+        account_id: s.account_id,
+        id: byKind.quarantined_reservation.id,
+      }),
+    ).rejects.toThrow("can't be acknowledged");
+    // nor is someone else's alert theirs to acknowledge
+    await expect(
+      acknowledgeAlertLocal({
+        account_id: randomUUID(),
+        id: byKind.unmanaged_pod.id,
+      }),
+    ).rejects.toThrow("No such GPU alert");
+    expect(
+      await acknowledgeAlertLocal({
+        account_id: s.account_id,
+        id: byKind.unmanaged_pod.id,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        resolved_by: "acknowledged",
+        acknowledgeable: false,
+      }),
+    );
+    // releasing the hold: fresh auth, the owner, all at once, one event
+    const layerBefore = await keyLayer(s.credential_id);
+    await expect(
+      releaseQuarantinedLocal(
+        { account_id: s.account_id, pod_id: pod.handle },
+        s.deps,
+      ),
+    ).rejects.toThrow("sign in again");
+    const released = await releaseQuarantinedLocal(
+      {
+        account_id: s.account_id,
+        pod_id: pod.handle,
+        fresh_auth_verified: true,
+      },
+      s.deps,
+    );
+    expect(released).toEqual({
+      pod_id: pod.id,
+      released_usd: expect.any(String),
+      warning: expect.stringContaining("may be running and billing"),
+    });
+    expect(n(released.released_usd)).toBeGreaterThan(0);
+    const layerAfter = await keyLayer(s.credential_id);
+    expect(n(layerAfter.reserved_usd)).toBeCloseTo(
+      n(layerBefore.reserved_usd) - n(released.released_usd),
+    );
+    expect(n(layerAfter.spent_usd)).toBe(n(layerBefore.spent_usd));
+    expect((await reservations(pod.id)).map((r) => r.state)).toEqual([
+      "settled",
+    ]);
+    const { rows: ev } = await getPool().query(
+      "SELECT action, details FROM gpu_pod_events WHERE pod_id = $1 AND action = 'quarantine_released'",
+      [pod.id],
+    );
+    expect(ev).toEqual([
+      {
+        action: "quarantine_released",
+        details: { released_usd: released.released_usd },
+      },
+    ]);
+    // its alert ended with it; a second release has nothing to release
+    expect(
+      (await listAlertsLocal({ account_id: s.account_id })).map((a) => a.kind),
+    ).toEqual(["unknown_pod"]);
+    await expect(
+      releaseQuarantinedLocal(
+        {
+          account_id: s.account_id,
+          pod_id: pod.handle,
+          fresh_auth_verified: true,
+        },
+        s.deps,
+      ),
+    ).rejects.toThrow("no held budget");
+  });
+
+  it("releasing a hold refuses a live pod and someone else's pod", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    await expect(
+      releaseQuarantinedLocal(
+        {
+          account_id: s.account_id,
+          pod_id: pod.handle,
+          fresh_auth_verified: true,
+        },
+        s.deps,
+      ),
+    ).rejects.toThrow("no held budget");
+    await expect(
+      releaseQuarantinedLocal(
+        {
+          account_id: randomUUID(),
+          pod_id: pod.handle,
+          fresh_auth_verified: true,
+        },
+        s.deps,
+      ),
+    ).rejects.toThrow("No such GPU pod");
   });
 
   describe("reporting a key compromised", () => {
@@ -790,6 +963,11 @@ describeDb("GPU budgets", () => {
           )
         ).rows[0].state;
       expect(await fence()).toBe("compromised");
+      expect(
+        (await listAlertsLocal({ account_id: s.account_id })).map(
+          (x) => x.kind,
+        ),
+      ).toEqual(["compromise_awaiting_revocation"]);
       // no launches, and no removal without force, meanwhile
       await expect(s.launch()).rejects.toThrow("reported compromised");
       await expect(
@@ -844,6 +1022,17 @@ describeDb("GPU budgets", () => {
         warning: expect.stringContaining("RunPod's Pods page"),
       });
       expect(await fence()).toBe("closed");
+      // the wait for RunPod is over; the owner checks the account once
+      const after = await listAlertsLocal({
+        account_id: s.account_id,
+        include_resolved: true,
+      });
+      expect(
+        after.map((x) => [x.kind, x.resolved_by, x.acknowledgeable]),
+      ).toEqual([
+        ["compromise_check_pods", null, true],
+        ["compromise_awaiting_revocation", "compromise_closed", false],
+      ]);
       const { rows: cred } = await getPool().query(
         "SELECT revoked IS NOT NULL AS revoked, encrypted_payload IS NULL AS nulled FROM external_credentials WHERE id = $1",
         [s.credential_id],

@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "@cocalc/database/pool";
 import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
+import { raiseAlert, resolveAlert } from "@cocalc/server/gpu/alerts";
 
 type Db = Pick<PoolClient, "query">;
 type Dec = ReturnType<typeof toDecimal>;
@@ -273,9 +274,10 @@ export async function lockKeyFence(
   state: string;
   paused_reason: string | null;
   kill_switch_at: Date | null;
+  last_inventory_at: Date | null;
 }> {
   const { rows } = await db.query(
-    `SELECT state, paused_reason, kill_switch_at FROM gpu_key_fences WHERE credential_id = $1 FOR UPDATE`,
+    `SELECT state, paused_reason, kill_switch_at, last_inventory_at FROM gpu_key_fences WHERE credential_id = $1 FOR UPDATE`,
     [credential_id],
   );
   if (!rows[0]) refuse("This RunPod key has no GPU budget yet.");
@@ -299,15 +301,57 @@ export async function requireFreshWorkers(
   if (last && now.getTime() - new Date(last).getTime() <= REAPER_STALE_MS) {
     return;
   }
-  const { rows: overrides } = await db.query(
+  if (await hasWorkerOverride(db, key_owner_account_id, now)) return;
+  refuse(
+    "GPU launches are paused because CoCalc's GPU cleanup worker (which terminates pods at their limits) hasn't completed a check recently. Try again in a few minutes.",
+  );
+}
+
+// Launches also need a recent complete inventory of the key (the reconciler,
+// reconcile.ts): what it doesn't know about, nobody is watching. The admin
+// override for stale workers (gpu.adminAllowStaleWorkers) is the only bypass.
+export const INVENTORY_STALE_MS = 20 * 60_000;
+
+// reconcile.ts registers this: a refused launch asks for a pass soon (it
+// runs after this transaction, bounded, never awaited here)
+let inventoryWaker:
+  | ((k: { credential_id: string; key_owner_account_id: string }) => void)
+  | undefined;
+export function setInventoryWaker(f: typeof inventoryWaker): void {
+  inventoryWaker = f;
+}
+
+async function hasWorkerOverride(
+  db: Db,
+  key_owner_account_id: string,
+  now: Date,
+): Promise<boolean> {
+  const { rows } = await db.query(
     `SELECT 1 FROM gpu_worker_overrides
       WHERE key_owner_account_id = $1 AND revoked_at IS NULL AND expires_at > $2
       LIMIT 1`,
     [key_owner_account_id, now],
   );
-  if (overrides.length > 0) return;
+  return rows.length > 0;
+}
+
+export async function requireFreshInventory(
+  db: Db,
+  fence: { last_inventory_at: Date | null },
+  k: { credential_id: string; key_owner_account_id: string; now: Date },
+): Promise<void> {
+  const last = fence.last_inventory_at;
+  if (
+    last &&
+    k.now.getTime() - new Date(last).getTime() <= INVENTORY_STALE_MS
+  ) {
+    return;
+  }
+  const { credential_id, key_owner_account_id } = k;
+  setImmediate(() => inventoryWaker?.({ credential_id, key_owner_account_id }));
+  if (await hasWorkerOverride(db, key_owner_account_id, k.now)) return;
   refuse(
-    "GPU launches are paused because CoCalc's GPU cleanup worker (which terminates pods at their limits) hasn't completed a check recently. Try again in a few minutes.",
+    "GPU launches with this key are waiting for CoCalc to check the pods on your RunPod account (it does every few minutes). Try again shortly.",
   );
 }
 
@@ -340,9 +384,14 @@ export async function admitLaunch(
   }
   if (fence.paused_reason) {
     refuse(
-      "New GPU launches with this key are paused until an alert is resolved. Check gpu alerts.",
+      "New GPU launches with this key are paused because CoCalc found something on your RunPod account that needs you. See cocalc gpu alerts; once you've dealt with it, resume launches with cocalc gpu resume (it asks you to sign in again).",
     );
   }
+  await requireFreshInventory(db, fence, {
+    credential_id: req.credential_id,
+    key_owner_account_id: req.key_owner_account_id,
+    now,
+  });
   const { rows: layers } = await db.query(
     `SELECT * FROM gpu_budget_layers
       WHERE credential_id = $1
@@ -601,6 +650,10 @@ export async function settleReservations(
   // the caller holds lockBudgetsForPod (row locks are re-entrant)
   void credential_id;
   const reservations = await lockReservations(db, pod_id);
+  // the owner hears about holds that stay (and when they end), in the same
+  // transaction as the change
+  let quarantined = toDecimal(0);
+  let unquarantined = false;
   for (const r of reservations) {
     if (r.state === "settled") continue;
     if (settlement.kind === "quarantine") {
@@ -610,8 +663,10 @@ export async function settleReservations(
           [r.id],
         );
       }
+      quarantined = quarantined.plus(r.reserved_usd);
       continue;
     }
+    if (r.state === "quarantined") unquarantined = true;
     const estimate = toDecimal(r.reserved_usd);
     const actual = toDecimal(
       settlement.kind === "actual" ? settlement.actual_usd : 0,
@@ -639,6 +694,59 @@ export async function settleReservations(
       [r.layer_id, moneyToDbString(estimate), moneyToDbString(actual)],
     );
   }
+  if (settlement.kind === "quarantine" && quarantined.gt(0)) {
+    await alertQuarantined(db, pod_id, quarantined);
+  } else if (unquarantined) {
+    await endQuarantineAlert(db, pod_id, "settled");
+  }
+}
+
+// One info alert per pod whose holds are quarantined (dedupe: the pod id).
+async function alertQuarantined(db: Db, pod_id: string, held: Dec) {
+  const { rows } = await db.query(
+    "SELECT handle, credential_id, key_owner_account_id FROM gpu_pods WHERE id = $1",
+    [pod_id],
+  );
+  if (!rows[0]) return;
+  await raiseAlert(
+    {
+      key_owner_account_id: rows[0].key_owner_account_id,
+      credential_id: rows[0].credential_id,
+      kind: "quarantined_reservation",
+      severity: "info",
+      dedupe_key: pod_id,
+      details: {
+        pod_id,
+        handle: rows[0].handle,
+        held_usd: moneyToDbString(held),
+      },
+      observed_at: new Date(),
+    },
+    db,
+  );
+}
+
+// The pod's holds left quarantine (settled, released, or active again).
+export async function endQuarantineAlert(
+  db: Db,
+  pod_id: string,
+  by: string,
+): Promise<void> {
+  const { rows } = await db.query(
+    "SELECT credential_id FROM gpu_pods WHERE id = $1",
+    [pod_id],
+  );
+  if (!rows[0]) return;
+  await resolveAlert(
+    {
+      credential_id: rows[0].credential_id,
+      kind: "quarantined_reservation",
+      dedupe_key: pod_id,
+      observed_at: new Date(),
+      by,
+    },
+    db,
+  );
 }
 
 // What a pod that ran cost: runtime x the bound hourly cost. When RunPod

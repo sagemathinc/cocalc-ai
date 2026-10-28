@@ -54,4 +54,7 @@ export interface GpuProviderKeyStatus {
   // The provider account the key acts for (non-secret), when connected.
   provider_account?: GpuProviderAccount;
   connected_at?: string;
+  // When connected: "checking" until CoCalc has a recent complete check of
+  // the pods on the RunPod account (launches wait for it), then "complete".
+  inventory?: "complete" | "checking";
 }
