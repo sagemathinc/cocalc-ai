@@ -251,8 +251,7 @@ export async function runCompromiseCleanup(
     if (!cut) throw e;
   });
   if (cut) return await cutShort();
-  // the listing is complete: CoCalc's pods bound before it that it doesn't
-  // show are gone
+  // done only once the account is empty and CoCalc has no unfinished pod
   const left = await unfinishedCredentialPods(credential_id);
   if (cut || listed.length > 0 || left.length > 0) {
     return {

@@ -107,11 +107,47 @@ describe("GpuProviderKeySection", () => {
       expect(mockSystem.deleteGpuProviderKey).toHaveBeenCalledWith({
         provider: "runpod",
         browser_id: "browser-1",
+        // a first removal never forces (only "Remove anyway" does)
+        force: false,
         // longer than a removal forwarded to another bay may take
         timeout: KEY_RPC_TIMEOUT_MS,
       }),
     );
     expect(await screen.findByLabelText("RunPod API key")).toBeTruthy();
+  });
+
+  it("while pods drain, offers to remove again or anyway; anyway forces and warns about the pods left", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue(CONNECTED);
+    mockSystem.deleteGpuProviderKey
+      .mockResolvedValueOnce({ revoked: false, remaining: ["cc-7f3k9q2x"] })
+      .mockResolvedValueOnce({
+        revoked: true,
+        unmanaged: ["cc-7f3k9q2x"],
+        warning: "1 pod launched with this key may still be running",
+      });
+    render(<GpuProviderKeySection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Remove" }),
+    );
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Remove" }).at(-1)!,
+    );
+    expect(
+      await screen.findByText(/Terminating 1 GPU pod launched with this key/),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove again" })).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove anyway" }),
+    );
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Remove anyway" }).at(-1)!,
+    );
+    await waitFor(() =>
+      expect(mockSystem.deleteGpuProviderKey).toHaveBeenLastCalledWith(
+        expect.objectContaining({ provider: "runpod", force: true }),
+      ),
+    );
+    expect(await screen.findByText(/may still be running/)).toBeTruthy();
   });
 
   it("shows a server error, such as a rejected key", async () => {
