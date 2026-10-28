@@ -1224,6 +1224,90 @@ describeDb("GPU budgets", () => {
       expect(bounded.every((b) => b)).toBe(true);
     });
 
+    it("acts on no ambiguous-create lookup that came back after the pass's time ran out", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      await getPool().query(
+        "UPDATE gpu_pods SET state = 'ambiguous', provider_pod_id = NULL WHERE id = $1",
+        [pod.id],
+      );
+      // the only page starts in time and comes back late (with the pod)
+      const real = s.rp.client.findPodsByName.getMockImplementation()!;
+      s.rp.client.findPodsByName.mockImplementationOnce(
+        async (name: string, opts?: any) => {
+          await opts?.beforePage?.();
+          await new Promise((r) => setTimeout(r, 300));
+          return await real(name);
+        },
+      );
+      const result = await runCompromiseCleanup(s.account_id, s.credential_id, {
+        ...a.deps,
+        passMs: 150,
+      });
+      expect(result.closed).toBe(false);
+      const row = async () =>
+        (
+          await getPool().query(
+            "SELECT state, provider_pod_id FROM gpu_pods WHERE id = $1",
+            [pod.id],
+          )
+        ).rows[0];
+      // not bound, nothing terminated, and not backed off for it
+      expect(await row()).toEqual({
+        state: "ambiguous",
+        provider_pod_id: null,
+      });
+      expect(s.rp.client.terminatePod).not.toHaveBeenCalled();
+      // the next pass, in time, resolves it
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect((await row()).state).not.toBe("ambiguous");
+    });
+
+    it("stops between an ambiguous create's duplicate terminations when the pass's guard trips", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      await getPool().query(
+        "UPDATE gpu_pods SET state = 'ambiguous', provider_pod_id = NULL WHERE id = $1",
+        [pod.id],
+      );
+      // RunPod retried the create: two duplicates under the same name
+      for (const id of ["pod_dup0001", "pod_dup0002"]) {
+        s.rp.pods.set(id, {
+          id,
+          name: pod.handle,
+          createdAt: "2999-01-01T00:00:00Z",
+        });
+      }
+      // the lease is lost right after the first provider action
+      await expect(
+        runCompromiseCleanup(s.account_id, s.credential_id, {
+          ...a.deps,
+          guard: async () => {
+            if (s.rp.client.terminatePod.mock.calls.length > 0) {
+              throw Error("lease lost");
+            }
+          },
+        }),
+      ).rejects.toThrow("lease lost");
+      expect(s.rp.client.terminatePod).toHaveBeenCalledTimes(1);
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_pods WHERE id = $1",
+        [pod.id],
+      );
+      expect(rows[0].state).toBe("ambiguous");
+      // the next pass finishes: the other duplicates go, the record binds
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      const { rows: after } = await getPool().query(
+        "SELECT state, provider_pod_id FROM gpu_pods WHERE id = $1",
+        [pod.id],
+      );
+      expect(after[0].state).not.toBe("ambiguous");
+      // one pod is left at RunPod under that name: the one the record holds
+      expect([...s.rp.pods.keys()]).toEqual([after[0].provider_pod_id]);
+    });
+
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {
       const s = setup();
       await s.stored;

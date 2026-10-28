@@ -975,16 +975,23 @@ async function resolveAmbiguous(
   client: Pick<RunpodClient, "findPodsByName" | "terminatePod">,
   actor: Actor,
   deps: GpuPodDeps,
-  // a bounded pass's guard, before each page of RunPod's inventory
+  // a bounded pass's guard: before each page of RunPod's inventory, after
+  // the lookup, and before each terminate or bind
   beforePage?: () => Promise<void>,
 ): Promise<PodRow> {
   let found: RunpodPodView[];
   try {
     found = await client.findPodsByName(row.handle, { beforePage });
   } catch {
-    // Still unknown; a later look (pods, terminate) tries again.
+    // if the pass's guard stopped the lookup, the caller stops too (it
+    // throws again here); otherwise still unknown, and a later look (pods,
+    // terminate) tries again
+    await beforePage?.();
     return row;
   }
+  // The last (or only) page may have come back after the pass's time or
+  // lease ran out: act on it only within both.
+  await beforePage?.();
   if (found.length === 0) {
     const age = (deps.now ?? Date.now)() - new Date(row.created).getTime();
     if (age < AMBIGUOUS_WINDOW_MS) return row;
@@ -1021,9 +1028,13 @@ async function resolveAmbiguous(
             `${b.createdAt ?? ""}${b.id}`,
           ),
   );
+  // before each provider action too (the record stays ambiguous if the pass
+  // stops here, so the next one looks again and finishes)
   for (const pod of extra) {
+    await beforePage?.();
     await terminateDuplicate(row, pod, client, actor);
   }
+  await beforePage?.();
   return await bind(row, keep, client, actor);
 }
 
@@ -1160,12 +1171,26 @@ export async function resolvePendingForAccount(
     [account_id, now, limit, c.credential_id],
   );
   const ours = (row: PodRow) => row.credential_id === c.credential_id;
+  // the guard, also run inside a record (an inventory lookup's pages): its
+  // throw stops the pass there too, without counting against the pod
+  let stopped: unknown;
+  const inner = guard
+    ? async () => {
+        try {
+          await guard();
+        } catch (err) {
+          stopped = err;
+          throw err;
+        }
+      }
+    : undefined;
   const attempt = async (row: PodRow, fn: () => Promise<unknown>) => {
     // outside the try: a guard that throws stops the pass, not this pod
     await guard?.();
     try {
       await fn();
     } catch {
+      if (stopped !== undefined) throw stopped;
       // back off: 1, 2, 4, ... minutes, at most 30
       const minutes = Math.min(2 ** (row.reap_attempts ?? 0), 30);
       await getPool().query(
@@ -1188,7 +1213,7 @@ export async function resolvePendingForAccount(
     await attempt(row, async () => {
       // still unresolved (RunPod's inventory couldn't be read, and the
       // window hasn't closed): a failed attempt, backed off like any other
-      const after = await resolveAmbiguous(row, c, actor, deps, guard);
+      const after = await resolveAmbiguous(row, c, actor, deps, inner);
       if (after?.state === "ambiguous") {
         throw Error("the ambiguous create is still unresolved");
       }
