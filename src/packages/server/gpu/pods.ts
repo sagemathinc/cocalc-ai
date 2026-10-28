@@ -1096,12 +1096,17 @@ export async function resolvePendingForAccount(
     actor = { kind: "cleanup" } as Actor,
     limit = 100,
     guard,
+    retryBackedOff = false,
   }: {
     actor?: Actor;
     limit?: number;
     // called before each record is acted on: the reaper renews its lease
     // here, and a throw stops the pass
     guard?: () => Promise<void>;
+    // a compromised key's cleanup: backed-off pods too, the longest-waiting
+    // first (never tried, then the earliest backoff), so pods a slow failure
+    // keeps holding up still get their turn on later passes
+    retryBackedOff?: boolean;
   } = {},
 ): Promise<{ full: boolean }> {
   const nowMs = (deps.now ?? Date.now)();
@@ -1123,11 +1128,18 @@ export async function resolvePendingForAccount(
   }
   const ready =
     "AND (reap_after IS NULL OR reap_after <= $2) AND unmanaged_at IS NULL";
+  // what this pass picks ($2 stays typed when the backoff is ignored)
+  const pick = retryBackedOff
+    ? "AND $2::timestamptz IS NOT NULL AND unmanaged_at IS NULL"
+    : ready;
+  const order = retryBackedOff
+    ? "ORDER BY reap_after NULLS FIRST, created"
+    : "ORDER BY created";
   const due = await getPool().query(
     `SELECT 1 FROM gpu_pods WHERE key_owner_account_id = $1
         AND ((desired_state = 'terminated' AND state IN ('running', 'stopped', 'terminating')
               AND provider_pod_id IS NOT NULL)
-             OR state = 'ambiguous') ${ready}
+             OR state = 'ambiguous') ${pick}
       LIMIT 1`,
     [account_id, now],
   );
@@ -1160,14 +1172,14 @@ export async function resolvePendingForAccount(
       WHERE key_owner_account_id = $1 AND credential_id = $4
         AND desired_state = 'terminated'
         AND state IN ('running', 'stopped', 'terminating')
-        AND provider_pod_id IS NOT NULL ${ready}
-      ORDER BY created LIMIT $3`,
+        AND provider_pod_id IS NOT NULL ${pick}
+      ${order} LIMIT $3`,
     [account_id, now, limit, c.credential_id],
   );
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND credential_id = $4
-        AND state = 'ambiguous' ${ready}
-      ORDER BY created LIMIT $3`,
+        AND state = 'ambiguous' ${pick}
+      ${order} LIMIT $3`,
     [account_id, now, limit, c.credential_id],
   );
   const ours = (row: PodRow) => row.credential_id === c.credential_id;
@@ -1677,6 +1689,8 @@ export async function endPodsAbsentFromInventory(
   present: Set<string>,
   boundBefore: Set<string>,
   actor: Actor = { kind: "cleanup" },
+  // a bounded pass's guard, before each record it ends
+  guard?: () => Promise<void>,
 ): Promise<number> {
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods
@@ -1688,6 +1702,7 @@ export async function endPodsAbsentFromInventory(
   for (const row of rows as PodRow[]) {
     if (present.has(row.provider_pod_id!)) continue;
     if (!boundBefore.has(row.provider_pod_id!)) continue;
+    await guard?.();
     const terminating = await recordTerminating(row, actor);
     if (!terminating) continue;
     // RunPod already has no such pod: its terminate is a no-op here

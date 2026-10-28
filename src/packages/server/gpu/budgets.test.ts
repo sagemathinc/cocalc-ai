@@ -673,14 +673,18 @@ describeDb("GPU budgets", () => {
       };
       const deps = {
         getCleanup: async () => cleanup as any,
-        resolvePending: (a: string, guard: () => Promise<void>) =>
+        resolvePending: (
+          a: string,
+          guard: () => Promise<void>,
+          opts?: { retryBackedOff?: boolean },
+        ) =>
           resolvePendingForAccount(
             a,
             {
               ...s.deps,
               getCleanup: async () => cleanup as any,
             },
-            { guard },
+            { guard, ...opts },
           ),
       };
       return {
@@ -1330,11 +1334,15 @@ describeDb("GPU budgets", () => {
       // a batch of one, so the second pod is beyond the first batch
       const deps = {
         ...a.deps,
-        resolvePending: (acct: string, guard: () => Promise<void>) =>
+        resolvePending: (
+          acct: string,
+          guard: () => Promise<void>,
+          opts?: { retryBackedOff?: boolean },
+        ) =>
           resolvePendingForAccount(
             acct,
             { ...s.deps, getCleanup: async () => a.cleanup as any },
-            { guard, limit: 1 },
+            { guard, limit: 1, ...opts },
           ),
       };
       await reportCompromisedLocal(
@@ -1347,6 +1355,91 @@ describeDb("GPU budgets", () => {
       );
       expect((await ids(first.id)).state).not.toBe("terminated");
       expect((await ids(second.id)).state).toBe("terminated");
+    });
+
+    it("ends pods absent from the inventory one at a time under the pass's guard", async () => {
+      const s = setup();
+      const first = await s.launch();
+      const second = await s.launch();
+      const a = account(s);
+      // marked to terminate (as a report leaves them)
+      await getPool().query(
+        "UPDATE gpu_pods SET desired_state = 'terminated' WHERE id = ANY($1)",
+        [[first.id, second.id]],
+      );
+      // RunPod won't terminate them, and its complete listing shows neither
+      s.rp.client.terminatePod.mockRejectedValue(
+        new RunpodApiError("provider", 503),
+      );
+      a.cleanup.listPods.mockResolvedValue([]);
+      const states = async () =>
+        (
+          await getPool().query(
+            "SELECT state FROM gpu_pods WHERE id = ANY($1) ORDER BY created",
+            [[first.id, second.id]],
+          )
+        ).rows.map((r) => r.state);
+      // the lease is lost once the first has ended
+      await expect(
+        runCompromiseCleanup(s.account_id, s.credential_id, {
+          ...a.deps,
+          resolvePending: async () => {},
+          guard: async () => {
+            if ((await states()).includes("terminated")) {
+              throw Error("lease lost");
+            }
+          },
+        }),
+      ).rejects.toThrow("lease lost");
+      expect((await states()).filter((x) => x === "terminated")).toHaveLength(
+        1,
+      );
+      // the next pass ends the other
+      await runCompromiseCleanup(s.account_id, s.credential_id, {
+        ...a.deps,
+        resolvePending: async () => {},
+      });
+      expect(await states()).toEqual(["terminated", "terminated"]);
+    });
+
+    it("a slow failure that uses up the pass doesn't keep the next pod waiting: later passes take the longest-waiting first", async () => {
+      const s = setup();
+      const first = await s.launch();
+      const second = await s.launch();
+      const a = account(s);
+      const row = async (id: string) =>
+        (
+          await getPool().query(
+            "SELECT provider_pod_id, state FROM gpu_pods WHERE id = $1",
+            [id],
+          )
+        ).rows[0];
+      const slow = (await row(first.id)).provider_pod_id;
+      // RunPod takes the whole pass to fail the oldest pod's terminate
+      const terminate = s.rp.client.terminatePod.getMockImplementation()!;
+      s.rp.client.terminatePod.mockImplementation(async (id: string) => {
+        if (id === slow) {
+          await new Promise((r) => setTimeout(r, 150));
+          throw new RunpodApiError("provider", 503);
+        }
+        return await terminate(id);
+      });
+      await getPool().query(
+        "UPDATE gpu_pods SET desired_state = 'terminated' WHERE id = ANY($1)",
+        [[first.id, second.id]],
+      );
+      const pass = () =>
+        runCompromiseCleanup(s.account_id, s.credential_id, {
+          ...a.deps,
+          passMs: 100,
+        });
+      await pass();
+      // that pass only reached the slow pod
+      expect((await row(second.id)).state).not.toBe("terminated");
+      // the next one takes the pod that hasn't been tried yet first
+      await pass();
+      expect((await row(second.id)).state).toBe("terminated");
+      expect((await row(first.id)).state).not.toBe("terminated");
     });
 
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {

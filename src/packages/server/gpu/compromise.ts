@@ -93,6 +93,7 @@ export interface GpuCompromiseDeps {
   resolvePending?: (
     account_id: string,
     guard: () => Promise<void>,
+    opts?: { retryBackedOff?: boolean },
   ) => Promise<unknown>;
   keyFence?: typeof underKeyFence;
   homeClient?: (account_id: string) => Promise<InterBayGpuApi | undefined>;
@@ -129,16 +130,8 @@ export async function runCompromiseCleanup(
   // the key is no longer stored (a forced removal ended it), or another key
   // is: nothing to do with this one
   if (!c || c.credential_id !== credential_id) return { closed: false };
-  // the key's own pods, through their normal paths, every pass: a compromised
-  // key's terminates don't back off (the reaper's backoff is for one bad pod
-  // among many; here each is retried until RunPod confirms)
-  await getPool().query(
-    `UPDATE gpu_pods SET reap_after = NULL
-      WHERE credential_id = $1 AND desired_state = 'terminated'
-        AND state NOT IN ('terminated', 'failed')
-        AND unmanaged_at IS NULL AND reap_after IS NOT NULL`,
-    [credential_id],
-  );
+  // the key's own pods, through their normal paths, every pass (backed-off
+  // ones included: see the batches below)
   // the whole pass, resolving included, is bounded: past the deadline it
   // stops (the next pass continues)
   const deadline = Date.now() + (deps.passMs ?? REQUEST_PASS_MS);
@@ -153,12 +146,26 @@ export async function runCompromiseCleanup(
   // Batch after batch while the resolver says more may wait (within the
   // pass's bound): a batch's failures back off, so the next batch reaches
   // the pods after them; the next pass retries the failures.
+  // The first batch also takes backed-off pods, the longest-waiting first
+  // (a compromised key's pods are retried every pass, and one slow failure
+  // can't keep the rest waiting); later batches skip what this pass just
+  // backed off.
   const resolve =
     deps.resolvePending ??
-    ((a: string, guard: () => Promise<void>) =>
-      resolvePendingForAccount(a, {}, { guard }));
+    ((
+      a: string,
+      guard: () => Promise<void>,
+      opts?: { retryBackedOff?: boolean },
+    ) =>
+      resolvePendingForAccount(
+        a,
+        {},
+        { guard, retryBackedOff: opts?.retryBackedOff },
+      ));
   for (let batch = 0; batch < MAX_RESOLVE_BATCHES && !cut; batch++) {
-    const r = await resolve(account_id, bounded).catch(() => undefined);
+    const r = await resolve(account_id, bounded, {
+      retryBackedOff: batch === 0,
+    }).catch(() => undefined);
     if ((r as { full?: boolean } | undefined)?.full !== true) break;
   }
   // out of time: nothing more this pass (the next one continues)
@@ -226,7 +233,12 @@ export async function runCompromiseCleanup(
     credential_id,
     new Set(listed.map((p) => p.id)),
     boundBefore,
-  );
+    { kind: "cleanup" },
+    bounded,
+  ).catch((e) => {
+    if (!cut) throw e;
+  });
+  if (cut) return await cutShort();
   for (const pod of listed) {
     if (live.has(pod.id)) continue;
     if (Date.now() >= deadline) {
