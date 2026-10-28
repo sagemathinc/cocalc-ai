@@ -17,9 +17,15 @@ lease) makes sure no pod outlives what it was allowed:
 
 A layer that is merely full blocks new launches; it never terminates pods
 already funded. Only a *completed* sweep moves the watermark that launch
-admission requires (budgets.ts); a sweep that fails part-way doesn't.
+admission requires (budgets.ts): every query is paged to its end, and a
+sweep that fails, loses its lease, or can't drain an owner in time doesn't
+move it. The watermark is the time the sweep finished.
+
+Each sweep holds the lease under its own token, renewed as it goes, so a
+second tick (on this hub or another) can't start while one is running.
 */
 
+import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
@@ -27,6 +33,7 @@ import { isGpuProviderKeysEntitled } from "@cocalc/server/gpu/provider-keys";
 import {
   recordSeenAddresses,
   resolvePendingForAccount,
+  STALE_CREATE_MS,
   transition,
   type Actor,
   type GpuPodDeps,
@@ -43,6 +50,9 @@ export const LAPSE_GRACE_MS = 7 * 24 * 60 * 60_000;
 // it started is terminated, rather than billing for nothing.
 export const COMMUNITY_SSH_DEADLINE_MS = 10 * 60_000;
 const BATCH = 100;
+// passes over one owner's pending records before the sweep counts as
+// incomplete (each pass takes up to BATCH of each kind)
+const OWNER_PASSES = 20;
 
 export interface ReaperDeps extends GpuPodDeps {
   holder?: string;
@@ -51,9 +61,11 @@ export interface ReaperDeps extends GpuPodDeps {
 
 const REAPER: Actor = { kind: "reaper" };
 
+// The lease is taken under a token unique to one sweep: nobody, not even
+// the same hub, takes it again until that sweep releases it or it expires.
 export async function acquireWorkerLease(
   name: "reaper" | "reconciler",
-  holder: string,
+  token: string,
   now: Date,
   ttlMs = REAPER_LEASE_MS,
 ): Promise<boolean> {
@@ -65,27 +77,50 @@ export async function acquireWorkerLease(
     `UPDATE gpu_worker_leases
         SET holder = $2, expires_at = $3::timestamptz + make_interval(secs => $4),
             last_started_at = $3
-      WHERE name = $1 AND (holder IS NULL OR holder = $2 OR expires_at < $3)
+      WHERE name = $1 AND (holder IS NULL OR expires_at < $3)
       RETURNING name`,
-    [name, holder, now, ttlMs / 1000],
+    [name, token, now, ttlMs / 1000],
   );
   return rows.length > 0;
 }
 
+class LeaseLost extends Error {}
+
+// Extend this sweep's lease; a sweep that lost it stops at once.
+async function renewWorkerLease(
+  name: "reaper" | "reconciler",
+  token: string,
+  now: Date,
+  ttlMs = REAPER_LEASE_MS,
+): Promise<void> {
+  const { rows } = await getPool().query(
+    `UPDATE gpu_worker_leases
+        SET expires_at = $3::timestamptz + make_interval(secs => $4)
+      WHERE name = $1 AND holder = $2 RETURNING name`,
+    [name, token, now, ttlMs / 1000],
+  );
+  if (rows.length === 0) throw new LeaseLost("the reaper lease was lost");
+}
+
+// Release this sweep's lease; only a complete sweep moves the watermark,
+// to the time it finished.
 async function finishWorkerLease(
   name: "reaper" | "reconciler",
-  holder: string,
-  now: Date,
+  token: string,
+  finished: Date,
   error?: string,
 ): Promise<void> {
   await getPool().query(
     error == null
-      ? `UPDATE gpu_worker_leases SET last_completed_at = $3, last_error = NULL
+      ? `UPDATE gpu_worker_leases
+            SET last_completed_at = $3, last_error = NULL, holder = NULL, expires_at = NULL
           WHERE name = $1 AND holder = $2`
-      : `UPDATE gpu_worker_leases SET last_error = $4 WHERE name = $1 AND holder = $2`,
+      : `UPDATE gpu_worker_leases
+            SET last_error = $4, holder = NULL, expires_at = NULL
+          WHERE name = $1 AND holder = $2`,
     error == null
-      ? [name, holder, now]
-      : [name, holder, now, error.slice(0, 500)],
+      ? [name, token, finished]
+      : [name, token, finished, error.slice(0, 500)],
   );
 }
 
@@ -139,139 +174,247 @@ const CAUSES: {
 
 // Record, per key, whether its owner still has the entitlement: the 7-day
 // lapse clock starts the first time it is seen missing.
-async function checkEntitlements(now: Date, deps: ReaperDeps): Promise<void> {
-  const { rows } = await getPool().query(
-    `SELECT DISTINCT f.credential_id, f.key_owner_account_id, f.entitlement_lapsed_at
-       FROM gpu_key_fences f JOIN gpu_pods p ON p.credential_id = f.credential_id
-      WHERE p.state NOT IN ('terminated', 'failed') LIMIT $1`,
-    [BATCH],
-  );
-  for (const f of rows) {
-    let entitled: boolean;
-    try {
-      entitled = await (deps.isEntitled ?? isGpuProviderKeysEntitled)(
-        f.key_owner_account_id,
-      );
-    } catch {
-      continue; // unknown: decide next sweep
-    }
-    if (!entitled && f.entitlement_lapsed_at == null) {
-      await getPool().query(
-        `UPDATE gpu_key_fences SET entitlement_lapsed_at = $2, updated = now() WHERE credential_id = $1`,
-        [f.credential_id, now],
-      );
-    } else if (entitled && f.entitlement_lapsed_at != null) {
-      await getPool().query(
-        `UPDATE gpu_key_fences SET entitlement_lapsed_at = NULL, updated = now() WHERE credential_id = $1`,
-        [f.credential_id],
-      );
-    }
+async function checkEntitlements(
+  now: Date,
+  deps: ReaperDeps,
+  renew: () => Promise<void>,
+): Promise<void> {
+  let after = "";
+  for (;;) {
+    const { rows } = await getPool().query(
+      `SELECT f.credential_id, f.key_owner_account_id, f.entitlement_lapsed_at
+         FROM gpu_key_fences f
+        WHERE f.credential_id::text > $2
+          AND EXISTS (SELECT 1 FROM gpu_pods p WHERE p.credential_id = f.credential_id
+                        AND p.state NOT IN ('terminated', 'failed'))
+        ORDER BY f.credential_id::text LIMIT $1`,
+      [BATCH, after],
+    );
+    for (const f of rows) await checkEntitlement(f, now, deps);
+    if (rows.length < BATCH) return;
+    after = `${rows[rows.length - 1].credential_id}`;
+    await renew();
   }
 }
 
-async function markForTermination(now: Date): Promise<number> {
+async function checkEntitlement(
+  f: {
+    credential_id: string;
+    key_owner_account_id: string;
+    entitlement_lapsed_at: Date | null;
+  },
+  now: Date,
+  deps: ReaperDeps,
+): Promise<void> {
+  let entitled: boolean;
+  try {
+    entitled = await (deps.isEntitled ?? isGpuProviderKeysEntitled)(
+      f.key_owner_account_id,
+    );
+  } catch {
+    return; // unknown: decide next sweep
+  }
+  if (!entitled && f.entitlement_lapsed_at == null) {
+    await getPool().query(
+      `UPDATE gpu_key_fences SET entitlement_lapsed_at = $2, updated = now() WHERE credential_id = $1`,
+      [f.credential_id, now],
+    );
+  } else if (entitled && f.entitlement_lapsed_at != null) {
+    await getPool().query(
+      `UPDATE gpu_key_fences SET entitlement_lapsed_at = NULL, updated = now() WHERE credential_id = $1`,
+      [f.credential_id],
+    );
+  }
+}
+
+async function markForTermination(
+  now: Date,
+  renew: () => Promise<void>,
+): Promise<number> {
   let marked = 0;
   for (const c of CAUSES) {
-    const { rows } = await getPool().query(
-      `SELECT p.id FROM gpu_pods p WHERE ${LIVE} AND ${c.where}
-        ORDER BY p.deadline LIMIT ${BATCH}`,
-      [now],
-    );
-    for (const { id } of rows) {
-      const row = await transition(
-        id,
-        { desired_state: "terminated", reason: c.reason },
-        "AND desired_state <> 'terminated' AND state NOT IN ('terminated', 'failed')",
-        { actor: REAPER, action: c.action, details: { cause: c.cause } },
+    let after = "";
+    for (;;) {
+      const { rows } = await getPool().query(
+        `SELECT p.id FROM gpu_pods p WHERE ${LIVE} AND ${c.where}
+            AND p.id::text > $2
+          ORDER BY p.id::text LIMIT ${BATCH}`,
+        [now, after],
       );
-      if (row) marked += 1;
+      for (const { id } of rows) {
+        const row = await transition(
+          id,
+          { desired_state: "terminated", reason: c.reason },
+          "AND desired_state <> 'terminated' AND state NOT IN ('terminated', 'failed')",
+          { actor: REAPER, action: c.action, details: { cause: c.cause } },
+        );
+        if (row) marked += 1;
+      }
+      if (rows.length < BATCH) break;
+      after = `${rows[rows.length - 1].id}`;
+      await renew();
     }
   }
   return marked;
 }
 
-async function checkCommunitySsh(now: Date, deps: ReaperDeps): Promise<number> {
-  const { rows } = await getPool().query(
-    `SELECT p.* FROM gpu_pods p
-      WHERE ${LIVE} AND p.state = 'running' AND p.cloud = 'COMMUNITY'
-        AND p.ssh_key_fingerprint IS NOT NULL AND p.public_ip IS NULL
-        AND p.running_since <= $1::timestamptz - make_interval(secs => $2)
-      LIMIT ${BATCH}`,
-    [now, COMMUNITY_SSH_DEADLINE_MS / 1000],
-  );
+// public_ip is recorded only from a complete SSH endpoint (host, port and
+// user: cloud/runpod/views.ts), so a pod with only a public IP, or none, is
+// still a candidate here.
+async function checkCommunitySsh(
+  now: Date,
+  deps: ReaperDeps,
+  renew: () => Promise<void>,
+): Promise<number> {
   let marked = 0;
-  for (const p of rows) {
-    const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
-      p.key_owner_account_id,
-    ).catch(() => undefined);
-    if (!c || c.credential_id !== p.credential_id) continue;
-    const live = await c.getPod(p.provider_pod_id).catch(() => null);
-    if (live === null) continue; // couldn't ask: next sweep
-    if (live?.sshDirect?.host) {
-      await recordSeenAddresses(
-        [{ id: p.id, provider_pod_id: p.provider_pod_id } as any],
-        [live],
-      );
-      continue;
-    }
-    const row = await transition(
-      p.id,
-      {
-        desired_state: "terminated",
-        reason:
-          "No public SSH port appeared within 10 minutes on Community Cloud; try Secure Cloud.",
-      },
-      "AND desired_state <> 'terminated' AND state NOT IN ('terminated', 'failed')",
-      {
-        actor: REAPER,
-        action: "terminate",
-        details: { cause: "community_no_ssh" },
-      },
+  let after = "";
+  for (;;) {
+    const { rows } = await getPool().query(
+      `SELECT p.* FROM gpu_pods p
+        WHERE ${LIVE} AND p.state = 'running' AND p.cloud = 'COMMUNITY'
+          AND p.ssh_key_fingerprint IS NOT NULL AND p.public_ip IS NULL
+          AND p.running_since <= $1::timestamptz - make_interval(secs => $2)
+          AND p.id::text > $3
+        ORDER BY p.id::text LIMIT ${BATCH}`,
+      [now, COMMUNITY_SSH_DEADLINE_MS / 1000, after],
     );
-    if (row) marked += 1;
+    for (const p of rows) marked += await checkCommunityPod(p, deps);
+    if (rows.length < BATCH) return marked;
+    after = `${rows[rows.length - 1].id}`;
+    await renew();
   }
-  return marked;
 }
 
-export async function runGpuReaperSweep(
-  deps: ReaperDeps = {},
-): Promise<{ ran: boolean; marked?: number; accounts?: number }> {
-  const now = new Date((deps.now ?? Date.now)());
-  const holder = deps.holder ?? `${hostname()}:${process.pid}`;
-  if (!(await acquireWorkerLease("reaper", holder, now))) {
-    return { ran: false };
+// 1 if the pod is marked for termination, else 0
+async function checkCommunityPod(p: any, deps: ReaperDeps): Promise<number> {
+  const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
+    p.key_owner_account_id,
+  ).catch(() => undefined);
+  if (!c || c.credential_id !== p.credential_id) return 0;
+  const live = await c.getPod(p.provider_pod_id).catch(() => null);
+  if (live === null) return 0; // couldn't ask: next sweep
+  if (live?.sshDirect?.host && live.sshDirect.port) {
+    await recordSeenAddresses(
+      [{ id: p.id, provider_pod_id: p.provider_pod_id } as any],
+      [live],
+    );
+    return 0;
   }
-  try {
-    await checkEntitlements(now, deps);
-    const marked =
-      (await markForTermination(now)) + (await checkCommunitySsh(now, deps));
+  const row = await transition(
+    p.id,
+    {
+      desired_state: "terminated",
+      reason:
+        "No public SSH port appeared within 10 minutes on Community Cloud; try Secure Cloud.",
+    },
+    "AND desired_state <> 'terminated' AND state NOT IN ('terminated', 'failed')",
+    {
+      actor: REAPER,
+      action: "terminate",
+      details: { cause: "community_no_ssh" },
+    },
+  );
+  return row ? 1 : 0;
+}
+
+// Key owners with records ready for work now (backed-off pods excluded),
+// paged; each owner is passed over until its batches are short.
+async function resolveOwners(
+  now: Date,
+  deps: ReaperDeps,
+  renew: () => Promise<void>,
+): Promise<{ accounts: number; complete: boolean }> {
+  let accounts = 0;
+  let complete = true;
+  let after = "";
+  const staleBefore = new Date(now.getTime() - STALE_CREATE_MS);
+  for (;;) {
     const { rows } = await getPool().query(
       `SELECT DISTINCT key_owner_account_id FROM gpu_pods
-        WHERE state IN ('intent', 'creating', 'ambiguous')
-           OR (desired_state = 'terminated'
-               AND state IN ('running', 'stopped', 'terminating'))
-        LIMIT $1`,
-      [BATCH],
+        WHERE key_owner_account_id::text > $4
+          AND ((state IN ('intent', 'creating') AND updated < $3)
+               OR ((state = 'ambiguous'
+                    OR (desired_state = 'terminated'
+                        AND state IN ('running', 'stopped', 'terminating')
+                        AND provider_pod_id IS NOT NULL))
+                   AND (reap_after IS NULL OR reap_after <= $2)))
+        ORDER BY key_owner_account_id LIMIT $1`,
+      [BATCH, now, staleBefore, after],
     );
     for (const { key_owner_account_id } of rows) {
-      await resolvePendingForAccount(key_owner_account_id, deps, {
-        actor: REAPER,
-      });
+      accounts += 1;
+      let drained = false;
+      for (let pass = 0; pass < OWNER_PASSES; pass++) {
+        const { full } = await resolvePendingForAccount(
+          key_owner_account_id,
+          deps,
+          { actor: REAPER },
+        );
+        await renew();
+        if (!full) {
+          drained = true;
+          break;
+        }
+      }
+      if (!drained) complete = false;
     }
-    await finishWorkerLease("reaper", holder, now);
-    return { ran: true, marked, accounts: rows.length };
+    if (rows.length < BATCH) return { accounts, complete };
+    after = `${rows[rows.length - 1].key_owner_account_id}`;
+  }
+}
+
+export async function runGpuReaperSweep(deps: ReaperDeps = {}): Promise<{
+  ran: boolean;
+  complete?: boolean;
+  marked?: number;
+  accounts?: number;
+}> {
+  const clock = () => new Date((deps.now ?? Date.now)());
+  // the cutoff for every decision in this sweep
+  const now = clock();
+  const token = `${deps.holder ?? `${hostname()}:${process.pid}`}:${randomUUID()}`;
+  if (!(await acquireWorkerLease("reaper", token, now))) {
+    return { ran: false };
+  }
+  const renew = () => renewWorkerLease("reaper", token, clock());
+  try {
+    await checkEntitlements(now, deps, renew);
+    const marked =
+      (await markForTermination(now, renew)) +
+      (await checkCommunitySsh(now, deps, renew));
+    const { accounts, complete } = await resolveOwners(now, deps, renew);
+    await finishWorkerLease(
+      "reaper",
+      token,
+      clock(),
+      complete ? undefined : "incomplete: an owner's pending work didn't drain",
+    );
+    return { ran: true, complete, marked, accounts };
   } catch (err) {
     log.error("GPU reaper sweep failed", `${err}`);
-    await finishWorkerLease("reaper", holder, now, `${err}`).catch(() => {});
+    if (!(err instanceof LeaseLost)) {
+      await finishWorkerLease("reaper", token, clock(), `${err}`).catch(
+        () => {},
+      );
+    }
     throw err;
   }
 }
 
 export function initGpuReaper(): void {
-  const run = () =>
-    runGpuReaperSweep().catch(() => {
+  // one sweep at a time in this hub (the lease covers other hubs)
+  let running = false;
+  const run = async () => {
+    if (running) return;
+    running = true;
+    try {
+      await runGpuReaperSweep();
+    } catch {
       // logged; the watermark stays put, so launches wait (fail closed)
-    });
+    } finally {
+      running = false;
+    }
+  };
   void run();
   setInterval(run, REAPER_INTERVAL_MS).unref?.();
 }

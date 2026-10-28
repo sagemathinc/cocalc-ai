@@ -1077,7 +1077,7 @@ export async function resolvePendingForAccount(
   account_id: string,
   deps: GpuPodDeps,
   { actor = { kind: "cleanup" } as Actor, limit = 100 } = {},
-): Promise<void> {
+): Promise<{ full: boolean }> {
   const nowMs = (deps.now ?? Date.now)();
   const now = new Date(nowMs);
   const staleBefore = new Date(nowMs - STALE_CREATE_MS);
@@ -1094,29 +1094,39 @@ export async function resolvePendingForAccount(
     await resolveStaleCreate(r.id, r.state, actor);
   }
   const ready = "AND (reap_after IS NULL OR reap_after <= $2)";
-  // Pods that must go but whose termination RunPod didn't confirm.
-  const { rows: pending } = await getPool().query(
-    `SELECT * FROM gpu_pods
-      WHERE key_owner_account_id = $1 AND desired_state = 'terminated'
-        AND state IN ('running', 'stopped', 'terminating')
-        AND provider_pod_id IS NOT NULL ${ready}
-      ORDER BY created LIMIT $3`,
-    [account_id, now, limit],
+  const due = await getPool().query(
+    `SELECT 1 FROM gpu_pods WHERE key_owner_account_id = $1
+        AND ((desired_state = 'terminated' AND state IN ('running', 'stopped', 'terminating')
+              AND provider_pod_id IS NOT NULL)
+             OR state = 'ambiguous') ${ready}
+      LIMIT 1`,
+    [account_id, now],
   );
-  const { rows } = await getPool().query(
-    `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1
-        AND state = 'ambiguous' ${ready}
-      ORDER BY created LIMIT $3`,
-    [account_id, now, limit],
-  );
-  if (rows.length === 0 && pending.length === 0) return;
+  if (due.rows.length === 0) return { full: stale.length >= limit };
   const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
     account_id,
   ).catch(() => undefined);
-  if (!c) return;
+  // Without a key, nothing more can be done now (a later pass retries).
+  if (!c) return { full: stale.length >= limit };
   // Only pods launched with the key now connected: another key may act for
   // another RunPod account, where these pods don't exist (5c keeps the
   // launching key until its pods end).
+  // Pods that must go but whose termination RunPod didn't confirm.
+  const { rows: pending } = await getPool().query(
+    `SELECT * FROM gpu_pods
+      WHERE key_owner_account_id = $1 AND credential_id = $4
+        AND desired_state = 'terminated'
+        AND state IN ('running', 'stopped', 'terminating')
+        AND provider_pod_id IS NOT NULL ${ready}
+      ORDER BY created LIMIT $3`,
+    [account_id, now, limit, c.credential_id],
+  );
+  const { rows } = await getPool().query(
+    `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND credential_id = $4
+        AND state = 'ambiguous' ${ready}
+      ORDER BY created LIMIT $3`,
+    [account_id, now, limit, c.credential_id],
+  );
   const ours = (row: PodRow) => row.credential_id === c.credential_id;
   const attempt = async (row: PodRow, fn: () => Promise<unknown>) => {
     try {
@@ -1143,6 +1153,11 @@ export async function resolvePendingForAccount(
   for (const row of (rows as PodRow[]).filter(ours)) {
     await attempt(row, () => resolveAmbiguous(row, c, actor, deps));
   }
+  // a full batch may have more behind it: the caller passes again
+  return {
+    full:
+      stale.length >= limit || pending.length >= limit || rows.length >= limit,
+  };
 }
 
 const resolveAmbiguousForAccount = (account_id: string, deps: GpuPodDeps) =>

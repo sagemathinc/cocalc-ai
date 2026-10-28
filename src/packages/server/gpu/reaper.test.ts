@@ -129,11 +129,12 @@ describeDb("GPU reaper", () => {
   });
   beforeEach(freshReaper);
 
-  it("runs on one hub at a time, and takes over an expired lease", async () => {
+  it("runs one sweep at a time, and takes over an expired lease", async () => {
     const now = new Date();
-    expect(await acquireWorkerLease("reaper", "hub-a", now)).toBe(true);
-    expect(await acquireWorkerLease("reaper", "hub-b", now)).toBe(false);
-    expect(await acquireWorkerLease("reaper", "hub-a", now)).toBe(true);
+    expect(await acquireWorkerLease("reaper", "hub-a:run1", now)).toBe(true);
+    expect(await acquireWorkerLease("reaper", "hub-b:run1", now)).toBe(false);
+    // not even another sweep of the same hub
+    expect(await acquireWorkerLease("reaper", "hub-a:run2", now)).toBe(false);
     expect(
       await acquireWorkerLease(
         "reaper",
@@ -364,7 +365,11 @@ describeDb("GPU reaper", () => {
       },
       s.deps,
     );
-    const getPod = jest.fn(async (id: string) => ({ id }));
+    // a public IP but no SSH endpoint: not usable
+    const getPod = jest.fn(async (id: string) => ({
+      id,
+      publicIp: "203.0.113.9",
+    }));
     const deps = {
       ...s.deps,
       getCleanup: async () =>
@@ -427,5 +432,125 @@ describeDb("GPU reaper", () => {
       (await listManagedGpuPodsLocal({ account_id: s.account_id }, s.deps))
         .length,
     ).toBe(1);
+  });
+
+  it("never starts a second sweep while one runs, even from the same hub", async () => {
+    const s = setup();
+    await s.launch();
+    let reached!: () => void;
+    const atGate = new Promise<void>((r) => (reached = r));
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    let calls = 0;
+    const deps = {
+      ...s.deps,
+      isEntitled: async () => {
+        if (++calls === 1) {
+          reached();
+          await gate;
+        }
+        return true;
+      },
+    };
+    const first = runGpuReaperSweep(deps);
+    await atGate;
+    expect(await runGpuReaperSweep(deps)).toEqual({ ran: false });
+    open();
+    expect(await first).toEqual(expect.objectContaining({ ran: true }));
+  });
+
+  it("records the time a sweep finished as its watermark", async () => {
+    const s = setup();
+    await s.launch();
+    let calls = 0;
+    const deps = {
+      ...s.deps,
+      // the sweep takes four minutes
+      isEntitled: async () => {
+        if (++calls === 1) s.advance(4 * 60_000);
+        return true;
+      },
+    };
+    await runGpuReaperSweep(deps);
+    const { rows } = await getPool().query(
+      "SELECT last_completed_at, holder FROM gpu_worker_leases WHERE name = 'reaper'",
+    );
+    expect(new Date(rows[0].last_completed_at).getTime()).toBe(s.deps.now());
+    expect(rows[0].holder).toBeNull();
+  });
+
+  // synthetic records, many owners at once
+  async function bulkPods({
+    n,
+    state,
+    extra = "",
+  }: {
+    n: number;
+    state: string;
+    extra?: string;
+  }): Promise<string[]> {
+    const { rows } = await getPool().query(
+      `INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider,
+         beneficiary_account_id, spec, gpu_type_id, gpu_count, cloud, state, desired_state,
+         max_runtime_minutes, deadline, created, updated, reap_after)
+       SELECT gen_random_uuid(), 'cc-' || substr(translate(md5(random()::text), '0189', 'abcd'), 1, 16),
+         o, gen_random_uuid(), 'runpod', o, '{}', 'NVIDIA RTX A4000', 1, 'SECURE', $2, 'running',
+         60, now() + interval '30 days', now() - interval '1 hour', now() - interval '1 hour',
+         ${extra || "NULL"}
+         FROM (SELECT gen_random_uuid() AS o FROM generate_series(1, $1)) owners
+       RETURNING key_owner_account_id`,
+      [n, state],
+    );
+    return rows.map((r) => r.key_owner_account_id);
+  }
+
+  it("drains more than a batch of owners, past backed-off work", async () => {
+    const s = setup();
+    // 100 owners whose pending work is backed off far into the future...
+    const delayed = await bulkPods({
+      n: 100,
+      state: "ambiguous",
+      extra: "now() + interval '1 day'",
+    });
+    // ...and 150 owners with crash-left intents, ready now
+    const ready = await bulkPods({ n: 150, state: "intent" });
+    const result = await runGpuReaperSweep(s.deps);
+    expect(result).toEqual(
+      expect.objectContaining({ ran: true, complete: true }),
+    );
+    const { rows } = await getPool().query(
+      "SELECT state, count(*)::int AS n FROM gpu_pods WHERE key_owner_account_id = ANY($1) GROUP BY state",
+      [[...delayed, ...ready]],
+    );
+    expect(Object.fromEntries(rows.map((r) => [r.state, r.n]))).toEqual({
+      ambiguous: 100,
+      failed: 150,
+    });
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'failed', desired_state = 'terminated' WHERE key_owner_account_id = ANY($1)",
+      [delayed],
+    );
+  });
+
+  it("checks the entitlement of more than a batch of keys", async () => {
+    const s = setup();
+    const owners = await bulkPods({ n: 150, state: "running" });
+    await getPool().query(
+      `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
+       SELECT credential_id, key_owner_account_id, 'active', now(), now()
+         FROM gpu_pods WHERE key_owner_account_id = ANY($1)`,
+      [owners],
+    );
+    await runGpuReaperSweep({ ...s.deps, isEntitled: async () => false });
+    const { rows } = await getPool().query(
+      `SELECT count(*)::int AS n FROM gpu_key_fences
+        WHERE key_owner_account_id = ANY($1) AND entitlement_lapsed_at IS NOT NULL`,
+      [owners],
+    );
+    expect(rows[0].n).toBe(150);
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'terminated', desired_state = 'terminated' WHERE key_owner_account_id = ANY($1)",
+      [owners],
+    );
   });
 });
