@@ -61,6 +61,7 @@ import "./email-auth";
 import "./email-counter";
 import "./external-credentials";
 import "./global-config";
+import "./gpu-agent-grants";
 import "./gpu-budgets";
 import "./gpu-pods";
 import "./growth-analytics";

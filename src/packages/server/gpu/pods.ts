@@ -67,6 +67,15 @@ import { parseEd25519PublicKey } from "@cocalc/util/gpu/ssh-key";
 import siteURL from "@cocalc/database/settings/site-url";
 import { CLEARED_HOSTKEY_FIELDS } from "@cocalc/server/gpu/hostkey-clear";
 import {
+  agentLaunchPayload,
+  consumeGrantLaunch,
+  lockUsableGrant,
+  NoUsableAgentGrant,
+  requestAgentLaunch,
+  revokeAgentGrantsForKillSwitch,
+  type GpuAgentPrincipal,
+} from "@cocalc/server/gpu/agent-grants";
+import {
   HOSTKEY_TOKEN_TTL_MS,
   newHostkeyToken,
 } from "@cocalc/server/gpu/hostkey-token";
@@ -258,7 +267,7 @@ export function podSummary(row: PodRow): GpuPodSummary {
   };
   if (row.provider_pod_id) s.provider_pod_id = row.provider_pod_id;
   if (row.project_id) s.project_id = row.project_id;
-  if (row.agent_id) s.agent_id = row.agent_id;
+  if (row.agent_id) s.agent_id = visibleAgentId(row.agent_id);
   if (row.data_center_id) s.data_center_id = row.data_center_id;
   if (row.cost_per_hr != null) s.cost_per_hr = `${row.cost_per_hr}`;
   if (row.terminated_at) s.terminated_at = iso(row.terminated_at);
@@ -272,6 +281,8 @@ export interface Actor {
   kind: GpuActorKind;
   account_id?: string;
   agent_id?: string;
+  // the agent's run: who did it, never what it may reach
+  run_id?: string;
 }
 
 // A standalone event (a lookup, a duplicate terminated at RunPod).
@@ -283,14 +294,15 @@ async function recordEvent(
   db: Pick<PoolClient, "query"> = getPool(),
 ): Promise<void> {
   await db.query(
-    `INSERT INTO gpu_pod_events (id, pod_id, at, actor_kind, actor_account_id, agent_id, action, details)
-     VALUES ($1, $2, now(), $3, $4, $5, $6, $7)`,
+    `INSERT INTO gpu_pod_events (id, pod_id, at, actor_kind, actor_account_id, agent_id, turn_id, action, details)
+     VALUES ($1, $2, now(), $3, $4, $5, $6, $7, $8)`,
     [
       randomUUID(),
       pod_id,
       actor.kind,
       actor.account_id ?? null,
       actor.agent_id ?? null,
+      actor.run_id ?? null,
       action,
       details ?? null,
     ],
@@ -508,9 +520,44 @@ async function isProjectCollaborator(account_id: string, project_id: string) {
 // the ones it is responsible for. (Course staff come with classes, step 7.)
 const MINE = `(key_owner_account_id = $1 OR beneficiary_account_id = $1)`;
 
+// A principal as it may arrive from another bay (its expiry as text).
+type GpuAgentPrincipalWire = Omit<GpuAgentPrincipal, "expires_at"> & {
+  expires_at: Date | string;
+};
+
+// An agent sees only the managed pods it launched in its own project (its
+// principal key, so a chat session sees only that session's pods). Human
+// launches and other agents' pods are never in scope for it.
+// What an agent may see and reach: the pods it launched in its project. A
+// later run of the same agent may clean up an earlier run's pods (STEP6
+// "later cleanup"); for a chat session the agent is the session. run_id
+// only attributes what it does (events); it never narrows or widens scope.
+export interface GpuAgentScope {
+  project_id: string;
+  agent_id: string;
+  run_id?: string;
+}
+
+// A chat session's key is derived from its token's fingerprint: never shown.
+function visibleAgentId(agent_id: string): string {
+  return agent_id.startsWith("session:") ? "chat-session" : agent_id;
+}
+
+function agentScopeSql(
+  agent: GpuAgentScope | undefined,
+  first: number,
+): { sql: string; values: unknown[] } {
+  if (!agent) return { sql: "", values: [] };
+  return {
+    sql: ` AND project_id = $${first} AND agent_id = $${first + 1}`,
+    values: [agent.project_id, agent.agent_id],
+  };
+}
+
 export async function findPod(
   account_id: string,
   pod: unknown,
+  agent?: GpuAgentScope,
 ): Promise<PodRow | undefined> {
   const ref = `${pod ?? ""}`.trim();
   const column = isValidUUID(ref)
@@ -521,9 +568,10 @@ export async function findPod(
         ? "provider_pod_id"
         : undefined;
   if (!column) throw Error("Give a pod id or handle.");
+  const scope = agentScopeSql(agent, 3);
   const { rows } = await getPool().query(
-    `SELECT * FROM gpu_pods WHERE ${column} = $2 AND ${MINE}`,
-    [account_id, ref],
+    `SELECT * FROM gpu_pods WHERE ${column} = $2 AND ${MINE}${scope.sql}`,
+    [account_id, ref, ...scope.values],
   );
   return rows[0];
 }
@@ -535,6 +583,9 @@ export async function launchGpuPodLocal(
     account_id?: string;
     project_id?: unknown;
     spec?: unknown;
+    // An agent's launch (step 6b): its verified principal and its own
+    // idempotency key. It needs an approved grant for exactly this launch.
+    agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
   },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary> {
@@ -542,6 +593,28 @@ export async function launchGpuPodLocal(
   await requireHomeBay(account_id, deps);
   const project_id = `${opts.project_id ?? ""}`;
   if (!isValidUUID(project_id)) throw Error("A launch needs a project.");
+  // (after an inter-bay hop the expiry arrives as text)
+  const agent = opts.agent
+    ? {
+        ...opts.agent,
+        principal: {
+          ...opts.agent.principal,
+          expires_at: new Date(opts.agent.principal.expires_at),
+        },
+      }
+    : undefined;
+  if (
+    agent &&
+    (agent.principal.account_id !== account_id ||
+      agent.principal.project_id !== project_id)
+  ) {
+    throw Error("An agent can launch only in its own project.");
+  }
+  if (agent && !/^[A-Za-z0-9._:-]{1,128}$/.test(agent.operation_id ?? "")) {
+    throw Error(
+      "An agent's GPU launch needs an operation id (cocalc gpu launch --operation <id>).",
+    );
+  }
   const spec = normalizeGpuLaunchSpec(opts.spec);
   if (
     !(await (deps.isProjectCollaborator ?? isProjectCollaborator)(
@@ -551,7 +624,14 @@ export async function launchGpuPodLocal(
   ) {
     throw Error("project not found or access denied");
   }
-  const actor: Actor = { kind: "user", account_id };
+  const actor: Actor = agent
+    ? {
+        kind: "agent",
+        account_id,
+        agent_id: agent.principal.agent_id,
+        run_id: agent.principal.run_id,
+      }
+    : { kind: "user", account_id };
   const cloud = spec.cloud ?? "SECURE";
 
   // A pod that takes SSH reports its host key once, with this token; only
@@ -597,22 +677,49 @@ export async function launchGpuPodLocal(
     );
   }
   const hourly_usd = moneyToDbString(toDecimal(perGpu).times(spec.gpu_count));
+  // what an agent's human approves, exactly
+  const approval = agent ? agentLaunchPayload(spec, perGpu) : undefined;
 
   // 1. The budget reservation, the intent and its event, in one transaction,
   // before anything reaches RunPod. The key is read under the account fence
   // that key replacement and removal also take, so no launch can use a key
   // that is being replaced or removed. A launch that doesn't fit writes
   // nothing.
-  const intent = await insertIntent({
-    account_id,
-    project_id,
-    spec,
-    hourly_usd,
-    priced,
-    actor,
-    deps,
-    token,
-  });
+  let intent: Awaited<ReturnType<typeof insertIntent>>;
+  try {
+    intent = await insertIntent({
+      account_id,
+      project_id,
+      spec,
+      hourly_usd,
+      priced,
+      actor,
+      deps,
+      token,
+      agent:
+        agent && approval
+          ? { ...agent, payload_hash: approval.payload_hash }
+          : undefined,
+    });
+  } catch (err) {
+    if (!(err instanceof NoUsableAgentGrant) || !agent || !approval) throw err;
+    // Nothing was written; ask the human, in a transaction of its own.
+    throw await inTransaction(async (db) => {
+      // serializes this agent's asks with each other and with approvals
+      await (deps.accountWriteFence ?? lockGpuAccountFence)(
+        db,
+        account_id,
+        "ask for a GPU approval",
+      );
+      return await requestAgentLaunch(db, {
+        principal: agent.principal,
+        operation_id: agent.operation_id,
+        payload: approval.payload,
+        payload_hash: approval.payload_hash,
+        now: new Date((deps.now ?? Date.now)()),
+      });
+    });
+  }
   const { client } = intent;
   let row = intent.row;
 
@@ -720,6 +827,7 @@ async function insertIntent({
   actor,
   deps,
   token,
+  agent,
 }: {
   account_id: string;
   project_id: string;
@@ -732,6 +840,11 @@ async function insertIntent({
   actor: Actor;
   deps: GpuPodDeps;
   token?: { token_id: string; verifier: string };
+  agent?: {
+    principal: GpuAgentPrincipal;
+    operation_id: string;
+    payload_hash: string;
+  };
 }): Promise<{ row: PodRow; client: RunpodClient }> {
   const now = (deps.now ?? Date.now)();
   const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
@@ -749,10 +862,27 @@ async function insertIntent({
           account_id,
           "launch a GPU",
         );
+        // An agent's grant comes next in the lock order (before the key's
+        // fence and layers): exactly this launch, this run, unexpired, unused.
+        const grant = agent
+          ? await lockUsableGrant(
+              db,
+              agent.principal,
+              agent.payload_hash,
+              agent.operation_id,
+              new Date(now),
+            )
+          : undefined;
+        if (agent && !grant) throw new NoUsableAgentGrant();
         const { client, credential_id, revision } = await loadLaunchAccess(
           account_id,
           deps,
         );
+        if (grant && grant.credential_id !== credential_id) {
+          throw Error(
+            "Your RunPod key changed since this agent's launch was approved; the agent has to ask again.",
+          );
+        }
         if (
           credential_id !== priced.credential_id ||
           revision !== priced.revision
@@ -771,6 +901,7 @@ async function insertIntent({
           key_owner_account_id: account_id,
           beneficiary_account_id: account_id,
           project_id,
+          grant_id: grant?.grant_id,
           gpu_type_id: spec.gpu_type_id,
           gpu_count: spec.gpu_count,
           cloud: spec.cloud ?? "SECURE",
@@ -784,9 +915,9 @@ async function insertIntent({
              beneficiary_account_id, project_id, spec, gpu_type_id, gpu_count, cloud,
              data_center_id, state, desired_state, max_runtime_minutes, deadline,
              ssh_key_fingerprint, hostkey_token_id, hostkey_verifier,
-             hostkey_expires, created, updated)
+             hostkey_expires, agent_id, turn_id, created, updated)
            VALUES ($1, $2, $3, $4, 'runpod', $3, $5, $6, $7, $8, $9, $10, 'intent',
-             'running', $11, $12, $13, $14, $15, $16, now(), now())
+             'running', $11, $12, $13, $14, $15, $16, $17, $18, now(), now())
            RETURNING *`,
           [
             id,
@@ -805,9 +936,12 @@ async function insertIntent({
             token?.token_id ?? null,
             token?.verifier ?? null,
             token ? new Date(now + HOSTKEY_TOKEN_TTL_MS) : null,
+            agent?.principal.agent_id ?? null,
+            agent?.principal.run_id ?? null,
           ],
         );
         await insertReservations(db, id, admission, spec.gpu_count);
+        if (grant) await consumeGrantLaunch(db, grant.grant_id);
         await recordEvent(
           id,
           actor,
@@ -1415,17 +1549,24 @@ async function terminateBound(
 }
 
 export async function terminateGpuPodLocal(
-  opts: { account_id?: string; pod_id?: unknown },
+  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<{ state: GpuPodSummary["state"] }> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
-  const row = await findPod(account_id, opts.pod_id);
+  const row = await findPod(account_id, opts.pod_id, opts.agent);
   if (!row) throw Error("No such GPU pod.");
-  const actor: Actor = {
-    kind: row.key_owner_account_id === account_id ? "key_owner" : "user",
-    account_id,
-  };
+  const actor: Actor = opts.agent
+    ? {
+        kind: "agent",
+        account_id,
+        agent_id: opts.agent.agent_id,
+        run_id: opts.agent.run_id,
+      }
+    : {
+        kind: row.key_owner_account_id === account_id ? "key_owner" : "user",
+        account_id,
+      };
   // Recorded first, with its event: a create still in flight sees it when it
   // binds, and an unresolved record keeps it until it is resolved.
   let current = await transition(
@@ -1534,18 +1675,19 @@ export async function recordSeenAddresses(
 }
 
 export async function listManagedGpuPodsLocal(
-  opts: { account_id?: string; include_ended?: boolean },
+  opts: { account_id?: string; include_ended?: boolean; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary[]> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
   await resolveAmbiguousForAccount(account_id, deps);
+  const scope = agentScopeSql(opts.agent, 3);
   const { rows } = await getPool().query(
-    `SELECT * FROM gpu_pods WHERE ${MINE}
+    `SELECT * FROM gpu_pods WHERE ${MINE}${scope.sql}
        AND (state = ANY($2)
             ${opts.include_ended ? "OR created > now() - interval '30 days'" : ""})
      ORDER BY created DESC LIMIT 500`,
-    [account_id, GPU_POD_LIVE_STATES],
+    [account_id, GPU_POD_LIVE_STATES, ...scope.values],
   );
   return rows.map(podSummary);
 }
@@ -1553,7 +1695,7 @@ export async function listManagedGpuPodsLocal(
 // Who is responsible for a pod. Provider ids and IPs are only
 // lookup hints: results are limited to the caller's own records.
 export async function whoGpuPodLocal(
-  opts: { account_id?: string; query?: unknown },
+  opts: { account_id?: string; query?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<GpuAttribution[]> {
   const account_id = requireAccount(opts.account_id);
@@ -1562,15 +1704,16 @@ export async function whoGpuPodLocal(
   if (!q || q.length > 64 || !/^[A-Za-z0-9_.:-]+$/.test(q)) {
     throw Error("Give a pod id, handle, RunPod pod id or IP address.");
   }
+  const scope = agentScopeSql(opts.agent, 3);
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods
-      WHERE ${MINE}
+      WHERE ${MINE}${scope.sql}
         AND (id::text = $2 OR handle = $2 OR provider_pod_id = $2
              OR public_ip = $2
              OR id IN (SELECT pod_id FROM gpu_pod_events
                         WHERE action = 'ip_seen' AND details->>'public_ip' = $2))
       ORDER BY created DESC LIMIT 50`,
-    [account_id, q],
+    [account_id, q, ...scope.values],
   );
   const out: GpuAttribution[] = [];
   for (const row of rows as PodRow[]) {
@@ -1584,9 +1727,21 @@ export async function whoGpuPodLocal(
       pod: podSummary(row),
       events: events.rows.map(eventView),
     });
-    await recordEvent(row.id, { kind: "user", account_id }, "who_lookup", {
-      query_kind: HANDLE.test(q) ? "handle" : isValidUUID(q) ? "id" : "hint",
-    });
+    await recordEvent(
+      row.id,
+      opts.agent
+        ? {
+            kind: "agent",
+            account_id,
+            agent_id: opts.agent.agent_id,
+            run_id: opts.agent.run_id,
+          }
+        : { kind: "user", account_id },
+      "who_lookup",
+      {
+        query_kind: HANDLE.test(q) ? "handle" : isValidUUID(q) ? "id" : "hint",
+      },
+    );
   }
   return out;
 }
@@ -1600,7 +1755,8 @@ function eventView(row: any): GpuPodEvent {
     action: row.action,
   };
   if (row.actor_account_id) e.actor_account_id = row.actor_account_id;
-  if (row.agent_id) e.agent_id = row.agent_id;
+  if (row.agent_id) e.agent_id = visibleAgentId(row.agent_id);
+  if (row.turn_id) e.run_id = visibleAgentId(row.turn_id);
   if (row.details) e.details = row.details;
   return e;
 }
@@ -1620,7 +1776,12 @@ export async function gpuPodHomeClient(
 }
 
 export async function launchGpuPod(
-  opts: { account_id?: string; project_id?: unknown; spec?: unknown },
+  opts: {
+    account_id?: string;
+    project_id?: unknown;
+    spec?: unknown;
+    agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
+  },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary> {
   const account_id = requireAccount(opts.account_id);
@@ -1630,18 +1791,24 @@ export async function launchGpuPod(
       account_id,
       project_id: opts.project_id,
       spec: opts.spec,
+      ...(opts.agent ? { agent: opts.agent } : {}),
     });
   }
   return await launchGpuPodLocal({ ...opts, account_id }, deps);
 }
 
 export async function terminateGpuPod(
-  opts: { account_id?: string; pod_id?: unknown },
+  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<{ state: GpuPodSummary["state"] }> {
   const account_id = requireAccount(opts.account_id);
   const home = await (deps.homeClient ?? gpuPodHomeClient)(account_id);
-  if (home) return await home.gpuTerminate({ account_id, pod_id: opts.pod_id });
+  if (home)
+    return await home.gpuTerminate({
+      account_id,
+      pod_id: opts.pod_id,
+      ...(opts.agent ? { agent: opts.agent } : {}),
+    });
   return await terminateGpuPodLocal({ ...opts, account_id }, deps);
 }
 
@@ -1782,6 +1949,9 @@ export async function killSwitchLocal(
       account_id,
       "stop GPU pods",
     );
+    // agents' approvals end with it (next in the lock order: grants, then
+    // key fences and layers): nothing an agent was allowed survives a resume
+    await revokeAgentGrantsForKillSwitch(db, { account_id, project_id });
     const { rows } = await db.query(
       `UPDATE gpu_pods SET desired_state = 'terminated', reason = $3, updated = now()
         WHERE key_owner_account_id = $1
@@ -1892,11 +2062,16 @@ export async function killSwitch(
 }
 
 export async function whoGpuPod(
-  opts: { account_id?: string; query?: unknown },
+  opts: { account_id?: string; query?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<GpuAttribution[]> {
   const account_id = requireAccount(opts.account_id);
   const home = await (deps.homeClient ?? gpuPodHomeClient)(account_id);
-  if (home) return await home.gpuWho({ account_id, query: opts.query });
+  if (home)
+    return await home.gpuWho({
+      account_id,
+      query: opts.query,
+      ...(opts.agent ? { agent: opts.agent } : {}),
+    });
   return await whoGpuPodLocal({ ...opts, account_id }, deps);
 }

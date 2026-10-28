@@ -86,6 +86,28 @@ const RECORD_ROW = {
   reason: null,
 };
 
+const AGENT_REQUEST = {
+  request_id: "00000000-1000-4000-8000-0000000000c1",
+  project_id: "00000000-1000-4000-8000-0000000000aa",
+  principal_kind: "chat_session",
+  operation_id: "op-1",
+  payload: {
+    spec: {
+      gpu_type_id: "NVIDIA RTX A5000",
+      gpu_count: 1,
+      image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+      max_runtime_minutes: 60,
+    },
+    hourly_usd: "0.2700000000",
+    max_cost_usd: "0.30",
+    max_pods: 1,
+  },
+  payload_hash: "a".repeat(64),
+  state: "pending",
+  created: "2026-10-28T12:00:00.000Z",
+  expires_at: "2026-10-28T12:30:00.000Z",
+};
+
 function harness(
   globals: Record<string, unknown> = {},
   { fail = false }: { fail?: boolean } = {},
@@ -166,6 +188,21 @@ function harness(
             calls.push({ name: "who", args });
             observe();
             return [{ pod: RECORD, events: [EVENT] }];
+          },
+          agentRequests: async (args) => {
+            calls.push({ name: "agentRequests", args });
+            observe();
+            return [AGENT_REQUEST];
+          },
+          approveAgentRequest: async (args) => {
+            calls.push({ name: "approveAgentRequest", args });
+            observe();
+            return { grant_id: "g1", state: "active" };
+          },
+          revokeAgentGrant: async (args) => {
+            calls.push({ name: "revokeAgentGrant", args });
+            observe();
+            return { grant_id: "g1", state: "revoked" };
           },
         },
       };
@@ -339,11 +376,14 @@ it("launches from flags, in this project, with a write-sized timeout", async () 
       "--env",
       "MODE=a=b",
     );
+    const operation_id = (h.calls[0]?.args as any)?.operation_id;
+    assert.match(operation_id, /^cli-[0-9a-f]{32}$/);
     assert.deepEqual(h.calls, [
       {
         name: "launch",
         args: {
           project_id: RECORD.project_id,
+          operation_id,
           spec: {
             gpu_type_id: "NVIDIA RTX A5000",
             gpu_count: 1,
@@ -992,4 +1032,66 @@ it("a local cleanup failure after the terminate doesn't change what is reported"
     t.run(dry2.next),
     /more than --max-cost \$0\.26; terminating it failed: run cocalc gpu terminate cc-\S+\./,
   );
+});
+
+it("gpu agent requests shows the exact launch and hash, and names a session as this chat session", async () => {
+  const h = harness();
+  await h.run("agent", "requests", "--all");
+  assert.deepEqual(h.calls, [
+    { name: "agentRequests", args: { include_decided: true } },
+  ]);
+  const [row] = h.outputs[0] as any[];
+  assert.equal(row.agent, "this chat session");
+  assert.equal(row.hash, "a".repeat(64));
+  assert.equal(row.gpu, "1 x NVIDIA RTX A5000");
+  assert.equal(row.max_cost_usd, "0.30");
+  const json = harness({ json: true });
+  await json.run("agent", "requests");
+  assert.deepEqual(json.outputs[0], [AGENT_REQUEST]);
+});
+
+it("gpu agent approve needs the reviewed hash; revoke takes the grant", async () => {
+  const h = harness();
+  await assert.rejects(h.run("agent", "approve", "r1"));
+  assert.deepEqual(h.calls, []);
+  await h.run("agent", "approve", "r1", "--hash", "b".repeat(64));
+  await h.run("agent", "revoke", "g1");
+  assert.deepEqual(h.calls, [
+    {
+      name: "approveAgentRequest",
+      args: { request_id: "r1", expected_hash: "b".repeat(64) },
+    },
+    { name: "revokeAgentGrant", args: { grant_id: "g1" } },
+  ]);
+});
+
+it("a launch's operation id is stable for the same launch, and --operation overrides it", async () => {
+  const base = [
+    "launch",
+    "--project",
+    "00000000-1000-4000-8000-0000000000aa",
+    "--gpu",
+    "NVIDIA RTX A5000",
+    "--max-runtime",
+    "60",
+  ];
+  const a = harness();
+  await a.run(...base);
+  const b = harness();
+  await b.run(
+    ...base,
+    "--ssh-public-key",
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+  );
+  const c = harness();
+  await c.run(...base, "--count", "2");
+  const d = harness();
+  await d.run(...base, "--operation", "my-op");
+  const op = (h: any) =>
+    h.calls.find((x: any) => x.name === "launch").args.operation_id;
+  assert.match(op(a), /^cli-[0-9a-f]{32}$/);
+  // the pod's SSH key doesn't change it; the launch does
+  assert.equal(op(b), op(a));
+  assert.notEqual(op(c), op(a));
+  assert.equal(op(d), "my-op");
 });

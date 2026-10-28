@@ -196,6 +196,11 @@ Table({
     },
     actor_account_id: { type: "uuid" },
     agent_id: { type: "string", pg_type: "varchar(128)" },
+    turn_id: {
+      type: "string",
+      pg_type: "varchar(128)",
+      desc: "The agent run (turn) that did it, derived server-side like gpu_pods.turn_id; attribution only.",
+    },
     action: {
       type: "string",
       pg_type: "varchar(32)",

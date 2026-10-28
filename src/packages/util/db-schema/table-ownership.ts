@@ -637,6 +637,18 @@ export const TABLE_OWNERSHIP = {
     },
   ),
 
+  ...entries(["gpu_agent_requests", "gpu_agent_grants"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "The agent's bound project; only a scope reference, the row lives on the key owner's home bay.",
+    },
+    notes:
+      "Agents' GPU launch requests (immutable payload and hash) and the human's one-launch grants, on the home bay of the account whose provider key pays; each grant's budget layer is in gpu_budget_layers. Rehome is refused while any GPU rows exist (assertNoPersonalStateForRehome).",
+  }),
+
   ...entries(["gpu_worker_leases"], {
     ownership: "audit-local",
     authority: "local",

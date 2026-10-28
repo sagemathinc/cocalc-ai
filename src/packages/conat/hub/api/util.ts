@@ -12,7 +12,8 @@ export type HubApiPrincipalPolicy =
   | "account-or-compute-project"
   | "account-or-compute-agent"
   | "account-or-host-or-compute-agent"
-  | "account-or-bound-agent-project";
+  | "account-or-bound-agent-project"
+  | "account-or-gpu-agent";
 
 export interface HubApiArgTransformContext {
   args: any[];
@@ -352,3 +353,48 @@ export const authFirstRequireAccountOrComputeAgent =
     }
     return await authFirstRequireAccount(context);
   });
+
+// GPU calls an agent may make (step 6b). Its identity comes only from the
+// verified auth context: the account and project are forced, any
+// caller-supplied identity is dropped, and gpu_agent_auth carries the
+// verified token (the server derives the agent principal from it). A human
+// caller can never pass gpu_agent_auth.
+export const authFirstRequireAccountOrGpuAgent = declareHubApiPrincipalPolicy(
+  "account-or-gpu-agent",
+  async (context) => {
+    const opts = firstArg(context.args);
+    delete opts.gpu_agent_auth;
+    delete opts.agent_id;
+    delete opts.run_id;
+    if (context.auth_actor === "agent") {
+      const {
+        account_id,
+        project_id,
+        auth_token_fingerprint,
+        auth_iat_s,
+        auth_exp_s,
+      } = context;
+      if (
+        !account_id ||
+        !project_id ||
+        !auth_token_fingerprint ||
+        !auth_iat_s ||
+        !auth_exp_s
+      ) {
+        throw new Error("invalid GPU agent identity");
+      }
+      delete opts.host_id;
+      opts.account_id = account_id;
+      opts.project_id = project_id;
+      opts.gpu_agent_auth = {
+        account_id,
+        project_id,
+        auth_token_fingerprint,
+        auth_iat_s,
+        auth_exp_s,
+      };
+      return context.args;
+    }
+    return await authFirstRequireAccount(context);
+  },
+);

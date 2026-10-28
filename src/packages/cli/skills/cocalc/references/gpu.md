@@ -67,6 +67,32 @@ cocalc gpu terminate cc-...              # end it (and its billing)
   right after the launch, and terminate the pod when it wakes you if the work
   isn't done.
 
+## Your human's approval
+
+As an agent you may launch only what your human approved, once: one pod,
+exactly that launch, and only in this chat session (or this run of a
+registered agent), until it ends.
+
+- The first `launch` doesn't start anything. It fails with "needs your
+  human's approval first: request <id>". **Then stop:** tell the human the
+  request id, the GPU, the maximum runtime and the most it can cost (the dry
+  run's `max_cost_usd`), and end your turn. Don't retry, and don't try a
+  different launch to get around it: that makes a new request.
+- The human reviews the exact launch and its hash (`cocalc gpu agent
+  requests`) and approves it after signing in again. You can't approve
+  anything yourself.
+- Once approved, run **the identical command again**: same options, same
+  `--operation` if you gave one. Any change is a different launch and needs
+  a new approval. A second pod needs a second approval too.
+- `pods`, `who`, `connect` and `terminate` show and reach only the pods this
+  session launched (for a registered agent: any of its runs in this
+  project). You can always terminate them.
+- If the human revokes the approval, or presses the kill switch, CoCalc
+  terminates the pod it launched; after a kill switch, every launch needs a
+  new approval.
+  When your session ends, no new launch is possible, but the pod runs to its
+  maximum runtime: terminate it yourself when the work is done.
+
 ## Facts
 
 - **Secure Cloud is the default.** It gives the direct SSH endpoint that

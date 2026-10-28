@@ -27,6 +27,42 @@ import {
 } from "@cocalc/server/gpu/pods";
 import { gpuSshInfo } from "@cocalc/server/gpu/hostkey";
 import { reportCompromised as reportGpuKeyCompromised } from "@cocalc/server/gpu/compromise";
+import {
+  approveAgentRequest as approveAgentRequestImpl,
+  getAgentRequests,
+  revokeAgentGrant as revokeAgentGrantImpl,
+} from "@cocalc/server/gpu/agent-api";
+import { resolveGpuAgentPrincipal } from "@cocalc/server/gpu/agent-identity";
+import type { GpuAgentPrincipal } from "@cocalc/server/gpu/agent-grants";
+
+// The agent principal, only when the account-or-gpu-agent policy attached
+// the verified token (gpu_agent_auth); resolved here, on the bay that
+// authenticated it. Any other identity in opts is ignored.
+async function agentPrincipal(
+  opts: any,
+): Promise<GpuAgentPrincipal | undefined> {
+  const auth = opts?.gpu_agent_auth;
+  if (!auth) return undefined;
+  return await resolveGpuAgentPrincipal({
+    account_id: auth.account_id,
+    project_id: auth.project_id,
+    auth_token_fingerprint: auth.auth_token_fingerprint,
+    auth_exp_s: auth.auth_exp_s,
+  });
+}
+
+function scopeOf(p: GpuAgentPrincipal | undefined) {
+  return p
+    ? {
+        agent: {
+          project_id: p.project_id,
+          agent_id: p.agent_id,
+          // attribution only
+          run_id: p.run_id,
+        },
+      }
+    : {};
+}
 
 export const catalog: GpuApi["catalog"] = async (opts = {}) =>
   await getGpuCatalog(opts);
@@ -34,31 +70,51 @@ export const catalog: GpuApi["catalog"] = async (opts = {}) =>
 export const availability: GpuApi["availability"] = async (opts = {}) =>
   await getGpuAvailability(opts);
 
-export const pods: GpuApi["pods"] = async (opts = {}) => await getGpuPods(opts);
+export const pods: GpuApi["pods"] = async (opts = {}) => {
+  const principal = await agentPrincipal(opts);
+  const { gpu_agent_auth: _auth, ...rest } = opts as any;
+  return await getGpuPods({ ...rest, ...scopeOf(principal) });
+};
 
 export async function launch(
   opts: Parameters<GpuApi["launch"]>[0],
 ): ReturnType<GpuApi["launch"]> {
+  const principal = await agentPrincipal(opts);
   return await launchGpuPod({
     account_id: opts?.account_id,
     project_id: opts?.project_id,
     spec: opts?.spec,
+    ...(principal
+      ? {
+          agent: {
+            principal,
+            operation_id: `${opts?.operation_id ?? ""}`,
+          },
+        }
+      : {}),
   });
 }
 
 export async function terminate(
   opts: Parameters<GpuApi["terminate"]>[0],
 ): ReturnType<GpuApi["terminate"]> {
+  const principal = await agentPrincipal(opts);
   return await terminateGpuPod({
     account_id: opts?.account_id,
     pod_id: opts?.pod_id,
+    ...scopeOf(principal),
   });
 }
 
 export async function who(
   opts: Parameters<GpuApi["who"]>[0],
 ): ReturnType<GpuApi["who"]> {
-  return await whoGpuPod({ account_id: opts?.account_id, query: opts?.query });
+  const principal = await agentPrincipal(opts);
+  return await whoGpuPod({
+    account_id: opts?.account_id,
+    query: opts?.query,
+    ...scopeOf(principal),
+  });
 }
 
 export async function budget(
@@ -126,8 +182,41 @@ export async function adminAllowStaleWorkers(
 export async function sshInfo(
   opts: Parameters<GpuApi["sshInfo"]>[0],
 ): ReturnType<GpuApi["sshInfo"]> {
+  const principal = await agentPrincipal(opts);
   return await gpuSshInfo({
     account_id: opts?.account_id,
     pod_id: opts?.pod_id,
+    ...scopeOf(principal),
+  });
+}
+
+export async function agentRequests(
+  opts: Parameters<GpuApi["agentRequests"]>[0],
+): ReturnType<GpuApi["agentRequests"]> {
+  return await getAgentRequests({
+    account_id: opts?.account_id,
+    project_id: opts?.project_id,
+    include_decided: opts?.include_decided,
+  });
+}
+
+export async function approveAgentRequest(
+  opts: Parameters<GpuApi["approveAgentRequest"]>[0],
+): ReturnType<GpuApi["approveAgentRequest"]> {
+  return await approveAgentRequestImpl({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+    request_id: opts?.request_id,
+    expected_hash: opts?.expected_hash,
+  });
+}
+
+export async function revokeAgentGrant(
+  opts: Parameters<GpuApi["revokeAgentGrant"]>[0],
+): ReturnType<GpuApi["revokeAgentGrant"]> {
+  return await revokeAgentGrantImpl({
+    account_id: opts?.account_id,
+    grant_id: opts?.grant_id,
   });
 }
