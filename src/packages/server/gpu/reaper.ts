@@ -131,7 +131,7 @@ async function finishWorkerLease(
 }
 
 const LIVE =
-  "p.state NOT IN ('terminated', 'failed') AND p.desired_state <> 'terminated'";
+  "p.state NOT IN ('terminated', 'failed') AND p.desired_state <> 'terminated' AND p.unmanaged_at IS NULL";
 
 // Why a pod must go, and the SQL that finds such pods (bounded).
 const CAUSES: {
@@ -354,6 +354,7 @@ async function resolveOwners(
     const { rows } = await getPool().query(
       `SELECT DISTINCT key_owner_account_id FROM gpu_pods
         WHERE key_owner_account_id::text > $4
+          AND unmanaged_at IS NULL
           AND ((state IN ('intent', 'creating') AND updated < $3)
                OR ((state = 'ambiguous'
                     OR (desired_state = 'terminated'

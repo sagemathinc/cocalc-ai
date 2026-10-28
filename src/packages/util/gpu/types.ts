@@ -81,6 +81,8 @@ export const GPU_POD_ACTIONS = [
   "host_key",
   // the owner's kill switch stopped it
   "kill_switch",
+  // a forced key removal left it outside CoCalc's management (5c)
+  "unmanaged",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 

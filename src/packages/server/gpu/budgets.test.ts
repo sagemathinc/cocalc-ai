@@ -24,6 +24,7 @@ import {
 } from "./pods";
 import { DEFAULT_KEY_LAYER } from "./budgets";
 import { resumeGpuLaunchesLocal } from "./budget-api";
+import { deleteGpuProviderKeyLocal } from "./provider-keys";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -549,5 +550,60 @@ describeDb("GPU budgets", () => {
         ),
       ).toEqual({ marked: 0, remaining: 0, paused: false });
     });
+  });
+
+  it("a forced key removal leaves a pod RunPod won't terminate unmanaged: quarantined, never claimed stopped", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    s.rp.client.terminatePod.mockRejectedValue(
+      new RunpodApiError("provider", 503),
+    );
+    const removal = {
+      isHomeBay: async () => true,
+      storedKeyRejected: async () => false,
+      drain: async () => {},
+      drainMs: 0,
+    };
+    // without force, the key stays while the pod drains
+    expect(
+      await deleteGpuProviderKeyLocal(
+        { account_id: s.account_id, provider: "runpod" },
+        removal,
+      ),
+    ).toEqual({ revoked: false, remaining: [pod.handle] });
+    const result = await deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", force: true },
+      removal,
+    );
+    expect(result).toEqual(
+      expect.objectContaining({ revoked: true, unmanaged: [pod.handle] }),
+    );
+    const { rows } = await getPool().query(
+      "SELECT state, desired_state, unmanaged_at, terminated_at FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0].state).toBe("running");
+    expect(rows[0].unmanaged_at).not.toBeNull();
+    expect(rows[0].terminated_at).toBeNull();
+    const [r] = await reservations(pod.id);
+    expect(r.state).toBe("quarantined");
+    const { rows: fence } = await getPool().query(
+      "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    expect(fence[0].state).toBe("closed");
+    const { rows: log } = await getPool().query(
+      "SELECT action FROM gpu_key_events WHERE credential_id = $1 ORDER BY at",
+      [s.credential_id],
+    );
+    expect(log.map((l) => l.action)).toEqual([
+      "removal_started",
+      "removal_started",
+      "forced_removal",
+    ]);
+    // outside management: the kill switch neither marks nor counts it
+    expect(await killSwitchLocal({ account_id: s.account_id }, s.deps)).toEqual(
+      expect.objectContaining({ marked: 0, remaining: 0 }),
+    );
   });
 });

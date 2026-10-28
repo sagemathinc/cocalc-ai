@@ -32,6 +32,14 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 
 // unfinished GPU pods for the account (gpu_pods), per test
 let unfinished = 0;
+// the key's unfinished managed pods, as removal sees them (pods.ts)
+let podsLeft: { id: string; handle: string }[] = [];
+jest.mock("@cocalc/server/gpu/pods", () => ({
+  unfinishedCredentialPods: async () => podsLeft,
+  markCredentialPodsToTerminate: async () => podsLeft.length,
+  markCredentialPodsUnmanaged: async () => podsLeft.map((p) => p.handle),
+  resolvePendingForAccount: async () => ({ full: false }),
+}));
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => {
@@ -129,6 +137,7 @@ const home = { isHomeBay: async () => true };
 
 beforeEach(() => {
   unfinished = 0;
+  podsLeft = [];
   upsertMock.mockReset().mockResolvedValue({ id: "cred-1", created: true });
   listMock.mockReset().mockResolvedValue([]);
   localGetMock.mockReset().mockResolvedValue(undefined);
@@ -540,7 +549,7 @@ describe("GPU provider keys", () => {
     expect(await deleteGpuProviderKey(op, deps)).toEqual({ revoked: true });
     expect(remote.gpuKeyStatus).toHaveBeenCalledWith(op);
     expect(remote.gpuKeySet).toHaveBeenCalledWith({ ...op, api_key: KEY });
-    expect(remote.gpuKeyDelete).toHaveBeenCalledWith(op);
+    expect(remote.gpuKeyDelete).toHaveBeenCalledWith({ ...op, force: false });
     expect(timeouts).toEqual([
       KEY_HOME_BAY_TIMEOUT_MS,
       SET_KEY_HOME_BAY_TIMEOUT_MS,
@@ -597,7 +606,7 @@ describe("GPU provider keys", () => {
     }
   });
 
-  it("refuses to replace or remove a key while pods launched with it aren't finished", async () => {
+  it("refuses to replace a key with unfinished pods; removing it drains them and keeps the key until they're gone", async () => {
     listMock.mockResolvedValue([summary({})]);
     unfinished = 2;
     const { fetch, urls } = fakeFetch([]);
@@ -606,24 +615,55 @@ describe("GPU provider keys", () => {
         { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
         { ...home, fetch, isEntitled: entitled },
       ),
-    ).rejects.toThrow("2 GPU pods were launched with your current RunPod key");
+    ).rejects.toThrow("can't be replaced yet");
     expect(urls).toEqual([]); // refused before RunPod is asked
-    await expect(
-      deleteGpuProviderKeyLocal(
-        { account_id: ACCOUNT, provider: "runpod" },
-        home,
-      ),
-    ).rejects.toThrow("can't be removed yet");
-    expect(upsertMock).not.toHaveBeenCalled();
-    expect(revokeMock).not.toHaveBeenCalled();
-    // once they're finished, removal works
-    unfinished = 0;
+    // removal: RunPod doesn't confirm in time, so the key stays
+    podsLeft = [
+      { id: "p1", handle: "cc-aaaaaaaaaaaaaaaa" },
+      { id: "p2", handle: "cc-bbbbbbbbbbbbbbbb" },
+    ];
+    const drained = {
+      ...home,
+      drainMs: 0,
+      storedKeyRejected: async () => false,
+    };
     expect(
       await deleteGpuProviderKeyLocal(
         { account_id: ACCOUNT, provider: "runpod" },
-        home,
+        drained,
+      ),
+    ).toEqual({
+      revoked: false,
+      remaining: ["cc-aaaaaaaaaaaaaaaa", "cc-bbbbbbbbbbbbbbbb"],
+    });
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(revokeMock).not.toHaveBeenCalled();
+    // once they're gone, removal finishes
+    podsLeft = [];
+    expect(
+      await deleteGpuProviderKeyLocal(
+        { account_id: ACCOUNT, provider: "runpod" },
+        drained,
       ),
     ).toEqual({ revoked: true });
+    expect(revokeMock).toHaveBeenCalled();
+  });
+
+  it("forces a removal on request: what is left becomes unmanaged, with a warning", async () => {
+    listMock.mockResolvedValue([summary({})]);
+    podsLeft = [{ id: "p1", handle: "cc-aaaaaaaaaaaaaaaa" }];
+    const result = await deleteGpuProviderKeyLocal(
+      { account_id: ACCOUNT, provider: "runpod", force: true },
+      { ...home, drainMs: 0, storedKeyRejected: async () => false },
+    );
+    expect(result).toEqual({
+      revoked: true,
+      unmanaged: ["cc-aaaaaaaaaaaaaaaa"],
+      warning: expect.stringMatching(
+        /may still be running and billing at RunPod/,
+      ),
+    });
+    expect(revokeMock).toHaveBeenCalled();
   });
 
   it("doesn't block connecting a first key", async () => {
@@ -642,9 +682,9 @@ describe("GPU provider keys", () => {
     expect(upsertMock).toHaveBeenCalled();
   });
 
-  it("lets a key RunPod already rejects be removed or replaced, even with unfinished pods", async () => {
+  it("removes a key RunPod already rejects at once, leaving its pods unmanaged", async () => {
     listMock.mockResolvedValue([summary({})]);
-    unfinished = 1;
+    podsLeft = [{ id: "p1", handle: "cc-aaaaaaaaaaaaaaaa" }];
     localGetMock.mockResolvedValue(storedRecord({}));
     // RunPod answers 401 for the stored key (deleted at RunPod)
     const { fetch } = fakeFetch([{ status: 401, body: { detail: "nope" } }]);
@@ -653,20 +693,25 @@ describe("GPU provider keys", () => {
         { account_id: ACCOUNT, provider: "runpod" },
         { ...home, fetch },
       ),
-    ).toEqual({ revoked: true });
+    ).toEqual(
+      expect.objectContaining({
+        revoked: true,
+        unmanaged: ["cc-aaaaaaaaaaaaaaaa"],
+      }),
+    );
   });
 
-  it("keeps refusing when RunPod can't be asked about the stored key", async () => {
+  it("doesn't treat a RunPod it can't ask as a rejection: the key stays while its pods drain", async () => {
     listMock.mockResolvedValue([summary({})]);
-    unfinished = 1;
+    podsLeft = [{ id: "p1", handle: "cc-aaaaaaaaaaaaaaaa" }];
     localGetMock.mockResolvedValue(storedRecord({}));
     const { fetch } = fakeFetch([{ status: 503, body: {} }]);
-    await expect(
-      deleteGpuProviderKeyLocal(
+    expect(
+      await deleteGpuProviderKeyLocal(
         { account_id: ACCOUNT, provider: "runpod" },
-        { ...home, fetch },
+        { ...home, fetch, drainMs: 0 },
       ),
-    ).rejects.toThrow("can't be removed yet");
+    ).toEqual({ revoked: false, remaining: ["cc-aaaaaaaaaaaaaaaa"] });
     expect(revokeMock).not.toHaveBeenCalled();
   });
 

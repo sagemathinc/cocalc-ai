@@ -4137,10 +4137,18 @@ export interface InterBayGpuApi {
     provider: unknown;
     api_key: unknown;
   }) => Promise<import("@cocalc/util/gpu/provider-keys").GpuProviderKeyStatus>;
+  // Removal drains the key's pods first (5c); force leaves what remains
+  // unmanaged.
   gpuKeyDelete: (opts: {
     account_id: string;
     provider: unknown;
-  }) => Promise<{ revoked: boolean }>;
+    force?: boolean;
+  }) => Promise<{
+    revoked: boolean;
+    remaining?: string[];
+    unmanaged?: string[];
+    warning?: string;
+  }>;
   // Pods CoCalc starts with the key (step 3).
   gpuLaunch: (opts: {
     account_id: string;

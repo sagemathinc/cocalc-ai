@@ -155,20 +155,22 @@ async function hostKeyEvents(id: string) {
   ).rows;
 }
 
-// Removing a key is refused while its pods aren't finished (#1456), and a
-// finished pod has no token or host key left. These tests skip that count:
-// they check what the clear itself guarantees, for 5c's cleanup-only removal
-// and for any pod the count could miss.
+// Removing a key drains its pods first (5c), and a finished pod has no token
+// or host key left. These tests skip the drain (no pods to wait for): they
+// check what the clear at revocation itself guarantees, for any pod a drain
+// or a forced removal leaves behind.
 // PGlite has one connection, so the account fence (a transaction held
 // while the revoke opens its own) is real only on a real PostgreSQL.
 const REMOVE_DEPS = {
   isHomeBay: async () => true,
   unfinishedPods: async () => 0,
+  credentialPods: async () => [],
+  drain: async () => {},
   ...(process.env.COCALC_TEST_REAL_PG === "1"
     ? {}
     : {
         keyFence: async <T>(_account_id: string, fn: (db: any) => Promise<T>) =>
-          await fn(undefined),
+          await fn(getPool()),
       }),
 };
 

@@ -291,7 +291,9 @@ export async function admitLaunch(
     refuse(
       fence.state === "draining"
         ? "This RunPod key is being removed; no new GPUs can be launched with it."
-        : "This RunPod key was reported compromised; no new GPUs can be launched with it.",
+        : fence.state === "closed"
+          ? "This RunPod key was removed; connect a key to launch GPUs."
+          : "This RunPod key was reported compromised; no new GPUs can be launched with it.",
     );
   }
   if (fence.kill_switch_at) {

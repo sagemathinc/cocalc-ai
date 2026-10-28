@@ -1097,6 +1097,7 @@ export async function resolvePendingForAccount(
   const { rows: stale } = await getPool().query(
     `SELECT id, state FROM gpu_pods
       WHERE key_owner_account_id = $1 AND state IN ('intent', 'creating')
+        AND unmanaged_at IS NULL
         AND updated < $2
       ORDER BY created LIMIT $3`,
     [account_id, staleBefore, limit],
@@ -1105,7 +1106,8 @@ export async function resolvePendingForAccount(
     await guard?.();
     await resolveStaleCreate(r.id, r.state, actor);
   }
-  const ready = "AND (reap_after IS NULL OR reap_after <= $2)";
+  const ready =
+    "AND (reap_after IS NULL OR reap_after <= $2) AND unmanaged_at IS NULL";
   const due = await getPool().query(
     `SELECT 1 FROM gpu_pods WHERE key_owner_account_id = $1
         AND ((desired_state = 'terminated' AND state IN ('running', 'stopped', 'terminating')
@@ -1577,6 +1579,94 @@ export async function terminateGpuPod(
   return await terminateGpuPodLocal({ ...opts, account_id }, deps);
 }
 
+// ---- removing a key (5c) ----
+
+// A credential's pods CoCalc still manages and that aren't finished.
+export async function unfinishedCredentialPods(
+  credential_id: string,
+  db: Pick<PoolClient, "query"> = getPool(),
+): Promise<{ id: string; handle: string }[]> {
+  const { rows } = await db.query(
+    `SELECT id, handle FROM gpu_pods
+      WHERE credential_id = $1 AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL
+      ORDER BY created`,
+    [credential_id],
+  );
+  return rows;
+}
+
+// Mark every unfinished pod of a credential to terminate, now (backoff
+// cleared), for a key removal or a compromise.
+export async function markCredentialPodsToTerminate(
+  db: PoolClient,
+  {
+    account_id,
+    credential_id,
+    cause,
+  }: {
+    account_id: string;
+    credential_id: string;
+    cause: "key_removal" | "compromised";
+  },
+): Promise<number> {
+  const actor: Actor = { kind: "user", account_id };
+  // newly marked ones get an event; a repeat only clears the backoff
+  const { rows } = await db.query(
+    `UPDATE gpu_pods SET desired_state = 'terminated', reason = $2, updated = now()
+      WHERE credential_id = $1 AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL AND desired_state <> 'terminated'
+      RETURNING id`,
+    [
+      credential_id,
+      cause === "key_removal"
+        ? "Its RunPod key is being removed."
+        : "Its RunPod key was reported compromised.",
+    ],
+  );
+  for (const { id } of rows) {
+    await recordEvent(id, actor, "terminate", { cause }, db);
+  }
+  await db.query(
+    `UPDATE gpu_pods SET reap_after = NULL
+      WHERE credential_id = $1 AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL AND reap_after IS NOT NULL`,
+    [credential_id],
+  );
+  return rows.length;
+}
+
+// A forced removal: the credential's remaining pods leave CoCalc's
+// management. Their state is left as it is (they may still run and bill at
+// RunPod; nothing claims they stopped), their reservations are quarantined
+// (cost unknown; 5d settles them if billing shows it), and each gets an
+// event. Called under the account fence, before the key is revoked.
+export async function markCredentialPodsUnmanaged(
+  db: PoolClient,
+  { account_id, credential_id }: { account_id: string; credential_id: string },
+): Promise<string[]> {
+  const actor: Actor = { kind: "user", account_id };
+  const pods = await unfinishedCredentialPods(credential_id, db);
+  for (const pod of pods) {
+    await lockBudgetsForPod(db, {
+      pod_id: pod.id,
+      credential_id,
+      key_owner_account_id: account_id,
+    });
+    await settleReservations(
+      db,
+      { pod_id: pod.id, credential_id },
+      { kind: "quarantine" },
+    );
+    await db.query(
+      `UPDATE gpu_pods SET unmanaged_at = now(), updated = now() WHERE id = $1`,
+      [pod.id],
+    );
+    await recordEvent(pod.id, actor, "unmanaged", {}, db);
+  }
+  return pods.map((p) => p.handle);
+}
+
 // ---- the kill switch ----
 
 export interface GpuKillSwitchResult {
@@ -1626,6 +1716,7 @@ export async function killSwitchLocal(
           AND ($2::uuid IS NULL OR project_id = $2::uuid)
           AND state NOT IN ('terminated', 'failed')
           AND desired_state <> 'terminated'
+          AND unmanaged_at IS NULL
         RETURNING id`,
       [account_id, project_id, "Stopped by the kill switch."],
     );
@@ -1640,6 +1731,7 @@ export async function killSwitchLocal(
           AND ($2::uuid IS NULL OR project_id = $2::uuid)
           AND desired_state = 'terminated'
           AND state NOT IN ('terminated', 'failed')
+          AND unmanaged_at IS NULL
           AND reap_after IS NOT NULL`,
       [account_id, project_id],
     );
@@ -1687,7 +1779,8 @@ export async function killSwitchLocal(
       WHERE key_owner_account_id = $1
         AND ($2::uuid IS NULL OR project_id = $2::uuid)
         AND desired_state = 'terminated'
-        AND state NOT IN ('terminated', 'failed')`,
+        AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL`,
     [account_id, project_id],
   );
   return { marked, remaining: rows[0].n, paused };
