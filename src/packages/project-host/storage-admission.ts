@@ -351,6 +351,26 @@ function readMaintenanceDisksIdle(): boolean {
   return idle;
 }
 
+// Starts still preparing their volumes: the project's state says "starting"
+// only after that, but the preparation already takes the btrfs mutation lock
+// several times, and background mutations must not slip in between.
+let preparingStarts = 0;
+
+// Returns the function that ends it; calling that again does nothing.
+export function beginStartPreparation(): () => void {
+  preparingStarts++;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    preparingStarts--;
+  };
+}
+
+export function preparingStartCount(): number {
+  return preparingStarts;
+}
+
 function defaultReadInputs(): StorageAdmissionInputs {
   const projectCounts = countProjectsByStates(["starting", "stopping"]);
   const locks = getBtrfsMutationLockStatus();
@@ -371,7 +391,7 @@ function defaultReadInputs(): StorageAdmissionInputs {
     maintenance_io_full_avg60: maintenance.avg60,
     maintenance_io_capped: readIoMaxCapped(MAINTENANCE_IO_MAX),
     maintenance_disks_idle: readMaintenanceDisksIdle(),
-    starting_projects: projectCounts.starting ?? 0,
+    starting_projects: (projectCounts.starting ?? 0) + preparingStartCount(),
     stopping_projects: projectCounts.stopping ?? 0,
     btrfs_mutation_locks: locks.length,
     btrfs_mutation_waiters: locks.reduce(
