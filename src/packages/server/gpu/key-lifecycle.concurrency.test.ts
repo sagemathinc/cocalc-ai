@@ -352,10 +352,11 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     await waitForLockWaiters(query, 1);
     g.open();
     expect(await removing).toEqual({ revoked: true });
-    // refused either way: no key, or (before the revocation lands) a closed
-    // fence
+    // refused whichever fence turn it got: draining (between the removal's
+    // fenced phases, on a loaded machine), closed (before the revocation
+    // lands), or no key
     await expect(launching).rejects.toThrow(
-      /No RunPod API key is connected|This RunPod key was removed/,
+      /No RunPod API key is connected|This RunPod key was removed|This RunPod key is being removed/,
     );
     expect(s.used).toEqual([]);
     const { rows } = await getPool().query(

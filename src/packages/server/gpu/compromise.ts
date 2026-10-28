@@ -150,10 +150,17 @@ export async function runCompromiseCleanup(
       throw Error("compromise pass deadline");
     }
   };
-  await (
+  // Batch after batch while the resolver says more may wait (within the
+  // pass's bound): a batch's failures back off, so the next batch reaches
+  // the pods after them; the next pass retries the failures.
+  const resolve =
     deps.resolvePending ??
-    ((a, guard) => resolvePendingForAccount(a, {}, { guard }))
-  )(account_id, bounded).catch(() => {});
+    ((a: string, guard: () => Promise<void>) =>
+      resolvePendingForAccount(a, {}, { guard }));
+  for (let batch = 0; batch < MAX_RESOLVE_BATCHES && !cut; batch++) {
+    const r = await resolve(account_id, bounded).catch(() => undefined);
+    if ((r as { full?: boolean } | undefined)?.full !== true) break;
+  }
   // out of time: nothing more this pass (the next one continues)
   const cutShort = async (): Promise<GpuCompromiseStatus> => ({
     closed: false,
@@ -324,6 +331,9 @@ async function revokeAndClose(
     warning: CLOSED_WARNING,
   };
 }
+
+// how many resolver batches one pass may run (each is bounded too)
+const MAX_RESOLVE_BATCHES = 20;
 
 const FINISHED = new Set(["terminated", "failed"]);
 

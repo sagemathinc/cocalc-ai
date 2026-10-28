@@ -1308,6 +1308,47 @@ describeDb("GPU budgets", () => {
       expect([...s.rp.pods.keys()]).toEqual([after[0].provider_pod_id]);
     });
 
+    it("reaches pods beyond the first resolver batch in the same pass, even while the first keep failing", async () => {
+      const s = setup();
+      const first = await s.launch();
+      const second = await s.launch();
+      const a = account(s);
+      const ids = async (id: string) =>
+        (
+          await getPool().query(
+            "SELECT provider_pod_id, state FROM gpu_pods WHERE id = $1",
+            [id],
+          )
+        ).rows[0];
+      const stuck = (await ids(first.id)).provider_pod_id;
+      // RunPod won't terminate the oldest pod
+      const terminate = s.rp.client.terminatePod.getMockImplementation()!;
+      s.rp.client.terminatePod.mockImplementation(async (id: string) => {
+        if (id === stuck) throw new RunpodApiError("provider", 503);
+        return await terminate(id);
+      });
+      // a batch of one, so the second pod is beyond the first batch
+      const deps = {
+        ...a.deps,
+        resolvePending: (acct: string, guard: () => Promise<void>) =>
+          resolvePendingForAccount(
+            acct,
+            { ...s.deps, getCleanup: async () => a.cleanup as any },
+            { guard, limit: 1 },
+          ),
+      };
+      await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        deps,
+      );
+      expect((await ids(first.id)).state).not.toBe("terminated");
+      expect((await ids(second.id)).state).toBe("terminated");
+    });
+
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {
       const s = setup();
       await s.stored;
