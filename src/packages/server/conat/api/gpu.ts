@@ -18,6 +18,7 @@ import {
   terminateGpuPod,
   whoGpuPod,
 } from "@cocalc/server/gpu/pods";
+import { gpuSshInfo } from "@cocalc/server/gpu/hostkey";
 
 export const catalog: GpuApi["catalog"] = async (opts = {}) =>
   await getGpuCatalog(opts);
@@ -50,4 +51,13 @@ export async function who(
   opts: Parameters<GpuApi["who"]>[0],
 ): ReturnType<GpuApi["who"]> {
   return await whoGpuPod({ account_id: opts?.account_id, query: opts?.query });
+}
+
+export async function sshInfo(
+  opts: Parameters<GpuApi["sshInfo"]>[0],
+): ReturnType<GpuApi["sshInfo"]> {
+  return await gpuSshInfo({
+    account_id: opts?.account_id,
+    pod_id: opts?.pod_id,
+  });
 }

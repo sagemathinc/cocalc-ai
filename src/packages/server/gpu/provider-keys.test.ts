@@ -8,6 +8,7 @@ const listMock = jest.fn();
 const localGetMock = jest.fn();
 const revokeMock = jest.fn();
 const membershipMock = jest.fn();
+const clearHostkeysMock = jest.fn();
 
 // Everything runs on the home bay, against its local store.
 jest.mock("@cocalc/server/external-credentials/store", () => ({
@@ -15,6 +16,10 @@ jest.mock("@cocalc/server/external-credentials/store", () => ({
   upsertExternalCredential: (...args: any[]) => upsertMock(...args),
   listExternalCredentials: (...args: any[]) => listMock(...args),
   revokeExternalCredential: (...args: any[]) => revokeMock(...args),
+}));
+
+jest.mock("@cocalc/server/gpu/hostkey-clear", () => ({
+  clearHostkeysForCredential: (...args: any[]) => clearHostkeysMock(...args),
 }));
 
 jest.mock("@cocalc/server/bay-config", () => ({
@@ -122,6 +127,7 @@ beforeEach(() => {
   listMock.mockReset().mockResolvedValue([]);
   localGetMock.mockReset().mockResolvedValue(undefined);
   revokeMock.mockReset().mockResolvedValue(true);
+  clearHostkeysMock.mockReset().mockResolvedValue(0);
   membershipMock.mockReset();
 });
 
@@ -296,6 +302,7 @@ describe("GPU provider keys", () => {
       await deleteGpuProviderKey({ account_id: ACCOUNT, provider: "runpod" }),
     ).toEqual({ revoked: false });
     expect(revokeMock).not.toHaveBeenCalled();
+    expect(clearHostkeysMock).not.toHaveBeenCalled();
     listMock.mockResolvedValue([summary({})]);
     expect(
       await deleteGpuProviderKey({ account_id: ACCOUNT, provider: "runpod" }),
@@ -304,7 +311,17 @@ describe("GPU provider keys", () => {
     expect(revokeMock).toHaveBeenCalledWith({
       id: "cred-1",
       owner_account_id: ACCOUNT,
+      alsoOnRevoke: expect.any(Function),
     });
+    // its pods' registration tokens and host keys are cleared in the
+    // revoking transaction
+    expect(clearHostkeysMock).not.toHaveBeenCalled();
+    const client = { query: jest.fn() };
+    await revokeMock.mock.calls[0][0].alsoOnRevoke(client);
+    expect(clearHostkeysMock).toHaveBeenCalledWith(
+      { account_id: ACCOUNT, credential_id: "cred-1" },
+      client,
+    );
   });
 
   it("builds a RunPod client from the local store, or nothing without a key", async () => {
