@@ -87,6 +87,7 @@ describeDb("direct conversations", () => {
       "accounts",
       "projects",
       "account_collaborator_index",
+      "account_project_index",
       "direct_conversations",
       "direct_messages",
       "direct_fanout_pending",
@@ -106,7 +107,7 @@ describeDb("direct conversations", () => {
     mockNotify.mockReset().mockResolvedValue(undefined);
     mockBanned.clear();
     await getPool().query(
-      "TRUNCATE projects, account_collaborator_index, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
+      "TRUNCATE projects, account_collaborator_index, account_project_index, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
     );
   });
 
@@ -378,6 +379,27 @@ describeDb("direct conversations", () => {
       directHubApi.startDirect({ account_id: ada, member_ids: [bea] }),
     ).rejects.toThrow("by their username");
     void started;
+  });
+
+  test("another bay's project in the account's project index makes people collaborators", async () => {
+    await getPool().query(
+      "INSERT INTO account_project_index (account_id, project_id, owning_bay_id, users_summary) VALUES ($1, $2, 'bay-9', $3)",
+      [
+        ada,
+        project_id,
+        JSON.stringify({
+          [ada]: { group: "collaborator" },
+          [bea]: { group: "owner" },
+        }),
+      ],
+    );
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+      body: "Hi",
+    });
+    expect(started.state).toBe("active");
+    expect((await listFor(bea))[0].state).toBe("active");
   });
 
   test("an older revision arriving late can't undo a newer answer", async () => {

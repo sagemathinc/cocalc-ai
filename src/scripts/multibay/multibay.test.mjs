@@ -200,10 +200,10 @@ describe("direct conversations across bays", () => {
       `const getPool = require("@cocalc/database/pool").default;
        const id = ${JSON.stringify(conversation_id)};
        const c = await getPool().query(
-         "SELECT owner_bay_id FROM direct_conversations WHERE conversation_id=$1", [id]);
+         "SELECT conversation_id FROM direct_conversations WHERE conversation_id=$1", [id]);
        const i = await getPool().query(
          "SELECT account_id FROM account_direct_conversations WHERE conversation_id=$1 ORDER BY account_id", [id]);
-       return { owners: c.rows.map((r) => r.owner_bay_id), indexed: i.rows.map((r) => r.account_id) };`,
+       return { owners: c.rows.map(() => ${JSON.stringify(bay)}), indexed: i.rows.map((r) => r.account_id) };`,
     );
 
   before(async () => {

@@ -639,8 +639,8 @@ export async function isDirectBlocked(
 }
 
 // Whether two accounts share, or shared, a project: the collaborator index
-// (which this bay keeps for its own accounts, including other bays' projects)
-// or a project this bay owns. A local copy of another bay's project never
+// (which this bay keeps for its own accounts), a project this bay owns, or
+// another bay's project in the account's project index. A local copy of another bay's project never
 // counts: it may be stale.
 export async function areCollaborators(
   account_id: string,
@@ -656,6 +656,18 @@ export async function areCollaborators(
        AND COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $3::text) = $3::text
        AND users -> $1::text ->> 'group' IN ('owner', 'collaborator')
        AND users -> $2::text ->> 'group' IN ('owner', 'collaborator')
+     UNION ALL
+     -- Another bay's project, from the account's project index, which the
+     -- owning bay keeps current (the collaborator index may not have it yet).
+     SELECT 1 FROM account_project_index i
+     WHERE i.account_id = $1::uuid
+       AND i.users_summary -> $1::text ->> 'group' IN ('owner', 'collaborator')
+       AND i.users_summary -> $2::text ->> 'group' IN ('owner', 'collaborator')
+       AND NOT EXISTS (
+         SELECT 1 FROM projects lp
+         WHERE lp.project_id = i.project_id
+           AND COALESCE(NULLIF(BTRIM(lp.owning_bay_id), ''), $3::text) = $3::text
+       )
      LIMIT 1`,
     [account_id, other_id, bay_id],
   );
