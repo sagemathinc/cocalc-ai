@@ -1,4 +1,8 @@
 import type { LiveVoiceRequest, LiveVoiceResult } from "./live-voice";
+import type {
+  GpuProvider,
+  GpuProviderKeyStatus,
+} from "@cocalc/util/gpu/provider-keys";
 import {
   noAuth,
   authFirstRequireAccount,
@@ -152,6 +156,9 @@ export const system = {
   setOpenAiApiKey: authFirstRequireAccount,
   deleteOpenAiApiKey: authFirstRequireAccount,
   getOpenAiApiKeyStatus: authFirstRequireAccount,
+  setGpuProviderKey: authFirstRequireAccount,
+  deleteGpuProviderKey: authFirstRequireAccount,
+  getGpuProviderKeyStatus: authFirstRequireAccount,
   liveVoice: authFirstRequireAccount,
   getChatSpeechCapabilities: authFirstRequireAccount,
   transcribeChatAudio: authFirstRequireAccount,
@@ -2993,6 +3000,29 @@ export interface System {
     account_id?: string;
     project_id?: string;
   }) => Promise<OpenAiApiKeyStatus>;
+
+  // GPU bring-your-own-key: the account's own provider key (RunPod). Set
+  // verifies it with the provider first; nothing ever returns the key.
+  setGpuProviderKey: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    provider: GpuProvider;
+    api_key: string;
+    timeout?: number;
+  }) => Promise<GpuProviderKeyStatus>;
+
+  deleteGpuProviderKey: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    provider: GpuProvider;
+  }) => Promise<{ revoked: boolean }>;
+
+  getGpuProviderKeyStatus: (opts: {
+    account_id?: string;
+    provider: GpuProvider;
+  }) => Promise<GpuProviderKeyStatus>;
 
   liveVoice: (opts: LiveVoiceRequest) => Promise<LiveVoiceResult>;
   getChatSpeechCapabilities: (opts?: {

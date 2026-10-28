@@ -613,6 +613,12 @@ function buildMembershipTierDetailGroups({
   });
   add({
     group: "dedicated-hosts",
+    key: "gpu_provider_keys",
+    label: "Use your own RunPod GPUs",
+    value: formatBoolean(features.gpu_provider_keys),
+  });
+  add({
+    group: "dedicated-hosts",
     key: "dedicated_host_egress_policy",
     label: "Dedicated-host network policy",
     value: formatPolicy(usageLimits.dedicated_host_egress_policy),
@@ -735,6 +741,11 @@ export function buildMembershipTierPresentation(
         : "Shared public project-host pool access, tier 0.";
     summaryBenefits.push(hostPoolBenefit);
     benefits.push(hostPoolBenefit);
+  }
+  if (features.gpu_provider_keys) {
+    benefits.push(
+      "Can connect your own RunPod account and launch GPUs from CoCalc, billed by RunPod with no markup.",
+    );
   }
   if (features.create_hosts) {
     benefits.push(

@@ -471,6 +471,12 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import {
+  deleteGpuProviderKey as deleteGpuProviderKeyImpl,
+  getGpuProviderKeyStatus as getGpuProviderKeyStatusImpl,
+  setGpuProviderKey as setGpuProviderKeyImpl,
+} from "@cocalc/server/gpu/provider-keys";
+import type { GpuProvider } from "@cocalc/util/gpu/provider-keys";
+import {
   getProjectArchiveBlockedSummary,
   getProjectArchiveHostCoverage,
   getProjectArchiveLifecycleOperationalStatus,
@@ -7428,6 +7434,67 @@ export async function deleteOpenAiApiKey({
     owner_account_id: account_id,
   });
   return { revoked, scope: "account" as const };
+}
+
+export async function setGpuProviderKey({
+  account_id,
+  browser_id,
+  session_hash,
+  provider,
+  api_key,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  provider: GpuProvider;
+  api_key: string;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: false,
+  });
+  return await setGpuProviderKeyImpl({ account_id, provider, api_key });
+}
+
+export async function deleteGpuProviderKey({
+  account_id,
+  browser_id,
+  session_hash,
+  provider,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  provider: GpuProvider;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: false,
+  });
+  return await deleteGpuProviderKeyImpl({ account_id, provider });
+}
+
+export async function getGpuProviderKeyStatus({
+  account_id,
+  provider,
+}: {
+  account_id?: string;
+  provider: GpuProvider;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  return await getGpuProviderKeyStatusImpl({ account_id, provider });
 }
 
 export async function getOpenAiApiKeyStatus({

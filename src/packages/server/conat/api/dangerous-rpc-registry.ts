@@ -1735,6 +1735,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "account deletion",
   },
+  "system.deleteGpuProviderKey": {
+    decision: "fresh-auth-required",
+    reason: "GPU provider external credential removal",
+  },
   "system.deleteOpenAiApiKey": {
     decision: "fresh-auth-required",
     reason: "OpenAI external credential revocation",
@@ -1882,6 +1886,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.setBayProjectOwnershipAdmission": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "system.setGpuProviderKey": {
+    decision: "fresh-auth-required",
+    reason: "GPU provider external credential mutation",
   },
   "system.setOpenAiApiKey": {
     decision: "fresh-auth-required",

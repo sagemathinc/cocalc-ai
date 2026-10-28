@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { randomBytes } from "node:crypto";
+
 // Internal RunPod client on the REST API v2 (https://api.runpod.io/v2; v1 is
 // retired 2026-11-15). Read-only for now: catalog, availability, pods and
 // pod billing. Writes come with the allowlist request builder and the key
@@ -218,6 +220,82 @@ export class RunpodClient {
     // An inventory that may be incomplete must not look complete: callers
     // reconcile against it.
     throw new RunpodApiError("protocol");
+  }
+
+  // One request: can this key list the account's pods? A permission probe
+  // with a bounded cost, unlike listPods, which may page through many.
+  async canListPods(): Promise<void> {
+    const body = await this.get("/v2/pods");
+    if (
+      !Array.isArray(body?.pods) ||
+      typeof body.pagination?.hasNextPage !== "boolean"
+    ) {
+      throw new RunpodApiError("protocol");
+    }
+  }
+
+  // May this key change the account's resources? RunPod has no endpoint that
+  // lists a key's permissions, and it reports "not found" or a validation
+  // error before it checks permissions, so probing a resource that doesn't
+  // exist proves nothing. This creates a free, private template with a
+  // random name and deletes it at once. Measured 10-27: a Read Only key gets
+  // 403 on the create; a key with "All" permissions gets 201, then 204 on the
+  // delete. Anything else fails closed. A delete that fails leaves only a
+  // free private template; it is retried once.
+  async canWritePods(): Promise<void> {
+    const name = `cc-permission-probe-${randomBytes(6).toString("hex")}`;
+    let id: string | undefined;
+    try {
+      const res = await this.request(`${API_ORIGIN}/v2/templates`, {
+        method: "POST",
+        body: JSON.stringify({ name, image: "busybox:latest" }),
+      });
+      const created = await this.parse(res);
+      id = typeof created?.id === "string" ? created.id : undefined;
+      if (!id) throw new RunpodApiError("protocol", res.status);
+    } catch (err) {
+      // A clear refusal created nothing. Anything else (a lost reply, a
+      // timeout, an odd body) may have created the template: find it by its
+      // random name and delete it.
+      const refused =
+        err instanceof RunpodApiError &&
+        (err.kind === "auth" ||
+          err.kind === "forbidden" ||
+          err.kind === "invalid");
+      if (!refused) await this.deleteTemplatesNamed(name);
+      throw err;
+    }
+    await this.deleteTemplate(id);
+  }
+
+  // Best effort, retried once: a leftover is only a free private template.
+  private async deleteTemplate(id: string): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const del = await this.request(
+          `${API_ORIGIN}/v2/templates/${encodeURIComponent(id)}`,
+          { method: "DELETE" },
+        );
+        await this.parse(del);
+        return;
+      } catch {
+        // retry once
+      }
+    }
+  }
+
+  private async deleteTemplatesNamed(name: string): Promise<void> {
+    try {
+      const body = await this.get("/v2/templates");
+      const rows: any[] = Array.isArray(body) ? body : (body?.templates ?? []);
+      for (const row of rows) {
+        if (row?.name === name && typeof row?.id === "string") {
+          await this.deleteTemplate(row.id);
+        }
+      }
+    } catch {
+      // best effort
+    }
   }
 
   async getPod(podId: string): Promise<RunpodPodView | undefined> {
