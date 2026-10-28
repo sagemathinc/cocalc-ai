@@ -9,8 +9,14 @@ import {
   connectGpuPod,
   disconnectGpuPod,
   newLaunchKey,
+  settleLaunchKey,
 } from "./gpu-connect";
-import { keyFingerprint, listPendingKeys, listPodSsh } from "./gpu-ssh";
+import {
+  hasPodKey,
+  keyFingerprint,
+  listPendingKeys,
+  listPodSsh,
+} from "./gpu-ssh";
 
 const HANDLE = "cc-abcdefgh234567ab";
 // A real ed25519 public key (not a secret), standing in for the pod's.
@@ -206,4 +212,87 @@ it("forgets a terminated pod here, and leaves SSH config alone for pods it never
     "--stop",
     "--json",
   ]);
+});
+
+it("after a launch error, keeps the key without an answer, else adopts or removes it", async () => {
+  const { deps } = setup();
+  const pods = (records: any[]) => ({
+    pods: async () => ({ records }) as any,
+  });
+  // no answer (a timeout): the launch may still be running there
+  const timedOut = await newLaunchKey(deps);
+  const timeout = Object.assign(new Error("timeout"), { code: 408 });
+  assert.equal(
+    await settleLaunchKey(pods([]), timedOut, timeout, deps),
+    "kept",
+  );
+  const reset = Object.assign(new Error("socket"), { code: "ECONNRESET" });
+  assert.equal(await settleLaunchKey(pods([]), timedOut, reset, deps), "kept");
+  assert.deepEqual(
+    (await listPendingKeys(deps)).map((k) => k.name),
+    [timedOut.name],
+  );
+
+  // a refusal before anything was made: removed
+  const refused = await newLaunchKey(deps);
+  assert.equal(
+    await settleLaunchKey(
+      pods([
+        {
+          handle: "cc-zzzzzzzzzzzzzzzz",
+          state: "running",
+          ssh_key_fingerprint: "SHA256:other",
+        },
+        {
+          handle: "cc-yyyyyyyyyyyyyyyy",
+          state: "failed",
+          ssh_key_fingerprint: refused.fingerprint,
+        },
+      ]),
+      refused,
+      new Error("The GPU budget doesn't allow this launch."),
+      deps,
+    ),
+    "discarded",
+  );
+  // made at RunPod, but its bind wasn't recorded: adopted under its handle
+  const made = await newLaunchKey(deps);
+  assert.equal(
+    await settleLaunchKey(
+      pods([
+        {
+          handle: HANDLE,
+          state: "ambiguous",
+          ssh_key_fingerprint: made.fingerprint,
+        },
+      ]),
+      made,
+      new Error("RunPod created pod, but CoCalc couldn't record it yet."),
+      deps,
+    ),
+    "adopted",
+  );
+  assert.ok(await hasPodKey(HANDLE, deps));
+  // only the unanswered launch's key is still pending
+  assert.deepEqual(
+    (await listPendingKeys(deps)).map((k) => k.name),
+    [timedOut.name],
+  );
+});
+
+it("terminating a pod whose launch was interrupted removes its pending key", async () => {
+  const { deps } = setup();
+  const key = await newLaunchKey(deps);
+  const other = await newLaunchKey(deps);
+  // no alias and no handle key, only the pending key, matched by fingerprint
+  assert.equal(await disconnectGpuPod(HANDLE, deps, key.fingerprint), true);
+  assert.deepEqual(
+    (await listPendingKeys(deps)).map((k) => k.name),
+    [other.name],
+  );
+  // nothing of this pod here: still a no-op
+  assert.equal(
+    await disconnectGpuPod(HANDLE, deps, "SHA256:nothinghere"),
+    false,
+  );
 });

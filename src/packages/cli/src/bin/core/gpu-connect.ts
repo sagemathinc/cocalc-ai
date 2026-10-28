@@ -80,6 +80,50 @@ export async function adoptLaunchedKey(
   await adoptPendingKey(key.name, handle, deps);
 }
 
+// No answer from the server (a timeout, a dropped connection): the launch
+// may still be running there. A server's own error is an answer.
+export function isTransportError(err: unknown): boolean {
+  const code = (err as any)?.code;
+  return (
+    [408, 499, 503].includes(code) ||
+    (typeof code === "string" && /^E[A-Z]+$/.test(code))
+  );
+}
+
+// A launch with a pending key threw. Without an answer the key is kept, so
+// `connect` can adopt it by fingerprint if the pod was made after all. An
+// answer is definite: the key is adopted by the pod recorded with it, if
+// there is one still alive (e.g. RunPod made it but recording the bind
+// failed), and removed otherwise.
+export async function settleLaunchKey(
+  api: Pick<GpuApi, "pods">,
+  key: PodKey,
+  err: unknown,
+  deps: GpuConnectDeps = {},
+): Promise<"kept" | "adopted" | "discarded"> {
+  if (isTransportError(err)) return "kept";
+  let records: {
+    handle: string;
+    state: string;
+    ssh_key_fingerprint?: string;
+  }[];
+  try {
+    records =
+      (await api.pods({ scope: "managed", include_ended: true })).records ?? [];
+  } catch {
+    return "kept";
+  }
+  const pod = records.find(
+    (r) => r.ssh_key_fingerprint === key.fingerprint && !TERMINAL.has(r.state),
+  );
+  if (pod) {
+    await adoptLaunchedKey(key, pod.handle, deps);
+    return "adopted";
+  }
+  await discardLaunchKey(key, deps);
+  return "discarded";
+}
+
 // ---- connect ----
 
 export interface GpuConnectResult {
@@ -195,10 +239,22 @@ export async function connectGpuPod(
 export async function disconnectGpuPod(
   handle: string,
   deps: GpuConnectDeps = {},
+  // the pod's recorded key: a launch interrupted before the key took the
+  // handle left it pending under this fingerprint
+  ssh_key_fingerprint?: string,
 ): Promise<boolean> {
+  let pendingRemoved = false;
+  if (ssh_key_fingerprint) {
+    for (const key of await listPendingKeys(deps)) {
+      if (key.fingerprint === ssh_key_fingerprint) {
+        await removePendingKey(key.name, deps);
+        pendingRemoved = true;
+      }
+    }
+  }
   const hasKey = await hasPodKey(handle, deps);
   const hasAlias = (await listPodSsh(deps)).some((p) => p.handle === handle);
-  if (!hasKey && !hasAlias) return false;
+  if (!hasKey && !hasAlias) return pendingRemoved;
   await (deps.runReflect ?? runReflect)([
     "jupyter",
     "target",

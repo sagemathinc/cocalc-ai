@@ -452,3 +452,67 @@ it("launch --ssh makes the key here and sends only its public key; terminate for
     handle,
   ]);
 });
+
+it("launch --ssh removes its pending key when the server refuses, and keeps it on a timeout", async () => {
+  const { mkdtempSync, readdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const pending = (home: string) =>
+    readdirSync(join(home, ".ssh", "cocalc-gpu")).filter((f) =>
+      /^pending-[a-z2-7]+$/.test(f),
+    );
+  async function launchFailing(err: Error) {
+    const home = mkdtempSync(join(tmpdir(), "gpu-cmd-refused-"));
+    const program = new Command()
+      .exitOverride()
+      .configureOutput({ writeErr: () => {}, writeOut: () => {} });
+    registerGpuCommand(program, {
+      connect: { home },
+      withContext: async (_cmd, _name, fn) => {
+        await fn({
+          globals: { json: true },
+          timeoutMs: 600_000,
+          rpcTimeoutMs: 30_000,
+          hub: {
+            gpu: {
+              launch: async () => {
+                throw err;
+              },
+              pods: async () => ({ records: [] }),
+            },
+          },
+        });
+      },
+    });
+    const prev = process.env.COCALC_PROJECT_ID;
+    process.env.COCALC_PROJECT_ID = RECORD.project_id;
+    try {
+      await assert.rejects(
+        program.parseAsync(
+          [
+            "gpu",
+            "launch",
+            "--gpu",
+            "NVIDIA RTX A5000",
+            "--max-runtime",
+            "60",
+            "--ssh",
+          ],
+          { from: "user" },
+        ),
+      );
+    } finally {
+      process.env.COCALC_PROJECT_ID = prev;
+    }
+    return pending(home);
+  }
+  assert.deepEqual(
+    await launchFailing(new Error("No RunPod API key is connected.")),
+    [],
+  );
+  assert.equal(
+    (await launchFailing(Object.assign(new Error("timeout"), { code: 408 })))
+      .length,
+    1,
+  );
+});

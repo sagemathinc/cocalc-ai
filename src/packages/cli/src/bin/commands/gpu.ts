@@ -23,6 +23,7 @@ import {
   disconnectGpuPod,
   discardLaunchKey,
   newLaunchKey,
+  settleLaunchKey,
   type GpuConnectDeps,
 } from "../core/gpu-connect";
 import {
@@ -325,9 +326,15 @@ export function registerGpuCommand(
           // The private key stays here; the launch gets only the public key.
           const key = opts.ssh ? await newLaunchKey(deps.connect) : undefined;
           if (key) spec.ssh_public_key = key.publicKey;
-          // If the launch fails without an answer, the pending key is kept:
-          // `connect` finds it by fingerprint if the pod was made after all.
-          const pod = await api.launch({ project_id, spec });
+          let pod: Awaited<ReturnType<typeof api.launch>>;
+          try {
+            pod = await api.launch({ project_id, spec });
+          } catch (err) {
+            // Kept without an answer (`connect` adopts it by fingerprint if
+            // the pod was made after all); otherwise adopted or removed.
+            if (key) await settleLaunchKey(api, key, err, deps.connect);
+            throw err;
+          }
           if (key) {
             if (pod.state === "failed") {
               await discardLaunchKey(key, deps.connect);
@@ -355,8 +362,10 @@ export function registerGpuCommand(
           // Forget its kernel and SSH alias here too, if this project had
           // them. The pod is gone either way, so this never fails the command.
           try {
-            const { handle } = await api.sshInfo({ pod_id: pod });
-            await disconnectGpuPod(handle, deps.connect);
+            const { handle, ssh_key_fingerprint } = await api.sshInfo({
+              pod_id: pod,
+            });
+            await disconnectGpuPod(handle, deps.connect, ssh_key_fingerprint);
           } catch {}
           return result;
         },
