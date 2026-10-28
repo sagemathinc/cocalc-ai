@@ -80,6 +80,8 @@ export const GPU_ACTOR_KINDS = [
   "cleanup",
   // the pod itself, reporting its SSH host key
   "pod",
+  // provider billing reconciliation (5d-2a)
+  "billing",
 ] as const;
 export type GpuActorKind = (typeof GPU_ACTOR_KINDS)[number];
 
@@ -103,6 +105,9 @@ export const GPU_POD_ACTIONS = [
   "unmanaged",
   // the owner released a quarantined pod's held reservations (5d)
   "quarantine_released",
+  // RunPod's billing replaced the estimate as the pod's spend (5d-2a):
+  // {billed_usd, estimate_usd}
+  "billed",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 

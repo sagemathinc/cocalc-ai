@@ -1231,6 +1231,22 @@ Merge comments are private unless their corresponding --*-comment-public flag is
       );
     });
 
+  admin
+    .command("gpu")
+    .description("GPU bring-your-own-key administration")
+    .command("alerts")
+    .description(
+      "this bay's GPU admin alerts (billing that couldn't be applied; decrypt audit): never key material",
+    )
+    .option("--all", "also recently resolved alerts")
+    .action(async (opts: { all?: boolean }, command: Command) => {
+      await withContext(command, "admin gpu alerts", async (ctx) => {
+        return await ctx.hub.gpu.adminAlerts({
+          ...(opts.all ? { include_resolved: true } : {}),
+        });
+      });
+    });
+
   registerReceivablesCommand(admin, {
     withContext,
     resolveAccountByIdentifier,

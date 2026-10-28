@@ -74,6 +74,8 @@ export const gpu = {
   acknowledgeAlert: authFirstRequireAccount,
   // loosens the budget: fresh auth on the caller's own session
   releaseQuarantined: authFirstRequireAccountWithBoundSession,
+  // CoCalc admins only (checked by the server): this bay's GPU admin alerts
+  adminAlerts: authFirstRequireAccount,
 };
 
 // Set only by the account-or-gpu-agent policy, from verified auth.
@@ -321,6 +323,26 @@ export interface GpuApi {
     account_id?: string;
     id: string;
   }) => Promise<GpuAlert>;
+  // CoCalc admins: this bay's GPU admin alerts (5d-2), e.g. billing that
+  // couldn't be applied; never key material.
+  adminAlerts: (opts?: {
+    account_id?: string;
+    include_resolved?: boolean;
+  }) => Promise<
+    {
+      id: string;
+      kind: string;
+      severity: string;
+      dedupe_key: string;
+      key_owner_account_id: string | null;
+      credential_id: string | null;
+      details: Record<string, unknown> | null;
+      opened: string;
+      last_seen: string;
+      resolved_at: string | null;
+      emailed_at: string | null;
+    }[]
+  >;
   // Release the budget held for a pod whose create CoCalc couldn't confirm
   // (or that a forced removal left unmanaged): fresh authentication.
   releaseQuarantined: (opts: {

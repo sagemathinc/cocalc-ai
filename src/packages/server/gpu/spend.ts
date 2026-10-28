@@ -31,6 +31,7 @@ import {
 } from "@cocalc/util/gpu/types";
 import type { InterBayGpuApi } from "@cocalc/conat/inter-bay/api";
 import { actualCost } from "@cocalc/server/gpu/budgets";
+import { billedThrough } from "@cocalc/server/gpu/billing";
 import { requireHomeBay } from "@cocalc/server/gpu/pods";
 import { budgetHomeClient } from "@cocalc/server/gpu/budget-api";
 
@@ -211,6 +212,13 @@ export async function getGpuSpendLocal(
     });
   }
   all.sort((a, b) => b.total.comparedTo(a.total) || a.key.localeCompare(b.key));
+  // everything settled before this is RunPod's billed amount (or the
+  // estimate, where billing never proved a pod: 5d-2a)
+  const billed_through = await billedThrough(
+    account_id,
+    new Date(since),
+    new Date(Math.min(until, now)),
+  );
   return {
     as_of: new Date(now).toISOString(),
     since: new Date(since).toISOString(),
@@ -223,6 +231,7 @@ export async function getGpuSpendLocal(
       held_usd: moneyToDbString(totals.held),
     },
     ...(all.length > SPEND_MAX_ROWS ? { truncated: true } : {}),
+    billed_through: billed_through.toISOString(),
   };
 }
 
