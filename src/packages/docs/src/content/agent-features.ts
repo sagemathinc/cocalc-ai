@@ -209,9 +209,8 @@ GitHub permissions, and fresh-auth requirements remain separate checks.
 
 Use Codex when the task depends on continuing goals or scheduled agent work.
 Both integrations provide asynchronous question cards and Agent Network
-delivery, subject to the qualification notes above. Use the
-Claude preview for interactive project work when its listed limitations are
-acceptable. Shared CoCalc tools can provide notebook, document, Git, terminal,
+delivery, subject to the qualification notes above. Use Claude Code for
+interactive project work when its listed limitations are acceptable. Shared CoCalc tools can provide notebook, document, Git, terminal,
 and browser workflows without implying that every native Codex feature exists
 in Claude.
 

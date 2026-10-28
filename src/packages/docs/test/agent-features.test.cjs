@@ -62,7 +62,7 @@ test("feature matrix renders as tables with valid detailed-guide links", () => {
   }
 });
 
-test("assessment distinguishes Claude preview from full parity and unknown evidence", () => {
+test("assessment distinguishes Claude preview ratings from full parity and unknown evidence", () => {
   const body = full.getDocsEntry(slug).body;
   for (const phrase of [
     "describes that capability, not Claude Code as a whole",
@@ -79,6 +79,8 @@ test("assessment distinguishes Claude preview from full parity and unknown evide
     "approval is not execution",
   ])
     assert.ok(body.includes(phrase), phrase);
+  // Preview is a per-capability rating; Claude Code as a whole is not one.
+  assert.doesNotMatch(body, /Claude\s+preview/i);
   const claude = full.getDocsEntry("ai/claude-code").body;
   assert.match(claude, /still need live qualification/);
   assert.match(claude, /stored payment selection/);
