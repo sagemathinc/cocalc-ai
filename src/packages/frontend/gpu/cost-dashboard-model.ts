@@ -5,7 +5,8 @@
 
 import { moneyAdd, toDecimal } from "@cocalc/util/money";
 import type {
-  GpuPodScope,
+  DashboardPod,
+  GpuDashboardScope,
   GpuPodState,
   GpuPodSummary,
   GpuSpendGroupBy,
@@ -48,8 +49,12 @@ export function periodSince(period: GpuSpendPeriod, now: number): string {
   return new Date(now - PERIOD_MS[period]).toISOString();
 }
 
-export function podStateLabel(state: GpuPodState): string {
-  return STATE_LABELS[state] ?? state;
+export function podStateLabel(
+  pod: Pick<GpuPodSummary, "state" | "unmanaged_at">,
+): string {
+  // A forced key removal left it outside CoCalc's management.
+  if (pod.unmanaged_at) return "Unmanaged (may still bill at RunPod)";
+  return STATE_LABELS[pod.state] ?? pod.state;
 }
 
 /** A pod that may still cost money: everything until deletion is confirmed. */
@@ -57,36 +62,63 @@ export function isLivePod(pod: Pick<GpuPodSummary, "state">): boolean {
   return pod.state !== "terminated" && pod.state !== "failed";
 }
 
-export function livePods(pods: GpuPodSummary[]): GpuPodSummary[] {
+export function livePods<T extends GpuPodSummary>(pods: T[]): T[] {
   return pods
     .filter(isLivePod)
     .sort((a, b) => a.created.localeCompare(b.created));
 }
 
-export function hourlyRate(pods: GpuPodSummary[]): string {
-  return pods
-    .reduce((sum, pod) => moneyAdd(sum, pod.cost_per_hr), toDecimal(0))
-    .toString();
+/** Total hourly rate of the priced pods, and how many have no price yet (they
+ * are not counted as zero). */
+export function hourlyRate(pods: Pick<GpuPodSummary, "cost_per_hr">[]): {
+  total: string;
+  unpriced: number;
+} {
+  let total = toDecimal(0);
+  let unpriced = 0;
+  for (const pod of pods) {
+    if (pod.cost_per_hr == null) unpriced += 1;
+    else total = moneyAdd(total, pod.cost_per_hr);
+  }
+  return { total: total.toString(), unpriced };
 }
 
-export function spendTotals(rows: GpuSpendRow[]): {
-  estimated: string;
-  billed: string | null;
-} {
-  let estimated = toDecimal(0);
-  let billed = toDecimal(0);
-  let anyBilled = false;
-  for (const row of rows) {
-    estimated = moneyAdd(estimated, row.estimated);
-    if (row.billed != null) {
-      anyBilled = true;
-      billed = moneyAdd(billed, row.billed);
-    }
+export function spendTotal(row: {
+  spent_usd: string;
+  live_estimate_usd: string;
+  held_usd: string;
+}): string {
+  return moneyAdd(
+    moneyAdd(row.spent_usd, row.live_estimate_usd),
+    row.held_usd,
+  ).toString();
+}
+
+/** A spend row's label: the person's name (or "You"), the agent, the
+ * project's title, or the pod's handle. */
+export function spendRowLabel(
+  row: Pick<GpuSpendRow, "key" | "label">,
+  group_by: GpuSpendGroupBy,
+  labels: {
+    viewerAccountId?: string;
+    names?: Record<string, string | undefined>;
+    projectTitle?: (project_id: string) => string | undefined;
+  },
+): string {
+  switch (group_by) {
+    case "beneficiary":
+      if (labels.viewerAccountId != null && row.key === labels.viewerAccountId)
+        return "You";
+      return labels.names?.[row.key] || "Unknown person";
+    case "agent":
+      return row.key ? `Agent ${row.key.slice(0, 8)}` : "No agent (a person)";
+    case "project":
+      return row.key
+        ? (labels.projectTitle?.(row.key) ?? `Project ${row.key.slice(0, 8)}`)
+        : "No project";
+    case "pod":
+      return row.label ?? row.key.slice(0, 8);
   }
-  return {
-    estimated: estimated.toString(),
-    billed: anyBilled ? billed.toString() : null,
-  };
 }
 
 export function podGpuLabel(
@@ -100,7 +132,7 @@ export function podGpuLabel(
  * is never assumed to be the viewer. */
 export function podOwnerLabel(
   pod: Pick<
-    GpuPodSummary,
+    DashboardPod,
     "beneficiary_name" | "beneficiary_account_id" | "agent_id"
   >,
   viewerAccountId?: string,
@@ -114,9 +146,7 @@ export function podOwnerLabel(
 
 /** Completes "GPU pods ..." for a scope, so the confirmation always names the
  * pods the kill switch will actually terminate. */
-export function defaultScopeLabel(scope: GpuPodScope): string {
+export function defaultScopeLabel(scope: GpuDashboardScope): string {
   if (scope === "funded") return "your RunPod key pays for";
-  if (scope === "mine") return "you are responsible for";
-  if ("course_id" in scope) return "in this course";
-  return "funded by this grant";
+  return "in this course";
 }

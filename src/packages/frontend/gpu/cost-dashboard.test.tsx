@@ -1,9 +1,27 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GpuCostDashboard } from "./cost-dashboard";
-import type { GpuCostDashboardApi, GpuPodSummary } from "./types";
+import type {
+  DashboardPod,
+  GpuCostDashboardApi,
+  GpuDashboardScope,
+  GpuSpendResult,
+} from "./types";
+
+const mockFreshAuth = jest.fn(async (action: () => Promise<void>) => {
+  await action();
+  return true;
+});
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => null,
+  useFreshAuthAction: () => ({
+    runFreshAuthAction: (action) => mockFreshAuth(action),
+    freshAuthModalProps: {},
+  }),
+}));
 
 beforeEach(() => {
+  mockFreshAuth.mockClear();
   const getComputedStyle = window.getComputedStyle;
   jest
     .spyOn(window, "getComputedStyle")
@@ -11,7 +29,11 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
-function pod(overrides: Partial<GpuPodSummary>): GpuPodSummary {
+const GRACE = "77777777-7777-4777-8777-777777777777";
+const ALAN = "88888888-8888-4888-8888-888888888888";
+const NAMES = { [GRACE]: "Grace Hopper", [ALAN]: "Alan Turing" };
+
+function pod(overrides: Partial<DashboardPod>): DashboardPod {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     handle: "cc-7f3k9q2x",
@@ -22,17 +44,51 @@ function pod(overrides: Partial<GpuPodSummary>): GpuPodSummary {
     gpu_type_id: "NVIDIA RTX A5000",
     gpu_count: 1,
     cloud: "COMMUNITY",
+    image: "runpod/pytorch",
     cost_per_hr: "0.27",
-    estimated_cost: "0.54",
+    max_runtime_minutes: 60,
+    deadline: "2026-10-27T11:00:00.000Z",
     state: "running",
     desired_state: "running",
     created: "2026-10-27T10:00:00.000Z",
+    updated: "2026-10-27T10:00:00.000Z",
     ...overrides,
   };
 }
 
-function api(): jest.Mocked<GpuCostDashboardApi> {
+function spendResult(
+  rows: Partial<GpuSpendResult["rows"][number]>[],
+): GpuSpendResult {
+  const full = rows.map((row) => ({
+    key: GRACE,
+    spent_usd: "0",
+    live_estimate_usd: "0",
+    held_usd: "0",
+    pods: 1,
+    pods_live: 0,
+    ...row,
+  }));
+  const sum = (k: "spent_usd" | "live_estimate_usd" | "held_usd") =>
+    full.reduce((t, row) => t + Number(row[k]), 0).toFixed(2);
   return {
+    as_of: "2026-10-27T12:00:00.000Z",
+    since: "2026-10-20T12:00:00.000Z",
+    until: "2026-10-27T12:00:00.000Z",
+    group_by: "beneficiary",
+    rows: full,
+    totals: {
+      spent_usd: sum("spent_usd"),
+      live_estimate_usd: sum("live_estimate_usd"),
+      held_usd: sum("held_usd"),
+    },
+  };
+}
+
+function api(
+  scope: GpuDashboardScope = "funded",
+): jest.Mocked<Required<GpuCostDashboardApi>> {
+  return {
+    scope,
     pods: jest.fn().mockResolvedValue([
       pod({}),
       pod({
@@ -49,21 +105,45 @@ function api(): jest.Mocked<GpuCostDashboardApi> {
         state: "terminated",
       }),
     ]),
-    spend: jest.fn().mockResolvedValue({
-      as_of: "2026-10-27T12:00:00.000Z",
-      billed_through: "2026-10-27T11:00:00.000Z",
-      rows: [
-        {
-          key: "33333333-3333-4333-8333-333333333333",
-          label: "Spend row Ada",
-          estimated: "1.25",
-          billed: "1",
-          pods_live: 1,
-        },
-      ],
+    spend: jest
+      .fn()
+      .mockResolvedValue(
+        spendResult([
+          {
+            key: GRACE,
+            spent_usd: "1.25",
+            live_estimate_usd: "0.5",
+            pods_live: 1,
+          },
+        ]),
+      ),
+    budget: jest.fn().mockResolvedValue({
+      layer_id: "l",
+      version: 1,
+      state: "active",
+      authorized_usd: "20",
+      spent_usd: "4",
+      reserved_usd: "1",
+      released_usd: "0",
+      available_usd: "15",
+      max_hourly_usd: null,
+      max_concurrent_pods: null,
+      max_gpu_count: null,
+      max_runtime_minutes: null,
+      starts_at: "2026-10-01T00:00:00.000Z",
+      ends_at: "2027-10-01T00:00:00.000Z",
+      live_pods: 2,
+      live_gpus: 2,
     }),
     terminate: jest.fn().mockResolvedValue({ state: "terminating" }),
-    killSwitch: jest.fn().mockResolvedValue({ terminating: 2 }),
+    killSwitch: jest
+      .fn()
+      .mockResolvedValue({ marked: 2, remaining: 0, paused: true }),
+    resume: jest.fn().mockResolvedValue({ resumed: 1 }),
+    names: jest.fn(async (ids: string[]) =>
+      Object.fromEntries(ids.map((id) => [id, NAMES[id]])),
+    ),
+    projectTitle: jest.fn(() => undefined),
   };
 }
 
@@ -77,7 +157,7 @@ async function findDialog(title: string): Promise<HTMLElement> {
 }
 
 describe("GpuCostDashboard", () => {
-  it("shows live pods, the live rate and estimated vs billed spend", async () => {
+  it("shows live pods, the live rate, spend from the server and the budget", async () => {
     const mock = api();
     render(<GpuCostDashboard api={mock} />);
     expect(
@@ -91,12 +171,20 @@ describe("GpuCostDashboard", () => {
     ).toBeTruthy();
     expect(screen.queryByRole("cell", { name: /^You/ })).toBeNull();
     expect(screen.getByText("$0.77/hour")).toBeTruthy();
+    expect(
+      await screen.findByRole("cell", { name: "Grace Hopper" }),
+    ).toBeTruthy();
     expect(screen.getAllByText("$1.25").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("$1.00").length).toBeGreaterThan(0);
-    expect(mock.pods).toHaveBeenCalledWith({ scope: "funded" });
+    expect(screen.getAllByText("$0.50").length).toBeGreaterThan(0);
+    expect(await screen.findByText("$15.00 left of $20.00")).toBeTruthy();
+    // no RunPod billing yet: no billed column, and no held column at zero
+    expect(screen.queryByText(/Billed by RunPod/)).toBeNull();
+    expect(screen.queryByText(/Held/)).toBeNull();
+    expect(mock.pods).toHaveBeenCalledWith();
     expect(mock.spend).toHaveBeenCalledWith(
-      expect.objectContaining({ scope: "funded", group_by: "beneficiary" }),
+      expect.objectContaining({ group_by: "beneficiary" }),
     );
+    expect(mock.names).toHaveBeenCalledWith([GRACE]);
   });
 
   it("labels the viewer's own pods as You only when the viewer is known", async () => {
@@ -143,8 +231,72 @@ describe("GpuCostDashboard", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "Terminate all" }),
     );
-    expect(mock.killSwitch).toHaveBeenCalledWith({ scope: "funded" });
-    expect(await screen.findByText("Terminating 2 pods.")).toBeTruthy();
+    expect(mock.killSwitch).toHaveBeenCalledWith();
+    expect(
+      await screen.findByText(
+        "Marked 2 pods for termination. New launches are paused.",
+      ),
+    ).toBeTruthy();
+    // Resume, behind fresh authentication
+    await user.click(screen.getByRole("button", { name: "Resume launches" }));
+    expect(mockFreshAuth).toHaveBeenCalled();
+    expect(mock.resume).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByText("New launches are allowed again."),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Resume launches" }),
+    ).toBeNull();
+  });
+
+  it("says when pods are still terminating after the kill switch returns", async () => {
+    const mock = api();
+    mock.killSwitch.mockResolvedValueOnce({
+      marked: 3,
+      remaining: 1,
+      paused: true,
+    });
+    const user = userEvent.setup();
+    render(<GpuCostDashboard api={mock} />);
+    await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    await user.click(screen.getByRole("button", { name: "Terminate all" }));
+    const dialog = await findDialog(
+      "Terminate all GPU pods your RunPod key pays for?",
+    );
+    expect(within(dialog).getByText(/pauses new launches/)).toBeTruthy();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Terminate all" }),
+    );
+    expect(
+      await screen.findByText(
+        "Marked 3 pods for termination. 1 pod still terminating; CoCalc keeps at it. New launches are paused.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("shows pods without a price, held amounts and an over-budget key honestly", async () => {
+    const mock = api();
+    mock.pods.mockResolvedValue([pod({ cost_per_hr: undefined })]);
+    mock.spend.mockResolvedValue(
+      spendResult([{ key: GRACE, spent_usd: "1", held_usd: "4" }]),
+    );
+    mock.budget.mockResolvedValue({
+      ...(await api().budget()),
+      available_usd: "0",
+      over_budget_usd: "2.5",
+    });
+    render(<GpuCostDashboard api={mock} />);
+    expect(
+      await screen.findByRole("cell", { name: "not priced yet" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("$0.00/hour plus 1 pod not priced yet"),
+    ).toBeTruthy();
+    expect(
+      await screen.findByRole("columnheader", { name: "Held (unconfirmed)" }),
+    ).toBeTruthy();
+    expect(screen.getAllByText("$4.00").length).toBeGreaterThan(0);
+    expect(await screen.findByText("over by $2.50")).toBeTruthy();
   });
 
   it("is keyboard operable: Escape cancels and focus returns to the trigger", async () => {
@@ -188,43 +340,30 @@ describe("GpuCostDashboard", () => {
     ).toBeTruthy();
   });
 
-  it("passes a course scope through to every call", async () => {
-    const mock = api();
+  it("acts for the scope its API is bound to", async () => {
+    const mock = api({ course_id: "c1" });
     const user = userEvent.setup();
-    render(
-      <GpuCostDashboard
-        api={mock}
-        scope={{ course_id: "c1" }}
-        scopeLabel="in this course"
-      />,
-    );
+    render(<GpuCostDashboard api={mock} scopeLabel="in this course" />);
     await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
-    expect(mock.pods).toHaveBeenCalledWith({ scope: { course_id: "c1" } });
     await user.click(screen.getByRole("button", { name: "Terminate all" }));
     const dialog = await findDialog("Terminate all GPU pods in this course?");
     await user.click(
       within(dialog).getByRole("button", { name: "Terminate all" }),
     );
-    expect(mock.killSwitch).toHaveBeenCalledWith({
-      scope: { course_id: "c1" },
-    });
+    expect(mock.killSwitch).toHaveBeenCalledWith();
   });
 
-  it("terminates exactly the scope it shows, and doesn't refetch for an equal scope object", async () => {
-    const mock = api();
+  it("terminates exactly the scope it shows, and doesn't refetch for an equal API object", async () => {
+    const mock = api({ course_id: "c1" });
     const user = userEvent.setup();
     const { rerender } = render(
-      <GpuCostDashboard
-        api={mock}
-        scope={{ course_id: "c1" }}
-        scopeLabel="in this course"
-      />,
+      <GpuCostDashboard api={mock} scopeLabel="in this course" />,
     );
     await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
+    // a new but equal API object, as a parent might pass on every render
     rerender(
       <GpuCostDashboard
-        api={mock}
-        scope={{ course_id: "c1" }}
+        api={{ ...mock, scope: { course_id: "c1" } }}
         scopeLabel="in this course"
       />,
     );
@@ -235,17 +374,16 @@ describe("GpuCostDashboard", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "Terminate all" }),
     );
+    // the API is bound to the scope shown: it takes no scope argument
     expect(mock.killSwitch).toHaveBeenCalledTimes(1);
-    expect(mock.killSwitch.mock.calls[0][0].scope).toEqual(
-      mock.pods.mock.calls[0][0].scope,
-    );
+    expect(mock.killSwitch).toHaveBeenCalledWith();
   });
 
   it("never shows old rows under a new period while the new query is loading", async () => {
     const mock = api();
     const user = userEvent.setup();
     render(<GpuCostDashboard api={mock} />);
-    await screen.findByRole("cell", { name: "Spend row Ada" });
+    await screen.findByRole("cell", { name: "Grace Hopper" });
     let resolve!: (value: Awaited<ReturnType<typeof mock.spend>>) => void;
     mock.spend.mockReturnValueOnce(new Promise((r) => (resolve = r)));
     await user.click(screen.getByText("Last 24 hours"));
@@ -254,19 +392,14 @@ describe("GpuCostDashboard", () => {
         .checked,
     ).toBe(true);
     await waitFor(() =>
-      expect(screen.queryByRole("cell", { name: "Spend row Ada" })).toBeNull(),
+      expect(screen.queryByRole("cell", { name: "Grace Hopper" })).toBeNull(),
     );
     expect(screen.queryByText("$1.25")).toBeNull();
     // A period change refetches spend only, not the pod list.
     expect(mock.pods).toHaveBeenCalledTimes(1);
-    resolve({
-      as_of: "2026-10-27T12:00:00.000Z",
-      rows: [
-        { key: "x", label: "Grace Hopper", estimated: "0.5", pods_live: 0 },
-      ],
-    });
+    resolve(spendResult([{ key: ALAN, spent_usd: "0.5" }]));
     expect(
-      await screen.findByRole("cell", { name: "Grace Hopper" }),
+      await screen.findByRole("cell", { name: "Alan Turing" }),
     ).toBeTruthy();
   });
 
@@ -274,14 +407,14 @@ describe("GpuCostDashboard", () => {
     const mock = api();
     const user = userEvent.setup();
     render(<GpuCostDashboard api={mock} />);
-    await screen.findByRole("cell", { name: "Spend row Ada" });
+    await screen.findByRole("cell", { name: "Grace Hopper" });
     mock.spend.mockRejectedValue(new Error("spend is down"));
     await user.click(
       screen.getByRole("combobox", { name: "Group spending by" }),
     );
     await user.click(await screen.findByTitle("Agent"));
     expect(await screen.findByRole("alert")).toHaveTextContent("spend is down");
-    expect(screen.queryByRole("cell", { name: "Spend row Ada" })).toBeNull();
+    expect(screen.queryByRole("cell", { name: "Grace Hopper" })).toBeNull();
     expect(screen.getAllByText("unavailable").length).toBeGreaterThan(0);
   });
 
@@ -323,7 +456,7 @@ describe("GpuCostDashboard", () => {
       "Couldn't load live pods",
     );
     expect(
-      await screen.findByRole("cell", { name: "Spend row Ada" }),
+      await screen.findByRole("cell", { name: "Grace Hopper" }),
     ).toBeTruthy();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getByText("Unavailable.")).toBeTruthy();
@@ -333,7 +466,7 @@ describe("GpuCostDashboard", () => {
     jest.useFakeTimers();
     try {
       const mock = api();
-      let resolve!: (value: GpuPodSummary[]) => void;
+      let resolve!: (value: DashboardPod[]) => void;
       mock.pods.mockReturnValueOnce(new Promise((r) => (resolve = r)));
       render(<GpuCostDashboard api={mock} />);
       await act(async () => {
@@ -463,9 +596,9 @@ describe("GpuCostDashboard", () => {
   });
 
   it("labels a course scope as the course when no label is given", async () => {
-    const mock = api();
+    const mock = api({ course_id: "c2" });
     const user = userEvent.setup();
-    render(<GpuCostDashboard api={mock} scope={{ course_id: "c2" }} />);
+    render(<GpuCostDashboard api={mock} />);
     await screen.findByRole("cell", { name: "cc-7f3k9q2x" });
     expect(
       screen.getByRole("heading", { name: "GPU pods in this course" }),
@@ -479,9 +612,7 @@ describe("GpuCostDashboard", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "Terminate all" }),
     );
-    expect(mock.killSwitch).toHaveBeenCalledWith({
-      scope: { course_id: "c2" },
-    });
+    expect(mock.killSwitch).toHaveBeenCalledWith();
   });
 
   it("reports load failures in an alert", async () => {
