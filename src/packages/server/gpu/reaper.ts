@@ -174,17 +174,21 @@ const CAUSES: {
     where: `EXISTS (SELECT 1 FROM gpu_key_fences f
                      WHERE f.credential_id = p.credential_id
                        AND f.entitlement_lapsed_at IS NOT NULL
-                       AND f.entitlement_lapsed_at <= $1::timestamptz - make_interval(secs => ${LAPSE_GRACE_MS / 1000}))`,
+                       AND f.entitlement_lapsed_at <= $1::timestamptz - make_interval(secs => ${LAPSE_GRACE_MS / 1000}))
+            -- an entitlement this sweep couldn't check: decide next sweep
+            AND p.credential_id <> ALL($3::uuid[])`,
   },
 ];
 
 // Record, per key, whether its owner still has the entitlement: the 7-day
 // lapse clock starts the first time it is seen missing.
+// Returns the keys whose entitlement couldn't be checked this sweep.
 async function checkEntitlements(
   now: Date,
   deps: ReaperDeps,
   renew: () => Promise<void>,
-): Promise<void> {
+): Promise<string[]> {
+  const unknown: string[] = [];
   let after = "";
   for (;;) {
     const { rows } = await getPool().query(
@@ -198,9 +202,11 @@ async function checkEntitlements(
     );
     for (const f of rows) {
       await renew();
-      await checkEntitlement(f, now, deps);
+      if (!(await checkEntitlement(f, now, deps))) {
+        unknown.push(f.credential_id);
+      }
     }
-    if (rows.length < BATCH) return;
+    if (rows.length < BATCH) return unknown;
     after = `${rows[rows.length - 1].credential_id}`;
     await renew();
   }
@@ -214,14 +220,14 @@ async function checkEntitlement(
   },
   now: Date,
   deps: ReaperDeps,
-): Promise<void> {
+): Promise<boolean> {
   let entitled: boolean;
   try {
     entitled = await (deps.isEntitled ?? isGpuProviderKeysEntitled)(
       f.key_owner_account_id,
     );
   } catch {
-    return; // unknown: decide next sweep
+    return false; // unknown: decide next sweep
   }
   if (!entitled && f.entitlement_lapsed_at == null) {
     await getPool().query(
@@ -234,11 +240,14 @@ async function checkEntitlement(
       [f.credential_id],
     );
   }
+  return true;
 }
 
 async function markForTermination(
   now: Date,
   renew: () => Promise<void>,
+  // keys whose entitlement couldn't be checked this sweep
+  unknown: string[] = [],
 ): Promise<number> {
   let marked = 0;
   for (const c of CAUSES) {
@@ -248,7 +257,7 @@ async function markForTermination(
         `SELECT p.id FROM gpu_pods p WHERE ${LIVE} AND ${c.where}
             AND p.id::text > $2
           ORDER BY p.id::text LIMIT ${BATCH}`,
-        [now, after],
+        c.where.includes("$3") ? [now, after, unknown] : [now, after],
       );
       for (const { id } of rows) {
         await renew();
@@ -404,9 +413,9 @@ export async function runGpuReaperSweep(deps: ReaperDeps = {}): Promise<{
   }, deps.heartbeatMs ?? 60_000);
   heartbeat.unref?.();
   try {
-    await checkEntitlements(now, deps, renew);
+    const unknown = await checkEntitlements(now, deps, renew);
     const marked =
-      (await markForTermination(now, renew)) +
+      (await markForTermination(now, renew, unknown)) +
       (await checkCommunitySsh(now, deps, renew));
     const { accounts, complete } = await resolveOwners(now, deps, renew);
     if (lost) throw new LeaseLost("the reaper lease was lost");

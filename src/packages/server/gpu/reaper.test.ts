@@ -749,4 +749,34 @@ describeDb("GPU reaper", () => {
     expect(r.reap_attempts).toBe(1);
     expect(new Date(r.reap_after).getTime()).toBe(s.deps.now() + 60_000);
   });
+
+  it("doesn't act on a past lapse while the entitlement can't be checked", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    await getPool().query(
+      "UPDATE gpu_pods SET deadline = now() + interval '30 days', running_since = NULL WHERE id = $1",
+      [pod.id],
+    );
+    // lapsed more than 7 days ago, but the membership has since returned...
+    await getPool().query(
+      "UPDATE gpu_key_fences SET entitlement_lapsed_at = $2 WHERE credential_id = $1",
+      [s.credential_id, new Date(s.deps.now() - LAPSE_GRACE_MS - HOUR)],
+    );
+    // ...and this sweep can't look it up
+    await runGpuReaperSweep({
+      ...s.deps,
+      isEntitled: async () => {
+        throw Error("membership service unavailable");
+      },
+    });
+    expect((await row(pod.id)).desired_state).toBe("running");
+    // the next sweep sees the entitlement and clears the lapse
+    await runGpuReaperSweep(s.deps);
+    expect((await row(pod.id)).desired_state).toBe("running");
+    const { rows } = await getPool().query(
+      "SELECT entitlement_lapsed_at FROM gpu_key_fences WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    expect(rows[0].entitlement_lapsed_at).toBeNull();
+  });
 });
