@@ -386,7 +386,13 @@ export function registerGpuCommand(
               max_cost_usd: plan.max_cost_usd ?? null,
               // the same GPU, held to this bound
               next:
-                pinnedLaunchCommand(plan, { template: opts.template }) ?? null,
+                pinnedLaunchCommand(plan, {
+                  project_id,
+                  template: opts.template,
+                  ssh: !!opts.ssh,
+                  connect: opts.connect,
+                  wait: opts.wait,
+                }) ?? null,
             };
           }
           // The private key stays here; the launch gets only the public key.

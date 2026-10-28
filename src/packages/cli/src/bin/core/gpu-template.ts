@@ -133,18 +133,53 @@ export async function planGpuLaunch(
   return plan;
 }
 
-// The launch a dry run describes, pinned: the same GPU, and refused if it
-// would now cost more than the stated bound.
+// POSIX shell quoting: one word, whatever the value holds.
+export function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value)
+    ? value
+    : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+// The launch a dry run describes, exactly: the whole normalized spec as
+// explicit options (each wins over the template, so the template only keeps
+// its SSH and kernel behavior), the project, how it connects, and
+// --max-cost at the stated bound, so a change in prices or stock refuses
+// it rather than costing more.
 export function pinnedLaunchCommand(
   plan: GpuLaunchPlan,
-  args: { template?: string },
+  context: {
+    project_id: string;
+    template?: string;
+    // --ssh without a template
+    ssh?: boolean;
+    // false for --no-connect
+    connect?: boolean;
+    wait?: number;
+  },
 ): string | undefined {
   if (plan.max_cost_usd == null) return undefined;
-  const parts = ["cocalc gpu launch"];
-  if (args.template) parts.push(`--template ${args.template}`);
-  parts.push(`--gpu ${JSON.stringify(plan.spec.gpu_type_id)}`);
-  parts.push(`--max-runtime ${plan.spec.max_runtime_minutes}`);
-  if (plan.spec.gpu_count !== 1) parts.push(`--count ${plan.spec.gpu_count}`);
-  parts.push(`--max-cost ${plan.max_cost_usd.toFixed(2)}`);
-  return parts.join(" ");
+  const { spec } = plan;
+  const args: string[] = ["cocalc", "gpu", "launch"];
+  const opt = (flag: string, value: string | number) =>
+    args.push(flag, shellQuote(`${value}`));
+  opt("--project", context.project_id);
+  if (context.template) opt("--template", context.template);
+  opt("--gpu", spec.gpu_type_id);
+  opt("--count", spec.gpu_count);
+  opt("--cloud", spec.cloud ?? "SECURE");
+  if (spec.data_center_id) opt("--data-center", spec.data_center_id);
+  opt("--image", spec.image);
+  if (spec.container_disk_gb != null) opt("--disk", spec.container_disk_gb);
+  if (spec.volume_gb) opt("--volume", spec.volume_gb);
+  for (const port of spec.ports ?? []) opt("--port", port);
+  for (const [name, value] of Object.entries(spec.env ?? {})) {
+    opt("--env", `${name}=${value}`);
+  }
+  opt("--max-runtime", spec.max_runtime_minutes);
+  if (spec.ssh_public_key) opt("--ssh-public-key", spec.ssh_public_key);
+  else if (context.ssh && !context.template) args.push("--ssh");
+  if (context.connect === false) args.push("--no-connect");
+  if (context.wait != null) opt("--wait", context.wait);
+  opt("--max-cost", plan.max_cost_usd.toFixed(2));
+  return args.join(" ");
 }

@@ -17,9 +17,10 @@ money.
   command: it pins the GPU and adds `--max-cost`, so the launch is refused if
   prices or stock changed. Launch only what the user asked for.
 - **The bound holds only if the pod ends by its maximum runtime. You end
-  it:** don't count on CoCalc to terminate it at the deadline. Before
-  launching, set a watcher for a few minutes before the deadline (see
-  Waiting), and terminate the pod then if the work isn't done.
+  it:** don't count on CoCalc to terminate it at the deadline. Launch with
+  the dry run's `next`, then, before starting any work, set a watcher for a
+  few minutes before the `deadline` the launch returned (see Waiting), and
+  terminate the pod then if the work isn't done.
 - **Always use the shortest sensible `--max-runtime`.**
 - **Terminate the pod as soon as the work is done:**
   `cocalc gpu terminate <handle>`.
@@ -41,8 +42,7 @@ money.
 cocalc gpu templates                     # built-in starting points
 cocalc gpu availability --cloud SECURE   # what is in stock now, cheapest first
 cocalc gpu launch --template pytorch-kernel --dry-run   # the GPU, spec, max cost, next
-cocalc gpu launch --template pytorch-kernel --gpu "NVIDIA RTX A4000" --max-runtime 60 --max-cost 0.26
-                                         # the dry run's next: launch, SSH, kernel
+# then run the dry run's `next` exactly as printed: launch, SSH, kernel
 cocalc gpu pods                          # the pods CoCalc started
 cocalc gpu terminate cc-...              # end it (and its billing)
 ```

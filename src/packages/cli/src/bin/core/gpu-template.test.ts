@@ -3,6 +3,7 @@ import { it } from "node:test";
 import {
   pinnedLaunchCommand,
   planGpuLaunch,
+  shellQuote,
   templateRows,
 } from "./gpu-template";
 
@@ -140,10 +141,13 @@ it("holds a launch to --max-cost, and pins a dry run's choice in its next comman
     price: true,
   });
   assert.equal(dry.max_cost_usd, 0.26);
-  const next = pinnedLaunchCommand(dry, { template: "pytorch-kernel" })!;
+  const next = pinnedLaunchCommand(dry, {
+    project_id: "00000000-1000-4000-8000-0000000000aa",
+    template: "pytorch-kernel",
+  })!;
   assert.equal(
     next,
-    'cocalc gpu launch --template pytorch-kernel --gpu "NVIDIA RTX A4000" --max-runtime 60 --max-cost 0.26',
+    "cocalc gpu launch --project 00000000-1000-4000-8000-0000000000aa --template pytorch-kernel --gpu 'NVIDIA RTX A4000' --count 1 --cloud SECURE --image runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404 --disk 20 --max-runtime 60 --max-cost 0.26",
   );
   // the same launch later, at the stated bound: fine
   const ok = await planGpuLaunch(cheap, {
@@ -184,8 +188,15 @@ it("holds a launch to --max-cost, and pins a dry run's choice in its next comman
       await planGpuLaunch(api([]), {
         spec: { gpu_type_id: "NVIDIA RTX A4000", max_runtime_minutes: 60 },
       }),
-      {},
+      { project_id: "00000000-1000-4000-8000-0000000000aa" },
     ),
     undefined,
   );
+});
+
+it("quotes every value for a POSIX shell", () => {
+  assert.equal(shellQuote("EU-RO-1"), "EU-RO-1");
+  assert.equal(shellQuote("NVIDIA RTX A4000"), "'NVIDIA RTX A4000'");
+  assert.equal(shellQuote(`a'b $(x) "c"`), `'a'\\''b $(x) "c"'`);
+  assert.equal(shellQuote(""), "''");
 });
