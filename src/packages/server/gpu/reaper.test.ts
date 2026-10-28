@@ -700,4 +700,33 @@ describeDb("GPU reaper", () => {
     expect(r.reap_attempts).toBe(32);
     expect(new Date(r.reap_after).getTime()).toBe(s.deps.now() + 30 * 60_000);
   });
+
+  it("keeps its lease through one long ambiguous lookup, by a heartbeat", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'ambiguous', provider_pod_id = NULL WHERE id = $1",
+      [pod.id],
+    );
+    // RunPod's pod list pages slowly: the lookup outlasts the 5-minute lease
+    // (the fake clock moves 3 minutes per real 20 ms; the heartbeat runs
+    // every 5 real ms)
+    let other: boolean | undefined;
+    s.client.findPodsByName.mockImplementationOnce(async (name: string) => {
+      for (let page = 0; page < 4; page++) {
+        s.advance(3 * 60_000);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      other = await acquireWorkerLease(
+        "reaper",
+        "hub-other:run",
+        new Date(s.deps.now()),
+      );
+      return [...s.pods.values()].filter((p) => p.name === name);
+    });
+    const result = await runGpuReaperSweep({ ...s.deps, heartbeatMs: 5 });
+    expect(other).toBe(false);
+    expect(result).toEqual(expect.objectContaining({ ran: true }));
+    expect((await row(pod.id)).state).toBe("running");
+  });
 });

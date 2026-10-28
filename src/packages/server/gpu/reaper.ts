@@ -58,6 +58,8 @@ const OWNER_PASSES = 20;
 
 export interface ReaperDeps extends GpuPodDeps {
   holder?: string;
+  // how often the lease is renewed in the background (default: a minute)
+  heartbeatMs?: number;
   isEntitled?: (account_id: string) => Promise<boolean>;
 }
 
@@ -388,13 +390,26 @@ export async function runGpuReaperSweep(deps: ReaperDeps = {}): Promise<{
   if (!(await acquireWorkerLease("reaper", token, now))) {
     return { ran: false };
   }
-  const renew = () => renewWorkerLease("reaper", token, clock());
+  // Renewed before every record, and by a heartbeat while one record's
+  // provider calls run long (an ambiguous lookup pages RunPod's pod list):
+  // another sweep can take over only after this process stalls for the
+  // lease's whole TTL, and then this one stops at its next record.
+  let lost = false;
+  const renew = async () => {
+    if (lost) throw new LeaseLost("the reaper lease was lost");
+    await renewWorkerLease("reaper", token, clock());
+  };
+  const heartbeat = setInterval(() => {
+    renewWorkerLease("reaper", token, clock()).catch(() => (lost = true));
+  }, deps.heartbeatMs ?? 60_000);
+  heartbeat.unref?.();
   try {
     await checkEntitlements(now, deps, renew);
     const marked =
       (await markForTermination(now, renew)) +
       (await checkCommunitySsh(now, deps, renew));
     const { accounts, complete } = await resolveOwners(now, deps, renew);
+    if (lost) throw new LeaseLost("the reaper lease was lost");
     await finishWorkerLease(
       "reaper",
       token,
@@ -404,12 +419,14 @@ export async function runGpuReaperSweep(deps: ReaperDeps = {}): Promise<{
     return { ran: true, complete, marked, accounts };
   } catch (err) {
     log.error("GPU reaper sweep failed", `${err}`);
-    if (!(err instanceof LeaseLost)) {
+    if (!(err instanceof LeaseLost) && !lost) {
       await finishWorkerLease("reaper", token, clock(), `${err}`).catch(
         () => {},
       );
     }
     throw err;
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
