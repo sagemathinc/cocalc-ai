@@ -182,36 +182,108 @@ describe("hub API argument transforms", () => {
     ).toThrow("agent project is required");
   });
 
-  it("keeps gpu.pods account-only: an agent's token may not list the account's pods", async () => {
-    expect(getHubApiPrincipalPolicies()["gpu.pods"]).toBe("account");
-    expect(
-      await transformArgs({
-        name: "gpu.pods",
-        args: [{ account_id: "forged", pod_id: "pod_abc123" }],
+  it.each([
+    "gpu.pods",
+    "gpu.launch",
+    "gpu.terminate",
+    "gpu.who",
+    "gpu.sshInfo",
+  ])(
+    "lets an agent call %s only as itself, from its verified token",
+    async (name) => {
+      expect(getHubApiPrincipalPolicies()[name]).toBe("account-or-gpu-agent");
+      const forged = {
+        account_id: "forged",
+        project_id: "other-project",
+        agent_id: "agent:forged",
+        run_id: "forged-run",
+        gpu_agent_auth: { auth_token_fingerprint: "f".repeat(64) },
+        pod_id: "pod_abc123",
+      };
+      // a human: bound to the account; agent identity args are dropped
+      const [human] = await transformArgs({
+        name,
+        args: [{ ...forged }],
         account_id: "human",
-      }),
-    ).toEqual([{ account_id: "human", pod_id: "pod_abc123" }]);
-    await expect(
-      transformArgs({
-        name: "gpu.pods",
-        args: [{}],
-        account_id: "agent-account",
-        project_id: "own-project",
-        auth_actor: "agent",
-      }),
-    ).rejects.toThrow();
-    for (const actor of [
-      { project_id: "project" },
-      { host_id: "host" },
-      {
-        account_id: "agent-account",
-        project_id: "own-project",
-        auth_actor: "agent" as const,
-      },
+      });
+      expect(human.account_id).toBe("human");
+      expect(human.pod_id).toBe("pod_abc123");
+      for (const k of ["gpu_agent_auth", "agent_id", "run_id"]) {
+        expect(human).not.toHaveProperty(k);
+      }
+      // an agent: its account, project and token, never what it passed
+      expect(
+        await transformArgs({
+          name,
+          args: [{ ...forged }],
+          account_id: "agent-account",
+          project_id: "own-project",
+          auth_actor: "agent",
+          auth_token_fingerprint: "a".repeat(64),
+          auth_iat_s: 100,
+          auth_exp_s: 200,
+        }),
+      ).toEqual([
+        {
+          account_id: "agent-account",
+          project_id: "own-project",
+          pod_id: "pod_abc123",
+          gpu_agent_auth: {
+            account_id: "agent-account",
+            project_id: "own-project",
+            auth_token_fingerprint: "a".repeat(64),
+            auth_iat_s: 100,
+            auth_exp_s: 200,
+          },
+        },
+      ]);
+      // an agent without a verified token identity is refused
+      await expect(
+        transformArgs({
+          name,
+          args: [{}],
+          account_id: "agent-account",
+          project_id: "own-project",
+          auth_actor: "agent",
+        }),
+      ).rejects.toThrow("invalid GPU agent identity");
+      for (const actor of [{ project_id: "project" }, { host_id: "host" }]) {
+        expect(
+          isHubApiPrincipalAllowed({
+            policy: "account-or-gpu-agent",
+            ...actor,
+          }),
+        ).toBe(false);
+      }
+    },
+  );
+
+  it("keeps GPU approval and revocation for the human", async () => {
+    expect(getHubApiPrincipalPolicies()["gpu.agentRequests"]).toBe("account");
+    expect(getHubApiPrincipalPolicies()["gpu.revokeAgentGrant"]).toBe(
+      "account",
+    );
+    expect(getHubApiPrincipalPolicies()["gpu.approveAgentRequest"]).not.toMatch(
+      /agent/,
+    );
+    for (const name of [
+      "gpu.agentRequests",
+      "gpu.approveAgentRequest",
+      "gpu.revokeAgentGrant",
     ]) {
-      expect(isHubApiPrincipalAllowed({ policy: "account", ...actor })).toBe(
-        false,
-      );
+      await expect(
+        (async () =>
+          await transformArgs({
+            name,
+            args: [{ request_id: "r", grant_id: "g" }],
+            account_id: "agent-account",
+            project_id: "own-project",
+            auth_actor: "agent",
+            auth_token_fingerprint: "a".repeat(64),
+            auth_iat_s: 100,
+            auth_exp_s: 200,
+          }))(),
+      ).rejects.toThrow();
     }
   });
 

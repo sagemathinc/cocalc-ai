@@ -50,13 +50,13 @@ const identity = {
     type: "string",
     pg_type: "varchar(128)",
     not_null: true,
-    desc: "The agent (verified auth).",
+    desc: "The agent, derived server-side from the verified token (server/gpu/agent-identity.ts): 'agent:<agent_id>' for a registered agent identity, 'session:<token fingerprint>' for a project agent token (one chat session, not a durable agent). Never from a request body; never shown to users.",
   },
   run_id: {
     type: "string",
     pg_type: "varchar(128)",
     not_null: true,
-    desc: "The agent run (turn) the request was made in (verified auth).",
+    desc: "The agent run the request was made in, derived like agent_id: the registered agent's single active run id, or the same 'session:<token fingerprint>' key for a project agent token.",
   },
 } as const;
 
