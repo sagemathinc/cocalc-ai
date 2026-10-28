@@ -20,10 +20,12 @@ export const GPU_PROVIDER_LABELS: Record<GpuProvider, string> = {
 // The external-credentials kind; the provider is the GpuProvider id.
 export const GPU_PROVIDER_API_KEY_KIND = "gpu-provider-api-key";
 
-// How long the browser waits for setGpuProviderKey: longer than the server's
-// verification deadline (25 s, after which it stores nothing) plus storing
-// the key (at most 15 s).
-export const VERIFY_RPC_TIMEOUT_MS = 45_000;
+// How long the browser waits for setGpuProviderKey: well past the server's
+// verification deadline (25 s, after which it stores nothing) plus the store,
+// which waits on the database and the selector lock without its own deadline.
+// If even this passes, the panel reloads the real status (see
+// gpu-provider-key.tsx), so a late store shows up at the next load.
+export const VERIFY_RPC_TIMEOUT_MS = 90_000;
 
 export function isGpuProvider(value: unknown): value is GpuProvider {
   return GPU_PROVIDERS.includes(value as GpuProvider);

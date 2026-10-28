@@ -62,7 +62,7 @@ describe("GpuProviderKeySection", () => {
         api_key: KEY,
         browser_id: "browser-1",
         // longer than the server's worst-case verification
-        timeout: 45_000,
+        timeout: 90_000,
       }),
     );
     expect(mockFreshAuth).toHaveBeenCalled();
