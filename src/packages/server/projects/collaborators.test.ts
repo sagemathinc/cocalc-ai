@@ -1268,6 +1268,32 @@ describe("project collaborators local bay access", () => {
     ]);
   });
 
+  it.each(["prefer", "only"])(
+    "%s mode names projected collaborators this bay has no name for",
+    async (mode) => {
+      process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS = mode;
+      const REMOTE = "66666666-6666-4666-8666-666666666666";
+      listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => [
+        {
+          account_id: REMOTE,
+          name: null,
+          first_name: null,
+          last_name: null,
+          shared_projects: 1,
+        },
+      ]);
+      getClusterAccountsByIdsMock = jest.fn(async () => [
+        { account_id: REMOTE, first_name: "Ada", last_name: "Tester" },
+      ]);
+      const { listMyCollaborators } = await import("./collaborators");
+      await expect(
+        listMyCollaborators({ account_id: ACCOUNT_ID, limit: 20 }),
+      ).resolves.toEqual([
+        expect.objectContaining({ account_id: REMOTE, name: "Ada Tester" }),
+      ]);
+    },
+  );
+
   it("uses projection-only collaborator reads in only mode", async () => {
     process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS = "only";
     listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => []);

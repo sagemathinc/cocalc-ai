@@ -3193,7 +3193,7 @@ export async function listMyCollaborators({
         include_email: includeEmail,
       });
       if (readMode === "only" || projected.length > 0) {
-        return projected;
+        return await withNames(projected);
       }
     } catch (err) {
       if (readMode === "only") {
