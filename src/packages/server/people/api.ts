@@ -203,7 +203,23 @@ export const peopleControl: InterBayPeopleApi = {
     return await getConversation(opts);
   },
 
-  async createRecord({ account_id, project_id, path, title, member_ids }) {
+  async createRecord({ account_id, project_id, path, title }) {
+    await assertOwner(project_id);
+    return await createConversationRecord({
+      account_id,
+      project_id,
+      path,
+      title,
+    });
+  },
+
+  async createRecordWithMembers({
+    account_id,
+    project_id,
+    path,
+    title,
+    member_ids,
+  }) {
     await assertOwner(project_id);
     return await createConversationRecord({
       account_id,
@@ -470,15 +486,25 @@ export const peopleApi: PeopleApi = {
   },
 
   async addConversation({ account_id, project_id, path, title, member_ids }) {
-    const c = await (
-      await owner(project_id)
-    ).createRecord({
-      account_id: account_id!,
-      project_id,
-      path,
-      title,
-      member_ids,
-    });
+    const api = await owner(project_id);
+    const opts = { account_id: account_id!, project_id, path, title };
+    let c: Conversation;
+    if (member_ids != null && member_ids.length > 0) {
+      try {
+        c = await api.createRecordWithMembers({ ...opts, member_ids });
+      } catch (err) {
+        // An owning bay that predates members: fail rather than create a
+        // conversation that silently leaves them out.
+        if (/unknown service method|is not a function/.test(`${err}`)) {
+          throw Error(
+            "This project's server does not support conversation members yet. Try again in a few minutes.",
+          );
+        }
+        throw err;
+      }
+    } else {
+      c = await api.createRecord(opts);
+    }
     await markReadBestEffort(account_id!, c);
     return c;
   },

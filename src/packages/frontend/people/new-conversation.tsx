@@ -13,7 +13,8 @@ import { peopleApi, conversationsChanged } from "./api";
 import { createConversation } from "./create";
 
 // Projects where the current account is an owner or collaborator, optionally
-// restricted to those shared with another person.
+// restricted to those where another person is one too (not a viewer: a
+// conversation can only be with full collaborators).
 export function useCollaboratorProjects(personId?: string) {
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
@@ -25,7 +26,12 @@ export function useCollaboratorProjects(personId?: string) {
       if (!isProjectCollaboratorRole(users?.getIn([account_id, "group"]))) {
         return;
       }
-      if (personId && !users?.has(personId)) return;
+      if (
+        personId &&
+        !isProjectCollaboratorRole(users?.getIn([personId, "group"]))
+      ) {
+        return;
+      }
       result.push({ project_id, title: project.get("title") ?? project_id });
     });
     return result.sort((a, b) => a.title.localeCompare(b.title));
@@ -66,9 +72,10 @@ export function NewConversationModal({
   onCreated: (conversation: Conversation) => void;
 }) {
   const projects = useCollaboratorProjects(personId);
-  // With a person, only projects you share with them.
+  // With a person, only projects where they are a full collaborator too.
   const sharedWithPerson = useCallback(
-    (project: any) => !personId || project.users?.[personId] != null,
+    (project: any) =>
+      !personId || isProjectCollaboratorRole(project.users?.[personId]?.group),
     [personId],
   );
   const [project_id, setProjectId] = useState<string>();
@@ -77,8 +84,12 @@ export function NewConversationModal({
   const [member_ids, setMemberIds] = useState<string[]>(
     personId ? [personId] : [],
   );
+  // Each opening starts over: the modal stays mounted, and a project chosen
+  // for one person may not be shared with the next.
   useEffect(() => {
-    if (open) setMemberIds(personId ? [personId] : []);
+    if (!open) return;
+    setProjectId(undefined);
+    setMemberIds(personId ? [personId] : []);
   }, [open, personId]);
   // Only people in the chosen project can be in it.
   useEffect(() => {
@@ -158,7 +169,11 @@ export function NewConversationModal({
         <Form.Item
           label="With"
           htmlFor="people-new-conversation-with"
-          extra="They are notified of new messages and see it in For you."
+          extra={
+            mode === "new"
+              ? "They are notified of new messages and see it in For you."
+              : "They see it in For you. In an existing file they are notified once they write in a thread or are @mentioned."
+          }
         >
           <Select
             id="people-new-conversation-with"

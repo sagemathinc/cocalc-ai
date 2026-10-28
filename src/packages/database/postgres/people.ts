@@ -93,8 +93,10 @@ async function nonCollaborators(
 }
 
 // Idempotent on (project_id, path): adding a file that is already a
-// conversation returns the existing record unchanged. member_ids are who it
-// is with besides the creator; each must be a collaborator.
+// conversation returns the existing record, with any requested members added
+// (so a retry, or adding a registered file with people, never drops them).
+// member_ids are who it is with besides the creator; each must be a
+// collaborator.
 export async function createConversationRecord({
   account_id,
   project_id,
@@ -111,6 +113,9 @@ export async function createConversationRecord({
   path = normalizeConversationPath(path);
   title = normalizeConversationTitle(title);
   const members = normalizeMemberIds(account_id, member_ids);
+  // Members asked for explicitly (with the caller), to add to an existing
+  // record; none means leave it as it is.
+  const requested = member_ids?.length ? members : undefined;
   await assertCollaborator(account_id, project_id);
   const outside = await nonCollaborators(project_id, members);
   if (outside.length > 0) {
@@ -123,7 +128,9 @@ export async function createConversationRecord({
      WHERE project_id = $1 AND path = $2`,
     [project_id, path],
   );
-  if (registered[0] != null) return toConversation(registered[0]);
+  if (registered[0] != null) {
+    return await addMembers(toConversation(registered[0]), requested);
+  }
   const { rows: counts } = await getPool().query(
     "SELECT count(*)::int AS n FROM project_conversations WHERE project_id = $1",
     [project_id],
@@ -147,7 +154,26 @@ export async function createConversationRecord({
     [project_id, path],
   );
   if (existing.rows[0] == null) throw Error("conversation was not created");
-  return toConversation(existing.rows[0]);
+  return await addMembers(toConversation(existing.rows[0]), requested);
+}
+
+// Add requested members (already checked to be collaborators) to an existing
+// record. Records from before members existed count their creator.
+async function addMembers(
+  c: Conversation,
+  member_ids?: string[],
+): Promise<Conversation> {
+  if (!member_ids?.length) return c;
+  const current = c.member_ids?.length ? c.member_ids : [c.created_by];
+  const merged = normalizeMemberIds(current[0], [...current, ...member_ids]);
+  if (c.member_ids?.length && merged.length === current.length) return c;
+  const { rows } = await getPool().query(
+    `UPDATE project_conversations SET member_ids = $3::uuid[]
+     WHERE project_id = $1 AND conversation_id = $2
+     RETURNING ${COLUMNS}`,
+    [c.project_id, c.conversation_id, merged],
+  );
+  return rows[0] == null ? c : toConversation(rows[0]);
 }
 
 // Only projects where account_id is currently a collaborator contribute rows,

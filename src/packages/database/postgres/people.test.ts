@@ -147,6 +147,37 @@ test("members: the creator first, then who it is with, each a collaborator", asy
   ).rejects.toThrow("invalid member");
 });
 
+test("adding a registered file with people adds them, never dropping any", async () => {
+  // Registered without members (as by an owning bay before members existed).
+  const before = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "later.chat",
+    title: "Later",
+  });
+  await getPool().query(
+    "UPDATE project_conversations SET member_ids = NULL WHERE conversation_id = $1",
+    [before.conversation_id],
+  );
+  const after = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "later.chat",
+    title: "Later",
+    member_ids: [bob],
+  });
+  expect(after.conversation_id).toBe(before.conversation_id);
+  expect(after.member_ids).toEqual([alice, bob]);
+  // Bob re-adding it without people changes nothing.
+  const again = await createConversationRecord({
+    account_id: bob,
+    project_id,
+    path: "later.chat",
+    title: "Later",
+  });
+  expect(again.member_ids).toEqual([alice, bob]);
+});
+
 test("at capacity, existing registrations are unchanged but new paths fail", async () => {
   await getPool().query(
     `INSERT INTO project_conversations
