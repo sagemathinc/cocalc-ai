@@ -103,6 +103,8 @@ export interface GpuPodsResult {
   pods: RunpodPodView[];
   // CoCalc's records, for "managed"
   records?: GpuPodSummary[];
+  // why live views are missing (e.g. no usable key); records still come
+  live_error?: string;
 }
 
 export interface GpuApi {

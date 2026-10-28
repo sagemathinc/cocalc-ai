@@ -455,6 +455,39 @@ describeDb("GPU pods", () => {
     expect(rp.pods.size).toBe(0);
   });
 
+  it("retries the termination of a raced bind until RunPod confirms it", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const create = rp.client.createPod.getMockImplementation()!;
+    rp.client.createPod.mockImplementationOnce(async (body: any) => {
+      await gate;
+      return await create(body);
+    });
+    const launching = launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    let pod;
+    for (let i = 0; i < 100 && !pod; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      [pod] = await listManagedGpuPodsLocal({ account_id }, d);
+    }
+    await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d);
+    // RunPod fails the first terminate after the bind
+    rp.client.terminatePod.mockRejectedValueOnce(
+      new RunpodApiError("provider", 503),
+    );
+    release();
+    const result = await launching;
+    expect(result.state).toBe("terminating");
+    expect(result.desired_state).toBe("terminated");
+    expect(rp.pods.size).toBe(1);
+    // the next listing retries, and this time RunPod confirms
+    expect(await listManagedGpuPodsLocal({ account_id }, d)).toEqual([]);
+    expect(rp.pods.size).toBe(0);
+  });
+
   it("keeps each account's pods to itself", async () => {
     const owner = deps(randomUUID());
     const other = deps(randomUUID(), owner.rp);

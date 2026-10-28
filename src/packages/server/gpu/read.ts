@@ -418,7 +418,21 @@ export async function getGpuPodsLocal(
     // A record's pod is read with its key owner's key: the caller's own, as
     // records are scoped to pods the caller's key pays for (classes, with
     // another payer, come in step 7).
-    const c = await cleanup(account_id, deps);
+    // Without a usable key the records are still returned (they say what
+    // to clean up at RunPod), with no live views.
+    let c: RunpodCleanupCapability;
+    try {
+      c = await cleanup(account_id, deps);
+    } catch (err) {
+      return {
+        provider,
+        as_of,
+        scope,
+        pods: [],
+        records: selected,
+        live_error: `${(err as Error)?.message ?? err}`,
+      };
+    }
     const ids = new Set(bound.map((r) => r.provider_pod_id!));
     pods =
       podId != null && bound.length === 1

@@ -582,7 +582,20 @@ async function bind(
   );
   if (bound) {
     if (bound.desired_state === "terminated") {
-      return await terminateBound(bound, client, actor);
+      // Marked terminating first: if RunPod doesn't confirm, the record
+      // still says the pod must go, and the next listing (or terminate, or
+      // the step 5 reaper) retries.
+      const terminating =
+        (await transition(
+          bound.id,
+          { state: "terminating" },
+          "AND state = 'running'",
+        )) ?? bound;
+      try {
+        return await terminateBound(terminating, client, actor);
+      } catch {
+        return await loadPod(bound.id);
+      }
     }
     return bound;
   }
@@ -709,15 +722,26 @@ async function resolveAmbiguousForAccount(
   for (const r of stale) {
     await resolveStaleCreate(r.id, r.state, actor);
   }
+  // Pods that must go but whose termination RunPod didn't confirm.
+  const { rows: pending } = await getPool().query(
+    `SELECT * FROM gpu_pods
+      WHERE key_owner_account_id = $1 AND desired_state = 'terminated'
+        AND state IN ('running', 'stopped', 'terminating')
+        AND provider_pod_id IS NOT NULL`,
+    [account_id],
+  );
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND state = 'ambiguous'`,
     [account_id],
   );
-  if (rows.length === 0) return;
+  if (rows.length === 0 && pending.length === 0) return;
   const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
     account_id,
   ).catch(() => undefined);
   if (!c) return;
+  for (const row of pending as PodRow[]) {
+    await terminateBound(row, c, actor).catch(() => {});
+  }
   for (const row of rows as PodRow[]) {
     await resolveAmbiguous(row, c, { kind: "cleanup" }, deps).catch(() => {});
   }

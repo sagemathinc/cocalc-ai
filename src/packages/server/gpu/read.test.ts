@@ -431,6 +431,29 @@ describe("gpu.pods", () => {
     }
   });
 
+  it("still returns the managed records when the key can't be used", async () => {
+    const record = {
+      id: "00000000-1000-4000-8000-000000000099",
+      handle: "cc-7f3k9q2xa4mbn6wd",
+      provider: "runpod",
+      provider_pod_id: "pod_abc123",
+      state: "running",
+      desired_state: "running",
+    } as any;
+    const result = await getGpuPods(
+      { account_id: ACCOUNT },
+      {
+        listManaged: async () => [record],
+        getCleanup: async () => undefined,
+        homeClient: async () => undefined,
+      },
+    );
+    expect(result.scope).toBe("managed");
+    expect(result.records).toEqual([record]);
+    expect(result.pods).toEqual([]);
+    expect(result.live_error).toMatch(/No RunPod API key is connected/);
+  });
+
   it("hides why the key could not be loaded", async () => {
     await expect(
       getGpuPods(
