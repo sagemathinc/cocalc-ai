@@ -169,7 +169,9 @@ Table({
       {
         name: "gpu_budget_layers_authorized",
         type: "check",
-        expression: "authorized_usd > 0",
+        // 0: a key that followed an exhausted one (5c) has nothing to spend
+        // until its owner raises it
+        expression: "authorized_usd >= 0",
       },
     ],
     // One key layer per key; one course layer per key and course instance;

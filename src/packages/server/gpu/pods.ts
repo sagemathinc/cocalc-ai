@@ -1643,8 +1643,13 @@ export async function killSwitchLocal(
           AND reap_after IS NOT NULL`,
       [account_id, project_id],
     );
+    // the currently connected key only (a closed, draining or compromised
+    // fence admits nothing anyway)
     const { rows: fences } = await db.query(
-      "SELECT credential_id FROM gpu_key_fences WHERE key_owner_account_id = $1",
+      `SELECT f.credential_id FROM gpu_key_fences f
+         JOIN external_credentials c ON c.id = f.credential_id
+        WHERE f.key_owner_account_id = $1 AND f.state = 'active'
+          AND c.revoked IS NULL`,
       [account_id],
     );
     for (const f of fences) {
@@ -1663,16 +1668,16 @@ export async function killSwitchLocal(
       // its own field: a safety pause (an alert's) is left alone
       await db.query(
         `UPDATE gpu_key_fences SET kill_switch_at = now(), updated = now()
-          WHERE key_owner_account_id = $1 AND kill_switch_at IS NULL`,
-        [account_id],
+          WHERE credential_id = ANY($1::uuid[]) AND kill_switch_at IS NULL`,
+        [fences.map((f) => f.credential_id)],
       );
     }
     // what is actually paused now (--no-pause never lifts a pause; only a
     // fresh-auth resume does)
     const { rows: paused } = await db.query(
       `SELECT bool_or(kill_switch_at IS NOT NULL) AS paused FROM gpu_key_fences
-        WHERE key_owner_account_id = $1`,
-      [account_id],
+        WHERE credential_id = ANY($1::uuid[])`,
+      [fences.map((f) => f.credential_id)],
     );
     return { marked: rows.length, paused: paused[0]?.paused === true };
   });

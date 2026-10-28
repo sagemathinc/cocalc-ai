@@ -111,20 +111,36 @@ function layerName(layer: LayerRow): string {
 
 // The key's fence and its key layer exist (made at connect, or here at the
 // first launch). Idempotent.
+// The caps a new key layer starts with: the defaults, or for a key that
+// follows another (5c), what carryKeyBudget allows.
+export interface KeyLayerCaps {
+  authorized_usd: string;
+  max_hourly_usd: string | null;
+  max_concurrent_pods: number | null;
+  max_gpu_count: number | null;
+  max_runtime_minutes: number | null;
+}
+
 export async function ensureKeyBudget(
   db: Db,
   {
     credential_id,
     key_owner_account_id,
     now = new Date(),
-  }: { credential_id: string; key_owner_account_id: string; now?: Date },
+    initial,
+  }: {
+    credential_id: string;
+    key_owner_account_id: string;
+    now?: Date;
+    initial?: KeyLayerCaps;
+  },
 ): Promise<void> {
   await db.query(
     `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
      VALUES ($1, $2, 'active', now(), now()) ON CONFLICT (credential_id) DO NOTHING`,
     [credential_id, key_owner_account_id],
   );
-  const d = DEFAULT_KEY_LAYER;
+  const d = { ...DEFAULT_KEY_LAYER, ...(initial ?? {}) };
   const ends = new Date(now);
   ends.setFullYear(ends.getFullYear() + d.years);
   const { rows } = await db.query(
@@ -166,6 +182,49 @@ export async function ensureKeyBudget(
       ],
     );
   }
+}
+
+// The caps for an account's next key (5c): never looser than what the
+// account's latest key layer allowed. Money is what that layer had left
+// (authorized - spent - reserved - released, at least 0), so a rotation
+// never restores dollars; the other caps are the tighter of it and the
+// default. With no earlier key layer, the defaults.
+export async function carryKeyBudget(
+  db: Db,
+  key_owner_account_id: string,
+): Promise<KeyLayerCaps | undefined> {
+  const { rows } = await db.query(
+    `SELECT * FROM gpu_budget_layers
+      WHERE key_owner_account_id = $1 AND scope_kind = 'key'
+      ORDER BY created DESC LIMIT 1`,
+    [key_owner_account_id],
+  );
+  const prior: LayerRow | undefined = rows[0];
+  if (!prior) return undefined;
+  const d = DEFAULT_KEY_LAYER;
+  const min = (a: Dec, b: Dec) => (a.lt(b) ? a : b);
+  const avail = available(prior);
+  const left = avail.gt(0) ? avail : toDecimal(0);
+  const money = min(left, toDecimal(d.authorized_usd));
+  const tighter = (cap: number | null, def: number) =>
+    cap == null ? def : Math.min(cap, def);
+  return {
+    authorized_usd: moneyToDbString(money),
+    max_hourly_usd: moneyToDbString(
+      prior.max_hourly_usd == null
+        ? toDecimal(d.max_hourly_usd)
+        : min(toDecimal(prior.max_hourly_usd), toDecimal(d.max_hourly_usd)),
+    ),
+    max_concurrent_pods: tighter(
+      prior.max_concurrent_pods,
+      d.max_concurrent_pods,
+    ),
+    max_gpu_count: tighter(prior.max_gpu_count, d.max_gpu_count),
+    max_runtime_minutes: tighter(
+      prior.max_runtime_minutes,
+      d.max_runtime_minutes,
+    ),
+  };
 }
 
 // The key's fence, locked. Every budget change takes it first (after the

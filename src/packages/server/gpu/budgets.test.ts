@@ -60,9 +60,18 @@ function fakeRunpod(cost = 0.5) {
   return { client, pods };
 }
 
+// the stored key a fence belongs to (what the kill switch acts on)
+async function storeKey(account_id: string, credential_id: string) {
+  await getPool().query(
+    "INSERT INTO external_credentials (id, provider, kind, scope, owner_account_id, encrypted_payload, created, updated) VALUES ($1, 'runpod', 'gpu-provider-api-key', 'account', $2, 'x', now(), now())",
+    [credential_id, account_id],
+  );
+}
+
 function setup({ cost = 0.5 }: { cost?: number } = {}) {
   const account_id = randomUUID();
   const credential_id = randomUUID();
+  const stored = storeKey(account_id, credential_id);
   const rp = fakeRunpod(cost);
   const deps = {
     isHomeBay: async () => true,
@@ -79,12 +88,14 @@ function setup({ cost = 0.5 }: { cost?: number } = {}) {
       await lockGpuAccountFence(db, id, action);
     },
   };
-  const launch = (spec: object = {}) =>
-    launchGpuPodLocal(
+  const launch = async (spec: object = {}) => {
+    await stored;
+    return await launchGpuPodLocal(
       { account_id, project_id: PROJECT, spec: { ...SPEC, ...spec } },
       deps,
     );
-  return { account_id, credential_id, rp, deps, launch };
+  };
+  return { account_id, credential_id, rp, deps, launch, stored };
 }
 
 async function keyLayer(credential_id: string) {
@@ -120,6 +131,7 @@ describeDb("GPU budgets", () => {
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
       gpu_worker_leases: SCHEMA.gpu_worker_leases,
       gpu_worker_overrides: SCHEMA.gpu_worker_overrides,
+      external_credentials: SCHEMA.external_credentials,
     });
     // the reaper has just completed a sweep (admission requires it)
     await getPool().query(
@@ -396,6 +408,31 @@ describeDb("GPU budgets", () => {
   });
 
   describe("the kill switch", () => {
+    it("pauses and logs only the connected key, not a closed earlier one", async () => {
+      const s = setup();
+      await s.launch();
+      const old = randomUUID();
+      await getPool().query(
+        "INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated) VALUES ($1, $2, 'closed', now(), now())",
+        [old, s.account_id],
+      );
+      await killSwitchLocal({ account_id: s.account_id }, s.deps);
+      const { rows } = await getPool().query(
+        "SELECT credential_id, kill_switch_at FROM gpu_key_fences WHERE key_owner_account_id = $1",
+        [s.account_id],
+      );
+      const byId = Object.fromEntries(
+        rows.map((r) => [r.credential_id, r.kill_switch_at]),
+      );
+      expect(byId[s.credential_id]).not.toBeNull();
+      expect(byId[old]).toBeNull();
+      const { rows: log } = await getPool().query(
+        "SELECT count(*)::int AS n FROM gpu_key_events WHERE credential_id = $1",
+        [old],
+      );
+      expect(log[0].n).toBe(0);
+    });
+
     it("reports the persisted pause: --no-pause never lifts one, and no key means nothing paused", async () => {
       const s = setup();
       await s.launch();
