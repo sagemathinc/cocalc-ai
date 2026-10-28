@@ -70,6 +70,9 @@ export const RECONCILE_INTERVAL_MS = 2 * 60_000;
 export const RECONCILE_KEY_PASS_MS = 30_000;
 export const RECONCILE_SWEEP_MS = 90_000;
 export const RECONCILE_CONCURRENCY = 8;
+// the sweep's RunPod client gives up on one call after this (a pass's own
+// time ends a call sooner; this ends the abandoned request too)
+export const RECONCILE_CALL_MS = 5_000;
 export { INVENTORY_STALE_MS };
 // the admin backlog signal opens before keys start refusing
 export const RECONCILE_BACKLOG_MS = 15 * 60_000;
@@ -160,18 +163,46 @@ export async function reconcileKey(
     });
     return outcome;
   };
-  let c: ReconcileCapability | undefined;
+  let key: ReconcileCapability | undefined;
   try {
-    c = await (deps.getReconcile ?? getRunpodCleanupForAccount)(
-      key_owner_account_id,
-    );
+    key = await (
+      deps.getReconcile ??
+      ((a: string) =>
+        getRunpodCleanupForAccount(a, { runpodTimeoutMs: RECONCILE_CALL_MS }))
+    )(key_owner_account_id);
   } catch {
     return await fail({ claimed: true, failed: true });
   }
   // no stored key, or another key now: nothing to reconcile with this one
-  if (!c || c.credential_id !== credential_id) {
+  if (!key || key.credential_id !== credential_id) {
     return await fail({ claimed: true, failed: true });
   }
+  // Every RunPod call ends with the pass's time: one still unanswered when
+  // it runs out cuts the pass (the guards around it only check between
+  // calls). The client's own per-call timeout ends the abandoned request.
+  const raw = key;
+  const within = <T>(call: Promise<T>): Promise<T> => {
+    const left = deadline - clock();
+    if (left <= 0) {
+      call.catch(() => {});
+      return Promise.reject(new PassCut("reconcile pass deadline"));
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cut = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new PassCut("reconcile pass deadline")),
+        left,
+      );
+      timer.unref?.();
+    });
+    call.catch(() => {});
+    return Promise.race([call, cut]).finally(() => clearTimeout(timer));
+  };
+  const c: ReconcileCapability = {
+    credential_id,
+    listPods: (opts) => within(raw.listPods(opts)),
+    getPod: (id) => within(raw.getPod(id)),
+  };
   try {
     await bounded();
     // Read-only: nothing is terminated while it pages. What a page shows
@@ -185,7 +216,7 @@ export async function reconcileKey(
       onPage: async (page) => {
         await bounded();
         unknown += await matchInventory(k, page, bounded, "sightings", {
-          c: c!,
+          c,
           now: () => new Date(clock()),
         });
       },

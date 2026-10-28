@@ -775,7 +775,8 @@ describeDb("GPU inventory reconciler", () => {
       },
       { getReconcile: async () => s.reconcile as any },
     );
-    expect(outcome).toEqual({ claimed: true, failed: true });
+    // cut at the pass's time, before RunPod's own failure arrives
+    expect(outcome).toEqual({ claimed: true, cut: true });
     expect(Date.now() - started).toBeLessThan(2_000);
     expect((await fence(s.credential_id)).last_inventory_at).toBeNull();
     await expect(s.launch()).rejects.toThrow(/waiting for CoCalc to check/);
@@ -882,6 +883,46 @@ describeDb("GPU inventory reconciler", () => {
       }),
     ).rejects.toThrow("lease was lost");
     expect((await alerts(s.credential_id)).length).toBeLessThan(10);
+    expect((await fence(s.credential_id)).last_inventory_at).toBeNull();
+  });
+
+  it("a RunPod call still unanswered when the pass's time runs out cuts the pass then, not when RunPod gives up", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    await getPool().query(
+      "UPDATE gpu_key_fences SET last_inventory_at = NULL WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    const never = () => new Promise<never>(() => {});
+    const run = (deadlineMs: number) =>
+      reconcileKey(
+        {
+          credential_id: s.credential_id,
+          key_owner_account_id: s.account_id,
+          // the pass's clock is the real one here, so its time is real
+          deadline: Date.now() + deadlineMs,
+        },
+        { getReconcile: async () => s.reconcile as any },
+      );
+    // a listing that never answers
+    s.reconcile.listPods.mockImplementationOnce(never);
+    let started = Date.now();
+    expect(await run(300)).toEqual({ claimed: true, cut: true });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // a by-id check that never answers, started near the end
+    s.reconcile.listPods.mockImplementationOnce(async (opts: any) => {
+      await opts.beforePage?.();
+      await opts.onPage?.([]);
+      return [];
+    });
+    s.reconcile.getPod.mockImplementationOnce(never);
+    started = Date.now();
+    expect(await run(300)).toEqual({ claimed: true, cut: true });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(s.reconcile.getPod).toHaveBeenCalledWith(
+      (await row(pod.id)).provider_pod_id,
+    );
+    expect((await row(pod.id)).state).toBe("running");
     expect((await fence(s.credential_id)).last_inventory_at).toBeNull();
   });
 });
