@@ -909,16 +909,21 @@ describeDb("GPU inventory reconciler", () => {
     let started = Date.now();
     expect(await run(300)).toEqual({ claimed: true, cut: true });
     expect(Date.now() - started).toBeLessThan(2_000);
-    // a by-id check that never answers, started near the end
+    // a by-id check that never answers, started near the end: the listing
+    // takes 400 ms of a 600 ms pass, so the check gets the 200 ms left (a
+    // fresh window per call would run to about 1 s)
     s.reconcile.listPods.mockImplementationOnce(async (opts: any) => {
       await opts.beforePage?.();
+      await new Promise((r) => setTimeout(r, 400));
       await opts.onPage?.([]);
       return [];
     });
     s.reconcile.getPod.mockImplementationOnce(never);
     started = Date.now();
-    expect(await run(300)).toEqual({ claimed: true, cut: true });
-    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(await run(600)).toEqual({ claimed: true, cut: true });
+    const took = Date.now() - started;
+    expect(took).toBeGreaterThanOrEqual(550);
+    expect(took).toBeLessThan(850);
     expect(s.reconcile.getPod).toHaveBeenCalledWith(
       (await row(pod.id)).provider_pod_id,
     );
