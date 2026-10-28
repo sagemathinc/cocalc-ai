@@ -45,6 +45,8 @@ import LRUCache from "lru-cache";
 import { until } from "@cocalc/util/async-utils";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { toArchiveRelativePath } from "./archive-path";
+import type { PurgeHistoryResult } from "@cocalc/conat/hub/api/sync";
+import { purgeHistoryMessage } from "./purge-message";
 type PatchId = string;
 interface GitCommitEntry {
   hash: string;
@@ -394,10 +396,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     return path;
   };
 
-  purgeHistory = async (): Promise<{
-    deleted: number;
-    history_epoch: number;
-  }> => {
+  purgeHistory = async (): Promise<PurgeHistoryResult> => {
     const result = await webapp_client.conat_client.hub.sync.purgeHistory({
       project_id: this.project_id,
       path: this.docpath,
@@ -450,7 +449,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     const result = await this.purgeHistory();
     alert_message({
       type: "success",
-      message: `Purged ${result.deleted} history entries.`,
+      message: purgeHistoryMessage(result),
     });
   };
 

@@ -26,6 +26,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
 import { purgeHistory } from "@cocalc/conat/hub/api/sync-impl";
+import { setResetAdmissionHook } from "@cocalc/conat/persist/storage";
 import {
   SyncClient,
   setSyncClientHooks,
@@ -265,6 +266,28 @@ describe("an acknowledged edit newer than the saved file: nothing is reset autom
     expect(alerts).toEqual([]);
     expect(await archivedHistories()).toEqual(before);
   });
+
+  // H1c §3.4: an earlier reset's trash still being removed (here the volume
+  // admission hook declines, the same refusal): the restart says so, with the
+  // way out, through every retry, and changes nothing; the next one works
+  it("while an earlier reset's trash is pending, the restart says so with the way out", async () => {
+    const before = await archivedHistories();
+    let asked = 0;
+    setResetAdmissionHook(() => {
+      asked += 1;
+      return false;
+    });
+    try {
+      await expect(opened.restartHistoryFromSavedFile()).rejects.toThrow(
+        /still being cleaned up.*download the file from the file explorer.*\/docs\/files\/history-unloadable/,
+      );
+    } finally {
+      setResetAdmissionHook(undefined);
+    }
+    expect(asked).toBeGreaterThan(1);
+    expect(await archivedHistories()).toEqual(before);
+    resets = [];
+  }, 60_000);
 
   it("the user's explicit restart rolls back to the file and keeps the newer edit in the archive", async () => {
     const before = await archivedHistories();

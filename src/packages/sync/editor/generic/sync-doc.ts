@@ -1233,7 +1233,9 @@ export class SyncDoc extends EventEmitter {
                 ? "busy"
                 : result.refused == "seed-too-large"
                   ? "too-large"
-                  : "failed",
+                  : result.refused == "trash-pending"
+                    ? "trash-pending"
+                    : "failed",
           message: result.refused,
         };
       }
@@ -1412,6 +1414,11 @@ export class SyncDoc extends EventEmitter {
         this.oversizedHistoryReset = true;
         this.history_epoch = result.history_epoch;
         return result;
+      }
+      if (result.refused === "trash-pending") {
+        throw Error(
+          "an earlier restart of this file's history is still being cleaned up; try again in a minute. Meanwhile you can download the file from the file explorer (see /docs/files/history-unloadable)",
+        );
       }
       if (result.refused !== "moved" && result.refused !== "epoch") {
         throw Error(`the history was not restarted (${result.refused})`);

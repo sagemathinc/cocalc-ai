@@ -51,6 +51,9 @@ export interface Sync {
 export interface PurgeHistoryResult {
   // number of patches deleted (or kept aside)
   deleted: number;
+  // false if the history was still being counted (H1c): then more than
+  // `deleted` patches were deleted, and `deleted` is only a lower bound
+  deletedExact?: false;
   // the history epoch now in effect
   history_epoch: number;
   // false if oversized_seq was given and that patch was already gone

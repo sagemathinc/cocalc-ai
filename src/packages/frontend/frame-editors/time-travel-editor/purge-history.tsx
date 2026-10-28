@@ -7,6 +7,7 @@ import { Button, Dropdown, Modal, message } from "antd";
 import { useState } from "react";
 import { Tooltip } from "@cocalc/frontend/components";
 import { TimeTravelActions } from "./actions";
+import { purgeHistoryMessage } from "./purge-message";
 
 interface Props {
   actions: TimeTravelActions;
@@ -26,7 +27,7 @@ export function PurgeHistory({ actions }: Props) {
         setPending(true);
         try {
           const result = await actions.purgeHistory();
-          message.success(`Purged ${result.deleted} history entries.`);
+          message.success(purgeHistoryMessage(result));
         } catch (err) {
           message.error(`Unable to purge history: ${err}`);
         } finally {

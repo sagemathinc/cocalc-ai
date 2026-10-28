@@ -1204,6 +1204,8 @@ describe("what the board's host answers", () => {
     "deadline",
     "failed",
     "reset-unknown",
+    // H1c §3.4: an earlier reset's trash still being removed
+    "trash-pending",
   ]) {
     test(`${cause}: Open as text, Download, Retry and the docs page`, async () => {
       boardOpen.mockResolvedValue(unloadable(cause, `because ${cause}`));

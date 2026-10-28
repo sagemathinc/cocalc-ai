@@ -18,6 +18,7 @@ import {
   wait,
 } from "@cocalc/backend/conat/test/sync-doc/setup";
 import { SyncClient } from "@cocalc/conat/sync-doc/sync-client";
+import { setResetAdmissionHook } from "@cocalc/conat/persist/storage";
 import { ipynbPath, syncdbPath } from "@cocalc/util/jupyter/names";
 import {
   RESTART_LIMITS,
@@ -191,6 +192,45 @@ describe("(B) the confirmed restart from the saved notebook", () => {
       versions: 1,
     });
     expect(unresolvedReset(syncdbPath(path))).toBeUndefined();
+    live.close();
+  });
+});
+
+// H1c §3.4, end to end: the persist server refuses the restart's reset as
+// "trash-pending" (an earlier reset's trash still being removed; here the
+// volume admission hook declines, the same refusal), through the retries and
+// the deadline; the notebook is unchanged, and the restart then works
+describe("(B) while an earlier reset's trash is pending", () => {
+  const project_id = uuid();
+  const path = ipynbPath("trash.ipynb");
+  afterEach(() => setResetAdmissionHook(undefined));
+
+  it("is refused as trash-pending, changing nothing; once admitted it restarts", async () => {
+    Object.assign(RESTART_LIMITS, { deadlineMs: 2000 });
+    const live = await liveNotebook(project_id, path);
+    const { syncClient } = harness(() =>
+      bytesOf(ipynbOf(["y = 1"], "python3")),
+    );
+    const confirmed = await state(project_id, path);
+    let asked = 0;
+    setResetAdmissionHook(() => {
+      asked += 1;
+      return false;
+    });
+    expect(
+      await restart(project_id, path, confirmed, syncClient),
+    ).toMatchObject({ restarted: false, reason: "trash-pending" });
+    expect(asked).toBeGreaterThan(0);
+    expect(await state(project_id, path)).toMatchObject({
+      epoch: confirmed.epoch,
+      seq: confirmed.seq,
+      count: confirmed.count,
+    });
+    setResetAdmissionHook(undefined);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(
+      await restart(project_id, path, confirmed, syncClient),
+    ).toMatchObject({ restarted: true });
     live.close();
   });
 });
