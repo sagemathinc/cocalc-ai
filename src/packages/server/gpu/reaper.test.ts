@@ -19,6 +19,7 @@ import { launchGpuPodLocal, listManagedGpuPodsLocal } from "./pods";
 import {
   LAPSE_GRACE_MS,
   acquireWorkerLease,
+  every,
   runCompromiseSweep,
   runGpuReaperSweep,
 } from "./reaper";
@@ -805,4 +806,22 @@ describeDb("GPU reaper", () => {
     ).rows[0].last_completed_at;
     expect(new Date(after).getTime()).toBe(new Date(before).getTime());
   });
+});
+
+it("a stuck reaper sweep doesn't hold up the compromise worker: each has its own timer", async () => {
+  // the reaper's first sweep never finishes
+  const reaper = jest.fn(() => new Promise<void>(() => {}));
+  const compromise = jest.fn(async () => {});
+  const timers = [
+    every("reaper", reaper, 20),
+    every("compromise", compromise, 20),
+  ];
+  try {
+    await new Promise((r) => setTimeout(r, 110));
+  } finally {
+    timers.forEach(clearInterval);
+  }
+  // one reaper pass at a time (still the first), while compromise passes go on
+  expect(reaper).toHaveBeenCalledTimes(1);
+  expect(compromise.mock.calls.length).toBeGreaterThanOrEqual(3);
 });

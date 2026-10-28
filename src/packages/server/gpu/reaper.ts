@@ -489,25 +489,35 @@ export async function runCompromiseSweep(
 // how long one account's compromise pass may spend terminating pods
 export const COMPROMISE_PASS_MS = 60_000;
 
-export function initGpuReaper(): void {
-  // one sweep at a time in this hub (the lease covers other hubs)
+// Each worker runs one pass at a time in this hub (its lease covers other
+// hubs), on its own timer: a slow reaper sweep never delays the cleanup of a
+// compromised key, nor the other way around.
+export function every(
+  name: string,
+  sweep: () => Promise<unknown>,
+  intervalMs = REAPER_INTERVAL_MS,
+): ReturnType<typeof setInterval> {
   let running = false;
   const run = async () => {
     if (running) return;
     running = true;
     try {
-      await runGpuReaperSweep();
-    } catch {
-      // logged; the watermark stays put, so launches wait (fail closed)
-    }
-    try {
-      await runCompromiseSweep();
-    } catch {
-      // logged; it continues on the next run
+      await sweep();
+    } catch (err) {
+      // logged by the sweep; it continues on the next run
+      log.debug(`${name} pass failed`, `${err}`);
     } finally {
       running = false;
     }
   };
   void run();
-  setInterval(run, REAPER_INTERVAL_MS).unref?.();
+  const timer = setInterval(run, intervalMs);
+  timer.unref?.();
+  return timer;
+}
+
+export function initGpuReaper(): void {
+  // a failed reaper pass leaves the watermark, so launches wait (fail closed)
+  every("reaper", runGpuReaperSweep);
+  every("compromise", runCompromiseSweep);
 }
