@@ -30,22 +30,27 @@ import type {
 import {
   authFirstRequireAccount,
   authFirstRequireAccountOrBoundAgentProject,
+  authFirstRequireAccountOrGpuAgent,
   authFirstRequireAccountWithBoundSession,
 } from "./util";
 
 // Agents may read the catalog and stock for the account they act for, from
-// the project sealed into their token. Pods are account-only until they can
-// be filtered to the pods that agent's project started (launch, step 3): the
-// account's whole pod list spans projects and includes SSH endpoints.
-// Launch, terminate and who are account-only until agents get a token
-// scoped to their turn and budget (step 6).
+// the project sealed into their token. Their pod calls (step 6b) are scoped
+// to the managed pods that agent launched in that project, and a launch needs
+// the human's approval of exactly that launch for the agent's run; the agent
+// principal comes only from the verified token (account-or-gpu-agent).
 export const gpu = {
   catalog: authFirstRequireAccountOrBoundAgentProject,
   availability: authFirstRequireAccountOrBoundAgentProject,
-  pods: authFirstRequireAccount,
-  launch: authFirstRequireAccount,
-  terminate: authFirstRequireAccount,
-  who: authFirstRequireAccount,
+  pods: authFirstRequireAccountOrGpuAgent,
+  launch: authFirstRequireAccountOrGpuAgent,
+  terminate: authFirstRequireAccountOrGpuAgent,
+  who: authFirstRequireAccountOrGpuAgent,
+  // the human's side of agent launches (step 6b)
+  agentRequests: authFirstRequireAccount,
+  // fresh auth, with the caller's own session, never a nominated one
+  approveAgentRequest: authFirstRequireAccountWithBoundSession,
+  revokeAgentGrant: authFirstRequireAccount,
   budget: authFirstRequireAccount,
   // its fresh-auth check uses the caller's own session, never a nominated one
   setBudget: authFirstRequireAccountWithBoundSession,
@@ -57,9 +62,47 @@ export const gpu = {
   // like setBudget: the fresh-auth check uses the caller's own session
   adminAllowStaleWorkers: authFirstRequireAccountWithBoundSession,
   // what `cocalc gpu connect` needs: the live SSH endpoint and the host key
-  // the pod registered; account-only, like pods
-  sshInfo: authFirstRequireAccount,
+  // the pod registered (for an agent, only its own pods)
+  sshInfo: authFirstRequireAccountOrGpuAgent,
 };
+
+// Set only by the account-or-gpu-agent policy, from verified auth.
+export interface GpuAgentAuth {
+  account_id: string;
+  project_id: string;
+  auth_token_fingerprint: string;
+  auth_iat_s: number;
+  auth_exp_s: number;
+}
+
+// Exactly what an agent asked to launch; the human approves this payload and
+// hash, never a reconstruction of it.
+export interface GpuAgentRequestView {
+  request_id: string;
+  project_id: string;
+  // "chat_session" for a project-scoped agent token; "registered_agent"
+  // with agent and run ids only when genuinely resolved
+  principal_kind: "chat_session" | "registered_agent";
+  agent_id?: string;
+  run_id?: string;
+  operation_id: string;
+  payload: {
+    spec: Omit<GpuLaunchSpec, "ssh_public_key">;
+    hourly_usd: string;
+    max_cost_usd: string;
+    max_pods: 1;
+  };
+  payload_hash: string;
+  state: "pending" | "approved" | "superseded" | "expired" | "denied";
+  created: string;
+  expires_at: string;
+  grant?: {
+    grant_id: string;
+    state: "active" | "expired" | "revoked";
+    expires_at: string;
+    launches_used: number;
+  };
+}
 
 interface GpuReadOpts {
   account_id?: string;
@@ -140,12 +183,47 @@ export interface GpuApi {
       include_ended?: boolean;
     },
   ) => Promise<GpuPodsResult>;
+  // An agent's launch also needs an operation_id (its idempotency key) and
+  // its human's approval of exactly this launch: without one it fails with
+  // code gpu_agent_approval_required, a request_id and payload_hash.
   launch: (opts: {
     account_id?: string;
     project_id: string;
     spec: GpuLaunchSpec;
+    operation_id?: string;
     timeout?: number;
   }) => Promise<GpuPodSummary>;
+  // The account's agent GPU requests and grants, newest first.
+  agentRequests: (opts?: {
+    account_id?: string;
+    project_id?: string;
+    include_decided?: boolean;
+  }) => Promise<GpuAgentRequestView[]>;
+  // Approve exactly the reviewed request (fresh authentication).
+  approveAgentRequest: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    request_id: string;
+    expected_hash: string;
+  }) => Promise<{
+    grant_id: string;
+    request_id: string;
+    payload_hash: string;
+    state: string;
+    expires_at: string;
+  }>;
+  // No new launch, and the grant's running pods are terminated.
+  revokeAgentGrant: (opts: {
+    account_id?: string;
+    grant_id: string;
+  }) => Promise<{
+    grant_id: string;
+    request_id: string;
+    payload_hash: string;
+    state: string;
+    expires_at: string;
+  }>;
   // pod_id: CoCalc's pod id, the handle, or RunPod's pod id
   terminate: (opts: {
     account_id?: string;

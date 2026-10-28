@@ -38,6 +38,7 @@ import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import { initGpuReaper } from "@cocalc/server/gpu/reaper";
 import { eraseRevokedExternalCredentialPayloads } from "@cocalc/server/external-credentials/store";
 import { clearStaleHostkeyTokens } from "@cocalc/server/gpu/hostkey-clear";
+import { closeExpiredAgentGrants } from "@cocalc/server/gpu/agent-api";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
@@ -437,6 +438,22 @@ async function startServer(): Promise<void> {
       5 * 60 * 1000,
     );
     hostkeyTimer.unref?.();
+    // Agent GPU approvals whose run ended: admission closes on their layers
+    // (their pods keep running to their deadlines). Idempotent, per grant.
+    const agentGrantTimer = setInterval(
+      () =>
+        closeExpiredAgentGrants()
+          .then((closed) => {
+            if (closed > 0) {
+              logger.info(`closed ${closed} expired agent GPU approvals`);
+            }
+          })
+          .catch((err) =>
+            logger.warn(`closing expired agent GPU approvals failed: ${err}`),
+          ),
+      5 * 60 * 1000,
+    );
+    agentGrantTimer.unref?.();
   }
 
   if (program.all || program.mentions) {

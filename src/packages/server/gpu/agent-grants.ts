@@ -273,7 +273,6 @@ export async function requestAgentLaunch(
 
 export interface GpuAgentGrantDeps {
   accountWriteFence?: typeof lockGpuAccountFence;
-  credentialId?: (account_id: string) => Promise<string | undefined>;
   now?: () => Date;
 }
 
@@ -295,7 +294,10 @@ export async function approveAgentRequestLocal(
     expected_hash: unknown;
     fresh_auth_verified?: boolean;
   },
-  deps: GpuAgentGrantDeps & { credential_id: string },
+  deps: GpuAgentGrantDeps & {
+    // the connected key's id, read under the account fence
+    credentialId: (account_id: string) => Promise<string | undefined>;
+  },
 ): Promise<GpuAgentGrantView> {
   const request_id = requireUuid(opts.request_id, "request id");
   if (
@@ -358,7 +360,12 @@ export async function approveAgentRequestLocal(
     throw Error("This GPU request is damaged; the agent has to ask again.");
   }
   const payload: GpuAgentPayload = req.payload;
-  const credential_id = deps.credential_id;
+  const credential_id = await deps.credentialId(opts.account_id);
+  if (!credential_id) {
+    throw Error(
+      "No RunPod API key is connected. Connect one in Settings → Connectors.",
+    );
+  }
   // 3. the key's fence and its key layer, then the new rows
   await ensureKeyBudget(db, {
     credential_id,

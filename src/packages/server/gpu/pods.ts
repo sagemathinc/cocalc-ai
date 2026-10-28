@@ -516,9 +516,34 @@ async function isProjectCollaborator(account_id: string, project_id: string) {
 // the ones it is responsible for. (Course staff come with classes, step 7.)
 const MINE = `(key_owner_account_id = $1 OR beneficiary_account_id = $1)`;
 
+// A principal as it may arrive from another bay (its expiry as text).
+type GpuAgentPrincipalWire = Omit<GpuAgentPrincipal, "expires_at"> & {
+  expires_at: Date | string;
+};
+
+// An agent sees only the managed pods it launched in its own project (its
+// principal key, so a chat session sees only that session's pods). Human
+// launches and other agents' pods are never in scope for it.
+export interface GpuAgentScope {
+  project_id: string;
+  agent_id: string;
+}
+
+function agentScopeSql(
+  agent: GpuAgentScope | undefined,
+  first: number,
+): { sql: string; values: unknown[] } {
+  if (!agent) return { sql: "", values: [] };
+  return {
+    sql: ` AND project_id = $${first} AND agent_id = $${first + 1}`,
+    values: [agent.project_id, agent.agent_id],
+  };
+}
+
 export async function findPod(
   account_id: string,
   pod: unknown,
+  agent?: GpuAgentScope,
 ): Promise<PodRow | undefined> {
   const ref = `${pod ?? ""}`.trim();
   const column = isValidUUID(ref)
@@ -529,9 +554,10 @@ export async function findPod(
         ? "provider_pod_id"
         : undefined;
   if (!column) throw Error("Give a pod id or handle.");
+  const scope = agentScopeSql(agent, 3);
   const { rows } = await getPool().query(
-    `SELECT * FROM gpu_pods WHERE ${column} = $2 AND ${MINE}`,
-    [account_id, ref],
+    `SELECT * FROM gpu_pods WHERE ${column} = $2 AND ${MINE}${scope.sql}`,
+    [account_id, ref, ...scope.values],
   );
   return rows[0];
 }
@@ -545,7 +571,7 @@ export async function launchGpuPodLocal(
     spec?: unknown;
     // An agent's launch (step 6b): its verified principal and its own
     // idempotency key. It needs an approved grant for exactly this launch.
-    agent?: { principal: GpuAgentPrincipal; operation_id: string };
+    agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
   },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary> {
@@ -553,7 +579,16 @@ export async function launchGpuPodLocal(
   await requireHomeBay(account_id, deps);
   const project_id = `${opts.project_id ?? ""}`;
   if (!isValidUUID(project_id)) throw Error("A launch needs a project.");
-  const agent = opts.agent;
+  // (after an inter-bay hop the expiry arrives as text)
+  const agent = opts.agent
+    ? {
+        ...opts.agent,
+        principal: {
+          ...opts.agent.principal,
+          expires_at: new Date(opts.agent.principal.expires_at),
+        },
+      }
+    : undefined;
   if (
     agent &&
     (agent.principal.account_id !== account_id ||
@@ -1487,17 +1522,19 @@ async function terminateBound(
 }
 
 export async function terminateGpuPodLocal(
-  opts: { account_id?: string; pod_id?: unknown },
+  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<{ state: GpuPodSummary["state"] }> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
-  const row = await findPod(account_id, opts.pod_id);
+  const row = await findPod(account_id, opts.pod_id, opts.agent);
   if (!row) throw Error("No such GPU pod.");
-  const actor: Actor = {
-    kind: row.key_owner_account_id === account_id ? "key_owner" : "user",
-    account_id,
-  };
+  const actor: Actor = opts.agent
+    ? { kind: "agent", account_id, agent_id: opts.agent.agent_id }
+    : {
+        kind: row.key_owner_account_id === account_id ? "key_owner" : "user",
+        account_id,
+      };
   // Recorded first, with its event: a create still in flight sees it when it
   // binds, and an unresolved record keeps it until it is resolved.
   let current = await transition(
@@ -1606,18 +1643,19 @@ export async function recordSeenAddresses(
 }
 
 export async function listManagedGpuPodsLocal(
-  opts: { account_id?: string; include_ended?: boolean },
+  opts: { account_id?: string; include_ended?: boolean; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary[]> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
   await resolveAmbiguousForAccount(account_id, deps);
+  const scope = agentScopeSql(opts.agent, 3);
   const { rows } = await getPool().query(
-    `SELECT * FROM gpu_pods WHERE ${MINE}
+    `SELECT * FROM gpu_pods WHERE ${MINE}${scope.sql}
        AND (state = ANY($2)
             ${opts.include_ended ? "OR created > now() - interval '30 days'" : ""})
      ORDER BY created DESC LIMIT 500`,
-    [account_id, GPU_POD_LIVE_STATES],
+    [account_id, GPU_POD_LIVE_STATES, ...scope.values],
   );
   return rows.map(podSummary);
 }
@@ -1625,7 +1663,7 @@ export async function listManagedGpuPodsLocal(
 // Who is responsible for a pod. Provider ids and IPs are only
 // lookup hints: results are limited to the caller's own records.
 export async function whoGpuPodLocal(
-  opts: { account_id?: string; query?: unknown },
+  opts: { account_id?: string; query?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<GpuAttribution[]> {
   const account_id = requireAccount(opts.account_id);
@@ -1634,15 +1672,16 @@ export async function whoGpuPodLocal(
   if (!q || q.length > 64 || !/^[A-Za-z0-9_.:-]+$/.test(q)) {
     throw Error("Give a pod id, handle, RunPod pod id or IP address.");
   }
+  const scope = agentScopeSql(opts.agent, 3);
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods
-      WHERE ${MINE}
+      WHERE ${MINE}${scope.sql}
         AND (id::text = $2 OR handle = $2 OR provider_pod_id = $2
              OR public_ip = $2
              OR id IN (SELECT pod_id FROM gpu_pod_events
                         WHERE action = 'ip_seen' AND details->>'public_ip' = $2))
       ORDER BY created DESC LIMIT 50`,
-    [account_id, q],
+    [account_id, q, ...scope.values],
   );
   const out: GpuAttribution[] = [];
   for (const row of rows as PodRow[]) {
@@ -1692,7 +1731,12 @@ export async function gpuPodHomeClient(
 }
 
 export async function launchGpuPod(
-  opts: { account_id?: string; project_id?: unknown; spec?: unknown },
+  opts: {
+    account_id?: string;
+    project_id?: unknown;
+    spec?: unknown;
+    agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
+  },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary> {
   const account_id = requireAccount(opts.account_id);
@@ -1702,18 +1746,24 @@ export async function launchGpuPod(
       account_id,
       project_id: opts.project_id,
       spec: opts.spec,
+      ...(opts.agent ? { agent: opts.agent } : {}),
     });
   }
   return await launchGpuPodLocal({ ...opts, account_id }, deps);
 }
 
 export async function terminateGpuPod(
-  opts: { account_id?: string; pod_id?: unknown },
+  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<{ state: GpuPodSummary["state"] }> {
   const account_id = requireAccount(opts.account_id);
   const home = await (deps.homeClient ?? gpuPodHomeClient)(account_id);
-  if (home) return await home.gpuTerminate({ account_id, pod_id: opts.pod_id });
+  if (home)
+    return await home.gpuTerminate({
+      account_id,
+      pod_id: opts.pod_id,
+      ...(opts.agent ? { agent: opts.agent } : {}),
+    });
   return await terminateGpuPodLocal({ ...opts, account_id }, deps);
 }
 
@@ -1964,11 +2014,16 @@ export async function killSwitch(
 }
 
 export async function whoGpuPod(
-  opts: { account_id?: string; query?: unknown },
+  opts: { account_id?: string; query?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<GpuAttribution[]> {
   const account_id = requireAccount(opts.account_id);
   const home = await (deps.homeClient ?? gpuPodHomeClient)(account_id);
-  if (home) return await home.gpuWho({ account_id, query: opts.query });
+  if (home)
+    return await home.gpuWho({
+      account_id,
+      query: opts.query,
+      ...(opts.agent ? { agent: opts.agent } : {}),
+    });
   return await whoGpuPodLocal({ ...opts, account_id }, deps);
 }

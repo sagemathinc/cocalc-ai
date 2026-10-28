@@ -48,6 +48,16 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "lifts the kill switch's pause on launches; checked in resumeGpuLaunches",
   },
+  "gpu.approveAgentRequest": {
+    decision: "fresh-auth-required",
+    reason:
+      "lets an agent spend on the account's RunPod key: approves exactly the reviewed request (request_id + payload hash), checked in approveAgentRequest",
+  },
+  "gpu.revokeAgentGrant": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "only narrows: ends an agent's GPU approval and terminates that grant's pods",
+  },
   "gpu.setBudget": {
     decision: "fresh-auth-required",
     reason:
