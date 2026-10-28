@@ -1181,8 +1181,33 @@ export function createLegacyProjectArchiveHandlers({
           max_uncompressed_bytes,
           lro,
         });
-        if (exclude != null && file_count === 0) {
-          throw new Error("legacy project archive matched no restorable files");
+        if (file_count === 0) {
+          // The legacy project had no files, or only CoCalc's own state, which
+          // is never restored.  That is a complete restore with nothing to
+          // apply.  Applying would empty the home (the rsync uses --delete),
+          // so it is left untouched.
+          publishArchiveProgress({
+            lro,
+            phase: "finish",
+            message: "legacy project had no files to restore",
+            progress: 95,
+            detail: { file_count, skipped_file_count, skipped_bytes },
+          });
+          markProjectArchiveInitialBackupExempt?.(project_id);
+          return {
+            ...downloaded,
+            file_count,
+            uncompressed_bytes,
+            skipped_file_count,
+            skipped_bytes,
+            skipped_files,
+            unsafe_path_count,
+            unsafe_paths,
+            missing_archive_file_count: 0,
+            missing_archive_files: [],
+            empty_archive: true,
+            duration_ms: Date.now() - started,
+          };
         }
         if (temporary_quota_grace) {
           if (getProjectQuota == null || beginProjectQuotaOverride == null) {
