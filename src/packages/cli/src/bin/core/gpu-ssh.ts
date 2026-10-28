@@ -26,7 +26,7 @@ reports can inject a config line.
 */
 
 import { execFile } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -41,6 +41,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { parseEd25519PublicKey } from "@cocalc/util/gpu/ssh-key";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,9 +51,6 @@ const HANDLE = /^cc-[a-z2-7]{8}$/;
 const PENDING = /^pending-[a-z2-7]{10}$/;
 const HOST = /^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$/;
 const USER = /^[a-z_][a-z0-9_-]{0,31}$/;
-// "AAAAC3NzaC1lZDI1NTE5" is the base64 of the key type inside the blob.
-const ED25519_KEY =
-  /^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]{48,}={0,2}$/;
 
 export interface PodSshEndpoint {
   handle: string;
@@ -107,12 +105,12 @@ export function checkEndpoint(e: PodSshEndpoint): PodSshEndpoint {
   if (typeof e.user !== "string" || !USER.test(e.user)) {
     throw new Error("invalid SSH user");
   }
-  // One key on one line: "ssh-ed25519 <blob>", optionally with a comment,
-  // which is dropped. Anything else is refused, never trimmed to fit.
-  const raw = typeof e.hostKey === "string" ? e.hostKey.trim() : "";
-  const words = raw.split(/[ \t]+/);
-  const hostKey = words.slice(0, 2).join(" ");
-  if (/[\r\n]/.test(raw) || words.length > 3 || !ED25519_KEY.test(hostKey)) {
+  // One ed25519 key, strictly parsed (the shared validator); only its
+  // canonical form, without any comment, is ever written.
+  let hostKey: string;
+  try {
+    hostKey = parseEd25519PublicKey(e.hostKey).line;
+  } catch {
     throw new Error("invalid host key: expected one ssh-ed25519 public key");
   }
   return {
@@ -275,13 +273,7 @@ async function writeAll(pods: PodSshEndpoint[], opts: GpuSshOptions) {
 // prints it ("SHA256:<unpadded base64>"). The server records this one for
 // the pod, so a key left pending can be matched to its pod later.
 export function keyFingerprint(publicKey: string): string {
-  const blob = `${publicKey}`.trim().split(/\s+/)[1] ?? "";
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(blob))
-    throw new Error("invalid public key");
-  const digest = createHash("sha256")
-    .update(Buffer.from(blob, "base64"))
-    .digest("base64");
-  return `SHA256:${digest.replace(/=+$/, "")}`;
+  return parseEd25519PublicKey(publicKey).fingerprint;
 }
 
 export interface PodKey {
@@ -293,7 +285,9 @@ export interface PodKey {
 
 async function readPublicKey(key: string): Promise<string> {
   const pub = (await readFile(`${key}.pub`, "utf8")).trim();
-  if (!ED25519_KEY.test(pub.split(/\s+/).slice(0, 2).join(" "))) {
+  try {
+    parseEd25519PublicKey(pub);
+  } catch {
     throw new Error("unexpected public key file");
   }
   return pub;
