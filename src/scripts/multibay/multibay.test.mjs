@@ -2185,7 +2185,12 @@ describe("a host's calls about a project on another bay", () => {
   };
 
   before(async () => {
-    project_id = await createProject(alice.client, "hosted-elsewhere");
+    // Its own owner: alice's project limit is needed by later scenarios.
+    const owner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "hester",
+    });
+    project_id = await createProject(await client(owner), "hosted-elsewhere");
     assert.equal(await owningBay(project_id), SEED);
     await runInBay(
       cluster,
