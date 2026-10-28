@@ -1,3 +1,4 @@
+import { GPU_PROVIDER_API_KEY_KIND } from "@cocalc/util/gpu/provider-keys";
 import {
   assertAccountNotRehoming,
   assertAccountWriteOnHomeBay,
@@ -118,5 +119,22 @@ export async function assertNoPersonalStateForRehome(
       throw new Error(
         "Account rehome is unavailable while this account has GPU pods, GPU budgets or an admin GPU override on its own RunPod key. GPU state portability is not supported yet; keep this account on its current home bay.",
       );
+  }
+  // A connected GPU provider key lives (encrypted) on the home bay only.
+  const credentials = await db.query(
+    "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='external_credentials'",
+  );
+  if (
+    credentials.rows.length &&
+    (
+      await db.query(
+        "SELECT 1 FROM external_credentials WHERE owner_account_id=$1 AND kind=$2 AND revoked IS NULL LIMIT 1",
+        [account_id, GPU_PROVIDER_API_KEY_KIND],
+      )
+    ).rows.length
+  ) {
+    throw new Error(
+      "Account rehome is unavailable while this account has a GPU provider key connected. Remove the key first (Settings → Connectors), or keep this account on its current home bay.",
+    );
   }
 }

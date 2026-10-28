@@ -22,9 +22,10 @@ describeDb("Agent Network account rehome fence", () => {
     ...GPU_STATE_TABLES,
   ];
   beforeAll(async () => {
-    await syncSchema(
-      Object.fromEntries(tables.map((name) => [name, SCHEMA[name]])),
-    );
+    await syncSchema({
+      ...Object.fromEntries(tables.map((name) => [name, SCHEMA[name]])),
+      external_credentials: SCHEMA.external_credentials,
+    });
   });
 
   test("every retained account-home network table participates in the fence", async () => {
@@ -129,5 +130,22 @@ describeDb("Agent Network account rehome fence", () => {
     await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
       "admin GPU override",
     );
+  });
+
+  test("a connected GPU provider key blocks a rehome; a removed one doesn't", async () => {
+    const account = randomUUID();
+    const id = randomUUID();
+    await db.query(
+      "INSERT INTO external_credentials (id, provider, kind, scope, owner_account_id, encrypted_payload, created, updated) VALUES ($1, 'runpod', 'gpu-provider-api-key', 'account', $2, 'x', now(), now())",
+      [id, account],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "GPU provider key connected",
+    );
+    await db.query(
+      "UPDATE external_credentials SET revoked = now(), encrypted_payload = NULL WHERE id = $1",
+      [id],
+    );
+    await assertNoPersonalStateForRehome(db, account);
   });
 });
