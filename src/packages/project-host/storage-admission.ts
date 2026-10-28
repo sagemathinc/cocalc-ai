@@ -270,8 +270,56 @@ function elapsedMs(since: number, at: number): number {
   return at >= since ? at - since : Infinity;
 }
 
+// The last interval in which maintenance did I/O only on idle disks: when,
+// and the devices it used.
+type IdleMaintenanceIo = { at_ms: number; devices: string[] };
+
+// The gate also reads 60 s PSI averages, which keep a throttled backup's
+// stall for a minute after its last I/O: between its reads, or once it has
+// finished. Intervals without maintenance I/O therefore keep the last idle
+// verdict for that long, while the disks it used stay idle. A busy one of
+// those disks, or maintenance I/O on a busy or unknown disk, ends it, so a
+// real outside stall is still counted.
+const MAINTENANCE_IDLE_HOLD_MS = 60_000;
+
+function maintenanceDisksIdleHeld(
+  previous: DiskActivity | undefined,
+  next: DiskActivity | undefined,
+  held: IdleMaintenanceIo | undefined,
+  maxUtilization: number,
+): { idle: boolean; held?: IdleMaintenanceIo } {
+  if (maintenanceStallOnIdleDisks(previous, next, maxUtilization)) {
+    const devices = [...next!.maintenance_ios]
+      .filter(
+        ([device, ios]) => ios > (previous!.maintenance_ios.get(device) ?? 0),
+      )
+      .map(([device]) => device);
+    return { idle: true, held: { at_ms: next!.at_ms, devices } };
+  }
+  if (!previous || !next || !held) return { idle: false };
+  const elapsed = next.at_ms - previous.at_ms;
+  if (
+    !(elapsed > 0) ||
+    elapsedMs(held.at_ms, next.at_ms) > MAINTENANCE_IDLE_HOLD_MS
+  ) {
+    return { idle: false };
+  }
+  for (const [device, ios] of next.maintenance_ios) {
+    if (ios > (previous.maintenance_ios.get(device) ?? 0))
+      return { idle: false };
+  }
+  for (const device of held.devices) {
+    const before = previous.busy_ms.get(device);
+    const after = next.busy_ms.get(device);
+    if (before == null || after == null) return { idle: false };
+    if ((after - before) / elapsed >= maxUtilization) return { idle: false };
+  }
+  return { idle: true, held };
+}
+
 let lastDiskActivity: DiskActivity | undefined;
 let lastDisksIdle = false;
+let lastIdleMaintenanceIo: IdleMaintenanceIo | undefined;
 
 function readMaintenanceDisksIdle(): boolean {
   const at = Date.now();
@@ -282,9 +330,10 @@ function readMaintenanceDisksIdle(): boolean {
     return lastDisksIdle;
   }
   const next = readDiskActivity(at);
-  const idle = maintenanceStallOnIdleDisks(
+  const { idle, held } = maintenanceDisksIdleHeld(
     lastDiskActivity,
     next,
+    lastIdleMaintenanceIo,
     finiteNonNegative(
       process.env.COCALC_PROJECT_HOST_STORAGE_MAINTENANCE_IDLE_UTILIZATION,
       DEFAULT_MAINTENANCE_IDLE_UTILIZATION,
@@ -292,6 +341,7 @@ function readMaintenanceDisksIdle(): boolean {
   );
   lastDiskActivity = next;
   lastDisksIdle = idle;
+  lastIdleMaintenanceIo = held;
   return idle;
 }
 
@@ -1040,5 +1090,6 @@ export const _test = {
   parseDiskstatsBusyMs,
   parseIoStatIos,
   maintenanceStallOnIdleDisks,
+  maintenanceDisksIdleHeld,
   maxDefined,
 };

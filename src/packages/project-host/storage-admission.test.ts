@@ -559,6 +559,81 @@ describe("storage admission controller", () => {
     ).toBe(false);
   });
 
+  it("keeps a throttled maintenance stall attributed through gaps in its I/O", () => {
+    // Prod asia-3, 2026-10-28: a throttled backup went 19 s without an I/O
+    // while its stall stayed in the 60 s averages. Unattributed, that stall
+    // counted as host pressure, and the gate flapped to contended and
+    // emergency (effective avg10 0.06-2.3, avg60 6.5-12.6).
+    const { parseDiskstatsBusyMs, parseIoStatIos, maintenanceDisksIdleHeld } =
+      _test;
+    const activity = (at_ms: number, sdbBusy: number, sdbIos: number) => ({
+      at_ms,
+      busy_ms: parseDiskstatsBusyMs(
+        `   8       0 sda 1 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0\n` +
+          `   8      16 sdb 1 0 0 0 1 0 0 0 0 ${sdbBusy} ${sdbBusy} 0 0 0 0 0 0\n`,
+      ),
+      maintenance_ios: parseIoStatIos(
+        `8:16 rbytes=1 wbytes=1 rios=${sdbIos} wios=0 dbytes=0 dios=0\n`,
+      ),
+    });
+    // The burst: the backup reads the capped disk at 8% busy.
+    const burst = maintenanceDisksIdleHeld(
+      activity(0, 0, 0),
+      activity(5_000, 400, 1200),
+      undefined,
+      0.5,
+    );
+    expect(burst).toEqual({
+      idle: true,
+      held: { at_ms: 5_000, devices: ["8:16"] },
+    });
+    // 19 s without maintenance I/O on a still idle disk: still its throttle.
+    let previous = activity(5_000, 400, 1200);
+    for (let at = 10_000; at <= 24_000; at += 5_000) {
+      const next = activity(at, 400 + (at - 5_000) / 50, 1200);
+      expect(maintenanceDisksIdleHeld(previous, next, burst.held, 0.5)).toEqual(
+        burst,
+      );
+      previous = next;
+    }
+    // But the disk got busy in that gap: a real outside stall counts again.
+    expect(
+      maintenanceDisksIdleHeld(
+        activity(5_000, 400, 1200),
+        activity(10_000, 400 + 4_000, 1200),
+        burst.held,
+        0.5,
+      ),
+    ).toEqual({ idle: false });
+    // Maintenance I/O on a busy disk ends it too, as without a hold.
+    expect(
+      maintenanceDisksIdleHeld(
+        activity(5_000, 400, 1200),
+        activity(10_000, 400 + 4_000, 1300),
+        burst.held,
+        0.5,
+      ),
+    ).toEqual({ idle: false });
+    // The 60 s averages no longer hold that stall a minute after its I/O.
+    expect(
+      maintenanceDisksIdleHeld(
+        activity(65_000, 1_000, 1200),
+        activity(70_000, 1_000, 1200),
+        burst.held,
+        0.5,
+      ),
+    ).toEqual({ idle: false });
+    // Without an idle verdict to hold, no I/O proves nothing (as before).
+    expect(
+      maintenanceDisksIdleHeld(
+        activity(5_000, 400, 1200),
+        activity(10_000, 400, 1200),
+        undefined,
+        0.5,
+      ),
+    ).toEqual({ idle: false });
+  });
+
   it("recognizes a finite io.max cap", () => {
     const capped = _test.ioMaxCapped;
     expect(
