@@ -20,6 +20,7 @@ import {
   listManagedGpuPodsLocal,
   newPodHandle,
   recordSeenAddresses,
+  providerStartTime,
   STALE_CREATE_MS,
   sshKeyFingerprint,
   terminateGpuPodLocal,
@@ -1113,5 +1114,52 @@ describe("routing", () => {
       project_id: PROJECT,
       spec: SPEC,
     });
+  });
+});
+
+describe("providerStartTime", () => {
+  const created = new Date("2026-10-28T06:00:00Z");
+  const now = new Date("2026-10-28T06:20:00Z");
+  it("uses RunPod's startedAt, else createdAt, bounded by the intent and now", () => {
+    expect(
+      providerStartTime(
+        {
+          startedAt: "2026-10-28T06:05:00Z",
+          createdAt: "2026-10-28T06:01:00Z",
+        },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe("2026-10-28T06:05:00.000Z");
+    expect(
+      providerStartTime(
+        { createdAt: "2026-10-28T06:01:00Z" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe("2026-10-28T06:01:00.000Z");
+    // before the intent existed, or in the future: clamped
+    expect(
+      providerStartTime(
+        { startedAt: "2026-10-27T00:00:00Z" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe(created.toISOString());
+    expect(
+      providerStartTime(
+        { startedAt: "2026-10-29T00:00:00Z" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe(now.toISOString());
+    // nothing usable: from the intent (it may have run all along)
+    expect(
+      providerStartTime(
+        { startedAt: "garbage" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe(created.toISOString());
   });
 });

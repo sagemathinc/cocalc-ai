@@ -335,6 +335,10 @@ async function transition(
               kind: "actual",
               actual_usd: actualCost({
                 cost_per_hr: row.cost_per_hr,
+                reserved_hourly_usd:
+                  row.cost_per_hr == null
+                    ? await reservedHourly(db, id)
+                    : undefined,
                 running_since: row.running_since,
                 ended_at: row.terminated_at ?? new Date(),
               }),
@@ -742,6 +746,37 @@ async function insertIntent({
   }
 }
 
+// When the pod started being billed: RunPod's startedAt (else its
+// createdAt), bounded by the intent's creation (no pod exists before it) and
+// now. Without a usable provider time, the intent's creation: an ambiguous
+// create found by name later may have run all along.
+export function providerStartTime(
+  pod: Pick<RunpodPodView, "startedAt" | "createdAt">,
+  row: Pick<PodRow, "created">,
+  now: Date = new Date(),
+): Date {
+  const earliest = new Date(row.created).getTime();
+  for (const t of [pod.startedAt, pod.createdAt]) {
+    const ms = t ? Date.parse(t) : NaN;
+    if (Number.isFinite(ms)) {
+      return new Date(Math.min(Math.max(ms, earliest), now.getTime()));
+    }
+  }
+  return new Date(Math.min(earliest, now.getTime()));
+}
+
+// The pod's reserved list rate, standing in when RunPod reported no cost.
+async function reservedHourly(
+  db: Pick<PoolClient, "query">,
+  pod_id: string,
+): Promise<string | null> {
+  const { rows } = await db.query(
+    "SELECT MAX(hourly_usd) AS hourly FROM gpu_pod_reservations WHERE pod_id = $1",
+    [pod_id],
+  );
+  return rows[0]?.hourly ?? null;
+}
+
 // Record RunPod's pod for this handle, only if no pod is bound yet. If the
 // record moved on meanwhile (another resolution bound it, or it was given
 // up), the pod is either already ours (nothing to do) or would be untracked
@@ -758,7 +793,7 @@ async function bind(
     {
       provider_pod_id: pod.id,
       state: "running",
-      running_since: new Date(),
+      running_since: providerStartTime(pod, row),
       cost_per_hr: pod.cost ?? null,
       data_center_id: pod.dataCenterId ?? row.data_center_id,
       public_ip: pod.sshDirect?.host ?? null,

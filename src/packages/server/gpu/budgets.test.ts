@@ -190,6 +190,60 @@ describeDb("GPU budgets", () => {
     );
   });
 
+  it("settles a pod RunPod reported no cost for at the reserved list rate, never at zero", async () => {
+    const { account_id, credential_id, launch, deps } = setup({
+      cost: null as any,
+    });
+    const pod = await launch();
+    await getPool().query(
+      "UPDATE gpu_pods SET running_since = now() - interval '30 minutes' WHERE id = $1",
+      [pod.id],
+    );
+    await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, deps);
+    // 30 minutes at the reserved $0.50/h
+    expect(n((await keyLayer(credential_id)).spent_usd)).toBeCloseTo(0.25, 3);
+  });
+
+  it("counts a late-bound pod's runtime from RunPod's start, not from the bind", async () => {
+    const { account_id, credential_id, rp, launch, deps } = setup();
+    // the create is unclear (the pod was made), and the first lookup by
+    // name doesn't see it yet
+    rp.client.createPod.mockImplementationOnce(async (body: any) => {
+      const pod = {
+        id: `pod_${randomUUID().slice(0, 8)}`,
+        name: body.name,
+        cost: 0.5,
+        startedAt: new Date().toISOString(),
+      };
+      rp.pods.set(pod.id, pod);
+      throw Error("socket hang up");
+    });
+    rp.client.findPodsByName.mockImplementationOnce(async () => []);
+    const pending = await launch();
+    expect(pending.state).toBe("ambiguous");
+    // RunPod started it 12 minutes ago; it is found only now
+    await getPool().query(
+      "UPDATE gpu_pods SET created = now() - interval '13 minutes' WHERE id = $1",
+      [pending.id],
+    );
+    const started = Date.now() - 12 * 60_000;
+    for (const p of rp.pods.values()) {
+      p.startedAt = new Date(started).toISOString();
+    }
+    await listManagedGpuPodsLocal({ account_id }, deps);
+    const { rows } = await getPool().query(
+      "SELECT state, running_since FROM gpu_pods WHERE id = $1",
+      [pending.id],
+    );
+    expect(rows[0].state).toBe("running");
+    expect(
+      Math.abs(new Date(rows[0].running_since).getTime() - started),
+    ).toBeLessThan(2000);
+    await terminateGpuPodLocal({ account_id, pod_id: pending.handle }, deps);
+    // 12 minutes at $0.50/h
+    expect(n((await keyLayer(credential_id)).spent_usd)).toBeCloseTo(0.1, 3);
+  });
+
   it("records an overrun in full and then refuses new launches", async () => {
     const { account_id, credential_id, launch, deps } = setup();
     const pod = await launch();
