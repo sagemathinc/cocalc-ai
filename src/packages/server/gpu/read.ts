@@ -390,10 +390,21 @@ export async function getGpuPodsLocal(
     // Every pod in the provider account, including ones CoCalc didn't start
     // (what an unknown-pod alert points at). Account principals only.
     const c = await cleanup(account_id, deps);
+    // A CoCalc handle (cc-...) is our name, not RunPod's id: look it up in
+    // our records first.
+    let providerId: string | undefined = podId as string | undefined;
+    if (providerId != null && /^cc-/.test(providerId)) {
+      const records = await (deps.listManaged ?? listManagedGpuPodsLocal)({
+        account_id,
+        include_ended: true,
+      });
+      providerId = records.find((r) => r.handle === podId)?.provider_pod_id;
+      if (providerId == null) return { provider, as_of, scope, pods: [] };
+    }
     const pods =
-      podId != null
+      providerId != null
         ? await runpod(async () => {
-            const pod = await c.getPod(podId);
+            const pod = await c.getPod(providerId!);
             return pod ? [pod] : [];
           })
         : await runpod(() => c.listPods());

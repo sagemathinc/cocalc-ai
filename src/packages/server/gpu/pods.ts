@@ -744,7 +744,14 @@ async function resolveAmbiguousForAccount(
   // launching key until its pods end).
   const ours = (row: PodRow) => row.credential_id === c.credential_id;
   for (const row of (pending as PodRow[]).filter(ours)) {
-    await terminateBound(row, c, actor).catch(() => {});
+    // recorded as terminating before RunPod is asked, as on every path
+    const terminating =
+      (await transition(
+        row.id,
+        { state: "terminating" },
+        "AND state IN ('running', 'stopped')",
+      ).catch(() => undefined)) ?? row;
+    await terminateBound(terminating, c, actor).catch(() => {});
   }
   for (const row of (rows as PodRow[]).filter(ours)) {
     await resolveAmbiguous(row, c, { kind: "cleanup" }, deps).catch(() => {});

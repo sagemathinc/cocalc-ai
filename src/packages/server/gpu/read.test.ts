@@ -431,6 +431,27 @@ describe("gpu.pods", () => {
     }
   });
 
+  it("reads a pod by its CoCalc handle in the account-wide view", async () => {
+    const rp = fakeRunpod({ "/v2/pods/pod_abc123": { body: POD } });
+    const record = {
+      handle: "cc-7f3k9q2xa4mbn6wd",
+      provider_pod_id: "pod_abc123",
+    } as any;
+    const deps = { ...rp, listManaged: async () => [record] };
+    const one = await getGpuPods(
+      { account_id: ACCOUNT, scope: "account", pod_id: record.handle },
+      deps,
+    );
+    expect(one.pods.map((p) => p.id)).toEqual(["pod_abc123"]);
+    const none = await getGpuPods(
+      { account_id: ACCOUNT, scope: "account", pod_id: "cc-aaaaaaaaaaaaaaaa" },
+      deps,
+    );
+    expect(none.pods).toEqual([]);
+    // the handle itself never reaches RunPod
+    expect(rp.calls).toEqual(["/v2/pods/pod_abc123"]);
+  });
+
   it("still returns the managed records when the key can't be used", async () => {
     const record = {
       id: "00000000-1000-4000-8000-000000000099",
