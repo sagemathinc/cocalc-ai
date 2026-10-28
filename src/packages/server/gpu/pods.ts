@@ -1539,27 +1539,27 @@ export async function recordSeenAddresses(
 // to terminate anything. These two are its only pod-state changes.
 
 // RunPod says (by id, getPod 404) that a bound pod no longer exists: end the
-// record through the normal terminated path, settling what it actually
-// cost. Undefined if the record moved on meanwhile.
+// record through the normal termination path (recorded as wanted, then
+// terminating, then terminated with its actual settlement), with a client
+// that sends nothing: RunPod has already shown the pod is gone. Undefined if
+// the record moved on meanwhile.
+const GONE_AT_PROVIDER = { terminatePod: async () => {} };
 export async function endPodGoneAtProvider(
   row: PodRow,
   actor: Actor,
 ): Promise<PodRow | undefined> {
-  return await transition(
+  let current = await transition(
     row.id,
-    {
-      state: "terminated",
-      desired_state: "terminated",
-      terminated_at: new Date(),
-    },
+    { desired_state: "terminated" },
     "AND state IN ('running', 'stopped', 'terminating') AND unmanaged_at IS NULL",
-    {
-      actor,
-      action: "state",
-      details: { state: "terminated", gone_at_provider: true },
-    },
-    { settle: "actual" },
+    { actor, action: "terminate", details: { gone_at_provider: true } },
   );
+  if (!current) return undefined;
+  if (current.state !== "terminating") {
+    current = await recordTerminating(current, actor);
+    if (!current) return undefined;
+  }
+  return await terminateBound(current, GONE_AT_PROVIDER, actor);
 }
 
 // A RunPod pod named exactly like an ambiguous or failed (quarantined or

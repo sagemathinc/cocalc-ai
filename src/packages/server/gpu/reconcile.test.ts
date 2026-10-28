@@ -25,6 +25,7 @@ import {
 } from "./reconcile";
 import { INVENTORY_STALE_MS } from "./budgets";
 import { freshInventoryForTests } from "./test-inventory";
+import { allowStaleWorkersLocal } from "./admin";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -243,6 +244,17 @@ describeDb("GPU inventory reconciler", () => {
     await s.pass();
     const r = await row(pod.id);
     expect(r.state).toBe("terminated");
+    // through the normal path, by the reconciler, without a DELETE
+    const { rows: ev } = await getPool().query(
+      "SELECT actor_kind, action, details FROM gpu_pod_events WHERE pod_id = $1 AND actor_kind = 'reconciler' ORDER BY at",
+      [pod.id],
+    );
+    expect(ev.map((e: any) => e.details?.state ?? e.action)).toEqual([
+      "terminate",
+      "terminating",
+      "terminated",
+    ]);
+    expect(s.client.terminatePod).not.toHaveBeenCalled();
     const { rows } = await getPool().query(
       "SELECT state FROM gpu_pod_reservations WHERE pod_id = $1",
       [pod.id],
@@ -357,6 +369,28 @@ describeDb("GPU inventory reconciler", () => {
     await expect(s.launch()).rejects.toThrow(/waiting for CoCalc to check/);
     s.advance(MINUTE);
     await s.pass();
+    await expect(s.launch()).resolves.toEqual(
+      expect.objectContaining({ state: "running" }),
+    );
+  });
+
+  it("the admin override for stale workers also admits a launch without a recent inventory", async () => {
+    const s = setup();
+    await s.launch();
+    await getPool().query(
+      "UPDATE gpu_key_fences SET last_inventory_at = NULL WHERE credential_id = $1",
+      [s.credential_id],
+    );
+    await expect(s.launch()).rejects.toThrow(/waiting for CoCalc to check/);
+    await allowStaleWorkersLocal(
+      {
+        admin_account_id: randomUUID(),
+        account_id: s.account_id,
+        hours: 1,
+        reason: "a good enough reason",
+      },
+      { accountWriteFence: s.deps.accountWriteFence },
+    );
     await expect(s.launch()).resolves.toEqual(
       expect.objectContaining({ state: "running" }),
     );

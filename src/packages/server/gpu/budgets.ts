@@ -294,21 +294,15 @@ export async function requireFreshWorkers(
   if (last && now.getTime() - new Date(last).getTime() <= REAPER_STALE_MS) {
     return;
   }
-  const { rows: overrides } = await db.query(
-    `SELECT 1 FROM gpu_worker_overrides
-      WHERE key_owner_account_id = $1 AND revoked_at IS NULL AND expires_at > $2
-      LIMIT 1`,
-    [key_owner_account_id, now],
-  );
-  if (overrides.length > 0) return;
+  if (await hasWorkerOverride(db, key_owner_account_id, now)) return;
   refuse(
     "GPU launches are paused because CoCalc's GPU cleanup worker (which terminates pods at their limits) hasn't completed a check recently. Try again in a few minutes.",
   );
 }
 
 // Launches also need a recent complete inventory of the key (the reconciler,
-// reconcile.ts): what it doesn't know about, nobody is watching. No override:
-// a key whose inventory can't be read can't be watched either.
+// reconcile.ts): what it doesn't know about, nobody is watching. The admin
+// override for stale workers (gpu.adminAllowStaleWorkers) is the only bypass.
 export const INVENTORY_STALE_MS = 20 * 60_000;
 
 // reconcile.ts registers this: a refused launch asks for a pass soon (it
@@ -320,10 +314,25 @@ export function setInventoryWaker(f: typeof inventoryWaker): void {
   inventoryWaker = f;
 }
 
-export function requireFreshInventory(
+async function hasWorkerOverride(
+  db: Db,
+  key_owner_account_id: string,
+  now: Date,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT 1 FROM gpu_worker_overrides
+      WHERE key_owner_account_id = $1 AND revoked_at IS NULL AND expires_at > $2
+      LIMIT 1`,
+    [key_owner_account_id, now],
+  );
+  return rows.length > 0;
+}
+
+export async function requireFreshInventory(
+  db: Db,
   fence: { last_inventory_at: Date | null },
   k: { credential_id: string; key_owner_account_id: string; now: Date },
-): void {
+): Promise<void> {
   const last = fence.last_inventory_at;
   if (
     last &&
@@ -333,6 +342,7 @@ export function requireFreshInventory(
   }
   const { credential_id, key_owner_account_id } = k;
   setImmediate(() => inventoryWaker?.({ credential_id, key_owner_account_id }));
+  if (await hasWorkerOverride(db, key_owner_account_id, k.now)) return;
   refuse(
     "GPU launches with this key are waiting for CoCalc to check the pods on your RunPod account (it does every few minutes). Try again shortly.",
   );
@@ -370,7 +380,7 @@ export async function admitLaunch(
       "New GPU launches with this key are paused until an alert is resolved. Check gpu alerts.",
     );
   }
-  requireFreshInventory(fence, {
+  await requireFreshInventory(db, fence, {
     credential_id: req.credential_id,
     key_owner_account_id: req.key_owner_account_id,
     now,
