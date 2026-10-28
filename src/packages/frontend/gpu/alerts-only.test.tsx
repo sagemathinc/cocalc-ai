@@ -117,4 +117,41 @@ describe("GpuAlertsOnly (no key connected)", () => {
       screen.getByText("Terminate it at RunPod if it still exists."),
     ).toBeTruthy();
   });
+
+  it("says so when the alerts can't be read at first, instead of showing nothing", async () => {
+    const mock = api([]);
+    mock.alerts.mockRejectedValue(new Error("alerts unavailable"));
+    render(<GpuAlertsOnly api={mock} />);
+    expect(
+      await screen.findByText("Couldn't load your GPU alerts"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/There may be alerts that aren't shown/),
+    ).toBeTruthy();
+  });
+
+  it("keeps the last alerts loaded, marked as such, when a later read fails", async () => {
+    const mock = api([alert({})]);
+    const user = userEvent.setup();
+    render(<GpuAlertsOnly api={mock} />);
+    expect(
+      await screen.findByText(
+        "Warning: A pod is running outside CoCalc's control",
+      ),
+    ).toBeTruthy();
+    // acknowledging reloads the alerts; that read fails
+    mock.alerts.mockRejectedValue(new Error("alerts unavailable"));
+    await user.click(
+      screen.getByRole("button", {
+        name: "Acknowledge: A pod is running outside CoCalc's control",
+      }),
+    );
+    expect(
+      await screen.findByText("Couldn't load your GPU alerts"),
+    ).toBeTruthy();
+    expect(screen.getByText(/Showing the alerts last loaded/)).toBeTruthy();
+    expect(
+      screen.getByText("Warning: A pod is running outside CoCalc's control"),
+    ).toBeTruthy();
+  });
 });

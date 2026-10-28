@@ -34,6 +34,10 @@ export function GpuAlertsOnly({ api }: { api: GpuAlertsApi }) {
   const apiRef = useRef(api);
   apiRef.current = api;
   const [alerts, setAlerts] = useState<GpuAlert[]>([]);
+  // whether any read has succeeded, and the last read's failure: a failure is
+  // shown, never taken as "no alerts"; the last alerts loaded stay
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [notice, setNotice] = useState("");
   const [warning, setWarning] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
@@ -43,9 +47,13 @@ export function GpuAlertsOnly({ api }: { api: GpuAlertsApi }) {
     const version = ++generation.current;
     try {
       const next = await apiRef.current.alerts();
-      if (generation.current === version) setAlerts(next);
-    } catch {
-      // keep what was shown; the next poll retries
+      if (generation.current !== version) return;
+      setAlerts(next);
+      setLoaded(true);
+      setLoadError("");
+    } catch (err) {
+      if (generation.current === version)
+        setLoadError(String(err instanceof Error ? err.message : err));
     }
   }, []);
 
@@ -78,7 +86,7 @@ export function GpuAlertsOnly({ api }: { api: GpuAlertsApi }) {
     return true;
   }
 
-  if (alerts.length === 0 && !notice && !warning) return null;
+  if (alerts.length === 0 && !notice && !warning && !loadError) return null;
   return (
     <div style={{ marginTop: 16 }}>
       <div role="status" aria-live="polite">
@@ -102,6 +110,23 @@ export function GpuAlertsOnly({ api }: { api: GpuAlertsApi }) {
           description={warning}
           closable
           onClose={() => setWarning("")}
+        />
+      )}
+      {loadError && (
+        <Alert
+          role="alert"
+          type="warning"
+          showIcon
+          style={{ marginTop: 8 }}
+          title="Couldn't load your GPU alerts"
+          description={
+            <>
+              {loadError}.{" "}
+              {loaded
+                ? "Showing the alerts last loaded."
+                : "There may be alerts that aren't shown here, such as pods still running at RunPod."}
+            </>
+          }
         />
       )}
       <GpuAlertsStrip
