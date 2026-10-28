@@ -292,7 +292,8 @@ export async function setGpuBudgetLocal(
 
 // ---- routed entry points (hub API) ----
 
-async function budgetHomeClient(
+// The inter-bay client of the account's home bay, or undefined on it.
+export async function budgetHomeClient(
   account_id: string,
 ): Promise<InterBayGpuApi | undefined> {
   const { home_bay_id } = await resolveAccountHomeBay({

@@ -243,3 +243,50 @@ export interface GpuBudgetChange {
   max_runtime_minutes?: number | null;
   ends_at?: string;
 }
+
+// gpu.spend: what the pods on the owner's keys cost, from the key layer's
+// reservations (each pod counted once).
+export const GPU_SPEND_GROUP_BY = [
+  "beneficiary",
+  "agent",
+  "project",
+  "pod",
+] as const;
+export type GpuSpendGroupBy = (typeof GPU_SPEND_GROUP_BY)[number];
+
+export interface GpuSpendRow {
+  // the beneficiary's account id, the agent id, the project id or the pod id;
+  // "" for pods without an agent or a project
+  key: string;
+  // the pod's handle, when grouped by pod
+  label?: string;
+  // settled in the period: what the budget's spent_usd totals
+  spent_usd: string;
+  // live pods: CoCalc's estimate so far (computed as settlement will), not
+  // yet spent
+  live_estimate_usd: string;
+  // quarantined reservations: held, neither spent nor live (see gpu.alerts)
+  held_usd: string;
+  // pods with spend, a live estimate or a hold in this row
+  pods: number;
+  pods_live: number;
+}
+
+export interface GpuSpendResult {
+  as_of: string;
+  since: string;
+  until: string;
+  group_by: GpuSpendGroupBy;
+  // largest first (spent + live estimate + held)
+  rows: GpuSpendRow[];
+  totals: {
+    spent_usd: string;
+    live_estimate_usd: string;
+    held_usd: string;
+  };
+  // more groups than fit: rows has the largest, totals cover all
+  truncated?: boolean;
+  // set once RunPod billing is reconciled into spent_usd (5d-2); absent
+  // until then
+  billed_through?: string;
+}

@@ -4,89 +4,65 @@
  */
 
 /*
-The read side of the GPU hub API that the cost dashboard uses, as specified in
-the GPU bring-your-own-key contract (INTERFACES.md). These are replaced by the
-shared types in @cocalc/util/gpu and the `gpu` hub API group once those land;
-do not extend them independently.
-
-All USD values are decimal strings, all times ISO strings.
+What the GPU cost dashboard reads and does, on top of the shared GPU types in
+@cocalc/util/gpu/types. A dashboard API is bound to one scope: what it shows is
+exactly what its kill switch terminates. All USD values are decimal strings.
 */
 
-export type GpuPodState =
-  | "intent"
-  | "creating"
-  | "ambiguous"
-  | "running"
-  | "stopped"
-  | "terminating"
-  | "terminated"
-  | "failed";
+import type {
+  GpuBudget,
+  GpuPodState,
+  GpuPodSummary,
+  GpuSpendGroupBy,
+  GpuSpendResult,
+  GpuSpendRow,
+} from "@cocalc/util/gpu/types";
 
-export type GpuCloud = "SECURE" | "COMMUNITY";
+export type {
+  GpuBudget,
+  GpuPodState,
+  GpuPodSummary,
+  GpuSpendGroupBy,
+  GpuSpendResult,
+  GpuSpendRow,
+};
 
-// "mine": pods I'm responsible for; "funded": every pod my key pays for.
-export type GpuPodScope =
-  | "mine"
-  | "funded"
-  | { grant_id: string }
-  | { course_id: string };
+// "funded": every pod the viewer's key pays for. (A course scope comes with
+// the instructor's course view.)
+export type GpuDashboardScope = "funded" | { course_id: string };
 
-export type GpuKillSwitchScope =
-  | GpuPodScope
-  | { beneficiary_account_id: string };
-
-export interface GpuPodSummary {
-  id: string;
-  handle: string;
-  provider: "runpod";
-  provider_pod_id?: string | null;
-  key_owner_account_id: string;
-  beneficiary_account_id: string;
+// A pod as the dashboard shows it: CoCalc's record, plus the beneficiary's
+// name when known.
+export interface DashboardPod extends GpuPodSummary {
   beneficiary_name?: string;
-  project_id?: string | null;
-  grant_id?: string | null;
-  agent_id?: string | null;
-  turn_id?: string | null;
-  gpu_type_id: string;
-  gpu_count: number;
-  cloud: GpuCloud;
-  data_center_id?: string | null;
-  cost_per_hr: string;
-  estimated_cost: string;
-  state: GpuPodState;
-  desired_state: "running" | "stopped" | "terminated";
-  created: string;
-  terminated_at?: string | null;
 }
 
-export type GpuSpendGroupBy = "beneficiary" | "agent" | "project" | "pod";
-
-export interface GpuSpendRow {
-  key: string;
-  label: string;
-  estimated: string;
-  // RunPod's per-pod billing arrives about an hour late; absent until then.
-  billed?: string | null;
-  pods_live: number;
-}
-
-export interface GpuSpendResult {
-  as_of: string;
-  // The end of the last hour RunPod has billed, if any.
-  billed_through?: string | null;
-  rows: GpuSpendRow[];
+export interface GpuKillResult {
+  // pods newly marked for termination
+  marked: number;
+  // pods still terminating when the call returned (the reaper finishes them)
+  remaining: number;
+  // whether new launches are paused now
+  paused: boolean;
 }
 
 export interface GpuCostDashboardApi {
-  pods(opts: { scope: GpuPodScope }): Promise<GpuPodSummary[]>;
+  scope: GpuDashboardScope;
+  // the pods of this scope, including ones that ended recently
+  pods(): Promise<DashboardPod[]>;
+  // settled spend, live estimates and holds, from the server (gpu.spend)
   spend(opts: {
-    scope: GpuPodScope;
-    since?: string;
-    until?: string;
+    since: string;
     group_by: GpuSpendGroupBy;
   }): Promise<GpuSpendResult>;
+  // the key's budget, for scopes that have one
+  budget?(): Promise<GpuBudget>;
   terminate(opts: { pod_id: string }): Promise<{ state: GpuPodState }>;
-  killSwitch(opts: {
-    scope: GpuKillSwitchScope;
-  }): Promise<{ terminating: number }>;
+  killSwitch(): Promise<GpuKillResult>;
+  // lift the kill switch's pause (needs fresh authentication); absent for
+  // scopes that never pause
+  resume?(): Promise<{ resumed: number }>;
+  // display names of accounts, for spend rows grouped by person
+  names?(account_ids: string[]): Promise<Record<string, string | undefined>>;
+  projectTitle?(project_id: string): string | undefined;
 }

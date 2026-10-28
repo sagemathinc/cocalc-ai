@@ -26,6 +26,7 @@ import {
   whoGpuPod,
 } from "@cocalc/server/gpu/pods";
 import { gpuSshInfo } from "@cocalc/server/gpu/hostkey";
+import { getGpuSpend } from "@cocalc/server/gpu/spend";
 import { reportCompromised as reportGpuKeyCompromised } from "@cocalc/server/gpu/compromise";
 import {
   approveAgentRequest as approveAgentRequestImpl,
@@ -121,6 +122,17 @@ export async function budget(
   opts: Parameters<GpuApi["budget"]>[0],
 ): ReturnType<GpuApi["budget"]> {
   return await getGpuBudget({ account_id: opts?.account_id });
+}
+
+export async function spend(
+  opts: Parameters<GpuApi["spend"]>[0],
+): ReturnType<GpuApi["spend"]> {
+  return await getGpuSpend({
+    account_id: opts?.account_id,
+    since: opts?.since,
+    until: opts?.until,
+    group_by: opts?.group_by,
+  });
 }
 
 export async function killSwitch(

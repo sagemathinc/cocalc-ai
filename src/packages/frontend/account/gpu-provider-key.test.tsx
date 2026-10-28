@@ -30,6 +30,17 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
     freshAuthModalProps: {},
   }),
 }));
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  useTypedRedux: () => "00000000-1000-4000-8000-000000000001",
+}));
+jest.mock("@cocalc/frontend/gpu/runpod-dashboard-section", () => ({
+  RunpodDashboardSection: ({ account_id, onKeyChanged }) => (
+    <div>
+      GPU dashboard for {account_id}
+      <button onClick={onKeyChanged}>Report a key change</button>
+    </div>
+  ),
+}));
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: () => <span>just now</span>,
 }));
@@ -299,5 +310,33 @@ describe("GpuProviderKeySection", () => {
     expect(screen.queryByText(/^Connected to RunPod/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Replace key" })).toBeNull();
     expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
+  });
+
+  it("shows the GPU dashboard only while a key is connected", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue(CONNECTED);
+    const { unmount } = render(<GpuProviderKeySection />);
+    expect(
+      await screen.findByText(
+        "GPU dashboard for 00000000-1000-4000-8000-000000000001",
+      ),
+    ).toBeTruthy();
+    unmount();
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue(DISCONNECTED);
+    render(<GpuProviderKeySection />);
+    await screen.findByLabelText("RunPod API key");
+    expect(screen.queryByText(/GPU dashboard/)).toBeNull();
+  });
+
+  it("re-reads the key's status when the dashboard reports a change (e.g. a closed compromise)", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValueOnce(CONNECTED);
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValueOnce(DISCONNECTED);
+    render(<GpuProviderKeySection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Report a key change" }),
+    );
+    // CoCalc's copy is gone: the key form is back, the dashboard is gone
+    expect(await screen.findByLabelText("RunPod API key")).toBeTruthy();
+    expect(screen.queryByText(/GPU dashboard/)).toBeNull();
+    expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledTimes(2);
   });
 });
