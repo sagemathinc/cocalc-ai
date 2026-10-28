@@ -36,6 +36,7 @@ import {
   type GpuPodSummary,
 } from "@cocalc/util/gpu/types";
 import { isValidUUID } from "@cocalc/util/misc";
+import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import {
   createInterBayAccountLocalClient,
   type InterBayGpuApi,
@@ -50,6 +51,16 @@ import {
   getRunpodLaunchAccessForAccount,
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
+import {
+  actualCost,
+  admitLaunch,
+  enlargeAtBind,
+  ensureKeyBudget,
+  insertReservations,
+  lockBudgetsForPod,
+  settleReservations,
+} from "@cocalc/server/gpu/budgets";
+import { getRunpodCatalog } from "@cocalc/cloud/runpod/catalog";
 import { GPU_POD_WRITE_TIMEOUT_MS } from "@cocalc/util/gpu/runpod";
 
 export interface GpuPodDeps {
@@ -70,6 +81,24 @@ export interface GpuPodDeps {
   now?: () => number;
   // for tests: the account fence (default: lockGpuAccountFence)
   accountWriteFence?: typeof lockGpuAccountFence;
+  // list price per GPU-hour for this type and cloud (default: RunPod's
+  // catalog read with the key); undefined when RunPod doesn't list one
+  listPrice?: (
+    client: RunpodClient,
+    gpu_type_id: string,
+    cloud: "SECURE" | "COMMUNITY",
+  ) => Promise<number | undefined>;
+}
+
+async function catalogListPrice(
+  client: RunpodClient,
+  gpu_type_id: string,
+  cloud: "SECURE" | "COMMUNITY",
+): Promise<number | undefined> {
+  const catalog = await getRunpodCatalog(client);
+  const type = catalog.gpuTypes.find((t) => t.id === gpu_type_id);
+  const offer = cloud === "SECURE" ? type?.secure : type?.community;
+  return offer?.price != null && offer.price > 0 ? offer.price : undefined;
 }
 
 // ---- handles and fingerprints ----
@@ -151,6 +180,7 @@ interface PodRow {
   data_center_id: string | null;
   cost_per_hr: string | null;
   public_ip: string | null;
+  running_since: Date | null;
   state: GpuPodSummary["state"];
   desired_state: GpuPodSummary["desired_state"];
   max_runtime_minutes: number;
@@ -250,13 +280,40 @@ interface PodEvent {
 // One state change and its event, in one transaction: an event never
 // describes a change that didn't happen, and a change never lacks its event.
 // `where` adds conditions (compare-and-set); undefined means it didn't apply.
+//
+// Budgets: a change to a terminal state must say how its reservations
+// settle (`settle`), and they settle in the same transaction. A transition
+// that settles, or runs `after` (bind's re-reservation), first takes the
+// budget locks in the global order, before the pod row.
+type SettleKind = "actual" | "release" | "quarantine";
+
+interface TransitionOptions {
+  settle?: SettleKind;
+  // runs in the transaction after the update applied; may change the row
+  after?: (db: PoolClient, row: PodRow) => Promise<PodRow | void>;
+}
+
 async function transition(
   id: string,
   fields: Record<string, unknown>,
   where: string,
   event?: PodEvent,
+  opts: TransitionOptions = {},
 ): Promise<PodRow | undefined> {
+  const terminal = fields.state === "terminated" || fields.state === "failed";
+  if (terminal && !opts.settle) {
+    throw Error("a pod's terminal state must settle its reservations");
+  }
   return await inTransaction(async (db) => {
+    if (opts.settle || opts.after) {
+      const { rows: pre } = await db.query(
+        "SELECT credential_id, key_owner_account_id FROM gpu_pods WHERE id = $1",
+        [id],
+      );
+      if (pre[0]) {
+        await lockBudgetsForPod(db, { pod_id: id, ...pre[0] });
+      }
+    }
     const keys = Object.keys(fields);
     const sets = keys.map((k, i) => `${k} = $${i + 2}`);
     const { rows } = await db.query(
@@ -264,10 +321,29 @@ async function transition(
         WHERE id = $1 ${where} RETURNING *`,
       [id, ...keys.map((k) => fields[k])],
     );
-    if (rows[0] && event) {
+    let row: PodRow | undefined = rows[0];
+    if (!row) return undefined;
+    if (opts.settle) {
+      await settleReservations(
+        db,
+        { pod_id: id, credential_id: row.credential_id },
+        opts.settle === "actual"
+          ? {
+              kind: "actual",
+              actual_usd: actualCost({
+                cost_per_hr: row.cost_per_hr,
+                running_since: row.running_since,
+                ended_at: row.terminated_at ?? new Date(),
+              }),
+            }
+          : { kind: opts.settle },
+      );
+    }
+    if (opts.after) row = (await opts.after(db, row)) || row;
+    if (event) {
       await recordEvent(id, event.actor, event.action, event.details, db);
     }
-    return rows[0];
+    return row;
   });
 }
 
@@ -404,14 +480,40 @@ export async function launchGpuPodLocal(
     throw Error("project not found or access denied");
   }
   const actor: Actor = { kind: "user", account_id };
+  const cloud = spec.cloud ?? "SECURE";
 
-  // 1. The intent and its event, before anything reaches RunPod. The key is
-  // read under the account fence that key replacement and removal also
-  // take, so no launch can use a key that is being replaced or removed.
+  // The estimate the budget reserves: RunPod's list price for the pod. It is
+  // read before the fence, so no network call is made under it; the launch
+  // then uses the key read under the fence, which must be the same one.
+  const priced = await loadLaunchAccess(account_id, deps);
+  let perGpu: number | undefined;
+  try {
+    perGpu = await (deps.listPrice ?? catalogListPrice)(
+      priced.client,
+      spec.gpu_type_id,
+      cloud,
+    );
+  } catch {
+    throw Error("RunPod's prices could not be read. Try again shortly.");
+  }
+  if (perGpu == null) {
+    throw Error(
+      `RunPod lists no ${cloud} price for ${spec.gpu_type_id}; check gpu availability.`,
+    );
+  }
+  const hourly_usd = moneyToDbString(toDecimal(perGpu).times(spec.gpu_count));
+
+  // 1. The budget reservation, the intent and its event, in one transaction,
+  // before anything reaches RunPod. The key is read under the account fence
+  // that key replacement and removal also take, so no launch can use a key
+  // that is being replaced or removed. A launch that doesn't fit writes
+  // nothing.
   const intent = await insertIntent({
     account_id,
     project_id,
     spec,
+    hourly_usd,
+    priced_credential_id: priced.credential_id,
     actor,
     deps,
   });
@@ -434,6 +536,8 @@ export async function launchGpuPodLocal(
       },
       "AND state = 'intent'",
       { actor, action: "state", details: { state: "failed" } },
+      // never sent to RunPod: release the reservation
+      { settle: "release" },
     );
     return podSummary(failed ?? (await loadPod(row.id)));
   }
@@ -449,6 +553,8 @@ export async function launchGpuPodLocal(
         { state: "failed", reason, terminated_at: new Date() },
         "AND state = 'creating'",
         { actor, action: "state", details: { state: "failed" } },
+        // a definite refusal: no pod exists
+        { settle: "release" },
       );
       throw Error(reason);
     }
@@ -509,12 +615,18 @@ async function insertIntent({
   account_id,
   project_id,
   spec,
+  hourly_usd,
+  priced_credential_id,
   actor,
   deps,
 }: {
   account_id: string;
   project_id: string;
   spec: GpuLaunchSpec;
+  hourly_usd: string;
+  // the key the estimate was priced with: the key read under the fence must
+  // be the same one
+  priced_credential_id: string;
   actor: Actor;
   deps: GpuPodDeps;
 }): Promise<{ row: PodRow; client: RunpodClient }> {
@@ -525,9 +637,10 @@ async function insertIntent({
     const handle = (deps.newHandle ?? newPodHandle)();
     try {
       return await inTransaction(async (db) => {
-        // the fence key mutation takes too (provider-keys.ts), with the
-        // authoritative checks made under it: not being rehomed, still homed
-        // on this bay
+        // The global lock order: the account fence key mutation takes too
+        // (provider-keys.ts), with the authoritative checks made under it
+        // (not being rehomed, still homed on this bay); then the key's fence
+        // and its layers (admitLaunch); then the new rows.
         await (deps.accountWriteFence ?? lockGpuAccountFence)(
           db,
           account_id,
@@ -537,6 +650,26 @@ async function insertIntent({
           account_id,
           deps,
         );
+        if (credential_id !== priced_credential_id) {
+          throw Error("Your RunPod API key changed during the launch. Try again.");
+        }
+        await ensureKeyBudget(db, {
+          credential_id,
+          key_owner_account_id: account_id,
+        });
+        const admission = await admitLaunch(db, {
+          credential_id,
+          key_owner_account_id: account_id,
+          beneficiary_account_id: account_id,
+          project_id,
+          gpu_type_id: spec.gpu_type_id,
+          gpu_count: spec.gpu_count,
+          cloud: spec.cloud ?? "SECURE",
+          data_center_id: spec.data_center_id,
+          max_runtime_minutes: spec.max_runtime_minutes,
+          hourly_usd,
+          now: new Date(now),
+        });
         const { rows } = await db.query(
           `INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider,
              beneficiary_account_id, project_id, spec, gpu_type_id, gpu_count, cloud,
@@ -561,6 +694,7 @@ async function insertIntent({
             spec.ssh_public_key ? sshKeyFingerprint(spec.ssh_public_key) : null,
           ],
         );
+        await insertReservations(db, id, admission, spec.gpu_count);
         await recordEvent(
           id,
           actor,
@@ -572,6 +706,8 @@ async function insertIntent({
             gpu_count: spec.gpu_count,
             cloud: spec.cloud,
             max_runtime_minutes: spec.max_runtime_minutes,
+            hourly_usd: admission.hourly_usd,
+            reserved_usd: admission.estimate_usd,
           },
           db,
         );
@@ -601,6 +737,7 @@ async function bind(
     {
       provider_pod_id: pod.id,
       state: "running",
+      running_since: new Date(),
       cost_per_hr: pod.cost ?? null,
       data_center_id: pod.dataCenterId ?? row.data_center_id,
       public_ip: pod.sshDirect?.host ?? null,
@@ -610,6 +747,49 @@ async function bind(
       actor,
       action: "bind",
       details: { provider_pod_id: pod.id, cost_per_hr: pod.cost },
+    },
+    {
+      // in the bind's transaction: RunPod's real price must fit the budget,
+      // or the pod is terminated at once; and the first IP is recorded
+      after: async (db, b) => {
+        let out: PodRow = b;
+        if (pod.cost != null) {
+          const fits = await enlargeAtBind(db, {
+            pod_id: b.id,
+            credential_id: b.credential_id,
+            actual_hourly_usd: moneyToDbString(pod.cost),
+            max_runtime_minutes: b.max_runtime_minutes,
+          });
+          if (!fits) {
+            const { rows } = await db.query(
+              `UPDATE gpu_pods SET desired_state = 'terminated', reason = $2, updated = now()
+                WHERE id = $1 RETURNING *`,
+              [
+                b.id,
+                "RunPod's price for this pod is more than your GPU budget allows, so it was terminated.",
+              ],
+            );
+            out = rows[0];
+            await recordEvent(
+              b.id,
+              actor,
+              "budget_stop",
+              { cost_per_hr: pod.cost },
+              db,
+            );
+          }
+        }
+        if (b.public_ip) {
+          await recordEvent(
+            b.id,
+            actor,
+            "ip_seen",
+            { public_ip: b.public_ip, ports: pod.runtime?.ports ?? null },
+            db,
+          );
+        }
+        return out;
+      },
     },
   );
   if (bound) {
@@ -669,6 +849,9 @@ async function resolveAmbiguous(
           action: "state",
           details: { state: "failed", resolved: "not_found" },
         },
+        // an empty lookup isn't proof: hold the reservation until the
+        // reconciler has seen a full inventory without the handle
+        { settle: "quarantine" },
       )) ?? (await loadPod(row.id))
     );
   }
@@ -715,6 +898,8 @@ async function resolveStaleCreate(
       },
       "AND state = 'intent'",
       { actor, action: "state", details: { state: "failed", stale: true } },
+      // never sent to RunPod: release the reservation
+      { settle: "release" },
     );
   }
   return await transition(
@@ -892,6 +1077,7 @@ async function terminateBound(
       { state: "terminated", terminated_at: new Date() },
       "AND state <> 'terminated'",
       { actor, action: "state", details: { state: "terminated" } },
+      { settle: "actual" },
     )) ?? (await loadPod(row.id))
   );
 }

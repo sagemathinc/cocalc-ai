@@ -146,6 +146,10 @@ Table({
     created: { type: "timestamp", not_null: true, pg_default: "now()" },
     updated: { type: "timestamp", not_null: true, pg_default: "now()" },
     terminated_at: { type: "timestamp" },
+    running_since: {
+      type: "timestamp",
+      desc: "When RunPod's pod was bound (runtime and cost start here).",
+    },
   },
 });
 

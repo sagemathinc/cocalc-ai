@@ -613,6 +613,28 @@ export const TABLE_OWNERSHIP = {
     rebuild: "No rebuild: counters restart empty.",
   }),
 
+  ...entries(
+    [
+      "gpu_key_fences",
+      "gpu_budget_layers",
+      "gpu_budget_events",
+      "gpu_pod_reservations",
+    ],
+    {
+      ownership: "account-home",
+      authority: "key_owner_account_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        project_id:
+          "Project a GPU budget layer is bound to; only a scope reference, the row lives on the key owner's home bay.",
+        account_id:
+          "Not used; beneficiary_account_id is an attribution reference.",
+      },
+      notes:
+        "GPU bring-your-own-key budgets: per-key fences, budget layers and their events, and pod reservations, on the home bay of the account whose provider key pays (reservation and event rows follow their layer). Rehome is refused while any GPU rows exist (assertNoPersonalStateForRehome).",
+    },
+  ),
+
   ...entries(["gpu_pods", "gpu_pod_events"], {
     ownership: "account-home",
     authority: "key_owner_account_id",
