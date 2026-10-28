@@ -37,9 +37,11 @@ import {
 
 type Fetch = typeof globalThis.fetch;
 
-// Verification is at most six requests (organization, maybe GraphQL
-// `myself`, one page of pods, a template created and deleted to prove write
-// access, one delete retry) of at most 4 s each, and must finish within
+// Verification is at most seven requests (organization, maybe GraphQL
+// `myself`, one page of pods, then a template created and deleted to prove
+// write access; an unclear create adds a lookup by name, and a delete may be
+// retried once) of at most 4 s each. Cleanup after a failed probe can run
+// past 25 s, but verification must succeed within
 // VERIFY_DEADLINE_MS or nothing is stored. The store after that has no
 // deadline of its own (it may wait on the database and the selector lock);
 // the browser's VERIFY_RPC_TIMEOUT_MS (90 s, in util/gpu/provider-keys) is
