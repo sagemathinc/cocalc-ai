@@ -15,6 +15,7 @@ import type { GpuProvider } from "@cocalc/util/gpu/provider-keys";
 import type {
   GpuAttribution,
   GpuLaunchSpec,
+  GpuPodSshInfo,
   GpuPodSummary,
 } from "@cocalc/util/gpu/types";
 import type {
@@ -41,6 +42,9 @@ export const gpu = {
   launch: authFirstRequireAccount,
   terminate: authFirstRequireAccount,
   who: authFirstRequireAccount,
+  // what `cocalc gpu connect` needs: the live SSH endpoint and the host key
+  // the pod registered; account-only, like pods
+  sshInfo: authFirstRequireAccount,
 };
 
 interface GpuReadOpts {
@@ -139,4 +143,10 @@ export interface GpuApi {
     account_id?: string;
     query: string;
   }) => Promise<GpuAttribution[]>;
+  // pod_id: a pod id, handle or RunPod pod id. ready is false until the pod
+  // runs and has registered its host key; then host, port, user and the key.
+  sshInfo: (opts: {
+    account_id?: string;
+    pod_id: string;
+  }) => Promise<GpuPodSshInfo>;
 }
