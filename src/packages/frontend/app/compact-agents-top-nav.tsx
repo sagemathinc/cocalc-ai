@@ -24,6 +24,7 @@ import { ConnectionIndicator } from "./connection-indicator";
 import { BrowserUpdateIndicator } from "./update-indicator";
 import openSupportTab from "@cocalc/frontend/support/open";
 import type { PageStyle } from "./top-nav-consts";
+import { PeopleUnreadBadge } from "@cocalc/frontend/people/unread-badge";
 
 export function CompactAgentsTopNav({
   isLoggedIn,
@@ -76,7 +77,16 @@ export function CompactAgentsTopNav({
         ]
       : []),
     { key: "projects", icon: <Icon name="edit" />, label: "Projects" },
-    { key: "people", icon: <Icon name="users" />, label: "People" },
+    {
+      key: "people",
+      icon: <Icon name="users" />,
+      label: (
+        <>
+          People
+          <PeopleUnreadBadge />
+        </>
+      ),
+    },
     { key: "hosts", icon: <Icon name="server" />, label: "Compute" },
     ...(isLoggedIn
       ? [
