@@ -6,6 +6,14 @@
 import { peopleApi } from "@cocalc/server/people/api";
 
 export const {
+  listDirect,
+  startDirect,
+  getDirect,
+  sendDirect,
+  respondDirect,
+  markDirectRead,
+  setDirectMuted,
+  findDirectRecipient,
   listConversations,
   getConversation,
   addConversation,

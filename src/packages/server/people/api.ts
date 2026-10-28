@@ -8,6 +8,7 @@
 // conversation list is built on the home bay with one request per owning bay.
 
 import { notifyIdentityWatchers } from "@cocalc/server/agents/identity-watchers";
+import { directHubApi } from "./direct";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type { PeopleApi } from "@cocalc/conat/hub/api/people";
 import {
@@ -458,6 +459,7 @@ export const peopleControl: InterBayPeopleApi = {
 
 /** Browser-facing hub API; account_id is bound by the auth policy. */
 export const peopleApi: PeopleApi = {
+  ...directHubApi,
   async listConversations({ account_id }) {
     return await (await home(account_id!)).listConversations({ account_id });
   },

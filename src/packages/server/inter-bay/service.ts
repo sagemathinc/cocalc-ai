@@ -17,6 +17,11 @@ import { paymentSelectionsHome } from "@cocalc/server/agents/payment-selections"
 import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/artifact-catalog";
 import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
 import { createInterBayPeopleHandler } from "@cocalc/conat/inter-bay/people";
+import { createInterBayDirectHandler } from "@cocalc/conat/inter-bay/direct";
+import {
+  directControl,
+  startDirectFanoutRetries,
+} from "@cocalc/server/people/direct";
 import { peopleControl } from "@cocalc/server/people/api";
 import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
 import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
@@ -678,6 +683,12 @@ export async function initInterBayServices(): Promise<void> {
         parallel: true,
         impl: peopleControl,
       }),
+      createInterBayDirectHandler({
+        client: getInterBayFabricServiceClient(),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: directControl,
+      }),
       createInterBayPersonalLibraryHandler({
         client: getInterBayFabricServiceClient(),
         bayId: getConfiguredBayId(),
@@ -697,6 +708,7 @@ export async function initInterBayServices(): Promise<void> {
         impl: personalUrlAliasHomeControl,
       }),
     );
+    startDirectFanoutRetries();
     await startProjectSecretsService();
     await startExternalCredentialsService();
     await startHostConnectionService();

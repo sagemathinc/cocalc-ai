@@ -28,25 +28,15 @@ import { NewConversationModal } from "./new-conversation";
 import { ScanDialog } from "./scan-dialog";
 import { InvitesPanel } from "./invites";
 import { useConversations } from "./use-conversations";
+import { DirectMessagesTab } from "./direct-messages";
+import { NewDirectModal } from "./new-direct";
+import { directAttentionCount, useDirectConversations } from "./use-direct";
+import { directRoute } from "@cocalc/util/direct-conversations";
 import { useWorkspaceContentNavigation } from "@cocalc/frontend/agents/workspace-content-navigation";
 import "./people.css";
 
-// people_route is "", "conversations/<project_id>/<conversation_id>",
-// "collaborators" or "collaborators/<account_id>".
-export function parsePeopleRoute(route?: string): {
-  tab: "conversations" | "collaborators" | "invites";
-  project_id?: string;
-  conversation_id?: string;
-  account_id?: string;
-} {
-  const [head, a, b] = (route ?? "").split("/");
-  if (head === "collaborators") return { tab: "collaborators", account_id: a };
-  if (head === "invites") return { tab: "invites" };
-  if (head === "conversations" && a && b) {
-    return { tab: "conversations", project_id: a, conversation_id: b };
-  }
-  return { tab: "conversations" };
-}
+export { parsePeopleRoute } from "./route";
+import { parsePeopleRoute } from "./route";
 
 function navigate(route?: string) {
   const page = redux.getActions("page");
@@ -68,6 +58,10 @@ export function PeoplePage() {
   const filter = useListQuery();
   const [newFor, setNewFor] = useState<{ personId?: string } | null>(null);
   const [dialog, setDialog] = useState<"scan">();
+  const [newDirect, setNewDirect] = useState<{ personId?: string } | null>(
+    null,
+  );
+  const direct = useDirectConversations(active);
   // "+ New Conversation" in the sidebar.
   useEffect(() => newConversationRequest.on(() => setNewFor({})), []);
   const people = usePeople();
@@ -169,6 +163,7 @@ export function PeoplePage() {
       onBack={() => navigate("collaborators")}
       onOpenConversation={(c) => navigate(conversationRoute(c))}
       onStartConversation={() => setNewFor({ personId: route.account_id })}
+      onMessage={() => void messagePerson(route.account_id!)}
     />
   ) : (
     <CollaboratorList
@@ -179,12 +174,29 @@ export function PeoplePage() {
     />
   );
 
+  // Opens (or starts) the direct conversation with one person.
+  async function messagePerson(person: string) {
+    try {
+      const c = await peopleApi().startDirect({ member_ids: [person] });
+      direct.refresh();
+      navigate(directRoute(c.conversation_id));
+    } catch (err) {
+      setNewDirect({ personId: person });
+    }
+  }
+  const directAttention = directAttentionCount(
+    direct.conversations,
+    account_id,
+  );
+
   const count =
     route.tab === "conversations"
       ? `${filtered.length} ${filtered.length === 1 ? "conversation" : "conversations"}`
-      : route.tab === "collaborators"
-        ? `${people.length} ${people.length === 1 ? "collaborator" : "collaborators"}`
-        : "Invitations you sent or received";
+      : route.tab === "messages"
+        ? `${direct.conversations.length} direct ${direct.conversations.length === 1 ? "conversation" : "conversations"}`
+        : route.tab === "collaborators"
+          ? `${people.length} ${people.length === 1 ? "collaborator" : "collaborators"}`
+          : "Invitations you sent or received";
 
   return (
     <div
@@ -243,17 +255,19 @@ export function PeoplePage() {
                 : ""}
             </span>
           </div>
-          {!route.account_id && route.tab !== "invites" && (
-            <CollectionViewControl
-              view={tabPreferences.value.view}
-              onChange={tabPreferences.setView}
-              label={
-                route.tab === "conversations"
-                  ? "Conversations"
-                  : "Collaborators"
-              }
-            />
-          )}
+          {!route.account_id &&
+            route.tab !== "invites" &&
+            route.tab !== "messages" && (
+              <CollectionViewControl
+                view={tabPreferences.value.view}
+                onChange={tabPreferences.setView}
+                label={
+                  route.tab === "conversations"
+                    ? "Conversations"
+                    : "Collaborators"
+                }
+              />
+            )}
           <PageSearchBox scope="people" />
           {route.tab === "conversations" && (
             <Button
@@ -263,10 +277,17 @@ export function PeoplePage() {
               Scan
             </Button>
           )}
-          <PageCreateButton
-            label="New conversation"
-            onClick={() => setNewFor({})}
-          />
+          {route.tab === "messages" ? (
+            <PageCreateButton
+              label="New message"
+              onClick={() => setNewDirect({})}
+            />
+          ) : (
+            <PageCreateButton
+              label="New conversation"
+              onClick={() => setNewFor({})}
+            />
+          )}
         </header>
         <Tabs
           activeKey={route.tab}
@@ -293,6 +314,20 @@ export function PeoplePage() {
               children: conversationsTab,
             },
             {
+              key: "messages",
+              label: directAttention
+                ? `Messages (${directAttention})`
+                : "Messages",
+              children: (
+                <DirectMessagesTab
+                  conversation_id={route.direct_id}
+                  search={filter}
+                  onOpen={(id) => navigate(directRoute(id))}
+                  onClose={() => navigate("messages")}
+                />
+              ),
+            },
+            {
               key: "collaborators",
               label: "Collaborators",
               children: collaboratorsTab,
@@ -305,6 +340,15 @@ export function PeoplePage() {
           ]}
         />
       </div>
+      <NewDirectModal
+        open={newDirect != null}
+        personId={newDirect?.personId}
+        onClose={() => setNewDirect(null)}
+        onStarted={(c) => {
+          setNewDirect(null);
+          navigate(directRoute(c.conversation_id));
+        }}
+      />
       <ScanDialog
         open={dialog === "scan"}
         conversations={state.conversations}

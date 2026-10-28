@@ -195,6 +195,24 @@ export const TABLE_OWNERSHIP = {
     },
   ),
 
+  ...entries(["account_direct_conversations", "account_direct_blocks"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    notes:
+      "A member's index of their direct conversations (owning bay, read state, mute) and their blocks, kept on the member's home bay and updated by fan-out from each conversation's owning bay. Rehome remains unsafe until this table has explicit migration tests.",
+  }),
+  ...entries(
+    ["direct_conversations", "direct_messages", "direct_fanout_pending"],
+    {
+      ownership: "stable-bay",
+      authority: "bay_id",
+      portability: "stable",
+      notes:
+        "Direct conversations and their messages, stored on the bay where they were started (the creator's home bay then); members on any bay reach them through that bay. Account rehome does not move them.",
+    },
+  ),
+
   ...entries(["admin_assigned_memberships"], {
     ownership: "account-home",
     authority: "account_id",
