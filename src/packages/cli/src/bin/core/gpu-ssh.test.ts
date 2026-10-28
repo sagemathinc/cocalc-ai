@@ -229,6 +229,16 @@ it("refreshes a pod in place, keeps others, and forgets one completely", async (
   assert.notDeepEqual(resolved(h, HANDLE).hostname, ["203.0.113.7"]);
 });
 
+it("forgets a pod that never had an alias without editing ~/.ssh/config", async () => {
+  const h = home();
+  mkdirSync(join(h, ".ssh"), { mode: 0o700 });
+  writeFileSync(join(h, ".ssh", "config"), "Host a\n", { mode: 0o600 });
+  await podKey(HANDLE, h);
+  await removePodSsh(HANDLE, { home: h });
+  assert.equal(readFileSync(join(h, ".ssh", "config"), "utf8"), "Host a\n");
+  assert.ok(!existsSync(join(h, ".ssh", "cocalc-gpu", HANDLE)));
+});
+
 it("won't write an alias for a pod without its key", async () => {
   await assert.rejects(
     writePodSsh(endpoint(), { home: home() }),

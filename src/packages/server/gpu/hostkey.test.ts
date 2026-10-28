@@ -86,7 +86,8 @@ async function launched() {
       client: rp.client as any,
       credential_id: CREDENTIAL,
     }),
-    getCleanup: async () => rp.client as any,
+    getCleanup: async () =>
+      ({ ...rp.client, credential_id: CREDENTIAL }) as any,
     siteUrl: async () => "https://cocalc.test",
   };
   const pod = await launchGpuPodLocal(
@@ -174,6 +175,16 @@ describeDb("pod host-key registration", () => {
         host_key_fingerprint: r1.host_key_fingerprint,
       }),
     );
+
+    // a replaced key (maybe another RunPod account) gets no endpoint
+    const replaced = {
+      ...deps,
+      getCleanup: async () =>
+        ({ ...(await deps.getCleanup()), credential_id: randomUUID() }) as any,
+    };
+    expect(
+      await gpuSshInfoLocal({ account_id, pod_id: pod.id }, replaced),
+    ).toEqual(expect.objectContaining({ ready: false, state: "running" }));
   });
 
   it("answers a retried lost response, and alerts on a different key", async () => {

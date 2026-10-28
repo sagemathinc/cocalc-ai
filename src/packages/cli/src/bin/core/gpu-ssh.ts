@@ -257,6 +257,8 @@ async function writeAll(pods: PodSshEndpoint[], opts: GpuSshOptions) {
   await writeAtomic(p.knownHosts, renderPodKnownHosts(pods));
   await writeAtomic(p.config, renderPodSshConfig(pods, opts));
   await writeAtomic(p.registry, JSON.stringify({ version: 1, pods }, null, 2));
+  // Only an alias needs the Include; removing one never edits the user's file.
+  if (pods.length === 0) return;
   const current = (await exists(p.userConfig))
     ? await readFile(p.userConfig, "utf8")
     : "";

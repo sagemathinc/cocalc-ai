@@ -209,7 +209,9 @@ export async function gpuSshInfoLocal(
   const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
     pod.key_owner_account_id,
   );
-  if (!c) return info;
+  // Only the key that launched the pod can see it (a replaced key may act
+  // for another RunPod account).
+  if (!c || c.credential_id !== pod.credential_id) return info;
   let live: Awaited<ReturnType<typeof c.getPod>>;
   try {
     live = await c.getPod(pod.provider_pod_id);
