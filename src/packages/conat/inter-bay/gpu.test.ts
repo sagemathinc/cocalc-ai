@@ -16,6 +16,7 @@ it.each([
   "gpuApproveAgentRequest",
   "gpuRevokeAgentGrant",
   "gpuBudget",
+  "gpuSpend",
   "gpuSetBudget",
   "gpuAllowStaleWorkers",
   "gpuSshInfo",

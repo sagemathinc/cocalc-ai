@@ -14,6 +14,8 @@ the allowlisted spec (util/gpu/launch-spec); budgets come in step 5.
 import type { GpuProvider } from "@cocalc/util/gpu/provider-keys";
 import type {
   GpuBudget,
+  GpuSpendGroupBy,
+  GpuSpendResult,
   GpuBudgetChange,
   GpuAlert,
   GpuAttribution,
@@ -53,6 +55,7 @@ export const gpu = {
   approveAgentRequest: authFirstRequireAccountWithBoundSession,
   revokeAgentGrant: authFirstRequireAccount,
   budget: authFirstRequireAccount,
+  spend: authFirstRequireAccount,
   // its fresh-auth check uses the caller's own session, never a nominated one
   setBudget: authFirstRequireAccountWithBoundSession,
   killSwitch: authFirstRequireAccount,
@@ -239,6 +242,17 @@ export interface GpuApi {
   }) => Promise<{ state: GpuPodSummary["state"] }>;
   // The connected key's budget (step 5).
   budget: (opts?: { account_id?: string }) => Promise<GpuBudget>;
+  // What the pods on your RunPod keys cost in a period (default: the last
+  // 30 days, at most 400), grouped by beneficiary (default), agent, project
+  // or pod: settled spend, the live pods' estimate so far, and quarantined
+  // holds. Times are ISO strings.
+  spend: (opts?: {
+    account_id?: string;
+    since?: string;
+    until?: string;
+    group_by?: GpuSpendGroupBy;
+    timeout?: number;
+  }) => Promise<GpuSpendResult>;
   // Lowering limits needs only the owner; raising any (more money, a higher
   // or removed cap, a later end) needs fresh authentication (browser_id).
   setBudget: (opts: {

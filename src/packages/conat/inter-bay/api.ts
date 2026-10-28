@@ -4204,6 +4204,13 @@ export interface InterBayGpuApi {
   gpuBudget: (opts: {
     account_id: string;
   }) => Promise<import("@cocalc/util/gpu/types").GpuBudget>;
+  // What the pods on the owner's keys cost (gpu.spend).
+  gpuSpend: (opts: {
+    account_id: string;
+    since?: unknown;
+    until?: unknown;
+    group_by?: unknown;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuSpendResult>;
   gpuSetBudget: (opts: {
     account_id: string;
     change: unknown;
@@ -8318,6 +8325,7 @@ export function createInterBayAccountLocalClient({
     gpuRevokeAgentGrant: async (opts) =>
       await gpuClient.gpuRevokeAgentGrant(opts),
     gpuBudget: async (opts) => await gpuClient.gpuBudget(opts),
+    gpuSpend: async (opts) => await gpuClient.gpuSpend(opts),
     gpuSetBudget: async (opts) => await gpuClient.gpuSetBudget(opts),
     gpuKillSwitch: async (opts) => await gpuClient.gpuKillSwitch(opts),
     gpuResume: async (opts) => await gpuClient.gpuResume(opts),
@@ -8920,6 +8928,7 @@ export function createInterBayAccountLocalHandler({
         gpuRevokeAgentGrant: async (opts) =>
           await impl.gpuRevokeAgentGrant(opts),
         gpuBudget: async (opts) => await impl.gpuBudget(opts),
+        gpuSpend: async (opts) => await impl.gpuSpend(opts),
         gpuSetBudget: async (opts) => await impl.gpuSetBudget(opts),
         gpuKillSwitch: async (opts) => await impl.gpuKillSwitch(opts),
         gpuResume: async (opts) => await impl.gpuResume(opts),

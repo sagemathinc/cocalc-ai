@@ -6,10 +6,11 @@
 /*
 GPU cost dashboard: what the pods a RunPod key pays for cost, which of them are
 live, and a way to terminate one or all of them. The same component serves the
-key owner (scope "funded") and, later, a course (scope {course_id}).
+key owner (scope "funded") and, later, a course: the API it is given is bound
+to one scope, and everything shown and done is for that scope.
 
-Spend is CoCalc's estimate (cost per hour × time, which slightly overcounts),
-then RunPod's own per-pod billing once it arrives, about an hour late.
+Spend comes from the server (gpu.spend): settled spend, CoCalc's estimate for
+live pods (computed as settlement will), and quarantined holds.
 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -23,8 +24,12 @@ import {
   Table,
   Typography,
 } from "antd";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { moneyToCurrency } from "@cocalc/util/money";
+import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import {
   GROUP_BY_LABELS,
   defaultScopeLabel,
@@ -35,13 +40,13 @@ import {
   podGpuLabel,
   podOwnerLabel,
   podStateLabel,
-  spendTotals,
+  spendRowLabel,
 } from "./cost-dashboard-model";
 import type { GpuSpendPeriod } from "./cost-dashboard-model";
 import type {
+  DashboardPod,
+  GpuBudget,
   GpuCostDashboardApi,
-  GpuPodScope,
-  GpuPodSummary,
   GpuSpendGroupBy,
   GpuSpendResult,
 } from "./types";
@@ -51,7 +56,7 @@ const REFRESH_MS = 15_000;
 // can hang instead of failing.
 const STALE_MS = 2 * REFRESH_MS;
 
-type Confirmation = { kind: "all" } | { kind: "pod"; pod: GpuPodSummary };
+type Confirmation = { kind: "all" } | { kind: "pod"; pod: DashboardPod };
 
 function errorText(err: unknown): string {
   return String(err instanceof Error ? err.message : err);
@@ -66,6 +71,17 @@ function asOf(value: string, at: number | undefined): string {
   return at == null
     ? value
     : `${value} (as of ${formatTime(at)}; not updating)`;
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+function rateText(rate: { total: string; unpriced: number }): string {
+  const priced = `${moneyToCurrency(rate.total)}/hour`;
+  return rate.unpriced > 0
+    ? `${priced} plus ${plural(rate.unpriced, "pod")} not priced yet`
+    : priced;
 }
 
 /** Polls `load`, scheduling each request only after the previous one settles.
@@ -103,27 +119,32 @@ function usePolling(
 
 export function GpuCostDashboard({
   api,
-  scope = "funded",
   scopeLabel: scopeLabelOverride,
   viewerAccountId,
 }: {
+  // Bound to one scope: what is shown is exactly what "Terminate all" ends.
   api: GpuCostDashboardApi;
-  // What is shown is exactly what "Terminate all" terminates.
-  scope?: GpuPodScope;
   // Completes "GPU pods ..." in headings and confirmations; defaults to a
-  // label derived from scope.
+  // label derived from the API's scope.
   scopeLabel?: string;
   // The signed-in account, so its own pods read "You".
   viewerAccountId?: string;
 }) {
-  const scopeLabel = scopeLabelOverride ?? defaultScopeLabel(scope);
+  // Callers may pass a new but equal API object on every render: the loaders
+  // read it from a ref and depend only on the scope's value.
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  // the viewer is part of every cache key: another account's data is never
+  // shown under this one
+  const scopeKey = JSON.stringify([api.scope, viewerAccountId ?? null]);
+  const scopeLabel = scopeLabelOverride ?? defaultScopeLabel(api.scope);
   const [period, setPeriod] = useState<GpuSpendPeriod>("7d");
   const [groupBy, setGroupBy] = useState<GpuSpendGroupBy>("beneficiary");
   // Each result is stored with the query it answers, and only shown while that
   // query is current, so new labels are never put on old numbers.
   const [podsResult, setPodsResult] = useState<{
     key: string;
-    pods: GpuPodSummary[];
+    pods: DashboardPod[];
     at: number;
   }>();
   const [spendResult, setSpendResult] = useState<{
@@ -131,10 +152,15 @@ export function GpuCostDashboard({
     spend: GpuSpendResult;
     at: number;
   }>();
-  // Pods and spend load and fail independently: a billing outage must not
-  // hide the pod list and its per-pod terminate buttons, nor the reverse.
-  // Errors are kept per query and cleared only by a successful read, so a
-  // cached result after a failed refresh is shown as last known, never live.
+  const [budgetResult, setBudgetResult] = useState<{
+    key: string;
+    budget: GpuBudget;
+  }>();
+  const [names, setNames] = useState<Record<string, string | undefined>>({});
+  // Pods and spend load and fail independently: a spend outage must not hide
+  // the pod list and its per-pod terminate buttons, nor the reverse. Errors
+  // are kept per query and cleared only by a successful read, so a cached
+  // result after a failed refresh is shown as last known, never live.
   const [podsFailure, setPodsFailure] = useState<{
     key: string;
     message: string;
@@ -147,19 +173,23 @@ export function GpuCostDashboard({
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
+  // the pause the kill switch reported in this session
+  const [paused, setPaused] = useState(false);
+  const [resumeError, setResumeError] = useState("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const podsGeneration = useRef(0);
   const spendGeneration = useRef(0);
 
-  // Callers may pass a new but equal scope object on every render.
-  const scopeKey = JSON.stringify(scope);
-  const spendKey = JSON.stringify([scope, period, groupBy]);
+  const spendKey = JSON.stringify([scopeKey, period, groupBy]);
   const podsLoaded = podsResult?.key === scopeKey ? podsResult : undefined;
   const spendLoaded = spendResult?.key === spendKey ? spendResult : undefined;
   const pods = podsLoaded?.pods;
   const spend = spendLoaded?.spend;
+  const budget =
+    budgetResult?.key === scopeKey ? budgetResult.budget : undefined;
   const podsError = podsFailure?.key === scopeKey ? podsFailure.message : "";
   const spendError = spendFailure?.key === spendKey ? spendFailure.message : "";
-  // Fresh: loaded for this query and not followed by a failed refresh.
+  // Fresh: loaded for this query, recently, and not followed by a failure.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 5_000);
@@ -172,8 +202,11 @@ export function GpuCostDashboard({
 
   const refreshPods = useCallback(async () => {
     const version = ++podsGeneration.current;
+    const current = apiRef.current;
+    // the budget is a side read: its failure never hides the pods
+    const budgetRead = current.budget?.().catch(() => undefined);
     try {
-      const next = await api.pods({ scope: JSON.parse(scopeKey) });
+      const next = await current.pods();
       if (podsGeneration.current !== version) return;
       const at = Date.now();
       setPodsResult({ key: scopeKey, pods: next, at });
@@ -183,15 +216,17 @@ export function GpuCostDashboard({
       if (podsGeneration.current === version)
         setPodsFailure({ key: scopeKey, message: errorText(err) });
     }
-  }, [api, scopeKey]);
+    const b = await budgetRead;
+    if (b != null && podsGeneration.current === version)
+      setBudgetResult({ key: scopeKey, budget: b });
+  }, [scopeKey]);
 
   const refreshSpend = useCallback(async () => {
     const version = ++spendGeneration.current;
-    const query: GpuPodScope = JSON.parse(scopeKey);
-    const key = JSON.stringify([query, period, groupBy]);
+    const current = apiRef.current;
+    const key = JSON.stringify([scopeKey, period, groupBy]);
     try {
-      const next = await api.spend({
-        scope: query,
+      const next = await current.spend({
         since: periodSince(period, Date.now()),
         group_by: groupBy,
       });
@@ -200,11 +235,20 @@ export function GpuCostDashboard({
       setSpendResult({ key, spend: next, at });
       setNow(at);
       setSpendFailure(undefined);
+      if (groupBy === "beneficiary" && current.names) {
+        const ids = next.rows.map((row) => row.key).filter(Boolean);
+        if (ids.length > 0) {
+          current
+            .names(ids)
+            .then((found) => setNames((old) => ({ ...old, ...found })))
+            .catch(() => {});
+        }
+      }
     } catch (err) {
       if (spendGeneration.current === version)
         setSpendFailure({ key, message: errorText(err) });
     }
-  }, [api, scopeKey, period, groupBy]);
+  }, [scopeKey, period, groupBy]);
 
   // Each endpoint polls itself: the next request is scheduled only after the
   // previous one settles, so a slow endpoint never piles up requests. A query
@@ -219,7 +263,10 @@ export function GpuCostDashboard({
 
   const live = useMemo(() => livePods(pods ?? []), [pods]);
   const rate = useMemo(() => hourlyRate(live), [live]);
-  const totals = useMemo(() => spendTotals(spend?.rows ?? []), [spend]);
+  const projectTitle = useCallback(
+    (project_id: string) => apiRef.current.projectTitle?.(project_id),
+    [],
+  );
 
   async function runConfirmed() {
     if (!confirm) return;
@@ -227,14 +274,21 @@ export function GpuCostDashboard({
     setActionError("");
     try {
       if (confirm.kind === "all") {
-        const { terminating } = await api.killSwitch({ scope });
+        const result = await apiRef.current.killSwitch();
+        setPaused(result.paused);
         setNotice(
-          terminating === 1
-            ? "Terminating 1 pod."
-            : `Terminating ${terminating} pods.`,
+          [
+            `Marked ${plural(result.marked, "pod")} for termination.`,
+            result.remaining > 0
+              ? `${plural(result.remaining, "pod")} still terminating; CoCalc keeps at it.`
+              : "",
+            result.paused ? "New launches are paused." : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
         );
       } else {
-        await api.terminate({ pod_id: confirm.pod.id });
+        await apiRef.current.terminate({ pod_id: confirm.pod.id });
         setNotice(`Terminating pod ${confirm.pod.handle}.`);
       }
       setConfirm(undefined);
@@ -246,12 +300,37 @@ export function GpuCostDashboard({
     }
   }
 
+  async function resume() {
+    const resumeApi = apiRef.current.resume;
+    if (!resumeApi || busy) return;
+    setBusy(true);
+    setResumeError("");
+    try {
+      const completed = await runFreshAuthAction(async () => {
+        await resumeApi();
+      });
+      if (completed) {
+        setPaused(false);
+        setNotice("New launches are allowed again.");
+      }
+    } catch (err) {
+      setResumeError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const groupLabel = GROUP_BY_LABELS[groupBy];
   // Missing numbers are never shown as zero.
   const podsPending = podsError || podsAged ? "unavailable" : "…";
   const spendPending = spendError || spendAged ? "unavailable" : "…";
-  const billedText =
-    totals.billed == null ? "not yet billed" : moneyToCurrency(totals.billed);
+  const spendValue = (value: string) =>
+    spendFresh
+      ? value
+      : spendLoaded
+        ? asOf(value, spendLoaded.at)
+        : spendPending;
+  const held = spend ? toDecimal(spend.totals.held_usd) : toDecimal(0);
 
   return (
     <section aria-label="GPU spending" style={{ color: UI_COLORS.text }}>
@@ -282,6 +361,29 @@ export function GpuCostDashboard({
           />
         )}
       </div>
+      {paused && api.resume && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginTop: 8 }}
+          title="New launches are paused"
+          description="Terminate all paused launches with this key. Resume when you are ready (you'll be asked to sign in again)."
+          action={
+            <Button disabled={busy} onClick={() => void resume()}>
+              Resume launches
+            </Button>
+          }
+        />
+      )}
+      {resumeError && (
+        <Alert
+          role="alert"
+          type="error"
+          showIcon
+          style={{ marginTop: 8 }}
+          title={resumeError}
+        />
+      )}
 
       <Space wrap size="large" style={{ marginTop: 12 }}>
         <span>
@@ -298,40 +400,50 @@ export function GpuCostDashboard({
           <Typography.Text type="secondary">Live rate: </Typography.Text>
           <strong>
             {podsFresh
-              ? `${moneyToCurrency(rate)}/hour`
+              ? rateText(rate)
               : podsLoaded
-                ? asOf(`${moneyToCurrency(rate)}/hour`, podsLoaded.at)
+                ? asOf(rateText(rate), podsLoaded.at)
                 : podsPending}
           </strong>
         </span>
         <span>
           <Typography.Text type="secondary">
-            Estimated spend ({PERIOD_LABELS[period].toLowerCase()}):{" "}
+            Spent ({PERIOD_LABELS[period].toLowerCase()}):{" "}
           </Typography.Text>
           <strong>
-            {spendFresh
-              ? moneyToCurrency(totals.estimated)
-              : spendLoaded
-                ? asOf(moneyToCurrency(totals.estimated), spendLoaded.at)
-                : spendPending}
+            {spendValue(spend ? moneyToCurrency(spend.totals.spent_usd) : "")}
           </strong>
         </span>
         <span>
-          <Typography.Text type="secondary">Billed by RunPod: </Typography.Text>
+          <Typography.Text type="secondary">
+            Live pods so far (estimate):{" "}
+          </Typography.Text>
           <strong>
-            {spendFresh
-              ? billedText
-              : spendLoaded
-                ? asOf(billedText, spendLoaded.at)
-                : spendPending}
+            {spendValue(
+              spend ? moneyToCurrency(spend.totals.live_estimate_usd) : "",
+            )}
           </strong>
-          {spend?.billed_through && (
-            <Typography.Text type="secondary">
-              {" "}
-              (through {formatTime(spend.billed_through)})
-            </Typography.Text>
-          )}
         </span>
+        {held.gt(0) && (
+          <span>
+            <Typography.Text type="secondary">
+              Held (unconfirmed):{" "}
+            </Typography.Text>
+            <strong>
+              {spendValue(moneyToCurrency(spend!.totals.held_usd))}
+            </strong>
+          </span>
+        )}
+        {budget && (
+          <span>
+            <Typography.Text type="secondary">Budget: </Typography.Text>
+            <strong>
+              {budget.over_budget_usd
+                ? `over by ${moneyToCurrency(budget.over_budget_usd)}`
+                : `${moneyToCurrency(budget.available_usd)} left of ${moneyToCurrency(budget.authorized_usd)}`}
+            </strong>
+          </span>
+        )}
       </Space>
 
       <Typography.Title level={5} style={{ marginTop: 20 }}>
@@ -353,7 +465,7 @@ export function GpuCostDashboard({
           updating, so they may be out of date.
         </Typography.Paragraph>
       )}
-      <Table<GpuPodSummary>
+      <Table<DashboardPod>
         size="small"
         rowKey="id"
         loading={pods == null && !podsError}
@@ -376,19 +488,16 @@ export function GpuCostDashboard({
           {
             title: "State",
             key: "state",
-            render: (_, pod) => podStateLabel(pod.state),
+            render: (_, pod) => podStateLabel(pod),
           },
           {
             title: "Rate",
             key: "rate",
             align: "right",
-            render: (_, pod) => `${moneyToCurrency(pod.cost_per_hr)}/hour`,
-          },
-          {
-            title: "Estimated cost",
-            key: "estimated",
-            align: "right",
-            render: (_, pod) => moneyToCurrency(pod.estimated_cost),
+            render: (_, pod) =>
+              pod.cost_per_hr == null
+                ? "not priced yet"
+                : `${moneyToCurrency(pod.cost_per_hr)}/hour`,
           },
           {
             title: "Started",
@@ -476,20 +585,38 @@ export function GpuCostDashboard({
             : "No GPU spending in this period.",
         }}
         columns={[
-          { title: groupLabel, dataIndex: "label", key: "label" },
           {
-            title: "Estimated",
-            key: "estimated",
-            align: "right",
-            render: (_, row) => moneyToCurrency(row.estimated),
-          },
-          {
-            title: "Billed by RunPod",
-            key: "billed",
-            align: "right",
+            title: groupLabel,
+            key: "label",
             render: (_, row) =>
-              row.billed == null ? "not yet" : moneyToCurrency(row.billed),
+              spendRowLabel(row, groupBy, {
+                viewerAccountId,
+                names,
+                projectTitle,
+              }),
           },
+          {
+            title: "Spent",
+            key: "spent",
+            align: "right",
+            render: (_, row) => moneyToCurrency(row.spent_usd),
+          },
+          {
+            title: "Live (estimate)",
+            key: "live",
+            align: "right",
+            render: (_, row) => moneyToCurrency(row.live_estimate_usd),
+          },
+          ...(held.gt(0)
+            ? [
+                {
+                  title: "Held (unconfirmed)",
+                  key: "held",
+                  align: "right" as const,
+                  render: (_, row) => moneyToCurrency(row.held_usd),
+                },
+              ]
+            : []),
           {
             title: "Live pods",
             dataIndex: "pods_live",
@@ -500,9 +627,14 @@ export function GpuCostDashboard({
       />
       {spend && (
         <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-          As of {formatTime(spend.as_of)}. Estimates are cost per hour × time
-          since launch, which slightly overcounts; RunPod bills each hour about
-          an hour after it ends.
+          As of {formatTime(spend.as_of)}.{" "}
+          {spend.truncated ? "Only the largest groups are listed. " : ""}
+          Spent is what finished pods cost. Live pods are CoCalc&apos;s estimate
+          so far (cost per hour × time since the pod started running), settled
+          when they end.
+          {held.gt(0)
+            ? " Held amounts belong to pods CoCalc couldn't confirm; see the alerts."
+            : ""}
         </Typography.Paragraph>
       )}
 
@@ -527,28 +659,34 @@ export function GpuCostDashboard({
         {confirm?.kind === "pod" ? (
           <p>
             {podGpuLabel(confirm.pod)} for{" "}
-            {podOwnerLabel(confirm.pod, viewerAccountId)}, at{" "}
-            {moneyToCurrency(confirm.pod.cost_per_hr)}/hour.
+            {podOwnerLabel(confirm.pod, viewerAccountId)}
+            {confirm.pod.cost_per_hr == null
+              ? " (not priced yet)."
+              : `, at ${moneyToCurrency(confirm.pod.cost_per_hr)}/hour.`}
           </p>
         ) : (
           <p>
             This terminates every GPU pod {scopeLabel}, including pods started
-            by agents and students.{" "}
+            by agents and students
+            {api.resume
+              ? ", and pauses new launches until you resume"
+              : ""}.{" "}
             {podsFresh
-              ? `${live.length === 1 ? "1 pod is" : `${live.length} pods are`} live now, at ${moneyToCurrency(rate)}/hour.`
+              ? `${live.length === 1 ? "1 pod is" : `${live.length} pods are`} live now, at ${rateText(rate)}.`
               : podsLoaded
-                ? `The pod list may be out of date: when it was last loaded at ${formatTime(podsLoaded.at)}, ${live.length === 1 ? "1 pod was" : `${live.length} pods were`} live, at ${moneyToCurrency(rate)}/hour. Every GPU pod ${scopeLabel} will be terminated, whatever the list shows.`
+                ? `The pod list may be out of date: when it was last loaded at ${formatTime(podsLoaded.at)}, ${live.length === 1 ? "1 pod was" : `${live.length} pods were`} live, at ${rateText(rate)}. Every GPU pod ${scopeLabel} will be terminated, whatever the list shows.`
                 : `The pod list is unavailable right now. Every GPU pod ${scopeLabel} will be terminated.`}
           </p>
         )}
         <p>
-          Terminated pods and their disks are deleted at RunPod and can't be
-          restarted.
+          Terminated pods and their disks are deleted at RunPod and can&apos;t
+          be restarted.
         </p>
         {actionError && (
           <Alert role="alert" type="error" showIcon title={actionError} />
         )}
       </Modal>
+      <FreshAuthModal {...freshAuthModalProps} />
     </section>
   );
 }

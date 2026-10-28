@@ -21,6 +21,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export const CHECKING_POLL_MS = 15_000;
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { RunpodDashboardSection } from "@cocalc/frontend/gpu/runpod-dashboard-section";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -72,6 +74,7 @@ export function GpuProviderKeySection() {
   }, [removed]);
   const [error, setError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const account_id = useTypedRedux("account", "account_id");
 
   const refresh = useCallback(async () => {
     setLoadError("");
@@ -381,6 +384,13 @@ export function GpuProviderKeySection() {
           showIcon
           title={error}
           style={{ marginTop: 12 }}
+        />
+      )}
+      {/* Also while the membership lapsed: its pods may still be running. */}
+      {status?.connected && account_id && (
+        <RunpodDashboardSection
+          account_id={account_id}
+          onKeyChanged={() => void refresh()}
         />
       )}
       <FreshAuthModal {...freshAuthModalProps} />
