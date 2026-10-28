@@ -1106,7 +1106,21 @@ export async function resolvePendingForAccount(
   const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
     account_id,
   ).catch(() => undefined);
-  // Without a key, nothing more can be done now (a later pass retries).
+  // Ready work this pass can't act on (no key now, or pods of another key)
+  // backs off like a failed attempt: it is retried later, and doesn't keep
+  // the reaper's sweep from completing (one account's state must not hold
+  // every launch on the bay). 5d alerts on pods it can't reach.
+  await getPool().query(
+    `UPDATE gpu_pods
+        SET reap_attempts = reap_attempts + 1,
+            reap_after = $2::timestamptz + make_interval(mins => LEAST(power(2, reap_attempts)::int, 30))
+      WHERE key_owner_account_id = $1
+        AND ($3::uuid IS NULL OR credential_id <> $3::uuid)
+        AND ((desired_state = 'terminated' AND state IN ('running', 'stopped', 'terminating')
+              AND provider_pod_id IS NOT NULL)
+             OR state = 'ambiguous') ${ready}`,
+    [account_id, now, c?.credential_id ?? null],
+  );
   if (!c) return { full: stale.length >= limit };
   // Only pods launched with the key now connected: another key may act for
   // another RunPod account, where these pods don't exist (5c keeps the

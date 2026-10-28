@@ -33,7 +33,8 @@ export const COMPUTER_STATE_TABLES = [
 ] as const;
 
 // GPU state of a key owner (BYOK pods, budget layers, the key's fence and
-// an admin's unexpired stale-worker override), keyed by key_owner_account_id.
+// admins' stale-worker overrides, history included: all account-home audit
+// records), keyed by key_owner_account_id.
 // Its pods run on the owner's own RunPod account and are managed only from
 // the home bay, so it must not be left behind by a rehome.
 export const GPU_STATE_TABLES = [
@@ -109,18 +110,13 @@ export async function assertNoPersonalStateForRehome(
     if (
       (
         await db.query(
-          `SELECT 1 FROM "${table}" WHERE key_owner_account_id=$1 ${
-            // an override that expired or was revoked is only history
-            table === "gpu_worker_overrides"
-              ? "AND revoked_at IS NULL AND expires_at > now()"
-              : ""
-          } LIMIT 1`,
+          `SELECT 1 FROM "${table}" WHERE key_owner_account_id=$1 LIMIT 1`,
           [account_id],
         )
       ).rows.length
     )
       throw new Error(
-        "Account rehome is unavailable while this account has GPU pods, GPU budgets or an active admin GPU override on its own RunPod key. GPU state portability is not supported yet; keep this account on its current home bay.",
+        "Account rehome is unavailable while this account has GPU pods, GPU budgets or an admin GPU override on its own RunPod key. GPU state portability is not supported yet; keep this account on its current home bay.",
       );
   }
 }

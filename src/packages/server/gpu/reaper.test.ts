@@ -588,4 +588,70 @@ describeDb("GPU reaper", () => {
       [owners],
     );
   });
+
+  it("stops a sweep that lost its lease, and writes no watermark", async () => {
+    const s = setup();
+    await s.launch();
+    const before = (
+      await getPool().query(
+        "SELECT last_completed_at FROM gpu_worker_leases WHERE name = 'reaper'",
+      )
+    ).rows[0].last_completed_at;
+    let reached!: () => void;
+    const atGate = new Promise<void>((r) => (reached = r));
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    let calls = 0;
+    const deps = {
+      ...s.deps,
+      isEntitled: async () => {
+        if (++calls === 1) {
+          reached();
+          await gate;
+        }
+        return true;
+      },
+    };
+    const first = runGpuReaperSweep(deps);
+    await atGate;
+    // the first sweep stalls past its lease; another hub takes over
+    s.advance(6 * 60_000);
+    expect(
+      await acquireWorkerLease(
+        "reaper",
+        "hub-other:run",
+        new Date(s.deps.now()),
+      ),
+    ).toBe(true);
+    open();
+    await expect(first).rejects.toThrow("lease was lost");
+    const { rows } = await getPool().query(
+      "SELECT last_completed_at, holder FROM gpu_worker_leases WHERE name = 'reaper'",
+    );
+    expect(rows[0].holder).toBe("hub-other:run");
+    expect(new Date(rows[0].last_completed_at).getTime()).toBe(
+      new Date(before).getTime(),
+    );
+  });
+
+  it("backs off ready work it can't act on, instead of holding every launch", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    await getPool().query(
+      "UPDATE gpu_pods SET desired_state = 'terminated', state = 'terminating' WHERE id = $1",
+      [pod.id],
+    );
+    // the key is gone: nothing can reach RunPod for this owner now
+    const result = await runGpuReaperSweep({
+      ...s.deps,
+      getCleanup: async () => undefined,
+    });
+    expect(result).toEqual(
+      expect.objectContaining({ ran: true, complete: true }),
+    );
+    const r = await row(pod.id);
+    expect(r.state).toBe("terminating");
+    expect(r.reap_attempts).toBe(1);
+    expect(new Date(r.reap_after).getTime()).toBeGreaterThan(s.deps.now());
+  });
 });

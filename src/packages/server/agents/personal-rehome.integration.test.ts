@@ -112,7 +112,7 @@ describeDb("Agent Network account rehome fence", () => {
     );
   });
 
-  test("an active admin GPU override blocks a rehome; an expired one doesn't", async () => {
+  test("an admin GPU override blocks a rehome, even once revoked (its audit history stays home)", async () => {
     const account = randomUUID();
     const override = randomUUID();
     await db.query(
@@ -120,12 +120,14 @@ describeDb("Agent Network account rehome fence", () => {
       [override, account],
     );
     await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
-      "active admin GPU override",
+      "admin GPU override",
     );
     await db.query(
       "UPDATE gpu_worker_overrides SET revoked_at = now() WHERE id = $1",
       [override],
     );
-    await assertNoPersonalStateForRehome(db, account);
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "admin GPU override",
+    );
   });
 });

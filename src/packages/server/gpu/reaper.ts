@@ -21,8 +21,10 @@ admission requires (budgets.ts): every query is paged to its end, and a
 sweep that fails, loses its lease, or can't drain an owner in time doesn't
 move it. The watermark is the time the sweep finished.
 
-Each sweep holds the lease under its own token, renewed as it goes, so a
-second tick (on this hub or another) can't start while one is running.
+Each sweep holds the lease under its own token, renewed before every
+record it works on, so a second tick (on this hub or another) can't start
+while one is running; a sweep that finds its lease lost or expired stops at
+once and writes nothing.
 */
 
 import { randomUUID } from "node:crypto";
@@ -96,32 +98,34 @@ async function renewWorkerLease(
   const { rows } = await getPool().query(
     `UPDATE gpu_worker_leases
         SET expires_at = $3::timestamptz + make_interval(secs => $4)
-      WHERE name = $1 AND holder = $2 RETURNING name`,
+      WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`,
     [name, token, now, ttlMs / 1000],
   );
   if (rows.length === 0) throw new LeaseLost("the reaper lease was lost");
 }
 
-// Release this sweep's lease; only a complete sweep moves the watermark,
-// to the time it finished.
+// Release this sweep's lease; only a complete sweep that still holds an
+// unexpired lease moves the watermark, to the time it finished. A sweep
+// that lost its lease writes nothing.
 async function finishWorkerLease(
   name: "reaper" | "reconciler",
   token: string,
   finished: Date,
   error?: string,
 ): Promise<void> {
-  await getPool().query(
+  const { rows } = await getPool().query(
     error == null
       ? `UPDATE gpu_worker_leases
             SET last_completed_at = $3, last_error = NULL, holder = NULL, expires_at = NULL
-          WHERE name = $1 AND holder = $2`
+          WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`
       : `UPDATE gpu_worker_leases
             SET last_error = $4, holder = NULL, expires_at = NULL
-          WHERE name = $1 AND holder = $2`,
+          WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`,
     error == null
       ? [name, token, finished]
       : [name, token, finished, error.slice(0, 500)],
   );
+  if (rows.length === 0) throw new LeaseLost("the reaper lease was lost");
 }
 
 const LIVE =
@@ -190,7 +194,10 @@ async function checkEntitlements(
         ORDER BY f.credential_id::text LIMIT $1`,
       [BATCH, after],
     );
-    for (const f of rows) await checkEntitlement(f, now, deps);
+    for (const f of rows) {
+      await renew();
+      await checkEntitlement(f, now, deps);
+    }
     if (rows.length < BATCH) return;
     after = `${rows[rows.length - 1].credential_id}`;
     await renew();
@@ -242,6 +249,7 @@ async function markForTermination(
         [now, after],
       );
       for (const { id } of rows) {
+        await renew();
         const row = await transition(
           id,
           { desired_state: "terminated", reason: c.reason },
@@ -278,7 +286,10 @@ async function checkCommunitySsh(
         ORDER BY p.id::text LIMIT ${BATCH}`,
       [now, COMMUNITY_SSH_DEADLINE_MS / 1000, after],
     );
-    for (const p of rows) marked += await checkCommunityPod(p, deps);
+    for (const p of rows) {
+      await renew();
+      marked += await checkCommunityPod(p, deps);
+    }
     if (rows.length < BATCH) return marked;
     after = `${rows[rows.length - 1].id}`;
     await renew();
@@ -345,6 +356,7 @@ async function resolveOwners(
       accounts += 1;
       let drained = false;
       for (let pass = 0; pass < OWNER_PASSES; pass++) {
+        await renew();
         const { full } = await resolvePendingForAccount(
           key_owner_account_id,
           deps,
