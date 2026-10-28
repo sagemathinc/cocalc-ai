@@ -26,6 +26,8 @@ import {
   settleLaunchKey,
   type GpuConnectDeps,
 } from "../core/gpu-connect";
+import { planGpuLaunch, templateRows } from "../core/gpu-template";
+import { GPU_TEMPLATES } from "@cocalc/util/gpu/templates";
 import {
   GPU_POD_WRITE_RPC_TIMEOUT_MS,
   GPU_READ_TIMEOUT_MS,
@@ -263,15 +265,46 @@ export function registerGpuCommand(
     );
 
   gpu
+    .command("templates")
+    .description(
+      "built-in launch templates (cocalc gpu launch --template <id>): image, runtime, GPU memory, and whether they set up SSH and a Jupyter kernel",
+    )
+    .action(async (_opts, command: Command) =>
+      run(command, "templates", async (_api, ctx) =>
+        isJson(ctx) ? GPU_TEMPLATES : templateRows(),
+      ),
+    );
+
+  gpu
     .command("launch")
     .description(
       "start a pod on your RunPod key; it is terminated after --max-runtime minutes at the latest (once budgets land; until then, terminate it yourself)",
     )
-    .requiredOption("--gpu <id>", 'GPU type id, e.g. "NVIDIA GeForce RTX 4090"')
-    .requiredOption(
+    .option(
+      "--template <id>",
+      "start from a built-in template (cocalc gpu templates); other options override it",
+    )
+    .option(
+      "--gpu <id>",
+      'GPU type id, e.g. "NVIDIA GeForce RTX 4090" (with --template: default the cheapest in stock with enough memory)',
+    )
+    .option(
       "--max-runtime <minutes>",
-      "maximum runtime in minutes (5 to 1440)",
+      "maximum runtime in minutes (5 to 1440; with --template: the template's)",
       positiveNumber("--max-runtime", true),
+    )
+    .option(
+      "--dry-run",
+      "show the spec, the GPU offer and the most it can cost, without launching",
+    )
+    .option(
+      "--no-connect",
+      "with a kernel template: don't wait for the pod and set up its kernel (run cocalc gpu connect later)",
+    )
+    .option(
+      "--wait <seconds>",
+      "with a kernel template: how long to wait for the pod to register (default 300)",
+      positiveNumber("--wait", true),
     )
     .option(
       "--project <project-id>",
@@ -319,12 +352,32 @@ export function registerGpuCommand(
           if (!project_id) {
             throw new Error("--project is required outside a project");
           }
-          if (opts.ssh && opts.sshPublicKey) {
-            throw new Error("use --ssh or --ssh-public-key, not both");
+          if (opts.sshPublicKey && (opts.ssh || opts.template)) {
+            throw new Error(
+              "--ssh-public-key can't be combined with --ssh or --template, which make the pod's key here",
+            );
           }
-          const spec = launchSpecFromOptions(opts);
+          const plan = await planGpuLaunch(api, {
+            template: opts.template,
+            spec: explicitSpecFromOptions(opts),
+            price: !!opts.dryRun,
+          });
+          const spec = plan.spec;
+          const ssh = !!opts.ssh || !!plan.template?.ssh;
+          const kernel = !!plan.template?.kernel && opts.connect !== false;
+          if (opts.dryRun) {
+            return {
+              dry_run: true,
+              template: plan.template?.id ?? null,
+              spec,
+              ssh,
+              kernel,
+              offer: plan.offer ?? null,
+              max_cost_usd: plan.max_cost_usd ?? null,
+            };
+          }
           // The private key stays here; the launch gets only the public key.
-          const key = opts.ssh ? await newLaunchKey(deps.connect) : undefined;
+          const key = ssh ? await newLaunchKey(deps.connect) : undefined;
           if (key) spec.ssh_public_key = key.publicKey;
           let pod: Awaited<ReturnType<typeof api.launch>>;
           try {
@@ -342,7 +395,25 @@ export function registerGpuCommand(
               await adoptLaunchedKey(key, pod.handle, deps.connect);
             }
           }
-          return isJson(ctx) ? pod : podRecordRow(pod);
+          const shown: Record<string, unknown> = isJson(ctx)
+            ? { ...pod }
+            : podRecordRow(pod);
+          if (plan.max_cost_usd != null) shown.max_cost_usd = plan.max_cost_usd;
+          if (!kernel || !key || pod.state === "failed") return shown;
+          // The pod bills from now on: a connect failure is reported, not
+          // thrown, so the pod's handle is never lost.
+          try {
+            shown.connect = await connectGpuPod(
+              api,
+              pod.handle,
+              { waitSeconds: opts.wait },
+              deps.connect,
+            );
+          } catch (err) {
+            shown.connect_error = `${(err as Error)?.message ?? err}`;
+            shown.next = `cocalc gpu connect ${pod.handle}   (or cocalc gpu terminate ${pod.handle})`;
+          }
+          return shown;
         },
         GPU_POD_WRITE_RPC_TIMEOUT_MS,
       ),
@@ -434,12 +505,20 @@ export function registerGpuCommand(
 // The CLI's options as a launch spec; the server checks it against the
 // allowlist.
 export function launchSpecFromOptions(opts: any): GpuLaunchSpec {
-  const spec: GpuLaunchSpec = {
-    gpu_type_id: opts.gpu,
-    gpu_count: opts.count ?? 1,
-    image: opts.image ?? GPU_LAUNCH_IMAGES[0],
-    max_runtime_minutes: opts.maxRuntime,
-  };
+  return {
+    gpu_count: 1,
+    image: GPU_LAUNCH_IMAGES[0],
+    ...explicitSpecFromOptions(opts),
+  } as GpuLaunchSpec;
+}
+
+// Only the options given, so a template's values stay where none was.
+export function explicitSpecFromOptions(opts: any): Partial<GpuLaunchSpec> {
+  const spec: Partial<GpuLaunchSpec> = {};
+  if (opts.gpu) spec.gpu_type_id = opts.gpu;
+  if (opts.count != null) spec.gpu_count = opts.count;
+  if (opts.image) spec.image = opts.image;
+  if (opts.maxRuntime != null) spec.max_runtime_minutes = opts.maxRuntime;
   if (opts.cloud) spec.cloud = `${opts.cloud}`.toUpperCase() as any;
   if (opts.dataCenter) spec.data_center_id = opts.dataCenter;
   if (opts.disk != null) spec.container_disk_gb = opts.disk;

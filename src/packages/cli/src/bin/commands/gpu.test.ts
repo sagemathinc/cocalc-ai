@@ -318,6 +318,9 @@ it("launches from flags, in this project, with a write-sized timeout", async () 
             cloud: "COMMUNITY",
             ports: ["8888/http"],
             env: { EPOCHS: "3", MODE: "a=b" },
+            // checked against the allowlist here too, with its defaults
+            container_disk_gb: 20,
+            volume_gb: 0,
           },
         },
       },
@@ -515,4 +518,140 @@ it("launch --ssh removes its pending key when the server refuses, and keeps it o
       .length,
     1,
   );
+});
+
+it("lists templates, and a template dry run shows the GPU and the most it can cost", async () => {
+  const h = harness();
+  await h.run("templates");
+  assert.ok((h.outputs[0] as any[]).some((t) => t.id === "pytorch-kernel"));
+  const prev = process.env.COCALC_PROJECT_ID;
+  process.env.COCALC_PROJECT_ID = RECORD.project_id;
+  try {
+    // the harness has no offers in stock
+    await assert.rejects(
+      h.run("launch", "--template", "pytorch-kernel", "--dry-run"),
+      /No GPU with at least 16 GB is in stock/,
+    );
+    await h.run(
+      "launch",
+      "--template",
+      "pytorch-ssh",
+      "--gpu",
+      "NVIDIA RTX A4000",
+      "--dry-run",
+    );
+  } finally {
+    process.env.COCALC_PROJECT_ID = prev;
+  }
+  const dry = h.outputs.at(-1) as any;
+  assert.equal(dry.dry_run, true);
+  assert.equal(dry.template, "pytorch-ssh");
+  assert.equal(dry.ssh, true);
+  assert.equal(dry.kernel, false);
+  assert.equal(dry.spec.gpu_type_id, "NVIDIA RTX A4000");
+  assert.equal(dry.spec.max_runtime_minutes, 60);
+  assert.equal(dry.max_cost_usd, null);
+  // nothing was launched
+  assert.ok(!h.calls.some((c) => c.name === "launch"));
+});
+
+it("a kernel template launches with a key made here, then connects and registers the kernel", async () => {
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(tmpdir(), "gpu-cmd-template-"));
+  const handle = "cc-abcdefgh234567ab";
+  const HOST_KEY =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+  const calls: Array<{ name: string; args: any }> = [];
+  const reflect: string[][] = [];
+  const outputs: any[] = [];
+  const program = new Command()
+    .exitOverride()
+    .configureOutput({ writeErr: () => {}, writeOut: () => {} });
+  let fingerprint = "";
+  registerGpuCommand(program, {
+    connect: {
+      home,
+      sleep: async () => {},
+      runReflect: async (args) => {
+        reflect.push(args);
+        return {
+          code: 0,
+          stdout: JSON.stringify({ kernel: `reflect-${handle}` }),
+          stderr: "",
+        };
+      },
+    },
+    withContext: async (_cmd, _name, fn) => {
+      outputs.push(
+        await fn({
+          globals: { json: true },
+          timeoutMs: 600_000,
+          rpcTimeoutMs: 30_000,
+          hub: {
+            gpu: {
+              availability: async (args) => {
+                calls.push({ name: "availability", args });
+                return {
+                  offers: [
+                    {
+                      gpu_type_id: "NVIDIA RTX A4000",
+                      gpu_name: "RTX A4000",
+                      memory_gb: 16,
+                      cloud: "SECURE",
+                      data_center_id: "EU-RO-1",
+                      stock: "HIGH",
+                      price_per_gpu_hour: 0.25,
+                    },
+                  ],
+                };
+              },
+              launch: async (args) => {
+                calls.push({ name: "launch", args });
+                const { keyFingerprint } = await import("../core/gpu-ssh");
+                fingerprint = keyFingerprint(args.spec.ssh_public_key);
+                return {
+                  ...RECORD,
+                  handle,
+                  gpu_type_id: args.spec.gpu_type_id,
+                };
+              },
+              sshInfo: async () => ({
+                handle,
+                state: "running",
+                ready: true,
+                host: "203.0.113.7",
+                port: 40022,
+                user: "root",
+                host_public_key: HOST_KEY,
+                ssh_key_fingerprint: fingerprint,
+              }),
+            },
+          },
+        }),
+      );
+    },
+  });
+  const prev = process.env.COCALC_PROJECT_ID;
+  process.env.COCALC_PROJECT_ID = RECORD.project_id;
+  try {
+    await program.parseAsync(
+      ["gpu", "launch", "--template", "pytorch-kernel"],
+      {
+        from: "user",
+      },
+    );
+  } finally {
+    process.env.COCALC_PROJECT_ID = prev;
+  }
+  const launch = calls.find((c) => c.name === "launch")!;
+  assert.equal(launch.args.spec.gpu_type_id, "NVIDIA RTX A4000");
+  assert.equal(launch.args.spec.max_runtime_minutes, 60);
+  assert.match(launch.args.spec.ssh_public_key, /^ssh-ed25519 /);
+  const out = outputs[0];
+  assert.equal(out.handle, handle);
+  assert.equal(out.max_cost_usd, 0.25);
+  assert.equal(out.connect.kernel, `reflect-${handle}`);
+  assert.equal(reflect.at(-1)![2], "add");
 });
