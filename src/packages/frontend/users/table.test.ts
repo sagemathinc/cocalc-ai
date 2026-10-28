@@ -307,6 +307,32 @@ describe("users table helpers", () => {
     expect(userMap.getIn(["acct-remote", "collaborator"])).toBeUndefined();
   });
 
+  it("a snapshot installed while a request is pending wins", async () => {
+    signedIn = true;
+    accountId = "acct-me";
+    userMap = fromJS({
+      "acct-a": { first_name: "A", collaborator: true },
+    }) as Map<string, any>;
+    const stale = deferred<any[]>();
+    listMyCollaborators
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce([]);
+    const { addOtherBayCollaborators, mergeUsersSnapshot } =
+      await import("./table");
+    const { store } = await import("./store");
+    (store.get as jest.Mock).mockImplementation((key: string) =>
+      key === "user_map" ? userMap : undefined,
+    );
+    const done = addOtherBayCollaborators();
+    // A newer snapshot no longer lists A.
+    userMap = mergeUsersSnapshot(Map() as Map<string, Map<string, any>>);
+    expect(userMap.getIn(["acct-a", "collaborator"])).toBe(false);
+    stale.resolve([remoteRow("acct-a")]);
+    await done;
+    expect(listMyCollaborators).toHaveBeenCalledTimes(2);
+    expect(userMap.getIn(["acct-a", "collaborator"])).toBe(false);
+  });
+
   it("does not create the collaborators table before account id is known", async () => {
     const { redux } = await import("../app-framework");
 

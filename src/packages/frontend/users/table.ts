@@ -65,6 +65,9 @@ export function buildCollaboratorRecord(
 export function mergeUsersSnapshot(
   upstream_user_map: Map<string, Map<string, any>>,
 ): Map<string, any> {
+  // A newer snapshot is authoritative: a pending other-bay read must not
+  // undo it, so it asks again against this state.
+  invalidateOtherBayCollaborators();
   let next = (store.get("user_map") ?? Map<string, any>()).asMutable();
   next.forEach((data, account_id) => {
     if (data?.get?.("collaborator")) {
@@ -166,8 +169,8 @@ export function addOtherBayCollaborators(): Promise<void> {
   return addOtherBayCollaboratorsFor(account_id);
 }
 
-// Bumped by anything a pending response must not undo: signing out and
-// collaborator feed events. A response that started before is dropped and
+// Bumped by anything a pending response must not undo: signing out, a new
+// collaborators snapshot and collaborator feed events. A response that started before is dropped and
 // asked for again, so a remove that arrives meanwhile always wins.
 let otherBayGeneration = 0;
 function invalidateOtherBayCollaborators(): void {
