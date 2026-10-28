@@ -933,6 +933,82 @@ describeDb("GPU budgets", () => {
       expect(s.rp.pods.has(provider_pod_id)).toBe(false);
     });
 
+    it("retries a backed-off managed pod on every compromise pass", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      s.rp.client.terminatePod.mockRejectedValueOnce(
+        new RunpodApiError("provider", 503),
+      );
+      await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      const row = async () =>
+        (
+          await getPool().query(
+            "SELECT state, reap_after FROM gpu_pods WHERE id = $1",
+            [pod.id],
+          )
+        ).rows[0];
+      // the failed terminate backed off into the future
+      expect((await row()).state).not.toBe("terminated");
+      expect(new Date((await row()).reap_after).getTime()).toBeGreaterThan(
+        Date.now(),
+      );
+      // the next pass retries it at once
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect((await row()).state).toBe("terminated");
+    });
+
+    it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {
+      const s = setup();
+      await s.stored;
+      const a = account(s);
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      // the crash state: the removal closed the fence, then stopped before
+      // revoking CoCalc's copy
+      await getPool().query(
+        `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
+         VALUES ($1, $2, 'closed', now(), now())
+         ON CONFLICT (credential_id) DO UPDATE SET state = 'closed'`,
+        [s.credential_id, s.account_id],
+      );
+      await expect(
+        reportCompromisedLocal(
+          {
+            account_id: s.account_id,
+            confirm_cocalc_only: true,
+            fresh_auth_verified: true,
+          },
+          a.deps,
+        ),
+      ).rejects.toThrow("already removed from CoCalc");
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("closed");
+      const { rows: log } = await getPool().query(
+        "SELECT action FROM gpu_key_events WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(log).toEqual([]);
+      expect(
+        await deleteGpuProviderKeyLocal(
+          { account_id: s.account_id, provider: "runpod" },
+          { isHomeBay: async () => true },
+        ),
+      ).toEqual({ revoked: true });
+    });
+
     it("removal first, report second: the removal yields to the compromise cleanup and keeps the key", async () => {
       const s = setup();
       await s.launch();

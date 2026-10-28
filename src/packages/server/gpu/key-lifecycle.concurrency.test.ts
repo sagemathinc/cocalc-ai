@@ -649,4 +649,50 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     );
     expect(rows[0].state).toBe("active");
   });
+
+  it("removal closes, then a report comes in before the revoke: the report refuses and claims nothing; the removal still revokes", async () => {
+    const s = await setup();
+    const compromise = await import("./compromise");
+    const before = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    const cleanup = await keys.getRunpodCleanupForAccount(
+      s.account_id,
+      s.keyDeps,
+    );
+    let reported: unknown;
+    const removal = await keys.deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      {
+        ...s.keyDeps,
+        // in the revocation, after the removal's fence committed the close
+        clearHostkeys: async () => {
+          reported = await compromise
+            .reportCompromisedLocal(
+              {
+                account_id: s.account_id,
+                confirm_cocalc_only: true,
+                fresh_auth_verified: true,
+              },
+              { getCleanup: async () => cleanup },
+            )
+            .catch((err) => err);
+        },
+      },
+    );
+    expect(removal).toEqual({ revoked: true });
+    expect(`${reported}`).toContain("already removed from CoCalc");
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+      [before],
+    );
+    expect(rows[0].state).toBe("closed");
+    const { rows: log } = await getPool().query(
+      "SELECT action FROM gpu_key_events WHERE credential_id = $1 ORDER BY at",
+      [before],
+    );
+    expect(log.map((l) => l.action)).not.toContain("compromised");
+    expect(await storedKey(s.account_id)).toBeUndefined();
+  });
 });

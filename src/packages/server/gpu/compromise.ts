@@ -114,7 +114,16 @@ export async function runCompromiseCleanup(
   // the key is no longer stored (a forced removal ended it), or another key
   // is: nothing to do with this one
   if (!c || c.credential_id !== credential_id) return { closed: false };
-  // the key's own pods, through their normal paths
+  // the key's own pods, through their normal paths, every pass: a compromised
+  // key's terminates don't back off (the reaper's backoff is for one bad pod
+  // among many; here each is retried until RunPod confirms)
+  await getPool().query(
+    `UPDATE gpu_pods SET reap_after = NULL
+      WHERE credential_id = $1 AND desired_state = 'terminated'
+        AND state NOT IN ('terminated', 'failed')
+        AND unmanaged_at IS NULL AND reap_after IS NOT NULL`,
+    [credential_id],
+  );
   await (deps.resolvePending ?? ((a) => resolvePendingForAccount(a, {})))(
     account_id,
   ).catch(() => {});
@@ -331,6 +340,19 @@ export async function reportCompromisedLocal(
     if (current[0]?.id !== credential_id) {
       throw Error(
         "Your RunPod key changed while this was being reported; check it and report again.",
+      );
+    }
+    // A closed fence on a key still stored: a removal finished (or is just
+    // revoking it, after its own fence). CoCalc launches nothing with it and
+    // is about to drop its copy, so it can't watch the account: say so, and
+    // claim nothing.
+    const { rows: fence } = await db.query(
+      "SELECT state FROM gpu_key_fences WHERE credential_id = $1 FOR UPDATE",
+      [credential_id],
+    );
+    if (fence[0]?.state === "closed") {
+      throw Error(
+        "This RunPod key was already removed from CoCalc, which no longer uses it. Delete it on RunPod's Credentials page and terminate any pods there; if it still shows as connected here, remove it again.",
       );
     }
     await db.query(
