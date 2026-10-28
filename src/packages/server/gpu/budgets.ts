@@ -94,7 +94,7 @@ function refuse(message: string): never {
   throw new GpuBudgetRefusal(message);
 }
 
-const usd = (v: Dec | string) => `$${toDecimal(v).toDecimalPlaces(2)}`;
+const usd = (v: Dec | string) => `$${toDecimal(v).toFixed(2)}`;
 
 function available(layer: LayerRow): Dec {
   return toDecimal(layer.authorized_usd)
@@ -223,7 +223,7 @@ export async function admitLaunch(
     const left = available(layer);
     if (estimate.gt(left)) {
       refuse(
-        `This launch needs up to ${usd(estimate)} (${usd(hourly)}/h for ${req.max_runtime_minutes} min), but ${name.toLowerCase()} has ${usd(left.lt(0) ? toDecimal(0) : left)} left.`,
+        `This launch needs up to ${usd(estimate)} (${usd(hourly)}/h for ${req.max_runtime_minutes} min), but ${name[0].toLowerCase()}${name.slice(1)} has ${usd(left.lt(0) ? toDecimal(0) : left)} left.`,
       );
     }
     const h: any = held.get(layer.id) ?? { hourly: "0", pods: 0, gpus: 0 };

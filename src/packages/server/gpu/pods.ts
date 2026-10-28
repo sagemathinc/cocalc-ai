@@ -651,11 +651,14 @@ async function insertIntent({
           deps,
         );
         if (credential_id !== priced_credential_id) {
-          throw Error("Your RunPod API key changed during the launch. Try again.");
+          throw Error(
+            "Your RunPod API key changed during the launch. Try again.",
+          );
         }
         await ensureKeyBudget(db, {
           credential_id,
           key_owner_account_id: account_id,
+          now: new Date(now),
         });
         const admission = await admitLaunch(db, {
           credential_id,

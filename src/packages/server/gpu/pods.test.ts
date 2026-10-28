@@ -31,7 +31,6 @@ const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
 const PROJECT = "00000000-1000-4000-8000-0000000000aa";
-const CREDENTIAL = "00000000-1000-4000-8000-0000000000cc";
 // ssh-keygen -lf prints SHA256:O8VI/... for this key (computed below).
 const SSH_KEY =
   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl test";
@@ -66,18 +65,24 @@ function fakeRunpod() {
   return { client, pods };
 }
 
+// Each account has its own key (and so its own budget: the default, $20 in
+// all, 2 pods at once); the list price is $0.50 per GPU-hour.
+const LIST_PRICE = 0.5;
+
 function deps(account_id: string, rp = fakeRunpod()) {
+  const credential_id = randomUUID();
   return {
     rp,
+    credential_id,
     deps: {
       isHomeBay: async () => true,
       isProjectCollaborator: async () => true,
       getLaunchAccess: async () => ({
         client: rp.client as any,
-        credential_id: CREDENTIAL,
+        credential_id,
       }),
-      getCleanup: async () =>
-        ({ ...rp.client, credential_id: CREDENTIAL }) as any,
+      getCleanup: async () => ({ ...rp.client, credential_id }) as any,
+      listPrice: async () => LIST_PRICE,
       // the real fence, on the account row it needs (same transaction)
       accountWriteFence: async (db: any, id: string, action: string) => {
         await db.query(
@@ -89,6 +94,20 @@ function deps(account_id: string, rp = fakeRunpod()) {
     },
     account_id,
   };
+}
+
+async function syncGpuTables() {
+  await getPool().query(
+    "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
+  );
+  await syncSchema({
+    gpu_key_fences: SCHEMA.gpu_key_fences,
+    gpu_budget_layers: SCHEMA.gpu_budget_layers,
+    gpu_budget_events: SCHEMA.gpu_budget_events,
+    gpu_pods: SCHEMA.gpu_pods,
+    gpu_pod_events: SCHEMA.gpu_pod_events,
+    gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
+  });
 }
 
 async function events(pod_id: string) {
@@ -144,13 +163,7 @@ describe("pod handles, fingerprints and the create body", () => {
 
 describeDb("GPU pods", () => {
   beforeAll(async () => {
-    await getPool().query(
-      "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
-    );
-    await syncSchema({
-      gpu_pods: SCHEMA.gpu_pods,
-      gpu_pod_events: SCHEMA.gpu_pod_events,
-    });
+    await syncGpuTables();
   });
 
   it("records the intent, creates the pod by its handle, and binds it", async () => {
@@ -892,13 +905,7 @@ describeDb("GPU pods", () => {
 
 describeDb("GPU pods left behind and seen again", () => {
   beforeAll(async () => {
-    await getPool().query(
-      "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
-    );
-    await syncSchema({
-      gpu_pods: SCHEMA.gpu_pods,
-      gpu_pod_events: SCHEMA.gpu_pod_events,
-    });
+    await syncGpuTables();
   });
 
   it("resolves records a crash left in intent or creating", async () => {
