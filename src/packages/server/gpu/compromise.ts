@@ -47,6 +47,7 @@ import {
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
+import type { RunpodPodView } from "@cocalc/cloud/runpod/views";
 import {
   endPodsAbsentFromInventory,
   markCredentialPodsToTerminate,
@@ -136,8 +137,15 @@ export async function runCompromiseCleanup(
   // stops (the next pass continues)
   const deadline = Date.now() + (deps.passMs ?? REQUEST_PASS_MS);
   let cut = false;
+  // a lost lease (the guard's throw) stops the pass wherever it happens
+  let lost: unknown;
   const bounded = async () => {
-    await deps.guard?.();
+    try {
+      await deps.guard?.();
+    } catch (err) {
+      lost = err;
+      throw err;
+    }
     if (Date.now() >= deadline) {
       cut = true;
       throw Error("compromise pass deadline");
@@ -178,12 +186,40 @@ export async function runCompromiseCleanup(
   // for being absent from it (one bound later may have been created after
   // RunPod took the snapshot; the next pass sees it)
   const boundBefore = await boundCredentialPods(credential_id);
+  // Each page's pods are acted on as the page arrives, so a large or slow
+  // inventory still makes progress every pass (what this pass terminates
+  // is gone from the next one's pages). CoCalc's unfinished pods end through
+  // their normal paths; one it records as ended but RunPod still lists is
+  // terminated again (quietly: it is CoCalc's, and terminating is
+  // idempotent); any other pod CoCalc didn't start.
+  const onPage = async (page: RunpodPodView[]) => {
+    const { rows: managed } = await getPool().query(
+      "SELECT provider_pod_id, state FROM gpu_pods WHERE credential_id = $1 AND provider_pod_id = ANY($2)",
+      [credential_id, page.map((p) => p.id)],
+    );
+    const state = new Map<string, string>(
+      managed.map((r) => [r.provider_pod_id, r.state]),
+    );
+    for (const pod of page) {
+      const known = state.get(pod.id);
+      if (known != null && !FINISHED.has(known)) continue;
+      await bounded();
+      if (known != null) {
+        await c.terminatePod(pod.id).catch((err) => {
+          log.warn("terminating an ended pod again failed", pod.id, `${err}`);
+        });
+        continue;
+      }
+      await terminateUnknownPod(account_id, credential_id, c, pod);
+    }
+  };
   let listed: Awaited<ReturnType<RunpodCleanupCapability["listPods"]>>;
   try {
     // every page is bounded by the pass too (RunPod may be slow, or the
     // account large)
-    listed = await c.listPods({ beforePage: bounded });
+    listed = await c.listPods({ beforePage: bounded, onPage });
   } catch (err) {
+    if (lost !== undefined) throw lost;
     if (cut) return await cutShort();
     // RunPod rejects the key outright (the owner deleted it there): the same
     // end as the identity check below, once CoCalc has no unfinished pod on
@@ -215,18 +251,6 @@ export async function runCompromiseCleanup(
     if (!cut) throw e;
   });
   if (cut) return await cutShort();
-  const { rows: managed } = await getPool().query(
-    "SELECT provider_pod_id, state FROM gpu_pods WHERE credential_id = $1 AND provider_pod_id IS NOT NULL",
-    [credential_id],
-  );
-  // CoCalc's unfinished pods end through their normal paths; one it records
-  // as ended but RunPod still lists is terminated again (quietly: it is
-  // CoCalc's, and terminating is idempotent)
-  const live = new Set<string>();
-  const ended = new Set<string>();
-  for (const r of managed) {
-    (FINISHED.has(r.state) ? ended : live).add(r.provider_pod_id);
-  }
   // the listing is complete: CoCalc's pods bound before it that it doesn't
   // show are gone
   await endPodsAbsentFromInventory(
@@ -239,51 +263,6 @@ export async function runCompromiseCleanup(
     if (!cut) throw e;
   });
   if (cut) return await cutShort();
-  for (const pod of listed) {
-    if (live.has(pod.id)) continue;
-    if (Date.now() >= deadline) {
-      cut = true;
-      break;
-    }
-    await deps.guard?.();
-    if (ended.has(pod.id)) {
-      await c.terminatePod(pod.id).catch((err) => {
-        log.warn("terminating an ended pod again failed", pod.id, `${err}`);
-      });
-      continue;
-    }
-    // a pod CoCalc didn't start: record it the first time it is seen, and
-    // terminate it every pass until it is gone
-    const { rows: seen } = await getPool().query(
-      `SELECT 1 FROM gpu_key_events WHERE credential_id = $1
-         AND action = 'unknown_pod_seen' AND details->>'provider_pod_id' = $2 LIMIT 1`,
-      [credential_id, sanitizeProviderName(pod.id)],
-    );
-    if (seen.length === 0) {
-      await recordKeyEvent({
-        credential_id,
-        key_owner_account_id: account_id,
-        actor: { kind: "cleanup" },
-        action: "unknown_pod_seen",
-        details: {
-          provider_pod_id: sanitizeProviderName(pod.id),
-          name: sanitizeProviderName(pod.name),
-        },
-      });
-    }
-    try {
-      await c.terminatePod(pod.id);
-      await recordKeyEvent({
-        credential_id,
-        key_owner_account_id: account_id,
-        actor: { kind: "cleanup" },
-        action: "unknown_pod_terminated",
-        details: { provider_pod_id: sanitizeProviderName(pod.id) },
-      });
-    } catch (err) {
-      log.warn("terminating an unknown pod failed", pod.id, `${err}`);
-    }
-  }
   const left = await unfinishedCredentialPods(credential_id);
   if (cut || listed.length > 0 || left.length > 0) {
     return {
@@ -342,6 +321,45 @@ async function revokeAndClose(
     managed_pods: 0,
     warning: CLOSED_WARNING,
   };
+}
+
+// A pod in the key's RunPod account that CoCalc didn't start: recorded the
+// first time it is seen, and terminated every pass until it is gone.
+async function terminateUnknownPod(
+  account_id: string,
+  credential_id: string,
+  c: RunpodCleanupCapability,
+  pod: RunpodPodView,
+): Promise<void> {
+  const { rows: seen } = await getPool().query(
+    `SELECT 1 FROM gpu_key_events WHERE credential_id = $1
+       AND action = 'unknown_pod_seen' AND details->>'provider_pod_id' = $2 LIMIT 1`,
+    [credential_id, sanitizeProviderName(pod.id)],
+  );
+  if (seen.length === 0) {
+    await recordKeyEvent({
+      credential_id,
+      key_owner_account_id: account_id,
+      actor: { kind: "cleanup" },
+      action: "unknown_pod_seen",
+      details: {
+        provider_pod_id: sanitizeProviderName(pod.id),
+        name: sanitizeProviderName(pod.name),
+      },
+    });
+  }
+  try {
+    await c.terminatePod(pod.id);
+    await recordKeyEvent({
+      credential_id,
+      key_owner_account_id: account_id,
+      actor: { kind: "cleanup" },
+      action: "unknown_pod_terminated",
+      details: { provider_pod_id: sanitizeProviderName(pod.id) },
+    });
+  } catch (err) {
+    log.warn("terminating an unknown pod failed", pod.id, `${err}`);
+  }
 }
 
 // how many resolver batches one pass may run (each is bounded too)

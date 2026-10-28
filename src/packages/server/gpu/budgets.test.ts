@@ -703,9 +703,13 @@ describeDb("GPU budgets", () => {
       const cleanup = {
         ...s.rp.client,
         credential_id: s.credential_id,
-        listPods: jest.fn(async () => {
+        // one page, handed to the caller as it arrives (as the client does)
+        listPods: jest.fn(async (opts?: any) => {
           if (listFails) throw new RunpodApiError("provider", 503);
-          return [...s.rp.pods.values()];
+          await opts?.beforePage?.();
+          const page = [...s.rp.pods.values()];
+          await opts?.onPage?.(page);
+          return page;
         }),
         // RunPod still accepts the key until the owner deletes it there
         getProviderIdentity: jest.fn(async () => ({
@@ -1524,6 +1528,41 @@ describeDb("GPU budgets", () => {
       expect(seen).toContain(fast.account_id);
       release();
       await sweep;
+    });
+
+    it("a slow, many-page inventory still terminates pods every pass, though no pass gets through it", async () => {
+      const s = setup();
+      await s.stored;
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      const a = account(s);
+      for (const id of ["pod_thief001", "pod_thief002", "pod_thief003"]) {
+        s.rp.pods.set(id, { id, name: id });
+      }
+      // one pod per page, each page slow: a whole listing outlasts a pass
+      a.cleanup.listPods.mockImplementation(async (opts?: any) => {
+        const out: any[] = [];
+        for (const pod of [...s.rp.pods.values()]) {
+          await opts?.beforePage?.();
+          await new Promise((r) => setTimeout(r, 120));
+          out.push(pod);
+          await opts?.onPage?.([pod]);
+        }
+        return out;
+      });
+      const pass = () =>
+        runCompromiseCleanup(s.account_id, s.credential_id, {
+          ...a.deps,
+          passMs: 200,
+        });
+      const first = await pass();
+      expect(first.closed).toBe(false);
+      // cut, but not for nothing: the first page's pod is gone
+      expect(s.rp.pods.size).toBeLessThan(3);
+      for (let i = 0; i < 4 && s.rp.pods.size > 0; i++) await pass();
+      expect(s.rp.pods.size).toBe(0);
     });
 
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {

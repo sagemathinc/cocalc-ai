@@ -147,6 +147,34 @@ describe("RunpodClient", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("hands each page to onPage as it arrives, before the next is fetched", async () => {
+    const { fetch, calls } = fakeFetch([
+      {
+        body: {
+          pods: [{ id: "pod_aaaaaa" }],
+          pagination: { hasNextPage: true, nextCursor: "c2" },
+        },
+      },
+      {
+        body: {
+          pods: [{ id: "pod_bbbbbb" }],
+          pagination: { hasNextPage: false, nextCursor: null },
+        },
+      },
+    ]);
+    const seen: string[][] = [];
+    const pods = await client(fetch).listPods({
+      onPage: async (page) => {
+        seen.push([`${calls.length}`, ...page.map((p) => p.id)]);
+      },
+    });
+    expect(seen).toEqual([
+      ["1", "pod_aaaaaa"],
+      ["2", "pod_bbbbbb"],
+    ]);
+    expect(pods.map((p) => p.id)).toEqual(["pod_aaaaaa", "pod_bbbbbb"]);
+  });
+
   it("treats a malformed inventory as an error, not an empty list", async () => {
     const page = (body: unknown) => client(fakeFetch([{ body }]).fetch);
     for (const body of [

@@ -213,9 +213,15 @@ export class RunpodClient {
   // RunPod leaves out by default: a hidden pod is hidden spend.
   // beforePage runs before each page: a caller with a deadline throws there
   // to stop (the listing then fails; it never returns a partial one).
+  // onPage gets each page's pods as it arrives (a caller can act on them
+  // before the whole inventory is in).
   async listPods({
     beforePage,
-  }: { beforePage?: () => Promise<void> } = {}): Promise<RunpodPodView[]> {
+    onPage,
+  }: {
+    beforePage?: () => Promise<void>;
+    onPage?: (pods: RunpodPodView[]) => Promise<void>;
+  } = {}): Promise<RunpodPodView[]> {
     const pods: RunpodPodView[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
@@ -230,12 +236,15 @@ export class RunpodClient {
       ) {
         throw new RunpodApiError("protocol");
       }
+      const page: RunpodPodView[] = [];
       for (const raw of body.pods) {
         // A row we can't parse could be a live pod: never drop it silently.
         const pod = podView(raw);
         if (!pod) throw new RunpodApiError("protocol");
-        pods.push(pod);
+        page.push(pod);
       }
+      pods.push(...page);
+      await onPage?.(page);
       if (!body.pagination.hasNextPage) return pods;
       const next = body.pagination.nextCursor;
       if (!(typeof next === "string" && next)) {
