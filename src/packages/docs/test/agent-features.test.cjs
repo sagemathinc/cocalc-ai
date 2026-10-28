@@ -62,10 +62,12 @@ test("feature matrix renders as tables with valid detailed-guide links", () => {
   }
 });
 
-test("assessment distinguishes Claude preview from full parity and unknown evidence", () => {
+test("assessment distinguishes Claude preview ratings from full parity and unknown evidence", () => {
   const body = full.getDocsEntry(slug).body;
   for (const phrase of [
-    "Claude Code remains an experimental preview",
+    "describes that capability, not Claude Code as a whole",
+    "Access options reviewed 2026-10-26",
+    "Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Conditional",
     "Live Agent Networks that guide busy recipients | Supported | Preview",
     "Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Preview",
     "Agent-to-agent messaging across projects | Supported | Unverified",
@@ -77,6 +79,8 @@ test("assessment distinguishes Claude preview from full parity and unknown evide
     "approval is not execution",
   ])
     assert.ok(body.includes(phrase), phrase);
+  // Preview is a per-capability rating; Claude Code as a whole is not one.
+  assert.doesNotMatch(body, /Claude\s+preview/i);
   const claude = full.getDocsEntry("ai/claude-code").body;
   assert.match(claude, /still need live qualification/);
   assert.match(claude, /stored payment selection/);

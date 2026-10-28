@@ -17,8 +17,8 @@ files, run commands, work with notebooks, and make changes.
 3. Start a Codex thread.
 4. Ask a concrete task, including relevant files and constraints.
 
-Claude Code is also integrated, as an experimental preview on sites that enable
-it. For other terminal-native agents such as opencode, install and run them
+Claude Code is also integrated, on sites that enable it. For other
+terminal-native agents such as opencode, install and run them
 inside a normal project terminal with compatible software and permissions.
 Hosted project images and local CoCalc Plus can provide different operating
 systems and installed tools; terminal-native agents provide their own interface.
@@ -30,7 +30,7 @@ On phones, open **Chat tools** using the ellipsis button, then choose
 
 - [Compare all integrated agent features](/docs/ai/agent-features).
 - [Start and review work in Agents](/docs/ai/my-agents).
-- [Use Claude Code (experimental preview)](/docs/ai/claude-code).
+- [Use Claude Code](/docs/ai/claude-code).
 - [Let agents remember notes across sessions](/docs/ai/agent-memory).
 - [Connect access and choose funding](/docs/ai/connect-credentials).
 - [Give an agent access to other CoCalc projects](/docs/ai/cocalc-access).
@@ -73,8 +73,8 @@ checks that would make the result useful.
 
 When CoCalc opens the request box for you, it asks **What would you like to work
 on?** There is no name or project to choose. Below the box, the runtime menu
-starts at **Codex**; choose **Claude** there for the Claude Code experimental
-preview, where the site enables it. For Codex, the model, thinking level, and
+starts at **Codex**; choose **Claude** there for Claude Code, where the site
+enables it. For Codex, the model, thinking level, and
 payment source buttons work as in the new-agent form described below. If CoCalc
 asks you to verify your email, do that first. When you start typing, CoCalc
 prepares a project and starts it, which can start project compute; the chat and
@@ -93,8 +93,8 @@ box. They start from the agent you had selected, if any.
    no project, CoCalc says **Your first project will be created
    automatically**, and titles that project from the first line of your
    request, or **My first project** if there is no request.
-3. In the runtime menu, choose **Claude** for the Claude Code experimental
-   preview, where the site enables it; see [Use Claude Code](/docs/ai/claude-code).
+3. In the runtime menu, choose **Claude** for Claude Code, where the site
+   enables it; see [Use Claude Code](/docs/ai/claude-code).
    For Codex, click the model, thinking level, or payment source button to
    change it. When **CoCalc Membership** pays, whether chosen directly or
    automatically, the thinking level is fixed. Access, funding, project
@@ -300,9 +300,14 @@ index, Agent Networks, workbench results, and Claude differences, see
 export const AI_CREDENTIALS_BODY = String.raw`
 ## What AI credentials are for
 
-CoCalc-ai uses OpenAI access for integrated Codex chat. A user can connect a
-ChatGPT subscription or configure an OpenAI API key, depending on what access
-the deployment and account support.
+Codex and Claude Code have separate payment settings. Choose membership
+funding where included, connect a personal subscription, or configure an API
+key. Codex uses ChatGPT or OpenAI access; Claude Code uses Claude Pro/Max or
+Anthropic access. Connecting one provider does not connect the other.
+
+A model credential pays for agent work. It does not grant access to other
+CoCalc projects, provision compute, or configure credentials for every script
+an agent runs.
 
 ## Connect access for Codex
 
@@ -365,11 +370,34 @@ a personal plan does not increase the membership allowance itself.
 For unavailable-model messages, see
 [Configure Codex chats](/docs/ai/codex-settings).
 
+## Connect access for Claude Code
+
+1. Open an agent and choose **Claude** in the runtime menu.
+2. Open Claude settings using its settings icon or payment method control.
+3. Choose **CoCalc Membership** if offered, a connected Claude Pro/Max
+   subscription, an account Anthropic API key, or a project API-key secret.
+4. For subscription access, choose **Connect Claude Pro/Max** and complete
+   the sign-in flow. For a project key, use the Claude API-key dialog.
+   Membership funding does not require your own Anthropic credential.
+5. Check the selected payment method and available model before sending work.
+   Changes apply to future turns, not work already admitted.
+
+Membership-funded Claude uses its included model and the AI allowance shared
+with Codex; higher membership tiers include a larger allowance. A personal subscription uses that provider plan's allowance;
+API-key usage is billed by Anthropic. These modes have different credential
+and tool boundaries: see [Claude Code access and billing](/docs/ai/claude-code).
+In particular, an account API key does not authorize agent-authored network
+or sensor turns, and a newly connected subscription does not load claude.ai
+account connectors. CoCalc project tools are separate from those connectors.
+
 ## Use project secrets for keys
 
-For code that calls OpenAI directly from a notebook, script, or terminal, store
-the API key as a project secret such as \`OPENAI_API_KEY\`. Do not paste keys
-into notebooks, chat messages, shell history, or committed files.
+For code that calls a provider directly from a script, terminal, or notebook,
+store its API key as a project secret, such as \`OPENAI_API_KEY\` or
+\`ANTHROPIC_API_KEY\`. Project collaborators and project code can use these
+keys. An account subscription or isolated account-key relay is not a general
+API key for arbitrary project code. Do not paste keys into notebooks, chat
+messages, shell history, or committed files.
 
 ## Complete a Codex authorization request
 
@@ -398,9 +426,11 @@ it is not available for every command or deployment.
 
 ## Why this matters in CoCalc
 
-AI access is both account-level and project-contextual. The account connection
-lets Codex work in the UI; project secrets let ordinary code and terminal-native
-agents use credentials without turning private tokens into shared content.
+Keep the agent's payment method, project-code credentials, and CoCalc access
+permissions separate. Review the selected payment method before starting work,
+and configure only the credentials the project needs. A project secret is
+shared with project code and collaborators; an account connection has the
+provider-specific boundaries described in its guide.
 `;
 
 export const CODEX_SETTINGS_BODY = String.raw`

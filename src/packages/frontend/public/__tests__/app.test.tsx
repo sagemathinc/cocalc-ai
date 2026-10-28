@@ -494,8 +494,7 @@ describe("PublicApp", () => {
     );
   });
 
-  // On cocalc.ai the lead names Claude and links it to the Claude guide, which
-  // states its preview status, so the page itself does not.
+  // On cocalc.ai the lead names Claude and links it to the Claude guide.
   it("links the About lead's Claude mention to its guide on cocalc.ai", async () => {
     const user = userEvent.setup();
     await renderPublicApp(

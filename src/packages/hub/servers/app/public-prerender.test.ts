@@ -533,7 +533,7 @@ describe("core landing page initial HTML", () => {
       expect(home).toContain('data-cocalc-public-prerender="home"');
       expect(home).toContain("Build and use software with AI.");
       expect(home).toContain(
-        "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals",
+        "Use the integrated Codex agent, Claude Code on sites that enable it, or other command-line agents in project terminals",
       );
       // the Agents guide's starter tasks (hosted products, and the default)
       expect(home).toContain(
@@ -1014,7 +1014,7 @@ describe("core landing page initial HTML", () => {
   );
 
   // As on the React page, cocalc.ai's lead names Claude and links it to the
-  // Claude guide, which states its preview status.
+  // Claude guide.
   it.each(["/", "/prefix"])(
     "links the About lead's Claude mention to its guide on cocalc.ai, on %s",
     (basePath) => {
@@ -1157,7 +1157,7 @@ describe("core landing page initial HTML", () => {
     );
 
     expect(html).toContain(
-      '<a href="/prefix/docs/ai/claude-code">Claude Code in CoCalc (Experimental Preview)</a>',
+      '<a href="/prefix/docs/ai/claude-code">Claude Code in CoCalc</a>',
     );
   });
 
