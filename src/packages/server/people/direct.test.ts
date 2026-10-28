@@ -9,8 +9,11 @@ const mockBanned = new Set<string>();
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
+const mockHomes: Record<string, string> = {};
 jest.mock("@cocalc/server/bay-directory", () => ({
-  resolveAccountHomeBay: async () => ({ home_bay_id: "bay-0" }),
+  resolveAccountHomeBay: async ({ account_id }) => ({
+    home_bay_id: mockHomes[account_id] ?? "bay-0",
+  }),
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({}),
@@ -57,7 +60,7 @@ jest.mock("@cocalc/server/accounts/usernames", () => ({
   },
 }));
 
-import { directHubApi, retryDirectFanouts } from "./direct";
+import { directControl, directHubApi, retryDirectFanouts } from "./direct";
 import {
   createDirectConversationRecord,
   getDirectConversationRecord,
@@ -99,6 +102,7 @@ describeDb("direct conversations", () => {
     await closePglite();
   });
   beforeEach(async () => {
+    for (const id of Object.keys(mockHomes)) delete mockHomes[id];
     mockNotify.mockReset().mockResolvedValue(undefined);
     mockBanned.clear();
     await getPool().query(
@@ -459,6 +463,54 @@ describeDb("direct conversations", () => {
     ).rejects.toThrow("no one has the username");
   });
 
+  test("a lost reply keeps the request's charge; only proof of creating nothing releases one", async () => {
+    const admissions = async () =>
+      (
+        await getPool().query(
+          "SELECT count(*)::int AS n FROM direct_request_admissions",
+        )
+      ).rows[0].n;
+    const conversations = async () =>
+      (
+        await getPool().query(
+          "SELECT count(*)::int AS n FROM direct_conversations",
+        )
+      ).rows[0].n;
+    const create = directControl.create;
+    // The owner commits, then the reply is lost (a timeout after commit).
+    const lost = jest
+      .spyOn(directControl, "create")
+      .mockImplementationOnce(async (opts) => {
+        await create(opts);
+        throw Error("timeout");
+      });
+    await expect(request("Hi")).rejects.toThrow("timeout");
+    expect(await conversations()).toBe(1);
+    expect(await admissions()).toBe(1);
+    // The person tries again: the pair's conversation exists (a different
+    // id), so this attempt's own charge is released; the first stays.
+    await expect(request("Hi again")).rejects.toThrow(NOT_ACCEPTED);
+    expect(await conversations()).toBe(1);
+    expect(await admissions()).toBe(1);
+    lost.mockRestore();
+
+    // A transport retry of the same create reports it as existing: still
+    // this attempt's, so its charge stays.
+    await getPool().query(
+      "TRUNCATE direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations",
+    );
+    const retried = jest
+      .spyOn(directControl, "create")
+      .mockImplementationOnce(async (opts) => {
+        await create(opts);
+        return await create(opts);
+      });
+    await request("Hello");
+    expect(await conversations()).toBe(1);
+    expect(await admissions()).toBe(1);
+    retried.mockRestore();
+  });
+
   test("the daily request quota isn't refunded by answers and holds under concurrency", async () => {
     for (let i = 0; i < 20; i++) {
       const started = await request(`Request ${i}`, `Topic ${i}`);
@@ -513,6 +565,60 @@ describeDb("direct conversations", () => {
     ]) {
       await expect(call()).rejects.toThrow("not found");
     }
+  });
+
+  test("oversized recipient lists are refused before any lookup", async () => {
+    await expect(
+      directHubApi.startDirect({
+        account_id: ada,
+        member_ids: Array.from({ length: 1000 }, () => bea),
+      }),
+    ).rejects.toThrow("at most 8");
+    await expect(
+      directHubApi.startDirect({
+        account_id: ada,
+        usernames: Array.from({ length: 1000 }, () => "bea"),
+      }),
+    ).rejects.toThrow("at most 8");
+  });
+
+  test("the owner validates a create request on its own", async () => {
+    const base = {
+      conversation_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      account_id: ada,
+      member_ids: [ada, bea],
+      member_states: { [ada]: "active", [bea]: "requested" } as any,
+      title: "Group",
+      pair_key: null,
+      body: "Hi",
+    };
+    // The starter isn't a member (or not first).
+    await expect(
+      directControl.create({ ...base, member_ids: [bea, cy] }),
+    ).rejects.toThrow("invalid members");
+    // States must cover exactly the members, the starter active.
+    await expect(
+      directControl.create({
+        ...base,
+        member_states: { [ada]: "requested", [bea]: "active" },
+      }),
+    ).rejects.toThrow("invalid member states");
+    await expect(
+      directControl.create({ ...base, member_states: { [ada]: "active" } }),
+    ).rejects.toThrow("invalid member states");
+    // A group belongs on its starter's home bay.
+    mockHomes[ada] = "bay-1";
+    await expect(directControl.create(base)).rejects.toThrow(
+      "stale account-home route",
+    );
+    // A pair on its fixed bay only.
+    await expect(
+      directControl.create({
+        ...base,
+        title: null,
+        pair_key: "not-a-pair",
+      }),
+    ).rejects.toThrow("invalid pair");
   });
 
   test("limits: empty messages, banned senders", async () => {

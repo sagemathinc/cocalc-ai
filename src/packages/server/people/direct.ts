@@ -66,6 +66,7 @@ import {
 } from "@cocalc/server/accounts/security-state";
 import { resolveUsernameOwner } from "@cocalc/server/accounts/usernames";
 import {
+  MAX_DIRECT_MEMBERS,
   directPairKey,
   directPreview,
   directRoute,
@@ -339,6 +340,30 @@ export const directControl: InterBayDirectApi = {
       }
     }
     requireUuid(conversation_id, "conversation_id");
+    // Validate the whole envelope here too: the starter is a member and
+    // active, states cover exactly the members, and this bay is the right
+    // owner (a pair's fixed bay, or the starter's home for a group).
+    const members = normalizeDirectMembers(account_id, member_ids);
+    if (
+      members.length !== member_ids.length ||
+      members.some((id, i) => id !== member_ids[i]?.toLowerCase())
+    ) {
+      throw Error("invalid members");
+    }
+    const keys = Object.keys(member_states ?? {});
+    if (
+      keys.length !== members.length ||
+      !members.every((id) => keys.includes(id)) ||
+      member_states[account_id] !== "active" ||
+      !Object.values(member_states).every(
+        (state) => state === "active" || state === "requested",
+      )
+    ) {
+      throw Error("invalid member states");
+    }
+    if (pair_key == null && (await homeBay(account_id)) !== bay()) {
+      throw Error("stale account-home route");
+    }
     const { created, conversation } = await createDirectConversationRecord({
       conversation_id,
       owner_bay_id: bay(),
@@ -429,6 +454,16 @@ export const directControl: InterBayDirectApi = {
   async start({ account_id, member_ids, usernames, title, body }) {
     await assertHome(account_id);
     await assertCanSend(account_id);
+    // Bound what the browser sent before any lookup: the final, deduplicated
+    // check is normalizeDirectMembers below.
+    if (
+      !Array.isArray(member_ids ?? []) ||
+      !Array.isArray(usernames ?? []) ||
+      (member_ids ?? []).length + (usernames ?? []).length >
+        MAX_DIRECT_MEMBERS - 1
+    ) {
+      throw Error(`at most ${MAX_DIRECT_MEMBERS} people in a conversation`);
+    }
     const collaborators = new Set<string>();
     for (const id of member_ids ?? []) {
       requireUuid(id, "member_ids");
@@ -479,8 +514,10 @@ export const directControl: InterBayDirectApi = {
     ).length;
 
     const conversation_id = randomUUID();
-    // A request is charged before it is created, and released if nothing
-    // was (the pair already had its conversation, or creating failed).
+    // A request is charged before it is created. The charge is released only
+    // on proof that this attempt created nothing: the pair already had a
+    // different conversation. An error (a lost reply, a timeout after the
+    // owner committed) keeps it.
     if (requests > 0) {
       await admitDirectRequest({
         account_id,
@@ -488,25 +525,23 @@ export const directControl: InterBayDirectApi = {
         recipients: requests,
       });
     }
-    let result: { created: boolean; conversation: DirectConversation };
-    try {
-      result = await owner(ownerBay).create({
-        conversation_id,
-        account_id,
-        member_ids: members,
-        member_states: states,
-        title: normalizedTitle,
-        pair_key,
-        body: text,
-      });
-    } catch (err) {
-      if (requests > 0) await releaseDirectRequest(conversation_id);
-      throw err;
-    }
-    if (requests > 0 && !result.created) {
+    const result = await owner(ownerBay).create({
+      conversation_id,
+      account_id,
+      member_ids: members,
+      member_states: states,
+      title: normalizedTitle,
+      pair_key,
+      body: text,
+    });
+    // A retried create of this same conversation reports it as existing:
+    // it is still this attempt's.
+    const ours = result.conversation.conversation_id === conversation_id;
+    if (requests > 0 && !ours) {
       await releaseDirectRequest(conversation_id);
     }
-    const { created, conversation } = result;
+    const created = result.created || ours;
+    const { conversation } = result;
     if (!created) {
       // The pair's conversation exists: rejoin it if this account had left
       // it, then send (with the usual first-message rule).

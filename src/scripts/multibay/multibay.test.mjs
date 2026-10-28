@@ -186,6 +186,154 @@ describe("routing by ownership", () => {
   });
 });
 
+describe("direct conversations across bays", () => {
+  // Two collaborators homed on different bays. A pair's conversation is owned
+  // by the home bay of the smaller account id; each member's index row lives
+  // on that member's home bay, delivered by the owner over the real fabric.
+  let carol; // homed on the seed
+  let dave; // homed on the attached bay
+
+  const directRows = async (bay, conversation_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const id = ${JSON.stringify(conversation_id)};
+       const c = await getPool().query(
+         "SELECT owner_bay_id FROM direct_conversations WHERE conversation_id=$1", [id]);
+       const i = await getPool().query(
+         "SELECT account_id FROM account_direct_conversations WHERE conversation_id=$1 ORDER BY account_id", [id]);
+       return { owners: c.rows.map((r) => r.owner_bay_id), indexed: i.rows.map((r) => r.account_id) };`,
+    );
+
+  before(async () => {
+    carol = await createAccount(cluster, { home_bay_id: SEED, name: "carol" });
+    dave = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "dave",
+    });
+    carol.client = await client(carol);
+    dave.client = await client(dave);
+    const project_id = await createProject(carol.client, "carol-dave");
+    await invite(carol, dave, project_id);
+    // Each home bay must see the other as a collaborator before starting.
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          ATTACHED,
+          `const { areCollaborators } = require("@cocalc/database/postgres/direct-conversations");
+           return await areCollaborators(${JSON.stringify(dave.account_id)}, ${JSON.stringify(carol.account_id)}, ${JSON.stringify(ATTACHED)});`,
+        ),
+      { timeoutMs: 60_000, what: "carol as dave's collaborator on bay-1" },
+    );
+  });
+
+  it("converges both directions of a pair on one conversation, owned by one bay", async () => {
+    const [fromCarol, fromDave] = await Promise.all([
+      carol.client.call("people.startDirect", {
+        member_ids: [dave.account_id],
+      }),
+      dave.client.call("people.startDirect", {
+        member_ids: [carol.account_id],
+      }),
+    ]);
+    assert.equal(fromCarol.conversation_id, fromDave.conversation_id);
+    carol.direct = fromCarol.conversation_id;
+    carol.directCreator = fromCarol.created_by;
+    const expectedOwner =
+      [carol.account_id, dave.account_id].sort()[0] === carol.account_id
+        ? SEED
+        : ATTACHED;
+    const other = expectedOwner === SEED ? ATTACHED : SEED;
+    assert.deepEqual((await directRows(expectedOwner, carol.direct)).owners, [
+      expectedOwner,
+    ]);
+    assert.deepEqual((await directRows(other, carol.direct)).owners, []);
+    // Each member's index row is on that member's home bay only.
+    await eventually(
+      async () =>
+        (await directRows(SEED, carol.direct)).indexed.join() ===
+          carol.account_id &&
+        (await directRows(ATTACHED, carol.direct)).indexed.join() ===
+          dave.account_id,
+      { what: "each member indexed on their own home bay" },
+    );
+  });
+
+  it("delivers a message to the other bay's member, unread", async () => {
+    await carol.client.call("people.sendDirect", {
+      conversation_id: carol.direct,
+      body: "hello from bay-0",
+    });
+    const seen = await eventually(
+      async () =>
+        (await dave.client.call("people.listDirect", {})).conversations.find(
+          (row) =>
+            row.conversation_id === carol.direct &&
+            row.last_sender_id === carol.account_id &&
+            row.preview === "hello from bay-0",
+        ),
+      { what: "carol's message in dave's list" },
+    );
+    assert.equal(seen.state, "active");
+    const { messages } = await dave.client.call("people.getDirect", {
+      conversation_id: carol.direct,
+    });
+    assert.ok(messages.some((m) => m.body === "hello from bay-0"));
+  });
+
+  it("refuses the wrong bay's authority", async () => {
+    // A home method for dave run on the seed, and an owner method run on the
+    // bay that doesn't own the conversation, both fail closed.
+    const notOwner =
+      [carol.account_id, dave.account_id].sort()[0] === carol.account_id
+        ? ATTACHED
+        : SEED;
+    const result = await runInBay(
+      cluster,
+      SEED,
+      `const { directControl } = server("people/direct.js");
+       const out = {};
+       try { await directControl.list({ account_id: ${JSON.stringify(dave.account_id)} }); out.home = "allowed"; }
+       catch (err) { out.home = err.message; }
+       return out;`,
+    );
+    assert.match(result.home, /stale account-home route/);
+    const owned = await runInBay(
+      cluster,
+      notOwner,
+      `const { directControl } = server("people/direct.js");
+       try {
+         await directControl.send({ account_id: ${JSON.stringify(carol.account_id)}, conversation_id: ${JSON.stringify(carol.direct)}, body: "forged" });
+         return "allowed";
+       } catch (err) { return err.message; }`,
+    );
+    assert.notEqual(owned, "allowed");
+  });
+
+  it("refuses new conversations from someone blocked on another bay", async () => {
+    // Blocking blocks whoever started the conversation: either of the two
+    // concurrent starts may have created it.
+    const created_by = carol.directCreator;
+    const [blocked, blocker] =
+      created_by === carol.account_id ? [carol, dave] : [dave, carol];
+    await blocker.client.call("people.respondDirect", {
+      conversation_id: carol.direct,
+      action: "block",
+    });
+    // The block is checked on the blocker's home bay, the other bay.
+    assert.notEqual(blocked.home_bay_id, blocker.home_bay_id);
+    await assert.rejects(
+      blocked.client.call("people.startDirect", {
+        member_ids: [blocker.account_id],
+        title: "a group after the block",
+      }),
+      /can't message this person/,
+    );
+  });
+});
+
 describe("agent delivery reports across bays", () => {
   // The seed forwards a report about a message to the bay that owns the
   // sender's project, over the real fabric; only that bay may write it, and

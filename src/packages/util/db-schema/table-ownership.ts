@@ -195,20 +195,22 @@ export const TABLE_OWNERSHIP = {
     },
   ),
 
-  ...entries(["account_direct_conversations", "account_direct_blocks"], {
-    ownership: "account-home",
-    authority: "account_id",
-    portability: "unsupported",
-    notes:
-      "A member's index of their direct conversations (owning bay, read state, mute) and their blocks, kept on the member's home bay and updated by fan-out from each conversation's owning bay. Rehome remains unsafe until this table has explicit migration tests.",
-  }),
   ...entries(
     [
-      "direct_conversations",
-      "direct_messages",
-      "direct_fanout_pending",
+      "account_direct_conversations",
+      "account_direct_blocks",
       "direct_request_admissions",
     ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      notes:
+        "A member's index of their direct conversations (owning bay, read state, mute), their blocks, and the message requests they started (the daily quota ledger), kept on the member's home bay; the index is updated by fan-out from each conversation's owning bay. Rehome remains unsafe until these tables have explicit migration tests.",
+    },
+  ),
+  ...entries(
+    ["direct_conversations", "direct_messages", "direct_fanout_pending"],
     {
       ownership: "stable-bay",
       authority: "bay_id",
