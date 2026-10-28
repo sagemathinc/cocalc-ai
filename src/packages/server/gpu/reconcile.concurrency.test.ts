@@ -486,4 +486,51 @@ describeRealPostgres("GPU reconcile passes that overlap", () => {
     });
     expect((await s.podRow()).state).toBe("terminated");
   });
+
+  it("a sighting that commits while a 404's end waits on the pod wins; one after it changes nothing", async () => {
+    const s = await setup();
+    const asked = new Date(Date.now() - MINUTE);
+    const row = await s.podRow();
+    // a newer listing's sighting, not yet committed, holds the pod's row
+    const db = await getPool().connect();
+    try {
+      await db.query("BEGIN");
+      await db.query(
+        "UPDATE gpu_pods SET provider_seen_at = $2 WHERE id = $1",
+        [row.id, new Date()],
+      );
+      const ending = pods.endPodGoneAtProvider(
+        row,
+        { kind: "reconciler" },
+        asked,
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      await db.query("COMMIT");
+      // the end re-checked the sighting and did nothing: not even wanted
+      // terminated, and its holds untouched
+      expect(await ending).toBeUndefined();
+    } finally {
+      db.release();
+    }
+    const after = await s.podRow();
+    expect(after.state).toBe("running");
+    expect(after.desired_state).toBe("running");
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_pod_reservations WHERE pod_id = $1",
+      [row.id],
+    );
+    expect(rows.map((r: any) => r.state)).toEqual(["active"]);
+    // a 404 asked after that sighting ends it, all at once
+    const ended = await pods.endPodGoneAtProvider(
+      after,
+      { kind: "reconciler" },
+      new Date(Date.now() + 1000),
+    );
+    expect(ended?.state).toBe("terminated");
+    const { rows: settled } = await getPool().query(
+      "SELECT state FROM gpu_pod_reservations WHERE pod_id = $1",
+      [row.id],
+    );
+    expect(settled.map((r: any) => r.state)).toEqual(["settled"]);
+  });
 });

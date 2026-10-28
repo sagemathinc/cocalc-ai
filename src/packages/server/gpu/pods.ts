@@ -1681,33 +1681,47 @@ export async function recordSeenAddresses(
 // The reconciler reads RunPod and records what it sees; it never asks RunPod
 // to terminate anything. These two are its only pod-state changes.
 
-// RunPod says (by id, getPod 404) that a bound pod no longer exists: end the
-// record through the normal termination path (recorded as wanted, then
-// terminating, then terminated with its actual settlement), with a client
-// that sends nothing: RunPod has already shown the pod is gone. Undefined if
-// the record moved on meanwhile.
-const GONE_AT_PROVIDER = { terminatePod: async () => {} };
-//
-// `asked`: when RunPod was asked. A sighting recorded after it (another
-// pass's listing, newer than this answer's question) wins: nothing ends.
+// RunPod says (by id, getPod 404) that a bound pod no longer exists: the
+// record ends as if CoCalc had terminated it (wanted terminated, then
+// terminated, with its actual settlement and the same events), in ONE
+// transaction, and nothing is sent to RunPod (it has already shown the pod
+// is gone). `asked`: when RunPod was asked. A sighting recorded after it
+// (another pass's listing, newer than this answer's question) wins and
+// nothing changes; one that commits while this runs is re-checked by the
+// UPDATE itself. Undefined if the record moved on meanwhile.
 export async function endPodGoneAtProvider(
   row: PodRow,
   actor: Actor,
   asked: Date,
 ): Promise<PodRow | undefined> {
-  let current = await transition(
+  return await transition(
     row.id,
-    { desired_state: "terminated" },
+    {
+      state: "terminated",
+      desired_state: "terminated",
+      terminated_at: new Date(),
+    },
     `AND state IN ('running', 'stopped', 'terminating') AND unmanaged_at IS NULL
      AND (provider_seen_at IS NULL OR provider_seen_at < '${asked.toISOString()}'::timestamptz)`,
-    { actor, action: "terminate", details: { gone_at_provider: true } },
+    {
+      actor,
+      action: "state",
+      details: { state: "terminated", gone_at_provider: true },
+    },
+    {
+      settle: "actual",
+      after: async (db, ended) => {
+        // the terminate this stands for, recorded first (same transaction)
+        await recordEvent(
+          ended.id,
+          actor,
+          "terminate",
+          { gone_at_provider: true },
+          db,
+        );
+      },
+    },
   );
-  if (!current) return undefined;
-  if (current.state !== "terminating") {
-    current = await recordTerminating(current, actor);
-    if (!current) return undefined;
-  }
-  return await terminateBound(current, GONE_AT_PROVIDER, actor);
 }
 
 // A RunPod pod named exactly like an ambiguous or failed (quarantined or

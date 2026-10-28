@@ -280,9 +280,9 @@ describeDb("GPU inventory reconciler", () => {
       "SELECT actor_kind, action, details FROM gpu_pod_events WHERE pod_id = $1 AND actor_kind = 'reconciler' ORDER BY at",
       [pod.id],
     );
-    expect(ev.map((e: any) => e.details?.state ?? e.action)).toEqual([
+    // one transaction (one timestamp): wanted terminated, and terminated
+    expect(ev.map((e: any) => e.details?.state ?? e.action).sort()).toEqual([
       "terminate",
-      "terminating",
       "terminated",
     ]);
     expect(s.client.terminatePod).not.toHaveBeenCalled();
