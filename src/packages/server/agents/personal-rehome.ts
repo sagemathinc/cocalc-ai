@@ -32,6 +32,16 @@ export const COMPUTER_STATE_TABLES = [
   "computer_pairing_requests",
 ] as const;
 
+// GPU state of a key owner (BYOK pods, budget layers and the key's fence),
+// keyed by key_owner_account_id. Its pods run on the owner's own RunPod
+// account and are managed only from the home bay, so it must not be left
+// behind by a rehome.
+export const GPU_STATE_TABLES = [
+  "gpu_pods",
+  "gpu_budget_layers",
+  "gpu_key_fences",
+] as const;
+
 export type PersonalAuthorityDb = {
   query(sql: string, values?: unknown[]): Promise<{ rows: any[] }>;
 };
@@ -83,6 +93,28 @@ export async function assertNoPersonalStateForRehome(
     )
       throw new Error(
         "Account rehome is unavailable while this account has People state, personal agent names, networks, controls, proposals, computers, or external-agent history. Personal state portability is not supported yet; keep this account on its current home bay. Pausing messaging does not remove this restriction.",
+      );
+  }
+  const gpuExisting = new Set(
+    (
+      await db.query(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name=ANY($1::text[])",
+        [GPU_STATE_TABLES],
+      )
+    ).rows.map((row) => row.table_name),
+  );
+  for (const table of GPU_STATE_TABLES) {
+    if (!gpuExisting.has(table)) continue;
+    if (
+      (
+        await db.query(
+          `SELECT 1 FROM "${table}" WHERE key_owner_account_id=$1 LIMIT 1`,
+          [account_id],
+        )
+      ).rows.length
+    )
+      throw new Error(
+        "Account rehome is unavailable while this account has GPU pods or GPU budgets on its own RunPod key. GPU state portability is not supported yet; keep this account on its current home bay.",
       );
   }
 }

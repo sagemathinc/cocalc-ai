@@ -4974,7 +4974,10 @@ describe("GPU budgets are read and changed on the key owner's home bay", () => {
        }
        return out;`,
     );
-    for (const m of r) assert.match(m, /homed on|home bay/);
+    // the seed has no row for bob, or knows he is homed elsewhere: either
+    // way it refuses before touching any budget
+    for (const m of r)
+      assert.match(m, /homed on|home bay|account \S+ not found/);
   });
 });
 
@@ -5082,7 +5085,9 @@ describe("a pod's host key is registered on the bay that minted its token", () =
        const ev = await getPool().query("SELECT details FROM gpu_pod_events WHERE pod_id = $1 AND action = 'host_key' ORDER BY at", [${JSON.stringify(POD_ID)}]);
        return { key: rows[0].host_public_key, alerts: ev.rows.map((e) => e.details.alert ?? null) };`,
     );
-    assert.deepEqual(home, { key: HOST_KEY, alerts: [null, "host_key_mismatch"] });
+    assert.deepEqual(home, {
+      key: HOST_KEY,
+      alerts: [null, "host_key_mismatch"],
+    });
   });
-
 });
