@@ -9,7 +9,7 @@
 // revoking only narrow. Only the key owner sees anything here: requests are
 // the owner's own.
 
-import { Alert, Button, Collapse, Popconfirm, Space, Typography } from "antd";
+import { Alert, Button, Collapse, Modal, Space, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -39,6 +39,10 @@ export function GpuAgentRequestBanner({ projectId }: { projectId: string }) {
   const [paused, setPaused] = useState<"kill_switch" | "alert" | null>(null);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
+  // what the owner is asked to confirm revoking
+  const [confirmRevoke, setConfirmRevoke] = useState<GpuAgentRequestView>();
+  // the clock the banner hides expired requests and approvals by
+  const [now, setNow] = useState(() => Date.now());
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const generation = useRef(0);
 
@@ -94,6 +98,27 @@ export function GpuAgentRequestBanner({ projectId }: { projectId: string }) {
     };
   }, [projectId]);
 
+  // A pending request ends at its expiry and an approval at its own, with
+  // nothing to announce it: at the next one, hide what ended and look again.
+  useEffect(() => {
+    const ends = views
+      .flatMap((v) => [
+        v.state === "pending" ? Date.parse(v.expires_at) : NaN,
+        v.grant?.state === "active" ? Date.parse(v.grant.expires_at) : NaN,
+      ])
+      .filter((t) => Number.isFinite(t) && t > now);
+    if (ends.length === 0) return;
+    const delay = Math.min(Math.min(...ends) - Date.now() + 250, 2 ** 31 - 1);
+    const timer = setTimeout(
+      () => {
+        setNow(Date.now());
+        void load().catch(() => {});
+      },
+      Math.max(delay, 0),
+    );
+    return () => clearTimeout(timer);
+  }, [views, now]);
+
   const act = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
     setError(undefined);
@@ -133,8 +158,12 @@ export function GpuAgentRequestBanner({ projectId }: { projectId: string }) {
       }),
     );
 
-  const pending = pendingRequests(views);
-  const active = activeApprovals(views);
+  const pending = pendingRequests(views).filter(
+    (v) => Date.parse(v.expires_at) > now,
+  );
+  const active = activeApprovals(views).filter(
+    (v) => Date.parse(v.grant!.expires_at) > now,
+  );
   if (pending.length === 0 && active.length === 0 && !error) {
     return <FreshAuthModal {...freshAuthModalProps} />;
   }
@@ -147,7 +176,7 @@ export function GpuAgentRequestBanner({ projectId }: { projectId: string }) {
         : null;
 
   return (
-    <div aria-live="polite">
+    <div aria-live="polite" style={{ overflowWrap: "anywhere", minWidth: 0 }}>
       {error ? (
         <Alert
           closable
@@ -192,7 +221,16 @@ export function GpuAgentRequestBanner({ projectId }: { projectId: string }) {
                     key: "exact",
                     label: "The exact request",
                     children: (
-                      <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                      <pre
+                        style={{
+                          margin: 0,
+                          whiteSpace: "pre-wrap",
+                          // the 64-character hash and long image names wrap
+                          // at narrow widths and high zoom
+                          overflowWrap: "anywhere",
+                          maxWidth: "100%",
+                        }}
+                      >
                         {exactRequest(view)}
                       </pre>
                     ),
@@ -232,29 +270,37 @@ export function GpuAgentRequestBanner({ projectId }: { projectId: string }) {
             <Space wrap>
               <Text>
                 {view.grant!.launches_used > 0
-                  ? "Launched."
+                  ? "Its one launch was used."
                   : "Not launched yet."}{" "}
                 No new launch after {timeOfDay(view.grant!.expires_at)}.
               </Text>
-              <Popconfirm
-                title="Revoke this approval?"
-                description="No new launch, and CoCalc terminates the pod it launched."
-                okText="Revoke and terminate"
-                onConfirm={() => void revoke(view)}
+              <Button
+                size="small"
+                danger
+                loading={busy === view.grant!.grant_id}
+                disabled={busy != null && busy !== view.grant!.grant_id}
+                onClick={() => setConfirmRevoke(view)}
               >
-                <Button
-                  size="small"
-                  danger
-                  loading={busy === view.grant!.grant_id}
-                  disabled={busy != null && busy !== view.grant!.grant_id}
-                >
-                  Revoke
-                </Button>
-              </Popconfirm>
+                Revoke
+              </Button>
             </Space>
           }
         />
       ))}
+      <Modal
+        open={confirmRevoke != null}
+        title="Revoke this approval?"
+        okText="Revoke and terminate"
+        okButtonProps={{ danger: true }}
+        onOk={() => {
+          const view = confirmRevoke;
+          setConfirmRevoke(undefined);
+          if (view) void revoke(view);
+        }}
+        onCancel={() => setConfirmRevoke(undefined)}
+      >
+        No new launch, and CoCalc terminates the pod it launched.
+      </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );

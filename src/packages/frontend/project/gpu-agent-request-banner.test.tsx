@@ -5,7 +5,9 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const agentRequests = jest.fn();
 const approveAgentRequest = jest.fn();
@@ -67,6 +69,8 @@ const PENDING = {
   created: "2026-10-28T12:00:00.000Z",
   expires_at: "2026-10-28T12:30:00.000Z",
 };
+// most tests run on the real clock: a request that hasn't expired
+const PENDING_NOW = { ...PENDING, expires_at: "2999-01-01T00:00:00.000Z" };
 const ACTIVE = {
   ...PENDING,
   request_id: "r-active",
@@ -74,7 +78,7 @@ const ACTIVE = {
   grant: {
     grant_id: "grant-1",
     state: "active",
-    expires_at: "2026-10-28T12:30:00.000Z",
+    expires_at: "2999-01-01T00:00:00.000Z",
     launches_used: 1,
   },
 };
@@ -92,7 +96,13 @@ describe("GpuAgentRequestBanner", () => {
     }
     freshAuth.mockClear();
     budget.mockResolvedValue({ paused: false, kill_switch: false });
+    // jsdom has no pseudo-element styles (antd's modal asks for them)
+    const getComputedStyle = window.getComputedStyle;
+    jest
+      .spyOn(window, "getComputedStyle")
+      .mockImplementation((element) => getComputedStyle(element));
   });
+  afterEach(() => jest.restoreAllMocks());
 
   it("shows nothing when there are no requests", async () => {
     agentRequests.mockResolvedValue([]);
@@ -108,7 +118,7 @@ describe("GpuAgentRequestBanner", () => {
   });
 
   it("shows the exact launch and approves exactly it, after a fresh sign-in", async () => {
-    agentRequests.mockResolvedValueOnce([PENDING]).mockResolvedValue([]);
+    agentRequests.mockResolvedValueOnce([PENDING_NOW]).mockResolvedValue([]);
     approveAgentRequest.mockResolvedValue({ grant_id: "g", state: "active" });
     render(<GpuAgentRequestBanner projectId="project-1" />);
     const approve = await screen.findByRole("button", {
@@ -136,7 +146,7 @@ describe("GpuAgentRequestBanner", () => {
   });
 
   it("approves nothing when the fresh sign-in is cancelled", async () => {
-    agentRequests.mockResolvedValue([PENDING]);
+    agentRequests.mockResolvedValue([PENDING_NOW]);
     freshAuth.mockImplementationOnce(async () => false);
     render(<GpuAgentRequestBanner projectId="project-1" />);
     fireEvent.click(
@@ -147,7 +157,7 @@ describe("GpuAgentRequestBanner", () => {
   });
 
   it("declines without a fresh sign-in", async () => {
-    agentRequests.mockResolvedValueOnce([PENDING]).mockResolvedValue([]);
+    agentRequests.mockResolvedValueOnce([PENDING_NOW]).mockResolvedValue([]);
     denyAgentRequest.mockResolvedValue({ state: "denied" });
     render(<GpuAgentRequestBanner projectId="project-1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Decline" }));
@@ -160,7 +170,7 @@ describe("GpuAgentRequestBanner", () => {
   });
 
   it("shows the server's refusal, e.g. a request that changed", async () => {
-    agentRequests.mockResolvedValue([PENDING]);
+    agentRequests.mockResolvedValue([PENDING_NOW]);
     approveAgentRequest.mockRejectedValue(
       new Error(
         "This request isn't the one you reviewed (it changed). Review it again.",
@@ -176,7 +186,7 @@ describe("GpuAgentRequestBanner", () => {
   });
 
   it("says when the kill switch would refuse even an approved launch", async () => {
-    agentRequests.mockResolvedValue([PENDING]);
+    agentRequests.mockResolvedValue([PENDING_NOW]);
     budget.mockResolvedValue({ paused: true, kill_switch: true });
     render(<GpuAgentRequestBanner projectId="project-1" />);
     expect(
@@ -184,24 +194,69 @@ describe("GpuAgentRequestBanner", () => {
     ).not.toBeNull();
   });
 
-  it("revokes an active approval after saying it terminates the pod", async () => {
+  it("revokes an active approval after saying it terminates the pod, by keyboard too", async () => {
     agentRequests.mockResolvedValueOnce([ACTIVE]).mockResolvedValue([]);
     revokeAgentGrant.mockResolvedValue({ state: "revoked" });
+    const user = userEvent.setup();
     render(<GpuAgentRequestBanner projectId="project-1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+    expect(await screen.findByText(/Its one launch was used/)).not.toBeNull();
+    const trigger = await screen.findByRole("button", { name: "Revoke" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog");
     expect(
-      await screen.findByText(/CoCalc terminates the pod it launched/),
+      within(dialog).getByText(/CoCalc terminates the pod it launched/),
     ).not.toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Revoke and terminate" }),
-    );
+    const ok = within(dialog).getByRole("button", {
+      name: "Revoke and terminate",
+    });
+    ok.focus();
+    await user.keyboard("{Enter}");
     await waitFor(() =>
       expect(revokeAgentGrant).toHaveBeenCalledWith({ grant_id: "grant-1" }),
     );
   });
 
+  it("Escape dismisses the revoke confirmation without revoking, and focus returns to Revoke", async () => {
+    agentRequests.mockResolvedValue([ACTIVE]);
+    const user = userEvent.setup();
+    render(<GpuAgentRequestBanner projectId="project-1" />);
+    const trigger = await screen.findByRole("button", { name: "Revoke" });
+    await user.click(trigger);
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(revokeAgentGrant).not.toHaveBeenCalled();
+  });
+
+  it("hides a request when it expires in an open tab, and looks again", async () => {
+    jest.useFakeTimers({ doNotFake: ["queueMicrotask", "nextTick"] });
+    try {
+      jest.setSystemTime(new Date("2026-10-28T12:29:00.000Z"));
+      agentRequests.mockResolvedValueOnce([PENDING]).mockResolvedValue([]);
+      render(<GpuAgentRequestBanner projectId="project-1" />);
+      expect(
+        await screen.findByRole("button", { name: "Approve this launch" }),
+      ).not.toBeNull();
+      // past its expiry (12:30), with nothing announcing it
+      await act(async () => {
+        jest.setSystemTime(new Date("2026-10-28T12:30:01.000Z"));
+        jest.advanceTimersByTime(61_000);
+      });
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "Approve this launch" }),
+        ).toBeNull(),
+      );
+      expect(agentRequests).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("refetches when told the project's GPU requests changed", async () => {
-    agentRequests.mockResolvedValueOnce([]).mockResolvedValue([PENDING]);
+    agentRequests.mockResolvedValueOnce([]).mockResolvedValue([PENDING_NOW]);
     render(<GpuAgentRequestBanner projectId="project-1" />);
     await waitFor(() => expect(agentRequests).toHaveBeenCalledTimes(1));
     act(() => {
