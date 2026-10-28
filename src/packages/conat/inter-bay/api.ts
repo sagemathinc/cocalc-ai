@@ -4141,6 +4141,24 @@ export interface InterBayGpuApi {
     account_id: string;
     provider: unknown;
   }) => Promise<{ revoked: boolean }>;
+  // Pods CoCalc starts with the key (step 3).
+  gpuLaunch: (opts: {
+    account_id: string;
+    project_id: unknown;
+    spec: unknown;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary>;
+  gpuTerminate: (opts: {
+    account_id: string;
+    pod_id: unknown;
+  }) => Promise<{ state: import("@cocalc/util/gpu/types").GpuPodState }>;
+  gpuWho: (opts: {
+    account_id: string;
+    query: unknown;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuAttribution[]>;
+  gpuManagedPods: (opts: {
+    account_id: string;
+    include_ended?: boolean;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]>;
 }
 
 export interface InterBayAccountLocalApi
@@ -8181,6 +8199,10 @@ export function createInterBayAccountLocalClient({
     gpuKeyStatus: async (opts) => await gpuClient.gpuKeyStatus(opts),
     gpuKeySet: async (opts) => await gpuClient.gpuKeySet(opts),
     gpuKeyDelete: async (opts) => await gpuClient.gpuKeyDelete(opts),
+    gpuLaunch: async (opts) => await gpuClient.gpuLaunch(opts),
+    gpuTerminate: async (opts) => await gpuClient.gpuTerminate(opts),
+    gpuWho: async (opts) => await gpuClient.gpuWho(opts),
+    gpuManagedPods: async (opts) => await gpuClient.gpuManagedPods(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -8758,6 +8780,10 @@ export function createInterBayAccountLocalHandler({
         gpuKeyStatus: async (opts) => await impl.gpuKeyStatus(opts),
         gpuKeySet: async (opts) => await impl.gpuKeySet(opts),
         gpuKeyDelete: async (opts) => await impl.gpuKeyDelete(opts),
+        gpuLaunch: async (opts) => await impl.gpuLaunch(opts),
+        gpuTerminate: async (opts) => await impl.gpuTerminate(opts),
+        gpuWho: async (opts) => await impl.gpuWho(opts),
+        gpuManagedPods: async (opts) => await impl.gpuManagedPods(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({

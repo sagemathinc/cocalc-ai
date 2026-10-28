@@ -247,9 +247,9 @@ describe("gpu.catalog", () => {
     ).rejects.toThrow("Your membership doesn't include");
     expect(rp.calls).toHaveLength(0);
     // A lapsed owner can still see what is running (and billing).
-    await expect(getGpuPods({ account_id: ACCOUNT }, lapsed)).resolves.toEqual(
-      expect.objectContaining({ pods: [] }),
-    );
+    await expect(
+      getGpuPods({ account_id: ACCOUNT, scope: "account" }, lapsed),
+    ).resolves.toEqual(expect.objectContaining({ pods: [] }));
     expect(rp.purposes).toEqual(["cleanup"]);
     await getGpuCatalog({ account_id: ACCOUNT }, rp);
     expect(rp.purposes).toEqual(["cleanup", "operate"]);
@@ -358,7 +358,10 @@ describe("gpu.pods", () => {
         },
       },
     });
-    const result = await getGpuPods({ account_id: ACCOUNT }, rp);
+    const result = await getGpuPods(
+      { account_id: ACCOUNT, scope: "account" },
+      rp,
+    );
     expect(result.scope).toBe("account");
     expect(result.pods).toEqual([
       {
@@ -383,17 +386,20 @@ describe("gpu.pods", () => {
       "/v2/pods/pod_gone99": { status: 404, body: { detail: "not found" } },
     });
     const one = await getGpuPods(
-      { account_id: ACCOUNT, pod_id: "pod_abc123" },
+      { account_id: ACCOUNT, scope: "account", pod_id: "pod_abc123" },
       rp,
     );
     expect(one.pods.map((p) => p.id)).toEqual(["pod_abc123"]);
     const none = await getGpuPods(
-      { account_id: ACCOUNT, pod_id: "pod_gone99" },
+      { account_id: ACCOUNT, scope: "account", pod_id: "pod_gone99" },
       rp,
     );
     expect(none.pods).toEqual([]);
     await expect(
-      getGpuPods({ account_id: ACCOUNT, pod_id: "../v2/billing" }, rp),
+      getGpuPods(
+        { account_id: ACCOUNT, scope: "account", pod_id: "../v2/billing" },
+        rp,
+      ),
     ).rejects.toThrow("invalid pod id");
     expect(rp.calls).toEqual(["/v2/pods/pod_abc123", "/v2/pods/pod_gone99"]);
   });
@@ -411,7 +417,10 @@ describe("gpu.pods", () => {
           body: { detail: `bad env ${BOOTSTRAP}`, auth: `Bearer ${KEY}` },
         },
       });
-      const err = await getGpuPods({ account_id: ACCOUNT }, rp).then(
+      const err = await getGpuPods(
+        { account_id: ACCOUNT, scope: "account" },
+        rp,
+      ).then(
         () => undefined,
         (e) => e,
       );
@@ -425,7 +434,7 @@ describe("gpu.pods", () => {
   it("hides why the key could not be loaded", async () => {
     await expect(
       getGpuPods(
-        { account_id: ACCOUNT },
+        { account_id: ACCOUNT, scope: "account" },
         {
           getCleanup: async () => {
             throw Error(`decrypt failed for ${KEY}`);
@@ -445,7 +454,10 @@ describe("hub API gpu.*", () => {
     // getClient must not be used.
     const getClient = jest.fn();
     await expect(
-      (hubGpu.pods as any)({ account_id: ACCOUNT }, { getClient }),
+      (hubGpu.pods as any)(
+        { account_id: ACCOUNT, scope: "account" },
+        { getClient },
+      ),
     ).rejects.toThrow("No RunPod API key is connected");
     expect(getClient).not.toHaveBeenCalled();
   });

@@ -7,11 +7,16 @@
 GPU bring-your-own-key: GPUs on the account's own provider account (RunPod
 first), using the key it connected in Settings. These reads are rich on
 purpose, so agents get the provider's full catalog and stock; nothing here
-ever returns the key or provider error text. Writes (launch, terminate) come
-with the allowlist request builder and budgets.
+ever returns the key or provider error text. Launch and terminate take only
+the allowlisted spec (util/gpu/launch-spec); budgets come in step 5.
 */
 
 import type { GpuProvider } from "@cocalc/util/gpu/provider-keys";
+import type {
+  GpuAttribution,
+  GpuLaunchSpec,
+  GpuPodSummary,
+} from "@cocalc/util/gpu/types";
 import type {
   RunpodCatalog,
   RunpodCloud,
@@ -27,10 +32,15 @@ import {
 // the project sealed into their token. Pods are account-only until they can
 // be filtered to the pods that agent's project started (launch, step 3): the
 // account's whole pod list spans projects and includes SSH endpoints.
+// Launch, terminate and who are account-only until agents get a token
+// scoped to their turn and budget (step 6).
 export const gpu = {
   catalog: authFirstRequireAccountOrBoundAgentProject,
   availability: authFirstRequireAccountOrBoundAgentProject,
   pods: authFirstRequireAccount,
+  launch: authFirstRequireAccount,
+  terminate: authFirstRequireAccount,
+  who: authFirstRequireAccount,
 };
 
 interface GpuReadOpts {
@@ -85,10 +95,14 @@ export interface GpuAvailabilityResult {
 export interface GpuPodsResult {
   provider: GpuProvider;
   as_of: string;
-  // "account": every pod in the provider account (until CoCalc records
-  // which pods it started). "managed": only pods CoCalc started.
+  // "managed" (the default): the pods CoCalc started that the caller pays for
+  // or is responsible for, with their records. "account": every pod in the
+  // provider account, read live, including ones CoCalc didn't start.
   scope: "account" | "managed";
+  // live views from RunPod (for "managed", only pods with a record here)
   pods: RunpodPodView[];
+  // CoCalc's records, for "managed"
+  records?: GpuPodSummary[];
 }
 
 export interface GpuApi {
@@ -98,5 +112,29 @@ export interface GpuApi {
   ) => Promise<GpuAvailabilityResult>;
   // With pod_id, that one pod read live (with SSH endpoints and runtime
   // metrics), or no pods if it doesn't exist.
-  pods: (opts?: GpuReadOpts & { pod_id?: string }) => Promise<GpuPodsResult>;
+  pods: (
+    opts?: GpuReadOpts & {
+      pod_id?: string;
+      scope?: "managed" | "account";
+      // also terminated and failed pods from the last 30 days
+      include_ended?: boolean;
+    },
+  ) => Promise<GpuPodsResult>;
+  launch: (opts: {
+    account_id?: string;
+    project_id: string;
+    spec: GpuLaunchSpec;
+    timeout?: number;
+  }) => Promise<GpuPodSummary>;
+  // pod_id: CoCalc's pod id, the handle, or RunPod's pod id
+  terminate: (opts: {
+    account_id?: string;
+    pod_id: string;
+    timeout?: number;
+  }) => Promise<{ state: GpuPodSummary["state"] }>;
+  // query: a pod id, handle, RunPod pod id, machine id or IP address
+  who: (opts: {
+    account_id?: string;
+    query: string;
+  }) => Promise<GpuAttribution[]>;
 }

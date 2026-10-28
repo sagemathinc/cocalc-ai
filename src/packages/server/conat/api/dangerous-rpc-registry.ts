@@ -23,6 +23,15 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "gpu.launch": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "starts a pod on the caller's own RunPod key, from the allowlisted spec, with a required maximum runtime; budgets (step 5) cap spend. Fresh auth would block the CLI and agents, which launch most pods",
+  },
+  "gpu.terminate": {
+    decision: "fresh-auth-not-required",
+    reason: "narrowing: ends a pod the caller pays for or is responsible for",
+  },
   "computers.approveComputerRequest": {
     decision: "fresh-auth-required",
     reason:

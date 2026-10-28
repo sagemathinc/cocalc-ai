@@ -136,7 +136,7 @@ beforeEach(() => {
 describe("gpu.* for an account homed on another bay", () => {
   it("forwards pods to the home bay; no key or pod secret crosses", async () => {
     const home = homeBay();
-    const result = await hubGpu.pods({ account_id: ACCOUNT });
+    const result = await hubGpu.pods({ account_id: ACCOUNT, scope: "account" });
     expect(result.pods).toEqual([
       { id: "pod_abc123", name: "cc-7f3k9q2x", status: "RUNNING" },
     ]);
@@ -157,7 +157,7 @@ describe("gpu.* for an account homed on another bay", () => {
     );
     expect(fastRpcRequest).not.toHaveBeenCalled();
     expect(GPU_HOME_BAY_TIMEOUT_MS).toBeGreaterThanOrEqual(120_000);
-    expect(home.received).toEqual([{ account_id: ACCOUNT }]);
+    expect(home.received).toEqual([{ account_id: ACCOUNT, scope: "account" }]);
     expect(edgeGetClient).not.toHaveBeenCalled();
     expect(edgeGetCleanup).not.toHaveBeenCalled();
     const text = wireText();
@@ -178,11 +178,15 @@ describe("gpu.* for an account homed on another bay", () => {
       api_key: KEY,
     } as any);
     await hubGpu.catalog({ account_id: ACCOUNT, provider: "runpod" });
-    await hubGpu.pods({ account_id: ACCOUNT, pod_id: "pod_abc123" });
+    await hubGpu.pods({
+      account_id: ACCOUNT,
+      scope: "account",
+      pod_id: "pod_abc123",
+    });
     expect(home.received).toEqual([
       { account_id: ACCOUNT, cloud: "SECURE", gpu: ["RTX A4000"] },
       { account_id: ACCOUNT, provider: "runpod" },
-      { account_id: ACCOUNT, pod_id: "pod_abc123" },
+      { account_id: ACCOUNT, scope: "account", pod_id: "pod_abc123" },
     ]);
     expect(wireText()).not.toContain(KEY);
     expect(edgeGetClient).not.toHaveBeenCalled();
@@ -192,9 +196,9 @@ describe("gpu.* for an account homed on another bay", () => {
   it("runs locally, without crossing, for an account homed here", async () => {
     resolveAccountHomeBay.mockResolvedValueOnce({ home_bay_id: "bay-0" });
     // The edge mock refuses: this bay was asked for the key itself.
-    await expect(hubGpu.pods({ account_id: ACCOUNT })).rejects.toThrow(
-      "Your RunPod API key could not be loaded.",
-    );
+    await expect(
+      hubGpu.pods({ account_id: ACCOUNT, scope: "account" }),
+    ).rejects.toThrow("Your RunPod API key could not be loaded.");
     expect(edgeGetCleanup).toHaveBeenCalledWith(ACCOUNT);
     expect(wire).toHaveLength(0);
   });

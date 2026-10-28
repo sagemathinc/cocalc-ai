@@ -121,6 +121,8 @@ export interface GpuPodSummary {
   terminated_at?: string;
   // why it failed or was terminated, in words for the user
   reason?: string;
+  // SHA256 fingerprint of ssh_public_key, as `ssh-keygen -lf` prints it
+  ssh_key_fingerprint?: string;
 }
 
 export interface GpuPodEvent {

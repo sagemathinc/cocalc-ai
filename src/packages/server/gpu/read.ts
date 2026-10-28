@@ -18,6 +18,7 @@ between bays, never the key.
 
 import { RunpodApiError, type RunpodClient } from "@cocalc/cloud/runpod/client";
 import { getRunpodCatalog } from "@cocalc/cloud/runpod/catalog";
+import type { RunpodPodView } from "@cocalc/util/gpu/runpod";
 import type {
   GpuAvailabilityFilter,
   GpuAvailabilityResult,
@@ -32,6 +33,7 @@ import {
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { listManagedGpuPodsLocal } from "@cocalc/server/gpu/pods";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
@@ -59,6 +61,7 @@ const MAX_CACHED_ACCOUNTS = 1000;
 // cleanup capability and stays readable after a lapse, so the owner can see
 // what is still running and billing.
 export interface GpuReadDeps {
+  listManaged?: typeof listManagedGpuPodsLocal;
   // for tests
   getClient?: (account_id: string) => Promise<RunpodClient | undefined>;
   getCleanup?: (
@@ -359,7 +362,13 @@ export async function getGpuAvailabilityLocal(
 const POD_ID = /^[A-Za-z0-9_-]{6,64}$/;
 
 export async function getGpuPodsLocal(
-  opts: { account_id?: string; provider?: unknown; pod_id?: unknown },
+  opts: {
+    account_id?: string;
+    provider?: unknown;
+    pod_id?: unknown;
+    scope?: unknown;
+    include_ended?: unknown;
+  },
   deps: GpuReadDeps = {},
 ): Promise<GpuPodsResult> {
   const account_id = requireAccount(opts.account_id);
@@ -368,18 +377,54 @@ export async function getGpuPodsLocal(
   if (podId != null && !(typeof podId === "string" && POD_ID.test(podId))) {
     throw Error("invalid pod id");
   }
-  const c = await cleanup(account_id, deps);
+  const scope = opts.scope ?? "managed";
+  if (scope !== "managed" && scope !== "account") {
+    throw Error('scope must be "managed" or "account"');
+  }
   const as_of = new Date((deps.now ?? Date.now)()).toISOString();
-  // Until CoCalc records which pods it started (launch), this is every pod
-  // in the provider account; there is no write path yet.
-  const pods =
+  if (scope === "account") {
+    // Every pod in the provider account, including ones CoCalc didn't start
+    // (what an unknown-pod alert points at). Account principals only.
+    const c = await cleanup(account_id, deps);
+    const pods =
+      podId != null
+        ? await runpod(async () => {
+            const pod = await c.getPod(podId);
+            return pod ? [pod] : [];
+          })
+        : await runpod(() => c.listPods());
+    return { provider, as_of, scope, pods };
+  }
+  // The pods CoCalc started that this account pays for or is responsible
+  // for, with live views of the ones RunPod knows.
+  const records = await (deps.listManaged ?? listManagedGpuPodsLocal)({
+    account_id,
+    include_ended: opts.include_ended === true,
+  });
+  const selected =
     podId != null
-      ? await runpod(async () => {
-          const pod = await c.getPod(podId);
-          return pod ? [pod] : [];
-        })
-      : await runpod(() => c.listPods());
-  return { provider, as_of, scope: "account", pods };
+      ? records.filter((r) => r.provider_pod_id === podId || r.handle === podId)
+      : records;
+  const bound = selected.filter(
+    (r) =>
+      r.provider_pod_id && r.state !== "terminated" && r.state !== "failed",
+  );
+  let pods: RunpodPodView[] = [];
+  if (bound.length > 0) {
+    // A record's pod is read with its key owner's key: the caller's own, as
+    // records are scoped to pods the caller's key pays for (classes, with
+    // another payer, come in step 7).
+    const c = await cleanup(account_id, deps);
+    const ids = new Set(bound.map((r) => r.provider_pod_id!));
+    pods =
+      podId != null && bound.length === 1
+        ? await runpod(async () => {
+            const pod = await c.getPod(bound[0].provider_pod_id!);
+            return pod ? [pod] : [];
+          })
+        : (await runpod(() => c.listPods())).filter((p) => ids.has(p.id));
+  }
+  return { provider, as_of, scope, pods, records: selected };
 }
 
 // ---- routed entry points (hub API) ----
@@ -437,14 +482,25 @@ export async function getGpuAvailability(
 }
 
 export async function getGpuPods(
-  opts: { account_id?: string; provider?: unknown; pod_id?: unknown },
+  opts: {
+    account_id?: string;
+    provider?: unknown;
+    pod_id?: unknown;
+    scope?: unknown;
+    include_ended?: unknown;
+  },
   deps: GpuReadDeps & GpuRoutingDeps = {},
 ): Promise<GpuPodsResult> {
   const account_id = requireAccount(opts.account_id);
   const home = await (deps.homeClient ?? gpuHomeClient)(account_id);
   if (home) {
     return await home.gpuPods(
-      forwarded(account_id, opts, ["provider", "pod_id"]) as any,
+      forwarded(account_id, opts, [
+        "provider",
+        "pod_id",
+        "scope",
+        "include_ended",
+      ]) as any,
     );
   }
   return await getGpuPodsLocal({ ...opts, account_id }, deps);

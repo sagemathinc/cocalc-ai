@@ -336,11 +336,14 @@ describe("GPU provider keys", () => {
       ...home,
       fetch,
     }))!;
+    // Nothing that creates or starts anything.
     expect(Object.keys(cleanup).sort()).toEqual([
+      "findPodsByName",
       "getPod",
       "getProviderIdentity",
       "listPodBilling",
       "listPods",
+      "terminatePod",
     ]);
     expect(Object.isFrozen(cleanup)).toBe(true);
     expect(cleanup).not.toBeInstanceOf(

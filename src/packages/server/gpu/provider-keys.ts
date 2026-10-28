@@ -389,13 +389,13 @@ async function isAccountHomeBay(account_id: string): Promise<boolean> {
 async function readLocalKey(
   account_id: string,
   deps: GpuProviderKeyDeps,
-): Promise<string | undefined> {
+): Promise<{ id: string; apiKey: string } | undefined> {
   await requireHomeBay(account_id, deps);
   const record = await getExternalCredential({
     selector: selector(account_id, "runpod"),
   });
   if (!record || record.revoked || !record.payload) return undefined;
-  return record.payload;
+  return { id: record.id, apiKey: record.payload };
 }
 
 // Custody (both functions below): they run only on the key owner's home bay
@@ -411,15 +411,28 @@ export async function getRunpodClientForAccount(
   account_id: string,
   deps: GpuProviderKeyDeps = {},
 ): Promise<RunpodClient | undefined> {
+  return (await getRunpodLaunchAccessForAccount(account_id, deps))?.client;
+}
+
+// The full client together with the id of the stored key it uses, which
+// every pod record keeps. Same custody and entitlement as above.
+export async function getRunpodLaunchAccessForAccount(
+  account_id: string,
+  deps: GpuProviderKeyDeps = {},
+): Promise<{ client: RunpodClient; credential_id: string } | undefined> {
   if (!(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))) {
     throw Error("Your membership doesn't include using a GPU provider key.");
   }
-  const apiKey = await readLocalKey(account_id, deps);
-  return apiKey ? new RunpodClient({ apiKey, fetch: deps.fetch }) : undefined;
+  const key = await readLocalKey(account_id, deps);
+  if (!key) return undefined;
+  return {
+    client: new RunpodClient({ apiKey: key.apiKey, fetch: deps.fetch }),
+    credential_id: key.id,
+  };
 }
 
 // What cleanup may do with an account's key: find the pods and storage it
-// manages, check billing, and (from step 3) terminate them. Nothing here can
+// manages, check billing, and terminate them. Nothing here can
 // create or start anything, so it needs no entitlement: a lapsed membership
 // or a removed key can still be cleaned up. The client itself stays private
 // to these closures.
@@ -430,20 +443,24 @@ export interface RunpodCleanupCapability {
   listPodBilling(
     ...args: Parameters<RunpodClient["listPodBilling"]>
   ): ReturnType<RunpodClient["listPodBilling"]>;
+  terminatePod(podId: string): Promise<void>;
+  findPodsByName(name: string): ReturnType<RunpodClient["findPodsByName"]>;
 }
 
 export async function getRunpodCleanupForAccount(
   account_id: string,
   deps: GpuProviderKeyDeps = {},
 ): Promise<RunpodCleanupCapability | undefined> {
-  const apiKey = await readLocalKey(account_id, deps);
-  if (!apiKey) return undefined;
-  const client = new RunpodClient({ apiKey, fetch: deps.fetch });
+  const key = await readLocalKey(account_id, deps);
+  if (!key) return undefined;
+  const client = new RunpodClient({ apiKey: key.apiKey, fetch: deps.fetch });
   return Object.freeze({
     getProviderIdentity: () => client.getProviderIdentity(),
     listPods: () => client.listPods(),
     getPod: (podId: string) => client.getPod(podId),
     listPodBilling: (...args: Parameters<RunpodClient["listPodBilling"]>) =>
       client.listPodBilling(...args),
+    terminatePod: (podId: string) => client.terminatePod(podId),
+    findPodsByName: (name: string) => client.findPodsByName(name),
   });
 }
