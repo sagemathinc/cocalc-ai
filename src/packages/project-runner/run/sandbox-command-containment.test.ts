@@ -314,7 +314,7 @@ test("recovery polling never overlaps a stalled privileged query, and abandons i
   child.emit("close", 1);
   await result;
   const finish: (() => void)[] = [];
-  const queries: { kill: jest.Mock }[] = [];
+  const queries: (EventEmitter & { kill: jest.Mock })[] = [];
   mockExecFile.mockImplementation((_command, _args, _options, callback) => {
     const stdin = new PassThrough();
     stdin.on("data", (data) => {
@@ -325,25 +325,29 @@ test("recovery polling never overlaps a stalled privileged query, and abandons i
         ),
       );
     });
-    const query = { stdin, kill: jest.fn() };
+    const query = Object.assign(new EventEmitter(), { stdin, kill: jest.fn() });
     queries.push(query);
     return query;
   });
-  // The query at 5 s never settles: no other query overlaps it, but after
-  // 45 s it is killed and abandoned, so recovery cannot stop for good.
+  // The query at 5 s never settles: after 45 s it is abandoned and asked to
+  // stop (sudo relays SIGTERM to the helper; SIGKILL would orphan it).
   await jest.advanceTimersByTimeAsync(49_999);
   expect(mockExecFile).toHaveBeenCalledTimes(1);
   expect(queries[0].kill).not.toHaveBeenCalled();
   await jest.advanceTimersByTimeAsync(1);
-  expect(queries[0].kill).toHaveBeenCalledWith("SIGKILL");
+  expect(queries[0].kill).toHaveBeenCalledWith("SIGTERM");
   // An abandoned query's late reply proves nothing.
   finish[0]();
   await jest.advanceTimersByTimeAsync(0);
   expect(confirmed).not.toHaveBeenCalled();
-  // The next 30 s check asks again.
-  await jest.advanceTimersByTimeAsync(40_000);
+  // No other query starts until the abandoned one has exited.
+  await jest.advanceTimersByTimeAsync(60_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(1);
+  queries[0].emit("exit", null, "SIGTERM");
+  await jest.advanceTimersByTimeAsync(30_000);
   expect(mockExecFile).toHaveBeenCalledTimes(2);
   finish[1]();
+  queries[1].emit("exit", 0, null);
   await jest.advanceTimersByTimeAsync(0);
   expect(confirmed).toHaveBeenCalledTimes(1);
   await jest.advanceTimersByTimeAsync(60_000);

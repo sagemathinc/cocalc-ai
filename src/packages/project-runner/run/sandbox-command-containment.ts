@@ -81,6 +81,9 @@ async function recover(): Promise<void> {
     recoveries.set(entry.scope, entry);
   }
   let watchdog: ReturnType<typeof setTimeout> | undefined;
+  // Resolves when sudo has exited, i.e. after the root helper did.
+  let exited: Promise<void> | undefined;
+  let abandoned = false;
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
       const child = execFile(
@@ -92,9 +95,17 @@ async function recover(): Promise<void> {
             ? reject(Error("Cleanup confirmation unavailable"))
             : resolve(stdout),
       );
+      exited =
+        typeof child.once === "function"
+          ? new Promise((done) => child.once("exit", () => done()))
+          : undefined;
       watchdog = setTimeout(() => {
+        // Its reply no longer counts. sudo relays SIGTERM to the read-only
+        // helper (SIGKILL would orphan it); the next query waits until it has
+        // exited, so queries never overlap.
+        abandoned = true;
         reject(Error("Cleanup confirmation did not finish"));
-        child.kill?.("SIGKILL");
+        child.kill?.("SIGTERM");
       }, CONFIRM_WATCHDOG_MS);
       watchdog.unref?.();
       child.stdin?.on("error", () => {});
@@ -151,6 +162,10 @@ async function recover(): Promise<void> {
     });
   } finally {
     clearTimeout(watchdog);
+    if (abandoned && exited) {
+      logger.warn("job cleanup recheck abandoned; waiting for it to exit");
+      await exited;
+    }
     recovering = false;
     if (!recoveries.size) {
       clearInterval(recoveryTimer);
