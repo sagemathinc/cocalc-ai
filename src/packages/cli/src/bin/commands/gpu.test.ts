@@ -662,7 +662,17 @@ it("a kernel template launches with a key made here, then connects and registers
 // A program whose hub records launches, with offers in stock and pod keys in
 // a temporary home; `cocalc gpu ...` command lines run as a shell would
 // split them.
-async function launchHarness({ billed }: { billed?: string } = {}) {
+async function launchHarness({
+  billed,
+  noRate = false,
+  reflectFails = false,
+  terminateFails = false,
+}: {
+  billed?: string;
+  noRate?: boolean;
+  reflectFails?: boolean;
+  terminateFails?: boolean;
+} = {}) {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -693,7 +703,10 @@ async function launchHarness({ billed }: { billed?: string } = {}) {
     connect: {
       home,
       sleep: async () => {},
-      runReflect: async () => ({ code: 0, stdout: "{}", stderr: "" }),
+      runReflect: async () => {
+        if (reflectFails) throw new Error("reflect is broken");
+        return { code: 0, stdout: "{}", stderr: "" };
+      },
     },
     withContext: async (_cmd, _name, fn) => {
       outputs.push(
@@ -721,15 +734,14 @@ async function launchHarness({ billed }: { billed?: string } = {}) {
                 calls.push({ name: "launch", args });
                 // a new handle per pod, so each pod's key is its own
                 handle = `cc-${"abcdefghijklmnop".slice(0, 15)}${"abcdefghijklmnopqrstuvwxyz"[launches++]}`;
-                return {
-                  ...RECORD,
-                  handle,
-                  state: "running",
-                  cost_per_hr: billed ?? "0.25",
-                };
+                const pod: any = { ...RECORD, handle, state: "running" };
+                if (noRate) delete pod.cost_per_hr;
+                else pod.cost_per_hr = billed ?? "0.25";
+                return pod;
               },
               terminate: async (args) => {
                 calls.push({ name: "terminate", args });
+                if (terminateFails) throw new Error("hub call failed");
                 return { state: "terminating" };
               },
               sshInfo: async (args) => {
@@ -833,4 +845,46 @@ it("terminates a pod at once if RunPod bills it above --max-cost", async () => {
   );
   await ok.run(dry2.next);
   assert.ok(!ok.calls.some((c) => c.name === "terminate"));
+});
+
+it("with --max-cost, a pod whose billed rate can't be verified is terminated too", async () => {
+  const PROJECT = "00000000-1000-4000-8000-0000000000bb";
+  const dryLine = `cocalc gpu launch --dry-run --project ${PROJECT} --template pytorch-ssh --gpu "NVIDIA RTX A4000"`;
+  for (const opts of [
+    { noRate: true },
+    { billed: "" },
+    { billed: "n/a" },
+    { billed: "-1" },
+  ]) {
+    const h = await launchHarness(opts);
+    const dry = await h.run(dryLine);
+    await assert.rejects(
+      h.run(dry.next),
+      /RunPod didn't report a billed rate for cc-\S+, so it can't be held to --max-cost \$0\.26; it was terminated\./,
+      JSON.stringify(opts),
+    );
+    assert.ok(
+      h.calls.some((c) => c.name === "terminate"),
+      JSON.stringify(opts),
+    );
+  }
+});
+
+it("a local cleanup failure after the terminate doesn't change what is reported", async () => {
+  const PROJECT = "00000000-1000-4000-8000-0000000000bb";
+  const dryLine = `cocalc gpu launch --dry-run --project ${PROJECT} --template pytorch-ssh --gpu "NVIDIA RTX A4000"`;
+  // RunPod terminated it; forgetting it here failed: still "terminated"
+  const h = await launchHarness({ billed: "0.40", reflectFails: true });
+  const dry = await h.run(dryLine);
+  await assert.rejects(
+    h.run(dry.next),
+    /more than --max-cost \$0\.26; it was terminated\./,
+  );
+  // the terminate itself failed: say so, with the command to run
+  const t = await launchHarness({ billed: "0.40", terminateFails: true });
+  const dry2 = await t.run(dryLine);
+  await assert.rejects(
+    t.run(dry2.next),
+    /more than --max-cost \$0\.26; terminating it failed: run cocalc gpu terminate cc-\S+\./,
+  );
 });

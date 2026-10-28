@@ -415,10 +415,13 @@ export function registerGpuCommand(
             }
           }
           // The price was checked before the launch; RunPod's actual rate is
-          // known only now. Above --max-cost, the pod goes at once.
+          // known only now. Above --max-cost, or if it can't be verified, the
+          // pod goes at once.
           if (opts.maxCost != null && pod.state !== "failed") {
-            const hourly = Number(pod.cost_per_hr);
-            const bound = Number.isFinite(hourly)
+            const raw = `${pod.cost_per_hr ?? ""}`.trim();
+            const hourly = raw === "" ? NaN : Number(raw);
+            const verified = Number.isFinite(hourly) && hourly >= 0;
+            const bound = verified
               ? maxLaunchCostUsd({
                   price_per_gpu_hour: hourly / spec.gpu_count,
                   gpu_count: spec.gpu_count,
@@ -427,17 +430,25 @@ export function registerGpuCommand(
                   volume_gb: spec.volume_gb ?? 0,
                 })
               : undefined;
-            if (bound != null && bound > opts.maxCost) {
-              let ended = "it was terminated";
+            if (bound == null || bound > opts.maxCost) {
+              const cap = `--max-cost $${opts.maxCost.toFixed(2)}`;
+              const why = verified
+                ? `RunPod billed ${pod.handle} at $${hourly}/h, so it could cost up to $${bound!.toFixed(2)}, more than ${cap}`
+                : `RunPod didn't report a billed rate for ${pod.handle}, so it can't be held to ${cap}`;
+              let ended: string;
               try {
                 await api.terminate({ pod_id: pod.handle });
-                if (key) await disconnectGpuPod(pod.handle, deps.connect);
+                ended = "it was terminated";
               } catch {
                 ended = `terminating it failed: run cocalc gpu terminate ${pod.handle}`;
               }
-              throw new Error(
-                `RunPod billed ${pod.handle} at $${hourly}/h, so it could cost up to $${bound.toFixed(2)}, more than --max-cost $${opts.maxCost.toFixed(2)}; ${ended}.`,
-              );
+              // Only after RunPod was asked: forgetting it here is best effort.
+              if (key && ended === "it was terminated") {
+                try {
+                  await disconnectGpuPod(pod.handle, deps.connect);
+                } catch {}
+              }
+              throw new Error(`${why}; ${ended}.`);
             }
           }
           const shown: Record<string, unknown> = isJson(ctx)
