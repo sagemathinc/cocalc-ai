@@ -712,15 +712,13 @@ describeDb("agent GPU launches", () => {
       { account_id, project_id: PROJECT, spec: SPEC },
       deps,
     );
-    const scope = {
+    const scope = { project_id: PROJECT, agent_id: p.agent_id };
+    const other = {
       project_id: PROJECT,
-      agent_id: p.agent_id,
-      run_id: p.run_id,
+      agent_id: `session:${"c".repeat(64)}`,
     };
-    const otherKey = `session:${"c".repeat(64)}`;
-    const other = { project_id: PROJECT, agent_id: otherKey, run_id: otherKey };
-    // the same agent in a later run is a different principal
-    const laterRun = { ...scope, run_id: "a-later-run" };
+    // the same agent in another project
+    const elsewhere = { ...scope, project_id: OTHER_PROJECT };
     const listed = await listManagedGpuPodsLocal(
       { account_id, agent: scope },
       deps,
@@ -735,7 +733,7 @@ describeDb("agent GPU launches", () => {
     ]);
     expect(seen).not.toContain("session:");
     expect(seen).not.toContain("a".repeat(64));
-    for (const nobody of [other, laterRun]) {
+    for (const nobody of [other, elsewhere]) {
       expect(
         await listManagedGpuPodsLocal({ account_id, agent: nobody }, deps),
       ).toEqual([]);
@@ -746,12 +744,19 @@ describeDb("agent GPU launches", () => {
         ),
       ).rejects.toThrow("No such GPU pod");
     }
-    await expect(
-      terminateGpuPodLocal(
-        { account_id, pod_id: mine.handle, agent: laterRun },
-        deps,
-      ),
-    ).rejects.toThrow("No such GPU pod");
+    // an agent's lookup is recorded as the agent's, not the human's
+    await whoGpuPodLocal(
+      { account_id, query: mine.handle, agent: scope },
+      deps,
+    );
+    const lookups = await getPool().query(
+      "SELECT actor_kind, agent_id FROM gpu_pod_events WHERE pod_id = $1 AND action = 'who_lookup' ORDER BY at, id",
+      [mine.id],
+    );
+    expect(lookups.rows.map((r: any) => r.actor_kind).sort()).toEqual([
+      "agent",
+      "user",
+    ]);
     expect(
       await whoGpuPodLocal(
         { account_id, query: human.handle, agent: scope },

@@ -525,13 +525,12 @@ type GpuAgentPrincipalWire = Omit<GpuAgentPrincipal, "expires_at"> & {
 // An agent sees only the managed pods it launched in its own project (its
 // principal key, so a chat session sees only that session's pods). Human
 // launches and other agents' pods are never in scope for it.
-// What an agent may see and reach: the pods it launched in its project, in
-// this run (a registered agent's later run is a different principal; for a
-// chat session the run is the session).
+// What an agent may see and reach: the pods it launched in its project. A
+// later run of the same agent may clean up an earlier run's pods (STEP6
+// "later cleanup"); for a chat session the agent is the session.
 export interface GpuAgentScope {
   project_id: string;
   agent_id: string;
-  run_id: string;
 }
 
 // A chat session's key is derived from its token's fingerprint: never shown.
@@ -545,8 +544,8 @@ function agentScopeSql(
 ): { sql: string; values: unknown[] } {
   if (!agent) return { sql: "", values: [] };
   return {
-    sql: ` AND project_id = $${first} AND agent_id = $${first + 1} AND turn_id = $${first + 2}`,
-    values: [agent.project_id, agent.agent_id, agent.run_id ?? null],
+    sql: ` AND project_id = $${first} AND agent_id = $${first + 1}`,
+    values: [agent.project_id, agent.agent_id],
   };
 }
 
@@ -1713,9 +1712,16 @@ export async function whoGpuPodLocal(
       pod: podSummary(row),
       events: events.rows.map(eventView),
     });
-    await recordEvent(row.id, { kind: "user", account_id }, "who_lookup", {
-      query_kind: HANDLE.test(q) ? "handle" : isValidUUID(q) ? "id" : "hint",
-    });
+    await recordEvent(
+      row.id,
+      opts.agent
+        ? { kind: "agent", account_id, agent_id: opts.agent.agent_id }
+        : { kind: "user", account_id },
+      "who_lookup",
+      {
+        query_kind: HANDLE.test(q) ? "handle" : isValidUUID(q) ? "id" : "hint",
+      },
+    );
   }
   return out;
 }
