@@ -698,7 +698,11 @@ describeDb("GPU budgets", () => {
           },
           a.deps,
         ),
-      ).toEqual({ closed: false, listing_failed: true });
+      ).toEqual({
+        closed: false,
+        listing_failed: true,
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
       const fence = async () =>
         (
           await getPool().query(
@@ -738,6 +742,7 @@ describeDb("GPU budgets", () => {
       ).toEqual({
         closed: false,
         awaiting_provider_revocation: true,
+        warning: expect.stringContaining("RunPod's Pods page"),
         provider_pods: 0,
         managed_pods: 0,
       });
@@ -804,6 +809,7 @@ describeDb("GPU budgets", () => {
       expect(result).toEqual({
         closed: false,
         awaiting_provider_revocation: true,
+        warning: expect.stringContaining("RunPod's Pods page"),
         provider_pods: 0,
         managed_pods: 0,
       });
@@ -994,7 +1000,11 @@ describeDb("GPU budgets", () => {
         { ...a.deps, passMs: 0 },
       );
       // out of time before the first pod: nothing terminated, nothing listed
-      expect(result).toEqual({ closed: false, managed_pods: 1 });
+      expect(result).toEqual({
+        closed: false,
+        managed_pods: 1,
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
       expect(s.rp.client.terminatePod).not.toHaveBeenCalled();
       expect(a.cleanup.listPods).not.toHaveBeenCalled();
       // the next pass, with time, continues
@@ -1025,7 +1035,11 @@ describeDb("GPU budgets", () => {
       );
       // cut: neither "awaiting revocation" nor a listing failure, and the
       // key's identity was never checked
-      expect(result).toEqual({ closed: false, managed_pods: 0 });
+      expect(result).toEqual({
+        closed: false,
+        managed_pods: 0,
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
       expect(a.cleanup.getProviderIdentity).not.toHaveBeenCalled();
     });
 
@@ -1050,7 +1064,11 @@ describeDb("GPU budgets", () => {
         },
         { ...a.deps, passMs: 150 },
       );
-      expect(result).toEqual({ closed: false, managed_pods: 1 });
+      expect(result).toEqual({
+        closed: false,
+        managed_pods: 1,
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
       const state = async () =>
         (
           await getPool().query("SELECT state FROM gpu_pods WHERE id = $1", [

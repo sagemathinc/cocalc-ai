@@ -74,6 +74,11 @@ const PROVIDER_REJECTED_WARNING =
 const CLOSED_WARNING =
   "CoCalc removed this key and stopped watching the RunPod account. It can't see pods started after its last check: look at RunPod's Pods page once, and terminate any pod you don't recognize.";
 
+// What the owner does next, told by every report (the close itself usually
+// happens later, in the background, where no one sees its result).
+const NEXT_STEPS_WARNING =
+  "Delete this key on RunPod's Credentials page: until then CoCalc keeps it, to watch the account and terminate every pod in it. After you delete it, check RunPod's Pods page once and terminate any pod you don't recognize: CoCalc can't see pods started after its last check.";
+
 // how long the report request's own pass may spend terminating pods (the
 // compromise worker continues)
 const REQUEST_PASS_MS = 15_000;
@@ -282,6 +287,7 @@ export async function runCompromiseCleanup(
       awaiting_provider_revocation: true,
       provider_pods: 0,
       managed_pods: 0,
+      warning: NEXT_STEPS_WARNING,
     };
   }
   return await revokeAndClose(account_id, credential_id, deps);
@@ -425,7 +431,8 @@ export async function reportCompromisedLocal(
     );
   });
   // 2. One pass now; the reaper continues.
-  return await runCompromiseCleanup(account_id, credential_id, deps);
+  const status = await runCompromiseCleanup(account_id, credential_id, deps);
+  return { ...status, warning: status.warning ?? NEXT_STEPS_WARNING };
 }
 
 async function compromiseHomeClient(

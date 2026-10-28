@@ -156,9 +156,10 @@ function harness(
             observe();
             return {
               closed: false,
-              provider_rejected: true,
-              managed_pods: 1,
-              warning: "terminate them at RunPod",
+              awaiting_provider_revocation: true,
+              provider_pods: 0,
+              managed_pods: 0,
+              warning: "check RunPod's Pods page once",
             };
           },
           who: async (args) => {
@@ -421,12 +422,14 @@ it("the kill switch pauses by default for the account, never for a project, and 
   ]);
   // terminating pods can take a while: the write-sized timeout
   assert.equal(h.seen[0].rpcTimeoutMs, GPU_POD_WRITE_RPC_TIMEOUT_MS);
-  // the warning for pods CoCalc can no longer stop reaches the output
+  // the ordinary first answer (RunPod still accepts the key) carries the
+  // owner's next steps in the command's output, not only its help
   assert.deepEqual(h.outputs.at(-1), {
     closed: false,
-    provider_rejected: true,
-    managed_pods: 1,
-    warning: "terminate them at RunPod",
+    awaiting_provider_revocation: true,
+    provider_pods: 0,
+    managed_pods: 0,
+    warning: "check RunPod's Pods page once",
   });
 });
 
