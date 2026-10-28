@@ -99,7 +99,7 @@ export interface GpuProviderKeyDeps {
   credentialPods?: (
     credential_id: string,
   ) => Promise<{ id: string; handle: string }[]>;
-  drain?: (account_id: string) => Promise<unknown>;
+  drain?: (account_id: string, guard: () => Promise<void>) => Promise<unknown>;
   markUnmanaged?: (credential_id: string) => Promise<string[]>;
   drainMs?: number;
   drainPollMs?: number;
@@ -657,10 +657,17 @@ export async function deleteGpuProviderKeyLocal(
   // 2. Terminate them with the key while it is still stored (bounded).
   if (!rejected) {
     const drain =
-      deps.drain ?? ((a: string) => pods.resolvePendingForAccount(a, {}));
+      deps.drain ??
+      ((a: string, guard: () => Promise<void>) =>
+        pods.resolvePendingForAccount(a, {}, { guard }));
     const deadline = Date.now() + (deps.drainMs ?? KEY_REMOVAL_DRAIN_MS);
+    // the resolver stops at the deadline too, before its next pod (one slow
+    // RunPod call can't turn into a whole batch of them)
+    const guard = async () => {
+      if (Date.now() >= deadline) throw Error("key removal drain deadline");
+    };
     for (;;) {
-      await drain(account_id).catch(() => {});
+      await drain(account_id, guard).catch(() => {});
       if ((await unfinished()).length === 0 || Date.now() >= deadline) break;
       await new Promise((r) => setTimeout(r, deps.drainPollMs ?? 2_000));
     }

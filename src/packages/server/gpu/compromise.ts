@@ -281,6 +281,11 @@ export async function runCompromiseCleanup(
   } catch (err) {
     rejected = err instanceof RunpodApiError && err.kind === "auth";
   }
+  // the answer may have come after the pass's time (or lease) ran out
+  await bounded().catch((e) => {
+    if (!cut) throw e;
+  });
+  if (cut) return await cutShort();
   if (!rejected) {
     return {
       closed: false,

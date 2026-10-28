@@ -573,6 +573,32 @@ describeDb("GPU budgets", () => {
     });
   });
 
+  it("a key removal's drain stops its resolver at the deadline", async () => {
+    const s = setup();
+    const pod = await s.launch();
+    const seen: boolean[] = [];
+    const result = await deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      {
+        isHomeBay: async () => true,
+        storedKeyRejected: async () => false,
+        drainMs: 50,
+        // a resolver whose pods are slow: past the deadline, its guard stops it
+        drain: async (_a: string, guard: () => Promise<void>) => {
+          await new Promise((r) => setTimeout(r, 80));
+          seen.push(
+            await guard().then(
+              () => false,
+              () => true,
+            ),
+          );
+        },
+      },
+    );
+    expect(seen).toEqual([true]);
+    expect(result).toEqual({ revoked: false, remaining: [pod.handle] });
+  });
+
   it("a forced key removal leaves a pod RunPod won't terminate unmanaged: quarantined, never claimed stopped", async () => {
     const s = setup();
     const pod = await s.launch();
@@ -1082,6 +1108,91 @@ describeDb("GPU budgets", () => {
       a.cleanup.listPods.mockResolvedValueOnce([]);
       await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
       expect(await state()).toBe("terminated");
+    });
+
+    it("acts on no identity answer that came back after the pass's time ran out", async () => {
+      const s = setup();
+      await s.stored;
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      const a = account(s);
+      // the owner deleted the key at RunPod, but RunPod's answer is slow
+      a.cleanup.listPods.mockResolvedValue([]);
+      a.cleanup.getProviderIdentity.mockImplementationOnce(async () => {
+        await new Promise((r) => setTimeout(r, 300));
+        throw new RunpodApiError("auth", 401);
+      });
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        { ...a.deps, passMs: 150 },
+      );
+      expect(result.closed).toBe(false);
+      const fence = async () =>
+        (
+          await getPool().query(
+            "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+            [s.credential_id],
+          )
+        ).rows[0].state;
+      expect(await fence()).toBe("compromised");
+      // the next pass, in time, closes
+      a.cleanup.getProviderIdentity.mockRejectedValueOnce(
+        new RunpodApiError("auth", 401),
+      );
+      expect(
+        (await runCompromiseCleanup(s.account_id, s.credential_id, a.deps))
+          .closed,
+      ).toBe(true);
+      expect(await fence()).toBe("closed");
+    });
+
+    it("a pass whose lease was lost while RunPod answered the identity check neither revokes nor closes", async () => {
+      const s = setup();
+      await s.stored;
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      const a = account(s);
+      a.cleanup.listPods.mockResolvedValue([]);
+      // start compromised (as a report leaves it), then run a worker pass
+      await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      let lost = false;
+      a.cleanup.getProviderIdentity.mockImplementationOnce(async () => {
+        lost = true; // another hub took the lease meanwhile
+        throw new RunpodApiError("auth", 401);
+      });
+      await expect(
+        runCompromiseCleanup(s.account_id, s.credential_id, {
+          ...a.deps,
+          guard: async () => {
+            if (lost) throw Error("lease lost");
+          },
+        }),
+      ).rejects.toThrow("lease lost");
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("compromised");
+      const { rows: cred } = await getPool().query(
+        "SELECT revoked IS NULL AS active FROM external_credentials WHERE id = $1",
+        [s.credential_id],
+      );
+      expect(cred[0].active).toBe(true);
     });
 
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {

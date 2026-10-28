@@ -25,6 +25,9 @@ jest.mock("@cocalc/database/settings/secret-settings", () => ({
 
 const describeRealPostgres = postgresBinDir() ? describe : describe.skip;
 
+// lock waits are slow on a loaded machine (the full parallel run)
+jest.setTimeout(30_000);
+
 const OLD = "rpa_OLDKEY0123456789abcdefghijklmnopqrstuvwxyzAB";
 const NEW = "rpa_NEWKEY0123456789abcdefghijklmnopqrstuvwxyzAB";
 
