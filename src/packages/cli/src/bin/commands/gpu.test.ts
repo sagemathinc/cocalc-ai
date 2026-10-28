@@ -328,6 +328,9 @@ it("launches from flags, in this project, with a write-sized timeout", async () 
             cloud: "COMMUNITY",
             ports: ["8888/http"],
             env: { EPOCHS: "3", MODE: "a=b" },
+            // checked against the allowlist here too, with its defaults
+            container_disk_gb: 20,
+            volume_gb: 0,
           },
         },
       },
@@ -563,5 +566,374 @@ it("launch --ssh removes its pending key when the server refuses, and keeps it o
     (await launchFailing(Object.assign(new Error("timeout"), { code: 408 })))
       .length,
     1,
+  );
+});
+
+it("lists templates, and a template dry run shows the GPU and the most it can cost", async () => {
+  const h = harness();
+  await h.run("templates");
+  assert.ok((h.outputs[0] as any[]).some((t) => t.id === "pytorch-kernel"));
+  const prev = process.env.COCALC_PROJECT_ID;
+  process.env.COCALC_PROJECT_ID = RECORD.project_id;
+  try {
+    // the harness has no offers in stock
+    await assert.rejects(
+      h.run("launch", "--template", "pytorch-kernel", "--dry-run"),
+      /No GPU with at least 16 GB is in stock/,
+    );
+    await h.run(
+      "launch",
+      "--template",
+      "pytorch-ssh",
+      "--gpu",
+      "NVIDIA RTX A4000",
+      "--dry-run",
+    );
+  } finally {
+    process.env.COCALC_PROJECT_ID = prev;
+  }
+  const dry = h.outputs.at(-1) as any;
+  assert.equal(dry.dry_run, true);
+  assert.equal(dry.template, "pytorch-ssh");
+  assert.equal(dry.ssh, true);
+  assert.equal(dry.kernel, false);
+  assert.equal(dry.spec.gpu_type_id, "NVIDIA RTX A4000");
+  assert.equal(dry.spec.max_runtime_minutes, 60);
+  assert.equal(dry.max_cost_usd, null);
+  // no price, so no pinned next command
+  assert.equal(dry.next, null);
+  // nothing was launched
+  assert.ok(!h.calls.some((c) => c.name === "launch"));
+});
+
+it("a kernel template launches with a key made here, then connects and registers the kernel", async () => {
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(tmpdir(), "gpu-cmd-template-"));
+  const handle = "cc-abcdefgh234567ab";
+  const HOST_KEY =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+  const calls: Array<{ name: string; args: any }> = [];
+  const reflect: string[][] = [];
+  const outputs: any[] = [];
+  const program = new Command()
+    .exitOverride()
+    .configureOutput({ writeErr: () => {}, writeOut: () => {} });
+  let fingerprint = "";
+  registerGpuCommand(program, {
+    connect: {
+      home,
+      sleep: async () => {},
+      runReflect: async (args) => {
+        reflect.push(args);
+        return {
+          code: 0,
+          stdout: JSON.stringify({ kernel: `reflect-${handle}` }),
+          stderr: "",
+        };
+      },
+    },
+    withContext: async (_cmd, _name, fn) => {
+      outputs.push(
+        await fn({
+          globals: { json: true },
+          timeoutMs: 600_000,
+          rpcTimeoutMs: 30_000,
+          hub: {
+            gpu: {
+              availability: async (args) => {
+                calls.push({ name: "availability", args });
+                return {
+                  offers: [
+                    {
+                      gpu_type_id: "NVIDIA RTX A4000",
+                      gpu_name: "RTX A4000",
+                      memory_gb: 16,
+                      cloud: "SECURE",
+                      data_center_id: "EU-RO-1",
+                      stock: "HIGH",
+                      price_per_gpu_hour: 0.25,
+                    },
+                  ],
+                };
+              },
+              launch: async (args) => {
+                calls.push({ name: "launch", args });
+                const { keyFingerprint } = await import("../core/gpu-ssh");
+                fingerprint = keyFingerprint(args.spec.ssh_public_key);
+                return {
+                  ...RECORD,
+                  handle,
+                  gpu_type_id: args.spec.gpu_type_id,
+                };
+              },
+              sshInfo: async () => ({
+                handle,
+                state: "running",
+                ready: true,
+                host: "203.0.113.7",
+                port: 40022,
+                user: "root",
+                host_public_key: HOST_KEY,
+                ssh_key_fingerprint: fingerprint,
+              }),
+            },
+          },
+        }),
+      );
+    },
+  });
+  const prev = process.env.COCALC_PROJECT_ID;
+  process.env.COCALC_PROJECT_ID = RECORD.project_id;
+  try {
+    await program.parseAsync(
+      ["gpu", "launch", "--template", "pytorch-kernel"],
+      {
+        from: "user",
+      },
+    );
+  } finally {
+    process.env.COCALC_PROJECT_ID = prev;
+  }
+  const launch = calls.find((c) => c.name === "launch")!;
+  assert.equal(launch.args.spec.gpu_type_id, "NVIDIA RTX A4000");
+  assert.equal(launch.args.spec.max_runtime_minutes, 60);
+  assert.match(launch.args.spec.ssh_public_key, /^ssh-ed25519 /);
+  const out = outputs[0];
+  assert.equal(out.handle, handle);
+  // the GPU hour and the 20 GB disk, rounded up
+  assert.equal(out.max_cost_usd, 0.26);
+  assert.equal(out.connect.kernel, `reflect-${handle}`);
+  assert.equal(reflect.at(-1)![2], "add");
+});
+
+// A program whose hub records launches, with offers in stock and pod keys in
+// a temporary home; `cocalc gpu ...` command lines run as a shell would
+// split them.
+async function launchHarness({
+  billed,
+  noRate = false,
+  reflectFails = false,
+  terminateFails = false,
+}: {
+  billed?: string;
+  noRate?: boolean;
+  reflectFails?: boolean;
+  terminateFails?: boolean;
+} = {}) {
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const home = mkdtempSync(join(tmpdir(), "gpu-cmd-next-"));
+  const calls: Array<{ name: string; args: any }> = [];
+  const outputs: any[] = [];
+  let launches = 0;
+  let handle = "";
+  const program = new Command()
+    .exitOverride()
+    .configureOutput({ writeErr: () => {}, writeOut: () => {} });
+  const offer = (
+    gpu_type_id: string,
+    memory_gb: number,
+    price: number,
+    cloud = "SECURE",
+  ) => ({
+    gpu_type_id,
+    gpu_name: gpu_type_id,
+    memory_gb,
+    cloud,
+    data_center_id: "EU-RO-1",
+    stock: "HIGH",
+    price_per_gpu_hour: price,
+  });
+  registerGpuCommand(program, {
+    connect: {
+      home,
+      sleep: async () => {},
+      runReflect: async () => {
+        if (reflectFails) throw new Error("reflect is broken");
+        return { code: 0, stdout: "{}", stderr: "" };
+      },
+    },
+    withContext: async (_cmd, _name, fn) => {
+      outputs.push(
+        await fn({
+          globals: { json: true },
+          timeoutMs: 600_000,
+          rpcTimeoutMs: 30_000,
+          hub: {
+            gpu: {
+              availability: async (args) => {
+                calls.push({ name: "availability", args });
+                return {
+                  offers: [
+                    offer("NVIDIA RTX A4000", 16, 0.25),
+                    offer("NVIDIA RTX A4000", 16, 0.17, "COMMUNITY"),
+                    offer("NVIDIA L40S", 48, 0.86),
+                  ].filter(
+                    (o) =>
+                      (!args.cloud || o.cloud === args.cloud) &&
+                      (!args.gpu || args.gpu.includes(o.gpu_type_id)),
+                  ),
+                };
+              },
+              launch: async (args) => {
+                calls.push({ name: "launch", args });
+                // a new handle per pod, so each pod's key is its own
+                handle = `cc-${"abcdefghijklmnop".slice(0, 15)}${"abcdefghijklmnopqrstuvwxyz"[launches++]}`;
+                const pod: any = { ...RECORD, handle, state: "running" };
+                if (noRate) delete pod.cost_per_hr;
+                else pod.cost_per_hr = billed ?? "0.25";
+                return pod;
+              },
+              terminate: async (args) => {
+                calls.push({ name: "terminate", args });
+                if (terminateFails) throw new Error("hub call failed");
+                return { state: "terminating" };
+              },
+              sshInfo: async (args) => {
+                calls.push({ name: "sshInfo", args });
+                return {
+                  handle,
+                  state: "running",
+                  ready: true,
+                  host: "203.0.113.7",
+                  port: 40022,
+                  user: "root",
+                  host_public_key:
+                    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+                };
+              },
+            },
+          },
+        }),
+      );
+    },
+  });
+  // a command line as /bin/sh splits it
+  const words = (line: string): string[] =>
+    execFileSync(
+      "sh",
+      [
+        "-c",
+        'eval "set -- $1"; for a; do printf "%s\\0" "$a"; done',
+        "sh",
+        line,
+      ],
+      { encoding: "utf8" },
+    )
+      .split("\0")
+      .slice(0, -1);
+  const run = async (line: string) => {
+    const w = words(line);
+    assert.deepEqual(w.slice(0, 2), ["cocalc", "gpu"]);
+    await program.parseAsync(w.slice(1), { from: "user" });
+    return outputs.at(-1);
+  };
+  return { calls, outputs, run, words };
+}
+
+it("a dry run's next is exactly its launch: every option, the project, SSH and connect behavior", async () => {
+  const OTHER_PROJECT = "00000000-1000-4000-8000-0000000000bb";
+  const h = await launchHarness();
+  const cases = [
+    // a template with every override, for another project, values a shell would mangle
+    `cocalc gpu launch --dry-run --project ${OTHER_PROJECT} --template pytorch-kernel --cloud community --data-center EU-RO-1 --gpu "NVIDIA RTX A4000" --count 2 --disk 30 --volume 50 --port 8888/http --port 6006/http --env 'NOTE=a b; $(echo no) "q" '"'"'x'"'"'' --env EPOCHS=3 --max-runtime 45 --no-connect --wait 120`,
+    // no template, with --ssh
+    `cocalc gpu launch --dry-run --project ${OTHER_PROJECT} --gpu "NVIDIA L40S" --max-runtime 30 --ssh`,
+    // a kernel template, defaults
+    `cocalc gpu launch --dry-run --project ${OTHER_PROJECT} --template pytorch-kernel`,
+  ];
+  for (const line of cases) {
+    const dry = await h.run(line);
+    assert.equal(dry.dry_run, true);
+    assert.ok(dry.next, line);
+    const before = h.calls.length;
+    const out = await h.run(dry.next);
+    const launch = h.calls.slice(before).find((c) => c.name === "launch")!;
+    assert.ok(launch, dry.next);
+    assert.equal(launch.args.project_id, OTHER_PROJECT);
+    // the same spec, apart from the key made at launch
+    const { ssh_public_key, ...sent } = launch.args.spec;
+    assert.deepEqual(sent, dry.spec, dry.next);
+    assert.equal(!!ssh_public_key, dry.ssh, dry.next);
+    assert.equal(out.max_cost_usd, dry.max_cost_usd);
+    // connect only where the dry run said it would
+    const connected = h.calls.slice(before).some((c) => c.name === "sshInfo");
+    assert.equal(connected, dry.kernel, dry.next);
+    assert.match(
+      dry.next,
+      new RegExp(`--max-cost ${dry.max_cost_usd.toFixed(2)}$`),
+    );
+  }
+  // the odd env value survived the shell
+  const first = (await h.run(cases[0])).spec.env;
+  assert.equal(first.NOTE, `a b; $(echo no) "q" 'x'`);
+});
+
+it("terminates a pod at once if RunPod bills it above --max-cost", async () => {
+  const PROJECT = "00000000-1000-4000-8000-0000000000bb";
+  // listed at 0.25/h (bound 0.26), billed at 0.40/h: bound 0.41
+  const h = await launchHarness({ billed: "0.40" });
+  const dry = await h.run(
+    `cocalc gpu launch --dry-run --project ${PROJECT} --template pytorch-ssh --gpu "NVIDIA RTX A4000"`,
+  );
+  assert.equal(dry.max_cost_usd, 0.26);
+  await assert.rejects(
+    h.run(dry.next),
+    /billed cc-\S+ at \$0\.4\/h, so it could cost up to \$0\.41, more than --max-cost \$0\.26; it was terminated/,
+  );
+  const terminated = h.calls.find((c) => c.name === "terminate");
+  assert.ok(terminated);
+  // within the bound: kept
+  const ok = await launchHarness({ billed: "0.25" });
+  const dry2 = await ok.run(
+    `cocalc gpu launch --dry-run --project ${PROJECT} --template pytorch-ssh --gpu "NVIDIA RTX A4000"`,
+  );
+  await ok.run(dry2.next);
+  assert.ok(!ok.calls.some((c) => c.name === "terminate"));
+});
+
+it("with --max-cost, a pod whose billed rate can't be verified is terminated too", async () => {
+  const PROJECT = "00000000-1000-4000-8000-0000000000bb";
+  const dryLine = `cocalc gpu launch --dry-run --project ${PROJECT} --template pytorch-ssh --gpu "NVIDIA RTX A4000"`;
+  for (const opts of [
+    { noRate: true },
+    { billed: "" },
+    { billed: "n/a" },
+    { billed: "-1" },
+  ]) {
+    const h = await launchHarness(opts);
+    const dry = await h.run(dryLine);
+    await assert.rejects(
+      h.run(dry.next),
+      /RunPod didn't report a billed rate for cc-\S+, so it can't be held to --max-cost \$0\.26; it was terminated\./,
+      JSON.stringify(opts),
+    );
+    assert.ok(
+      h.calls.some((c) => c.name === "terminate"),
+      JSON.stringify(opts),
+    );
+  }
+});
+
+it("a local cleanup failure after the terminate doesn't change what is reported", async () => {
+  const PROJECT = "00000000-1000-4000-8000-0000000000bb";
+  const dryLine = `cocalc gpu launch --dry-run --project ${PROJECT} --template pytorch-ssh --gpu "NVIDIA RTX A4000"`;
+  // RunPod terminated it; forgetting it here failed: still "terminated"
+  const h = await launchHarness({ billed: "0.40", reflectFails: true });
+  const dry = await h.run(dryLine);
+  await assert.rejects(
+    h.run(dry.next),
+    /more than --max-cost \$0\.26; it was terminated\./,
+  );
+  // the terminate itself failed: say so, with the command to run
+  const t = await launchHarness({ billed: "0.40", terminateFails: true });
+  const dry2 = await t.run(dryLine);
+  await assert.rejects(
+    t.run(dry2.next),
+    /more than --max-cost \$0\.26; terminating it failed: run cocalc gpu terminate cc-\S+\./,
   );
 });

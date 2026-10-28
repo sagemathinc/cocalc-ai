@@ -1,6 +1,6 @@
 ---
 name: cocalc
-description: Use when working in a CoCalc project or with CoCalc-native documents and workflows, including CoCalc usage questions (bundled docs); agent memory (notes that persist across sessions and projects); chat workbench artifacts (documents, file previews, proposed action reviews, GitHub PR and commit cards, live boards, calendars, todo lists); messaging other agents; sensors and watchers (being woken when CI finishes, a file changes or at a time); the person's notifications; disk space and the project quota; software installs (RootFS recipes); complete project-side document builds (LaTeX, R Markdown, Quarto); live tasks, chats, boards, slides and notebooks; a shared web browser and terminal the agent drives and the human can take over; document history (TimeTravel); and CoCalc export/import workflows.
+description: Use when working in a CoCalc project or with CoCalc-native documents and workflows, including CoCalc usage questions (bundled docs); agent memory (notes that persist across sessions and projects); chat workbench artifacts (documents, file previews, proposed action reviews, GitHub PR and commit cards, live boards, calendars, todo lists); messaging other agents; sensors and watchers (being woken when CI finishes, a file changes or at a time); the person's notifications; disk space and the project quota; software installs (RootFS recipes); complete project-side document builds (LaTeX, R Markdown, Quarto); live tasks, chats, boards, slides and notebooks; a shared web browser and terminal the agent drives and the human can take over; document history (TimeTravel); CoCalc export/import workflows; and GPU pods on the user's own RunPod key (templates, a remote GPU Jupyter kernel).
 ---
 
 # CoCalc
@@ -37,6 +37,9 @@ starting that kind of work; see the table at the end.
 7. **Web pages:** the shared browser, `cocalc project browser ...`.
    **CoCalc's own UI:** browser exec, only when the task is about the UI.
    (references/browser-and-terminal.md)
+8. **GPUs** (training, inference, a GPU Jupyter kernel): `cocalc gpu ...` on
+   the user's own RunPod key. State the most a launch can cost before you
+   launch, and terminate the pod when the work is done. (references/gpu.md)
 
 ## CoCalc's Own Source
 
@@ -231,6 +234,7 @@ Details: references/browser-and-terminal.md.
 | Notifications                                                        | references/notifications.md        |
 | Chat/tasks/board/slides export and import                            | references/export-import.md        |
 | Shared browser, shared terminal, browser exec                        | references/browser-and-terminal.md |
+| GPU pods on the user's RunPod key, templates, GPU kernels, the rules | references/gpu.md                  |
 
 ## Trigger Examples
 
