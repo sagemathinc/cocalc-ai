@@ -113,6 +113,11 @@ export interface MembershipUsageLimits {
   invite_email_daily_count?: number;
   invite_email_hourly_count?: number;
   invite_email_recipients_per_batch?: number;
+  // Message requests to people who aren't collaborators (People > Messages);
+  // unset uses DEFAULT_DIRECT_REQUESTS_PER_DAY and
+  // DEFAULT_DIRECT_REQUEST_RECIPIENTS_PER_DAY.
+  direct_message_requests_per_day?: number;
+  direct_message_request_recipients_per_day?: number;
   invite_email_pending_per_project?: number;
   invite_email_pending_per_course?: number;
   invite_email_resend_cooldown_minutes?: number;
@@ -218,6 +223,8 @@ export interface AccountUsageLimitOverrides {
   invite_email_daily_count?: NumericLimitRule;
   invite_email_hourly_count?: NumericLimitRule;
   invite_email_recipients_per_batch?: NumericLimitRule;
+  direct_message_requests_per_day?: NumericLimitRule;
+  direct_message_request_recipients_per_day?: NumericLimitRule;
   invite_email_pending_per_project?: NumericLimitRule;
   invite_email_pending_per_course?: NumericLimitRule;
   invite_email_resend_cooldown_minutes?: NumericLimitRule;

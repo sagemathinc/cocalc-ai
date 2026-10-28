@@ -14,7 +14,6 @@ import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import {
   DIRECT_MESSAGES_PAGE,
-  MAX_DIRECT_REQUESTS_PER_DAY,
   directPreview,
   type DirectConversation,
   type DirectMemberState,
@@ -682,10 +681,15 @@ export async function admitDirectRequest({
   account_id,
   conversation_id,
   recipients,
+  requests_per_day,
+  recipients_per_day,
 }: {
   account_id: string;
   conversation_id: string;
   recipients: number;
+  // The account's limits (its membership tier, or the defaults).
+  requests_per_day: number;
+  recipients_per_day: number;
 }): Promise<void> {
   await inTransaction(async (db) => {
     await db.query(
@@ -693,13 +697,16 @@ export async function admitDirectRequest({
       [account_id],
     );
     const { rows } = await db.query(
-      `SELECT count(*)::int AS n FROM direct_request_admissions
+      `SELECT count(*)::int AS n, COALESCE(sum(recipients), 0)::int AS people
+       FROM direct_request_admissions
        WHERE account_id = $1 AND created > NOW() - INTERVAL '1 day'`,
       [account_id],
     );
-    if ((rows[0]?.n ?? 0) >= MAX_DIRECT_REQUESTS_PER_DAY) {
+    const n = rows[0]?.n ?? 0;
+    const people = rows[0]?.people ?? 0;
+    if (n + 1 > requests_per_day || people + recipients > recipients_per_day) {
       throw Error(
-        "you have sent the maximum number of message requests for today",
+        `you have reached your daily limit on message requests (${requests_per_day} requests to at most ${recipients_per_day} people); try again later or upgrade your membership`,
       );
     }
     await db.query(

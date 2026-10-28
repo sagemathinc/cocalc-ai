@@ -19,9 +19,13 @@
 export const MAX_DIRECT_MEMBERS = 8;
 export const MAX_DIRECT_MESSAGE_LENGTH = 20_000;
 export const MAX_DIRECT_TITLE_LENGTH = 200;
-// Conversations someone may start per day that include a request (someone
-// who is not a collaborator).
-export const MAX_DIRECT_REQUESTS_PER_DAY = 20;
+// Message requests (conversations that include someone who isn't a
+// collaborator) per rolling day, and the people they may reach. These are
+// defaults: a membership tier sets its own with the usage limits
+// direct_message_requests_per_day and
+// direct_message_request_recipients_per_day.
+export const DEFAULT_DIRECT_REQUESTS_PER_DAY = 20;
+export const DEFAULT_DIRECT_REQUEST_RECIPIENTS_PER_DAY = 40;
 export const DIRECT_MESSAGES_PAGE = 50;
 // Shown in lists and notifications.
 export const DIRECT_PREVIEW_LENGTH = 200;

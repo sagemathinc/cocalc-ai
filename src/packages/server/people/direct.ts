@@ -65,7 +65,11 @@ import {
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
 import { resolveUsernameOwner } from "@cocalc/server/accounts/usernames";
+import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
+  DEFAULT_DIRECT_REQUESTS_PER_DAY,
+  DEFAULT_DIRECT_REQUEST_RECIPIENTS_PER_DAY,
   MAX_DIRECT_MEMBERS,
   directPairKey,
   directPreview,
@@ -301,6 +305,24 @@ async function notify(
   });
 }
 
+// The account's daily message-request limits: its membership tier's, or the
+// defaults when the tier doesn't set them.
+async function directRequestLimits(account_id: string): Promise<{
+  requests_per_day: number;
+  recipients_per_day: number;
+}> {
+  const limits = getEffectiveMembershipUsageLimits(
+    await resolveMembershipForAccount(account_id),
+  );
+  return {
+    requests_per_day:
+      limits.direct_message_requests_per_day ?? DEFAULT_DIRECT_REQUESTS_PER_DAY,
+    recipients_per_day:
+      limits.direct_message_request_recipients_per_day ??
+      DEFAULT_DIRECT_REQUEST_RECIPIENTS_PER_DAY,
+  };
+}
+
 // An exact, current username's account (not an account id, email, or a
 // redirect from an old name), or null.
 async function resolveDirectUsername(value: unknown): Promise<string | null> {
@@ -531,6 +553,7 @@ export const directControl: InterBayDirectApi = {
         account_id,
         conversation_id,
         recipients: requests,
+        ...(await directRequestLimits(account_id)),
       });
     }
     const result = await owner(ownerBay).create({

@@ -3,6 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  DEFAULT_DIRECT_REQUESTS_PER_DAY,
+  DEFAULT_DIRECT_REQUEST_RECIPIENTS_PER_DAY,
+} from "./direct-conversations";
 import { currency, humanSize, plural, round2 } from "./misc";
 
 export interface MembershipTierPresentationInput {
@@ -482,6 +486,24 @@ function buildMembershipTierDetailGroups({
     key: "invite_email_daily_count",
     label: "Invitation emails per day",
     value: formatLimitCount(usageLimits.invite_email_daily_count),
+  });
+  add({
+    group: "collaboration",
+    key: "direct_message_requests_per_day",
+    label: "Message requests per day",
+    value: formatLimitCount(
+      usageLimits.direct_message_requests_per_day ??
+        DEFAULT_DIRECT_REQUESTS_PER_DAY,
+    ),
+  });
+  add({
+    group: "collaboration",
+    key: "direct_message_request_recipients_per_day",
+    label: "Message request recipients per day",
+    value: formatLimitCount(
+      usageLimits.direct_message_request_recipients_per_day ??
+        DEFAULT_DIRECT_REQUEST_RECIPIENTS_PER_DAY,
+    ),
   });
   add({
     group: "collaboration",

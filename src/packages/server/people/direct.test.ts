@@ -59,6 +59,14 @@ jest.mock("@cocalc/server/accounts/usernames", () => ({
     };
   },
 }));
+// The account's membership tier usage limits ({} = the tier sets none).
+let mockTierLimits: Record<string, number> = {};
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  resolveMembershipForAccount: async (account_id: string) => ({ account_id }),
+}));
+jest.mock("@cocalc/server/membership/effective-limits", () => ({
+  getEffectiveMembershipUsageLimits: () => ({ ...mockTierLimits }),
+}));
 
 import { directControl, directHubApi, retryDirectFanouts } from "./direct";
 import {
@@ -107,6 +115,7 @@ describeDb("direct conversations", () => {
     for (const id of Object.keys(mockHomes)) delete mockHomes[id];
     mockNotify.mockReset().mockResolvedValue(undefined);
     mockBanned.clear();
+    mockTierLimits = {};
     await getPool().query(
       "TRUNCATE projects, account_collaborator_index, account_project_index, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
     );
@@ -544,7 +553,7 @@ describeDb("direct conversations", () => {
       });
     }
     await expect(request("One too many", "Topic 20")).rejects.toThrow(
-      "maximum number of message requests",
+      "daily limit on message requests",
     );
     await getPool().query("TRUNCATE direct_request_admissions");
     const results = await Promise.allSettled(
@@ -554,6 +563,42 @@ describeDb("direct conversations", () => {
     );
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(20);
   }, 30000);
+
+  test("the membership tier sets the daily request and recipient limits", async () => {
+    // Requests per day.
+    mockTierLimits = { direct_message_requests_per_day: 2 };
+    await request("One", "Topic 1");
+    await request("Two", "Topic 2");
+    await expect(request("Three", "Topic 3")).rejects.toThrow(
+      "(2 requests to at most 40 people)",
+    );
+    // People reached per day: a group request counts each of them.
+    await getPool().query("TRUNCATE direct_request_admissions");
+    mockTierLimits = { direct_message_request_recipients_per_day: 2 };
+    await directHubApi.startDirect({
+      account_id: ada,
+      usernames: ["bea", "cy"],
+      title: "Group",
+      body: "Hi both",
+    });
+    await expect(request("One more person", "Topic 4")).rejects.toThrow(
+      "(20 requests to at most 2 people)",
+    );
+    // A tier may turn requests off; collaborators are unaffected.
+    await getPool().query("TRUNCATE direct_request_admissions");
+    mockTierLimits = { direct_message_requests_per_day: 0 };
+    await expect(request("Hello", "Topic 5")).rejects.toThrow(
+      "daily limit on message requests",
+    );
+    await shareProject();
+    await expect(
+      directHubApi.startDirect({
+        account_id: ada,
+        member_ids: [bea],
+        body: "Hi collaborator",
+      }),
+    ).resolves.toMatchObject({ state: "active" });
+  });
 
   test("notifications carry plain text, never Markdown", async () => {
     await request(
