@@ -478,13 +478,13 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Integrated Codex and Claude Code",
         paragraphs: [
-          "Codex works with project files, terminals, commands, and live notebook state through CoCalc's project chat. Claude Code is integrated as an experimental preview on sites that enable it and works with your personal Claude Pro or Max subscription.",
+          "Codex works with project files, terminals, commands, and live notebook state through CoCalc's project chat. On sites that enable it, Claude Code is integrated too and can use CoCalc membership, a Claude Pro or Max subscription, or an Anthropic API key.",
         ],
         links: [
           { href: "/docs/ai/codex-chat", label: "Read the Codex guide" },
           {
             href: "/docs/ai/claude-code",
-            label: "Claude Code in CoCalc (Experimental Preview)",
+            label: "Claude Code in CoCalc",
           },
         ],
       },

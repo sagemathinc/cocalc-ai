@@ -486,7 +486,7 @@ test("cancel reports the outcome instead of replaying old output", async () => {
   }
 });
 
-test("unconfirmed cleanup says what happens next and when to restart", async () => {
+test("unconfirmed cleanup says what happens next and what clears it", async () => {
   const execute = jest.fn(async () => ({
     code: 1,
     stdout: "",
@@ -497,7 +497,7 @@ test("unconfirmed cleanup says what happens next and when to restart", async () 
   try {
     await jobs.start({ script: "grep", yield_time_ms: 1000 });
     await expect(jobs.start({ script: "echo alive" })).rejects.toThrow(
-      /rechecks automatically.*ask the user to restart the project/,
+      /rechecks automatically.*new agent session starts with its project tools open, and so does a project restart/,
     );
   } finally {
     await jobs.close();

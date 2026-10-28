@@ -24,6 +24,9 @@ export const RESET_BUSY_ERROR = "resetHistory: busy";
 export function isResetBusy(x: unknown): boolean {
   if (x == null) return false;
   if ((x as ResetHistoryResult).refused === "busy") return true;
+  // an earlier reset's trash is still being removed (H1c §3.3); each retry
+  // removes some of it, so retrying makes progress
+  if ((x as ResetHistoryResult).refused === "trash-pending") return true;
   return (
     (x as any)?.code == 409 &&
     `${(x as any)?.message ?? x}`.includes(RESET_BUSY_ERROR)

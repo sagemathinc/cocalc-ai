@@ -120,13 +120,13 @@ describe("/llms.txt", () => {
     expect(text).toContain("- [Pricing](https://cocalc.ai/pricing)\n");
   });
 
-  it("tags a link with the status its page declares", () => {
+  it("tags a link only when its page declares a status", () => {
     const text = renderLlmsTxt({ product: "launchpad", siteName: "CoCalc" })!;
     const tagged = text.split("\n").filter((line) => /Status: /.test(line));
-    expect(tagged).toEqual([
-      expect.stringMatching(
-        /^- \[Claude Code in CoCalc \(Experimental Preview\)\]\(https:\/\/cocalc\.ai\/docs\/ai\/claude-code\): .+ Status: experimental preview\.$/,
-      ),
-    ]);
+    // No listed page is a preview: Claude Code left preview on 2026-10-27.
+    expect(tagged).toEqual([]);
+    expect(text).toMatch(
+      /^- \[Claude Code in CoCalc\]\(https:\/\/cocalc\.ai\/docs\/ai\/claude-code\): [^\n]+$/m,
+    );
   });
 });

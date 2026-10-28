@@ -113,16 +113,22 @@ export function ComputeVmAgentGrantBanner({
   const approve = async (grant: ComputeAgentGrant) => {
     setBusyGrantId(grant.grant_id);
     setError(undefined);
+    // approve exactly the request shown; if it changed meanwhile the server
+    // refuses, and the refresh shows the new one to review
+    const request = grant.metadata?.pending_request;
     try {
       const completed = await runFreshAuthAction(async () => {
         await webapp_client.conat_client.hub.compute.approveAgentGrant({
           grant_id: grant.grant_id,
           browser_id: webapp_client.browser_id,
+          operation_id: request?.operation_id,
+          request_revision: request?.request_revision,
         });
       });
       if (completed) await refresh();
     } catch (err) {
       setError(`${err}`);
+      await refresh().catch(() => {});
     } finally {
       setBusyGrantId(undefined);
     }

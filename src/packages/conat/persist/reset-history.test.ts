@@ -56,6 +56,22 @@ function tables(): string[] {
 const archives = () =>
   tables().filter((name) => name.startsWith("messages_archived_"));
 
+// H1c: a purge leaves its table as counted trash and earlier archives
+// unreferenced (plan §3.1 (a) and (e)): unreadable at commit, removed in
+// bounded steps; check that, then remove them
+function expectOnlyTrash() {
+  expect(
+    stream.sqlite(
+      "SELECT archive FROM history_epochs WHERE archive IS NOT NULL",
+    ),
+  ).toEqual([]);
+  expect(
+    stream.sqlite("SELECT 1 FROM history_trash WHERE kind='messages'"),
+  ).toHaveLength(1);
+  while (!stream.runTrashStep());
+  expect(archives()).toEqual([]);
+}
+
 describe("resetHistory", () => {
   it("fences, publishes the new epoch, and deletes the history; seqs continue", () => {
     stream.setMetadata({ users: ["a"], settings: { other: 1 } });
@@ -69,7 +85,7 @@ describe("resetHistory", () => {
     });
     expect(result).toEqual({ reset: true, history_epoch: 1, count: 2 });
     expect(stream.length).toBe(0);
-    expect(archives()).toEqual([]);
+    expectOnlyTrash();
     // other metadata and settings are kept
     expect(stream.getMetadata()).toEqual({
       users: ["a"],
@@ -110,10 +126,22 @@ describe("resetHistory", () => {
       headers: { history_epoch: 1 },
     });
     expect(stream.keys()).toEqual(["k"]);
+    // the new table's indexes have the next generation's names; the
+    // archived table keeps its own (H1c: dropping them is O(index pages))
     expect(
       stream
         .sqlite(
           "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='messages' ORDER BY name",
+        )
+        .map(({ name }) => name),
+    ).toEqual(
+      expect.arrayContaining(["idx_messages_key_g1", "idx_messages_time_g1"]),
+    );
+    expect(
+      stream
+        .sqlite(
+          "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? ORDER BY name",
+          [result.archive],
         )
         .map(({ name }) => name),
     ).toEqual(
@@ -166,7 +194,7 @@ describe("resetHistory", () => {
     expect(archives()).toHaveLength(2);
     write(10, 2);
     expect(stream.resetHistory({})).toMatchObject({ reset: true, count: 1 });
-    expect(archives()).toEqual([]);
+    expectOnlyTrash();
     expect(stream.length).toBe(0);
   });
 });

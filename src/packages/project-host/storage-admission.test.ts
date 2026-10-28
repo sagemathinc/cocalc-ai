@@ -3,7 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { _test, createStorageAdmissionController } from "./storage-admission";
+import {
+  _test,
+  beginStartPreparation,
+  createStorageAdmissionController,
+  preparingStartCount,
+} from "./storage-admission";
 
 describe("storage admission controller", () => {
   // Most tests here are about how pressure is classified and what each
@@ -1300,5 +1305,47 @@ describe("storage admission controller", () => {
       would_defer: true,
       reason: "io_pressure_unavailable",
     });
+  });
+});
+
+describe("a start preparing its volumes", () => {
+  // Prod us-south-1, 2026-10-28: a start's volume preparation (quota, scratch
+  // subvolume) takes the btrfs mutation lock several times before the
+  // project's state says "starting". Background mutations were not deferred
+  // then, slipped in between those steps, and a start waited 11 s behind a
+  // maintenance snapshot.
+  it("counts as lifecycle activity until it ends", () => {
+    let now = 1_000_000;
+    const controller = createStorageAdmissionController({
+      contendedSamples: 1,
+      minStateSampleMs: 0,
+      escalationMs: 0,
+      mode: "enforce",
+      now: () => now,
+      readInputs: () => ({
+        sampled_at_ms: now,
+        host_io_full_avg10: 0,
+        project_pool_io_full_avg10: 0,
+        // (as defaultReadInputs adds the starts still preparing)
+        starting_projects: preparingStartCount(),
+        stopping_projects: 0,
+        btrfs_mutation_locks: 0,
+        btrfs_mutation_waiters: 0,
+      }),
+    });
+    expect(controller.backgroundDeferralReason()).toBeUndefined();
+    const end = beginStartPreparation();
+    expect(preparingStartCount()).toBe(1);
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }),
+    ).toMatchObject({ admitted: false, reason: "lifecycle_active" });
+    expect(controller.backgroundDeferralReason()).toBe("lifecycle_active");
+    // Ended when the state says "starting", and again in the start's
+    // finally (also on failure): the second call does nothing.
+    end();
+    end();
+    expect(preparingStartCount()).toBe(0);
+    now += 60_000;
+    expect(controller.backgroundDeferralReason()).toBeUndefined();
   });
 });

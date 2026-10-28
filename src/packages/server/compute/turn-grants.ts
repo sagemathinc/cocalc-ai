@@ -71,12 +71,15 @@ export function agentComputeApprovalRequired(
   };
 }
 
+// (a pending request written before revisions existed is rewritten, so the
+// owner can approve it by its revision)
 function isSamePendingRequest(
   current: Record<string, unknown> | undefined,
   next: Record<string, unknown>,
 ): boolean {
   return Boolean(
     current &&
+    typeof current.request_revision === "string" &&
     current.action === next.action &&
     current.operation === next.operation &&
     current.operation_id === next.operation_id &&
@@ -238,6 +241,9 @@ export async function requireAgentComputeGrant(
       total_authorized_usd: Number(opts.request?.total_authorized_usd ?? 0),
       ttl_minutes: Number(opts.request?.ttl_minutes ?? 0),
       requested_at: new Date().toISOString(),
+      // new for every request written: an approval names the revision the
+      // owner reviewed (approveAgentComputeGrant)
+      request_revision: randomUUID(),
     };
     if (!isSamePendingRequest(grant.metadata?.pending_request, request)) {
       await pool.query(
@@ -402,9 +408,14 @@ export async function listAgentComputeGrants(opts: {
   return rows;
 }
 
+// Approves the pending request the owner reviewed, named by its operation_id
+// and request_revision. If the agent replaced the request since, nothing is
+// approved: the owner reviews the new one.
 export async function approveAgentComputeGrant(opts: {
   account_id: string;
   grant_id: string;
+  operation_id: string;
+  request_revision: string;
 }): Promise<any> {
   const pool = getPool();
   const client = await pool.connect();
@@ -421,6 +432,19 @@ export async function approveAgentComputeGrant(opts: {
     const request = grant?.metadata?.pending_request;
     if (!grant || !request?.action) {
       throw new Error("managed-compute grant request is missing or expired");
+    }
+    if (
+      !opts.operation_id ||
+      !opts.request_revision ||
+      request.operation_id !== opts.operation_id ||
+      request.request_revision !== opts.request_revision
+    ) {
+      throw Object.assign(
+        new Error(
+          "This VM request changed after it was shown to you; review the current request and approve it again.",
+        ),
+        { code: "agent_grant_request_changed" },
+      );
     }
     if (
       !["availability", "billable", "destructive"].includes(request.action) ||

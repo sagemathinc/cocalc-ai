@@ -3353,6 +3353,8 @@ export async function approveAgentGrant(opts: {
   browser_id?: string;
   session_hash?: string;
   grant_id: string;
+  operation_id: string;
+  request_revision: string;
 }) {
   const accountId = requireAccount(opts.account_id);
   await requireDangerousSessionAuth({
@@ -3364,6 +3366,8 @@ export async function approveAgentGrant(opts: {
   const grant = await approveAgentComputeGrant({
     account_id: accountId,
     grant_id: opts.grant_id,
+    operation_id: opts.operation_id,
+    request_revision: opts.request_revision,
   });
   await centralLog({
     event: "managed_compute_agent_grant_approved",

@@ -342,6 +342,12 @@ export async function rebuildBoardHistory({
         continue;
       }
       if (result.refused == "busy") throw new Refused("busy", BUSY_MESSAGE);
+      if (result.refused == "trash-pending") {
+        throw new Refused(
+          "trash-pending",
+          "an earlier rebuild of this board's history is still being cleaned up; try again in a minute",
+        );
+      }
       if (result.refused == "seed-too-large") {
         throw new Refused(
           "file-too-large",

@@ -9,6 +9,7 @@ import {
 import { getPublicFeaturePage } from "./public-feature-pages";
 import {
   getPublicHomeHighlights,
+  PUBLIC_HOME_AGENT_BODY,
   PUBLIC_HOME_AGENTS_HIGHLIGHT,
 } from "./public-home-content";
 
@@ -88,8 +89,27 @@ describe("AI feature page words", () => {
         getDocsEntry(href.slice("/docs/".length), { product: "plus" }),
       ).toBeUndefined();
     }
-    expect(getDocsEntry("ai/claude-code")?.title).toBe(
-      "Claude Code in CoCalc (Experimental Preview)",
+    expect(getDocsEntry("ai/claude-code")?.title).toBe("Claude Code in CoCalc");
+  });
+
+  it.each([[{ cocalc_product: "plus" }], [{}], [COCALC_AI]])(
+    "qualifies Claude Code by site, since every product shows the cards: %j",
+    (config) => {
+      // Plus and sites with Claude disabled offer neither Claude Code nor
+      // CoCalc membership.
+      const claude = getPublicAiCards(config)
+        .flatMap(({ paragraphs }) => paragraphs ?? [])
+        .filter((paragraph) => /Claude Code/.test(paragraph));
+      expect(claude.length).toBeGreaterThan(0);
+      for (const paragraph of claude) {
+        expect(paragraph).toMatch(/On sites that enable it, Claude Code/);
+      }
+    },
+  );
+
+  it("qualifies Claude Code by site in Home's agent section, which every product shows", () => {
+    expect(PUBLIC_HOME_AGENT_BODY).toMatch(
+      /Claude Code on sites that enable it/,
     );
   });
 });

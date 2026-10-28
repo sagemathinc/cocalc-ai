@@ -544,16 +544,26 @@ offers what does not depend on the rebuild:
 | The rebuild took too long or failed | **Open the saved file as text** or **Download the file**, both of which work however often the rebuild fails, or **Retry**. |
 | No answer came in time after the rebuild was sent | The board may already be rebuilt: **Retry** opens it. You can also open the file as text or download it. |
 | A rebuild is already running | **Retry** in a moment. |
+| An earlier reset of the history is still being cleaned up | **Open the saved file as text** or **Download the file** at any time, or **Retry** in a minute. |
 
 **Download the file** is the project's ordinary file download: it works for a
 file of any size, including one too large for the text editor. When a file is
 too large to open as text, downloading it is the way in.
+
+For a file or a notebook, a restart that comes while an earlier reset of the
+same history is still being cleaned up says so: try again in a minute, and
+meanwhile download the file (or the \`.ipynb\`) from the file explorer.
 
 ## The archived history
 
 The old history is archived in the document's own storage, within the
 archive's size limits; entries too large to keep are left out. Only CoCalc
 support can retrieve an archive, and an archive is kept only as long as the
-history's retention allows: there is no promise beyond that. Use
+history's retention allows: there is no promise beyond that.
+
+Purging a history makes it unreadable at once, through every part of CoCalc,
+and its records are then removed in small steps. This is a logical purge:
+it does not promise that the bytes are physically erased from the storage
+or from backups already taken. Use
 [TimeTravel](/docs/files/timetravel) for the history after the restart.
 `;

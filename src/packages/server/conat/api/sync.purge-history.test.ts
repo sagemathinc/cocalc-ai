@@ -23,7 +23,12 @@ function mockClient({
   resetResult,
   syncstringsSettings = { history_epoch: 5 },
 }: {
-  resetResult: { reset: boolean; history_epoch: number; count: number };
+  resetResult: {
+    reset: boolean;
+    history_epoch: number;
+    count: number;
+    countExact?: boolean;
+  };
   syncstringsSettings?: Record<string, any>;
 }) {
   const stream = {
@@ -128,6 +133,31 @@ describe("sync.purgeHistory", () => {
     // someone else already reset it: nothing to record
     expect(syncstrings.set).not.toHaveBeenCalled();
     expect(result).toEqual({ deleted: 0, history_epoch: 6, reset: false });
+  });
+
+  it("reports a history still being counted as a lower bound, not an exact count", async () => {
+    // a stream from before H1c, too long to count yet: count() is the probe
+    // sentinel COUNT_PROBE_RECORDS + 1, "more than COUNT_PROBE_RECORDS"
+    mockClient({
+      resetResult: {
+        reset: true,
+        history_epoch: 6,
+        count: 10_001,
+        countExact: false,
+      },
+    });
+    const { purgeHistory } = await import("./sync");
+    const result = await purgeHistory({
+      account_id: "acct-1",
+      project_id: PROJECT,
+      path: "a.txt",
+    });
+    expect(result).toEqual({
+      deleted: 10_000,
+      deletedExact: false,
+      history_epoch: 6,
+      reset: true,
+    });
   });
 
   it("rejects a malformed oversized_seq", async () => {

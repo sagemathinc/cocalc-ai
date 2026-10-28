@@ -36,8 +36,10 @@ function rowsRead(fn: () => void): { max: number; total: number } {
   const prepare = db.prepare.bind(db);
   const counts = { max: 0, total: 0 };
   const count = (statement: string, n: number) => {
-    // resetHistory's delete notification lists the live seqs (as on main)
-    if (statement === "SELECT seq FROM messages") return;
+    // resetHistory's delete notification lists the live seqs of a small
+    // history, at most RESET_DELETE_LIST_MAX + 1 read (H1c §2; checked by
+    // the notification tests)
+    if (statement === "SELECT seq FROM messages ORDER BY seq LIMIT ?") return;
     counts.max = Math.max(counts.max, n);
     counts.total += n;
   };

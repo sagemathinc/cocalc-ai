@@ -138,7 +138,9 @@ export class AStream<T = any> {
         time: number;
         key?: string;
       }
-    | { op: "delete"; seqs: number[] },
+    // through: every message with seq <= through was deleted (a history
+    // reset); seqs lists deleted messages explicitly
+    | { op: "delete"; seqs: number[]; through?: number },
     void,
     unknown
   > {

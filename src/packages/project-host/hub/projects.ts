@@ -70,6 +70,7 @@ import { secretsPath as sshProxySecretsPath } from "@cocalc/project-proxy/ssh-se
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getClaudeSubscriptionLoginService } from "../acp/claude-subscription-service";
+import { beginStartPreparation } from "../storage-admission";
 import {
   writeManagedAuthorizedKeys,
   deleteVolume,
@@ -2170,6 +2171,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     };
     beginProjectHostActivity(activity_id, "start");
     let resolved: StartMetadata | undefined;
+    let endStartPreparation: (() => void) | undefined;
     try {
       const cachedProject = getProject(project_id);
       const cachedLifecycleState = `${cachedProject?.state ?? ""}`;
@@ -2302,6 +2304,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         progress: 3,
         message: "checking project disk quota",
       });
+      // Volume preparation takes the btrfs mutation lock several times before
+      // the state says "starting": count it as lifecycle work, so background
+      // mutations wait instead of slipping in between those steps.
+      endStartPreparation = beginStartPreparation();
       await timings.measure("check_quota", async () => {
         const measureQuotaDetail = async <T>(
           phase: string,
@@ -2405,6 +2411,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           state: "starting",
           secret_names: startMetadata.secret_names,
         });
+        // From here the "starting" state counts it.
+        endStartPreparation?.();
       });
       publishStartProgress({
         activity_id,
@@ -2655,6 +2663,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       });
       throw err;
     } finally {
+      endStartPreparation?.();
       endProjectHostActivity(activity_id);
     }
     return {

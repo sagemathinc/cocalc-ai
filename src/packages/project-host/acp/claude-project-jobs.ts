@@ -4,7 +4,10 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import getLogger from "@cocalc/backend/logger";
 import type { SandboxExecResult } from "@cocalc/project-runner/run/sandbox-exec";
+
+const logger = getLogger("project-host:acp:claude-project-jobs");
 
 export type ProjectJobExecutor = (
   script: string,
@@ -51,9 +54,10 @@ const MAX_TIMEOUT = 86_400_000;
 const RETENTION = 600_000;
 const OUTPUT_BYTES = 1024 * 1024;
 // Says what happens next: the runtime keeps checking, and tools reopen on its
-// proof; only a job it can never account for needs a project restart.
+// proof. The fence belongs to this agent session (controller): a new session
+// starts without it, as does a project restart.
 const CLEANUP_UNCONFIRMED =
-  "Project job cleanup is unconfirmed, so this agent session cannot start more project tools until the runtime confirms that the job's processes are gone. It rechecks automatically about every 30 seconds, so try again in a minute. If this lasts more than a few minutes, ask the user to restart the project (project Settings, Restart).";
+  "Project job cleanup is unconfirmed, so this agent session cannot start more project tools until the runtime confirms that the job's processes are gone. It rechecks automatically about every 30 seconds, so try again in a minute. If this lasts more than a few minutes, tell the user: a new agent session starts with its project tools open, and so does a project restart.";
 const PAGE_BYTES = 64 * 1024;
 let activeJobs = 0;
 
@@ -121,15 +125,26 @@ export class ClaudeProjectJobs {
         this.unproven.add(other);
       this.stop(other, "canceled");
     }
+    logger.warn("project tools fenced: job cleanup unconfirmed", {
+      job_id: job.id,
+      unproven: this.unproven.size,
+    });
   }
   private cleanupProven(job: Job) {
     job.cleanupProven = true;
-    this.unproven.delete(job);
+    const fenced = this.unproven.delete(job);
     // The root-owned supervisor attests that each fenced job's scope is gone,
     // so no execution authority is unaccounted for: reopen. A job that never
     // gets a proof keeps the controller fenced. Closing is separate and final.
-    if (this.cleanupBlocked && this.unproven.size === 0)
+    if (fenced)
+      logger.info("fenced job cleanup proven", {
+        job_id: job.id,
+        unproven: this.unproven.size,
+      });
+    if (this.cleanupBlocked && this.unproven.size === 0) {
       this.cleanupBlocked = false;
+      logger.info("project tools reopened: every fenced job's cleanup proven");
+    }
   }
   private prune() {
     for (const [id, job] of this.jobs)
@@ -346,6 +361,10 @@ export class ClaudeProjectJobs {
         if (executionStarted) {
           this.blockCleanup(job);
           this.append(job, "stderr", CLEANUP_UNCONFIRMED);
+        } else {
+          // Stopped before it was handed to the executor: nothing ran, so it
+          // holds no fence (it may be a peer a fence just stopped).
+          this.cleanupProven(job);
         }
         if (job.status === "running") {
           job.status = "failed";

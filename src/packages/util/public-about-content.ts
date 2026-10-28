@@ -25,7 +25,7 @@ const PUBLIC_ABOUT_INTRO_START =
 // The lead under the headline. Codex is built in on every site. Claude is
 // named only on cocalc.ai (isPublicCocalcAiSite in public-home-content.ts,
 // whose result renderers pass in), and links to the Claude guide, which
-// states its preview status.
+// explains its access options.
 export function getPublicAboutIntro(
   onCocalcAi: boolean,
 ): readonly PublicAboutTextPart[] {

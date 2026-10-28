@@ -184,6 +184,12 @@ export async function purgeHistory({
           : {}),
       }),
     );
+    if (!result.reset && result.refused === "trash-pending") {
+      // H1c §3.3: an earlier reset's trash is still being removed
+      throw new Error(
+        "an earlier reset of this file's history is still being cleaned up; try again in a minute",
+      );
+    }
     if (result.reset) {
       syncstrings.set({
         ...current,
@@ -201,8 +207,12 @@ export async function purgeHistory({
       });
       await syncstrings.save();
     }
+    // A history still being counted reports COUNT_PROBE_RECORDS + 1, meaning
+    // "more than COUNT_PROBE_RECORDS": pass on that lower bound, marked as one.
+    const inexact = result.reset && result.countExact === false;
     return {
-      deleted: result.reset ? result.count : 0,
+      deleted: result.reset ? (inexact ? result.count - 1 : result.count) : 0,
+      ...(inexact ? { deletedExact: false as const } : {}),
       history_epoch: result.history_epoch,
       reset: result.reset,
     };

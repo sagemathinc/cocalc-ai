@@ -80,6 +80,8 @@ export const RESTART_LIMITS = {
 export type RestartRefusal =
   | "invalid"
   | "busy"
+  // an earlier reset's trash is still being removed (H1c §3.3)
+  | "trash-pending"
   | "deadline"
   | "too-large"
   | "missing"
@@ -504,9 +506,11 @@ async function restartWith({
         ? result.refused
         : result.refused == "busy"
           ? "busy"
-          : result.refused == "seed-too-large"
-            ? "too-large"
-            : "failed";
+          : result.refused == "trash-pending"
+            ? "trash-pending"
+            : result.refused == "seed-too-large"
+              ? "too-large"
+              : "failed";
     return { restarted: false, reason, message: result.refused };
   } catch (err) {
     if (err instanceof DeadlineExpired) {

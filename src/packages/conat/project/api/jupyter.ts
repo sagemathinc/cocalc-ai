@@ -70,6 +70,7 @@ export type SeedOversizedHistoryResult =
         | "moved"
         | "deadline"
         | "invalid"
+        | "trash-pending"
         | "failed";
       message?: string;
     };
@@ -81,6 +82,8 @@ export type RestartHistoryFromIpynbResult =
       reason:
         | "invalid"
         | "busy"
+        // an earlier reset's trash is still being removed (H1c §3.3)
+        | "trash-pending"
         | "deadline"
         | "too-large"
         | "missing"

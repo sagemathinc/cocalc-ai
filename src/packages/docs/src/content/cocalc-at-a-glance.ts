@@ -12,8 +12,8 @@ export const COCALC_AT_A_GLANCE_BODY = String.raw`
 
 CoCalc is made by SageMath, Inc. Each CoCalc project is a Linux environment with
 files, notebooks, terminals, and installed software, where people and AI agents
-work on the same files. Codex is built in, and Claude Code is available as an
-experimental preview on sites that enable it.
+work on the same files. Codex is built in, and Claude Code is integrated too
+on sites that enable it.
 
 CoCalc.ai is the hosted service. To run CoCalc on a computer or server you
 control, see [Where to run CoCalc](/products).
@@ -25,8 +25,7 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
 
 - People and agents work directly in the same notebooks, files, documents,
   terminals, and services.
-- You want Codex and Claude Code (experimental preview, where enabled) working
-  on the same files.
+- You want Codex and Claude Code working on the same files.
 - Collaborators need to see work update live and restore earlier versions.
 - The work must persist across sessions, collaborators, reviews, and handoffs.
 - An agent needs to read or work across several of your projects.
@@ -46,9 +45,9 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
 
 - Codex is the built-in agent. It works with project files, terminals, and
   notebooks.
-- Claude Code is an experimental preview on sites that enable it and works with
-  your personal Claude Pro or Max subscription. Codex and Claude Code agents can
-  work side by side in the same project.
+- Claude Code is integrated on sites that enable it. It can use CoCalc
+  membership, a Claude Pro or Max subscription, or an Anthropic API key. Codex
+  and Claude Code agents can work side by side in the same project.
 - Agents can message each other in Agent Networks. To connect two agents,
   mention a named agent with @ in another agent's conversation and choose
   **Create network** in the **Connect agents** dialog, or give both named
@@ -57,7 +56,7 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
 - Some features still differ between Codex and Claude Code. For the current
   status of each feature by agent, see
   [Agent features: Codex and Claude Code](/docs/ai/agent-features) and
-  [Claude Code in CoCalc (Experimental Preview)](/docs/ai/claude-code).
+  [Claude Code in CoCalc](/docs/ai/claude-code).
 - A Codex agent or a Claude Code agent can be given access to other projects
   you choose, with **Read-only files** or **Full runtime** access, without
   creating an API key. See

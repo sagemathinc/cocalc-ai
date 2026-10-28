@@ -42,7 +42,11 @@ are: * BSD 3-Clause License *
 
 import crypto from "crypto";
 import { v4 as uuid } from "uuid";
-import { Dealer } from "zeromq";
+
+// what respond() sends on (a DEALER socket of either transport)
+interface FrameSender {
+  send(frames: any): unknown;
+}
 
 const DEBUG = (global as any).DEBUG || false;
 
@@ -101,7 +105,7 @@ export class Message {
   }
 
   respond(
-    socket: Dealer,
+    socket: FrameSender,
     messageType: string,
     content?: object,
     metadata?: object,

@@ -72,7 +72,7 @@ export function getPublicFeaturesSignUp(
 export function getPublicFeaturesTasks(config: Config): PublicFeaturesTask[] {
   const { cocalcAi, compute, plus } = site(config);
   const ask = cocalcAi
-    ? "Ask Codex, or Claude Code (experimental preview) with your personal Claude Pro or Max subscription, to build or use software."
+    ? "Ask Codex or Claude Code to build or use software."
     : "Ask Codex to build or use software.";
   const tasks: (PublicFeaturesTask | false)[] = [
     {

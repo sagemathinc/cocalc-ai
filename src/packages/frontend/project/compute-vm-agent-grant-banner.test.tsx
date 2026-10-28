@@ -46,6 +46,8 @@ const pendingGrant = {
     pending_request: {
       action: "availability",
       operation: "start-vm",
+      operation_id: "a".repeat(64),
+      request_revision: "rev-a",
       vm_id: "12345678-abcd",
       hourly_usd: 0.25,
     },
@@ -77,6 +79,8 @@ describe("ComputeVmAgentGrantBanner", () => {
       expect(approveAgentGrant).toHaveBeenCalledWith({
         grant_id: "grant-1",
         browser_id: "browser-1",
+        operation_id: "a".repeat(64),
+        request_revision: "rev-a",
       }),
     );
     await waitFor(() =>
@@ -131,6 +135,52 @@ describe("ComputeVmAgentGrantBanner", () => {
       }),
     ).not.toBeNull();
     expect(listAgentGrants).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it("when the request changed, shows the refusal and the new request to review", async () => {
+    const replaced = {
+      grant_id: "grant-1",
+      metadata: {
+        pending_request: {
+          action: "billable",
+          operation: "set-vm-machine-type",
+          operation_id: "b".repeat(64),
+          request_revision: "rev-b",
+          vm_id: "12345678-abcd",
+          hourly_usd: 4,
+        },
+      },
+    };
+    listAgentGrants
+      .mockResolvedValueOnce([pendingGrant])
+      .mockResolvedValue([replaced]);
+    approveAgentGrant.mockRejectedValue(
+      new Error(
+        "This VM request changed after it was shown to you; review the current request and approve it again.",
+      ),
+    );
+
+    const { unmount } = render(
+      <ComputeVmAgentGrantBanner projectId="project-1" />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Allow start/stop for this turn",
+      }),
+    );
+
+    expect(
+      await screen.findByText(/review the current request/),
+    ).not.toBeNull();
+    expect(
+      await screen.findByRole("button", { name: "Approve exact request" }),
+    ).not.toBeNull();
+    expect(screen.getByText(/\$4.000\/hour maximum/)).not.toBeNull();
+    expect(approveAgentGrant).toHaveBeenCalledTimes(1);
+    expect(approveAgentGrant).toHaveBeenCalledWith(
+      expect.objectContaining({ request_revision: "rev-a" }),
+    );
     unmount();
   });
 });

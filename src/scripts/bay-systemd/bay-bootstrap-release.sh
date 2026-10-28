@@ -626,7 +626,9 @@ read_browser_version_settings() {
   )" || return 0
   local name value min="-" recommended="-"
   while read -r name value; do
-    value="${value//[[:space:]]/}"
+    # (read trims the ends.) Inner whitespace keeps the value one word and
+    # invalid: the hub's parseInt would stop at it, never join the digits.
+    value="${value//[[:space:]]/_}"
     case "$name" in
       version_min_browser) min="${value:--}" ;;
       version_recommended_browser) recommended="${value:--}" ;;
@@ -783,6 +785,147 @@ frontend_asset_retention_cutoff() {
       echo "$((version * 1000 - FRONTEND_ASSET_VERSION_SLACK_MS)) required-browser-version=${version}"
       ;;
   esac
+}
+
+# A deploy that installs a frontend keeps "Required browser version" (and the
+# recommended version, since the hub enforces the smaller of the two) at most
+# this many days old, so browsers older than that are disconnected and a later
+# deploy can drop their chunks. 0 turns this off. Hub-only deploys leave it.
+FRONTEND_MAX_BROWSER_AGE_DAYS="${FRONTEND_MAX_BROWSER_AGE_DAYS:-30}"
+
+# The value a browser version setting is raised to so it is at least FLOOR,
+# or nothing when it stays: raise only, so a recent value, or one in the
+# future (which the hub ignores, and replacing would lower), is left alone.
+browser_version_raise_target() {
+  local value="$1" now="$2" floor="$3" clamped
+  clamped="$(clamp_browser_version "$value" "$now")"
+  if [[ "$clamped" != "$now" ]] && ((clamped < floor)); then
+    echo "$floor"
+  fi
+}
+
+# Raises one browser version setting to VALUE as the bay account, atomically
+# and only while the stored value is not a number (missing, empty, "-",
+# anything else) or is numerically below VALUE: a value an admin raised in
+# between, or one in the future, is never lowered, and a row the environment
+# sets (COCALC_SETTING_*, readonly) is never touched. Bumps _last_update so
+# running hubs reload. Returns 0 when it was raised, 2 when it was left, 3
+# when the environment sets it, 1 on error.
+write_browser_version_setting() {
+  local name="$1" value="$2"
+  [[ "$name" =~ ^version_(min|recommended)_browser$ && "$value" =~ ^[0-9]+$ ]] || return 1
+  local updated
+  updated="$(
+    runuser -u "$BAY_USER" -- env \
+      PGHOST="${BAY_ROOT}/run/postgres" \
+      PGPORT=5432 \
+      PGUSER="$BAY_USER" \
+      PGCONNECT_TIMEOUT=5 \
+      timeout 15 "$PSQL_BIN" -d "$BAY_USER" -XAtq -v ON_ERROR_STOP=1 \
+      -v name="$name" -v value="$value" <<'SQL'
+WITH up AS (
+  INSERT INTO server_settings (name, value) VALUES (:'name', :'value')
+  ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
+  -- CASE, not OR: only CASE fixes the order, so the cast never sees text.
+  WHERE NOT coalesce(server_settings.readonly, false) AND CASE
+    WHEN server_settings.value IS NULL
+      OR btrim(server_settings.value) !~ '^[0-9]+$' THEN true
+    ELSE btrim(server_settings.value)::numeric < (:'value')::numeric
+  END
+  RETURNING 1
+), touched AS (
+  INSERT INTO server_settings (name, value)
+  SELECT '_last_update', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  WHERE EXISTS (SELECT 1 FROM up)
+  ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value
+  RETURNING 1
+)
+SELECT (SELECT count(*) FROM up) || ' ' || coalesce(
+  (SELECT readonly::text FROM server_settings WHERE name = :'name'), 'false');
+SQL
+  )" || return 1
+  [[ "$updated" == "1 "* ]] && return 0
+  [[ "$updated" == *" true" ]] && return 3
+  return 2
+}
+
+# This bay's COCALC_CLUSTER_ROLE as its services get it: the env files in
+# the order the units load them (systemd/*.service), the last value winning,
+# standalone when unset or empty (getConfiguredClusterRole); a later empty
+# assignment overrides an earlier value, as in systemd.
+bay_cluster_role() {
+  local dir="${ENV_DIR:-/etc/cocalc}" file role=""
+  for file in bay.env bay-workers.env bay-overlay.env bay-topology.env \
+    bay-secrets.env bay-local.env; do
+    [[ -r "${dir}/${file}" ]] || continue
+    grep -q '^COCALC_CLUSTER_ROLE=' "${dir}/${file}" || continue
+    role="$(sed -n 's/^COCALC_CLUSTER_ROLE=//p' "${dir}/${file}" | tail -n1)"
+  done
+  # Only the outer syntax goes: surrounding whitespace and one pair of
+  # quotes, then the hub's trim. Inner whitespace stays, so a misspelling
+  # like "st andalone" is unknown, as the hub finds it.
+  role="$(trim_outer_space "$role")"
+  if ((${#role} >= 2)) && [[ "$role" == \"*\" || "$role" == \'*\' ]]; then
+    role="$(trim_outer_space "${role:1:${#role}-2}")"
+  fi
+  echo "${role:-standalone}"
+}
+
+trim_outer_space() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  echo "${s%"${s##*[![:space:]]}"}"
+}
+
+# Raises the required and recommended browser versions to at most
+# FRONTEND_MAX_BROWSER_AGE_DAYS old, logging each change. Does nothing when
+# the settings cannot be read (the retention step reports that).
+ensure_recent_browser_version() {
+  local days="$FRONTEND_MAX_BROWSER_AGE_DAYS"
+  if [[ ! "$days" =~ ^[0-9]{1,5}$ ]]; then
+    echo "WARNING: FRONTEND_MAX_BROWSER_AGE_DAYS='${days}' is not a number of days (at most 5 digits); not changing browser versions" >&2
+    return 0
+  fi
+  days=$((10#$days))
+  ((days > 0)) || return 0
+  # In a multi-bay cluster site settings belong to the seed, which records
+  # and propagates them; a direct write here would bypass that.
+  local role
+  role="$(bay_cluster_role)"
+  case "$role" in
+    standalone) ;;
+    seed | attached)
+      echo "NOTE: this bay's cluster role is '${role}': site settings belong to the seed bay, so the browser versions are not changed here; keep them at most ${days} days old in the admin site settings"
+      return 0
+      ;;
+    *)
+      echo "WARNING: unknown COCALC_CLUSTER_ROLE '${role}'; not changing browser versions" >&2
+      return 0
+      ;;
+  esac
+  local settings
+  settings="$(read_browser_version_settings)"
+  [[ -n "$settings" ]] || return 0
+  local now floor
+  now="$(date +%s)"
+  floor=$((now - days * 86400))
+  local name value target status
+  # shellcheck disable=SC2086
+  set -- $settings
+  for name in version_min_browser version_recommended_browser; do
+    value="$1"
+    shift
+    target="$(browser_version_raise_target "$value" "$now" "$floor")"
+    [[ -n "$target" ]] || continue
+    status=0
+    write_browser_version_setting "$name" "$target" || status=$?
+    case "$status" in
+      0) echo "browser version: raised ${name} from ${value} to ${target} (at most ${days} days old)" ;;
+      2) echo "browser version: ${name} is already at least ${target} (changed meanwhile); left as is" ;;
+      3) echo "browser version: ${name} is set by COCALC_SETTING_${name^^} in the environment; left as is" ;;
+      *) echo "WARNING: could not raise ${name} from ${value} to ${target}" >&2 ;;
+    esac
+  done
 }
 
 prepare_frontend_asset_history() {
@@ -1538,13 +1681,16 @@ main() {
   else
     stage_source_release
   fi
+  local frontend_prepared=0
   if [[ -n "$STATIC_BUNDLE_PATH" || -n "$BUNDLE_PATH" ]]; then
     prepare_frontend_asset_history
+    frontend_prepared=1
   elif [[
     -z "$HUB_BUNDLE_PATH" &&
       -f "${TARGET_RELEASE}/runtime/control-plane/static/frontend-build.json"
   ]]; then
     prepare_frontend_asset_history
+    frontend_prepared=1
   fi
   validate_release
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
@@ -1554,6 +1700,12 @@ main() {
     remove_trusted_scaffold
   fi
   set_current_release
+  # Only once the new frontend is live: a failed deploy never leaves the old
+  # one serving under a raised floor. This deploy kept chunks by the setting
+  # as it was; the next one prunes to it. Failures here only warn.
+  if ((frontend_prepared)); then
+    ensure_recent_browser_version
+  fi
 
   if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
     prune_old_releases

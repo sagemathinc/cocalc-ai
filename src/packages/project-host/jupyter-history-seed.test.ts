@@ -24,6 +24,7 @@ import {
   setSyncClientHooks,
 } from "@cocalc/conat/sync-doc/sync-client";
 import { ipynbPath, syncdbPath } from "@cocalc/util/jupyter/names";
+import { setResetAdmissionHook } from "@cocalc/conat/persist/storage";
 import {
   RESTART_LIMITS,
   resetHistoryRestartState,
@@ -195,6 +196,57 @@ describe("(A) an opener hits the 413 and the live writer seeds", () => {
     expect((await stateOf(project_id, path)).epoch).toBe(before.epoch);
     opener.close();
     writer.close();
+  });
+});
+
+// H1c §3.4: the writer's seed is refused as trash-pending (an earlier reset's
+// trash still being removed; here the volume admission hook declines, the
+// same refusal); the opener falls back to (B), with nothing reset
+describe("(A) while an earlier reset's trash is pending", () => {
+  afterEach(() => setResetAdmissionHook(undefined));
+
+  it("the opener is told, with the restart from the .ipynb", async () => {
+    jest.setTimeout(90_000);
+    const limits = { ...RESTART_LIMITS };
+    // the writer keeps 10 s of its deadline for the reset itself
+    Object.assign(RESTART_LIMITS, { deadlineMs: 15_000 });
+    try {
+      const project_id = uuid();
+      const path = ipynbPath("trash-a.ipynb");
+      const writer = await liveWriter(project_id, path);
+      const before = await stateOf(project_id, path);
+      let asked = 0;
+      setResetAdmissionHook(() => {
+        asked += 1;
+        return false;
+      });
+      const opener = openNotebook(project_id, path);
+      const answers: any[] = [];
+      (opener as any).client.askLiveWriterToSeed = async (opts) => {
+        const answer = await seedOversizedHistory({
+          ...opts,
+          project_id,
+          syncdbOf: () => writer,
+          syncClient: new SyncClient(connect()),
+        });
+        answers.push(answer);
+        return answer;
+      };
+      const unloadable: any[] = [];
+      opener.on("history-unloadable", (x) => unloadable.push(x));
+      await wait({ until: () => unloadable.length > 0, timeout: 30000 });
+      expect(unloadable[0]).toMatchObject({ restart: "ipynb" });
+      expect(answers[0]?.seeded).toBe(false);
+      // refused at the persist server; the deadline is also a correct
+      // terminal state
+      expect(["trash-pending", "deadline"]).toContain(answers[0]?.reason);
+      expect(asked).toBeGreaterThan(0);
+      expect((await stateOf(project_id, path)).epoch).toBe(before.epoch);
+      opener.close();
+      writer.close();
+    } finally {
+      Object.assign(RESTART_LIMITS, limits);
+    }
   });
 });
 

@@ -266,6 +266,7 @@ it("records an exact pending mutation request", async () => {
     operation_id: "a".repeat(64),
     vm_id,
     total_authorized_usd: 0.24,
+    request_revision: expect.stringMatching(/^[0-9a-f-]{36}$/),
   });
   expect(centralLog).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -288,6 +289,7 @@ it("does not rewrite or re-log the same pending mutation request", async () => {
             action: "availability",
             ...request(),
             requested_at: new Date().toISOString(),
+            request_revision: "rev-a",
           },
         },
       }),
@@ -308,6 +310,38 @@ it("does not rewrite or re-log the same pending mutation request", async () => {
   });
   expect(query).toHaveBeenCalledTimes(1);
   expect(centralLog).not.toHaveBeenCalled();
+});
+
+it("gives a pending request from before revisions a revision", async () => {
+  query
+    .mockResolvedValueOnce({
+      rows: [
+        approvedGrant({
+          allowed_actions: [],
+          metadata: {
+            pending_request: {
+              action: "availability",
+              ...request(),
+              requested_at: new Date().toISOString(),
+            },
+          },
+        }),
+      ],
+    })
+    .mockResolvedValueOnce({ rows: [] });
+
+  await expect(
+    requireAgentComputeGrant({
+      auth: auth(),
+      action: "availability",
+      project_id,
+      vm_id,
+      request: request(),
+    }),
+  ).rejects.toMatchObject({ code: "agent_grant_required" });
+  expect(query.mock.calls[1][1][1].pending_request.request_revision).toEqual(
+    expect.any(String),
+  );
 });
 
 it("requires exact operation identity and enforces the approved envelope", async () => {
@@ -428,6 +462,7 @@ it("approves a pending request transactionally", async () => {
   const pending = {
     action: "availability",
     ...request(),
+    request_revision: "rev-a",
   };
   const updated = approvedGrant();
   clientQuery
@@ -445,7 +480,12 @@ it("approves a pending request transactionally", async () => {
     .mockResolvedValueOnce({ rows: [] });
 
   await expect(
-    approveAgentComputeGrant({ account_id, grant_id }),
+    approveAgentComputeGrant({
+      account_id,
+      grant_id,
+      operation_id: "a".repeat(64),
+      request_revision: "rev-a",
+    }),
   ).resolves.toEqual(updated);
   expect(
     clientQuery.mock.calls.map(([sql]) => sql.trim().split(/\s+/)[0]),
@@ -462,6 +502,76 @@ it("approves a pending request transactionally", async () => {
   expect(publishProjectDetailInvalidationBestEffort).toHaveBeenCalledWith({
     project_id,
     fields: ["compute_agent_grants"],
+  });
+});
+
+it("approves only the request the owner reviewed, never one that replaced it", async () => {
+  // the owner reviewed A; the agent has since replaced it with B
+  const reviewedA = { operation_id: "a".repeat(64), request_revision: "rev-a" };
+  const pendingB = {
+    action: "billable",
+    ...request({
+      operation: "set-vm-machine-type",
+      operation_id: "b".repeat(64),
+    }),
+    request_revision: "rev-b",
+  };
+  const grantWith = (pending: Record<string, unknown>) => ({
+    rows: [
+      {
+        ...approvedGrant(),
+        expires_at: new Date(Date.now() + 600_000),
+        metadata: { pending_request: pending },
+      },
+    ],
+  });
+  clientQuery
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce(grantWith(pendingB))
+    .mockResolvedValueOnce({ rows: [] });
+  await expect(
+    approveAgentComputeGrant({ account_id, grant_id, ...reviewedA }),
+  ).rejects.toMatchObject({
+    code: "agent_grant_request_changed",
+    message: expect.stringContaining("review the current request"),
+  });
+  // A's operation with B's revision (or the reverse) is no match either
+  clientQuery
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce(grantWith(pendingB))
+    .mockResolvedValueOnce({ rows: [] });
+  await expect(
+    approveAgentComputeGrant({
+      account_id,
+      grant_id,
+      operation_id: "a".repeat(64),
+      request_revision: "rev-b",
+    }),
+  ).rejects.toMatchObject({ code: "agent_grant_request_changed" });
+  expect(
+    clientQuery.mock.calls.map(([sql]) => sql.trim().split(/\s+/)[0]),
+  ).toEqual(["BEGIN", "SELECT", "ROLLBACK", "BEGIN", "SELECT", "ROLLBACK"]);
+  expect(publishProjectDetailInvalidationBestEffort).not.toHaveBeenCalled();
+
+  // reviewing B and approving it by its own identity succeeds
+  clientQuery.mockReset();
+  const updated = approvedGrant();
+  clientQuery
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce(grantWith(pendingB))
+    .mockResolvedValueOnce({ rows: [updated] })
+    .mockResolvedValueOnce({ rows: [] });
+  await expect(
+    approveAgentComputeGrant({
+      account_id,
+      grant_id,
+      operation_id: "b".repeat(64),
+      request_revision: "rev-b",
+    }),
+  ).resolves.toEqual(updated);
+  expect(clientQuery.mock.calls[2][1][13].approved_request).toMatchObject({
+    operation: "set-vm-machine-type",
+    request_revision: "rev-b",
   });
 });
 

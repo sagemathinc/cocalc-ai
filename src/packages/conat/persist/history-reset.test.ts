@@ -359,6 +359,12 @@ describe("historyInclusion: which pending patches did the reset include?", () =>
         });
       }
     }
+    // the expired epoch's ids are trash, removed in bounded steps (H1c §4):
+    // meanwhile they are valid evidence, never "absent"
+    const before = stream.historyInclusion({ epoch: 0, ids: ["e0", "x"] }).ids;
+    expect(before.e0.status).not.toBe("absent");
+    expect(before.x.status).toBe("unknown");
+    while (!stream.runTrashStep());
     expect(stream.historyInclusion({ epoch: 0, ids: ["e0", "x"] }).ids).toEqual(
       {
         e0: { status: "unknown" },
@@ -380,8 +386,13 @@ describe("historyInclusion: which pending patches did the reset include?", () =>
     expect(stream.historyInclusion({ epoch: 0, ids: ["a"] }).ids.a.status).toBe(
       "excluded",
     );
-    // and purging forgets everything
+    // and purging forgets everything, once its trash is removed (H1c §4);
+    // meanwhile never "absent"
     stream.resetHistory({});
+    expect(
+      stream.historyInclusion({ epoch: 0, ids: ["a"] }).ids.a.status,
+    ).not.toBe("absent");
+    while (!stream.runTrashStep());
     expect(stream.historyInclusion({ epoch: 0, ids: ["a"] }).ids).toEqual({
       a: { status: "unknown" },
     });

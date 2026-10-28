@@ -1,0 +1,53 @@
+name: Jupyter ZMTP transport (Windows)
+
+# The pure-JS ZMTP transport (src/packages/jupyter/zmq/zmtp.ts) on Windows,
+# where ipc:// is refused and the socket error codes differ: its codec,
+# lifecycle and flow-control tests, and its TCP interop with libzmq (pyzmq).
+# zmtp.ts depends only on Node, so this needs no workspace install.
+
+on:
+  pull_request:
+    paths:
+      - "src/packages/jupyter/zmq/**"
+      - ".github/workflows/jupyter-zmtp-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zmtp:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install pyzmq and TypeScript (pinned)
+        shell: bash
+        run: |
+          python -m pip install pyzmq==27.1.0
+          python -c "import zmq; print('libzmq', zmq.zmq_version(), 'pyzmq', zmq.__version__)"
+          mkdir -p "$RUNNER_TEMP/ts" && cd "$RUNNER_TEMP/ts" && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund typescript@5.9.3 @types/node@24.19.2 @types/jest@30.0.0
+      - name: Compile and run the ZMTP tests
+        shell: bash
+        env:
+          PYTHON: python
+          ZMTP_REQUIRE_PYZMQ: "1"
+          ZMTP_TS_API: ${{ runner.temp }}/ts/node_modules/typescript
+        run: |
+          out="$RUNNER_TEMP/zmtp"
+          mkdir -p "$out"
+          cp src/packages/jupyter/zmq/zmtp.ts src/packages/jupyter/zmq/zmtp.test.ts src/packages/jupyter/zmq/zmtp-interop.test.ts "$out/"
+          cd "$out"
+          node "$RUNNER_TEMP/ts/node_modules/typescript/bin/tsc" --esModuleInterop --target es2022 --lib es2022 --module commonjs --types node,jest --typeRoots "$RUNNER_TEMP/ts/node_modules/@types" zmtp.test.ts zmtp-interop.test.ts
+          shim="$GITHUB_WORKSPACE/src/packages/jupyter/zmq/node-test-shim.cjs"
+          # both files run even if the first fails, so one can't hide the other's coverage
+          rc=0
+          node --test-reporter=spec "$shim" zmtp.test.js || rc=1
+          node --test-reporter=spec "$shim" zmtp-interop.test.js || rc=1
+          exit $rc

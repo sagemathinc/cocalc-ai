@@ -17,11 +17,13 @@ every row was retested on every deployment. Older frontend, project-host, worker
 or CLI builds can lack features listed here. Site policy, project permissions,
 model access, installed software, and compute availability still apply.
 
-The Claude column covers **integrated Claude Code with a personal Pro/Max
-subscription on an enabled managed project host**. It does not qualify Claude
-API-key modes, generic ACP adapters, or Claude running independently in a terminal.
-Claude Code remains an experimental preview; this comparison does not announce
-general availability or close its release gates.
+**Access options reviewed 2026-10-26.** The access rows include Claude membership
+and API-key options. Unless a row specifies another payment method, the remaining
+Claude qualifications refer to **integrated Claude Code with a personal Pro/Max
+subscription on an enabled managed project host** and retain the assessment above.
+They do not qualify generic ACP adapters or Claude running independently in a
+terminal, or establish feature parity across payment methods. The status
+of each row describes that capability, not Claude Code as a whole.
 
 | Status | Meaning |
 | --- | --- |
@@ -42,7 +44,7 @@ general availability or close its release gates.
 | [Choose a working directory](/docs/ai/codex-conversations) | Supported | Preview | Use the composer directory control. A directory is not an access restriction. |
 | [Open a terminal from an agent](/docs/terminal/use-terminal) | Supported | Preview | New agent terminals use the agent's configured working directory on current builds. Existing terminals keep their shell state. |
 | [Connect personal subscription access](/docs/ai/connect-credentials) | Supported | Preview | ChatGPT for Codex; verified personal Claude Pro/Max for Claude. These are separate connections. |
-| [Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Not supported | Not part of the Claude subscription release scope. Other Claude credential modes may appear on experimental sites, but are not qualified by this table. |
+| [Choose API-key or membership funding](/docs/ai/connect-credentials) | Supported | Conditional | Claude offers membership funding when enabled and included in your membership, an account Anthropic API key, or a project API-key secret. Membership uses its included model and the AI allowance shared with Codex; Anthropic bills API-key usage. See [Claude access and billing](/docs/ai/claude-code). |
 | [Choose model, reasoning/effort, and Standard/Fast speed](/docs/ai/codex-settings) | Conditional | Preview | Only options advertised for the selected model and credential are usable. Fast can consume additional allowance. |
 | [Save account defaults and refresh available models](/docs/ai/codex-settings) | Supported | Limited | Claude offers model refresh and remembers payment choices, but does not share all Codex account-default controls. Changes do not rewrite admitted work. |
 | [Inspect subscription usage and reconnect](/docs/ai/connect-credentials) | Supported | Preview | Provider-reported usage, not a per-agent hard spending limit. Claude offers Reconnect Claude in settings. |
@@ -207,9 +209,8 @@ GitHub permissions, and fresh-auth requirements remain separate checks.
 
 Use Codex when the task depends on continuing goals or scheduled agent work.
 Both integrations provide asynchronous question cards and Agent Network
-delivery, subject to the qualification notes above. Use the
-Claude preview for interactive project work when its listed limitations are
-acceptable. Shared CoCalc tools can provide notebook, document, Git, terminal,
+delivery, subject to the qualification notes above. Use Claude Code for
+interactive project work when its listed limitations are acceptable. Shared CoCalc tools can provide notebook, document, Git, terminal,
 and browser workflows without implying that every native Codex feature exists
 in Claude.
 

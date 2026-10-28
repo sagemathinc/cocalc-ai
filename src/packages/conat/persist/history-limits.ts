@@ -30,6 +30,11 @@ export interface HistoryLimits {
   maxArchivedIdEpochs: number;
   // ids in one inclusion query
   maxInclusionIds: number;
+  // the history a reset leaves to remove later (its trash: bounded history
+  // plan H1c §3), per stream; a later reset waits while more is pending
+  maxTrashItems: number;
+  maxTrashRecords: number;
+  maxTrashBytes: number;
 }
 
 export const DEFAULT_HISTORY_LIMITS: Readonly<HistoryLimits> = Object.freeze({
@@ -43,6 +48,9 @@ export const DEFAULT_HISTORY_LIMITS: Readonly<HistoryLimits> = Object.freeze({
   maxTrimBytes: 64 * MiB,
   maxArchivedIdEpochs: 2,
   maxInclusionIds: 1000,
+  maxTrashItems: 16,
+  maxTrashRecords: 100_000,
+  maxTrashBytes: 512 * MiB,
 });
 
 const ENV: { [key in keyof HistoryLimits]: string } = {
@@ -56,6 +64,9 @@ const ENV: { [key in keyof HistoryLimits]: string } = {
   maxTrimBytes: "COCALC_HISTORY_MAX_TRIM_BYTES",
   maxArchivedIdEpochs: "COCALC_HISTORY_MAX_ARCHIVED_ID_EPOCHS",
   maxInclusionIds: "COCALC_HISTORY_MAX_INCLUSION_IDS",
+  maxTrashItems: "COCALC_HISTORY_MAX_TRASH_ITEMS",
+  maxTrashRecords: "COCALC_HISTORY_MAX_TRASH_RECORDS",
+  maxTrashBytes: "COCALC_HISTORY_MAX_TRASH_BYTES",
 };
 
 export function historyLimits(

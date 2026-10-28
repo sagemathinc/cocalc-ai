@@ -4785,7 +4785,7 @@ class AdmissionCancelled(RuntimeError):
     pass
 
 def stdin_closed():
-    # The runtime cancels by ending stdin, then SIGKILLs 20s later, while
+    # The runtime cancels by ending stdin, then SIGKILLs sudo 45s later, while
     # admission may wait much longer for the lifecycle lock. Detect the hangup
     # without reading: the job configuration may still be queued unread.
     hangup = select.POLLHUP | select.POLLERR | getattr(select, "POLLRDHUP", 0)
