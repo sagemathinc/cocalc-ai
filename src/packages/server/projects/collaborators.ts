@@ -3232,7 +3232,48 @@ export async function listMyCollaborators({
      LIMIT $3`,
     [account_id, includeEmail, maxRows],
   );
-  return await hydrateMyCollaboratorRows(rows, includeEmail);
+  const local = await hydrateMyCollaboratorRows(rows, includeEmail);
+  return await withOtherBayCollaborators({
+    account_id,
+    local,
+    includeEmail,
+    maxRows,
+  });
+}
+
+// The query above sees only projects this bay owns. People met only in
+// projects on other bays are in the account's collaborator index (kept
+// current from their owning bays), so add those it doesn't already list.
+// Best effort: without the index the local list is still right as far as
+// it goes.
+async function withOtherBayCollaborators({
+  account_id,
+  local,
+  includeEmail,
+  maxRows,
+}: {
+  account_id: string;
+  local: MyCollaboratorRow[];
+  includeEmail: boolean;
+  maxRows: number;
+}): Promise<MyCollaboratorRow[]> {
+  if (local.length >= maxRows) return local;
+  try {
+    const listed = new Set(local.map((row) => row.account_id));
+    const projected = await listProjectedMyCollaboratorsForAccount({
+      account_id,
+      limit: maxRows,
+      include_email: includeEmail,
+    });
+    const extra = projected.filter((row) => !listed.has(row.account_id));
+    return [...local, ...extra].slice(0, maxRows);
+  } catch (err) {
+    logger.warn("collaborators on other bays unavailable", {
+      account_id,
+      err: `${err}`,
+    });
+    return local;
+  }
 }
 
 async function allowUrlsInEmails({

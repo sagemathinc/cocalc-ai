@@ -7,6 +7,7 @@ import { fromJS, Map } from "immutable";
 import { EventEmitter } from "events";
 
 const getSharedAccountDStream = jest.fn();
+const listMyCollaborators = jest.fn();
 let signedIn = false;
 let accountId: string | undefined;
 let userMap = Map<string, any>();
@@ -69,6 +70,11 @@ jest.mock("../webapp-client", () => ({
     conat_client: {
       on: jest.fn(),
       dstream: jest.fn(),
+      hub: {
+        projects: {
+          listMyCollaborators: (...args: any[]) => listMyCollaborators(...args),
+        },
+      },
     },
   },
 }));
@@ -188,6 +194,37 @@ describe("users table helpers", () => {
     expect(merged.getIn(["acct-new-collab", "display_name"])).toBe(
       "New Collab",
     );
+  });
+
+  it("adds collaborators from other bays that the snapshot lacks", async () => {
+    signedIn = true;
+    accountId = "acct-me";
+    userMap = fromJS({
+      "acct-local": { first_name: "Local", collaborator: true },
+    }) as Map<string, any>;
+    listMyCollaborators.mockResolvedValue([
+      { account_id: "acct-local", name: "Changed", shared_projects: 1 },
+      {
+        account_id: "acct-remote",
+        first_name: "Ada",
+        last_name: "Tester",
+        last_active: new Date("2026-10-28T00:00:00Z"),
+        shared_projects: 1,
+      },
+      { account_id: "acct-me", name: "Me", shared_projects: 1 },
+    ]);
+    const { addOtherBayCollaborators } = await import("./table");
+    await addOtherBayCollaborators();
+    // The other bay's collaborator, by name, as a collaborator.
+    expect(userMap.getIn(["acct-remote", "collaborator"])).toBe(true);
+    expect(userMap.getIn(["acct-remote", "display_name"])).toBe("Ada Tester");
+    expect(userMap.getIn(["acct-remote", "last_active"])).toEqual(
+      new Date("2026-10-28T00:00:00Z"),
+    );
+    // Snapshot rows and the account itself are left alone.
+    expect(userMap.getIn(["acct-local", "first_name"])).toBe("Local");
+    expect(userMap.getIn(["acct-local", "name"])).toBeUndefined();
+    expect(userMap.has("acct-me")).toBe(false);
   });
 
   it("does not create the collaborators table before account id is known", async () => {

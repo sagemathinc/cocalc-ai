@@ -144,8 +144,58 @@ class UsersTable extends Table {
 
   _change(table, _keys) {
     actions.setState({ user_map: mergeUsersSnapshot(table.get()) });
+    void addOtherBayCollaborators();
   }
 }
+
+// The collaborators snapshot reads only this account's home bay, so people
+// met only in projects on other bays are missing from it. The hub's
+// collaborator list includes them (from the account's collaborator index):
+// add the ones the snapshot lacks, as the realtime feed would.
+export const addOtherBayCollaborators = reuseInFlight(
+  async (): Promise<void> => {
+    if (getKioskProjectId() != null || !webapp_client.is_signed_in()) return;
+    let rows: Awaited<
+      ReturnType<
+        typeof webapp_client.conat_client.hub.projects.listMyCollaborators
+      >
+    >;
+    try {
+      rows = await webapp_client.conat_client.hub.projects.listMyCollaborators({
+        limit: 1000,
+      });
+    } catch (err) {
+      log.info("collaborators on other bays unavailable", err);
+      return;
+    }
+    const user_map = store.get("user_map") ?? Map<string, any>();
+    let next = user_map;
+    for (const row of rows) {
+      if (row.account_id === getAccountId()) continue;
+      if (next.get(row.account_id)?.get?.("collaborator")) continue;
+      next = next.set(
+        row.account_id,
+        (next.get(row.account_id) ?? Map<string, any>()).merge(
+          buildCollaboratorRecord({
+            account_id: row.account_id,
+            display_name: null,
+            first_name: row.first_name ?? null,
+            last_name: row.last_name ?? null,
+            name: row.name ?? null,
+            last_active:
+              row.last_active != null
+                ? new Date(row.last_active).toISOString()
+                : null,
+            profile: null,
+            common_project_count: row.shared_projects ?? 0,
+            updated_at: null,
+          }),
+        ),
+      );
+    }
+    if (next !== user_map) actions.setState({ user_map: next });
+  },
+);
 
 let signedInListener: (() => void) | undefined;
 let signedOutListener: (() => void) | undefined;
