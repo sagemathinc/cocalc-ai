@@ -33,6 +33,7 @@ import initPublicSupport from "./app/public-support";
 import { resolveStaticPath, servePublicShell } from "./app/public-shell";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
+import initGpuPodHostKey from "./app/gpu-pod-host-key";
 import initProjectHostSoftware from "./app/project-host-software";
 import initCliDistribution from "./app/cli-distribution";
 import initSelfHostConnector from "./app/self-host-connector";
@@ -338,6 +339,7 @@ export default async function init(opts: Options): Promise<{
   }
   initAppRedirect(router, { includeAuth: false });
   initProjectHostBootstrap(router);
+  initGpuPodHostKey(router);
   initProjectHostSoftware(router);
   initCliDistribution(router);
   initSelfHostConnector(router);
