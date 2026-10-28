@@ -762,7 +762,7 @@ export async function listManagedGpuPodsLocal(
   return rows.map(podSummary);
 }
 
-// Who is responsible for a pod. Provider ids, machine ids and IPs are only
+// Who is responsible for a pod. Provider ids and IPs are only
 // lookup hints: results are limited to the caller's own records.
 export async function whoGpuPodLocal(
   opts: { account_id?: string; query?: unknown },
@@ -772,20 +772,22 @@ export async function whoGpuPodLocal(
   await requireHomeBay(account_id, deps);
   const q = `${opts.query ?? ""}`.trim();
   if (!q || q.length > 64 || !/^[A-Za-z0-9_.:-]+$/.test(q)) {
-    throw Error("Give a pod id, handle, machine id or IP address.");
+    throw Error("Give a pod id, handle, RunPod pod id or IP address.");
   }
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods
       WHERE ${MINE}
-        AND (${isValidUUID(q) ? "id = $2::uuid OR " : ""}handle = $2
-             OR provider_pod_id = $2 OR machine_id = $2 OR public_ip = $2)
+        AND (id::text = $2 OR handle = $2 OR provider_pod_id = $2
+             OR public_ip = $2)
       ORDER BY created DESC LIMIT 50`,
     [account_id, q],
   );
   const out: GpuAttribution[] = [];
   for (const row of rows as PodRow[]) {
     const events = await getPool().query(
-      `SELECT * FROM gpu_pod_events WHERE pod_id = $1 ORDER BY at ASC LIMIT 200`,
+      // the newest 200, shown oldest first
+      `SELECT * FROM (SELECT * FROM gpu_pod_events WHERE pod_id = $1
+         ORDER BY at DESC, id DESC LIMIT 200) e ORDER BY at ASC, id ASC`,
       [row.id],
     );
     out.push({

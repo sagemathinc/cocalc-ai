@@ -132,7 +132,7 @@ export interface GpuApi {
     pod_id: string;
     timeout?: number;
   }) => Promise<{ state: GpuPodSummary["state"] }>;
-  // query: a pod id, handle, RunPod pod id, machine id or IP address
+  // query: a pod id, handle, RunPod pod id or IP address
   who: (opts: {
     account_id?: string;
     query: string;

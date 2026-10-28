@@ -496,9 +496,31 @@ describeDb("GPU pods", () => {
       expect.arrayContaining(["create", "bind"]),
     );
     expect((await events(pod.id)).map((e) => e.action)).toContain("who_lookup");
+    // by our id (a UUID), the handle, and RunPod's id
+    for (const query of [pod.id, pod.handle, pod.provider_pod_id]) {
+      const [h] = await whoGpuPodLocal({ account_id, query }, d);
+      expect(h.pod.id).toBe(pod.id);
+    }
     await expect(
       whoGpuPodLocal({ account_id, query: "'; drop table x" }, d),
     ).rejects.toThrow("Give a pod id");
+  });
+
+  it("shows the newest 200 events of a long history", async () => {
+    const { deps: d, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    for (let i = 0; i < 205; i++) {
+      await whoGpuPodLocal({ account_id, query: pod.handle }, d);
+    }
+    const [h] = await whoGpuPodLocal({ account_id, query: pod.handle }, d);
+    expect(h.events).toHaveLength(200);
+    // the earliest events (create, bind) have aged out; the latest is there
+    expect(h.events.map((e) => e.action)).not.toContain("create");
+    const times = h.events.map((e) => e.at);
+    expect([...times].sort()).toEqual(times);
   });
 
   it("says when no key is connected", async () => {

@@ -330,7 +330,7 @@ export function registerGpuCommand(
   gpu
     .command("who <query>")
     .description(
-      "who is responsible for a pod, and what was done to it: a handle, RunPod pod id, machine id or IP address",
+      "who is responsible for a pod, and what was done to it: a handle, RunPod pod id or IP address",
     )
     .action(async (query: string, _opts, command: Command) =>
       run(command, "who", async (api, ctx) => {
