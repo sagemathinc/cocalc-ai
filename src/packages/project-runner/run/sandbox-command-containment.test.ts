@@ -77,7 +77,11 @@ test("cancel ends the lease; a killed transport never claims cleanup", async () 
   const { child, result, controller } = fixture();
   controller.abort();
   expect(child.stdin.writableEnded).toBe(true);
-  await jest.advanceTimersByTimeAsync(20000);
+  // Not while the helper may still be cleaning up: lock wait and scope kill
+  // within its 30 s output drain.
+  await jest.advanceTimersByTimeAsync(44_999);
+  expect(child.kill).not.toHaveBeenCalled();
+  await jest.advanceTimersByTimeAsync(1);
   expect(child.kill).toHaveBeenCalledWith("SIGKILL");
   child.emit("close", null, "SIGKILL");
   expect(await result).toMatchObject({ cleanupConfirmed: false });
@@ -302,31 +306,126 @@ test("untrusted output and mismatched scope identities cannot obtain a recovery 
   expect(mockExecFile).not.toHaveBeenCalled();
 });
 
-test("recovery polling never overlaps a stalled privileged query", async () => {
+test("recovery polling never overlaps a stalled privileged query, and abandons it", async () => {
   jest.useFakeTimers();
   const confirmed = jest.fn();
   const { child, result, frame, scope } = fixture(confirmed);
   frame({ type: "scope", scope });
   child.emit("close", 1);
   await result;
-  let finish: () => void;
+  const finish: (() => void)[] = [];
+  const queries: (EventEmitter & { kill: jest.Mock })[] = [];
   mockExecFile.mockImplementation((_command, _args, _options, callback) => {
     const stdin = new PassThrough();
     stdin.on("data", (data) => {
-      finish = () =>
+      finish.push(() =>
         callback(
           null,
           JSON.stringify({ confirmed: JSON.parse(data.toString()).jobs }),
-        );
+        ),
+      );
     });
+    const query = Object.assign(new EventEmitter(), { stdin, kill: jest.fn() });
+    queries.push(query);
+    return query;
+  });
+  // The query at 5 s never settles: after 45 s it is abandoned and asked to
+  // stop (sudo relays SIGTERM to the helper; SIGKILL would orphan it).
+  await jest.advanceTimersByTimeAsync(49_999);
+  expect(mockExecFile).toHaveBeenCalledTimes(1);
+  expect(queries[0].kill).not.toHaveBeenCalled();
+  await jest.advanceTimersByTimeAsync(1);
+  expect(queries[0].kill).toHaveBeenCalledWith("SIGTERM");
+  // An abandoned query's late reply proves nothing.
+  finish[0]();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(confirmed).not.toHaveBeenCalled();
+  // No other query starts while the abandoned one may still run: here it
+  // exits 20 s after SIGTERM.
+  await jest.advanceTimersByTimeAsync(20_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(1);
+  queries[0].emit("exit", null, "SIGTERM");
+  expect(queries[0].kill).not.toHaveBeenCalledWith("SIGKILL");
+  // The next 30 s check asks again.
+  await jest.advanceTimersByTimeAsync(20_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(2);
+  finish[1]();
+  queries[1].emit("exit", 0, null);
+  await jest.advanceTimersByTimeAsync(0);
+  expect(confirmed).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(60_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(2);
+});
+
+test("an abandoned recheck that ignores SIGTERM cannot stop recovery for good", async () => {
+  jest.useFakeTimers();
+  const confirmed = jest.fn();
+  const { child, result, frame, scope } = fixture(confirmed);
+  frame({ type: "scope", scope });
+  child.emit("close", 1);
+  await result;
+  const finish: (() => void)[] = [];
+  const queries: (EventEmitter & { kill: jest.Mock })[] = [];
+  mockExecFile.mockImplementation((_command, _args, _options, callback) => {
+    const stdin = new PassThrough();
+    stdin.on("data", (data) => {
+      finish.push(() =>
+        callback(
+          null,
+          JSON.stringify({ confirmed: JSON.parse(data.toString()).jobs }),
+        ),
+      );
+    });
+    const query = Object.assign(new EventEmitter(), { stdin, kill: jest.fn() });
+    queries.push(query);
+    return query;
+  });
+  // Abandoned at 50 s; it never exits (stuck in the kernel).
+  await jest.advanceTimersByTimeAsync(50_000);
+  expect(queries[0].kill).toHaveBeenCalledWith("SIGTERM");
+  await jest.advanceTimersByTimeAsync(29_999);
+  expect(queries[0].kill).not.toHaveBeenCalledWith("SIGKILL");
+  expect(mockExecFile).toHaveBeenCalledTimes(1);
+  // After the 30 s grace: sudo is killed and recovery resumes at the next
+  // check.
+  await jest.advanceTimersByTimeAsync(1);
+  expect(queries[0].kill).toHaveBeenCalledWith("SIGKILL");
+  await jest.advanceTimersByTimeAsync(10_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(2);
+  finish[1]();
+  queries[1].emit("exit", 0, null);
+  await jest.advanceTimersByTimeAsync(0);
+  expect(confirmed).toHaveBeenCalledTimes(1);
+});
+
+test("a proof whose callback throws does not lose the other proofs", async () => {
+  jest.useFakeTimers();
+  const delivered: string[] = [];
+  const first = fixture(() => {
+    delivered.push("first");
+    throw Error("callback failed");
+  });
+  first.frame({ type: "scope", scope: first.scope });
+  first.child.emit("close", 1);
+  await first.result;
+  const second = fixture(() => delivered.push("second"));
+  second.frame({ type: "scope", scope: second.scope });
+  second.child.emit("close", 1);
+  await second.result;
+  mockExecFile.mockImplementation((_command, _args, _options, callback) => {
+    const stdin = new PassThrough();
+    stdin.on("data", (data) =>
+      callback(
+        null,
+        JSON.stringify({ confirmed: JSON.parse(data.toString()).jobs }),
+      ),
+    );
     return { stdin };
   });
-  await jest.advanceTimersByTimeAsync(90_000);
-  expect(mockExecFile).toHaveBeenCalledTimes(1);
-  expect(confirmed).not.toHaveBeenCalled();
-  finish!();
-  await jest.advanceTimersByTimeAsync(30_000);
-  expect(confirmed).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(5_000);
+  expect(delivered).toEqual(["first", "second"]);
+  // Both were proven: nothing is left to recheck.
+  await jest.advanceTimersByTimeAsync(60_000);
   expect(mockExecFile).toHaveBeenCalledTimes(1);
 });
 
