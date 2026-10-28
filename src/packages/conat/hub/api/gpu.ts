@@ -184,8 +184,8 @@ export interface GpuApi {
     },
   ) => Promise<GpuPodsResult>;
   // An agent's launch also needs an operation_id (its idempotency key) and
-  // its human's approval of exactly this launch: without one it fails with
-  // code gpu_agent_approval_required, a request_id and payload_hash.
+  // its human's approval of exactly this launch: without one it fails, with
+  // a message naming the request the human is asked to approve.
   launch: (opts: {
     account_id?: string;
     project_id: string;

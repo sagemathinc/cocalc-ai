@@ -597,7 +597,9 @@ export async function launchGpuPodLocal(
     throw Error("An agent can launch only in its own project.");
   }
   if (agent && !/^[A-Za-z0-9._:-]{1,128}$/.test(agent.operation_id ?? "")) {
-    throw Error("An agent's GPU launch needs an operation id.");
+    throw Error(
+      "An agent's GPU launch needs an operation id (cocalc gpu launch --operation <id>).",
+    );
   }
   const spec = normalizeGpuLaunchSpec(opts.spec);
   if (
