@@ -25,8 +25,8 @@ import {
   writePodSsh,
 } from "./gpu-ssh";
 
-const HANDLE = "cc-7f3k2qxa";
-const OTHER = "cc-b2c3d4e5";
+const HANDLE = "cc-7f3k2qxa7f3k2qxa";
+const OTHER = "cc-b2c3d4e5b2c3d4e5";
 // A real ed25519 public key (made once with ssh-keygen; not a secret).
 const HOST_KEY =
   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
@@ -71,6 +71,8 @@ const endpoint = (over = {}) => ({
 it("refuses anything that could inject an SSH config line", () => {
   for (const bad of [
     { handle: "cc-UPPER123" },
+    // the old 8-character handles are no longer valid
+    { handle: "cc-7f3k2qxa" },
     { handle: "../../etc" },
     { host: "203.0.113.7\n  ProxyCommand sh -c evil" },
     { host: "-oProxyCommand=evil" },

@@ -47,7 +47,7 @@ const execFileAsync = promisify(execFile);
 
 export const GPU_SSH_DIR = ".ssh/cocalc-gpu";
 
-const HANDLE = /^cc-[a-z2-7]{8}$/;
+const HANDLE = /^cc-[a-z2-7]{16}$/;
 const PENDING = /^pending-[a-z2-7]{10}$/;
 const HOST = /^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$/;
 const USER = /^[a-z_][a-z0-9_-]{0,31}$/;
