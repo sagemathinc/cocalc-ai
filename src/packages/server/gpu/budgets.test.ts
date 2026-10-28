@@ -990,6 +990,33 @@ describeDb("GPU budgets", () => {
       expect(s.rp.client.terminatePod).toHaveBeenCalled();
     });
 
+    it("bounds the provider listing by the pass deadline too", async () => {
+      const s = setup();
+      await s.stored;
+      const a = account(s);
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      // a listing that would page on (the fake checks before each page)
+      a.cleanup.listPods.mockImplementation(async (opts?: any) => {
+        await opts?.beforePage?.();
+        return [];
+      });
+      const result = await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        { ...a.deps, passMs: 0 },
+      );
+      // cut: neither "awaiting revocation" nor a listing failure, and the
+      // key's identity was never checked
+      expect(result).toEqual({ closed: false, managed_pods: 0 });
+      expect(a.cleanup.getProviderIdentity).not.toHaveBeenCalled();
+    });
+
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {
       const s = setup();
       await s.stored;

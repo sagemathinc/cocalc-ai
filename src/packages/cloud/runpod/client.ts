@@ -211,10 +211,15 @@ export class RunpodClient {
 
   // Every pod in the account, including Instant Cluster members, which
   // RunPod leaves out by default: a hidden pod is hidden spend.
-  async listPods(): Promise<RunpodPodView[]> {
+  // beforePage runs before each page: a caller with a deadline throws there
+  // to stop (the listing then fails; it never returns a partial one).
+  async listPods({
+    beforePage,
+  }: { beforePage?: () => Promise<void> } = {}): Promise<RunpodPodView[]> {
     const pods: RunpodPodView[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
+      await beforePage?.();
       const body = await this.get("/v2/pods", {
         includeClusterPods: "true",
         ...(cursor ? { cursor } : {}),

@@ -152,8 +152,14 @@ export async function runCompromiseCleanup(
   const boundBefore = await boundCredentialPods(credential_id);
   let listed: Awaited<ReturnType<RunpodCleanupCapability["listPods"]>>;
   try {
-    listed = await c.listPods();
+    // every page is bounded by the pass too (RunPod may be slow, or the
+    // account large)
+    listed = await c.listPods({ beforePage: bounded });
   } catch (err) {
+    if (cut) {
+      const left = await unfinishedCredentialPods(credential_id);
+      return { closed: false, managed_pods: left.length };
+    }
     // RunPod rejects the key outright (the owner deleted it there): the same
     // end as the identity check below, once CoCalc has no unfinished pod on
     // it. Any other failure says nothing about the account: fail closed.

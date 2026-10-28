@@ -798,7 +798,9 @@ export interface RunpodCleanupCapability {
   // the key that launched it (its record's credential_id)
   readonly credential_id: string;
   getProviderIdentity(): Promise<RunpodProviderIdentity>;
-  listPods(): ReturnType<RunpodClient["listPods"]>;
+  listPods(
+    ...args: Parameters<RunpodClient["listPods"]>
+  ): ReturnType<RunpodClient["listPods"]>;
   getPod(podId: string): ReturnType<RunpodClient["getPod"]>;
   listPodBilling(
     ...args: Parameters<RunpodClient["listPodBilling"]>
@@ -817,7 +819,8 @@ export async function getRunpodCleanupForAccount(
   return Object.freeze({
     credential_id: key.id,
     getProviderIdentity: () => client.getProviderIdentity(),
-    listPods: () => client.listPods(),
+    listPods: (...args: Parameters<RunpodClient["listPods"]>) =>
+      client.listPods(...args),
     getPod: (podId: string) => client.getPod(podId),
     listPodBilling: (...args: Parameters<RunpodClient["listPodBilling"]>) =>
       client.listPodBilling(...args),

@@ -121,6 +121,32 @@ describe("RunpodClient", () => {
     ]);
   });
 
+  it("stops a paged inventory when beforePage throws, returning nothing partial", async () => {
+    const { fetch, calls } = fakeFetch([
+      {
+        body: {
+          pods: [{ id: "pod_aaaaaa" }],
+          pagination: { hasNextPage: true, nextCursor: "c2" },
+        },
+      },
+      {
+        body: {
+          pods: [{ id: "pod_bbbbbb" }],
+          pagination: { hasNextPage: false, nextCursor: null },
+        },
+      },
+    ]);
+    let pages = 0;
+    await expect(
+      client(fetch).listPods({
+        beforePage: async () => {
+          if (++pages > 1) throw Error("deadline");
+        },
+      }),
+    ).rejects.toThrow("deadline");
+    expect(calls).toHaveLength(1);
+  });
+
   it("treats a malformed inventory as an error, not an empty list", async () => {
     const page = (body: unknown) => client(fakeFetch([{ body }]).fetch);
     for (const body of [
