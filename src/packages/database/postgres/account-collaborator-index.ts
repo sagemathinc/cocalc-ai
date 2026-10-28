@@ -257,33 +257,39 @@ function collaboratorProjectionSelect(
 ): string {
   const localAvailable = `${accountAlias}.account_id IS NOT NULL AND (${accountAlias}.deleted IS NULL OR ${accountAlias}.deleted IS FALSE)`;
   const directoryAvailable = `${directoryAlias}.account_id IS NOT NULL AND ${directoryAlias}.provisioned IS TRUE`;
+  // "Deleted User" only for an account this bay knows was deleted. One it
+  // knows nothing about (homed on another bay, not in this bay's directory)
+  // gets no name here; readers resolve it (see listMyCollaborators).
+  const knownDeleted = `${accountAlias}.account_id IS NOT NULL AND ${accountAlias}.deleted IS TRUE`;
+  const deletedOr = (value: string) =>
+    `CASE WHEN ${knownDeleted} THEN ${value} ELSE NULL END`;
   return `CASE
             WHEN ${localAvailable}
               THEN ${displayNameSql(accountAlias)}
             WHEN ${directoryAvailable}
               THEN ${displayNameSql(directoryAlias)}
-            ELSE $4::TEXT
+            ELSE ${deletedOr("$4::TEXT")}
           END AS display_name,
           CASE
             WHEN ${localAvailable}
               THEN ${accountAlias}.first_name
             WHEN ${directoryAvailable}
               THEN ${directoryAlias}.first_name
-            ELSE $2::TEXT
+            ELSE ${deletedOr("$2::TEXT")}
           END AS first_name,
           CASE
             WHEN ${localAvailable}
               THEN ${accountAlias}.last_name
             WHEN ${directoryAvailable}
               THEN ${directoryAlias}.last_name
-            ELSE $3::TEXT
+            ELSE ${deletedOr("$3::TEXT")}
           END AS last_name,
           CASE
             WHEN ${localAvailable}
               THEN ${displayNameSql(accountAlias)}
             WHEN ${directoryAvailable}
               THEN ${displayNameSql(directoryAlias)}
-            ELSE $4::TEXT
+            ELSE ${deletedOr("$4::TEXT")}
           END AS name,
           CASE
             WHEN ${localAvailable}
@@ -425,7 +431,6 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
       FROM shared
       LEFT JOIN accounts a
         ON a.account_id = shared.collaborator_account_id
-       AND (a.deleted IS NULL OR a.deleted = FALSE)
       LEFT JOIN ${CLUSTER_ACCOUNT_DIRECTORY_TABLE} cad
         ON cad.account_id = shared.collaborator_account_id
       ORDER BY
@@ -478,7 +483,6 @@ export async function refreshProjectedCollaboratorIdentityRows(opts: {
         FROM account_collaborator_index aci
         LEFT JOIN accounts a
           ON a.account_id = aci.collaborator_account_id
-         AND (a.deleted IS NULL OR a.deleted = FALSE)
         LEFT JOIN ${CLUSTER_ACCOUNT_DIRECTORY_TABLE} cad
           ON cad.account_id = aci.collaborator_account_id
         WHERE aci.collaborator_account_id = $1::UUID

@@ -3241,6 +3241,46 @@ export async function listMyCollaborators({
   });
 }
 
+// Names for collaborators this bay has none for (homed on another bay and not
+// in this bay's directory), from the cluster's account directory.
+async function withNames<
+  T extends {
+    account_id: string;
+    name?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+  },
+>(rows: T[]): Promise<T[]> {
+  const missing = rows
+    .filter((row) => !row.name && !row.first_name && !row.last_name)
+    .map((row) => row.account_id);
+  if (missing.length === 0) return rows;
+  try {
+    const found = new Map(
+      (await getClusterAccountsByIds(missing)).map((entry) => [
+        entry.account_id,
+        entry,
+      ]),
+    );
+    return rows.map((row) => {
+      const entry = found.get(row.account_id);
+      if (entry == null || row.name || row.first_name || row.last_name) {
+        return row;
+      }
+      const first_name = entry.first_name ?? null;
+      const last_name = entry.last_name ?? null;
+      const name =
+        `${entry.display_name ?? ""}`.trim() ||
+        [first_name, last_name].filter(Boolean).join(" ") ||
+        null;
+      return { ...row, name, first_name, last_name };
+    });
+  } catch (err) {
+    logger.debug("collaborator names unavailable", { err: `${err}` });
+    return rows;
+  }
+}
+
 // The query above sees only projects this bay owns. People met only in
 // projects on other bays are in the account's collaborator index (kept
 // current from their owning bays), so add those it doesn't already list.
@@ -3265,7 +3305,9 @@ async function withOtherBayCollaborators({
       limit: maxRows,
       include_email: includeEmail,
     });
-    const extra = projected.filter((row) => !listed.has(row.account_id));
+    const extra = await withNames(
+      projected.filter((row) => !listed.has(row.account_id)),
+    );
     return [...local, ...extra].slice(0, maxRows);
   } catch (err) {
     logger.warn("collaborators on other bays unavailable", {

@@ -1233,6 +1233,30 @@ describe("project collaborators local bay access", () => {
       expect.objectContaining({ account_id: TARGET_ACCOUNT_ID, name: "Local" }),
       expect.objectContaining({ account_id: REMOTE, name: "Other Bay" }),
     ]);
+    // One this bay has no name for gets it from the cluster directory.
+    listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => [
+      {
+        account_id: REMOTE,
+        name: null,
+        first_name: null,
+        last_name: null,
+        shared_projects: 1,
+      },
+    ]);
+    getClusterAccountsByIdsMock = jest.fn(async () => [
+      { account_id: REMOTE, first_name: "Ada", last_name: "Tester" },
+    ]);
+    await expect(
+      listMyCollaborators({ account_id: ACCOUNT_ID, limit: 20 }),
+    ).resolves.toEqual([
+      expect.objectContaining({ account_id: TARGET_ACCOUNT_ID, name: "Local" }),
+      expect.objectContaining({
+        account_id: REMOTE,
+        name: "Ada Tester",
+        first_name: "Ada",
+        last_name: "Tester",
+      }),
+    ]);
     // Without the index, the local list as before.
     listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => {
       throw Error("no index");

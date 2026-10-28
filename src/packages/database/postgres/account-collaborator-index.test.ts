@@ -201,6 +201,37 @@ describe("account_collaborator_index rebuild", () => {
     ]);
   });
 
+  it("leaves the name of an account this bay knows nothing about empty", async () => {
+    await getPool().query(
+      `INSERT INTO accounts (account_id, home_bay_id) VALUES ($1, $2)`,
+      [ACCOUNT_ID, LOCAL_BAY_ID],
+    );
+    // Homed on another bay and not in this bay's directory: not "deleted".
+    await indexProject(PROJECT_B, {
+      [ACCOUNT_ID]: { group: "owner" },
+      [COLLAB_B]: { group: "collaborator" },
+    });
+    await rebuildAccountCollaboratorIndex({
+      account_id: ACCOUNT_ID,
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+    await expect(
+      listProjectedCollaboratorsForAccount({
+        account_id: ACCOUNT_ID,
+        limit: 10,
+        collaborator_account_id: COLLAB_B,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        collaborator_account_id: COLLAB_B,
+        first_name: null,
+        last_name: null,
+        name: null,
+      }),
+    ]);
+  });
+
   it("projects deleted collaborators as Deleted User", async () => {
     await getPool().query(
       `INSERT INTO accounts
@@ -208,6 +239,12 @@ describe("account_collaborator_index rebuild", () => {
        VALUES
          ($1, 'Local', 'User', NOW(), 'local@example.com', $2)`,
       [ACCOUNT_ID, LOCAL_BAY_ID],
+    );
+    // Deleted accounts keep their row, marked deleted.
+    await getPool().query(
+      `INSERT INTO accounts (account_id, first_name, last_name, deleted, home_bay_id)
+       VALUES ($1, 'Was', 'Here', TRUE, $2)`,
+      [DELETED_COLLAB, LOCAL_BAY_ID],
     );
     await getPool().query(
       `INSERT INTO projects
