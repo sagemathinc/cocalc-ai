@@ -8,8 +8,38 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const CLUSTER_ACCOUNT_DIRECTORY_TABLE = "cluster_account_directory";
 const COLLAB_MEMBERSHIP_GROUPS_SQL = `('owner','collaborator')`;
-const REQUESTER_COLLAB_PROJECT_SQL = `users ? $1::text AND (users -> $1::text ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}`;
 const PEER_COLLAB_GROUP_SQL = `(info ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}`;
+
+// The projects where $1 is an owner or collaborator, with their users; the
+// bay id is parameter $bay. Projects this bay owns come from `projects`.
+// Projects owned by other bays come from the account's project index, which
+// their owning bays keep current (applyAccountProjectFeedUpsertOnHomeBay):
+// without them, collaborators met in another bay's project never appear. A
+// local copy of another bay's project is used only if the index has no row.
+function requesterProjectsSql(bay: number): string {
+  const ownedHere = (alias: string) =>
+    `COALESCE(NULLIF(BTRIM(${alias}.owning_bay_id), ''), $${bay}::TEXT) = $${bay}::TEXT`;
+  return `
+  SELECT p.project_id, p.users
+    FROM projects p
+   WHERE p.deleted IS NOT TRUE
+     AND p.users ? $1::text
+     AND (p.users -> $1::text ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}
+     AND (${ownedHere("p")} OR NOT EXISTS (
+       SELECT 1 FROM account_project_index ri
+        WHERE ri.account_id = $1::uuid AND ri.project_id = p.project_id
+     ))
+  UNION ALL
+  SELECT i.project_id, i.users_summary AS users
+    FROM account_project_index i
+   WHERE i.account_id = $1::uuid
+     AND i.users_summary ? $1::text
+     AND (i.users_summary -> $1::text ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}
+     AND NOT EXISTS (
+       SELECT 1 FROM projects lp
+        WHERE lp.project_id = i.project_id AND ${ownedHere("lp")}
+     )`;
+}
 
 export interface RebuildAccountCollaboratorIndexResult {
   bay_id: string;
@@ -309,7 +339,10 @@ async function getExistingRowCount(account_id: string): Promise<number> {
   return Number(rows[0]?.count ?? 0);
 }
 
-async function getSourceCounts(account_id: string): Promise<{
+async function getSourceCounts(
+  account_id: string,
+  bay_id: string,
+): Promise<{
   source_project_rows: number;
   source_collaborator_rows: number;
 }> {
@@ -317,12 +350,7 @@ async function getSourceCounts(account_id: string): Promise<{
     source_project_rows: string;
     source_collaborator_rows: string;
   }>(
-    `WITH shared_projects AS (
-        SELECT project_id, users
-          FROM projects
-         WHERE deleted IS NOT TRUE
-           AND ${REQUESTER_COLLAB_PROJECT_SQL}
-      ),
+    `WITH shared_projects AS (${requesterProjectsSql(2)}),
       shared_collaborators AS (
         SELECT DISTINCT u.account_id_text::UUID AS collaborator_account_id
           FROM shared_projects
@@ -333,7 +361,7 @@ async function getSourceCounts(account_id: string): Promise<{
       SELECT
         (SELECT COUNT(*)::TEXT FROM shared_projects) AS source_project_rows,
         (SELECT COUNT(*)::TEXT FROM shared_collaborators) AS source_collaborator_rows`,
-    [account_id],
+    [account_id, bay_id],
   );
   return {
     source_project_rows: Number(rows[0]?.source_project_rows ?? 0),
@@ -344,6 +372,9 @@ async function getSourceCounts(account_id: string): Promise<{
 export async function replaceAccountCollaboratorIndexRows(opts: {
   db: Queryable;
   account_id: string;
+  // This bay: its own projects are read from `projects`, others' from the
+  // account's project index.
+  bay_id: string;
   collaborator_account_ids?: string[];
 }): Promise<ReplaceAccountCollaboratorIndexRowsResult> {
   await ensureClusterAccountDirectorySchema(opts.db);
@@ -367,11 +398,9 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
         SELECT
           u.account_id_text::UUID AS collaborator_account_id,
           COUNT(*)::INT AS common_project_count
-        FROM projects p
+        FROM (${requesterProjectsSql(6)}) p
         CROSS JOIN LATERAL jsonb_each(p.users) AS u(account_id_text, info)
-        WHERE p.deleted IS NOT TRUE
-          AND ${REQUESTER_COLLAB_PROJECT_SQL}
-          AND u.account_id_text ~* '^[0-9a-f-]{36}$'
+        WHERE u.account_id_text ~* '^[0-9a-f-]{36}$'
           AND ${PEER_COLLAB_GROUP_SQL}
           AND ($5::text[] IS NULL OR u.account_id_text = ANY($5::text[]))
         GROUP BY 1
@@ -421,6 +450,7 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
       deletedUser.last_name,
       deletedUser.name,
       peers,
+      normalizeBayId(opts.bay_id),
     ],
   );
   return {
@@ -507,7 +537,7 @@ export async function rebuildAccountCollaboratorIndex(opts: {
   await assertAccountIsHomedLocally({ account_id, bay_id });
   const existing_rows = await getExistingRowCount(account_id);
   const { source_project_rows, source_collaborator_rows } =
-    await getSourceCounts(account_id);
+    await getSourceCounts(account_id, bay_id);
 
   if (dry_run) {
     return {
@@ -530,6 +560,7 @@ export async function rebuildAccountCollaboratorIndex(opts: {
       await replaceAccountCollaboratorIndexRows({
         db: client,
         account_id,
+        bay_id,
       });
     await client.query("COMMIT");
     return {

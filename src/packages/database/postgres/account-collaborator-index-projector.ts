@@ -325,6 +325,7 @@ export async function applyProjectEventToAccountCollaboratorIndex(opts: {
     const result = await replaceAccountCollaboratorIndexRows({
       db: opts.db,
       account_id,
+      bay_id: opts.bay_id,
       collaborator_account_ids: impacted,
     });
     const current_rows = await collaboratorRowsForAccount(
@@ -347,6 +348,84 @@ export async function applyProjectEventToAccountCollaboratorIndex(opts: {
     inserted_rows,
     deleted_rows,
     feed_events,
+  };
+}
+
+// Owners and collaborators in a project's users map.
+export function collaboratorGroups(
+  users:
+    | Record<string, { group?: string } | null | undefined>
+    | null
+    | undefined,
+): Map<string, string> {
+  const groups = new Map<string, string>();
+  for (const [account_id, info] of Object.entries(users ?? {})) {
+    const group = `${info?.group ?? ""}`;
+    if (
+      isValidUUID(account_id) &&
+      (group === "owner" || group === "collaborator")
+    ) {
+      groups.set(account_id, group);
+    }
+  }
+  return groups;
+}
+
+// On an account's home bay, when a project owned by another bay changes for
+// it (a forwarded project upsert or remove, already applied to its project
+// index in this transaction), recompute its rows for that project's people,
+// before and after. The owning bay does this only for its own accounts, so
+// without it collaborators met in another bay's project never appear.
+// Unchanged membership is skipped unless a row is missing (that also repairs
+// rows lost before this existed). The caller holds the transaction.
+export async function applyRemoteProjectToAccountCollaboratorIndex(opts: {
+  db: PoolClient;
+  bay_id: string;
+  account_id: string;
+  previous_users?: Record<string, any> | null;
+  current_users?: Record<string, any> | null;
+  event_ts?: string | Date | number | null;
+}): Promise<{ feed_events: AccountFeedEvent[] }> {
+  const before = collaboratorGroups(opts.previous_users);
+  const after = collaboratorGroups(opts.current_users);
+  const peers = [...new Set([...before.keys(), ...after.keys()])]
+    .filter((id) => id !== opts.account_id)
+    .sort();
+  if (peers.length === 0) return { feed_events: [] };
+  await lockAccountCollaboratorProjection(opts.db, [opts.account_id]);
+  const previous_rows = await collaboratorRowsForAccount(
+    opts.db,
+    opts.account_id,
+    peers,
+  );
+  const unchanged =
+    before.size === after.size &&
+    [...after].every(([id, group]) => before.get(id) === group);
+  const expected = after.has(opts.account_id)
+    ? peers.filter((id) => after.has(id))
+    : [];
+  const have = new Set(previous_rows.map((row) => row.account_id));
+  if (unchanged && expected.every((id) => have.has(id))) {
+    return { feed_events: [] };
+  }
+  await replaceAccountCollaboratorIndexRows({
+    db: opts.db,
+    account_id: opts.account_id,
+    bay_id: opts.bay_id,
+    collaborator_account_ids: peers,
+  });
+  const current_rows = await collaboratorRowsForAccount(
+    opts.db,
+    opts.account_id,
+    peers,
+  );
+  return {
+    feed_events: collaboratorFeedEventsForAccount({
+      account_id: opts.account_id,
+      previous_rows,
+      current_rows,
+      event_ts: opts.event_ts,
+    }),
   };
 }
 
