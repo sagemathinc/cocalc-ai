@@ -12,7 +12,7 @@ None of these touch `updated`: they retire a capability, not the pod's
 lifecycle, which reconciliation reads from `updated`.
 */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { HOSTKEY_IDEMPOTENCY_WINDOW_MS } from "@cocalc/server/gpu/hostkey-token";
 
 // The token, and the host key it registered.
@@ -25,14 +25,15 @@ export const CLEARED_HOSTKEY_FIELDS = {
   host_key_fingerprint: null,
 } as const;
 
-// The key that launched these pods was removed: no token of theirs can
-// register any more, and no host key of theirs is handed out. (The audit
-// events keep the fingerprints.)
-export async function clearHostkeysForCredential(opts: {
-  account_id: string;
-  credential_id: string;
-}): Promise<number> {
-  const { rowCount } = await getPool().query(
+// The key that launched these pods is being removed: no token of theirs
+// can register any more, and no host key of theirs is handed out. (The
+// audit events keep the fingerprints.) Pass the revoking transaction's
+// client, so the two commit together.
+export async function clearHostkeysForCredential(
+  opts: { account_id: string; credential_id: string },
+  client?: PoolClient,
+): Promise<number> {
+  const { rowCount } = await (client ?? getPool()).query(
     `UPDATE gpu_pods
         SET hostkey_token_id = NULL, hostkey_verifier = NULL,
             hostkey_expires = NULL, hostkey_consumed_at = NULL,

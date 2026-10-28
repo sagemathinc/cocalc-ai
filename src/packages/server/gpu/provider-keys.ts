@@ -510,16 +510,18 @@ export async function deleteGpuProviderKeyLocal(
     const [existing] = await activeKeySummaries(account_id, provider);
     if (!existing) return { revoked: false };
     await requireNoUnfinishedPods(account_id, deps, "remove", db);
+    // One transaction: the key's pods lose their registration tokens and
+    // host keys exactly when the key is revoked. (A report racing it waits
+    // for the pod's row, and its consume then needs an active key.)
     const revoked = await revokeExternalCredential({
       id: existing.id,
       owner_account_id: account_id,
-    });
-    // After the revoke commits: from then on no token of these pods can
-    // register (the consume requires an active key), and this clears what a
-    // report racing the revoke may have written.
-    await (deps.clearHostkeys ?? clearHostkeysForCredential)({
-      account_id,
-      credential_id: existing.id,
+      alsoOnRevoke: async (client) => {
+        await (deps.clearHostkeys ?? clearHostkeysForCredential)(
+          { account_id, credential_id: existing.id },
+          client,
+        );
+      },
     });
     return { revoked };
   });

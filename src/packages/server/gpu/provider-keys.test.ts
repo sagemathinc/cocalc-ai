@@ -311,14 +311,16 @@ describe("GPU provider keys", () => {
     expect(revokeMock).toHaveBeenCalledWith({
       id: "cred-1",
       owner_account_id: ACCOUNT,
+      alsoOnRevoke: expect.any(Function),
     });
-    // then its pods' registration tokens and host keys are cleared
-    expect(clearHostkeysMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT,
-      credential_id: "cred-1",
-    });
-    expect(clearHostkeysMock.mock.invocationCallOrder[0]).toBeGreaterThan(
-      revokeMock.mock.invocationCallOrder[0],
+    // its pods' registration tokens and host keys are cleared in the
+    // revoking transaction
+    expect(clearHostkeysMock).not.toHaveBeenCalled();
+    const client = { query: jest.fn() };
+    await revokeMock.mock.calls[0][0].alsoOnRevoke(client);
+    expect(clearHostkeysMock).toHaveBeenCalledWith(
+      { account_id: ACCOUNT, credential_id: "cred-1" },
+      client,
     );
   });
 

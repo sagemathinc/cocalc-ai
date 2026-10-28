@@ -15,7 +15,10 @@ import { parseHostkeyToken } from "./hostkey-token";
 import { gpuSshInfoLocal, registerHostKeyLocal } from "./hostkey";
 import { launchGpuPodLocal, terminateGpuPodLocal } from "./pods";
 import { deleteGpuProviderKeyLocal } from "./provider-keys";
-import { clearStaleHostkeyTokens } from "./hostkey-clear";
+import {
+  clearHostkeysForCredential,
+  clearStaleHostkeyTokens,
+} from "./hostkey-clear";
 import { upsertExternalCredential } from "@cocalc/server/external-credentials/store";
 
 // The key store, without the site's secret encryption.
@@ -377,6 +380,47 @@ describeDb("pod host-key registration", () => {
         registered.deps,
       ),
     ).toEqual(expect.objectContaining({ ready: false }));
+  });
+
+  it("revokes the key and clears its pods together, or does neither", async () => {
+    const { pod, token, account_id, credential_id } = await launched();
+    // the clear fails inside the revoking transaction (a crash would too)
+    await expect(
+      deleteGpuProviderKeyLocal(
+        { account_id, provider: "runpod" },
+        {
+          isHomeBay: async () => true,
+          clearHostkeys: async (opts, client) => {
+            await clearHostkeysForCredential(opts, client);
+            throw new Error("boom");
+          },
+        },
+      ),
+    ).rejects.toThrow("boom");
+    // nothing happened: the key is still active and the token still valid
+    const cred = await getPool().query(
+      "SELECT revoked, encrypted_payload IS NOT NULL AS has_payload FROM external_credentials WHERE id = $1",
+      [credential_id],
+    );
+    expect(cred.rows[0]).toEqual({ revoked: null, has_payload: true });
+    expect((await row(pod.id)).hostkey_verifier).not.toBeNull();
+    // so a retry finds the active key and does both
+    expect(
+      await deleteGpuProviderKeyLocal(
+        { account_id, provider: "runpod" },
+        { isHomeBay: async () => true },
+      ),
+    ).toEqual({ revoked: true });
+    expect((await row(pod.id)).hostkey_verifier).toBeNull();
+    expect(
+      (
+        await registerHostKeyLocal({
+          token,
+          pod_id: pod.provider_pod_id!,
+          host_public_key: HOST_KEY,
+        })
+      ).status,
+    ).toBe(401);
   });
 
   it("refuses a token whose launching key was revoked, even before it is cleared", async () => {
