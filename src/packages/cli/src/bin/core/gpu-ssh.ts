@@ -422,6 +422,16 @@ export async function removePodSsh(
   await rm(`${key}.pub`, { force: true });
 }
 
+// Whether this project holds the key pair for a pod.
+export async function hasPodKey(
+  handle: string,
+  opts: GpuSshOptions = {},
+): Promise<boolean> {
+  checkHandle(handle);
+  const key = paths(opts).key(handle);
+  return (await exists(key)) && (await exists(`${key}.pub`));
+}
+
 export async function listPodSsh(
   opts: GpuSshOptions = {},
 ): Promise<PodSshEndpoint[]> {

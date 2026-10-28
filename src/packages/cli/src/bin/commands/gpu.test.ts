@@ -366,3 +366,89 @@ it("terminates and looks up a pod", async () => {
     },
   ]);
 });
+
+it("launch --ssh makes the key here and sends only its public key; terminate forgets the pod here", async () => {
+  const { mkdtempSync, existsSync, readdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(tmpdir(), "gpu-cmd-ssh-"));
+  const handle = "cc-abcdefgh234567ab";
+  const calls: Array<{ name: string; args: any }> = [];
+  const reflect: string[][] = [];
+  const program = new Command()
+    .exitOverride()
+    .configureOutput({ writeErr: () => {}, writeOut: () => {} });
+  registerGpuCommand(program, {
+    connect: {
+      home,
+      runReflect: async (args) => {
+        reflect.push(args);
+        return { code: 0, stdout: "{}", stderr: "" };
+      },
+    },
+    withContext: async (_cmd, _name, fn) => {
+      await fn({
+        globals: { json: true },
+        timeoutMs: 600_000,
+        rpcTimeoutMs: 30_000,
+        hub: {
+          gpu: {
+            launch: async (args) => {
+              calls.push({ name: "launch", args });
+              return { ...RECORD, handle };
+            },
+            terminate: async (args) => {
+              calls.push({ name: "terminate", args });
+              return { state: "terminated" };
+            },
+            sshInfo: async (args) => {
+              calls.push({ name: "sshInfo", args });
+              return { handle, ready: false, state: "terminated" };
+            },
+          },
+        },
+      });
+    },
+  });
+  const prev = process.env.COCALC_PROJECT_ID;
+  process.env.COCALC_PROJECT_ID = RECORD.project_id;
+  try {
+    await program.parseAsync(
+      [
+        "gpu",
+        "launch",
+        "--gpu",
+        "NVIDIA RTX A5000",
+        "--max-runtime",
+        "60",
+        "--ssh",
+      ],
+      { from: "user" },
+    );
+  } finally {
+    process.env.COCALC_PROJECT_ID = prev;
+  }
+  const dir = join(home, ".ssh", "cocalc-gpu");
+  // only the public key went to the hub; the key is now named after the pod
+  const sent = calls[0].args.spec.ssh_public_key;
+  assert.match(sent, /^ssh-ed25519 \S+ cocalc-gpu$/);
+  assert.ok(!JSON.stringify(calls).includes("PRIVATE KEY"));
+  assert.ok(existsSync(join(dir, handle)));
+  assert.deepEqual(
+    readdirSync(dir).filter((f) => f.startsWith("pending-")),
+    [],
+  );
+
+  await program.parseAsync(["gpu", "terminate", handle], { from: "user" });
+  assert.deepEqual(
+    calls.slice(1).map((c) => c.name),
+    ["terminate", "sshInfo"],
+  );
+  assert.ok(!existsSync(join(dir, handle)));
+  assert.deepEqual(reflect.at(-1)?.slice(0, 4), [
+    "jupyter",
+    "target",
+    "remove",
+    handle,
+  ]);
+});
