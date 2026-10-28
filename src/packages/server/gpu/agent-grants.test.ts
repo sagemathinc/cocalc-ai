@@ -26,6 +26,7 @@ import {
   revokeAgentGrantLocal,
 } from "./agent-api";
 import {
+  killSwitchLocal,
   launchGpuPodLocal,
   listManagedGpuPodsLocal,
   terminateGpuPodLocal,
@@ -166,7 +167,9 @@ describeDb("agent GPU launches", () => {
       "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
     );
     await syncSchema({
+      external_credentials: SCHEMA.external_credentials,
       gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pods: SCHEMA.gpu_pods,
@@ -765,5 +768,44 @@ describeDb("agent GPU launches", () => {
     expect(await state(launched[0].pod_id)).not.toMatch(/terminat|failed/);
     expect(await state(human.id)).not.toMatch(/terminat|failed/);
     expect(rp.client.terminatePod).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an approved agent launch while the kill switch's pause is on, leaving the grant unused", async () => {
+    const { account_id, rp, deps, approveDeps, credential_id } = setup();
+    // the kill switch pauses the connected key
+    await getPool().query(
+      "INSERT INTO external_credentials (id, provider, kind, scope, owner_account_id, encrypted_payload, created, updated) VALUES ($1, 'runpod', 'gpu-provider-api-key', 'account', $2, 'x', now(), now())",
+      [credential_id, account_id],
+    );
+    const agent = { principal: principal(account_id), operation_id: "op-1" };
+    const ask = await askedFor(
+      launchGpuPodLocal(
+        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        deps,
+      ),
+    );
+    const grant = await approveAgentRequestLocal(
+      {
+        account_id,
+        request_id: ask.request_id,
+        expected_hash: ask.payload_hash,
+        fresh_auth_verified: true,
+      },
+      approveDeps,
+    );
+    expect((await killSwitchLocal({ account_id }, deps)).paused).toBe(true);
+    await expect(
+      launchGpuPodLocal(
+        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        deps,
+      ),
+    ).rejects.toThrow("paused by your kill switch");
+    expect(rp.client.createPod).not.toHaveBeenCalled();
+    expect(
+      await count(
+        "SELECT launches_used AS n FROM gpu_agent_grants WHERE grant_id = $1",
+        [grant.grant_id],
+      ),
+    ).toBe(0);
   });
 });
