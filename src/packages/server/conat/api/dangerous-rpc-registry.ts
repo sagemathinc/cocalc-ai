@@ -23,6 +23,15 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "gpu.launch": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "an ordinary CLI/agent operation on the caller's own RunPod key with the allowlisted spec. STACK GATE: the gpu-byok branch must not reach staging or main before step 5 enforces budgets, the max runtime (reaper) and the kill switch; until then this waiver is acceptable only because nothing outside the branch can call it",
+  },
+  "gpu.terminate": {
+    decision: "fresh-auth-not-required",
+    reason: "narrowing: ends a pod the caller pays for or is responsible for",
+  },
   "computers.approveComputerRequest": {
     decision: "fresh-auth-required",
     reason:

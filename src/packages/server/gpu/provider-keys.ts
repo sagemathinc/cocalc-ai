@@ -20,6 +20,8 @@ import {
   RunpodClient,
   type RunpodProviderIdentity,
 } from "@cocalc/cloud/runpod/client";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { lockGpuAccountFence } from "@cocalc/server/gpu/account-fence";
 import {
   createInterBayAccountLocalClient,
   type InterBayGpuApi,
@@ -66,6 +68,19 @@ export interface GpuProviderKeyDeps {
   fetch?: Fetch;
   isEntitled?: (account_id: string) => Promise<boolean>;
   isHomeBay?: (account_id: string) => Promise<boolean>;
+  // pods launched with this account's key that aren't finished
+  unfinishedPods?: (account_id: string) => Promise<number>;
+  // does RunPod reject the stored key (deleted or revoked at RunPod)?
+  storedKeyRejected?: (
+    account_id: string,
+    deps: GpuProviderKeyDeps,
+  ) => Promise<boolean>;
+  // the account fence shared with launches (default: a transaction holding
+  // the account rehome fence)
+  keyFence?: <T>(
+    account_id: string,
+    fn: (db: PoolClient) => Promise<T>,
+  ) => Promise<T>;
   verifyDeadlineMs?: number;
   // the home bay's API, or undefined when this is the home bay
   homeClient?: (
@@ -273,6 +288,113 @@ export async function setGpuProviderKey(
   return await setGpuProviderKeyLocal({ account_id, provider, api_key }, deps);
 }
 
+// Pods launched with the account's key that may still exist at RunPod. While
+// there are any, the key can be neither replaced nor removed: the stored key
+// keeps its id when replaced, and a key for another RunPod account (or no
+// key) couldn't reach those pods, so CoCalc could no longer terminate them.
+// Step 5c replaces this with draining and a cleanup-only copy of the key.
+async function countUnfinishedPods(
+  account_id: string,
+  db: Pick<PoolClient, "query"> = getPool(),
+): Promise<number> {
+  const { rows } = await db.query(
+    `SELECT count(*)::int AS n FROM gpu_pods
+      WHERE key_owner_account_id = $1 AND state NOT IN ('terminated', 'failed')`,
+    [account_id],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+// Does RunPod reject the stored key itself (401)? Only that counts: a
+// network error, a timeout or any other answer is "don't know".
+async function storedKeyRejectedByRunpod(
+  account_id: string,
+  deps: GpuProviderKeyDeps,
+): Promise<boolean> {
+  const key = await readLocalKey(account_id, deps).catch(() => undefined);
+  if (!key) return false;
+  const client = new RunpodClient({
+    apiKey: key.apiKey,
+    fetch: deps.fetch,
+    timeoutMs: VERIFY_REQUEST_TIMEOUT_MS,
+  });
+  try {
+    await client.getProviderIdentity();
+    return false;
+  } catch (err) {
+    return err instanceof RunpodApiError && err.kind === "auth";
+  }
+}
+
+// Key replacement and removal run under the same account fence a launch
+// holds while it reads the key and records its intent (pods.ts), so the
+// count of unfinished pods can't change between the check and the change.
+async function underKeyFence<T>(
+  account_id: string,
+  fn: (db: PoolClient) => Promise<T>,
+): Promise<T> {
+  const db = await getPool().connect();
+  try {
+    await db.query("BEGIN");
+    await lockGpuAccountFence(db, account_id, "change a GPU provider key");
+    const result = await fn(db);
+    await db.query("COMMIT");
+    return result;
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
+}
+
+async function requireNoUnfinishedPods(
+  account_id: string,
+  deps: GpuProviderKeyDeps,
+  doing: "replace" | "remove",
+  db?: Pick<PoolClient, "query">,
+  // for a replacement: the stored key's metadata and the new key's verified
+  // identity (undefined before verification: then a rejected old key defers
+  // the decision to the check under the fence)
+  replacement?: {
+    stored?: Record<string, any>;
+    identity?: RunpodProviderIdentity;
+  },
+): Promise<void> {
+  const n = await (deps.unfinishedPods ?? ((a) => countUnfinishedPods(a, db)))(
+    account_id,
+  );
+  if (n === 0) return;
+  // A key RunPod rejects (deleted or revoked at RunPod) can't reach those
+  // pods anyway, so refusing would only leave the connector stuck. Any other
+  // failure to ask RunPod keeps the refusal.
+  if (
+    await (deps.storedKeyRejected ?? storedKeyRejectedByRunpod)(
+      account_id,
+      deps,
+    )
+  ) {
+    // Removing is always fine then: a later connect gets a new credential
+    // id, which can't act on these pods. Replacing in place keeps the id, so
+    // it is allowed only for the same RunPod account; otherwise the new key
+    // would look like the one that launched these pods.
+    if (doing === "remove" || replacement?.identity == null) return;
+    const stored = replacement.stored ?? {};
+    if (
+      stored.provider_account_kind === replacement.identity.kind &&
+      stored.provider_account_id === replacement.identity.id
+    ) {
+      return;
+    }
+    throw Error(
+      `The new key is for a different RunPod account than the one your ${n} unfinished GPU pod${n === 1 ? " was" : "s were"} launched with, so it can't replace the old key in place. Remove the old key first (CoCalc allows that now, since RunPod rejects it), then connect the new one; terminate the old pods at RunPod.`,
+    );
+  }
+  throw Error(
+    `${n} GPU pod${n === 1 ? " was" : "s were"} launched with your current RunPod key and ${n === 1 ? "isn't" : "aren't"} finished, so the key can't be ${doing === "replace" ? "replaced" : "removed"} yet: CoCalc would lose the way to terminate ${n === 1 ? "it" : "them"}. Terminate ${n === 1 ? "it" : "them"} first (cocalc gpu pods, then cocalc gpu terminate). If you need to cut the key off now, delete it at RunPod and terminate the pods there; once RunPod rejects the key, CoCalc lets you remove it here (or replace it with a key for the same RunPod account).`,
+  );
+}
+
 export async function setGpuProviderKeyLocal(
   {
     account_id,
@@ -289,6 +411,8 @@ export async function setGpuProviderKeyLocal(
     );
   }
   const key = normalizeRunpodKey(api_key);
+  const replacing = (await activeKeySummaries(account_id, provider)).length > 0;
+  if (replacing) await requireNoUnfinishedPods(account_id, deps, "replace");
   const started = Date.now();
   const identity = await verifyRunpodKey(key, deps.fetch);
   if (Date.now() - started > (deps.verifyDeadlineMs ?? VERIFY_DEADLINE_MS)) {
@@ -321,16 +445,27 @@ export async function setGpuProviderKeyLocal(
     identity.kind === "organization" && identity.name
       ? identity.name.slice(0, 120)
       : undefined;
-  await upsertExternalCredential({
-    selector: selector(account_id, provider),
-    payload: key,
-    metadata: {
-      source: "account-settings",
-      provider_account_kind: identity.kind,
-      provider_account_id: identity.id,
-      ...(provider_account_name ? { provider_account_name } : {}),
-      verified_at,
-    },
+  // Checked again and stored under the fence launches take: no launch can
+  // read the old key between this check and the store.
+  await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
+    const [current] = await activeKeySummaries(account_id, provider);
+    if (current) {
+      await requireNoUnfinishedPods(account_id, deps, "replace", db, {
+        stored: current.metadata,
+        identity,
+      });
+    }
+    await upsertExternalCredential({
+      selector: selector(account_id, provider),
+      payload: key,
+      metadata: {
+        source: "account-settings",
+        provider_account_kind: identity.kind,
+        provider_account_id: identity.id,
+        ...(provider_account_name ? { provider_account_name } : {}),
+        verified_at,
+      },
+    });
   });
   // Built from what was just verified and stored, with no further read.
   return {
@@ -368,13 +503,17 @@ export async function deleteGpuProviderKeyLocal(
   await requireHomeBay(account_id, deps);
   // The store keeps one active key per selector (upsert holds the selector
   // lock), so there is at most one to revoke.
-  const [existing] = await activeKeySummaries(account_id, provider);
-  if (!existing) return { revoked: false };
-  const revoked = await revokeExternalCredential({
-    id: existing.id,
-    owner_account_id: account_id,
+  // Under the fence launches take (see setGpuProviderKeyLocal).
+  return await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
+    const [existing] = await activeKeySummaries(account_id, provider);
+    if (!existing) return { revoked: false };
+    await requireNoUnfinishedPods(account_id, deps, "remove", db);
+    const revoked = await revokeExternalCredential({
+      id: existing.id,
+      owner_account_id: account_id,
+    });
+    return { revoked };
   });
-  return { revoked };
 }
 
 async function accountHomeBay(account_id: string): Promise<string> {
@@ -389,13 +528,13 @@ async function isAccountHomeBay(account_id: string): Promise<boolean> {
 async function readLocalKey(
   account_id: string,
   deps: GpuProviderKeyDeps,
-): Promise<string | undefined> {
+): Promise<{ id: string; apiKey: string } | undefined> {
   await requireHomeBay(account_id, deps);
   const record = await getExternalCredential({
     selector: selector(account_id, "runpod"),
   });
   if (!record || record.revoked || !record.payload) return undefined;
-  return record.payload;
+  return { id: record.id, apiKey: record.payload };
 }
 
 // Custody (both functions below): they run only on the key owner's home bay
@@ -411,39 +550,60 @@ export async function getRunpodClientForAccount(
   account_id: string,
   deps: GpuProviderKeyDeps = {},
 ): Promise<RunpodClient | undefined> {
+  return (await getRunpodLaunchAccessForAccount(account_id, deps))?.client;
+}
+
+// The full client together with the id of the stored key it uses, which
+// every pod record keeps. Same custody and entitlement as above.
+export async function getRunpodLaunchAccessForAccount(
+  account_id: string,
+  deps: GpuProviderKeyDeps = {},
+): Promise<{ client: RunpodClient; credential_id: string } | undefined> {
   if (!(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))) {
     throw Error("Your membership doesn't include using a GPU provider key.");
   }
-  const apiKey = await readLocalKey(account_id, deps);
-  return apiKey ? new RunpodClient({ apiKey, fetch: deps.fetch }) : undefined;
+  const key = await readLocalKey(account_id, deps);
+  if (!key) return undefined;
+  return {
+    client: new RunpodClient({ apiKey: key.apiKey, fetch: deps.fetch }),
+    credential_id: key.id,
+  };
 }
 
 // What cleanup may do with an account's key: find the pods and storage it
-// manages, check billing, and (from step 3) terminate them. Nothing here can
+// manages, check billing, and terminate them. Nothing here can
 // create or start anything, so it needs no entitlement: a lapsed membership
 // or a removed key can still be cleaned up. The client itself stays private
 // to these closures.
 export interface RunpodCleanupCapability {
+  // the stored key this capability holds: a pod is only ever acted on with
+  // the key that launched it (its record's credential_id)
+  readonly credential_id: string;
   getProviderIdentity(): Promise<RunpodProviderIdentity>;
   listPods(): ReturnType<RunpodClient["listPods"]>;
   getPod(podId: string): ReturnType<RunpodClient["getPod"]>;
   listPodBilling(
     ...args: Parameters<RunpodClient["listPodBilling"]>
   ): ReturnType<RunpodClient["listPodBilling"]>;
+  terminatePod(podId: string): Promise<void>;
+  findPodsByName(name: string): ReturnType<RunpodClient["findPodsByName"]>;
 }
 
 export async function getRunpodCleanupForAccount(
   account_id: string,
   deps: GpuProviderKeyDeps = {},
 ): Promise<RunpodCleanupCapability | undefined> {
-  const apiKey = await readLocalKey(account_id, deps);
-  if (!apiKey) return undefined;
-  const client = new RunpodClient({ apiKey, fetch: deps.fetch });
+  const key = await readLocalKey(account_id, deps);
+  if (!key) return undefined;
+  const client = new RunpodClient({ apiKey: key.apiKey, fetch: deps.fetch });
   return Object.freeze({
+    credential_id: key.id,
     getProviderIdentity: () => client.getProviderIdentity(),
     listPods: () => client.listPods(),
     getPod: (podId: string) => client.getPod(podId),
     listPodBilling: (...args: Parameters<RunpodClient["listPodBilling"]>) =>
       client.listPodBilling(...args),
+    terminatePod: (podId: string) => client.terminatePod(podId),
+    findPodsByName: (name: string) => client.findPodsByName(name),
   });
 }

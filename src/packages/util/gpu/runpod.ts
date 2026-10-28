@@ -17,6 +17,12 @@ credentials or template ids.
 // forward, the CLI) budget at least this much.
 export const GPU_READ_TIMEOUT_MS = 120_000;
 
+// A launch or terminate forwarded to the key owner's home bay: a create is
+// one RunPod request (30 s), plus resolving an unclear outcome by name (a
+// pod listing) and the database writes. The browser and CLI wait longer.
+export const GPU_POD_WRITE_TIMEOUT_MS = 120_000;
+export const GPU_POD_WRITE_RPC_TIMEOUT_MS = 150_000;
+
 export type RunpodCloud = "SECURE" | "COMMUNITY";
 
 export type RunpodAvailability = "NONE" | "LOW" | "MEDIUM" | "HIGH";

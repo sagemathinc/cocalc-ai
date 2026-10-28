@@ -654,3 +654,101 @@ describe("podView", () => {
     expect(retry.calls).toHaveLength(3);
   });
 });
+
+describe("creating and terminating pods", () => {
+  const body = {
+    name: "cc-7f3k9q2x",
+    image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+    gpu: { id: "NVIDIA GeForce RTX 4090", count: 1 },
+    cloud: "SECURE" as const,
+    disk: 20,
+    ports: ["22/tcp"],
+    env: { PUBLIC_KEY: "ssh-ed25519 AAAA test" },
+  };
+
+  it("posts exactly the given body and returns the allowlisted view", async () => {
+    const { fetch, calls } = fakeFetch([
+      {
+        status: 201,
+        body: {
+          id: "pod_abc123",
+          name: "cc-7f3k9q2x",
+          status: "PROVISIONING",
+          cost: 0.69,
+          env: { PUBLIC_KEY: "ssh-ed25519 AAAA test", BOOTSTRAP },
+        },
+      },
+    ]);
+    const pod = await client(fetch).createPod(body);
+    expect(calls[0].url).toBe("https://api.runpod.io/v2/pods");
+    expect(calls[0].init.method).toBe("POST");
+    expect(JSON.parse(calls[0].init.body as string)).toEqual(body);
+    expect(pod).toEqual(
+      expect.objectContaining({ id: "pod_abc123", name: "cc-7f3k9q2x" }),
+    );
+    expect(JSON.stringify(pod)).not.toContain(BOOTSTRAP);
+  });
+
+  it("reports a refusal by kind, with no provider text", async () => {
+    for (const [status, kind] of [
+      [400, "invalid"],
+      [402, "invalid"],
+      [422, "invalid"],
+      [403, "forbidden"],
+    ] as const) {
+      const { fetch } = fakeFetch([
+        { status, body: { detail: `echo ${BOOTSTRAP}` } },
+      ]);
+      const err = await failure(client(fetch).createPod(body));
+      expect(err.kind).toBe(kind);
+      expect(err.message).not.toContain(BOOTSTRAP);
+    }
+  });
+
+  it("treats a reply for some other pod as unreadable", async () => {
+    const { fetch } = fakeFetch([
+      { status: 201, body: { id: "pod_other", name: "cc-zzzzzzzz" } },
+    ]);
+    expect((await failure(client(fetch).createPod(body))).kind).toBe(
+      "protocol",
+    );
+  });
+
+  it("terminates with DELETE, and a pod RunPod doesn't know is already gone", async () => {
+    const { fetch, calls } = fakeFetch([
+      { status: 204, body: "" },
+      { status: 404, body: {} },
+    ]);
+    await client(fetch).terminatePod("pod_abc123");
+    await client(fetch).terminatePod("pod_gone");
+    expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+      ["DELETE", "https://api.runpod.io/v2/pods/pod_abc123"],
+      ["DELETE", "https://api.runpod.io/v2/pods/pod_gone"],
+    ]);
+  });
+
+  it("refuses to terminate on any other failure", async () => {
+    const { fetch } = fakeFetch([{ status: 500, body: {} }]);
+    expect((await failure(client(fetch).terminatePod("pod_abc123"))).kind).toBe(
+      "provider",
+    );
+  });
+
+  it("finds pods by exact name", async () => {
+    const { fetch } = fakeFetch([
+      {
+        body: {
+          pods: [
+            { id: "pod_1", name: "cc-7f3k9q2x" },
+            { id: "pod_2", name: "cc-7f3k9q2xx" },
+            { id: "pod_3", name: "mine" },
+          ],
+          pagination: { hasNextPage: false, nextCursor: null },
+        },
+      },
+    ]);
+    expect(
+      (await client(fetch).findPodsByName("cc-7f3k9q2x")).map((p) => p.id),
+    ).toEqual(["pod_1"]);
+  });
+});

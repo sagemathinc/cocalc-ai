@@ -6,10 +6,10 @@
 import { randomBytes } from "node:crypto";
 
 // Internal RunPod client on the REST API v2 (https://api.runpod.io/v2; v1 is
-// retired 2026-11-15). Read-only for now: catalog, availability, pods and
-// pod billing. Writes come with the allowlist request builder and the key
-// authority; see the GPU bring-your-own-key design. Callers outside the
-// authority must never get a RunpodClient or the key it holds.
+// retired 2026-11-15): catalog, availability, pods, pod billing, and creating
+// and terminating pods. Creates take only the body server/gpu/launch.ts builds
+// from the allowlisted spec. Callers outside the key authority must never get
+// a RunpodClient or the key it holds.
 //
 // The credential-bearing origins are fixed: there is deliberately no option
 // to point this client (and so the escrowed key) anywhere else.
@@ -115,6 +115,23 @@ export interface RunpodAccountBalance {
 }
 
 export type { RunpodAvailability, RunpodCloud } from "@cocalc/util/gpu/runpod";
+
+// The subset of RunPod's v2 create-pod body CoCalc sends. RunPod rejects
+// unknown fields (422), so nothing extra can slip through either.
+export interface RunpodCreatePodBody {
+  name: string;
+  image: string;
+  gpu: { id: string; count: number };
+  cloud: RunpodCloud;
+  dataCenterIds?: string[];
+  // ephemeral container disk, GB
+  disk: number;
+  mounts?: { persistent: { size: number; path: string } };
+  ports: string[];
+  env: Record<string, string>;
+  entrypoint?: string[];
+  cmd?: string[];
+}
 
 export class RunpodClient {
   readonly #apiKey: string;
@@ -300,6 +317,44 @@ export class RunpodClient {
     } catch {
       // best effort
     }
+  }
+
+  // POST /v2/pods. The body comes only from the server's allowlisted spec
+  // (server/gpu/launch.ts). A RunpodApiError with kind auth, forbidden,
+  // invalid (400/402/422) or conflict means RunPod refused and made no pod;
+  // anything else (network, timeout, 5xx, an unreadable reply) may have made
+  // one, so the caller finds it by its unique name before trying again.
+  async createPod(body: RunpodCreatePodBody): Promise<RunpodPodView> {
+    const res = await this.request(`${API_ORIGIN}/v2/pods`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const pod = podView(await this.parse(res));
+    if (!pod || pod.name !== body.name) {
+      throw new RunpodApiError("protocol", res.status);
+    }
+    return pod;
+  }
+
+  // DELETE /v2/pods/{id}: terminate, which also ends storage billing. A pod
+  // RunPod no longer knows is already gone.
+  async terminatePod(podId: string): Promise<void> {
+    try {
+      const res = await this.request(
+        `${API_ORIGIN}/v2/pods/${checkPodId(podId)}`,
+        { method: "DELETE" },
+      );
+      await this.parse(res);
+    } catch (err) {
+      if (err instanceof RunpodApiError && err.kind === "not_found") return;
+      throw err;
+    }
+  }
+
+  // Pods with exactly this name: how an ambiguous create is resolved. Our
+  // names are random handles, unique per account.
+  async findPodsByName(name: string): Promise<RunpodPodView[]> {
+    return (await this.listPods()).filter((pod) => pod.name === name);
   }
 
   async getPod(podId: string): Promise<RunpodPodView | undefined> {

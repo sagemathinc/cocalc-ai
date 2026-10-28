@@ -8,6 +8,10 @@ it.each([
   "gpuKeyStatus",
   "gpuKeySet",
   "gpuKeyDelete",
+  "gpuLaunch",
+  "gpuTerminate",
+  "gpuWho",
+  "gpuManagedPods",
 ] as const)(
   "routes %s to the key owner's home bay on the account-local gpu subject",
   async (method) => {

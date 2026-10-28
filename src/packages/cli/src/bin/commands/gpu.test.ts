@@ -42,6 +42,47 @@ const PODS = {
   ],
 };
 
+const RECORD = {
+  id: "00000000-1000-4000-8000-000000000099",
+  handle: "cc-7f3k9q2x",
+  provider: "runpod",
+  provider_pod_id: "pod_abc123",
+  state: "running",
+  desired_state: "running",
+  key_owner_account_id: "00000000-1000-4000-8000-000000000001",
+  beneficiary_account_id: "00000000-1000-4000-8000-000000000001",
+  project_id: "00000000-1000-4000-8000-0000000000aa",
+  gpu_type_id: "NVIDIA RTX A5000",
+  gpu_count: 1,
+  cloud: "SECURE",
+  image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+  cost_per_hr: "0.27",
+  max_runtime_minutes: 60,
+  deadline: "2026-10-27T22:00:00.000Z",
+  created: "2026-10-27T21:00:00.000Z",
+  updated: "2026-10-27T21:00:00.000Z",
+};
+const EVENT = {
+  id: "e1",
+  pod_id: RECORD.id,
+  at: "2026-10-27T21:00:00.000Z",
+  actor_kind: "user",
+  action: "create",
+};
+const MANAGED = { ...PODS, scope: "managed", records: [RECORD] };
+const RECORD_ROW = {
+  handle: "cc-7f3k9q2x",
+  state: "running",
+  status: "RUNNING",
+  gpu: "NVIDIA RTX A5000",
+  count: 1,
+  cost_per_hr: "0.27",
+  cloud: "SECURE",
+  deadline: "2026-10-27T22:00:00.000Z",
+  pod_id: "pod_abc123",
+  reason: null,
+};
+
 function harness(
   globals: Record<string, unknown> = {},
   { fail = false }: { fail?: boolean } = {},
@@ -75,7 +116,22 @@ function harness(
           pods: async (args) => {
             calls.push({ name: "pods", args });
             observe();
-            return PODS;
+            return (args as any)?.scope === "account" ? PODS : MANAGED;
+          },
+          launch: async (args) => {
+            calls.push({ name: "launch", args });
+            observe();
+            return RECORD;
+          },
+          terminate: async (args) => {
+            calls.push({ name: "terminate", args });
+            observe();
+            return { state: "terminated" };
+          },
+          who: async (args) => {
+            calls.push({ name: "who", args });
+            observe();
+            return [{ pod: RECORD, events: [EVENT] }];
           },
         },
       };
@@ -140,7 +196,7 @@ it("shows summary rows in tables and the full result with --json", async () => {
   const table = harness();
   await table.run("catalog");
   await table.run("catalog", "--data-centers");
-  await table.run("pods");
+  await table.run("pods", "--all");
   assert.deepEqual(table.outputs, [
     [
       {
@@ -177,14 +233,16 @@ it("shows summary rows in tables and the full result with --json", async () => {
   ]);
   const json = harness({ json: true });
   await json.run("catalog");
-  await json.run("pods");
+  await json.run("pods", "--all");
   assert.deepEqual(json.outputs, [CATALOG, PODS]);
 });
 
 it("reads one pod by id", async () => {
   const h = harness();
-  await h.run("pods", "--id", "pod_abc123");
-  assert.deepEqual(h.calls, [{ name: "pods", args: { pod_id: "pod_abc123" } }]);
+  await h.run("pods", "--all", "--id", "pod_abc123");
+  assert.deepEqual(h.calls, [
+    { name: "pods", args: { pod_id: "pod_abc123", scope: "account" } },
+  ]);
   assert.deepEqual(h.outputs, [PODS.pods[0]]);
 });
 
@@ -212,4 +270,99 @@ it("restores the context's timeouts when a read fails", async () => {
   assert.equal(h.seen[0].rpcTimeoutMs, GPU_CLI_RPC_TIMEOUT_MS);
   assert.equal(h.ctx.rpcTimeoutMs, 30_000);
   assert.equal(h.ctx.timeoutMs, 600_000);
+});
+
+it("lists the pods CoCalc started by default, with RunPod's live status", async () => {
+  const h = harness();
+  await h.run("pods");
+  await h.run("pods", "--ended");
+  await h.run("pods", "--id", "cc-7f3k9q2x");
+  assert.deepEqual(
+    h.calls.map((c) => c.args),
+    [{}, { include_ended: true }, { pod_id: "cc-7f3k9q2x" }],
+  );
+  assert.deepEqual(h.outputs[0], [RECORD_ROW]);
+  assert.deepEqual(h.outputs[2], { ...RECORD, live: PODS.pods[0] });
+});
+
+it("launches from flags, in this project, with a write-sized timeout", async () => {
+  const prev = process.env.COCALC_PROJECT_ID;
+  process.env.COCALC_PROJECT_ID = RECORD.project_id;
+  try {
+    const h = harness();
+    await h.run(
+      "launch",
+      "--gpu",
+      "NVIDIA RTX A5000",
+      "--max-runtime",
+      "60",
+      "--cloud",
+      "community",
+      "--port",
+      "8888/http",
+      "--env",
+      "EPOCHS=3",
+      "--env",
+      "MODE=a=b",
+    );
+    assert.deepEqual(h.calls, [
+      {
+        name: "launch",
+        args: {
+          project_id: RECORD.project_id,
+          spec: {
+            gpu_type_id: "NVIDIA RTX A5000",
+            gpu_count: 1,
+            image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+            max_runtime_minutes: 60,
+            cloud: "COMMUNITY",
+            ports: ["8888/http"],
+            env: { EPOCHS: "3", MODE: "a=b" },
+          },
+        },
+      },
+    ]);
+    assert.ok(h.seen[0].rpcTimeoutMs >= 150_000);
+    assert.deepEqual(h.outputs, [{ ...RECORD_ROW, status: null }]);
+  } finally {
+    if (prev == null) delete process.env.COCALC_PROJECT_ID;
+    else process.env.COCALC_PROJECT_ID = prev;
+  }
+});
+
+it("needs a project and a maximum runtime to launch", async () => {
+  const prev = process.env.COCALC_PROJECT_ID;
+  delete process.env.COCALC_PROJECT_ID;
+  try {
+    const h = harness();
+    await assert.rejects(
+      h.run("launch", "--gpu", "x", "--max-runtime", "5"),
+      /--project is required/,
+    );
+    await assert.rejects(h.run("launch", "--gpu", "x", "--project", "p"));
+    assert.deepEqual(h.calls, []);
+  } finally {
+    if (prev != null) process.env.COCALC_PROJECT_ID = prev;
+  }
+});
+
+it("terminates and looks up a pod", async () => {
+  const h = harness();
+  await h.run("terminate", "cc-7f3k9q2x");
+  await h.run("who", "pod_abc123");
+  assert.deepEqual(h.calls, [
+    { name: "terminate", args: { pod_id: "cc-7f3k9q2x" } },
+    { name: "who", args: { query: "pod_abc123" } },
+  ]);
+  assert.deepEqual(h.outputs[0], { state: "terminated" });
+  assert.deepEqual(h.outputs[1], [
+    {
+      ...RECORD_ROW,
+      status: null,
+      beneficiary: RECORD.beneficiary_account_id,
+      key_owner: RECORD.key_owner_account_id,
+      project: RECORD.project_id,
+      events: "2026-10-27T21:00:00.000Z user create",
+    },
+  ]);
 });
