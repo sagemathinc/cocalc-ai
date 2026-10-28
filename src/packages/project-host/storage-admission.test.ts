@@ -566,31 +566,34 @@ describe("storage admission controller", () => {
     // emergency (effective avg10 0.06-2.3, avg60 6.5-12.6).
     const { parseDiskstatsBusyMs, parseIoStatIos, maintenanceDisksIdleHeld } =
       _test;
-    const activity = (at_ms: number, sdbBusy: number, sdbIos: number) => ({
+    // Busy milliseconds and maintenance I/Os on sda (8:0) and sdb (8:16).
+    const activity = (
+      at_ms: number,
+      [sdaBusy, sdbBusy]: number[],
+      [sdaIos, sdbIos]: number[] = [0, 1200],
+    ) => ({
       at_ms,
       busy_ms: parseDiskstatsBusyMs(
-        `   8       0 sda 1 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0\n` +
+        `   8       0 sda 1 0 0 0 1 0 0 0 0 ${sdaBusy} ${sdaBusy} 0 0 0 0 0 0\n` +
           `   8      16 sdb 1 0 0 0 1 0 0 0 0 ${sdbBusy} ${sdbBusy} 0 0 0 0 0 0\n`,
       ),
       maintenance_ios: parseIoStatIos(
-        `8:16 rbytes=1 wbytes=1 rios=${sdbIos} wios=0 dbytes=0 dios=0\n`,
+        `8:0 rbytes=1 wbytes=1 rios=${sdaIos} wios=0 dbytes=0 dios=0\n` +
+          `8:16 rbytes=1 wbytes=1 rios=${sdbIos} wios=0 dbytes=0 dios=0\n`,
       ),
     });
-    // The burst: the backup reads the capped disk at 8% busy.
+    // The burst: the backup reads the capped disk sdb at 8% busy.
     const burst = maintenanceDisksIdleHeld(
-      activity(0, 0, 0),
-      activity(5_000, 400, 1200),
+      activity(0, [0, 0], [0, 0]),
+      activity(5_000, [0, 400]),
       undefined,
       0.5,
     );
-    expect(burst).toEqual({
-      idle: true,
-      held: { at_ms: 5_000, devices: ["8:16"] },
-    });
+    expect(burst).toEqual({ idle: true, held: new Map([["8:16", 5_000]]) });
     // 19 s without maintenance I/O on a still idle disk: still its throttle.
-    let previous = activity(5_000, 400, 1200);
+    let previous = activity(5_000, [0, 400]);
     for (let at = 10_000; at <= 24_000; at += 5_000) {
-      const next = activity(at, 400 + (at - 5_000) / 50, 1200);
+      const next = activity(at, [0, 400 + (at - 5_000) / 50]);
       expect(maintenanceDisksIdleHeld(previous, next, burst.held, 0.5)).toEqual(
         burst,
       );
@@ -599,8 +602,8 @@ describe("storage admission controller", () => {
     // But the disk got busy in that gap: a real outside stall counts again.
     expect(
       maintenanceDisksIdleHeld(
-        activity(5_000, 400, 1200),
-        activity(10_000, 400 + 4_000, 1200),
+        activity(5_000, [0, 400]),
+        activity(10_000, [0, 4_400]),
         burst.held,
         0.5,
       ),
@@ -608,17 +611,50 @@ describe("storage admission controller", () => {
     // Maintenance I/O on a busy disk ends it too, as without a hold.
     expect(
       maintenanceDisksIdleHeld(
-        activity(5_000, 400, 1200),
-        activity(10_000, 400 + 4_000, 1300),
+        activity(5_000, [0, 400]),
+        activity(10_000, [0, 4_400], [0, 1300]),
         burst.held,
         0.5,
       ),
     ).toEqual({ idle: false });
-    // The 60 s averages no longer hold that stall a minute after its I/O.
+    // Codex on #1463: maintenance moving on to another idle disk keeps the
+    // first one's stall in the averages, so that disk going busy counts.
     expect(
       maintenanceDisksIdleHeld(
-        activity(65_000, 1_000, 1200),
-        activity(70_000, 1_000, 1200),
+        activity(5_000, [0, 400]),
+        activity(10_000, [100, 4_400], [50, 1200]),
+        burst.held,
+        0.5,
+      ),
+    ).toEqual({ idle: false });
+    expect(
+      maintenanceDisksIdleHeld(
+        activity(5_000, [0, 400]),
+        activity(10_000, [100, 500], [50, 1200]),
+        burst.held,
+        0.5,
+      ),
+    ).toEqual({
+      idle: true,
+      held: new Map([
+        ["8:16", 5_000],
+        ["8:0", 10_000],
+      ]),
+    });
+    // Codex on #1463: avg60 decays by 1/e a minute, so a minute later the
+    // stall is still in it (37%); the verdict lasts 180 s, to under 5%.
+    expect(
+      maintenanceDisksIdleHeld(
+        activity(65_000, [0, 1_000]),
+        activity(70_000, [0, 1_100]),
+        burst.held,
+        0.5,
+      ),
+    ).toEqual(burst);
+    expect(
+      maintenanceDisksIdleHeld(
+        activity(185_000, [0, 1_000]),
+        activity(190_000, [0, 1_100]),
         burst.held,
         0.5,
       ),
@@ -626,8 +662,8 @@ describe("storage admission controller", () => {
     // Without an idle verdict to hold, no I/O proves nothing (as before).
     expect(
       maintenanceDisksIdleHeld(
-        activity(5_000, 400, 1200),
-        activity(10_000, 400, 1200),
+        activity(5_000, [0, 400]),
+        activity(10_000, [0, 400]),
         undefined,
         0.5,
       ),

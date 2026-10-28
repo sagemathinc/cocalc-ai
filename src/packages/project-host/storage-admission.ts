@@ -270,17 +270,19 @@ function elapsedMs(since: number, at: number): number {
   return at >= since ? at - since : Infinity;
 }
 
-// The last interval in which maintenance did I/O only on idle disks: when,
-// and the devices it used.
-type IdleMaintenanceIo = { at_ms: number; devices: string[] };
+// Per device ("major:minor"): when maintenance last did I/O there, in an
+// interval that found every disk it used idle.
+type IdleMaintenanceIo = Map<string, number>;
 
 // The gate also reads 60 s PSI averages, which keep a throttled backup's
-// stall for a minute after its last I/O: between its reads, or once it has
-// finished. Intervals without maintenance I/O therefore keep the last idle
-// verdict for that long, while the disks it used stay idle. A busy one of
-// those disks, or maintenance I/O on a busy or unknown disk, ends it, so a
-// real outside stall is still counted.
-const MAINTENANCE_IDLE_HOLD_MS = 60_000;
+// stall after its last I/O: between its reads, or once it has finished.
+// Intervals without maintenance I/O therefore keep the last idle verdict
+// while every disk it recently used stays idle. A busy one of those disks,
+// or maintenance I/O on a busy or unknown disk, ends it, so a real outside
+// stall is still counted. avg60 decays exponentially (by 1/e every 60 s),
+// so the verdict lasts 180 s after a disk's last such I/O: by then under 5%
+// of any stall remains, below the contended threshold.
+const MAINTENANCE_IDLE_HOLD_MS = 180_000;
 
 function maintenanceDisksIdleHeld(
   previous: DiskActivity | undefined,
@@ -288,33 +290,37 @@ function maintenanceDisksIdleHeld(
   held: IdleMaintenanceIo | undefined,
   maxUtilization: number,
 ): { idle: boolean; held?: IdleMaintenanceIo } {
-  if (maintenanceStallOnIdleDisks(previous, next, maxUtilization)) {
-    const devices = [...next!.maintenance_ios]
-      .filter(
-        ([device, ios]) => ios > (previous!.maintenance_ios.get(device) ?? 0),
-      )
-      .map(([device]) => device);
-    return { idle: true, held: { at_ms: next!.at_ms, devices } };
-  }
-  if (!previous || !next || !held) return { idle: false };
+  if (!previous || !next) return { idle: false };
   const elapsed = next.at_ms - previous.at_ms;
-  if (
-    !(elapsed > 0) ||
-    elapsedMs(held.at_ms, next.at_ms) > MAINTENANCE_IDLE_HOLD_MS
-  ) {
-    return { idle: false };
-  }
-  for (const [device, ios] of next.maintenance_ios) {
-    if (ios > (previous.maintenance_ios.get(device) ?? 0))
-      return { idle: false };
-  }
-  for (const device of held.devices) {
+  if (!(elapsed > 0)) return { idle: false };
+  // Disks whose maintenance stall can still be in the averages: one of them
+  // busy now makes that stall possibly real contention.
+  const recent: IdleMaintenanceIo = new Map(
+    [...(held ?? [])].filter(
+      ([, at]) => elapsedMs(at, next.at_ms) <= MAINTENANCE_IDLE_HOLD_MS,
+    ),
+  );
+  for (const device of recent.keys()) {
     const before = previous.busy_ms.get(device);
     const after = next.busy_ms.get(device);
     if (before == null || after == null) return { idle: false };
     if ((after - before) / elapsed >= maxUtilization) return { idle: false };
   }
-  return { idle: true, held };
+  if (maintenanceStallOnIdleDisks(previous, next, maxUtilization)) {
+    for (const [device, ios] of next.maintenance_ios) {
+      if (ios > (previous.maintenance_ios.get(device) ?? 0)) {
+        recent.set(device, next.at_ms);
+      }
+    }
+    return { idle: true, held: recent };
+  }
+  if (recent.size === 0) return { idle: false };
+  for (const [device, ios] of next.maintenance_ios) {
+    if (ios > (previous.maintenance_ios.get(device) ?? 0)) {
+      return { idle: false };
+    }
+  }
+  return { idle: true, held: recent };
 }
 
 let lastDiskActivity: DiskActivity | undefined;
