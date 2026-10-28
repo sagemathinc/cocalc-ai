@@ -1584,7 +1584,7 @@ export interface GpuKillSwitchResult {
   marked: number;
   // pods still not confirmed terminated by RunPod (the reaper retries)
   remaining: number;
-  // new launches paused by the kill switch
+  // whether new launches are paused by the kill switch now (persisted state)
   paused: boolean;
 }
 
@@ -1614,7 +1614,7 @@ export async function killSwitchLocal(
   }
   const pause = project_id == null && opts.pause !== false;
   const actor: Actor = { kind: "user", account_id };
-  const marked = await inTransaction(async (db) => {
+  const { marked, paused } = await inTransaction(async (db) => {
     await (deps.accountWriteFence ?? lockGpuAccountFence)(
       db,
       account_id,
@@ -1632,6 +1632,17 @@ export async function killSwitchLocal(
     for (const { id } of rows) {
       await recordEvent(id, actor, "kill_switch", { project_id }, db);
     }
+    // a human pressing it again means "now": pods already marked but backed
+    // off are retried at once (without another event)
+    await db.query(
+      `UPDATE gpu_pods SET reap_after = NULL
+        WHERE key_owner_account_id = $1
+          AND ($2::uuid IS NULL OR project_id = $2::uuid)
+          AND desired_state = 'terminated'
+          AND state NOT IN ('terminated', 'failed')
+          AND reap_after IS NOT NULL`,
+      [account_id, project_id],
+    );
     const { rows: fences } = await db.query(
       "SELECT credential_id FROM gpu_key_fences WHERE key_owner_account_id = $1",
       [account_id],
@@ -1656,7 +1667,14 @@ export async function killSwitchLocal(
         [account_id],
       );
     }
-    return rows.length;
+    // what is actually paused now (--no-pause never lifts a pause; only a
+    // fresh-auth resume does)
+    const { rows: paused } = await db.query(
+      `SELECT bool_or(kill_switch_at IS NOT NULL) AS paused FROM gpu_key_fences
+        WHERE key_owner_account_id = $1`,
+      [account_id],
+    );
+    return { marked: rows.length, paused: paused[0]?.paused === true };
   });
   await resolvePendingForAccount(account_id, deps).catch(() => {});
   const { rows } = await getPool().query(
@@ -1667,7 +1685,7 @@ export async function killSwitchLocal(
         AND state NOT IN ('terminated', 'failed')`,
     [account_id, project_id],
   );
-  return { marked, remaining: rows[0].n, paused: pause };
+  return { marked, remaining: rows[0].n, paused };
 }
 
 export async function killSwitch(

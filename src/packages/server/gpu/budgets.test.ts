@@ -396,6 +396,27 @@ describeDb("GPU budgets", () => {
   });
 
   describe("the kill switch", () => {
+    it("reports the persisted pause: --no-pause never lifts one, and no key means nothing paused", async () => {
+      const s = setup();
+      await s.launch();
+      expect(
+        (await killSwitchLocal({ account_id: s.account_id }, s.deps)).paused,
+      ).toBe(true);
+      expect(
+        (
+          await killSwitchLocal(
+            { account_id: s.account_id, pause: false },
+            s.deps,
+          )
+        ).paused,
+      ).toBe(true);
+      const none = setup();
+      expect(
+        (await killSwitchLocal({ account_id: none.account_id }, none.deps))
+          .paused,
+      ).toBe(false);
+    });
+
     it("terminates every live pod and pauses launches until a fresh-auth resume", async () => {
       const s = setup();
       const a = await s.launch();
@@ -482,11 +503,8 @@ describeDb("GPU budgets", () => {
         paused_reason: "unknown_pod",
         kill_switch_at: null,
       });
-      // a second kill switch marks nothing new but retries the terminate
-      await getPool().query(
-        "UPDATE gpu_pods SET reap_after = NULL WHERE id = $1",
-        [pod.id],
-      );
+      // a second kill switch marks nothing new but retries the backed-off
+      // terminate at once
       expect(
         await killSwitchLocal(
           { account_id: s.account_id, pause: false },
