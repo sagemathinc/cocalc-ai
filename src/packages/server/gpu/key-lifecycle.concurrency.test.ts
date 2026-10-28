@@ -553,6 +553,42 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     expect(log).toEqual([{ action: "removed", details: { replaced: true } }]);
   });
 
+  it("a key whose budget already ended can be replaced; the new key's budget stays ended", async () => {
+    const s = await setup();
+    const pod = await launch(s);
+    const before = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'terminated', desired_state = 'terminated' WHERE id = $1",
+      [pod.id],
+    );
+    const day = 24 * 3600 * 1000;
+    const starts = new Date(Date.now() - 10 * day);
+    const ends = new Date(Date.now() - day);
+    await getPool().query(
+      "UPDATE gpu_budget_layers SET reserved_usd = 0, starts_at = $2, ends_at = $3 WHERE credential_id = $1 AND scope_kind = 'key'",
+      [before, starts, ends],
+    );
+    await keys.setGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", api_key: NEW },
+      s.keyDeps,
+    );
+    const after = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    expect(after).not.toBe(before);
+    const { rows: layer } = await getPool().query(
+      "SELECT starts_at, ends_at FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+      [after],
+    );
+    expect(new Date(layer[0].starts_at).getTime()).toBe(starts.getTime());
+    expect(new Date(layer[0].ends_at).getTime()).toBe(ends.getTime());
+    await expect(launch(s)).rejects.toThrow();
+  });
+
   it("replacement first: a removal that waited acts on nothing stale; it refuses, and the new key stays", async () => {
     const s = await setup();
     const g = gate();

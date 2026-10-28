@@ -16,6 +16,7 @@ import type {
   GpuBudget,
   GpuBudgetChange,
   GpuAttribution,
+  GpuCompromiseStatus,
   GpuLaunchSpec,
   GpuPodSshInfo,
   GpuPodSummary,
@@ -181,13 +182,7 @@ export interface GpuApi {
     browser_id?: string | null;
     session_hash?: string | null;
     confirm_cocalc_only: boolean;
-  }) => Promise<{
-    closed: boolean;
-    awaiting_provider_revocation?: boolean;
-    provider_pods?: number;
-    managed_pods?: number;
-    listing_failed?: boolean;
-  }>;
+  }) => Promise<GpuCompromiseStatus>;
   // Lift the kill switch's pause: fresh authentication.
   resume: (opts?: {
     account_id?: string;

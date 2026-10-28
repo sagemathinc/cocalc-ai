@@ -4190,13 +4190,7 @@ export interface InterBayGpuApi {
     account_id: string;
     confirm_cocalc_only: boolean;
     fresh_auth_verified: boolean;
-  }) => Promise<{
-    closed: boolean;
-    awaiting_provider_revocation?: boolean;
-    provider_pods?: number;
-    managed_pods?: number;
-    listing_failed?: boolean;
-  }>;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuCompromiseStatus>;
   // Lift the kill switch's pause (the forwarding bay checked fresh auth).
   gpuResume: (opts: {
     account_id: string;

@@ -107,6 +107,27 @@ export interface GpuLaunchSpec {
   ssh_public_key?: string;
 }
 
+// What reporting a key compromised has done so far (5c).
+export interface GpuCompromiseStatus {
+  // the cleanup finished: RunPod rejects the key, nothing is left, and
+  // CoCalc's copy is revoked and its fence closed
+  closed: boolean;
+  // the account is clean but RunPod still accepts the key: delete it on
+  // RunPod's Credentials page; CoCalc keeps watching until then
+  awaiting_provider_revocation?: boolean;
+  // pods still in the RunPod account at the last complete listing
+  provider_pods?: number;
+  // CoCalc's pods of this key not yet confirmed terminated
+  managed_pods?: number;
+  // the last pass couldn't list the account (it retries)
+  listing_failed?: boolean;
+  // RunPod rejects the key, but CoCalc still has unfinished pods on it: it
+  // can't terminate them anymore (see warning)
+  provider_rejected?: boolean;
+  // what the owner must do now
+  warning?: string;
+}
+
 export interface GpuPodSummary {
   id: string;
   handle: string;

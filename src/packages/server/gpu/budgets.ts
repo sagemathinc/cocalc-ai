@@ -119,7 +119,9 @@ export interface KeyLayerCaps {
   max_concurrent_pods: number | null;
   max_gpu_count: number | null;
   max_runtime_minutes: number | null;
-  // the previous layer's end, when it ends before a new layer's default
+  // the previous layer's window, when it ends before a new layer's default
+  // (an ended one is kept whole: it stays ended)
+  starts_at?: Date;
   ends_at?: Date;
 }
 
@@ -157,8 +159,13 @@ export async function ensureKeyBudget(
   const d = { ...DEFAULT_KEY_LAYER, ...(initial ?? {}) };
   let ends = new Date(now);
   ends.setFullYear(ends.getFullYear() + d.years);
+  let starts = now;
   if (initial?.ends_at != null && initial.ends_at < ends) {
     ends = new Date(initial.ends_at);
+    // already ended: keep the earlier window as it was, not now..end
+    if (ends <= starts) {
+      starts = new Date(initial.starts_at ?? ends.getTime() - 1);
+    }
   }
   const { rows } = await db.query(
     `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind,
@@ -176,7 +183,7 @@ export async function ensureKeyBudget(
       d.max_concurrent_pods,
       d.max_gpu_count,
       d.max_runtime_minutes,
-      now,
+      starts,
       ends,
     ],
   );
@@ -246,6 +253,7 @@ export async function carryKeyBudget(
     ),
     // a deliberately shortened budget stays as short (ensureKeyBudget keeps
     // the earlier of it and the default)
+    starts_at: new Date(prior.starts_at),
     ends_at: new Date(prior.ends_at),
   };
 }

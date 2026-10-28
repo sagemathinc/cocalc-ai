@@ -866,6 +866,7 @@ describeDb("GPU budgets", () => {
         closed: false,
         provider_rejected: true,
         managed_pods: 1,
+        warning: expect.stringContaining("Remove anyway"),
       });
       const { rows } = await getPool().query(
         "SELECT state FROM gpu_key_fences WHERE credential_id = $1",

@@ -154,7 +154,12 @@ function harness(
           reportCompromised: async (args) => {
             calls.push({ name: "reportCompromised", args });
             observe();
-            return { closed: false, awaiting_provider_revocation: true };
+            return {
+              closed: false,
+              provider_rejected: true,
+              managed_pods: 1,
+              warning: "terminate them at RunPod",
+            };
           },
           who: async (args) => {
             calls.push({ name: "who", args });
@@ -416,6 +421,13 @@ it("the kill switch pauses by default for the account, never for a project, and 
   ]);
   // terminating pods can take a while: the write-sized timeout
   assert.equal(h.seen[0].rpcTimeoutMs, GPU_POD_WRITE_RPC_TIMEOUT_MS);
+  // the warning for pods CoCalc can no longer stop reaches the output
+  assert.deepEqual(h.outputs.at(-1), {
+    closed: false,
+    provider_rejected: true,
+    managed_pods: 1,
+    warning: "terminate them at RunPod",
+  });
 });
 
 it("shows and changes the budget; none removes a limit", async () => {

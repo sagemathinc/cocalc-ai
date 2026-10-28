@@ -58,28 +58,20 @@ import {
   sanitizeProviderName,
 } from "@cocalc/server/gpu/key-events";
 
+import type { GpuCompromiseStatus } from "@cocalc/util/gpu/types";
+
 const log = getLogger("server:gpu:compromise");
+
+// RunPod rejects the key while CoCalc's own pods of it may still run: CoCalc
+// can't stop them anymore, and won't close the report by itself
+const PROVIDER_REJECTED_WARNING =
+  "RunPod no longer accepts this key, but pods CoCalc launched with it may still be running and billing at RunPod, and CoCalc can't terminate them anymore. Terminate them on RunPod's Pods page, then remove the key in CoCalc's Settings with \"Remove anyway\".";
 
 // how long the report request's own pass may spend terminating pods (the
 // compromise worker continues)
 const REQUEST_PASS_MS = 15_000;
 
-export interface GpuCompromiseStatus {
-  // the cleanup finished: RunPod rejects the key, nothing is left, and
-  // CoCalc's copy is revoked and its fence closed
-  closed: boolean;
-  // the account is clean but RunPod still accepts the key: delete it on
-  // RunPod's Credentials page; CoCalc keeps watching until then
-  awaiting_provider_revocation?: boolean;
-  // pods still in the RunPod account at the last complete listing
-  provider_pods?: number;
-  // CoCalc's pods of this key not yet confirmed terminated
-  managed_pods?: number;
-  // the last pass couldn't list the account (it retries)
-  listing_failed?: boolean;
-  // RunPod rejects the key, but CoCalc still has unfinished pods on it
-  provider_rejected?: boolean;
-}
+export type { GpuCompromiseStatus };
 
 export interface GpuCompromiseDeps {
   // for tests
@@ -144,6 +136,7 @@ export async function runCompromiseCleanup(
           closed: false,
           provider_rejected: true,
           managed_pods: left.length,
+          warning: PROVIDER_REJECTED_WARNING,
         };
       }
       return await revokeAndClose(account_id, credential_id, deps);
