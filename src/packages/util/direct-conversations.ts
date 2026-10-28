@@ -52,11 +52,46 @@ export interface DirectConversation {
 }
 
 // A conversation in one member's list: the shared record plus their own
-// standing and private state.
+// standing and private state. Server side only: it includes every member's
+// standing.
 export interface ListedDirectConversation extends DirectConversation {
   state: DirectMemberState;
   last_read: number | null;
   muted: boolean;
+}
+
+// What a member's browser gets: their own standing only. Others' standings
+// (whether someone declined or blocked) are never sent, nor the owning bay.
+export interface MemberDirectConversation {
+  conversation_id: string;
+  member_ids: string[];
+  created_by: string;
+  created: number;
+  last_activity: number;
+  last_sender_id: string | null;
+  preview: string;
+  title: string | null;
+  state: DirectMemberState;
+  last_read: number | null;
+  muted: boolean;
+}
+
+export function memberView(
+  c: ListedDirectConversation,
+): MemberDirectConversation {
+  return {
+    conversation_id: c.conversation_id,
+    member_ids: c.member_ids,
+    created_by: c.created_by,
+    created: c.created,
+    last_activity: c.last_activity,
+    last_sender_id: c.last_sender_id,
+    preview: c.preview,
+    title: c.title,
+    state: c.state,
+    last_read: c.last_read,
+    muted: c.muted,
+  };
 }
 
 export interface DirectMessage {
@@ -82,8 +117,16 @@ export function normalizeDirectTitle(title: unknown): string | null {
   return value.slice(0, MAX_DIRECT_TITLE_LENGTH);
 }
 
+// Plain text for lists and notifications: no images, links or HTML (nothing
+// that loads a resource or is rendered as Markdown), so a message from someone
+// not yet accepted can't track who read the notification.
 export function directPreview(body: string): string {
-  const text = body.replace(/\s+/g, " ").trim();
+  const text = body
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "[image]")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return text.length > DIRECT_PREVIEW_LENGTH
     ? `${text.slice(0, DIRECT_PREVIEW_LENGTH - 1)}…`
     : text;
@@ -115,7 +158,10 @@ export function normalizeDirectMembers(
 // Unread for this member: someone else wrote after what they read, and they
 // are active in it (a pending request is shown as a request instead).
 export function isDirectUnread(
-  c: ListedDirectConversation,
+  c: Pick<
+    MemberDirectConversation,
+    "muted" | "state" | "last_sender_id" | "last_activity" | "last_read"
+  >,
   account_id?: string,
 ): boolean {
   if (c.muted || c.state !== "active") return false;
@@ -123,8 +169,28 @@ export function isDirectUnread(
   return c.last_read == null || c.last_activity > c.last_read;
 }
 
-export function isDirectRequest(c: ListedDirectConversation): boolean {
+export function isDirectRequest(
+  c: Pick<MemberDirectConversation, "state">,
+): boolean {
   return c.state === "requested";
+}
+
+// Markdown that shows a plain-text preview literally: escapes what Markdown
+// would interpret (used for notification bodies).
+export function escapeMarkdown(text: string): string {
+  return text.replace(/([\\`*_{}\[\]()#+\-.!|<>~])/g, "\\$1");
+}
+
+const UUID_LIKE =
+  /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
+// An exact username to message someone who isn't a collaborator: never an
+// account id or an email address.
+export function normalizeDirectUsername(value: unknown): string | null {
+  const text = `${value ?? ""}`.trim().replace(/^@/, "");
+  if (!text || UUID_LIKE.test(text) || text.includes("@")) return null;
+  if (!/^[a-zA-Z0-9_.-]{1,64}$/.test(text)) return null;
+  return text;
 }
 
 // The URL route (under /people) of a direct conversation.

@@ -54,6 +54,9 @@ function toMessage(row: any): DirectMessage {
 
 // ---- owning bay ----
 
+// Create the record. With requests in it, admission is charged to the
+// creator: under an account lock, so concurrent starts can't all pass, and in
+// a ledger that later answers to the request don't refund.
 export async function createDirectConversationRecord({
   owner_bay_id,
   created_by,
@@ -67,21 +70,58 @@ export async function createDirectConversationRecord({
   member_states: Record<string, DirectMemberState>;
   title: string | null;
 }): Promise<DirectConversation> {
-  const { rows } = await getPool().query(
-    `INSERT INTO direct_conversations
-       (conversation_id, member_ids, member_states, created_by, created,
-        last_activity, last_sender_id, preview, title)
-     VALUES ($1, $2::uuid[], $3::jsonb, $4, NOW(), NOW(), NULL, '', $5)
-     RETURNING ${COLUMNS}`,
-    [
-      randomUUID(),
-      member_ids,
-      JSON.stringify(member_states),
-      created_by,
-      title,
-    ],
-  );
-  return toConversation(rows[0], owner_bay_id);
+  const requests = Object.values(member_states).filter(
+    (state) => state === "requested",
+  ).length;
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    if (requests > 0) {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('direct-request-admission'), hashtext($1::text))",
+        [created_by],
+      );
+      const { rows: counted } = await client.query(
+        `SELECT count(*)::int AS n FROM direct_request_admissions
+         WHERE account_id = $1 AND created > NOW() - INTERVAL '1 day'`,
+        [created_by],
+      );
+      if ((counted[0]?.n ?? 0) >= MAX_DIRECT_REQUESTS_PER_DAY) {
+        throw Error(
+          "you have sent the maximum number of message requests for today",
+        );
+      }
+    }
+    const { rows } = await client.query(
+      `INSERT INTO direct_conversations
+         (conversation_id, member_ids, member_states, created_by, created,
+          last_activity, last_sender_id, preview, title)
+       VALUES ($1, $2::uuid[], $3::jsonb, $4, NOW(), NOW(), NULL, '', $5)
+       RETURNING ${COLUMNS}`,
+      [
+        randomUUID(),
+        member_ids,
+        JSON.stringify(member_states),
+        created_by,
+        title,
+      ],
+    );
+    if (requests > 0) {
+      await client.query(
+        `INSERT INTO direct_request_admissions
+           (conversation_id, account_id, recipients, created)
+         VALUES ($1, $2, $3, NOW())`,
+        [rows[0].conversation_id, created_by, requests],
+      );
+    }
+    await client.query("COMMIT");
+    return toConversation(rows[0], owner_bay_id);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getDirectConversationRecord(
@@ -95,29 +135,16 @@ export async function getDirectConversationRecord(
   return rows[0] == null ? null : toConversation(rows[0], owner_bay_id);
 }
 
-// Conversations started today by this account that include a request.
-export async function countDirectRequestsToday(
-  created_by: string,
+export async function countDirectMessagesFrom(
+  conversation_id: string,
+  sender_id: string,
 ): Promise<number> {
   const { rows } = await getPool().query(
-    `SELECT count(*)::int AS n FROM direct_conversations
-     WHERE created_by = $1 AND created > NOW() - INTERVAL '1 day'
-       AND member_states::text LIKE '%"requested"%'`,
-    [created_by],
+    `SELECT count(*)::int AS n FROM direct_messages
+     WHERE conversation_id = $1 AND sender_id = $2`,
+    [conversation_id, sender_id],
   );
   return rows[0]?.n ?? 0;
-}
-
-export async function assertDirectRequestQuota(
-  created_by: string,
-): Promise<void> {
-  if (
-    (await countDirectRequestsToday(created_by)) >= MAX_DIRECT_REQUESTS_PER_DAY
-  ) {
-    throw Error(
-      "you have sent the maximum number of message requests for today",
-    );
-  }
 }
 
 export async function addDirectMessage({

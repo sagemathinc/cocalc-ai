@@ -8,7 +8,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   isDirectRequest,
   isDirectUnread,
-  type ListedDirectConversation,
+  type MemberDirectConversation,
 } from "@cocalc/util/direct-conversations";
 import { peopleApi } from "./api";
 
@@ -18,12 +18,12 @@ const NOTIFICATION_REFRESH_DELAY_MS = 500;
 interface Snapshot {
   // Whose list this is: nothing is shown or kept across accounts.
   account_id?: string;
-  conversations: ListedDirectConversation[];
+  conversations: MemberDirectConversation[];
   loading: boolean;
   error?: string;
 }
 
-const NONE: ListedDirectConversation[] = [];
+const NONE: MemberDirectConversation[] = [];
 function empty(account_id?: string): Snapshot {
   return { account_id, conversations: NONE, loading: true };
 }
@@ -160,7 +160,7 @@ export function useDirectConversations(active: boolean): Snapshot & {
 
 // Direct conversations needing this account: unread ones and requests.
 export function directAttentionCount(
-  conversations: ListedDirectConversation[],
+  conversations: MemberDirectConversation[],
   account_id?: string,
 ): number {
   return conversations.filter(

@@ -4,10 +4,9 @@
  */
 
 import type {
-  DirectConversation,
   DirectMessage,
   DirectResponse,
-  ListedDirectConversation,
+  MemberDirectConversation,
 } from "@cocalc/util/direct-conversations";
 import type {
   Conversation,
@@ -42,22 +41,24 @@ export interface PeopleApi {
   // Direct conversations, in no project (@cocalc/util/direct-conversations).
   listDirect(opts: {
     account_id?: string;
-  }): Promise<{ conversations: ListedDirectConversation[] }>;
+  }): Promise<{ conversations: MemberDirectConversation[] }>;
   // Start a conversation (or reuse the one with that person), optionally
-  // with a first message. People who aren't collaborators get a request.
+  // with a first message. member_ids must be collaborators; anyone else is
+  // named by exact username and gets a message request.
   startDirect(opts: {
     account_id?: string;
-    member_ids: string[];
+    member_ids?: string[];
+    usernames?: string[];
     title?: string | null;
     body?: string | null;
-  }): Promise<ListedDirectConversation>;
+  }): Promise<MemberDirectConversation>;
   // A page of messages, oldest first, before an optional time.
   getDirect(opts: {
     account_id?: string;
     conversation_id: string;
     before?: number | null;
   }): Promise<{
-    conversation: ListedDirectConversation;
+    conversation: MemberDirectConversation;
     messages: DirectMessage[];
   }>;
   sendDirect(opts: {
@@ -70,7 +71,7 @@ export interface PeopleApi {
     account_id?: string;
     conversation_id: string;
     action: DirectResponse;
-  }): Promise<DirectConversation>;
+  }): Promise<MemberDirectConversation>;
   markDirectRead(opts: {
     account_id?: string;
     conversation_id: string;
@@ -81,11 +82,12 @@ export interface PeopleApi {
     conversation_id: string;
     muted: boolean;
   }): Promise<void>;
-  // Someone to message by exact username, or null.
+  // Someone to message by exact username (never an account id or email), or
+  // null. Start the conversation with the username.
   findDirectRecipient(opts: {
     account_id?: string;
     username: string;
-  }): Promise<{ account_id: string; name: string } | null>;
+  }): Promise<{ account_id: string; name: string; username: string } | null>;
 
   listConversations(opts: { account_id?: string }): Promise<ConversationList>;
   // The shared record only (no personal state), for opening a link.

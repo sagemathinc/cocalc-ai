@@ -203,7 +203,12 @@ export const TABLE_OWNERSHIP = {
       "A member's index of their direct conversations (owning bay, read state, mute) and their blocks, kept on the member's home bay and updated by fan-out from each conversation's owning bay. Rehome remains unsafe until this table has explicit migration tests.",
   }),
   ...entries(
-    ["direct_conversations", "direct_messages", "direct_fanout_pending"],
+    [
+      "direct_conversations",
+      "direct_messages",
+      "direct_fanout_pending",
+      "direct_request_admissions",
+    ],
     {
       ownership: "stable-bay",
       authority: "bay_id",

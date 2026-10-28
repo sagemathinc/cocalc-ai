@@ -61,6 +61,7 @@ jest.mock("@cocalc/frontend/editors/markdown-input", () => ({
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   TimeAgo: () => <span>ago</span>,
+  Tooltip: ({ children }) => <>{children}</>,
 }));
 jest.mock("./collaborators", () => ({
   usePeople: () => [{ account_id: bea, name: "Bea Tester" }],
@@ -208,6 +209,32 @@ test("a conversation shows its messages, marks them read and sends with Shift+En
   );
 });
 
+test("a request's messages are plain text until accepted: no image loads", async () => {
+  const request = listed("c3", { state: "requested", created_by: bea });
+  mockApi.listDirect.mockResolvedValue({ conversations: [request] });
+  mockApi.getDirect.mockResolvedValue({
+    conversation: request,
+    messages: [
+      {
+        message_id: "m1",
+        conversation_id: "c3",
+        sender_id: bea,
+        sent: 3000,
+        body: "![probe](https://attacker.example/pixel)",
+      },
+    ],
+  });
+  const { container } = render(
+    <DirectConversationView conversation_id="c3" onClose={() => {}} />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByText("![probe](https://attacker.example/pixel)"),
+    ).toBeTruthy(),
+  );
+  expect(container.querySelector("img")).toBeNull();
+});
+
 test("a request can be accepted; it isn't marked read until then", async () => {
   const request = listed("c2", {
     state: "requested",
@@ -232,7 +259,11 @@ test("a request can be accepted; it isn't marked read until then", async () => {
 });
 
 test("New message: a collaborator prefilled, or someone added by username", async () => {
-  mockApi.findDirectRecipient.mockResolvedValue({ account_id: cy, name: "Cy" });
+  mockApi.findDirectRecipient.mockResolvedValue({
+    account_id: cy,
+    name: "Cy",
+    username: "cy",
+  });
   mockApi.startDirect.mockResolvedValue(listed("new"));
   const started = jest.fn();
   render(
@@ -257,8 +288,10 @@ test("New message: a collaborator prefilled, or someone added by username", asyn
   });
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() =>
+    // The collaborator by id; someone else only by username.
     expect(mockApi.startDirect).toHaveBeenCalledWith({
-      member_ids: [bea, cy],
+      member_ids: [bea],
+      usernames: ["cy"],
       title: "",
       body: "Hi both",
     }),

@@ -6,10 +6,10 @@
 // The Messages tab on People: direct conversations, in no project.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Button, Popconfirm, Space, Tag, Tooltip } from "antd";
+import { Alert, Button, Popconfirm, Space, Tag } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
-import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { MarkdownInput } from "@cocalc/frontend/editors/markdown-input";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { User } from "@cocalc/frontend/users/user";
@@ -20,7 +20,7 @@ import {
   isDirectUnread,
   type DirectMessage,
   type DirectResponse,
-  type ListedDirectConversation,
+  type MemberDirectConversation,
 } from "@cocalc/util/direct-conversations";
 import { peopleApi } from "./api";
 import { directChanged, useDirectConversations } from "./use-direct";
@@ -30,7 +30,7 @@ export function DirectNames({
   conversation,
   account_id,
 }: {
-  conversation: Pick<ListedDirectConversation, "member_ids" | "title">;
+  conversation: Pick<MemberDirectConversation, "member_ids" | "title">;
   account_id?: string;
 }) {
   const others = conversation.member_ids.filter((id) => id !== account_id);
@@ -53,7 +53,7 @@ function DirectRow({
   selected,
   onSelect,
 }: {
-  conversation: ListedDirectConversation;
+  conversation: MemberDirectConversation;
   account_id?: string;
   selected: boolean;
   onSelect: () => void;
@@ -150,15 +150,15 @@ export function DirectList({
   onSelect,
   search,
 }: {
-  conversations: ListedDirectConversation[];
+  conversations: MemberDirectConversation[];
   selected?: string;
-  onSelect: (c: ListedDirectConversation) => void;
+  onSelect: (c: MemberDirectConversation) => void;
   search?: string;
 }) {
   const account_id = useTypedRedux("account", "account_id");
   const user_map = useTypedRedux("users", "user_map");
   const q = (search ?? "").trim().toLowerCase();
-  const matches = (c: ListedDirectConversation) =>
+  const matches = (c: MemberDirectConversation) =>
     !q ||
     `${c.title ?? ""} ${c.preview}`.toLowerCase().includes(q) ||
     c.member_ids.some((id) =>
@@ -170,7 +170,7 @@ export function DirectList({
     (c) => isDirectRequest(c) && matches(c),
   );
   const others = conversations.filter((c) => !isDirectRequest(c) && matches(c));
-  const row = (c: ListedDirectConversation) => (
+  const row = (c: MemberDirectConversation) => (
     <DirectRow
       key={c.conversation_id}
       conversation={c}
@@ -233,7 +233,7 @@ function RequestBanner({
   conversation,
   onRespond,
 }: {
-  conversation: ListedDirectConversation;
+  conversation: MemberDirectConversation;
   onRespond: (action: DirectResponse) => void;
 }) {
   return (
@@ -245,7 +245,7 @@ function RequestBanner({
           <User account_id={conversation.created_by} /> wants to message you.
         </>
       }
-      description="You aren't collaborators. Reply or accept to continue; they won't be told if you decline."
+      description="You aren't collaborators. Messages show as plain text until you accept. Reply or accept to continue; they won't be told if you decline."
       action={
         <Space direction="vertical">
           <Button
@@ -278,9 +278,13 @@ function RequestBanner({
 function MessageItem({
   message,
   account_id,
+  plain,
 }: {
   message: DirectMessage;
   account_id?: string;
+  // Not yet accepted: shown as text, so nothing in it loads (an image could
+  // tell the sender you looked).
+  plain?: boolean;
 }) {
   const mine = message.sender_id === account_id;
   return (
@@ -296,7 +300,13 @@ function MessageItem({
           </strong>{" "}
           <TimeAgo date={message.sent} />
         </div>
-        <StaticMarkdown value={message.body} />
+        {plain ? (
+          <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+            {message.body}
+          </div>
+        ) : (
+          <StaticMarkdown value={message.body} />
+        )}
       </div>
     </article>
   );
@@ -314,7 +324,7 @@ export function DirectConversationView({
   const listed = conversations.find(
     (c) => c.conversation_id === conversation_id,
   );
-  const [conversation, setConversation] = useState<ListedDirectConversation>();
+  const [conversation, setConversation] = useState<MemberDirectConversation>();
   const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [more, setMore] = useState(false);
   const [error, setError] = useState("");
@@ -473,7 +483,12 @@ export function DirectConversationView({
           </div>
         )}
         {messages.map((m) => (
-          <MessageItem key={m.message_id} message={m} account_id={account_id} />
+          <MessageItem
+            key={m.message_id}
+            message={m}
+            account_id={account_id}
+            plain={shown?.state === "requested"}
+          />
         ))}
         {messages.length === 0 && !error && (
           <p style={{ color: UI_COLORS.secondary, padding: 12 }}>

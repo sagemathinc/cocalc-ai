@@ -11,7 +11,7 @@ import { Alert, Button, Form, Input, Modal, Select, Space } from "antd";
 import { MarkdownInput } from "@cocalc/frontend/editors/markdown-input";
 import {
   MAX_DIRECT_MEMBERS,
-  type ListedDirectConversation,
+  type MemberDirectConversation,
 } from "@cocalc/util/direct-conversations";
 import { peopleApi } from "./api";
 import { usePeople } from "./collaborators";
@@ -26,14 +26,15 @@ export function NewDirectModal({
   open: boolean;
   personId?: string;
   onClose: () => void;
-  onStarted: (conversation: ListedDirectConversation) => void;
+  onStarted: (conversation: MemberDirectConversation) => void;
 }) {
   const people = usePeople();
   const [to, setTo] = useState<string[]>([]);
-  // People found by username, who aren't in the collaborator list.
-  const [found, setFound] = useState<{ account_id: string; name: string }[]>(
-    [],
-  );
+  // People found by username, who aren't in the collaborator list. They are
+  // sent as usernames: the server accepts account ids for collaborators only.
+  const [found, setFound] = useState<
+    { account_id: string; name: string; username: string }[]
+  >([]);
   const [username, setUsername] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -80,8 +81,14 @@ export function NewDirectModal({
     setBusy(true);
     setError("");
     try {
+      const collaborators = new Set(people.map((p) => p.account_id));
+      const usernames = to
+        .filter((id) => !collaborators.has(id))
+        .map((id) => found.find((f) => f.account_id === id)?.username)
+        .filter((name): name is string => !!name);
       const conversation = await peopleApi().startDirect({
-        member_ids: to,
+        member_ids: to.filter((id) => collaborators.has(id)),
+        usernames,
         title: to.length > 1 ? title : null,
         body,
       });

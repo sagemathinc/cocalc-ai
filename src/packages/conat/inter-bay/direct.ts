@@ -11,6 +11,7 @@ import {
 import type { Options } from "@cocalc/conat/service/service";
 import type {
   DirectConversation,
+  DirectMemberState,
   DirectMessage,
   DirectResponse,
   ListedDirectConversation,
@@ -37,10 +38,18 @@ export interface InterBayDirectApi {
     conversation_id: string;
     action: DirectResponse;
   }): Promise<DirectConversation>;
+  // Every member's standing, for the trusted caller deciding whether to reuse
+  // a conversation (never passed to a browser).
+  standings(opts: {
+    account_id: string;
+    conversation_id: string;
+  }): Promise<Record<string, DirectMemberState>>;
   // home
+  // member_ids: collaborators only; anyone else by exact username.
   start(opts: {
     account_id: string;
     member_ids: string[];
+    usernames?: string[];
     title?: string | null;
     body?: string | null;
   }): Promise<ListedDirectConversation>;

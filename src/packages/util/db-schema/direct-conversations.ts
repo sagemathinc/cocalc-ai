@@ -57,6 +57,25 @@ Table({
   },
 });
 
+// Every conversation started with a message request, kept for the daily
+// quota: a later accept, decline or block doesn't give it back.
+Table({
+  name: "direct_request_admissions",
+  rules: {
+    primary_key: "conversation_id",
+    pg_indexes: ["account_id, created"],
+  },
+  fields: {
+    conversation_id: { type: "uuid", desc: "The conversation started." },
+    account_id: { type: "uuid", desc: "Account that started it." },
+    recipients: {
+      type: "integer",
+      desc: "How many people got a request in it.",
+    },
+    created: { type: "timestamp", desc: "When." },
+  },
+});
+
 // Index updates for a member's home bay that could not be delivered yet; the
 // owning bay retries them.
 Table({

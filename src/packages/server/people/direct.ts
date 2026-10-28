@@ -17,7 +17,7 @@ import {
 import {
   addDirectMessage,
   areCollaborators,
-  assertDirectRequestQuota,
+  countDirectMessagesFrom,
   blockDirectSender,
   clearDirectFanout,
   createDirectConversationRecord,
@@ -54,11 +54,15 @@ import {
   normalizeDirectBody,
   normalizeDirectMembers,
   normalizeDirectTitle,
+  normalizeDirectUsername,
+  escapeMarkdown,
+  memberView,
   type DirectConversation,
   type DirectMemberState,
   type DirectMessage,
   type DirectResponse,
   type ListedDirectConversation,
+  type MemberDirectConversation,
 } from "@cocalc/util/direct-conversations";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
@@ -226,7 +230,8 @@ async function notify({
     title: request
       ? `${sender} sent you a message request`
       : `Message from ${sender}`,
-    body_markdown: directPreview(message.body),
+    // Plain text, escaped: nothing in it renders as Markdown or loads.
+    body_markdown: escapeMarkdown(directPreview(message.body)),
     severity: "info",
     origin_label: "Messages",
     notice_type: "direct_message",
@@ -256,6 +261,23 @@ async function notify({
   });
 }
 
+// An exact, current username's account (not an account id, not a redirect
+// from an old name), or null.
+async function resolveDirectUsername(value: unknown): Promise<string | null> {
+  const username = normalizeDirectUsername(value);
+  if (username == null) return null;
+  try {
+    const owner = await resolveUsernameOwner(username);
+    if (!owner?.account_id || owner.redirect) return null;
+    if (`${owner.username ?? ""}`.toLowerCase() !== username.toLowerCase()) {
+      return null;
+    }
+    return owner.account_id;
+  } catch {
+    return null;
+  }
+}
+
 export const directControl: InterBayDirectApi = {
   // ---- owner ----
   async messages({ account_id, conversation_id, before }) {
@@ -267,7 +289,25 @@ export const directControl: InterBayDirectApi = {
   async send({ account_id, conversation_id, body }) {
     await assertCanSend(account_id);
     body = normalizeDirectBody(body);
-    const { state } = await memberRecord(account_id, conversation_id);
+    const { conversation: current, state } = await memberRecord(
+      account_id,
+      conversation_id,
+    );
+    // Until someone else in it has accepted, a request is its first message
+    // only: no flood of messages to people who haven't agreed. (The same
+    // answer whether they declined or haven't decided.)
+    const othersActive = current.member_ids.some(
+      (id) =>
+        id !== account_id &&
+        (current.member_states[id] ?? "active") === "active",
+    );
+    if (
+      state === "active" &&
+      !othersActive &&
+      (await countDirectMessagesFrom(conversation_id, account_id)) > 0
+    ) {
+      throw Error("your message request hasn't been accepted yet");
+    }
     // Replying to a request accepts it.
     if (state === "requested") {
       await setDirectMemberState({
@@ -319,30 +359,41 @@ export const directControl: InterBayDirectApi = {
     return conversation;
   },
 
+  async standings({ account_id, conversation_id }) {
+    const { conversation } = await memberRecord(account_id, conversation_id);
+    return conversation.member_states;
+  },
+
   // ---- home ----
-  async start({ account_id, member_ids, title, body }) {
+  // Collaborators by account id; anyone else only by exact username,
+  // resolved here, so the browser can't turn an account id into a request.
+  async start({ account_id, member_ids, usernames, title, body }) {
     await assertHome(account_id);
     await assertCanSend(account_id);
-    const members = normalizeDirectMembers(account_id, member_ids);
+    const collaborators = new Set<string>();
+    for (const id of member_ids ?? []) {
+      requireUuid(id, "member_ids");
+      if (!(await areCollaborators(account_id, id))) {
+        throw Error(
+          "add people who aren't your collaborators by their username",
+        );
+      }
+      collaborators.add(id);
+    }
+    const byUsername: string[] = [];
+    for (const name of usernames ?? []) {
+      const resolved = await resolveDirectUsername(name);
+      if (resolved == null) {
+        throw Error(`no one has the username "${`${name}`.slice(0, 64)}"`);
+      }
+      byUsername.push(resolved);
+    }
+    const members = normalizeDirectMembers(account_id, [
+      ...collaborators,
+      ...byUsername,
+    ]);
     const normalizedTitle = normalizeDirectTitle(title);
     const text = body == null || `${body}`.trim() === "" ? null : body;
-    // One conversation per pair (untitled): reuse it.
-    if (members.length === 2 && normalizedTitle == null) {
-      const existing = await findDirectPair(account_id, members[1]);
-      if (
-        existing != null &&
-        (existing.state === "active" || existing.state === "requested")
-      ) {
-        if (text != null) {
-          await owner(existing.owner_bay_id).send({
-            account_id,
-            conversation_id: existing.conversation_id,
-            body: text,
-          });
-        }
-        return (await getDirectIndex(account_id, existing.conversation_id))!;
-      }
-    }
     const states: Record<string, DirectMemberState> = {
       [account_id]: "active",
     };
@@ -354,12 +405,33 @@ export const directControl: InterBayDirectApi = {
       ) {
         throw Error(CANNOT_MESSAGE);
       }
-      states[other] = (await areCollaborators(account_id, other))
-        ? "active"
-        : "requested";
+      states[other] =
+        collaborators.has(other) || (await areCollaborators(account_id, other))
+          ? "active"
+          : "requested";
     }
-    if (Object.values(states).includes("requested")) {
-      await assertDirectRequestQuota(account_id);
+    // One conversation per pair (untitled): reuse it while the other person
+    // is still in it (by its owning bay's record, not this list).
+    if (members.length === 2 && normalizedTitle == null) {
+      const existing = await findDirectPair(account_id, members[1]);
+      if (existing != null && existing.state === "active") {
+        const standing = (
+          await owner(existing.owner_bay_id).standings({
+            account_id,
+            conversation_id: existing.conversation_id,
+          })
+        )[members[1]];
+        if (standing === "active" || standing === "requested") {
+          if (text != null) {
+            await owner(existing.owner_bay_id).send({
+              account_id,
+              conversation_id: existing.conversation_id,
+              body: text,
+            });
+          }
+          return (await getDirectIndex(account_id, existing.conversation_id))!;
+        }
+      }
     }
     let conversation = await createDirectConversationRecord({
       owner_bay_id: bay(),
@@ -453,29 +525,44 @@ async function listedOrThrow(
   return listed;
 }
 
+// Everything returned to a browser goes through memberView: the caller's own
+// standing only, never whether someone else declined or blocked.
 export const directHubApi = {
-  async listDirect({ account_id }: { account_id?: string }) {
-    return {
-      conversations: await (
-        await home(account_id!)
-      ).list({ account_id: account_id! }),
-    };
+  async listDirect({
+    account_id,
+  }: {
+    account_id?: string;
+  }): Promise<{ conversations: MemberDirectConversation[] }> {
+    const listed = await (
+      await home(account_id!)
+    ).list({ account_id: account_id! });
+    return { conversations: listed.map(memberView) };
   },
 
   async startDirect({
     account_id,
     member_ids,
+    usernames,
     title,
     body,
   }: {
     account_id?: string;
-    member_ids: string[];
+    member_ids?: string[];
+    usernames?: string[];
     title?: string | null;
     body?: string | null;
-  }) {
-    return await (
-      await home(account_id!)
-    ).start({ account_id: account_id!, member_ids, title, body });
+  }): Promise<MemberDirectConversation> {
+    return memberView(
+      await (
+        await home(account_id!)
+      ).start({
+        account_id: account_id!,
+        member_ids: member_ids ?? [],
+        usernames: usernames ?? [],
+        title,
+        body,
+      }),
+    );
   },
 
   // A page of messages, oldest first, and the conversation as listed for the
@@ -488,17 +575,20 @@ export const directHubApi = {
     account_id?: string;
     conversation_id: string;
     before?: number | null;
-  }) {
+  }): Promise<{
+    conversation: MemberDirectConversation;
+    messages: DirectMessage[];
+  }> {
     const listed = await listedOrThrow(account_id!, conversation_id);
     const { conversation, messages } = await owner(
       listed.owner_bay_id,
     ).messages({ account_id: account_id!, conversation_id, before });
     return {
-      conversation: {
+      conversation: memberView({
         ...listed,
         ...conversation,
         state: conversation.member_states[account_id!] ?? listed.state,
-      } as ListedDirectConversation,
+      }),
       messages,
     };
   },
@@ -528,12 +618,17 @@ export const directHubApi = {
     account_id?: string;
     conversation_id: string;
     action: DirectResponse;
-  }) {
+  }): Promise<MemberDirectConversation> {
     const listed = await listedOrThrow(account_id!, conversation_id);
-    return await owner(listed.owner_bay_id).respond({
+    const conversation = await owner(listed.owner_bay_id).respond({
       account_id: account_id!,
       conversation_id,
       action,
+    });
+    return memberView({
+      ...listed,
+      ...conversation,
+      state: conversation.member_states[account_id!] ?? listed.state,
     });
   },
 
@@ -566,23 +661,19 @@ export const directHubApi = {
   },
 
   // Someone to message by their exact username (usernames are public, in
-  // personal URLs); email addresses are not looked up.
+  // personal URLs); never by account id or email address. To message them,
+  // start with the username: the account id here only labels the choice.
   async findDirectRecipient({
     username,
   }: {
     account_id?: string;
     username: string;
-  }): Promise<{ account_id: string; name: string } | null> {
-    const value = `${username ?? ""}`.trim().replace(/^@/, "");
-    if (!value) return null;
-    try {
-      const owner = await resolveUsernameOwner(value);
-      if (!owner?.account_id) return null;
-      const name =
-        (await names([owner.account_id])).get(owner.account_id) ?? value;
-      return { account_id: owner.account_id, name };
-    } catch {
-      return null;
-    }
+  }): Promise<{ account_id: string; name: string; username: string } | null> {
+    const value = normalizeDirectUsername(username);
+    if (value == null) return null;
+    const account_id = await resolveDirectUsername(value);
+    if (account_id == null) return null;
+    const name = (await names([account_id])).get(account_id) ?? value;
+    return { account_id, name, username: value };
   },
 };
