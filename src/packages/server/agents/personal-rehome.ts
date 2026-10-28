@@ -47,6 +47,12 @@ export const GPU_STATE_TABLES = [
   "gpu_alerts",
 ] as const;
 
+// Agents' GPU requests and grants (6b), keyed by the key owner's account_id.
+export const GPU_AGENT_STATE_TABLES = [
+  "gpu_agent_requests",
+  "gpu_agent_grants",
+] as const;
+
 export type PersonalAuthorityDb = {
   query(sql: string, values?: unknown[]): Promise<{ rows: any[] }>;
 };
@@ -104,18 +110,24 @@ export async function assertNoPersonalStateForRehome(
     (
       await db.query(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name=ANY($1::text[])",
-        [GPU_STATE_TABLES],
+        [[...GPU_STATE_TABLES, ...GPU_AGENT_STATE_TABLES]],
       )
     ).rows.map((row) => row.table_name),
   );
-  for (const table of GPU_STATE_TABLES) {
+  const gpuTables: [string, string][] = [
+    ...GPU_STATE_TABLES.map((t): [string, string] => [
+      t,
+      "key_owner_account_id",
+    ]),
+    ...GPU_AGENT_STATE_TABLES.map((t): [string, string] => [t, "account_id"]),
+  ];
+  for (const [table, column] of gpuTables) {
     if (!gpuExisting.has(table)) continue;
     if (
       (
-        await db.query(
-          `SELECT 1 FROM "${table}" WHERE key_owner_account_id=$1 LIMIT 1`,
-          [account_id],
-        )
+        await db.query(`SELECT 1 FROM "${table}" WHERE ${column}=$1 LIMIT 1`, [
+          account_id,
+        ])
       ).rows.length
     )
       throw new Error(

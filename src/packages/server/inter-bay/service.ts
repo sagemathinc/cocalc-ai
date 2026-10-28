@@ -1311,6 +1311,18 @@ async function startAccountLocalService(): Promise<void> {
       ).listManagedGpuPodsLocal(opts),
     gpuSshInfo: async (opts) =>
       await (await import("@cocalc/server/gpu/hostkey")).gpuSshInfoLocal(opts),
+    gpuAgentRequests: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/agent-api")
+      ).listAgentRequestsLocal(opts),
+    gpuApproveAgentRequest: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/agent-api")
+      ).approveAgentRequestLocal(opts),
+    gpuRevokeAgentGrant: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/agent-api")
+      ).revokeAgentGrantLocal(opts),
     gpuRegisterHostKey: async (opts) =>
       await (
         await import("@cocalc/server/gpu/hostkey")

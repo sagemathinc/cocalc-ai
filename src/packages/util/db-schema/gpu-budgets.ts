@@ -169,7 +169,14 @@ Table({
           OR (scope_kind = 'grant' AND course_project_id IS NOT NULL AND course_instance_id IS NOT NULL AND beneficiary_account_id IS NOT NULL AND project_id IS NULL AND agent_id IS NULL)
           OR (scope_kind = 'beneficiary' AND course_project_id IS NULL AND course_instance_id IS NULL AND beneficiary_account_id IS NOT NULL AND project_id IS NULL AND agent_id IS NULL)
           OR (scope_kind = 'project' AND course_project_id IS NULL AND course_instance_id IS NULL AND beneficiary_account_id IS NULL AND project_id IS NOT NULL AND agent_id IS NULL)
-          OR (scope_kind = 'agent' AND course_project_id IS NULL AND course_instance_id IS NULL AND beneficiary_account_id IS NULL AND project_id IS NULL AND agent_id IS NOT NULL)`,
+          OR (scope_kind = 'agent' AND course_project_id IS NULL AND course_instance_id IS NULL AND beneficiary_account_id IS NULL AND project_id IS NOT NULL AND agent_id IS NOT NULL)`,
+      },
+      // An agent layer is exactly one approved agent grant (step 6b); no
+      // other layer has one.
+      {
+        name: "gpu_budget_layers_agent_grant",
+        type: "check",
+        expression: `(scope_kind = 'agent') = (grant_id IS NOT NULL)`,
       },
       {
         name: "gpu_budget_layers_dates",
@@ -190,6 +197,7 @@ Table({
       "(credential_id) WHERE scope_kind = 'key'",
       "(credential_id, course_instance_id) WHERE scope_kind = 'course'",
       "(parent_id, beneficiary_account_id) WHERE scope_kind = 'grant'",
+      "(grant_id) WHERE scope_kind = 'agent'",
     ],
   },
   fields: {
@@ -217,6 +225,12 @@ Table({
     beneficiary_account_id: { type: "uuid" },
     project_id: { type: "uuid" },
     agent_id: { type: "string", pg_type: "varchar(128)" },
+    // the gpu_agent_grants row an agent layer funds (step 6b)
+    grant_id: { type: "uuid" },
+    // When set, no new launch is admitted, but the layer stays active for its
+    // running pods (an agent grant's run ended). A revoked layer's pods are
+    // terminated by the reaper instead.
+    admission_closed_at: { type: "timestamp" },
     // Available = authorized - spent - reserved - released. released is
     // capacity deliberately retired, never a pod's unused estimate. spent
     // may exceed authorized (billing overrun): admission checks, the

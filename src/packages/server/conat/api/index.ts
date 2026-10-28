@@ -566,4 +566,11 @@ const AGENT_HUB_API_METHODS = new Set([
   "compute.deleteVolume",
   "gpu.catalog",
   "gpu.availability",
+  // scoped to the agent's own pods in its project; a launch needs its
+  // human's approval of exactly that launch (step 6b)
+  "gpu.pods",
+  "gpu.launch",
+  "gpu.terminate",
+  "gpu.who",
+  "gpu.sshInfo",
 ]);

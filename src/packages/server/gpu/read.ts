@@ -35,6 +35,7 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   listManagedGpuPodsLocal,
+  type GpuAgentScope,
   recordSeenAddresses,
 } from "@cocalc/server/gpu/pods";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
@@ -372,6 +373,8 @@ export async function getGpuPodsLocal(
     pod_id?: unknown;
     scope?: unknown;
     include_ended?: unknown;
+    // an agent (step 6b): only the managed pods it launched in its project
+    agent?: GpuAgentScope;
   },
   deps: GpuReadDeps = {},
 ): Promise<GpuPodsResult> {
@@ -384,6 +387,9 @@ export async function getGpuPodsLocal(
   const scope = opts.scope ?? "managed";
   if (scope !== "managed" && scope !== "account") {
     throw Error('scope must be "managed" or "account"');
+  }
+  if (opts.agent && scope !== "managed") {
+    throw Error("An agent can list only the GPU pods it launched.");
   }
   const as_of = new Date((deps.now ?? Date.now)()).toISOString();
   if (scope === "account") {
@@ -415,6 +421,7 @@ export async function getGpuPodsLocal(
   const records = await (deps.listManaged ?? listManagedGpuPodsLocal)({
     account_id,
     include_ended: opts.include_ended === true,
+    ...(opts.agent ? { agent: opts.agent } : {}),
   });
   const selected =
     podId != null
@@ -533,6 +540,7 @@ export async function getGpuPods(
     pod_id?: unknown;
     scope?: unknown;
     include_ended?: unknown;
+    agent?: GpuAgentScope;
   },
   deps: GpuReadDeps & GpuRoutingDeps = {},
 ): Promise<GpuPodsResult> {
@@ -545,6 +553,7 @@ export async function getGpuPods(
         "pod_id",
         "scope",
         "include_ended",
+        "agent",
       ]) as any,
     );
   }

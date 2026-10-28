@@ -7,8 +7,10 @@
 // connected in Settings → Connectors. Tables show a summary; --json gives
 // the full provider detail.
 
+import { createHash } from "node:crypto";
 import { Command } from "commander";
 import type {
+  GpuAgentRequestView,
   GpuApi,
   GpuAvailabilityFilter,
   GpuCatalogResult,
@@ -360,6 +362,10 @@ export function registerGpuCommand(
       "make the pod's SSH key here, so `cocalc gpu connect` can reach it from this project",
     )
     .option("--ssh-public-key <key>", "the pod's own ssh-ed25519 public key")
+    .option(
+      "--operation <id>",
+      "for agents: this launch's id, the same when it is run again after your human approved it (default: derived from the launch)",
+    )
     .action(async (opts, command: Command) =>
       run(
         command,
@@ -408,7 +414,11 @@ export function registerGpuCommand(
           if (key) spec.ssh_public_key = key.publicKey;
           let pod: Awaited<ReturnType<typeof api.launch>>;
           try {
-            pod = await api.launch({ project_id, spec });
+            pod = await api.launch({
+              project_id,
+              spec,
+              operation_id: opts.operation ?? launchOperationId(spec),
+            });
           } catch (err) {
             // Kept without an answer (`connect` adopts it by fingerprint if
             // the pod was made after all); otherwise adopted or removed.
@@ -690,6 +700,65 @@ export function registerGpuCommand(
       }),
     );
 
+  const agent = gpu
+    .command("agent")
+    .description(
+      "agents' GPU launches: an agent may launch only what you approved, once; review its requests here",
+    );
+
+  agent
+    .command("requests")
+    .description(
+      "what agents asked to launch on your key (pending, unless --all), with the exact launch and its hash",
+    )
+    .option("--all", "also approved, superseded and expired requests")
+    .option("--project <project-id>", "only this project's")
+    .action(async (opts, command: Command) =>
+      run(command, "agent requests", async (api, ctx) => {
+        const views = await api.agentRequests({
+          ...(opts.project ? { project_id: opts.project } : {}),
+          include_decided: !!opts.all,
+        });
+        if (isJson(ctx)) return views;
+        return views.map(agentRequestRow);
+      }),
+    );
+
+  agent
+    .command("approve <request-id>")
+    .description(
+      "approve exactly one reviewed request: one launch, by that agent run, until its run ends. Needs a fresh sign-in, so it works only where CoCalc can verify one",
+    )
+    .requiredOption(
+      "--hash <payload-hash>",
+      "the request's payload hash, as `cocalc gpu agent requests` showed it: the approval fails if the request isn't exactly that",
+    )
+    .action(async (request_id: string, opts, command: Command) =>
+      run(
+        command,
+        "agent approve",
+        async (api) =>
+          await api.approveAgentRequest({
+            request_id,
+            expected_hash: opts.hash,
+          }),
+      ),
+    );
+
+  agent
+    .command("revoke <grant-id>")
+    .description(
+      "revoke an approval: no new launch, and the pods it launched are terminated",
+    )
+    .action(async (grant_id: string, _opts, command: Command) =>
+      run(
+        command,
+        "agent revoke",
+        async (api) => await api.revokeAgentGrant({ grant_id }),
+        GPU_POD_WRITE_RPC_TIMEOUT_MS,
+      ),
+    );
+
   return gpu;
 }
 
@@ -707,6 +776,49 @@ export function alertRow(a: GpuAlert) {
       (a.details?.handle as string | undefined) ??
       null,
     message: a.message,
+  };
+}
+
+// The same launch gets the same id, so an agent that asked for approval and
+// runs the identical command again uses the grant. The pod's SSH key, new
+// on every run, isn't part of it.
+export function launchOperationId(spec: GpuLaunchSpec): string {
+  const { ssh_public_key: _, ...rest } = spec;
+  const sorted = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(sorted)
+      : v != null && typeof v === "object"
+        ? Object.fromEntries(
+            Object.keys(v as object)
+              .sort()
+              .map((k) => [k, sorted((v as any)[k])]),
+          )
+        : v;
+  return `cli-${createHash("sha256")
+    .update(JSON.stringify(sorted(rest)))
+    .digest("hex")
+    .slice(0, 32)}`;
+}
+
+export function agentRequestRow(v: GpuAgentRequestView) {
+  const { spec } = v.payload;
+  return {
+    request: v.request_id,
+    state: v.grant ? `${v.state} (grant ${v.grant.state})` : v.state,
+    // a project agent token is one chat session, not a named agent
+    agent:
+      v.principal_kind === "chat_session"
+        ? "this chat session"
+        : `agent ${v.agent_id ?? "?"}`,
+    project: v.project_id,
+    gpu: `${spec.gpu_count ?? 1} x ${spec.gpu_type_id}`,
+    cloud: spec.cloud ?? "SECURE",
+    max_runtime: spec.max_runtime_minutes,
+    hourly_usd: v.payload.hourly_usd,
+    max_cost_usd: v.payload.max_cost_usd,
+    hash: v.payload_hash,
+    grant: v.grant?.grant_id ?? null,
+    expires: v.grant?.expires_at ?? v.expires_at,
   };
 }
 

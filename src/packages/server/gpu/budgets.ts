@@ -63,6 +63,8 @@ export interface LayerRow {
   cloud: string | null;
   starts_at: Date;
   ends_at: Date;
+  grant_id?: string | null;
+  admission_closed_at?: Date | null;
 }
 
 export interface AdmissionRequest {
@@ -71,6 +73,10 @@ export interface AdmissionRequest {
   beneficiary_account_id: string;
   project_id: string;
   agent_id?: string;
+  // An agent's launch: the approved grant whose layer funds it (from the
+  // verified grant, never a request body). Human launches pass none, so no
+  // agent layer applies to them.
+  grant_id?: string;
   gpu_type_id: string;
   gpu_count: number;
   cloud: string;
@@ -105,9 +111,9 @@ function available(layer: LayerRow): Dec {
 }
 
 function layerName(layer: LayerRow): string {
-  return layer.scope_kind === "key"
-    ? "Your GPU budget"
-    : `The ${layer.scope_kind} GPU budget`;
+  if (layer.scope_kind === "key") return "Your GPU budget";
+  if (layer.scope_kind === "agent") return "This agent's GPU approval";
+  return `The ${layer.scope_kind} GPU budget`;
 }
 
 // The key's fence and its key layer exist (made at connect, or here at the
@@ -392,17 +398,24 @@ export async function admitLaunch(
         AND (scope_kind = 'key'
              OR (scope_kind = 'project' AND project_id = $2)
              OR (scope_kind = 'beneficiary' AND beneficiary_account_id = $3)
-             OR (scope_kind = 'agent' AND agent_id = $4))
+             OR (scope_kind = 'agent' AND grant_id = $4))
       ORDER BY id FOR UPDATE`,
     [
       req.credential_id,
       req.project_id,
       req.beneficiary_account_id,
-      req.agent_id ?? null,
+      req.grant_id ?? null,
     ],
   );
   if (!layers.some((l: LayerRow) => l.scope_kind === "key")) {
     refuse("This RunPod key has no GPU budget yet.");
+  }
+  // An agent's launch is funded by its grant's layer, or not at all.
+  if (
+    req.grant_id != null &&
+    !layers.some((l: LayerRow) => l.scope_kind === "agent")
+  ) {
+    refuse("This agent's GPU approval is no longer valid. Ask again.");
   }
   const hourly = toDecimal(req.hourly_usd);
   const estimate = hourly.times(req.max_runtime_minutes).dividedBy(60);
@@ -420,6 +433,9 @@ export async function admitLaunch(
   for (const layer of layers as LayerRow[]) {
     const name = layerName(layer);
     if (layer.state !== "active") refuse(`${name} is ${layer.state}.`);
+    if (layer.admission_closed_at != null) {
+      refuse(`${name} is closed to new launches.`);
+    }
     if (new Date(layer.starts_at) > now || new Date(layer.ends_at) <= now) {
       refuse(`${name} isn't in effect now.`);
     }

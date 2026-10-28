@@ -4136,24 +4136,69 @@ export interface InterBayGpuApi {
     unmanaged?: string[];
     warning?: string;
   }>;
-  // Pods CoCalc starts with the key (step 3).
+  // Pods CoCalc starts with the key (step 3). agent (step 6b): the agent
+  // principal the forwarding bay derived from the caller's verified token
+  // (it holds the agent tables); a launch needs that agent's approved grant,
+  // and the other calls see only that agent's pods in its project.
   gpuLaunch: (opts: {
     account_id: string;
     project_id: unknown;
     spec: unknown;
+    agent?: {
+      principal: {
+        account_id: string;
+        project_id: string;
+        agent_id: string;
+        run_id: string;
+        expires_at: Date | string;
+      };
+      operation_id: string;
+    };
   }) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary>;
   gpuTerminate: (opts: {
     account_id: string;
     pod_id: unknown;
+    agent?: { project_id: string; agent_id: string; run_id?: string };
   }) => Promise<{ state: import("@cocalc/util/gpu/types").GpuPodState }>;
   gpuWho: (opts: {
     account_id: string;
     query: unknown;
+    agent?: { project_id: string; agent_id: string; run_id?: string };
   }) => Promise<import("@cocalc/util/gpu/types").GpuAttribution[]>;
   gpuManagedPods: (opts: {
     account_id: string;
     include_ended?: boolean;
+    agent?: { project_id: string; agent_id: string; run_id?: string };
   }) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]>;
+  // The human's side of agent launches (step 6b). fresh_auth_verified: the
+  // forwarding bay checked the caller's fresh authentication.
+  gpuAgentRequests: (opts: {
+    account_id: string;
+    project_id?: string;
+    include_decided?: boolean;
+  }) => Promise<import("@cocalc/conat/hub/api/gpu").GpuAgentRequestView[]>;
+  gpuApproveAgentRequest: (opts: {
+    account_id: string;
+    request_id: unknown;
+    expected_hash: unknown;
+    fresh_auth_verified: boolean;
+  }) => Promise<{
+    grant_id: string;
+    request_id: string;
+    payload_hash: string;
+    state: string;
+    expires_at: string;
+  }>;
+  gpuRevokeAgentGrant: (opts: {
+    account_id: string;
+    grant_id: unknown;
+  }) => Promise<{
+    grant_id: string;
+    request_id: string;
+    payload_hash: string;
+    state: string;
+    expires_at: string;
+  }>;
   // The key's budget (step 5). fresh_auth_verified: the forwarding bay
   // checked the caller's fresh authentication (needed to raise limits).
   gpuBudget: (opts: {
@@ -4194,6 +4239,7 @@ export interface InterBayGpuApi {
   gpuSshInfo: (opts: {
     account_id: string;
     pod_id: unknown;
+    agent?: { project_id: string; agent_id: string; run_id?: string };
   }) => Promise<import("@cocalc/util/gpu/types").GpuPodSshInfo>;
   // The key owner's GPU alerts (5d), and acknowledging one.
   gpuAlerts: (opts: {
@@ -8266,6 +8312,11 @@ export function createInterBayAccountLocalClient({
     gpuTerminate: async (opts) => await gpuClient.gpuTerminate(opts),
     gpuWho: async (opts) => await gpuClient.gpuWho(opts),
     gpuManagedPods: async (opts) => await gpuClient.gpuManagedPods(opts),
+    gpuAgentRequests: async (opts) => await gpuClient.gpuAgentRequests(opts),
+    gpuApproveAgentRequest: async (opts) =>
+      await gpuClient.gpuApproveAgentRequest(opts),
+    gpuRevokeAgentGrant: async (opts) =>
+      await gpuClient.gpuRevokeAgentGrant(opts),
     gpuBudget: async (opts) => await gpuClient.gpuBudget(opts),
     gpuSetBudget: async (opts) => await gpuClient.gpuSetBudget(opts),
     gpuKillSwitch: async (opts) => await gpuClient.gpuKillSwitch(opts),
@@ -8863,6 +8914,11 @@ export function createInterBayAccountLocalHandler({
         gpuTerminate: async (opts) => await impl.gpuTerminate(opts),
         gpuWho: async (opts) => await impl.gpuWho(opts),
         gpuManagedPods: async (opts) => await impl.gpuManagedPods(opts),
+        gpuAgentRequests: async (opts) => await impl.gpuAgentRequests(opts),
+        gpuApproveAgentRequest: async (opts) =>
+          await impl.gpuApproveAgentRequest(opts),
+        gpuRevokeAgentGrant: async (opts) =>
+          await impl.gpuRevokeAgentGrant(opts),
         gpuBudget: async (opts) => await impl.gpuBudget(opts),
         gpuSetBudget: async (opts) => await impl.gpuSetBudget(opts),
         gpuKillSwitch: async (opts) => await impl.gpuKillSwitch(opts),

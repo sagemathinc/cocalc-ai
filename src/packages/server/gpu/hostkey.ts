@@ -46,6 +46,7 @@ import {
   gpuPodHomeClient,
   requireAccount,
   requireHomeBay,
+  type GpuAgentScope,
   type GpuPodDeps,
 } from "@cocalc/server/gpu/pods";
 import { getRunpodCleanupForAccount } from "@cocalc/server/gpu/provider-keys";
@@ -184,12 +185,13 @@ export async function registerHostKeyLocal(opts: {
 // ---- what a project needs to reach a pod ----
 
 export async function gpuSshInfoLocal(
-  opts: { account_id?: string; pod_id?: unknown },
+  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSshInfo> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
-  const pod: any = await findPod(account_id, opts.pod_id);
+  // an agent sees only the pods it launched in its project
+  const pod: any = await findPod(account_id, opts.pod_id, opts.agent);
   if (!pod) throw Error("No such GPU pod.");
   const info: GpuPodSshInfo = {
     handle: pod.handle,
@@ -240,11 +242,16 @@ export async function gpuSshInfoLocal(
 }
 
 export async function gpuSshInfo(
-  opts: { account_id?: string; pod_id?: unknown },
+  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSshInfo> {
   const account_id = requireAccount(opts.account_id);
   const home = await (deps.homeClient ?? gpuPodHomeClient)(account_id);
-  if (home) return await home.gpuSshInfo({ account_id, pod_id: opts.pod_id });
+  if (home)
+    return await home.gpuSshInfo({
+      account_id,
+      pod_id: opts.pod_id,
+      ...(opts.agent ? { agent: opts.agent } : {}),
+    });
   return await gpuSshInfoLocal({ ...opts, account_id }, deps);
 }

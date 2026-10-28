@@ -176,6 +176,8 @@ export interface GpuPodEvent {
   actor_kind: GpuActorKind;
   actor_account_id?: string;
   agent_id?: string;
+  // the agent's run that did it ("chat-session" for a chat session)
+  run_id?: string;
   action: GpuPodAction;
   details?: Record<string, unknown>;
 }
