@@ -7,6 +7,7 @@ import { act, render, screen } from "@testing-library/react";
 import { fromJS } from "immutable";
 
 const me = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+let mockAccount: string | undefined = me;
 const other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const mockList = jest.fn();
 let mockMentions: any = fromJS({});
@@ -26,7 +27,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     },
   },
   useTypedRedux: (_store: string, field: string) =>
-    field === "account_id" ? me : undefined,
+    field === "account_id" ? mockAccount : undefined,
 }));
 jest.mock("./api", () => {
   const { EventEmitter } = require("events");
@@ -36,9 +37,11 @@ jest.mock("./api", () => {
   };
 });
 
+import { useLayoutEffect } from "react";
 import {
   hasNewChatNotification,
   resetConversationsForTests,
+  setConversationsSnapshotForTests,
   unreadConversationCount,
   useConversations,
 } from "./use-conversations";
@@ -71,6 +74,7 @@ async function flush() {
 }
 
 beforeEach(() => {
+  mockAccount = me;
   jest.useFakeTimers();
   resetConversationsForTests();
   mockList.mockReset();
@@ -155,4 +159,82 @@ test("no badge when nothing is unread", async () => {
   const { container } = render(<PeopleUnreadBadge />);
   await flush();
   expect(container.textContent).toBe("");
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+const another = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+
+test("a list loaded for one account is not shown for another", async () => {
+  mockList.mockResolvedValue({
+    conversations: [conv("c1")],
+    unavailable_bays: 0,
+  });
+  const first = render(<PeopleUnreadBadge />);
+  await flush();
+  expect(screen.getByLabelText("1 unread conversation")).toBeTruthy();
+  first.unmount();
+  // Someone else signs in; their own list has nothing unread.
+  mockAccount = another;
+  const pending = deferred<any>();
+  mockList.mockReturnValue(pending.promise);
+  const { container } = render(<PeopleUnreadBadge />);
+  expect(container.textContent).toBe("");
+  pending.resolve({ conversations: [], unavailable_bays: 0 });
+  await flush();
+  expect(container.textContent).toBe("");
+});
+
+test("a response for the previous account is dropped after a switch", async () => {
+  const forMe = deferred<any>();
+  mockList.mockReturnValueOnce(forMe.promise);
+  const view = render(<PeopleUnreadBadge />);
+  mockAccount = another;
+  const forAnother = deferred<any>();
+  mockList.mockReturnValueOnce(forAnother.promise);
+  view.rerender(<PeopleUnreadBadge />);
+  await flush();
+  // The first account's answer arrives late.
+  forMe.resolve({ conversations: [conv("c1")], unavailable_bays: 0 });
+  await flush();
+  expect(view.container.textContent).toBe("");
+  forAnother.resolve({ conversations: [], unavailable_bays: 0 });
+  await flush();
+  expect(view.container.textContent).toBe("");
+});
+
+test("a consumer that mounts while the list changes still sees the change", async () => {
+  mockList.mockResolvedValue({
+    conversations: [conv("c1")],
+    unavailable_bays: 0,
+  });
+  function List({ id }: { id: string }) {
+    const { conversations } = useConversations(true);
+    return <span>{`${id}:${conversations.length}`}</span>;
+  }
+  // Changes the list between the late consumer's render and its subscription.
+  function ChangeDuringLayout() {
+    useLayoutEffect(() => {
+      setConversationsSnapshotForTests({
+        conversations: [conv("c1"), conv("c2")] as any,
+      });
+    }, []);
+    return null;
+  }
+  const view = render(<List id="early" />);
+  await flush();
+  view.rerender(
+    <>
+      <List id="early" />
+      <List id="late" />
+      <ChangeDuringLayout />
+    </>,
+  );
+  await flush();
+  expect(screen.getByText("early:2")).toBeTruthy();
+  expect(screen.getByText("late:2")).toBeTruthy();
 });
