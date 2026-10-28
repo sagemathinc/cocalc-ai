@@ -13,7 +13,11 @@ import { join } from "node:path";
 import { it } from "node:test";
 import {
   checkEndpoint,
-  ensurePodKey,
+  adoptPendingKey,
+  createPendingKey,
+  keyFingerprint,
+  listPendingKeys,
+  removePendingKey,
   gpuSshInclude,
   listPodSsh,
   removePodSsh,
@@ -47,6 +51,12 @@ function resolved(h: string, alias: string): Record<string, string[]> {
     (opts[line.slice(0, i)] ??= []).push(line.slice(i + 1));
   }
   return opts;
+}
+
+// A launched pod's key, the way `cocalc gpu launch` makes it.
+async function podKey(handle: string, h: string) {
+  const key = await createPendingKey({ home: h });
+  await adoptPendingKey(key.name, handle, { home: h });
 }
 
 const endpoint = (over = {}) => ({
@@ -88,14 +98,56 @@ it("refuses anything that could inject an SSH config line", () => {
   );
 });
 
-it("makes the pod's ed25519 key once, private to the project", async () => {
+it("makes a pod key under a pending name, then names it after the launched pod", async () => {
   const h = home();
-  const pub = await ensurePodKey(HANDLE, { home: h });
-  assert.match(pub, /^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5\S+ cc-7f3k2qxa$/);
-  assert.equal(await ensurePodKey(HANDLE, { home: h }), pub);
-  const key = join(h, ".ssh", "cocalc-gpu", HANDLE);
-  assert.equal(statSync(key).mode & 0o777, 0o600);
-  assert.equal(statSync(join(h, ".ssh", "cocalc-gpu")).mode & 0o777, 0o700);
+  const key = await createPendingKey({ home: h });
+  assert.match(key.name, /^pending-[a-z2-7]{10}$/);
+  assert.match(
+    key.publicKey,
+    /^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5\S+ cocalc-gpu$/,
+  );
+  const dir = join(h, ".ssh", "cocalc-gpu");
+  assert.equal(statSync(join(dir, key.name)).mode & 0o777, 0o600);
+  assert.equal(statSync(dir).mode & 0o777, 0o700);
+  // the same fingerprint ssh-keygen prints, which the server records
+  const printed = execFileSync(
+    "ssh-keygen",
+    ["-lf", join(dir, `${key.name}.pub`)],
+    {
+      encoding: "utf8",
+    },
+  ).split(" ")[1];
+  assert.equal(key.fingerprint, printed);
+  assert.equal(keyFingerprint(key.publicKey), printed);
+
+  // an interrupted launch leaves it pending: find it by fingerprint
+  assert.deepEqual(
+    (await listPendingKeys({ home: h })).map((k) => k.fingerprint),
+    [key.fingerprint],
+  );
+  await adoptPendingKey(key.name, HANDLE, { home: h });
+  assert.ok(
+    existsSync(join(dir, HANDLE)) && existsSync(join(dir, `${HANDLE}.pub`)),
+  );
+  assert.ok(!existsSync(join(dir, key.name)));
+  assert.deepEqual(await listPendingKeys({ home: h }), []);
+
+  // never overwrite another pod's key; bad names are refused
+  const second = await createPendingKey({ home: h });
+  await assert.rejects(
+    adoptPendingKey(second.name, HANDLE, { home: h }),
+    /already exists/,
+  );
+  await assert.rejects(
+    adoptPendingKey("../x", OTHER, { home: h }),
+    /invalid pending key name/,
+  );
+  await assert.rejects(
+    adoptPendingKey(second.name, "../etc", { home: h }),
+    /invalid pod handle/,
+  );
+  await removePendingKey(second.name, { home: h });
+  assert.deepEqual(await listPendingKeys({ home: h }), []);
 });
 
 it("puts the pod alias first, so a `Host *` below can't weaken it", async () => {
@@ -105,7 +157,7 @@ it("puts the pod alias first, so a `Host *` below can't weaken it", async () => 
   const userConfig =
     "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  IdentityFile ~/.ssh/id_other\n\nHost alpha\n  HostName alpha.example\n";
   writeFileSync(join(h, ".ssh", "config"), userConfig, { mode: 0o600 });
-  await ensurePodKey(HANDLE, { home: h });
+  await podKey(HANDLE, h);
   await writePodSsh(endpoint(), { home: h });
 
   const config = readFileSync(join(h, ".ssh", "config"), "utf8");
@@ -138,8 +190,8 @@ it("puts the pod alias first, so a `Host *` below can't weaken it", async () => 
 
 it("refreshes a pod in place, keeps others, and forgets one completely", async () => {
   const h = home();
-  await ensurePodKey(HANDLE, { home: h });
-  await ensurePodKey(OTHER, { home: h });
+  await podKey(HANDLE, h);
+  await podKey(OTHER, h);
   await Promise.all([
     writePodSsh(endpoint(), { home: h }),
     writePodSsh(endpoint({ handle: OTHER, port: 41000 }), { home: h }),

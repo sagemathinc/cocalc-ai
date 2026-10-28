@@ -10,7 +10,8 @@ a GPU pod. See ~/ops2/runpod/SSH-KERNEL.md.
 
 - Each pod gets its own ed25519 key in ~/.ssh/cocalc-gpu/<handle>. The
   private key is made here and never leaves the project; only the public
-  key is sent to launch.
+  key is sent to launch. It is made under a pending name and renamed to the
+  handle the launch returns.
 - ~/.ssh/cocalc-gpu/config has one `Host <handle>` block per pod: only that
   key (IdentitiesOnly, no agent), and the host key the pod reported, pinned
   by HostKeyAlias so a new IP or port after a restart needs only a refresh.
@@ -25,11 +26,12 @@ reports can inject a config line.
 */
 
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmod,
   mkdir,
   open,
+  readdir,
   readFile,
   rename,
   rm,
@@ -45,6 +47,7 @@ const execFileAsync = promisify(execFile);
 export const GPU_SSH_DIR = ".ssh/cocalc-gpu";
 
 const HANDLE = /^cc-[a-z2-7]{8}$/;
+const PENDING = /^pending-[a-z2-7]{10}$/;
 const HOST = /^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$/;
 const USER = /^[a-z_][a-z0-9_-]{0,31}$/;
 // "AAAAC3NzaC1lZDI1NTE5" is the base64 of the key type inside the blob.
@@ -268,34 +271,126 @@ async function writeAll(pods: PodSshEndpoint[], opts: GpuSshOptions) {
   }
 }
 
-// The pod's key pair, made once; returns the public key line to send with
-// the launch. The private key stays in the project.
-export async function ensurePodKey(
-  handle: string,
-  opts: GpuSshOptions = {},
-): Promise<string> {
-  checkHandle(handle);
-  await ensureDirs(opts);
-  const key = paths(opts).key(handle);
-  if (!(await exists(key))) {
-    await execFileAsync("ssh-keygen", [
-      "-q",
-      "-t",
-      "ed25519",
-      "-N",
-      "",
-      "-C",
-      handle,
-      "-f",
-      key,
-    ]);
-  }
-  await chmod(key, 0o600);
+// SHA256 fingerprint of a public key line, exactly as `ssh-keygen -lf`
+// prints it ("SHA256:<unpadded base64>"). The server records this one for
+// the pod, so a key left pending can be matched to its pod later.
+export function keyFingerprint(publicKey: string): string {
+  const blob = `${publicKey}`.trim().split(/\s+/)[1] ?? "";
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(blob))
+    throw new Error("invalid public key");
+  const digest = createHash("sha256")
+    .update(Buffer.from(blob, "base64"))
+    .digest("base64");
+  return `SHA256:${digest.replace(/=+$/, "")}`;
+}
+
+export interface PodKey {
+  // "pending-<random>" until the launch returns the pod's handle
+  name: string;
+  publicKey: string;
+  fingerprint: string;
+}
+
+async function readPublicKey(key: string): Promise<string> {
   const pub = (await readFile(`${key}.pub`, "utf8")).trim();
   if (!ED25519_KEY.test(pub.split(/\s+/).slice(0, 2).join(" "))) {
-    throw new Error("ssh-keygen produced an unexpected public key");
+    throw new Error("unexpected public key file");
   }
   return pub;
+}
+
+// A new key pair for a pod about to be launched. The server makes the
+// pod's handle, so the key starts under a pending name: send its public key
+// with the launch, then adoptPendingKey() with the handle the launch
+// returns. The private key never leaves the project.
+export async function createPendingKey(
+  opts: GpuSshOptions = {},
+): Promise<PodKey> {
+  await ensureDirs(opts);
+  const name = `pending-${base32(10)}`;
+  const key = paths(opts).key(name);
+  await execFileAsync("ssh-keygen", [
+    "-q",
+    "-t",
+    "ed25519",
+    "-N",
+    "",
+    "-C",
+    "cocalc-gpu",
+    "-f",
+    key,
+  ]);
+  await chmod(key, 0o600);
+  const publicKey = await readPublicKey(key);
+  return { name, publicKey, fingerprint: keyFingerprint(publicKey) };
+}
+
+// Name a pending key after the pod it was launched with.
+export async function adoptPendingKey(
+  name: string,
+  handle: string,
+  opts: GpuSshOptions = {},
+): Promise<void> {
+  checkPendingName(name);
+  checkHandle(handle);
+  const p = paths(opts);
+  const from = p.key(name);
+  const to = p.key(handle);
+  if (await exists(to)) throw new Error(`a key for ${handle} already exists`);
+  await rename(`${from}.pub`, `${to}.pub`);
+  await rename(from, to);
+}
+
+// Pending keys left by a launch that was interrupted after the server
+// answered: match them to a pod by its recorded ssh_key_fingerprint.
+export async function listPendingKeys(
+  opts: GpuSshOptions = {},
+): Promise<PodKey[]> {
+  const p = paths(opts);
+  let names: string[];
+  try {
+    names = await readdir(p.dir);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return [];
+    throw err;
+  }
+  const keys: PodKey[] = [];
+  for (const file of names.sort()) {
+    if (!PENDING.test(file) || !(await exists(`${p.key(file)}.pub`))) continue;
+    try {
+      const publicKey = await readPublicKey(p.key(file));
+      keys.push({
+        name: file,
+        publicKey,
+        fingerprint: keyFingerprint(publicKey),
+      });
+    } catch {}
+  }
+  return keys;
+}
+
+export async function removePendingKey(
+  name: string,
+  opts: GpuSshOptions = {},
+): Promise<void> {
+  checkPendingName(name);
+  const key = paths(opts).key(name);
+  await rm(key, { force: true });
+  await rm(`${key}.pub`, { force: true });
+}
+
+function checkPendingName(name: unknown): string {
+  if (typeof name !== "string" || !PENDING.test(name)) {
+    throw new Error("invalid pending key name");
+  }
+  return name;
+}
+
+const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
+function base32(n: number): string {
+  let s = "";
+  for (const byte of randomBytes(n)) s += BASE32[byte % 32];
+  return s;
 }
 
 // Add or refresh one pod's alias and pinned host key.
