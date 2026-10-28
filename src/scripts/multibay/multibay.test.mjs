@@ -4688,7 +4688,7 @@ describe("GPU reads run whole on the key owner's home bay", () => {
        const account_id = ${JSON.stringify(account.account_id)};
        const out = {};
        if (${JSON.stringify(method ?? "")}) {
-         try { await read[${JSON.stringify(method ?? "")}]({ account_id }); out.read = "ok"; }
+         try { await read[${JSON.stringify(method ?? "")}]({ account_id, scope: "account" }); out.read = "ok"; }
          catch (e) { out.read = String(e?.message ?? e); }
        }
        const local = await getExternalCredential({ selector: ${JSON.stringify(selector(account.account_id))} });
@@ -4740,7 +4740,7 @@ describe("GPU reads run whole on the key owner's home bay", () => {
          }), { status: 200 });
        };
        try {
-         const result = await getGpuPodsLocal({ account_id: ${JSON.stringify(bob.account_id)} });
+         const result = await getGpuPodsLocal({ account_id: ${JSON.stringify(bob.account_id)}, scope: "account" });
          return { calls, result };
        } finally {
          globalThis.fetch = real;
