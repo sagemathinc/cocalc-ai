@@ -975,10 +975,12 @@ async function resolveAmbiguous(
   client: Pick<RunpodClient, "findPodsByName" | "terminatePod">,
   actor: Actor,
   deps: GpuPodDeps,
+  // a bounded pass's guard, before each page of RunPod's inventory
+  beforePage?: () => Promise<void>,
 ): Promise<PodRow> {
   let found: RunpodPodView[];
   try {
-    found = await client.findPodsByName(row.handle);
+    found = await client.findPodsByName(row.handle, { beforePage });
   } catch {
     // Still unknown; a later look (pods, terminate) tries again.
     return row;
@@ -1186,7 +1188,7 @@ export async function resolvePendingForAccount(
     await attempt(row, async () => {
       // still unresolved (RunPod's inventory couldn't be read, and the
       // window hasn't closed): a failed attempt, backed off like any other
-      const after = await resolveAmbiguous(row, c, actor, deps);
+      const after = await resolveAmbiguous(row, c, actor, deps, guard);
       if (after?.state === "ambiguous") {
         throw Error("the ambiguous create is still unresolved");
       }

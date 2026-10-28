@@ -1195,6 +1195,35 @@ describeDb("GPU budgets", () => {
       expect(cred[0].active).toBe(true);
     });
 
+    it("bounds the inventory lookup of an ambiguous create by the pass too", async () => {
+      const s = setup();
+      const pod = await s.launch();
+      const a = account(s);
+      // CoCalc lost RunPod's create reply: the pod is looked up by handle
+      await getPool().query(
+        "UPDATE gpu_pods SET state = 'ambiguous', provider_pod_id = NULL WHERE id = $1",
+        [pod.id],
+      );
+      const bounded: boolean[] = [];
+      a.cleanup.findPodsByName.mockImplementation(
+        async (_name: string, opts?: any) => {
+          bounded.push(typeof opts?.beforePage === "function");
+          await opts?.beforePage?.();
+          return [];
+        },
+      );
+      await reportCompromisedLocal(
+        {
+          account_id: s.account_id,
+          confirm_cocalc_only: true,
+          fresh_auth_verified: true,
+        },
+        a.deps,
+      );
+      expect(bounded.length).toBeGreaterThan(0);
+      expect(bounded.every((b) => b)).toBe(true);
+    });
+
     it("refuses a report for a key whose removal already closed its fence, claiming nothing; removing again finishes", async () => {
       const s = setup();
       await s.stored;

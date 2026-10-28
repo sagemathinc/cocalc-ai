@@ -813,7 +813,9 @@ export interface RunpodCleanupCapability {
     ...args: Parameters<RunpodClient["listPodBilling"]>
   ): ReturnType<RunpodClient["listPodBilling"]>;
   terminatePod(podId: string): Promise<void>;
-  findPodsByName(name: string): ReturnType<RunpodClient["findPodsByName"]>;
+  findPodsByName(
+    ...args: Parameters<RunpodClient["findPodsByName"]>
+  ): ReturnType<RunpodClient["findPodsByName"]>;
 }
 
 export async function getRunpodCleanupForAccount(
@@ -832,6 +834,7 @@ export async function getRunpodCleanupForAccount(
     listPodBilling: (...args: Parameters<RunpodClient["listPodBilling"]>) =>
       client.listPodBilling(...args),
     terminatePod: (podId: string) => client.terminatePod(podId),
-    findPodsByName: (name: string) => client.findPodsByName(name),
+    findPodsByName: (...args: Parameters<RunpodClient["findPodsByName"]>) =>
+      client.findPodsByName(...args),
   });
 }

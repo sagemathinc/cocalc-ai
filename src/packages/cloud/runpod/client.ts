@@ -358,8 +358,11 @@ export class RunpodClient {
 
   // Pods with exactly this name: how an ambiguous create is resolved. Our
   // names are random handles, unique per account.
-  async findPodsByName(name: string): Promise<RunpodPodView[]> {
-    return (await this.listPods()).filter((pod) => pod.name === name);
+  async findPodsByName(
+    name: string,
+    opts: Parameters<RunpodClient["listPods"]>[0] = {},
+  ): Promise<RunpodPodView[]> {
+    return (await this.listPods(opts)).filter((pod) => pod.name === name);
   }
 
   async getPod(podId: string): Promise<RunpodPodView | undefined> {
