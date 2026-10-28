@@ -37,7 +37,10 @@ import {
 } from "@cocalc/server/external-credentials/store";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { clearHostkeysForCredential } from "@cocalc/server/gpu/hostkey-clear";
-import { recordKeyEvent } from "@cocalc/server/gpu/key-events";
+import {
+  recordKeyEvent,
+  type GpuKeyEventActor,
+} from "@cocalc/server/gpu/key-events";
 import { carryKeyBudget, ensureKeyBudget } from "@cocalc/server/gpu/budgets";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
@@ -401,6 +404,7 @@ export async function closeKeyFence(
   credential_id: string,
   action: "removed" | "compromise_closed" | "forced_removal",
   details?: Record<string, unknown>,
+  actor: GpuKeyEventActor = { kind: "user", account_id },
 ): Promise<void> {
   await db.query(
     `UPDATE gpu_key_fences SET state = 'closed', updated = now()
@@ -411,7 +415,7 @@ export async function closeKeyFence(
     {
       credential_id,
       key_owner_account_id: account_id,
-      actor: { kind: "user", account_id },
+      actor,
       action,
       details,
     },
@@ -475,25 +479,13 @@ export async function setGpuProviderKeyLocal(
   // is revoked first and its fence closed.
   await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
     const [current] = await activeKeySummaries(account_id, provider);
-    if (current) {
-      await requireReplaceable(account_id, current.id, deps, db);
-      await revokeExternalCredential({
-        id: current.id,
-        owner_account_id: account_id,
-        alsoOnRevoke: async (client) => {
-          await (deps.clearHostkeys ?? clearHostkeysForCredential)(
-            { account_id, credential_id: current.id },
-            client,
-          );
-          await closeKeyFence(client, account_id, current.id, "removed", {
-            replaced: true,
-          });
-        },
-      });
-    }
+    if (current) await requireReplaceable(account_id, current.id, deps, db);
     // never looser than what the account's previous key layer allowed
     const caps = await carryKeyBudget(db, account_id);
-    const stored = await upsertExternalCredential({
+    // One transaction: the old key is revoked and its fence closed, the new
+    // one stored with a new id, and its fence and layer (with the carried
+    // caps) created; or none of it happens.
+    await upsertExternalCredential({
       selector: selector(account_id, provider),
       payload: key,
       metadata: {
@@ -503,14 +495,26 @@ export async function setGpuProviderKeyLocal(
         ...(provider_account_name ? { provider_account_name } : {}),
         verified_at,
       },
+      newIdentity: true,
+      alsoInTransaction: async (client, { id, previous }) => {
+        for (const old of previous) {
+          await (deps.clearHostkeys ?? clearHostkeysForCredential)(
+            { account_id, credential_id: old },
+            client,
+          );
+          await closeKeyFence(client, account_id, old, "removed", {
+            replaced: true,
+          });
+        }
+        // the fence and layer exist from the start (the kill switch and
+        // the first launch both find them)
+        await ensureKeyBudget(client, {
+          credential_id: id,
+          key_owner_account_id: account_id,
+          ...(caps ? { initial: caps } : {}),
+        });
+      },
     });
-    if (caps && stored?.id) {
-      await ensureKeyBudget(db, {
-        credential_id: stored.id,
-        key_owner_account_id: account_id,
-        initial: caps,
-      });
-    }
   });
   // Built from what was just verified and stored, with no further read.
   return {
@@ -587,18 +591,17 @@ export async function deleteGpuProviderKeyLocal(
     deps.credentialPods
       ? deps.credentialPods(credential_id)
       : pods.unfinishedCredentialPods(credential_id, db);
-  // A key RunPod rejects (401: deleted or revoked there) can't terminate
-  // anything, so removing it goes straight to the forced outcome.
-  const rejected =
-    (await unfinished()).length > 0 &&
-    (await (deps.storedKeyRejected ?? storedKeyRejectedByRunpod)(
-      account_id,
-      deps,
-    ));
 
   // 1. Under the fence launches take: the key admits nothing more, and its
-  // pods are marked to terminate.
+  // pods are marked to terminate. It must still be the connected key (a
+  // replacement may have won the fence first).
   await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
+    const [current] = await activeKeySummaries(account_id, provider);
+    if (current?.id !== credential_id) {
+      throw Error(
+        "Your RunPod key changed while it was being removed; check it and try again.",
+      );
+    }
     const { rows } = await db.query(
       "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
       [credential_id],
@@ -626,11 +629,20 @@ export async function deleteGpuProviderKeyLocal(
         key_owner_account_id: account_id,
         actor: { kind: "user", account_id },
         action: "removal_started",
-        details: { marked, force, rejected },
+        details: { marked, force },
       },
       db,
     );
   });
+  // From here the key can't change (a draining key can't be replaced).
+  // A key RunPod rejects (401: deleted or revoked there) can't terminate
+  // anything, so removing it goes straight to the forced outcome.
+  const rejected =
+    (await unfinished()).length > 0 &&
+    (await (deps.storedKeyRejected ?? storedKeyRejectedByRunpod)(
+      account_id,
+      deps,
+    ));
 
   // 2. Terminate them with the key while it is still stored (bounded).
   if (!rejected) {

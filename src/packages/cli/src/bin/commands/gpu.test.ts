@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { Command } from "commander";
-import { GPU_READ_TIMEOUT_MS } from "@cocalc/util/gpu/runpod";
+import {
+  GPU_POD_WRITE_RPC_TIMEOUT_MS,
+  GPU_READ_TIMEOUT_MS,
+} from "@cocalc/util/gpu/runpod";
 import { GPU_CLI_RPC_TIMEOUT_MS, registerGpuCommand } from "./gpu";
 
 const CATALOG = {
@@ -137,6 +140,21 @@ function harness(
             calls.push({ name: "setBudget", args });
             observe();
             return { authorized_usd: "10" };
+          },
+          killSwitch: async (args) => {
+            calls.push({ name: "killSwitch", args });
+            observe();
+            return { marked: 1, remaining: 0, paused: true };
+          },
+          resume: async (args) => {
+            calls.push({ name: "resume", args });
+            observe();
+            return { resumed: 1 };
+          },
+          reportCompromised: async (args) => {
+            calls.push({ name: "reportCompromised", args });
+            observe();
+            return { closed: false, awaiting_provider_revocation: true };
           },
           who: async (args) => {
             calls.push({ name: "who", args });
@@ -375,6 +393,29 @@ it("terminates and looks up a pod", async () => {
       events: "2026-10-27T21:00:00.000Z user create",
     },
   ]);
+});
+
+it("the kill switch pauses by default for the account, never for a project, and resume and report-compromised send what they should", async () => {
+  const h = harness();
+  await h.run("kill");
+  await h.run("kill", "--no-pause");
+  await h.run("kill", "--project", "00000000-1000-4000-8000-0000000000aa");
+  await h.run("resume");
+  await h.run("report-compromised");
+  await h.run("report-compromised", "--confirm-cocalc-only");
+  assert.deepEqual(h.calls, [
+    { name: "killSwitch", args: { pause: true } },
+    { name: "killSwitch", args: { pause: false } },
+    {
+      name: "killSwitch",
+      args: { project_id: "00000000-1000-4000-8000-0000000000aa" },
+    },
+    { name: "resume", args: {} },
+    { name: "reportCompromised", args: { confirm_cocalc_only: false } },
+    { name: "reportCompromised", args: { confirm_cocalc_only: true } },
+  ]);
+  // terminating pods can take a while: the write-sized timeout
+  assert.equal(h.seen[0].rpcTimeoutMs, GPU_POD_WRITE_RPC_TIMEOUT_MS);
 });
 
 it("shows and changes the budget; none removes a limit", async () => {

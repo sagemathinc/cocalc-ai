@@ -548,4 +548,65 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     );
     expect(log).toEqual([{ action: "removed", details: { replaced: true } }]);
   });
+
+  it("replacement first: a removal that waited acts on nothing stale; it refuses, and the new key stays", async () => {
+    const s = await setup();
+    const g = gate();
+    const replacing = keys.setGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", api_key: NEW },
+      { ...s.keyDeps, unfinishedPods: pauseUnderFence(g, 2) },
+    );
+    await fenceHeld();
+    // the removal read the old key before the replacement committed
+    const removing = keys.deleteGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod" },
+      s.keyDeps,
+    );
+    await waitForLockWaiters(query, 1);
+    g.open();
+    await replacing;
+    await expect(removing).rejects.toThrow(
+      "changed while it was being removed",
+    );
+    expect(await storedKey(s.account_id)).toBe(NEW);
+  });
+
+  it("replacement first: a compromise report that waited refuses, and the new key stays active", async () => {
+    const s = await setup();
+    const compromise = await import("./compromise");
+    const g = gate();
+    // the report captures the old key's cleanup capability first
+    const stale = await keys.getRunpodCleanupForAccount(
+      s.account_id,
+      s.keyDeps,
+    );
+    const replacing = keys.setGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", api_key: NEW },
+      { ...s.keyDeps, unfinishedPods: pauseUnderFence(g, 2) },
+    );
+    await fenceHeld();
+    const reporting = compromise.reportCompromisedLocal(
+      {
+        account_id: s.account_id,
+        confirm_cocalc_only: true,
+        fresh_auth_verified: true,
+      },
+      { getCleanup: async () => stale },
+    );
+    await waitForLockWaiters(query, 1);
+    g.open();
+    await replacing;
+    await expect(reporting).rejects.toThrow(
+      "changed while this was being reported",
+    );
+    const after = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+      [after],
+    );
+    expect(rows[0].state).toBe("active");
+  });
 });

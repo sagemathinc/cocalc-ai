@@ -4192,6 +4192,7 @@ export interface InterBayGpuApi {
     fresh_auth_verified: boolean;
   }) => Promise<{
     closed: boolean;
+    awaiting_provider_revocation?: boolean;
     provider_pods?: number;
     managed_pods?: number;
     listing_failed?: boolean;

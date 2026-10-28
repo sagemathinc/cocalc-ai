@@ -17,9 +17,14 @@ terminated, including ones CoCalc didn't start (the theft case).
    list every pod in the RunPod account (a listing that may be incomplete
    throws), terminate each one, and the managed ones through their normal
    paths.
-3. Done only when a complete listing shows no pods at all and no managed
-   pod of the key is unfinished: then the fence is closed and the key
-   revoked. Otherwise only an explicit forced removal ends it.
+   Bound pods a complete listing no longer shows are gone at RunPod: they
+   end through the normal terminated path, settling their cost.
+3. The key is still valid at RunPod (CoCalc can't revoke a RunPod key), so
+   an empty account isn't the end: CoCalc keeps its copy, the only way to
+   see and stop pods a thief starts, and keeps cleaning every sweep. It
+   closes the fence and drops its copy only once RunPod authoritatively
+   rejects the key (401: the owner deleted it at RunPod) and nothing of the
+   key is unfinished. Otherwise only an explicit forced removal ends it.
 */
 
 import getPool from "@cocalc/database/pool";
@@ -41,7 +46,9 @@ import {
   underKeyFence,
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
+import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import {
+  endPodsAbsentFromInventory,
   markCredentialPodsToTerminate,
   resolvePendingForAccount,
   unfinishedCredentialPods,
@@ -53,9 +60,17 @@ import {
 
 const log = getLogger("server:gpu:compromise");
 
+// how long the report request's own pass may spend terminating pods (the
+// compromise worker continues)
+const REQUEST_PASS_MS = 15_000;
+
 export interface GpuCompromiseStatus {
-  // the cleanup finished: the key is revoked and its fence closed
+  // the cleanup finished: RunPod rejects the key, nothing is left, and
+  // CoCalc's copy is revoked and its fence closed
   closed: boolean;
+  // the account is clean but RunPod still accepts the key: delete it on
+  // RunPod's Credentials page; CoCalc keeps watching until then
+  awaiting_provider_revocation?: boolean;
   // pods still in the RunPod account at the last complete listing
   provider_pods?: number;
   // CoCalc's pods of this key not yet confirmed terminated
@@ -73,6 +88,11 @@ export interface GpuCompromiseDeps {
   keyFence?: typeof underKeyFence;
   homeClient?: (account_id: string) => Promise<InterBayGpuApi | undefined>;
   freshAuth?: typeof requireDangerousSessionAuth;
+  // bounds one pass: before each pod it terminates, guard runs (the
+  // worker's lease) and the pass stops once passMs is spent (the next one
+  // continues; nothing is lost)
+  guard?: () => Promise<void>;
+  passMs?: number;
 }
 
 function requireAccount(account_id: unknown): string {
@@ -116,14 +136,26 @@ export async function runCompromiseCleanup(
     [credential_id],
   );
   const known = new Set(managed.map((r) => r.provider_pod_id));
+  const deadline = Date.now() + (deps.passMs ?? REQUEST_PASS_MS);
+  let cut = false;
+  // the listing is complete: CoCalc's pods it doesn't show are gone
+  await endPodsAbsentFromInventory(
+    credential_id,
+    new Set(listed.map((p) => p.id)),
+  );
   for (const pod of listed) {
     if (known.has(pod.id)) continue;
+    if (Date.now() >= deadline) {
+      cut = true;
+      break;
+    }
+    await deps.guard?.();
     // a pod CoCalc didn't start: record it the first time it is seen, and
     // terminate it every pass until it is gone
     const { rows: seen } = await getPool().query(
       `SELECT 1 FROM gpu_key_events WHERE credential_id = $1
          AND action = 'unknown_pod_seen' AND details->>'provider_pod_id' = $2 LIMIT 1`,
-      [credential_id, pod.id],
+      [credential_id, sanitizeProviderName(pod.id)],
     );
     if (seen.length === 0) {
       await recordKeyEvent({
@@ -132,7 +164,7 @@ export async function runCompromiseCleanup(
         actor: { kind: "cleanup" },
         action: "unknown_pod_seen",
         details: {
-          provider_pod_id: pod.id,
+          provider_pod_id: sanitizeProviderName(pod.id),
           name: sanitizeProviderName(pod.name),
         },
       });
@@ -144,39 +176,42 @@ export async function runCompromiseCleanup(
         key_owner_account_id: account_id,
         actor: { kind: "cleanup" },
         action: "unknown_pod_terminated",
-        details: { provider_pod_id: pod.id },
+        details: { provider_pod_id: sanitizeProviderName(pod.id) },
       });
     } catch (err) {
       log.warn("terminating an unknown pod failed", pod.id, `${err}`);
     }
   }
   const left = await unfinishedCredentialPods(credential_id);
-  if (listed.length > 0 || left.length > 0) {
+  if (cut || listed.length > 0 || left.length > 0) {
     return {
       closed: false,
       provider_pods: listed.length,
       managed_pods: left.length,
     };
   }
-  // A complete listing shows no pods, and none of CoCalc's is unfinished:
-  // close the fence, then revoke the key (after the commit, so the
-  // revocation never waits on rows this transaction holds).
-  const closed = await (deps.keyFence ?? underKeyFence)(
-    account_id,
-    async (db) => {
-      const { rows } = await db.query(
-        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
-        [credential_id],
-      );
-      if (rows[0]?.state !== "compromised") return false;
-      if ((await unfinishedCredentialPods(credential_id, db)).length > 0) {
-        return false;
-      }
-      await closeKeyFence(db, account_id, credential_id, "compromise_closed");
-      return true;
-    },
-  );
-  if (!closed) return { closed: false, provider_pods: 0, managed_pods: 0 };
+  // Empty, but a thief may still use the key: keep it (CoCalc's only way to
+  // see and stop their pods) until RunPod itself rejects it.
+  let rejected = false;
+  try {
+    await c.getProviderIdentity();
+  } catch (err) {
+    rejected = err instanceof RunpodApiError && err.kind === "auth";
+  }
+  if (!rejected) {
+    return {
+      closed: false,
+      awaiting_provider_revocation: true,
+      provider_pods: 0,
+      managed_pods: 0,
+    };
+  }
+  // RunPod rejects the key and nothing is left: revoke CoCalc's copy, then
+  // close the fence. In that order: if closing fails, the fence stays
+  // compromised with its key revoked, and the next sweep closes it
+  // (closeRevokedCompromises); the key is never left active outside the
+  // reaper's view. (Nothing can change between: a compromised fence admits
+  // nothing and can't be replaced.)
   await revokeExternalCredential({
     id: credential_id,
     owner_account_id: account_id,
@@ -184,7 +219,30 @@ export async function runCompromiseCleanup(
       await clearHostkeysForCredential({ account_id, credential_id }, client);
     },
   });
+  await closeCompromise(account_id, credential_id, deps);
   return { closed: true, provider_pods: 0, managed_pods: 0 };
+}
+
+async function closeCompromise(
+  account_id: string,
+  credential_id: string,
+  deps: GpuCompromiseDeps,
+): Promise<void> {
+  await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
+    const { rows } = await db.query(
+      "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+      [credential_id],
+    );
+    if (rows[0]?.state !== "compromised") return;
+    await closeKeyFence(
+      db,
+      account_id,
+      credential_id,
+      "compromise_closed",
+      undefined,
+      { kind: "cleanup" },
+    );
+  });
 }
 
 // On the key owner's home bay. The caller checked fresh authentication.
@@ -212,7 +270,19 @@ export async function reportCompromisedLocal(
   if (!c) throw Error("No RunPod API key is connected.");
   const credential_id = c.credential_id;
   // 1. Before any provider call: the fence is compromised, the pods marked.
+  // It must still be the connected key (a replacement may have won the
+  // fence first); the cleanup acts only with that same key.
   await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
+    const { rows: current } = await db.query(
+      `SELECT id FROM external_credentials
+        WHERE owner_account_id = $1 AND kind = 'gpu-provider-api-key' AND revoked IS NULL`,
+      [account_id],
+    );
+    if (current[0]?.id !== credential_id) {
+      throw Error(
+        "Your RunPod key changed while this was being reported; check it and report again.",
+      );
+    }
     await db.query(
       `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
        VALUES ($1, $2, 'compromised', now(), now())
@@ -287,6 +357,18 @@ export async function continueCompromiseCleanups(
   guard: () => Promise<void>,
   deps: GpuCompromiseDeps = {},
 ): Promise<number> {
+  // a cleanup that revoked its key but didn't get to close its fence
+  const { rows: revoked } = await getPool().query(
+    `SELECT f.credential_id, f.key_owner_account_id FROM gpu_key_fences f
+       JOIN external_credentials c ON c.id = f.credential_id
+      WHERE f.state = 'compromised' AND c.revoked IS NOT NULL`,
+  );
+  for (const r of revoked) {
+    await guard();
+    await closeCompromise(r.key_owner_account_id, r.credential_id, deps).catch(
+      (err) => log.warn("closing a finished compromise failed", `${err}`),
+    );
+  }
   const { rows } = await getPool().query(
     `SELECT f.credential_id, f.key_owner_account_id FROM gpu_key_fences f
        JOIN external_credentials c ON c.id = f.credential_id
@@ -294,11 +376,10 @@ export async function continueCompromiseCleanups(
   );
   for (const r of rows) {
     await guard();
-    await runCompromiseCleanup(
-      r.key_owner_account_id,
-      r.credential_id,
-      deps,
-    ).catch((err) => log.warn("a compromise cleanup pass failed", `${err}`));
+    await runCompromiseCleanup(r.key_owner_account_id, r.credential_id, {
+      ...deps,
+      guard,
+    }).catch((err) => log.warn("a compromise cleanup pass failed", `${err}`));
   }
   return rows.length;
 }

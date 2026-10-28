@@ -19,6 +19,7 @@ import { launchGpuPodLocal, listManagedGpuPodsLocal } from "./pods";
 import {
   LAPSE_GRACE_MS,
   acquireWorkerLease,
+  runCompromiseSweep,
   runGpuReaperSweep,
 } from "./reaper";
 import { allowStaleWorkers, allowStaleWorkersLocal } from "./admin";
@@ -780,5 +781,28 @@ describeDb("GPU reaper", () => {
       [s.credential_id],
     );
     expect(rows[0].entitlement_lapsed_at).toBeNull();
+  });
+
+  it("runs compromise cleanups under their own lease, never touching the sweep's watermark", async () => {
+    const s = setup();
+    const before = (
+      await getPool().query(
+        "SELECT last_completed_at FROM gpu_worker_leases WHERE name = 'reaper'",
+      )
+    ).rows[0].last_completed_at;
+    expect(await runCompromiseSweep(s.deps)).toEqual(
+      expect.objectContaining({ ran: true }),
+    );
+    // one at a time per bay
+    expect(
+      await acquireWorkerLease("compromise", "hub-other:run", new Date()),
+    ).toBe(true);
+    expect(await runCompromiseSweep(s.deps)).toEqual({ ran: false });
+    const after = (
+      await getPool().query(
+        "SELECT last_completed_at FROM gpu_worker_leases WHERE name = 'reaper'",
+      )
+    ).rows[0].last_completed_at;
+    expect(new Date(after).getTime()).toBe(new Date(before).getTime());
   });
 });

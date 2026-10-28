@@ -26,7 +26,11 @@ import {
 import { DEFAULT_KEY_LAYER } from "./budgets";
 import { resumeGpuLaunchesLocal } from "./budget-api";
 import { deleteGpuProviderKeyLocal } from "./provider-keys";
-import { reportCompromisedLocal, runCompromiseCleanup } from "./compromise";
+import {
+  continueCompromiseCleanups,
+  reportCompromisedLocal,
+  runCompromiseCleanup,
+} from "./compromise";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -411,6 +415,15 @@ describeDb("GPU budgets", () => {
   });
 
   describe("the kill switch", () => {
+    it("pauses a key connected but never used yet", async () => {
+      const s = setup();
+      await s.stored; // connected; no fence or layer yet
+      expect(
+        (await killSwitchLocal({ account_id: s.account_id }, s.deps)).paused,
+      ).toBe(true);
+      await expect(s.launch()).rejects.toThrow("paused by your kill switch");
+    });
+
     it("pauses and logs only the connected key, not a closed earlier one", async () => {
       const s = setup();
       await s.launch();
@@ -450,7 +463,13 @@ describeDb("GPU budgets", () => {
           )
         ).paused,
       ).toBe(true);
+      // no connected key (removed): nothing to pause
       const none = setup();
+      await none.stored;
+      await getPool().query(
+        "UPDATE external_credentials SET revoked = now() WHERE id = $1",
+        [none.credential_id],
+      );
       expect(
         (await killSwitchLocal({ account_id: none.account_id }, none.deps))
           .paused,
@@ -620,6 +639,11 @@ describeDb("GPU budgets", () => {
           if (listFails) throw new RunpodApiError("provider", 503);
           return [...s.rp.pods.values()];
         }),
+        // RunPod still accepts the key until the owner deletes it there
+        getProviderIdentity: jest.fn(async () => ({
+          kind: "personal",
+          id: "user_1",
+        })),
       };
       const deps = {
         getCleanup: async () => cleanup as any,
@@ -703,7 +727,25 @@ describeDb("GPU budgets", () => {
           ])
         ).rows[0].state,
       ).toBe("terminated");
-      // an empty account and no unfinished pod: closed, key revoked
+      // an empty account, but RunPod still accepts the key: CoCalc keeps its
+      // copy (its only way to see and stop a thief's pods) and keeps going
+      expect(
+        await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
+      ).toEqual({
+        closed: false,
+        awaiting_provider_revocation: true,
+        provider_pods: 0,
+        managed_pods: 0,
+      });
+      expect(await fence()).toBe("compromised");
+      // a pod the thief starts meanwhile is terminated on the next pass
+      s.rp.pods.set("pod_miner2", { id: "pod_miner2", name: "miner2" });
+      await runCompromiseCleanup(s.account_id, s.credential_id, a.deps);
+      expect(s.rp.pods.size).toBe(0);
+      // the owner deleted the key at RunPod: now closed, CoCalc's copy revoked
+      a.cleanup.getProviderIdentity.mockRejectedValue(
+        new RunpodApiError("auth", 401),
+      );
       expect(
         await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
       ).toEqual({ closed: true, provider_pods: 0, managed_pods: 0 });
@@ -721,6 +763,8 @@ describeDb("GPU budgets", () => {
         "compromised",
         "unknown_pod_seen",
         "unknown_pod_terminated",
+        "unknown_pod_seen",
+        "unknown_pod_terminated",
         "compromise_closed",
       ]);
       // the provider name is sanitized and bounded
@@ -730,7 +774,7 @@ describeDb("GPU budgets", () => {
       });
     });
 
-    it("doesn't close while a pod of the key is unfinished, even if RunPod lists none", async () => {
+    it("ends a pod a complete listing no longer shows, through the normal terminated path", async () => {
       const s = setup();
       const pod = await s.launch();
       const a = account(s);
@@ -749,8 +793,9 @@ describeDb("GPU budgets", () => {
       );
       expect(result).toEqual({
         closed: false,
+        awaiting_provider_revocation: true,
         provider_pods: 0,
-        managed_pods: 1,
+        managed_pods: 0,
       });
       expect(
         (
@@ -758,7 +803,53 @@ describeDb("GPU budgets", () => {
             pod.id,
           ])
         ).rows[0].state,
-      ).not.toBe("terminated");
+      ).toBe("terminated");
+      const [r] = await reservations(pod.id);
+      expect(r.state).toBe("settled");
+    });
+
+    it("refuses if the key changed before the report took the fence", async () => {
+      const s = setup();
+      await s.stored;
+      await getPool().query(
+        "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [s.account_id],
+      );
+      const a = account(s);
+      const stale = { ...a.cleanup, credential_id: randomUUID() };
+      await expect(
+        reportCompromisedLocal(
+          {
+            account_id: s.account_id,
+            confirm_cocalc_only: true,
+            fresh_auth_verified: true,
+          },
+          { ...a.deps, getCleanup: async () => stale as any },
+        ),
+      ).rejects.toThrow("changed while this was being reported");
+    });
+
+    it("finishes a cleanup that revoked its key but didn't close its fence", async () => {
+      const s = setup();
+      await s.launch();
+      await getPool().query(
+        "UPDATE gpu_key_fences SET state = 'compromised' WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      await getPool().query(
+        "UPDATE external_credentials SET revoked = now(), encrypted_payload = NULL WHERE id = $1",
+        [s.credential_id],
+      );
+      await getPool().query(
+        "UPDATE gpu_pods SET state = 'terminated' WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      await continueCompromiseCleanups(async () => {});
+      const { rows } = await getPool().query(
+        "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
+        [s.credential_id],
+      );
+      expect(rows[0].state).toBe("closed");
     });
   });
 });

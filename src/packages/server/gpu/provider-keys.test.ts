@@ -780,11 +780,22 @@ describe("GPU provider keys", () => {
       { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
       { ...home, fetch, isEntitled: entitled },
     );
-    expect(revokeMock).toHaveBeenCalled();
-    expect(upsertMock).toHaveBeenCalled();
-    // revoked first, so the store inserts a new row (a new id)
-    expect(revokeMock.mock.invocationCallOrder[0]).toBeLessThan(
-      upsertMock.mock.invocationCallOrder[0],
+    // one store transaction: the old key revoked, a new row (a new id), and
+    // the old fence closed and the new budget made inside it
+    expect(revokeMock).not.toHaveBeenCalled();
+    const call = upsertMock.mock.calls[0][0];
+    expect(call.newIdentity).toBe(true);
+    const client = { query: jest.fn(async () => ({ rows: [] })) };
+    await call.alsoInTransaction(client, {
+      id: "cred-2",
+      previous: ["cred-1"],
+    });
+    expect(clearHostkeysMock).toHaveBeenCalledWith(
+      { account_id: ACCOUNT, credential_id: "cred-1" },
+      client,
     );
+    const sql = client.query.mock.calls.map((c: any) => c[0]).join("\n");
+    expect(sql).toMatch(/UPDATE gpu_key_fences SET state = 'closed'/);
+    expect(sql).toMatch(/INSERT INTO gpu_budget_layers/);
   });
 });

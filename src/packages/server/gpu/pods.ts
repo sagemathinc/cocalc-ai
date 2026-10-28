@@ -1638,6 +1638,33 @@ export async function markCredentialPodsToTerminate(
   return rows.length;
 }
 
+// A complete inventory of the key's RunPod account doesn't list these
+// bound pods: they are gone at RunPod, so they end through the normal
+// terminating -> terminated path (settling their actual cost), as a
+// terminate RunPod confirmed would.
+export async function endPodsAbsentFromInventory(
+  credential_id: string,
+  present: Set<string>,
+  actor: Actor = { kind: "cleanup" },
+): Promise<number> {
+  const { rows } = await getPool().query(
+    `SELECT * FROM gpu_pods
+      WHERE credential_id = $1 AND provider_pod_id IS NOT NULL
+        AND state NOT IN ('terminated', 'failed') AND unmanaged_at IS NULL`,
+    [credential_id],
+  );
+  let ended = 0;
+  for (const row of rows as PodRow[]) {
+    if (present.has(row.provider_pod_id!)) continue;
+    const terminating = await recordTerminating(row, actor);
+    if (!terminating) continue;
+    // RunPod already has no such pod: its terminate is a no-op here
+    await terminateBound(terminating, { terminatePod: async () => {} }, actor);
+    ended += 1;
+  }
+  return ended;
+}
+
 // A forced removal: the credential's remaining pods leave CoCalc's
 // management. Their state is left as it is (they may still run and bill at
 // RunPod; nothing claims they stopped), their reservations are quarantined
@@ -1736,6 +1763,15 @@ export async function killSwitchLocal(
           AND unmanaged_at IS NULL
           AND reap_after IS NOT NULL`,
       [account_id, project_id],
+    );
+    // the connected key's fence exists from its connect (5c); make sure, so
+    // the pause always lands
+    await db.query(
+      `INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated)
+       SELECT id, owner_account_id, 'active', now(), now() FROM external_credentials
+        WHERE owner_account_id = $1 AND kind = 'gpu-provider-api-key' AND revoked IS NULL
+       ON CONFLICT (credential_id) DO NOTHING`,
+      [account_id],
     );
     // the currently connected key only (a closed, draining or compromised
     // fence admits nothing anyway)

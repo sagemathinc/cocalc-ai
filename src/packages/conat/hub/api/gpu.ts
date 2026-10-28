@@ -172,9 +172,10 @@ export interface GpuApi {
   }) => Promise<{ marked: number; remaining: number; paused: boolean }>;
   // Report the RunPod key compromised: fresh authentication, and the
   // owner's confirmation that the RunPod account is used only for CoCalc.
-  // CoCalc stops launching with the key, terminates EVERY pod in that RunPod
-  // account (including ones it didn't start), and removes the key once a
-  // complete listing shows none left; it keeps trying until then.
+  // CoCalc stops launching with the key and terminates EVERY pod in that
+  // RunPod account (including ones it didn't start), every sweep, until the
+  // owner deletes the key at RunPod (CoCalc can't revoke a RunPod key); once
+  // RunPod rejects it and nothing is left, CoCalc removes its copy.
   reportCompromised: (opts: {
     account_id?: string;
     browser_id?: string | null;
@@ -182,6 +183,7 @@ export interface GpuApi {
     confirm_cocalc_only: boolean;
   }) => Promise<{
     closed: boolean;
+    awaiting_provider_revocation?: boolean;
     provider_pods?: number;
     managed_pods?: number;
     listing_failed?: boolean;

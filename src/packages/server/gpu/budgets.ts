@@ -140,6 +140,18 @@ export async function ensureKeyBudget(
      VALUES ($1, $2, 'active', now(), now()) ON CONFLICT (credential_id) DO NOTHING`,
     [credential_id, key_owner_account_id],
   );
+  // A key's layer is created once, whoever gets there first (the connect,
+  // the first launch, a budget read): it always starts from what the
+  // account's previous key layer allowed, never looser (5c).
+  if (initial == null) {
+    const { rows: existing } = await db.query(
+      `SELECT 1 FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'`,
+      [credential_id],
+    );
+    if (existing.length === 0) {
+      initial = await carryKeyBudget(db, key_owner_account_id, credential_id);
+    }
+  }
   const d = { ...DEFAULT_KEY_LAYER, ...(initial ?? {}) };
   const ends = new Date(now);
   ends.setFullYear(ends.getFullYear() + d.years);
@@ -192,12 +204,15 @@ export async function ensureKeyBudget(
 export async function carryKeyBudget(
   db: Db,
   key_owner_account_id: string,
+  // the key the caps are for (its own layer, if any, isn't a prior one)
+  credential_id?: string,
 ): Promise<KeyLayerCaps | undefined> {
   const { rows } = await db.query(
     `SELECT * FROM gpu_budget_layers
       WHERE key_owner_account_id = $1 AND scope_kind = 'key'
+        AND ($2::uuid IS NULL OR credential_id <> $2::uuid)
       ORDER BY created DESC LIMIT 1`,
-    [key_owner_account_id],
+    [key_owner_account_id, credential_id ?? null],
   );
   const prior: LayerRow | undefined = rows[0];
   if (!prior) return undefined;

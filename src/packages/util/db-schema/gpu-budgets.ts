@@ -402,7 +402,9 @@ Table({
       type: "string",
       pg_type: "varchar(32)",
       not_null: true,
-      pg_check: "CHECK (name IN ('reaper','reconciler'))",
+      // compromise: the cleanup of keys reported compromised (5c), apart
+      // from the reaper's sweep so it never holds back its watermark
+      pg_check: "CHECK (name IN ('reaper','reconciler','compromise'))",
     },
     holder: { type: "string", pg_type: "varchar(128)" },
     expires_at: { type: "timestamp" },
