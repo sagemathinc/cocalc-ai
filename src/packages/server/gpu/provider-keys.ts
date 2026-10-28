@@ -40,10 +40,11 @@ type Fetch = typeof globalThis.fetch;
 // Verification is at most six requests (organization, maybe GraphQL
 // `myself`, one page of pods, a template created and deleted to prove write
 // access, one delete retry) of at most 4 s each, and must finish within
-// VERIFY_DEADLINE_MS or nothing is stored. With the store (routed, at most
-// 15 s) that stays under the browser's VERIFY_RPC_TIMEOUT_MS (90 s, in
-// util/gpu/provider-keys), so the browser never reports a failure for a key
-// that is stored afterwards.
+// VERIFY_DEADLINE_MS or nothing is stored. The store after that has no
+// deadline of its own (it may wait on the database and the selector lock);
+// the browser's VERIFY_RPC_TIMEOUT_MS (90 s, in util/gpu/provider-keys) is
+// ample headroom in practice, and a store that is later still shows up at
+// the next status load.
 const VERIFY_REQUEST_TIMEOUT_MS = 4_000;
 const VERIFY_DEADLINE_MS = 25_000;
 
