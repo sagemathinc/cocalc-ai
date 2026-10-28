@@ -75,7 +75,8 @@ function deps(account_id: string, rp = fakeRunpod()) {
         client: rp.client as any,
         credential_id: CREDENTIAL,
       }),
-      getCleanup: async () => rp.client as any,
+      getCleanup: async () =>
+        ({ ...rp.client, credential_id: CREDENTIAL }) as any,
     },
     account_id,
   };
@@ -486,6 +487,34 @@ describeDb("GPU pods", () => {
     // the next listing retries, and this time RunPod confirms
     expect(await listManagedGpuPodsLocal({ account_id }, d)).toEqual([]);
     expect(rp.pods.size).toBe(0);
+  });
+
+  it("never acts on a pod with a key other than the one that launched it", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const pod = await launchGpuPodLocal(
+      { account_id, project_id: PROJECT, spec: SPEC },
+      d,
+    );
+    // the key was replaced (maybe for another RunPod account)
+    const replaced = {
+      ...d,
+      getCleanup: async () =>
+        ({ ...rp.client, credential_id: randomUUID() }) as any,
+    };
+    rp.client.terminatePod.mockClear();
+    await expect(
+      terminateGpuPodLocal({ account_id, pod_id: pod.handle }, replaced),
+    ).rejects.toThrow(/key that has since been replaced.*pod_/);
+    expect(rp.client.terminatePod).not.toHaveBeenCalled();
+    // still recorded as live, with the terminate pending
+    const { rows } = await getPool().query(
+      "SELECT state, desired_state FROM gpu_pods WHERE id = $1",
+      [pod.id],
+    );
+    expect(rows[0]).toEqual({ state: "running", desired_state: "terminated" });
+    // and a listing with the new key doesn't retry it either
+    await listManagedGpuPodsLocal({ account_id }, replaced);
+    expect(rp.client.terminatePod).not.toHaveBeenCalled();
   });
 
   it("keeps each account's pods to itself", async () => {

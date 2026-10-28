@@ -437,6 +437,9 @@ export async function getRunpodLaunchAccessForAccount(
 // or a removed key can still be cleaned up. The client itself stays private
 // to these closures.
 export interface RunpodCleanupCapability {
+  // the stored key this capability holds: a pod is only ever acted on with
+  // the key that launched it (its record's credential_id)
+  readonly credential_id: string;
   getProviderIdentity(): Promise<RunpodProviderIdentity>;
   listPods(): ReturnType<RunpodClient["listPods"]>;
   getPod(podId: string): ReturnType<RunpodClient["getPod"]>;
@@ -455,6 +458,7 @@ export async function getRunpodCleanupForAccount(
   if (!key) return undefined;
   const client = new RunpodClient({ apiKey: key.apiKey, fetch: deps.fetch });
   return Object.freeze({
+    credential_id: key.id,
     getProviderIdentity: () => client.getProviderIdentity(),
     listPods: () => client.listPods(),
     getPod: (podId: string) => client.getPod(podId),

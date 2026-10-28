@@ -739,10 +739,14 @@ async function resolveAmbiguousForAccount(
     account_id,
   ).catch(() => undefined);
   if (!c) return;
-  for (const row of pending as PodRow[]) {
+  // Only pods launched with the key now connected: another key may act for
+  // another RunPod account, where these pods don't exist (step 5 keeps the
+  // launching key until its pods end).
+  const ours = (row: PodRow) => row.credential_id === c.credential_id;
+  for (const row of (pending as PodRow[]).filter(ours)) {
     await terminateBound(row, c, actor).catch(() => {});
   }
-  for (const row of rows as PodRow[]) {
+  for (const row of (rows as PodRow[]).filter(ours)) {
     await resolveAmbiguous(row, c, { kind: "cleanup" }, deps).catch(() => {});
   }
 }
@@ -804,6 +808,14 @@ export async function terminateGpuPodLocal(
   if (!c) {
     throw Error(
       "Your RunPod key was removed, so CoCalc can't terminate this pod. Terminate it at RunPod.",
+    );
+  }
+  if (c.credential_id !== row.credential_id) {
+    // The connected key isn't the one that launched this pod, and may act
+    // for another RunPod account: asking it would wrongly report the pod
+    // gone. The terminate stays recorded.
+    throw Error(
+      `This pod was launched with a RunPod key that has since been replaced, so CoCalc can't reach it. Terminate it at RunPod${row.provider_pod_id ? ` (pod ${row.provider_pod_id})` : ` (named ${row.handle})`}.`,
     );
   }
   try {

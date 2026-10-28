@@ -338,6 +338,7 @@ describe("GPU provider keys", () => {
     }))!;
     // Nothing that creates or starts anything.
     expect(Object.keys(cleanup).sort()).toEqual([
+      "credential_id",
       "findPodsByName",
       "getPod",
       "getProviderIdentity",
@@ -346,6 +347,7 @@ describe("GPU provider keys", () => {
       "terminatePod",
     ]);
     expect(Object.isFrozen(cleanup)).toBe(true);
+    expect(cleanup.credential_id).toBe("cred-1");
     expect(cleanup).not.toBeInstanceOf(
       (await import("@cocalc/cloud/runpod/client")).RunpodClient,
     );
