@@ -758,7 +758,11 @@ describeDb("GPU pods", () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     rp.client.createPod.mockImplementationOnce(async (body: any) => {
       rp.pods.set("pod_dupaaa", { id: "pod_dupaaa", name: body.name });
-      rp.pods.set("pod_dupbbb", { id: "pod_dupbbb", name: body.name });
+      rp.pods.set("pod_dupbbb", {
+        id: "pod_dupbbb",
+        name: body.name,
+        cost: 0.9,
+      });
       throw new RunpodApiError("protocol");
     });
     // the duplicate's first terminate fails
@@ -783,9 +787,35 @@ describeDb("GPU pods", () => {
     );
     expect(rows[0].handle).not.toBe(pod.handle);
     // the next listing retries it
+    // it ran for 20 minutes before it was found
+    await getPool().query(
+      "UPDATE gpu_pods SET running_since = now() - interval '20 minutes' WHERE provider_pod_id = 'pod_dupbbb'",
+    );
     const live = await listManagedGpuPodsLocal({ account_id }, d);
     expect(rp.pods.has("pod_dupbbb")).toBe(false);
     expect(live.map((p) => p.provider_pod_id)).toEqual(["pod_dupaaa"]);
+    // its spend is settled onto the canonical pod's layer: 20 min at $0.90/h,
+    // all of it overrun of a zero hold; the canonical pod's hold is untouched
+    const { rows: dup } = await getPool().query(
+      `SELECT r.* FROM gpu_pod_reservations r JOIN gpu_pods p ON p.id = r.pod_id
+        WHERE p.provider_pod_id = 'pod_dupbbb'`,
+    );
+    expect(dup).toHaveLength(1);
+    expect(dup[0].state).toBe("settled");
+    expect(Number(dup[0].reserved_usd)).toBe(0);
+    expect(Number(dup[0].spent_usd)).toBeCloseTo(0.3, 3);
+    expect(Number(dup[0].overrun_usd)).toBeCloseTo(0.3, 3);
+    const { rows: layer } = await getPool().query(
+      "SELECT spent_usd, reserved_usd FROM gpu_budget_layers WHERE id = $1",
+      [dup[0].layer_id],
+    );
+    expect(Number(layer[0].spent_usd)).toBeCloseTo(0.3, 3);
+    const { rows: canon } = await getPool().query(
+      "SELECT reserved_usd, state FROM gpu_pod_reservations WHERE pod_id = $1",
+      [pod.id],
+    );
+    expect(canon[0].state).toBe("active");
+    expect(Number(layer[0].reserved_usd)).toBe(Number(canon[0].reserved_usd));
   });
 
   it("never terminates the pod another resolver just bound", async () => {

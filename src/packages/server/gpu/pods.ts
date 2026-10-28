@@ -867,7 +867,7 @@ async function bind(
   }
   const current = await loadPod(row.id);
   if (current.provider_pod_id === pod.id) return current;
-  await terminateDuplicate(row, pod.id, client, actor);
+  await terminateDuplicate(row, pod, client, actor);
   return current;
 }
 
@@ -925,7 +925,7 @@ async function resolveAmbiguous(
           ),
   );
   for (const pod of extra) {
-    await terminateDuplicate(row, pod.id, client, actor);
+    await terminateDuplicate(row, pod, client, actor);
   }
   return await bind(row, keep, client, actor);
 }
@@ -1029,23 +1029,36 @@ async function resolveAmbiguousForAccount(
 // A second RunPod pod under one handle (RunPod retried a create): it is
 // recorded as a pod of its own, terminating, before RunPod is asked, so a
 // failed terminate is retried like any other pending termination.
+//
+// Its spend is real, so it is budgeted: under the budget locks of the pod it
+// duplicates, it gets a hold on each of that pod's layers. The holds reserve
+// nothing (nothing is refused: the spend already exists), and its RunPod
+// cost and start time are recorded, so terminating it settles what it
+// actually cost onto those layers (as an overrun of its zero hold).
 async function terminateDuplicate(
   of: PodRow,
-  provider_pod_id: string,
+  pod: RunpodPodView,
   client: Pick<RunpodClient, "terminatePod">,
   actor: Actor,
 ): Promise<void> {
+  const provider_pod_id = pod.id;
   const dup = await inTransaction(async (db) => {
+    await lockBudgetsForPod(db, {
+      pod_id: of.id,
+      credential_id: of.credential_id,
+      key_owner_account_id: of.key_owner_account_id,
+    });
     const id = randomUUID();
     const { rows } = await db.query(
       `INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider,
          provider_pod_id, beneficiary_account_id, project_id, agent_id, spec,
          gpu_type_id, gpu_count, cloud, data_center_id, state, desired_state,
-         max_runtime_minutes, deadline, reason, created, updated)
+         max_runtime_minutes, deadline, reason, cost_per_hr, running_since,
+         created, updated)
        SELECT $1, $2, key_owner_account_id, credential_id, provider, $3,
          beneficiary_account_id, project_id, agent_id, spec, gpu_type_id, gpu_count,
          cloud, data_center_id, 'terminating', 'terminated', max_runtime_minutes,
-         now(), $4, now(), now()
+         now(), $4, $6, $7, now(), now()
          FROM gpu_pods WHERE id = $5
        ON CONFLICT (provider, provider_pod_id) DO NOTHING
        RETURNING *`,
@@ -1055,9 +1068,19 @@ async function terminateDuplicate(
         provider_pod_id,
         `A duplicate RunPod made for ${of.handle}; terminated.`,
         of.id,
+        pod.cost ?? null,
+        providerStartTime(pod, of),
       ],
     );
     if (!rows[0]) return undefined; // already recorded
+    await db.query(
+      `INSERT INTO gpu_pod_reservations (id, pod_id, layer_id, state, reserved_usd,
+         hourly_usd, gpu_count, pod_slots, created, updated)
+       SELECT gen_random_uuid(), $1, layer_id, 'active', 0, hourly_usd, gpu_count,
+         0, now(), now()
+         FROM gpu_pod_reservations WHERE pod_id = $2`,
+      [id, of.id],
+    );
     await recordEvent(
       id,
       actor,
