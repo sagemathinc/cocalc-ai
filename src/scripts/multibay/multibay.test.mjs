@@ -4776,3 +4776,72 @@ describe("GPU reads run whole on the key owner's home bay", () => {
     assert.match(r.custody, /only on the key owner's home bay/);
   });
 });
+
+describe("connecting and removing a GPU key runs whole on the owner's home bay", () => {
+  // bob's key is stored on his home bay (the attached bay) by the GPU reads
+  // above; the seed has no copy. Every call here starts on the seed.
+  const selector = {
+    provider: "runpod",
+    kind: "gpu-provider-api-key",
+    scope: "account",
+  };
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const keys = server("gpu/provider-keys.js");
+       const account_id = ${JSON.stringify(bob.account_id)};
+       ${body}`,
+    );
+  }
+
+  it("reports the key the home bay holds", async () => {
+    const status = await onSeed(
+      `return await keys.getGpuProviderKeyStatus({ account_id, provider: "runpod" });`,
+    );
+    assert.equal(status.connected, true);
+  });
+
+  it("checks a new key on the home bay, which refuses before calling RunPod", async () => {
+    const r = await onSeed(
+      `try {
+         await keys.setGpuProviderKey({ account_id, provider: "runpod", api_key: "rpa_${"x".repeat(40)}" });
+         return "saved";
+       } catch (e) { return String(e?.message ?? e); }`,
+    );
+    assert.match(r, /membership doesn't include connecting a GPU provider key/);
+  });
+
+  it("refuses to run the home bay's part anywhere else", async () => {
+    const r = await onSeed(
+      `const out = [];
+       for (const f of ["getGpuProviderKeyStatusLocal", "setGpuProviderKeyLocal", "deleteGpuProviderKeyLocal"]) {
+         try { await keys[f]({ account_id, provider: "runpod", api_key: "x" }); out.push("ran"); }
+         catch (e) { out.push(String(e?.message ?? e)); }
+       }
+       return out;`,
+    );
+    for (const m of r) assert.match(m, /only on the key owner's home bay/);
+  });
+
+  it("removes the key on the home bay in one forwarded call", async () => {
+    const r = await onSeed(
+      `return await keys.deleteGpuProviderKey({ account_id, provider: "runpod" });`,
+    );
+    assert.deepEqual(r, { revoked: true });
+    const home = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getExternalCredential } = server("external-credentials/store.js");
+       const row = await getExternalCredential({
+         selector: ${JSON.stringify({ ...selector, owner_account_id: bob.account_id })},
+       });
+       return { active: !!row && !row.revoked };`,
+    );
+    assert.equal(home.active, false);
+    const status = await onSeed(
+      `return await keys.getGpuProviderKeyStatus({ account_id, provider: "runpod" });`,
+    );
+    assert.equal(status.connected, false);
+  });
+});

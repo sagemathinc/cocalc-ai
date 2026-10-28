@@ -8,6 +8,11 @@ GPU bring-your-own-key: connecting and removing an account's own GPU provider
 key (RunPod). The key is verified with the provider before it is stored, then
 kept in the external-credentials broker on the account's home bay. Nothing
 here ever returns the key.
+
+Each operation runs whole on the account's home bay: the bay the user is
+signed in to forwards it there (after its own fresh-auth check), so the
+entitlement, the check with RunPod and the store all happen where the key
+lives, in one inter-bay call.
 */
 
 import {
@@ -15,17 +20,20 @@ import {
   RunpodClient,
   type RunpodProviderIdentity,
 } from "@cocalc/cloud/runpod/client";
+import {
+  createInterBayAccountLocalClient,
+  type InterBayGpuApi,
+} from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import {
-  listAccountExternalCredentialsRouted,
-  revokeAccountExternalCredentialRouted,
-  upsertExternalCredentialRouted,
-} from "@cocalc/server/external-credentials/routing";
-import {
   getExternalCredential,
+  listExternalCredentials,
+  revokeExternalCredential,
+  upsertExternalCredential,
   type ExternalCredentialSummary,
 } from "@cocalc/server/external-credentials/store";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   GPU_PROVIDER_API_KEY_KIND,
@@ -33,6 +41,8 @@ import {
   type GpuProviderAccount,
   type GpuProviderKeyStatus,
   isGpuProvider,
+  KEY_HOME_BAY_TIMEOUT_MS,
+  SET_KEY_HOME_BAY_TIMEOUT_MS,
 } from "@cocalc/util/gpu/provider-keys";
 
 type Fetch = typeof globalThis.fetch;
@@ -44,9 +54,10 @@ type Fetch = typeof globalThis.fetch;
 // past 25 s, but verification must succeed within
 // VERIFY_DEADLINE_MS or nothing is stored. The store after that has no
 // deadline of its own (it may wait on the database and the selector lock);
-// the browser's VERIFY_RPC_TIMEOUT_MS (90 s, in util/gpu/provider-keys) is
-// ample headroom in practice, and a store that is later still shows up at
-// the next status load.
+// a save forwarded from another bay may take SET_KEY_HOME_BAY_TIMEOUT_MS
+// (75 s) and the browser's VERIFY_RPC_TIMEOUT_MS (90 s) exceeds that (both in
+// util/gpu/provider-keys); a store that is later still shows up at the next
+// status load.
 const VERIFY_REQUEST_TIMEOUT_MS = 4_000;
 const VERIFY_DEADLINE_MS = 25_000;
 
@@ -56,6 +67,40 @@ export interface GpuProviderKeyDeps {
   isEntitled?: (account_id: string) => Promise<boolean>;
   isHomeBay?: (account_id: string) => Promise<boolean>;
   verifyDeadlineMs?: number;
+  // the home bay's API, or undefined when this is the home bay
+  homeClient?: (
+    account_id: string,
+    timeout: number,
+  ) => Promise<InterBayGpuApi | undefined>;
+}
+
+async function gpuKeyHomeClient(
+  account_id: string,
+  timeout: number,
+): Promise<InterBayGpuApi | undefined> {
+  const dest_bay = await accountHomeBay(account_id);
+  if (dest_bay === getConfiguredBayId()) return undefined;
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay,
+    timeout,
+  });
+}
+
+async function homeClientFor(
+  account_id: string,
+  timeout: number,
+  deps: GpuProviderKeyDeps,
+): Promise<InterBayGpuApi | undefined> {
+  return await (deps.homeClient ?? gpuKeyHomeClient)(account_id, timeout);
+}
+
+// The *Local functions below are what the home bay runs, never forwarding
+// again; anywhere else they refuse.
+async function requireHomeBay(account_id: string, deps: GpuProviderKeyDeps) {
+  if (!(await (deps.isHomeBay ?? isAccountHomeBay)(account_id))) {
+    throw Error("GPU provider keys are used only on the key owner's home bay");
+  }
 }
 
 function selector(account_id: string, provider: GpuProvider) {
@@ -169,12 +214,12 @@ function toStatus(
   };
 }
 
-// Summaries only: the key itself never leaves the owner's home bay.
+// Summaries only, from the local store.
 async function activeKeySummaries(
   account_id: string,
   provider: GpuProvider,
 ): Promise<ExternalCredentialSummary[]> {
-  const rows = await listAccountExternalCredentialsRouted({
+  const rows = await listExternalCredentials({
     owner_account_id: account_id,
     provider,
     kind: GPU_PROVIDER_API_KEY_KIND,
@@ -184,6 +229,16 @@ async function activeKeySummaries(
 }
 
 export async function getGpuProviderKeyStatus(
+  { account_id, provider }: { account_id: string; provider: unknown },
+  deps: GpuProviderKeyDeps = {},
+): Promise<GpuProviderKeyStatus> {
+  requireProvider(provider);
+  const home = await homeClientFor(account_id, KEY_HOME_BAY_TIMEOUT_MS, deps);
+  if (home) return await home.gpuKeyStatus({ account_id, provider });
+  return await getGpuProviderKeyStatusLocal({ account_id, provider }, deps);
+}
+
+export async function getGpuProviderKeyStatusLocal(
   {
     account_id,
     provider: providerInput,
@@ -191,6 +246,7 @@ export async function getGpuProviderKeyStatus(
   deps: GpuProviderKeyDeps = {},
 ): Promise<GpuProviderKeyStatus> {
   const provider = requireProvider(providerInput);
+  await requireHomeBay(account_id, deps);
   const [entitled, record] = await Promise.all([
     (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id),
     activeKeySummaries(account_id, provider),
@@ -202,12 +258,31 @@ export async function getGpuProviderKeyStatus(
 export async function setGpuProviderKey(
   {
     account_id,
+    provider,
+    api_key,
+  }: { account_id: string; provider: unknown; api_key: unknown },
+  deps: GpuProviderKeyDeps = {},
+): Promise<GpuProviderKeyStatus> {
+  requireProvider(provider);
+  const home = await homeClientFor(
+    account_id,
+    SET_KEY_HOME_BAY_TIMEOUT_MS,
+    deps,
+  );
+  if (home) return await home.gpuKeySet({ account_id, provider, api_key });
+  return await setGpuProviderKeyLocal({ account_id, provider, api_key }, deps);
+}
+
+export async function setGpuProviderKeyLocal(
+  {
+    account_id,
     provider: providerInput,
     api_key,
   }: { account_id: string; provider: unknown; api_key: unknown },
   deps: GpuProviderKeyDeps = {},
 ): Promise<GpuProviderKeyStatus> {
   const provider = requireProvider(providerInput);
+  await requireHomeBay(account_id, deps);
   if (!(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))) {
     throw Error(
       "Your membership doesn't include connecting a GPU provider key.",
@@ -228,7 +303,7 @@ export async function setGpuProviderKey(
   // counts only removals after this save started, so a removal just before
   // it never blocks it; clock skew with the database is milliseconds.
   const removedSince = (
-    await listAccountExternalCredentialsRouted({
+    await listExternalCredentials({
       owner_account_id: account_id,
       provider,
       kind: GPU_PROVIDER_API_KEY_KIND,
@@ -246,7 +321,7 @@ export async function setGpuProviderKey(
     identity.kind === "organization" && identity.name
       ? identity.name.slice(0, 120)
       : undefined;
-  await upsertExternalCredentialRouted({
+  await upsertExternalCredential({
     selector: selector(account_id, provider),
     payload: key,
     metadata: {
@@ -257,8 +332,7 @@ export async function setGpuProviderKey(
       verified_at,
     },
   });
-  // Built from what was just verified and stored: another routed read here
-  // could outlast the browser's wait after the key is already saved.
+  // Built from what was just verified and stored, with no further read.
   return {
     provider,
     entitled: true,
@@ -273,40 +347,50 @@ export async function setGpuProviderKey(
 }
 
 // The caller has already required fresh auth for this session.
-export async function deleteGpuProviderKey({
-  account_id,
-  provider: providerInput,
-}: {
-  account_id: string;
-  provider: unknown;
-}): Promise<{ revoked: boolean }> {
+export async function deleteGpuProviderKey(
+  { account_id, provider }: { account_id: string; provider: unknown },
+  deps: GpuProviderKeyDeps = {},
+): Promise<{ revoked: boolean }> {
+  requireProvider(provider);
+  const home = await homeClientFor(account_id, KEY_HOME_BAY_TIMEOUT_MS, deps);
+  if (home) return await home.gpuKeyDelete({ account_id, provider });
+  return await deleteGpuProviderKeyLocal({ account_id, provider }, deps);
+}
+
+export async function deleteGpuProviderKeyLocal(
+  {
+    account_id,
+    provider: providerInput,
+  }: { account_id: string; provider: unknown },
+  deps: GpuProviderKeyDeps = {},
+): Promise<{ revoked: boolean }> {
   const provider = requireProvider(providerInput);
+  await requireHomeBay(account_id, deps);
   // The store keeps one active key per selector (upsert holds the selector
   // lock), so there is at most one to revoke.
   const [existing] = await activeKeySummaries(account_id, provider);
   if (!existing) return { revoked: false };
-  const revoked = await revokeAccountExternalCredentialRouted({
+  const revoked = await revokeExternalCredential({
     id: existing.id,
     owner_account_id: account_id,
   });
   return { revoked };
 }
 
-async function isAccountHomeBay(account_id: string): Promise<boolean> {
+async function accountHomeBay(account_id: string): Promise<string> {
   const { home_bay_id } = await resolveAccountHomeBay({ account_id });
-  return (
-    (`${home_bay_id ?? ""}`.trim() || getConfiguredBayId()) ===
-    getConfiguredBayId()
-  );
+  return `${home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+}
+
+async function isAccountHomeBay(account_id: string): Promise<boolean> {
+  return (await accountHomeBay(account_id)) === getConfiguredBayId();
 }
 
 async function readLocalKey(
   account_id: string,
   deps: GpuProviderKeyDeps,
 ): Promise<string | undefined> {
-  if (!(await (deps.isHomeBay ?? isAccountHomeBay)(account_id))) {
-    throw Error("GPU provider keys are used only on the key owner's home bay");
-  }
+  await requireHomeBay(account_id, deps);
   const record = await getExternalCredential({
     selector: selector(account_id, "runpod"),
   });

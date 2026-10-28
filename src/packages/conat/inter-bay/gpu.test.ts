@@ -1,7 +1,14 @@
 import { createInterBayAccountLocalClient } from "./api";
 import { DataEncoding, encode, decode } from "@cocalc/conat/core/codec";
 
-it.each(["gpuCatalog", "gpuAvailability", "gpuPods"] as const)(
+it.each([
+  "gpuCatalog",
+  "gpuAvailability",
+  "gpuPods",
+  "gpuKeyStatus",
+  "gpuKeySet",
+  "gpuKeyDelete",
+] as const)(
   "routes %s to the key owner's home bay on the account-local gpu subject",
   async (method) => {
     const fastRpcRequest = jest.fn(async () => ({
