@@ -35,7 +35,13 @@ let unfinished = 0;
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => {
-    const query = async () => ({ rows: [{ n: unfinished }] });
+    // the unfinished-pod count (and an account row for the fence); no fence
+    // or budget rows
+    const query = async (sql: string) => ({
+      rows: /gpu_key_fences|gpu_budget_layers/.test(sql)
+        ? []
+        : [{ n: unfinished }],
+    });
     return { query, connect: async () => ({ query, release: () => {} }) };
   },
 }));
@@ -664,7 +670,7 @@ describe("GPU provider keys", () => {
     expect(revokeMock).not.toHaveBeenCalled();
   });
 
-  describe("replacing a key RunPod already rejects, with unfinished pods", () => {
+  describe("replacing a key with unfinished pods (5c: every connect is a new credential)", () => {
     const verify = () =>
       fakeFetch([
         PERSONAL_ORG_403,
@@ -675,49 +681,30 @@ describe("GPU provider keys", () => {
       ]);
     const rejected = { storedKeyRejected: async () => true };
 
-    it("allows it for the same RunPod account (old pods stay reachable)", async () => {
-      unfinished = 1;
-      listMock.mockResolvedValue([
-        summary({
-          provider_account_kind: "personal",
-          provider_account_id: "user_1",
-        }),
-      ]);
-      const { fetch } = verify();
-      await setGpuProviderKeyLocal(
-        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
-        { ...home, ...rejected, fetch, isEntitled: entitled },
-      );
-      expect(upsertMock).toHaveBeenCalled();
-    });
-
     it.each([
+      [{ provider_account_kind: "personal", provider_account_id: "user_1" }],
       [
         {
           provider_account_kind: "personal",
           provider_account_id: "user_other",
         },
       ],
-      [
-        {
-          provider_account_kind: "organization",
-          provider_account_id: "user_1",
-        },
-      ],
       [{}],
     ])(
-      "refuses it for another or unknown RunPod account (%j)",
+      "refuses it even when RunPod rejects the old key, for any account (%j)",
       async (metadata) => {
         unfinished = 1;
         listMock.mockResolvedValue([summary(metadata)]);
-        const { fetch } = verify();
+        const { fetch, urls } = verify();
         await expect(
           setGpuProviderKeyLocal(
             { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
             { ...home, ...rejected, fetch, isEntitled: entitled },
           ),
-        ).rejects.toThrow("different RunPod account");
+        ).rejects.toThrow("can't be replaced yet");
+        expect(urls).toEqual([]); // refused before RunPod is asked
         expect(upsertMock).not.toHaveBeenCalled();
+        expect(revokeMock).not.toHaveBeenCalled();
       },
     );
 
@@ -733,5 +720,26 @@ describe("GPU provider keys", () => {
         ),
       ).toEqual({ revoked: true });
     });
+  });
+
+  it("replaces a key with no unfinished pods by revoking it and storing a new credential", async () => {
+    listMock.mockResolvedValue([summary({})]);
+    const { fetch } = fakeFetch([
+      PERSONAL_ORG_403,
+      MYSELF,
+      NO_PODS,
+      TEMPLATE_CREATED,
+      TEMPLATE_DELETED,
+    ]);
+    await setGpuProviderKeyLocal(
+      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      { ...home, fetch, isEntitled: entitled },
+    );
+    expect(revokeMock).toHaveBeenCalled();
+    expect(upsertMock).toHaveBeenCalled();
+    // revoked first, so the store inserts a new row (a new id)
+    expect(revokeMock.mock.invocationCallOrder[0]).toBeLessThan(
+      upsertMock.mock.invocationCallOrder[0],
+    );
   });
 });

@@ -485,4 +485,49 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     );
     expect(rows[0]).toEqual({ state: "running", credential_id: before });
   });
+
+  it("a replacement is a new credential: the old key is revoked and its fence closed, and only its remaining money carries over", async () => {
+    const s = await setup();
+    const pod = await launch(s);
+    const before = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    // the pod ended, having spent $15 of the key's $20
+    await getPool().query(
+      "UPDATE gpu_pods SET state = 'terminated', desired_state = 'terminated' WHERE id = $1",
+      [pod.id],
+    );
+    await getPool().query(
+      "UPDATE gpu_budget_layers SET spent_usd = 15, reserved_usd = 0 WHERE credential_id = $1 AND scope_kind = 'key'",
+      [before],
+    );
+    await keys.setGpuProviderKeyLocal(
+      { account_id: s.account_id, provider: "runpod", api_key: NEW },
+      s.keyDeps,
+    );
+    const after = (await keys.getRunpodLaunchAccessForAccount(
+      s.account_id,
+      s.keyDeps,
+    ))!.credential_id;
+    expect(after).not.toBe(before);
+    expect(await storedKey(s.account_id)).toBe(NEW);
+    const { rows: fences } = await getPool().query(
+      "SELECT credential_id, state FROM gpu_key_fences WHERE key_owner_account_id = $1",
+      [s.account_id],
+    );
+    expect(
+      Object.fromEntries(fences.map((f) => [f.credential_id, f.state])),
+    ).toEqual({ [before]: "closed", [after]: "active" });
+    const { rows: layer } = await getPool().query(
+      "SELECT authorized_usd FROM gpu_budget_layers WHERE credential_id = $1 AND scope_kind = 'key'",
+      [after],
+    );
+    expect(Number(layer[0].authorized_usd)).toBe(5);
+    const { rows: log } = await getPool().query(
+      "SELECT action, details FROM gpu_key_events WHERE credential_id = $1",
+      [before],
+    );
+    expect(log).toEqual([{ action: "removed", details: { replaced: true } }]);
+  });
 });
