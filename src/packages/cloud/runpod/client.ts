@@ -14,6 +14,7 @@ import { randomBytes } from "node:crypto";
 // The credential-bearing origins are fixed: there is deliberately no option
 // to point this client (and so the escrowed key) anywhere else.
 
+import type { RunpodCloud } from "@cocalc/util/gpu/runpod";
 import {
   billingRecordView,
   podView,
@@ -113,9 +114,7 @@ export interface RunpodAccountBalance {
   spendLimitPerHour?: number;
 }
 
-export type RunpodCloud = "SECURE" | "COMMUNITY";
-
-export type RunpodAvailability = "NONE" | "LOW" | "MEDIUM" | "HIGH";
+export type { RunpodAvailability, RunpodCloud } from "@cocalc/util/gpu/runpod";
 
 export class RunpodClient {
   readonly #apiKey: string;
@@ -193,11 +192,16 @@ export class RunpodClient {
     return { kind: "personal", id: me.id };
   }
 
+  // Every pod in the account, including Instant Cluster members, which
+  // RunPod leaves out by default: a hidden pod is hidden spend.
   async listPods(): Promise<RunpodPodView[]> {
     const pods: RunpodPodView[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
-      const body = await this.get("/v2/pods", cursor ? { cursor } : {});
+      const body = await this.get("/v2/pods", {
+        includeClusterPods: "true",
+        ...(cursor ? { cursor } : {}),
+      });
       if (
         !Array.isArray(body?.pods) ||
         typeof body.pagination?.hasNextPage !== "boolean"

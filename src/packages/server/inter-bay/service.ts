@@ -1244,6 +1244,15 @@ async function startAccountLocalService(): Promise<void> {
     creditTransferDeliver,
     computeFundingGetCourseSummary: computeFunding.getCourseSummary,
     computeFundingGetOwnedPools: computeFunding.getOwnedPools,
+    // Never forwards again: the key helper refuses off the home bay.
+    gpuCatalog: async (opts) =>
+      await (await import("@cocalc/server/gpu/read")).getGpuCatalogLocal(opts),
+    gpuAvailability: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/read")
+      ).getGpuAvailabilityLocal(opts),
+    gpuPods: async (opts) =>
+      await (await import("@cocalc/server/gpu/read")).getGpuPodsLocal(opts),
     computeOwnerResources: async (opts) =>
       (
         await import("@cocalc/server/compute/owner-resource-routing")

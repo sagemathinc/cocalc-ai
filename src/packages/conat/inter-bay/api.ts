@@ -2746,6 +2746,7 @@ export type AccountDirectoryMethod =
   | "revoke-membership-claim-identity";
 export type AccountLocalMethod =
   | "compute-funding"
+  | "gpu"
   | "credit-transfers"
   | "create"
   | "delete"
@@ -4103,8 +4104,31 @@ export interface InterBayComputeFundingApi extends MonthlyCollectionApi {
 
 import type { InterBayCreditTransferApi } from "./credit-transfers";
 
+// GPU bring-your-own-key: operations that use an account's provider key run
+// whole on the key owner's home bay; the key never crosses between bays.
+// account_id is the authenticated caller.
+export interface InterBayGpuApi {
+  gpuCatalog: (
+    opts: Parameters<
+      import("@cocalc/conat/hub/api/gpu").GpuApi["catalog"]
+    >[0] & {
+      account_id: string;
+    },
+  ) => Promise<import("@cocalc/conat/hub/api/gpu").GpuCatalogResult>;
+  gpuAvailability: (
+    opts: Parameters<
+      import("@cocalc/conat/hub/api/gpu").GpuApi["availability"]
+    >[0] & { account_id: string },
+  ) => Promise<import("@cocalc/conat/hub/api/gpu").GpuAvailabilityResult>;
+  gpuPods: (
+    opts: Parameters<import("@cocalc/conat/hub/api/gpu").GpuApi["pods"]>[0] & {
+      account_id: string;
+    },
+  ) => Promise<import("@cocalc/conat/hub/api/gpu").GpuPodsResult>;
+}
+
 export interface InterBayAccountLocalApi
-  extends InterBayComputeFundingApi, InterBayCreditTransferApi {
+  extends InterBayComputeFundingApi, InterBayCreditTransferApi, InterBayGpuApi {
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
@@ -6668,6 +6692,10 @@ export function createInterBayAccountLocalClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({ dest_bay, method: "compute-funding" }),
   });
+  const gpuClient = createServiceClient<InterBayGpuApi>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "gpu" }),
+  });
   const createClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "create">
   >({
@@ -8131,6 +8159,9 @@ export function createInterBayAccountLocalClient({
       }),
     });
   return {
+    gpuCatalog: async (opts) => await gpuClient.gpuCatalog(opts),
+    gpuAvailability: async (opts) => await gpuClient.gpuAvailability(opts),
+    gpuPods: async (opts) => await gpuClient.gpuPods(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -8695,6 +8726,16 @@ export function createInterBayAccountLocalHandler({
         creditTransferVerifyRoot: (opts) => impl.creditTransferVerifyRoot(opts),
         creditTransferOutgoing: (opts) => impl.creditTransferOutgoing(opts),
         creditTransferDeliver: (opts) => impl.creditTransferDeliver(opts),
+      },
+    }),
+    createServiceHandler<InterBayGpuApi>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({ dest_bay: bay_id, method: "gpu" }),
+      impl: {
+        gpuCatalog: async (opts) => await impl.gpuCatalog(opts),
+        gpuAvailability: async (opts) => await impl.gpuAvailability(opts),
+        gpuPods: async (opts) => await impl.gpuPods(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({

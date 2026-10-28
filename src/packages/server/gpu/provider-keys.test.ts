@@ -334,7 +334,9 @@ describe("GPU provider keys", () => {
       (await import("@cocalc/cloud/runpod/client")).RunpodClient,
     );
     expect(await cleanup.listPods()).toEqual([]);
-    expect(urls).toEqual(["https://api.runpod.io/v2/pods"]);
+    expect(urls).toEqual([
+      "https://api.runpod.io/v2/pods?includeClusterPods=true",
+    ]);
     expect(JSON.stringify(cleanup)).not.toContain(KEY);
   });
 

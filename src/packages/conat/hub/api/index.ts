@@ -39,6 +39,7 @@ import {
   commercialOrders,
 } from "./commercial-orders";
 import { type AdminCrmApi, adminCrm } from "./crm";
+import { type GpuApi, gpu } from "./gpu";
 import type { HubApiArgTransform, HubApiPrincipalPolicy } from "./util";
 
 export interface HubApi {
@@ -75,6 +76,7 @@ export interface HubApi {
   growthAnalytics: GrowthAnalyticsApi;
   commercialOrders: CommercialOrdersApi;
   adminCrm: AdminCrmApi;
+  gpu: GpuApi;
 }
 
 type HubApiTransformStructure = {
@@ -117,6 +119,7 @@ const HubApiStructure = {
   growthAnalytics,
   commercialOrders,
   adminCrm,
+  gpu,
 } as const satisfies HubApiTransformStructure;
 
 export function getHubApiPrincipalPolicy(

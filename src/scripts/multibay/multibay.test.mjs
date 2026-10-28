@@ -4665,3 +4665,114 @@ describe("backup prune plans run on the seed, which owns the repositories", () =
     assert.equal((await prunePlanLog(SEED)).length, 1);
   });
 });
+
+describe("GPU reads run whole on the key owner's home bay", () => {
+  // A fake RunPod key. Nothing here calls RunPod: every assertion is decided
+  // on a bay before any provider request.
+  const FAKE_KEY = `rpa_MULTIBAYFAKE${"0".repeat(36)}`;
+  const selector = (owner_account_id) => ({
+    provider: "runpod",
+    kind: "gpu-provider-api-key",
+    scope: "account",
+    owner_account_id,
+  });
+  // On `bay`, for `account`: the read's outcome (if a method is given),
+  // whether this bay stores the key, and whether its key helper allows it.
+  async function onBay(bay, account, method) {
+    return await runInBay(
+      cluster,
+      bay,
+      `const read = server("gpu/read.js");
+       const { getExternalCredential } = server("external-credentials/store.js");
+       const { getRunpodCleanupForAccount } = server("gpu/provider-keys.js");
+       const account_id = ${JSON.stringify(account.account_id)};
+       const out = {};
+       if (${JSON.stringify(method ?? "")}) {
+         try { await read[${JSON.stringify(method ?? "")}]({ account_id }); out.read = "ok"; }
+         catch (e) { out.read = String(e?.message ?? e); }
+       }
+       const local = await getExternalCredential({ selector: ${JSON.stringify(selector(account.account_id))} });
+       out.local_key = !!local?.payload;
+       try { out.custody = (await getRunpodCleanupForAccount(account_id)) ? "key" : "no key"; }
+       catch (e) { out.custody = String(e?.message ?? e); }
+       return out;`,
+    );
+  }
+
+  before(async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { upsertExternalCredential } = server("external-credentials/store.js");
+       await upsertExternalCredential({
+         selector: ${JSON.stringify(selector(bob.account_id))},
+         payload: ${JSON.stringify(FAKE_KEY)},
+         metadata: { source: "multibay-test" },
+       });`,
+    );
+  });
+
+  it("keeps the key on its owner's home bay; the other bay has no copy and refuses", async () => {
+    const home = await onBay(ATTACHED, bob);
+    assert.equal(home.local_key, true);
+    assert.equal(home.custody, "key");
+    const other = await onBay(SEED, bob);
+    assert.equal(other.local_key, false);
+    assert.match(other.custody, /only on the key owner's home bay/);
+    assert.ok(!JSON.stringify({ home, other }).includes(FAKE_KEY));
+  });
+
+  // What the home bay's handler runs for a forwarded pod read, in the home
+  // bay's own environment, with RunPod itself stubbed (fetch, in this worker
+  // only): the stored key is read and sent to RunPod's fixed endpoint.
+  it("reads the key on the home bay and calls RunPod's fixed endpoint with it", async () => {
+    const r = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getGpuPodsLocal } = server("gpu/read.js");
+       const real = globalThis.fetch;
+       const calls = [];
+       globalThis.fetch = async (url, init) => {
+         calls.push({ url: String(url), auth: init?.headers?.Authorization === "Bearer " + ${JSON.stringify(FAKE_KEY)} });
+         return new Response(JSON.stringify({
+           pods: [{ id: "pod_mb0001", name: "cc-multibay", status: "RUNNING", env: { SECRET: "x" } }],
+           pagination: { hasNextPage: false, nextCursor: null },
+         }), { status: 200 });
+       };
+       try {
+         const result = await getGpuPodsLocal({ account_id: ${JSON.stringify(bob.account_id)} });
+         return { calls, result };
+       } finally {
+         globalThis.fetch = real;
+       }`,
+    );
+    assert.deepEqual(r.calls, [
+      {
+        url: "https://api.runpod.io/v2/pods?includeClusterPods=true",
+        auth: true,
+      },
+    ]);
+    assert.equal(r.result.scope, "account");
+    assert.deepEqual(r.result.pods, [
+      { id: "pod_mb0001", name: "cc-multibay", status: "RUNNING" },
+    ]);
+    assert.ok(!JSON.stringify(r).includes(FAKE_KEY));
+  });
+
+  // Run on the wrong bay, these reads would fail to load the key ("could not
+  // be loaded"); these answers come only from the home bay.
+  it("forwards a catalog read to the home bay, which checks the entitlement", async () => {
+    const r = await onBay(SEED, bob, "getGpuCatalog");
+    assert.match(
+      r.read,
+      /Your membership doesn't include GPUs on your own key/,
+    );
+  });
+
+  it("forwards a pod read the other way, to an account's home bay on the seed", async () => {
+    const r = await onBay(ATTACHED, alice, "getGpuPods");
+    assert.match(r.read, /No RunPod API key is connected/);
+    assert.equal(r.local_key, false);
+    assert.match(r.custody, /only on the key owner's home bay/);
+  });
+});
