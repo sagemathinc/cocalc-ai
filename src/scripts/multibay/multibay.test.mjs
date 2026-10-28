@@ -4021,7 +4021,7 @@ describe("outgoing support tickets across bays", () => {
     };
     let plan;
     let lastError;
-    for (const deadline = Date.now() + 60_000; Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline;) {
       try {
         plan = await runInBay(
           cluster,
@@ -4932,6 +4932,55 @@ describe("GPU pods are recorded and managed on the key owner's home bay", () => 
   });
 });
 
+describe("GPU budgets are read and changed on the key owner's home bay", () => {
+  // bob's key was removed above, so his home bay (the attached bay) answers
+  // that no key is connected; the seed must forward rather than answer.
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const budgets = server("gpu/budget-api.js");
+       const account_id = ${JSON.stringify(bob.account_id)};
+       ${body}`,
+    );
+  }
+
+  it("forwards budget reads and changes from the seed to the home bay", async () => {
+    const r = await onSeed(
+      `const out = [];
+       try { await budgets.getGpuBudget({ account_id }); out.push("read"); }
+       catch (e) { out.push(String(e?.message ?? e)); }
+       try { await budgets.setGpuBudget({ account_id, change: { max_concurrent_pods: 1 } }); out.push("set"); }
+       catch (e) { out.push(String(e?.message ?? e)); }
+       const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const local = (await getPool().query("SELECT count(*)::int AS n FROM gpu_budget_layers WHERE key_owner_account_id = $1", [account_id])).rows[0].n;
+       return { out, local };`,
+    );
+    for (const m of r.out) {
+      assert.match(
+        m,
+        /No RunPod API key is connected|membership doesn't include/,
+      );
+    }
+    assert.equal(r.local, 0);
+  });
+
+  it("refuses to run the home bay's part anywhere else", async () => {
+    const r = await onSeed(
+      `const out = [];
+       for (const f of ["getGpuBudgetLocal", "setGpuBudgetLocal"]) {
+         try { await budgets[f]({ account_id, change: { max_concurrent_pods: 1 } }); out.push("ran"); }
+         catch (e) { out.push(String(e?.message ?? e)); }
+       }
+       return out;`,
+    );
+    // the seed has no row for bob, or knows he is homed elsewhere: either
+    // way it refuses before touching any budget
+    for (const m of r)
+      assert.match(m, /homed on|home bay|account \S+ not found/);
+  });
+});
+
 describe("a pod's host key is registered on the bay that minted its token", () => {
   // The pod reports to whichever bay its load balancer picks; that bay
   // forwards to the token's bay (bay-1, bob's home), the only one that can
@@ -5036,7 +5085,9 @@ describe("a pod's host key is registered on the bay that minted its token", () =
        const ev = await getPool().query("SELECT details FROM gpu_pod_events WHERE pod_id = $1 AND action = 'host_key' ORDER BY at", [${JSON.stringify(POD_ID)}]);
        return { key: rows[0].host_public_key, alerts: ev.rows.map((e) => e.details.alert ?? null) };`,
     );
-    assert.deepEqual(home, { key: HOST_KEY, alerts: [null, "host_key_mismatch"] });
+    assert.deepEqual(home, {
+      key: HOST_KEY,
+      alerts: [null, "host_key_mismatch"],
+    });
   });
-
 });

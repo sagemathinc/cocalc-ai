@@ -128,6 +128,16 @@ function harness(
             observe();
             return { state: "terminated" };
           },
+          budget: async (args) => {
+            calls.push({ name: "budget", args });
+            observe();
+            return { authorized_usd: "20" };
+          },
+          setBudget: async (args) => {
+            calls.push({ name: "setBudget", args });
+            observe();
+            return { authorized_usd: "10" };
+          },
           who: async (args) => {
             calls.push({ name: "who", args });
             observe();
@@ -365,6 +375,45 @@ it("terminates and looks up a pod", async () => {
       events: "2026-10-27T21:00:00.000Z user create",
     },
   ]);
+});
+
+it("shows and changes the budget; none removes a limit", async () => {
+  const h = harness();
+  await h.run("budget");
+  await h.run(
+    "budget",
+    "set",
+    "--authorized",
+    "10",
+    "--max-hourly",
+    "none",
+    "--max-pods",
+    "1",
+    "--max-runtime",
+    "none",
+    "--expected-version",
+    "3",
+  );
+  assert.deepEqual(h.calls, [
+    { name: "budget", args: {} },
+    {
+      name: "setBudget",
+      args: {
+        change: {
+          authorized_usd: "10",
+          max_hourly_usd: null,
+          max_concurrent_pods: 1,
+          max_runtime_minutes: null,
+        },
+        expected_version: 3,
+      },
+    },
+  ]);
+  await assert.rejects(h.run("budget", "set"), /at least one limit/);
+  await assert.rejects(
+    h.run("budget", "set", "--max-pods", "1.5"),
+    /whole number or none/,
+  );
 });
 
 it("launch --ssh makes the key here and sends only its public key; terminate forgets the pod here", async () => {

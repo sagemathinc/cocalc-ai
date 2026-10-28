@@ -20,6 +20,7 @@ import {
   listManagedGpuPodsLocal,
   newPodHandle,
   recordSeenAddresses,
+  providerStartTime,
   STALE_CREATE_MS,
   sshKeyFingerprint,
   terminateGpuPodLocal,
@@ -31,7 +32,6 @@ const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
 const PROJECT = "00000000-1000-4000-8000-0000000000aa";
-const CREDENTIAL = "00000000-1000-4000-8000-0000000000cc";
 // ssh-keygen -lf prints SHA256:O8VI/... for this key (computed below).
 const SSH_KEY =
   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl test";
@@ -66,18 +66,24 @@ function fakeRunpod() {
   return { client, pods };
 }
 
+// Each account has its own key (and so its own budget: the default, $20 in
+// all, 2 pods at once); the list price is $0.50 per GPU-hour.
+const LIST_PRICE = 0.5;
+
 function deps(account_id: string, rp = fakeRunpod()) {
+  const credential_id = randomUUID();
   return {
     rp,
+    credential_id,
     deps: {
       isHomeBay: async () => true,
       isProjectCollaborator: async () => true,
       getLaunchAccess: async () => ({
         client: rp.client as any,
-        credential_id: CREDENTIAL,
+        credential_id,
       }),
-      getCleanup: async () =>
-        ({ ...rp.client, credential_id: CREDENTIAL }) as any,
+      getCleanup: async () => ({ ...rp.client, credential_id }) as any,
+      listPrice: async () => LIST_PRICE,
       // the real fence, on the account row it needs (same transaction)
       accountWriteFence: async (db: any, id: string, action: string) => {
         await db.query(
@@ -90,6 +96,20 @@ function deps(account_id: string, rp = fakeRunpod()) {
     },
     account_id,
   };
+}
+
+async function syncGpuTables() {
+  await getPool().query(
+    "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
+  );
+  await syncSchema({
+    gpu_key_fences: SCHEMA.gpu_key_fences,
+    gpu_budget_layers: SCHEMA.gpu_budget_layers,
+    gpu_budget_events: SCHEMA.gpu_budget_events,
+    gpu_pods: SCHEMA.gpu_pods,
+    gpu_pod_events: SCHEMA.gpu_pod_events,
+    gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
+  });
 }
 
 async function events(pod_id: string) {
@@ -166,13 +186,41 @@ describe("pod handles, fingerprints and the create body", () => {
 
 describeDb("GPU pods", () => {
   beforeAll(async () => {
-    await getPool().query(
-      "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
-    );
-    await syncSchema({
-      gpu_pods: SCHEMA.gpu_pods,
-      gpu_pod_events: SCHEMA.gpu_pod_events,
+    await syncGpuTables();
+  });
+
+  it("refuses a launch whose key changed between pricing and the fence, recording nothing", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    // a different key at each read
+    d.getLaunchAccess = async () => ({
+      client: rp.client as any,
+      credential_id: randomUUID(),
     });
+    await expect(
+      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+    ).rejects.toThrow("Your RunPod API key changed during the launch");
+    expect(rp.client.createPod).not.toHaveBeenCalled();
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_pods WHERE key_owner_account_id = $1",
+      [account_id],
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
+  it("refuses a launch whose key was replaced in place between pricing and the fence", async () => {
+    const { deps: d, rp, account_id } = deps(randomUUID());
+    const credential_id = randomUUID();
+    // the same record (an in-place replacement keeps its id), rewritten
+    let reads = 0;
+    d.getLaunchAccess = async () => ({
+      client: rp.client as any,
+      credential_id,
+      revision: `r${++reads}`,
+    });
+    await expect(
+      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+    ).rejects.toThrow("Your RunPod API key changed during the launch");
+    expect(rp.client.createPod).not.toHaveBeenCalled();
   });
 
   it("records the intent, creates the pod by its handle, and binds it", async () => {
@@ -732,7 +780,11 @@ describeDb("GPU pods", () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     rp.client.createPod.mockImplementationOnce(async (body: any) => {
       rp.pods.set("pod_dupaaa", { id: "pod_dupaaa", name: body.name });
-      rp.pods.set("pod_dupbbb", { id: "pod_dupbbb", name: body.name });
+      rp.pods.set("pod_dupbbb", {
+        id: "pod_dupbbb",
+        name: body.name,
+        cost: 0.9,
+      });
       throw new RunpodApiError("protocol");
     });
     // the duplicate's first terminate fails
@@ -756,10 +808,47 @@ describeDb("GPU pods", () => {
       }),
     );
     expect(rows[0].handle).not.toBe(pod.handle);
-    // the next listing retries it
+    // while its terminate is pending it is a live pod: with the default
+    // 2 pods at once, the canonical pod and it leave no room for another
+    await expect(
+      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+    ).rejects.toThrow("at most 2 pods at once");
+    // it holds its RunPod rate ($0.90/h) for its whole allowed hour
+    const { rows: pending } = await getPool().query(
+      `SELECT r.reserved_usd, r.hourly_usd FROM gpu_pod_reservations r
+         JOIN gpu_pods p ON p.id = r.pod_id WHERE p.provider_pod_id = 'pod_dupbbb'`,
+    );
+    expect(Number(pending[0].hourly_usd)).toBeCloseTo(0.9, 6);
+    expect(Number(pending[0].reserved_usd)).toBeCloseTo(0.9, 6);
+    // it ran for 20 minutes before it was found; the next listing retries it
+    await getPool().query(
+      "UPDATE gpu_pods SET running_since = now() - interval '20 minutes' WHERE provider_pod_id = 'pod_dupbbb'",
+    );
     const live = await listManagedGpuPodsLocal({ account_id }, d);
     expect(rp.pods.has("pod_dupbbb")).toBe(false);
     expect(live.map((p) => p.provider_pod_id)).toEqual(["pod_dupaaa"]);
+    // its spend is settled onto the canonical pod's layer: 20 min at $0.90/h,
+    // the rest of its hold returns; the canonical pod's hold is untouched
+    const { rows: dup } = await getPool().query(
+      `SELECT r.* FROM gpu_pod_reservations r JOIN gpu_pods p ON p.id = r.pod_id
+        WHERE p.provider_pod_id = 'pod_dupbbb'`,
+    );
+    expect(dup).toHaveLength(1);
+    expect(dup[0].state).toBe("settled");
+    expect(Number(dup[0].spent_usd)).toBeCloseTo(0.3, 3);
+    expect(Number(dup[0].released_usd)).toBeCloseTo(0.6, 3);
+    expect(Number(dup[0].overrun_usd)).toBe(0);
+    const { rows: layer } = await getPool().query(
+      "SELECT spent_usd, reserved_usd FROM gpu_budget_layers WHERE id = $1",
+      [dup[0].layer_id],
+    );
+    expect(Number(layer[0].spent_usd)).toBeCloseTo(0.3, 3);
+    const { rows: canon } = await getPool().query(
+      "SELECT reserved_usd, state FROM gpu_pod_reservations WHERE pod_id = $1",
+      [pod.id],
+    );
+    expect(canon[0].state).toBe("active");
+    expect(Number(layer[0].reserved_usd)).toBe(Number(canon[0].reserved_usd));
   });
 
   it("never terminates the pod another resolver just bound", async () => {
@@ -914,13 +1003,7 @@ describeDb("GPU pods", () => {
 
 describeDb("GPU pods left behind and seen again", () => {
   beforeAll(async () => {
-    await getPool().query(
-      "CREATE TABLE IF NOT EXISTS accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
-    );
-    await syncSchema({
-      gpu_pods: SCHEMA.gpu_pods,
-      gpu_pod_events: SCHEMA.gpu_pod_events,
-    });
+    await syncGpuTables();
   });
 
   it("resolves records a crash left in intent or creating", async () => {
@@ -1094,5 +1177,52 @@ describe("routing", () => {
       project_id: PROJECT,
       spec: SPEC,
     });
+  });
+});
+
+describe("providerStartTime", () => {
+  const created = new Date("2026-10-28T06:00:00Z");
+  const now = new Date("2026-10-28T06:20:00Z");
+  it("uses RunPod's startedAt, else createdAt, bounded by the intent and now", () => {
+    expect(
+      providerStartTime(
+        {
+          startedAt: "2026-10-28T06:05:00Z",
+          createdAt: "2026-10-28T06:01:00Z",
+        },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe("2026-10-28T06:05:00.000Z");
+    expect(
+      providerStartTime(
+        { createdAt: "2026-10-28T06:01:00Z" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe("2026-10-28T06:01:00.000Z");
+    // before the intent existed, or in the future: clamped
+    expect(
+      providerStartTime(
+        { startedAt: "2026-10-27T00:00:00Z" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe(created.toISOString());
+    expect(
+      providerStartTime(
+        { startedAt: "2026-10-29T00:00:00Z" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe(now.toISOString());
+    // nothing usable: from the intent (it may have run all along)
+    expect(
+      providerStartTime(
+        { startedAt: "garbage" },
+        { created },
+        now,
+      ).toISOString(),
+    ).toBe(created.toISOString());
   });
 });

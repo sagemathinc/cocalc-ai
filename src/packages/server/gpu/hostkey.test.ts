@@ -113,6 +113,7 @@ async function launched() {
     getCleanup: async () =>
       ({ ...rp.client, credential_id: CREDENTIAL }) as any,
     siteUrl: async () => "https://cocalc.test",
+    listPrice: async () => 0.5,
     // the real fence, on the account row it needs (same transaction)
     accountWriteFence: async (db: any, id: string, action: string) => {
       await db.query(
@@ -174,6 +175,10 @@ const REMOVE_DEPS = {
 describeDb("pod host-key registration", () => {
   beforeAll(async () => {
     await syncSchema({
+      gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_budget_layers: SCHEMA.gpu_budget_layers,
+      gpu_budget_events: SCHEMA.gpu_budget_events,
+      gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
       gpu_pods: SCHEMA.gpu_pods,
       gpu_pod_events: SCHEMA.gpu_pod_events,
       external_credentials: SCHEMA.external_credentials,

@@ -14,7 +14,11 @@ import type {
   GpuCatalogResult,
   GpuPodsResult,
 } from "@cocalc/conat/hub/api/gpu";
-import type { GpuLaunchSpec, GpuPodSummary } from "@cocalc/util/gpu/types";
+import type {
+  GpuBudgetChange,
+  GpuLaunchSpec,
+  GpuPodSummary,
+} from "@cocalc/util/gpu/types";
 import { GPU_LAUNCH_IMAGES } from "@cocalc/util/gpu/launch-spec";
 import {
   adoptLaunchedKey,
@@ -407,6 +411,39 @@ export function registerGpuCommand(
       ),
     );
 
+  const budget = gpu
+    .command("budget")
+    .description(
+      "your RunPod key's GPU budget: money and limits CoCalc enforces before every launch",
+    )
+    .action(async (_opts, command: Command) =>
+      run(command, "budget", async (api) => await api.budget({})),
+    );
+
+  budget
+    .command("set")
+    .description(
+      'change the budget; "none" removes a limit. Lowering works here; raising needs you to sign in again, from Settings in the browser',
+    )
+    .option("--authorized <usd>", "the total CoCalc may let the key spend")
+    .option("--max-hourly <usd|none>", "all pods together, per hour")
+    .option("--max-pods <n|none>", "pods at once")
+    .option("--max-gpus <n|none>", "GPUs at once")
+    .option("--max-runtime <minutes|none>", "per pod")
+    .option("--ends <iso-time>", "when the budget stops admitting launches")
+    .option("--expected-version <n>", "fail if the budget changed meanwhile")
+    .action(async (opts, command: Command) =>
+      run(command, "budget set", async (api) => {
+        const change = budgetChangeFromOptions(opts);
+        return await api.setBudget({
+          change,
+          ...(opts.expectedVersion != null
+            ? { expected_version: Number(opts.expectedVersion) }
+            : {}),
+        });
+      }),
+    );
+
   gpu
     .command("who <query>")
     .description(
@@ -455,4 +492,33 @@ export function launchSpecFromOptions(opts: any): GpuLaunchSpec {
   }
   if (opts.sshPublicKey) spec.ssh_public_key = opts.sshPublicKey;
   return spec;
+}
+
+// "none" removes a limit; numbers are checked again by the server.
+export function budgetChangeFromOptions(opts: any): GpuBudgetChange {
+  const change: GpuBudgetChange = {};
+  const count = (flag: string, v: string): number | null => {
+    if (`${v}`.toLowerCase() === "none") return null;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new Error(`${flag} must be a whole number or none`);
+    }
+    return n;
+  };
+  if (opts.authorized != null) change.authorized_usd = `${opts.authorized}`;
+  if (opts.maxHourly != null) {
+    change.max_hourly_usd =
+      `${opts.maxHourly}`.toLowerCase() === "none" ? null : `${opts.maxHourly}`;
+  }
+  if (opts.maxPods != null)
+    change.max_concurrent_pods = count("--max-pods", opts.maxPods);
+  if (opts.maxGpus != null)
+    change.max_gpu_count = count("--max-gpus", opts.maxGpus);
+  if (opts.maxRuntime != null)
+    change.max_runtime_minutes = count("--max-runtime", opts.maxRuntime);
+  if (opts.ends != null) change.ends_at = `${opts.ends}`;
+  if (Object.keys(change).length === 0) {
+    throw new Error("give at least one limit to change");
+  }
+  return change;
 }

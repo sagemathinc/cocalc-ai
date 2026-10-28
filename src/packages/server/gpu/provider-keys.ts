@@ -539,13 +539,18 @@ async function isAccountHomeBay(account_id: string): Promise<boolean> {
 async function readLocalKey(
   account_id: string,
   deps: GpuProviderKeyDeps,
-): Promise<{ id: string; apiKey: string } | undefined> {
+): Promise<{ id: string; apiKey: string; revision: string } | undefined> {
   await requireHomeBay(account_id, deps);
   const record = await getExternalCredential({
     selector: selector(account_id, "runpod"),
   });
   if (!record || record.revoked || !record.payload) return undefined;
-  return { id: record.id, apiKey: record.payload };
+  // the record's last write: an in-place replacement keeps the id but not this
+  return {
+    id: record.id,
+    apiKey: record.payload,
+    revision: new Date(record.updated).toISOString(),
+  };
 }
 
 // Custody (both functions below): they run only on the key owner's home bay
@@ -569,7 +574,9 @@ export async function getRunpodClientForAccount(
 export async function getRunpodLaunchAccessForAccount(
   account_id: string,
   deps: GpuProviderKeyDeps = {},
-): Promise<{ client: RunpodClient; credential_id: string } | undefined> {
+): Promise<
+  { client: RunpodClient; credential_id: string; revision: string } | undefined
+> {
   if (!(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))) {
     throw Error("Your membership doesn't include using a GPU provider key.");
   }
@@ -578,6 +585,7 @@ export async function getRunpodLaunchAccessForAccount(
   return {
     client: new RunpodClient({ apiKey: key.apiKey, fetch: deps.fetch }),
     credential_id: key.id,
+    revision: key.revision,
   };
 }
 

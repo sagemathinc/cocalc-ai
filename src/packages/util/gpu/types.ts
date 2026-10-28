@@ -177,3 +177,39 @@ export interface GpuAttribution {
   pod: GpuPodSummary;
   events: GpuPodEvent[];
 }
+
+// A key's budget (its key layer), as gpu.budget shows it. Money is decimal
+// strings in USD. Available = authorized - spent - reserved - released
+// (released: capacity deliberately retired); spent can pass authorized when
+// RunPod bills more than estimated (over_budget_usd), which pauses launches.
+export interface GpuBudget {
+  layer_id: string;
+  version: number;
+  state: string;
+  authorized_usd: string;
+  spent_usd: string;
+  reserved_usd: string;
+  released_usd: string;
+  available_usd: string;
+  over_budget_usd?: string;
+  // null: no limit of that kind
+  max_hourly_usd: string | null;
+  max_concurrent_pods: number | null;
+  max_gpu_count: number | null;
+  max_runtime_minutes: number | null;
+  starts_at: string;
+  ends_at: string;
+  live_pods: number;
+  live_gpus: number;
+}
+
+// What gpu.setBudget may change. Lowering needs only the owner; raising
+// (or removing a limit, or a later end) needs fresh authentication.
+export interface GpuBudgetChange {
+  authorized_usd?: string | number;
+  max_hourly_usd?: string | number | null;
+  max_concurrent_pods?: number | null;
+  max_gpu_count?: number | null;
+  max_runtime_minutes?: number | null;
+  ends_at?: string;
+}

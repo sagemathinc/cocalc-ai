@@ -12,6 +12,8 @@ it.each([
   "gpuTerminate",
   "gpuWho",
   "gpuManagedPods",
+  "gpuBudget",
+  "gpuSetBudget",
   "gpuSshInfo",
   "gpuRegisterHostKey",
 ] as const)(

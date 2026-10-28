@@ -47,8 +47,12 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     );
     await syncSchema({
       external_credentials: SCHEMA.external_credentials,
+      gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_budget_layers: SCHEMA.gpu_budget_layers,
+      gpu_budget_events: SCHEMA.gpu_budget_events,
       gpu_pods: SCHEMA.gpu_pods,
       gpu_pod_events: SCHEMA.gpu_pod_events,
+      gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
     });
     keys = await import("./provider-keys");
     pods = await import("./pods");
@@ -133,7 +137,9 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
   function launch(
     s: Awaited<ReturnType<typeof setup>>,
     waitFor?: Promise<void>,
+    underFence?: () => void,
   ) {
+    let reads = 0;
     return pods.launchGpuPodLocal(
       {
         account_id: s.account_id,
@@ -147,14 +153,20 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       {
         isHomeBay: async () => true,
         isProjectCollaborator: async () => true,
-        // called under the account fence
+        // the second read is the one under the account fence (the first
+        // prices the launch, after a fence check of its own)
         getLaunchAccess: async (account_id) => {
-          await waitFor;
+          reads += 1;
+          if (reads === 2) {
+            underFence?.();
+            await waitFor;
+          }
           return await keys.getRunpodLaunchAccessForAccount(
             account_id,
             s.keyDeps,
           );
         },
+        listPrice: async () => 0.5,
       },
     );
   }
@@ -199,10 +211,11 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
   it("launch first: the replacement waits, then is refused; the pod used the old key", async () => {
     const s = await setup();
     const g = gate();
-    const launching = launch(s, g.p);
+    const held = gate();
+    const launching = launch(s, g.p, held.open);
     // the launch holds the fence (waiting on its gate); the replacement
     // verifies with RunPod and then waits for the fence
-    await fenceHeld();
+    await held.p;
     const replacing = keys.setGpuProviderKeyLocal(
       { account_id: s.account_id, provider: "runpod", api_key: NEW },
       s.keyDeps,
@@ -242,8 +255,9 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
   it("launch first: the removal waits, then is refused", async () => {
     const s = await setup();
     const g = gate();
-    const launching = launch(s, g.p);
-    await fenceHeld();
+    const held = gate();
+    const launching = launch(s, g.p, held.open);
+    await held.p;
     const removing = keys.deleteGpuProviderKeyLocal(
       { account_id: s.account_id, provider: "runpod" },
       s.keyDeps,
@@ -253,6 +267,52 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     await launching;
     await expect(removing).rejects.toThrow("can't be removed yet");
     expect(await storedKey(s.account_id)).toBe(OLD);
+  });
+
+  it("a key replaced in place between pricing and the fence refuses the launch", async () => {
+    const s = await setup();
+    let reads = 0;
+    const launching = pods.launchGpuPodLocal(
+      {
+        account_id: s.account_id,
+        project_id: "00000000-1000-4000-8000-0000000000aa",
+        spec: {
+          gpu_type_id: "NVIDIA GeForce RTX 4090",
+          image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+          max_runtime_minutes: 60,
+        },
+      },
+      {
+        isHomeBay: async () => true,
+        isProjectCollaborator: async () => true,
+        getLaunchAccess: async (account_id) => {
+          const access = await keys.getRunpodLaunchAccessForAccount(
+            account_id,
+            s.keyDeps,
+          );
+          // right after pricing read the old key, it is replaced in place
+          // (the record keeps its id)
+          if (++reads === 1) {
+            await keys.setGpuProviderKeyLocal(
+              { account_id, provider: "runpod", api_key: NEW },
+              s.keyDeps,
+            );
+          }
+          return access;
+        },
+        listPrice: async () => 0.5,
+      },
+    );
+    await expect(launching).rejects.toThrow(
+      "Your RunPod API key changed during the launch",
+    );
+    expect(s.used).toEqual([]);
+    expect(await storedKey(s.account_id)).toBe(NEW);
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_pods WHERE key_owner_account_id = $1",
+      [s.account_id],
+    );
+    expect(rows[0].n).toBe(0);
   });
 
   it("removal first: the launch waits, then finds no key and records nothing", async () => {
@@ -324,6 +384,7 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
           read();
           return await keys.getRunpodLaunchAccessForAccount(a, s.keyDeps);
         },
+        listPrice: async () => 0.5,
       },
     );
     await rehome.cutover();
