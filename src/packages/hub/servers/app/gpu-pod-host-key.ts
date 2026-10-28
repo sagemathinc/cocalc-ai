@@ -58,7 +58,12 @@ export interface GpuPodHostKeyDeps {
     dest_bay: string,
     opts: { token: HostkeyToken; pod_id: string; host_public_key: string },
   ) => Promise<GpuHostKeyResult>;
+  limits?: { global: number; ip: number; token: number };
+  clientAddress?: (req: Request) => string;
 }
+
+// Per minute.
+const LIMITS = { global: 600, ip: 30, token: 10 };
 
 function knownBays(): Set<string> {
   const bays = new Set(
@@ -121,12 +126,16 @@ export default function initGpuPodHostKey(
     if (!(deps.isSecure ?? ((r) => r.secure))(req)) {
       return answer(res, 400, "https_required");
     }
-    const ip = createHash("sha256")
-      .update(req.ip ?? req.socket.remoteAddress ?? "unknown")
-      .digest("hex");
+    const limits = deps.limits ?? LIMITS;
+    const address = deps.clientAddress
+      ? deps.clientAddress(req)
+      : (req.ip ?? req.socket.remoteAddress ?? "unknown");
+    const ip = createHash("sha256").update(address).digest("hex");
+    // Per IP first: the site-wide allowance is charged only for requests an
+    // IP's own allowance admits, so one client can't use it up for all pods.
     if (
-      !checkAndRecordCount(counts, "global", 600) ||
-      !checkAndRecordCount(counts, `ip:${ip}`, 30)
+      !checkAndRecordCount(counts, `ip:${ip}`, limits.ip) ||
+      !checkAndRecordCount(counts, "global", limits.global)
     ) {
       res.set("Retry-After", "60");
       return answer(res, 429, "rate_limited");
@@ -138,7 +147,7 @@ export default function initGpuPodHostKey(
     ) {
       return answer(res, 401, "unauthorized");
     }
-    if (!checkAndRecordCount(counts, `token:${token.token_id}`, 10)) {
+    if (!checkAndRecordCount(counts, `token:${token.token_id}`, limits.token)) {
       res.set("Retry-After", "60");
       return answer(res, 429, "rate_limited");
     }

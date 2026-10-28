@@ -155,6 +155,52 @@ describe("POST /gpu/pod-host-key", () => {
     },
   );
 
+  it("lets one flooding address use only its own allowance, not the site's", async () => {
+    // a second app with small limits, the address taken from a test header
+    const app = express();
+    const router = express.Router();
+    initGpuPodHostKey(router, {
+      isSecure: () => true,
+      knownBays: () => new Set(["bay-0"]),
+      thisBay: () => "bay-0",
+      register,
+      forward,
+      limits: { global: 5, ip: 2, token: 100 },
+      clientAddress: (req) => `${req.get("x-test-address")}`,
+    });
+    app.use("/base", router);
+    const small: ReturnType<ReturnType<typeof express>["listen"]> =
+      await new Promise((resolve) => {
+        const s = app.listen(0, "127.0.0.1", () => resolve(s));
+      });
+    try {
+      const smallUrl = `http://127.0.0.1:${(small.address() as AddressInfo).port}/base/gpu/pod-host-key`;
+      const from = (address: string) =>
+        fetch(smallUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${here.token}`,
+            "Content-Type": "application/json",
+            "X-Test-Address": address,
+          },
+          body: JSON.stringify(good),
+        }).then((r) => r.status);
+      const flood: number[] = [];
+      for (let i = 0; i < 20; i++) flood.push(await from("203.0.113.66"));
+      expect(flood.filter((s) => s === 200)).toHaveLength(2);
+      expect(flood.slice(2).every((s) => s === 429)).toBe(true);
+      // the flood charged the site-wide allowance only twice: 3 are left
+      const others = [];
+      for (const a of ["198.51.100.1", "198.51.100.2", "198.51.100.3"]) {
+        others.push(await from(a));
+      }
+      expect(others).toEqual([200, 200, 200]);
+      expect(await from("198.51.100.4")).toBe(429);
+    } finally {
+      await new Promise<void>((resolve) => small.close(() => resolve()));
+    }
+  });
+
   it("rate-limits one token", async () => {
     const codes: number[] = [];
     for (let i = 0; i < 12; i++) codes.push((await post(good)).status);
