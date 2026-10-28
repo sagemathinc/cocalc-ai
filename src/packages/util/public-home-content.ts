@@ -43,7 +43,7 @@ export const PUBLIC_HOME_HIGHLIGHTS = [
 export const PUBLIC_HOME_AGENT_TITLE = "From an idea to something you can use.";
 
 export const PUBLIC_HOME_AGENT_BODY =
-  "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code can use CoCalc membership, a Claude Pro or Max subscription, or an Anthropic API key, where the site offers them.";
+  "Use the integrated Codex agent, Claude Code on sites that enable it, or other command-line agents in project terminals, all with the files, tools, and running services your collaborators already use. Claude Code can use CoCalc membership, a Claude Pro or Max subscription, or an Anthropic API key, where the site offers them.";
 
 export const PUBLIC_HOME_AGENT_STEPS = [
   {

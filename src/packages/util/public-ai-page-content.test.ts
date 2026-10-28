@@ -9,6 +9,7 @@ import {
 import { getPublicFeaturePage } from "./public-feature-pages";
 import {
   getPublicHomeHighlights,
+  PUBLIC_HOME_AGENT_BODY,
   PUBLIC_HOME_AGENTS_HIGHLIGHT,
 } from "./public-home-content";
 
@@ -105,4 +106,10 @@ describe("AI feature page words", () => {
       }
     },
   );
+
+  it("qualifies Claude Code by site in Home's agent section, which every product shows", () => {
+    expect(PUBLIC_HOME_AGENT_BODY).toMatch(
+      /Claude Code on sites that enable it/,
+    );
+  });
 });

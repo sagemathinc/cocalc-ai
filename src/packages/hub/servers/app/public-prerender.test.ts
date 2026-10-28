@@ -533,7 +533,7 @@ describe("core landing page initial HTML", () => {
       expect(home).toContain('data-cocalc-public-prerender="home"');
       expect(home).toContain("Build and use software with AI.");
       expect(home).toContain(
-        "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals",
+        "Use the integrated Codex agent, Claude Code on sites that enable it, or other command-line agents in project terminals",
       );
       // the Agents guide's starter tasks (hosted products, and the default)
       expect(home).toContain(

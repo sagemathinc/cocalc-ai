@@ -25,7 +25,7 @@ describe("STALE_AGENT_PHRASES", () => {
   });
 
   it.each([
-    "Use the integrated Codex agent or Claude Code, or run other command-line agents in project terminals.",
+    "Use the integrated Codex agent, Claude Code on sites that enable it, or other command-line agents in project terminals.",
     "Claude Code is an integrated agent.",
     "You can also run Claude Code in a terminal.",
     "Codex and Claude Code work in the same project.",
