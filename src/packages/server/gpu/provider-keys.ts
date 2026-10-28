@@ -20,7 +20,8 @@ import {
   RunpodClient,
   type RunpodProviderIdentity,
 } from "@cocalc/cloud/runpod/client";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
 import {
   createInterBayAccountLocalClient,
   type InterBayGpuApi,
@@ -69,6 +70,12 @@ export interface GpuProviderKeyDeps {
   isHomeBay?: (account_id: string) => Promise<boolean>;
   // pods launched with this account's key that aren't finished
   unfinishedPods?: (account_id: string) => Promise<number>;
+  // the account fence shared with launches (default: a transaction holding
+  // the account rehome fence)
+  keyFence?: <T>(
+    account_id: string,
+    fn: (db: PoolClient) => Promise<T>,
+  ) => Promise<T>;
   verifyDeadlineMs?: number;
   // the home bay's API, or undefined when this is the home bay
   homeClient?: (
@@ -281,8 +288,11 @@ export async function setGpuProviderKey(
 // keeps its id when replaced, and a key for another RunPod account (or no
 // key) couldn't reach those pods, so CoCalc could no longer terminate them.
 // Step 5c replaces this with draining and a cleanup-only copy of the key.
-async function countUnfinishedPods(account_id: string): Promise<number> {
-  const { rows } = await getPool().query(
+async function countUnfinishedPods(
+  account_id: string,
+  db: Pick<PoolClient, "query"> = getPool(),
+): Promise<number> {
+  const { rows } = await db.query(
     `SELECT count(*)::int AS n FROM gpu_pods
       WHERE key_owner_account_id = $1 AND state NOT IN ('terminated', 'failed')`,
     [account_id],
@@ -290,12 +300,37 @@ async function countUnfinishedPods(account_id: string): Promise<number> {
   return rows[0]?.n ?? 0;
 }
 
+// Key replacement and removal run under the same account fence a launch
+// holds while it reads the key and records its intent (pods.ts), so the
+// count of unfinished pods can't change between the check and the change.
+async function underKeyFence<T>(
+  account_id: string,
+  fn: (db: PoolClient) => Promise<T>,
+): Promise<T> {
+  const db = await getPool().connect();
+  try {
+    await db.query("BEGIN");
+    await lockAccountRehomeFence({ db, account_id });
+    const result = await fn(db);
+    await db.query("COMMIT");
+    return result;
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
+}
+
 async function requireNoUnfinishedPods(
   account_id: string,
   deps: GpuProviderKeyDeps,
   doing: "replace" | "remove",
+  db?: Pick<PoolClient, "query">,
 ): Promise<void> {
-  const n = await (deps.unfinishedPods ?? countUnfinishedPods)(account_id);
+  const n = await (deps.unfinishedPods ?? ((a) => countUnfinishedPods(a, db)))(
+    account_id,
+  );
   if (n === 0) return;
   throw Error(
     `${n} GPU pod${n === 1 ? " was" : "s were"} launched with your current RunPod key and ${n === 1 ? "isn't" : "aren't"} finished, so the key can't be ${doing === "replace" ? "replaced" : "removed"} yet: CoCalc would lose the way to terminate ${n === 1 ? "it" : "them"}. Terminate ${n === 1 ? "it" : "them"} first (cocalc gpu pods, then cocalc gpu terminate). If you need to cut the key off now, delete it at RunPod and terminate the pods there.`,
@@ -352,16 +387,23 @@ export async function setGpuProviderKeyLocal(
     identity.kind === "organization" && identity.name
       ? identity.name.slice(0, 120)
       : undefined;
-  await upsertExternalCredential({
-    selector: selector(account_id, provider),
-    payload: key,
-    metadata: {
-      source: "account-settings",
-      provider_account_kind: identity.kind,
-      provider_account_id: identity.id,
-      ...(provider_account_name ? { provider_account_name } : {}),
-      verified_at,
-    },
+  // Checked again and stored under the fence launches take: no launch can
+  // read the old key between this check and the store.
+  await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
+    if ((await activeKeySummaries(account_id, provider)).length > 0) {
+      await requireNoUnfinishedPods(account_id, deps, "replace", db);
+    }
+    await upsertExternalCredential({
+      selector: selector(account_id, provider),
+      payload: key,
+      metadata: {
+        source: "account-settings",
+        provider_account_kind: identity.kind,
+        provider_account_id: identity.id,
+        ...(provider_account_name ? { provider_account_name } : {}),
+        verified_at,
+      },
+    });
   });
   // Built from what was just verified and stored, with no further read.
   return {
@@ -399,14 +441,17 @@ export async function deleteGpuProviderKeyLocal(
   await requireHomeBay(account_id, deps);
   // The store keeps one active key per selector (upsert holds the selector
   // lock), so there is at most one to revoke.
-  const [existing] = await activeKeySummaries(account_id, provider);
-  if (!existing) return { revoked: false };
-  await requireNoUnfinishedPods(account_id, deps, "remove");
-  const revoked = await revokeExternalCredential({
-    id: existing.id,
-    owner_account_id: account_id,
+  // Under the fence launches take (see setGpuProviderKeyLocal).
+  return await (deps.keyFence ?? underKeyFence)(account_id, async (db) => {
+    const [existing] = await activeKeySummaries(account_id, provider);
+    if (!existing) return { revoked: false };
+    await requireNoUnfinishedPods(account_id, deps, "remove", db);
+    const revoked = await revokeExternalCredential({
+      id: existing.id,
+      owner_account_id: account_id,
+    });
+    return { revoked };
   });
-  return { revoked };
 }
 
 async function accountHomeBay(account_id: string): Promise<string> {

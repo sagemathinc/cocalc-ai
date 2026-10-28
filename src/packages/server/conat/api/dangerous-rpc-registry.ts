@@ -26,7 +26,7 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "gpu.launch": {
     decision: "fresh-auth-not-required",
     reason:
-      "starts a pod on the caller's own RunPod key, from the allowlisted spec, with a required maximum runtime; budgets (step 5) cap spend. Fresh auth would block the CLI and agents, which launch most pods",
+      "an ordinary CLI/agent operation on the caller's own RunPod key with the allowlisted spec. STACK GATE: the gpu-byok branch must not reach staging or main before step 5 enforces budgets, the max runtime (reaper) and the kill switch; until then this waiver is acceptable only because nothing outside the branch can call it",
   },
   "gpu.terminate": {
     decision: "fresh-auth-not-required",

@@ -223,6 +223,44 @@ describeDb("GPU pods", () => {
     expect(rp.client.findPodsByName).not.toHaveBeenCalled();
   });
 
+  it.each([408, 409, 418])(
+    "treats a %i on create as unclear, never as no pod",
+    async (status) => {
+      const { deps: d, rp, account_id } = deps(randomUUID());
+      rp.client.createPod.mockImplementationOnce(async (body: any) => {
+        // RunPod made it, then answered with a non-definitive status
+        rp.pods.set(`pod_late${status}`, {
+          id: `pod_late${status}`,
+          name: body.name,
+        });
+        throw new RunpodApiError(
+          status === 409 ? "conflict" : "invalid",
+          status,
+        );
+      });
+      const pod = await launchGpuPodLocal(
+        { account_id, project_id: PROJECT, spec: SPEC },
+        d,
+      );
+      expect(pod.state).toBe("running");
+      expect(pod.provider_pod_id).toBe(`pod_late${status}`);
+    },
+  );
+
+  it.each([400, 402, 422])(
+    "treats a %i on create as no pod",
+    async (status) => {
+      const { deps: d, rp, account_id } = deps(randomUUID());
+      rp.client.createPod.mockRejectedValueOnce(
+        new RunpodApiError("invalid", status),
+      );
+      await expect(
+        launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+      ).rejects.toThrow();
+      expect(rp.client.findPodsByName).not.toHaveBeenCalled();
+    },
+  );
+
   it("resolves an unclear create by the handle: the pod was made", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     rp.client.createPod.mockImplementationOnce(async (body: any) => {

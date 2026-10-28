@@ -41,6 +41,7 @@ import {
   type InterBayGpuApi,
 } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -278,14 +279,26 @@ async function loadPod(id: string): Promise<PodRow> {
 
 // ---- errors in words, never provider text ----
 
+// A create RunPod definitely refused, so no pod exists: a rejected key, no
+// permission, rate limiting, or one of the validation answers RunPod
+// documents for this endpoint (400 placement, 402 balance, 422 schema).
+// Anything else, including a 408 timeout, a 409 or an unknown 4xx, may have
+// made a pod and is resolved by its handle.
+const DEFINITE_CREATE_REFUSALS = new Set([400, 402, 422]);
+
 function refused(err: unknown): boolean {
+  if (!(err instanceof RunpodApiError)) return false;
+  if (
+    err.kind === "auth" ||
+    err.kind === "forbidden" ||
+    err.kind === "rate_limited"
+  ) {
+    return true;
+  }
   return (
-    err instanceof RunpodApiError &&
-    (err.kind === "auth" ||
-      err.kind === "forbidden" ||
-      err.kind === "invalid" ||
-      err.kind === "conflict" ||
-      err.kind === "rate_limited")
+    err.kind === "invalid" &&
+    err.status != null &&
+    DEFINITE_CREATE_REFUSALS.has(err.status)
   );
 }
 
@@ -303,8 +316,6 @@ function refusalReason(err: unknown): string {
           return "Your RunPod balance is too low for this pod. Add credit at RunPod.";
         }
         return "RunPod couldn't place this pod (that GPU may be out of stock there, or the request was refused). Check gpu availability and try again.";
-      case "conflict":
-        return "RunPod reported a conflict creating this pod. Try again.";
     }
   }
   return "RunPod refused to create this pod.";
@@ -390,34 +401,20 @@ export async function launchGpuPodLocal(
   ) {
     throw Error("project not found or access denied");
   }
-  let access: Awaited<ReturnType<typeof getRunpodLaunchAccessForAccount>>;
-  try {
-    access = await (deps.getLaunchAccess ?? getRunpodLaunchAccessForAccount)(
-      account_id,
-    );
-  } catch (err) {
-    if (`${err}`.includes("membership")) {
-      throw Error("Your membership doesn't include GPUs on your own key.");
-    }
-    throw Error("Your RunPod API key could not be loaded. Try again shortly.");
-  }
-  if (!access) {
-    throw Error(
-      "No RunPod API key is connected. Connect one in Settings → Connectors.",
-    );
-  }
-  const { client, credential_id } = access;
   const actor: Actor = { kind: "user", account_id };
 
-  // 1. The intent and its event, before anything reaches RunPod.
-  let row = await insertIntent({
+  // 1. The intent and its event, before anything reaches RunPod. The key is
+  // read under the account fence that key replacement and removal also
+  // take, so no launch can use a key that is being replaced or removed.
+  const intent = await insertIntent({
     account_id,
     project_id,
-    credential_id,
     spec,
     actor,
     deps,
   });
+  const { client } = intent;
+  let row = intent.row;
 
   // 2. The create. A terminate that arrived first wins.
   const creating = await transition(
@@ -483,21 +480,42 @@ export async function launchGpuPodLocal(
 
 const HANDLE_ATTEMPTS = 3;
 
+async function loadLaunchAccess(
+  account_id: string,
+  deps: GpuPodDeps,
+): Promise<{ client: RunpodClient; credential_id: string }> {
+  let access: Awaited<ReturnType<typeof getRunpodLaunchAccessForAccount>>;
+  try {
+    access = await (deps.getLaunchAccess ?? getRunpodLaunchAccessForAccount)(
+      account_id,
+    );
+  } catch (err) {
+    if (`${err}`.includes("membership")) {
+      throw Error("Your membership doesn't include GPUs on your own key.");
+    }
+    throw Error("Your RunPod API key could not be loaded. Try again shortly.");
+  }
+  if (!access) {
+    throw Error(
+      "No RunPod API key is connected. Connect one in Settings → Connectors.",
+    );
+  }
+  return access;
+}
+
 async function insertIntent({
   account_id,
   project_id,
-  credential_id,
   spec,
   actor,
   deps,
 }: {
   account_id: string;
   project_id: string;
-  credential_id: string;
   spec: GpuLaunchSpec;
   actor: Actor;
   deps: GpuPodDeps;
-}): Promise<PodRow> {
+}): Promise<{ row: PodRow; client: RunpodClient }> {
   const now = (deps.now ?? Date.now)();
   const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
   for (let attempt = 1; ; attempt++) {
@@ -505,6 +523,12 @@ async function insertIntent({
     const handle = (deps.newHandle ?? newPodHandle)();
     try {
       return await inTransaction(async (db) => {
+        // the fence key mutation takes too (provider-keys.ts)
+        await lockAccountRehomeFence({ db, account_id });
+        const { client, credential_id } = await loadLaunchAccess(
+          account_id,
+          deps,
+        );
         const { rows } = await db.query(
           `INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider,
              beneficiary_account_id, project_id, spec, gpu_type_id, gpu_count, cloud,
@@ -543,7 +567,7 @@ async function insertIntent({
           },
           db,
         );
-        return rows[0];
+        return { row: rows[0], client };
       });
     } catch (err: any) {
       // A handle collision (80 random bits: vanishingly rare) gets a new one.

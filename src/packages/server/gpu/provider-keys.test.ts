@@ -29,9 +29,10 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 let unfinished = 0;
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: () => ({
-    query: async () => ({ rows: [{ n: unfinished }] }),
-  }),
+  default: () => {
+    const query = async () => ({ rows: [{ n: unfinished }] });
+    return { query, connect: async () => ({ query, release: () => {} }) };
+  },
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
@@ -174,11 +175,11 @@ describe("GPU provider keys", () => {
       provider_account: { kind: "personal", id: "user_1" },
       connected_at: stored.metadata.verified_at,
     });
-    // Two reads before the write (is a key being replaced; removals since
-    // the check started), none after it: the status comes from what was
-    // stored.
-    expect(listMock).toHaveBeenCalledTimes(2);
-    expect(listMock.mock.invocationCallOrder[1]).toBeLessThan(
+    // Reads before the write (is a key being replaced, before and again
+    // under the fence; removals since the check started), none after it:
+    // the status comes from what was stored.
+    expect(listMock).toHaveBeenCalledTimes(3);
+    expect(listMock.mock.invocationCallOrder[2]).toBeLessThan(
       upsertMock.mock.invocationCallOrder[0],
     );
     // The key is never part of what comes back.
