@@ -13,6 +13,8 @@ the allowlisted spec (util/gpu/launch-spec); budgets come in step 5.
 
 import type { GpuProvider } from "@cocalc/util/gpu/provider-keys";
 import type {
+  GpuBudget,
+  GpuBudgetChange,
   GpuAttribution,
   GpuLaunchSpec,
   GpuPodSummary,
@@ -41,6 +43,8 @@ export const gpu = {
   launch: authFirstRequireAccount,
   terminate: authFirstRequireAccount,
   who: authFirstRequireAccount,
+  budget: authFirstRequireAccount,
+  setBudget: authFirstRequireAccount,
 };
 
 interface GpuReadOpts {
@@ -134,6 +138,17 @@ export interface GpuApi {
     pod_id: string;
     timeout?: number;
   }) => Promise<{ state: GpuPodSummary["state"] }>;
+  // The connected key's budget (step 5).
+  budget: (opts?: { account_id?: string }) => Promise<GpuBudget>;
+  // Lowering limits needs only the owner; raising any (more money, a higher
+  // or removed cap, a later end) needs fresh authentication (browser_id).
+  setBudget: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    change: GpuBudgetChange;
+    expected_version?: number;
+  }) => Promise<GpuBudget>;
   // query: a pod id, handle, RunPod pod id or IP address
   who: (opts: {
     account_id?: string;

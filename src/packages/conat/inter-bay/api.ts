@@ -4159,6 +4159,17 @@ export interface InterBayGpuApi {
     account_id: string;
     include_ended?: boolean;
   }) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]>;
+  // The key's budget (step 5). fresh_auth_verified: the forwarding bay
+  // checked the caller's fresh authentication (needed to raise limits).
+  gpuBudget: (opts: {
+    account_id: string;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuBudget>;
+  gpuSetBudget: (opts: {
+    account_id: string;
+    change: unknown;
+    expected_version?: number;
+    fresh_auth_verified: boolean;
+  }) => Promise<import("@cocalc/util/gpu/types").GpuBudget>;
 }
 
 export interface InterBayAccountLocalApi
@@ -8203,6 +8214,8 @@ export function createInterBayAccountLocalClient({
     gpuTerminate: async (opts) => await gpuClient.gpuTerminate(opts),
     gpuWho: async (opts) => await gpuClient.gpuWho(opts),
     gpuManagedPods: async (opts) => await gpuClient.gpuManagedPods(opts),
+    gpuBudget: async (opts) => await gpuClient.gpuBudget(opts),
+    gpuSetBudget: async (opts) => await gpuClient.gpuSetBudget(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -8784,6 +8797,8 @@ export function createInterBayAccountLocalHandler({
         gpuTerminate: async (opts) => await impl.gpuTerminate(opts),
         gpuWho: async (opts) => await impl.gpuWho(opts),
         gpuManagedPods: async (opts) => await impl.gpuManagedPods(opts),
+        gpuBudget: async (opts) => await impl.gpuBudget(opts),
+        gpuSetBudget: async (opts) => await impl.gpuSetBudget(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({

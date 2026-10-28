@@ -127,12 +127,13 @@ export async function ensureKeyBudget(
   const d = DEFAULT_KEY_LAYER;
   const ends = new Date(now);
   ends.setFullYear(ends.getFullYear() + d.years);
-  await db.query(
+  const { rows } = await db.query(
     `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind,
        authorized_usd, max_hourly_usd, max_concurrent_pods, max_gpu_count,
        max_runtime_minutes, starts_at, ends_at, state, created, updated)
      VALUES ($1, $2, $3, 'key', $4, $5, $6, $7, $8, $9, $10, 'active', now(), now())
-     ON CONFLICT (credential_id) WHERE scope_kind = 'key' DO NOTHING`,
+     ON CONFLICT (credential_id) WHERE scope_kind = 'key' DO NOTHING
+     RETURNING id`,
     [
       randomUUID(),
       credential_id,
@@ -146,6 +147,25 @@ export async function ensureKeyBudget(
       ends,
     ],
   );
+  if (rows[0]) {
+    await db.query(
+      `INSERT INTO gpu_budget_events (id, layer_id, at, actor_account_id, action, after)
+       VALUES ($1, $2, now(), $3, 'create', $4)`,
+      [
+        randomUUID(),
+        rows[0].id,
+        key_owner_account_id,
+        {
+          authorized_usd: d.authorized_usd,
+          max_hourly_usd: d.max_hourly_usd,
+          max_concurrent_pods: d.max_concurrent_pods,
+          max_gpu_count: d.max_gpu_count,
+          max_runtime_minutes: d.max_runtime_minutes,
+          ends_at: ends.toISOString(),
+        },
+      ],
+    );
+  }
 }
 
 // The key's fence, locked. Every budget change takes it first (after the

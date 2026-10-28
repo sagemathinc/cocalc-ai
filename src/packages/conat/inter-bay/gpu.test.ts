@@ -12,6 +12,8 @@ it.each([
   "gpuTerminate",
   "gpuWho",
   "gpuManagedPods",
+  "gpuBudget",
+  "gpuSetBudget",
 ] as const)(
   "routes %s to the key owner's home bay on the account-local gpu subject",
   async (method) => {

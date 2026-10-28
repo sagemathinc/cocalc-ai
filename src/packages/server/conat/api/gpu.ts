@@ -14,6 +14,10 @@ import {
   getGpuPods,
 } from "@cocalc/server/gpu/read";
 import {
+  getGpuBudget,
+  setGpuBudget as setGpuBudgetImpl,
+} from "@cocalc/server/gpu/budget-api";
+import {
   launchGpuPod,
   terminateGpuPod,
   whoGpuPod,
@@ -50,4 +54,22 @@ export async function who(
   opts: Parameters<GpuApi["who"]>[0],
 ): ReturnType<GpuApi["who"]> {
   return await whoGpuPod({ account_id: opts?.account_id, query: opts?.query });
+}
+
+export async function budget(
+  opts: Parameters<GpuApi["budget"]>[0],
+): ReturnType<GpuApi["budget"]> {
+  return await getGpuBudget({ account_id: opts?.account_id });
+}
+
+export async function setBudget(
+  opts: Parameters<GpuApi["setBudget"]>[0],
+): ReturnType<GpuApi["setBudget"]> {
+  return await setGpuBudgetImpl({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+    change: opts?.change,
+    expected_version: opts?.expected_version,
+  });
 }
