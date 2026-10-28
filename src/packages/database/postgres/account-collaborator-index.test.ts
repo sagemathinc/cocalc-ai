@@ -515,7 +515,7 @@ describe("account_collaborator_index rebuild", () => {
     expect(await collaboratorIds()).toEqual([COLLAB_A, COLLAB_B].sort());
   });
 
-  it("a local copy of another bay's project defers to the index when it has a row", async () => {
+  it("a local copy of another bay's project is never used; the index decides", async () => {
     await getPool().query(
       `INSERT INTO accounts (account_id, home_bay_id) VALUES ($1, $2)`,
       [ACCOUNT_ID, LOCAL_BAY_ID],
@@ -538,9 +538,10 @@ describe("account_collaborator_index rebuild", () => {
         bay_id: LOCAL_BAY_ID,
         dry_run: false,
       });
-    // Without an index row, the copy is all there is (as before).
+    // Without an index row the copy still doesn't count: it may be stale, and
+    // no row can mean the owning bay removed the account.
     await rebuild();
-    expect(await collaboratorIds()).toEqual([COLLAB_A]);
+    expect(await collaboratorIds()).toEqual([]);
     await indexProject(PROJECT_B, {
       [ACCOUNT_ID]: { group: "owner" },
       [COLLAB_B]: { group: "collaborator" },
@@ -596,8 +597,19 @@ describe("account_collaborator_index rebuild", () => {
     await getPool().query("TRUNCATE account_collaborator_index");
     expect(await apply(users, users)).toEqual(["collaborator.upsert"]);
     expect(await collaboratorIds()).toEqual([COLLAB_B]);
-    // Removed from the project: gone.
+    // Removed from the project: gone, even with a stale local copy of the
+    // project that still lists both, and a later rebuild doesn't bring it back.
+    await getPool().query(
+      `INSERT INTO projects (project_id, users, owning_bay_id) VALUES ($1, $2::JSONB, $3)`,
+      [PROJECT_B, JSON.stringify(users), OTHER_BAY_ID],
+    );
     expect(await apply(users, null)).toEqual(["collaborator.remove"]);
+    expect(await collaboratorIds()).toEqual([]);
+    await rebuildAccountCollaboratorIndex({
+      account_id: ACCOUNT_ID,
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
     expect(await collaboratorIds()).toEqual([]);
   });
 });

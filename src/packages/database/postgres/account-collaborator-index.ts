@@ -15,7 +15,8 @@ const PEER_COLLAB_GROUP_SQL = `(info ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_
 // Projects owned by other bays come from the account's project index, which
 // their owning bays keep current (applyAccountProjectFeedUpsertOnHomeBay):
 // without them, collaborators met in another bay's project never appear. A
-// local copy of another bay's project is used only if the index has no row.
+// local copy of another bay's project is never used: it may be stale, and an
+// absent index row can mean an authoritative removal.
 function requesterProjectsSql(bay: number): string {
   const ownedHere = (alias: string) =>
     `COALESCE(NULLIF(BTRIM(${alias}.owning_bay_id), ''), $${bay}::TEXT) = $${bay}::TEXT`;
@@ -25,10 +26,7 @@ function requesterProjectsSql(bay: number): string {
    WHERE p.deleted IS NOT TRUE
      AND p.users ? $1::text
      AND (p.users -> $1::text ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}
-     AND (${ownedHere("p")} OR NOT EXISTS (
-       SELECT 1 FROM account_project_index ri
-        WHERE ri.account_id = $1::uuid AND ri.project_id = p.project_id
-     ))
+     AND ${ownedHere("p")}
   UNION ALL
   SELECT i.project_id, i.users_summary AS users
     FROM account_project_index i
