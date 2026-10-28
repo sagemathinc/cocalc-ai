@@ -1216,6 +1216,9 @@ describePg(
           account_id: f.student,
           grant_id: requests[0].grant_id,
           session_hash,
+          operation_id: requests[0].metadata.pending_request.operation_id,
+          request_revision:
+            requests[0].metadata.pending_request.request_revision,
         });
         expect((await api.stopVm(agentStop)).desired_state).toBe("stopped");
         await api.revokeAgentGrant({
