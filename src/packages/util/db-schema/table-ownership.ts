@@ -34,10 +34,7 @@ export type TableAuthorityKey =
   | "mixed";
 
 export type TablePortabilityStatus =
-  | "portable"
-  | "rebuildable"
-  | "stable"
-  | "unsupported";
+  "portable" | "rebuildable" | "stable" | "unsupported";
 
 export type TableReferenceField =
   | "account_id"
@@ -621,6 +618,7 @@ export const TABLE_OWNERSHIP = {
       "gpu_pod_reservations",
       "gpu_worker_overrides",
       "gpu_key_events",
+      "gpu_alerts",
     ],
     {
       ownership: "account-home",
@@ -633,7 +631,7 @@ export const TABLE_OWNERSHIP = {
           "Not used; beneficiary_account_id is an attribution reference.",
       },
       notes:
-        "GPU bring-your-own-key budgets: per-key fences, budget layers and their events, pod reservations, and the per-key security log (gpu_key_events), on the home bay of the account whose provider key pays (reservation and event rows follow their layer). Rehome is refused while any GPU rows exist (assertNoPersonalStateForRehome).",
+        "GPU bring-your-own-key budgets: per-key fences, budget layers and their events, pod reservations, the per-key security log (gpu_key_events) and the owner's alerts (gpu_alerts), on the home bay of the account whose provider key pays (reservation and event rows follow their layer). Rehome is refused while any GPU rows exist (assertNoPersonalStateForRehome).",
     },
   ),
 

@@ -58,6 +58,8 @@ export const GPU_ACTOR_KINDS = [
   "agent",
   "key_owner",
   "reaper",
+  // the inventory reconciler (5d): it reads RunPod and records, never terminates
+  "reconciler",
   "kill_switch",
   "cleanup",
   // the pod itself, reporting its SSH host key
@@ -83,6 +85,8 @@ export const GPU_POD_ACTIONS = [
   "kill_switch",
   // a forced key removal left it outside CoCalc's management (5c)
   "unmanaged",
+  // the owner released a quarantined pod's held reservations (5d)
+  "quarantine_released",
 ] as const;
 export type GpuPodAction = (typeof GPU_POD_ACTIONS)[number];
 

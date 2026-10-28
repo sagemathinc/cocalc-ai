@@ -96,6 +96,16 @@ Table({
     // first seen without the gpu_provider_keys entitlement (the reaper
     // terminates its pods 7 days later); cleared when it returns
     entitlement_lapsed_at: { type: "timestamp" },
+    // The reconciler (5d). last_inventory_at: when the listing of the last
+    // complete inventory started (admission requires it fresh; it only moves
+    // forward). next_reconcile_at: the attempt cursor, claimed before any
+    // provider call (backoff after a failure); last_reconcile_attempt_at:
+    // the observation whose outcome next_reconcile_at records (an older
+    // pass never overwrites a newer one's).
+    last_inventory_at: { type: "timestamp" },
+    next_reconcile_at: { type: "timestamp" },
+    last_reconcile_attempt_at: { type: "timestamp" },
+    reconcile_attempts: { type: "integer", not_null: true, pg_default: "0" },
     ...timestamps(),
   },
 });
@@ -301,6 +311,7 @@ export const GPU_KEY_EVENT_ACTIONS = [
   "compromise_closed",
   "kill_switch",
   "resumed",
+  "quarantine_released",
 ] as const;
 
 Table({
@@ -318,7 +329,8 @@ Table({
       type: "string",
       pg_type: "varchar(16)",
       not_null: true,
-      pg_check: "CHECK (actor_kind IN ('user','admin','reaper','cleanup'))",
+      pg_check:
+        "CHECK (actor_kind IN ('user','admin','reaper','cleanup','reconciler'))",
     },
     actor_account_id: { type: "uuid" },
     action: {
@@ -328,6 +340,57 @@ Table({
       pg_check: `CHECK (action IN (${GPU_KEY_EVENT_ACTIONS.map((a) => `'${a}'`).join(",")}))`,
     },
     details: { type: "map" },
+  },
+});
+
+export const GPU_ALERT_KINDS = [
+  "unknown_pod",
+  "unmanaged_pod",
+  "key_rejected",
+  "quarantined_reservation",
+  "compromise_awaiting_revocation",
+  "compromise_check_pods",
+] as const;
+export const GPU_ALERT_SEVERITIES = ["info", "warning", "critical"] as const;
+
+// What the owner must know about their key's RunPod account (5d). One open
+// alert per (key, kind, dedupe_key); each kind has its own way to resolve
+// (never "a listing didn't show it"), and some are only acknowledged.
+Table({
+  name: "gpu_alerts",
+  rules: {
+    primary_key: "id",
+    pg_indexes: ["key_owner_account_id", "credential_id"],
+    pg_unique_indexes: [
+      "(credential_id, kind, dedupe_key) WHERE resolved_at IS NULL",
+    ],
+  },
+  fields: {
+    id: { type: "uuid", not_null: true },
+    key_owner_account_id: { type: "uuid", not_null: true },
+    credential_id: { type: "uuid", not_null: true },
+    kind: {
+      type: "string",
+      pg_type: "varchar(40)",
+      not_null: true,
+      pg_check: oneOf("kind", GPU_ALERT_KINDS),
+    },
+    severity: {
+      type: "string",
+      pg_type: "varchar(16)",
+      not_null: true,
+      pg_check: oneOf("severity", GPU_ALERT_SEVERITIES),
+    },
+    // e.g. the provider pod id (sanitized) or the reservation's pod id
+    dedupe_key: { type: "string", pg_type: "varchar(128)", not_null: true },
+    details: { type: "map" },
+    opened: { type: "timestamp", not_null: true, pg_default: "now()" },
+    // the observation that last saw the condition: a resolution only applies
+    // if it observed later
+    last_seen: { type: "timestamp", not_null: true, pg_default: "now()" },
+    resolved_at: { type: "timestamp" },
+    resolved_by: { type: "string", pg_type: "varchar(40)" },
+    acknowledged_at: { type: "timestamp" },
   },
 });
 
