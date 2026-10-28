@@ -4125,6 +4125,22 @@ export interface InterBayGpuApi {
       account_id: string;
     },
   ) => Promise<import("@cocalc/conat/hub/api/gpu").GpuPodsResult>;
+  // Connecting, checking and removing the key itself. The bay the user is
+  // signed in to has already required fresh auth for a save or removal; the
+  // pasted key crosses once, to be verified and stored, and never comes back.
+  gpuKeyStatus: (opts: {
+    account_id: string;
+    provider: unknown;
+  }) => Promise<import("@cocalc/util/gpu/provider-keys").GpuProviderKeyStatus>;
+  gpuKeySet: (opts: {
+    account_id: string;
+    provider: unknown;
+    api_key: unknown;
+  }) => Promise<import("@cocalc/util/gpu/provider-keys").GpuProviderKeyStatus>;
+  gpuKeyDelete: (opts: {
+    account_id: string;
+    provider: unknown;
+  }) => Promise<{ revoked: boolean }>;
 }
 
 export interface InterBayAccountLocalApi
@@ -8162,6 +8178,9 @@ export function createInterBayAccountLocalClient({
     gpuCatalog: async (opts) => await gpuClient.gpuCatalog(opts),
     gpuAvailability: async (opts) => await gpuClient.gpuAvailability(opts),
     gpuPods: async (opts) => await gpuClient.gpuPods(opts),
+    gpuKeyStatus: async (opts) => await gpuClient.gpuKeyStatus(opts),
+    gpuKeySet: async (opts) => await gpuClient.gpuKeySet(opts),
+    gpuKeyDelete: async (opts) => await gpuClient.gpuKeyDelete(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -8736,6 +8755,9 @@ export function createInterBayAccountLocalHandler({
         gpuCatalog: async (opts) => await impl.gpuCatalog(opts),
         gpuAvailability: async (opts) => await impl.gpuAvailability(opts),
         gpuPods: async (opts) => await impl.gpuPods(opts),
+        gpuKeyStatus: async (opts) => await impl.gpuKeyStatus(opts),
+        gpuKeySet: async (opts) => await impl.gpuKeySet(opts),
+        gpuKeyDelete: async (opts) => await impl.gpuKeyDelete(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({

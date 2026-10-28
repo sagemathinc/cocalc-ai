@@ -27,6 +27,15 @@ export const GPU_PROVIDER_API_KEY_KIND = "gpu-provider-api-key";
 // gpu-provider-key.tsx), so a late store shows up at the next load.
 export const VERIFY_RPC_TIMEOUT_MS = 90_000;
 
+// For an account homed on another bay, the whole operation is forwarded to
+// the home bay, which may wait this long for it. The browser's wait must
+// exceed it: VERIFY_RPC_TIMEOUT_MS for a save, KEY_RPC_TIMEOUT_MS for the
+// status and removal (the default 15 s is shorter than one forwarded call
+// may take).
+export const SET_KEY_HOME_BAY_TIMEOUT_MS = 75_000;
+export const KEY_HOME_BAY_TIMEOUT_MS = 30_000;
+export const KEY_RPC_TIMEOUT_MS = 45_000;
+
 export function isGpuProvider(value: unknown): value is GpuProvider {
   return GPU_PROVIDERS.includes(value as GpuProvider);
 }

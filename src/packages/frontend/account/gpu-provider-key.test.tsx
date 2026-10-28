@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { KEY_RPC_TIMEOUT_MS } from "@cocalc/util/gpu/provider-keys";
 import { GpuProviderKeySection } from "./gpu-provider-key";
 
 const mockSystem = {
@@ -66,6 +67,10 @@ describe("GpuProviderKeySection", () => {
       }),
     );
     expect(mockFreshAuth).toHaveBeenCalled();
+    expect(mockSystem.getGpuProviderKeyStatus).toHaveBeenCalledWith({
+      provider: "runpod",
+      timeout: KEY_RPC_TIMEOUT_MS,
+    });
     const connected = await screen.findByRole("status");
     expect(connected.textContent).toMatch(/Connected to RunPod account user_1/);
     // The Connect button is gone; focus moved to the announced status.
@@ -102,6 +107,8 @@ describe("GpuProviderKeySection", () => {
       expect(mockSystem.deleteGpuProviderKey).toHaveBeenCalledWith({
         provider: "runpod",
         browser_id: "browser-1",
+        // longer than a removal forwarded to another bay may take
+        timeout: KEY_RPC_TIMEOUT_MS,
       }),
     );
     expect(await screen.findByLabelText("RunPod API key")).toBeTruthy();

@@ -28,6 +28,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   type GpuProviderKeyStatus,
+  KEY_RPC_TIMEOUT_MS,
   VERIFY_RPC_TIMEOUT_MS,
 } from "@cocalc/util/gpu/provider-keys";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -72,6 +73,7 @@ export function GpuProviderKeySection() {
       setStatus(
         await webapp_client.conat_client.hub.system.getGpuProviderKeyStatus({
           provider: "runpod",
+          timeout: KEY_RPC_TIMEOUT_MS,
         }),
       );
     } catch (err) {
@@ -128,6 +130,7 @@ export function GpuProviderKeySection() {
         await webapp_client.conat_client.hub.system.deleteGpuProviderKey({
           provider: "runpod",
           browser_id: webapp_client.browser_id,
+          timeout: KEY_RPC_TIMEOUT_MS,
         });
       });
       if (completed) {

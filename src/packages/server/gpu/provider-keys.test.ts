@@ -9,16 +9,20 @@ const localGetMock = jest.fn();
 const revokeMock = jest.fn();
 const membershipMock = jest.fn();
 
-// Only summaries cross bays (list, revoke); the payload read is local only.
-jest.mock("@cocalc/server/external-credentials/routing", () => ({
-  upsertExternalCredentialRouted: (...args: any[]) => upsertMock(...args),
-  listAccountExternalCredentialsRouted: (...args: any[]) => listMock(...args),
-  revokeAccountExternalCredentialRouted: (...args: any[]) =>
-    revokeMock(...args),
-}));
-
+// Everything runs on the home bay, against its local store.
 jest.mock("@cocalc/server/external-credentials/store", () => ({
   getExternalCredential: (...args: any[]) => localGetMock(...args),
+  upsertExternalCredential: (...args: any[]) => upsertMock(...args),
+  listExternalCredentials: (...args: any[]) => listMock(...args),
+  revokeExternalCredential: (...args: any[]) => revokeMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: () => "bay-0",
+}));
+const resolveAccountHomeBay = jest.fn(async () => ({ home_bay_id: "bay-0" }));
+jest.mock("@cocalc/server/bay-directory", () => ({
+  resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBay(...args),
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
@@ -26,7 +30,16 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
 }));
 
 import {
+  KEY_HOME_BAY_TIMEOUT_MS,
+  KEY_RPC_TIMEOUT_MS,
+  SET_KEY_HOME_BAY_TIMEOUT_MS,
+  VERIFY_RPC_TIMEOUT_MS,
+} from "@cocalc/util/gpu/provider-keys";
+import {
   deleteGpuProviderKey,
+  deleteGpuProviderKeyLocal,
+  getGpuProviderKeyStatusLocal,
+  setGpuProviderKeyLocal,
   getRunpodCleanupForAccount,
   getRunpodClientForAccount,
   getGpuProviderKeyStatus,
@@ -407,9 +420,13 @@ describe("GPU provider keys", () => {
       TEMPLATE_CREATED,
       TEMPLATE_DELETED,
     ]);
-    // Another tab removes the old key during verification.
+    // Another tab removes the old key during verification (strictly after
+    // the save started, even when the fake RunPod answers within the same
+    // millisecond).
     listMock.mockImplementation(async ({ includeRevoked }) =>
-      includeRevoked ? [{ ...summary({}), revoked: new Date() }] : [],
+      includeRevoked
+        ? [{ ...summary({}), revoked: new Date(Date.now() + 5) }]
+        : [],
     );
     await expect(
       setGpuProviderKey(
@@ -454,5 +471,89 @@ describe("GPU provider keys", () => {
       { fetch, isEntitled: entitled },
     );
     expect(upsertMock).toHaveBeenCalled();
+  });
+
+  it("forwards each operation whole to the home bay, never touching this bay's store", async () => {
+    const status = {
+      provider: "runpod",
+      entitled: true,
+      connected: true,
+    } as const;
+    const remote = {
+      gpuKeyStatus: jest.fn(async () => status),
+      gpuKeySet: jest.fn(async () => status),
+      gpuKeyDelete: jest.fn(async () => ({ revoked: true })),
+    };
+    const timeouts: number[] = [];
+    const homeClient = jest.fn(async (_account_id: string, timeout: number) => {
+      timeouts.push(timeout);
+      return remote as any;
+    });
+    const isEntitled = jest.fn(async () => true);
+    const fetch = jest.fn();
+    const deps = { homeClient, isEntitled, fetch: fetch as any };
+    const op = { account_id: ACCOUNT, provider: "runpod" };
+    expect(await getGpuProviderKeyStatus(op, deps)).toEqual(status);
+    expect(await setGpuProviderKey({ ...op, api_key: KEY }, deps)).toEqual(
+      status,
+    );
+    expect(await deleteGpuProviderKey(op, deps)).toEqual({ revoked: true });
+    expect(remote.gpuKeyStatus).toHaveBeenCalledWith(op);
+    expect(remote.gpuKeySet).toHaveBeenCalledWith({ ...op, api_key: KEY });
+    expect(remote.gpuKeyDelete).toHaveBeenCalledWith(op);
+    expect(timeouts).toEqual([
+      KEY_HOME_BAY_TIMEOUT_MS,
+      SET_KEY_HOME_BAY_TIMEOUT_MS,
+      KEY_HOME_BAY_TIMEOUT_MS,
+    ]);
+    // The home bay checks the entitlement and talks to RunPod.
+    expect(isEntitled).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    for (const m of [listMock, upsertMock, revokeMock, localGetMock]) {
+      expect(m).not.toHaveBeenCalled();
+    }
+  });
+
+  it("the browser waits longer than a forwarded call may take", () => {
+    expect(VERIFY_RPC_TIMEOUT_MS).toBeGreaterThan(SET_KEY_HOME_BAY_TIMEOUT_MS);
+    expect(KEY_RPC_TIMEOUT_MS).toBeGreaterThan(KEY_HOME_BAY_TIMEOUT_MS);
+  });
+
+  it("forwards nothing for an account homed here", async () => {
+    const homeClient = jest.fn(async () => undefined);
+    await getGpuProviderKeyStatus(
+      { account_id: ACCOUNT, provider: "runpod" },
+      { homeClient, isEntitled: entitled },
+    );
+    expect(homeClient).toHaveBeenCalled();
+    expect(listMock).toHaveBeenCalled();
+  });
+
+  it("rejects an unknown provider before forwarding", async () => {
+    const homeClient = jest.fn();
+    await expect(
+      deleteGpuProviderKey(
+        { account_id: ACCOUNT, provider: "other" },
+        { homeClient },
+      ),
+    ).rejects.toThrow("unknown GPU provider");
+    expect(homeClient).not.toHaveBeenCalled();
+  });
+
+  it("runs the home bay's part only on the home bay", async () => {
+    const away = { isHomeBay: async () => false, isEntitled: entitled };
+    const op = { account_id: ACCOUNT, provider: "runpod" };
+    await expect(getGpuProviderKeyStatusLocal(op, away)).rejects.toThrow(
+      "home bay",
+    );
+    await expect(
+      setGpuProviderKeyLocal({ ...op, api_key: KEY }, away),
+    ).rejects.toThrow("home bay");
+    await expect(deleteGpuProviderKeyLocal(op, away)).rejects.toThrow(
+      "home bay",
+    );
+    for (const m of [listMock, upsertMock, revokeMock, localGetMock]) {
+      expect(m).not.toHaveBeenCalled();
+    }
   });
 });

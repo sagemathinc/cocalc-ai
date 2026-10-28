@@ -3017,11 +3017,13 @@ export interface System {
     browser_id?: string | null;
     session_hash?: string | null;
     provider: GpuProvider;
+    timeout?: number;
   }) => Promise<{ revoked: boolean }>;
 
   getGpuProviderKeyStatus: (opts: {
     account_id?: string;
     provider: GpuProvider;
+    timeout?: number;
   }) => Promise<GpuProviderKeyStatus>;
 
   liveVoice: (opts: LiveVoiceRequest) => Promise<LiveVoiceResult>;
