@@ -415,6 +415,47 @@ describeDb("GPU budgets", () => {
   });
 
   describe("the kill switch", () => {
+    it("a pod listing resolves only as long as its bound", async () => {
+      const s = setup();
+      await s.launch();
+      await s.launch();
+      await getPool().query(
+        "UPDATE gpu_pods SET desired_state = 'terminated' WHERE key_owner_account_id = $1",
+        [s.account_id],
+      );
+      const terminate = s.rp.client.terminatePod.getMockImplementation()!;
+      s.rp.client.terminatePod.mockImplementation(async (id: string) => {
+        await new Promise((r) => setTimeout(r, 150));
+        return await terminate(id);
+      });
+      const listed = await listManagedGpuPodsLocal(
+        { account_id: s.account_id },
+        { ...s.deps, listResolveMs: 100 },
+      );
+      expect(s.rp.client.terminatePod).toHaveBeenCalledTimes(1);
+      expect(listed.length).toBeGreaterThan(0);
+    });
+
+    it("terminates only as long as its bound, and reports what is left for the reaper", async () => {
+      const s = setup();
+      await s.launch();
+      await s.launch();
+      // each terminate takes longer than the whole bound
+      const terminate = s.rp.client.terminatePod.getMockImplementation()!;
+      s.rp.client.terminatePod.mockImplementation(async (id: string) => {
+        await new Promise((r) => setTimeout(r, 150));
+        return await terminate(id);
+      });
+      const result = await killSwitchLocal(
+        { account_id: s.account_id },
+        { ...s.deps, killSwitchResolveMs: 100 },
+      );
+      expect(s.rp.client.terminatePod).toHaveBeenCalledTimes(1);
+      expect(result).toEqual(
+        expect.objectContaining({ marked: 2, remaining: 1, paused: true }),
+      );
+    });
+
     it("pauses a key connected but never used yet", async () => {
       const s = setup();
       await s.stored; // connected; no fence or layer yet

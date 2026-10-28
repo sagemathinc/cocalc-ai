@@ -78,6 +78,8 @@ import {
 
 export interface GpuPodDeps {
   // for tests
+  killSwitchResolveMs?: number;
+  listResolveMs?: number;
   getLaunchAccess?: (
     account_id: string,
   ) => Promise<
@@ -1238,8 +1240,31 @@ export async function resolvePendingForAccount(
   };
 }
 
-const resolveAmbiguousForAccount = (account_id: string, deps: GpuPodDeps) =>
-  resolvePendingForAccount(account_id, deps);
+// A pod listing resolves what it can first, briefly: short RunPod calls and
+// a short bound, so the listing answers well within its RPC timeout (the
+// reaper finishes the rest).
+export const LIST_RESOLVE_MS = 10_000;
+const LIST_RESOLVE_CALL_TIMEOUT_MS = 5_000;
+const resolveAmbiguousForAccount = (account_id: string, deps: GpuPodDeps) => {
+  const deadline = Date.now() + (deps.listResolveMs ?? LIST_RESOLVE_MS);
+  return resolvePendingForAccount(
+    account_id,
+    {
+      ...deps,
+      getCleanup:
+        deps.getCleanup ??
+        ((a: string) =>
+          getRunpodCleanupForAccount(a, {
+            runpodTimeoutMs: LIST_RESOLVE_CALL_TIMEOUT_MS,
+          })),
+    },
+    {
+      guard: async () => {
+        if (Date.now() >= deadline) throw Error("pod listing resolve deadline");
+      },
+    },
+  ).catch(() => ({ full: false }));
+};
 
 // ---- terminate ----
 
@@ -1760,10 +1785,16 @@ export interface GpuKillSwitchResult {
 // It only narrows, so it needs no fresh auth. Marked under the account fence,
 // so no launch admitted before it can slip past; then terminated at once,
 // best effort (the reaper finishes what RunPod doesn't confirm).
+// How long the kill switch itself terminates pods before returning (one
+// RunPod call, at most 30 s, may still be in flight then): inside the home
+// bay's 120 s and the CLI's 150 s write deadlines.
+export const KILL_SWITCH_RESOLVE_MS = 60_000;
+
 export async function killSwitchLocal(
   opts: { account_id?: string; project_id?: unknown; pause?: unknown },
   deps: GpuPodDeps = {},
 ): Promise<GpuKillSwitchResult> {
+  const started = Date.now();
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
   let project_id: string | null = null;
@@ -1858,7 +1889,15 @@ export async function killSwitchLocal(
     );
     return { marked: rows.length, paused: paused[0]?.paused === true };
   });
-  await resolvePendingForAccount(account_id, deps).catch(() => {});
+  // Best effort, bounded: what isn't done in time the reaper finishes, and
+  // the caller gets the remaining count well within its RPC deadline.
+  const deadline =
+    started + (deps.killSwitchResolveMs ?? KILL_SWITCH_RESOLVE_MS);
+  await resolvePendingForAccount(account_id, deps, {
+    guard: async () => {
+      if (Date.now() >= deadline) throw Error("kill switch resolve deadline");
+    },
+  }).catch(() => {});
   const { rows } = await getPool().query(
     `SELECT count(*)::int AS n FROM gpu_pods
       WHERE key_owner_account_id = $1
