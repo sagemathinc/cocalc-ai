@@ -66,7 +66,7 @@ export interface ReaperDeps extends GpuPodDeps {
 
 const REAPER: Actor = { kind: "reaper" };
 
-type WorkerName = "reaper" | "reconciler" | "compromise";
+export type WorkerName = "reaper" | "reconciler" | "compromise";
 
 // The lease is taken under a token unique to one sweep: nobody, not even
 // the same hub, takes it again until that sweep releases it or it expires.
@@ -91,10 +91,10 @@ export async function acquireWorkerLease(
   return rows.length > 0;
 }
 
-class LeaseLost extends Error {}
+export class LeaseLost extends Error {}
 
 // Extend this sweep's lease; a sweep that lost it stops at once.
-async function renewWorkerLease(
+export async function renewWorkerLease(
   name: WorkerName,
   token: string,
   now: Date,
@@ -112,22 +112,24 @@ async function renewWorkerLease(
 // Release this sweep's lease; only a complete sweep that still holds an
 // unexpired lease moves the watermark, to the time it finished. A sweep
 // that lost its lease writes nothing.
-async function finishWorkerLease(
+export async function finishWorkerLease(
   name: WorkerName,
   token: string,
   finished: Date,
   error?: string,
+  stats?: Record<string, unknown>,
 ): Promise<void> {
   const { rows } = await getPool().query(
     error == null
       ? `UPDATE gpu_worker_leases
-            SET last_completed_at = $3, last_error = NULL, holder = NULL, expires_at = NULL
+            SET last_completed_at = $3, last_error = NULL, holder = NULL, expires_at = NULL,
+                last_stats = COALESCE($4::jsonb, last_stats)
           WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`
       : `UPDATE gpu_worker_leases
             SET last_error = $4, holder = NULL, expires_at = NULL
           WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`,
     error == null
-      ? [name, token, finished]
+      ? [name, token, finished, stats == null ? null : JSON.stringify(stats)]
       : [name, token, finished, error.slice(0, 500)],
   );
   if (rows.length === 0) throw new LeaseLost("the reaper lease was lost");

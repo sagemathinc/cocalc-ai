@@ -15,6 +15,7 @@ import {
   waitForLockWaiters,
   type RealPostgres,
 } from "@cocalc/server/test/real-postgres";
+import { freshInventoryForTests } from "./test-inventory";
 
 jest.mock("@cocalc/database/settings/secret-settings", () => ({
   encryptSecretStorageValue: async (_name: string, value: string) => value,
@@ -64,6 +65,8 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     await getPool().query(
       "INSERT INTO gpu_worker_leases (name, last_completed_at) VALUES ('reaper', now() + interval '10 years') ON CONFLICT (name) DO UPDATE SET last_completed_at = EXCLUDED.last_completed_at",
     );
+    // and every key has a recent complete inventory (likewise)
+    await freshInventoryForTests();
     keys = await import("./provider-keys");
     pods = await import("./pods");
     store = await import("@cocalc/server/external-credentials/store");

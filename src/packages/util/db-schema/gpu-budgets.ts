@@ -474,6 +474,8 @@ Table({
     last_started_at: { type: "timestamp" },
     last_completed_at: { type: "timestamp" },
     last_error: { type: "string", pg_type: "varchar(500)" },
+    // the last complete sweep's numbers (the reconciler: its backlog)
+    last_stats: { type: "map" },
   },
 });
 

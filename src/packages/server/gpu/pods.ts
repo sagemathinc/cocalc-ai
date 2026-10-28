@@ -1533,6 +1533,152 @@ export async function recordSeenAddresses(
   }
 }
 
+// ---- the reconciler's record changes (5d) ----
+//
+// The reconciler reads RunPod and records what it sees; it never asks RunPod
+// to terminate anything. These two are its only pod-state changes.
+
+// RunPod says (by id, getPod 404) that a bound pod no longer exists: end the
+// record through the normal terminated path, settling what it actually
+// cost. Undefined if the record moved on meanwhile.
+export async function endPodGoneAtProvider(
+  row: PodRow,
+  actor: Actor,
+): Promise<PodRow | undefined> {
+  return await transition(
+    row.id,
+    {
+      state: "terminated",
+      desired_state: "terminated",
+      terminated_at: new Date(),
+    },
+    "AND state IN ('running', 'stopped', 'terminating') AND unmanaged_at IS NULL",
+    {
+      actor,
+      action: "state",
+      details: { state: "terminated", gone_at_provider: true },
+    },
+    { settle: "actual" },
+  );
+}
+
+// A RunPod pod named exactly like an ambiguous or failed (quarantined or
+// released) record's handle: the pod is live, so the record becomes live and
+// managed again. Its quarantined holds go back to active, adding only what
+// RunPod's real price needs beyond them; holds the owner released are
+// reserved again in full. Nothing settles while it runs, and nothing is
+// terminated here: a pod that doesn't fit is marked to terminate, for the
+// reaper. Returns the record and whether its holds had been released.
+export async function reconcileBindPod(
+  row: PodRow,
+  pod: RunpodPodView,
+  actor: Actor,
+): Promise<{ row?: PodRow; released: boolean }> {
+  let released = false;
+  const bound = await transition(
+    row.id,
+    {
+      provider_pod_id: pod.id,
+      state: "running",
+      running_since: providerStartTime(pod, row),
+      cost_per_hr: pod.cost ?? null,
+      data_center_id: pod.dataCenterId ?? row.data_center_id,
+      public_ip: pod.sshDirect?.host ?? null,
+      terminated_at: null,
+    },
+    "AND state IN ('ambiguous', 'failed') AND provider_pod_id IS NULL AND unmanaged_at IS NULL",
+    {
+      actor,
+      action: "bind",
+      details: {
+        provider_pod_id: pod.id,
+        cost_per_hr: pod.cost,
+        reconciled: true,
+      },
+    },
+    {
+      after: async (db, b) => {
+        // the budget locks are held (transition takes them for `after`)
+        const { rows: reservations } = await db.query(
+          "SELECT * FROM gpu_pod_reservations WHERE pod_id = $1 ORDER BY id",
+          [b.id],
+        );
+        for (const r of reservations) {
+          if (r.state === "quarantined") {
+            // still held on its layer: only its state changes
+            await db.query(
+              "UPDATE gpu_pod_reservations SET state = 'active', updated = now() WHERE id = $1",
+              [r.id],
+            );
+          } else if (r.state === "settled") {
+            // released (the owner's audited release, or a failed create):
+            // hold it again in full
+            released = true;
+            await db.query(
+              `UPDATE gpu_pod_reservations
+                  SET state = 'active', spent_usd = 0, released_usd = 0, overrun_usd = 0,
+                      settled_at = NULL, updated = now()
+                WHERE id = $1`,
+              [r.id],
+            );
+            await db.query(
+              `UPDATE gpu_budget_layers
+                  SET reserved_usd = reserved_usd + $2, spent_usd = spent_usd - $3, updated = now()
+                WHERE id = $1`,
+              [r.layer_id, r.reserved_usd, r.spent_usd ?? 0],
+            );
+          }
+        }
+        let out: PodRow = b;
+        if (pod.cost != null) {
+          const fits = await enlargeAtBind(db, {
+            pod_id: b.id,
+            credential_id: b.credential_id,
+            actual_hourly_usd: moneyToDbString(pod.cost),
+            max_runtime_minutes: b.max_runtime_minutes,
+          });
+          if (!fits) {
+            await enlargeAtBind(db, {
+              pod_id: b.id,
+              credential_id: b.credential_id,
+              actual_hourly_usd: moneyToDbString(pod.cost),
+              max_runtime_minutes: b.max_runtime_minutes,
+              force: true,
+            });
+            const { rows } = await db.query(
+              `UPDATE gpu_pods SET desired_state = 'terminated', reason = $2, updated = now()
+                WHERE id = $1 RETURNING *`,
+              [
+                b.id,
+                "RunPod's price for this pod is more than your GPU budget allows, so it is being terminated.",
+              ],
+            );
+            out = rows[0];
+            await recordEvent(
+              b.id,
+              actor,
+              "budget_stop",
+              { cost_per_hr: pod.cost },
+              db,
+            );
+          }
+        }
+        if (b.public_ip) {
+          await recordEvent(
+            b.id,
+            actor,
+            "ip_seen",
+            { public_ip: b.public_ip, ports: pod.runtime?.ports ?? null },
+            db,
+          );
+        }
+        return out;
+      },
+    },
+  );
+  return { row: bound, released };
+}
+
 export async function listManagedGpuPodsLocal(
   opts: { account_id?: string; include_ended?: boolean },
   deps: GpuPodDeps = {},

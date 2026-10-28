@@ -267,9 +267,10 @@ export async function lockKeyFence(
   state: string;
   paused_reason: string | null;
   kill_switch_at: Date | null;
+  last_inventory_at: Date | null;
 }> {
   const { rows } = await db.query(
-    `SELECT state, paused_reason, kill_switch_at FROM gpu_key_fences WHERE credential_id = $1 FOR UPDATE`,
+    `SELECT state, paused_reason, kill_switch_at, last_inventory_at FROM gpu_key_fences WHERE credential_id = $1 FOR UPDATE`,
     [credential_id],
   );
   if (!rows[0]) refuse("This RunPod key has no GPU budget yet.");
@@ -305,6 +306,38 @@ export async function requireFreshWorkers(
   );
 }
 
+// Launches also need a recent complete inventory of the key (the reconciler,
+// reconcile.ts): what it doesn't know about, nobody is watching. No override:
+// a key whose inventory can't be read can't be watched either.
+export const INVENTORY_STALE_MS = 20 * 60_000;
+
+// reconcile.ts registers this: a refused launch asks for a pass soon (it
+// runs after this transaction, bounded, never awaited here)
+let inventoryWaker:
+  | ((k: { credential_id: string; key_owner_account_id: string }) => void)
+  | undefined;
+export function setInventoryWaker(f: typeof inventoryWaker): void {
+  inventoryWaker = f;
+}
+
+export function requireFreshInventory(
+  fence: { last_inventory_at: Date | null },
+  k: { credential_id: string; key_owner_account_id: string; now: Date },
+): void {
+  const last = fence.last_inventory_at;
+  if (
+    last &&
+    k.now.getTime() - new Date(last).getTime() <= INVENTORY_STALE_MS
+  ) {
+    return;
+  }
+  const { credential_id, key_owner_account_id } = k;
+  setImmediate(() => inventoryWaker?.({ credential_id, key_owner_account_id }));
+  refuse(
+    "GPU launches with this key are waiting for CoCalc to check the pods on your RunPod account (it does every few minutes). Try again shortly.",
+  );
+}
+
 // Check and reserve on every applicable layer. Call inside the intent's
 // transaction, after the account rehome fence and before the pod row; then
 // insertReservations() with the new pod's id.
@@ -337,6 +370,11 @@ export async function admitLaunch(
       "New GPU launches with this key are paused until an alert is resolved. Check gpu alerts.",
     );
   }
+  requireFreshInventory(fence, {
+    credential_id: req.credential_id,
+    key_owner_account_id: req.key_owner_account_id,
+    now,
+  });
   const { rows: layers } = await db.query(
     `SELECT * FROM gpu_budget_layers
       WHERE credential_id = $1

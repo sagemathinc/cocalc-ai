@@ -14,6 +14,7 @@ import {
   startRealPostgres,
   type RealPostgres,
 } from "@cocalc/server/test/real-postgres";
+import { freshInventoryForTests } from "./test-inventory";
 
 const describeRealPostgres = postgresBinDir() ? describe : describe.skip;
 
@@ -47,6 +48,8 @@ describeRealPostgres("GPU budget admission under concurrency", () => {
     await getPool().query(
       "INSERT INTO gpu_worker_leases (name, last_completed_at) VALUES ('reaper', now() + interval '10 years') ON CONFLICT (name) DO UPDATE SET last_completed_at = EXCLUDED.last_completed_at",
     );
+    // and every key has a recent complete inventory (likewise)
+    await freshInventoryForTests();
     pods = await import("./pods");
     fence = await import("./account-fence");
   }, 120_000);

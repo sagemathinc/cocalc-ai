@@ -27,6 +27,7 @@ import {
   whoGpuPodLocal,
   launchGpuPod,
 } from "./pods";
+import { freshInventoryForTests } from "./test-inventory";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -116,6 +117,8 @@ async function syncGpuTables() {
   await getPool().query(
     "INSERT INTO gpu_worker_leases (name, last_completed_at) VALUES ('reaper', now() + interval '10 years') ON CONFLICT (name) DO UPDATE SET last_completed_at = EXCLUDED.last_completed_at",
   );
+  // and every key has a recent complete inventory (likewise)
+  await freshInventoryForTests();
 }
 
 async function events(pod_id: string) {
