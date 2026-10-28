@@ -220,7 +220,7 @@ describeDb("gpu.spend", () => {
     ]);
     expect(result.totals.spent_usd).toBe("2.5000000000");
     // these fixture pods have no RunPod id, so billing can't reconcile them
-    // and they don't hold billed_through back (5d-2a): it reaches until
+    // and they don't hold billed_through back (5d-2a)
     expect(result.billed_through).toBe("2026-10-28T12:00:00.000Z");
   });
 
