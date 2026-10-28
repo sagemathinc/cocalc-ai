@@ -52,15 +52,22 @@ export interface GpuAlertInput {
   observed_at: Date;
 }
 
-// Open the alert, or record that its condition was seen again.
+// Open the alert, or record that its condition was seen again. A sighting
+// older than the observation that resolved the same alert (a newer pass
+// proved it gone) opens nothing. True if it is open now with this sighting.
 export async function raiseAlert(
   a: GpuAlertInput,
   db: Db = getPool(),
-): Promise<void> {
-  await db.query(
+): Promise<boolean> {
+  const { rowCount } = await db.query(
     `INSERT INTO gpu_alerts (id, key_owner_account_id, credential_id, kind, severity,
        dedupe_key, details, opened, last_seen)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8)
+     SELECT $1::uuid, $2::uuid, $3::uuid, $4::text, $5::text, $6::text, $7::jsonb, now(),
+            $8::timestamptz
+      WHERE NOT EXISTS (
+        SELECT 1 FROM gpu_alerts r
+         WHERE r.credential_id = $3::uuid AND r.kind = $4::text AND r.dedupe_key = $6::text
+           AND r.resolved_at IS NOT NULL AND r.resolved_observed_at >= $8::timestamptz)
      ON CONFLICT (credential_id, kind, dedupe_key) WHERE resolved_at IS NULL
      DO UPDATE SET last_seen = GREATEST(gpu_alerts.last_seen, EXCLUDED.last_seen),
                    details = COALESCE(EXCLUDED.details, gpu_alerts.details)`,
@@ -75,6 +82,7 @@ export async function raiseAlert(
       a.observed_at,
     ],
   );
+  return (rowCount ?? 0) > 0;
 }
 
 // Resolve one open alert, if nothing saw its condition after `observed_at`.
@@ -96,7 +104,7 @@ export async function resolveAlert(
   db: Db = getPool(),
 ): Promise<number> {
   const { rowCount } = await db.query(
-    `UPDATE gpu_alerts SET resolved_at = now(), resolved_by = $4
+    `UPDATE gpu_alerts SET resolved_at = now(), resolved_by = $4, resolved_observed_at = $5
       WHERE credential_id = $1 AND kind = $2 AND resolved_at IS NULL
         AND ($3::text IS NULL OR dedupe_key = $3)
         AND last_seen < $5`,

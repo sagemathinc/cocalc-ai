@@ -208,7 +208,7 @@ export async function reconcileKey(
       err instanceof RunpodApiError &&
       (err.kind === "auth" || err.kind === "forbidden")
     ) {
-      await raiseAlert({
+      const raised = await raiseAlert({
         key_owner_account_id,
         credential_id,
         kind: "key_rejected",
@@ -217,7 +217,7 @@ export async function reconcileKey(
         details: { status: err.kind === "auth" ? 401 : 403 },
         observed_at,
       });
-      await pauseKey(credential_id, "key_rejected");
+      if (raised) await pauseKey(credential_id, "key_rejected");
       return await fail({ claimed: true, rejected: true });
     }
     // a lost lease: the next holder continues
@@ -322,6 +322,7 @@ async function matchInventory(
             },
             observed_at,
           });
+          // bound just now: it is live, whatever any alert says
           await pauseKey(credential_id, "unknown_pod");
         }
         continue;
@@ -329,7 +330,7 @@ async function matchInventory(
     }
     // a pod CoCalc didn't start (or more than one under a record's handle)
     unknown += 1;
-    await raiseAlert({
+    const raised = await raiseAlert({
       key_owner_account_id,
       credential_id,
       kind: "unknown_pod",
@@ -341,7 +342,8 @@ async function matchInventory(
       },
       observed_at,
     });
-    await pauseKey(credential_id, "unknown_pod");
+    // (not if a newer pass showed it gone meanwhile)
+    if (raised) await pauseKey(credential_id, "unknown_pod");
   }
   if (seen.length > 0) {
     await recordSeenAddresses(

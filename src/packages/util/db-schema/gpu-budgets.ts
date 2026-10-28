@@ -390,6 +390,9 @@ Table({
     last_seen: { type: "timestamp", not_null: true, pg_default: "now()" },
     resolved_at: { type: "timestamp" },
     resolved_by: { type: "string", pg_type: "varchar(40)" },
+    // the observation that resolved it (a pass's observed_at): a sighting
+    // older than this doesn't reopen it
+    resolved_observed_at: { type: "timestamp" },
     acknowledged_at: { type: "timestamp" },
   },
 });
