@@ -6,10 +6,20 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
+import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import type { SandboxExecResult } from "./sandbox-exec";
 
+const logger = getLogger("project-runner:sandbox-command-containment");
 const HELPER = "/usr/local/sbin/cocalc-runtime-storage";
+// After its input closes, the helper's cleanup waits for the lifecycle lock
+// (15 s) and kills the job scope (10 s) within a 30 s output drain, then
+// flushes for up to 1 s more. Killing sudo sooner turns a cancel during
+// maintenance into unconfirmed cleanup, and never stops the root helper.
+const FORCE_KILL_MS = 45_000;
+// One confirmation round trip, beyond execFile's own 30 s timeout: a call
+// that never settles must not stop recovery for good.
+const CONFIRM_WATCHDOG_MS = 45_000;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const SCOPE = new RegExp(`^job-(\\d+)-(\\d+)-(\\d+)-(\\d+)-(\\d+)-(${UUID})$`);
 // Fixed admission refusals from the helper; its free-form diagnostics stay private.
@@ -46,6 +56,11 @@ export function containedPodmanEnv(): NodeJS.ProcessEnv {
 
 function retainRecovery(recovery: Recovery) {
   recoveries.set(recovery.scope, recovery);
+  logger.info("job cleanup unconfirmed; retained for recovery", {
+    project_id: recovery.project_id,
+    scope: recovery.scope,
+    pending: recoveries.size,
+  });
   if (recoveryTimer) return;
   // This runs in the execution worker, not just the main host's orphan reaper.
   // It outlives controllers and never retains scripts, credentials or output.
@@ -65,6 +80,7 @@ async function recover(): Promise<void> {
     recoveries.delete(entry.scope);
     recoveries.set(entry.scope, entry);
   }
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
       const child = execFile(
@@ -76,6 +92,11 @@ async function recover(): Promise<void> {
             ? reject(Error("Cleanup confirmation unavailable"))
             : resolve(stdout),
       );
+      watchdog = setTimeout(() => {
+        reject(Error("Cleanup confirmation did not finish"));
+        child.kill?.("SIGKILL");
+      }, CONFIRM_WATCHDOG_MS);
+      watchdog.unref?.();
       child.stdin?.on("error", () => {});
       child.stdin?.end(
         JSON.stringify({
@@ -99,13 +120,37 @@ async function recover(): Promise<void> {
       if (!entry) throw Error("Unknown cleanup confirmation");
       confirmed.add(entry);
     }
+    logger.debug("job cleanup recheck", {
+      queried: batch.length,
+      confirmed: confirmed.size,
+    });
     for (const entry of confirmed) {
       recoveries.delete(entry.scope);
-      entry.confirmed();
+      // Each proof is delivered on its own: one failing callback must not
+      // lose the others' proofs.
+      try {
+        entry.confirmed();
+        logger.info("job cleanup confirmed by recovery", {
+          project_id: entry.project_id,
+          scope: entry.scope,
+          pending: recoveries.size,
+        });
+      } catch (error) {
+        logger.warn("job cleanup proof could not be delivered", {
+          project_id: entry.project_id,
+          scope: entry.scope,
+          error: `${error}`,
+        });
+      }
     }
-  } catch {
+  } catch (error) {
     // Missing/old helpers, transport errors and malformed replies prove nothing.
+    logger.debug("job cleanup recheck proved nothing", {
+      queried: batch.length,
+      error: `${error}`,
+    });
   } finally {
+    clearTimeout(watchdog);
     recovering = false;
     if (!recoveries.size) {
       clearInterval(recoveryTimer);
@@ -186,7 +231,13 @@ export function runContainedSandboxCommand({
       child.stdin.end();
       // A stuck transport is not proof of cleanup. If this fallback fires,
       // preserve the unresolved status and leave the scope to the orphan reaper.
-      force = setTimeout(() => child.kill("SIGKILL"), 20_000);
+      force = setTimeout(() => {
+        logger.warn("job helper did not exit after stop; killing sudo", {
+          project_id,
+          scope,
+        });
+        child.kill("SIGKILL");
+      }, FORCE_KILL_MS);
     };
     child.stdin.on("error", stop);
     child.stdin.write(
@@ -295,6 +346,12 @@ export function runContainedSandboxCommand({
         if (confirmed) onCleanupConfirmed();
         else if (scope)
           retainRecovery({ project_id, scope, confirmed: onCleanupConfirmed });
+        else
+          logger.warn("job cleanup unconfirmed without a job scope", {
+            project_id,
+            invalid,
+            code,
+          });
       }
       resolve({
         stdout: "",
