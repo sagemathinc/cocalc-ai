@@ -752,7 +752,13 @@ describeDb("GPU budgets", () => {
       );
       expect(
         await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
-      ).toEqual({ closed: true, provider_pods: 0, managed_pods: 0 });
+      ).toEqual({
+        closed: true,
+        provider_pods: 0,
+        managed_pods: 0,
+        // pods started after the last check are the owner's to look for
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
       expect(await fence()).toBe("closed");
       const { rows: cred } = await getPool().query(
         "SELECT revoked IS NOT NULL AS revoked, encrypted_payload IS NULL AS nulled FROM external_credentials WHERE id = $1",
@@ -837,7 +843,13 @@ describeDb("GPU budgets", () => {
       );
       expect(
         await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
-      ).toEqual({ closed: true, provider_pods: 0, managed_pods: 0 });
+      ).toEqual({
+        closed: true,
+        provider_pods: 0,
+        managed_pods: 0,
+        // pods started after the last check are the owner's to look for
+        warning: expect.stringContaining("RunPod's Pods page"),
+      });
       const { rows } = await getPool().query(
         "SELECT state FROM gpu_key_fences WHERE credential_id = $1",
         [s.credential_id],

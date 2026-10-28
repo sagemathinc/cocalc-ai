@@ -67,6 +67,13 @@ const log = getLogger("server:gpu:compromise");
 const PROVIDER_REJECTED_WARNING =
   "RunPod no longer accepts this key, but pods CoCalc launched with it may still be running and billing at RunPod, and CoCalc can't terminate them anymore. Terminate them on RunPod's Pods page, then remove the key in CoCalc's Settings with \"Remove anyway\".";
 
+// A close follows RunPod rejecting the key, after CoCalc's last look at the
+// account: a pod started between that look and the revocation is one
+// CoCalc never saw, and now can't (deleting a key at RunPod doesn't stop its
+// pods). So the owner checks once.
+const CLOSED_WARNING =
+  "CoCalc removed this key and stopped watching the RunPod account. It can't see pods started after its last check: look at RunPod's Pods page once, and terminate any pod you don't recognize.";
+
 // how long the report request's own pass may spend terminating pods (the
 // compromise worker continues)
 const REQUEST_PASS_MS = 15_000;
@@ -299,7 +306,12 @@ async function revokeAndClose(
     },
   });
   await closeCompromise(account_id, credential_id, deps);
-  return { closed: true, provider_pods: 0, managed_pods: 0 };
+  return {
+    closed: true,
+    provider_pods: 0,
+    managed_pods: 0,
+    warning: CLOSED_WARNING,
+  };
 }
 
 const FINISHED = new Set(["terminated", "failed"]);

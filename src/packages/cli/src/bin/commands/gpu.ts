@@ -473,7 +473,7 @@ export function registerGpuCommand(
   gpu
     .command("report-compromised")
     .description(
-      "report your RunPod key stolen: CoCalc stops using it and terminates EVERY pod in that RunPod account (including ones it didn't start), and keeps doing so every minute until you delete the key on RunPod's Credentials page; then it removes its copy (if pods it launched are still left once RunPod rejects the key, follow the returned warning: terminate them at RunPod, then remove the key with \"Remove anyway\"). Needs --confirm-cocalc-only, and you to sign in again (from Settings in the browser)",
+      "report your RunPod key stolen: CoCalc stops using it and terminates EVERY pod in that RunPod account (including ones it didn't start), and keeps doing so every minute until you delete the key on RunPod's Credentials page; then it removes its copy and asks you to check RunPod's Pods page once, for pods started after its last look (if pods it launched are still left once RunPod rejects the key, follow the returned warning: terminate them at RunPod, then remove the key with \"Remove anyway\"). Needs --confirm-cocalc-only, and you to sign in again (from Settings in the browser)",
     )
     .option(
       "--confirm-cocalc-only",
