@@ -4976,13 +4976,32 @@ describe("a pod's host key is registered on the bay that minted its token", () =
       ATTACHED,
       `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
        const { newHostkeyToken } = server("gpu/hostkey-token.js");
+       const { upsertExternalCredential } = server("external-credentials/store.js");
+       // the stored key that launched the pod (a report needs it active)
+       const { id: credential_id } = await upsertExternalCredential({
+         selector: { provider: "runpod", kind: "gpu-provider-api-key", scope: "account", owner_account_id: ${JSON.stringify(bob.account_id)} },
+         payload: "rpa_MULTIBAYHOSTKEY0123456789abcdefghijklmnopq",
+         metadata: { source: "multibay-test" },
+       });
        const t = newHostkeyToken(${JSON.stringify(ATTACHED)});
        await getPool().query(
-         "INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider, beneficiary_account_id, spec, gpu_type_id, gpu_count, cloud, state, desired_state, max_runtime_minutes, deadline, provider_pod_id, hostkey_token_id, hostkey_verifier, hostkey_expires) VALUES ($1, $2, $3, $1, 'runpod', $3, '{}', 'NVIDIA RTX A4000', 1, 'SECURE', 'running', 'running', 30, now() + interval '30 minutes', $4, $5, $6, now() + interval '30 minutes')",
-         [${JSON.stringify(POD_ID)}, ${JSON.stringify(HANDLE)}, ${JSON.stringify(bob.account_id)}, ${JSON.stringify(PROVIDER_POD_ID)}, t.token_id, t.verifier],
+         "INSERT INTO gpu_pods (id, handle, key_owner_account_id, credential_id, provider, beneficiary_account_id, spec, gpu_type_id, gpu_count, cloud, state, desired_state, max_runtime_minutes, deadline, provider_pod_id, hostkey_token_id, hostkey_verifier, hostkey_expires) VALUES ($1, $2, $3, $7, 'runpod', $3, '{}', 'NVIDIA RTX A4000', 1, 'SECURE', 'running', 'running', 30, now() + interval '30 minutes', $4, $5, $6, now() + interval '30 minutes')",
+         [${JSON.stringify(POD_ID)}, ${JSON.stringify(HANDLE)}, ${JSON.stringify(bob.account_id)}, ${JSON.stringify(PROVIDER_POD_ID)}, t.token_id, t.verifier, credential_id],
        );
        return t.token;`,
     );
+  });
+
+  it("answers bob's SSH lookup from his home bay, not ready before registration", async () => {
+    const r = await runInBay(
+      cluster,
+      SEED,
+      `return await server("gpu/hostkey.js").gpuSshInfo({ account_id: ${JSON.stringify(bob.account_id)}, pod_id: ${JSON.stringify(HANDLE)} });`,
+    );
+    // Not registered yet, so there is nothing to hand out (and no RunPod call).
+    assert.equal(r.handle, HANDLE);
+    assert.equal(r.state, "running");
+    assert.equal(r.ready, false);
   });
 
   it("refuses the token on a bay that didn't mint it", async () => {
@@ -5020,15 +5039,4 @@ describe("a pod's host key is registered on the bay that minted its token", () =
     assert.deepEqual(home, { key: HOST_KEY, alerts: [null, "host_key_mismatch"] });
   });
 
-  it("answers bob's SSH lookup from his home bay", async () => {
-    const r = await runInBay(
-      cluster,
-      SEED,
-      `return await server("gpu/hostkey.js").gpuSshInfo({ account_id: ${JSON.stringify(bob.account_id)}, pod_id: ${JSON.stringify(HANDLE)} });`,
-    );
-    // Bob has no RunPod key here, so there is no live endpoint to hand out.
-    assert.equal(r.handle, HANDLE);
-    assert.equal(r.state, "running");
-    assert.equal(r.ready, false);
-  });
 });
