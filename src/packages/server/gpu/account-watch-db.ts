@@ -43,7 +43,7 @@ export async function endAccountWatch(
 ): Promise<void> {
   await db.query(
     `UPDATE gpu_provider_account_watch
-        SET confirmed_at = NULL, disabled_reason = NULL,
+        SET confirmed_at = NULL, confirmation_id = NULL, disabled_reason = NULL,
             rate_warning_passes = 0, rate_critical_passes = 0,
             last_asked_at = NULL, last_balance_usd = NULL, last_expected_usd = NULL,
             baseline_at = NULL, baseline_balance_usd = NULL, baseline_expected_usd = NULL,

@@ -240,6 +240,14 @@ export async function watchProviderAccount(
   ) {
     return { checked: false, reason: "unconfirmed" };
   }
+  // the confirmation this pass works under: a withdrawal and a new
+  // confirmation meanwhile (a new id) make whatever it learns stale
+  const epoch = watch.confirmation_id;
+  const current = (w: any) =>
+    w &&
+    w.credential_id === credential_id &&
+    w.confirmed_at &&
+    w.confirmation_id === epoch;
   // On this bay, exactly one active key may have this identity.
   const active = await identityCredentials(identity, getPool(), {
     active: true,
@@ -249,12 +257,15 @@ export async function watchProviderAccount(
     keys.length === 1 && keys[0] === credential_id;
   // The checks are off while another key uses the account: a co-owner's pods
   // would be counted against ours. They start over once it is gone.
-  const disable = async (db: Db, w: any, keys: number) => {
+  // (its time is kept as the last observation: an older answer can't land
+  // after it)
+  const disable = async (db: Db, w: any, keys: number, at: Date) => {
     await db.query(
       `UPDATE gpu_provider_account_watch
-          SET disabled_reason = 'shared', ${CLEARED_SAMPLES}, updated = now()
+          SET disabled_reason = 'shared', ${CLEARED_READINGS},
+              last_asked_at = GREATEST(COALESCE(last_asked_at, $2), $2), updated = now()
         WHERE id = $1`,
-      [w.id],
+      [w.id, at],
     );
     await raiseAlert(
       {
@@ -272,14 +283,40 @@ export async function watchProviderAccount(
   if (!exclusive(active)) {
     await underLiveFence(credential_id, async (db) => {
       const w = await lockWatch(db, identity);
-      if (!w || w.credential_id !== credential_id || !w.confirmed_at) return;
+      if (!current(w)) return;
       await lockProviderIdentity(db, identity);
       const now = await identityCredentials(identity, db, { active: true });
-      if (!exclusive(now)) await disable(db, w, now.length);
+      if (!exclusive(now)) await disable(db, w, now.length, observed_at);
     });
     return { checked: false, reason: "shared" };
   }
   const asked_at = new Date(clock());
+  // How every answer (or refusal) from RunPod is applied: under the key's
+  // live fence and the watch row's lock; never older than the last sample
+  // (a slower overlapping pass); and only while this is still the account's
+  // one key (a key for it connected while RunPod was asked commits before
+  // this, since the connect takes the same lock, and one connected after
+  // waits for this transaction).
+  const finish = async (
+    apply: (db: Db, w: any) => Promise<AccountWatchOutcome>,
+  ): Promise<AccountWatchOutcome> =>
+    (await underLiveFence(credential_id, async (db) => {
+      const w = await lockWatch(db, identity);
+      if (!current(w)) {
+        return { checked: false, reason: "unconfirmed" } as AccountWatchOutcome;
+      }
+      // every outcome (a sample, a refusal, shared) moves last_asked_at
+      if (w.last_asked_at && new Date(w.last_asked_at) >= asked_at) {
+        return { checked: false, reason: "stale" } as AccountWatchOutcome;
+      }
+      await lockProviderIdentity(db, identity);
+      const keys = await identityCredentials(identity, db, { active: true });
+      if (!exclusive(keys)) {
+        await disable(db, w, keys.length, asked_at);
+        return { checked: false, reason: "shared" } as AccountWatchOutcome;
+      }
+      return await apply(db, w);
+    })) ?? { checked: false, reason: "fence" };
   let balance: RunpodAccountBalance;
   try {
     balance = await deps.getAccountBalance();
@@ -290,14 +327,14 @@ export async function watchProviderAccount(
       err instanceof RunpodApiError &&
       (err.kind === "forbidden" || err.kind === "auth")
     ) {
-      await underLiveFence(credential_id, async (db) => {
-        const w = await lockWatch(db, identity);
-        if (!w || w.credential_id !== credential_id || !w.confirmed_at) return;
+      return await finish(async (db, w) => {
+        // (samples start over; this refusal is the latest observation)
         await db.query(
           `UPDATE gpu_provider_account_watch
-              SET disabled_reason = 'no_access', ${CLEARED_SAMPLES}, updated = now()
+              SET disabled_reason = 'no_access', ${CLEARED_READINGS},
+                  last_asked_at = $2, updated = now()
             WHERE id = $1`,
-          [w.id],
+          [w.id, asked_at],
         );
         await raiseAlert(
           {
@@ -311,29 +348,12 @@ export async function watchProviderAccount(
           },
           db,
         );
+        return { checked: false, reason: "no_access" };
       });
-      return { checked: false, reason: "no_access" };
     }
     throw err;
   }
-  const outcome = await underLiveFence(credential_id, async (db) => {
-    const w = await lockWatch(db, identity);
-    if (!w || w.credential_id !== credential_id || !w.confirmed_at) {
-      return { checked: false, reason: "unconfirmed" } as AccountWatchOutcome;
-    }
-    // a slower overlapping pass: never moves the samples backward
-    if (w.last_asked_at && new Date(w.last_asked_at) >= asked_at) {
-      return { checked: false, reason: "stale" } as AccountWatchOutcome;
-    }
-    // Still the only key on the account? A key for it connected while RunPod
-    // was asked commits before this (the connect takes the same lock), and
-    // one connected after waits for this transaction.
-    await lockProviderIdentity(db, identity);
-    const keys = await identityCredentials(identity, db, { active: true });
-    if (!exclusive(keys)) {
-      await disable(db, w, keys.length);
-      return { checked: false, reason: "shared" } as AccountWatchOutcome;
-    }
+  return await finish(async (db, w) => {
     const creds = await identityCredentials(identity, db, { active: false });
     const E = await expectedSpend(creds, asked_at, db);
     const out: AccountWatchOutcome = { checked: true };
@@ -455,12 +475,15 @@ export async function watchProviderAccount(
     );
     return out;
   });
-  return outcome ?? { checked: false, reason: "fence" };
 }
 
-const CLEARED_SAMPLES = `rate_warning_passes = 0, rate_critical_passes = 0,
-  last_asked_at = NULL, last_balance_usd = NULL, last_expected_usd = NULL,
+// everything learned so far, except when the last answer came (which only
+// moves forward, so no older answer lands after a newer one)
+const CLEARED_READINGS = `rate_warning_passes = 0, rate_critical_passes = 0,
+  last_balance_usd = NULL, last_expected_usd = NULL,
   baseline_at = NULL, baseline_balance_usd = NULL, baseline_expected_usd = NULL`;
+// and that too: a new confirmation starts from nothing
+const CLEARED_SAMPLES = `${CLEARED_READINGS}, last_asked_at = NULL`;
 
 async function readWatch(identity: ProviderIdentity, db: Db = getPool()) {
   const { rows } = await db.query(
@@ -619,12 +642,14 @@ export async function confirmAccountChecksLocal(
       }
       await db.query(
         `INSERT INTO gpu_provider_account_watch (id, provider, provider_account_kind,
-           provider_account_id, key_owner_account_id, credential_id, confirmed_at, updated)
-         VALUES ($1, $2, $3, $4, $5, $6, now(), now())
+           provider_account_id, key_owner_account_id, credential_id, confirmed_at,
+           confirmation_id, updated)
+         VALUES ($1, $2, $3, $4, $5, $6, now(), $7, now())
          ON CONFLICT (provider, provider_account_kind, provider_account_id)
          DO UPDATE SET key_owner_account_id = EXCLUDED.key_owner_account_id,
                        credential_id = EXCLUDED.credential_id,
                        confirmed_at = now(), disabled_reason = NULL,
+                       confirmation_id = EXCLUDED.confirmation_id,
                        ${CLEARED_SAMPLES}, updated = now()`,
         [
           randomUUID(),
@@ -633,6 +658,7 @@ export async function confirmAccountChecksLocal(
           identity.id,
           account_id,
           credential_id,
+          randomUUID(),
         ],
       );
     } else {

@@ -830,12 +830,14 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     answer.open();
     expect(await checking).toEqual({ checked: false, reason: "shared" });
     const { rows: w } = await getPool().query(
-      "SELECT disabled_reason, last_asked_at, rate_warning_passes FROM gpu_provider_account_watch WHERE credential_id = $1",
+      "SELECT disabled_reason, last_balance_usd, last_expected_usd, rate_warning_passes FROM gpu_provider_account_watch WHERE credential_id = $1",
       [keyA],
     );
     expect(w[0]).toEqual({
+      // no reading; the shared outcome is the latest observation
       disabled_reason: "shared",
-      last_asked_at: null,
+      last_balance_usd: null,
+      last_expected_usd: null,
       rate_warning_passes: 0,
     });
     const { rows: alerts } = await getPool().query(

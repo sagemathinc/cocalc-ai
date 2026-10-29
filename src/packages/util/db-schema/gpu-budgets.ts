@@ -552,6 +552,9 @@ Table({
     key_owner_account_id: { type: "uuid", not_null: true },
     credential_id: { type: "uuid", not_null: true },
     confirmed_at: { type: "timestamp" },
+    // a new id for each confirmation: a pass that started under an earlier
+    // one (withdrawn meanwhile, and confirmed again) writes nothing
+    confirmation_id: { type: "uuid" },
     // why the last pass didn't check (a second key on this account), or null
     disabled_reason: { type: "string", pg_type: "varchar(32)" },
     // consecutive passes over each spend-rate threshold

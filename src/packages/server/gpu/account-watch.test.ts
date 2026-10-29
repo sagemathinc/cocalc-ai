@@ -424,7 +424,11 @@ describeDb("GPU provider-account checks", () => {
       "SELECT last_asked_at, last_balance_usd FROM gpu_provider_account_watch WHERE credential_id = $1",
       [key],
     );
-    expect(rows[0]).toEqual({ last_asked_at: null, last_balance_usd: null });
+    // readings cleared; the refusal is the latest observation
+    expect(rows[0]).toEqual({
+      last_asked_at: at(MINUTE),
+      last_balance_usd: null,
+    });
     // RunPod answers again: on, and the warning ends
     expect(
       (await watcher(owner, key)(2 * MINUTE, { balance: 100, spendPerHour: 0 }))

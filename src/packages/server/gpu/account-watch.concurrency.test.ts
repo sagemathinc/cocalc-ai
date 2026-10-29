@@ -10,6 +10,7 @@
 // written. Skips itself without the server binaries.
 
 import { randomUUID } from "node:crypto";
+import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import {
   postgresBinDir,
   startRealPostgres,
@@ -95,22 +96,43 @@ describeRealPostgres("GPU provider-account checks, concurrently", () => {
     return { owner, key };
   }
 
-  // A pass that asked RunPod at `ms` and gets its answer when `answer` is
-  // called.
-  function slowPass(owner: string, key: string, ms: number, balance: number) {
+  // A pass that asked RunPod at `ms` and gets its answer (a balance, or
+  // RunPod's refusal) when `answer` is called. `asked` resolves once it is
+  // waiting on RunPod.
+  function slowPass(
+    owner: string,
+    key: string,
+    ms: number,
+    balance: number | "forbidden",
+  ) {
     let answer!: () => void;
     const gate = new Promise<void>((r) => (answer = r));
+    let asking!: () => void;
+    const asked = new Promise<void>((r) => (asking = r));
     const done = watch.watchProviderAccount(
       { credential_id: key, key_owner_account_id: owner },
       {
         now: () => T0 + ms,
         getAccountBalance: async () => {
+          asking();
           await gate;
+          if (balance === "forbidden") {
+            throw new RunpodApiError("forbidden", 200);
+          }
           return { balance, spendPerHour: 0 };
         },
       },
     );
-    return { answer, done };
+    return { answer, asked, done };
+  }
+
+  async function state(owner: string) {
+    return (
+      await watch.getAccountChecksLocal(
+        { account_id: owner },
+        { isHomeBay: async () => true },
+      )
+    ).state;
   }
 
   async function samples(key: string) {
@@ -154,5 +176,58 @@ describeRealPostgres("GPU provider-account checks, concurrently", () => {
     older.answer();
     await Promise.all([older.done, newer.done]);
     expect(await samples(key)).toEqual({ asked: 2 * MINUTE, balance: 40 });
+  });
+
+  it("an older answer never lands after a newer refusal", async () => {
+    const { owner, key } = await confirmedKey();
+    const older = slowPass(owner, key, 1 * MINUTE, 50);
+    const newer = slowPass(owner, key, 2 * MINUTE, "forbidden");
+    newer.answer();
+    expect(await newer.done).toEqual({ checked: false, reason: "no_access" });
+    older.answer();
+    expect(await older.done).toEqual({ checked: false, reason: "stale" });
+    expect(await state(owner)).toBe("no_access");
+  });
+
+  it("an older refusal never lands after a newer answer", async () => {
+    const { owner, key } = await confirmedKey();
+    const older = slowPass(owner, key, 1 * MINUTE, "forbidden");
+    const newer = slowPass(owner, key, 2 * MINUTE, 40);
+    newer.answer();
+    expect((await newer.done).checked).toBe(true);
+    older.answer();
+    expect(await older.done).toEqual({ checked: false, reason: "stale" });
+    expect(await state(owner)).toBe("on");
+    expect(await samples(key)).toEqual({ asked: 2 * MINUTE, balance: 40 });
+  });
+
+  it("a pass started before a withdrawal and a new confirmation writes nothing into the new one", async () => {
+    const { owner, key } = await confirmedKey();
+    const old = slowPass(owner, key, 10 * MINUTE, 1);
+    await old.asked;
+    const confirm = (yes: boolean) =>
+      watch.confirmAccountChecksLocal(
+        { account_id: owner, confirm: yes, fresh_auth_verified: true },
+        {
+          accountWriteFence: async (db: any, id: string, action: string) => {
+            await db.query(
+              "INSERT INTO accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+              [id],
+            );
+            await fence.lockGpuAccountFence(db, id, action);
+          },
+          isHomeBay: async () => true,
+        },
+      );
+    await confirm(false);
+    await confirm(true);
+    old.answer();
+    expect(await old.done).toEqual({ checked: false, reason: "unconfirmed" });
+    const { rows } = await getPool().query(
+      "SELECT last_asked_at, last_balance_usd FROM gpu_provider_account_watch WHERE credential_id = $1",
+      [key],
+    );
+    expect(rows[0]).toEqual({ last_asked_at: null, last_balance_usd: null });
+    expect(await state(owner)).toBe("on");
   });
 });
