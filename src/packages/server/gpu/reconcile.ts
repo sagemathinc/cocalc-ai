@@ -249,18 +249,6 @@ export async function reconcileKey(
       next: new Date(observed_at.getTime() + RECONCILE_EVERY_MS),
       attempts: 0,
     });
-    // the reconciliation capability works: a rejected-key alert ends
-    await underLiveFence(credential_id, (db) =>
-      resolveAlert(
-        {
-          credential_id,
-          kind: "key_rejected",
-          observed_at,
-          by: "complete_inventory",
-        },
-        db,
-      ),
-    );
     // The account checks, in what is left of the pass (only for an account
     // its owner confirmed). A failure here never undoes the inventory.
     const balance = raw.getAccountBalance;
@@ -284,6 +272,19 @@ export async function reconcileKey(
         }
       }
     }
+    // the reconciliation capability works: a rejected-key alert ends (after
+    // the account checks, whose 401 would say otherwise)
+    await underLiveFence(credential_id, (db) =>
+      resolveAlert(
+        {
+          credential_id,
+          kind: "key_rejected",
+          observed_at,
+          by: "complete_inventory",
+        },
+        db,
+      ),
+    );
     return { claimed: true, complete: true, unknown_pods: unknown };
   } catch (err) {
     if (err instanceof PassCut) return await fail({ claimed: true, cut: true });

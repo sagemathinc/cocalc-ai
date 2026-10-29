@@ -764,5 +764,26 @@ describeDb("GPU provider-account checks", () => {
     expect((await pass(3 * HOUR)).rejected).toBe(true);
     expect(await paused(key)).toBe("key_rejected");
     expect((await alerts(key)).map((a) => a.kind)).toContain("key_rejected");
+    // a later complete pass with a good account read ends it; and when the
+    // key is rejected again on the account read, with that alert already
+    // open from an earlier pass, it stays open and the key paused
+    await getPool().query(
+      "UPDATE gpu_key_fences SET paused_reason = NULL WHERE credential_id = $1",
+      [key],
+    );
+    getAccountBalance.mockRejectedValueOnce(new RunpodApiError("auth", 401));
+    expect((await pass(4 * HOUR)).rejected).toBe(true);
+    expect(await paused(key)).toBe("key_rejected");
+    const open = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_alerts WHERE credential_id = $1 AND kind = 'key_rejected' AND resolved_at IS NULL",
+      [key],
+    );
+    expect(open.rows[0].n).toBe(1);
+    expect((await pass(5 * HOUR)).complete).toBe(true);
+    const still = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_alerts WHERE credential_id = $1 AND kind = 'key_rejected' AND resolved_at IS NULL",
+      [key],
+    );
+    expect(still.rows[0].n).toBe(0);
   });
 });
