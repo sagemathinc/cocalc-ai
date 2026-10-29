@@ -5167,7 +5167,8 @@ describe("direct messages during a rehome", () => {
       { what: "the notice in nia's list on her old home" },
     );
 
-    // Hold the move after its snapshot: the destination's copy waits on this.
+    // Hold the move after its snapshot: the destination's copy waits on this
+    // table, which delivering the deletion to oto (on this bay) doesn't use.
     const held = runInBay(
       cluster,
       ATTACHED,
@@ -5175,7 +5176,7 @@ describe("direct messages during a rehome", () => {
        const db = await getPool().connect();
        try {
          await db.query("BEGIN");
-         await db.query("LOCK TABLE account_direct_deleted_messages IN ACCESS EXCLUSIVE MODE");
+         await db.query("LOCK TABLE direct_request_admissions IN ACCESS EXCLUSIVE MODE");
          await db.query("SELECT pg_sleep(20)");
          await db.query("COMMIT");
        } finally {
