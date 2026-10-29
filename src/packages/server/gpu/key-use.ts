@@ -84,6 +84,16 @@ const WORKER_OF: Record<GpuKeyWorkerPurpose, WorkerName> = {
   billing: "billing",
 };
 
+// (for the decrypt audit)
+export function workerForPurpose(purpose: string): WorkerName | undefined {
+  return WORKER_OF[purpose as GpuKeyWorkerPurpose];
+}
+
+// the purposes that are writes (they record an outcome)
+export function isWriteKeyPurpose(purpose: string): boolean {
+  return USE_POLICY[purpose as GpuKeyUsePurpose]?.write === true;
+}
+
 export interface GpuKeyUse {
   readonly kind: "use";
   readonly id: string;

@@ -45,6 +45,8 @@ const ACKNOWLEDGED_KINDS = new Set<GpuAlertKind>([
   "spend_drift",
   "billing_missing",
   "over_budget",
+  // 5d-2c: a decrypt nothing explains, for the owner to look at
+  "unexplained_decrypt",
 ]);
 
 export interface GpuAlertInput {
@@ -207,6 +209,8 @@ const MESSAGES: Record<GpuAlertKind, string> = {
     "Your RunPod balance dropped well more than the pods CoCalc runs with this key explain. If you didn't use the account otherwise, check RunPod's Pods and billing pages. When the difference is large, new launches pause until you resume them (cocalc gpu resume). If you also use this RunPod account outside CoCalc, withdraw the account confirmation (cocalc gpu account-checks --withdraw).",
   account_checks_disabled:
     "You confirmed this RunPod account is used only by you, for CoCalc, but another key connected to CoCalc uses it too, so CoCalc can't compare the account's spending with your pods. The checks resume once only one key uses the account.",
+  unexplained_decrypt:
+    "CoCalc read your RunPod key without a matching action of yours or of one of CoCalc's GPU workers. CoCalc's admins were alerted too. Check RunPod's Pods and billing pages; if anything looks unfamiliar, report the key compromised (cocalc gpu report-compromised). Acknowledge this alert once you've checked.",
 };
 
 export type GpuAlertView = GpuAlert;

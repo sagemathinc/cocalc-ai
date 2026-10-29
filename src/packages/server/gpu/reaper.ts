@@ -73,7 +73,12 @@ export interface ReaperDeps extends GpuPodDeps {
 
 const REAPER: Actor = { kind: "reaper" };
 
-export type WorkerName = "reaper" | "reconciler" | "compromise" | "billing";
+export type WorkerName =
+  | "reaper"
+  | "reconciler"
+  | "compromise"
+  | "billing"
+  | "decrypt_audit";
 
 // The lease is taken under a token unique to one sweep: nobody, not even
 // the same hub, takes it again until that sweep releases it or it expires.
