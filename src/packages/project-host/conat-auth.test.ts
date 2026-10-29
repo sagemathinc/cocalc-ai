@@ -4,7 +4,12 @@ const mockGetRow = jest.fn(() => ({ users: {} }));
 const mockGetAccountRevokedBeforeMs = jest.fn(() => undefined);
 const mockCallHub = jest.fn();
 const mockGetMasterConatClient = jest.fn();
-const mockConfirmProjectMemberWithOwningBay = jest.fn(async () => false);
+const mockConfirmProjectMemberWithOwningBay = jest.fn(
+  async (): Promise<any> => ({
+    member: false,
+    users_revision: null,
+  }),
+);
 
 jest.mock("@cocalc/conat/auth/project-host-token", () => ({
   verifyProjectHostAuthToken: (...args: any[]) =>
@@ -49,6 +54,11 @@ jest.mock("./managed-egress-runtime", () => ({
     getProjectHostManagedEgressBlockedMessageMock(...args),
 }));
 
+// The owning bay's answer, about the collaborator list at users_revision.
+function bay(member: boolean, users_revision: number | null = null) {
+  return { member, users_revision };
+}
+
 import {
   __test__,
   clearProjectHostConatAuthCaches,
@@ -78,7 +88,7 @@ describe("project-host Conat auth", () => {
     getProjectHostManagedEgressBlockedMessageMock.mockReset();
     getProjectHostManagedEgressBlockedMessageMock.mockReturnValue(undefined);
     mockConfirmProjectMemberWithOwningBay.mockReset();
-    mockConfirmProjectMemberWithOwningBay.mockResolvedValue(false);
+    mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(false));
     clearProjectHostConatAuthCaches();
   });
 
@@ -1083,7 +1093,7 @@ describe("project-host Conat auth", () => {
     it("asks the bay before refusing an account a missing project row does not know", async () => {
       // An archived project has no row on the host until it starts again.
       mockGetRow.mockReturnValue(undefined);
-      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(true));
       const { isAllowed } = createProjectHostConatAuth({ host_id });
 
       for (const subject of [fsSubject, cursorSubject]) {
@@ -1108,7 +1118,7 @@ describe("project-host Conat auth", () => {
       mockGetRow.mockReturnValue({
         users: { "00000000-1000-4000-8000-000000000009": { group: "owner" } },
       });
-      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(true));
       const { isAllowed } = createProjectHostConatAuth({ host_id });
       await expect(
         isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
@@ -1126,7 +1136,7 @@ describe("project-host Conat auth", () => {
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
 
       clearProjectHostConatAuthCaches();
-      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(true));
       await expect(
         isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
       ).resolves.toBe(true);
@@ -1139,7 +1149,7 @@ describe("project-host Conat auth", () => {
         users: { "00000000-1000-4000-8000-000000000009": { group: "owner" } },
         users_revision: 5,
       });
-      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(true, 5));
       const { isAllowed } = createProjectHostConatAuth({ host_id });
       await expect(
         isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
@@ -1150,34 +1160,65 @@ describe("project-host Conat auth", () => {
         users: { "00000000-1000-4000-8000-000000000009": { group: "owner" } },
         users_revision: 6,
       });
-      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(false);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(false));
       await expect(
         isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
       ).resolves.toBe(false);
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(2);
     });
 
+    it("lets a newer list stored during a bay request decide over its positive answer", async () => {
+      const other = "00000000-1000-4000-8000-000000000009";
+      mockGetRow.mockReturnValue({
+        users: { [other]: { group: "owner" } },
+        users_revision: 5,
+      });
+      let resolve!: (answer: any) => void;
+      mockConfirmProjectMemberWithOwningBay.mockReturnValue(
+        new Promise<any>((r) => (resolve = r)),
+      );
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      const decision = isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: fsSubject,
+      });
+      await new Promise((r) => setImmediate(r));
+      // Another lookup stores revision 6, which removed the account, before
+      // this request's answer about revision 5 is used.
+      mockGetRow.mockReturnValue({
+        users: { [other]: { group: "owner" } },
+        users_revision: 6,
+      });
+      resolve(bay(true, 5));
+      await expect(decision).resolves.toBe(false);
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      ).resolves.toBe(false);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
+    });
+
     it("asks the bay once for concurrent publishes", async () => {
       mockGetRow.mockReturnValue(undefined);
-      let resolve!: (member: boolean) => void;
+      let resolve!: (answer: any) => void;
       mockConfirmProjectMemberWithOwningBay.mockReturnValue(
-        new Promise<boolean>((r) => (resolve = r)),
+        new Promise<any>((r) => (resolve = r)),
       );
       const { isAllowed } = createProjectHostConatAuth({ host_id });
       const decisions = [1, 2, 3].map(() =>
         isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
       );
       await new Promise((r) => setImmediate(r));
-      resolve(true);
+      resolve(bay(true));
       await expect(Promise.all(decisions)).resolves.toEqual([true, true, true]);
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
     });
 
     it("lets a collaborator sync during a bay request decide, for waiting and later callers", async () => {
       mockGetRow.mockReturnValue(undefined);
-      const pending: Array<(member: boolean) => void> = [];
+      const pending: Array<(answer: any) => void> = [];
       mockConfirmProjectMemberWithOwningBay.mockImplementation(
-        () => new Promise<boolean>((r) => pending.push(r)),
+        () => new Promise<any>((r) => pending.push(r)),
       );
       const { isAllowed } = createProjectHostConatAuth({ host_id });
       const before = isAllowed({
@@ -1202,8 +1243,8 @@ describe("project-host Conat auth", () => {
       // A caller after the sync does not join the earlier request.
       expect(pending).toHaveLength(2);
 
-      pending[0](true);
-      pending[1](false);
+      pending[0](bay(true));
+      pending[1](bay(false));
       await expect(before).resolves.toBe(false);
       await expect(after).resolves.toBe(false);
       await expect(
@@ -1214,9 +1255,9 @@ describe("project-host Conat auth", () => {
 
     it("bounds the bay requests one account and the host can have running", async () => {
       mockGetRow.mockReturnValue(undefined);
-      const pending: Array<(member: boolean) => void> = [];
+      const pending: Array<(answer: any) => void> = [];
       mockConfirmProjectMemberWithOwningBay.mockImplementation(
-        () => new Promise<boolean>((r) => pending.push(r)),
+        () => new Promise<any>((r) => pending.push(r)),
       );
       const { isAllowed } = createProjectHostConatAuth({ host_id });
       const uuid = (prefix: string, i: number) =>
@@ -1251,10 +1292,10 @@ describe("project-host Conat auth", () => {
       }
       await new Promise((r) => setImmediate(r));
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(32);
-      for (const resolve of pending) resolve(true);
+      for (const resolve of pending) resolve(bay(true));
       await Promise.all(decisions);
       // Finished requests free their places.
-      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(true));
       await expect(
         isAllowed({
           user: { account_id },
@@ -1273,7 +1314,7 @@ describe("project-host Conat auth", () => {
           },
         },
       });
-      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(true));
       const { isAllowed } = createProjectHostConatAuth({ host_id });
       await expect(
         isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
@@ -1283,7 +1324,7 @@ describe("project-host Conat auth", () => {
 
     it("does not let the bay widen an agent beyond its project", async () => {
       mockGetRow.mockReturnValue(undefined);
-      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(true));
       mockVerifyProjectHostAuthToken.mockReturnValue({
         act: "account",
         sub: account_id,

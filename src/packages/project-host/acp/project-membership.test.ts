@@ -155,7 +155,7 @@ describe("isAcpProjectMember", () => {
         project_id,
         timeout: 5_000,
       }),
-    ).toBe(true);
+    ).toEqual({ member: true, users_revision: 1 });
     expect(mockCallHub).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "hosts.getProjectStartMetadata",
@@ -169,6 +169,6 @@ describe("isAcpProjectMember", () => {
         account_id: removed,
         project_id,
       }),
-    ).toBe(false);
+    ).toEqual({ member: false, users_revision: 1 });
   });
 });

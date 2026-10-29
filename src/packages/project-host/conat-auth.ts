@@ -393,15 +393,18 @@ function startBayMembershipFlight({
     account_id,
     generation,
     promise: (async () => {
+      const revisionBefore = localUsersRevision(project_id);
       let member = false;
+      let answeredRevision: number | null = null;
       try {
         const { confirmProjectMemberWithOwningBay } =
           await import("./acp/project-membership");
-        member = await confirmProjectMemberWithOwningBay({
-          account_id,
-          project_id,
-          timeout: BAY_MEMBERSHIP_TIMEOUT_MS,
-        });
+        ({ member, users_revision: answeredRevision } =
+          await confirmProjectMemberWithOwningBay({
+            account_id,
+            project_id,
+            timeout: BAY_MEMBERSHIP_TIMEOUT_MS,
+          }));
       } catch (err) {
         logger.debug("could not confirm project membership with the bay", {
           account_id,
@@ -409,11 +412,19 @@ function startBayMembershipFlight({
           err: `${err}`,
         });
       }
+      // A list newer than the one the bay's answer is about may have been
+      // stored while this request ran (by a sync or another lookup): then
+      // that list decides, not the answer.
+      const revision = localUsersRevision(project_id);
+      const newerListStored =
+        answeredRevision != null
+          ? revision != null && revision > answeredRevision
+          : revision !== revisionBefore;
+      if (newerListStored) {
+        member = isProjectCollaboratorLocal({ account_id, project_id });
+      }
       if (generation === bayMembershipGeneration) {
-        bayMembershipDecisions.set(key, {
-          member,
-          users_revision: localUsersRevision(project_id),
-        });
+        bayMembershipDecisions.set(key, { member, users_revision: revision });
       }
       return member;
     })().finally(() => {
