@@ -313,6 +313,14 @@ for _ in 1 2 3; do run_watchdog; done
 grep -q 'will not restart cocalc-bay-cloudflared.service yet (no other replica has a ready tunnel connection)' "$STDERR_LOG" || fail "missing no-other-ready log"
 [[ "$(restart_count_2)" == "1" ]] || fail "did not restart replica 2 with no ready connections"
 
+# Only replica 2 serves (replica 1 has no ready connection): replica 1 is
+# recovered, replica 2 is left alone.
+reset_state
+export FAKE_READY=0 FAKE_READY_2=4 FAKE_FAILURES="" FAKE_FAILURES_2=""
+for _ in 1 2 3 4; do run_watchdog; done
+[[ "$(restart_count)" == "1" ]] || fail "did not recover replica 1 while replica 2 served"
+[[ "$(restart_count_2)" == "0" ]] || fail "restarted replica 2, the only serving replica"
+
 # No replica serving at all: restarting one is the only way back, and the gap
 # keeps the other from restarting at the same time.
 reset_state

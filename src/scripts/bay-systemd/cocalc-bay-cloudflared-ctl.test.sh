@@ -36,6 +36,7 @@ case "${args[0]}" in
     esac ;;
   restart)
     [[ "$unit" == cocalc-bay-cloudflared-2.service && "${FAKE_RESTART2_FAILS:-0}" == 1 ]] && exit 1
+    touch "${LOG}.restarted.${unit}"
     exit 0 ;;
 esac
 exit 0
@@ -46,10 +47,18 @@ echo "journalctl $*" >> "$LOG"
 FAKE
 cat > "${TMP}/curl" <<'FAKE'
 #!/usr/bin/env bash
+# FAKE_READY*_AFTER_RESTART: the ready count once the unit was restarted.
 case "${*: -1}" in
-  *:20242/ready) printf '{"status":200,"readyConnections":%s}\n' "${FAKE_READY_2:-4}" ;;
-  *) printf '{"status":200,"readyConnections":%s}\n' "${FAKE_READY:-4}" ;;
+  *:20242/ready)
+    ready="${FAKE_READY_2:-4}"
+    [[ -e "${LOG}.restarted.cocalc-bay-cloudflared-2.service" && -n "${FAKE_READY_2_AFTER_RESTART:-}" ]] && ready="$FAKE_READY_2_AFTER_RESTART"
+    ;;
+  *)
+    ready="${FAKE_READY:-4}"
+    [[ -e "${LOG}.restarted.cocalc-bay-cloudflared.service" && -n "${FAKE_READY_AFTER_RESTART:-}" ]] && ready="$FAKE_READY_AFTER_RESTART"
+    ;;
 esac
+printf '{"status":200,"readyConnections":%s}\n' "$ready"
 FAKE
 chmod 0755 "$CTL" "${TMP}/systemctl" "${TMP}/journalctl" "${TMP}/curl"
 
@@ -63,7 +72,9 @@ restarts() {
 }
 reset() {
   : > "$LOG"
+  rm -f "${LOG}".restarted.*
   export FAKE_READY=4 FAKE_READY_2=4 FAKE_RESTART2_FAILS=0 FAKE_REPLICA2_INSTALLED=1
+  unset FAKE_READY_AFTER_RESTART FAKE_READY_2_AFTER_RESTART
 }
 
 # The original forms still mean replica 1; a replica argument selects another.
@@ -101,6 +112,30 @@ export FAKE_RESTART2_FAILS=1
 if bash "$CTL" restart-all 2>/dev/null; then fail "restart-all succeeded after a failed restart"; fi
 [[ "$(restarts)" == "restart cocalc-bay-cloudflared-2.service " ]] ||
   fail "restarted replica 1 after replica 2's restart failed: $(restarts)"
+
+# Only replica 2 serves: replica 1 (no ready connection) is recovered first,
+# and replica 2 is restarted only once replica 1 is ready.
+reset
+export FAKE_READY=0 FAKE_READY_AFTER_RESTART=4
+bash "$CTL" restart-all || fail "restart-all failed recovering replica 1 first"
+[[ "$(restarts)" == "restart cocalc-bay-cloudflared.service restart cocalc-bay-cloudflared-2.service " ]] ||
+  fail "did not recover the non-serving replica first: $(restarts)"
+
+# Only replica 2 serves and replica 1 does not come back: replica 2, the last
+# serving replica, is never restarted.
+reset
+export FAKE_READY=0
+if bash "$CTL" restart-all 2>/dev/null; then fail "restart-all succeeded with replica 1 not recovering"; fi
+[[ "$(restarts)" == "restart cocalc-bay-cloudflared.service " ]] ||
+  fail "restarted the only serving replica: $(restarts)"
+
+# No replica ready at all: there is nothing to keep serving, so restarting
+# is how ingress comes back.
+reset
+export FAKE_READY=0 FAKE_READY_2=0 FAKE_READY_AFTER_RESTART=4 FAKE_READY_2_AFTER_RESTART=4
+bash "$CTL" restart-all || fail "restart-all failed with no replica ready"
+[[ "$(restarts)" == "restart cocalc-bay-cloudflared-2.service restart cocalc-bay-cloudflared.service " ]] ||
+  fail "no replica ready: $(restarts)"
 
 # A bay with only replica 1 installed.
 reset

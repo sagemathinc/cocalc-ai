@@ -27,8 +27,9 @@ bay user (the cloudflared watchdog runs as cocalc-bay). The tunnel runs as
 replicas of the same tunnel: replica 1 is cocalc-bay-cloudflared.service
 (the default when no replica is given), replica N > 1 is
 cocalc-bay-cloudflared-N.service. restart-all restarts every installed
-replica one at a time, waiting for each to have a ready tunnel connection
-before the next, so public ingress never goes down.
+replica one at a time, those without a ready connection first, waiting for
+each to have a ready tunnel connection before the next; it never restarts a
+replica while no other replica is ready, so public ingress never goes down.
 USAGE
 }
 
@@ -77,6 +78,19 @@ wait_ready() {
   return 1
 }
 
+# Whether the unit has a ready tunnel connection now (no metrics address:
+# active counts as ready).
+ready_now() {
+  local unit="$1" address body
+  address="$(metrics_address "$unit")"
+  if [[ -z "$address" ]]; then
+    "$SYSTEMCTL" --quiet is-active "$unit"
+    return
+  fi
+  body="$("$CURL" --silent --max-time 2 "http://${address}/ready" 2>/dev/null)" &&
+    [[ "$body" =~ \"readyConnections\":([1-9][0-9]*) ]]
+}
+
 restart_unit() {
   # A unit in the failed state must be reset before it can be restarted.
   "$SYSTEMCTL" reset-failed "$1" >/dev/null 2>&1 || true
@@ -99,14 +113,43 @@ case "${1:-}/$#" in
     restart_unit "$(unit_for "$2")"
     ;;
   restart-all/1)
-    # Higher replicas first, so the primary (which also refreshes the tunnel
-    # with Cloudflare) restarts while the others carry the traffic. Stop at
-    # the first replica that does not come back ready: restarting the next
-    # one could leave no replica serving.
+    # Replicas without a ready connection first (restarting them loses
+    # nothing), then the serving ones; higher replicas first within each, so
+    # the primary (which also refreshes the tunnel with Cloudflare) restarts
+    # while the others carry the traffic. A serving replica is restarted
+    # only while a different replica is ready, and the roll stops at the
+    # first replica that does not come back ready.
+    units=()
     for replica in 9 8 7 6 5 4 3 2 1; do
       unit="$(unit_for "$replica")"
       unit_installed "$unit" || continue
       "$SYSTEMCTL" --quiet is-enabled "$unit" 2>/dev/null || [[ "$replica" == 1 ]] || continue
+      units+=("$unit")
+    done
+    not_serving=()
+    serving=()
+    for unit in "${units[@]}"; do
+      if ready_now "$unit"; then
+        serving+=("$unit")
+      else
+        not_serving+=("$unit")
+      fi
+    done
+    for unit in "${not_serving[@]}" "${serving[@]}"; do
+      if ((${#units[@]} > 1)) && ready_now "$unit"; then
+        other_ready=0
+        for other in "${units[@]}"; do
+          [[ "$other" == "$unit" ]] && continue
+          if ready_now "$other"; then
+            other_ready=1
+            break
+          fi
+        done
+        if ((other_ready == 0)); then
+          echo "cocalc-bay-cloudflared-ctl: not restarting ${unit}: it is the only replica with a ready connection" >&2
+          exit 1
+        fi
+      fi
       if ! restart_unit "$unit"; then
         echo "cocalc-bay-cloudflared-ctl: restarting ${unit} failed; not restarting the other replicas" >&2
         exit 1
