@@ -263,6 +263,7 @@ import {
   getSiteFundedCodexAccountReservationStatus,
   getSiteFundedCodexPoolStatus,
   heartbeatSiteFundedCodexTurn,
+  extendSiteFundedCodexTurn,
   recordSiteFundedCodexUsageEvent,
   reserveSiteFundedCodexTurn,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
@@ -880,6 +881,10 @@ async function startBayOpsService(): Promise<void> {
       return {
         active: await heartbeatSiteFundedCodexTurn({ reservationId }),
       };
+    },
+    extendSiteFundedCodexTurn: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      return await extendSiteFundedCodexTurn(opts);
     },
     recordSiteFundedCodexUsage: async ({ hostId, event }) => {
       assertSiteFundedCodexSeedAuthority();

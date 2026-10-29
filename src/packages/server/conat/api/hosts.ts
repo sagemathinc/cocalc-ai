@@ -257,11 +257,13 @@ import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   assertSiteFundedCodexReservationHost,
+  extendSiteFundedCodexTurn as extendSiteFundedCodexTurnLocal,
   finishSiteFundedCodexTurn as finishSiteFundedCodexTurnLocal,
   getSiteFundedCodexPoolStatus as getSiteFundedCodexPoolStatusLocal,
   heartbeatSiteFundedCodexTurn as heartbeatSiteFundedCodexTurnLocal,
   recordSiteFundedCodexUsageEvent as recordSiteFundedCodexUsageEventLocal,
   reserveSiteFundedCodexTurn as reserveSiteFundedCodexTurnLocal,
+  type ExtendSiteFundedCodexTurnOptions,
   type ReserveSiteFundedCodexTurnOptions,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
 import {
@@ -279,6 +281,7 @@ import type {
   SiteFundedAdmissionOutcome,
   SiteFundedAdmissionRecord,
   SiteFundedCodexAdmission,
+  SiteFundedCodexExtension,
   SiteFundedCodexPoolStatus,
   SiteFundedCodexReservation,
   SiteFundedCodexUsageEvent,
@@ -3848,6 +3851,8 @@ type ReserveSiteFundedCodexTurnArgs = {
   path?: string;
   /** "anthropic": a site-funded Claude turn. Default Codex. */
   provider?: SiteFundedProvider;
+  /** The host extends the reservation as the turn runs (rolling). */
+  rolling?: boolean;
 };
 
 /** What admission learned, for the admission funnel. */
@@ -3909,6 +3914,50 @@ export async function reserveSiteFundedCodexTurn(
   }
 }
 
+/**
+ * An account's membership and remaining included-AI allowance, from its home
+ * bay (with each funded turn's credited usage, so reservations are not
+ * counted twice).
+ */
+async function siteFundedAccountAllowance({
+  account_id,
+  homeBayId,
+}: {
+  account_id: string;
+  homeBayId: string;
+}) {
+  if (homeBayId === getConfiguredBayId()) {
+    const [membership, usageStatus] = await Promise.all([
+      resolveMembershipForAccount(account_id),
+      getAIUsageStatus({
+        account_id,
+        include_site_funded_credits: true,
+      }),
+    ]);
+    return [
+      membership,
+      usageLimitAndRemainingMicrousd(usageStatus, "5h"),
+      usageLimitAndRemainingMicrousd(usageStatus, "7d"),
+    ] as const;
+  }
+  const accountHome = createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  });
+  const [membership, overview] = await Promise.all([
+    accountHome.getMembership({ account_id }),
+    accountHome.getAccountUsageOverview({
+      account_id,
+      include_site_funded_codex_credits: true,
+    }),
+  ]);
+  return [
+    membership,
+    overviewLimitAndRemainingMicrousd(overview, "5h"),
+    overviewLimitAndRemainingMicrousd(overview, "7d"),
+  ] as const;
+}
+
 async function admitSiteFundedCodexTurn(
   {
     host_id,
@@ -3918,6 +3967,7 @@ async function admitSiteFundedCodexTurn(
     idempotency_key,
     path,
     provider = "openai",
+    rolling,
   }: ReserveSiteFundedCodexTurnArgs,
   note: SiteFundedAdmissionNote,
 ): Promise<SiteFundedCodexAdmission> {
@@ -3989,40 +4039,10 @@ async function admitSiteFundedCodexTurn(
   }
   const homeBayId =
     `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
-  const [membership, account5h, account7d] =
-    homeBayId === getConfiguredBayId()
-      ? await (async () => {
-          const [membership, usageStatus] = await Promise.all([
-            resolveMembershipForAccount(account_id),
-            getAIUsageStatus({
-              account_id,
-              include_site_funded_credits: true,
-            }),
-          ]);
-          return [
-            membership,
-            usageLimitAndRemainingMicrousd(usageStatus, "5h"),
-            usageLimitAndRemainingMicrousd(usageStatus, "7d"),
-          ] as const;
-        })()
-      : await (async () => {
-          const accountHome = createInterBayAccountLocalClient({
-            client: getInterBayFabricClient(),
-            dest_bay: homeBayId,
-          });
-          const [membership, overview] = await Promise.all([
-            accountHome.getMembership({ account_id }),
-            accountHome.getAccountUsageOverview({
-              account_id,
-              include_site_funded_codex_credits: true,
-            }),
-          ]);
-          return [
-            membership,
-            overviewLimitAndRemainingMicrousd(overview, "5h"),
-            overviewLimitAndRemainingMicrousd(overview, "7d"),
-          ] as const;
-        })();
+  const [membership, account5h, account7d] = await siteFundedAccountAllowance({
+    account_id,
+    homeBayId,
+  });
   const paid = membership.source !== "free";
   note.membershipTier = membership.class;
   const accountConcurrency =
@@ -4062,6 +4082,7 @@ async function admitSiteFundedCodexTurn(
     accountCredited5hMicrousdByFundedTurn: account5h.creditsByFundedTurn,
     accountCredited7dMicrousdByFundedTurn: account7d.creditsByFundedTurn,
     surface: siteFundedSurface(path),
+    ...(rolling ? { rolling: true } : {}),
   };
   const remoteSeed = remoteSiteFundedCodexSeed();
   const admission = remoteSeed
@@ -4155,6 +4176,80 @@ export async function heartbeatSiteFundedCodexTurn({
       reservationId: reservation_id,
     }),
   };
+}
+
+/**
+ * Extends a rolling reservation for the host running its turn, against the
+ * account's remaining allowance as its home bay reports it now.
+ */
+export async function extendSiteFundedCodexTurn({
+  host_id,
+  reservation_id,
+  account_id,
+  funded_turn_id,
+  sequence,
+}: {
+  host_id?: string;
+  reservation_id: string;
+  account_id: string;
+  funded_turn_id: string;
+  sequence: number;
+}): Promise<SiteFundedCodexExtension> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (!isValidUUID(reservation_id)) {
+    throw new Error("reservation_id must be a UUID");
+  }
+  if (!isValidUUID(account_id)) throw new Error("account_id must be a UUID");
+  if (!isValidUUID(funded_turn_id)) {
+    throw new Error("funded_turn_id must be a UUID");
+  }
+  if (await isAiLaunchDisabled()) {
+    throw new Error("AI is temporarily disabled by the site administrator.");
+  }
+  const account = await getClusterAccountById(account_id);
+  if (!account || account.banned) {
+    throw new Error("site-funded extension requires an active account");
+  }
+  const homeBayId =
+    `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  const [, account5h, account7d] = await siteFundedAccountAllowance({
+    account_id,
+    homeBayId,
+  });
+  const options: ExtendSiteFundedCodexTurnOptions = {
+    reservationId: reservation_id,
+    hostId: host_id,
+    accountId: account_id,
+    fundedTurnId: funded_turn_id,
+    sequence,
+    accountRemaining5hMicrousd: account5h.remaining,
+    accountRemaining7dMicrousd: account7d.remaining,
+    accountCredited5hMicrousdByFundedTurn: account5h.creditsByFundedTurn,
+    accountCredited7dMicrousdByFundedTurn: account7d.creditsByFundedTurn,
+  };
+  const remoteSeed = remoteSiteFundedCodexSeed();
+  const extension = remoteSeed
+    ? await remoteSeed.extendSiteFundedCodexTurn(options)
+    : await extendSiteFundedCodexTurnLocal(options);
+  if (
+    extension.granted ||
+    (extension.code !== "account_limit_5h" &&
+      extension.code !== "account_limit_7d")
+  ) {
+    return extension;
+  }
+  // Say when the allowance resets, as admission does.
+  const context = withSiteFundedUsageContext(
+    { allowed: false, code: extension.code, reason: extension.reason },
+    [account5h.use, account7d.use],
+  );
+  return context.allowed
+    ? extension
+    : {
+        ...extension,
+        reason: context.reason,
+        ...(context.resetAt ? { resetAt: context.resetAt } : {}),
+      };
 }
 
 export async function recordSiteFundedCodexUsageEvent({

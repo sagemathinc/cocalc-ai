@@ -37,9 +37,12 @@ import { dirname } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import {
   computeSiteFundedCodexRequestCost,
+  siteFundedCodexFinalRequestHeadroomMicrousd,
+  siteFundedExtensionThresholdMicrousd,
   siteFundedTurnEndedMessage,
   type SiteFundedCodexReservation,
   type SiteFundedCodexUsageEvent,
+  type SiteFundedExtend,
   type SiteFundedTurnEndReason,
 } from "@cocalc/util/ai/site-funded-codex";
 import {
@@ -92,11 +95,17 @@ const WEB_SEARCH_TOOL = /^web_search_\d+$/;
 // Client tools (run by Claude Code itself) carry no type, "custom", or one of
 // Anthropic's schema-less client tool types.
 const CLIENT_TOOL = /^(custom|bash_\d+|text_editor_\d+|computer_\d+)$/;
+// Extensions one request may make (each of at most one chunk).
+const MAX_EXTENSIONS_PER_REQUEST = 20;
+const EXTENSION_UNAVAILABLE =
+  "CoCalc could not extend this included Claude turn's funding right now, so it paused the turn. Start a new turn in a minute, or use your own Claude subscription or Anthropic API key.";
 
 export type SiteFundedClaudeTurn = {
   reservation: SiteFundedCodexReservation;
   apiKey: string;
   onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
+  /** Extends a rolling reservation as the turn runs. */
+  extend?: SiteFundedExtend;
 };
 
 export interface SiteFundedClaudeRelay {
@@ -126,6 +135,12 @@ type ActiveTurn = SiteFundedClaudeTurn & {
   /** Usage events, numbered in order for the ledger. */
   usageSequence: number;
   committedMicrousd: number;
+  /** What the turn holds; a rolling reservation grows as it is extended. */
+  reservedMicrousd: number;
+  /** The last granted extension. */
+  extensionSequence: number;
+  /** The hub's reason for refusing more: the turn ends once it uses up what it holds. */
+  extensionDenial?: string;
   blockedReason?: string;
   ended: boolean;
   /** Why the hub ended it while it ran. */
@@ -459,6 +474,31 @@ export async function createSiteFundedClaudeRelay({
       );
     }
     if (active.blockedReason) throw new RelayError(403, active.blockedReason);
+    // A request starts only while the turn holds more than it has spent: it
+    // may then overrun what it holds by at most its own cost.
+    // The hub never lets a rolling turn hold more than its ceiling less one
+    // request's worst case; checked here too, so the ceiling bounds what the
+    // turn spends whatever it holds.
+    if (
+      active.reservation.rolling &&
+      active.committedMicrousd +
+        siteFundedCodexFinalRequestHeadroomMicrousd(active.reservation.policy) >
+        active.reservation.policy.maxTurnCostMicrousd
+    ) {
+      throw new RelayError(
+        403,
+        "This included Claude turn reached its cost limit. Start a new turn, or use your own Claude subscription or Anthropic API key.",
+      );
+    }
+    if (
+      active.reservation.rolling &&
+      active.committedMicrousd >= active.reservedMicrousd
+    ) {
+      throw new RelayError(
+        403,
+        active.extensionDenial ?? EXTENSION_UNAVAILABLE,
+      );
+    }
     const policy = active.reservation.policy;
     // The reservation's own deadline too: its usage is accepted only before.
     const expiresAt = Date.parse(active.reservation.expiresAt ?? "");
@@ -481,6 +521,54 @@ export async function createSiteFundedClaudeRelay({
         "This included Claude turn reached its request limit. Start a new turn.",
       );
     }
+  };
+
+  // Before a request of a rolling turn starts: extend the reservation while
+  // what is left is below one request's worst case (or half a chunk). A
+  // refusal is final; a failure is retried before the next request.
+  const fundRequest = async (active: ActiveTurn): Promise<void> => {
+    if (!active.reservation.rolling || !active.extend) return;
+    if (active.ended || active.blockedReason || active.extensionDenial) return;
+    const threshold = siteFundedExtensionThresholdMicrousd(
+      active.reservation.policy,
+    );
+    // A chunk may be smaller than one request's worst case: keep extending
+    // until the turn holds enough, is refused, fails, or stops growing.
+    for (let attempt = 0; attempt < MAX_EXTENSIONS_PER_REQUEST; attempt += 1) {
+      if (active.reservedMicrousd - active.committedMicrousd >= threshold) {
+        return;
+      }
+      const sequence = active.extensionSequence + 1;
+      try {
+        const result = await active.extend({
+          reservation: active.reservation,
+          sequence,
+        });
+        if (!result.granted) {
+          active.extensionDenial = result.reason;
+          return;
+        }
+        active.extensionSequence = sequence;
+        const before = active.reservedMicrousd;
+        active.reservedMicrousd = Math.max(before, result.reservedMicrousd);
+        if (active.reservedMicrousd <= before) break;
+      } catch (err) {
+        logger.warn(
+          "site-funded Claude extension failed; keeping what the turn holds",
+          {
+            reservationId: active.reservation.reservationId,
+            sequence,
+            err: `${err}`,
+          },
+        );
+        return;
+      }
+    }
+    if (active.reservedMicrousd - active.committedMicrousd >= threshold) return;
+    // Still short after every extension one request may make (the hub raises
+    // a chunk to a request's worst case, so this means something is off):
+    // don't forward the request underfunded.
+    throw new RelayError(403, EXTENSION_UNAVAILABLE);
   };
 
   // Synchronous up to queueing the event, so its usage is recorded before
@@ -506,9 +594,11 @@ export async function createSiteFundedClaudeRelay({
       });
       active.usageSequence = event.requestSequence;
       active.committedMicrousd += cost.costMicrousd;
+      // A rolling turn is checked as each request starts (it may be extended).
       if (
+        !active.reservation.rolling &&
         active.committedMicrousd >=
-        active.reservation.policy.maxTurnCostMicrousd
+          active.reservation.policy.maxTurnCostMicrousd
       ) {
         active.blockedReason =
           "This included Claude turn reached its cost limit. Start a new turn, or use your own Claude subscription or Anthropic API key.";
@@ -806,8 +896,11 @@ export async function createSiteFundedClaudeRelay({
       headers["anthropic-beta"] = beta;
     }
     // One request at a time per turn; limits are checked as each starts.
+    // One request at a time per turn: what the turn holds is checked, and
+    // extended, with the previous request's usage counted.
     const run = active.queue.then(async () => {
       try {
+        await fundRequest(active);
         assertMayStart(active);
       } catch (err) {
         fail(
@@ -975,6 +1068,8 @@ export async function createSiteFundedClaudeRelay({
         requests: 0,
         usageSequence: 0,
         committedMicrousd: 0,
+        reservedMicrousd: next.reservation.reservedMicrousd,
+        extensionSequence: 0,
         ended: false,
         queue: Promise.resolve(),
         persisting: new Set(),

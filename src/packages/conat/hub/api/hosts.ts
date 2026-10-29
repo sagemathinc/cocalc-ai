@@ -39,6 +39,7 @@ import type {
   SiteFundedCodexPoolStatus,
   SiteFundedCodexReservation,
   SiteFundedCodexUsageEvent,
+  SiteFundedCodexExtension,
 } from "@cocalc/util/ai/site-funded-codex";
 
 export type HostStatus =
@@ -1939,6 +1940,7 @@ export const hosts = {
   reserveSiteFundedCodexTurn: authFirstRequireHostWithAccountTarget,
   getSiteFundedClaudeKey: authFirstRequireHost,
   heartbeatSiteFundedCodexTurn: authFirstRequireHost,
+  extendSiteFundedCodexTurn: authFirstRequireHostWithAccountTarget,
   recordSiteFundedCodexUsageEvent: authFirstRequireHost,
   finishSiteFundedCodexTurn: authFirstRequireHost,
   getSiteFundedCodexPoolStatus: authFirstRequireHost,
@@ -2485,6 +2487,8 @@ export interface Hosts {
     path?: string;
     /** "anthropic": a site-funded Claude turn. Default Codex. */
     provider?: "openai" | "anthropic";
+    /** The host extends the reservation as the turn runs. */
+    rolling?: boolean;
   }) => Promise<SiteFundedCodexAdmission>;
   /** The site key funding an active Claude turn this host runs. */
   getSiteFundedClaudeKey: (opts: {
@@ -2495,6 +2499,14 @@ export interface Hosts {
     host_id?: string;
     reservation_id: string;
   }) => Promise<{ active: boolean }>;
+  /** Extends a rolling reservation of a turn this host runs. */
+  extendSiteFundedCodexTurn: (opts: {
+    host_id?: string;
+    reservation_id: string;
+    account_id: string;
+    funded_turn_id: string;
+    sequence: number;
+  }) => Promise<SiteFundedCodexExtension>;
   recordSiteFundedCodexUsageEvent: (opts: {
     host_id?: string;
     event: SiteFundedCodexUsageEvent;
