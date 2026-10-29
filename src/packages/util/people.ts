@@ -28,7 +28,37 @@ export interface Conversation {
   last_sender_id?: string | null;
   // Recent human senders, most recent first, bounded.
   participant_ids: string[];
+  // Who the conversation is with: its creator and the people it was started
+  // with, before anyone writes. They follow it from the start. Missing from
+  // records made before it existed, or by a bay running older code.
+  member_ids?: string[];
 }
+
+// The creator first, then the others once each; at most
+// MAX_CONVERSATION_PARTICIPANTS. Throws on anything that is not an account id.
+export function normalizeMemberIds(
+  creator: string,
+  member_ids: unknown,
+): string[] {
+  if (member_ids != null && !Array.isArray(member_ids)) {
+    throw Error("member_ids must be an array");
+  }
+  const ids = [creator, ...((member_ids as unknown[] | undefined) ?? [])];
+  const result: string[] = [];
+  for (const id of ids) {
+    if (typeof id !== "string" || !UUID.test(id)) {
+      throw Error(`invalid member: ${id}`);
+    }
+    const value = id.toLowerCase();
+    if (!result.includes(value)) result.push(value);
+  }
+  if (result.length > MAX_CONVERSATION_PARTICIPANTS) {
+    throw Error(`at most ${MAX_CONVERSATION_PARTICIPANTS} members`);
+  }
+  return result;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Things an account keeps private choices about. Artifacts, agents and
 // projects keep using their existing stores (Library, named agents,

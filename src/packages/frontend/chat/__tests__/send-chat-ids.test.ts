@@ -539,6 +539,24 @@ describe("sendChat identity fields", () => {
     expect(actions.syncdb.commit).toHaveBeenCalled();
   });
 
+  it("a new thread can start with followers, so its first message notifies them", () => {
+    const actions = makeActions();
+    const alice = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const bob = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const threadId = actions.createEmptyThread({
+      name: "With Bob",
+      threadAgent: { mode: "human" },
+      followers: [bob, alice, bob, "not-an-account"],
+    });
+    const cfgSet = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (row: any) =>
+          row?.event === "chat-thread-config" && row?.thread_id === threadId,
+      );
+    expect(cfgSet.notification_followers).toEqual([alice, bob]);
+  });
+
   it("resets a thread by creating a fresh empty thread with copied codex settings", async () => {
     const actions = makeActions();
     actions.getThreadMetadata = jest.fn().mockReturnValue({

@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useCallback, useMemo, useState } from "react";
-import { Alert, Form, Input, Modal, Radio } from "antd";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Alert, Form, Input, Modal, Radio, Select } from "antd";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { Conversation } from "@cocalc/util/people";
 import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
@@ -13,7 +13,8 @@ import { peopleApi, conversationsChanged } from "./api";
 import { createConversation } from "./create";
 
 // Projects where the current account is an owner or collaborator, optionally
-// restricted to those shared with another person.
+// restricted to those where another person is one too (not a viewer: a
+// conversation can only be with full collaborators).
 export function useCollaboratorProjects(personId?: string) {
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
@@ -25,11 +26,36 @@ export function useCollaboratorProjects(personId?: string) {
       if (!isProjectCollaboratorRole(users?.getIn([account_id, "group"]))) {
         return;
       }
-      if (personId && !users?.has(personId)) return;
+      if (
+        personId &&
+        !isProjectCollaboratorRole(users?.getIn([personId, "group"]))
+      ) {
+        return;
+      }
       result.push({ project_id, title: project.get("title") ?? project_id });
     });
     return result.sort((a, b) => a.title.localeCompare(b.title));
   }, [project_map, account_id, personId]);
+}
+
+// The other owners and collaborators of a project, by name: who a
+// conversation in it can be with.
+export function useProjectPeople(project_id?: string) {
+  const project_map = useTypedRedux("projects", "project_map");
+  const account_id = useTypedRedux("account", "account_id");
+  return useMemo(() => {
+    const users = project_id
+      ? project_map?.getIn([project_id, "users"])
+      : undefined;
+    const result: { account_id: string; name: string }[] = [];
+    (users as any)?.forEach((user, id: string) => {
+      if (id === account_id) return;
+      if (!isProjectCollaboratorRole(user?.get?.("group"))) return;
+      const name = redux.getStore("users")?.get_name(id) ?? "";
+      result.push({ account_id: id, name: name.trim() || "Unknown person" });
+    });
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }, [project_map, account_id, project_id]);
 }
 
 export function NewConversationModal({
@@ -46,21 +72,60 @@ export function NewConversationModal({
   onCreated: (conversation: Conversation) => void;
 }) {
   const projects = useCollaboratorProjects(personId);
-  // With a person, only projects you share with them.
+  // With a person, only projects where they are a full collaborator too.
   const sharedWithPerson = useCallback(
-    (project: any) => !personId || project.users?.[personId] != null,
+    (project: any) =>
+      !personId || isProjectCollaboratorRole(project.users?.[personId]?.group),
     [personId],
   );
   const [project_id, setProjectId] = useState<string>();
+  const people = useProjectPeople(project_id);
+  // Who it is with besides you; started from a person, them.
+  const [member_ids, setMemberIds] = useState<string[]>(
+    personId ? [personId] : [],
+  );
   const [title, setTitle] = useState("");
   const [mode, setMode] = useState<"new" | "existing">("new");
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Each opening starts over: the modal stays mounted, and a project chosen
+  // for one person may not be shared with the next. A title, mode or path
+  // left from a cancelled attempt could otherwise submit the wrong thing.
+  useEffect(() => {
+    if (!open) return;
+    setProjectId(undefined);
+    setMemberIds(personId ? [personId] : []);
+    setTitle("");
+    setMode("new");
+    setPath("");
+    setError("");
+  }, [open, personId]);
+  // Only people in the chosen project can be in it, except the person it was
+  // started for: they are kept, and a project without them is refused below.
+  useEffect(() => {
+    if (!project_id) return;
+    const inProject = new Set(people.map((p) => p.account_id));
+    setMemberIds((ids) =>
+      ids.filter((id) => id === personId || inProject.has(id)),
+    );
+  }, [project_id, people, personId]);
+  // Started from a person, the conversation must be with them: never
+  // quietly drop them (e.g. a project where they are only a viewer).
+  const personMissing =
+    !!personId &&
+    !!project_id &&
+    !people.some((p) => p.account_id === personId);
 
   async function submit() {
     if (!project_id) {
       setError("Choose a project.");
+      return;
+    }
+    if (personMissing || (personId && !member_ids.includes(personId))) {
+      setError(
+        `${personName ?? "They"} must be a full collaborator in the project, and in the conversation.`,
+      );
       return;
     }
     setBusy(true);
@@ -68,8 +133,13 @@ export function NewConversationModal({
     try {
       const conversation =
         mode === "new"
-          ? await createConversation({ project_id, title })
-          : await peopleApi().addConversation({ project_id, path, title });
+          ? await createConversation({ project_id, title, member_ids })
+          : await peopleApi().addConversation({
+              project_id,
+              path,
+              title,
+              member_ids,
+            });
       conversationsChanged();
       setTitle("");
       setPath("");
@@ -88,7 +158,13 @@ export function NewConversationModal({
         personName ? `New conversation with ${personName}` : "New conversation"
       }
       okText={mode === "new" ? "Create" : "Add"}
-      okButtonProps={{ disabled: !project_id || !title.trim() }}
+      okButtonProps={{
+        disabled:
+          !project_id ||
+          !title.trim() ||
+          personMissing ||
+          (!!personId && !member_ids.includes(personId)),
+      }}
       confirmLoading={busy}
       onOk={submit}
       onCancel={onClose}
@@ -114,6 +190,40 @@ export function NewConversationModal({
             }
             value={project_id ?? null}
             onChange={setProjectId}
+          />
+          {personMissing && (
+            <Alert
+              type="warning"
+              role="alert"
+              style={{ marginTop: 8 }}
+              title={`${personName ?? "This person"} isn't a full collaborator in this project, so the conversation can't be with them. Choose another project.`}
+            />
+          )}
+        </Form.Item>
+        <Form.Item
+          label="With"
+          htmlFor="people-new-conversation-with"
+          extra={
+            mode === "new"
+              ? "They are notified of new messages and see it in For you."
+              : "They see it in For you. In an existing file they are notified once they write in a thread or are @mentioned."
+          }
+        >
+          <Select
+            id="people-new-conversation-with"
+            aria-label="With"
+            mode="multiple"
+            disabled={!project_id}
+            placeholder={
+              project_id ? "Choose people" : "Choose a project first"
+            }
+            value={member_ids}
+            onChange={setMemberIds}
+            optionFilterProp="label"
+            options={people.map((p) => ({
+              value: p.account_id,
+              label: p.name,
+            }))}
           />
         </Form.Item>
         <Form.Item label="Title" htmlFor="people-new-conversation-title">

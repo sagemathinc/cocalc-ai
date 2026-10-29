@@ -43,6 +43,9 @@ export interface PeopleApi {
     project_id: string;
     path: string;
     title: string;
+    // Who it is with besides you: project collaborators, who follow it from
+    // the start and see it in For you.
+    member_ids?: string[];
   }): Promise<Conversation>;
   // Called when a human sends a chat message in CoCalc; no-op unless the
   // file is a conversation.

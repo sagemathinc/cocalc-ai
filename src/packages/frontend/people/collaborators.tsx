@@ -28,7 +28,7 @@ import { VIEW_ONLY_NOTE } from "./agent-access-dialog";
 import { conversationEvents, conversationsChanged, peopleApi } from "./api";
 import { ConversationCollection } from "./conversation-collection";
 import { useCollaboratorProjects } from "./new-conversation";
-import { matchesPerson } from "./scope";
+import { isWith, matchesPerson } from "./scope";
 export { matchesPerson };
 
 export interface Person {
@@ -353,10 +353,10 @@ export function PersonDetail({
   const sharedIds = new Set(shared.map((p) => p.project_id));
   const projectTitle = (id: string) =>
     (project_map?.getIn([id, "title"]) as string | undefined) ?? "";
-  // Conversations they have written in, in projects we both belong to.
+  // Conversations with them (started with them, or they wrote in it), in
+  // projects we both belong to.
   const theirs = conversations.filter(
-    (c) =>
-      sharedIds.has(c.project_id) && c.participant_ids.includes(account_id),
+    (c) => sharedIds.has(c.project_id) && isWith(c, account_id),
   );
   const loading = <p role="status">Loading...</p>;
   return (

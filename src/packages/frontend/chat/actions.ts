@@ -1287,12 +1287,16 @@ export class ChatActions extends Actions<ChatState> {
     threadAppearance,
     preserveSelectedThread,
     anchor,
+    followers,
   }: {
     name?: string;
     threadAgent?: NewThreadAgentOptions;
     threadAppearance?: NewThreadAppearanceOptions;
     preserveSelectedThread?: boolean;
     anchor?: ChatThreadAnchor;
+    // Accounts that follow the thread from the start, so its first message
+    // notifies them (see buildThreadNotificationPlan).
+    followers?: string[];
   } = {}): string => {
     if (this.syncdb == null || this.store == null) {
       console.warn(
@@ -1309,6 +1313,13 @@ export class ChatActions extends Actions<ChatState> {
     });
     if (anchor != null) {
       (threadConfigPatch as Record<string, unknown>).anchor = anchor;
+    }
+    const initialFollowers = Array.from(
+      new Set((followers ?? []).filter((id) => isValidUUID(id))),
+    ).sort();
+    if (initialFollowers.length > 0) {
+      (threadConfigPatch as Record<string, unknown>).notification_followers =
+        initialFollowers;
     }
     if (
       !this.setThreadConfigRecord(thread_id, threadConfigPatch, {
