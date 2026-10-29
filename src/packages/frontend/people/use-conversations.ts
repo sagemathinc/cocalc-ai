@@ -8,6 +8,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ListedConversation } from "@cocalc/util/people";
 import { conversationEvents, peopleApi } from "./api";
 import { isUnread, matchesScope } from "./scope";
+import { lite } from "@cocalc/frontend/lite";
 
 const POLL_MS = 30_000;
 // Notifications for several messages arrive together; one refresh covers them.
@@ -191,7 +192,8 @@ export function unreadConversationCount(
 
 export function useUnreadConversationCount(): number {
   const account_id = useTypedRedux("account", "account_id");
-  const { conversations } = useConversations(true);
+  // Lite has no People API: never poll it there (the badge just stays empty).
+  const { conversations } = useConversations(!lite);
   return unreadConversationCount(conversations, account_id);
 }
 
