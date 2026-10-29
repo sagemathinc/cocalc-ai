@@ -16,6 +16,7 @@ import {
   type SiteFundedUsageWarning,
 } from "@cocalc/util/ai/site-funded-codex";
 import {
+  extendSiteFundedTurn,
   finishSiteFundedTurn,
   getSiteFundedClaudeKey,
   heartbeatSiteFundedTurn,
@@ -47,6 +48,7 @@ export type SiteFundedClaudeTurnsDeps = {
   heartbeat: typeof heartbeatSiteFundedTurn;
   finish: typeof finishSiteFundedTurn;
   persistUsage: typeof persistSiteFundedUsageEvent;
+  extend?: typeof extendSiteFundedTurn;
 };
 
 const defaultDeps: SiteFundedClaudeTurnsDeps = {
@@ -55,6 +57,7 @@ const defaultDeps: SiteFundedClaudeTurnsDeps = {
   heartbeat: heartbeatSiteFundedTurn,
   finish: finishSiteFundedTurn,
   persistUsage: persistSiteFundedUsageEvent,
+  extend: extendSiteFundedTurn,
 };
 
 export function createSiteFundedClaudeTurns({
@@ -110,6 +113,7 @@ export function createSiteFundedClaudeTurns({
           reservation,
           apiKey,
           onUsage: deps.persistUsage,
+          extend: deps.extend,
         });
       } catch (err) {
         await deps.finish({

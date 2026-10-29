@@ -279,6 +279,7 @@ import type {
   SiteFundedCodexReservation,
   SiteFundedCodexUsageEvent,
   SiteFundedCodexUsageRecordResult,
+  SiteFundedCodexExtension,
 } from "@cocalc/util/ai/site-funded-codex";
 
 export interface BayOwnership {
@@ -2389,6 +2390,18 @@ export interface BayOpsReserveSiteFundedCodexTurnRequest {
   surface?: string;
 }
 
+export interface BayOpsExtendSiteFundedCodexTurnRequest {
+  reservationId: string;
+  hostId: string;
+  accountId: string;
+  fundedTurnId: string;
+  sequence: number;
+  accountRemaining5hMicrousd?: number | null;
+  accountRemaining7dMicrousd?: number | null;
+  accountCredited5hMicrousdByFundedTurn?: Record<string, number>;
+  accountCredited7dMicrousdByFundedTurn?: Record<string, number>;
+}
+
 export interface BayOpsSiteFundedCodexReservationRequest {
   reservationId: string;
   hostId: string;
@@ -2946,6 +2959,7 @@ export type BayOpsMethod =
   | "get-global-config-propagation-status"
   | "reserve-site-funded-codex-turn"
   | "heartbeat-site-funded-codex-turn"
+  | "extend-site-funded-codex-turn"
   | "record-site-funded-codex-usage"
   | "finish-site-funded-codex-turn"
   | "get-site-funded-codex-status"
@@ -4689,6 +4703,9 @@ export interface InterBayBayOpsApi {
   heartbeatSiteFundedCodexTurn: (
     opts: BayOpsSiteFundedCodexReservationRequest,
   ) => Promise<{ active: boolean }>;
+  extendSiteFundedCodexTurn: (
+    opts: BayOpsExtendSiteFundedCodexTurnRequest,
+  ) => Promise<SiteFundedCodexExtension>;
   recordSiteFundedCodexUsage: (
     opts: BayOpsRecordSiteFundedCodexUsageRequest,
   ) => Promise<SiteFundedCodexUsageRecordResult>;
@@ -11078,6 +11095,15 @@ export function createInterBayBayOpsClient({
       method: "heartbeat-site-funded-codex-turn",
     }),
   });
+  const extendSiteFundedCodexTurnClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "extendSiteFundedCodexTurn">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "extend-site-funded-codex-turn",
+    }),
+  });
   const recordSiteFundedCodexUsageClient = createServiceClient<
     Pick<InterBayBayOpsApi, "recordSiteFundedCodexUsage">
   >({
@@ -11422,6 +11448,8 @@ export function createInterBayBayOpsClient({
       await heartbeatSiteFundedCodexTurnClient.heartbeatSiteFundedCodexTurn(
         opts,
       ),
+    extendSiteFundedCodexTurn: async (opts) =>
+      await extendSiteFundedCodexTurnClient.extendSiteFundedCodexTurn(opts),
     recordSiteFundedCodexUsage: async (opts) =>
       await recordSiteFundedCodexUsageClient.recordSiteFundedCodexUsage(opts),
     finishSiteFundedCodexTurn: async (opts) =>
@@ -11640,6 +11668,18 @@ export function createInterBayBayOpsHandlers({
       impl: {
         heartbeatSiteFundedCodexTurn: async (opts) =>
           await impl.heartbeatSiteFundedCodexTurn(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "extendSiteFundedCodexTurn">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "extend-site-funded-codex-turn",
+      }),
+      impl: {
+        extendSiteFundedCodexTurn: async (opts) =>
+          await impl.extendSiteFundedCodexTurn(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "recordSiteFundedCodexUsage">>(

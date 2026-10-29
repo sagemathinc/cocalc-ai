@@ -21,7 +21,7 @@ export type {
 } from "./site-funded-codex-prices";
 
 export const MICROUSD_PER_USD = 1_000_000;
-export const SITE_FUNDED_CODEX_POLICY_VERSION = 7;
+export const SITE_FUNDED_CODEX_POLICY_VERSION = 8;
 // Provider requests can contain base64 images, so HTTP bytes do not map to
 // context tokens. Keep an independent host-memory safety limit instead.
 export const SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024;
@@ -33,8 +33,22 @@ export type SiteFundedCodexPolicy = {
   reasoning: "low" | "medium";
   serviceTier: "standard";
   maxConcurrentTurnsPerAccount: number;
+  /**
+   * The most one turn may spend (a ceiling, not reserved up front when the
+   * reservation is rolling). It also bounds what the turn's provider
+   * credential could spend if code in the project read it.
+   */
   maxTurnCostMicrousd: number;
+  /** A turn's hard lifetime: it ends then, however busy. */
   maxTurnDurationMs: number;
+  /**
+   * A rolling reservation holds this much at a time and is extended chunk by
+   * chunk while the turn runs. Absent on policies from before rolling
+   * reservations.
+   */
+  reservationChunkMicrousd?: number;
+  /** A rolling reservation expires after this long without a heartbeat. */
+  idleTimeoutMs?: number;
   contextWindowTokens: number;
   autoCompactTokenLimit: number;
   maxOutputTokensPerRequest: number;
@@ -60,11 +74,14 @@ export const DEFAULT_SITE_FUNDED_CODEX_POLICY: SiteFundedCodexPolicy = {
   // fallback conservative when an entitlement is missing or malformed.
   maxConcurrentTurnsPerAccount: 2,
   maxTurnCostMicrousd: 250_000,
-  maxTurnDurationMs: 60 * 60_000,
+  maxTurnDurationMs: 24 * 60 * 60_000,
+  reservationChunkMicrousd: 100_000,
+  idleTimeoutMs: 15 * 60_000,
   contextWindowTokens: 128_000,
   autoCompactTokenLimit: 96_000,
   maxOutputTokensPerRequest: 32_000,
-  maxRequestsPerTurn: 256,
+  // A safety cap only: a turn normally ends at its allowance.
+  maxRequestsPerTurn: 10_000,
   allowFastMode: false,
   allowUltraOrMultiAgent: false,
   allowedProviderTools: [],
@@ -131,7 +148,59 @@ export type SiteFundedCodexReservation = {
   provider?: SiteFundedProvider;
   /** The site key this turn is funded by (site-funded Claude). */
   providerKeyId?: string;
+  /**
+   * Holds one chunk at a time, extended with extendSiteFundedCodexTurn while
+   * the turn runs. Absent: reserved once, at admission.
+   */
+  rolling?: boolean;
 };
+
+/** Why a rolling reservation could not be extended. */
+export type SiteFundedCodexExtensionDenialCode =
+  | "account_limit_5h"
+  | "account_limit_7d"
+  | "global_pool"
+  | "provider_keys_exhausted"
+  /** The turn reached its per-turn ceiling (maxTurnCostMicrousd). */
+  | "turn_limit"
+  /** The reservation is no longer active, or is not rolling. */
+  | "inactive";
+
+export type SiteFundedCodexExtension =
+  | {
+      granted: true;
+      /** What this extension added. */
+      grantedMicrousd: number;
+      /** The reservation's total after it. */
+      reservedMicrousd: number;
+    }
+  | {
+      granted: false;
+      code: SiteFundedCodexExtensionDenialCode;
+      reason: string;
+      resetAt?: string;
+      reservedMicrousd: number;
+    };
+
+/** Asks the hub for more of a rolling reservation (throws when unreachable). */
+export type SiteFundedExtend = (opts: {
+  reservation: SiteFundedCodexReservation;
+  sequence: number;
+}) => Promise<SiteFundedCodexExtension>;
+
+/**
+ * When a rolling reservation should be extended: before a request starts with
+ * less than this left, so a request normally starts with a whole request's
+ * worst case reserved.
+ */
+export function siteFundedExtensionThresholdMicrousd(
+  policy: SiteFundedCodexPolicy,
+): number {
+  return Math.max(
+    Math.ceil((policy.reservationChunkMicrousd ?? 0) / 2),
+    siteFundedCodexFinalRequestHeadroomMicrousd(policy),
+  );
+}
 
 /**
  * Why an included turn stopped being funded while it ran: it reached its

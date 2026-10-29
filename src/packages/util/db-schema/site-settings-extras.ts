@@ -325,6 +325,8 @@ export type SiteSettingsExtrasKeys =
   | "site_funded_codex_max_input_tokens_per_request"
   | "site_funded_codex_max_output_tokens_per_request"
   | "site_funded_codex_max_requests_per_turn"
+  | "site_funded_codex_reservation_chunk_usd"
+  | "site_funded_codex_idle_timeout_seconds"
   | "site_funded_codex_global_concurrency"
   | "site_funded_codex_openai_admin_key"
   | "site_funded_codex_openai_project_id"
@@ -1226,8 +1228,8 @@ export const EXTRAS: SettingsExtras = {
     order: 80,
   },
   site_funded_codex_max_turn_usd: {
-    name: "Emergency Maximum Funded Turn Cost (USD)",
-    desc: "Generous emergency ceiling for one turn, not a normal UX limit. The ledger reserves this exposure before admission and releases unused funds when the turn finishes.",
+    name: "Maximum Funded Turn Cost (USD)",
+    desc: "The most one turn may spend. A turn holds only one reservation chunk at a time and is extended while the user has allowance left, so this ceiling is not reserved up front. It is also the most that code in the project could spend in one turn if it read the turn's funding credential, so raise it knowing that.",
     default: "0.25",
     valid: onlyPosFloat,
     to_val: toFloat,
@@ -1237,9 +1239,9 @@ export const EXTRAS: SettingsExtras = {
     order: 200,
   },
   site_funded_codex_max_turn_seconds: {
-    name: "Emergency Maximum Turn Duration (seconds)",
-    desc: "Generous emergency guard against abandoned or runaway turns. Normal turns should finish well below it.",
-    default: "3600",
+    name: "Maximum Turn Lifetime (seconds)",
+    desc: "Hard lifetime of one turn, a safety cap only: a turn normally ends when it finishes, when the user's included allowance runs out, or when its host stops sending heartbeats (see the idle timeout).",
+    default: "86400",
     valid: only_pos_int,
     to_val: to_int,
     tags: ["AI", "OpenAI", "Security"],
@@ -1274,8 +1276,8 @@ export const EXTRAS: SettingsExtras = {
   },
   site_funded_codex_max_requests_per_turn: {
     name: "Emergency Maximum Provider Requests per Turn",
-    desc: "Generous runaway-loop guard. It should not stop normal multi-step Codex work.",
-    default: "256",
+    desc: "Runaway-loop guard, a safety cap only. It should not stop normal multi-step Codex work.",
+    default: "10000",
     valid: only_pos_int,
     to_val: to_int,
     tags: ["AI", "OpenAI", "Commercialization", "Security"],
@@ -1283,6 +1285,30 @@ export const EXTRAS: SettingsExtras = {
     subgroup: "Site-Funded Codex",
     advanced: true,
     order: 240,
+  },
+  site_funded_codex_reservation_chunk_usd: {
+    name: "Funded Turn Reservation Chunk (USD)",
+    desc: "How much a funded Codex or Claude turn holds at a time. A turn is admitted with one chunk and extended chunk by chunk while the account's included allowance and the pools have room; unused funds are released when it ends.",
+    default: "0.10",
+    valid: onlyPosFloat,
+    to_val: toFloat,
+    tags: ["AI", "OpenAI", "Commercialization", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Codex",
+    advanced: true,
+    order: 205,
+  },
+  site_funded_codex_idle_timeout_seconds: {
+    name: "Funded Turn Idle Timeout (seconds)",
+    desc: "A funded Codex or Claude turn whose project host sends no heartbeat for this long is treated as abandoned and its reservation released. A running turn heartbeats every 30 seconds, also while it waits on a long tool call.",
+    default: "900",
+    valid: only_pos_int,
+    to_val: to_int,
+    tags: ["AI", "OpenAI", "Security"],
+    group: "AI & Agents",
+    subgroup: "Site-Funded Codex",
+    advanced: true,
+    order: 215,
   },
   site_funded_codex_global_concurrency: {
     name: "Global Funded Turn Concurrency",
@@ -1349,8 +1375,8 @@ export const EXTRAS: SettingsExtras = {
     order: 30,
   },
   site_funded_claude_max_turn_usd: {
-    name: "Emergency Maximum Funded Claude Turn Cost (USD)",
-    desc: "Generous emergency ceiling for one turn, not a normal UX limit. The ledger reserves this exposure before admission and releases unused funds when the turn finishes.",
+    name: "Maximum Funded Claude Turn Cost (USD)",
+    desc: "The most one turn may spend. A turn holds only one reservation chunk at a time and is extended while the user has allowance left, so this ceiling is not reserved up front. It is also the most that code in the project could spend in one turn if it read the turn's funding credential, so raise it knowing that.",
     default: "0.25",
     valid: onlyPosFloat,
     to_val: toFloat,
@@ -1360,9 +1386,9 @@ export const EXTRAS: SettingsExtras = {
     order: 200,
   },
   site_funded_claude_max_turn_seconds: {
-    name: "Emergency Maximum Claude Turn Duration (seconds)",
-    desc: "Generous emergency guard against abandoned or runaway turns. Normal turns should finish well below it.",
-    default: "3600",
+    name: "Maximum Claude Turn Lifetime (seconds)",
+    desc: "Hard lifetime of one turn, a safety cap only: a turn normally ends when it finishes, when the user's included allowance runs out, or when its host stops sending heartbeats (see the idle timeout).",
+    default: "86400",
     valid: only_pos_int,
     to_val: to_int,
     tags: ["AI", "Security"],
@@ -1385,8 +1411,8 @@ export const EXTRAS: SettingsExtras = {
   },
   site_funded_claude_max_requests_per_turn: {
     name: "Emergency Maximum Claude Provider Requests per Turn",
-    desc: "Generous runaway-loop guard. It should not stop normal multi-step Claude Code work.",
-    default: "256",
+    desc: "Runaway-loop guard, a safety cap only. It should not stop normal multi-step Claude Code work.",
+    default: "10000",
     valid: only_pos_int,
     to_val: to_int,
     tags: ["AI", "Commercialization", "Security"],

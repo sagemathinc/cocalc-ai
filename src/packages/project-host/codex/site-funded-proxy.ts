@@ -13,10 +13,12 @@ import getLogger from "@cocalc/backend/logger";
 import {
   computeSiteFundedCodexRequestCost,
   siteFundedCodexMaxRequestBodyBytes,
+  siteFundedExtensionThresholdMicrousd,
   siteFundedTurnEndedMessage,
   type SiteFundedCodexPolicy,
   type SiteFundedCodexReservation,
   type SiteFundedCodexUsageEvent,
+  type SiteFundedExtend,
   type SiteFundedTurnEndReason,
 } from "@cocalc/util/ai/site-funded-codex";
 import { siteFundedCodexProxyPorts } from "./site-funded-proxy-port";
@@ -52,12 +54,22 @@ export function siteFundedUsageEventId(
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+const EXTENSION_UNAVAILABLE =
+  "CoCalc could not extend this included Codex turn's funding right now, so it paused the turn. Start a new turn in a minute, or connect your own ChatGPT plan or OpenAI API key.";
+
 type ActiveTurn = {
   reservation: SiteFundedCodexReservation;
   policy: SiteFundedCodexPolicy;
   startedAt: number;
   requestSequence: number;
   costMicrousd: number;
+  /** What the turn holds; a rolling reservation grows as it is extended. */
+  reservedMicrousd: number;
+  extend?: SiteFundedExtend;
+  /** The last granted extension. */
+  extensionSequence: number;
+  /** The hub's reason for refusing more: the turn ends once it uses up what it holds. */
+  extensionDenial?: string;
   requestQueueTail: Promise<void>;
   requestQueueDepth: number;
   closed: boolean;
@@ -85,6 +97,7 @@ export type SiteFundedProxySession = {
   activate: (opts: {
     reservation: SiteFundedCodexReservation;
     onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
+    extend?: SiteFundedExtend;
   }) => void;
   /** Stops funding the turn; `reason` when the hub ended it while it ran. */
   deactivate: (reservationId: string, reason?: SiteFundedTurnEndReason) => void;
@@ -260,6 +273,47 @@ function assertAllowedTools(tools: unknown): void {
   }
 }
 
+/**
+ * Before a request of a rolling turn starts: extend the reservation while
+ * what is left is below one request's worst case (or half a chunk). A refusal
+ * is final; a failure is retried before the next request.
+ */
+async function fundRequest(turn: ActiveTurn): Promise<void> {
+  if (!turn.reservation.rolling || !turn.extend) return;
+  if (turn.closed || turn.blockedReason || turn.extensionDenial) return;
+  if (
+    turn.reservedMicrousd - turn.costMicrousd >=
+    siteFundedExtensionThresholdMicrousd(turn.policy)
+  ) {
+    return;
+  }
+  const sequence = turn.extensionSequence + 1;
+  try {
+    const result = await turn.extend({
+      reservation: turn.reservation,
+      sequence,
+    });
+    if (result.granted) {
+      turn.extensionSequence = sequence;
+      turn.reservedMicrousd = Math.max(
+        turn.reservedMicrousd,
+        result.reservedMicrousd,
+      );
+    } else {
+      turn.extensionDenial = result.reason;
+    }
+  } catch (err) {
+    logger.warn(
+      "site-funded Codex extension failed; keeping what the turn holds",
+      {
+        reservationId: turn.reservation.reservationId,
+        sequence,
+        err: `${err}`,
+      },
+    );
+  }
+}
+
 function boundedProviderRequest({
   body,
   turn,
@@ -280,6 +334,14 @@ function boundedProviderRequest({
   }
   if (turn.blockedReason) {
     throw Object.assign(new Error(turn.blockedReason), { statusCode: 403 });
+  }
+  // A request starts only while the turn holds more than it has spent: it
+  // may then overrun what it holds by at most its own cost.
+  if (turn.reservation.rolling && turn.costMicrousd >= turn.reservedMicrousd) {
+    throw Object.assign(
+      new Error(turn.extensionDenial ?? EXTENSION_UNAVAILABLE),
+      { statusCode: 403 },
+    );
   }
   if (Date.now() - turn.startedAt >= turn.policy.maxTurnDurationMs) {
     throw Object.assign(
@@ -402,11 +464,13 @@ class SiteFundedCodexProxy {
     reservation,
     apiKey,
     onUsage,
+    extend,
     upstreamBaseUrl = DEFAULT_UPSTREAM_BASE_URL,
   }: {
     reservation: SiteFundedCodexReservation;
     apiKey: string;
     onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
+    extend?: SiteFundedExtend;
     upstreamBaseUrl?: string;
   }): Promise<SiteFundedProxySession> {
     const port = await this.ensureListening();
@@ -414,15 +478,20 @@ class SiteFundedCodexProxy {
     const makeActiveTurn = ({
       reservation,
       onUsage,
+      extend,
     }: {
       reservation: SiteFundedCodexReservation;
       onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
+      extend?: SiteFundedExtend;
     }): ActiveTurn => ({
       reservation,
       policy: reservation.policy,
       startedAt: Date.now(),
       requestSequence: 0,
       costMicrousd: 0,
+      reservedMicrousd: reservation.reservedMicrousd,
+      extend,
+      extensionSequence: 0,
       requestQueueTail: Promise.resolve(),
       requestQueueDepth: 0,
       closed: false,
@@ -433,7 +502,7 @@ class SiteFundedCodexProxy {
       apiKey,
       upstreamBaseUrl: upstreamBaseUrl.replace(/\/$/, ""),
       closed: false,
-      activeTurn: makeActiveTurn({ reservation, onUsage }),
+      activeTurn: makeActiveTurn({ reservation, onUsage, extend }),
     };
     this.sessions.set(token, session);
     return {
@@ -526,7 +595,11 @@ class SiteFundedCodexProxy {
       usage: event,
     });
     turn.costMicrousd += cost.costMicrousd;
-    if (turn.costMicrousd >= turn.policy.maxTurnCostMicrousd) {
+    // A rolling turn is checked as each request starts (it may be extended).
+    if (
+      !turn.reservation.rolling &&
+      turn.costMicrousd >= turn.policy.maxTurnCostMicrousd
+    ) {
       turn.blockedReason =
         "This included Codex turn reached its emergency cost limit. Start a new turn, upgrade your CoCalc membership, or connect a ChatGPT plan or personal OpenAI API key.";
     }
@@ -634,6 +707,10 @@ class SiteFundedCodexProxy {
       }
       let body: any;
       try {
+        // Requests of a turn run one at a time (this queue), so what the
+        // turn holds is checked, and extended, with the previous request's
+        // usage counted.
+        await fundRequest(turn);
         // Recheck turn limits after waiting because the preceding request may
         // have closed or exhausted this turn while persisting its usage.
         body = boundedProviderRequest({ body: requestedBody, turn });

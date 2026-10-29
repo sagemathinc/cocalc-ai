@@ -79,9 +79,11 @@ jest.mock("@cocalc/lite/hub/sqlite/database", () => ({
 
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import {
+  extendSiteFundedTurn,
   finishSiteFundedTurn,
   flushSiteFundedCodexOutbox,
   persistSiteFundedUsageEvent,
+  reserveSiteFundedTurn,
 } from "./codex-site-metering";
 
 function usageEvent(requestSequence: number, inputTokens = 1_000) {
@@ -255,5 +257,72 @@ describe("site-funded usage during a database lock", () => {
     lockedWrites = 0;
     await flushSiteFundedCodexOutbox();
     expect(queued()).toEqual([{ kind: "usage", requestSequence: 1 }]);
+  });
+});
+
+describe("rolling site-funded reservations", () => {
+  it("asks for a rolling reservation, which an old hub simply ignores", async () => {
+    mockCallHub.mockImplementation(async ({ name }) =>
+      name === "hosts.reserveSiteFundedCodexTurn"
+        ? { allowed: true, reservation: { reservationId: "r-1" } }
+        : {},
+    );
+    await reserveSiteFundedTurn({
+      provider: "anthropic",
+      accountId: "a-1",
+      projectId: "p-1",
+      fundedTurnId: "t-1",
+      idempotencyKey: "t-1",
+    });
+    expect(mockCallHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "hosts.reserveSiteFundedCodexTurn",
+        args: [
+          expect.objectContaining({ provider: "anthropic", rolling: true }),
+        ],
+      }),
+    );
+  });
+
+  it("extends a reservation for its account and turn", async () => {
+    const extension = {
+      granted: true,
+      grantedMicrousd: 100_000,
+      reservedMicrousd: 200_000,
+    };
+    mockCallHub.mockResolvedValue(extension);
+    await expect(
+      extendSiteFundedTurn({
+        reservation: {
+          reservationId: "r-1",
+          accountId: "a-1",
+          fundedTurnId: "t-1",
+        } as any,
+        sequence: 2,
+      }),
+    ).resolves.toEqual(extension);
+    expect(mockCallHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "hosts.extendSiteFundedCodexTurn",
+        args: [
+          {
+            reservation_id: "r-1",
+            account_id: "a-1",
+            funded_turn_id: "t-1",
+            sequence: 2,
+          },
+        ],
+      }),
+    );
+  });
+
+  it("throws when the hub cannot be reached, so the turn keeps to what it holds", async () => {
+    mockCallHub.mockRejectedValue(new Error("timeout"));
+    await expect(
+      extendSiteFundedTurn({
+        reservation: { reservationId: "r-1" } as any,
+        sequence: 1,
+      }),
+    ).rejects.toThrow("timeout");
   });
 });

@@ -34,6 +34,26 @@ function positiveUsdMicrousd(value: unknown, fallback: number): number {
   }
 }
 
+// Shared by Codex and Claude: how much a turn holds at a time, and how long
+// without a heartbeat before it counts as abandoned.
+function rollingReservationPolicy(
+  settings: Settings,
+  defaults: SiteFundedCodexPolicy,
+): Pick<SiteFundedCodexPolicy, "reservationChunkMicrousd" | "idleTimeoutMs"> {
+  return {
+    reservationChunkMicrousd: positiveUsdMicrousd(
+      settings.site_funded_codex_reservation_chunk_usd,
+      defaults.reservationChunkMicrousd ?? 100_000,
+    ),
+    idleTimeoutMs:
+      positiveInteger(
+        settings.site_funded_codex_idle_timeout_seconds,
+        (defaults.idleTimeoutMs ?? 15 * 60_000) / 1_000,
+        24 * 60 * 60,
+      ) * 1_000,
+  };
+}
+
 export type SiteFundedCodexConfiguration = {
   enabled: boolean;
   policy: SiteFundedCodexPolicy;
@@ -63,6 +83,7 @@ export function siteFundedCodexConfigurationFromSettings(
       settings.site_funded_codex_max_turn_usd,
       DEFAULT_SITE_FUNDED_CODEX_POLICY.maxTurnCostMicrousd,
     ),
+    ...rollingReservationPolicy(settings, DEFAULT_SITE_FUNDED_CODEX_POLICY),
     maxTurnDurationMs:
       positiveInteger(
         settings.site_funded_codex_max_turn_seconds,
@@ -140,6 +161,7 @@ export function siteFundedClaudeConfigurationFromSettings(
         settings.site_funded_claude_max_turn_usd,
         DEFAULT_SITE_FUNDED_CLAUDE_POLICY.maxTurnCostMicrousd,
       ),
+      ...rollingReservationPolicy(settings, DEFAULT_SITE_FUNDED_CLAUDE_POLICY),
       maxTurnDurationMs:
         positiveInteger(
           settings.site_funded_claude_max_turn_seconds,
