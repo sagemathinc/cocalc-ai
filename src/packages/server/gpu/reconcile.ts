@@ -271,6 +271,7 @@ export async function reconcileKey(
           { credential_id, key_owner_account_id },
           {
             getAccountBalance: () => within(raw.getAccountBalance!()),
+            guard: deps.guard,
             now: clock,
           },
         );

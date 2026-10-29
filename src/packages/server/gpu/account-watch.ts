@@ -230,6 +230,9 @@ export async function watchProviderAccount(
   deps: {
     getAccountBalance: () => Promise<RunpodAccountBalance>;
     now?: () => number;
+    // the worker's lease check (throws once lost), before anything is
+    // written: RunPod may answer after the lease is gone
+    guard?: () => Promise<void>;
   },
 ): Promise<AccountWatchOutcome> {
   const clock = deps.now ?? Date.now;
@@ -306,24 +309,31 @@ export async function watchProviderAccount(
   const finish = async (
     at: Date,
     apply: (db: Db, w: any) => Promise<AccountWatchOutcome>,
-  ): Promise<AccountWatchOutcome> =>
-    (await underLiveFence(credential_id, async (db) => {
-      const w = await lockWatch(db, identity);
-      if (!current(w)) {
-        return { checked: false, reason: "unconfirmed" } as AccountWatchOutcome;
-      }
-      // every outcome (a sample, a refusal, shared) moves last_asked_at
-      if (w.last_asked_at && new Date(w.last_asked_at) >= at) {
-        return { checked: false, reason: "stale" } as AccountWatchOutcome;
-      }
-      await lockProviderIdentity(db, identity);
-      const keys = await identityCredentials(identity, db, { active: true });
-      if (!exclusive(keys)) {
-        await disable(db, w, keys.length, at);
-        return { checked: false, reason: "shared" } as AccountWatchOutcome;
-      }
-      return await apply(db, w);
-    })) ?? { checked: false, reason: "fence" };
+  ): Promise<AccountWatchOutcome> => {
+    await deps.guard?.();
+    return (
+      (await underLiveFence(credential_id, async (db) => {
+        const w = await lockWatch(db, identity);
+        if (!current(w)) {
+          return {
+            checked: false,
+            reason: "unconfirmed",
+          } as AccountWatchOutcome;
+        }
+        // every outcome (a sample, a refusal, shared) moves last_asked_at
+        if (w.last_asked_at && new Date(w.last_asked_at) >= at) {
+          return { checked: false, reason: "stale" } as AccountWatchOutcome;
+        }
+        await lockProviderIdentity(db, identity);
+        const keys = await identityCredentials(identity, db, { active: true });
+        if (!exclusive(keys)) {
+          await disable(db, w, keys.length, at);
+          return { checked: false, reason: "shared" } as AccountWatchOutcome;
+        }
+        return await apply(db, w);
+      })) ?? { checked: false, reason: "fence" }
+    );
+  };
   // Another key on the account already: don't ask RunPod. Recorded through
   // the same guards (this observation's own time); if the other key is gone
   // by then, nothing is written and the next pass checks.
