@@ -277,6 +277,8 @@ export async function reconcileKey(
         );
       } catch (err) {
         if (err instanceof LeaseLost) throw err;
+        // RunPod rejects the key itself: the rejected-key handling below
+        if (err instanceof RunpodApiError && err.kind === "auth") throw err;
         if (!(err instanceof PassCut)) {
           log.warn("checking a RunPod account failed", `${err}`);
         }

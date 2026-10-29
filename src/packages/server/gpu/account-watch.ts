@@ -349,11 +349,9 @@ export async function watchProviderAccount(
     balance = await deps.getAccountBalance();
   } catch (err) {
     // The key can list pods but not read the account: the checks can't run
-    // until it can. Say so (the status, and a warning), rather than look on.
-    if (
-      err instanceof RunpodApiError &&
-      (err.kind === "forbidden" || err.kind === "auth")
-    ) {
+    // until it can. (A rejected key, 401, is the caller's: it ends more than
+    // these checks.) Say so (the status, and a warning), rather than look on.
+    if (err instanceof RunpodApiError && err.kind === "forbidden") {
       return await finish(asked_at, async (db, w) => {
         // (samples start over; this refusal is the latest observation)
         await db.query(

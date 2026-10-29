@@ -758,5 +758,11 @@ describeDb("GPU provider-account checks", () => {
     expect(
       (await getAccountChecksLocal({ account_id: owner }, here)).state,
     ).toBe("no_access");
+    // RunPod rejects the key itself (401) during the account read: the
+    // rejected-key handling, with its pause
+    getAccountBalance.mockRejectedValueOnce(new RunpodApiError("auth", 401));
+    expect((await pass(3 * HOUR)).rejected).toBe(true);
+    expect(await paused(key)).toBe("key_rejected");
+    expect((await alerts(key)).map((a) => a.kind)).toContain("key_rejected");
   });
 });
