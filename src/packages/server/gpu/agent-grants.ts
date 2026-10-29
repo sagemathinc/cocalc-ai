@@ -284,6 +284,7 @@ export interface GpuAgentGrantDeps {
 export interface GpuAgentGrantView {
   grant_id: string;
   request_id: string;
+  project_id: string;
   payload_hash: string;
   state: string;
   expires_at: string;
@@ -342,7 +343,7 @@ export async function approveAgentRequestLocal(
   }
   if (req.state === "approved") {
     const { rows: existing } = await db.query(
-      `SELECT grant_id, request_id, payload_hash, state, expires_at
+      `SELECT grant_id, request_id, project_id, payload_hash, state, expires_at
          FROM gpu_agent_grants WHERE request_id = $1`,
       [request_id],
     );
@@ -460,6 +461,7 @@ export async function approveAgentRequestLocal(
   return grantView({
     grant_id,
     request_id,
+    project_id: req.project_id,
     payload_hash: req.payload_hash,
     state: "active",
     expires_at,
@@ -470,6 +472,7 @@ function grantView(row: any): GpuAgentGrantView {
   return {
     grant_id: row.grant_id,
     request_id: row.request_id,
+    project_id: row.project_id,
     payload_hash: row.payload_hash,
     state: row.state,
     expires_at: new Date(row.expires_at).toISOString(),
@@ -547,10 +550,10 @@ async function revokeLockedGrant(
 export async function revokeAgentGrantsForKillSwitch(
   db: Db,
   opts: { account_id: string; project_id: string | null; now?: Date },
-): Promise<{ grants: number; requests: number }> {
+): Promise<{ grants: number; requests: number; project_ids: string[] }> {
   const now = opts.now ?? new Date();
   const { rows: grants } = await db.query(
-    `SELECT grant_id, layer_id, credential_id FROM gpu_agent_grants
+    `SELECT grant_id, layer_id, credential_id, project_id FROM gpu_agent_grants
       WHERE account_id = $1 AND ($2::uuid IS NULL OR project_id = $2::uuid)
         AND state = 'active'
       ORDER BY grant_id
@@ -566,14 +569,64 @@ export async function revokeAgentGrantsForKillSwitch(
       project_id: opts.project_id,
     });
   }
-  const { rowCount } = await db.query(
+  const { rows: requests } = await db.query(
     `UPDATE gpu_agent_requests SET state = 'denied', decided_at = $3,
        decided_by_account_id = $1
       WHERE account_id = $1 AND ($2::uuid IS NULL OR project_id = $2::uuid)
-        AND state = 'pending'`,
+        AND state = 'pending'
+      RETURNING project_id`,
     [opts.account_id, opts.project_id, now],
   );
-  return { grants: grants.length, requests: rowCount ?? 0 };
+  return {
+    grants: grants.length,
+    requests: requests.length,
+    // whose approval banners changed
+    project_ids: [
+      ...new Set<string>(
+        [...grants, ...requests].map((r: any) => `${r.project_id}`),
+      ),
+    ],
+  };
+}
+
+// The human declines a pending request: nothing is approved, and the agent
+// has to ask again (a new request). Idempotent; a request already decided
+// some other way says so.
+export async function denyAgentRequestLocal(
+  db: Db,
+  opts: { account_id: string; request_id: unknown },
+  deps: GpuAgentGrantDeps = {},
+): Promise<{ request_id: string; project_id: string; state: string }> {
+  const request_id = requireUuid(opts.request_id, "request id");
+  const now = (deps.now ?? (() => new Date()))();
+  await (deps.accountWriteFence ?? lockGpuAccountFence)(
+    db as PoolClient,
+    opts.account_id,
+    "decline an agent's GPU request",
+  );
+  const { rows } = await db.query(
+    `SELECT request_id, account_id, project_id, state FROM gpu_agent_requests
+      WHERE request_id = $1 FOR UPDATE`,
+    [request_id],
+  );
+  const req = rows[0];
+  if (!req || req.account_id !== opts.account_id) {
+    throw Error("No such GPU request.");
+  }
+  if (req.state === "approved") {
+    throw Error(
+      "This GPU request was already approved; revoke its approval instead.",
+    );
+  }
+  if (req.state === "pending") {
+    await db.query(
+      `UPDATE gpu_agent_requests SET state = 'denied', decided_at = $2,
+         decided_by_account_id = $3 WHERE request_id = $1`,
+      [request_id, now, opts.account_id],
+    );
+    return { request_id, project_id: req.project_id, state: "denied" };
+  }
+  return { request_id, project_id: req.project_id, state: req.state };
 }
 
 // The end of a run: admission closes, the layer stays active for its pods.

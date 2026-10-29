@@ -1390,6 +1390,10 @@ async function startAccountLocalService(): Promise<void> {
       await (
         await import("@cocalc/server/gpu/agent-api")
       ).revokeAgentGrantLocal(opts),
+    gpuDenyAgentRequest: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/agent-api")
+      ).denyAgentRequestLocal(opts),
     gpuRegisterHostKey: async (opts) =>
       await (
         await import("@cocalc/server/gpu/hostkey")

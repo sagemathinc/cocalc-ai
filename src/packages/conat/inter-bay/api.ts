@@ -703,7 +703,10 @@ export interface AccountDirectoryTouchRequest {
 
 // Who started an account deletion; recorded in the account audit log.
 export type AccountDeletionInitiator =
-  "self" | "admin" | "ephemeral-expiry" | "system";
+  | "self"
+  | "admin"
+  | "ephemeral-expiry"
+  | "system";
 
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
@@ -1213,7 +1216,9 @@ export interface AccountLocalGetDedicatedHostAdmissionSnapshotRequest {
 export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
   account_id: string;
   funding_mode_override?:
-    "account-prepaid" | "account-postpaid" | "site-funded";
+    | "account-prepaid"
+    | "account-postpaid"
+    | "site-funded";
 }
 
 export interface AccountLocalReconcileDedicatedHostPurchaseSessionRequest {
@@ -1268,7 +1273,11 @@ export interface AccountLocalRecordDedicatedHostMeteredUsageResult {
 }
 
 export type ProjectRuntimeSlotState =
-  "starting" | "running" | "released" | "expired" | "failed";
+  | "starting"
+  | "running"
+  | "released"
+  | "expired"
+  | "failed";
 
 export interface ProjectRuntimeSlotWire {
   sponsor_account_id: string;
@@ -2901,7 +2910,11 @@ export type AccountLocalMethod =
   | "public-directory-share-grant-temporary-viewer-access"
   | "public-directory-share-get-temporary-viewer-read-policy";
 export type AuthTokenMethod =
-  "requires-token" | "validate" | "redeem" | "disable" | "delete";
+  | "requires-token"
+  | "validate"
+  | "redeem"
+  | "disable"
+  | "delete";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod =
   | "get-load"
@@ -4192,16 +4205,22 @@ export interface InterBayGpuApi {
   }) => Promise<{
     grant_id: string;
     request_id: string;
+    project_id: string;
     payload_hash: string;
     state: string;
     expires_at: string;
   }>;
+  gpuDenyAgentRequest: (opts: {
+    account_id: string;
+    request_id: unknown;
+  }) => Promise<{ request_id: string; state: string }>;
   gpuRevokeAgentGrant: (opts: {
     account_id: string;
     grant_id: unknown;
   }) => Promise<{
     grant_id: string;
     request_id: string;
+    project_id: string;
     payload_hash: string;
     state: string;
     expires_at: string;
@@ -8343,6 +8362,8 @@ export function createInterBayAccountLocalClient({
     gpuAgentRequests: async (opts) => await gpuClient.gpuAgentRequests(opts),
     gpuApproveAgentRequest: async (opts) =>
       await gpuClient.gpuApproveAgentRequest(opts),
+    gpuDenyAgentRequest: async (opts) =>
+      await gpuClient.gpuDenyAgentRequest(opts),
     gpuRevokeAgentGrant: async (opts) =>
       await gpuClient.gpuRevokeAgentGrant(opts),
     gpuBudget: async (opts) => await gpuClient.gpuBudget(opts),
@@ -8949,6 +8970,8 @@ export function createInterBayAccountLocalHandler({
         gpuAgentRequests: async (opts) => await impl.gpuAgentRequests(opts),
         gpuApproveAgentRequest: async (opts) =>
           await impl.gpuApproveAgentRequest(opts),
+        gpuDenyAgentRequest: async (opts) =>
+          await impl.gpuDenyAgentRequest(opts),
         gpuRevokeAgentGrant: async (opts) =>
           await impl.gpuRevokeAgentGrant(opts),
         gpuBudget: async (opts) => await impl.gpuBudget(opts),

@@ -8,6 +8,11 @@
 // overrun case), release, quarantine, bind re-reservation and the key fence.
 
 import { randomUUID } from "node:crypto";
+
+// Notifications to the owner's browsers (6b-2) are recorded, never sent.
+jest.mock("@cocalc/server/account/feed", () => ({
+  publishAccountFeedEventBestEffort: jest.fn(async () => {}),
+}));
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";

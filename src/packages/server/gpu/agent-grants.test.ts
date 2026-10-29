@@ -37,6 +37,14 @@ import { runGpuReaperSweep } from "./reaper";
 import { resumeGpuLaunchesLocal } from "./budget-api";
 import { freshInventoryForTests } from "./test-inventory";
 import { testKeyUse } from "./key-use-testing";
+import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
+import { GPU_AGENT_REQUESTS_PROJECT_DETAIL_FIELD } from "@cocalc/conat/hub/api/gpu";
+import { denyAgentRequestLocal } from "./agent-api";
+
+// Notifications to the owner's browsers (6b-2) are recorded, never sent.
+jest.mock("@cocalc/server/account/feed", () => ({
+  publishAccountFeedEventBestEffort: jest.fn(async () => {}),
+}));
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -1257,5 +1265,194 @@ describeDb("agent GPU launches", () => {
     await k.approve(otherPending.req);
     await k.launch(other.agent);
     expect(k.rp.client.createPod).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the human decline a pending request; approving it then fails, and the agent asks anew", async () => {
+    const { account_id, deps, approveDeps } = setup();
+    const agent = { principal: principal(account_id), operation_id: "op-1" };
+    const launch = () =>
+      launchGpuPodLocal(
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
+        deps,
+      );
+    const ask = await askedFor(launch());
+    // only the owner can decline it
+    await expect(
+      denyAgentRequestLocal(
+        { account_id: randomUUID(), request_id: ask.request_id },
+        { accountWriteFence: fence },
+      ),
+    ).rejects.toThrow("No such GPU request");
+    expect(
+      await denyAgentRequestLocal(
+        { account_id, request_id: ask.request_id },
+        { accountWriteFence: fence },
+      ),
+    ).toEqual({ request_id: ask.request_id, state: "denied" });
+    // idempotent
+    expect(
+      (
+        await denyAgentRequestLocal(
+          { account_id, request_id: ask.request_id },
+          { accountWriteFence: fence },
+        )
+      ).state,
+    ).toBe("denied");
+    await expect(
+      approveAgentRequestLocal(
+        {
+          account_id,
+          request_id: ask.request_id,
+          expected_hash: ask.payload_hash,
+          fresh_auth_verified: true,
+        },
+        approveDeps,
+      ),
+    ).rejects.toThrow("the agent has to ask again");
+    const again = await askedFor(launch());
+    expect(again.request_id).not.toBe(ask.request_id);
+    // an approved request isn't declined: its approval is revoked instead
+    await approveAgentRequestLocal(
+      {
+        account_id,
+        request_id: again.request_id,
+        expected_hash: again.payload_hash,
+        fresh_auth_verified: true,
+      },
+      approveDeps,
+    );
+    await expect(
+      denyAgentRequestLocal(
+        { account_id, request_id: again.request_id },
+        { accountWriteFence: fence },
+      ),
+    ).rejects.toThrow("revoke its approval instead");
+  });
+
+  it("tells only the key owner's browsers to look again, for the project, on every change", async () => {
+    const publish = publishAccountFeedEventBestEffort as jest.Mock;
+    const k = await killSetup();
+    const sent = () =>
+      publish.mock.calls
+        .map(([opts]) => opts)
+        .filter((o: any) => o.event.project_id === PROJECT);
+    const expectNotified = (before: number) => {
+      const calls = sent().slice(before);
+      expect(calls.length).toBeGreaterThan(0);
+      for (const o of calls) {
+        expect(o.account_id).toBe(k.account_id);
+        expect(o.event).toMatchObject({
+          type: "project.detail.invalidate",
+          account_id: k.account_id,
+          project_id: PROJECT,
+          fields: [GPU_AGENT_REQUESTS_PROJECT_DETAIL_FIELD],
+        });
+        // nothing but "look again": no request, payload or key
+        expect(Object.keys(o.event).sort()).toEqual(
+          ["account_id", "fields", "project_id", "ts", "type"].sort(),
+        );
+      }
+    };
+    // killSetup asked twice and approved once
+    expect(sent().length).toBeGreaterThanOrEqual(3);
+    let n = sent().length;
+    await denyAgentRequestLocal(
+      { account_id: k.account_id, request_id: k.pending.req.request_id },
+      { accountWriteFence: fence },
+    );
+    expectNotified(n);
+    n = sent().length;
+    await revokeAgentGrantLocal(
+      { account_id: k.account_id, grant_id: k.grant.grant_id },
+      { accountWriteFence: fence },
+    );
+    expectNotified(n);
+    // the kill switch, for the projects whose approvals it ended
+    const other = await k.ask("5", PROJECT);
+    n = sent().length;
+    await killSwitchLocal(
+      { key_use: testKeyUse("terminate"), account_id: k.account_id },
+      k.deps,
+    );
+    expectNotified(n);
+    const { rows } = await getPool().query(
+      "SELECT state FROM gpu_agent_requests WHERE request_id = $1",
+      [other.req.request_id],
+    );
+    expect(rows[0].state).toBe("denied");
+  });
+
+  it("keeps an active approval listed however many newer requests there are", async () => {
+    const k = await killSetup();
+    // 101 newer pending requests in the same project, past the list's bound
+    await getPool().query(
+      `INSERT INTO gpu_agent_requests (request_id, account_id, project_id, agent_id, run_id,
+         operation_id, payload, payload_hash, state, created, expires_at)
+       SELECT gen_random_uuid(), $1, $2, 'session:' || repeat(md5(i::text), 2),
+         'session:' || repeat(md5(i::text), 2), 'op-' || i, '{}'::jsonb,
+         repeat('e', 64), 'pending', now() + (i || ' seconds')::interval,
+         now() + interval '20 minutes'
+         FROM generate_series(1, 101) AS i`,
+      [k.account_id, PROJECT],
+    );
+    const views = await listAgentRequestsLocal({
+      account_id: k.account_id,
+      project_id: PROJECT,
+    });
+    expect(views).toHaveLength(100);
+    // the approval (and so its Revoke) is never pushed out by them
+    expect(views[0].grant).toMatchObject({
+      grant_id: k.grant.grant_id,
+      state: "active",
+    });
+  });
+
+  it("never lets approvals past their expiry, not yet swept, crowd out new requests", async () => {
+    const k = await killSetup();
+    // 101 approvals whose grants expired but are still marked active (the
+    // sweep hasn't run), all newer than the pending request
+    await getPool().query(
+      `WITH reqs AS (
+         INSERT INTO gpu_agent_requests (request_id, account_id, project_id, agent_id, run_id,
+           operation_id, payload, payload_hash, state, created, expires_at)
+         SELECT gen_random_uuid(), $1, $2, 'session:' || repeat(md5(i::text), 2),
+           'session:' || repeat(md5(i::text), 2), 'op-x' || i, '{}'::jsonb,
+           repeat('f', 64), 'approved', now() + (i || ' seconds')::interval,
+           now() - interval '1 minute'
+           FROM generate_series(1, 101) AS i
+         RETURNING *)
+       INSERT INTO gpu_agent_grants (grant_id, request_id, account_id, project_id, agent_id,
+         run_id, operation_id, payload_hash, credential_id, layer_id, launches_allowed,
+         launches_used, state, created, expires_at)
+       SELECT gen_random_uuid(), request_id, account_id, project_id, agent_id, run_id,
+         operation_id, payload_hash, $3, gen_random_uuid(), 1, 0, 'active', created,
+         now() - interval '1 minute'
+         FROM reqs`,
+      [k.account_id, PROJECT, k.credential_id],
+    );
+    const views = await listAgentRequestsLocal({
+      account_id: k.account_id,
+      project_id: PROJECT,
+    });
+    // only the live approval and the pending request: nothing expired
+    expect(views.map((v) => v.request_id).sort()).toEqual(
+      [k.grant.request_id, k.pending.req.request_id].sort(),
+    );
+    expect(views[0].grant?.grant_id).toBe(k.grant.grant_id);
+    // and with decided ones included, an unswept expired approval says so
+    const all = await listAgentRequestsLocal({
+      account_id: k.account_id,
+      project_id: PROJECT,
+      include_decided: true,
+    });
+    const stale = all.filter((v) => v.payload_hash === "f".repeat(64));
+    expect(stale.length).toBeGreaterThan(0);
+    for (const v of stale) expect(v.grant?.state).toBe("expired");
   });
 });

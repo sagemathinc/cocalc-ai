@@ -770,6 +770,19 @@ export function registerGpuCommand(
     );
 
   agent
+    .command("deny <request-id>")
+    .description(
+      "decline a pending request: nothing is approved, and the agent has to ask again",
+    )
+    .action(async (request_id: string, _opts, command: Command) =>
+      run(
+        command,
+        "agent deny",
+        async (api) => await api.denyAgentRequest({ request_id }),
+      ),
+    );
+
+  agent
     .command("revoke <grant-id>")
     .description(
       "revoke an approval: no new launch, and the pods it launched are terminated",
