@@ -6,7 +6,7 @@
 import { Badge } from "antd";
 import { useRef } from "react";
 import type { CSSProperties } from "react";
-import { useUnreadConversationCount } from "./use-conversations";
+import { useUnreadConversations } from "./use-conversations";
 
 // Read by screen readers, not shown.
 const VISUALLY_HIDDEN: CSSProperties = {
@@ -27,20 +27,25 @@ const VISUALLY_HIDDEN: CSSProperties = {
 // The count changes in the background (polling, notifications), so screen
 // readers hear it through a polite live region that stays mounted: it says
 // the new count, and "No unread conversations" once they have all been read.
-// Before anything was ever unread it is empty, so nothing is announced.
+// It is empty until something was unread for this account, and while a
+// list is loading (after signing in as someone else, the count is 0 only
+// because nothing has arrived yet), so nothing false is announced.
 export function PeopleUnreadBadge() {
-  const count = useUnreadConversationCount();
-  const hadUnread = useRef(false);
-  if (count > 0) hadUnread.current = true;
-  const label =
-    count > 0
+  const { count, loaded, account_id } = useUnreadConversations();
+  // The account that had something unread, if it is still this one.
+  const hadUnreadFor = useRef<string | undefined>(undefined);
+  if (hadUnreadFor.current !== account_id) hadUnreadFor.current = undefined;
+  if (loaded && count > 0) hadUnreadFor.current = account_id;
+  const label = !loaded
+    ? ""
+    : count > 0
       ? `${count} unread conversation${count === 1 ? "" : "s"}`
-      : hadUnread.current
+      : hadUnreadFor.current != null
         ? "No unread conversations"
         : "";
   return (
     <>
-      {count > 0 && (
+      {loaded && count > 0 && (
         <Badge
           count={count}
           overflowCount={99}

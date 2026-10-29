@@ -5,45 +5,69 @@
 
 import { render, screen } from "@testing-library/react";
 
-let mockCount = 0;
+const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+let mockUnread = { count: 0, loaded: true, account_id: A as string };
 jest.mock("./use-conversations", () => ({
-  useUnreadConversationCount: () => mockCount,
+  useUnreadConversations: () => mockUnread,
 }));
 
 import { PeopleUnreadBadge } from "./unread-badge";
 
 test("a live region that stays mounted announces count changes, including back to zero", () => {
-  mockCount = 0;
+  mockUnread = { count: 0, loaded: true, account_id: A };
   const { rerender } = render(<PeopleUnreadBadge />);
   const region = screen.getByRole("status");
   expect(region).toHaveAttribute("aria-live", "polite");
   // Nothing was ever unread: nothing to announce.
   expect(region.textContent).toBe("");
 
-  mockCount = 3;
+  mockUnread = { count: 3, loaded: true, account_id: A };
   rerender(<PeopleUnreadBadge />);
   expect(screen.getByRole("status")).toBe(region);
   expect(region.textContent).toBe("3 unread conversations");
 
-  mockCount = 1;
+  mockUnread = { count: 1, loaded: true, account_id: A };
   rerender(<PeopleUnreadBadge />);
   expect(region.textContent).toBe("1 unread conversation");
 
-  mockCount = 0;
+  mockUnread = { count: 0, loaded: true, account_id: A };
   rerender(<PeopleUnreadBadge />);
   expect(screen.getByRole("status")).toBe(region);
   expect(region.textContent).toBe("No unread conversations");
 });
 
+test("after switching accounts, nothing is announced until the new list says so", () => {
+  mockUnread = { count: 2, loaded: true, account_id: A };
+  const { rerender } = render(<PeopleUnreadBadge />);
+  const region = screen.getByRole("status");
+  expect(region.textContent).toBe("2 unread conversations");
+
+  // Signed in as B: the list is loading, so 0 means nothing yet.
+  mockUnread = { count: 0, loaded: false, account_id: B };
+  rerender(<PeopleUnreadBadge />);
+  expect(region.textContent).toBe("");
+  expect(document.querySelector(".ant-badge")).toBeNull();
+
+  // B's list has nothing unread, and B never had anything unread here.
+  mockUnread = { count: 0, loaded: true, account_id: B };
+  rerender(<PeopleUnreadBadge />);
+  expect(region.textContent).toBe("");
+
+  mockUnread = { count: 1, loaded: true, account_id: B };
+  rerender(<PeopleUnreadBadge />);
+  expect(region.textContent).toBe("1 unread conversation");
+});
+
 test("the visible badge shows the count and is hidden from screen readers", () => {
-  mockCount = 5;
+  mockUnread = { count: 5, loaded: true, account_id: A };
   const { container } = render(<PeopleUnreadBadge />);
   const badge = container.querySelector(".ant-badge");
   expect(badge).not.toBeNull();
   expect(badge).toHaveAttribute("aria-hidden", "true");
   expect(badge?.textContent).toContain("5");
 
-  mockCount = 0;
+  mockUnread = { count: 0, loaded: true, account_id: A };
   const { container: empty } = render(<PeopleUnreadBadge />);
   expect(empty.querySelector(".ant-badge")).toBeNull();
 });

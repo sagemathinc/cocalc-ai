@@ -209,6 +209,28 @@ test("a response for the previous account is dropped after a switch", async () =
   expect(view.container.textContent).toBe("");
 });
 
+test("switching accounts announces nothing false while the new list loads", async () => {
+  mockList.mockResolvedValue({
+    conversations: [conv("c1")],
+    unavailable_bays: 0,
+  });
+  const view = render(<PeopleUnreadBadge />);
+  await flush();
+  expect(screen.getByRole("status")).toHaveTextContent("1 unread conversation");
+  // Someone else signs in, without the badge unmounting.
+  mockAccount = another;
+  const forAnother = deferred<any>();
+  mockList.mockReturnValueOnce(forAnother.promise);
+  view.rerender(<PeopleUnreadBadge />);
+  await flush();
+  // Loading: not "No unread conversations", which isn't known yet.
+  expect(screen.getByRole("status").textContent).toBe("");
+  forAnother.resolve({ conversations: [], unavailable_bays: 0 });
+  await flush();
+  // Nothing was ever unread for this account: still nothing to announce.
+  expect(screen.getByRole("status").textContent).toBe("");
+});
+
 test("a consumer that mounts while the list changes still sees the change", async () => {
   mockList.mockResolvedValue({
     conversations: [conv("c1")],

@@ -190,11 +190,23 @@ export function unreadConversationCount(
   ).length;
 }
 
-export function useUnreadConversationCount(): number {
+export interface UnreadConversations {
+  count: number;
+  // Whether this account's list has loaded: until then the count is not
+  // known, and 0 means nothing.
+  loaded: boolean;
+  account_id?: string;
+}
+
+export function useUnreadConversations(): UnreadConversations {
   const account_id = useTypedRedux("account", "account_id");
   // Lite has no People API: never poll it there (the badge just stays empty).
-  const { conversations } = useConversations(!lite);
-  return unreadConversationCount(conversations, account_id);
+  const { conversations, loading } = useConversations(!lite);
+  return {
+    count: unreadConversationCount(conversations, account_id),
+    loaded: !lite && !loading && account_id != null,
+    account_id,
+  };
 }
 
 // For tests: replace the shared list at once.
