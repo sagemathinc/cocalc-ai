@@ -1185,6 +1185,96 @@ describe("cross-bay collaboration", () => {
   });
 });
 
+describe("project conversations with members across bays", () => {
+  // The project is owned by the seed; Erin, homed on the attached bay,
+  // starts a conversation with its owner. Her bay routes the call to the
+  // owning bay, which stores the record with both of them as members.
+  let frank; // homed on the seed, owns the project
+  let erin; // homed on the attached bay
+  let project_id;
+
+  const conversationRows = async (bay, path) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT conversation_id, path, member_ids FROM project_conversations WHERE project_id=$1 AND path LIKE $2",
+         [${JSON.stringify(project_id)}, "%" + ${JSON.stringify(path)}]);
+       return rows;`,
+    );
+
+  before(async () => {
+    frank = await createAccount(cluster, { home_bay_id: SEED, name: "frank" });
+    erin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "erin",
+    });
+    frank.client = await client(frank);
+    erin.client = await client(erin);
+    project_id = await createProject(frank.client, "frank-erin");
+    await invite(frank, erin, project_id);
+    await eventually(() => listed(erin.client, project_id), {
+      what: "frank's project in erin's list",
+    });
+  });
+
+  it("creates the record on the owning bay with everyone it is with", async () => {
+    const conversation = await erin.client.call("people.addConversation", {
+      project_id,
+      path: "plans.chat",
+      title: "Plans",
+      member_ids: [frank.account_id],
+    });
+    assert.deepEqual(
+      [...conversation.member_ids].sort(),
+      [erin.account_id, frank.account_id].sort(),
+    );
+    const owned = await conversationRows(SEED, "plans.chat");
+    assert.equal(owned.length, 1);
+    assert.equal(owned[0].conversation_id, conversation.conversation_id);
+    assert.deepEqual(
+      [...owned[0].member_ids].sort(),
+      [erin.account_id, frank.account_id].sort(),
+    );
+    // Only the owning bay keeps the record.
+    assert.deepEqual(await conversationRows(ATTACHED, "plans.chat"), []);
+  });
+
+  it("recognizes an owning bay without the method, and it creates nothing", async () => {
+    // An owner running older code doesn't have createRecordWithMembers. Call
+    // a method the seed doesn't have, over the real fabric, and check that
+    // the refusal is what addConversation treats as "fail, don't create the
+    // record without its members".
+    const result = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+       const { ownerLacksMethod } = server("people/api.js");
+       const { createInterBayPeopleClient } = require("@cocalc/conat/inter-bay/people");
+       const api = createInterBayPeopleClient({
+         client: getInterBayFabricClient(),
+         bay_id: ${JSON.stringify(SEED)},
+       });
+       try {
+         await api.createRecordWithMembersFromTheFuture({
+           account_id: ${JSON.stringify(erin.account_id)},
+           project_id: ${JSON.stringify(project_id)},
+           path: "future.chat",
+           title: "Future",
+           member_ids: [${JSON.stringify(frank.account_id)}],
+         });
+         return { accepted: true };
+       } catch (err) {
+         return { accepted: false, lacks: ownerLacksMethod(err), message: String(err) };
+       }`,
+    );
+    assert.equal(result.accepted, false);
+    assert.equal(result.lacks, true, result.message);
+    assert.deepEqual(await conversationRows(SEED, "future.chat"), []);
+  });
+});
+
 describe("a project managed from the other bay", () => {
   // Every call below is made by an account homed on the bay that does NOT
   // own the project, so each one crosses the fabric to the owner.
@@ -4021,7 +4111,7 @@ describe("outgoing support tickets across bays", () => {
     };
     let plan;
     let lastError;
-    for (const deadline = Date.now() + 60_000; Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline;) {
       try {
         plan = await runInBay(
           cluster,

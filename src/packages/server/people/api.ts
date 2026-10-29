@@ -66,6 +66,12 @@ function remote(bay_id: string): InterBayPeopleApi {
   });
 }
 
+// How an owning bay running older code refuses a method it doesn't have, as
+// it arrives over the inter-bay fabric.
+export function ownerLacksMethod(err: unknown): boolean {
+  return /unknown service method|is not a function/.test(`${err}`);
+}
+
 function local(bay_id: string): boolean {
   return bay_id === getConfiguredBayId();
 }
@@ -495,7 +501,7 @@ export const peopleApi: PeopleApi = {
       } catch (err) {
         // An owning bay that predates members: fail rather than create a
         // conversation that silently leaves them out.
-        if (/unknown service method|is not a function/.test(`${err}`)) {
+        if (ownerLacksMethod(err)) {
           throw Error(
             "This project's server does not support conversation members yet. Try again in a few minutes.",
           );
