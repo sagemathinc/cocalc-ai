@@ -27,6 +27,10 @@ const TITLES: Record<GpuAlertKind, string> = {
   spend_drift: "RunPod billed a pod well above CoCalc's estimate",
   billing_missing: "RunPod's billing never fully covered a pod",
   over_budget: "Billing pushed spending past a GPU budget",
+  account_spend_rate: "Your RunPod account is spending faster than your pods",
+  account_balance_drop:
+    "Your RunPod balance dropped more than your pods explain",
+  account_checks_disabled: "RunPod account checks are off",
 };
 
 const SEVERITY_LABELS = {

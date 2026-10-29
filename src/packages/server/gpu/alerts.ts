@@ -30,6 +30,7 @@ import type {
   GpuAlertKind,
   GpuAlertSeverity,
 } from "@cocalc/util/gpu/types";
+import { endAccountWatch } from "@cocalc/server/gpu/account-watch-db";
 
 export type { GpuAlertKind, GpuAlertSeverity };
 
@@ -176,6 +177,8 @@ export async function onKeyGone(
       WHERE credential_id = $1 AND kind = 'key_rejected' AND resolved_at IS NULL`,
     [credential_id, by.slice(0, 40)],
   );
+  // the account checks made with it end too (5d-2b)
+  await endAccountWatch(db, credential_id, by);
 }
 
 // What each kind tells the owner (details carry the specifics).
@@ -198,6 +201,12 @@ const MESSAGES: Record<GpuAlertKind, string> = {
     "RunPod's billing pushed spending past what this GPU budget authorizes. New launches it covers are refused until you raise the budget or a new period starts.",
   compromise_check_pods:
     "CoCalc removed the compromised key and stopped watching its RunPod account. Check RunPod's Pods page once and terminate any pod you don't recognize, then acknowledge this alert.",
+  account_spend_rate:
+    "Your RunPod account is spending well faster than the pods CoCalc runs with this key explain. If you didn't start anything else on it, check RunPod's Pods page now. When the difference is large, new launches pause until you resume them (cocalc gpu resume). If you also use this RunPod account outside CoCalc, withdraw the account confirmation (cocalc gpu account-checks --withdraw).",
+  account_balance_drop:
+    "Your RunPod balance dropped well more than the pods CoCalc runs with this key explain. If you didn't use the account otherwise, check RunPod's Pods and billing pages. When the difference is large, new launches pause until you resume them (cocalc gpu resume). If you also use this RunPod account outside CoCalc, withdraw the account confirmation (cocalc gpu account-checks --withdraw).",
+  account_checks_disabled:
+    "You confirmed this RunPod account is used only by you, for CoCalc, but another key connected to CoCalc uses it too, so CoCalc can't compare the account's spending with your pods. The checks resume once only one key uses the account.",
 };
 
 export type GpuAlertView = GpuAlert;
@@ -212,7 +221,9 @@ function view(r: any): GpuAlertView {
     message:
       r.kind === "unknown_pod" && r.details?.unverifiable === true
         ? "A pod CoCalc didn't start was on the RunPod account of a key that has since been removed or replaced, so CoCalc can't check it anymore. Look at RunPod's Pods page, terminate it if it's still there, then acknowledge this alert."
-        : (MESSAGES[r.kind as GpuAlertKind] ?? ""),
+        : r.kind === "account_checks_disabled" && r.dedupe_key === "no_access"
+          ? "You confirmed this RunPod account for CoCalc's account checks, but RunPod doesn't let this key read the account's balance and spend rate, so CoCalc can't compare them with your pods. Connect a key with read access to the account (RunPod's \"All\" or read-write permission), or withdraw the confirmation (cocalc gpu account-checks --withdraw)."
+          : (MESSAGES[r.kind as GpuAlertKind] ?? ""),
     details: r.details ?? null,
     opened: iso(r.opened)!,
     last_seen: iso(r.last_seen)!,

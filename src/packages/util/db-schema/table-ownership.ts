@@ -619,6 +619,7 @@ export const TABLE_OWNERSHIP = {
       "gpu_worker_overrides",
       "gpu_key_events",
       "gpu_alerts",
+      "gpu_provider_account_watch",
     ],
     {
       ownership: "account-home",

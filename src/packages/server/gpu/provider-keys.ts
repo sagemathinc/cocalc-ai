@@ -42,6 +42,7 @@ import {
   type GpuKeyEventActor,
 } from "@cocalc/server/gpu/key-events";
 import { onKeyGone, raiseAlert } from "@cocalc/server/gpu/alerts";
+import { lockProviderIdentity } from "@cocalc/server/gpu/account-watch-db";
 import {
   carryKeyBudget,
   ensureKeyBudget,
@@ -591,6 +592,13 @@ export async function setGpuProviderKeyLocal(
             [id, previous],
           );
         }
+        // last (after every fence row above): a key for this RunPod account
+        // and the account checks on it take turns (5d-2b)
+        await lockProviderIdentity(client, {
+          provider,
+          kind: identity.kind,
+          id: identity.id,
+        });
       },
     }));
   });
@@ -929,6 +937,8 @@ export interface RunpodCleanupCapability {
   findPodsByName(
     ...args: Parameters<RunpodClient["findPodsByName"]>
   ): ReturnType<RunpodClient["findPodsByName"]>;
+  // the account's balance and spend rate (5d-2b's account checks)
+  getAccountBalance(): ReturnType<RunpodClient["getAccountBalance"]>;
 }
 
 export async function getRunpodCleanupForAccount(
@@ -953,5 +963,6 @@ export async function getRunpodCleanupForAccount(
     terminatePod: (podId: string) => client.terminatePod(podId),
     findPodsByName: (...args: Parameters<RunpodClient["findPodsByName"]>) =>
       client.findPodsByName(...args),
+    getAccountBalance: () => client.getAccountBalance(),
   });
 }

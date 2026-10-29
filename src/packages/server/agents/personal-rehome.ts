@@ -46,6 +46,7 @@ export const GPU_STATE_TABLES = [
   "gpu_key_events",
   "gpu_alerts",
   "gpu_pod_state_intervals",
+  "gpu_provider_account_watch",
 ] as const;
 
 // Agents' GPU requests and grants (6b), keyed by the key owner's account_id.

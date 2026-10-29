@@ -28,6 +28,7 @@ terminated, including ones CoCalc didn't start (the theft case).
 */
 
 import getPool from "@cocalc/database/pool";
+import { endAccountWatch } from "@cocalc/server/gpu/account-watch-db";
 import { getLogger } from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -459,6 +460,8 @@ export async function reportCompromisedLocal(
          WHERE gpu_key_fences.state IN ('active', 'draining')`,
       [credential_id, account_id],
     );
+    // its account checks end: the fence admits nothing any more (5d-2b)
+    await endAccountWatch(db, credential_id, "compromised");
     const marked = await markCredentialPodsToTerminate(db, {
       account_id,
       credential_id,

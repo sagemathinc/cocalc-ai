@@ -638,6 +638,30 @@ export function registerGpuCommand(
       run(command, "resume", async (api) => await api.resume({})),
     );
 
+  gpu
+    .command("account-checks")
+    .description(
+      "compare your RunPod account's own spend rate and balance with the pods CoCalc runs, and alert (and pause new launches, for a large difference) when RunPod spends much more. Only for a RunPod account used only by you, only for CoCalc: --confirm says so for the connected key, --withdraw turns the checks off (both need you to sign in again, from Settings in the browser). Without either, shows whether the checks are on",
+    )
+    .option(
+      "--confirm",
+      "confirm the connected key's RunPod account is used only by you, only for CoCalc",
+    )
+    .option("--withdraw", "withdraw that confirmation (the checks stop)")
+    .action(async (opts, command: Command) =>
+      run(command, "account-checks", async (api) => {
+        if (opts.confirm && opts.withdraw) {
+          throw Error("Give --confirm or --withdraw, not both.");
+        }
+        if (opts.confirm || opts.withdraw) {
+          return await api.confirmAccountChecks({
+            confirm: opts.confirm === true,
+          });
+        }
+        return await api.accountChecks({});
+      }),
+    );
+
   const alerts = gpu
     .command("alerts")
     .description(

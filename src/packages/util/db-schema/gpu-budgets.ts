@@ -369,6 +369,13 @@ export const GPU_ALERT_KINDS = [
   "spend_drift",
   "billing_missing",
   "over_budget",
+  // 5d-2b, the provider account's own numbers (only for an account the
+  // owner confirmed is theirs alone, for CoCalc only): RunPod's spend rate
+  // or balance moved well beyond what CoCalc's pods explain; or the checks
+  // are off because a second key on this bay uses the same RunPod account
+  "account_spend_rate",
+  "account_balance_drop",
+  "account_checks_disabled",
 ] as const;
 
 // What CoCalc admins must know (5d-2), apart from any one owner's alerts.
@@ -509,6 +516,59 @@ Table({
     last_error: { type: "string", pg_type: "varchar(500)" },
     // the last complete sweep's numbers (the reconciler: its backlog)
     last_stats: { type: "map" },
+  },
+});
+
+// The provider account watch (5d-2b): one row per provider account
+// (identity), on the home bay of the owner who confirmed it is used only by
+// them, only for CoCalc. The confirmation belongs to the key it was made with
+// (credential_id): a new key starts unconfirmed. The samples are RunPod's
+// balance and CoCalc's expected spend E (from gpu_pod_state_intervals) at the
+// time RunPod was asked; a sample is written only if it is newer than the
+// last one, under this row's lock.
+Table({
+  name: "gpu_provider_account_watch",
+  rules: {
+    primary_key: "id",
+    pg_indexes: ["key_owner_account_id", "credential_id"],
+    pg_unique_indexes: [
+      "(provider, provider_account_kind, provider_account_id)",
+    ],
+  },
+  fields: {
+    id: { type: "uuid", not_null: true },
+    provider: { type: "string", pg_type: "varchar(16)", not_null: true },
+    provider_account_kind: {
+      type: "string",
+      pg_type: "varchar(16)",
+      not_null: true,
+    },
+    provider_account_id: {
+      type: "string",
+      pg_type: "varchar(128)",
+      not_null: true,
+    },
+    // who confirmed it, with which key, and when (null: not confirmed)
+    key_owner_account_id: { type: "uuid", not_null: true },
+    credential_id: { type: "uuid", not_null: true },
+    confirmed_at: { type: "timestamp" },
+    // a new id for each confirmation: a pass that started under an earlier
+    // one (withdrawn meanwhile, and confirmed again) writes nothing
+    confirmation_id: { type: "uuid" },
+    // why the last pass didn't check (a second key on this account), or null
+    disabled_reason: { type: "string", pg_type: "varchar(32)" },
+    // consecutive passes over each spend-rate threshold
+    rate_warning_passes: { type: "integer", not_null: true, pg_default: "0" },
+    rate_critical_passes: { type: "integer", not_null: true, pg_default: "0" },
+    // the last sample: when RunPod was asked, its balance, and E then
+    last_asked_at: { type: "timestamp" },
+    last_balance_usd: { type: "string", pg_type: "NUMERIC(20,10)" },
+    last_expected_usd: { type: "string", pg_type: "NUMERIC(20,10)" },
+    // the start of the current balance window (moved on a compare or deposit)
+    baseline_at: { type: "timestamp" },
+    baseline_balance_usd: { type: "string", pg_type: "NUMERIC(20,10)" },
+    baseline_expected_usd: { type: "string", pg_type: "NUMERIC(20,10)" },
+    updated: { type: "timestamp", not_null: true, pg_default: "now()" },
   },
 });
 

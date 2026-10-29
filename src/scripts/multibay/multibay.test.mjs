@@ -5222,3 +5222,81 @@ describe("GPU admin alerts are read from every bay through one hub", () => {
     );
   });
 });
+
+describe("RunPod account checks live on the key owner's home bay", () => {
+  // carol is homed on the attached bay, with a RunPod key there. Every call
+  // below starts on the seed, which has no record of her key.
+  const CREDENTIAL_ID = randomUUID();
+  let carol;
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const watch = server("gpu/account-watch.js");
+       const account_id = ${JSON.stringify(carol.account_id)};
+       ${body}`,
+    );
+  }
+  async function watchRows(bay) {
+    return await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT confirmed_at IS NOT NULL AS confirmed FROM gpu_provider_account_watch WHERE key_owner_account_id = $1",
+         [${JSON.stringify(carol.account_id)}]);
+       return rows;`,
+    );
+  }
+
+  before(async () => {
+    carol = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "carol",
+    });
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO external_credentials (id, provider, kind, scope, owner_account_id, encrypted_payload, metadata, created, updated) VALUES ($1, 'runpod', 'gpu-provider-api-key', 'account', $2, 'x', $3, now(), now())",
+         [${JSON.stringify(CREDENTIAL_ID)}, ${JSON.stringify(carol.account_id)},
+          { provider_account_kind: "personal", provider_account_id: ${JSON.stringify(randomUUID())} }]);
+       await getPool().query(
+         "INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated) VALUES ($1, $2, 'active', now(), now())",
+         [${JSON.stringify(CREDENTIAL_ID)}, ${JSON.stringify(carol.account_id)}]);`,
+    );
+  });
+
+  it("confirms, reads and withdraws through the seed; the row is only on the home bay", async () => {
+    // (fresh authentication is the entry bay's own check, done before it
+    // forwards; here it is taken as passed)
+    const r = await onSeed(
+      `const deps = { freshAuth: async () => {} };
+       const before = await watch.getAccountChecks({ account_id });
+       const confirmed = await watch.confirmAccountChecks({ account_id, confirm: true }, deps);
+       const read = await watch.getAccountChecks({ account_id });
+       return { before: before.state, confirmed: confirmed.state, read: read.state };`,
+    );
+    assert.deepEqual(r, { before: "off", confirmed: "on", read: "on" });
+    assert.deepEqual(await watchRows(ATTACHED), [{ confirmed: true }]);
+    assert.deepEqual(await watchRows(SEED), []);
+    const withdrawn = await onSeed(
+      `return (await watch.confirmAccountChecks({ account_id, confirm: false }, { freshAuth: async () => {} })).state;`,
+    );
+    assert.equal(withdrawn, "off");
+    assert.deepEqual(await watchRows(ATTACHED), [{ confirmed: false }]);
+  });
+
+  it("refuses to run the home bay's part anywhere else", async () => {
+    const r = await onSeed(
+      `const out = [];
+       for (const f of ["getAccountChecksLocal", "confirmAccountChecksLocal"]) {
+         try { await watch[f]({ account_id, confirm: true, fresh_auth_verified: true }); out.push("ran"); }
+         catch (e) { out.push(String(e?.message ?? e)); }
+       }
+       return out;`,
+    );
+    for (const m of r) assert.match(m, /home bay|homed on|not found/);
+  });
+});

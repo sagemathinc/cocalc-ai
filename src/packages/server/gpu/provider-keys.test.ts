@@ -430,7 +430,7 @@ describe("GPU provider keys", () => {
     expect(await getRunpodCleanupForAccount(ACCOUNT, lapsed)).toBeDefined();
   });
 
-  it("gives cleanup only inventory and billing, with no client to reach through", async () => {
+  it("gives cleanup only inventory, billing and the account balance, with no client to reach through", async () => {
     localGetMock.mockResolvedValue(storedRecord({}));
     const { fetch, urls } = fakeFetch([NO_PODS]);
     const cleanup = (await getRunpodCleanupForAccount(ACCOUNT, {
@@ -441,6 +441,7 @@ describe("GPU provider keys", () => {
     expect(Object.keys(cleanup).sort()).toEqual([
       "credential_id",
       "findPodsByName",
+      "getAccountBalance",
       "getPod",
       "getProviderIdentity",
       "listPodBilling",

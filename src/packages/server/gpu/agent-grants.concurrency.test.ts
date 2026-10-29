@@ -49,6 +49,7 @@ describeRealPostgres("agent GPU grants under concurrency", () => {
       external_credentials: SCHEMA.external_credentials,
       gpu_key_fences: SCHEMA.gpu_key_fences,
       gpu_alerts: SCHEMA.gpu_alerts,
+      gpu_provider_account_watch: SCHEMA.gpu_provider_account_watch,
       gpu_key_events: SCHEMA.gpu_key_events,
       gpu_budget_layers: SCHEMA.gpu_budget_layers,
       gpu_budget_events: SCHEMA.gpu_budget_events,

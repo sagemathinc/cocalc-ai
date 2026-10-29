@@ -133,6 +133,17 @@ export interface GpuLaunchSpec {
 }
 
 // What reporting a key compromised has done so far (5c).
+// The provider-account checks (5d-2b). on: checked every reconcile pass;
+// off: not confirmed with the connected key; shared: confirmed, but a second
+// key on the owner's home bay uses the same RunPod account; no_access:
+// confirmed, but RunPod refuses this key the account's balance (a key with
+// pod access only); no_key: no RunPod key is connected.
+export interface GpuAccountChecks {
+  state: "on" | "off" | "shared" | "no_access" | "no_key";
+  confirmed_at: string | null;
+  last_checked_at: string | null;
+}
+
 export interface GpuCompromiseStatus {
   // the cleanup finished: RunPod rejects the key, nothing is left, and
   // CoCalc's copy is revoked and its fence closed

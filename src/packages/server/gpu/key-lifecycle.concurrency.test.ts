@@ -64,6 +64,7 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       gpu_pod_reservations: SCHEMA.gpu_pod_reservations,
       gpu_worker_leases: SCHEMA.gpu_worker_leases,
       gpu_worker_overrides: SCHEMA.gpu_worker_overrides,
+      gpu_provider_account_watch: SCHEMA.gpu_provider_account_watch,
     });
     // a reaper that has just completed a pass (launches need one)
     await getPool().query(
@@ -90,7 +91,8 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
     return { p, open };
   };
 
-  async function setup() {
+  // identity: the RunPod account the fake answers for (default u1)
+  async function setup({ identity = "u1" }: { identity?: string } = {}) {
     const account_id = randomUUID();
     // homed on this bay (no home_bay_id means the local bay)
     await getPool().query("INSERT INTO accounts (account_id) VALUES ($1)", [
@@ -106,7 +108,7 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       payload: OLD,
       metadata: {
         provider_account_kind: "personal",
-        provider_account_id: "u1",
+        provider_account_id: identity,
       },
     });
     // One fake RunPod for verification and creates; records the key used.
@@ -158,7 +160,7 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
         });
       }
       if (path === "/graphql")
-        return json(200, { data: { myself: { id: "u1" } } });
+        return json(200, { data: { myself: { id: identity } } });
       if (path === "/v2/pods") {
         return json(200, { pods: [], pagination: { hasNextPage: false } });
       }
@@ -777,5 +779,76 @@ describeRealPostgres("GPU launches vs key replacement and removal", () => {
       drainMs + keys.KEY_REMOVAL_CALL_TIMEOUT_MS,
     );
     expect(result).toEqual({ revoked: false, remaining: [pod.handle] });
+  });
+
+  it("a second key for the same RunPod account connected while the account check asks RunPod: the check turns off, and writes no verdict", async () => {
+    const watch = await import("./account-watch");
+    const fence = await import("./account-fence");
+    const here = {
+      isHomeBay: async () => true,
+      accountWriteFence: async (db: any, id: string, action: string) => {
+        await fence.lockGpuAccountFence(db, id, action);
+      },
+    };
+    // owner A connects (a live fence) and confirms the account (its own, so
+    // no other test's key shares it)
+    const identity = `u-${randomUUID()}`;
+    const a = await setup({ identity });
+    const connect = (account_id: string, api_key: string, deps: any) =>
+      keys.setGpuProviderKeyLocal(
+        { account_id, provider: "runpod", api_key },
+        { ...deps, connectInventory: async () => true },
+      );
+    const statusA = await connect(a.account_id, NEW, a.keyDeps);
+    expect(statusA.provider_account).toMatchObject({ id: identity });
+    await watch.confirmAccountChecksLocal(
+      { account_id: a.account_id, confirm: true, fresh_auth_verified: true },
+      here,
+    );
+    const { rows: ka } = await getPool().query(
+      "SELECT id FROM external_credentials WHERE owner_account_id = $1 AND revoked IS NULL",
+      [a.account_id],
+    );
+    const keyA = ka[0].id;
+    // RunPod is asked, and answers only once B's key is stored
+    const asked = gate();
+    const answer = gate();
+    const checking = watch.watchProviderAccount(
+      { credential_id: keyA, key_owner_account_id: a.account_id },
+      {
+        getAccountBalance: async () => {
+          asked.open();
+          await answer.p;
+          // far beyond our pods: a verdict, if one were written
+          return { balance: 1, spendPerHour: 1000 };
+        },
+      },
+    );
+    await asked.p;
+    const b = await setup({ identity });
+    await connect(b.account_id, OLD, b.keyDeps);
+    answer.open();
+    expect(await checking).toEqual({ checked: false, reason: "shared" });
+    const { rows: w } = await getPool().query(
+      "SELECT disabled_reason, last_balance_usd, last_expected_usd, rate_warning_passes FROM gpu_provider_account_watch WHERE credential_id = $1",
+      [keyA],
+    );
+    expect(w[0]).toEqual({
+      // no reading; the shared outcome is the latest observation
+      disabled_reason: "shared",
+      last_balance_usd: null,
+      last_expected_usd: null,
+      rate_warning_passes: 0,
+    });
+    const { rows: alerts } = await getPool().query(
+      "SELECT kind FROM gpu_alerts WHERE credential_id = $1 ORDER BY kind",
+      [keyA],
+    );
+    expect(alerts.map((r: any) => r.kind)).toEqual(["account_checks_disabled"]);
+    const { rows: f } = await getPool().query(
+      "SELECT paused_reason FROM gpu_key_fences WHERE credential_id = $1",
+      [keyA],
+    );
+    expect(f[0].paused_reason).toBe(null);
   });
 });

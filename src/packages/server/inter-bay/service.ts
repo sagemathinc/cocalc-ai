@@ -1297,6 +1297,14 @@ async function startAccountLocalService(): Promise<void> {
       await (
         await import("@cocalc/server/gpu/budget-api")
       ).resumeGpuLaunchesLocal(opts),
+    gpuAccountChecks: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/account-watch")
+      ).getAccountChecksLocal(opts),
+    gpuConfirmAccountChecks: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/account-watch")
+      ).confirmAccountChecksLocal(opts),
     gpuAlerts: async (opts) =>
       await (await import("@cocalc/server/gpu/alerts")).listAlertsLocal(opts),
     gpuAcknowledgeAlert: async (opts) =>

@@ -54,6 +54,7 @@ import {
   INVENTORY_STALE_MS,
   setInventoryWaker,
 } from "@cocalc/server/gpu/budgets";
+import { watchProviderAccount } from "@cocalc/server/gpu/account-watch";
 import {
   acquireWorkerLease,
   every,
@@ -90,7 +91,9 @@ const RECONCILER: Actor = { kind: "reconciler" };
 export type ReconcileCapability = Pick<
   RunpodCleanupCapability,
   "credential_id" | "listPods" | "getPod"
->;
+> &
+  // the account checks (5d-2b), for a confirmed account
+  Partial<Pick<RunpodCleanupCapability, "getAccountBalance">>;
 
 export interface ReconcileDeps {
   now?: () => number;
@@ -246,7 +249,33 @@ export async function reconcileKey(
       next: new Date(observed_at.getTime() + RECONCILE_EVERY_MS),
       attempts: 0,
     });
-    // the reconciliation capability works: a rejected-key alert ends
+    // The account checks, in what is left of the pass (only for an account
+    // its owner confirmed). A failure here never undoes the inventory.
+    const balance = raw.getAccountBalance;
+    if (balance) {
+      try {
+        await bounded();
+        await watchProviderAccount(
+          { credential_id, key_owner_account_id },
+          {
+            getAccountBalance: () => within(raw.getAccountBalance!()),
+            guard: deps.guard,
+            now: clock,
+          },
+        );
+      } catch (err) {
+        if (err instanceof LeaseLost) throw err;
+        // RunPod rejects the key itself: the rejected-key handling below
+        if (err instanceof RunpodApiError && err.kind === "auth") throw err;
+        if (!(err instanceof PassCut)) {
+          log.warn("checking a RunPod account failed", `${err}`);
+        }
+      }
+    }
+    // the reconciliation capability works: a rejected-key alert ends (after
+    // the account checks, whose 401 would say otherwise; and only while this
+    // worker still holds its lease, which a RunPod call may have outlasted)
+    await deps.guard?.();
     await underLiveFence(credential_id, (db) =>
       resolveAlert(
         {
