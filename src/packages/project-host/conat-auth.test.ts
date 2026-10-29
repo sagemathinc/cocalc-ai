@@ -1133,6 +1133,30 @@ describe("project-host Conat auth", () => {
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(2);
     });
 
+    it("does not use a bay answer after a newer collaborator list is stored", async () => {
+      // The bay's list (revision 5) still has the account; it is confirmed.
+      mockGetRow.mockReturnValue({
+        users: { "00000000-1000-4000-8000-000000000009": { group: "owner" } },
+        users_revision: 5,
+      });
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      ).resolves.toBe(true);
+      // Another account's lookup stores revision 6, which removed the account
+      // (without a collaborator sync clearing the caches).
+      mockGetRow.mockReturnValue({
+        users: { "00000000-1000-4000-8000-000000000009": { group: "owner" } },
+        users_revision: 6,
+      });
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(false);
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      ).resolves.toBe(false);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(2);
+    });
+
     it("asks the bay once for concurrent publishes", async () => {
       mockGetRow.mockReturnValue(undefined);
       let resolve!: (member: boolean) => void;

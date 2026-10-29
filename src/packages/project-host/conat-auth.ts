@@ -297,8 +297,15 @@ function isAccountUnknownLocally({
 
 // The owning bay's answers for accounts the host's collaborator list does not
 // know, kept briefly so that a non-member cannot turn every publish into a bay
-// call. A collaborator sync clears them (clearAuthCaches).
-const bayMembershipDecisions = new TTL<string, boolean>({
+// call. A collaborator sync clears them (clearAuthCaches), and an answer is
+// used only while the host's list is still the revision it was given against:
+// a newer list stored by any path (e.g., another account's bay lookup) voids
+// it.
+type BayMembershipDecision = {
+  member: boolean;
+  users_revision: number | null;
+};
+const bayMembershipDecisions = new TTL<string, BayMembershipDecision>({
   max: 10_000,
   ttl: 30_000,
 });
@@ -324,6 +331,14 @@ const BAY_MEMBERSHIP_MAX_IN_FLIGHT_PER_ACCOUNT = 4;
 // syncs the list. So before refusing an account the list does not know at
 // all, ask the bay. An account the list knows in another role (a viewer) is
 // refused without asking.
+function localUsersRevision(project_id: string): number | null {
+  const revision = getRow(
+    "projects",
+    JSON.stringify({ project_id }),
+  )?.users_revision;
+  return Number.isFinite(revision) ? Number(revision) : null;
+}
+
 async function isProjectMemberConfirmedByBay({
   account_id,
   project_id,
@@ -333,7 +348,12 @@ async function isProjectMemberConfirmedByBay({
 }): Promise<boolean> {
   const key = `${account_id}:${project_id}`;
   const cached = bayMembershipDecisions.get(key);
-  if (cached != null) return cached;
+  if (
+    cached != null &&
+    cached.users_revision === localUsersRevision(project_id)
+  ) {
+    return cached.member;
+  }
   let flight = bayMembershipInFlight.get(key);
   if (flight == null) {
     const accountInFlight = bayMembershipInFlightByAccount.get(account_id) ?? 0;
@@ -390,7 +410,10 @@ function startBayMembershipFlight({
         });
       }
       if (generation === bayMembershipGeneration) {
-        bayMembershipDecisions.set(key, member);
+        bayMembershipDecisions.set(key, {
+          member,
+          users_revision: localUsersRevision(project_id),
+        });
       }
       return member;
     })().finally(() => {
