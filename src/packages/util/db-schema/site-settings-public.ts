@@ -13,8 +13,12 @@ import { hasStripeBillingConfiguration } from "../stripe/billing";
 import { enabledCliConnectors } from "../ai/cli-connectors-enabled";
 import { version as FRONTEND_VERSION } from "../smc-version";
 
+// A setting marked `password` is a secret: it never leaves the server, even
+// though it is declared with the public settings.
 export const PUBLIC_SITE_SETTINGS_KEYS = Object.freeze(
-  Object.keys(site_settings_conf) as SiteSettingsKeys[],
+  (Object.keys(site_settings_conf) as SiteSettingsKeys[]).filter(
+    (key) => site_settings_conf[key].password !== true,
+  ),
 );
 
 const PUBLIC_SITE_SETTINGS_SET = new Set(PUBLIC_SITE_SETTINGS_KEYS);
