@@ -31,13 +31,15 @@ export async function lockProviderIdentity(
   ]);
 }
 
-// The confirmation made with this key ends (the key was removed, replaced or
-// reported compromised, or the owner withdrew it), with its samples and its
-// account alerts. A new key starts unconfirmed.
+// The confirmation made with this key ends, with its samples and its account
+// alerts. terminal: the key is gone or compromised, so nothing reopens them;
+// otherwise (the owner withdrew it) a later confirmation's checks can. A new
+// key starts unconfirmed.
 export async function endAccountWatch(
   db: Db,
   credential_id: string,
   by: string,
+  { terminal = true }: { terminal?: boolean } = {},
 ): Promise<void> {
   await db.query(
     `UPDATE gpu_provider_account_watch
@@ -49,19 +51,23 @@ export async function endAccountWatch(
       WHERE credential_id = $1`,
     [credential_id],
   );
-  await endAccountAlerts(db, credential_id, by);
+  await endAccountAlerts(db, credential_id, by, { terminal });
 }
 
-// The key's account alerts end, for good (no later sighting reopens them).
+// The key's account alerts end. terminal: for good (no later sighting
+// reopens them). Otherwise as of their last sighting: an older one can't
+// reopen them, and any later check (under a new confirmation) can.
 export async function endAccountAlerts(
   db: Db,
   credential_id: string,
   by: string,
+  { terminal = true }: { terminal?: boolean } = {},
 ): Promise<void> {
   await db.query(
     `UPDATE gpu_alerts SET resolved_at = now(), resolved_by = $3,
-            resolved_observed_at = 'infinity'
+            resolved_observed_at = CASE WHEN $4::boolean THEN 'infinity'::timestamptz
+                                        ELSE last_seen END
       WHERE credential_id = $1 AND kind = ANY($2::text[]) AND resolved_at IS NULL`,
-    [credential_id, ACCOUNT_ALERT_KINDS, by.slice(0, 40)],
+    [credential_id, ACCOUNT_ALERT_KINDS, by.slice(0, 40), terminal],
   );
 }

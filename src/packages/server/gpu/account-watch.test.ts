@@ -447,6 +447,42 @@ describeDb("GPU provider-account checks", () => {
     rate_warning_passes: 0,
   };
 
+  it("withdrawing and confirming again (or a transfer back) lets the checks raise new alerts", async () => {
+    const owner = randomUUID();
+    const identity = randomUUID();
+    const key = await connectKey(owner, identity);
+    await confirm(owner);
+    const watch = watcher(owner, key);
+    await watch(0, { balance: 100 });
+    expect((await watch(30 * MINUTE, { balance: 80 })).balance).toBe(
+      "critical",
+    );
+    await confirm(owner, false);
+    expect((await alerts(key)).map((a) => a.resolved)).toEqual([true]);
+    // confirmed again with the same key: the condition opens a new alert
+    await confirm(owner);
+    await watch(60 * MINUTE, { balance: 70 });
+    expect((await watch(90 * MINUTE, { balance: 50 })).balance).toBe(
+      "critical",
+    );
+    expect((await alerts(key)).map((a) => a.resolved)).toEqual([true, false]);
+    // A to B and back to A: A's checks can raise again
+    const b = randomUUID();
+    const keyB = await connectKey(b, identity);
+    await confirm(b);
+    await revoke(keyB);
+    await confirm(owner);
+    await watch(120 * MINUTE, { balance: 40 });
+    expect((await watch(150 * MINUTE, { balance: 20 })).balance).toBe(
+      "critical",
+    );
+    expect((await alerts(key)).map((a) => a.resolved)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+  });
+
   it("the key's removal or replacement ends its confirmation, samples and account alerts; the new key starts unconfirmed", async () => {
     const owner = randomUUID();
     const identity = randomUUID();

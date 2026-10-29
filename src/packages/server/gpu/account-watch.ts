@@ -559,6 +559,9 @@ export async function confirmAccountChecksLocal(
           db,
           prior.credential_id,
           "confirmation_replaced",
+          {
+            terminal: false,
+          },
         );
       }
       await db.query(
@@ -581,7 +584,9 @@ export async function confirmAccountChecksLocal(
       );
     } else {
       // (only a confirmation made with this key: never another owner's)
-      await endAccountWatch(db, credential_id, "withdrawn");
+      await endAccountWatch(db, credential_id, "withdrawn", {
+        terminal: false,
+      });
     }
     log.debug("account checks", { account_id, confirm });
     return await statusOf(account_id, db);
