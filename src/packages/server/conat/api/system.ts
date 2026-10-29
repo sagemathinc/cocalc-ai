@@ -242,6 +242,12 @@ import {
   projectBackupRepoHealthSummary,
 } from "@cocalc/server/project-backup/repo-health";
 import {
+  getSiteFundedAiHealth,
+  siteFundedAiHealthDetails,
+  siteFundedAiHealthLevel,
+  siteFundedAiHealthSummary,
+} from "@cocalc/server/ai/site-funded-health";
+import {
   getProjectRecoveryAttemptHealth,
   getProjectRecoveryHealth,
   getProjectRecoveryRecentPayingCompletions,
@@ -2307,6 +2313,7 @@ export async function getLaunchHealth({
     archiveHostCoverageResult,
     archiveBlockedResult,
     membershipAuditResult,
+    siteFundedAiResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2338,6 +2345,10 @@ export async function getLaunchHealth({
     getProjectArchiveHostCoverage(),
     getProjectArchiveBlockedSummary(),
     getProjectMembershipAuditHealthStatus(),
+    // Site-funded turns are recorded on the seed bay.
+    getConfiguredBayId() === seedBayId
+      ? getSiteFundedAiHealth({ now: new Date(checkedAt) })
+      : Promise.resolve(undefined),
   ]);
   const membershipAudit =
     membershipAuditResult.status === "fulfilled"
@@ -2695,6 +2706,28 @@ export async function getLaunchHealth({
         billingExposureResult.status === "rejected"
           ? [`${billingExposureResult.reason}`]
           : billingExposureHealthDetails(billingExposureResult.value),
+    }),
+    launchHealthCheck({
+      id: "site-funded-ai",
+      label: "Site-funded AI turns",
+      level:
+        siteFundedAiResult.status === "rejected"
+          ? "warning"
+          : siteFundedAiResult.value
+            ? siteFundedAiHealthLevel(siteFundedAiResult.value)
+            : "healthy",
+      summary:
+        siteFundedAiResult.status === "rejected"
+          ? "Unable to read site-funded AI turns."
+          : siteFundedAiResult.value
+            ? siteFundedAiHealthSummary(siteFundedAiResult.value)
+            : "The seed bay records and checks site-funded AI turns.",
+      details:
+        siteFundedAiResult.status === "rejected"
+          ? [`${siteFundedAiResult.reason}`]
+          : siteFundedAiResult.value
+            ? siteFundedAiHealthDetails(siteFundedAiResult.value)
+            : [],
     }),
     launchHealthCheck({
       id: "backup-repos",
