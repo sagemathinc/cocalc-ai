@@ -30,11 +30,19 @@ function encode(value: unknown, where: string): string {
       if (Array.isArray(value)) {
         const items: string[] = [];
         for (let i = 0; i < value.length; i++) {
-          // a sparse array's hole has no JSON form: refuse it
-          if (!(i in value)) {
+          // Each index must be the array's own data property: a hole (or an
+          // inherited slot) has no JSON form, and a getter could give a
+          // different value on another traversal. Refused before any getter.
+          const slot = Object.getOwnPropertyDescriptor(value, i);
+          if (slot == null) {
             throw new Error(`canonicalJson: array hole at ${where}[${i}]`);
           }
-          items.push(encode(value[i], `${where}[${i}]`));
+          if (slot.get != null || slot.set != null) {
+            throw new Error(
+              `canonicalJson: accessor property at ${where}[${i}]`,
+            );
+          }
+          items.push(encode(slot.value, `${where}[${i}]`));
         }
         return `[${items.join(",")}]`;
       }
@@ -45,7 +53,8 @@ function encode(value: unknown, where: string): string {
       const record = value as Record<string, unknown>;
       for (const key of Object.keys(record)) {
         // a getter could give a different value on another traversal
-        if (Object.getOwnPropertyDescriptor(record, key)?.get != null) {
+        const slot = Object.getOwnPropertyDescriptor(record, key);
+        if (slot?.get != null || slot?.set != null) {
           throw new Error(
             `canonicalJson: accessor property at ${where}.${key}`,
           );

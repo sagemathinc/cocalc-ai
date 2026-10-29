@@ -425,6 +425,7 @@ describe("replay", () => {
     expect(replayRow({ turn, row: ghost, projector })).toEqual({
       result: "refused",
       reason: "gap",
+      integrity: true,
     });
   });
 
@@ -710,11 +711,16 @@ describe("C1 r2: replay eligibility, order and identity", () => {
     admit("B", { x: "late" });
     const rows = listC7QueueRows(turn).filter((r) => r.kind === "in");
     expect(rows).toHaveLength(3);
-    for (const row of rows) {
-      const result = replayRow({ turn, row, projector });
-      expect(result).toMatchObject({ result: "duplicate", process: false });
-      expect((result as any).envelope).toBeUndefined();
-    }
+    // never "duplicate": each stays refused with its class, and nothing else
+    // happens (the turn's winner is the malformed refusal, unchanged)
+    const winner = getC7Winner(turn);
+    expect(rows.map((row) => replayRow({ turn, row, projector }))).toEqual([
+      { result: "refused", reason: "stale", integrity: false },
+      { result: "refused", reason: "malformed", integrity: false },
+      { result: "refused", reason: "late", integrity: false },
+    ]);
+    expect(getC7Winner(turn)).toEqual(winner);
+    expect(log().filter((e) => e.type === "turn_invalidated")).toHaveLength(0);
   });
 
   it("returns the queue in commit order, inputs and closes merged", () => {
@@ -746,10 +752,10 @@ describe("C1 r2: replay eligibility, order and identity", () => {
     const [row] = listC7QueueRows(turn);
     expect(
       replayRow({ turn, row: { ...row, envelope: "{not json" }, projector }),
-    ).toEqual({ result: "refused", reason: "collision" });
+    ).toEqual({ result: "refused", reason: "collision", integrity: true });
     expect(
       replayRow({ turn, row: { ...row, envelope: "null" }, projector }),
-    ).toEqual({ result: "refused", reason: "collision" });
+    ).toEqual({ result: "refused", reason: "collision", integrity: true });
     expect(getC7Winner(turn)).toMatchObject({ code: "source_conflict" });
   });
 
@@ -970,7 +976,30 @@ describe("C1 r2: derived objects at read time", () => {
   it("sweeps in batches", () => {
     start("A");
     for (let i = 0; i < 450; i++) admit("A", { object: "reset", i });
+    let batches = 0;
+    const sizes: number[] = [];
+    __setC7FaultHook((p) => {
+      if (p === "expire:batch") batches += 1;
+      if (p.startsWith("expire:deleted:")) sizes.push(Number(p.slice(15)));
+    });
     expect(expireC7DerivedObjects(Date.now() + 25 * 60 * 60 * 1000)).toBe(450);
+    __setC7FaultHook(undefined);
+    // 200 + 200 + 50, each in its own short transaction
+    expect(batches).toBe(3);
+    expect(sizes).toEqual([200, 200, 50]);
+  });
+
+  it("finds expired derived objects through the (class, created_at) index", () => {
+    start("A");
+    const plan = getAcpDatabase()
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT object_id FROM c7_object
+         WHERE class IN ('page', 'reset') AND created_at <= ? LIMIT 200`,
+      )
+      .all(0) as Array<{ detail: string }>;
+    expect(plan.map((row) => row.detail).join(" ")).toContain(
+      "c7_object_class_created_idx",
+    );
   });
 });
 
@@ -1115,4 +1144,216 @@ describe("C1 r2: projector exceptions", () => {
     ).toBe("storage_failed");
     expect(tables()).toEqual(before);
   });
+});
+
+describe("C1 r3: commit order is bound to the input record", () => {
+  it("refuses a row whose qseq was changed", () => {
+    start("A");
+    admit("A", { x: 1 });
+    admit("A", { x: 2 });
+    const [row] = listC7QueueRows(turn);
+    expect(replayRow({ turn, row: { ...row, qseq: 9 }, projector })).toEqual({
+      result: "refused",
+      reason: "collision",
+      integrity: true,
+    });
+  });
+
+  it("refuses two rows whose qseqs were swapped, after the winner too", () => {
+    start("A");
+    admit("A", { x: 1 });
+    admit("A", { x: 2 });
+    decideClose({
+      turn,
+      caller: "ordinary",
+      attempt_id: "A",
+      candidate: { outcome: "completed", F: "done" },
+      projector,
+    });
+    const [first, second] = listC7QueueRows(turn);
+    const swapped = [
+      { ...first, qseq: second.qseq },
+      { ...second, qseq: first.qseq },
+    ];
+    for (const row of swapped) {
+      expect(replayRow({ turn, row, projector })).toMatchObject({
+        result: "refused",
+        integrity: true,
+      });
+    }
+    expect(log().filter((e) => e.type === "turn_invalidated")).toHaveLength(1);
+  });
+
+  it("refuses a row that claims another row's position (a duplicate qseq)", () => {
+    start("A");
+    admit("A", { x: 1 });
+    admit("A", { x: 2 });
+    const [first, second] = listC7QueueRows(turn);
+    expect(
+      replayRow({ turn, row: { ...second, qseq: first.qseq }, projector }),
+    ).toMatchObject({ result: "refused", integrity: true });
+    expect(getC7Winner(turn)).toMatchObject({ code: "source_conflict" });
+  });
+
+  it("replays every row of a restart in its committed order as a duplicate", () => {
+    start("A");
+    admit("A", { x: 1 });
+    start("B");
+    admit("B", { x: 2 });
+    decideClose({
+      turn,
+      caller: "ordinary",
+      attempt_id: "B",
+      candidate: { outcome: "completed", F: "done" },
+      projector,
+    });
+    const rows = listC7QueueRows(turn);
+    expect(rows.map((r) => r.qseq)).toEqual([1, 2, 3]);
+    expect(
+      rows.map((row) => replayRow({ turn, row, projector }).result),
+    ).toEqual(["duplicate", "duplicate", "duplicate"]);
+  });
+});
+
+describe("C1 r3: a real COMMIT failure", () => {
+  // A deferred foreign key, on the same connection, that the hook violates
+  // inside the transaction: SQLite then refuses the COMMIT itself.
+  function withDeferredViolation(run: () => void): void {
+    const db = getAcpDatabase();
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec(
+      `CREATE TABLE IF NOT EXISTS c7_test_parent (id INTEGER PRIMARY KEY)`,
+    );
+    db.exec(`CREATE TABLE IF NOT EXISTS c7_test_child (
+      parent INTEGER REFERENCES c7_test_parent(id) DEFERRABLE INITIALLY DEFERRED)`);
+    __setC7FaultHook((p) => {
+      if (p === "tx:before-commit") {
+        db.prepare(`INSERT INTO c7_test_child (parent) VALUES (999)`).run();
+      }
+    });
+    try {
+      run();
+    } finally {
+      __setC7FaultHook(undefined);
+      db.exec("DELETE FROM c7_test_child");
+      db.exec("PRAGMA foreign_keys = OFF");
+    }
+  }
+
+  it("rolls back an admission whose COMMIT SQLite refuses, sets pending, and a retry works", () => {
+    start("A");
+    admit("A", { x: 0 });
+    const before = tables();
+    let reached = false;
+    let outcome: any;
+    withDeferredViolation(() => {
+      const hook = (p: string) => {
+        if (p === "tx:before-commit") {
+          getAcpDatabase()
+            .prepare(`INSERT INTO c7_test_child (parent) VALUES (999)`)
+            .run();
+          reached = true;
+        }
+      };
+      __setC7FaultHook(hook);
+      outcome = admit("A", { object: "tool_body" });
+      // the violating child row was rolled back with everything else
+      expect(
+        getAcpDatabase()
+          .prepare(`SELECT COUNT(*) AS c FROM c7_test_child`)
+          .get(),
+      ).toMatchObject({ c: 0 });
+    });
+    // the body finished, and it was COMMIT itself that SQLite refused
+    expect(reached).toBe(true);
+    expect(outcome.result).toBe("storage_failed");
+    expect(String(outcome.error)).toMatch(/FOREIGN KEY/i);
+    expect(tables()).toEqual(before);
+    expect(hasPendingIncomplete(turn)).toBe(true);
+    __clearPendingIncompleteForTests();
+    expect(admit("A", { x: 1 })).toMatchObject({
+      result: "admitted",
+      envelope: { n: 1 },
+    });
+    expect(log().map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it("takes the same handler for a failure at the COMMIT call itself", () => {
+    start("A");
+    const before = tables();
+    __setC7FaultHook((p) => {
+      if (p === "tx:commit") throw Error("injected at COMMIT");
+    });
+    expect(admit("A", { x: 1 }).result).toBe("storage_failed");
+    __setC7FaultHook(undefined);
+    expect(tables()).toEqual(before);
+    // and the connection is usable: the failed transaction was rolled back
+    expect(admit("A", { x: 2 }).result).toBe("admitted");
+  });
+});
+
+describe("C1 r3: mutating validators and projectors can't change what was admitted", () => {
+  it("keeps the queued bytes, the hash and the returned body", () => {
+    start("A");
+    const mutating: C7Projector = {
+      ...projector,
+      validate: (state, envelope) => {
+        (envelope.body as any).nested.text = "validator";
+        return projector.validate(state, envelope);
+      },
+      input: (state, envelope, ctx) => {
+        expect((envelope.body as any).nested.text).toBe("one");
+        (envelope.body as any).nested.text = "projector";
+        return projector.input(state, envelope, ctx);
+      },
+    };
+    const result = admitInitial({
+      turn,
+      attempt_id: "A",
+      origin: "source",
+      body: { nested: { text: "one" } },
+      projector: mutating,
+    });
+    if (result.result !== "admitted") throw Error("not admitted");
+    expect((result.envelope.body as any).nested.text).toBe("one");
+    const [row] = listC7QueueRows(turn);
+    expect(JSON.parse(row.envelope).body.nested.text).toBe("one");
+    expect(replayRow({ turn, row, projector })).toMatchObject({
+      result: "duplicate",
+      process: true,
+    });
+  });
+});
+
+describe("C1 r3: the 24-hour boundary, exactly", () => {
+  const T0 = 5_000_000;
+  const DAY = 24 * 60 * 60 * 1000;
+  for (const klass of ["page", "reset"] as const) {
+    it(`reads a ${klass} just before 24 hours, and not at or after it`, () => {
+      start("A");
+      admitInitial({
+        turn,
+        attempt_id: "A",
+        origin: "source",
+        body: { object: klass },
+        projector,
+        now: T0,
+      });
+      const [row] = getAcpDatabase()
+        .prepare(`SELECT object_id, created_at FROM c7_object`)
+        .all() as any[];
+      expect(row.created_at).toBe(T0);
+      const thread = {
+        project_id: turn.project_id,
+        path: turn.path,
+        thread_id: turn.thread_id,
+      };
+      expect(readC7Object(row.object_id, thread, T0 + DAY - 1)?.bytes).toBe(4);
+      expect(readC7Object(row.object_id, thread, T0 + DAY)).toBeUndefined();
+      expect(readC7Object(row.object_id, thread, T0 + DAY + 1)).toBeUndefined();
+      // the sweep agrees with the read at the same instant
+      expect(expireC7DerivedObjects(T0 + DAY - 1)).toBe(0);
+      expect(expireC7DerivedObjects(T0 + DAY)).toBe(1);
+    });
+  }
 });

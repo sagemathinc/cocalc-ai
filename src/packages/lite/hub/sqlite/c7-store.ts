@@ -159,16 +159,26 @@ export type C7AdmitResult =
   | { result: "storage_failed"; error: unknown };
 
 export type C7ReplayResult =
-  // A stored row that matches its record exactly. `process` is true only for
-  // a live input, and `envelope` is then its own parse of the stored text.
+  // A stored row that matches its record exactly: a live input (processable,
+  // with its own parse of the stored text), or a close candidate (never
+  // processed).
   | {
       result: "duplicate";
-      kind: "in" | "close";
-      class: string;
-      process: boolean;
-      envelope?: C7Envelope;
+      kind: "in";
+      class: "live";
+      process: true;
+      envelope: C7Envelope;
     }
-  | { result: "refused"; reason: "collision" | "gap" }
+  | { result: "duplicate"; kind: "close"; class: string; process: false }
+  // An exact stored input that admission refused: it stays refused, and is
+  // never processed. Not an integrity problem, so nothing else happens.
+  | {
+      result: "refused";
+      reason: "stale" | "late" | "malformed";
+      integrity: false;
+    }
+  // A stored row that doesn't match its record: an integrity refusal.
+  | { result: "refused"; reason: "collision" | "gap"; integrity: true }
   | { result: "storage_failed"; error: unknown };
 
 export type C7DecideResult =
@@ -271,7 +281,7 @@ function initSchema(db: SqliteDatabase): void {
   }
   // One record per admitted input (kind "in", by ordinal n) and per close
   // candidate (kind "close", by candidate index k), with the attempt_gen it
-  // was admitted under, its hash and its class.
+  // was admitted under, its commit position qseq, its hash and its class.
   db.exec(`
     CREATE TABLE IF NOT EXISTS c7_input (
       project_id TEXT NOT NULL,
@@ -281,6 +291,7 @@ function initSchema(db: SqliteDatabase): void {
       kind TEXT NOT NULL,
       n INTEGER NOT NULL,
       attempt_gen INTEGER NOT NULL,
+      qseq INTEGER NOT NULL,
       origin TEXT,
       h TEXT NOT NULL,
       class TEXT NOT NULL,
@@ -407,6 +418,9 @@ function transaction<T>(db: SqliteDatabase, fn: () => T): T {
     throw err;
   }
   try {
+    // tests only: a failure at the COMMIT call itself, taking the same
+    // handler as a COMMIT that SQLite refuses
+    fault("tx:commit");
     db.exec("COMMIT");
   } catch (err) {
     try {
@@ -543,6 +557,7 @@ function recordInput(
   kind: "in" | "close",
   n: number,
   attempt_gen: number,
+  qseq: number,
   origin: C7Origin | null,
   h: string,
   klass: string,
@@ -550,8 +565,8 @@ function recordInput(
   db.prepare(
     `INSERT INTO c7_input
        (project_id, path, message_date, attempt_id, kind, n, attempt_gen,
-        origin, h, class)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        qseq, origin, h, class)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     key.project_id,
     key.path,
@@ -560,15 +575,28 @@ function recordInput(
     kind,
     n,
     attempt_gen,
+    qseq,
     origin,
     h,
     klass,
   );
 }
 
-// Insert-once (§2.2, step 2), numbered in commit order: qseq is allocated
-// from the turn's row inside the same transaction, so the queue reads back in
-// the order admissions committed, inputs and closes merged.
+// The next commit position for the turn: allocated from the turn's row
+// inside the admitting transaction, so qseq is the order admissions
+// committed, inputs and closes merged. It is recorded in c7_input as well as
+// the queue, and replay requires the two to agree.
+function allocQseq(db: SqliteDatabase, turn: C7TurnContext): number {
+  const row = ensureTurn(db, turn);
+  const qseq = Number(row.next_qseq);
+  db.prepare(
+    `UPDATE c7_turn SET next_qseq = ?
+     WHERE project_id = ? AND path = ? AND message_date = ?`,
+  ).run(qseq + 1, turn.project_id, turn.path, turn.message_date);
+  return qseq;
+}
+
+// Insert-once (§2.2, step 2), at the commit position allocQseq gave.
 function writeQueueRow(
   db: SqliteDatabase,
   turn: C7TurnContext,
@@ -576,13 +604,12 @@ function writeQueueRow(
   attempt_id: string,
   kind: "in" | "close",
   n: number,
+  qseq: number,
   envelope: string,
   h: string,
   hub_seq: number | null,
   now: number,
 ): void {
-  const row = ensureTurn(db, turn);
-  const qseq = Number(row.next_qseq);
   const changes = db
     .prepare(
       `INSERT INTO c7_queue
@@ -609,10 +636,6 @@ function writeQueueRow(
     // The input record is new, so its queue row must be too.
     throw new Error("c7: queue row already exists for a new input");
   }
-  db.prepare(
-    `UPDATE c7_turn SET next_qseq = ?
-     WHERE project_id = ? AND path = ? AND message_date = ?`,
-  ).run(qseq + 1, turn.project_id, turn.path, turn.message_date);
 }
 
 // Returns true when exactly the turn's lease row now carries the flag.
@@ -753,7 +776,19 @@ function decideCloseInTx(db: SqliteDatabase, args: DecideArgs): C7DecideResult {
   const envelopeText = canonicalJson(closeEnvelope);
   const h = sha256Hex(envelopeText);
   const record = (klass: string) => {
-    recordInput(db, turn, attempt_id, "close", k, attempt_gen, null, h, klass);
+    const qseq = allocQseq(db, turn);
+    recordInput(
+      db,
+      turn,
+      attempt_id,
+      "close",
+      k,
+      attempt_gen,
+      qseq,
+      null,
+      h,
+      klass,
+    );
     writeQueueRow(
       db,
       turn,
@@ -761,6 +796,7 @@ function decideCloseInTx(db: SqliteDatabase, args: DecideArgs): C7DecideResult {
       attempt_id,
       "close",
       k,
+      qseq,
       envelopeText,
       h,
       null,
@@ -922,7 +958,19 @@ export function admitInitial(args: {
       )
         klass = "malformed";
       else klass = "live";
-      recordInput(db, turn, attempt_id, "in", n, attempt_gen, origin, h, klass);
+      const qseq = allocQseq(db, turn);
+      recordInput(
+        db,
+        turn,
+        attempt_id,
+        "in",
+        n,
+        attempt_gen,
+        qseq,
+        origin,
+        h,
+        klass,
+      );
       fault("admit:after-record");
       writeQueueRow(
         db,
@@ -931,6 +979,7 @@ export function admitInitial(args: {
         attempt_id,
         "in",
         n,
+        qseq,
         text,
         h,
         args.hub_seq ?? null,
@@ -1057,7 +1106,7 @@ export function replayRow(args: {
       const identity = storedIdentity(turn, row);
       const recorded = db
         .prepare(
-          `SELECT attempt_gen, h, class FROM c7_input
+          `SELECT attempt_gen, qseq, h, class FROM c7_input
            WHERE project_id = ? AND path = ? AND message_date = ?
              AND attempt_id = ? AND kind = ? AND n = ?`,
         )
@@ -1068,7 +1117,9 @@ export function replayRow(args: {
           row.attempt_id,
           row.kind,
           row.n,
-        ) as { attempt_gen: number; h: string; class: string } | undefined;
+        ) as
+        | { attempt_gen: number; qseq: number; h: string; class: string }
+        | undefined;
       const exact =
         identity != null &&
         recorded != null &&
@@ -1077,18 +1128,31 @@ export function replayRow(args: {
         identity.index === row.n &&
         identity.attempt_gen === row.attempt_gen &&
         Number(recorded.attempt_gen) === row.attempt_gen &&
+        Number(recorded.qseq) === row.qseq &&
         identity.h === recorded.h &&
         row.h === recorded.h;
       if (exact) {
-        const process = row.kind === "in" && recorded!.class === "live";
+        if (row.kind === "close") {
+          return {
+            result: "duplicate",
+            kind: "close",
+            class: recorded!.class,
+            process: false,
+          };
+        }
+        if (recorded!.class === "live") {
+          return {
+            result: "duplicate",
+            kind: "in",
+            class: "live",
+            process: true,
+            envelope: JSON.parse(row.envelope) as C7Envelope,
+          };
+        }
         return {
-          result: "duplicate",
-          kind: row.kind,
-          class: recorded!.class,
-          process,
-          ...(process
-            ? { envelope: JSON.parse(row.envelope) as C7Envelope }
-            : {}),
+          result: "refused",
+          reason: recorded!.class as "stale" | "late" | "malformed",
+          integrity: false,
         };
       }
       const reason = recorded ? "collision" : "gap";
@@ -1100,7 +1164,7 @@ export function replayRow(args: {
         projector,
         now,
       );
-      return { result: "refused", reason };
+      return { result: "refused", reason, integrity: true };
     });
   } catch (error) {
     // A genuine storage failure (a bad stored row is an integrity refusal,
@@ -1476,6 +1540,7 @@ export function expireC7DerivedObjects(now: number = Date.now()): number {
   let total = 0;
   for (;;) {
     const deleted = transaction(db, () => {
+      fault("expire:batch");
       const ids = db
         .prepare(
           `SELECT object_id FROM c7_object
@@ -1491,6 +1556,7 @@ export function expireC7DerivedObjects(now: number = Date.now()): number {
           object_id,
         );
       }
+      fault(`expire:deleted:${ids.length}`);
       return ids.length;
     });
     total += deleted;

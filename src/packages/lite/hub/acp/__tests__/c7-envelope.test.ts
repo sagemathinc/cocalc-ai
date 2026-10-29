@@ -58,3 +58,35 @@ describe("canonicalJson: C1 r2 edges", () => {
     expect(() => canonicalJson({ a: { b: holey } })).toThrow("$.a.b[1]");
   });
 });
+
+describe("canonicalJson: C1 r3 array slots", () => {
+  it("refuses an index getter before running it, at any depth", () => {
+    const list: unknown[] = [1, 2];
+    let calls = 0;
+    Object.defineProperty(list, 1, { enumerable: true, get: () => ++calls });
+    expect(() => canonicalJson({ a: [list] })).toThrow("accessor");
+    expect(calls).toBe(0);
+  });
+
+  it("refuses an inherited index slot on a real array", () => {
+    // a real array (Array.isArray is true) whose index 0 is only inherited
+    const proto = Object.create(Array.prototype);
+    let calls = 0;
+    Object.defineProperty(proto, 0, { enumerable: true, get: () => ++calls });
+    const list = new Array(1);
+    Object.setPrototypeOf(list, proto);
+    expect(Array.isArray(list)).toBe(true);
+    expect(0 in list).toBe(true);
+    expect(() => canonicalJson({ list })).toThrow("array hole");
+    expect(() => canonicalJson([[list]])).toThrow("array hole");
+    // `in` only checks presence, and canonicalJson refused the slot from its
+    // descriptor: the inherited getter never ran
+    expect(calls).toBe(0);
+  });
+
+  it("encodes ordinary dense arrays", () => {
+    expect(canonicalJson([[1, [2, "é"]], [], [null]])).toBe(
+      '[[1,[2,"é"]],[],[null]]',
+    );
+  });
+});
