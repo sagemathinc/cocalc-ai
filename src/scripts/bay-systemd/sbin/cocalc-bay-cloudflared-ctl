@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SERVICE="cocalc-bay-cloudflared.service"
 SYSTEMCTL="/usr/bin/systemctl"
 JOURNALCTL="/usr/bin/journalctl"
+CURL="/usr/bin/curl"
 
 if [[ ! -x "$SYSTEMCTL" ]]; then
   SYSTEMCTL="/bin/systemctl"
@@ -11,29 +11,109 @@ fi
 if [[ ! -x "$JOURNALCTL" ]]; then
   JOURNALCTL="/bin/journalctl"
 fi
+if [[ ! -x "$CURL" ]]; then
+  CURL="/bin/curl"
+fi
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: cocalc-bay-cloudflared-ctl <start|restart|status|is-active>
-       cocalc-bay-cloudflared-ctl journal-since <unix-seconds>
+Usage: cocalc-bay-cloudflared-ctl <start|restart|status|is-active> [replica]
+       cocalc-bay-cloudflared-ctl journal-since <unix-seconds> [replica]
+       cocalc-bay-cloudflared-ctl restart-all
 
-Narrow root helper for the CoCalc bay Cloudflare tunnel service, used by the
-bay user (the cloudflared watchdog runs as cocalc-bay).
+Narrow root helper for the CoCalc bay Cloudflare tunnel services, used by the
+bay user (the cloudflared watchdog runs as cocalc-bay). The tunnel runs as
+replicas of the same tunnel: replica 1 is cocalc-bay-cloudflared.service
+(the default when no replica is given), replica N > 1 is
+cocalc-bay-cloudflared-N.service. restart-all restarts every installed
+replica one at a time, waiting for each to have a ready tunnel connection
+before the next, so public ingress never goes down.
 USAGE
+}
+
+# Call only with a replica checked by valid_replica.
+unit_for() {
+  if [[ "$1" == 1 ]]; then
+    printf 'cocalc-bay-cloudflared.service\n'
+  else
+    printf 'cocalc-bay-cloudflared-%s.service\n' "$1"
+  fi
+}
+
+valid_replica() {
+  [[ "$1" =~ ^[1-9]$ ]] || { usage; exit 2; }
+}
+
+unit_installed() {
+  [[ -n "$("$SYSTEMCTL" list-unit-files --no-legend "$1" 2>/dev/null)" ]]
+}
+
+# The replica's metrics address, from its unit environment.
+metrics_address() {
+  local env
+  env="$("$SYSTEMCTL" show --property=Environment --value "$1" 2>/dev/null || true)"
+  sed -n 's/.*COCALC_BAY_CLOUDFLARED_METRICS_ADDRESS=\([^ ]*\).*/\1/p' <<<"$env" | head -n 1
+}
+
+wait_ready() {
+  local unit="$1" address deadline body
+  address="$(metrics_address "$unit")"
+  deadline=$((SECONDS + 60))
+  while ((SECONDS < deadline)); do
+    if [[ -n "$address" ]]; then
+      if body="$("$CURL" --silent --max-time 2 "http://${address}/ready" 2>/dev/null)" && \
+          [[ "$body" =~ \"readyConnections\":([1-9][0-9]*) ]]; then
+        return 0
+      fi
+    elif "$SYSTEMCTL" --quiet is-active "$unit"; then
+      # No known metrics address: give the tunnel time to register.
+      sleep 10
+      return 0
+    fi
+    sleep 1
+  done
+  echo "cocalc-bay-cloudflared-ctl: ${unit} has no ready tunnel connection after 60s" >&2
+  return 1
+}
+
+restart_unit() {
+  # A unit in the failed state must be reset before it can be restarted.
+  "$SYSTEMCTL" reset-failed "$1" >/dev/null 2>&1 || true
+  "$SYSTEMCTL" --no-pager restart "$1"
 }
 
 case "${1:-}/$#" in
   start/1|status/1|is-active/1)
-    exec "$SYSTEMCTL" --no-pager "$1" "$SERVICE"
+    exec "$SYSTEMCTL" --no-pager "$1" "$(unit_for 1)"
+    ;;
+  start/2|status/2|is-active/2)
+    valid_replica "$2"
+    exec "$SYSTEMCTL" --no-pager "$1" "$(unit_for "$2")"
     ;;
   restart/1)
-    # A unit in the failed state must be reset before it can be restarted.
-    "$SYSTEMCTL" reset-failed "$SERVICE" >/dev/null 2>&1 || true
-    exec "$SYSTEMCTL" --no-pager restart "$SERVICE"
+    restart_unit "$(unit_for 1)"
     ;;
-  journal-since/2)
+  restart/2)
+    valid_replica "$2"
+    restart_unit "$(unit_for "$2")"
+    ;;
+  restart-all/1)
+    # Higher replicas first, so the primary (which also refreshes the tunnel
+    # with Cloudflare) restarts while the others carry the traffic.
+    status=0
+    for replica in 9 8 7 6 5 4 3 2 1; do
+      unit="$(unit_for "$replica")"
+      unit_installed "$unit" || continue
+      "$SYSTEMCTL" --quiet is-enabled "$unit" 2>/dev/null || [[ "$replica" == 1 ]] || continue
+      restart_unit "$unit" || { status=1; continue; }
+      wait_ready "$unit" || status=1
+    done
+    exit "$status"
+    ;;
+  journal-since/2|journal-since/3)
     [[ "$2" =~ ^[0-9]{1,12}$ ]] || { usage; exit 2; }
-    exec "$JOURNALCTL" --unit "$SERVICE" --since "@$2" --output short-unix --no-pager
+    valid_replica "${3:-1}"
+    exec "$JOURNALCTL" --unit "$(unit_for "${3:-1}")" --since "@$2" --output short-unix --no-pager
     ;;
   *)
     usage

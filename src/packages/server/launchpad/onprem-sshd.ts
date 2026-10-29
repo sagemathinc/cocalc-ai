@@ -40,6 +40,9 @@ const logger = getLogger("launchpad:local:sshd");
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const CLOUDFLARED_APPLY_LOCK_KEY = "launchpad-cloudflared-apply";
 const SYSTEMD_CLOUDFLARED_CTL = "/usr/local/sbin/cocalc-bay-cloudflared-ctl";
+const REPLICA_CONFIG_NAMES = [2, 3, 4, 5, 6, 7, 8, 9].map(
+  (replica) => `config-${replica}.yml`,
+);
 
 type SshdState = {
   sshdDir: string;
@@ -173,11 +176,26 @@ async function restartSystemdCloudflared(): Promise<{
       error: `${SYSTEMD_CLOUDFLARED_CTL} is not installed`,
     };
   }
+  // The tunnel runs as replicas: restart them one at a time, so ingress stays
+  // up. An older helper knows only the single unit.
+  let rolling = false;
+  try {
+    rolling = (await readFile(SYSTEMD_CLOUDFLARED_CTL, "utf8")).includes(
+      "restart-all",
+    );
+  } catch {
+    // fall back to the single restart
+  }
   try {
     const { stdout, stderr, exit_code } = await executeCode({
       command: "sudo",
-      args: ["-n", SYSTEMD_CLOUDFLARED_CTL, "restart"],
-      timeout: 30,
+      args: [
+        "-n",
+        SYSTEMD_CLOUDFLARED_CTL,
+        rolling ? "restart-all" : "restart",
+      ],
+      // (each replica may take up to 60 s to become ready)
+      timeout: rolling ? 150 : 30,
       err_on_exit: false,
     });
     if (exit_code !== 0) {
@@ -994,7 +1012,7 @@ function clearPidFileSync(path: string): void {
 }
 
 async function listCloudflaredPidsForConfig(
-  configPath: string,
+  configPaths: string[],
 ): Promise<number[]> {
   try {
     const { stdout, exit_code } = await executeCode({
@@ -1009,7 +1027,7 @@ async function listCloudflaredPidsForConfig(
       .filter(
         (line) =>
           line.includes("cloudflared") &&
-          line.includes(configPath) &&
+          configPaths.some((configPath) => line.includes(configPath)) &&
           line.includes(" tunnel "),
       )
       .map((line) => parsePid(line.split(/\s+/, 1)[0]))
@@ -1042,10 +1060,13 @@ async function stopCloudflaredPids(pids: Iterable<number>): Promise<void> {
 
 async function stopManagedLaunchpadCloudflared(): Promise<void> {
   const pidPath = cloudflaredPidFilePath();
-  const configPath = join(cloudflaredStateDir(), "config.yml");
+  // Every replica (cloudflared-systemd.ts): config.yml, config-2.yml, ...
+  const configPaths = ["config.yml", ...REPLICA_CONFIG_NAMES].map((name) =>
+    join(cloudflaredStateDir(), name),
+  );
   const persistedPid = await readPidFile(pidPath);
   const pids = [
-    ...(await listCloudflaredPidsForConfig(configPath)),
+    ...(await listCloudflaredPidsForConfig(configPaths)),
     ...(cloudflaredState?.pid ? [cloudflaredState.pid] : []),
     ...(persistedPid ? [persistedPid] : []),
   ].filter((pid): pid is number => !!pid);

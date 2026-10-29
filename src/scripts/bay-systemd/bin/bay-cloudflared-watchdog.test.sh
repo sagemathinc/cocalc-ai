@@ -13,6 +13,9 @@ cat > "${FAKE_BIN}/curl" <<'EOF'
 set -euo pipefail
 url="${*: -1}"
 case "$url" in
+  *:20242/ready)
+    printf '{"status":200,"readyConnections":%s}\n' "${FAKE_READY_2:-4}"
+    ;;
   */ready)
     printf '{"status":200,"readyConnections":%s}\n' "${FAKE_READY:-4}"
     ;;
@@ -32,7 +35,11 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$WATCHDOG_SYSTEMCTL_LOG"
 case "$1" in
   is-active)
-    [[ "${FAKE_UNIT_ACTIVE:-1}" == "1" ]]
+    if [[ "${*: -1}" == cocalc-bay-cloudflared-2.service ]]; then
+      [[ "${FAKE_UNIT2_ACTIVE:-1}" == "1" ]]
+    else
+      [[ "${FAKE_UNIT_ACTIVE:-1}" == "1" ]]
+    fi
     ;;
   show)
     printf 'Mon 2026-09-21 01:24:04 UTC\n'
@@ -45,12 +52,18 @@ cat > "${FAKE_BIN}/journalctl" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >> "$WATCHDOG_JOURNALCTL_LOG"
 since=0
+unit=""
 while (($#)); do
   case "$1" in
     --since) since="${2#@}"; shift 2 ;;
+    --unit) unit="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
+failures="${FAKE_FAILURES:-}"
+if [[ "$unit" == cocalc-bay-cloudflared-2.service ]]; then
+  failures="${FAKE_FAILURES_2:-}"
+fi
 # Failures are logged now unless a test pins them to an earlier burst.
 ts="${FAKE_FAILURE_TS:-$(date +%s.%N)}"
 if ((${ts%.*} < since)); then
@@ -63,7 +76,7 @@ emit() {
     printf '%s prod-bay-0 bay-cloudflared[1]: 2026-10-07T20:27:31Z ERR Request failed error="stream %s canceled by remote with error code 0" connIndex=%s dest=https://cocalc.ai/customize event=0\n' "$ts" "$i" "$conn"
   done
 }
-for spec in ${FAKE_FAILURES:-}; do
+for spec in $failures; do
   emit "${spec%%:*}" "${spec##*:}"
 done
 EOF
@@ -79,9 +92,16 @@ EOF
 cat > "${FAKE_BIN}/cocalc-bay-cloudflared-ctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+unit() {
+  if [[ "${1:-1}" == 1 ]]; then
+    printf 'cocalc-bay-cloudflared.service'
+  else
+    printf 'cocalc-bay-cloudflared-%s.service' "$1"
+  fi
+}
 case "$1" in
-  restart) exec systemctl restart cocalc-bay-cloudflared.service ;;
-  journal-since) exec journalctl --unit cocalc-bay-cloudflared.service --since "@$2" --output short-unix --no-pager ;;
+  restart) exec systemctl restart "$(unit "${2:-1}")" ;;
+  journal-since) exec journalctl --unit "$(unit "${3:-1}")" --since "@$2" --output short-unix --no-pager ;;
   *) exit 2 ;;
 esac
 EOF
@@ -105,6 +125,8 @@ export COCALC_BAY_RUN_DIR="${TMP}/run"
 export COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD=3
 export COCALC_BAY_CLOUDFLARED_WATCHDOG_MIN_FAILURES=20
 export COCALC_BAY_CLOUDFLARED_WATCHDOG_READY_TIMEOUT_S=0
+# The single-replica cases below; the replica cases come at the end.
+export COCALC_BAY_CLOUDFLARED_REPLICAS=1
 export WATCHDOG_SYSTEMCTL_LOG="${TMP}/systemctl.log"
 export WATCHDOG_JOURNALCTL_LOG="${TMP}/journalctl.log"
 STDERR_LOG="${TMP}/stderr.log"
@@ -119,11 +141,16 @@ reset_state() {
   rm -rf "$COCALC_BAY_RUN_DIR"
   export COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD=3
   export FAKE_READY=4 FAKE_FRONTDOOR_HEALTHY=1 FAKE_UNIT_ACTIVE=1
+  export FAKE_READY_2=4 FAKE_UNIT2_ACTIVE=1 FAKE_FAILURES_2=""
   unset FAKE_FAILURE_TS
 }
 
 restart_count() {
   grep -c '^restart cocalc-bay-cloudflared.service$' "$WATCHDOG_SYSTEMCTL_LOG" || true
+}
+
+restart_count_2() {
+  grep -c '^restart cocalc-bay-cloudflared-2.service$' "$WATCHDOG_SYSTEMCTL_LOG" || true
 }
 
 fail() {
@@ -246,5 +273,50 @@ export COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD=1
 export COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED=0 FAKE_READY=0
 run_watchdog
 [[ "$(restart_count)" == "0" ]] || fail "restarted while the watchdog was disabled"
+
+# ---- Two replicas of the tunnel ----
+export COCALC_BAY_CLOUDFLARED_REPLICAS="1 2"
+unset COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED
+
+# Only the degraded replica is restarted; the healthy one keeps serving.
+reset_state
+export FAKE_FAILURES="0:120" FAKE_FAILURES_2=""
+for _ in 1 2 3; do run_watchdog; done
+[[ "$(restart_count)" == "1" ]] || fail "did not restart the degraded replica 1"
+[[ "$(restart_count_2)" == "0" ]] || fail "restarted the healthy replica 2"
+reset_state
+export FAKE_FAILURES="" FAKE_FAILURES_2="1:120"
+for _ in 1 2 3; do run_watchdog; done
+[[ "$(restart_count_2)" == "1" ]] || fail "did not restart the degraded replica 2"
+[[ "$(restart_count)" == "0" ]] || fail "restarted the healthy replica 1"
+grep -q 'restarting cocalc-bay-cloudflared-2.service' "$STDERR_LOG" || fail "restart log does not name replica 2"
+grep -q -- '--unit cocalc-bay-cloudflared-2.service' "$WATCHDOG_JOURNALCTL_LOG" || fail "replica 2 was not judged on its own journal"
+
+# Both degraded at once: one restart, then the other only after the gap.
+reset_state
+export FAKE_FAILURES="0:120" FAKE_FAILURES_2="1:120"
+for _ in 1 2 3 4 5; do run_watchdog; done
+[[ "$(restart_count)" == "1" ]] || fail "did not restart replica 1 when both were degraded"
+[[ "$(restart_count_2)" == "0" ]] || fail "restarted both replicas within the gap"
+grep -q 'will not restart cocalc-bay-cloudflared-2.service yet (replica 1 was restarted' "$STDERR_LOG" || fail "missing replica gap log"
+printf '%s\n' "$(($(date +%s) - 300))" > "${COCALC_BAY_RUN_DIR}/cloudflared-watchdog/last-restart"
+run_watchdog
+[[ "$(restart_count_2)" == "1" ]] || fail "replica 2 was not restarted after the gap (its strikes were lost)"
+
+# A degraded replica is not restarted while the other replica is up but has
+# no ready connection: it is the one carrying the traffic. The other one,
+# having nothing ready, is restarted instead.
+reset_state
+export FAKE_FAILURES="0:120" FAKE_READY_2=0 FAKE_FAILURES_2=""
+for _ in 1 2 3; do run_watchdog; done
+[[ "$(restart_count)" == "0" ]] || fail "restarted replica 1 while it was the only replica serving"
+grep -q 'will not restart cocalc-bay-cloudflared.service yet (no other replica has a ready tunnel connection)' "$STDERR_LOG" || fail "missing no-other-ready log"
+[[ "$(restart_count_2)" == "1" ]] || fail "did not restart replica 2 with no ready connections"
+
+# A bay running a single replica (the other unit inactive) still recovers.
+reset_state
+export FAKE_FAILURES="0:120" FAKE_UNIT2_ACTIVE=0
+for _ in 1 2 3; do run_watchdog; done
+[[ "$(restart_count)" == "1" ]] || fail "did not restart the only active replica"
 
 echo "bay cloudflared watchdog tests passed"

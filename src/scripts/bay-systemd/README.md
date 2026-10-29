@@ -645,20 +645,34 @@ The safe two-pass provisioning and cutover order is:
    then verify the still-active, restartable tunnel route.
 6. Replace only the bay hostname's Cloudflare record with a proxied A record for
    the reserved IP. Verify HTTP and WebSocket traffic through normal DNS before
-   stopping `cocalc-bay-cloudflared.service` and removing the temporary
+   stopping `cocalc-bay-cloudflared.service` and
+   `cocalc-bay-cloudflared-2.service` and removing the temporary
    `COCALC_BAY_CLOUDFLARED_ENABLED` override. Remove `--test-source-cidr` and
    reapply the reconciler.
 
 Rollback reverses the last two steps: restore the saved tunnel CNAME, set the
-ingress mode to `cloudflare-tunnel`, and start the cloudflared service. Do not
+ingress mode to `cloudflare-tunnel`, and start the cloudflared services. Do not
 delete the load-balancer resources during an incident; they are inert when DNS
 does not reference them and remain useful for diagnosis.
 
-In tunnel mode, `cocalc-bay-cloudflared-watchdog.timer` checks the tunnel every
-30 seconds. A single tunnel connection can stay registered while its edge
-cancels every stream: cloudflared logs `Request failed ... canceled by remote`
-for one `connIndex`, and only part of the public traffic hangs. The watchdog
-restarts `cocalc-bay-cloudflared.service` in either of two cases:
+In tunnel mode the bay runs two replicas of the same tunnel:
+`cocalc-bay-cloudflared.service` (replica 1, metrics on 127.0.0.1:20241) and
+`cocalc-bay-cloudflared-2.service` (replica 2, metrics on 127.0.0.1:20242).
+Each keeps its own connections to Cloudflare, and Cloudflare sends public
+requests over any of them, so restarting one replica never takes ingress down.
+Replica 1 creates and updates the tunnel with Cloudflare; replica 2 reuses
+the tunnel replica 1 recorded and waits (failing, and restarted by systemd)
+until it exists. Both read `COCALC_BAY_CLOUDFLARED_EXTRA_ENV`, e.g.
+`TUNNEL_TRANSPORT_PROTOCOL=http2`. To restart the tunnel, e.g. to apply new
+tunnel settings, run `cocalc-bay-cloudflared-ctl restart-all`: it restarts the
+replicas one at a time, each ready before the next. `upgrade-bay-release.sh
+--restart-cloudflared` and the hub's Cloudflare settings do the same.
+
+`cocalc-bay-cloudflared-watchdog.timer` checks each replica every 30 seconds.
+A single tunnel connection can stay registered while its edge cancels every
+stream: cloudflared logs `Request failed ... canceled by remote` for one
+`connIndex`, and only part of the public traffic hangs. The watchdog restarts
+a replica in either of two cases:
 
 - in three consecutive checks, each with new failures since the previous
   check, at least 80% of those failures come from one connection (and at least
@@ -667,9 +681,14 @@ restarts `cocalc-bay-cloudflared.service` in either of two cases:
 
 In both cases the local frontdoor must be healthy. Failures spread over all
 connections point at the origin or at clients, so they never trigger a restart.
-Restarts have a 15-minute cooldown and are logged with the edge locations in
-the watchdog unit's journal. Set `COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED=0` to
-disable it.
+Restarts have a 15-minute cooldown per replica and are logged with the edge
+locations in the watchdog unit's journal. A replica is not restarted within
+2 minutes of another replica's restart, nor while the other replicas are up
+without a ready connection (it is then the one carrying traffic); with only one
+replica running, it is restarted as before. Set
+`COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED=0` to disable the watchdog, and
+`COCALC_BAY_CLOUDFLARED_REPLICAS` (default `1 2`) to change which replicas it
+checks.
 
 For frontend/static-only changes, build a smaller artifact locally:
 

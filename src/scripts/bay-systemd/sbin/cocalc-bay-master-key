@@ -360,10 +360,21 @@ restart_services() {
     sleep "${COCALC_BAY_MASTER_KEY_RESTART_PAUSE:-15}"
   done
   for unit in cocalc-bay-conat-router.service cocalc-bay-conat-persist.service \
-    cocalc-bay-frontdoor.service cocalc-bay-billing.service cocalc-bay-cloudflared.service; do
+    cocalc-bay-frontdoor.service cocalc-bay-billing.service; do
     if "$SYSTEMCTL" is-active --quiet "$unit"; then
       echo "restarting ${unit}"
       "$SYSTEMCTL" restart "$unit"
+    fi
+  done
+  # The tunnel's replicas one at a time, each back up before the next, so
+  # public ingress stays up.
+  local restarted=0
+  for unit in cocalc-bay-cloudflared-2.service cocalc-bay-cloudflared.service; do
+    if "$SYSTEMCTL" is-active --quiet "$unit"; then
+      ((restarted == 0)) || sleep "${COCALC_BAY_MASTER_KEY_RESTART_PAUSE:-15}"
+      echo "restarting ${unit}"
+      "$SYSTEMCTL" restart "$unit"
+      restarted=1
     fi
   done
 }
