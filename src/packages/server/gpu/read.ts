@@ -534,14 +534,20 @@ const FILTER_KEYS = [
 // `key_use` (5d-2c) is made by the hub API handler when this is the home
 // bay; a forwarded call gets the home bay's own.
 export async function getGpuCatalog(
-  opts: { account_id?: string; provider?: unknown; key_use?: GpuKeyUse },
+  opts: {
+    account_id?: string;
+    provider?: unknown;
+    // an agent's scope: only the audit record uses it (5d-2c)
+    agent?: GpuAgentScope;
+    key_use?: GpuKeyUse;
+  },
   deps: GpuReadDeps & GpuRoutingDeps = {},
 ): Promise<GpuCatalogResult> {
   const account_id = requireAccount(opts.account_id);
   const home = await (deps.homeClient ?? gpuHomeClient)(account_id);
   if (home) {
     return await home.gpuCatalog(
-      forwarded(account_id, opts, ["provider"]) as any,
+      forwarded(account_id, opts, ["provider", "agent"]) as any,
     );
   }
   return await getGpuCatalogLocal({ ...opts, account_id }, deps);
@@ -551,6 +557,7 @@ export async function getGpuAvailability(
   opts: {
     account_id?: string;
     provider?: unknown;
+    agent?: GpuAgentScope;
     key_use?: GpuKeyUse;
   } & GpuAvailabilityFilter,
   deps: GpuReadDeps & GpuRoutingDeps = {},
@@ -559,7 +566,7 @@ export async function getGpuAvailability(
   const home = await (deps.homeClient ?? gpuHomeClient)(account_id);
   if (home) {
     return await home.gpuAvailability(
-      forwarded(account_id, opts, ["provider", ...FILTER_KEYS]) as any,
+      forwarded(account_id, opts, ["provider", "agent", ...FILTER_KEYS]) as any,
     );
   }
   return await getGpuAvailabilityLocal({ ...opts, account_id }, deps);

@@ -54,6 +54,7 @@ function callers(name: string): string[] {
 const BOUNDARIES = [
   "server/conat/api/gpu.ts",
   "server/conat/api/system.ts",
+  "server/inter-bay/gpu-key-use.ts",
   "server/inter-bay/service.ts",
 ];
 

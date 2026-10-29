@@ -101,17 +101,27 @@ function scopeOf(p: GpuAgentPrincipal | undefined) {
     : {};
 }
 
-export const catalog: GpuApi["catalog"] = async (opts = {}) =>
-  await getGpuCatalog({
-    ...opts,
-    key_use: await keyUse(opts?.account_id, "catalog"),
+// A catalog read decrypts the account's key: an agent's is recorded as the
+// agent's (5d-2c), and forwarded with its scope for the home bay's record.
+export const catalog: GpuApi["catalog"] = async (opts = {}) => {
+  const principal = await agentPrincipal(opts);
+  const { gpu_agent_auth: _auth, ...rest } = opts as any;
+  return await getGpuCatalog({
+    ...rest,
+    ...scopeOf(principal),
+    key_use: await keyUse(rest.account_id, "catalog", principal),
   });
+};
 
-export const availability: GpuApi["availability"] = async (opts = {}) =>
-  await getGpuAvailability({
-    ...opts,
-    key_use: await keyUse(opts?.account_id, "catalog"),
+export const availability: GpuApi["availability"] = async (opts = {}) => {
+  const principal = await agentPrincipal(opts);
+  const { gpu_agent_auth: _auth, ...rest } = opts as any;
+  return await getGpuAvailability({
+    ...rest,
+    ...scopeOf(principal),
+    key_use: await keyUse(rest.account_id, "catalog", principal),
   });
+};
 
 export const pods: GpuApi["pods"] = async (opts = {}) => {
   const principal = await agentPrincipal(opts);

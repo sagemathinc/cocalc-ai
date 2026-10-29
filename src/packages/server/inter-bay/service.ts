@@ -1228,38 +1228,14 @@ async function startAccountDirectoryService(): Promise<void> {
   );
 }
 
-// The authorization record of a forwarded GPU call that may decrypt the key
-// (5d-2c), made here on the key owner's home bay from the forwarded,
-// verified principal (the calling bay authenticated it), with the method's
-// fixed purpose. Anything a caller put in key_use is replaced.
+// The authorization record of a forwarded GPU call (5d-2c): made here, on
+// the key owner's home bay, from the forwarded, verified principal.
 async function gpuKeyUse(
   opts: any,
   purpose: import("@cocalc/server/gpu/key-use").GpuKeyUsePurpose,
 ): Promise<import("@cocalc/server/gpu/key-use").GpuKeyUse | undefined> {
-  const { admitAgentKeyUse, admitUserKeyUse, isGpuKeyHomeBay } =
-    await import("@cocalc/server/gpu/key-use");
-  const account_id = opts?.account_id;
-  if (typeof account_id !== "string" || !isValidUUID(account_id)) {
-    return undefined;
-  }
-  if (!(await isGpuKeyHomeBay(account_id))) return undefined;
-  // a launch carries the agent's principal, other calls its scope
-  const agent = opts?.agent?.principal ?? opts?.agent;
-  if (agent) {
-    if (agent.account_id != null && agent.account_id !== account_id) {
-      return undefined;
-    }
-    return await admitAgentKeyUse({
-      principal: {
-        account_id,
-        project_id: `${agent.project_id ?? ""}`,
-        agent_id: `${agent.agent_id ?? ""}`,
-        run_id: agent.run_id == null ? undefined : `${agent.run_id}`,
-      },
-      purpose,
-    });
-  }
-  return await admitUserKeyUse({ account_id, purpose });
+  const { forwardedGpuKeyUse } = await import("./gpu-key-use");
+  return await forwardedGpuKeyUse(opts, purpose);
 }
 
 async function startAccountLocalService(): Promise<void> {

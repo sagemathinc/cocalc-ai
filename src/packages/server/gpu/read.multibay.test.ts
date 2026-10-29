@@ -23,10 +23,31 @@ jest.mock("@cocalc/server/gpu/provider-keys", () => ({
 }));
 // an authorization record is made only on the home bay (5d-2c)
 const admitUserKeyUse = jest.fn(async () => undefined);
+const admitAgentKeyUse = jest.fn(async () => undefined);
 jest.mock("@cocalc/server/gpu/key-use", () => ({
   ...jest.requireActual("@cocalc/server/gpu/key-use"),
   admitUserKeyUse: (...args) => admitUserKeyUse(...args),
+  admitAgentKeyUse: (...args) => admitAgentKeyUse(...args),
 }));
+// an agent's verified token resolves to its principal (agent-identity has
+// its own tests)
+const AGENT = {
+  account_id: "00000000-1000-4000-8000-000000000001",
+  project_id: "00000000-1000-4000-8000-0000000000aa",
+  agent_id: "agent:a1",
+  run_id: "run-1",
+  expires_at: new Date(Date.now() + 3_600_000),
+};
+jest.mock("@cocalc/server/gpu/agent-identity", () => ({
+  resolveGpuAgentPrincipal: async () => AGENT,
+}));
+// what the hub's auth policy attaches for an agent (never a caller)
+const AGENT_AUTH = {
+  account_id: AGENT.account_id,
+  project_id: AGENT.project_id,
+  auth_token_fingerprint: "a".repeat(64),
+  auth_exp_s: 2_000_000_000,
+};
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
@@ -199,6 +220,67 @@ describe("gpu.* for an account homed on another bay", () => {
     expect(wireText()).not.toContain(KEY);
     expect(edgeGetClient).not.toHaveBeenCalled();
     expect(edgeGetCleanup).not.toHaveBeenCalled();
+  });
+
+  it("forwards an agent's catalog and stock reads with its scope, for the home bay's record", async () => {
+    const home = homeBay();
+    await hubGpu.catalog({
+      account_id: ACCOUNT,
+      provider: "runpod",
+      gpu_agent_auth: AGENT_AUTH,
+    } as any);
+    await hubGpu.availability({
+      account_id: ACCOUNT,
+      cloud: "SECURE",
+      gpu_agent_auth: AGENT_AUTH,
+    } as any);
+    const scope = {
+      project_id: AGENT.project_id,
+      agent_id: AGENT.agent_id,
+      run_id: AGENT.run_id,
+    };
+    // the verified scope crosses; the token itself never does
+    expect(home.received).toEqual([
+      { account_id: ACCOUNT, provider: "runpod", agent: scope },
+      { account_id: ACCOUNT, cloud: "SECURE", agent: scope },
+    ]);
+    expect(wireText()).not.toContain("a".repeat(64));
+    // no record on this (not the home) bay
+    expect(admitAgentKeyUse).not.toHaveBeenCalled();
+    expect(admitUserKeyUse).not.toHaveBeenCalled();
+  });
+
+  it("records an agent's catalog read here as the agent's, for an account homed here", async () => {
+    resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-0" });
+    try {
+      await hubGpu
+        .catalog({
+          account_id: ACCOUNT,
+          provider: "runpod",
+          gpu_agent_auth: AGENT_AUTH,
+        } as any)
+        .catch(() => undefined);
+      expect(admitAgentKeyUse).toHaveBeenCalledWith({
+        principal: AGENT,
+        purpose: "catalog",
+      });
+      expect(admitUserKeyUse).not.toHaveBeenCalled();
+      // a caller-supplied project is no agent: the owner's record
+      await hubGpu
+        .catalog({
+          account_id: ACCOUNT,
+          provider: "runpod",
+          project_id: AGENT.project_id,
+        } as any)
+        .catch(() => undefined);
+      expect(admitUserKeyUse).toHaveBeenCalledWith({
+        account_id: ACCOUNT,
+        purpose: "catalog",
+      });
+      expect(admitAgentKeyUse).toHaveBeenCalledTimes(1);
+    } finally {
+      resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-1" });
+    }
   });
 
   it("runs locally, without crossing, for an account homed here", async () => {

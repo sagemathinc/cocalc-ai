@@ -4102,12 +4102,17 @@ export interface InterBayGpuApi {
       import("@cocalc/conat/hub/api/gpu").GpuApi["catalog"]
     >[0] & {
       account_id: string;
+      // a verified agent's scope, for the home bay's audit record (5d-2c)
+      agent?: { project_id: string; agent_id: string; run_id?: string };
     },
   ) => Promise<import("@cocalc/conat/hub/api/gpu").GpuCatalogResult>;
   gpuAvailability: (
     opts: Parameters<
       import("@cocalc/conat/hub/api/gpu").GpuApi["availability"]
-    >[0] & { account_id: string },
+    >[0] & {
+      account_id: string;
+      agent?: { project_id: string; agent_id: string; run_id?: string };
+    },
   ) => Promise<import("@cocalc/conat/hub/api/gpu").GpuAvailabilityResult>;
   gpuPods: (
     opts: Parameters<import("@cocalc/conat/hub/api/gpu").GpuApi["pods"]>[0] & {

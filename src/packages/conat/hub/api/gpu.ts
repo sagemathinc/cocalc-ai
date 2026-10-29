@@ -33,7 +33,6 @@ import type {
 } from "@cocalc/util/gpu/runpod";
 import {
   authFirstRequireAccount,
-  authFirstRequireAccountOrBoundAgentProject,
   authFirstRequireAccountOrGpuAgent,
   authFirstRequireAccountWithBoundSession,
 } from "./util";
@@ -44,8 +43,10 @@ import {
 // the human's approval of exactly that launch for the agent's run; the agent
 // principal comes only from the verified token (account-or-gpu-agent).
 export const gpu = {
-  catalog: authFirstRequireAccountOrBoundAgentProject,
-  availability: authFirstRequireAccountOrBoundAgentProject,
+  // (the verified agent token too: a catalog read decrypts the account's
+  // key, and its audit record names the agent, 5d-2c)
+  catalog: authFirstRequireAccountOrGpuAgent,
+  availability: authFirstRequireAccountOrGpuAgent,
   pods: authFirstRequireAccountOrGpuAgent,
   launch: authFirstRequireAccountOrGpuAgent,
   terminate: authFirstRequireAccountOrGpuAgent,
