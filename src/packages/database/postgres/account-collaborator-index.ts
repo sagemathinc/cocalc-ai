@@ -373,6 +373,43 @@ async function getSourceCounts(
   };
 }
 
+// How many projects an account shares with each of these peers, from the
+// same sources replaceAccountCollaboratorIndexRows writes (read only).
+export async function collaboratorCountsForAccount(opts: {
+  db: Queryable;
+  account_id: string;
+  bay_id: string;
+  collaborator_account_ids: string[];
+}): Promise<Map<string, number>> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const peers = [
+    ...new Set(opts.collaborator_account_ids.map(normalizeAccountId)),
+  ];
+  const counts = new Map<string, number>();
+  if (peers.length === 0) return counts;
+  const { rows } = await opts.db.query<{
+    collaborator_account_id: string;
+    common_project_count: number;
+  }>(
+    `SELECT
+        u.account_id_text AS collaborator_account_id,
+        COUNT(*)::INT AS common_project_count
+      FROM (${requesterProjectsSql(2)}) p
+      CROSS JOIN LATERAL jsonb_each(p.users) AS u(account_id_text, info)
+      WHERE u.account_id_text = ANY($3::text[])
+        AND ${PEER_COLLAB_GROUP_SQL}
+      GROUP BY 1`,
+    [account_id, opts.bay_id, peers],
+  );
+  for (const row of rows) {
+    counts.set(
+      `${row.collaborator_account_id}`.toLowerCase(),
+      Number(row.common_project_count),
+    );
+  }
+  return counts;
+}
+
 export async function replaceAccountCollaboratorIndexRows(opts: {
   db: Queryable;
   account_id: string;

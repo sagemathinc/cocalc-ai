@@ -12,6 +12,7 @@ import type {
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   lockAccountCollaboratorProjection,
+  collaboratorCountsForAccount,
   replaceAccountCollaboratorIndexRows,
 } from "./account-collaborator-index";
 import type {
@@ -376,8 +377,9 @@ export function collaboratorGroups(
 // index in this transaction), recompute its rows for that project's people,
 // before and after. The owning bay does this only for its own accounts, so
 // without it collaborators met in another bay's project never appear.
-// Unchanged membership is skipped unless a row is missing (that also repairs
-// rows lost before this existed). The caller holds the transaction.
+// Unchanged membership is skipped only when every expected row exists with the
+// right shared-project count (that also repairs rows and counts that predate
+// this). The caller holds the transaction.
 export async function applyRemoteProjectToAccountCollaboratorIndex(opts: {
   db: PoolClient;
   bay_id: string;
@@ -404,9 +406,19 @@ export async function applyRemoteProjectToAccountCollaboratorIndex(opts: {
   const expected = after.has(opts.account_id)
     ? peers.filter((id) => after.has(id))
     : [];
-  const have = new Set(previous_rows.map((row) => row.account_id));
+  const have = new Map(
+    previous_rows.map((row) => [row.account_id, row.common_project_count]),
+  );
   if (unchanged && expected.every((id) => have.has(id))) {
-    return { feed_events: [] };
+    const counts = await collaboratorCountsForAccount({
+      db: opts.db,
+      account_id: opts.account_id,
+      bay_id: opts.bay_id,
+      collaborator_account_ids: expected,
+    });
+    if (expected.every((id) => have.get(id) === counts.get(id))) {
+      return { feed_events: [] };
+    }
   }
   await replaceAccountCollaboratorIndexRows({
     db: opts.db,
