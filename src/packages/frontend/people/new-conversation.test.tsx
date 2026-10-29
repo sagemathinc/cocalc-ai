@@ -31,6 +31,8 @@ const mockProjects = {
 };
 const mockProjectMap = fromJS(mockProjects);
 const mockCreate = jest.fn();
+// A picker that offers every project (whatever its filter says).
+let mockIgnoreFilter = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store: string, key: string) =>
@@ -46,7 +48,7 @@ jest.mock("@cocalc/frontend/projects/select-project", () => ({
   SelectProject: ({ filter, onChange, value }) => (
     <div>
       {Object.entries(mockProjects)
-        .filter(([, project]) => filter(project))
+        .filter(([, project]) => mockIgnoreFilter || filter(project))
         .map(([id, project]) => (
           <button
             key={id}
@@ -79,6 +81,7 @@ function modal(props: {
 
 beforeEach(() => {
   mockCreate.mockReset().mockResolvedValue({ conversation_id: "x" });
+  mockIgnoreFilter = false;
 });
 
 test("with a person, only projects where they are a full collaborator", () => {
@@ -129,4 +132,32 @@ test("for an existing file, the help doesn't promise notifications", () => {
   expect(
     screen.getByText(/In an existing file they are notified once they write/),
   ).toBeTruthy();
+});
+
+test("started from a person, a project where they're only a viewer can't drop them", async () => {
+  mockIgnoreFilter = true;
+  render(modal({ open: true, personId: bob, personName: "Bob" }));
+  fireEvent.change(screen.getByLabelText("Title"), {
+    target: { value: "Plans" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Project two" }));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Bob isn't a full collaborator in this project",
+  );
+  const create = screen.getByRole("button", {
+    name: "Create",
+  }) as HTMLButtonElement;
+  expect(create.disabled).toBe(true);
+  // In a project where Bob is a collaborator, it works.
+  fireEvent.click(screen.getByRole("button", { name: "Project one" }));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(create.disabled).toBe(false);
+  fireEvent.click(create);
+  await waitFor(() =>
+    expect(mockCreate).toHaveBeenCalledWith({
+      project_id: P1,
+      title: "Plans",
+      member_ids: [bob],
+    }),
+  );
 });

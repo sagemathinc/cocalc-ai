@@ -91,12 +91,21 @@ export function NewConversationModal({
     setProjectId(undefined);
     setMemberIds(personId ? [personId] : []);
   }, [open, personId]);
-  // Only people in the chosen project can be in it.
+  // Only people in the chosen project can be in it, except the person it was
+  // started for: they are kept, and a project without them is refused below.
   useEffect(() => {
     if (!project_id) return;
     const inProject = new Set(people.map((p) => p.account_id));
-    setMemberIds((ids) => ids.filter((id) => inProject.has(id)));
-  }, [project_id, people]);
+    setMemberIds((ids) =>
+      ids.filter((id) => id === personId || inProject.has(id)),
+    );
+  }, [project_id, people, personId]);
+  // Started from a person, the conversation must be with them: never
+  // quietly drop them (e.g. a project where they are only a viewer).
+  const personMissing =
+    !!personId &&
+    !!project_id &&
+    !people.some((p) => p.account_id === personId);
   const [title, setTitle] = useState("");
   const [mode, setMode] = useState<"new" | "existing">("new");
   const [path, setPath] = useState("");
@@ -106,6 +115,12 @@ export function NewConversationModal({
   async function submit() {
     if (!project_id) {
       setError("Choose a project.");
+      return;
+    }
+    if (personMissing || (personId && !member_ids.includes(personId))) {
+      setError(
+        `${personName ?? "They"} must be a full collaborator in the project, and in the conversation.`,
+      );
       return;
     }
     setBusy(true);
@@ -138,7 +153,13 @@ export function NewConversationModal({
         personName ? `New conversation with ${personName}` : "New conversation"
       }
       okText={mode === "new" ? "Create" : "Add"}
-      okButtonProps={{ disabled: !project_id || !title.trim() }}
+      okButtonProps={{
+        disabled:
+          !project_id ||
+          !title.trim() ||
+          personMissing ||
+          (!!personId && !member_ids.includes(personId)),
+      }}
       confirmLoading={busy}
       onOk={submit}
       onCancel={onClose}
@@ -165,6 +186,14 @@ export function NewConversationModal({
             value={project_id ?? null}
             onChange={setProjectId}
           />
+          {personMissing && (
+            <Alert
+              type="warning"
+              role="alert"
+              style={{ marginTop: 8 }}
+              title={`${personName ?? "This person"} isn't a full collaborator in this project, so the conversation can't be with them. Choose another project.`}
+            />
+          )}
         </Form.Item>
         <Form.Item
           label="With"
