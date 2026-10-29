@@ -49,7 +49,11 @@ import {
   type GpuAgentScope,
   type GpuPodDeps,
 } from "@cocalc/server/gpu/pods";
-import { getRunpodCleanupForAccount } from "@cocalc/server/gpu/provider-keys";
+import {
+  withRunpodCleanup,
+  type RunpodCleanupCapability,
+} from "@cocalc/server/gpu/provider-keys";
+import type { GpuKeyUse } from "@cocalc/server/gpu/key-use";
 import { parseEd25519PublicKey } from "@cocalc/util/gpu/ssh-key";
 import type { GpuHostKeyResult, GpuPodSshInfo } from "@cocalc/util/gpu/types";
 
@@ -185,7 +189,13 @@ export async function registerHostKeyLocal(opts: {
 // ---- what a project needs to reach a pod ----
 
 export async function gpuSshInfoLocal(
-  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
+  opts: {
+    account_id?: string;
+    pod_id?: unknown;
+    agent?: GpuAgentScope;
+    // made by the authenticated boundary (5d-2c)
+    key_use?: GpuKeyUse;
+  },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSshInfo> {
   const account_id = requireAccount(opts.account_id);
@@ -216,18 +226,21 @@ export async function gpuSshInfoLocal(
     return info;
   }
   // The live SSH endpoint (it changes when a pod restarts).
-  const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
-    pod.key_owner_account_id,
-  );
-  // Only the key that launched the pod can see it (a replaced key may act
-  // for another RunPod account).
-  if (!c || c.credential_id !== pod.credential_id) return info;
-  let live: Awaited<ReturnType<typeof c.getPod>>;
-  try {
-    live = await c.getPod(pod.provider_pod_id);
-  } catch {
-    throw Error("RunPod could not be reached. Try again shortly.");
-  }
+  const read = async (c: RunpodCleanupCapability | undefined) => {
+    // Only the key that launched the pod can see it (a replaced key may act
+    // for another RunPod account).
+    if (!c || c.credential_id !== pod.credential_id) return undefined;
+    try {
+      return { live: await c.getPod(pod.provider_pod_id) };
+    } catch {
+      throw Error("RunPod could not be reached. Try again shortly.");
+    }
+  };
+  const got = deps.getCleanup
+    ? await read(await deps.getCleanup(pod.key_owner_account_id))
+    : await withRunpodCleanup(pod.key_owner_account_id, opts.key_use, {}, read);
+  if (!got) return info;
+  const { live } = got;
   const direct = live?.sshDirect;
   if (!direct) return info;
   return {
@@ -242,7 +255,12 @@ export async function gpuSshInfoLocal(
 }
 
 export async function gpuSshInfo(
-  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
+  opts: {
+    account_id?: string;
+    pod_id?: unknown;
+    agent?: GpuAgentScope;
+    key_use?: GpuKeyUse;
+  },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSshInfo> {
   const account_id = requireAccount(opts.account_id);

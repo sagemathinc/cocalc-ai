@@ -640,6 +640,158 @@ Table({
   },
 });
 
+// Why a provider key is decrypted (5d-2c). A user or agent action's
+// purposes, then a worker run's (5d-2b's account checks run inside the
+// reconciler's pass, on its decrypt).
+export const GPU_KEY_USE_PURPOSES = [
+  "launch",
+  "terminate",
+  "pod_read",
+  "ssh_info",
+  // the GPU catalog and availability, read with the owner's key
+  "catalog",
+  "verify",
+  "removal",
+  "compromise",
+] as const;
+export const GPU_KEY_WORKER_PURPOSES = [
+  "reaper",
+  "cleanup",
+  "reconcile",
+  "billing",
+] as const;
+export const GPU_KEY_DECRYPT_PURPOSES = [
+  ...GPU_KEY_USE_PURPOSES,
+  ...GPU_KEY_WORKER_PURPOSES,
+] as const;
+// what admitted a user or agent action, fixed when its record is made
+export const GPU_KEY_USE_RULES = ["owner", "beneficiary", "agent"] as const;
+export const GPU_KEY_USE_OUTCOMES = ["succeeded", "failed", "unknown"] as const;
+
+// The authorization record of one user or agent action on a provider key
+// (5d-2c): made by the home bay's entry point from the verified caller,
+// before any decrypt, and never changed after, except its counter. Its id
+// (128 random bits) is the capability the action presents to decrypt.
+Table({
+  name: "gpu_key_uses",
+  rules: {
+    primary_key: "id",
+    pg_indexes: ["key_owner_account_id", "created", "audited_at"],
+  },
+  fields: {
+    id: { type: "string", pg_type: "varchar(32)", not_null: true },
+    key_owner_account_id: { type: "uuid", not_null: true },
+    // the owner's key when the record was made (null: none connected)
+    credential_id: { type: "uuid" },
+    principal_account_id: { type: "uuid", not_null: true },
+    // an agent's verified principal (null for a person)
+    agent_project_id: { type: "uuid" },
+    agent_id: { type: "string", pg_type: "varchar(200)" },
+    agent_run_id: { type: "string", pg_type: "varchar(200)" },
+    purpose: {
+      type: "string",
+      pg_type: "varchar(32)",
+      not_null: true,
+      pg_check: oneOf("purpose", GPU_KEY_USE_PURPOSES),
+    },
+    authorized: { type: "boolean", not_null: true },
+    rule: {
+      type: "string",
+      pg_type: "varchar(32)",
+      not_null: true,
+      pg_check: oneOf("rule", GPU_KEY_USE_RULES),
+    },
+    // what the rule refers to (the pod a beneficiary acts on), if anything
+    rule_ref: { type: "string", pg_type: "varchar(200)" },
+    request_id: { type: "string", pg_type: "varchar(200)" },
+    bay_id: { type: "string", pg_type: "varchar(200)", not_null: true },
+    created: { type: "timestamp", not_null: true },
+    expires: { type: "timestamp", not_null: true },
+    max_decrypts: { type: "integer", not_null: true },
+    decrypts: { type: "integer", not_null: true, pg_default: "0" },
+    // set by the decrypt audit (5d-2c-2) once it has covered this record
+    audited_at: { type: "timestamp" },
+  },
+});
+
+// What a user or agent write came to, recorded once in a finally (5d-2c):
+// an attempt that was made explains its decrypt, whatever it did.
+Table({
+  name: "gpu_key_use_outcomes",
+  rules: { primary_key: "key_use_id" },
+  fields: {
+    key_use_id: { type: "string", pg_type: "varchar(32)", not_null: true },
+    outcome: {
+      type: "string",
+      pg_type: "varchar(16)",
+      not_null: true,
+      pg_check: oneOf("outcome", GPU_KEY_USE_OUTCOMES),
+    },
+    at: { type: "timestamp", not_null: true },
+  },
+});
+
+// Every decrypt of a provider key (5d-2c): inserted, with its outbox row, in
+// the transaction that validated its capability, before the key is read; the
+// broker then claims it once, decrypts, and records how it finished. Never
+// key material.
+Table({
+  name: "gpu_key_decrypts",
+  rules: {
+    primary_key: "id",
+    pg_indexes: [
+      "key_use_id",
+      "worker_run_id",
+      "credential_id",
+      "started",
+      "audited_at",
+    ],
+  },
+  fields: {
+    id: { type: "uuid", not_null: true },
+    // the capability presented: a key use's record, or a worker's run
+    key_use_id: { type: "string", pg_type: "varchar(32)" },
+    worker_run_id: { type: "uuid" },
+    worker_name: { type: "string", pg_type: "varchar(32)" },
+    purpose: {
+      type: "string",
+      pg_type: "varchar(32)",
+      not_null: true,
+      pg_check: oneOf("purpose", GPU_KEY_DECRYPT_PURPOSES),
+    },
+    key_owner_account_id: { type: "uuid", not_null: true },
+    credential_id: { type: "uuid", not_null: true },
+    // the account (a person's or an agent's) or the worker it is for
+    principal: { type: "string", pg_type: "varchar(200)", not_null: true },
+    bay_id: { type: "string", pg_type: "varchar(200)", not_null: true },
+    // the hub process (host and pid)
+    process: { type: "string", pg_type: "varchar(200)", not_null: true },
+    started: { type: "timestamp", not_null: true },
+    // the broker's one-shot permit
+    claimed_at: { type: "timestamp" },
+    claim_nonce: { type: "string", pg_type: "varchar(64)" },
+    finished: { type: "timestamp" },
+    // ok | error | no_key
+    outcome: { type: "string", pg_type: "varchar(16)" },
+    audited_at: { type: "timestamp" },
+  },
+});
+
+// Security events waiting for the off-host log (5d-2c): written with the
+// event, acked by the future consumer after its own durable write. Nothing
+// here is off-host yet.
+Table({
+  name: "security_event_outbox",
+  rules: { primary_key: "id", pg_indexes: ["created", "acked_at"] },
+  fields: {
+    id: { type: "uuid", not_null: true },
+    kind: { type: "string", pg_type: "varchar(64)", not_null: true },
+    details: { type: "map", not_null: true },
+    created: { type: "timestamp", not_null: true },
+    acked_at: { type: "timestamp" },
+  },
+});
+
 // An admin's explicit, scoped, time-limited permission to launch although a
 // GPU worker is stale. It never bypasses a budget check.
 Table({

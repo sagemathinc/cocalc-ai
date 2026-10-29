@@ -28,7 +28,7 @@ import {
   type GpuAlertView,
 } from "@cocalc/server/gpu/alerts";
 import type { PoolClient } from "@cocalc/database/pool";
-import { getRunpodLaunchAccessForAccount } from "@cocalc/server/gpu/provider-keys";
+import { launchKeyMeta } from "@cocalc/server/gpu/provider-keys";
 import {
   ensureKeyBudget,
   INVENTORY_STALE_MS,
@@ -78,10 +78,9 @@ function requireAccount(account_id: unknown): string {
 async function credentialIdFor(
   account_id: string,
 ): Promise<string | undefined> {
-  // Only the id is used here; nothing is sent to RunPod.
-  return (
-    await getRunpodLaunchAccessForAccount(account_id).catch(() => undefined)
-  )?.credential_id;
+  // Only the id is used: from metadata, with no decrypt (5d-2c).
+  return (await launchKeyMeta(account_id).catch(() => undefined))
+    ?.credential_id;
 }
 
 async function requireKey(account_id: string, deps: GpuBudgetDeps) {

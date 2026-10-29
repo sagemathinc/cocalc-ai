@@ -1228,6 +1228,40 @@ async function startAccountDirectoryService(): Promise<void> {
   );
 }
 
+// The authorization record of a forwarded GPU call that may decrypt the key
+// (5d-2c), made here on the key owner's home bay from the forwarded,
+// verified principal (the calling bay authenticated it), with the method's
+// fixed purpose. Anything a caller put in key_use is replaced.
+async function gpuKeyUse(
+  opts: any,
+  purpose: import("@cocalc/server/gpu/key-use").GpuKeyUsePurpose,
+): Promise<import("@cocalc/server/gpu/key-use").GpuKeyUse | undefined> {
+  const { admitAgentKeyUse, admitUserKeyUse, isGpuKeyHomeBay } =
+    await import("@cocalc/server/gpu/key-use");
+  const account_id = opts?.account_id;
+  if (typeof account_id !== "string" || !isValidUUID(account_id)) {
+    return undefined;
+  }
+  if (!(await isGpuKeyHomeBay(account_id))) return undefined;
+  // a launch carries the agent's principal, other calls its scope
+  const agent = opts?.agent?.principal ?? opts?.agent;
+  if (agent) {
+    if (agent.account_id != null && agent.account_id !== account_id) {
+      return undefined;
+    }
+    return await admitAgentKeyUse({
+      principal: {
+        account_id,
+        project_id: `${agent.project_id ?? ""}`,
+        agent_id: `${agent.agent_id ?? ""}`,
+        run_id: agent.run_id == null ? undefined : `${agent.run_id}`,
+      },
+      purpose,
+    });
+  }
+  return await admitUserKeyUse({ account_id, purpose });
+}
+
 async function startAccountLocalService(): Promise<void> {
   const client = getInterBayFabricServiceClient();
   const impl: InterBayAccountLocalApi = {
@@ -1250,13 +1284,26 @@ async function startAccountLocalService(): Promise<void> {
     computeFundingGetOwnedPools: computeFunding.getOwnedPools,
     // Never forwards again: the key helper refuses off the home bay.
     gpuCatalog: async (opts) =>
-      await (await import("@cocalc/server/gpu/read")).getGpuCatalogLocal(opts),
+      await (
+        await import("@cocalc/server/gpu/read")
+      ).getGpuCatalogLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "catalog"),
+      }),
     gpuAvailability: async (opts) =>
       await (
         await import("@cocalc/server/gpu/read")
-      ).getGpuAvailabilityLocal(opts),
+      ).getGpuAvailabilityLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "catalog"),
+      }),
     gpuPods: async (opts) =>
-      await (await import("@cocalc/server/gpu/read")).getGpuPodsLocal(opts),
+      await (
+        await import("@cocalc/server/gpu/read")
+      ).getGpuPodsLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "pod_read"),
+      }),
     gpuKeyStatus: async (opts) =>
       await (
         await import("@cocalc/server/gpu/provider-keys")
@@ -1264,17 +1311,31 @@ async function startAccountLocalService(): Promise<void> {
     gpuKeySet: async (opts) =>
       await (
         await import("@cocalc/server/gpu/provider-keys")
-      ).setGpuProviderKeyLocal(opts),
+      ).setGpuProviderKeyLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "verify"),
+      }),
     gpuKeyDelete: async (opts) =>
       await (
         await import("@cocalc/server/gpu/provider-keys")
-      ).deleteGpuProviderKeyLocal(opts),
+      ).deleteGpuProviderKeyLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "removal"),
+      }),
     gpuLaunch: async (opts) =>
-      await (await import("@cocalc/server/gpu/pods")).launchGpuPodLocal(opts),
+      await (
+        await import("@cocalc/server/gpu/pods")
+      ).launchGpuPodLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "launch"),
+      }),
     gpuTerminate: async (opts) =>
       await (
         await import("@cocalc/server/gpu/pods")
-      ).terminateGpuPodLocal(opts),
+      ).terminateGpuPodLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "terminate"),
+      }),
     gpuWho: async (opts) =>
       await (await import("@cocalc/server/gpu/pods")).whoGpuPodLocal(opts),
     gpuBudget: async (opts) =>
@@ -1288,11 +1349,19 @@ async function startAccountLocalService(): Promise<void> {
         await import("@cocalc/server/gpu/budget-api")
       ).setGpuBudgetLocal(opts as any),
     gpuKillSwitch: async (opts) =>
-      await (await import("@cocalc/server/gpu/pods")).killSwitchLocal(opts),
+      await (
+        await import("@cocalc/server/gpu/pods")
+      ).killSwitchLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "terminate"),
+      }),
     gpuReportCompromised: async (opts) =>
       await (
         await import("@cocalc/server/gpu/compromise")
-      ).reportCompromisedLocal(opts),
+      ).reportCompromisedLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "compromise"),
+      }),
     gpuResume: async (opts) =>
       await (
         await import("@cocalc/server/gpu/budget-api")
@@ -1322,9 +1391,17 @@ async function startAccountLocalService(): Promise<void> {
     gpuManagedPods: async (opts) =>
       await (
         await import("@cocalc/server/gpu/pods")
-      ).listManagedGpuPodsLocal(opts),
+      ).listManagedGpuPodsLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "pod_read"),
+      }),
     gpuSshInfo: async (opts) =>
-      await (await import("@cocalc/server/gpu/hostkey")).gpuSshInfoLocal(opts),
+      await (
+        await import("@cocalc/server/gpu/hostkey")
+      ).gpuSshInfoLocal({
+        ...opts,
+        key_use: await gpuKeyUse(opts, "ssh_info"),
+      }),
     gpuAgentRequests: async (opts) =>
       await (
         await import("@cocalc/server/gpu/agent-api")

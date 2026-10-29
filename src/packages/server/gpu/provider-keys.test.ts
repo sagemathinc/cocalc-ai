@@ -9,13 +9,29 @@ const localGetMock = jest.fn();
 const revokeMock = jest.fn();
 const membershipMock = jest.fn();
 const clearHostkeysMock = jest.fn();
+const admitMock = jest.fn();
 
-// Everything runs on the home bay, against its local store.
+// Everything runs on the home bay, against its local store. The broker reads
+// what localGetMock holds; its claim and audit rows have their own tests
+// (key-use.test.ts), as does the admission (mocked here).
 jest.mock("@cocalc/server/external-credentials/store", () => ({
-  getExternalCredential: (...args: any[]) => localGetMock(...args),
+  GpuKeyGone: class GpuKeyGone extends Error {},
   upsertExternalCredential: (...args: any[]) => upsertMock(...args),
   listExternalCredentials: (...args: any[]) => listMock(...args),
   revokeExternalCredential: (...args: any[]) => revokeMock(...args),
+  withAuditedGpuKey: async (
+    _id: string,
+    _credential_id: string,
+    fn: (key: string) => Promise<unknown>,
+  ) => {
+    const record = await localGetMock();
+    if (!record) throw Error("the GPU provider key is no longer stored");
+    return await fn(record.payload);
+  },
+}));
+jest.mock("@cocalc/server/gpu/key-use", () => ({
+  ...jest.requireActual("@cocalc/server/gpu/key-use"),
+  admitDecrypt: (...args: any[]) => admitMock(...args),
 }));
 
 jest.mock("@cocalc/server/gpu/hostkey-clear", () => ({
@@ -71,8 +87,8 @@ import {
   deleteGpuProviderKeyLocal,
   getGpuProviderKeyStatusLocal,
   setGpuProviderKeyLocal,
-  getRunpodCleanupForAccount,
-  getRunpodClientForAccount,
+  withRunpodCleanup,
+  withRunpodLaunchAccess,
   getGpuProviderKeyStatus,
   isGpuProviderKeysEntitled,
   setGpuProviderKey,
@@ -146,7 +162,14 @@ beforeEach(() => {
   revokeMock.mockReset().mockResolvedValue(true);
   clearHostkeysMock.mockReset().mockResolvedValue(0);
   membershipMock.mockReset();
+  admitMock.mockReset().mockResolvedValue("decrypt-1");
 });
+
+// a stored key, as both the metadata and the broker see it
+function storeKey() {
+  listMock.mockResolvedValue([summary({})]);
+  localGetMock.mockResolvedValue(storedRecord({}));
+}
 
 describe("GPU provider keys", () => {
   it("follows the tier's gpu_provider_keys feature", async () => {
@@ -398,66 +421,97 @@ describe("GPU provider keys", () => {
 
   it("builds a RunPod client from the local store, or nothing without a key", async () => {
     const deps = { ...home, isEntitled: entitled };
-    expect(await getRunpodClientForAccount(ACCOUNT, deps)).toBeUndefined();
-    localGetMock.mockResolvedValue(storedRecord({}));
-    const client = await getRunpodClientForAccount(ACCOUNT, deps);
-    expect(client).toBeDefined();
-    expect(JSON.stringify(client)).not.toContain(KEY);
-    expect(localGetMock).toHaveBeenCalledWith({
-      selector: expect.objectContaining({ owner_account_id: ACCOUNT }),
+    expect(
+      await withRunpodLaunchAccess(ACCOUNT, undefined, deps, async (a) => a),
+    ).toBeUndefined();
+    // no key: nothing was admitted, nothing decrypted
+    expect(admitMock).not.toHaveBeenCalled();
+    storeKey();
+    let kept: any;
+    await withRunpodLaunchAccess(ACCOUNT, undefined, deps, async (a) => {
+      expect(a?.credential_id).toBe("cred-1");
+      expect(JSON.stringify(a)).not.toContain(KEY);
+      kept = a!.client;
     });
+    // admitted for exactly this owner's stored key, before it was read
+    expect(admitMock).toHaveBeenCalledWith(undefined, {
+      account_id: ACCOUNT,
+      credential_id: "cred-1",
+    });
+    // the client is usable only inside the callback
+    expect(() => kept.listPods).toThrow("ended");
   });
 
   it("never reads the key away from the owner's home bay", async () => {
-    localGetMock.mockResolvedValue(storedRecord({}));
+    storeKey();
     const away = { isHomeBay: async () => false, isEntitled: entitled };
-    await expect(getRunpodClientForAccount(ACCOUNT, away)).rejects.toThrow(
-      "home bay",
-    );
-    await expect(getRunpodCleanupForAccount(ACCOUNT, away)).rejects.toThrow(
-      "home bay",
-    );
-    expect(localGetMock).not.toHaveBeenCalled();
+    await expect(
+      withRunpodLaunchAccess(ACCOUNT, undefined, away, async (a) => a),
+    ).rejects.toThrow("home bay");
+    await expect(
+      withRunpodCleanup(ACCOUNT, undefined, away, async (c) => c),
+    ).rejects.toThrow("home bay");
+    expect(admitMock).not.toHaveBeenCalled();
   });
 
   it("requires the live entitlement for full access, but not for cleanup", async () => {
-    localGetMock.mockResolvedValue(storedRecord({}));
+    storeKey();
     const lapsed = { ...home, isEntitled: async () => false };
-    await expect(getRunpodClientForAccount(ACCOUNT, lapsed)).rejects.toThrow(
-      "membership",
-    );
-    expect(localGetMock).not.toHaveBeenCalled();
-    expect(await getRunpodCleanupForAccount(ACCOUNT, lapsed)).toBeDefined();
+    await expect(
+      withRunpodLaunchAccess(ACCOUNT, undefined, lapsed, async (a) => a),
+    ).rejects.toThrow("membership");
+    expect(admitMock).not.toHaveBeenCalled();
+    expect(
+      await withRunpodCleanup(ACCOUNT, undefined, lapsed, async (c) => !!c),
+    ).toBe(true);
+  });
+
+  it("refuses to read the key when the admission refuses", async () => {
+    storeKey();
+    admitMock.mockRejectedValue(Error("this capability doesn't allow it"));
+    const fn = jest.fn();
+    await expect(
+      withRunpodCleanup(ACCOUNT, undefined, home, fn),
+    ).rejects.toThrow("capability");
+    expect(fn).not.toHaveBeenCalled();
   });
 
   it("gives cleanup only inventory, billing and the account balance, with no client to reach through", async () => {
-    localGetMock.mockResolvedValue(storedRecord({}));
+    storeKey();
     const { fetch, urls } = fakeFetch([NO_PODS]);
-    const cleanup = (await getRunpodCleanupForAccount(ACCOUNT, {
-      ...home,
-      fetch,
-    }))!;
-    // Nothing that creates or starts anything.
-    expect(Object.keys(cleanup).sort()).toEqual([
-      "credential_id",
-      "findPodsByName",
-      "getAccountBalance",
-      "getPod",
-      "getProviderIdentity",
-      "listPodBilling",
-      "listPods",
-      "terminatePod",
-    ]);
-    expect(Object.isFrozen(cleanup)).toBe(true);
-    expect(cleanup.credential_id).toBe("cred-1");
-    expect(cleanup).not.toBeInstanceOf(
-      (await import("@cocalc/cloud/runpod/client")).RunpodClient,
+    let kept: any;
+    await withRunpodCleanup(
+      ACCOUNT,
+      undefined,
+      { ...home, fetch },
+      async (c) => {
+        const cleanup = c!;
+        kept = cleanup;
+        // Nothing that creates or starts anything.
+        expect(Object.keys(cleanup).sort()).toEqual([
+          "credential_id",
+          "findPodsByName",
+          "getAccountBalance",
+          "getPod",
+          "getProviderIdentity",
+          "listPodBilling",
+          "listPods",
+          "terminatePod",
+        ]);
+        expect(Object.isFrozen(cleanup)).toBe(true);
+        expect(cleanup.credential_id).toBe("cred-1");
+        expect(cleanup).not.toBeInstanceOf(
+          (await import("@cocalc/cloud/runpod/client")).RunpodClient,
+        );
+        expect(await cleanup.listPods()).toEqual([]);
+        expect(urls).toEqual([
+          "https://api.runpod.io/v2/pods?includeClusterPods=true",
+        ]);
+        expect(JSON.stringify(cleanup)).not.toContain(KEY);
+      },
     );
-    expect(await cleanup.listPods()).toEqual([]);
-    expect(urls).toEqual([
-      "https://api.runpod.io/v2/pods?includeClusterPods=true",
-    ]);
-    expect(JSON.stringify(cleanup)).not.toContain(KEY);
+    // and nothing once the callback returned
+    await expect(async () => await kept.listPods()).rejects.toThrow("ended");
   });
 
   it("checks pod access with one request, however many pages there are", async () => {

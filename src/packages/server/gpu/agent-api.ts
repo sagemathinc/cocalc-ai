@@ -25,7 +25,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
-import { getRunpodLaunchAccessForAccount } from "@cocalc/server/gpu/provider-keys";
+import { launchKeyMeta } from "@cocalc/server/gpu/provider-keys";
 import { inTransaction } from "@cocalc/server/gpu/pods";
 import {
   approveAgentRequestLocal as approveInTransaction,
@@ -52,10 +52,9 @@ function requireAccount(account_id: unknown): string {
 async function credentialIdFor(
   account_id: string,
 ): Promise<string | undefined> {
-  // Only the id is used; nothing is sent to RunPod.
-  return (
-    await getRunpodLaunchAccessForAccount(account_id).catch(() => undefined)
-  )?.credential_id;
+  // Only the id is used: from metadata, with no decrypt (5d-2c).
+  return (await launchKeyMeta(account_id).catch(() => undefined))
+    ?.credential_id;
 }
 
 // What the agent is, said plainly: never the raw principal key of a chat

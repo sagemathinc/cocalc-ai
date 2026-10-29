@@ -41,7 +41,8 @@ import {
   type PodRow,
 } from "@cocalc/server/gpu/pods";
 import {
-  getRunpodCleanupForAccount,
+  withRunpodCleanup,
+  type GpuProviderKeyDeps,
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
 import { sanitizeProviderName } from "@cocalc/server/gpu/key-events";
@@ -56,7 +57,14 @@ import {
 } from "@cocalc/server/gpu/budgets";
 import { watchProviderAccount } from "@cocalc/server/gpu/account-watch";
 import {
+  isGpuKeyCapability,
+  workerKeyUse,
+  workerKeyUseFor,
+  type GpuKeyCapability,
+} from "@cocalc/server/gpu/key-use";
+import {
   acquireWorkerLease,
+  releaseWorkerLease,
   every,
   finishWorkerLease,
   LeaseLost,
@@ -102,6 +110,8 @@ export interface ReconcileDeps {
   ) => Promise<ReconcileCapability | undefined>;
   // the sweep's lease renewal (request-time passes have none)
   guard?: () => Promise<void>;
+  // how the pass's own key read is made (a connect's: its timeouts)
+  keyDeps?: GpuProviderKeyDeps;
 }
 
 export interface ReconcileOutcome {
@@ -135,7 +145,14 @@ export async function reconcileKey(
     credential_id,
     key_owner_account_id,
     deadline,
-  }: { credential_id: string; key_owner_account_id: string; deadline: number },
+    key_use,
+  }: {
+    credential_id: string;
+    key_owner_account_id: string;
+    deadline: number;
+    // the reconciler's run (a sweep or a wake), or a connect's verify
+    key_use?: GpuKeyCapability;
+  },
   deps: ReconcileDeps = {},
 ): Promise<ReconcileOutcome> {
   const clock = deps.now ?? Date.now;
@@ -166,159 +183,202 @@ export async function reconcileKey(
     });
     return outcome;
   };
-  let key: ReconcileCapability | undefined;
-  try {
-    key = await (
-      deps.getReconcile ??
-      ((a: string) =>
-        getRunpodCleanupForAccount(a, { runpodTimeoutMs: RECONCILE_CALL_MS }))
-    )(key_owner_account_id);
-  } catch {
-    return await fail({ claimed: true, failed: true });
-  }
-  // no stored key, or another key now: nothing to reconcile with this one
-  if (!key || key.credential_id !== credential_id) {
-    return await fail({ claimed: true, failed: true });
-  }
-  // Every RunPod call ends with the pass's time: one still unanswered when
-  // it runs out cuts the pass (the guards around it only check between
-  // calls). The client's own per-call timeout ends the abandoned request.
-  const raw = key;
-  const within = <T>(call: Promise<T>): Promise<T> => {
-    const left = deadline - clock();
-    if (left <= 0) {
-      call.catch(() => {});
-      return Promise.reject(new PassCut("reconcile pass deadline"));
-    }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const cut = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new PassCut("reconcile pass deadline")),
-        left,
-      );
-      timer.unref?.();
-    });
-    call.catch(() => {});
-    return Promise.race([call, cut]).finally(() => clearTimeout(timer));
+  // One decrypt for the pass (5d-2c); the account checks, if they run, take
+  // one of their own in the same run.
+  const watchUse =
+    key_use && isGpuKeyCapability(key_use) && key_use.kind === "run"
+      ? workerKeyUseFor(key_use, "account_watch")
+      : undefined;
+  const open = async <T>(
+    fn: (key: ReconcileCapability | undefined) => Promise<T>,
+  ): Promise<T> => {
+    if (deps.getReconcile)
+      return await fn(await deps.getReconcile(key_owner_account_id));
+    return await withRunpodCleanup(
+      key_owner_account_id,
+      key_use,
+      deps.keyDeps ?? { runpodTimeoutMs: RECONCILE_CALL_MS },
+      async (key) =>
+        await fn(
+          key && {
+            credential_id: key.credential_id,
+            listPods: key.listPods,
+            getPod: key.getPod,
+            // only in a reconciler's run: a connect's pass leaves the
+            // account checks to the next sweep
+            ...(watchUse
+              ? {
+                  getAccountBalance: () =>
+                    withRunpodCleanup(
+                      key_owner_account_id,
+                      watchUse,
+                      { runpodTimeoutMs: RECONCILE_CALL_MS },
+                      async (w) => {
+                        if (!w || w.credential_id !== credential_id) {
+                          throw Error("the key changed");
+                        }
+                        return await w.getAccountBalance();
+                      },
+                    ),
+                }
+              : {}),
+          },
+        ),
+    );
   };
-  const c: ReconcileCapability = {
-    credential_id,
-    listPods: (opts) => within(raw.listPods(opts)),
-    getPod: (id) => within(raw.getPod(id)),
-  };
+  let entered = false;
   try {
-    await bounded();
-    // Read-only: nothing is terminated while it pages. What a page shows
-    // is acted on as it arrives (a sighting needs no complete listing), so
-    // a slow or flooded account still raises its alerts; only what needs
-    // the whole inventory waits (a handle's pod: bind, or duplicates).
-    const k = { credential_id, key_owner_account_id, observed_at };
-    let unknown = 0;
-    const listed = await c.listPods({
-      beforePage: bounded,
-      onPage: async (page) => {
-        await bounded();
-        unknown += await matchInventory(k, page, bounded, "sightings", {
-          c,
-          now: () => new Date(clock()),
+    return await open(async (raw) => {
+      entered = true;
+      // no stored key, or another key now: nothing to reconcile with this one
+      if (!raw || raw.credential_id !== credential_id) {
+        return await fail({ claimed: true, failed: true });
+      }
+      // Every RunPod call ends with the pass's time: one still unanswered when
+      // it runs out cuts the pass (the guards around it only check between
+      // calls). The client's own per-call timeout ends the abandoned request.
+      const within = <T>(call: Promise<T>): Promise<T> => {
+        const left = deadline - clock();
+        if (left <= 0) {
+          call.catch(() => {});
+          return Promise.reject(new PassCut("reconcile pass deadline"));
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const cut = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new PassCut("reconcile pass deadline")),
+            left,
+          );
+          timer.unref?.();
         });
-      },
-    });
-    // the last page may have come back after the pass's time ran out
-    await bounded();
-    // Everything after the listing is bounded too: each pod's action, and
-    // the end (a large inventory, or a lost lease, stops the pass here).
-    unknown += await matchInventory(k, listed, bounded, "handles");
-    await confirmAbsences(
-      { credential_id, key_owner_account_id, observed_at },
-      c,
-      new Set(listed.map((p) => p.id)),
-      bounded,
-      () => new Date(clock()),
-    );
-    await bounded();
-    // complete: the watermark moves (forward only), and so does the cursor
-    await getPool().query(
-      `UPDATE gpu_key_fences
-          SET last_inventory_at = GREATEST(COALESCE(last_inventory_at, $2), $2),
-              updated = now()
-        WHERE credential_id = $1`,
-      [credential_id, observed_at],
-    );
-    await recordOutcome(credential_id, observed_at, {
-      next: new Date(observed_at.getTime() + RECONCILE_EVERY_MS),
-      attempts: 0,
-    });
-    // The account checks, in what is left of the pass (only for an account
-    // its owner confirmed). A failure here never undoes the inventory.
-    const balance = raw.getAccountBalance;
-    if (balance) {
+        call.catch(() => {});
+        return Promise.race([call, cut]).finally(() => clearTimeout(timer));
+      };
+      const c: ReconcileCapability = {
+        credential_id,
+        listPods: (opts) => within(raw.listPods(opts)),
+        getPod: (id) => within(raw.getPod(id)),
+      };
       try {
         await bounded();
-        await watchProviderAccount(
-          { credential_id, key_owner_account_id },
-          {
-            getAccountBalance: () => within(raw.getAccountBalance!()),
-            guard: deps.guard,
-            now: clock,
+        // Read-only: nothing is terminated while it pages. What a page shows
+        // is acted on as it arrives (a sighting needs no complete listing), so
+        // a slow or flooded account still raises its alerts; only what needs
+        // the whole inventory waits (a handle's pod: bind, or duplicates).
+        const k = { credential_id, key_owner_account_id, observed_at };
+        let unknown = 0;
+        const listed = await c.listPods({
+          beforePage: bounded,
+          onPage: async (page) => {
+            await bounded();
+            unknown += await matchInventory(k, page, bounded, "sightings", {
+              c,
+              now: () => new Date(clock()),
+            });
           },
+        });
+        // the last page may have come back after the pass's time ran out
+        await bounded();
+        // Everything after the listing is bounded too: each pod's action, and
+        // the end (a large inventory, or a lost lease, stops the pass here).
+        unknown += await matchInventory(k, listed, bounded, "handles");
+        await confirmAbsences(
+          { credential_id, key_owner_account_id, observed_at },
+          c,
+          new Set(listed.map((p) => p.id)),
+          bounded,
+          () => new Date(clock()),
         );
-      } catch (err) {
-        if (err instanceof LeaseLost) throw err;
-        // RunPod rejects the key itself: the rejected-key handling below
-        if (err instanceof RunpodApiError && err.kind === "auth") throw err;
-        if (!(err instanceof PassCut)) {
-          log.warn("checking a RunPod account failed", `${err}`);
+        await bounded();
+        // complete: the watermark moves (forward only), and so does the cursor
+        await getPool().query(
+          `UPDATE gpu_key_fences
+            SET last_inventory_at = GREATEST(COALESCE(last_inventory_at, $2), $2),
+                updated = now()
+          WHERE credential_id = $1`,
+          [credential_id, observed_at],
+        );
+        await recordOutcome(credential_id, observed_at, {
+          next: new Date(observed_at.getTime() + RECONCILE_EVERY_MS),
+          attempts: 0,
+        });
+        // The account checks, in what is left of the pass (only for an account
+        // its owner confirmed). A failure here never undoes the inventory.
+        const balance = raw.getAccountBalance;
+        if (balance) {
+          try {
+            await bounded();
+            await watchProviderAccount(
+              { credential_id, key_owner_account_id },
+              {
+                getAccountBalance: () => within(raw.getAccountBalance!()),
+                guard: deps.guard,
+                now: clock,
+              },
+            );
+          } catch (err) {
+            if (err instanceof LeaseLost) throw err;
+            // RunPod rejects the key itself: the rejected-key handling below
+            if (err instanceof RunpodApiError && err.kind === "auth") throw err;
+            if (!(err instanceof PassCut)) {
+              log.warn("checking a RunPod account failed", `${err}`);
+            }
+          }
         }
-      }
-    }
-    // the reconciliation capability works: a rejected-key alert ends (after
-    // the account checks, whose 401 would say otherwise; and only while this
-    // worker still holds its lease, which a RunPod call may have outlasted)
-    await deps.guard?.();
-    await underLiveFence(credential_id, (db) =>
-      resolveAlert(
-        {
-          credential_id,
-          kind: "key_rejected",
-          observed_at,
-          by: "complete_inventory",
-        },
-        db,
-      ),
-    );
-    return { claimed: true, complete: true, unknown_pods: unknown };
-  } catch (err) {
-    if (err instanceof PassCut) return await fail({ claimed: true, cut: true });
-    if (
-      err instanceof RunpodApiError &&
-      (err.kind === "auth" || err.kind === "forbidden")
-    ) {
-      // (nothing, if the key was removed or replaced meanwhile)
-      await underLiveFence(credential_id, async (db) => {
-        const raised = await raiseAlert(
-          {
-            key_owner_account_id,
-            credential_id,
-            kind: "key_rejected",
-            severity: "critical",
-            dedupe_key: "key",
-            details: { status: err.kind === "auth" ? 401 : 403 },
-            observed_at,
-          },
-          db,
+        // the reconciliation capability works: a rejected-key alert ends (after
+        // the account checks, whose 401 would say otherwise; and only while this
+        // worker still holds its lease, which a RunPod call may have outlasted)
+        await deps.guard?.();
+        await underLiveFence(credential_id, (db) =>
+          resolveAlert(
+            {
+              credential_id,
+              kind: "key_rejected",
+              observed_at,
+              by: "complete_inventory",
+            },
+            db,
+          ),
         );
-        if (raised) await pauseKey(credential_id, "key_rejected", db);
-      });
-      return await fail({ claimed: true, rejected: true });
-    }
-    // a lost lease: the next holder continues
-    if (!(err instanceof RunpodApiError)) {
-      await fail({ claimed: true, failed: true }).catch(() => {});
-      throw err;
-    }
-    log.warn("reconciling a GPU key failed", `${err}`);
-    return await fail({ claimed: true, failed: true });
+        return { claimed: true, complete: true, unknown_pods: unknown };
+      } catch (err) {
+        if (err instanceof PassCut)
+          return await fail({ claimed: true, cut: true });
+        if (
+          err instanceof RunpodApiError &&
+          (err.kind === "auth" || err.kind === "forbidden")
+        ) {
+          // (nothing, if the key was removed or replaced meanwhile)
+          await underLiveFence(credential_id, async (db) => {
+            const raised = await raiseAlert(
+              {
+                key_owner_account_id,
+                credential_id,
+                kind: "key_rejected",
+                severity: "critical",
+                dedupe_key: "key",
+                details: { status: err.kind === "auth" ? 401 : 403 },
+                observed_at,
+              },
+              db,
+            );
+            if (raised) await pauseKey(credential_id, "key_rejected", db);
+          });
+          return await fail({ claimed: true, rejected: true });
+        }
+        // a lost lease: the next holder continues
+        if (!(err instanceof RunpodApiError)) {
+          await fail({ claimed: true, failed: true }).catch(() => {});
+          throw err;
+        }
+        log.warn("reconciling a GPU key failed", `${err}`);
+        return await fail({ claimed: true, failed: true });
+      }
+    });
+  } catch (err) {
+    // the key couldn't be read for this pass
+    if (!entered) return await fail({ claimed: true, failed: true });
+    throw err;
   }
 }
 
@@ -666,7 +726,11 @@ export async function runReconcileSweep(
         let outcome: ReconcileOutcome;
         try {
           outcome = await reconcileKey(
-            { ...k, deadline: clock() + keyPassMs },
+            {
+              ...k,
+              deadline: clock() + keyPassMs,
+              key_use: workerKeyUse("reconciler", token, "reconcile"),
+            },
             { ...deps, guard: renew },
           );
         } catch (err) {
@@ -710,21 +774,53 @@ export async function runReconcileSweep(
 
 // A launch refused for a stale inventory asks for one key's pass now
 // (bounded like a sweep's; at most one at a time per key in this hub; the
-// conditional claim covers other hubs and the sweep).
+// conditional claim covers other hubs and the sweep). It is a reconciler run
+// of its own: it takes the lease (while a sweep holds it, the sweep gets to
+// the key) and gives it back without moving the sweep's watermark.
 const waking = new Set<string>();
 export function wakeReconcile(
   k: { credential_id: string; key_owner_account_id: string },
-  deps: ReconcileDeps = {},
+  deps: ReconcileDeps & { holder?: string } = {},
 ): Promise<ReconcileOutcome | undefined> {
   if (waking.has(k.credential_id)) return Promise.resolve(undefined);
   waking.add(k.credential_id);
-  const clock = deps.now ?? Date.now;
-  return reconcileKey({ ...k, deadline: clock() + RECONCILE_KEY_PASS_MS }, deps)
+  return wakeOnce(k, deps)
     .catch((err) => {
       log.debug("a requested reconcile pass failed", `${err}`);
       return undefined;
     })
     .finally(() => waking.delete(k.credential_id));
+}
+
+async function wakeOnce(
+  k: { credential_id: string; key_owner_account_id: string },
+  deps: ReconcileDeps & { holder?: string },
+): Promise<ReconcileOutcome | undefined> {
+  const clock = deps.now ?? Date.now;
+  const at = () => new Date(clock());
+  const token = `wake:${deps.holder ?? `${hostname()}:${process.pid}`}:${randomUUID()}`;
+  const ttl = RECONCILE_KEY_PASS_MS + 60_000;
+  if (!(await acquireWorkerLease("reconciler", token, at(), ttl))) {
+    return undefined;
+  }
+  try {
+    return await reconcileKey(
+      {
+        ...k,
+        deadline: clock() + RECONCILE_KEY_PASS_MS,
+        key_use: workerKeyUse("reconciler", token, "reconcile"),
+      },
+      {
+        ...deps,
+        guard: async () => {
+          await deps.guard?.();
+          await renewWorkerLease("reconciler", token, at(), ttl);
+        },
+      },
+    );
+  } finally {
+    await releaseWorkerLease("reconciler", token, at()).catch(() => {});
+  }
 }
 
 export function initGpuReconciler(): void {

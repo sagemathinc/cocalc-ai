@@ -3,10 +3,19 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+// The default key lookup finds no key.
 jest.mock("@cocalc/server/gpu/provider-keys", () => ({
-  getRunpodClientForAccount: jest.fn(async () => undefined),
-  getRunpodCleanupForAccount: jest.fn(async () => undefined),
+  withRunpodLaunchAccess: jest.fn(
+    async (_a, _u, _d, fn) => await fn(undefined),
+  ),
+  withRunpodCleanup: jest.fn(async (_a, _u, _d, fn) => await fn(undefined)),
   isGpuProviderKeysEntitled: jest.fn(async () => true),
+}));
+// the hub's authorization records (5d-2c) have their own tests
+jest.mock("@cocalc/server/gpu/key-use", () => ({
+  ...jest.requireActual("@cocalc/server/gpu/key-use"),
+  admitUserKeyUse: jest.fn(async () => undefined),
+  admitAgentKeyUse: jest.fn(async () => undefined),
 }));
 // A single bay: every account is homed here.
 jest.mock("@cocalc/server/bay-config", () => ({

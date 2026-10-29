@@ -27,12 +27,13 @@ import type {
   GpuPodsResult,
 } from "@cocalc/conat/hub/api/gpu";
 import {
-  getRunpodCleanupForAccount,
-  getRunpodClientForAccount,
+  withRunpodCleanup,
+  withRunpodLaunchAccess,
   isGpuProviderKeysEntitled,
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import type { GpuKeyUse } from "@cocalc/server/gpu/key-use";
 import {
   listManagedGpuPodsLocal,
   type GpuAgentScope,
@@ -153,41 +154,62 @@ function readError(err: unknown): Error {
   return Error("Reading from RunPod failed.");
 }
 
-async function client(
+// The key, for `fn` only (5d-2c: one audited decrypt under `key_use`);
+// tests stand in with deps.getClient / deps.getCleanup.
+async function withClient<T>(
   account_id: string,
   deps: GpuReadDeps,
-): Promise<RunpodClient> {
+  key_use: GpuKeyUse | undefined,
+  fn: (c: RunpodClient) => Promise<T>,
+): Promise<T> {
   // Checked here too for a clear message; the key helper checks it again.
   if (!(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))) {
     throw Error("Your membership doesn't include GPUs on your own key.");
   }
-  return await loaded(() =>
-    (deps.getClient ?? getRunpodClientForAccount)(account_id),
+  return await loaded(
+    deps.getClient
+      ? async (use) => await use(await deps.getClient!(account_id))
+      : (use) =>
+          withRunpodLaunchAccess(account_id, key_use, {}, (a) =>
+            use(a?.client),
+          ),
+    fn,
   );
 }
 
-async function cleanup(
+async function withCleanup<T>(
   account_id: string,
   deps: GpuReadDeps,
-): Promise<RunpodCleanupCapability> {
-  return await loaded(() =>
-    (deps.getCleanup ?? getRunpodCleanupForAccount)(account_id),
+  key_use: GpuKeyUse | undefined,
+  fn: (c: RunpodCleanupCapability) => Promise<T>,
+): Promise<T> {
+  return await loaded(
+    deps.getCleanup
+      ? async (use) => await use(await deps.getCleanup!(account_id))
+      : (use) => withRunpodCleanup(account_id, key_use, {}, use),
+    fn,
   );
 }
 
-async function loaded<T>(get: () => Promise<T | undefined>): Promise<T> {
-  let c: T | undefined;
+async function loaded<C, T>(
+  open: (use: (c: C | undefined) => Promise<T>) => Promise<T>,
+  fn: (c: C) => Promise<T>,
+): Promise<T> {
+  let entered = false;
   try {
-    c = await get();
-  } catch {
+    return await open(async (c) => {
+      entered = true;
+      if (c == null) {
+        throw Error(
+          "No RunPod API key is connected. Connect one in Settings → Connectors.",
+        );
+      }
+      return await fn(c);
+    });
+  } catch (err) {
+    if (entered) throw err;
     throw Error("Your RunPod API key could not be loaded. Try again shortly.");
   }
-  if (c == null) {
-    throw Error(
-      "No RunPod API key is connected. Connect one in Settings → Connectors.",
-    );
-  }
-  return c;
 }
 
 async function runpod<T>(fn: () => Promise<T>): Promise<T> {
@@ -201,12 +223,14 @@ async function runpod<T>(fn: () => Promise<T>): Promise<T> {
 async function cachedCatalog(
   account_id: string,
   deps: GpuReadDeps,
+  key_use: GpuKeyUse | undefined,
 ): Promise<RunpodCatalog> {
   const now = (deps.now ?? Date.now)();
   const hit = catalogCache.get(account_id);
   if (hit && hit.expires > now) return await hit.catalog;
-  const c = await client(account_id, deps);
-  const catalog = runpod(() => getRunpodCatalog(c));
+  const catalog = withClient(account_id, deps, key_use, (c) =>
+    runpod(() => getRunpodCatalog(c)),
+  );
   if (catalogCache.size >= MAX_CACHED_ACCOUNTS) {
     for (const [id, entry] of catalogCache) {
       if (entry.expires <= now) catalogCache.delete(id);
@@ -223,13 +247,17 @@ async function cachedCatalog(
   return await catalog;
 }
 
+// `key_use` (5d-2c): the catalog read's, made by the authenticated boundary
 export async function getGpuCatalogLocal(
-  opts: { account_id?: string; provider?: unknown },
+  opts: { account_id?: string; provider?: unknown; key_use?: GpuKeyUse },
   deps: GpuReadDeps = {},
 ): Promise<GpuCatalogResult> {
   const account_id = requireAccount(opts.account_id);
   const provider = requireProvider(opts.provider);
-  return { provider, catalog: await cachedCatalog(account_id, deps) };
+  return {
+    provider,
+    catalog: await cachedCatalog(account_id, deps, opts.key_use),
+  };
 }
 
 const STOCK_RANK: Record<RunpodStockLevel, number> = {
@@ -349,14 +377,18 @@ export function availabilityOffers(
 }
 
 export async function getGpuAvailabilityLocal(
-  opts: { account_id?: string; provider?: unknown } & GpuAvailabilityFilter,
+  opts: {
+    account_id?: string;
+    provider?: unknown;
+    key_use?: GpuKeyUse;
+  } & GpuAvailabilityFilter,
   deps: GpuReadDeps = {},
 ): Promise<GpuAvailabilityResult> {
   const account_id = requireAccount(opts.account_id);
   const provider = requireProvider(opts.provider);
   // Validate before any provider call.
   normalizeFilter(opts);
-  const catalog = await cachedCatalog(account_id, deps);
+  const catalog = await cachedCatalog(account_id, deps, opts.key_use);
   return {
     provider,
     as_of: catalog.as_of,
@@ -375,9 +407,12 @@ export async function getGpuPodsLocal(
     include_ended?: unknown;
     // an agent (step 6b): only the managed pods it launched in its project
     agent?: GpuAgentScope;
+    // the listing's pod_read use, made by the authenticated boundary (5d-2c)
+    key_use?: GpuKeyUse;
   },
   deps: GpuReadDeps = {},
 ): Promise<GpuPodsResult> {
+  const key_use = opts.key_use;
   const account_id = requireAccount(opts.account_id);
   const provider = requireProvider(opts.provider);
   const podId = opts.pod_id;
@@ -395,7 +430,6 @@ export async function getGpuPodsLocal(
   if (scope === "account") {
     // Every pod in the provider account, including ones CoCalc didn't start
     // (what an unknown-pod alert points at). Account principals only.
-    const c = await cleanup(account_id, deps);
     // A CoCalc handle (cc-...) is our name, not RunPod's id: look it up in
     // our records first.
     let providerId: string | undefined = podId as string | undefined;
@@ -403,18 +437,21 @@ export async function getGpuPodsLocal(
       const records = await (deps.listManaged ?? listManagedGpuPodsLocal)({
         account_id,
         include_ended: true,
+        key_use,
       });
       providerId = records.find((r) => r.handle === podId)?.provider_pod_id;
       if (providerId == null) return { provider, as_of, scope, pods: [] };
     }
-    const pods =
-      providerId != null
-        ? await runpod(async () => {
-            const pod = await c.getPod(providerId!);
-            return pod ? [pod] : [];
-          })
-        : await runpod(() => c.listPods());
-    return { provider, as_of, scope, pods };
+    return await withCleanup(account_id, deps, key_use, async (c) => {
+      const pods =
+        providerId != null
+          ? await runpod(async () => {
+              const pod = await c.getPod(providerId!);
+              return pod ? [pod] : [];
+            })
+          : await runpod(() => c.listPods());
+      return { provider, as_of, scope, pods };
+    });
   }
   // The pods CoCalc started that this account pays for or is responsible
   // for, with live views of the ones RunPod knows.
@@ -422,6 +459,7 @@ export async function getGpuPodsLocal(
     account_id,
     include_ended: opts.include_ended === true,
     ...(opts.agent ? { agent: opts.agent } : {}),
+    key_use,
   });
   const selected =
     podId != null
@@ -438,28 +476,16 @@ export async function getGpuPodsLocal(
     // another payer, come in step 7).
     // Without a usable key the records are still returned (they say what
     // to clean up at RunPod), with no live views.
-    let c: RunpodCleanupCapability;
-    try {
-      c = await cleanup(account_id, deps);
-    } catch (err) {
-      return {
-        provider,
-        as_of,
-        scope,
-        pods: [],
-        records: selected,
-        live_error: `${(err as Error)?.message ?? err}`,
-      };
-    }
     const ids = new Set(bound.map((r) => r.provider_pod_id!));
     try {
-      pods =
+      pods = await withCleanup(account_id, deps, key_use, async (c) =>
         podId != null && bound.length === 1
           ? await runpod(async () => {
               const pod = await c.getPod(bound[0].provider_pod_id!);
               return pod ? [pod] : [];
             })
-          : (await runpod(() => c.listPods())).filter((p) => ids.has(p.id));
+          : (await runpod(() => c.listPods())).filter((p) => ids.has(p.id)),
+      );
     } catch (err) {
       // e.g. a key revoked at RunPod: the records matter most then. The
       // error is readError's (our words, never provider text).
@@ -505,8 +531,10 @@ const FILTER_KEYS = [
   "min_count",
 ];
 
+// `key_use` (5d-2c) is made by the hub API handler when this is the home
+// bay; a forwarded call gets the home bay's own.
 export async function getGpuCatalog(
-  opts: { account_id?: string; provider?: unknown },
+  opts: { account_id?: string; provider?: unknown; key_use?: GpuKeyUse },
   deps: GpuReadDeps & GpuRoutingDeps = {},
 ): Promise<GpuCatalogResult> {
   const account_id = requireAccount(opts.account_id);
@@ -520,7 +548,11 @@ export async function getGpuCatalog(
 }
 
 export async function getGpuAvailability(
-  opts: { account_id?: string; provider?: unknown } & GpuAvailabilityFilter,
+  opts: {
+    account_id?: string;
+    provider?: unknown;
+    key_use?: GpuKeyUse;
+  } & GpuAvailabilityFilter,
   deps: GpuReadDeps & GpuRoutingDeps = {},
 ): Promise<GpuAvailabilityResult> {
   const account_id = requireAccount(opts.account_id);
@@ -541,6 +573,7 @@ export async function getGpuPods(
     scope?: unknown;
     include_ended?: unknown;
     agent?: GpuAgentScope;
+    key_use?: GpuKeyUse;
   },
   deps: GpuReadDeps & GpuRoutingDeps = {},
 ): Promise<GpuPodsResult> {

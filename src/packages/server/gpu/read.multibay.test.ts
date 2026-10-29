@@ -16,9 +16,16 @@ const edgeGetCleanup = jest.fn(async () => {
   throw Error("the edge bay must never read the key");
 });
 jest.mock("@cocalc/server/gpu/provider-keys", () => ({
-  getRunpodClientForAccount: (...args) => edgeGetClient(...args),
-  getRunpodCleanupForAccount: (...args) => edgeGetCleanup(...args),
+  withRunpodLaunchAccess: async (a, _u, _d, fn) =>
+    await fn(await edgeGetClient(a)),
+  withRunpodCleanup: async (a, _u, _d, fn) => await fn(await edgeGetCleanup(a)),
   isGpuProviderKeysEntitled: async () => true,
+}));
+// an authorization record is made only on the home bay (5d-2c)
+const admitUserKeyUse = jest.fn(async () => undefined);
+jest.mock("@cocalc/server/gpu/key-use", () => ({
+  ...jest.requireActual("@cocalc/server/gpu/key-use"),
+  admitUserKeyUse: (...args) => admitUserKeyUse(...args),
 }));
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
@@ -158,6 +165,7 @@ describe("gpu.* for an account homed on another bay", () => {
     expect(fastRpcRequest).not.toHaveBeenCalled();
     expect(GPU_HOME_BAY_TIMEOUT_MS).toBeGreaterThanOrEqual(120_000);
     expect(home.received).toEqual([{ account_id: ACCOUNT, scope: "account" }]);
+    expect(admitUserKeyUse).not.toHaveBeenCalled();
     expect(edgeGetClient).not.toHaveBeenCalled();
     expect(edgeGetCleanup).not.toHaveBeenCalled();
     const text = wireText();
@@ -194,11 +202,19 @@ describe("gpu.* for an account homed on another bay", () => {
   });
 
   it("runs locally, without crossing, for an account homed here", async () => {
-    resolveAccountHomeBay.mockResolvedValueOnce({ home_bay_id: "bay-0" });
+    // (asked twice: for the record, then for the routing)
+    resolveAccountHomeBay
+      .mockResolvedValueOnce({ home_bay_id: "bay-0" })
+      .mockResolvedValueOnce({ home_bay_id: "bay-0" });
     // The edge mock refuses: this bay was asked for the key itself.
     await expect(
       hubGpu.pods({ account_id: ACCOUNT, scope: "account" }),
     ).rejects.toThrow("Your RunPod API key could not be loaded.");
+    // here, the hub made the read's record
+    expect(admitUserKeyUse).toHaveBeenCalledWith({
+      account_id: ACCOUNT,
+      purpose: "pod_read",
+    });
     expect(edgeGetCleanup).toHaveBeenCalledWith(ACCOUNT);
     expect(wire).toHaveLength(0);
   });

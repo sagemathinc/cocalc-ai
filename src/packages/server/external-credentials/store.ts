@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EXTERNAL_CREDENTIAL_CONFLICT } from "@cocalc/util/external-credential-conflict";
+import { GPU_PROVIDER_API_KEY_KIND } from "@cocalc/util/gpu/provider-keys";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
   decryptSecretStorageValue,
@@ -288,7 +289,28 @@ async function encryptPayload(
   return await encryptSecretStorageValue(credentialAadName(selector), payload);
 }
 
+// Every path that decrypts goes through here, and refuses a GPU provider
+// key: those are decrypted only by withAuditedGpuKey (5d-2c).
 async function decryptPayload(
+  selector: ExternalCredentialSelector,
+  encrypted_payload: string | null,
+): Promise<string> {
+  if (
+    `${selector.kind ?? ""}`.trim().toLowerCase() === GPU_PROVIDER_API_KEY_KIND
+  ) {
+    throw Error(GPU_KEY_REFUSED);
+  }
+  return await decryptPrimitive(selector, encrypted_payload);
+}
+
+// The key was removed between its admission and its read: no key, not a
+// failure to read one.
+export class GpuKeyGone extends Error {}
+
+export const GPU_KEY_REFUSED =
+  "GPU provider keys are decrypted only through the audited key path";
+
+async function decryptPrimitive(
   selector: ExternalCredentialSelector,
   encrypted_payload: string | null,
 ): Promise<string> {
@@ -299,6 +321,60 @@ async function decryptPayload(
     encrypted_payload,
   );
   return result.value;
+}
+
+/**
+ * The only way to decrypt a GPU provider key (5d-2c). `decrypt_id` is a
+ * gpu_key_decrypts row admitted for `credential_id` (server/gpu/key-use.ts
+ * admitDecrypt); it is a one-shot permit, claimed atomically before the key
+ * is read, so a second or concurrent use of it fails closed with no key.
+ * The key exists only inside `fn`; how it finished is recorded in a finally.
+ */
+export async function withAuditedGpuKey<T>(
+  decrypt_id: string,
+  credential_id: string,
+  fn: (key: string) => Promise<T>,
+): Promise<T> {
+  const nonce = randomUUID();
+  const { rows: claimed } = await pool().query(
+    `UPDATE gpu_key_decrypts SET claimed_at = now(), claim_nonce = $3
+      WHERE id = $1 AND credential_id = $2 AND claimed_at IS NULL
+      RETURNING id`,
+    [decrypt_id, credential_id, nonce],
+  );
+  if (claimed.length === 0) {
+    throw Error("this GPU key permit is not valid or was already used");
+  }
+  let outcome = "error";
+  try {
+    const { rows } = await pool().query<ExternalCredentialRow>(
+      `SELECT ${EXTERNAL_CREDENTIAL_COLUMNS} FROM external_credentials
+        WHERE id = $1 AND kind = $2 AND revoked IS NULL`,
+      [credential_id, GPU_PROVIDER_API_KEY_KIND],
+    );
+    const row = rows[0];
+    if (!row?.encrypted_payload) {
+      outcome = "no_key";
+      throw new GpuKeyGone("the GPU provider key is no longer stored");
+    }
+    const key = await decryptPrimitive(
+      { provider: row.provider, kind: row.kind, scope: row.scope },
+      row.encrypted_payload,
+    );
+    const result = await fn(key);
+    outcome = "ok";
+    return result;
+  } finally {
+    await pool()
+      .query(
+        `UPDATE gpu_key_decrypts SET finished = now(), outcome = $3
+          WHERE id = $1 AND claim_nonce = $2 AND finished IS NULL`,
+        [decrypt_id, nonce, outcome],
+      )
+      .catch(() => {
+        // a claimed, unfinished row: the audit reports it once mature
+      });
+  }
 }
 
 export async function upsertExternalCredential({
