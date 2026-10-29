@@ -27,7 +27,7 @@ describe("canonicalJson", () => {
   });
 
   it("is stable under a parse round trip", () => {
-    const value = { z: 'é "\\', y: [0, -1.5, true, null] };
+    const value = { z: '\u00e9\u2028"\\', y: [0, -1.5, true, null] };
     const text = canonicalJson(value);
     expect(canonicalJson(JSON.parse(text))).toBe(text);
     expect(sha256Hex(text)).toHaveLength(64);
