@@ -5,6 +5,7 @@
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
+import { applyRemoteProjectToAccountCollaboratorIndex } from "./account-collaborator-index-projector";
 import {
   listProjectedCollaboratorsForAccount,
   listProjectedMyCollaboratorsForAccount,
@@ -29,7 +30,7 @@ describe("account_collaborator_index rebuild", () => {
 
   afterEach(async () => {
     await getPool().query(
-      "TRUNCATE account_collaborator_index, projects, accounts, cluster_account_directory CASCADE",
+      "TRUNCATE account_collaborator_index, account_project_index, projects, accounts, cluster_account_directory CASCADE",
     );
   });
 
@@ -200,6 +201,37 @@ describe("account_collaborator_index rebuild", () => {
     ]);
   });
 
+  it("leaves the name of an account this bay knows nothing about empty", async () => {
+    await getPool().query(
+      `INSERT INTO accounts (account_id, home_bay_id) VALUES ($1, $2)`,
+      [ACCOUNT_ID, LOCAL_BAY_ID],
+    );
+    // Homed on another bay and not in this bay's directory: not "deleted".
+    await indexProject(PROJECT_B, {
+      [ACCOUNT_ID]: { group: "owner" },
+      [COLLAB_B]: { group: "collaborator" },
+    });
+    await rebuildAccountCollaboratorIndex({
+      account_id: ACCOUNT_ID,
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+    await expect(
+      listProjectedCollaboratorsForAccount({
+        account_id: ACCOUNT_ID,
+        limit: 10,
+        collaborator_account_id: COLLAB_B,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        collaborator_account_id: COLLAB_B,
+        first_name: null,
+        last_name: null,
+        name: null,
+      }),
+    ]);
+  });
+
   it("projects deleted collaborators as Deleted User", async () => {
     await getPool().query(
       `INSERT INTO accounts
@@ -207,6 +239,12 @@ describe("account_collaborator_index rebuild", () => {
        VALUES
          ($1, 'Local', 'User', NOW(), 'local@example.com', $2)`,
       [ACCOUNT_ID, LOCAL_BAY_ID],
+    );
+    // Deleted accounts keep their row, marked deleted.
+    await getPool().query(
+      `INSERT INTO accounts (account_id, first_name, last_name, deleted, home_bay_id)
+       VALUES ($1, 'Was', 'Here', TRUE, $2)`,
+      [DELETED_COLLAB, LOCAL_BAY_ID],
     );
     await getPool().query(
       `INSERT INTO projects
@@ -457,5 +495,176 @@ describe("account_collaborator_index rebuild", () => {
     ).rejects.toThrow(
       `account '${ACCOUNT_ID}' is not homed in bay '${LOCAL_BAY_ID}'`,
     );
+  });
+
+  async function indexProject(
+    project_id: string,
+    users: Record<string, { group: string }>,
+    owning_bay_id = OTHER_BAY_ID,
+  ) {
+    await getPool().query(
+      `INSERT INTO account_project_index
+         (account_id, project_id, owning_bay_id, users_summary, updated_at)
+       VALUES ($1, $2, $3, $4::JSONB, NOW())
+       ON CONFLICT (account_id, project_id)
+       DO UPDATE SET users_summary = EXCLUDED.users_summary`,
+      [ACCOUNT_ID, project_id, owning_bay_id, JSON.stringify(users)],
+    );
+  }
+
+  const collaboratorIds = async () =>
+    (await listProjectedMyCollaboratorsForAccount({ account_id: ACCOUNT_ID }))
+      .map((row) => row.account_id)
+      .sort();
+
+  it("counts projects owned by other bays, from the account's project index", async () => {
+    await getPool().query(
+      `INSERT INTO accounts (account_id, home_bay_id) VALUES ($1, $2)`,
+      [ACCOUNT_ID, LOCAL_BAY_ID],
+    );
+    await getPool().query(
+      `INSERT INTO projects (project_id, users, owning_bay_id) VALUES ($1, $2::JSONB, $3)`,
+      [
+        PROJECT_A,
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+          [COLLAB_A]: { group: "collaborator" },
+        }),
+        LOCAL_BAY_ID,
+      ],
+    );
+    // Only the index knows this one: it lives on another bay.
+    await indexProject(PROJECT_B, {
+      [ACCOUNT_ID]: { group: "collaborator" },
+      [COLLAB_B]: { group: "owner" },
+    });
+    await expect(
+      rebuildAccountCollaboratorIndex({
+        account_id: ACCOUNT_ID,
+        bay_id: LOCAL_BAY_ID,
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      source_project_rows: 2,
+      // The account's own row, as for local projects, and one per peer.
+      inserted_rows: 3,
+    });
+    expect(await collaboratorIds()).toEqual([COLLAB_A, COLLAB_B].sort());
+  });
+
+  it("a local copy of another bay's project is never used; the index decides", async () => {
+    await getPool().query(
+      `INSERT INTO accounts (account_id, home_bay_id) VALUES ($1, $2)`,
+      [ACCOUNT_ID, LOCAL_BAY_ID],
+    );
+    // A stale copy says COLLAB_A; the owning bay's current users say COLLAB_B.
+    await getPool().query(
+      `INSERT INTO projects (project_id, users, owning_bay_id) VALUES ($1, $2::JSONB, $3)`,
+      [
+        PROJECT_B,
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+          [COLLAB_A]: { group: "collaborator" },
+        }),
+        OTHER_BAY_ID,
+      ],
+    );
+    const rebuild = () =>
+      rebuildAccountCollaboratorIndex({
+        account_id: ACCOUNT_ID,
+        bay_id: LOCAL_BAY_ID,
+        dry_run: false,
+      });
+    // Without an index row the copy still doesn't count: it may be stale, and
+    // no row can mean the owning bay removed the account.
+    await rebuild();
+    expect(await collaboratorIds()).toEqual([]);
+    await indexProject(PROJECT_B, {
+      [ACCOUNT_ID]: { group: "owner" },
+      [COLLAB_B]: { group: "collaborator" },
+    });
+    await rebuild();
+    expect(await collaboratorIds()).toEqual([COLLAB_B]);
+  });
+
+  it("a forwarded change on the home bay adds, keeps and removes collaborators", async () => {
+    await getPool().query(
+      `INSERT INTO accounts (account_id, home_bay_id) VALUES ($1, $2)`,
+      [ACCOUNT_ID, LOCAL_BAY_ID],
+    );
+    const apply = async (
+      previous_users: Record<string, any> | null,
+      current_users: Record<string, any> | null,
+    ) => {
+      const client = await getPool().connect();
+      try {
+        await client.query("BEGIN");
+        if (current_users == null) {
+          await client.query(
+            "DELETE FROM account_project_index WHERE account_id = $1 AND project_id = $2",
+            [ACCOUNT_ID, PROJECT_B],
+          );
+        }
+        const result = await applyRemoteProjectToAccountCollaboratorIndex({
+          db: client,
+          bay_id: LOCAL_BAY_ID,
+          account_id: ACCOUNT_ID,
+          previous_users,
+          current_users,
+        });
+        await client.query("COMMIT");
+        return result.feed_events.map((event) => event.type);
+      } finally {
+        client.release();
+      }
+    };
+    const users = {
+      [ACCOUNT_ID]: { group: "collaborator" },
+      [COLLAB_B]: { group: "owner" },
+    };
+    await indexProject(PROJECT_B, users);
+    // Invited: COLLAB_B appears, with a feed event.
+    expect(await apply({ [COLLAB_B]: { group: "owner" } }, users)).toEqual([
+      "collaborator.upsert",
+    ]);
+    expect(await collaboratorIds()).toEqual([COLLAB_B]);
+    // Routine activity, same members: nothing to do.
+    expect(await apply(users, users)).toEqual([]);
+    // Same members but the row was lost: repaired.
+    await getPool().query("TRUNCATE account_collaborator_index");
+    expect(await apply(users, users)).toEqual(["collaborator.upsert"]);
+    expect(await collaboratorIds()).toEqual([COLLAB_B]);
+    // Same members and the row exists, but its shared-project count is stale
+    // (e.g. recorded before this project counted): repaired too.
+    const count = async () =>
+      (
+        await getPool().query(
+          "SELECT common_project_count FROM account_collaborator_index WHERE account_id = $1 AND collaborator_account_id = $2",
+          [ACCOUNT_ID, COLLAB_B],
+        )
+      ).rows[0]?.common_project_count;
+    expect(await count()).toBe(1);
+    await getPool().query(
+      "UPDATE account_collaborator_index SET common_project_count = 7 WHERE account_id = $1",
+      [ACCOUNT_ID],
+    );
+    await apply(users, users);
+    expect(await count()).toBe(1);
+    // And once right, an unchanged snapshot changes nothing again.
+    expect(await apply(users, users)).toEqual([]);
+    // Removed from the project: gone, even with a stale local copy of the
+    // project that still lists both, and a later rebuild doesn't bring it back.
+    await getPool().query(
+      `INSERT INTO projects (project_id, users, owning_bay_id) VALUES ($1, $2::JSONB, $3)`,
+      [PROJECT_B, JSON.stringify(users), OTHER_BAY_ID],
+    );
+    expect(await apply(users, null)).toEqual(["collaborator.remove"]);
+    expect(await collaboratorIds()).toEqual([]);
+    await rebuildAccountCollaboratorIndex({
+      account_id: ACCOUNT_ID,
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+    expect(await collaboratorIds()).toEqual([]);
   });
 });

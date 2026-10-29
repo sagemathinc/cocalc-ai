@@ -65,6 +65,9 @@ export function buildCollaboratorRecord(
 export function mergeUsersSnapshot(
   upstream_user_map: Map<string, Map<string, any>>,
 ): Map<string, any> {
+  // A newer snapshot is authoritative: a pending other-bay read must not
+  // undo it, so it asks again against this state.
+  invalidateOtherBayCollaborators();
   let next = (store.get("user_map") ?? Map<string, any>()).asMutable();
   next.forEach((data, account_id) => {
     if (data?.get?.("collaborator")) {
@@ -83,6 +86,7 @@ export function mergeUsersSnapshot(
 }
 
 function applyCollaboratorFeedUpsert(row: AccountFeedCollaboratorRow): void {
+  invalidateOtherBayCollaborators();
   const user_map = store.get("user_map") ?? Map<string, any>();
   const next = buildCollaboratorRecord(row);
   if (next.equals(user_map.get(row.account_id))) {
@@ -97,6 +101,7 @@ function applyCollaboratorFeedUpsert(row: AccountFeedCollaboratorRow): void {
 }
 
 function applyCollaboratorFeedRemove(collaborator_account_id: string): void {
+  invalidateOtherBayCollaborators();
   const user_map = store.get("user_map");
   const existing = user_map?.get(collaborator_account_id);
   if (existing == null || !existing.get("collaborator")) {
@@ -144,7 +149,127 @@ class UsersTable extends Table {
 
   _change(table, _keys) {
     actions.setState({ user_map: mergeUsersSnapshot(table.get()) });
+    void addOtherBayCollaborators();
   }
+}
+
+// The collaborators snapshot reads only this account's home bay, so people
+// met only in projects on other bays are missing from it. The hub's
+// collaborator list includes them (from the account's collaborator index):
+// add the ones the snapshot lacks, as the realtime feed would.
+export function addOtherBayCollaborators(): Promise<void> {
+  const account_id = getAccountId();
+  if (
+    account_id == null ||
+    getKioskProjectId() != null ||
+    !webapp_client.is_signed_in()
+  ) {
+    return Promise.resolve();
+  }
+  return addOtherBayCollaboratorsFor(account_id);
+}
+
+// Bumped by anything a pending response must not undo: signing out, a new
+// collaborators snapshot and collaborator feed events. A response that started before is dropped and
+// asked for again, so a remove that arrives meanwhile always wins.
+let otherBayGeneration = 0;
+function invalidateOtherBayCollaborators(): void {
+  otherBayGeneration += 1;
+}
+
+// One request per account at a time; its result only applies while that
+// account is still the one signed in.
+const addOtherBayCollaboratorsFor = reuseInFlight(
+  async (account_id: string): Promise<void> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const generation = otherBayGeneration;
+      let rows: Awaited<
+        ReturnType<
+          typeof webapp_client.conat_client.hub.projects.listMyCollaborators
+        >
+      >;
+      try {
+        rows =
+          await webapp_client.conat_client.hub.projects.listMyCollaborators({
+            limit: 1000,
+          });
+      } catch (err) {
+        log.info("collaborators on other bays unavailable", err);
+        // A transient failure (e.g. reconnecting): try again later, or they
+        // stay missing until something else changes.
+        if (webapp_client.is_signed_in() && getAccountId() === account_id) {
+          scheduleRetry();
+        }
+        return;
+      }
+      if (!webapp_client.is_signed_in() || getAccountId() !== account_id) {
+        return;
+      }
+      if (generation !== otherBayGeneration) continue;
+      retryDelay = RETRY_MIN_MS;
+      mergeOtherBayCollaborators(account_id, rows);
+      return;
+    }
+    // Changes kept arriving while asking: ask again a bit later, rather than
+    // leave those collaborators out until something else changes.
+    scheduleRetry();
+  },
+);
+
+// Backoff after a failed request, or a round where every answer was
+// outdated by a change; reset by a successful merge.
+const RETRY_MIN_MS = 2_000;
+const RETRY_MAX_MS = 60_000;
+let retryDelay = RETRY_MIN_MS;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleRetry(): void {
+  if (retryTimer != null) return;
+  const delay = retryDelay;
+  retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
+  retryTimer = setTimeout(() => {
+    retryTimer = undefined;
+    void addOtherBayCollaborators();
+  }, delay);
+}
+
+function mergeOtherBayCollaborators(
+  account_id: string,
+  rows: {
+    account_id: string;
+    name?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    last_active?: Date | string | null;
+    shared_projects?: number;
+  }[],
+): void {
+  const user_map = store.get("user_map") ?? Map<string, any>();
+  let next = user_map;
+  for (const row of rows) {
+    if (row.account_id === account_id) continue;
+    if (next.get(row.account_id)?.get?.("collaborator")) continue;
+    next = next.set(
+      row.account_id,
+      (next.get(row.account_id) ?? Map<string, any>()).merge(
+        buildCollaboratorRecord({
+          account_id: row.account_id,
+          display_name: null,
+          first_name: row.first_name ?? null,
+          last_name: row.last_name ?? null,
+          name: row.name ?? null,
+          last_active:
+            row.last_active != null
+              ? new Date(row.last_active).toISOString()
+              : null,
+          profile: null,
+          common_project_count: row.shared_projects ?? 0,
+          updated_at: null,
+        }),
+      ),
+    );
+  }
+  if (next !== user_map) actions.setState({ user_map: next });
 }
 
 let signedInListener: (() => void) | undefined;
@@ -345,6 +470,7 @@ function initRealtime(): void {
     void ensureRealtimeFeedForCurrentAccount();
   };
   signedOutListener = () => {
+    invalidateOtherBayCollaborators();
     closeRealtimeFeed();
     actions.setState({ user_map: fromJS({}) });
   };
