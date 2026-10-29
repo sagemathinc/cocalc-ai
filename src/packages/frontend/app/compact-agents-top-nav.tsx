@@ -80,10 +80,10 @@ export function CompactAgentsTopNav({
     {
       key: "people",
       icon: <Icon name="users" />,
+      // The sidebar's badge announces changes; this one only shows.
       label: (
         <>
           People
-          {/* The sidebar's badge announces changes; this one only shows. */}
           <PeopleUnreadBadge announce={false} />
         </>
       ),

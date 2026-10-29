@@ -1416,7 +1416,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       def(WORKSPACE_PAGE, 'label="People"'),
       def(
         "frontend/app/compact-agents-top-nav.tsx",
-        "<> People <PeopleUnreadBadge /> </>",
+        "<> People <PeopleUnreadBadge announce={false} /> </>",
       ),
       def("frontend/people/page.tsx", ">People</h1>"),
     ],
