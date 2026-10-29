@@ -2707,28 +2707,29 @@ export async function getLaunchHealth({
           ? [`${billingExposureResult.reason}`]
           : billingExposureHealthDetails(billingExposureResult.value),
     }),
-    launchHealthCheck({
-      id: "site-funded-ai",
-      label: "Site-funded AI turns",
-      level:
-        siteFundedAiResult.status === "rejected"
-          ? "warning"
-          : siteFundedAiResult.value
-            ? siteFundedAiHealthLevel(siteFundedAiResult.value)
-            : "healthy",
-      summary:
-        siteFundedAiResult.status === "rejected"
-          ? "Unable to read site-funded AI turns."
-          : siteFundedAiResult.value
-            ? siteFundedAiHealthSummary(siteFundedAiResult.value)
-            : "The seed bay records and checks site-funded AI turns.",
-      details:
-        siteFundedAiResult.status === "rejected"
-          ? [`${siteFundedAiResult.reason}`]
-          : siteFundedAiResult.value
-            ? siteFundedAiHealthDetails(siteFundedAiResult.value)
-            : [],
-    }),
+    // Only the seed bay records site-funded turns (and alerts on them).
+    // Another bay omits this check rather than report healthy without data.
+    ...(siteFundedAiResult.status === "rejected"
+      ? [
+          launchHealthCheck({
+            id: "site-funded-ai",
+            label: "Site-funded AI turns",
+            level: "warning",
+            summary: "Unable to read site-funded AI turns.",
+            details: [`${siteFundedAiResult.reason}`],
+          }),
+        ]
+      : siteFundedAiResult.value
+        ? [
+            launchHealthCheck({
+              id: "site-funded-ai",
+              label: "Site-funded AI turns",
+              level: siteFundedAiHealthLevel(siteFundedAiResult.value),
+              summary: siteFundedAiHealthSummary(siteFundedAiResult.value),
+              details: siteFundedAiHealthDetails(siteFundedAiResult.value),
+            }),
+          ]
+        : []),
     launchHealthCheck({
       id: "backup-repos",
       label: "Shared project backup repositories",
