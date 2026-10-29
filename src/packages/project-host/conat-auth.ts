@@ -56,7 +56,7 @@ import getLogger from "@cocalc/backend/logger";
 import { checkAmbientCookieRequest } from "./browser-origin-policy";
 import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
 import { isValidUUID } from "@cocalc/util/misc";
-import { getProject } from "./sqlite/projects";
+import { getProject, projectUsersGeneration } from "./sqlite/projects";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
 import {
   resolveProjectHostBrowserSessionFromCookieHeader,
@@ -284,8 +284,148 @@ async function hasTemporaryViewerGrant({
   }
 }
 
+function isAccountUnknownLocally({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): boolean {
+  const row = getRow("projects", JSON.stringify({ project_id }));
+  return row?.users?.[account_id] == null;
+}
+
+// The owning bay's refusals for accounts the host's collaborator list does not
+// know, kept briefly so that a non-member cannot turn every publish into a bay
+// call. Only refusals: a grant is never cached, so a removal always takes
+// effect (the next check asks the bay again, unless the host's list by then
+// knows the account). A refusal is used only while that project's local list
+// is unchanged, and a collaborator sync clears them all (clearAuthCaches).
+const bayMembershipRefusals = new TTL<string, string>({
+  max: 10_000,
+  ttl: 30_000,
+});
+type BayMembershipFlight = {
+  account_id: string;
+  promise: Promise<boolean>;
+};
+const bayMembershipInFlight = new Map<string, BayMembershipFlight>();
+const bayMembershipInFlightByAccount = new Map<string, number>();
+let bayMembershipRunning = 0;
+const BAY_MEMBERSHIP_TIMEOUT_MS = 5_000;
+// Bay requests running at once, for the whole host and for one account. When
+// either is full the account is refused at once (and may retry): an account
+// cannot queue up requests for many projects.
+const BAY_MEMBERSHIP_MAX_IN_FLIGHT = 32;
+const BAY_MEMBERSHIP_MAX_IN_FLIGHT_PER_ACCOUNT = 4;
+
+// Identifies the host's collaborator list for one project: any change to the
+// row, its revision or its users (a sync, a start, a bay lookup) changes it.
+function localListFingerprint(project_id: string): string {
+  const row = getRow("projects", JSON.stringify({ project_id }));
+  if (row == null) return "no-row";
+  return `${row.users_revision ?? ""}:${JSON.stringify(row.users ?? null)}`;
+}
+
+// The host's collaborator list can lag the owning bay. An archived project has
+// no local row until it starts again, and a browser that is already connected
+// to this host never asks the hub for the project-scoped token whose issue
+// syncs the list. So before refusing an account the list does not know at
+// all, ask the bay. An account the list knows in another role (a viewer) is
+// refused without asking.
+async function isProjectMemberConfirmedByBay({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<boolean> {
+  const key = `${account_id}:${project_id}`;
+  if (bayMembershipRefusals.get(key) === localListFingerprint(project_id)) {
+    return false;
+  }
+  let flight = bayMembershipInFlight.get(key);
+  if (flight == null) {
+    const accountInFlight = bayMembershipInFlightByAccount.get(account_id) ?? 0;
+    if (
+      bayMembershipRunning >= BAY_MEMBERSHIP_MAX_IN_FLIGHT ||
+      accountInFlight >= BAY_MEMBERSHIP_MAX_IN_FLIGHT_PER_ACCOUNT
+    ) {
+      return false;
+    }
+    flight = startBayMembershipFlight({ key, account_id, project_id });
+  }
+  return await flight.promise;
+}
+
+function startBayMembershipFlight({
+  key,
+  account_id,
+  project_id,
+}: {
+  key: string;
+  account_id: string;
+  project_id: string;
+}): BayMembershipFlight {
+  bayMembershipRunning += 1;
+  bayMembershipInFlightByAccount.set(
+    account_id,
+    (bayMembershipInFlightByAccount.get(account_id) ?? 0) + 1,
+  );
+  const flight: BayMembershipFlight = {
+    account_id,
+    promise: (async () => {
+      const before = localListFingerprint(project_id);
+      const generationBefore = projectUsersGeneration(project_id);
+      let member = false;
+      try {
+        const { confirmProjectMemberWithOwningBay } =
+          await import("./acp/project-membership");
+        ({ member } = await confirmProjectMemberWithOwningBay({
+          account_id,
+          project_id,
+          timeout: BAY_MEMBERSHIP_TIMEOUT_MS,
+        }));
+      } catch (err) {
+        logger.debug("could not confirm project membership with the bay", {
+          account_id,
+          project_id,
+          err: `${err}`,
+        });
+      }
+      // This project's list changed while the bay was asked (a sync, a start,
+      // or the bay's own list stored by the lookup): the list now on the host
+      // decides, not the answer. Other projects' syncs do not matter.
+      // (the generation also catches a change undone meanwhile, which
+      // leaves the list looking the same)
+      const after = localListFingerprint(project_id);
+      if (
+        after !== before ||
+        projectUsersGeneration(project_id) !== generationBefore
+      ) {
+        member = isProjectCollaboratorLocal({ account_id, project_id });
+      }
+      if (!member) {
+        bayMembershipRefusals.set(key, after);
+      }
+      return member;
+    })().finally(() => {
+      bayMembershipRunning -= 1;
+      const left = (bayMembershipInFlightByAccount.get(account_id) ?? 1) - 1;
+      if (left > 0) bayMembershipInFlightByAccount.set(account_id, left);
+      else bayMembershipInFlightByAccount.delete(account_id);
+      if (bayMembershipInFlight.get(key) === flight) {
+        bayMembershipInFlight.delete(key);
+      }
+    }),
+  };
+  bayMembershipInFlight.set(key, flight);
+  return flight;
+}
+
 function clearAuthCaches() {
   authDecisionCache.clear();
+  bayMembershipRefusals.clear();
 }
 
 function throwManagedEgressBlocked(account_id: string): never {
@@ -562,10 +702,20 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         presence?.account_id === userId &&
         user.auth_scopes?.includes(BROWSER_RUNTIME_PRESENCE_AUTH_SCOPE) ===
           true &&
-        isProjectCollaboratorLocal({
+        // (the same fallback as other project subjects: a refused heartbeat
+        // would let idle maintenance stop a project its user is working in)
+        (isProjectCollaboratorLocal({
           account_id: userId,
           project_id: presence.project_id,
-        })
+        }) ||
+          (isAccountUnknownLocally({
+            account_id: userId,
+            project_id: presence.project_id,
+          }) &&
+            (await isProjectMemberConfirmedByBay({
+              account_id: userId,
+              project_id: presence.project_id,
+            }))))
       );
     }
     // (an agent and its account share a user id, but not permissions)
@@ -648,10 +798,15 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       if (project_id) {
         allowed =
           (examProjectId == null || examProjectId === project_id) &&
-          isProjectCollaboratorLocal({
+          (isProjectCollaboratorLocal({
             account_id: userId,
             project_id,
-          });
+          }) ||
+            (isAccountUnknownLocally({ account_id: userId, project_id }) &&
+              (await isProjectMemberConfirmedByBay({
+                account_id: userId,
+                project_id,
+              }))));
       }
     }
 

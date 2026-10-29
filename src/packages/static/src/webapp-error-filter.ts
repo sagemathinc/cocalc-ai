@@ -122,6 +122,14 @@ export function isIgnorableUnhandledRejection(reason: unknown): boolean {
   const staleCollaboratorAccess =
     message.includes("account '") &&
     message.includes("' is not a collaborator on project '");
+  // A project host refuses an account its collaborator list does not (yet)
+  // know, e.g., right after an archived project is restored. The host logs
+  // the refusal; another subject's refusal is still reported.
+  const projectHostCollaboratorDenial =
+    rejectionCode(reason) === "403" &&
+    /^permission denied publishing to '(?:fs\.project-[0-9a-f-]{36}|project\.[0-9a-f-]{36}\.[^']+)' from /.test(
+      message,
+    );
   const skippedViewTransition = isSkippedViewTransition(reason, message);
   const injectedMetaMaskFailure =
     message === "failed to connect to metamask" &&
@@ -136,6 +144,7 @@ export function isIgnorableUnhandledRejection(reason: unknown): boolean {
     conatRequestTimedOut ||
     filesystemServerStarting ||
     staleCollaboratorAccess ||
+    projectHostCollaboratorDenial ||
     skippedViewTransition ||
     injectedMetaMaskFailure
   );
