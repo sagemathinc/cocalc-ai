@@ -47,6 +47,7 @@ import {
   restoreAccountPersistState,
 } from "@cocalc/server/accounts/persist-portability";
 import { isValidUUID } from "@cocalc/util/misc";
+import { redactDirectMessageNoticesForMovedAccount } from "@cocalc/database/postgres/direct-conversations";
 import { assertFundingAccountCanRehome } from "@cocalc/server/compute/funding/authority";
 import {
   financialRehomeEnabled,
@@ -608,6 +609,9 @@ async function clearPortableState(account_id: string): Promise<void> {
   for (const table of PORTABLE_STATE_TABLES) {
     await clearPortableRows({ table, account_id });
   }
+  // Message deletions now reach only the new home: drop the text of the
+  // direct-message notices left here, and their unsent emails.
+  await redactDirectMessageNoticesForMovedAccount(account_id);
   await clearOwnedMembershipPackageAssignments(account_id);
   await clearOwnedMembershipSideEffects(account_id);
   await clearOwnedPortableRows({

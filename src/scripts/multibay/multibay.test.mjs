@@ -4722,6 +4722,31 @@ describe("direct messages across a rehome", () => {
   let jack; // homed on the attached bay
   let kim; // someone ivy blocked
   let conversation_id;
+  let secret; // a message ivy is notified of, deleted after the move
+  const SECRET = "secret before the move zebra7731";
+
+  // Copies of the secret's text on a bay: in its notification graph and
+  // emails (for ivy), and in ivy's notification list.
+  const copies = async (bay) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const ivy = ${JSON.stringify(ivy.account_id)};
+       const like = "%" + ${JSON.stringify(SECRET)} + "%";
+       const count = async (sql) => Number((await getPool().query(sql, [ivy, like])).rows[0].n);
+       return {
+         events: await count(\`SELECT count(*) AS n FROM notification_events e
+           JOIN notification_targets t ON t.event_id = e.event_id
+           WHERE t.target_account_id = $1 AND e.payload_json::text LIKE $2\`),
+         outbox: await count(\`SELECT count(*) AS n FROM notification_target_outbox
+           WHERE target_account_id = $1 AND payload_json::text LIKE $2\`),
+         email: await count(\`SELECT count(*) AS n FROM notification_email_outbox
+           WHERE target_account_id = $1 AND summary_json::text LIKE $2\`),
+         list: await count(\`SELECT count(*) AS n FROM account_notification_index
+           WHERE account_id = $1 AND summary::text LIKE $2\`),
+       };`,
+    );
 
   const directRow = async (bay, account_id) =>
     await runInBay(
@@ -4796,6 +4821,14 @@ describe("direct messages across a rehome", () => {
         ),
       { what: "jack's message in ivy's list" },
     );
+    // A notice for ivy, on her old home, with the message's text.
+    secret = await jack.client.call("people.sendDirect", {
+      conversation_id,
+      body: SECRET,
+    });
+    await eventually(async () => (await copies(SEED)).list > 0, {
+      what: "the notice about the secret in ivy's notification list",
+    });
     await ivy.client.call("people.setDirectState", {
       conversation_id,
       patch: { pinned: true, muted: true },
@@ -4834,7 +4867,38 @@ describe("direct messages across a rehome", () => {
     ).conversations.find((c) => c.conversation_id === conversation_id);
     assert.ok(listed, "the conversation in ivy's list after the move");
     assert.equal(listed.pinned, true);
-    assert.equal(listed.preview, "before the move");
+    assert.equal(listed.preview, SECRET);
+    // The notification list moved with ivy, text included; the old home
+    // keeps no copy of the text (deletions no longer reach it).
+    assert.ok((await copies(ATTACHED)).list > 0);
+    assert.deepEqual(await copies(SEED), {
+      events: 0,
+      outbox: 0,
+      email: 0,
+      list: 0,
+    });
+  });
+
+  it("deleting a message after the move removes its text from the moved notification list", async () => {
+    await jack.client.call("people.deleteDirectMessage", {
+      conversation_id,
+      message_id: secret.message_id,
+    });
+    await eventually(async () => (await copies(ATTACHED)).list === 0, {
+      what: "the secret gone from ivy's notification list on her new home",
+    });
+    assert.deepEqual(await copies(ATTACHED), {
+      events: 0,
+      outbox: 0,
+      email: 0,
+      list: 0,
+    });
+    assert.deepEqual(await copies(SEED), {
+      events: 0,
+      outbox: 0,
+      email: 0,
+      list: 0,
+    });
   });
 
   it("delivers a new message to the member's new home bay", async () => {

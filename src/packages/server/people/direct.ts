@@ -280,6 +280,9 @@ async function notify(
     origin_label: "Messages",
     notice_type: "direct_message",
     conversation_id: row.conversation_id,
+    // Lets a deletion find this notice in a notification list that was
+    // copied to another bay with its account (a rehome).
+    direct_message_id: message.message_id,
   };
   const homes = await resolveNotificationTargetHomeBays({
     account_ids: [account_id],

@@ -37,6 +37,14 @@ jest.mock("@cocalc/database/pool", () => ({
   })),
 }));
 
+const redactDirectMessageNoticesForMovedAccountMock = jest.fn(
+  async (_account_id: string) => undefined,
+);
+jest.mock("@cocalc/database/postgres/direct-conversations", () => ({
+  redactDirectMessageNoticesForMovedAccount: (account_id: string) =>
+    redactDirectMessageNoticesForMovedAccountMock(account_id),
+}));
+
 jest.mock("@cocalc/backend/logger", () => {
   const logger = jest.fn(() => ({
     debug: jest.fn(),
@@ -429,6 +437,11 @@ describe("account rehome", () => {
       home_bay_id: "bay-2",
     });
     expect(clearAccountPersistStateMock).toHaveBeenCalledWith(
+      TARGET_ACCOUNT_ID,
+    );
+    // The old home drops the text of its direct-message notices for the
+    // account: deletions now reach only the new home.
+    expect(redactDirectMessageNoticesForMovedAccountMock).toHaveBeenCalledWith(
       TARGET_ACCOUNT_ID,
     );
     // The destination's own row flips to "homed here" only after the

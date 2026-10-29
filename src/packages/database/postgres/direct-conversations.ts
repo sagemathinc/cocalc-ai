@@ -880,7 +880,11 @@ export async function redactDirectMessageNotice({
 
 async function redactDirectMessageNoticeWithClient(
   db: PoolClient,
-  { account_id, message_id }: { account_id: string; message_id: string },
+  {
+    account_id,
+    message_id,
+    reason = "the message was deleted by its sender",
+  }: { account_id: string; message_id: string; reason?: string },
 ): Promise<string[]> {
   const dedupe_key = `direct-message:${message_id}:${account_id}`;
   {
@@ -889,7 +893,15 @@ async function redactDirectMessageNoticeWithClient(
        WHERE target_account_id = $1 AND dedupe_key = $2`,
       [account_id, dedupe_key],
     );
-    if (targets.length === 0) return [];
+    // A notification list row copied here by a rehome has no notification
+    // graph on this bay: it is found by the message id in its summary.
+    if (targets.length === 0) {
+      return await redactListedDirectMessageNotice(db, {
+        account_id,
+        message_id,
+        projected: [],
+      });
+    }
     const event_ids = targets.map((t) => t.event_id);
     const notification_ids = targets.map((t) => t.notification_id);
     const rewrite = async (
@@ -930,11 +942,11 @@ async function redactDirectMessageNoticeWithClient(
          SET status = CASE WHEN status = 'queued'
                THEN 'skipped_preference' ELSE status END,
              last_error = CASE WHEN status = 'queued'
-               THEN 'the message was deleted by its sender' ELSE last_error END,
+               THEN $3 ELSE last_error END,
              updated_at = NOW()
        WHERE notification_id = ANY($1::uuid[]) AND target_account_id = $2
        RETURNING email_id, summary_json`,
-      [notification_ids, account_id],
+      [notification_ids, account_id, reason],
     );
     const projected = new Set<string>(notification_ids);
     for (const email of emails) {
@@ -946,26 +958,71 @@ async function redactDirectMessageNoticeWithClient(
         [email.email_id, JSON.stringify(redactBodyText(email.summary_json))],
       );
     }
-    const { rows: listed } = await db.query(
-      `SELECT notification_id, summary FROM account_notification_index
-       WHERE account_id = $1 AND notification_id = ANY($2::uuid[])`,
-      [account_id, [...projected]],
-    );
-    for (const row of listed) {
-      await db.query(
-        `UPDATE account_notification_index
-           SET summary = $3::jsonb, revision = COALESCE(revision, 0) + 1,
-               updated_at = NOW()
-         WHERE account_id = $1 AND notification_id = $2`,
-        [
-          account_id,
-          row.notification_id,
-          JSON.stringify(redactBodyText(row.summary)),
-        ],
-      );
-    }
-    return listed.map((row) => row.notification_id);
+    return await redactListedDirectMessageNotice(db, {
+      account_id,
+      message_id,
+      projected: [...projected],
+    });
   }
+}
+
+// The recipient's notification list rows about the message: those projected
+// from its notices here, and any copied here by a rehome (found by the
+// message id the notice carries in its summary).
+async function redactListedDirectMessageNotice(
+  db: PoolClient,
+  {
+    account_id,
+    message_id,
+    projected,
+  }: { account_id: string; message_id: string; projected: string[] },
+): Promise<string[]> {
+  const { rows: listed } = await db.query(
+    `SELECT notification_id, summary FROM account_notification_index
+     WHERE account_id = $1
+       AND (notification_id = ANY($2::uuid[])
+            OR summary->>'direct_message_id' = $3)`,
+    [account_id, projected, message_id],
+  );
+  for (const row of listed) {
+    await db.query(
+      `UPDATE account_notification_index
+         SET summary = $3::jsonb, revision = COALESCE(revision, 0) + 1,
+             updated_at = NOW()
+       WHERE account_id = $1 AND notification_id = $2`,
+      [
+        account_id,
+        row.notification_id,
+        JSON.stringify(redactBodyText(row.summary)),
+      ],
+    );
+  }
+  return listed.map((row) => row.notification_id);
+}
+
+// On the old home bay, when an account moves to another: deletions now reach
+// only its new home, so this bay removes the text of every direct-message
+// notice it still holds for the account (the notification itself, its
+// outbox) and cancels emails about them not yet sent. The account's
+// notification list moved with it; its new home redacts that.
+export async function redactDirectMessageNoticesForMovedAccount(
+  account_id: string,
+): Promise<void> {
+  await inTransaction(async (db) => {
+    const { rows } = await db.query(
+      `SELECT DISTINCT split_part(dedupe_key, ':', 2) AS message_id
+         FROM notification_targets
+        WHERE target_account_id = $1 AND dedupe_key LIKE 'direct-message:%'`,
+      [account_id],
+    );
+    for (const { message_id } of rows) {
+      await redactDirectMessageNoticeWithClient(db, {
+        account_id,
+        message_id,
+        reason: "the account moved to another bay",
+      });
+    }
+  });
 }
 
 // Creating a notice about a message and deleting it are serialized per
