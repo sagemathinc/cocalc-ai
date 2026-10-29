@@ -687,9 +687,9 @@ describe("ACP worker control startup grace", () => {
       pid: 1004,
       state: "active",
       started_at: 1_000,
-      last_heartbeat_at: 70_000,
+      last_heartbeat_at: 30_000,
       last_seen_running_jobs: 0,
-      last_queue_progress_at: 70_000,
+      last_queue_progress_at: 30_000,
     });
 
     expect(
@@ -822,6 +822,201 @@ describe("ACP worker control startup grace", () => {
         200_000,
       ),
     ).toBe(false);
+  });
+});
+
+describe("unresponsive ACP workers", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  const worker = {
+    pid: 1201,
+    env: {
+      COCALC_ACP_INSTANCE_ID: "worker-quiet",
+      COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT: "1000",
+    },
+    cmdline: ["project-host:acp-worker"],
+  } as any;
+  const now = 1_000_000;
+  function row(last_heartbeat_at: number) {
+    return {
+      worker_id: "worker-quiet",
+      host_id: "host-1",
+      bundle_version: "current",
+      bundle_path: "/opt/cocalc/project-host/bundles/current",
+      pid: 1201,
+      state: "active",
+      started_at: 1_000,
+      last_heartbeat_at,
+      last_seen_running_jobs: 0,
+      last_queue_progress_at: last_heartbeat_at,
+    } as any;
+  }
+  const sleeping = () => "S";
+
+  it("terminates an idle worker that has failed its probe for 30 s with a heartbeat over 60 s old", () => {
+    mockGetAcpWorker.mockReturnValue(row(now - 61_000));
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 30_000,
+        now,
+        processState: sleeping,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a worker after one missed probe", () => {
+    mockGetAcpWorker.mockReturnValue(row(now - 61_000));
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 0,
+        now,
+        processState: sleeping,
+      }),
+    ).toBe(false);
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 29_000,
+        now,
+        processState: sleeping,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a worker whose heartbeat stalled for less than 60 s", () => {
+    // A slow disk can hold the worker's event loop for tens of seconds.
+    mockGetAcpWorker.mockReturnValue(row(now - 20_000));
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 30_000,
+        now,
+        processState: sleeping,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not kill a worker blocked on I/O", () => {
+    mockGetAcpWorker.mockReturnValue(row(now - 120_000));
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 120_000,
+        now,
+        processState: () => "D",
+      }),
+    ).toBe(false);
+  });
+
+  it("measures probe failure from the first failed pass and resets on an answer", () => {
+    expect(__test__.noteWorkerControlProbe(worker, false, 10_000)).toBe(0);
+    expect(__test__.noteWorkerControlProbe(worker, false, 25_000)).toBe(15_000);
+    expect(__test__.noteWorkerControlProbe(worker, true, 27_000)).toBe(0);
+    expect(__test__.noteWorkerControlProbe(worker, false, 29_000)).toBe(0);
+    __test__.forgetWorkerControlProbes([]);
+    expect(__test__.noteWorkerControlProbe(worker, false, 40_000)).toBe(0);
+    __test__.noteWorkerControlProbe(worker, true);
+  });
+
+  it("does not let a later worker with the same pid inherit failures", () => {
+    const earlier = { ...worker, start_time_ticks: "100" };
+    const later = { ...worker, start_time_ticks: "200" };
+    expect(__test__.noteWorkerControlProbe(earlier, false, 10_000)).toBe(0);
+    expect(__test__.noteWorkerControlProbe(earlier, false, 40_000)).toBe(
+      30_000,
+    );
+    __test__.forgetWorkerControlProbes([later]);
+    expect(__test__.noteWorkerControlProbe(later, false, 41_000)).toBe(0);
+    expect(__test__.noteWorkerControlProbe(later, false, 45_000)).toBe(4_000);
+    __test__.noteWorkerControlProbe(later, true);
+  });
+
+  it.each([
+    ["D", false],
+    ["S", true],
+  ])(
+    "reconciliation kills a stalled, silent worker only when it is not blocked on I/O (state %s)",
+    async (state, killed) => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      const entryPoint =
+        "/opt/cocalc/project-host/bundles/current/main/index.js";
+      configureProjectHostAcpWorkerLauncher({ entryPoint });
+      const pid = 1301;
+      let alive = true;
+      jest.spyOn(fs, "readdirSync").mockReturnValue([String(pid)] as any);
+      jest.spyOn(fs, "readFileSync").mockImplementation((filename) => {
+        if (String(filename).endsWith("/environ")) {
+          return [
+            "COCALC_PROJECT_HOST_ACP_WORKER=1",
+            "COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY=rolling-v1",
+            "COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT=1000",
+            "COCALC_ACP_INSTANCE_ID=worker-blocked",
+            "PROJECT_HOST_ID=host-1",
+          ].join("\0");
+        }
+        if (String(filename).endsWith("/cmdline")) {
+          return [process.execPath, entryPoint].join("\0");
+        }
+        if (String(filename).endsWith("/stat")) {
+          return `${pid} (node) ${[state, ...Array(18).fill("0"), "4242"].join(" ")}`;
+        }
+        throw new Error(`Unexpected read: ${filename}`);
+      });
+      jest.spyOn(fs, "rmSync").mockImplementation(() => {});
+      const kill = jest
+        .spyOn(process, "kill")
+        .mockImplementation((_pid, signal) => {
+          if (signal === 0) {
+            if (!alive) throw new Error("ESRCH");
+            return true;
+          }
+          alive = false;
+          return true;
+        });
+      // The control channel is silent; the heartbeat is old and a queued
+      // backlog has made no progress: every stall test points at the worker.
+      jest.mocked(acpDaemonControlClient).mockImplementation(
+        () =>
+          ({
+            health: async () => {
+              throw new Error("timeout");
+            },
+            requestDrain: jest.fn(),
+          }) as any,
+      );
+      mockGetAcpWorker.mockReturnValue({
+        worker_id: "worker-blocked",
+        host_id: "host-1",
+        pid,
+        state: "active",
+        started_at: 1_000,
+        last_heartbeat_at: 500_000,
+        last_seen_running_jobs: 0,
+        last_queue_progress_at: 500_000,
+      } as any);
+      mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(500_000);
+
+      const first = __test__.reconcileProjectHostAcpWorkers();
+      await jest.advanceTimersByTimeAsync(5_000);
+      await first;
+      jest.setSystemTime(1_040_000);
+      const second = __test__.reconcileProjectHostAcpWorkers();
+      await jest.advanceTimersByTimeAsync(5_000);
+      await second;
+
+      const terminated = kill.mock.calls.some(([, signal]) => signal !== 0);
+      expect(terminated).toBe(killed);
+    },
+  );
+
+  it("reads the kernel state of a process", () => {
+    expect(["R", "S"]).toContain(__test__.readProcessState(process.pid));
+    expect(__test__.readProcessState(2 ** 31 - 2)).toBeUndefined();
   });
 });
 
