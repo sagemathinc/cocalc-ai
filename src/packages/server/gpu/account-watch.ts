@@ -296,16 +296,6 @@ export async function watchProviderAccount(
     // (the account's other reason is unknown now: not said any more)
     await endOff(db, OFF_NO_ACCESS, at);
   };
-  if (!exclusive(active)) {
-    await underLiveFence(credential_id, async (db) => {
-      const w = await lockWatch(db, identity);
-      if (!current(w)) return;
-      await lockProviderIdentity(db, identity);
-      const now = await identityCredentials(identity, db, { active: true });
-      if (!exclusive(now)) await disable(db, w, now.length, observed_at);
-    });
-    return { checked: false, reason: "shared" };
-  }
   const asked_at = new Date(clock());
   // How every answer (or refusal) from RunPod is applied: under the key's
   // live fence and the watch row's lock; never older than the last sample
@@ -314,6 +304,7 @@ export async function watchProviderAccount(
   // this, since the connect takes the same lock, and one connected after
   // waits for this transaction).
   const finish = async (
+    at: Date,
     apply: (db: Db, w: any) => Promise<AccountWatchOutcome>,
   ): Promise<AccountWatchOutcome> =>
     (await underLiveFence(credential_id, async (db) => {
@@ -322,17 +313,26 @@ export async function watchProviderAccount(
         return { checked: false, reason: "unconfirmed" } as AccountWatchOutcome;
       }
       // every outcome (a sample, a refusal, shared) moves last_asked_at
-      if (w.last_asked_at && new Date(w.last_asked_at) >= asked_at) {
+      if (w.last_asked_at && new Date(w.last_asked_at) >= at) {
         return { checked: false, reason: "stale" } as AccountWatchOutcome;
       }
       await lockProviderIdentity(db, identity);
       const keys = await identityCredentials(identity, db, { active: true });
       if (!exclusive(keys)) {
-        await disable(db, w, keys.length, asked_at);
+        await disable(db, w, keys.length, at);
         return { checked: false, reason: "shared" } as AccountWatchOutcome;
       }
       return await apply(db, w);
     })) ?? { checked: false, reason: "fence" };
+  // Another key on the account already: don't ask RunPod. Recorded through
+  // the same guards (this observation's own time); if the other key is gone
+  // by then, nothing is written and the next pass checks.
+  if (!exclusive(active)) {
+    return await finish(observed_at, async () => ({
+      checked: false,
+      reason: "shared",
+    }));
+  }
   let balance: RunpodAccountBalance;
   try {
     balance = await deps.getAccountBalance();
@@ -343,7 +343,7 @@ export async function watchProviderAccount(
       err instanceof RunpodApiError &&
       (err.kind === "forbidden" || err.kind === "auth")
     ) {
-      return await finish(async (db, w) => {
+      return await finish(asked_at, async (db, w) => {
         // (samples start over; this refusal is the latest observation)
         await db.query(
           `UPDATE gpu_provider_account_watch
@@ -371,7 +371,7 @@ export async function watchProviderAccount(
     }
     throw err;
   }
-  return await finish(async (db, w) => {
+  return await finish(asked_at, async (db, w) => {
     const creds = await identityCredentials(identity, db, { active: false });
     const E = await expectedSpend(creds, asked_at, db);
     const out: AccountWatchOutcome = { checked: true };
