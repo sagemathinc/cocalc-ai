@@ -405,6 +405,35 @@ describe("notification email outbox maintenance", () => {
     expect(message.text).not.toContain("/notifications");
   });
 
+  it("links a direct message email to its conversation on People", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        summary_json: {
+          summary: {
+            notice_type: "direct_message",
+            conversation_id: "22222222-2222-4222-8222-222222222222",
+            body_text: "Hi there",
+          },
+        },
+      },
+    ]);
+    const sender = jest.fn(async () => undefined);
+
+    await sendQueuedNotificationEmailBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+
+    const message = sender.mock.calls[0]?.[0];
+    const expected =
+      "https://cocalc.test/people/messages/22222222-2222-4222-8222-222222222222";
+    expect(message.text).toContain(`Open the conversation: ${expected}`);
+    expect(message.html).toContain(`href="${expected}"`);
+    expect(message.text).not.toContain("/notifications");
+  });
+
   it("renders mention spans as readable text in immediate notification email", async () => {
     claimQueuedNotificationEmails.mockResolvedValue([
       {

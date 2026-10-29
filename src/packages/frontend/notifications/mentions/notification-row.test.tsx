@@ -145,6 +145,44 @@ describe("NotificationRow", () => {
     expect(open_file).not.toHaveBeenCalled();
   });
 
+  it("opens a direct message notice in People, in the app, with no separate link", async () => {
+    render(
+      <NotificationRow
+        id="notice-dm"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            target: "acct-1",
+            time: new Date("2026-10-28T00:00:00.000Z"),
+            title: "Message from Bea",
+            body_text: "Hi Ada",
+            origin_label: "Messages",
+            notice_type: "direct_message",
+            conversation_id: "dm-1",
+            // An older notice may still carry a link; it isn't shown.
+            action_link: "/people/messages/dm-1",
+            action_label: "Open conversation",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+    expect(screen.queryByText("Open conversation")).toBeNull();
+    expect(screen.getByRole("listitem").querySelector("a[href]")).toBeNull();
+    fireEvent.click(screen.getByText("Message from Bea"));
+    await waitFor(() =>
+      expect(setState).toHaveBeenCalledWith({
+        people_route: "messages/dm-1",
+      }),
+    );
+    expect(set_active_tab).toHaveBeenCalledWith("people");
+    await waitFor(() =>
+      expect(mockSetNotificationsOpen).toHaveBeenCalledWith(false),
+    );
+    expect(mark).toHaveBeenCalled();
+  });
+
   it("never shows the id file name of a conversation it cannot find", async () => {
     render(
       <NotificationRow
