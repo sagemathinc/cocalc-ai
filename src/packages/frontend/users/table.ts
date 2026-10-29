@@ -201,11 +201,31 @@ const addOtherBayCollaboratorsFor = reuseInFlight(
         return;
       }
       if (generation !== otherBayGeneration) continue;
+      churnRetryDelay = CHURN_RETRY_MIN_MS;
       mergeOtherBayCollaborators(account_id, rows);
       return;
     }
+    // Changes kept arriving while asking: ask again a bit later, rather than
+    // leave those collaborators out until something else changes.
+    scheduleChurnRetry();
   },
 );
+
+// Backoff between rounds that every answer was outdated by a change.
+const CHURN_RETRY_MIN_MS = 2_000;
+const CHURN_RETRY_MAX_MS = 60_000;
+let churnRetryDelay = CHURN_RETRY_MIN_MS;
+let churnRetry: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleChurnRetry(): void {
+  if (churnRetry != null) return;
+  const delay = churnRetryDelay;
+  churnRetryDelay = Math.min(churnRetryDelay * 2, CHURN_RETRY_MAX_MS);
+  churnRetry = setTimeout(() => {
+    churnRetry = undefined;
+    void addOtherBayCollaborators();
+  }, delay);
+}
 
 function mergeOtherBayCollaborators(
   account_id: string,
