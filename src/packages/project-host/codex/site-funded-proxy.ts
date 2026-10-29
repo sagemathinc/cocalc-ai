@@ -13,9 +13,11 @@ import getLogger from "@cocalc/backend/logger";
 import {
   computeSiteFundedCodexRequestCost,
   siteFundedCodexMaxRequestBodyBytes,
+  siteFundedTurnEndedMessage,
   type SiteFundedCodexPolicy,
   type SiteFundedCodexReservation,
   type SiteFundedCodexUsageEvent,
+  type SiteFundedTurnEndReason,
 } from "@cocalc/util/ai/site-funded-codex";
 import { siteFundedCodexProxyPorts } from "./site-funded-proxy-port";
 
@@ -59,6 +61,8 @@ type ActiveTurn = {
   requestQueueTail: Promise<void>;
   requestQueueDepth: number;
   closed: boolean;
+  /** Why the hub ended this turn while it ran. */
+  endedMessage?: string;
   blockedReason?: string;
   onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
 };
@@ -69,6 +73,8 @@ type Session = {
   upstreamBaseUrl: string;
   closed: boolean;
   activeTurn?: ActiveTurn;
+  /** Why the last turn stopped being funded, when the hub ended it. */
+  endedMessage?: string;
 };
 
 export type SiteFundedProxySession = {
@@ -80,7 +86,8 @@ export type SiteFundedProxySession = {
     reservation: SiteFundedCodexReservation;
     onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
   }) => void;
-  deactivate: (reservationId: string) => void;
+  /** Stops funding the turn; `reason` when the hub ended it while it ran. */
+  deactivate: (reservationId: string, reason?: SiteFundedTurnEndReason) => void;
   close: () => void;
 };
 
@@ -266,9 +273,10 @@ function boundedProviderRequest({
     });
   }
   if (turn.closed) {
-    throw Object.assign(new Error("site-funded Codex turn is closed"), {
-      statusCode: 403,
-    });
+    throw Object.assign(
+      new Error(turn.endedMessage ?? "site-funded Codex turn is closed"),
+      { statusCode: 403 },
+    );
   }
   if (turn.blockedReason) {
     throw Object.assign(new Error(turn.blockedReason), { statusCode: 403 });
@@ -276,7 +284,10 @@ function boundedProviderRequest({
   if (Date.now() - turn.startedAt >= turn.policy.maxTurnDurationMs) {
     throw Object.assign(
       new Error(
-        "This included Codex turn reached its emergency duration limit. Start a new turn, upgrade your CoCalc membership, or connect a ChatGPT plan or personal OpenAI API key.",
+        siteFundedTurnEndedMessage({
+          reason: "duration",
+          maxTurnDurationMs: turn.policy.maxTurnDurationMs,
+        }),
       ),
       { statusCode: 403 },
     );
@@ -438,12 +449,20 @@ class SiteFundedCodexProxy {
           throw new Error("site-funded Codex proxy already has an active turn");
         }
         session.activeTurn = makeActiveTurn(opts);
+        session.endedMessage = undefined;
       },
-      deactivate: (reservationId) => {
+      deactivate: (reservationId, reason) => {
         const turn = session.activeTurn;
         if (!turn || turn.reservation.reservationId !== reservationId) return;
         turn.closed = true;
         session.activeTurn = undefined;
+        turn.endedMessage = reason
+          ? siteFundedTurnEndedMessage({
+              reason,
+              maxTurnDurationMs: turn.policy.maxTurnDurationMs,
+            })
+          : undefined;
+        session.endedMessage = turn.endedMessage;
       },
       close: () => {
         session.closed = true;
@@ -515,7 +534,7 @@ class SiteFundedCodexProxy {
       await turn.onUsage(event);
     } catch (err) {
       turn.blockedReason =
-        "Site-funded usage accounting is temporarily unavailable.";
+        "CoCalc could not save this included Codex turn's usage, so it paused the turn. Start a new turn in a minute, or connect your own ChatGPT plan or OpenAI API key.";
       logger.error("failed to persist site-funded Codex provider usage", {
         reservationId: turn.reservation.reservationId,
         requestSequence,
@@ -557,7 +576,11 @@ class SiteFundedCodexProxy {
     }
     const turn = session.activeTurn;
     if (!turn || turn.closed) {
-      jsonResponse(response, 403, "site-funded Codex turn is not active");
+      jsonResponse(
+        response,
+        403,
+        session.endedMessage ?? "site-funded Codex turn is not active",
+      );
       return;
     }
     const requestUrl = new URL(request.url ?? "/", "http://localhost");

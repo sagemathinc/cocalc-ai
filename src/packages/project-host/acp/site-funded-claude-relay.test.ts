@@ -199,6 +199,24 @@ describe("site-funded Claude relay", () => {
     expect(seen).toEqual([]);
   });
 
+  it("tells later requests why the hub ended the turn", async () => {
+    activate({ maxTurnDurationMs: 60 * 60_000 });
+    await relay.deactivate("reservation-1", { reason: "duration" });
+    const ended = await send(message);
+    expect(ended.status).toBe(403);
+    expect(ended.body).toContain(
+      "This included Claude turn reached its 1-hour limit. Start a new turn to continue, or use your own Claude subscription or Anthropic API key.",
+    );
+    expect(ended.body).not.toContain("Codex");
+    // A new turn starts clean.
+    activate();
+    relay.deactivate();
+    expect((await send(message)).body).toContain(
+      "No included Claude turn is active",
+    );
+    expect(seen).toEqual([]);
+  });
+
   it("forwards only the Messages API, with the site key and the funded model", async () => {
     activate();
     expect(
@@ -746,7 +764,7 @@ describe("site-funded Claude relay", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     const blocked = await send(message);
     expect(blocked.status).toBe(403);
-    expect(blocked.body).toContain("could not be recorded");
+    expect(blocked.body).toContain("could not save");
   });
 
   it("starts no request after the reservation's deadline", async () => {
