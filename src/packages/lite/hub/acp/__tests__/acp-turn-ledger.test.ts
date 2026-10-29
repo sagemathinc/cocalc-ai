@@ -6,7 +6,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// The C7 store (S6a r10 §2.2, §2.5, §2.6) with a stub projector: admission,
+// The ACP turn ledger with a stub projector: admission,
 // replay, the terminal arbiter, pendingIncomplete, the lease CAS, the fence
 // and objects, with injected faults at each transaction step.
 
@@ -17,36 +17,36 @@ import {
 } from "../../sqlite/acp-database";
 import {
   __clearPendingIncompleteForTests,
-  __getC7MutationForTests,
-  __setC7FaultHook,
-  __setC7MutationForTests,
+  __getAcpLedgerMutationForTests,
+  __setAcpLedgerFaultHook,
+  __setAcpLedgerMutationForTests,
   admitInitial,
   decideClose,
-  deleteC7TurnObjects,
-  expireC7DerivedObjects,
-  fenceC7Project,
-  finalizeC7Lease,
+  deleteAcpLedgerTurnObjects,
+  expireAcpLedgerDerivedObjects,
+  fenceAcpLedgerProject,
+  finalizeAcpLedgerLease,
   flushPendingIncomplete,
-  getC7Winner,
+  getAcpLedgerWinner,
   hasPendingIncomplete,
-  heartbeatC7Lease,
-  listC7QueueRows,
+  heartbeatAcpLedgerLease,
+  listAcpLedgerQueueRows,
   markPendingIncomplete,
-  readC7Log,
-  readC7Object,
+  readAcpLedgerLog,
+  readAcpLedgerObject,
   replayRow,
-  startC7LeaseAttempt,
-  type C7Envelope,
-  type C7Projector,
-  type C7TurnContext,
-} from "../../sqlite/c7-store";
+  startAcpLedgerLeaseAttempt,
+  type AcpLedgerEnvelope,
+  type AcpLedgerProjector,
+  type AcpLedgerTurnContext,
+} from "../../sqlite/acp-turn-ledger";
 
-const turn: C7TurnContext = {
-  project_id: "project-c7",
+const turn: AcpLedgerTurnContext = {
+  project_id: "project-ledger",
   path: "work.chat",
   message_date: "2026-10-29T00:00:00.000Z",
-  thread_id: "thread-c7",
-  turn_id: "message-c7",
+  thread_id: "thread-ledger",
+  turn_id: "message-ledger",
 };
 
 const context = {
@@ -60,8 +60,8 @@ const context = {
 
 // A stub projector: one event per live input, one per winner and one per
 // invalidation. Its state counts live inputs.
-const projector: C7Projector = {
-  validate: (_state, envelope: C7Envelope) =>
+const projector: AcpLedgerProjector = {
+  validate: (_state, envelope: AcpLedgerEnvelope) =>
     (envelope.body as any)?.malformed ? "malformed" : "ok",
   input: (state, envelope, ctx) => ({
     state: { count: ((state as any)?.count ?? 0) + 1 },
@@ -103,7 +103,7 @@ const projector: C7Projector = {
 };
 
 function start(attempt_id: string) {
-  return startC7LeaseAttempt({
+  return startAcpLedgerLeaseAttempt({
     context,
     attempt_id,
     owner_instance_id: "worker-1",
@@ -113,7 +113,7 @@ function start(attempt_id: string) {
 }
 
 function log(): any[] {
-  const out = readC7Log({
+  const out = readAcpLedgerLog({
     project_id: turn.project_id,
     path: turn.path,
     thread_id: turn.thread_id,
@@ -128,26 +128,26 @@ function log(): any[] {
 function lease(): any {
   return getAcpDatabase()
     .prepare(
-      `SELECT state, attempt_id, attempt_gen, c7_incomplete FROM acp_turns
+      `SELECT state, attempt_id, attempt_gen, ledger_incomplete FROM acp_turns
        WHERE project_id = ? AND path = ? AND message_date = ?`,
     )
     .get(turn.project_id, turn.path, turn.message_date);
 }
 
-// Every C7 row and the lease, for whole-state rollback assertions.
+// Every ledger row and the lease, for whole-state rollback assertions.
 function tables(): Record<string, unknown[]> {
   const db = getAcpDatabase();
   const out: Record<string, unknown[]> = {};
   for (const table of [
     "acp_turns",
-    "c7_input",
-    "c7_queue",
-    "c7_turn",
-    "c7_close",
-    "c7_thread",
-    "c7_log",
-    "c7_object",
-    "c7_object_dep",
+    "acp_ledger_input",
+    "acp_ledger_queue",
+    "acp_ledger_turn",
+    "acp_ledger_close",
+    "acp_ledger_thread",
+    "acp_ledger_log",
+    "acp_ledger_object",
+    "acp_ledger_object_dep",
   ]) {
     out[table] = db.prepare(`SELECT * FROM ${table}`).all();
   }
@@ -170,19 +170,19 @@ beforeAll(() => {
 });
 
 afterEach(() => {
-  __setC7FaultHook(undefined);
+  __setAcpLedgerFaultHook(undefined);
   __clearPendingIncompleteForTests();
   const db = getAcpDatabase();
   for (const table of [
     "acp_turns",
-    "c7_input",
-    "c7_queue",
-    "c7_turn",
-    "c7_close",
-    "c7_thread",
-    "c7_log",
-    "c7_object",
-    "c7_object_dep",
+    "acp_ledger_input",
+    "acp_ledger_queue",
+    "acp_ledger_turn",
+    "acp_ledger_close",
+    "acp_ledger_thread",
+    "acp_ledger_log",
+    "acp_ledger_object",
+    "acp_ledger_object_dep",
   ]) {
     try {
       db.prepare(`DELETE FROM ${table}`).run();
@@ -209,7 +209,7 @@ describe("admission", () => {
     expect(
       log().every((e) => e.v === "1.0" && e.turn_id === turn.turn_id),
     ).toBe(true);
-    expect(listC7QueueRows(turn)).toHaveLength(2);
+    expect(listAcpLedgerQueueRows(turn)).toHaveLength(2);
   });
 
   it("shares one ordinal sequence between source and local inputs", () => {
@@ -231,7 +231,7 @@ describe("admission", () => {
     expect(result).toMatchObject({ result: "refused", reason: "stale" });
     expect(log()).toHaveLength(0);
     const row = getAcpDatabase()
-      .prepare(`SELECT class FROM c7_input WHERE attempt_id = 'A'`)
+      .prepare(`SELECT class FROM acp_ledger_input WHERE attempt_id = 'A'`)
       .get() as any;
     expect(row.class).toBe("stale");
   });
@@ -267,7 +267,7 @@ describe("admission", () => {
       result: "refused",
       reason: "malformed",
     });
-    expect(getC7Winner(turn)).toMatchObject({
+    expect(getAcpLedgerWinner(turn)).toMatchObject({
       outcome: "error",
       code: "source_malformed",
     });
@@ -289,12 +289,12 @@ describe("storage failure", () => {
   ]) {
     it(`writes nothing and sets pendingIncomplete (fault at ${point})`, () => {
       start("A");
-      __setC7FaultHook((p) => {
+      __setAcpLedgerFaultHook((p) => {
         if (p === point) throw Error("injected");
       });
       expect(admit("A", { x: 1 }).result).toBe("storage_failed");
-      __setC7FaultHook(undefined);
-      expect(listC7QueueRows(turn)).toHaveLength(0);
+      __setAcpLedgerFaultHook(undefined);
+      expect(listAcpLedgerQueueRows(turn)).toHaveLength(0);
       expect(log()).toHaveLength(0);
       expect(hasPendingIncomplete(turn)).toBe(true);
     });
@@ -302,11 +302,11 @@ describe("storage failure", () => {
 
   it("forces admission_failed at the writer's own close", () => {
     start("A");
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "admit:after-queue") throw Error("injected");
     });
     admit("A", { x: 1 });
-    __setC7FaultHook(undefined);
+    __setAcpLedgerFaultHook(undefined);
     const result = decideClose({
       turn,
       caller: "ordinary",
@@ -321,18 +321,18 @@ describe("storage failure", () => {
     });
     // the durable write committed first, so the entry is gone
     expect(hasPendingIncomplete(turn)).toBe(false);
-    expect(lease().c7_incomplete).toBe(1);
+    expect(lease().ledger_incomplete).toBe(1);
   });
 
   it("keeps the pending entry when the durable write rolls back", () => {
     start("A");
     markPendingIncomplete(turn);
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "flush:before-commit") throw Error("injected");
     });
     expect(flushPendingIncomplete(turn)).toBe(false);
     expect(hasPendingIncomplete(turn)).toBe(true);
-    expect(lease().c7_incomplete).toBe(0);
+    expect(lease().ledger_incomplete).toBe(0);
   });
 
   it("carries a pending flag through a later writer's cutover (the orphan path)", () => {
@@ -340,7 +340,7 @@ describe("storage failure", () => {
     markPendingIncomplete(turn);
     // A is gone (disposed); B starts in the same process
     start("B");
-    expect(lease().c7_incomplete).toBe(1);
+    expect(lease().ledger_incomplete).toBe(1);
     expect(hasPendingIncomplete(turn)).toBe(false);
     const result = decideClose({
       turn,
@@ -355,7 +355,7 @@ describe("storage failure", () => {
   it("keeps the pending flag and fails the cutover if its write rolls back", () => {
     start("A");
     markPendingIncomplete(turn);
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "cutover:before-commit") throw Error("injected");
     });
     expect(() => start("B")).toThrow("injected");
@@ -371,7 +371,7 @@ describe("replay", () => {
     admit("A", { x: 2 });
     const before = log();
     const tablesBefore = tables();
-    for (const row of listC7QueueRows(turn)) {
+    for (const row of listAcpLedgerQueueRows(turn)) {
       expect(replayRow({ turn, row, projector })).toMatchObject({
         result: "duplicate",
         kind: "in",
@@ -387,7 +387,7 @@ describe("replay", () => {
     it(`refuses a row whose ${field} changed (collision), before the winner`, () => {
       start("A");
       admit("A", { x: 1 });
-      const [row] = listC7QueueRows(turn);
+      const [row] = listAcpLedgerQueueRows(turn);
       const envelope = JSON.parse(row.envelope);
       if (field === "body") envelope.body = { x: 2 };
       if (field === "time") envelope.time += 1;
@@ -397,7 +397,7 @@ describe("replay", () => {
       expect(replayRow({ turn, row: changed, projector })).toMatchObject({
         result: "refused",
       });
-      expect(getC7Winner(turn)).toMatchObject({ outcome: "error" });
+      expect(getAcpLedgerWinner(turn)).toMatchObject({ outcome: "error" });
     });
   }
 
@@ -411,21 +411,21 @@ describe("replay", () => {
       candidate: { outcome: "completed", F: "done" },
       projector,
     });
-    const winner = getC7Winner(turn);
-    const [row] = listC7QueueRows(turn).filter((r) => r.kind === "in");
+    const winner = getAcpLedgerWinner(turn);
+    const [row] = listAcpLedgerQueueRows(turn).filter((r) => r.kind === "in");
     const envelope = JSON.parse(row.envelope);
     envelope.body = { x: 99 };
     const changed = { ...row, envelope: JSON.stringify(envelope) };
     expect(replayRow({ turn, row: changed, projector }).result).toBe("refused");
     expect(replayRow({ turn, row: changed, projector }).result).toBe("refused");
     expect(log().filter((e) => e.type === "turn_invalidated")).toHaveLength(1);
-    expect(getC7Winner(turn)).toEqual(winner);
+    expect(getAcpLedgerWinner(turn)).toEqual(winner);
   });
 
   it("refuses a row with no input record (gap)", () => {
     start("A");
     admit("A", { x: 1 });
-    const [row] = listC7QueueRows(turn);
+    const [row] = listAcpLedgerQueueRows(turn);
     const ghost = { ...row, n: 7 };
     expect(replayRow({ turn, row: ghost, projector })).toEqual({
       result: "refused",
@@ -438,7 +438,7 @@ describe("replay", () => {
     start("A");
     admit("A", { x: 1 });
     start("B");
-    const [row] = listC7QueueRows(turn);
+    const [row] = listAcpLedgerQueueRows(turn);
     const envelope = JSON.parse(row.envelope);
     envelope.body = { x: 2 };
     replayRow({
@@ -446,7 +446,7 @@ describe("replay", () => {
       row: { ...row, envelope: JSON.stringify(envelope) },
       projector,
     });
-    expect(getC7Winner(turn)).toMatchObject({
+    expect(getAcpLedgerWinner(turn)).toMatchObject({
       outcome: "error",
       code: "source_conflict",
       attempt_id: "B",
@@ -463,7 +463,9 @@ describe("replay", () => {
       candidate: { outcome: "completed", F: "done" },
       projector,
     });
-    const [close] = listC7QueueRows(turn).filter((r) => r.kind === "close");
+    const [close] = listAcpLedgerQueueRows(turn).filter(
+      (r) => r.kind === "close",
+    );
     expect(replayRow({ turn, row: close, projector })).toMatchObject({
       result: "duplicate",
       kind: "close",
@@ -478,7 +480,7 @@ describe("replay", () => {
         projector,
       }).result,
     ).toBe("refused");
-    expect(getC7Winner(turn)).toMatchObject({ F: "done" });
+    expect(getAcpLedgerWinner(turn)).toMatchObject({ F: "done" });
     expect(log().filter((e) => e.type === "turn_invalidated")).toHaveLength(1);
   });
 });
@@ -523,7 +525,7 @@ describe("the terminal winner", () => {
         projector,
       }),
     ).toEqual({ role: "stale", winner: null });
-    expect(getC7Winner(turn)).toBeUndefined();
+    expect(getAcpLedgerWinner(turn)).toBeUndefined();
   });
 
   it("lets a later writer adopt the existing winner", () => {
@@ -569,7 +571,7 @@ describe("the terminal winner", () => {
     ).toEqual({ role: "loser", winner: first.winner });
     const a = lease();
     expect(
-      finalizeC7Lease({
+      finalizeAcpLedgerLease({
         turn,
         owner_instance_id: "worker-1",
         attempt_id: "A",
@@ -586,7 +588,7 @@ describe("the lease", () => {
     const b = start("B");
     const key = turn;
     expect(
-      heartbeatC7Lease({
+      heartbeatAcpLedgerLease({
         key,
         owner_instance_id: "worker-1",
         attempt_id: "A",
@@ -595,7 +597,7 @@ describe("the lease", () => {
       }),
     ).toBe(false);
     expect(
-      heartbeatC7Lease({
+      heartbeatAcpLedgerLease({
         key,
         owner_instance_id: "worker-1",
         attempt_id: "B",
@@ -608,7 +610,7 @@ describe("the lease", () => {
   it("never lets a stale writer end the current lease", () => {
     const a = start("A");
     start("B");
-    const result = finalizeC7Lease({
+    const result = finalizeAcpLedgerLease({
       turn,
       owner_instance_id: "worker-1",
       attempt_id: "A",
@@ -617,12 +619,12 @@ describe("the lease", () => {
     });
     expect(result).toEqual({ ended: false, stale: true, winner: null });
     expect(lease()).toMatchObject({ state: "running", attempt_id: "B" });
-    expect(getC7Winner(turn)).toBeUndefined();
+    expect(getAcpLedgerWinner(turn)).toBeUndefined();
   });
 
   it("ends the lease with a winner, making one if needed", () => {
     const a = start("A");
-    const result = finalizeC7Lease({
+    const result = finalizeAcpLedgerLease({
       turn,
       owner_instance_id: "worker-1",
       attempt_id: "A",
@@ -636,11 +638,11 @@ describe("the lease", () => {
 
   it("keeps the lease running when finalization fails", () => {
     const a = start("A");
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "finalize:before-update") throw Error("injected");
     });
     expect(() =>
-      finalizeC7Lease({
+      finalizeAcpLedgerLease({
         turn,
         owner_instance_id: "worker-1",
         attempt_id: "A",
@@ -648,22 +650,22 @@ describe("the lease", () => {
         projector,
       }),
     ).toThrow("injected");
-    __setC7FaultHook(undefined);
+    __setAcpLedgerFaultHook(undefined);
     expect(lease().state).toBe("running");
-    expect(getC7Winner(turn)).toBeUndefined();
+    expect(getAcpLedgerWinner(turn)).toBeUndefined();
   });
 
   it("fences running leases with an aborted winner", () => {
     start("A");
     expect(
-      fenceC7Project({
+      fenceAcpLedgerProject({
         project_id: turn.project_id,
         reason: "worker gone",
         projector,
       }),
     ).toBe(1);
     expect(lease().state).toBe("aborted");
-    expect(getC7Winner(turn)).toMatchObject({
+    expect(getAcpLedgerWinner(turn)).toMatchObject({
       outcome: "error",
       code: "aborted",
       attempt_id: "A",
@@ -672,11 +674,11 @@ describe("the lease", () => {
 });
 
 describe("objects", () => {
-  it("publishes an object with its event, and deleteC7TurnObjects removes it and its dependency rows", () => {
+  it("publishes an object with its event, and deleteAcpLedgerTurnObjects removes it and its dependency rows", () => {
     start("A");
     admit("A", { object: "tool_body" });
     const ids = getAcpDatabase()
-      .prepare(`SELECT object_id FROM c7_object`)
+      .prepare(`SELECT object_id FROM acp_ledger_object`)
       .all() as any[];
     expect(ids).toHaveLength(1);
     const thread = {
@@ -684,14 +686,16 @@ describe("objects", () => {
       path: turn.path,
       thread_id: turn.thread_id,
     };
-    expect(readC7Object(ids[0].object_id, thread)?.bytes).toBe(4);
+    expect(readAcpLedgerObject(ids[0].object_id, thread)?.bytes).toBe(4);
     expect(
-      readC7Object(ids[0].object_id, { ...thread, thread_id: "other" }),
+      readAcpLedgerObject(ids[0].object_id, { ...thread, thread_id: "other" }),
     ).toBeUndefined();
-    expect(deleteC7TurnObjects(turn)).toBe(1);
-    expect(readC7Object(ids[0].object_id, thread)).toBeUndefined();
+    expect(deleteAcpLedgerTurnObjects(turn)).toBe(1);
+    expect(readAcpLedgerObject(ids[0].object_id, thread)).toBeUndefined();
     expect(
-      getAcpDatabase().prepare(`SELECT COUNT(*) AS c FROM c7_object_dep`).get(),
+      getAcpDatabase()
+        .prepare(`SELECT COUNT(*) AS c FROM acp_ledger_object_dep`)
+        .get(),
     ).toMatchObject({ c: 0 });
   });
 
@@ -699,32 +703,34 @@ describe("objects", () => {
     start("A");
     admit("A", { object: "page" });
     admit("A", { object: "diff" });
-    expect(expireC7DerivedObjects(Date.now() + 25 * 60 * 60 * 1000)).toBe(1);
+    expect(
+      expireAcpLedgerDerivedObjects(Date.now() + 25 * 60 * 60 * 1000),
+    ).toBe(1);
     const left = getAcpDatabase()
-      .prepare(`SELECT class FROM c7_object`)
+      .prepare(`SELECT class FROM acp_ledger_object`)
       .all() as any[];
     expect(left.map((x) => x.class)).toEqual(["diff"]);
   });
 });
 
-describe("C1 r2: replay eligibility, order and identity", () => {
+describe("replay eligibility, order and identity", () => {
   it("never makes a stale, late or malformed row processable on replay", () => {
     start("A");
     start("B");
     admit("A", { x: "stale" });
     admit("B", { malformed: true });
     admit("B", { x: "late" });
-    const rows = listC7QueueRows(turn).filter((r) => r.kind === "in");
+    const rows = listAcpLedgerQueueRows(turn).filter((r) => r.kind === "in");
     expect(rows).toHaveLength(3);
     // never "duplicate": each stays refused with its class, and nothing else
     // happens (the turn's winner is the malformed refusal, unchanged)
-    const winner = getC7Winner(turn);
+    const winner = getAcpLedgerWinner(turn);
     expect(rows.map((row) => replayRow({ turn, row, projector }))).toEqual([
       { result: "refused", reason: "stale", integrity: false },
       { result: "refused", reason: "malformed", integrity: false },
       { result: "refused", reason: "late", integrity: false },
     ]);
-    expect(getC7Winner(turn)).toEqual(winner);
+    expect(getAcpLedgerWinner(turn)).toEqual(winner);
     expect(log().filter((e) => e.type === "turn_invalidated")).toHaveLength(0);
   });
 
@@ -746,7 +752,7 @@ describe("C1 r2: replay eligibility, order and identity", () => {
       candidate: { outcome: "interrupted" },
       projector,
     });
-    const rows = listC7QueueRows(turn);
+    const rows = listAcpLedgerQueueRows(turn);
     expect(rows.map((r) => r.kind)).toEqual(["in", "close", "in", "close"]);
     expect(rows.map((r) => r.qseq)).toEqual([1, 2, 3, 4]);
   });
@@ -754,20 +760,20 @@ describe("C1 r2: replay eligibility, order and identity", () => {
   it("refuses a stored row that doesn't parse, as a collision", () => {
     start("A");
     admit("A", { x: 1 });
-    const [row] = listC7QueueRows(turn);
+    const [row] = listAcpLedgerQueueRows(turn);
     expect(
       replayRow({ turn, row: { ...row, envelope: "{not json" }, projector }),
     ).toEqual({ result: "refused", reason: "collision", integrity: true });
     expect(
       replayRow({ turn, row: { ...row, envelope: "null" }, projector }),
     ).toEqual({ result: "refused", reason: "collision", integrity: true });
-    expect(getC7Winner(turn)).toMatchObject({ code: "source_conflict" });
+    expect(getAcpLedgerWinner(turn)).toMatchObject({ code: "source_conflict" });
   });
 
   it("includes attempt_gen in the identity", () => {
     start("A");
     admit("A", { x: 1 });
-    const [row] = listC7QueueRows(turn);
+    const [row] = listAcpLedgerQueueRows(turn);
     const envelope = JSON.parse(row.envelope);
     envelope.attempt_gen += 1;
     expect(
@@ -787,7 +793,7 @@ describe("C1 r2: replay eligibility, order and identity", () => {
   });
 });
 
-describe("C1 r2: the owned body snapshot", () => {
+describe("the owned body snapshot", () => {
   it("queues, projects and returns copies, never the caller's object", () => {
     start("A");
     const body: any = { type: "event", nested: { text: "one" } };
@@ -796,7 +802,7 @@ describe("C1 r2: the owned body snapshot", () => {
     body.nested.text = "changed";
     expect(result.envelope.body).not.toBe(body);
     expect((result.envelope.body as any).nested.text).toBe("one");
-    const [row] = listC7QueueRows(turn);
+    const [row] = listAcpLedgerQueueRows(turn);
     expect(JSON.parse(row.envelope).body.nested.text).toBe("one");
     expect(replayRow({ turn, row, projector }).result).toBe("duplicate");
   });
@@ -808,26 +814,26 @@ describe("C1 r2: the owned body snapshot", () => {
     holey[1] = 1;
     expect(admit("A", { list: holey }).result).toBe("storage_failed");
     expect(admit("A", { n: Number.NaN }).result).toBe("storage_failed");
-    expect(listC7QueueRows(turn)).toHaveLength(0);
+    expect(listAcpLedgerQueueRows(turn)).toHaveLength(0);
     expect(hasPendingIncomplete(turn)).toBe(true);
   });
 });
 
-describe("C1 r2: the pending flag needs a real lease row", () => {
+describe("the pending flag needs a real lease row", () => {
   it("keeps the entry when there is no lease row, and the next cutover inherits it", () => {
     markPendingIncomplete(turn);
     expect(flushPendingIncomplete(turn)).toBe(false);
     expect(hasPendingIncomplete(turn)).toBe(true);
     start("A");
-    expect(lease().c7_incomplete).toBe(1);
+    expect(lease().ledger_incomplete).toBe(1);
     expect(hasPendingIncomplete(turn)).toBe(false);
   });
 });
 
-describe("C1 r2: finalization", () => {
+describe("finalization", () => {
   it("does nothing for the wrong owner", () => {
     const a = start("A");
-    const result = finalizeC7Lease({
+    const result = finalizeAcpLedgerLease({
       turn,
       owner_instance_id: "someone-else",
       attempt_id: "A",
@@ -835,15 +841,19 @@ describe("C1 r2: finalization", () => {
       projector,
     });
     expect(result).toEqual({ ended: false, stale: true, winner: null });
-    expect(getC7Winner(turn)).toBeUndefined();
+    expect(getAcpLedgerWinner(turn)).toBeUndefined();
     expect(lease().state).toBe("running");
   });
 
   it("does nothing once the lease is terminal", () => {
     start("A");
-    fenceC7Project({ project_id: turn.project_id, reason: "x", projector });
+    fenceAcpLedgerProject({
+      project_id: turn.project_id,
+      reason: "x",
+      projector,
+    });
     const after = lease();
-    const result = finalizeC7Lease({
+    const result = finalizeAcpLedgerLease({
       turn,
       owner_instance_id: "worker-1",
       attempt_id: "A",
@@ -856,12 +866,12 @@ describe("C1 r2: finalization", () => {
 
   it("sets the lease state from the winner", () => {
     const a = start("A");
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "admit:after-queue") throw Error("injected");
     });
     admit("A", { x: 1 });
-    __setC7FaultHook(undefined);
-    const result = finalizeC7Lease({
+    __setAcpLedgerFaultHook(undefined);
+    const result = finalizeAcpLedgerLease({
       turn,
       owner_instance_id: "worker-1",
       attempt_id: "A",
@@ -883,7 +893,7 @@ describe("C1 r2: finalization", () => {
       projector,
     });
     expect(
-      finalizeC7Lease({
+      finalizeAcpLedgerLease({
         turn,
         owner_instance_id: "worker-1",
         attempt_id: "A",
@@ -894,10 +904,10 @@ describe("C1 r2: finalization", () => {
   });
 });
 
-describe("C1 r2: more fault points", () => {
+describe("more fault points", () => {
   it("leaves no winner and no close row when decide-close fails", () => {
     start("A");
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "decide:before-commit") throw Error("injected");
     });
     expect(() =>
@@ -909,61 +919,65 @@ describe("C1 r2: more fault points", () => {
         projector,
       }),
     ).toThrow("injected");
-    __setC7FaultHook(undefined);
-    expect(getC7Winner(turn)).toBeUndefined();
-    expect(listC7QueueRows(turn)).toHaveLength(0);
+    __setAcpLedgerFaultHook(undefined);
+    expect(getAcpLedgerWinner(turn)).toBeUndefined();
+    expect(listAcpLedgerQueueRows(turn)).toHaveLength(0);
     expect(log()).toHaveLength(0);
   });
 
   it("aborts nothing and decides nothing when the fence fails", () => {
     start("A");
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "fence:after-decide") throw Error("injected");
     });
     expect(() =>
-      fenceC7Project({ project_id: turn.project_id, reason: "x", projector }),
+      fenceAcpLedgerProject({
+        project_id: turn.project_id,
+        reason: "x",
+        projector,
+      }),
     ).toThrow("injected");
-    __setC7FaultHook(undefined);
+    __setAcpLedgerFaultHook(undefined);
     expect(lease().state).toBe("running");
-    expect(getC7Winner(turn)).toBeUndefined();
+    expect(getAcpLedgerWinner(turn)).toBeUndefined();
   });
 
   it("rolls back an object and its dependency rows with the input", () => {
     start("A");
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "projection:after-object") throw Error("injected");
     });
     expect(admit("A", { object: "tool_body" }).result).toBe("storage_failed");
-    __setC7FaultHook(undefined);
+    __setAcpLedgerFaultHook(undefined);
     const db = getAcpDatabase();
     expect(
-      db.prepare(`SELECT COUNT(*) AS c FROM c7_object`).get(),
+      db.prepare(`SELECT COUNT(*) AS c FROM acp_ledger_object`).get(),
     ).toMatchObject({ c: 0 });
     expect(
-      db.prepare(`SELECT COUNT(*) AS c FROM c7_object_dep`).get(),
+      db.prepare(`SELECT COUNT(*) AS c FROM acp_ledger_object_dep`).get(),
     ).toMatchObject({ c: 0 });
   });
 
   it("writes nothing when the commit itself is refused", () => {
     start("A");
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "tx:before-commit") throw Error("injected");
     });
     expect(admit("A", { x: 1 }).result).toBe("storage_failed");
-    __setC7FaultHook(undefined);
-    expect(listC7QueueRows(turn)).toHaveLength(0);
+    __setAcpLedgerFaultHook(undefined);
+    expect(listAcpLedgerQueueRows(turn)).toHaveLength(0);
     expect(log()).toHaveLength(0);
   });
 });
 
-describe("C1 r2: derived objects at read time", () => {
+describe("derived objects at read time", () => {
   it("refuses an expired page or reset at read time, before any sweep", () => {
     start("A");
     admit("A", { object: "page" });
     admit("A", { object: "tool_body" });
     const db = getAcpDatabase();
     const rows = db
-      .prepare(`SELECT object_id, class FROM c7_object`)
+      .prepare(`SELECT object_id, class FROM acp_ledger_object`)
       .all() as any[];
     const thread = {
       project_id: turn.project_id,
@@ -972,7 +986,7 @@ describe("C1 r2: derived objects at read time", () => {
     };
     const later = Date.now() + 24 * 60 * 60 * 1000 + 1;
     for (const row of rows) {
-      const read = readC7Object(row.object_id, thread, later);
+      const read = readAcpLedgerObject(row.object_id, thread, later);
       if (row.class === "page") expect(read).toBeUndefined();
       else expect(read?.bytes).toBe(4);
     }
@@ -983,12 +997,14 @@ describe("C1 r2: derived objects at read time", () => {
     for (let i = 0; i < 450; i++) admit("A", { object: "reset", i });
     let batches = 0;
     const sizes: number[] = [];
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "expire:batch") batches += 1;
       if (p.startsWith("expire:deleted:")) sizes.push(Number(p.slice(15)));
     });
-    expect(expireC7DerivedObjects(Date.now() + 25 * 60 * 60 * 1000)).toBe(450);
-    __setC7FaultHook(undefined);
+    expect(
+      expireAcpLedgerDerivedObjects(Date.now() + 25 * 60 * 60 * 1000),
+    ).toBe(450);
+    __setAcpLedgerFaultHook(undefined);
     // 200 + 200 + 50, each in its own short transaction
     expect(batches).toBe(3);
     expect(sizes).toEqual([200, 200, 50]);
@@ -998,17 +1014,17 @@ describe("C1 r2: derived objects at read time", () => {
     start("A");
     const plan = getAcpDatabase()
       .prepare(
-        `EXPLAIN QUERY PLAN SELECT object_id FROM c7_object
+        `EXPLAIN QUERY PLAN SELECT object_id FROM acp_ledger_object
          WHERE class IN ('page', 'reset') AND created_at <= ? LIMIT 200`,
       )
       .all(0) as Array<{ detail: string }>;
     expect(plan.map((row) => row.detail).join(" ")).toContain(
-      "c7_object_class_created_idx",
+      "acp_ledger_object_class_created_idx",
     );
   });
 });
 
-describe("C1 r2: whole-state rollback and retry", () => {
+describe("whole-state rollback and retry", () => {
   for (const point of [
     "admit:after-record",
     "admit:after-queue",
@@ -1021,11 +1037,11 @@ describe("C1 r2: whole-state rollback and retry", () => {
       start("A");
       admit("A", { x: 0 });
       const before = tables();
-      __setC7FaultHook((p) => {
+      __setAcpLedgerFaultHook((p) => {
         if (p === point) throw Error("injected");
       });
       expect(admit("A", { object: "tool_body" }).result).toBe("storage_failed");
-      __setC7FaultHook(undefined);
+      __setAcpLedgerFaultHook(undefined);
       expect(tables()).toEqual(before);
       __clearPendingIncompleteForTests();
       const retry = admit("A", { x: 1 });
@@ -1044,18 +1060,18 @@ describe("C1 r2: whole-state rollback and retry", () => {
       db.exec("ROLLBACK");
     }
     expect(hasPendingIncomplete(turn)).toBe(true);
-    expect(listC7QueueRows(turn)).toHaveLength(0);
+    expect(listAcpLedgerQueueRows(turn)).toHaveLength(0);
   });
 
   it("sets the pending flag on a genuine storage failure during replay", () => {
     start("A");
     admit("A", { x: 1 });
-    const [row] = listC7QueueRows(turn);
-    __setC7FaultHook((p) => {
+    const [row] = listAcpLedgerQueueRows(turn);
+    __setAcpLedgerFaultHook((p) => {
       if (p === "tx:before-commit") throw Error("injected");
     });
     expect(replayRow({ turn, row, projector }).result).toBe("storage_failed");
-    __setC7FaultHook(undefined);
+    __setAcpLedgerFaultHook(undefined);
     expect(hasPendingIncomplete(turn)).toBe(true);
   });
 
@@ -1069,26 +1085,26 @@ describe("C1 r2: whole-state rollback and retry", () => {
       candidate: { outcome: "completed", F: "done" },
       projector,
     });
-    const [row] = listC7QueueRows(turn).filter((r) => r.kind === "in");
+    const [row] = listAcpLedgerQueueRows(turn).filter((r) => r.kind === "in");
     const envelope = JSON.parse(row.envelope);
     envelope.body = { x: 2 };
     const changed = { ...row, envelope: JSON.stringify(envelope) };
     const before = tables();
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "projection:after-event") throw Error("injected");
     });
     expect(replayRow({ turn, row: changed, projector }).result).toBe(
       "storage_failed",
     );
-    __setC7FaultHook(undefined);
+    __setAcpLedgerFaultHook(undefined);
     expect(tables()).toEqual(before);
     expect(replayRow({ turn, row: changed, projector }).result).toBe("refused");
     expect(log().filter((e) => e.type === "turn_invalidated")).toHaveLength(1);
   });
 });
 
-describe("C1 r2: projector exceptions", () => {
-  const throwing = (hook: keyof C7Projector): C7Projector => ({
+describe("projector exceptions", () => {
+  const throwing = (hook: keyof AcpLedgerProjector): AcpLedgerProjector => ({
     ...projector,
     [hook]: () => {
       throw Error(`projector ${hook} failed`);
@@ -1125,7 +1141,7 @@ describe("C1 r2: projector exceptions", () => {
       }),
     ).toThrow("projector close failed");
     expect(tables()).toEqual(before);
-    expect(getC7Winner(turn)).toBeUndefined();
+    expect(getAcpLedgerWinner(turn)).toBeUndefined();
   });
 
   it("rolls back a refusal whose projector invalidate throws", () => {
@@ -1138,7 +1154,7 @@ describe("C1 r2: projector exceptions", () => {
       candidate: { outcome: "completed", F: "done" },
       projector,
     });
-    const [row] = listC7QueueRows(turn).filter((r) => r.kind === "in");
+    const [row] = listAcpLedgerQueueRows(turn).filter((r) => r.kind === "in");
     const before = tables();
     expect(
       replayRow({
@@ -1151,12 +1167,12 @@ describe("C1 r2: projector exceptions", () => {
   });
 });
 
-describe("C1 r3: commit order is bound to the input record", () => {
+describe("commit order is bound to the input record", () => {
   it("refuses a row whose qseq was changed", () => {
     start("A");
     admit("A", { x: 1 });
     admit("A", { x: 2 });
-    const [row] = listC7QueueRows(turn);
+    const [row] = listAcpLedgerQueueRows(turn);
     expect(replayRow({ turn, row: { ...row, qseq: 9 }, projector })).toEqual({
       result: "refused",
       reason: "collision",
@@ -1175,7 +1191,7 @@ describe("C1 r3: commit order is bound to the input record", () => {
       candidate: { outcome: "completed", F: "done" },
       projector,
     });
-    const [first, second] = listC7QueueRows(turn);
+    const [first, second] = listAcpLedgerQueueRows(turn);
     const swapped = [
       { ...first, qseq: second.qseq },
       { ...second, qseq: first.qseq },
@@ -1193,11 +1209,11 @@ describe("C1 r3: commit order is bound to the input record", () => {
     start("A");
     admit("A", { x: 1 });
     admit("A", { x: 2 });
-    const [first, second] = listC7QueueRows(turn);
+    const [first, second] = listAcpLedgerQueueRows(turn);
     expect(
       replayRow({ turn, row: { ...second, qseq: first.qseq }, projector }),
     ).toMatchObject({ result: "refused", integrity: true });
-    expect(getC7Winner(turn)).toMatchObject({ code: "source_conflict" });
+    expect(getAcpLedgerWinner(turn)).toMatchObject({ code: "source_conflict" });
   });
 
   it("replays every row of a restart in its committed order as a duplicate", () => {
@@ -1212,7 +1228,7 @@ describe("C1 r3: commit order is bound to the input record", () => {
       candidate: { outcome: "completed", F: "done" },
       projector,
     });
-    const rows = listC7QueueRows(turn);
+    const rows = listAcpLedgerQueueRows(turn);
     expect(rows.map((r) => r.qseq)).toEqual([1, 2, 3]);
     expect(
       rows.map((row) => replayRow({ turn, row, projector }).result),
@@ -1220,27 +1236,29 @@ describe("C1 r3: commit order is bound to the input record", () => {
   });
 });
 
-describe("C1 r3: a real COMMIT failure", () => {
+describe("a real COMMIT failure", () => {
   // A deferred foreign key, on the same connection, that the hook violates
   // inside the transaction: SQLite then refuses the COMMIT itself.
   function withDeferredViolation(run: () => void): void {
     const db = getAcpDatabase();
     db.exec("PRAGMA foreign_keys = ON");
     db.exec(
-      `CREATE TABLE IF NOT EXISTS c7_test_parent (id INTEGER PRIMARY KEY)`,
+      `CREATE TABLE IF NOT EXISTS acp_ledger_test_parent (id INTEGER PRIMARY KEY)`,
     );
-    db.exec(`CREATE TABLE IF NOT EXISTS c7_test_child (
-      parent INTEGER REFERENCES c7_test_parent(id) DEFERRABLE INITIALLY DEFERRED)`);
-    __setC7FaultHook((p) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS acp_ledger_test_child (
+      parent INTEGER REFERENCES acp_ledger_test_parent(id) DEFERRABLE INITIALLY DEFERRED)`);
+    __setAcpLedgerFaultHook((p) => {
       if (p === "tx:before-commit") {
-        db.prepare(`INSERT INTO c7_test_child (parent) VALUES (999)`).run();
+        db.prepare(
+          `INSERT INTO acp_ledger_test_child (parent) VALUES (999)`,
+        ).run();
       }
     });
     try {
       run();
     } finally {
-      __setC7FaultHook(undefined);
-      db.exec("DELETE FROM c7_test_child");
+      __setAcpLedgerFaultHook(undefined);
+      db.exec("DELETE FROM acp_ledger_test_child");
       db.exec("PRAGMA foreign_keys = OFF");
     }
   }
@@ -1255,17 +1273,17 @@ describe("C1 r3: a real COMMIT failure", () => {
       const hook = (p: string) => {
         if (p === "tx:before-commit") {
           getAcpDatabase()
-            .prepare(`INSERT INTO c7_test_child (parent) VALUES (999)`)
+            .prepare(`INSERT INTO acp_ledger_test_child (parent) VALUES (999)`)
             .run();
           reached = true;
         }
       };
-      __setC7FaultHook(hook);
+      __setAcpLedgerFaultHook(hook);
       outcome = admit("A", { object: "tool_body" });
       // the violating child row was rolled back with everything else
       expect(
         getAcpDatabase()
-          .prepare(`SELECT COUNT(*) AS c FROM c7_test_child`)
+          .prepare(`SELECT COUNT(*) AS c FROM acp_ledger_test_child`)
           .get(),
       ).toMatchObject({ c: 0 });
     });
@@ -1286,21 +1304,21 @@ describe("C1 r3: a real COMMIT failure", () => {
   it("takes the same handler for a failure at the COMMIT call itself", () => {
     start("A");
     const before = tables();
-    __setC7FaultHook((p) => {
+    __setAcpLedgerFaultHook((p) => {
       if (p === "tx:commit") throw Error("injected at COMMIT");
     });
     expect(admit("A", { x: 1 }).result).toBe("storage_failed");
-    __setC7FaultHook(undefined);
+    __setAcpLedgerFaultHook(undefined);
     expect(tables()).toEqual(before);
     // and the connection is usable: the failed transaction was rolled back
     expect(admit("A", { x: 2 }).result).toBe("admitted");
   });
 });
 
-describe("C1 r3: mutating validators and projectors can't change what was admitted", () => {
+describe("mutating validators and projectors can't change what was admitted", () => {
   it("keeps the queued bytes, the hash and the returned body", () => {
     start("A");
-    const mutating: C7Projector = {
+    const mutating: AcpLedgerProjector = {
       ...projector,
       validate: (state, envelope) => {
         (envelope.body as any).nested.text = "validator";
@@ -1321,7 +1339,7 @@ describe("C1 r3: mutating validators and projectors can't change what was admitt
     });
     if (result.result !== "admitted") throw Error("not admitted");
     expect((result.envelope.body as any).nested.text).toBe("one");
-    const [row] = listC7QueueRows(turn);
+    const [row] = listAcpLedgerQueueRows(turn);
     expect(JSON.parse(row.envelope).body.nested.text).toBe("one");
     expect(replayRow({ turn, row, projector })).toMatchObject({
       result: "duplicate",
@@ -1330,7 +1348,7 @@ describe("C1 r3: mutating validators and projectors can't change what was admitt
   });
 });
 
-describe("C1 r3: the 24-hour boundary, exactly", () => {
+describe("the 24-hour boundary, exactly", () => {
   const T0 = 5_000_000;
   const DAY = 24 * 60 * 60 * 1000;
   for (const klass of ["page", "reset"] as const) {
@@ -1345,7 +1363,7 @@ describe("C1 r3: the 24-hour boundary, exactly", () => {
         now: T0,
       });
       const [row] = getAcpDatabase()
-        .prepare(`SELECT object_id, created_at FROM c7_object`)
+        .prepare(`SELECT object_id, created_at FROM acp_ledger_object`)
         .all() as any[];
       expect(row.created_at).toBe(T0);
       const thread = {
@@ -1353,19 +1371,25 @@ describe("C1 r3: the 24-hour boundary, exactly", () => {
         path: turn.path,
         thread_id: turn.thread_id,
       };
-      expect(readC7Object(row.object_id, thread, T0 + DAY - 1)?.bytes).toBe(4);
-      expect(readC7Object(row.object_id, thread, T0 + DAY)).toBeUndefined();
-      expect(readC7Object(row.object_id, thread, T0 + DAY + 1)).toBeUndefined();
+      expect(
+        readAcpLedgerObject(row.object_id, thread, T0 + DAY - 1)?.bytes,
+      ).toBe(4);
+      expect(
+        readAcpLedgerObject(row.object_id, thread, T0 + DAY),
+      ).toBeUndefined();
+      expect(
+        readAcpLedgerObject(row.object_id, thread, T0 + DAY + 1),
+      ).toBeUndefined();
       // the sweep agrees with the read at the same instant
-      expect(expireC7DerivedObjects(T0 + DAY - 1)).toBe(0);
-      expect(expireC7DerivedObjects(T0 + DAY)).toBe(1);
+      expect(expireAcpLedgerDerivedObjects(T0 + DAY - 1)).toBe(0);
+      expect(expireAcpLedgerDerivedObjects(T0 + DAY)).toBe(1);
     });
   }
 });
 
-describe("C1 r4: the COMMIT-catch control detects its mutant", () => {
+describe("the COMMIT-catch control detects its mutant", () => {
   it("has the mutation switch off by default", () => {
-    expect(__getC7MutationForTests()).toBeUndefined();
+    expect(__getAcpLedgerMutationForTests()).toBeUndefined();
   });
 
   it("is set by nothing outside the tests", () => {
@@ -1391,13 +1415,13 @@ describe("C1 r4: the COMMIT-catch control detects its mutant", () => {
     const uses = files.flatMap((file) =>
       readFileSync(file, "utf8")
         .split("\n")
-        .filter((line) => line.includes("__setC7MutationForTests"))
+        .filter((line) => line.includes("__setAcpLedgerMutationForTests"))
         .map((line) => `${file}: ${line.trim()}`),
     );
-    // only its own definition, in c7-store.ts
+    // only its own definition, in acp-turn-ledger.ts
     expect(uses).toHaveLength(1);
     expect(uses[0]).toMatch(
-      /c7-store\.ts: export function __setC7MutationForTests\(/,
+      /acp-turn-ledger\.ts: export function __setAcpLedgerMutationForTests\(/,
     );
   });
 
@@ -1407,35 +1431,39 @@ describe("C1 r4: the COMMIT-catch control detects its mutant", () => {
     const db = getAcpDatabase();
     db.exec("PRAGMA foreign_keys = ON");
     db.exec(
-      `CREATE TABLE IF NOT EXISTS c7_test_parent (id INTEGER PRIMARY KEY)`,
+      `CREATE TABLE IF NOT EXISTS acp_ledger_test_parent (id INTEGER PRIMARY KEY)`,
     );
-    db.exec(`CREATE TABLE IF NOT EXISTS c7_test_child (
-      parent INTEGER REFERENCES c7_test_parent(id) DEFERRABLE INITIALLY DEFERRED)`);
+    db.exec(`CREATE TABLE IF NOT EXISTS acp_ledger_test_child (
+      parent INTEGER REFERENCES acp_ledger_test_parent(id) DEFERRABLE INITIALLY DEFERRED)`);
     let failed: any;
     let retry: any;
     let childRows: any;
     try {
-      __setC7MutationForTests("skip-commit-rollback");
-      __setC7FaultHook((p) => {
+      __setAcpLedgerMutationForTests("skip-commit-rollback");
+      __setAcpLedgerFaultHook((p) => {
         if (p === "tx:before-commit") {
-          db.prepare(`INSERT INTO c7_test_child (parent) VALUES (999)`).run();
+          db.prepare(
+            `INSERT INTO acp_ledger_test_child (parent) VALUES (999)`,
+          ).run();
         }
       });
       failed = admit("A", { x: 1 });
-      __setC7FaultHook(undefined);
+      __setAcpLedgerFaultHook(undefined);
       // the deliberately leaked transaction is still open, so what the real
       // control asserts no longer holds
-      childRows = db.prepare(`SELECT COUNT(*) AS c FROM c7_test_child`).get();
+      childRows = db
+        .prepare(`SELECT COUNT(*) AS c FROM acp_ledger_test_child`)
+        .get();
       retry = admit("A", { x: 2 });
     } finally {
-      __setC7FaultHook(undefined);
-      __setC7MutationForTests(undefined);
+      __setAcpLedgerFaultHook(undefined);
+      __setAcpLedgerMutationForTests(undefined);
       try {
         db.exec("ROLLBACK"); // unwind the leaked transaction
       } catch {
         // already gone
       }
-      db.exec("DELETE FROM c7_test_child");
+      db.exec("DELETE FROM acp_ledger_test_child");
       db.exec("PRAGMA foreign_keys = OFF");
       __clearPendingIncompleteForTests();
     }

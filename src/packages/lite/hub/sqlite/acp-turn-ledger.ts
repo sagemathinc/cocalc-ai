@@ -3,13 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// The durable side of C7, the typed turn/event protocol (Sagebrush slice S6a,
-// scope packet r10 §2.2, §2.5 and §2.6). Everything an agent turn feeds into C7
-// is admitted here, in one SQLite transaction per input, together with its
-// queue row, its projection and the thread's next seq. The end of a turn is
-// decided here too: one winner per turn, shared by the chat and by C7.
+// The ACP turn ledger: the durable record behind each agent turn's typed
+// event stream. Every input a turn feeds into the stream is admitted here, in
+// one SQLite transaction per input, together with its queue row, its
+// projection and the thread's next seq. The end of a turn is decided here
+// too: one winner per turn, shared by the chat and by the event stream.
 //
-// The projector itself (what C7 events an input produces) is pluggable: this
+// The projector itself (what events an input produces) is pluggable: this
 // module only stores what it returns.
 
 import { randomBytes } from "node:crypto";
@@ -17,33 +17,33 @@ import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import { getAcpDatabase } from "./acp-database";
 import type { SqliteDatabase } from "./acp-database";
 import { ensureAcpTurnsSchema } from "./acp-turns";
-import { canonicalJson, sha256Bytes, sha256Hex } from "./c7-envelope";
+import { canonicalJson, sha256Bytes, sha256Hex } from "./acp-canonical-json";
 
-export const C7_VERSION = "1.0";
+export const ACP_LEDGER_VERSION = "1.0";
 
 // ---------------------------------------------------------------------------
 // Types
 
-export interface C7TurnKey {
+export interface AcpLedgerTurnKey {
   project_id: string;
   path: string;
   message_date: string;
 }
 
-// What C7 needs to know about a turn besides its key.
-export interface C7TurnContext extends C7TurnKey {
+// What the ledger needs to know about a turn besides its key.
+export interface AcpLedgerTurnContext extends AcpLedgerTurnKey {
   thread_id: string;
-  // The assistant reply's chat message id: the C7 turn_id.
+  // The assistant reply's chat message id: the event stream's turn_id.
   turn_id: string;
 }
 
-export type C7Origin = "source" | "local";
+export type AcpLedgerOrigin = "source" | "local";
 
-// An immutable hub-ingress envelope (§2.2). `n` and `time` are assigned
+// An immutable hub-ingress envelope. `n` and `time` are assigned
 // inside admission; `body` is the payload exactly as received, taken once as
 // canonical JSON. Every consumer (the hash, the queue row, the projector and
 // the hub) gets its own parse of that one text.
-export interface C7Envelope {
+export interface AcpLedgerEnvelope {
   kind: "in";
   project_id: string;
   path: string;
@@ -51,15 +51,15 @@ export interface C7Envelope {
   attempt_id: string;
   attempt_gen: number;
   n: number;
-  origin: C7Origin;
+  origin: AcpLedgerOrigin;
   time: number;
   body: unknown;
 }
 
-export type C7Outcome = "completed" | "interrupted" | "error";
+export type AcpLedgerOutcome = "completed" | "interrupted" | "error";
 
-export interface C7CloseCandidate {
-  outcome: C7Outcome;
+export interface AcpLedgerCloseCandidate {
+  outcome: AcpLedgerOutcome;
   // The authoritative final text, for a completed close only.
   F?: string;
   code?: string;
@@ -67,7 +67,7 @@ export interface C7CloseCandidate {
   cause?: { attempt_id: string; kind: "in" | "close"; n: number };
 }
 
-export interface C7Winner extends C7CloseCandidate {
+export interface AcpLedgerWinner extends AcpLedgerCloseCandidate {
   attempt_id: string;
   attempt_gen: number;
   h_close: string;
@@ -75,8 +75,8 @@ export interface C7Winner extends C7CloseCandidate {
 
 // A stored close candidate. Closes are keyed (K, attempt, "close", k): `k`
 // numbers an attempt's close candidates in their own namespace, never shared
-// with input ordinals (§2.2: "a close is never an ordinal").
-export interface C7CloseEnvelope {
+// with input ordinals: a close is never an ordinal.
+export interface AcpLedgerCloseEnvelope {
   kind: "close";
   project_id: string;
   path: string;
@@ -84,81 +84,81 @@ export interface C7CloseEnvelope {
   attempt_id: string;
   attempt_gen: number;
   k: number;
-  candidate: C7CloseCandidate;
+  candidate: AcpLedgerCloseCandidate;
 }
 
-// A C7 event as the projector returns it: the store adds thread_id, seq,
+// An event as the projector returns it: the store adds thread_id, seq,
 // turn_id and v.
-export interface C7EventDraft {
+export interface AcpLedgerEventDraft {
   type: string;
   [field: string]: unknown;
 }
 
-export type C7ObjectClass = "diff" | "tool_body" | "page" | "reset";
+export type AcpLedgerObjectClass = "diff" | "tool_body" | "page" | "reset";
 
-export interface C7ObjectDraft {
+export interface AcpLedgerObjectDraft {
   object_id: string;
-  class: C7ObjectClass;
+  class: AcpLedgerObjectClass;
   body: Uint8Array;
-  // The turns (message_date of each) this object depends on (§2.6).
+  // The turns (message_date of each) this object depends on.
   deps: string[];
 }
 
-export interface C7Projection {
+export interface AcpLedgerProjection {
   state: unknown;
-  events: C7EventDraft[];
-  objects: C7ObjectDraft[];
+  events: AcpLedgerEventDraft[];
+  objects: AcpLedgerObjectDraft[];
 }
 
-export interface C7ProjectionContext {
-  turn: C7TurnContext;
+export interface AcpLedgerProjectionContext {
+  turn: AcpLedgerTurnContext;
   attempt_gen: number;
-  // True at the first admitted input of a new current attempt (§2.2).
+  // True at the first admitted input of a new current attempt.
   cutover: boolean;
   newObjectId: () => string;
 }
 
-export type C7RefusalCode =
+export type AcpLedgerRefusalCode =
   | "source_conflict"
   | "source_gap"
   | "source_malformed";
 
-export interface C7Projector {
-  // Is this input well-formed against the turn's state (§2.4)?
-  validate(state: unknown, envelope: C7Envelope): "ok" | "malformed";
+export interface AcpLedgerProjector {
+  // Is this input well-formed against the turn's state?
+  validate(state: unknown, envelope: AcpLedgerEnvelope): "ok" | "malformed";
   // A live, admitted input.
   input(
     state: unknown,
-    envelope: C7Envelope,
-    ctx: C7ProjectionContext,
-  ): C7Projection;
-  // The turn's winner, the first time it is recorded (§2.5).
+    envelope: AcpLedgerEnvelope,
+    ctx: AcpLedgerProjectionContext,
+  ): AcpLedgerProjection;
+  // The turn's winner, the first time it is recorded.
   close(
     state: unknown,
-    winner: C7Winner,
-    ctx: C7ProjectionContext,
-  ): C7Projection;
-  // An integrity refusal after the winner (§2.2): one turn_invalidated.
+    winner: AcpLedgerWinner,
+    ctx: AcpLedgerProjectionContext,
+  ): AcpLedgerProjection;
+  // An integrity refusal after the winner: one turn_invalidated.
   invalidate(
     state: unknown,
-    code: C7RefusalCode,
-    ctx: C7ProjectionContext,
-  ): C7Projection;
+    code: AcpLedgerRefusalCode,
+    ctx: AcpLedgerProjectionContext,
+  ): AcpLedgerProjection;
 }
 
 // The class an input was given at admission. Only `live` inputs are ever
 // processed by the hub, at admission or on replay.
-export type C7InputClass = "live" | "stale" | "late" | "malformed";
+export type AcpLedgerInputClass = "live" | "stale" | "late" | "malformed";
 
-export type C7AdmitResult =
-  | { result: "admitted"; envelope: C7Envelope }
+export type AcpLedgerAdmitResult =
+  | { result: "admitted"; envelope: AcpLedgerEnvelope }
   | {
       result: "refused";
       reason: "stale" | "late" | "malformed" | "no_attempt";
     }
   | { result: "storage_failed"; error: unknown };
 
-export type C7ReplayResult =
+export type AcpLedgerReplayResult =
   // A stored row that matches its record exactly: a live input (processable,
   // with its own parse of the stored text), or a close candidate (never
   // processed).
@@ -167,7 +167,7 @@ export type C7ReplayResult =
       kind: "in";
       class: "live";
       process: true;
-      envelope: C7Envelope;
+      envelope: AcpLedgerEnvelope;
     }
   | { result: "duplicate"; kind: "close"; class: string; process: false }
   // An exact stored input that admission refused: it stays refused, and is
@@ -181,9 +181,9 @@ export type C7ReplayResult =
   | { result: "refused"; reason: "collision" | "gap"; integrity: true }
   | { result: "storage_failed"; error: unknown };
 
-export type C7DecideResult =
-  | { role: "winner"; winner: C7Winner }
-  | { role: "loser"; winner: C7Winner }
+export type AcpLedgerDecideResult =
+  | { role: "winner"; winner: AcpLedgerWinner }
+  | { role: "loser"; winner: AcpLedgerWinner }
   | { role: "stale"; winner: null };
 
 // ---------------------------------------------------------------------------
@@ -191,7 +191,7 @@ export type C7DecideResult =
 
 let faultHook: ((point: string) => void) | undefined;
 
-export function __setC7FaultHook(hook?: (point: string) => void): void {
+export function __setAcpLedgerFaultHook(hook?: (point: string) => void): void {
   faultHook = hook;
 }
 
@@ -202,41 +202,45 @@ function fault(point: string): void {
 // Mutation switch (tests only): lets a test break one handler on purpose, to
 // prove that its control detects the breakage. Off by default; nothing
 // outside the tests may set it (a test checks both).
-export type C7Mutation = "skip-commit-rollback";
+export type AcpLedgerMutation = "skip-commit-rollback";
 
-let mutation: C7Mutation | undefined;
+let mutation: AcpLedgerMutation | undefined;
 
-export function __setC7MutationForTests(value?: C7Mutation): void {
+export function __setAcpLedgerMutationForTests(
+  value?: AcpLedgerMutation,
+): void {
   mutation = value;
 }
 
-export function __getC7MutationForTests(): C7Mutation | undefined {
+export function __getAcpLedgerMutationForTests():
+  | AcpLedgerMutation
+  | undefined {
   return mutation;
 }
 
 // ---------------------------------------------------------------------------
-// The process-level pending flags (§2.2): turns whose admission failed and
-// whose durable c7_incomplete write hasn't committed yet. An entry outlives
+// The process-level pending flags: turns whose admission failed and
+// whose durable ledger_incomplete write hasn't committed yet. An entry outlives
 // the writer that recorded it; it is removed only after a transaction that
 // wrote the flag to the turn's lease row has committed.
 
 const pendingIncomplete = new Set<string>();
 
-function turnKeyString(key: C7TurnKey): string {
+function turnKeyString(key: AcpLedgerTurnKey): string {
   return JSON.stringify([key.project_id, key.path, key.message_date]);
 }
 
-export function markPendingIncomplete(key: C7TurnKey): void {
+export function markPendingIncomplete(key: AcpLedgerTurnKey): void {
   pendingIncomplete.add(turnKeyString(key));
 }
 
-export function hasPendingIncomplete(key: C7TurnKey): boolean {
+export function hasPendingIncomplete(key: AcpLedgerTurnKey): boolean {
   return pendingIncomplete.has(turnKeyString(key));
 }
 
 // Writes K's pending flag durably, if there is one. Returns true when nothing
 // is pending any more. A failure, or a missing lease row, keeps the entry.
-export function flushPendingIncomplete(key: C7TurnKey): boolean {
+export function flushPendingIncomplete(key: AcpLedgerTurnKey): boolean {
   if (!hasPendingIncomplete(key)) return true;
   const db = database();
   let written = false;
@@ -271,7 +275,7 @@ function database(): SqliteDatabase {
   return db;
 }
 
-export function __resetC7InitForTests(): void {
+export function __resetAcpLedgerInitForTests(): void {
   initialized = false;
 }
 
@@ -289,16 +293,16 @@ function initSchema(db: SqliteDatabase): void {
       `ALTER TABLE acp_turns ADD COLUMN attempt_gen INTEGER NOT NULL DEFAULT 0`,
     );
   }
-  if (!has("c7_incomplete")) {
+  if (!has("ledger_incomplete")) {
     db.exec(
-      `ALTER TABLE acp_turns ADD COLUMN c7_incomplete INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE acp_turns ADD COLUMN ledger_incomplete INTEGER NOT NULL DEFAULT 0`,
     );
   }
   // One record per admitted input (kind "in", by ordinal n) and per close
   // candidate (kind "close", by candidate index k), with the attempt_gen it
   // was admitted under, its commit position qseq, its hash and its class.
   db.exec(`
-    CREATE TABLE IF NOT EXISTS c7_input (
+    CREATE TABLE IF NOT EXISTS acp_ledger_input (
       project_id TEXT NOT NULL,
       path TEXT NOT NULL,
       message_date TEXT NOT NULL,
@@ -315,7 +319,7 @@ function initSchema(db: SqliteDatabase): void {
   `);
   // The queue: insert-once rows, read back in commit order (qseq).
   db.exec(`
-    CREATE TABLE IF NOT EXISTS c7_queue (
+    CREATE TABLE IF NOT EXISTS acp_ledger_queue (
       project_id TEXT NOT NULL,
       path TEXT NOT NULL,
       message_date TEXT NOT NULL,
@@ -332,13 +336,13 @@ function initSchema(db: SqliteDatabase): void {
     )
   `);
   db.exec(
-    `CREATE INDEX IF NOT EXISTS c7_queue_order_idx ON c7_queue(project_id, path, message_date, qseq)`,
+    `CREATE INDEX IF NOT EXISTS acp_ledger_queue_order_idx ON acp_ledger_queue(project_id, path, message_date, qseq)`,
   );
   db.exec(
-    `CREATE INDEX IF NOT EXISTS c7_queue_created_idx ON c7_queue(created_at)`,
+    `CREATE INDEX IF NOT EXISTS acp_ledger_queue_created_idx ON acp_ledger_queue(created_at)`,
   );
   db.exec(`
-    CREATE TABLE IF NOT EXISTS c7_turn (
+    CREATE TABLE IF NOT EXISTS acp_ledger_turn (
       project_id TEXT NOT NULL,
       path TEXT NOT NULL,
       message_date TEXT NOT NULL,
@@ -353,7 +357,7 @@ function initSchema(db: SqliteDatabase): void {
     )
   `);
   db.exec(`
-    CREATE TABLE IF NOT EXISTS c7_close (
+    CREATE TABLE IF NOT EXISTS acp_ledger_close (
       project_id TEXT NOT NULL,
       path TEXT NOT NULL,
       message_date TEXT NOT NULL,
@@ -363,7 +367,7 @@ function initSchema(db: SqliteDatabase): void {
     )
   `);
   db.exec(`
-    CREATE TABLE IF NOT EXISTS c7_thread (
+    CREATE TABLE IF NOT EXISTS acp_ledger_thread (
       project_id TEXT NOT NULL,
       path TEXT NOT NULL,
       thread_id TEXT NOT NULL,
@@ -372,7 +376,7 @@ function initSchema(db: SqliteDatabase): void {
     )
   `);
   db.exec(`
-    CREATE TABLE IF NOT EXISTS c7_log (
+    CREATE TABLE IF NOT EXISTS acp_ledger_log (
       project_id TEXT NOT NULL,
       path TEXT NOT NULL,
       thread_id TEXT NOT NULL,
@@ -383,7 +387,7 @@ function initSchema(db: SqliteDatabase): void {
     )
   `);
   db.exec(`
-    CREATE TABLE IF NOT EXISTS c7_object (
+    CREATE TABLE IF NOT EXISTS acp_ledger_object (
       object_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
       path TEXT NOT NULL,
@@ -396,10 +400,10 @@ function initSchema(db: SqliteDatabase): void {
     )
   `);
   db.exec(
-    `CREATE INDEX IF NOT EXISTS c7_object_class_created_idx ON c7_object(class, created_at)`,
+    `CREATE INDEX IF NOT EXISTS acp_ledger_object_class_created_idx ON acp_ledger_object(class, created_at)`,
   );
   db.exec(`
-    CREATE TABLE IF NOT EXISTS c7_object_dep (
+    CREATE TABLE IF NOT EXISTS acp_ledger_object_dep (
       object_id TEXT NOT NULL,
       project_id TEXT NOT NULL,
       path TEXT NOT NULL,
@@ -408,7 +412,7 @@ function initSchema(db: SqliteDatabase): void {
     )
   `);
   db.exec(
-    `CREATE INDEX IF NOT EXISTS c7_object_dep_turn_idx ON c7_object_dep(project_id, path, message_date)`,
+    `CREATE INDEX IF NOT EXISTS acp_ledger_object_dep_turn_idx ON acp_ledger_object_dep(project_id, path, message_date)`,
   );
 }
 
@@ -456,34 +460,42 @@ function transaction<T>(db: SqliteDatabase, fn: () => T): T {
 interface LeaseRow {
   attempt_id: string | null;
   attempt_gen: number;
-  c7_incomplete: number;
+  ledger_incomplete: number;
   state: string;
   owner_instance_id: string;
 }
 
-function readLease(db: SqliteDatabase, key: C7TurnKey): LeaseRow | undefined {
+function readLease(
+  db: SqliteDatabase,
+  key: AcpLedgerTurnKey,
+): LeaseRow | undefined {
   return db
     .prepare(
-      `SELECT attempt_id, attempt_gen, c7_incomplete, state, owner_instance_id
+      `SELECT attempt_id, attempt_gen, ledger_incomplete, state, owner_instance_id
        FROM acp_turns
        WHERE project_id = ? AND path = ? AND message_date = ?`,
     )
     .get(key.project_id, key.path, key.message_date) as LeaseRow | undefined;
 }
 
-function readWinner(db: SqliteDatabase, key: C7TurnKey): C7Winner | undefined {
+function readWinner(
+  db: SqliteDatabase,
+  key: AcpLedgerTurnKey,
+): AcpLedgerWinner | undefined {
   const row = db
     .prepare(
-      `SELECT record FROM c7_close
+      `SELECT record FROM acp_ledger_close
        WHERE project_id = ? AND path = ? AND message_date = ?`,
     )
     .get(key.project_id, key.path, key.message_date) as
     | { record: string }
     | undefined;
-  return row ? (JSON.parse(row.record) as C7Winner) : undefined;
+  return row ? (JSON.parse(row.record) as AcpLedgerWinner) : undefined;
 }
 
-export function getC7Winner(key: C7TurnKey): C7Winner | undefined {
+export function getAcpLedgerWinner(
+  key: AcpLedgerTurnKey,
+): AcpLedgerWinner | undefined {
   return readWinner(database(), key);
 }
 
@@ -494,18 +506,21 @@ interface TurnRow {
   invalidated_code: string | null;
 }
 
-function readTurn(db: SqliteDatabase, key: C7TurnKey): TurnRow | undefined {
+function readTurn(
+  db: SqliteDatabase,
+  key: AcpLedgerTurnKey,
+): TurnRow | undefined {
   return db
     .prepare(
-      `SELECT state, last_attempt_gen, next_qseq, invalidated_code FROM c7_turn
+      `SELECT state, last_attempt_gen, next_qseq, invalidated_code FROM acp_ledger_turn
        WHERE project_id = ? AND path = ? AND message_date = ?`,
     )
     .get(key.project_id, key.path, key.message_date) as TurnRow | undefined;
 }
 
-function ensureTurn(db: SqliteDatabase, turn: C7TurnContext): TurnRow {
+function ensureTurn(db: SqliteDatabase, turn: AcpLedgerTurnContext): TurnRow {
   db.prepare(
-    `INSERT INTO c7_turn (project_id, path, message_date, thread_id, turn_id)
+    `INSERT INTO acp_ledger_turn (project_id, path, message_date, thread_id, turn_id)
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(project_id, path, message_date) DO NOTHING`,
   ).run(
@@ -524,40 +539,40 @@ function parseState(row: TurnRow): unknown {
 
 function writeState(
   db: SqliteDatabase,
-  key: C7TurnKey,
+  key: AcpLedgerTurnKey,
   state: unknown,
   last_attempt_gen?: number,
 ): void {
   const text = state === undefined ? null : JSON.stringify(state);
   if (last_attempt_gen == null) {
     db.prepare(
-      `UPDATE c7_turn SET state = ?
+      `UPDATE acp_ledger_turn SET state = ?
        WHERE project_id = ? AND path = ? AND message_date = ?`,
     ).run(text, key.project_id, key.path, key.message_date);
   } else {
     db.prepare(
-      `UPDATE c7_turn SET state = ?, last_attempt_gen = ?
+      `UPDATE acp_ledger_turn SET state = ?, last_attempt_gen = ?
        WHERE project_id = ? AND path = ? AND message_date = ?`,
     ).run(text, last_attempt_gen, key.project_id, key.path, key.message_date);
   }
 }
 
-function countLate(db: SqliteDatabase, key: C7TurnKey): void {
+function countLate(db: SqliteDatabase, key: AcpLedgerTurnKey): void {
   db.prepare(
-    `UPDATE c7_turn SET late_count = late_count + 1
+    `UPDATE acp_ledger_turn SET late_count = late_count + 1
      WHERE project_id = ? AND path = ? AND message_date = ?`,
   ).run(key.project_id, key.path, key.message_date);
 }
 
 function nextIndex(
   db: SqliteDatabase,
-  key: C7TurnKey,
+  key: AcpLedgerTurnKey,
   attempt_id: string,
   kind: "in" | "close",
 ): number {
   const row = db
     .prepare(
-      `SELECT MAX(n) AS n FROM c7_input
+      `SELECT MAX(n) AS n FROM acp_ledger_input
        WHERE project_id = ? AND path = ? AND message_date = ?
          AND attempt_id = ? AND kind = ?`,
     )
@@ -569,18 +584,18 @@ function nextIndex(
 
 function recordInput(
   db: SqliteDatabase,
-  key: C7TurnKey,
+  key: AcpLedgerTurnKey,
   attempt_id: string,
   kind: "in" | "close",
   n: number,
   attempt_gen: number,
   qseq: number,
-  origin: C7Origin | null,
+  origin: AcpLedgerOrigin | null,
   h: string,
   klass: string,
 ): void {
   db.prepare(
-    `INSERT INTO c7_input
+    `INSERT INTO acp_ledger_input
        (project_id, path, message_date, attempt_id, kind, n, attempt_gen,
         qseq, origin, h, class)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -601,22 +616,22 @@ function recordInput(
 
 // The next commit position for the turn: allocated from the turn's row
 // inside the admitting transaction, so qseq is the order admissions
-// committed, inputs and closes merged. It is recorded in c7_input as well as
+// committed, inputs and closes merged. It is recorded in acp_ledger_input as well as
 // the queue, and replay requires the two to agree.
-function allocQseq(db: SqliteDatabase, turn: C7TurnContext): number {
+function allocQseq(db: SqliteDatabase, turn: AcpLedgerTurnContext): number {
   const row = ensureTurn(db, turn);
   const qseq = Number(row.next_qseq);
   db.prepare(
-    `UPDATE c7_turn SET next_qseq = ?
+    `UPDATE acp_ledger_turn SET next_qseq = ?
      WHERE project_id = ? AND path = ? AND message_date = ?`,
   ).run(qseq + 1, turn.project_id, turn.path, turn.message_date);
   return qseq;
 }
 
-// Insert-once (§2.2, step 2), at the commit position allocQseq gave.
+// Insert-once, at the commit position allocQseq gave.
 function writeQueueRow(
   db: SqliteDatabase,
-  turn: C7TurnContext,
+  turn: AcpLedgerTurnContext,
   attempt_gen: number,
   attempt_id: string,
   kind: "in" | "close",
@@ -629,7 +644,7 @@ function writeQueueRow(
 ): void {
   const changes = db
     .prepare(
-      `INSERT INTO c7_queue
+      `INSERT INTO acp_ledger_queue
          (project_id, path, message_date, attempt_gen, attempt_id, kind, n,
           qseq, envelope, h, hub_seq, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -651,15 +666,20 @@ function writeQueueRow(
     ).changes;
   if (Number(changes) !== 1) {
     // The input record is new, so its queue row must be too.
-    throw new Error("c7: queue row already exists for a new input");
+    throw new Error(
+      "acp turn ledger: queue row already exists for a new input",
+    );
   }
 }
 
 // Returns true when exactly the turn's lease row now carries the flag.
-function writeIncompleteInTx(db: SqliteDatabase, key: C7TurnKey): boolean {
+function writeIncompleteInTx(
+  db: SqliteDatabase,
+  key: AcpLedgerTurnKey,
+): boolean {
   const changes = db
     .prepare(
-      `UPDATE acp_turns SET c7_incomplete = 1
+      `UPDATE acp_turns SET ledger_incomplete = 1
        WHERE project_id = ? AND path = ? AND message_date = ?`,
     )
     .run(key.project_id, key.path, key.message_date).changes;
@@ -671,13 +691,13 @@ function writeIncompleteInTx(db: SqliteDatabase, key: C7TurnKey): boolean {
 
 function appendProjection(
   db: SqliteDatabase,
-  turn: C7TurnContext,
-  projection: C7Projection,
+  turn: AcpLedgerTurnContext,
+  projection: AcpLedgerProjection,
   now: number,
 ): void {
   for (const object of projection.objects) {
     db.prepare(
-      `INSERT INTO c7_object
+      `INSERT INTO acp_ledger_object
          (object_id, project_id, path, thread_id, class, bytes, sha256, body, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
@@ -693,7 +713,7 @@ function appendProjection(
     );
     for (const dep of object.deps) {
       db.prepare(
-        `INSERT INTO c7_object_dep (object_id, project_id, path, message_date)
+        `INSERT INTO acp_ledger_object_dep (object_id, project_id, path, message_date)
          VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
       ).run(object.object_id, turn.project_id, turn.path, dep);
     }
@@ -701,12 +721,12 @@ function appendProjection(
   }
   if (projection.events.length === 0) return;
   db.prepare(
-    `INSERT INTO c7_thread (project_id, path, thread_id, next_seq)
+    `INSERT INTO acp_ledger_thread (project_id, path, thread_id, next_seq)
      VALUES (?, ?, ?, 1) ON CONFLICT DO NOTHING`,
   ).run(turn.project_id, turn.path, turn.thread_id);
   const row = db
     .prepare(
-      `SELECT next_seq FROM c7_thread
+      `SELECT next_seq FROM acp_ledger_thread
        WHERE project_id = ? AND path = ? AND thread_id = ?`,
     )
     .get(turn.project_id, turn.path, turn.thread_id) as { next_seq: number };
@@ -717,10 +737,10 @@ function appendProjection(
       thread_id: turn.thread_id,
       seq,
       turn_id: turn.turn_id,
-      v: C7_VERSION,
+      v: ACP_LEDGER_VERSION,
     };
     db.prepare(
-      `INSERT INTO c7_log (project_id, path, thread_id, seq, message_date, event)
+      `INSERT INTO acp_ledger_log (project_id, path, thread_id, seq, message_date, event)
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(
       turn.project_id,
@@ -734,7 +754,7 @@ function appendProjection(
     fault("projection:after-event");
   }
   db.prepare(
-    `UPDATE c7_thread SET next_seq = ?
+    `UPDATE acp_ledger_thread SET next_seq = ?
      WHERE project_id = ? AND path = ? AND thread_id = ?`,
   ).run(seq, turn.project_id, turn.path, turn.thread_id);
 }
@@ -744,30 +764,33 @@ function newObjectId(): string {
 }
 
 function projectionContext(
-  turn: C7TurnContext,
+  turn: AcpLedgerTurnContext,
   attempt_gen: number,
   cutover: boolean,
-): C7ProjectionContext {
+): AcpLedgerProjectionContext {
   return { turn, attempt_gen, cutover, newObjectId };
 }
 
 // ---------------------------------------------------------------------------
-// The terminal arbiter (§2.5)
+// The terminal arbiter
 
-export type C7Caller = "ordinary" | "arbiter";
+export type AcpLedgerCaller = "ordinary" | "arbiter";
 
 interface DecideArgs {
-  turn: C7TurnContext;
-  caller: C7Caller;
+  turn: AcpLedgerTurnContext;
+  caller: AcpLedgerCaller;
   // For an ordinary caller, the caller's own attempt. An arbiter caller acts
   // for K and records its winner under the lease's current attempt.
   attempt_id?: string;
-  candidate: C7CloseCandidate;
-  projector: C7Projector;
+  candidate: AcpLedgerCloseCandidate;
+  projector: AcpLedgerProjector;
   now: number;
 }
 
-function decideCloseInTx(db: SqliteDatabase, args: DecideArgs): C7DecideResult {
+function decideCloseInTx(
+  db: SqliteDatabase,
+  args: DecideArgs,
+): AcpLedgerDecideResult {
   const { turn, caller, projector, now } = args;
   const lease = readLease(db, turn);
   const attempt_id =
@@ -780,7 +803,7 @@ function decideCloseInTx(db: SqliteDatabase, args: DecideArgs): C7DecideResult {
   const attempt_gen =
     lease?.attempt_id === attempt_id ? Number(lease.attempt_gen) : 0;
   const k = nextIndex(db, turn, attempt_id, "close");
-  const closeEnvelope: C7CloseEnvelope = {
+  const closeEnvelope: AcpLedgerCloseEnvelope = {
     kind: "close",
     project_id: turn.project_id,
     path: turn.path,
@@ -834,7 +857,10 @@ function decideCloseInTx(db: SqliteDatabase, args: DecideArgs): C7DecideResult {
   }
   // 3. The winner. An incomplete turn can only end as admission_failed.
   let candidate = args.candidate;
-  if (Number(lease?.c7_incomplete ?? 0) === 1 || hasPendingIncomplete(turn)) {
+  if (
+    Number(lease?.ledger_incomplete ?? 0) === 1 ||
+    hasPendingIncomplete(turn)
+  ) {
     candidate = { outcome: "error", code: "admission_failed" };
   }
   const base = {
@@ -843,9 +869,9 @@ function decideCloseInTx(db: SqliteDatabase, args: DecideArgs): C7DecideResult {
     attempt_gen,
   };
   const h_close = sha256Hex(canonicalJson(base));
-  const winner: C7Winner = { ...base, h_close };
+  const winner: AcpLedgerWinner = { ...base, h_close };
   db.prepare(
-    `INSERT INTO c7_close (project_id, path, message_date, record, h_close)
+    `INSERT INTO acp_ledger_close (project_id, path, message_date, record, h_close)
      VALUES (?, ?, ?, ?, ?)`,
   ).run(
     turn.project_id,
@@ -869,7 +895,7 @@ function decideCloseInTx(db: SqliteDatabase, args: DecideArgs): C7DecideResult {
 
 export function decideClose(
   args: Omit<DecideArgs, "now"> & { now?: number },
-): C7DecideResult {
+): AcpLedgerDecideResult {
   const db = database();
   flushPendingIncomplete(args.turn);
   return transaction(db, () =>
@@ -877,15 +903,15 @@ export function decideClose(
   );
 }
 
-// An integrity refusal (§2.2): through the arbiter, in the caller's
+// An integrity refusal: through the arbiter, in the caller's
 // transaction. Before the winner it becomes the error winner; after it, a
 // collision or a gap invalidates the turn, once.
 function refuseInTx(
   db: SqliteDatabase,
-  turn: C7TurnContext,
-  code: C7RefusalCode,
+  turn: AcpLedgerTurnContext,
+  code: AcpLedgerRefusalCode,
   cause: { attempt_id: string; kind: "in" | "close"; n: number },
-  projector: C7Projector,
+  projector: AcpLedgerProjector,
   now: number,
 ): void {
   const result = decideCloseInTx(db, {
@@ -907,16 +933,16 @@ function refuseInTx(
   appendProjection(db, turn, projection, now);
   writeState(db, turn, projection.state);
   db.prepare(
-    `UPDATE c7_turn SET invalidated_code = ?
+    `UPDATE acp_ledger_turn SET invalidated_code = ?
      WHERE project_id = ? AND path = ? AND message_date = ?`,
   ).run(code, turn.project_id, turn.path, turn.message_date);
 }
 
 // ---------------------------------------------------------------------------
-// Admission (§2.2)
+// Admission
 
 function inputHash(e: {
-  origin: C7Origin;
+  origin: AcpLedgerOrigin;
   n: number;
   time: number;
   body: unknown;
@@ -927,14 +953,14 @@ function inputHash(e: {
 }
 
 export function admitInitial(args: {
-  turn: C7TurnContext;
+  turn: AcpLedgerTurnContext;
   attempt_id: string;
-  origin: C7Origin;
+  origin: AcpLedgerOrigin;
   body: unknown;
   hub_seq?: number | null;
-  projector: C7Projector;
+  projector: AcpLedgerProjector;
   now?: number;
-}): C7AdmitResult {
+}): AcpLedgerAdmitResult {
   const { turn, attempt_id, origin, projector } = args;
   const now = args.now ?? Date.now();
   try {
@@ -943,7 +969,7 @@ export function admitInitial(args: {
     const bodyText = canonicalJson(args.body);
     const db = database();
     flushPendingIncomplete(turn);
-    return transaction(db, (): C7AdmitResult => {
+    return transaction(db, (): AcpLedgerAdmitResult => {
       const lease = readLease(db, turn);
       if (!lease?.attempt_id) {
         return { result: "refused", reason: "no_attempt" };
@@ -951,7 +977,7 @@ export function admitInitial(args: {
       const current = lease.attempt_id === attempt_id;
       const attempt_gen = current ? Number(lease.attempt_gen) : 0;
       const n = nextIndex(db, turn, attempt_id, "in");
-      const envelope: C7Envelope = {
+      const envelope: AcpLedgerEnvelope = {
         kind: "in",
         project_id: turn.project_id,
         path: turn.path,
@@ -967,7 +993,7 @@ export function admitInitial(args: {
       const h = inputHash(envelope);
       const row = ensureTurn(db, turn);
       const late = readWinner(db, turn) != null;
-      let klass: C7InputClass;
+      let klass: AcpLedgerInputClass;
       if (late) klass = "late";
       else if (!current) klass = "stale";
       else if (
@@ -1007,7 +1033,7 @@ export function admitInitial(args: {
         const cutover = Number(row.last_attempt_gen) !== attempt_gen;
         const projection = projector.input(
           parseState(row),
-          JSON.parse(text) as C7Envelope,
+          JSON.parse(text) as AcpLedgerEnvelope,
           projectionContext(turn, attempt_gen, cutover),
         );
         appendProjection(db, turn, projection, now);
@@ -1039,7 +1065,7 @@ export function admitInitial(args: {
   }
 }
 
-export interface C7QueueRow {
+export interface AcpLedgerQueueRow {
   attempt_gen: number;
   attempt_id: string;
   kind: "in" | "close";
@@ -1061,8 +1087,8 @@ interface StoredIdentity {
 // Parses a stored row and recomputes its identity and hash. Anything that
 // doesn't parse into a well-formed envelope of this turn returns undefined.
 function storedIdentity(
-  turn: C7TurnKey,
-  row: C7QueueRow,
+  turn: AcpLedgerTurnKey,
+  row: AcpLedgerQueueRow,
 ): StoredIdentity | undefined {
   try {
     const parsed = JSON.parse(row.envelope) as any;
@@ -1106,24 +1132,24 @@ function storedIdentity(
   }
 }
 
-// Replay of a stored queue row (§2.2): a duplicate, or an integrity refusal.
+// Replay of a stored queue row: a duplicate, or an integrity refusal.
 // A refused row is never processed, and only a duplicate of a live input is
 // processable.
 export function replayRow(args: {
-  turn: C7TurnContext;
-  row: C7QueueRow;
-  projector: C7Projector;
+  turn: AcpLedgerTurnContext;
+  row: AcpLedgerQueueRow;
+  projector: AcpLedgerProjector;
   now?: number;
-}): C7ReplayResult {
+}): AcpLedgerReplayResult {
   const { turn, row, projector } = args;
   const now = args.now ?? Date.now();
   try {
     const db = database();
-    return transaction(db, (): C7ReplayResult => {
+    return transaction(db, (): AcpLedgerReplayResult => {
       const identity = storedIdentity(turn, row);
       const recorded = db
         .prepare(
-          `SELECT attempt_gen, qseq, h, class FROM c7_input
+          `SELECT attempt_gen, qseq, h, class FROM acp_ledger_input
            WHERE project_id = ? AND path = ? AND message_date = ?
              AND attempt_id = ? AND kind = ? AND n = ?`,
         )
@@ -1163,7 +1189,7 @@ export function replayRow(args: {
             kind: "in",
             class: "live",
             process: true,
-            envelope: JSON.parse(row.envelope) as C7Envelope,
+            envelope: JSON.parse(row.envelope) as AcpLedgerEnvelope,
           };
         }
         return {
@@ -1192,38 +1218,42 @@ export function replayRow(args: {
 }
 
 // The turn's queue in commit order: inputs and closes merged.
-export function listC7QueueRows(key: C7TurnKey): C7QueueRow[] {
+export function listAcpLedgerQueueRows(
+  key: AcpLedgerTurnKey,
+): AcpLedgerQueueRow[] {
   return database()
     .prepare(
       `SELECT attempt_gen, attempt_id, kind, n, qseq, envelope, h, hub_seq
-       FROM c7_queue
+       FROM acp_ledger_queue
        WHERE project_id = ? AND path = ? AND message_date = ?
        ORDER BY qseq ASC`,
     )
-    .all(key.project_id, key.path, key.message_date) as C7QueueRow[];
+    .all(key.project_id, key.path, key.message_date) as AcpLedgerQueueRow[];
 }
 
-export function clearC7QueueRows(key: C7TurnKey): void {
+export function clearAcpLedgerQueueRows(key: AcpLedgerTurnKey): void {
   database()
     .prepare(
-      `DELETE FROM c7_queue WHERE project_id = ? AND path = ? AND message_date = ?`,
+      `DELETE FROM acp_ledger_queue WHERE project_id = ? AND path = ? AND message_date = ?`,
     )
     .run(key.project_id, key.path, key.message_date);
 }
 
 const QUEUE_RETENTION_MS = 24 * 60 * 60 * 1000;
 
-export function pruneC7Queue(retentionMs: number = QUEUE_RETENTION_MS): void {
+export function pruneAcpLedgerQueue(
+  retentionMs: number = QUEUE_RETENTION_MS,
+): void {
   database()
-    .prepare(`DELETE FROM c7_queue WHERE created_at < ?`)
+    .prepare(`DELETE FROM acp_ledger_queue WHERE created_at < ?`)
     .run(Date.now() - retentionMs);
 }
 
 // ---------------------------------------------------------------------------
-// The lease (§2.2): cutover, heartbeat and finalization, compare-and-swap on
+// The lease: cutover, heartbeat and finalization, compare-and-swap on
 // the attempt.
 
-export function startC7LeaseAttempt(args: {
+export function startAcpLedgerLeaseAttempt(args: {
   context: AcpChatContext;
   attempt_id: string;
   owner_instance_id: string;
@@ -1233,7 +1263,7 @@ export function startC7LeaseAttempt(args: {
   now?: number;
 }): { attempt_gen: number } {
   const db = database();
-  const key: C7TurnKey = {
+  const key: AcpLedgerTurnKey = {
     project_id: args.context.project_id,
     path: args.context.path,
     message_date: args.context.message_date,
@@ -1246,7 +1276,7 @@ export function startC7LeaseAttempt(args: {
         (project_id, path, message_date, message_id, thread_id, sender_id,
          approver_account_id, session_id, state, owner_instance_id, pid,
          started_at, heartbeat_at, ended_at, reason,
-         attempt_id, attempt_gen, c7_incomplete)
+         attempt_id, attempt_gen, ledger_incomplete)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, NULL, NULL, ?, 1, ?)
         ON CONFLICT(project_id, path, message_date) DO UPDATE SET
           message_id = COALESCE(excluded.message_id, acp_turns.message_id),
@@ -1263,7 +1293,7 @@ export function startC7LeaseAttempt(args: {
           reason = NULL,
           attempt_id = excluded.attempt_id,
           attempt_gen = acp_turns.attempt_gen + 1,
-          c7_incomplete = MAX(acp_turns.c7_incomplete, excluded.c7_incomplete)`,
+          ledger_incomplete = MAX(acp_turns.ledger_incomplete, excluded.ledger_incomplete)`,
     ).run(
       key.project_id,
       key.path,
@@ -1283,7 +1313,7 @@ export function startC7LeaseAttempt(args: {
     fault("cutover:before-commit");
     const lease = readLease(db, key);
     if (lease?.attempt_id !== args.attempt_id) {
-      throw new Error("c7: cutover did not take effect");
+      throw new Error("acp turn ledger: cutover did not take effect");
     }
     return { attempt_gen: Number(lease.attempt_gen) };
   });
@@ -1294,8 +1324,8 @@ export function startC7LeaseAttempt(args: {
 
 // Returns false when the caller's attempt is no longer the lease's current
 // one: the caller must stop its heartbeat timer.
-export function heartbeatC7Lease(args: {
-  key: C7TurnKey;
+export function heartbeatAcpLedgerLease(args: {
+  key: AcpLedgerTurnKey;
   owner_instance_id: string;
   attempt_id: string;
   attempt_gen: number;
@@ -1326,7 +1356,7 @@ export function heartbeatC7Lease(args: {
 
 // The lease state that follows a winner.
 export function leaseStateForWinner(
-  winner: C7Winner,
+  winner: AcpLedgerWinner,
 ): "completed" | "error" | "aborted" {
   if (winner.outcome === "error") {
     return winner.code === "aborted" ? "aborted" : "error";
@@ -1337,18 +1367,18 @@ export function leaseStateForWinner(
 // The lease ends only with a winner, never because of a stale writer, and
 // only for its own owner while it is still running. The lease state follows
 // the winner, not the caller's local decision.
-export function finalizeC7Lease(args: {
-  turn: C7TurnContext;
+export function finalizeAcpLedgerLease(args: {
+  turn: AcpLedgerTurnContext;
   owner_instance_id: string;
   attempt_id: string;
   attempt_gen: number;
   reason?: string;
-  projector: C7Projector;
+  projector: AcpLedgerProjector;
   now?: number;
 }): {
   ended: boolean;
   stale: boolean;
-  winner: C7Winner | null;
+  winner: AcpLedgerWinner | null;
   state?: "completed" | "error" | "aborted";
 } {
   const db = database();
@@ -1401,18 +1431,18 @@ export function finalizeC7Lease(args: {
     if (Number(changes) !== 1) {
       // The precheck held in this transaction, so this can't happen; roll
       // back rather than leave a winner without its lease ending.
-      throw new Error("c7: lease finalization matched no row");
+      throw new Error("acp turn ledger: lease finalization matched no row");
     }
     return { ended: true, stale: false, winner: decided.winner, state };
   });
 }
 
-// The fence (§2.2, point 3): a dead worker's running leases are aborted, and
+// The fence: a dead worker's running leases are aborted, and
 // each turn gets an error winner in the same transaction.
-export function fenceC7Project(args: {
+export function fenceAcpLedgerProject(args: {
   project_id: string;
   reason: string;
-  projector: C7Projector;
+  projector: AcpLedgerProjector;
   now?: number;
 }): number {
   const db = database();
@@ -1432,7 +1462,7 @@ export function fenceC7Project(args: {
     }>;
     for (const lease of leases) {
       if (!lease.message_id || !lease.thread_id) continue;
-      const turn: C7TurnContext = {
+      const turn: AcpLedgerTurnContext = {
         project_id: lease.project_id,
         path: lease.path,
         message_date: lease.message_date,
@@ -1466,7 +1496,7 @@ export function fenceC7Project(args: {
 // ---------------------------------------------------------------------------
 // Reading the log and objects
 
-export function readC7Log(args: {
+export function readAcpLedgerLog(args: {
   project_id: string;
   path: string;
   thread_id: string;
@@ -1476,7 +1506,7 @@ export function readC7Log(args: {
 }): { events: unknown[] } | { reset: true } {
   const rows = database()
     .prepare(
-      `SELECT event FROM c7_log
+      `SELECT event FROM acp_ledger_log
        WHERE project_id = ? AND path = ? AND thread_id = ? AND seq > ?
        ORDER BY seq ASC LIMIT ?`,
     )
@@ -1503,14 +1533,14 @@ export const DERIVED_TTL_MS = 24 * 60 * 60 * 1000;
 // One read: the whole committed body, or nothing. A derived object (a page
 // or a reset snapshot) older than 24 hours is gone at read time, whether or
 // not the sweeper has run yet.
-export function readC7Object(
+export function readAcpLedgerObject(
   object_id: string,
   thread: { project_id: string; path: string; thread_id: string },
   now: number = Date.now(),
 ): { bytes: number; sha256: string; body: Uint8Array } | undefined {
   const row = database()
     .prepare(
-      `SELECT bytes, sha256, body FROM c7_object
+      `SELECT bytes, sha256, body FROM acp_ledger_object
        WHERE object_id = ? AND project_id = ? AND path = ? AND thread_id = ?
          AND NOT (class IN ('page', 'reset') AND created_at <= ?)`,
     )
@@ -1524,22 +1554,23 @@ export function readC7Object(
   return row;
 }
 
-// Every object depending on a deleted turn goes in the same transaction
-// (§2.6).
-export function deleteC7TurnObjects(key: C7TurnKey): number {
+// Every object depending on a deleted turn goes in the same transaction.
+export function deleteAcpLedgerTurnObjects(key: AcpLedgerTurnKey): number {
   const db = database();
   return transaction(db, () => {
     const ids = db
       .prepare(
-        `SELECT DISTINCT object_id FROM c7_object_dep
+        `SELECT DISTINCT object_id FROM acp_ledger_object_dep
          WHERE project_id = ? AND path = ? AND message_date = ?`,
       )
       .all(key.project_id, key.path, key.message_date) as Array<{
       object_id: string;
     }>;
     for (const { object_id } of ids) {
-      db.prepare(`DELETE FROM c7_object WHERE object_id = ?`).run(object_id);
-      db.prepare(`DELETE FROM c7_object_dep WHERE object_id = ?`).run(
+      db.prepare(`DELETE FROM acp_ledger_object WHERE object_id = ?`).run(
+        object_id,
+      );
+      db.prepare(`DELETE FROM acp_ledger_object_dep WHERE object_id = ?`).run(
         object_id,
       );
     }
@@ -1549,10 +1580,12 @@ export function deleteC7TurnObjects(key: C7TurnKey): number {
 
 const EXPIRE_BATCH = 200;
 
-// Pages and reset snapshots are derived and expire after 24 hours (§2.6).
+// Pages and reset snapshots are derived and expire after 24 hours.
 // The sweeper deletes in small transactions, so it never holds the write lock
-// for long; reads already refuse expired objects (readC7Object).
-export function expireC7DerivedObjects(now: number = Date.now()): number {
+// for long; reads already refuse expired objects (readAcpLedgerObject).
+export function expireAcpLedgerDerivedObjects(
+  now: number = Date.now(),
+): number {
   const db = database();
   let total = 0;
   for (;;) {
@@ -1560,7 +1593,7 @@ export function expireC7DerivedObjects(now: number = Date.now()): number {
       fault("expire:batch");
       const ids = db
         .prepare(
-          `SELECT object_id FROM c7_object
+          `SELECT object_id FROM acp_ledger_object
            WHERE class IN ('page', 'reset') AND created_at <= ?
            LIMIT ?`,
         )
@@ -1568,8 +1601,10 @@ export function expireC7DerivedObjects(now: number = Date.now()): number {
         object_id: string;
       }>;
       for (const { object_id } of ids) {
-        db.prepare(`DELETE FROM c7_object WHERE object_id = ?`).run(object_id);
-        db.prepare(`DELETE FROM c7_object_dep WHERE object_id = ?`).run(
+        db.prepare(`DELETE FROM acp_ledger_object WHERE object_id = ?`).run(
+          object_id,
+        );
+        db.prepare(`DELETE FROM acp_ledger_object_dep WHERE object_id = ?`).run(
           object_id,
         );
       }

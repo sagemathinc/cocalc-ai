@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { canonicalJson, sha256Hex } from "../../sqlite/c7-envelope";
+import { canonicalJson, sha256Hex } from "../../sqlite/acp-canonical-json";
 
 describe("canonicalJson", () => {
   it("sorts keys at every depth and has no whitespace", () => {
@@ -34,7 +34,7 @@ describe("canonicalJson", () => {
   });
 });
 
-describe("canonicalJson: C1 r2 edges", () => {
+describe("canonicalJson: edges", () => {
   it("refuses accessor properties", () => {
     const value: any = {};
     let calls = 0;
@@ -59,7 +59,7 @@ describe("canonicalJson: C1 r2 edges", () => {
   });
 });
 
-describe("canonicalJson: C1 r3 array slots", () => {
+describe("canonicalJson: array slots", () => {
   it("refuses an index getter before running it, at any depth", () => {
     const list: unknown[] = [1, 2];
     let calls = 0;

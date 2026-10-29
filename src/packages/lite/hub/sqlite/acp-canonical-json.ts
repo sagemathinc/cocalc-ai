@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Canonical JSON and hashing for C7 input envelopes (S6a §2.2). The same
+// Canonical JSON and hashing for ACP turn ledger input envelopes. The same
 // bytes must hash the same in every process, so keys are sorted, there is no
 // whitespace, and values that JSON can't round-trip are refused rather than
 // silently dropped or rewritten.

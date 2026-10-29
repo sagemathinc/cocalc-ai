@@ -86,7 +86,7 @@ function ensureInit(): void {
   }
 }
 
-// For tables that extend acp_turns (the C7 store): make sure it exists.
+// For tables that extend acp_turns (the turn ledger): make sure it exists.
 export function ensureAcpTurnsSchema(): void {
   ensureInit();
 }
