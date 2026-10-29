@@ -46,6 +46,8 @@ import {
   recordDirectNotified,
   setDirectMemberState,
   deleteDirectMessage,
+  isDirectMessageDeleted,
+  recordDirectMessageDeleted,
   redactDirectMessageNotice,
   setDirectPersonal,
   unblockDirectSender,
@@ -345,6 +347,22 @@ async function resolveDirectUsername(value: unknown): Promise<string | null> {
 }
 
 const DIRECT_PERSONAL_FIELDS = new Set(["muted", "pinned", "archived_through"]);
+
+// A deleted message's notice loses its text, and the change reaches the
+// member's open notification list.
+async function redactNotice(
+  account_id: string,
+  message_id: string,
+): Promise<void> {
+  const changed = await redactDirectMessageNotice({ account_id, message_id });
+  if (changed.length > 0) {
+    await publishProjectedNotificationFeedUpdatesBestEffort({
+      account_id,
+      reason: "projected_upsert",
+      notification_ids: changed,
+    });
+  }
+}
 
 // Only known fields, with the right types (it comes from a browser):
 // anything else is refused, not ignored.
@@ -675,6 +693,15 @@ export const directControl: InterBayDirectApi = {
     if (!conversation.member_ids.includes(account_id)) {
       throw Error("not a member");
     }
+    // Deleted messages first, before anything that may return early (a
+    // blocked request still owes its redaction): record each one's
+    // tombstone, then redact its notice. A failure is retried by the owning
+    // bay (this is idempotent).
+    for (const message_id of deleted_message_ids ?? []) {
+      requireUuid(message_id, "deleted_message_ids");
+      await recordDirectMessageDeleted({ account_id, message_id });
+      await redactNotice(account_id, message_id);
+    }
     // A request from someone this member blocked is never recorded or
     // notified, even if the block landed after the starter checked it.
     if (
@@ -684,26 +711,29 @@ export const directControl: InterBayDirectApi = {
       return;
     }
     const row = await upsertDirectIndex({ account_id, conversation });
-    // Notices about deleted messages lose their text; email not yet sent is
-    // cancelled. A failure is retried by the owning bay (this is idempotent).
-    for (const message_id of deleted_message_ids ?? []) {
-      requireUuid(message_id, "deleted_message_ids");
-      const changed = await redactDirectMessageNotice({
-        account_id,
-        message_id,
-      });
-      if (changed.length > 0) {
-        await publishProjectedNotificationFeedUpdatesBestEffort({
-          account_id,
-          reason: "projected_upsert",
-          notification_ids: changed,
-        });
-      }
-    }
     // A failure here is retried by the owning bay (the notification is
-    // idempotent and recorded once created).
-    if (message != null && !message.deleted) {
+    // idempotent and recorded once created). A delivery that read the
+    // message before it was deleted may notify after the deletion's
+    // redaction ran: so a tombstone is checked before, and again after
+    // creating the notice (the deletion side writes its tombstone before
+    // redacting, so one of the two sides always sees the other).
+    if (
+      message != null &&
+      !message.deleted &&
+      !(await isDirectMessageDeleted({
+        account_id,
+        message_id: message.message_id,
+      }))
+    ) {
       await notify(account_id, row, message);
+      if (
+        await isDirectMessageDeleted({
+          account_id,
+          message_id: message.message_id,
+        })
+      ) {
+        await redactNotice(account_id, message.message_id);
+      }
     }
   },
 

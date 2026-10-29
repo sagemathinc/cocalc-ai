@@ -955,3 +955,33 @@ export async function redactDirectMessageNotice({
     return listed.map((row) => row.notification_id);
   });
 }
+
+// A deleted message's tombstone on a member's home bay (idempotent).
+export async function recordDirectMessageDeleted({
+  account_id,
+  message_id,
+}: {
+  account_id: string;
+  message_id: string;
+}): Promise<void> {
+  await getPool().query(
+    `INSERT INTO account_direct_deleted_messages (account_id, message_id, created)
+     VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
+    [account_id, message_id],
+  );
+}
+
+export async function isDirectMessageDeleted({
+  account_id,
+  message_id,
+}: {
+  account_id: string;
+  message_id: string;
+}): Promise<boolean> {
+  const { rows } = await getPool().query(
+    `SELECT 1 FROM account_direct_deleted_messages
+     WHERE account_id = $1 AND message_id = $2`,
+    [account_id, message_id],
+  );
+  return rows.length > 0;
+}

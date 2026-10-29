@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { closePglite } from "@cocalc/database/pglite";
@@ -110,6 +111,7 @@ describeDb("direct conversations", () => {
       "notification_target_outbox",
       "notification_email_outbox",
       "account_notification_index",
+      "account_direct_deleted_messages",
       "direct_conversations",
       "direct_messages",
       "direct_fanout_pending",
@@ -130,7 +132,7 @@ describeDb("direct conversations", () => {
     mockBanned.clear();
     mockTierLimits = {};
     await getPool().query(
-      "TRUNCATE projects, account_collaborator_index, account_project_index, notification_events, notification_targets, notification_target_outbox, notification_email_outbox, account_notification_index, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
+      "TRUNCATE projects, account_collaborator_index, account_project_index, notification_events, notification_targets, notification_target_outbox, notification_email_outbox, account_notification_index, account_direct_deleted_messages, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
     );
   });
 
@@ -1069,5 +1071,129 @@ describeDb("direct conversations", () => {
     expect(left?.deleted_message_ids).toEqual(
       expect.arrayContaining([second.message_id]),
     );
+  });
+
+  // A notice as the notification pipeline stores it on Bea's home bay.
+  async function seedNotice(dedupe_key: string, body_text: string) {
+    const summary = { notice_type: "direct_message", body_text };
+    const db = getPool();
+    const event_id = randomUUID();
+    const notification_id = randomUUID();
+    await db.query(
+      "INSERT INTO notification_events (event_id, kind, payload_json, created_at) VALUES ($1, 'account_notice', $2, NOW())",
+      [event_id, JSON.stringify(summary)],
+    );
+    await db.query(
+      "INSERT INTO notification_targets (event_id, target_account_id, target_home_bay_id, notification_id, dedupe_key, created_at) VALUES ($1, $2, 'bay-0', $3, $4, NOW())",
+      [event_id, bea, notification_id, dedupe_key],
+    );
+    await db.query(
+      "INSERT INTO account_notification_index (account_id, notification_id, kind, summary, read_state, revision, created_at, updated_at) VALUES ($1, $2, 'account_notice', $3, '{}', 1, NOW(), NOW())",
+      [bea, notification_id, JSON.stringify(summary)],
+    );
+  }
+  const noticeTexts = async () =>
+    (
+      await getPool().query("SELECT summary FROM account_notification_index")
+    ).rows.map((row) => row.summary.body_text);
+
+  test("a delivery that read a message before it was deleted never notifies after the redaction", async () => {
+    await shareProject();
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+    });
+    const conversation_id = started.conversation_id;
+    const stale = await getDirectConversationRecord(conversation_id, "bay-0");
+    const message = {
+      message_id: randomUUID(),
+      sender_id: ada,
+      body: "a secret",
+    };
+    mockNotify.mockClear();
+    // The deletion's delivery lands first (nothing to redact yet) ...
+    await directControl.upsertIndex({
+      account_id: bea,
+      conversation: { ...stale!, revision: stale!.revision + 5 },
+      deleted_message_ids: [message.message_id],
+    });
+    // ... then the stalled send delivery resumes with the message it read.
+    await directControl.upsertIndex({
+      account_id: bea,
+      conversation: stale!,
+      message,
+    });
+    expect(
+      mockNotify.mock.calls.filter(
+        (c) => c[0].targets[0].target_account_id === bea,
+      ),
+    ).toHaveLength(0);
+  });
+
+  test("a deletion landing while its notice is being created still takes the text out", async () => {
+    await shareProject();
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+    });
+    const conversation = await getDirectConversationRecord(
+      started.conversation_id,
+      "bay-0",
+    );
+    const message = {
+      message_id: randomUUID(),
+      sender_id: ada,
+      body: "a secret",
+    };
+    // The deletion's delivery runs after the pre-check but before the notice
+    // exists (its tombstone written, nothing to redact yet); then the notice
+    // is created.
+    mockNotify.mockImplementation(async (opts: any) => {
+      if (opts.targets[0].target_account_id !== bea) return;
+      await directControl.upsertIndex({
+        account_id: bea,
+        conversation: {
+          ...conversation!,
+          revision: conversation!.revision + 5,
+        },
+        deleted_message_ids: [message.message_id],
+      });
+      await seedNotice(opts.targets[0].dedupe_key, opts.payload_json.body_text);
+    });
+    await directControl.upsertIndex({
+      account_id: bea,
+      conversation: conversation!,
+      message,
+    });
+    expect(await noticeTexts()).toEqual(["Message deleted"]);
+  });
+
+  test("a deletion delivered while the request is blocked is still redacted", async () => {
+    const started = await request("my phone number is 555-0100");
+    const conversation = await getDirectConversationRecord(
+      started.conversation_id,
+      "bay-0",
+    );
+    const call = mockNotify.mock.calls.find(
+      (c) => c[0].targets[0].target_account_id === bea,
+    )![0];
+    await seedNotice(call.targets[0].dedupe_key, call.payload_json.body_text);
+    const first = (
+      await directHubApi.getDirect({
+        account_id: ada,
+        conversation_id: started.conversation_id,
+      })
+    ).messages[0];
+    // Bea's block is on her home bay; the owner still says "requested".
+    await getPool().query(
+      "INSERT INTO account_direct_blocks (account_id, blocked_account_id, created) VALUES ($1, $2, NOW())",
+      [bea, ada],
+    );
+    await directControl.upsertIndex({
+      account_id: bea,
+      conversation: { ...conversation!, revision: conversation!.revision + 5 },
+      deleted_message_ids: [first.message_id],
+    });
+    expect(await noticeTexts()).toEqual(["Message deleted"]);
   });
 });

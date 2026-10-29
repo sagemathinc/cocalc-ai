@@ -409,6 +409,20 @@ const CONTROLS_STYLE: CSSProperties = {
   flexShrink: 0,
 };
 
+// What was loaded, replaced by a fresh fetch of the same range: anything
+// missing from it is gone (deleted), except a message just sent that is
+// newer than the fetch.
+export function replaceLoaded(
+  shown: DirectMessage[],
+  fetched: DirectMessage[],
+): DirectMessage[] {
+  const newest = fetched[fetched.length - 1]?.sent ?? -Infinity;
+  return mergeMessages(
+    shown.filter((m) => m.sent > newest),
+    fetched,
+  );
+}
+
 export function mergeMessages(
   current: DirectMessage[],
   page: DirectMessage[],
@@ -494,7 +508,7 @@ function MessageItem({
           {mine && onDelete && !message.deleted && (
             <Popconfirm
               title="Delete this message for everyone?"
-              description="It's removed from the conversation and from notifications, and email about it that wasn't sent yet is cancelled. Email already sent can't be recalled."
+              description="It's removed from the conversation and from notifications, and email about it that wasn't sent yet is cancelled. Email already sent, or being sent, can't be recalled."
               okText="Delete"
               okButtonProps={{ danger: true }}
               onConfirm={onDelete}
@@ -539,7 +553,16 @@ export function DirectConversationView({
     (c) => c.conversation_id === conversation_id,
   );
   const [conversation, setConversation] = useState<MemberDirectConversation>();
-  const [messages, setMessages] = useState<DirectMessage[]>([]);
+  const [messages, setMessagesState] = useState<DirectMessage[]>([]);
+  const setMessages = useCallback(
+    (update: (shown: DirectMessage[]) => DirectMessage[]) =>
+      setMessagesState((shown) => {
+        const next = update(shown);
+        messagesRef.current = next;
+        return next;
+      }),
+    [],
+  );
   const [more, setMore] = useState(false);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
@@ -554,6 +577,8 @@ export function DirectConversationView({
   // view is also keyed by account, so another account starts empty.
   const generation = useRef(0);
   const alive = useRef(true);
+  // The messages shown, for load to know how far back to fetch again.
+  const messagesRef = useRef<DirectMessage[]>([]);
   useEffect(
     () => () => {
       alive.current = false;
@@ -567,13 +592,28 @@ export function DirectConversationView({
     try {
       const result = await peopleApi().getDirect({ conversation_id });
       if (current !== generation.current) return;
+      // Everything loaded so far is fetched again, back to the oldest message
+      // shown: one deleted in an earlier page must disappear too.
+      const oldestShown = messagesRef.current[0]?.sent;
+      let fetched = result.messages;
+      let older = fetched.length >= DIRECT_MESSAGES_PAGE;
+      while (
+        older &&
+        oldestShown != null &&
+        fetched.length > 0 &&
+        fetched[0].sent > oldestShown
+      ) {
+        const page = await peopleApi().getDirect({
+          conversation_id,
+          before: fetched[0].sent,
+        });
+        if (current !== generation.current) return;
+        fetched = [...page.messages, ...fetched];
+        older = page.messages.length >= DIRECT_MESSAGES_PAGE;
+      }
       setConversation(result.conversation);
-      // Everything loaded so far (earlier pages, a message just sent),
-      // updated by this page.
-      setMessages((current) => mergeMessages(current, result.messages));
-      setMore(
-        (current) => current || result.messages.length >= DIRECT_MESSAGES_PAGE,
-      );
+      setMessages((shown) => replaceLoaded(shown, fetched));
+      setMore(older);
       setError("");
       if (result.conversation.state === "active") {
         void peopleApi()

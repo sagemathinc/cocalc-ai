@@ -199,6 +199,7 @@ export const TABLE_OWNERSHIP = {
     [
       "account_direct_conversations",
       "account_direct_blocks",
+      "account_direct_deleted_messages",
       "direct_request_admissions",
     ],
     {

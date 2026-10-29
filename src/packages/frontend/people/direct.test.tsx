@@ -612,3 +612,39 @@ test("New message: a send still out when the account switches never lands for th
   });
   expect(started).not.toHaveBeenCalled();
 });
+
+test("a deleted message in an older page you loaded disappears too", async () => {
+  // 100 messages: the newest 50 load first; the rest with Load earlier.
+  let all = Array.from({ length: 100 }, (_, i) =>
+    message(`m${i}`, bea, 1000 + i, i === 10 ? "older secret" : `msg ${i}`),
+  );
+  const page = ({ before }: { before?: number }) => {
+    const older = all.filter((m) => before == null || m.sent < before);
+    return older.slice(-50);
+  };
+  mockApi.listDirect.mockResolvedValue({
+    conversations: [listed("c1", { last_activity: 1099, messages_version: 1 })],
+  });
+  mockApi.getDirect.mockImplementation(async (opts) => ({
+    conversation: listed("c1", { last_activity: 1099 }),
+    messages: page(opts),
+  }));
+  render(<DirectConversationView conversation_id="c1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("msg 99")).toBeTruthy());
+  fireEvent.click(
+    screen.getByRole("button", { name: "Load earlier messages" }),
+  );
+  await waitFor(() => expect(screen.getByText("older secret")).toBeTruthy());
+  // Bea deletes it: it's gone from what the server returns.
+  all = all.filter((m) => m.message_id !== "m10");
+  mockApi.listDirect.mockResolvedValue({
+    conversations: [listed("c1", { last_activity: 1099, messages_version: 2 })],
+  });
+  await act(async () => {
+    refreshDirect();
+  });
+  await waitFor(() => expect(screen.queryByText("older secret")).toBeNull());
+  // The rest of what was loaded is still there.
+  expect(screen.getByText("msg 0")).toBeTruthy();
+  expect(screen.getByText("msg 99")).toBeTruthy();
+});

@@ -198,3 +198,18 @@ Table({
     created: { type: "timestamp", desc: "When." },
   },
 });
+
+// On a member's home bay: messages their sender deleted. A notice about one
+// is never created, and one created concurrently is redacted (each side
+// checks after the other writes).
+Table({
+  name: "account_direct_deleted_messages",
+  rules: {
+    primary_key: ["account_id", "message_id"],
+  },
+  fields: {
+    account_id: { type: "uuid", desc: "Member whose home bay this is." },
+    message_id: { type: "uuid", desc: "A message its sender deleted." },
+    created: { type: "timestamp", desc: "When this bay learned of it." },
+  },
+});
