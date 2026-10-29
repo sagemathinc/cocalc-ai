@@ -345,6 +345,26 @@ describe("users table helpers", () => {
     }
   });
 
+  it("asks again later when a request fails", async () => {
+    jest.useFakeTimers();
+    try {
+      signedIn = true;
+      accountId = "acct-me";
+      listMyCollaborators
+        .mockRejectedValueOnce(new Error("timeout"))
+        .mockResolvedValueOnce([remoteRow("acct-remote")]);
+      const { addOtherBayCollaborators } = await import("./table");
+      await addOtherBayCollaborators();
+      expect(listMyCollaborators).toHaveBeenCalledTimes(1);
+      expect(userMap.has("acct-remote")).toBe(false);
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect(listMyCollaborators).toHaveBeenCalledTimes(2);
+      expect(userMap.getIn(["acct-remote", "collaborator"])).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("a snapshot installed while a request is pending wins", async () => {
     signedIn = true;
     accountId = "acct-me";

@@ -195,34 +195,40 @@ const addOtherBayCollaboratorsFor = reuseInFlight(
           });
       } catch (err) {
         log.info("collaborators on other bays unavailable", err);
+        // A transient failure (e.g. reconnecting): try again later, or they
+        // stay missing until something else changes.
+        if (webapp_client.is_signed_in() && getAccountId() === account_id) {
+          scheduleRetry();
+        }
         return;
       }
       if (!webapp_client.is_signed_in() || getAccountId() !== account_id) {
         return;
       }
       if (generation !== otherBayGeneration) continue;
-      churnRetryDelay = CHURN_RETRY_MIN_MS;
+      retryDelay = RETRY_MIN_MS;
       mergeOtherBayCollaborators(account_id, rows);
       return;
     }
     // Changes kept arriving while asking: ask again a bit later, rather than
     // leave those collaborators out until something else changes.
-    scheduleChurnRetry();
+    scheduleRetry();
   },
 );
 
-// Backoff between rounds that every answer was outdated by a change.
-const CHURN_RETRY_MIN_MS = 2_000;
-const CHURN_RETRY_MAX_MS = 60_000;
-let churnRetryDelay = CHURN_RETRY_MIN_MS;
-let churnRetry: ReturnType<typeof setTimeout> | undefined;
+// Backoff after a failed request, or a round where every answer was
+// outdated by a change; reset by a successful merge.
+const RETRY_MIN_MS = 2_000;
+const RETRY_MAX_MS = 60_000;
+let retryDelay = RETRY_MIN_MS;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
-function scheduleChurnRetry(): void {
-  if (churnRetry != null) return;
-  const delay = churnRetryDelay;
-  churnRetryDelay = Math.min(churnRetryDelay * 2, CHURN_RETRY_MAX_MS);
-  churnRetry = setTimeout(() => {
-    churnRetry = undefined;
+function scheduleRetry(): void {
+  if (retryTimer != null) return;
+  const delay = retryDelay;
+  retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
+  retryTimer = setTimeout(() => {
+    retryTimer = undefined;
     void addOtherBayCollaborators();
   }, delay);
 }
