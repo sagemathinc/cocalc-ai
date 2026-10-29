@@ -4,7 +4,7 @@ import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { closePglite } from "@cocalc/database/pglite";
 import { SCHEMA } from "@cocalc/util/db-schema";
 
-const mockNotify = jest.fn(async (_opts: any) => {});
+const mockNotify = jest.fn(async (_opts: any, _db?: any) => {});
 const mockBanned = new Set<string>();
 
 jest.mock("@cocalc/server/bay-config", () => ({
@@ -25,7 +25,8 @@ jest.mock("@cocalc/server/notifications/feed", () => ({
     mockPublish(opts),
 }));
 jest.mock("@cocalc/database/postgres/notifications-core", () => ({
-  createNotificationEventGraph: (opts: any) => mockNotify(opts),
+  createNotificationEventGraphInTransaction: ({ db, input }: any) =>
+    mockNotify(input, db),
   resolveNotificationTargetHomeBays: async ({ account_ids }) =>
     Object.fromEntries(account_ids.map((id: string) => [id, "bay-0"])),
 }));
@@ -75,6 +76,7 @@ jest.mock("@cocalc/server/membership/effective-limits", () => ({
 }));
 
 import { directControl, directHubApi, retryDirectFanouts } from "./direct";
+import * as directDb from "@cocalc/database/postgres/direct-conversations";
 import {
   clearDirectFanout,
   createDirectConversationRecord,
@@ -1074,9 +1076,12 @@ describeDb("direct conversations", () => {
   });
 
   // A notice as the notification pipeline stores it on Bea's home bay.
-  async function seedNotice(dedupe_key: string, body_text: string) {
+  async function seedNotice(
+    dedupe_key: string,
+    body_text: string,
+    db: { query: (sql: string, params?: any[]) => Promise<any> } = getPool(),
+  ) {
     const summary = { notice_type: "direct_message", body_text };
-    const db = getPool();
     const event_id = randomUUID();
     const notification_id = randomUUID();
     await db.query(
@@ -1130,7 +1135,7 @@ describeDb("direct conversations", () => {
     ).toHaveLength(0);
   });
 
-  test("a deletion landing while its notice is being created still takes the text out", async () => {
+  test("a notice whose bookkeeping fails leaves no copy, and a later deletion keeps it that way", async () => {
     await shareProject();
     const started = await directHubApi.startDirect({
       account_id: ada,
@@ -1145,25 +1150,77 @@ describeDb("direct conversations", () => {
       sender_id: ada,
       body: "a secret",
     };
-    // The deletion's delivery runs after the pre-check but before the notice
-    // exists (its tombstone written, nothing to redact yet); then the notice
-    // is created.
-    mockNotify.mockImplementation(async (opts: any) => {
-      if (opts.targets[0].target_account_id !== bea) return;
-      await directControl.upsertIndex({
+    // The notice graph is written (in the notify transaction) ...
+    mockNotify.mockImplementation(async (input: any, db: any) => {
+      if (input.targets[0].target_account_id !== bea) return;
+      await seedNotice(
+        input.targets[0].dedupe_key,
+        input.payload_json.body_text,
+        db,
+      );
+    });
+    // ... and then its bookkeeping fails (or the process dies).
+    const failing = jest
+      .spyOn(directDb, "recordDirectNotified")
+      .mockRejectedValueOnce(Error("connection lost"));
+    await expect(
+      directControl.upsertIndex({
         account_id: bea,
-        conversation: {
-          ...conversation!,
-          revision: conversation!.revision + 5,
-        },
-        deleted_message_ids: [message.message_id],
-      });
-      await seedNotice(opts.targets[0].dedupe_key, opts.payload_json.body_text);
+        conversation: conversation!,
+        message,
+      }),
+    ).rejects.toThrow("connection lost");
+    failing.mockRestore();
+    // Nothing of it was committed.
+    expect(await noticeTexts()).toEqual([]);
+    // The deletion is delivered and acknowledged; the stale send delivery is
+    // retried afterwards and must not create the notice.
+    await directControl.upsertIndex({
+      account_id: bea,
+      conversation: { ...conversation!, revision: conversation!.revision + 5 },
+      deleted_message_ids: [message.message_id],
     });
     await directControl.upsertIndex({
       account_id: bea,
       conversation: conversation!,
       message,
+    });
+    expect(await noticeTexts()).toEqual([]);
+  });
+
+  test("a notice committed before the deletion is redacted by it", async () => {
+    await shareProject();
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+    });
+    const conversation = await getDirectConversationRecord(
+      started.conversation_id,
+      "bay-0",
+    );
+    const message = {
+      message_id: randomUUID(),
+      sender_id: ada,
+      body: "a secret",
+    };
+    mockNotify.mockImplementation(async (input: any, db: any) => {
+      if (input.targets[0].target_account_id !== bea) return;
+      await seedNotice(
+        input.targets[0].dedupe_key,
+        input.payload_json.body_text,
+        db,
+      );
+    });
+    await directControl.upsertIndex({
+      account_id: bea,
+      conversation: conversation!,
+      message,
+    });
+    expect(await noticeTexts()).toEqual(["a secret"]);
+    await directControl.upsertIndex({
+      account_id: bea,
+      conversation: { ...conversation!, revision: conversation!.revision + 5 },
+      deleted_message_ids: [message.message_id],
     });
     expect(await noticeTexts()).toEqual(["Message deleted"]);
   });

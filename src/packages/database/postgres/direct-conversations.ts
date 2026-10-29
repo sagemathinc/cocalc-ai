@@ -568,18 +568,21 @@ export async function getDirectIndexRow(
 }
 
 // The member was notified (only after the notification was created).
-export async function recordDirectNotified({
-  account_id,
-  conversation_id,
-  message_id,
-  request,
-}: {
-  account_id: string;
-  conversation_id: string;
-  message_id: string;
-  request: boolean;
-}): Promise<void> {
-  await getPool().query(
+export async function recordDirectNotified(
+  {
+    account_id,
+    conversation_id,
+    message_id,
+    request,
+  }: {
+    account_id: string;
+    conversation_id: string;
+    message_id: string;
+    request: boolean;
+  },
+  db: Pick<PoolClient, "query"> = getPool(),
+): Promise<void> {
+  await db.query(
     `UPDATE account_direct_conversations SET
        notified_message_id = $3,
        request_notified = request_notified OR $4
@@ -870,8 +873,17 @@ export async function redactDirectMessageNotice({
   account_id: string;
   message_id: string;
 }): Promise<string[]> {
+  return await inTransaction((db) =>
+    redactDirectMessageNoticeWithClient(db, { account_id, message_id }),
+  );
+}
+
+async function redactDirectMessageNoticeWithClient(
+  db: PoolClient,
+  { account_id, message_id }: { account_id: string; message_id: string },
+): Promise<string[]> {
   const dedupe_key = `direct-message:${message_id}:${account_id}`;
-  return await inTransaction(async (db) => {
+  {
     const { rows: targets } = await db.query(
       `SELECT event_id, notification_id FROM notification_targets
        WHERE target_account_id = $1 AND dedupe_key = $2`,
@@ -953,35 +965,64 @@ export async function redactDirectMessageNotice({
       );
     }
     return listed.map((row) => row.notification_id);
+  }
+}
+
+// Creating a notice about a message and deleting it are serialized per
+// (account, message) with a transaction-scoped lock, and each side does all
+// its writes in that one transaction: a notice is only ever created after
+// checking for a tombstone, and a tombstone is written together with the
+// redaction. So whichever commits first, the other sees it, whatever fails
+// or crashes in between.
+async function lockDirectMessageNotice(
+  db: PoolClient,
+  account_id: string,
+  message_id: string,
+): Promise<void> {
+  await db.query(
+    "SELECT pg_advisory_xact_lock(hashtext('direct-message-notice'), hashtext($1))",
+    [`${account_id}:${message_id}`],
+  );
+}
+
+// Run f (creating a notice) unless the message was deleted; returns whether
+// it ran. f's writes commit together with the tombstone check.
+export async function withUndeletedDirectMessage<T>(
+  { account_id, message_id }: { account_id: string; message_id: string },
+  f: (db: PoolClient) => Promise<T>,
+): Promise<{ ran: boolean; result?: T }> {
+  return await inTransaction(async (db) => {
+    await lockDirectMessageNotice(db, account_id, message_id);
+    const { rows } = await db.query(
+      `SELECT 1 FROM account_direct_deleted_messages
+       WHERE account_id = $1 AND message_id = $2`,
+      [account_id, message_id],
+    );
+    if (rows.length > 0) return { ran: false };
+    return { ran: true, result: await f(db) };
   });
 }
 
-// A deleted message's tombstone on a member's home bay (idempotent).
-export async function recordDirectMessageDeleted({
+// A deleted message, on a member's home bay: its tombstone and the redaction
+// of any notice about it, in one transaction. Returns the notification list
+// ids that changed, to publish.
+export async function recordDirectMessageDeletion({
   account_id,
   message_id,
 }: {
   account_id: string;
   message_id: string;
-}): Promise<void> {
-  await getPool().query(
-    `INSERT INTO account_direct_deleted_messages (account_id, message_id, created)
-     VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
-    [account_id, message_id],
-  );
-}
-
-export async function isDirectMessageDeleted({
-  account_id,
-  message_id,
-}: {
-  account_id: string;
-  message_id: string;
-}): Promise<boolean> {
-  const { rows } = await getPool().query(
-    `SELECT 1 FROM account_direct_deleted_messages
-     WHERE account_id = $1 AND message_id = $2`,
-    [account_id, message_id],
-  );
-  return rows.length > 0;
+}): Promise<string[]> {
+  return await inTransaction(async (db) => {
+    await lockDirectMessageNotice(db, account_id, message_id);
+    await db.query(
+      `INSERT INTO account_direct_deleted_messages (account_id, message_id, created)
+       VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
+      [account_id, message_id],
+    );
+    return await redactDirectMessageNoticeWithClient(db, {
+      account_id,
+      message_id,
+    });
+  });
 }

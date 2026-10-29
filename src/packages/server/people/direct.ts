@@ -46,9 +46,8 @@ import {
   recordDirectNotified,
   setDirectMemberState,
   deleteDirectMessage,
-  isDirectMessageDeleted,
-  recordDirectMessageDeleted,
-  redactDirectMessageNotice,
+  recordDirectMessageDeletion,
+  withUndeletedDirectMessage,
   setDirectPersonal,
   unblockDirectSender,
   upsertDirectIndex,
@@ -56,7 +55,7 @@ import {
   type DirectIndexRow,
 } from "@cocalc/database/postgres/direct-conversations";
 import {
-  createNotificationEventGraph,
+  createNotificationEventGraphInTransaction,
   resolveNotificationTargetHomeBays,
 } from "@cocalc/database/postgres/notifications-core";
 import { getLogger } from "@cocalc/backend/logger";
@@ -286,29 +285,42 @@ async function notify(
     account_ids: [account_id],
     default_bay_id: bay(),
   });
-  // Idempotent by its dedupe key: safe to repeat on a retry.
-  await createNotificationEventGraph({
-    kind: "account_notice",
-    source_bay_id: bay(),
-    source_project_id: null,
-    actor_account_id: message.sender_id,
-    origin_kind: "system",
-    payload_json: summary,
-    targets: [
-      {
-        target_account_id: account_id,
-        target_home_bay_id: homes[account_id],
-        dedupe_key: `direct-message:${message.message_id}:${account_id}`,
-        summary_json: summary,
-      },
-    ],
-  });
-  await recordDirectNotified({
-    account_id,
-    conversation_id: row.conversation_id,
-    message_id: message.message_id,
-    request: kind === "request",
-  });
+  // Idempotent by its dedupe key: safe to repeat on a retry. Created only if
+  // the message wasn't deleted, in one transaction with that check and the
+  // bookkeeping (a deletion can't slip in between, even across a crash).
+  await withUndeletedDirectMessage(
+    { account_id, message_id: message.message_id },
+    async (db) => {
+      await createNotificationEventGraphInTransaction({
+        db,
+        input: {
+          kind: "account_notice",
+          source_bay_id: bay(),
+          source_project_id: null,
+          actor_account_id: message.sender_id,
+          origin_kind: "system",
+          payload_json: summary,
+          targets: [
+            {
+              target_account_id: account_id,
+              target_home_bay_id: homes[account_id],
+              dedupe_key: `direct-message:${message.message_id}:${account_id}`,
+              summary_json: summary,
+            },
+          ],
+        },
+      });
+      await recordDirectNotified(
+        {
+          account_id,
+          conversation_id: row.conversation_id,
+          message_id: message.message_id,
+          request: kind === "request",
+        },
+        db,
+      );
+    },
+  );
 }
 
 // The account's daily message-request limits: its membership tier's, or the
@@ -348,13 +360,12 @@ async function resolveDirectUsername(value: unknown): Promise<string | null> {
 
 const DIRECT_PERSONAL_FIELDS = new Set(["muted", "pinned", "archived_through"]);
 
-// A deleted message's notice loses its text, and the change reaches the
-// member's open notification list.
-async function redactNotice(
+// A deleted message's redacted notice reaches the member's open
+// notification list.
+async function publishRedacted(
   account_id: string,
-  message_id: string,
+  changed: string[],
 ): Promise<void> {
-  const changed = await redactDirectMessageNotice({ account_id, message_id });
   if (changed.length > 0) {
     await publishProjectedNotificationFeedUpdatesBestEffort({
       account_id,
@@ -699,8 +710,10 @@ export const directControl: InterBayDirectApi = {
     // bay (this is idempotent).
     for (const message_id of deleted_message_ids ?? []) {
       requireUuid(message_id, "deleted_message_ids");
-      await recordDirectMessageDeleted({ account_id, message_id });
-      await redactNotice(account_id, message_id);
+      await publishRedacted(
+        account_id,
+        await recordDirectMessageDeletion({ account_id, message_id }),
+      );
     }
     // A request from someone this member blocked is never recorded or
     // notified, even if the block landed after the starter checked it.
@@ -713,27 +726,10 @@ export const directControl: InterBayDirectApi = {
     const row = await upsertDirectIndex({ account_id, conversation });
     // A failure here is retried by the owning bay (the notification is
     // idempotent and recorded once created). A delivery that read the
-    // message before it was deleted may notify after the deletion's
-    // redaction ran: so a tombstone is checked before, and again after
-    // creating the notice (the deletion side writes its tombstone before
-    // redacting, so one of the two sides always sees the other).
-    if (
-      message != null &&
-      !message.deleted &&
-      !(await isDirectMessageDeleted({
-        account_id,
-        message_id: message.message_id,
-      }))
-    ) {
+    // message before it was deleted can't notify after the deletion: notify
+    // creates the notice only in a transaction that finds no tombstone.
+    if (message != null && !message.deleted) {
       await notify(account_id, row, message);
-      if (
-        await isDirectMessageDeleted({
-          account_id,
-          message_id: message.message_id,
-        })
-      ) {
-        await redactNotice(account_id, message.message_id);
-      }
     }
   },
 
