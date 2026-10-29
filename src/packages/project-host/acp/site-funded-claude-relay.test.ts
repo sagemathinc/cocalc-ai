@@ -789,11 +789,12 @@ describe("site-funded Claude relay with a rolling reservation", () => {
   function activateRolling(
     reservedMicrousd: number,
     extend: jest.Mock<Promise<SiteFundedCodexExtension>, [any]>,
+    turnPolicy = rollingPolicy,
   ) {
     relay.activate({
       reservation: {
         reservationId: "reservation-1",
-        policy: rollingPolicy,
+        policy: turnPolicy,
         reservedMicrousd,
         rolling: true,
       } as any,
@@ -831,6 +832,30 @@ describe("site-funded Claude relay with a rolling reservation", () => {
     expect(maxInFlight).toBe(1);
     expect(extend).toHaveBeenCalledTimes(1);
     expect(extend.mock.calls[0][0]).toMatchObject({ sequence: 1 });
+  });
+
+  it("keeps extending when a chunk is smaller than one request's worst case", async () => {
+    const headroom = siteFundedCodexFinalRequestHeadroomMicrousd(rollingPolicy);
+    const chunk = Math.ceil(headroom / 4);
+    const smallChunks = { ...rollingPolicy, reservationChunkMicrousd: chunk };
+    expect(siteFundedExtensionThresholdMicrousd(smallChunks)).toBe(headroom);
+    let reserved = 1;
+    const extend = jest.fn(async () => {
+      reserved += chunk;
+      return {
+        granted: true as const,
+        grantedMicrousd: chunk,
+        reservedMicrousd: reserved,
+      };
+    });
+    activateRolling(1, extend, smallChunks);
+    expect((await send(message)).status).toBe(200);
+    // 1 + 4 chunks is the first total of at least one request's worst case.
+    expect(extend.mock.calls.map(([opts]) => opts.sequence)).toEqual([
+      1, 2, 3, 4,
+    ]);
+    expect((await send(message)).status).toBe(200);
+    expect(seen).toHaveLength(2);
   });
 
   it("uses what it holds after a refusal, then stops with the hub's reason", async () => {

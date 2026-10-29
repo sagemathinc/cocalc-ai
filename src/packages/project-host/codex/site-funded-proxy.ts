@@ -54,6 +54,8 @@ export function siteFundedUsageEventId(
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// Extensions one request may make (each of at most one chunk).
+const MAX_EXTENSIONS_PER_REQUEST = 20;
 const EXTENSION_UNAVAILABLE =
   "CoCalc could not extend this included Codex turn's funding right now, so it paused the turn. Start a new turn in a minute, or connect your own ChatGPT plan or OpenAI API key.";
 
@@ -281,36 +283,36 @@ function assertAllowedTools(tools: unknown): void {
 async function fundRequest(turn: ActiveTurn): Promise<void> {
   if (!turn.reservation.rolling || !turn.extend) return;
   if (turn.closed || turn.blockedReason || turn.extensionDenial) return;
-  if (
-    turn.reservedMicrousd - turn.costMicrousd >=
-    siteFundedExtensionThresholdMicrousd(turn.policy)
-  ) {
-    return;
-  }
-  const sequence = turn.extensionSequence + 1;
-  try {
-    const result = await turn.extend({
-      reservation: turn.reservation,
-      sequence,
-    });
-    if (result.granted) {
-      turn.extensionSequence = sequence;
-      turn.reservedMicrousd = Math.max(
-        turn.reservedMicrousd,
-        result.reservedMicrousd,
-      );
-    } else {
-      turn.extensionDenial = result.reason;
-    }
-  } catch (err) {
-    logger.warn(
-      "site-funded Codex extension failed; keeping what the turn holds",
-      {
-        reservationId: turn.reservation.reservationId,
+  const threshold = siteFundedExtensionThresholdMicrousd(turn.policy);
+  // A chunk may be smaller than one request's worst case: keep extending
+  // until the turn holds enough, is refused, fails, or stops growing.
+  for (let attempt = 0; attempt < MAX_EXTENSIONS_PER_REQUEST; attempt += 1) {
+    if (turn.reservedMicrousd - turn.costMicrousd >= threshold) return;
+    const sequence = turn.extensionSequence + 1;
+    try {
+      const result = await turn.extend({
+        reservation: turn.reservation,
         sequence,
-        err: `${err}`,
-      },
-    );
+      });
+      if (!result.granted) {
+        turn.extensionDenial = result.reason;
+        return;
+      }
+      turn.extensionSequence = sequence;
+      const before = turn.reservedMicrousd;
+      turn.reservedMicrousd = Math.max(before, result.reservedMicrousd);
+      if (turn.reservedMicrousd <= before) return;
+    } catch (err) {
+      logger.warn(
+        "site-funded Codex extension failed; keeping what the turn holds",
+        {
+          reservationId: turn.reservation.reservationId,
+          sequence,
+          err: `${err}`,
+        },
+      );
+      return;
+    }
   }
 }
 

@@ -186,26 +186,49 @@ describe("rolling site-funded reservations", () => {
     expect(await accountReserved(opts.accountId)).toBe(2 * CHUNK);
   });
 
-  it("extends up to the turn's ceiling, then refuses", async () => {
+  it("extends up to the turn's ceiling less one request, so it never spends more than the ceiling", async () => {
     const opts = admission();
     const { reservationId } = await admit(opts);
+    const limit = CEILING - HEADROOM;
     const grants: number[] = [];
-    for (let sequence = 1; sequence <= 5; sequence += 1) {
+    for (let sequence = 1; sequence <= 6; sequence += 1) {
       const result = await extendSiteFundedCodexTurn(
         extension(opts, reservationId, sequence),
       );
       if (!result.granted) {
         expect(result).toMatchObject({
           code: "turn_limit",
-          reservedMicrousd: CEILING,
+          reservedMicrousd: limit,
         });
         expect(result.reason).toContain("cost limit");
         break;
       }
       grants.push(result.grantedMicrousd);
     }
-    // 10 000 + 10 000 + 10 000 + 10 000 + 5 000 = the 45 000 ceiling.
-    expect(grants).toEqual([CHUNK, CHUNK, CHUNK, CEILING - 4 * CHUNK]);
+    expect(grants).toEqual([CHUNK, CHUNK, limit - 3 * CHUNK]);
+    // A request starts only while the turn has spent less than it holds, and
+    // costs at most HEADROOM: the turn can't spend more than CEILING.
+    expect(limit + HEADROOM).toBe(CEILING);
+  });
+
+  it("reserves the ceiling once when it leaves no room for a rolling reservation", async () => {
+    const opts = admission();
+    opts.policy = { ...opts.policy, maxTurnCostMicrousd: HEADROOM };
+    const reservation = await admit(opts);
+    expect(reservation.rolling).toBeUndefined();
+    expect(reservation.reservedMicrousd).toBe(HEADROOM);
+  });
+
+  it("does not report a repeated extension of an ended turn as granted", async () => {
+    const opts = admission();
+    const { reservationId } = await admit(opts);
+    await expect(
+      extendSiteFundedCodexTurn(extension(opts, reservationId, 1)),
+    ).resolves.toMatchObject({ granted: true });
+    await finishSiteFundedCodexTurn({ reservationId, status: "committed" });
+    await expect(
+      extendSiteFundedCodexTurn(extension(opts, reservationId, 1)),
+    ).resolves.toMatchObject({ granted: false, code: "inactive" });
   });
 
   it("stops at the account's 5-hour and weekly allowance mid-turn", async () => {

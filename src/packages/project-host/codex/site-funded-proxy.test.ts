@@ -8,6 +8,7 @@ import {
   computeSiteFundedCodexRequestCost,
   DEFAULT_SITE_FUNDED_CODEX_POLICY,
   SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES,
+  siteFundedCodexFinalRequestHeadroomMicrousd,
   siteFundedExtensionThresholdMicrousd,
   type SiteFundedCodexExtension,
   type SiteFundedCodexReservation,
@@ -918,6 +919,7 @@ describe("site-funded Codex proxy with a rolling reservation", () => {
     reservedMicrousd: number,
     extend: jest.Mock<Promise<SiteFundedCodexExtension>, [any]>,
     rolling = true,
+    policy = DEFAULT_SITE_FUNDED_CODEX_POLICY,
   ) {
     let upstreamRequests = 0;
     const upstream = createServer(async (_request, response) => {
@@ -935,6 +937,7 @@ describe("site-funded Codex proxy with a rolling reservation", () => {
     const session = await startSiteFundedCodexProxySession({
       reservation: {
         ...reservation(),
+        policy,
         reservedMicrousd,
         ...(rolling ? { rolling: true } : {}),
       },
@@ -1019,9 +1022,11 @@ describe("site-funded Codex proxy with a rolling reservation", () => {
       .mockRejectedValue(new Error("hub unreachable"));
     const proxy = await setup(COST, extend);
     await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
-    // Retried (same sequence: the first never succeeded), and granted.
+    // Retried (same sequence: the first never succeeded) and granted; it
+    // still holds less than a request's worst case, so it asks again (2),
+    // which fails: it keeps what it holds.
     await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
-    expect(extend.mock.calls.map(([opts]) => opts.sequence)).toEqual([1, 1]);
+    expect(extend.mock.calls.map(([opts]) => opts.sequence)).toEqual([1, 1, 2]);
     await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
     // Spent all it holds while the hub is unreachable: paused, and not
     // blamed on the user's allowance.
@@ -1032,6 +1037,43 @@ describe("site-funded Codex proxy with a rolling reservation", () => {
     );
     expect(paused.body.error.message).not.toContain("allowance");
     expect(proxy.upstreamRequests()).toBe(3);
+    await proxy.close();
+  });
+
+  it("keeps extending when a chunk is smaller than one request's worst case", async () => {
+    const headroom = siteFundedCodexFinalRequestHeadroomMicrousd(
+      DEFAULT_SITE_FUNDED_CODEX_POLICY,
+    );
+    const chunk = Math.ceil(headroom / 4);
+    const policy = {
+      ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
+      reservationChunkMicrousd: chunk,
+    };
+    // Below one request's worst case, so that is the threshold.
+    expect(siteFundedExtensionThresholdMicrousd(policy)).toBe(headroom);
+    let reserved = 1;
+    const extend = jest.fn(async () => {
+      reserved += chunk;
+      return {
+        granted: true as const,
+        grantedMicrousd: chunk,
+        reservedMicrousd: reserved,
+      };
+    });
+    // Holds almost nothing: one request extends until it holds a whole
+    // request's worst case, then starts.
+    const proxy = await setup(1, extend, true, policy);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    // 1 + 4 chunks is the first total of at least the headroom.
+    expect(extend.mock.calls.map(([opts]) => opts.sequence)).toEqual([
+      1, 2, 3, 4,
+    ]);
+    // That request cost more than a chunk: the turn has spent past what it
+    // held, and the next request extends as many times as it takes.
+    expect(COST).toBeGreaterThan(chunk);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    expect(reserved - 2 * COST).toBeGreaterThanOrEqual(0);
+    expect(proxy.upstreamRequests()).toBe(2);
     await proxy.close();
   });
 

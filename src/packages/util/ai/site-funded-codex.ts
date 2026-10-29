@@ -34,9 +34,10 @@ export type SiteFundedCodexPolicy = {
   serviceTier: "standard";
   maxConcurrentTurnsPerAccount: number;
   /**
-   * The most one turn may spend (a ceiling, not reserved up front when the
-   * reservation is rolling). It also bounds what the turn's provider
-   * credential could spend if code in the project read it.
+   * The most one turn may spend, its last request included (a ceiling, not
+   * reserved up front when the reservation is rolling). It also bounds what
+   * the turn's provider credential could spend if code in the project read
+   * it.
    */
   maxTurnCostMicrousd: number;
   /** A turn's hard lifetime: it ends then, however busy. */
@@ -187,6 +188,20 @@ export type SiteFundedExtend = (opts: {
   reservation: SiteFundedCodexReservation;
   sequence: number;
 }) => Promise<SiteFundedCodexExtension>;
+
+/**
+ * The most a rolling reservation may hold: its ceiling less one request's
+ * worst case. A request starts only while the turn has spent less than it
+ * holds, so the turn never spends more than its ceiling.
+ */
+export function siteFundedRollingReservationLimitMicrousd(
+  policy: SiteFundedCodexPolicy,
+): number {
+  return (
+    policy.maxTurnCostMicrousd -
+    siteFundedCodexFinalRequestHeadroomMicrousd(policy)
+  );
+}
 
 /**
  * When a rolling reservation should be extended: before a request starts with

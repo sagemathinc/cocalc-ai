@@ -244,6 +244,7 @@ describe("hub API argument transforms", () => {
       "aiSessions.upsertProjectHostSession",
       "apiKeys.getViewerReadPolicy",
       "hosts.checkCodexSiteUsageAllowance",
+      "hosts.extendSiteFundedCodexTurn",
       "hosts.getAccountEffectiveLimits",
       "hosts.issueProjectHostAgentAuthToken",
       "hosts.recordAcpAdmissionDenial",

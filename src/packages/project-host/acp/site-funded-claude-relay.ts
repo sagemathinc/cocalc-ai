@@ -94,6 +94,8 @@ const WEB_SEARCH_TOOL = /^web_search_\d+$/;
 // Client tools (run by Claude Code itself) carry no type, "custom", or one of
 // Anthropic's schema-less client tool types.
 const CLIENT_TOOL = /^(custom|bash_\d+|text_editor_\d+|computer_\d+)$/;
+// Extensions one request may make (each of at most one chunk).
+const MAX_EXTENSIONS_PER_REQUEST = 20;
 const EXTENSION_UNAVAILABLE =
   "CoCalc could not extend this included Claude turn's funding right now, so it paused the turn. Start a new turn in a minute, or use your own Claude subscription or Anthropic API key.";
 
@@ -512,36 +514,40 @@ export async function createSiteFundedClaudeRelay({
   const fundRequest = async (active: ActiveTurn): Promise<void> => {
     if (!active.reservation.rolling || !active.extend) return;
     if (active.ended || active.blockedReason || active.extensionDenial) return;
-    if (
-      active.reservedMicrousd - active.committedMicrousd >=
-      siteFundedExtensionThresholdMicrousd(active.reservation.policy)
-    ) {
-      return;
-    }
-    const sequence = active.extensionSequence + 1;
-    try {
-      const result = await active.extend({
-        reservation: active.reservation,
-        sequence,
-      });
-      if (result.granted) {
-        active.extensionSequence = sequence;
-        active.reservedMicrousd = Math.max(
-          active.reservedMicrousd,
-          result.reservedMicrousd,
-        );
-      } else {
-        active.extensionDenial = result.reason;
+    const threshold = siteFundedExtensionThresholdMicrousd(
+      active.reservation.policy,
+    );
+    // A chunk may be smaller than one request's worst case: keep extending
+    // until the turn holds enough, is refused, fails, or stops growing.
+    for (let attempt = 0; attempt < MAX_EXTENSIONS_PER_REQUEST; attempt += 1) {
+      if (active.reservedMicrousd - active.committedMicrousd >= threshold) {
+        return;
       }
-    } catch (err) {
-      logger.warn(
-        "site-funded Claude extension failed; keeping what the turn holds",
-        {
-          reservationId: active.reservation.reservationId,
+      const sequence = active.extensionSequence + 1;
+      try {
+        const result = await active.extend({
+          reservation: active.reservation,
           sequence,
-          err: `${err}`,
-        },
-      );
+        });
+        if (!result.granted) {
+          active.extensionDenial = result.reason;
+          return;
+        }
+        active.extensionSequence = sequence;
+        const before = active.reservedMicrousd;
+        active.reservedMicrousd = Math.max(before, result.reservedMicrousd);
+        if (active.reservedMicrousd <= before) return;
+      } catch (err) {
+        logger.warn(
+          "site-funded Claude extension failed; keeping what the turn holds",
+          {
+            reservationId: active.reservation.reservationId,
+            sequence,
+            err: `${err}`,
+          },
+        );
+        return;
+      }
     }
   };
 

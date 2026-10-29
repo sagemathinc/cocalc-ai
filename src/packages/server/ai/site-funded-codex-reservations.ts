@@ -9,6 +9,7 @@ import type { PoolClient } from "@cocalc/database/pool";
 import {
   computeSiteFundedCodexRequestCost,
   siteFundedCodexFinalRequestHeadroomMicrousd,
+  siteFundedRollingReservationLimitMicrousd,
   type SiteFundedCodexAdmission,
   type SiteFundedCodexExtension,
   type SiteFundedCodexExtensionDenialCode,
@@ -584,14 +585,18 @@ export async function reserveSiteFundedCodexTurn(
       opts.accountRemaining7dMicrousd == null
         ? Number.MAX_SAFE_INTEGER
         : Math.max(0, opts.accountRemaining7dMicrousd - uncredited7dMicrousd);
+    // A rolling turn may hold at most its ceiling less one request's worst
+    // case: a request starts only while it has spent less than it holds, so
+    // it never spends more than the ceiling. With no room for that, reserve
+    // as before (the ceiling, once).
+    const rollingLimit = siteFundedRollingReservationLimitMicrousd(opts.policy);
     const rolling =
-      !!opts.rolling && (opts.policy.reservationChunkMicrousd ?? 0) > 0;
+      !!opts.rolling &&
+      (opts.policy.reservationChunkMicrousd ?? 0) > 0 &&
+      rollingLimit > 0;
     const requested = Math.min(
       rolling
-        ? Math.min(
-            opts.policy.reservationChunkMicrousd!,
-            opts.policy.maxTurnCostMicrousd,
-          )
+        ? Math.min(opts.policy.reservationChunkMicrousd!, rollingLimit)
         : opts.policy.maxTurnCostMicrousd,
       remaining5h,
       remaining7d,
@@ -927,7 +932,22 @@ export async function extendSiteFundedCodexTurn(
     }
     const reserved = int(row.reserved_microusd);
     const lastSequence = int(row.extension_sequence);
+    const provider: SiteFundedProvider = row.provider ?? "openai";
+    const words = fundedWording(provider);
+    const denied = async (
+      code: SiteFundedCodexExtensionDenialCode,
+      reason: string,
+    ) => {
+      await client.query("COMMIT");
+      return extensionDenied(code, reason, reserved);
+    };
+    const ended = () =>
+      denied(
+        "inactive",
+        `This included ${words.product} turn has ended. Start a new turn to continue.`,
+      );
     if (opts.sequence === lastSequence) {
+      if (!row.live) return await ended();
       // A repeated request: report what it granted, never grant twice.
       await client.query("COMMIT");
       return {
@@ -941,24 +961,11 @@ export async function extendSiteFundedCodexTurn(
         `site-funded extension sequence ${opts.sequence} follows ${lastSequence}`,
       );
     }
-    const provider: SiteFundedProvider = row.provider ?? "openai";
-    const words = fundedWording(provider);
-    const denied = async (
-      code: SiteFundedCodexExtensionDenialCode,
-      reason: string,
-    ) => {
-      await client.query("COMMIT");
-      return extensionDenied(code, reason, reserved);
-    };
-    if (!row.rolling || !row.live) {
-      return await denied(
-        "inactive",
-        `This included ${words.product} turn has ended. Start a new turn to continue.`,
-      );
-    }
+    if (!row.rolling || !row.live) return await ended();
     const policy: SiteFundedCodexPolicy = row.policy;
     const chunk = policy.reservationChunkMicrousd ?? 0;
-    const ceilingRoom = policy.maxTurnCostMicrousd - reserved;
+    const ceilingRoom =
+      siteFundedRollingReservationLimitMicrousd(policy) - reserved;
     if (chunk <= 0 || ceilingRoom <= 0) {
       return await denied(
         "turn_limit",
