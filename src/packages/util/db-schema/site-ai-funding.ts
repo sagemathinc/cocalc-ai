@@ -122,6 +122,13 @@ Table({
         query:
           "(provider_key_id, started_at) WHERE provider_key_id IS NOT NULL",
       },
+      {
+        // The last hour of finished turns, for the health check
+        // (server/ai/site-funded-health.ts).
+        name: "site_ai_turn_reservations_completed_idx",
+        query:
+          "(completed_at) WHERE status IN ('committed', 'failed', 'expired')",
+      },
     ],
     pg_constraints: [
       {

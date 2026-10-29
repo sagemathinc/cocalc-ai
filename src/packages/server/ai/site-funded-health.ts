@@ -10,8 +10,9 @@ site_ai_admission_attempts. Admins get a condition alert, and admin health a
 line, when
 
 - more than 10% of finished turns failed for a reason other than a limit
-  (emergency cost, request or duration limits, and expired turns, are limits
-  by design), out of at least 5 finished turns; or
+  (the cost, request and duration limits of a turn, "emergency" ones for
+  Codex, and expired turns, are limits by design), out of at least 5
+  finished turns; or
 - at least 5 turns were admitted (and have had 15 minutes to finish) but
   none completed.
 
@@ -28,11 +29,22 @@ export const SITE_AI_MIN_ADMITTED_TURNS = 5;
 // A turn admitted more recently may still be running.
 export const SITE_AI_ADMISSION_SETTLE_MINUTES = 15;
 const PROVIDERS = ["openai", "anthropic"];
-const LIMIT_OUTCOME = /emergency (cost|request|duration) limit/i;
+// "reached its emergency cost limit" (Codex, site-funded-proxy.ts) and
+// "reached its cost limit" (Claude, site-funded-claude-relay.ts).
+const LIMIT_OUTCOME = /\b(cost|request|duration) limit\b/i;
 const ALERT_SUBJECT = "Site-funded AI turns are failing";
 const ALERT_REMINDER_MINUTES = 6 * 60;
 const TOP_FAILURES = 3;
 const MAX_OUTCOME_LENGTH = 160;
+
+// Served by site_ai_turn_reservations_completed_idx, whose predicate the
+// status filter matches.
+export const FINISHED_TURNS_SQL = `SELECT provider, status, outcome, count(*)::int AS turns
+   FROM site_ai_turn_reservations
+  WHERE completed_at >= $1::timestamptz - make_interval(mins => $2)
+    AND completed_at <= $1::timestamptz
+    AND status IN ('committed', 'failed', 'expired')
+  GROUP BY provider, status, outcome`;
 
 export interface SiteFundedAiProviderHealth {
   provider: string;
@@ -62,21 +74,16 @@ export async function getSiteFundedAiHealth({
       status: string;
       outcome: string | null;
       turns: number;
-    }>(
-      `SELECT provider, status, outcome, count(*)::int AS turns
-         FROM site_ai_turn_reservations
-        WHERE completed_at >= $1::timestamptz - make_interval(mins => $2)
-          AND completed_at <= $1::timestamptz
-          AND status IN ('committed', 'failed', 'expired')
-        GROUP BY provider, status, outcome`,
-      [now, SITE_AI_HEALTH_WINDOW_MINUTES],
-    ),
+    }>(FINISHED_TURNS_SQL, [now, SITE_AI_HEALTH_WINDOW_MINUTES]),
     pool.query<{ provider: string; admitted: number }>(
       `SELECT provider, count(*)::int AS admitted
          FROM site_ai_admission_attempts
         WHERE outcome = 'allowed'
-          AND attempted_at >= $1::timestamptz - make_interval(mins => $2)
-          AND attempted_at < $1::timestamptz - make_interval(mins => $3)
+          -- When it was allowed: a retry keeps the first attempt's time.
+          AND decided_at >= $1::timestamptz - make_interval(mins => $2)
+          AND decided_at < $1::timestamptz - make_interval(mins => $3)
+          -- Bounds the scan (attempted_at is indexed; retries are quick).
+          AND attempted_at >= $1::timestamptz - INTERVAL '1 day'
         GROUP BY provider`,
       [now, SITE_AI_HEALTH_WINDOW_MINUTES, SITE_AI_ADMISSION_SETTLE_MINUTES],
     ),
