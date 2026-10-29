@@ -376,6 +376,8 @@ export const GPU_ALERT_KINDS = [
   "account_spend_rate",
   "account_balance_drop",
   "account_checks_disabled",
+  // 5d-2c: the key was decrypted with no authorized action behind it
+  "unexplained_decrypt",
 ] as const;
 
 // What CoCalc admins must know (5d-2), apart from any one owner's alerts.
@@ -507,7 +509,7 @@ Table({
       // from the reaper's sweep so it never holds back its watermark
       // billing: provider billing reconciliation (5d-2a)
       pg_check:
-        "CHECK (name IN ('reaper','reconciler','compromise','billing'))",
+        "CHECK (name IN ('reaper','reconciler','compromise','billing','decrypt_audit'))",
     },
     holder: { type: "string", pg_type: "varchar(128)" },
     expires_at: { type: "timestamp" },
@@ -587,9 +589,13 @@ Table({
       pg_type: "varchar(32)",
       not_null: true,
       pg_check:
-        "CHECK (name IN ('reaper','reconciler','compromise','billing'))",
+        "CHECK (name IN ('reaper','reconciler','compromise','billing','decrypt_audit'))",
     },
     started: { type: "timestamp", not_null: true },
+    // until when this run holds the lease: set when it is taken and at every
+    // renewal (5d-2c-2: a lost run's authority ends here, not when its loss
+    // was noticed)
+    lease_expires_at: { type: "timestamp" },
     finished: { type: "timestamp" },
     // finished | failed | lost
     outcome: { type: "string", pg_type: "varchar(16)" },
@@ -774,6 +780,9 @@ Table({
     finished: { type: "timestamp" },
     // ok | error | no_key
     outcome: { type: "string", pg_type: "varchar(16)" },
+    // the decrypt audit's verdict (5d-2c-2): explained | unexplained |
+    // unresolved | admitted_unused
+    verdict: { type: "string", pg_type: "varchar(16)" },
     audited_at: { type: "timestamp" },
   },
 });

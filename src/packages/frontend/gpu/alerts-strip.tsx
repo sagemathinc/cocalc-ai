@@ -31,6 +31,7 @@ const TITLES: Record<GpuAlertKind, string> = {
   account_balance_drop:
     "Your RunPod balance dropped more than your pods explain",
   account_checks_disabled: "RunPod account checks are off",
+  unexplained_decrypt: "Your RunPod key was read without a matching action",
 };
 
 const SEVERITY_LABELS = {
