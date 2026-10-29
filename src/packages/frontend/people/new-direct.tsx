@@ -219,6 +219,13 @@ export function NewDirectModal({
   // opening) are dropped: another account never sees them.
   const generation = useRef(0);
   const current = () => generation.current;
+  // Unmounted (e.g. keyed to another account): nothing pending may land.
+  useEffect(
+    () => () => {
+      generation.current++;
+    },
+    [],
+  );
 
   const collaborators = useMemo(
     () => new Set(people.map((p) => p.account_id)),
@@ -227,6 +234,9 @@ export function NewDirectModal({
 
   useEffect(() => {
     generation.current++;
+    // Whatever was pending is dropped, so its spinners too.
+    setSearching(false);
+    setBusy(false);
     if (!open) return;
     const person = people.find((p) => p.account_id === personId);
     setTo(
@@ -329,8 +339,8 @@ export function NewDirectModal({
         title: to.length > 1 ? title : null,
         body,
       });
-      directChanged();
       if (mine !== current()) return;
+      directChanged();
       onStarted(conversation);
     } catch (err) {
       if (mine === current()) setError(`${err}`);

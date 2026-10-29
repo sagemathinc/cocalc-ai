@@ -75,8 +75,11 @@ jest.mock("@cocalc/server/membership/effective-limits", () => ({
 
 import { directControl, directHubApi, retryDirectFanouts } from "./direct";
 import {
+  clearDirectFanout,
   createDirectConversationRecord,
+  deleteDirectMessage as deleteDirectMessageRecord,
   getDirectConversationRecord,
+  pendingDirectFanouts,
   upsertDirectIndex,
 } from "@cocalc/database/postgres/direct-conversations";
 import { directPairKey } from "@cocalc/util/direct-conversations";
@@ -1020,5 +1023,51 @@ describeDb("direct conversations", () => {
       reason: "projected_upsert",
       notification_ids: [notification_id],
     });
+  });
+
+  test("a deletion queued while an earlier one is being delivered is never acknowledged with it", async () => {
+    await shareProject();
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+      body: "first secret",
+    });
+    const conversation_id = started.conversation_id;
+    const second = await directHubApi.sendDirect({
+      account_id: ada,
+      conversation_id,
+      body: "second secret",
+    });
+    const first = (
+      await directHubApi.getDirect({ account_id: ada, conversation_id })
+    ).messages[0];
+    // Deletion A is queued; delivery reads Bea's pending row ([A]).
+    await deleteDirectMessageRecord({
+      conversation_id,
+      message_id: first.message_id,
+      sender_id: ada,
+      owner_bay_id: "bay-0",
+    });
+    const [read] = (await pendingDirectFanouts({ conversation_id })).filter(
+      (row) => row.account_id === bea,
+    );
+    expect(read.deleted_message_ids).toEqual([first.message_id]);
+    // Meanwhile deletion B lands on the same row.
+    await deleteDirectMessageRecord({
+      conversation_id,
+      message_id: second.message_id,
+      sender_id: ada,
+      owner_bay_id: "bay-0",
+    });
+    const current = await getDirectConversationRecord(conversation_id, "bay-0");
+    // Delivery acknowledges what it read, at the conversation's revision now.
+    await clearDirectFanout({ ...read, revision: current!.revision });
+    const [left] = (await pendingDirectFanouts({ conversation_id })).filter(
+      (row) => row.account_id === bea,
+    );
+    // B is still owed to Bea's home bay.
+    expect(left?.deleted_message_ids).toEqual(
+      expect.arrayContaining([second.message_id]),
+    );
   });
 });

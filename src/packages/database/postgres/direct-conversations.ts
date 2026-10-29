@@ -430,14 +430,22 @@ export async function pendingDirectFanouts({
   return rows.map((row) => ({ ...row, revision: Number(row.revision) }));
 }
 
-// Delivered: clear unless a newer change queued meanwhile.
+// Delivered: clear unless a newer change queued meanwhile, including a
+// message deleted since this row was read (its redaction is still owed).
 export async function clearDirectFanout(row: DirectFanoutRow): Promise<void> {
   await getPool().query(
     `DELETE FROM direct_fanout_pending
      WHERE conversation_id = $1 AND account_id = $2
        AND revision <= $3
-       AND message_id IS NOT DISTINCT FROM $4`,
-    [row.conversation_id, row.account_id, row.revision, row.message_id],
+       AND message_id IS NOT DISTINCT FROM $4
+       AND COALESCE(deleted_message_ids, '{}'::uuid[]) <@ $5::uuid[]`,
+    [
+      row.conversation_id,
+      row.account_id,
+      row.revision,
+      row.message_id,
+      row.deleted_message_ids ?? [],
+    ],
   );
 }
 

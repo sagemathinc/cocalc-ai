@@ -584,3 +584,31 @@ test("New message: switching accounts during a search shows the new account noth
     ).value,
   ).toBe("");
 });
+
+test("New message: a send still out when the account switches never lands for the new account", async () => {
+  let resolve!: (c: any) => void;
+  mockApi.startDirect.mockReturnValue(new Promise((r) => (resolve = r)));
+  const started = jest.fn();
+  // As on the People page: the dialog is keyed by account.
+  const keyed = (account: string) => (
+    <NewDirectModal
+      key={account}
+      open
+      personId={bea}
+      onClose={() => {}}
+      onStarted={started}
+    />
+  );
+  const view = render(keyed(me));
+  fireEvent.change(screen.getByLabelText("Composer"), {
+    target: { value: "for Bea, from me" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(mockApi.startDirect).toHaveBeenCalled());
+  mockAccount = cy;
+  view.rerender(keyed(cy));
+  await act(async () => {
+    resolve(listed("from-old-account"));
+  });
+  expect(started).not.toHaveBeenCalled();
+});
