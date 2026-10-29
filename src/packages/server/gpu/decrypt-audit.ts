@@ -156,7 +156,8 @@ export function judgeDecrypt(
     if (u.decrypt_rows > u.max_decrypts) {
       return unexplained("over its record's limit");
     }
-    if (started > t(u.expires)!) {
+    // (admission needs expires > now: a decrypt at expiry wasn't allowed)
+    if (started >= t(u.expires)!) {
       return unexplained("after its authorization record expired");
     }
     // 2-3. A read when its record expired; a write when its outcome is

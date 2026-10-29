@@ -340,16 +340,21 @@ describeRealPostgres("the GPU decrypt audit", () => {
     expect(await verdict(outside)).toMatchObject({ verdict: "unexplained" });
   });
 
-  it("judges a decrypt that started after its exact record expired as unexplained, at once", async () => {
+  it("judges a decrypt that started at or after its exact record's expiry as unexplained, at once", async () => {
     const o = await owner();
-    const { use, id } = await userDecrypt(o, "pod_read");
-    // the decrypt is dated just after the record it presents expired
-    await q(
-      "UPDATE gpu_key_decrypts SET started = (SELECT expires FROM gpu_key_uses WHERE id = $2) + interval '1 millisecond' WHERE id = $1",
-      [id, use.id],
-    );
-    await run(Date.now());
-    expect(await verdict(id)).toMatchObject({ verdict: "unexplained" });
+    for (const after of ["0 milliseconds", "1 millisecond"]) {
+      const { use, id } = await userDecrypt(o, "pod_read");
+      // dated at (or just after) the expiry of the record it presents
+      await q(
+        `UPDATE gpu_key_decrypts SET started = (SELECT expires FROM gpu_key_uses WHERE id = $2) + interval '${after}' WHERE id = $1`,
+        [id, use.id],
+      );
+      await run(Date.now());
+      expect([after, await verdict(id)]).toMatchObject([
+        after,
+        { verdict: "unexplained" },
+      ]);
+    }
   });
 
   it("ends a lost run's authority at its lease's expiry, not when the loss was noticed", async () => {
