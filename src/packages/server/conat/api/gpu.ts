@@ -105,7 +105,8 @@ function scopeOf(p: GpuAgentPrincipal | undefined) {
 // agent's (5d-2c), and forwarded with its scope for the home bay's record.
 export const catalog: GpuApi["catalog"] = async (opts = {}) => {
   const principal = await agentPrincipal(opts);
-  const { gpu_agent_auth: _auth, ...rest } = opts as any;
+  // (only the verified principal makes an agent scope)
+  const { gpu_agent_auth: _auth, agent: _agent, ...rest } = opts as any;
   return await getGpuCatalog({
     ...rest,
     ...scopeOf(principal),
@@ -115,7 +116,8 @@ export const catalog: GpuApi["catalog"] = async (opts = {}) => {
 
 export const availability: GpuApi["availability"] = async (opts = {}) => {
   const principal = await agentPrincipal(opts);
-  const { gpu_agent_auth: _auth, ...rest } = opts as any;
+  // (only the verified principal makes an agent scope)
+  const { gpu_agent_auth: _auth, agent: _agent, ...rest } = opts as any;
   return await getGpuAvailability({
     ...rest,
     ...scopeOf(principal),
@@ -125,7 +127,8 @@ export const availability: GpuApi["availability"] = async (opts = {}) => {
 
 export const pods: GpuApi["pods"] = async (opts = {}) => {
   const principal = await agentPrincipal(opts);
-  const { gpu_agent_auth: _auth, ...rest } = opts as any;
+  // (only the verified principal makes an agent scope)
+  const { gpu_agent_auth: _auth, agent: _agent, ...rest } = opts as any;
   return await getGpuPods({
     ...rest,
     ...scopeOf(principal),

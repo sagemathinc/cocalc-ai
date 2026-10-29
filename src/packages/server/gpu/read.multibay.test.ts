@@ -265,6 +265,51 @@ describe("gpu.* for an account homed on another bay", () => {
     expect(admitUserKeyUse).not.toHaveBeenCalled();
   });
 
+  it("discards an agent scope a person's call supplies, forwarded or not", async () => {
+    const forged = {
+      project_id: AGENT.project_id,
+      agent_id: "agent:forged",
+      run_id: "forged-run",
+    };
+    const home = homeBay();
+    await hubGpu.catalog({ account_id: ACCOUNT, agent: forged } as any);
+    await hubGpu.availability({ account_id: ACCOUNT, agent: forged } as any);
+    await hubGpu.pods({
+      account_id: ACCOUNT,
+      scope: "account",
+      agent: forged,
+    } as any);
+    // nothing about an agent crosses to the home bay (an account-wide
+    // listing would have been refused for an agent)
+    for (const r of home.received) expect(r).not.toHaveProperty("agent");
+    expect(wireText()).not.toContain("agent:forged");
+    // homed here: the owner's record, never an agent's
+    resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-0" });
+    try {
+      for (const call of [
+        () => hubGpu.catalog({ account_id: ACCOUNT, agent: forged } as any),
+        () =>
+          hubGpu.availability({ account_id: ACCOUNT, agent: forged } as any),
+        () =>
+          hubGpu.pods({
+            account_id: ACCOUNT,
+            scope: "account",
+            agent: forged,
+          } as any),
+      ]) {
+        await call().catch(() => undefined);
+      }
+      expect(admitAgentKeyUse).not.toHaveBeenCalled();
+      expect(admitUserKeyUse.mock.calls.map((c: any) => c[0])).toEqual([
+        { account_id: ACCOUNT, purpose: "catalog" },
+        { account_id: ACCOUNT, purpose: "catalog" },
+        { account_id: ACCOUNT, purpose: "pod_read" },
+      ]);
+    } finally {
+      resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-1" });
+    }
+  });
+
   it("records an agent's catalog read here as the agent's, for an account homed here", async () => {
     resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-0" });
     try {

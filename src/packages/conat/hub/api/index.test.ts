@@ -200,6 +200,7 @@ describe("hub API argument transforms", () => {
         agent_id: "agent:forged",
         run_id: "forged-run",
         gpu_agent_auth: { auth_token_fingerprint: "f".repeat(64) },
+        agent: { project_id: "other-project", agent_id: "agent:forged" },
         pod_id: "pod_abc123",
       };
       // a human: bound to the account; agent identity args are dropped
@@ -210,7 +211,7 @@ describe("hub API argument transforms", () => {
       });
       expect(human.account_id).toBe("human");
       expect(human.pod_id).toBe("pod_abc123");
-      for (const k of ["gpu_agent_auth", "agent_id", "run_id"]) {
+      for (const k of ["gpu_agent_auth", "agent_id", "run_id", "agent"]) {
         expect(human).not.toHaveProperty(k);
       }
       // an agent: its account, project and token, never what it passed

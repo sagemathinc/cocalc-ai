@@ -366,6 +366,8 @@ export const authFirstRequireAccountOrGpuAgent = declareHubApiPrincipalPolicy(
     delete opts.gpu_agent_auth;
     delete opts.agent_id;
     delete opts.run_id;
+    // an agent's scope is derived from its verified token, never passed in
+    delete opts.agent;
     if (context.auth_actor === "agent") {
       const {
         account_id,
