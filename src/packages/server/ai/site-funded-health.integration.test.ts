@@ -57,7 +57,7 @@ async function turn({
   minutes = 5,
 }: {
   provider?: "openai" | "anthropic";
-  status: "committed" | "failed" | "expired";
+  status: "committed" | "failed" | "expired" | "released";
   outcome?: string;
   minutes?: number;
 }) {
@@ -222,6 +222,27 @@ describe("site-funded AI health", () => {
       await client.query("RESET enable_seqscan");
       client.release();
     }
+  });
+
+  it("counts setup failures recorded as released, but not normal closes", async () => {
+    for (let i = 0; i < 4; i++) await turn({ status: "committed" });
+    await turn({ status: "released", outcome: "app-server runtime closed" });
+    await turn({ status: "released", outcome: "superseded by a new turn" });
+    await turn({
+      status: "released",
+      outcome: "provider proxy failed to start",
+    });
+    const health = await getSiteFundedAiHealth();
+    // 1 of 5 finished turns: the closes are not finished turns at all.
+    expect(health.providers.find((p) => p.provider === "openai")).toMatchObject(
+      {
+        committed: 4,
+        failed: 1,
+        limited: 0,
+        failure_rate_exceeded: true,
+        top_failures: [{ outcome: "provider proxy failed to start", turns: 1 }],
+      },
+    );
   });
 
   it("needs at least 5 finished turns", async () => {

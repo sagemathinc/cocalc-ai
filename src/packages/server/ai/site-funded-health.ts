@@ -9,7 +9,8 @@ last hour, from the seed bay's site_ai_turn_reservations and
 site_ai_admission_attempts. Admins get a condition alert, and admin health a
 line, when
 
-- more than 10% of finished turns failed for a reason other than a limit
+- more than 10% of finished turns (including turns released because they
+  could not be set up) failed for a reason other than a limit
   (the cost, request and duration limits of a turn, "emergency" ones for
   Codex, and expired turns, are limits by design), out of at least 5
   finished turns; or
@@ -35,6 +36,11 @@ const PROVIDERS = ["openai", "anthropic"];
 // this included turn" is not a limit.
 const LIMIT_OUTCOME =
   /\b(cost|request|duration) limit\b|\breached its \d+-(hour|minute) limit\b/i;
+// Released turns are normally closed ones ("app-server runtime closed",
+// "Claude harness closed", "superseded by a new turn"), but a turn that could
+// not be set up is released too: "provider proxy failed to start" or "failed
+// to activate" (Codex), "site key unavailable" (Claude). Those are failures.
+const RELEASED_FAILURE = /\bfailed to (start|activate)\b|\bunavailable\b/i;
 const ALERT_SUBJECT = "Site-funded AI turns are failing";
 const ALERT_REMINDER_MINUTES = 6 * 60;
 const TOP_FAILURES = 3;
@@ -46,7 +52,7 @@ export const FINISHED_TURNS_SQL = `SELECT provider, status, outcome, count(*)::i
    FROM site_ai_turn_reservations
   WHERE completed_at >= $1::timestamptz - make_interval(mins => $2)
     AND completed_at <= $1::timestamptz
-    AND status IN ('committed', 'failed', 'expired')
+    AND status IN ('committed', 'failed', 'expired', 'released')
   GROUP BY provider, status, outcome`;
 
 export interface SiteFundedAiProviderHealth {
@@ -114,6 +120,12 @@ export async function getSiteFundedAiHealth({
   for (const row of turns.rows) {
     const health = get(row.provider);
     const count = Number(row.turns) || 0;
+    if (
+      row.status === "released" &&
+      !RELEASED_FAILURE.test(row.outcome ?? "")
+    ) {
+      continue;
+    }
     if (row.status === "committed") {
       health.committed += count;
     } else if (

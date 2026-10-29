@@ -127,7 +127,7 @@ Table({
         // (server/ai/site-funded-health.ts).
         name: "site_ai_turn_reservations_completed_idx",
         query:
-          "(completed_at) WHERE status IN ('committed', 'failed', 'expired')",
+          "(completed_at) WHERE status IN ('committed', 'failed', 'expired', 'released')",
       },
     ],
     pg_constraints: [

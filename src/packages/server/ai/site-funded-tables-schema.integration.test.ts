@@ -144,7 +144,7 @@ const LEGACY_DDL = [
 const LATER_INDEXES = [
   `CREATE INDEX IF NOT EXISTS site_ai_turn_reservations_completed_idx
       ON site_ai_turn_reservations(completed_at)
-      WHERE status IN ('committed', 'failed', 'expired')`,
+      WHERE status IN ('committed', 'failed', 'expired', 'released')`,
 ];
 
 const siteAiSchema = Object.fromEntries(
