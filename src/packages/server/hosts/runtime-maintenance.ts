@@ -38,6 +38,12 @@ const SYNTHETIC_PROBE_CLAIM_TIMEOUT_MS = Math.max(
     process.env.COCALC_HOST_SYNTHETIC_PROBE_CLAIM_TIMEOUT_MS ?? 15 * 60_000,
   ),
 );
+/** How old a host's last synthetic probe may be before it is overdue: one
+ * interval between passing probes, plus the time a running probe may take. */
+export function syntheticProbeOverdueAfterMs(): number {
+  return SYNTHETIC_PROBE_SUCCESS_INTERVAL_MS + SYNTHETIC_PROBE_CLAIM_TIMEOUT_MS;
+}
+
 const SYNTHETIC_PROBE_RPC_TIMEOUT_MS = Math.max(
   2 * 60_000,
   Number(process.env.COCALC_HOST_SYNTHETIC_PROBE_RPC_TIMEOUT_MS ?? 2 * 60_000),
