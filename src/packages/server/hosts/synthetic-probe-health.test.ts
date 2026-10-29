@@ -19,16 +19,24 @@ import {
 const now = Date.parse("2026-10-29T19:00:00Z");
 const minutesAgo = (m: number) => new Date(now - m * 60_000).toISOString();
 
+const BOOT = { host_boot_id: "boot-1", host_session_id: "session-1" };
+
 function host(name: string, probe: Record<string, any> | undefined) {
   return {
     id: `00000000-0000-4000-8000-${name.length.toString().padStart(12, "0")}`,
     name,
-    metadata: { runtime_synthetic_probe: probe },
+    metadata: {
+      ...BOOT,
+      runtime_synthetic_probe: probe ? { ...BOOT, ...probe } : probe,
+    },
   };
 }
 const passed = (m: number) => ({ status: "passed", checked_at: minutesAgo(m) });
 
-function adminSmoke(status: "succeeded" | "failed", finishedMinutesAgo: number) {
+function adminSmoke(
+  status: "succeeded" | "failed",
+  finishedMinutesAgo: number,
+) {
   return {
     id: "smoke-1",
     project_id: "00000000-0000-4000-8000-000000000001",
@@ -122,9 +130,43 @@ describe("syntheticSmokeHealth", () => {
     );
     expect(health.details).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^Host probe overdue: asia-3 .*last passed 50 min ago$/),
-        expect.stringMatching(/^Host probe overdue: new-host .*no synthetic probe result yet$/),
-        expect.stringMatching(/^Host probe overdue: stuck .*running for 60 min$/),
+        expect.stringMatching(
+          /^Host probe overdue: asia-3 .*last passed 50 min ago$/,
+        ),
+        expect.stringMatching(
+          /^Host probe overdue: new-host .*no synthetic probe result yet$/,
+        ),
+        expect.stringMatching(
+          /^Host probe overdue: stuck .*running for 60 min$/,
+        ),
+      ]),
+    );
+  });
+
+  it("does not count a probe from an earlier boot or host session", () => {
+    const rebooted = host("rebooted", passed(5));
+    rebooted.metadata.host_boot_id = "boot-2";
+    const newSession = host("new-session", passed(5));
+    newSession.metadata.host_session_id = "session-2";
+    const noIdentity = host("no-identity", passed(5));
+    delete noIdentity.metadata.runtime_synthetic_probe!.host_boot_id;
+    const health = syntheticSmokeHealth({
+      hosts: [host("asia-1", passed(5)), rebooted, newSession, noIdentity],
+      now,
+    });
+    expect(health.level).toBe("warning");
+    expect(health.summary).toContain("1/4 passing, 3 overdue");
+    expect(health.details).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /^Host probe overdue: rebooted .*since the host last started$/,
+        ),
+        expect.stringMatching(
+          /^Host probe overdue: new-session .*since the host last started$/,
+        ),
+        expect.stringMatching(
+          /^Host probe overdue: no-identity .*since the host last started$/,
+        ),
       ]),
     );
   });
@@ -171,6 +213,10 @@ describe("listHostSyntheticProbes", () => {
     expect(sql).toContain("deleted IS NULL");
     expect(sql).toContain("status='running'");
     expect(sql).toContain("synthetic_probe_supported");
+    expect(sql).toContain("host_boot_id");
+    expect(sql).toContain("host_session_id");
+    // every host counts: no page limit that could hide one
+    expect(sql).not.toMatch(/LIMIT/i);
     expect(params).toEqual(["bay-0"]);
   });
 });

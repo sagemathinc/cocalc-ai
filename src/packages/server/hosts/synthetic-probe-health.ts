@@ -29,7 +29,8 @@ export interface HostSyntheticProbeRow {
   metadata?: any;
 }
 
-/** Running hosts of this bay that run synthetic probes. */
+/** Running hosts of this bay that run synthetic probes (all of them: the
+ * check is about every host). */
 export async function listHostSyntheticProbes(): Promise<
   HostSyntheticProbeRow[]
 > {
@@ -37,7 +38,9 @@ export async function listHostSyntheticProbes(): Promise<
     `
       SELECT id, name,
              jsonb_build_object(
-               'runtime_synthetic_probe', metadata->'runtime_synthetic_probe'
+               'runtime_synthetic_probe', metadata->'runtime_synthetic_probe',
+               'host_boot_id', metadata->'host_boot_id',
+               'host_session_id', metadata->'host_session_id'
              ) AS metadata
         FROM project_hosts
        WHERE deleted IS NULL
@@ -45,7 +48,6 @@ export async function listHostSyntheticProbes(): Promise<
          AND COALESCE(NULLIF(BTRIM(bay_id), ''), $1)=$1
          AND metadata #>> '{runtime_health,synthetic_probe_supported}' = 'true'
        ORDER BY name, id
-       LIMIT 1000
     `,
     [getConfiguredBayId()],
   );
@@ -80,6 +82,23 @@ function hostProbeState(
     return {
       kind: "failing",
       detail: `failed${failures > 0 ? ` ${failures} time${failures === 1 ? "" : "s"} in a row` : ""}${probe.quarantined === true ? ", quarantined from placement" : ""}${error ? `: ${error.slice(0, 200)}` : ""}`,
+    };
+  }
+  // As in runtime-maintenance's syntheticProbeDue: a probe from an earlier
+  // boot or host session says nothing about the host as it runs now.
+  const currentBootId = `${row.metadata?.host_boot_id ?? ""}`.trim();
+  const probeBootId = `${probe.host_boot_id ?? ""}`.trim();
+  const currentSessionId = `${row.metadata?.host_session_id ?? ""}`.trim();
+  const probeSessionId = `${probe.host_session_id ?? ""}`.trim();
+  if (
+    status &&
+    (!probeBootId ||
+      (currentBootId && probeBootId !== currentBootId) ||
+      (currentSessionId && probeSessionId !== currentSessionId))
+  ) {
+    return {
+      kind: "overdue",
+      detail: "no synthetic probe since the host last started",
     };
   }
   if (status === "running") {
@@ -136,7 +155,9 @@ export function syntheticSmokeHealth({
   let smokeCurrent = false;
   let smokeFailedRecently = false;
   if (smokeError != null) {
-    details.push(`Admin smoke: unable to read the latest result: ${smokeError}`);
+    details.push(
+      `Admin smoke: unable to read the latest result: ${smokeError}`,
+    );
   } else if (smoke != null) {
     const finishedAt = Date.parse(smoke.finished_at);
     const recent =
