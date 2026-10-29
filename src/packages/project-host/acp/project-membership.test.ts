@@ -20,7 +20,10 @@ jest.mock("../sqlite/projects", () => ({
   upsertProject: (...args: any[]) => mockUpsertProject(...args),
 }));
 
-import { isAcpProjectMember } from "./project-membership";
+import {
+  confirmProjectMemberWithOwningBay,
+  isAcpProjectMember,
+} from "./project-membership";
 
 const project_id = "11111111-1111-4111-8111-111111111111";
 const owner = "22222222-2222-4222-8222-222222222222";
@@ -138,5 +141,34 @@ describe("isAcpProjectMember", () => {
     expect(await isAcpProjectMember({ account_id: removed, project_id })).toBe(
       false,
     );
+  });
+  it("confirms an account for a project the host has no record of, without creating one", async () => {
+    // An archived project's row is gone until it starts again.
+    rows.clear();
+    mockCallHub.mockResolvedValue({
+      users: { [owner]: { group: "owner" } },
+      users_revision: 1,
+    });
+    expect(
+      await confirmProjectMemberWithOwningBay({
+        account_id: owner,
+        project_id,
+        timeout: 5_000,
+      }),
+    ).toBe(true);
+    expect(mockCallHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "hosts.getProjectStartMetadata",
+        args: [{ project_id }],
+        timeout: 5_000,
+      }),
+    );
+    expect(mockUpsertProject).not.toHaveBeenCalled();
+    expect(
+      await confirmProjectMemberWithOwningBay({
+        account_id: removed,
+        project_id,
+      }),
+    ).toBe(false);
   });
 });

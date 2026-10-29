@@ -4,6 +4,7 @@ const mockGetRow = jest.fn(() => ({ users: {} }));
 const mockGetAccountRevokedBeforeMs = jest.fn(() => undefined);
 const mockCallHub = jest.fn();
 const mockGetMasterConatClient = jest.fn();
+const mockConfirmProjectMemberWithOwningBay = jest.fn(async () => false);
 
 jest.mock("@cocalc/conat/auth/project-host-token", () => ({
   verifyProjectHostAuthToken: (...args: any[]) =>
@@ -36,6 +37,11 @@ jest.mock("./master-status", () => ({
   getMasterConatClient: (...args: any[]) => mockGetMasterConatClient(...args),
 }));
 
+jest.mock("./acp/project-membership", () => ({
+  confirmProjectMemberWithOwningBay: (...args: any[]) =>
+    mockConfirmProjectMemberWithOwningBay(...args),
+}));
+
 const getProjectHostManagedEgressBlockedMessageMock = jest.fn();
 
 jest.mock("./managed-egress-runtime", () => ({
@@ -43,7 +49,11 @@ jest.mock("./managed-egress-runtime", () => ({
     getProjectHostManagedEgressBlockedMessageMock(...args),
 }));
 
-import { __test__, createProjectHostConatAuth } from "./conat-auth";
+import {
+  __test__,
+  clearProjectHostConatAuthCaches,
+  createProjectHostConatAuth,
+} from "./conat-auth";
 import { createProjectHostBrowserSessionToken } from "./browser-session";
 import {
   BROWSER_RUNTIME_PRESENCE_AUTH_SCOPE,
@@ -67,6 +77,9 @@ describe("project-host Conat auth", () => {
     mockGetMasterConatClient.mockReturnValue(undefined);
     getProjectHostManagedEgressBlockedMessageMock.mockReset();
     getProjectHostManagedEgressBlockedMessageMock.mockReturnValue(undefined);
+    mockConfirmProjectMemberWithOwningBay.mockReset();
+    mockConfirmProjectMemberWithOwningBay.mockResolvedValue(false);
+    clearProjectHostConatAuthCaches();
   });
 
   it("uses bearer auth before interpreting project_id as project-secret auth", async () => {
@@ -1062,5 +1075,120 @@ describe("project-host Conat auth", () => {
         subject: `fs.project-${project_id}`,
       }),
     ).resolves.toBe(true);
+  });
+  describe("collaborator list that lags the owning bay", () => {
+    const fsSubject = `fs.project-${project_id}`;
+    const cursorSubject = `project.${project_id}.pubsub-cursors.L2hvbWUvdXNlci9hLnB5`;
+
+    it("asks the bay before refusing an account a missing project row does not know", async () => {
+      // An archived project has no row on the host until it starts again.
+      mockGetRow.mockReturnValue(undefined);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+
+      for (const subject of [fsSubject, cursorSubject]) {
+        await expect(
+          isAllowed({ user: { account_id }, type: "pub", subject }),
+        ).resolves.toBe(true);
+      }
+      await expect(
+        isAllowed({
+          user: { account_id },
+          type: "sub",
+          subject: cursorSubject,
+        }),
+      ).resolves.toBe(true);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledWith(
+        expect.objectContaining({ account_id, project_id }),
+      );
+    });
+
+    it("asks the bay when the row exists but does not list the account", async () => {
+      mockGetRow.mockReturnValue({
+        users: { "00000000-1000-4000-8000-000000000009": { group: "owner" } },
+      });
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      ).resolves.toBe(true);
+    });
+
+    it("keeps a refusal from the bay briefly, until a collaborator sync", async () => {
+      mockGetRow.mockReturnValue({ users: {} });
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      for (let i = 0; i < 3; i++) {
+        await expect(
+          isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+        ).resolves.toBe(false);
+      }
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
+
+      clearProjectHostConatAuthCaches();
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      ).resolves.toBe(true);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(2);
+    });
+
+    it("asks the bay once for concurrent publishes", async () => {
+      mockGetRow.mockReturnValue(undefined);
+      let resolve!: (member: boolean) => void;
+      mockConfirmProjectMemberWithOwningBay.mockReturnValue(
+        new Promise<boolean>((r) => (resolve = r)),
+      );
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      const decisions = [1, 2, 3].map(() =>
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      );
+      await new Promise((r) => setImmediate(r));
+      resolve(true);
+      await expect(Promise.all(decisions)).resolves.toEqual([true, true, true]);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not ask the bay for an account the row knows in another role", async () => {
+      mockGetRow.mockReturnValue({
+        users: {
+          [account_id]: {
+            group: "viewer",
+            read_policy: { rules: [{ action: "include", path: "." }] },
+          },
+        },
+      });
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      ).resolves.toBe(false);
+      expect(mockConfirmProjectMemberWithOwningBay).not.toHaveBeenCalled();
+    });
+
+    it("does not let the bay widen an agent beyond its project", async () => {
+      mockGetRow.mockReturnValue(undefined);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      mockVerifyProjectHostAuthToken.mockReturnValue({
+        act: "account",
+        sub: account_id,
+        iat: 1000,
+        auth_actor: "agent",
+        project_id,
+        jti: "00000000-1000-4000-8000-0000000000a5",
+      });
+      const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+      const agent = await getUser({
+        handshake: { auth: { bearer: "signed-agent-token" }, headers: {} },
+      } as any);
+      await expect(
+        isAllowed({
+          user: agent,
+          type: "pub",
+          subject: "fs.project-00000000-1000-4000-8000-000000000002",
+        }),
+      ).resolves.toBe(false);
+      expect(mockConfirmProjectMemberWithOwningBay).not.toHaveBeenCalled();
+    });
   });
 });

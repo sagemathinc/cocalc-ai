@@ -284,8 +284,79 @@ async function hasTemporaryViewerGrant({
   }
 }
 
+function isAccountUnknownLocally({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): boolean {
+  const row = getRow("projects", JSON.stringify({ project_id }));
+  return row?.users?.[account_id] == null;
+}
+
+// The owning bay's answers for accounts the host's collaborator list does not
+// know, kept briefly so that a non-member cannot turn every publish into a bay
+// call. A collaborator sync clears them (clearAuthCaches).
+const bayMembershipDecisions = new TTL<string, boolean>({
+  max: 10_000,
+  ttl: 30_000,
+});
+const bayMembershipInFlight = new Map<string, Promise<boolean>>();
+let bayMembershipGeneration = 0;
+const BAY_MEMBERSHIP_TIMEOUT_MS = 5_000;
+
+// The host's collaborator list can lag the owning bay. An archived project has
+// no local row until it starts again, and a browser that is already connected
+// to this host never asks the hub for the project-scoped token whose issue
+// syncs the list. So before refusing an account the list does not know at
+// all, ask the bay. An account the list knows in another role (a viewer) is
+// refused without asking.
+async function isProjectMemberConfirmedByBay({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<boolean> {
+  const key = `${account_id}:${project_id}`;
+  const cached = bayMembershipDecisions.get(key);
+  if (cached != null) return cached;
+  let pending = bayMembershipInFlight.get(key);
+  if (pending == null) {
+    const generation = bayMembershipGeneration;
+    pending = (async () => {
+      let member = false;
+      try {
+        const { confirmProjectMemberWithOwningBay } =
+          await import("./acp/project-membership");
+        member = await confirmProjectMemberWithOwningBay({
+          account_id,
+          project_id,
+          timeout: BAY_MEMBERSHIP_TIMEOUT_MS,
+        });
+      } catch (err) {
+        logger.debug("could not confirm project membership with the bay", {
+          account_id,
+          project_id,
+          err: `${err}`,
+        });
+      }
+      // (an answer from before a collaborator sync is not kept)
+      if (generation === bayMembershipGeneration) {
+        bayMembershipDecisions.set(key, member);
+      }
+      return member;
+    })().finally(() => bayMembershipInFlight.delete(key));
+    bayMembershipInFlight.set(key, pending);
+  }
+  return await pending;
+}
+
 function clearAuthCaches() {
   authDecisionCache.clear();
+  bayMembershipDecisions.clear();
+  bayMembershipGeneration += 1;
 }
 
 function throwManagedEgressBlocked(account_id: string): never {
@@ -648,10 +719,15 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       if (project_id) {
         allowed =
           (examProjectId == null || examProjectId === project_id) &&
-          isProjectCollaboratorLocal({
+          (isProjectCollaboratorLocal({
             account_id: userId,
             project_id,
-          });
+          }) ||
+            (isAccountUnknownLocally({ account_id: userId, project_id }) &&
+              (await isProjectMemberConfirmedByBay({
+                account_id: userId,
+                project_id,
+              }))));
       }
     }
 

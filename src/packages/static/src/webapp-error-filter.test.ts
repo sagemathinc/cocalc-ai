@@ -118,6 +118,31 @@ describe("isIgnorableUnhandledRejection", () => {
     },
   );
 
+  const user =
+    '{"account_id":"00000000-0000-4000-8000-000000000001","auth_iat_s":1,"auth_scopes":["browser-runtime-presence"]}';
+  const denied = (subject: string, code: number = 403) =>
+    Object.assign(
+      new Error(`permission denied publishing to '${subject}' from ${user}`),
+      { code },
+    );
+  const project_id = "00000000-0000-4000-8000-000000000002";
+
+  test.each([
+    denied(`fs.project-${project_id}`),
+    denied(`project.${project_id}.pubsub-cursors.L2hvbWUvdXNlci9hLnB5`),
+  ])("ignores a project host's collaborator refusal %p", (reason) => {
+    expect(isIgnorableUnhandledRejection(reason)).toBe(true);
+  });
+
+  test.each([
+    denied(`hub.account.${project_id}.api`),
+    denied(`fs-viewer.project-${project_id}.account-${project_id}`),
+    denied(`fs.project-${project_id}`, 500),
+    new Error(`permission denied publishing to 'fs.project-${project_id}'`),
+  ])("still reports other publish refusals %p", (reason) => {
+    expect(isIgnorableUnhandledRejection(reason)).toBe(false);
+  });
+
   test.each([
     new Error("permission denied"),
     new Error("unable to route billing request"),

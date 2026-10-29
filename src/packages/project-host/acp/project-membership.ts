@@ -44,6 +44,7 @@ export function isLocalAcpProjectMember({
  * the hub refuses projects that are not. */
 async function loadUsersFromOwningBay(
   project_id: string,
+  timeout: number,
 ): Promise<{ users?: unknown; users_revision?: number } | undefined> {
   const client = getMasterConatClient();
   const host_id = getLocalHostId();
@@ -53,7 +54,7 @@ async function loadUsersFromOwningBay(
     host_id,
     name: "hosts.getProjectStartMetadata",
     args: [{ project_id }],
-    timeout: OWNING_BAY_TIMEOUT_MS,
+    timeout,
   });
 }
 
@@ -73,9 +74,28 @@ export async function isAcpProjectMember({
 }): Promise<boolean> {
   if (!isValidUUID(account_id) || !isValidUUID(project_id)) return false;
   if (isLocalAcpProjectMember({ account_id, project_id })) return true;
+  return await confirmProjectMemberWithOwningBay({ account_id, project_id });
+}
+
+/**
+ * Whether the owning bay lists the account as an owner or collaborator. Use
+ * it after the host's own copy refused the account: when the bay disagrees,
+ * its (versioned) list is stored on the host. Unknown projects and accounts
+ * fail, and so does a bay that cannot be reached.
+ */
+export async function confirmProjectMemberWithOwningBay({
+  account_id,
+  project_id,
+  timeout = OWNING_BAY_TIMEOUT_MS,
+}: {
+  account_id: string;
+  project_id: string;
+  timeout?: number;
+}): Promise<boolean> {
+  if (!isValidUUID(account_id) || !isValidUUID(project_id)) return false;
   let authoritative: Awaited<ReturnType<typeof loadUsersFromOwningBay>>;
   try {
-    authoritative = await loadUsersFromOwningBay(project_id);
+    authoritative = await loadUsersFromOwningBay(project_id, timeout);
   } catch (err) {
     logger.warn("could not confirm project membership with the owning bay", {
       project_id,
