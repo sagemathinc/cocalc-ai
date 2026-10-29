@@ -5,11 +5,21 @@
 
 // The Messages tab on People: direct conversations, in no project.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { Alert, Button, Popconfirm, Space, Tag } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import { Collection } from "@cocalc/frontend/components/collection";
+import { moveVisibleCollectionPin } from "@cocalc/frontend/components/collection-order";
+import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 // The same editor as chat (rich text or Markdown, image paste).
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
@@ -20,6 +30,7 @@ import {
   isDirectRequest,
   isDirectUnread,
   type DirectMessage,
+  type DirectPersonalPatch,
   type DirectResponse,
   type MemberDirectConversation,
 } from "@cocalc/util/direct-conversations";
@@ -90,112 +101,141 @@ function DirectRow({
   account_id,
   selected,
   onSelect,
+  actions,
 }: {
   conversation: MemberDirectConversation;
   account_id?: string;
   selected: boolean;
   onSelect: () => void;
+  actions?: ReactNode;
 }) {
   const unread = isDirectUnread(conversation, account_id);
   const request = isDirectRequest(conversation);
   const first = conversation.member_ids.find((id) => id !== account_id);
+  // Archived through its latest message: nothing new to show.
+  const archived =
+    conversation.archived_through != null &&
+    conversation.last_activity <= conversation.archived_through;
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-current={selected ? "true" : undefined}
+    <div
       style={{
         display: "flex",
-        gap: 10,
         alignItems: "center",
-        width: "100%",
-        textAlign: "left",
-        padding: "10px 12px",
-        border: "none",
-        borderBottom: `1px solid ${UI_COLORS.border}`,
-        background: selected ? UI_COLORS.selected : "transparent",
-        cursor: "pointer",
-        color: UI_COLORS.text,
-        fontWeight: unread || request ? 600 : undefined,
+        gap: 4,
+        padding: "0 4px 0 0",
+        border: `1px solid ${UI_COLORS.border}`,
+        marginTop: -1,
+        background: selected ? UI_COLORS.selected : UI_COLORS.surface,
+        boxShadow: selected ? `inset 3px 0 ${UI_COLORS.link}` : undefined,
       }}
     >
-      {first && <Avatar account_id={first} size={32} no_tooltip />}
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span
-          style={{
-            display: "flex",
-            gap: 8,
-            alignItems: "baseline",
-            justifyContent: "space-between",
-          }}
-        >
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={selected ? "true" : undefined}
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          flex: 1,
+          minWidth: 0,
+          textAlign: "left",
+          padding: "10px 8px 10px 12px",
+          border: "none",
+          background: "transparent",
+          cursor: "pointer",
+          color: UI_COLORS.text,
+          fontWeight: unread || request ? 600 : undefined,
+        }}
+      >
+        {first && <Avatar account_id={first} size={32} no_tooltip />}
+        <span style={{ flex: 1, minWidth: 0 }}>
           <span
             style={{
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              display: "flex",
+              gap: 8,
+              alignItems: "baseline",
+              justifyContent: "space-between",
             }}
           >
-            <DirectNames conversation={conversation} account_id={account_id} />
-            {conversation.title && (
-              // A group: who it's with, after its title.
-              <span
-                style={{
-                  fontWeight: 400,
-                  color: UI_COLORS.secondary,
-                  marginLeft: 6,
-                }}
-              >
-                ·{" "}
-                <DirectNames
-                  conversation={{ member_ids: conversation.member_ids }}
-                  account_id={account_id}
-                />
-              </span>
-            )}
-          </span>
-          <span
-            style={{ fontSize: 12, color: UI_COLORS.secondary, flex: "none" }}
-          >
-            <TimeAgo date={conversation.last_activity} />
-          </span>
-        </span>
-        <span
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            fontWeight: 400,
-            color: UI_COLORS.secondary,
-            fontSize: 13,
-          }}
-        >
-          {request && <Tag color="blue">Request</Tag>}
-          {unread && (
+            <span style={ELLIPSIS}>
+              <DirectNames
+                conversation={conversation}
+                account_id={account_id}
+              />
+              {conversation.title && (
+                // A group: who it's with, after its title.
+                <span
+                  style={{
+                    fontWeight: 400,
+                    color: UI_COLORS.secondary,
+                    marginLeft: 6,
+                  }}
+                >
+                  ·{" "}
+                  <DirectNames
+                    conversation={{ member_ids: conversation.member_ids }}
+                    account_id={account_id}
+                  />
+                </span>
+              )}
+            </span>
             <span
-              aria-label="unread"
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                background: UI_COLORS.primary,
-                flex: "none",
-              }}
-            />
-          )}
+              style={{ fontSize: 12, color: UI_COLORS.secondary, flex: "none" }}
+            >
+              <TimeAgo date={conversation.last_activity} />
+            </span>
+          </span>
           <span
             style={{
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              display: "flex",
+              gap: 6,
+              alignItems: "center",
+              fontWeight: 400,
+              color: UI_COLORS.secondary,
+              fontSize: 13,
             }}
           >
-            {conversation.preview || "No messages yet"}
+            {request && <Tag color="blue">Request</Tag>}
+            {unread && (
+              <span
+                aria-label="unread"
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  background: UI_COLORS.primary,
+                  flex: "none",
+                }}
+              />
+            )}
+            <span style={ELLIPSIS}>
+              {archived
+                ? "Archived"
+                : conversation.preview || "No messages yet"}
+            </span>
           </span>
         </span>
-      </span>
-    </button>
+      </button>
+      {actions}
+    </div>
   );
+}
+
+const ELLIPSIS: CSSProperties = {
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  minWidth: 0,
+};
+
+// Your own settings for a conversation; the list refreshes after.
+async function setDirectState(
+  conversation_id: string,
+  patch: DirectPersonalPatch,
+): Promise<void> {
+  await peopleApi().setDirectState({ conversation_id, patch });
+  directChanged();
 }
 
 export function DirectList({
@@ -211,6 +251,9 @@ export function DirectList({
 }) {
   const account_id = useTypedRedux("account", "account_id");
   const user_map = useTypedRedux("users", "user_map");
+  const preferences = useCollectionPreferences("direct-messages");
+  const [busyIds, setBusyIds] = useState<string[]>([]);
+  const [error, setError] = useState("");
   const q = (search ?? "").trim().toLowerCase();
   const matches = (c: MemberDirectConversation) =>
     !q ||
@@ -224,45 +267,124 @@ export function DirectList({
     (c) => isDirectRequest(c) && matches(c),
   );
   const others = conversations.filter((c) => !isDirectRequest(c) && matches(c));
-  const row = (c: MemberDirectConversation) => (
-    <DirectRow
-      key={c.conversation_id}
-      conversation={c}
-      account_id={account_id}
-      selected={c.conversation_id === selected}
-      onSelect={() => onSelect(c)}
-    />
-  );
+
+  // Pinned in your saved order (newly pinned last), as on Project
+  // Conversations; the rest are Recent.
+  const order = preferences.value.order ?? [];
+  const pinnedIds = others
+    .filter((c) => c.pinned)
+    .map((c) => c.conversation_id);
+  const fullOrder = [
+    ...order,
+    ...pinnedIds.filter((id) => !order.includes(id)),
+  ];
+  const pins = fullOrder.filter((id) => pinnedIds.includes(id));
+
+  async function update(
+    c: MemberDirectConversation,
+    patch: DirectPersonalPatch,
+  ) {
+    setError("");
+    setBusyIds((ids) => [...ids, c.conversation_id]);
+    try {
+      await setDirectState(c.conversation_id, patch);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setBusyIds((ids) => ids.filter((id) => id !== c.conversation_id));
+    }
+  }
+
+  const title = (c: MemberDirectConversation) =>
+    c.title ??
+    c.member_ids
+      .filter((id) => id !== account_id)
+      .map(
+        (id) =>
+          `${user_map?.getIn([id, "first_name"]) ?? ""} ${user_map?.getIn([id, "last_name"]) ?? ""}`.trim() ||
+          "Someone",
+      )
+      .join(", ");
+
   return (
     <div>
+      {error && <Alert role="alert" type="error" title={error} />}
       {requests.length > 0 && (
-        <section aria-label="Message requests">
-          <h3
-            style={{
-              fontSize: 13,
-              color: UI_COLORS.secondary,
-              margin: "8px 12px",
-            }}
-          >
-            Requests ({requests.length})
-          </h3>
-          {requests.map(row)}
+        <section aria-label="Message requests" style={{ marginBottom: 12 }}>
+          <h3 style={SECTION_HEADING}>Requests ({requests.length})</h3>
+          {requests.map((c) => (
+            <DirectRow
+              key={c.conversation_id}
+              conversation={c}
+              account_id={account_id}
+              selected={c.conversation_id === selected}
+              onSelect={() => onSelect(c)}
+            />
+          ))}
         </section>
       )}
-      <section aria-label="Direct conversations">
-        {requests.length > 0 && others.length > 0 && (
-          <h3
-            style={{
-              fontSize: 13,
-              color: UI_COLORS.secondary,
-              margin: "8px 12px",
+      {others.length > 0 && (
+        <section aria-label="Direct conversations">
+          <Collection<MemberDirectConversation>
+            items={others}
+            itemId={(c) => c.conversation_id}
+            itemTitle={title}
+            pins={pins}
+            view="list"
+            otherTitle="Recent"
+            busyIds={busyIds}
+            onPin={(c, pinned) => {
+              if (pinned) {
+                preferences.setOrder([
+                  ...fullOrder.filter((id) => id !== c.conversation_id),
+                  c.conversation_id,
+                ]);
+              }
+              void update(c, { pinned });
             }}
-          >
-            Conversations
-          </h3>
-        )}
-        {others.map(row)}
-      </section>
+            onMove={(visible, id, index) =>
+              preferences.setOrder(
+                moveVisibleCollectionPin(fullOrder, visible, id, index),
+              )
+            }
+            renderItem={(c, controls) => {
+              const menu = controls.menu(
+                [
+                  {
+                    key: "mute",
+                    label: c.muted ? "Unmute" : "Mute",
+                    onClick: () => void update(c, { muted: !c.muted }),
+                  },
+                  {
+                    key: "archive",
+                    label: "Archive messages so far",
+                    onClick: () =>
+                      void update(c, { archived_through: c.last_activity }),
+                  },
+                ],
+                `Options for ${title(c)}`,
+              );
+              return (
+                <DirectRow
+                  conversation={c}
+                  account_id={account_id}
+                  selected={c.conversation_id === selected}
+                  onSelect={() => onSelect(c)}
+                  actions={
+                    <div style={CONTROLS_STYLE}>
+                      <span style={{ width: 28, display: "inline-flex" }}>
+                        {controls.dragHandle}
+                      </span>
+                      {controls.pinButton}
+                      {menu}
+                    </div>
+                  }
+                />
+              );
+            }}
+          />
+        </section>
+      )}
       {requests.length + others.length === 0 && (
         <p style={{ color: UI_COLORS.secondary, padding: 12 }}>
           {q
@@ -273,6 +395,20 @@ export function DirectList({
     </div>
   );
 }
+
+const SECTION_HEADING: CSSProperties = {
+  fontSize: 13,
+  color: UI_COLORS.secondary,
+  margin: "8px 12px",
+};
+
+const CONTROLS_STYLE: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "flex-end",
+  gap: 2,
+  flexShrink: 0,
+};
 
 export function mergeMessages(
   current: DirectMessage[],
@@ -333,12 +469,15 @@ function MessageItem({
   message,
   account_id,
   plain,
+  onDelete,
 }: {
   message: DirectMessage;
   account_id?: string;
   // Not yet accepted: shown as text, so nothing in it loads (an image could
   // tell the sender you looked).
   plain?: boolean;
+  // Your own message: delete it for everyone.
+  onDelete?: () => void;
 }) {
   const mine = message.sender_id === account_id;
   return (
@@ -353,8 +492,29 @@ function MessageItem({
             {mine ? "You" : <User account_id={message.sender_id} />}
           </strong>{" "}
           <TimeAgo date={message.sent} />
+          {mine && onDelete && !message.deleted && (
+            <Popconfirm
+              title="Delete this message for everyone?"
+              okText="Delete"
+              okButtonProps={{ danger: true }}
+              onConfirm={onDelete}
+            >
+              <Button
+                type="link"
+                size="small"
+                aria-label="Delete message"
+                style={{ padding: "0 4px", height: "auto", fontSize: 12 }}
+              >
+                Delete
+              </Button>
+            </Popconfirm>
+          )}
         </div>
-        {plain ? (
+        {message.deleted ? (
+          <div style={{ color: UI_COLORS.secondary, fontStyle: "italic" }}>
+            Message deleted
+          </div>
+        ) : plain ? (
           <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
             {message.body}
           </div>
@@ -385,6 +545,8 @@ export function DirectConversationView({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [uploads, setUploads] = useState(0);
+  // Archived messages are hidden until you choose to see them again.
+  const [showArchived, setShowArchived] = useState(false);
   // A new editor after each send clears it (as chat does).
   const [editorEpoch, setEditorEpoch] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
@@ -479,17 +641,41 @@ export function DirectConversationView({
     }
   }
 
-  async function toggleMute() {
+  async function setPersonal(patch: DirectPersonalPatch) {
     if (!conversation) return;
-    await peopleApi().setDirectMuted({
-      conversation_id,
-      muted: !conversation.muted,
-    });
-    setConversation({ ...conversation, muted: !conversation.muted });
-    directChanged();
+    try {
+      await setDirectState(conversation_id, patch);
+      setConversation({
+        ...conversation,
+        ...patch,
+      } as MemberDirectConversation);
+      if (patch.archived_through !== undefined) setShowArchived(false);
+    } catch (err) {
+      setError(`${err}`);
+    }
+  }
+
+  async function deleteMessage(message_id: string) {
+    try {
+      await peopleApi().deleteDirectMessage({ conversation_id, message_id });
+      setMessages((current) =>
+        current.map((m) =>
+          m.message_id === message_id ? { ...m, body: "", deleted: true } : m,
+        ),
+      );
+      directChanged();
+    } catch (err) {
+      setError(`${err}`);
+    }
   }
 
   const shown = conversation ?? listed;
+  const archivedThrough = shown?.archived_through ?? null;
+  const visible =
+    archivedThrough == null || showArchived
+      ? messages
+      : messages.filter((m) => m.sent > archivedThrough);
+  const hiddenCount = messages.length - visible.length;
   return (
     <section
       aria-label="Direct conversation"
@@ -529,6 +715,19 @@ export function DirectConversationView({
           )}
         </div>
         {shown?.state === "active" && (
+          <Tooltip title="Hide the messages so far, for you only. Nothing is deleted; you can show them again.">
+            <Button
+              type="text"
+              icon={<Icon name="container" />}
+              onClick={() =>
+                void setPersonal({ archived_through: shown.last_activity })
+              }
+            >
+              Archive
+            </Button>
+          </Tooltip>
+        )}
+        {shown?.state === "active" && (
           <Tooltip
             title={
               shown.muted
@@ -540,7 +739,7 @@ export function DirectConversationView({
               type="text"
               aria-pressed={!!shown.muted}
               icon={<Icon name="bell" />}
-              onClick={toggleMute}
+              onClick={() => void setPersonal({ muted: !shown.muted })}
             >
               {shown.muted ? "Unmute" : "Mute"}
             </Button>
@@ -554,19 +753,59 @@ export function DirectConversationView({
         <RequestBanner conversation={shown} onRespond={respond} />
       )}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {more && (
+        {archivedThrough != null && (
+          <div
+            role="status"
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              gap: 8,
+              padding: 8,
+              color: UI_COLORS.secondary,
+              fontSize: 13,
+            }}
+          >
+            {showArchived ? (
+              <>
+                Showing archived messages.
+                <Button size="small" onClick={() => setShowArchived(false)}>
+                  Hide them
+                </Button>
+                <Button
+                  size="small"
+                  type="link"
+                  onClick={() => void setPersonal({ archived_through: null })}
+                >
+                  Unarchive
+                </Button>
+              </>
+            ) : (
+              <>
+                {hiddenCount > 0 || more
+                  ? "Earlier messages are archived."
+                  : "Messages so far are archived."}
+                <Button size="small" onClick={() => setShowArchived(true)}>
+                  Show them
+                </Button>
+              </>
+            )}
+          </div>
+        )}
+        {more && (archivedThrough == null || showArchived) && (
           <div style={{ textAlign: "center", padding: 8 }}>
             <Button size="small" onClick={loadEarlier}>
               Load earlier messages
             </Button>
           </div>
         )}
-        {messages.map((m) => (
+        {visible.map((m) => (
           <MessageItem
             key={m.message_id}
             message={m}
             account_id={account_id}
             plain={shown?.state === "requested"}
+            onDelete={() => void deleteMessage(m.message_id)}
           />
         ))}
         {messages.length === 0 && !error && (

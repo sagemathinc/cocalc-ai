@@ -22,7 +22,8 @@ const mockApi = {
   sendDirect: jest.fn(),
   respondDirect: jest.fn(),
   markDirectRead: jest.fn(async () => {}),
-  setDirectMuted: jest.fn(async () => {}),
+  setDirectState: jest.fn(async () => {}),
+  deleteDirectMessage: jest.fn(async () => {}),
   startDirect: jest.fn(),
   findDirectRecipient: jest.fn(),
 };
@@ -46,8 +47,10 @@ jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
   __esModule: true,
   default: ({ value }) => <div>{value}</div>,
 }));
-jest.mock("@cocalc/frontend/editors/markdown-input", () => ({
-  MarkdownInput: ({ value, onChange, onShiftEnter }) => (
+// The chat editor (multimode), as a textarea.
+jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
+  __esModule: true,
+  default: ({ value, onChange, onShiftEnter }) => (
     <textarea
       aria-label="Composer"
       value={value}
@@ -94,6 +97,8 @@ const listed = (id: string, extra = {}) => ({
   state: "active",
   last_read: 1000,
   muted: false,
+  pinned: false,
+  archived_through: null,
   ...extra,
 });
 
@@ -353,4 +358,118 @@ test("New message: an unknown username says so", async () => {
       'No one has the username "nobody".',
     ),
   );
+});
+
+const message = (id: string, sender: string, sent: number, body: string) => ({
+  message_id: id,
+  conversation_id: "c1",
+  sender_id: sender,
+  sent,
+  body,
+});
+
+test("archived messages are hidden until shown again; nothing is deleted", async () => {
+  const archived = listed("c1", { archived_through: 2000 });
+  mockApi.listDirect.mockResolvedValue({ conversations: [archived] });
+  mockApi.getDirect.mockResolvedValue({
+    conversation: archived,
+    messages: [
+      message("m1", bea, 1000, "old one"),
+      message("m2", bea, 3000, "new one"),
+    ],
+  });
+  render(<DirectConversationView conversation_id="c1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("new one")).toBeTruthy());
+  expect(screen.queryByText("old one")).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Earlier messages are archived.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Show them" }));
+  expect(screen.getByText("old one")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Hide them" }));
+  expect(screen.queryByText("old one")).toBeNull();
+  expect(mockApi.deleteDirectMessage).not.toHaveBeenCalled();
+});
+
+test("Archive hides the messages so far, for you only", async () => {
+  mockApi.listDirect.mockResolvedValue({ conversations: [listed("c1")] });
+  mockApi.getDirect.mockResolvedValue({
+    conversation: listed("c1"),
+    messages: [message("m1", bea, 3000, "hello")],
+  });
+  render(<DirectConversationView conversation_id="c1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("hello")).toBeTruthy());
+  fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+  await waitFor(() =>
+    expect(mockApi.setDirectState).toHaveBeenCalledWith({
+      conversation_id: "c1",
+      patch: { archived_through: 3000 },
+    }),
+  );
+  await waitFor(() => expect(screen.queryByText("hello")).toBeNull());
+});
+
+test("you can delete your own messages, not anyone else's; deleted ones show a placeholder", async () => {
+  mockApi.listDirect.mockResolvedValue({ conversations: [listed("c1")] });
+  mockApi.getDirect.mockResolvedValue({
+    conversation: listed("c1"),
+    messages: [
+      message("m1", bea, 1000, "from Bea"),
+      message("m2", me, 2000, "oops, wrong paste"),
+      { ...message("m3", bea, 2500, ""), deleted: true },
+    ],
+  });
+  render(<DirectConversationView conversation_id="c1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("from Bea")).toBeTruthy());
+  expect(screen.getByText("Message deleted")).toBeTruthy();
+  // Only my message has a Delete button.
+  const buttons = screen.getAllByRole("button", { name: "Delete message" });
+  expect(buttons).toHaveLength(1);
+  fireEvent.click(buttons[0]);
+  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  await waitFor(() =>
+    expect(mockApi.deleteDirectMessage).toHaveBeenCalledWith({
+      conversation_id: "c1",
+      message_id: "m2",
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByText("oops, wrong paste")).toBeNull(),
+  );
+  expect(screen.getAllByText("Message deleted")).toHaveLength(2);
+});
+
+test("pinned direct conversations come first, under Pinned; the rest are Recent", () => {
+  render(
+    <DirectList
+      conversations={
+        [
+          listed("c1", { preview: "recent one" }),
+          listed("c2", { pinned: true, preview: "pinned one" }),
+        ] as any
+      }
+      onSelect={() => {}}
+    />,
+  );
+  const text = screen.getByRole("region", {
+    name: "Direct conversations",
+  }).textContent!;
+  expect(text.indexOf("Pinned")).toBeGreaterThanOrEqual(0);
+  expect(text.indexOf("pinned one")).toBeLessThan(text.indexOf("Recent"));
+  expect(text.indexOf("Recent")).toBeLessThan(text.indexOf("recent one"));
+});
+
+test("a group shows who it's with", () => {
+  render(
+    <DirectList
+      conversations={
+        [listed("g1", { title: "test", member_ids: [me, bea, cy] })] as any
+      }
+      onSelect={() => {}}
+    />,
+  );
+  const row = screen.getByRole("region", { name: "Direct conversations" });
+  expect(row).toHaveTextContent("test");
+  expect(row).toHaveTextContent("user:bbbb");
+  expect(row).toHaveTextContent("user:cccc");
 });
