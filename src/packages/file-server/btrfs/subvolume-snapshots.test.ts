@@ -323,6 +323,43 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
       expect(deleteCalls()).toHaveLength(3);
     });
 
+    it("does no quota work for a prune with nothing to delete", async () => {
+      const subvolume = createSubvolumeWithSnapshots([]) as any;
+      const withTemporaryQuotaOverride = jest.fn();
+      subvolume.filesystem.opts.withTemporaryQuotaOverride =
+        withTemporaryQuotaOverride;
+      const snapshots = new SubvolumeSnapshots(subvolume);
+      snapshots.readdir = jest.fn(async () => [new Date().toISOString()]);
+      const { pruneRollingSnapshots } = await import("./snapshots");
+      await expect(
+        pruneRollingSnapshots({ snapshots, counts: { daily: 5 } }),
+      ).resolves.toBe(0);
+      expect(subvolume.quota.get).not.toHaveBeenCalled();
+      expect(withTemporaryQuotaOverride).not.toHaveBeenCalled();
+      expect(subvolume.quota.set).not.toHaveBeenCalled();
+    });
+
+    it("still reports a failed create when the prune's quota read fails", async () => {
+      const subvolume = createSubvolume() as any;
+      subvolume.quota.get = jest.fn(async () => {
+        throw new Error("no qgroup info");
+      });
+      const snapshots = new SubvolumeSnapshots(subvolume);
+      const { TEMP_RUSTIC_SNAPSHOT_PREFIX } = await import("./snapshots");
+      const old = new Date(Date.now() - 10 * 24 * 60 * 60_000).toISOString();
+      // left by a failed backup a day ago: always pruned
+      const stale = `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${(Date.now() - 25 * 60 * 60_000).toString(36)}-stale`;
+      snapshots.readdir = jest.fn(async () => [old, stale]);
+      snapshots.hasUnsavedChanges = jest.fn(async () => true);
+      snapshots.create = jest.fn(async () => {
+        throw new Error("create failed");
+      });
+      await expect(
+        snapshots.update({ frequent: 0, daily: 1, weekly: 0, monthly: 0 }),
+      ).rejects.toThrow("create failed");
+      expect(subvolume.quota.get).toHaveBeenCalled();
+    });
+
     it("relieves a delete refused for quota after all, once more", async () => {
       const subvolume = createSubvolumeWithSnapshots(["snap1"]) as any;
       subvolume.quota.get = jest.fn(async () => ({ size: 10_000, used: 100 }));

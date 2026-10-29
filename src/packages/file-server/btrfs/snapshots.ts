@@ -193,21 +193,27 @@ export async function updateRollingSnapshots({
     }
   }
   await timed("prune", async () => {
-    await batchDeletes(snapshots, async () => {
-      for (const name of toDelete) {
-        try {
-          logger.debug(
-            "updateRollingSnapshots: deleting snapshot of",
-            snapshots.subvolume.name,
-            name,
-          );
-          await snapshots.delete(name);
-        } catch (err) {
-          // ONLY report this if create doesn't error, to give both delete and create a chance to run.
-          deleteError = err;
+    if (toDelete.length === 0) return;
+    try {
+      await batchDeletes(snapshots, async () => {
+        for (const name of toDelete) {
+          try {
+            logger.debug(
+              "updateRollingSnapshots: deleting snapshot of",
+              snapshots.subvolume.name,
+              name,
+            );
+            await snapshots.delete(name);
+          } catch (err) {
+            // ONLY report this if create doesn't error, to give both delete and create a chance to run.
+            deleteError = err;
+          }
         }
-      }
-    });
+      });
+    } catch (err) {
+      // the batch itself (its quota decision or relief) failed
+      deleteError = err;
+    }
   });
 
   if (createError) {
@@ -299,15 +305,23 @@ export async function pruneRollingSnapshots({
       return false;
     }
   };
-  await batchDeletes(snapshots, async () => {
-    for (const name of toDelete) await remove(name);
-  });
+  if (toDelete.length > 0) {
+    try {
+      await batchDeletes(snapshots, async () => {
+        for (const name of toDelete) await remove(name);
+      });
+    } catch (err) {
+      // the batch itself (its quota decision or relief) failed
+      deleteError = err;
+    }
+  }
   if (deleteError) throw deleteError;
   return deleted;
 }
 
 // A prune's deletes with one quota decision for all of them
 // (SubvolumeSnapshots.batchDeletes); others, e.g. Rustic snapshots, as they are.
+// Only for deletes there are: deciding costs a quota read, maybe a relief.
 async function batchDeletes<T>(
   snapshots: object,
   run: () => Promise<T>,
