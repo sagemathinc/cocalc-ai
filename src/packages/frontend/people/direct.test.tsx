@@ -16,6 +16,16 @@ const me = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const bea = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const cy = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 let mockAccount: string | undefined = me;
+// A project shared with Bea, for "N shared projects".
+const mockProjects = fromJS({
+  p1: { title: "Shared with Bea", users: { [me]: {}, [bea]: {} } },
+});
+const mockUserSearch = jest.fn();
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    users_client: { user_search: (opts) => mockUserSearch(opts) },
+  },
+}));
 const mockApi = {
   listDirect: jest.fn(),
   getDirect: jest.fn(),
@@ -34,7 +44,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     reduxStore: { subscribe: () => () => {} },
   },
   useTypedRedux: (_store: string, field: string) =>
-    field === "account_id" ? mockAccount : undefined,
+    field === "account_id"
+      ? mockAccount
+      : field === "project_map"
+        ? mockProjects
+        : undefined,
 }));
 jest.mock("./api", () => ({ peopleApi: () => mockApi }));
 jest.mock("@cocalc/frontend/users/user", () => ({
@@ -113,6 +127,7 @@ beforeEach(() => {
   mockAccount = me;
   resetDirectForTests();
   for (const f of Object.values(mockApi)) (f as jest.Mock).mockReset();
+  mockUserSearch.mockReset();
   mockApi.markDirectRead.mockResolvedValue(undefined);
 });
 
@@ -305,59 +320,98 @@ test("a request can be accepted; it isn't marked read until then", async () => {
   );
 });
 
-test("New message: a collaborator prefilled, or someone added by username", async () => {
+test("New message: collaborators are found by name, with what tells them apart", async () => {
+  mockUserSearch.mockResolvedValue([
+    {
+      account_id: bea,
+      first_name: "Bea",
+      last_name: "Tester",
+      last_active: 5000,
+      created: 1000,
+    },
+  ]);
+  mockApi.startDirect.mockResolvedValue(listed("new"));
+  const started = jest.fn();
+  render(<NewDirectModal open onClose={() => {}} onStarted={started} />);
+  fireEvent.change(
+    screen.getByPlaceholderText("Name, email address, or @username"),
+    { target: { value: "Bea" } },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  // The same search as adding collaborators to a project.
+  await waitFor(() =>
+    expect(mockUserSearch).toHaveBeenCalledWith({ query: "Bea", limit: 30 }),
+  );
+  const results = await screen.findByRole("region", { name: "Search results" });
+  expect(results).toHaveTextContent("Bea Tester");
+  expect(results).toHaveTextContent("Collaborator");
+  expect(results).toHaveTextContent("1 shared project");
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  expect(screen.getByRole("region", { name: "Recipients" })).toHaveTextContent(
+    "Sending to 1 person",
+  );
+  fireEvent.change(screen.getByLabelText("Composer"), {
+    target: { value: "Hi Bea" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() =>
+    expect(mockApi.startDirect).toHaveBeenCalledWith({
+      member_ids: [bea],
+      usernames: [],
+      title: null,
+      body: "Hi Bea",
+    }),
+  );
+  expect(started).toHaveBeenCalled();
+});
+
+test("New message: anyone else only by exact @username, as a message request", async () => {
   mockApi.findDirectRecipient.mockResolvedValue({
     account_id: cy,
     name: "Cy",
     username: "cy",
   });
   mockApi.startDirect.mockResolvedValue(listed("new"));
-  const started = jest.fn();
-  render(
-    <NewDirectModal
-      open
-      personId={bea}
-      onClose={() => {}}
-      onStarted={started}
-    />,
+  render(<NewDirectModal open onClose={() => {}} onStarted={() => {}} />);
+  fireEvent.change(
+    screen.getByPlaceholderText("Name, email address, or @username"),
+    { target: { value: "@cy" } },
   );
-  fireEvent.change(screen.getByPlaceholderText("@username"), {
-    target: { value: "@cy" },
-  });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  const results = await screen.findByRole("region", { name: "Search results" });
+  // An @username isn't a name search.
+  expect(mockUserSearch).not.toHaveBeenCalled();
+  expect(results).toHaveTextContent("Message request");
+  expect(results).toHaveTextContent("@cy");
+  expect(results).toHaveTextContent("No shared projects");
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
-  await waitFor(() =>
-    expect(mockApi.findDirectRecipient).toHaveBeenCalledWith({
-      username: "@cy",
-    }),
-  );
   fireEvent.change(screen.getByLabelText("Composer"), {
-    target: { value: "Hi both" },
+    target: { value: "Hello" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() =>
-    // The collaborator by id; someone else only by username.
+    // Someone who isn't a collaborator is sent only as a username.
     expect(mockApi.startDirect).toHaveBeenCalledWith({
-      member_ids: [bea],
+      member_ids: [],
       usernames: ["cy"],
-      title: "",
-      body: "Hi both",
+      title: null,
+      body: "Hello",
     }),
   );
-  expect(started).toHaveBeenCalled();
 });
 
-test("New message: an unknown username says so", async () => {
+test("New message: nothing found says how to find people", async () => {
+  mockUserSearch.mockResolvedValue([]);
   mockApi.findDirectRecipient.mockResolvedValue(null);
   render(<NewDirectModal open onClose={() => {}} onStarted={() => {}} />);
-  fireEvent.change(screen.getByPlaceholderText("@username"), {
-    target: { value: "nobody" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Add" }));
-  await waitFor(() =>
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      'No one has the username "nobody".',
-    ),
+  fireEvent.change(
+    screen.getByPlaceholderText("Name, email address, or @username"),
+    { target: { value: "nobody" } },
   );
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  expect(
+    await screen.findByText(/for anyone else, use their exact @username/),
+  ).toBeTruthy();
 });
 
 const message = (id: string, sender: string, sent: number, body: string) => ({
