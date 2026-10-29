@@ -1437,8 +1437,12 @@ export function finalizeAcpLedgerLease(args: {
   });
 }
 
-// The fence: a dead worker's running leases are aborted, and
-// each turn gets an error winner in the same transaction.
+// The fence: each of a dead worker's running ledger turns gets its winner (an
+// aborted error, unless one was already recorded), and its lease ends with
+// that winner's state, in one transaction. A running lease the ledger can't
+// decide (no message or thread id, or never cut over to an attempt) is left
+// running: it isn't a ledger turn, and the caller's legacy fence ends it.
+// Returns the number of leases ended.
 export function fenceAcpLedgerProject(args: {
   project_id: string;
   reason: string;
@@ -1460,6 +1464,7 @@ export function fenceAcpLedgerProject(args: {
       message_id: string | null;
       thread_id: string | null;
     }>;
+    let ended = 0;
     for (const lease of leases) {
       if (!lease.message_id || !lease.thread_id) continue;
       const turn: AcpLedgerTurnContext = {
@@ -1471,7 +1476,7 @@ export function fenceAcpLedgerProject(args: {
       };
       const current = readLease(db, turn);
       if (!current?.attempt_id) continue;
-      decideCloseInTx(db, {
+      const decided = decideCloseInTx(db, {
         turn,
         caller: "arbiter",
         candidate: { outcome: "error", code: "aborted" },
@@ -1479,17 +1484,34 @@ export function fenceAcpLedgerProject(args: {
         now,
       });
       fault("fence:after-decide");
-    }
-    fault("fence:before-update");
-    return Number(
-      db
+      if (!decided.winner) continue;
+      fault("fence:before-update");
+      const changes = db
         .prepare(
           `UPDATE acp_turns
-           SET state = 'aborted', reason = ?, heartbeat_at = ?, ended_at = ?
-           WHERE project_id = ? AND state = 'running'`,
+           SET state = ?, reason = ?, heartbeat_at = ?, ended_at = ?
+           WHERE project_id = ? AND path = ? AND message_date = ?
+             AND state = 'running' AND attempt_id = ? AND attempt_gen = ?`,
         )
-        .run(args.reason, now, now, args.project_id).changes,
-    );
+        .run(
+          leaseStateForWinner(decided.winner),
+          args.reason,
+          now,
+          now,
+          turn.project_id,
+          turn.path,
+          turn.message_date,
+          current.attempt_id,
+          current.attempt_gen,
+        ).changes;
+      if (Number(changes) !== 1) {
+        // The row was read as running in this transaction; roll back rather
+        // than leave a winner whose lease didn't end.
+        throw new Error("acp turn ledger: fence matched no lease row");
+      }
+      ended += 1;
+    }
+    return ended;
   });
 }
 

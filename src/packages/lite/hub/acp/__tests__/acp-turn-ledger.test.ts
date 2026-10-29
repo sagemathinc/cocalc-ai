@@ -16,6 +16,10 @@ import {
   initAcpDatabase,
 } from "../../sqlite/acp-database";
 import {
+  fenceAcpTurnLeasesForProject,
+  startAcpTurnLease,
+} from "../../sqlite/acp-turns";
+import {
   __clearPendingIncompleteForTests,
   __getAcpLedgerMutationForTests,
   __setAcpLedgerFaultHook,
@@ -670,6 +674,133 @@ describe("the lease", () => {
       code: "aborted",
       attempt_id: "A",
     });
+  });
+});
+
+describe("the fence and turns it didn't decide", () => {
+  // A second turn in the same project, for leases written by the legacy
+  // lease API only.
+  const legacy = {
+    project_id: turn.project_id,
+    path: "other.chat",
+    message_date: "2026-10-29T00:00:01.000Z",
+  };
+
+  function legacyLease(identity: { message_id?: string; thread_id?: string }) {
+    startAcpTurnLease({
+      context: { ...legacy, ...identity } as any,
+      owner_instance_id: "worker-1",
+      pid: 1,
+      approver_account_id: "account-1",
+    });
+  }
+
+  function legacyState(): string | undefined {
+    return (
+      getAcpDatabase()
+        .prepare(
+          `SELECT state FROM acp_turns
+           WHERE project_id = ? AND path = ? AND message_date = ?`,
+        )
+        .get(legacy.project_id, legacy.path, legacy.message_date) as any
+    )?.state;
+  }
+
+  it("keeps a completed winner's state when the worker died before finalizing", () => {
+    start("A");
+    decideClose({
+      turn,
+      caller: "ordinary",
+      attempt_id: "A",
+      candidate: { outcome: "completed", F: "done" },
+      projector,
+    });
+    expect(lease().state).toBe("running");
+    expect(
+      fenceAcpLedgerProject({
+        project_id: turn.project_id,
+        reason: "worker gone",
+        projector,
+      }),
+    ).toBe(1);
+    expect(lease().state).toBe("completed");
+    expect(getAcpLedgerWinner(turn)).toMatchObject({
+      outcome: "completed",
+      F: "done",
+    });
+    expect(log().filter((e) => e.type === "turn_finished")).toHaveLength(1);
+  });
+
+  it("keeps an error winner's state", () => {
+    start("A");
+    decideClose({
+      turn,
+      caller: "ordinary",
+      attempt_id: "A",
+      candidate: { outcome: "error", code: "provider_error" },
+      projector,
+    });
+    fenceAcpLedgerProject({
+      project_id: turn.project_id,
+      reason: "worker gone",
+      projector,
+    });
+    expect(lease().state).toBe("error");
+    expect(getAcpLedgerWinner(turn)).toMatchObject({ code: "provider_error" });
+  });
+
+  it("leaves running leases it can't decide for the legacy fence", () => {
+    legacyLease({});
+    expect(
+      fenceAcpLedgerProject({
+        project_id: turn.project_id,
+        reason: "worker gone",
+        projector,
+      }),
+    ).toBe(0);
+    expect(legacyState()).toBe("running");
+    legacyLease({ message_id: "m-legacy", thread_id: "t-legacy" });
+    expect(
+      fenceAcpLedgerProject({
+        project_id: turn.project_id,
+        reason: "worker gone",
+        projector,
+      }),
+    ).toBe(0);
+    expect(legacyState()).toBe("running");
+    expect(
+      getAcpDatabase()
+        .prepare(`SELECT COUNT(*) AS c FROM acp_ledger_close`)
+        .get(),
+    ).toMatchObject({ c: 0 });
+    expect(
+      getAcpDatabase()
+        .prepare(`SELECT COUNT(*) AS c FROM acp_ledger_log`)
+        .get(),
+    ).toMatchObject({ c: 0 });
+  });
+
+  it("ends only its own turns in a mixed project; the legacy fence ends the rest", () => {
+    start("A");
+    legacyLease({});
+    expect(
+      fenceAcpLedgerProject({
+        project_id: turn.project_id,
+        reason: "worker gone",
+        projector,
+      }),
+    ).toBe(1);
+    expect(lease().state).toBe("aborted");
+    expect(getAcpLedgerWinner(turn)).toMatchObject({ code: "aborted" });
+    expect(legacyState()).toBe("running");
+    expect(
+      fenceAcpTurnLeasesForProject({
+        project_id: turn.project_id,
+        reason: "worker gone",
+      }),
+    ).toBe(1);
+    expect(legacyState()).toBe("aborted");
+    expect(lease().state).toBe("aborted");
   });
 });
 
