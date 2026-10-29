@@ -27,6 +27,7 @@ KEY="${COCALC_SITE_MASTER_KEY_PATH:-${COCALC_BAY_CONFIG_DIR}/site-master-key}"
 KEYRING="${COCALC_SITE_MASTER_KEYRING_PATH:-${KEY}.keyring}"
 : "${COCALC_BAY_USER:=cocalc-bay}"
 : "${SYSTEMCTL:=systemctl}"
+: "${CLOUDFLARED_CTL:=/usr/local/sbin/cocalc-bay-cloudflared-ctl}"
 : "${SYSTEMD_RUN:=systemd-run}"
 # A retired key stays online this long: email sign-in challenges and other
 # short-lived keyed hashes cannot be re-encrypted.
@@ -366,17 +367,14 @@ restart_services() {
       "$SYSTEMCTL" restart "$unit"
     fi
   done
-  # The tunnel's replicas one at a time, each back up before the next, so
-  # public ingress stays up.
-  local restarted=0
-  for unit in cocalc-bay-cloudflared-2.service cocalc-bay-cloudflared.service; do
-    if "$SYSTEMCTL" is-active --quiet "$unit"; then
-      ((restarted == 0)) || sleep "${COCALC_BAY_MASTER_KEY_RESTART_PAUSE:-15}"
-      echo "restarting ${unit}"
-      "$SYSTEMCTL" restart "$unit"
-      restarted=1
-    fi
-  done
+  # The tunnel: its replicas one at a time, each with a ready connection
+  # before the next, stopping if one does not come back, so public ingress
+  # stays up.
+  if "$SYSTEMCTL" is-active --quiet cocalc-bay-cloudflared.service ||
+      "$SYSTEMCTL" is-active --quiet cocalc-bay-cloudflared-2.service; then
+    echo "restarting the cloudflared replicas"
+    "$CLOUDFLARED_CTL" restart-all
+  fi
 }
 
 [[ "$(id -u)" == 0 || -n "${COCALC_BAY_MASTER_KEY_TEST:-}" ]] || die "run as root"

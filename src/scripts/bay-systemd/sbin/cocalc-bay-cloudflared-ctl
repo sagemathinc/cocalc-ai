@@ -4,6 +4,7 @@ set -euo pipefail
 SYSTEMCTL="/usr/bin/systemctl"
 JOURNALCTL="/usr/bin/journalctl"
 CURL="/usr/bin/curl"
+READY_TIMEOUT_S=60
 
 if [[ ! -x "$SYSTEMCTL" ]]; then
   SYSTEMCTL="/bin/systemctl"
@@ -58,7 +59,7 @@ metrics_address() {
 wait_ready() {
   local unit="$1" address deadline body
   address="$(metrics_address "$unit")"
-  deadline=$((SECONDS + 60))
+  deadline=$((SECONDS + READY_TIMEOUT_S))
   while ((SECONDS < deadline)); do
     if [[ -n "$address" ]]; then
       if body="$("$CURL" --silent --max-time 2 "http://${address}/ready" 2>/dev/null)" && \
@@ -72,7 +73,7 @@ wait_ready() {
     fi
     sleep 1
   done
-  echo "cocalc-bay-cloudflared-ctl: ${unit} has no ready tunnel connection after 60s" >&2
+  echo "cocalc-bay-cloudflared-ctl: ${unit} has no ready tunnel connection after ${READY_TIMEOUT_S}s" >&2
   return 1
 }
 
@@ -99,16 +100,22 @@ case "${1:-}/$#" in
     ;;
   restart-all/1)
     # Higher replicas first, so the primary (which also refreshes the tunnel
-    # with Cloudflare) restarts while the others carry the traffic.
-    status=0
+    # with Cloudflare) restarts while the others carry the traffic. Stop at
+    # the first replica that does not come back ready: restarting the next
+    # one could leave no replica serving.
     for replica in 9 8 7 6 5 4 3 2 1; do
       unit="$(unit_for "$replica")"
       unit_installed "$unit" || continue
       "$SYSTEMCTL" --quiet is-enabled "$unit" 2>/dev/null || [[ "$replica" == 1 ]] || continue
-      restart_unit "$unit" || { status=1; continue; }
-      wait_ready "$unit" || status=1
+      if ! restart_unit "$unit"; then
+        echo "cocalc-bay-cloudflared-ctl: restarting ${unit} failed; not restarting the other replicas" >&2
+        exit 1
+      fi
+      if ! wait_ready "$unit"; then
+        echo "cocalc-bay-cloudflared-ctl: not restarting the other replicas" >&2
+        exit 1
+      fi
     done
-    exit "$status"
     ;;
   journal-since/2|journal-since/3)
     [[ "$2" =~ ^[0-9]{1,12}$ ]] || { usage; exit 2; }
