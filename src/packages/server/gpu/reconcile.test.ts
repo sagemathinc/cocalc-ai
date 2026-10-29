@@ -32,6 +32,7 @@ import { INVENTORY_STALE_MS } from "./budgets";
 import { freshInventoryForTests } from "./test-inventory";
 import { allowStaleWorkersLocal } from "./admin";
 import { resumeGpuLaunchesLocal } from "./budget-api";
+import { testKeyUse } from "./key-use-testing";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -114,7 +115,15 @@ function setup() {
     advance: (ms: number) => (clock += ms),
     now: () => clock,
     launch: () =>
-      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, deps),
+      launchGpuPodLocal(
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
+        deps,
+      ),
     pass: (over: any = {}) =>
       reconcileKey(
         {
@@ -405,7 +414,10 @@ describeDb("GPU inventory reconciler", () => {
     // CoCalc gives the create up (no pod by that name), holding its budget
     // (past the window, and past the lookup's backoff)
     s.advance(AMBIGUOUS_WINDOW_MS + 5 * MINUTE);
-    await listManagedGpuPodsLocal({ account_id: s.account_id }, s.deps);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id: s.account_id },
+      s.deps,
+    );
     expect((await row(pod.id)).state).toBe("failed");
     expect((await alerts(s.credential_id)).map((a: any) => a.kind)).toEqual([
       "quarantined_reservation",
@@ -519,7 +531,10 @@ describeDb("GPU inventory reconciler", () => {
     });
     const pod = await s.launch();
     s.advance(AMBIGUOUS_WINDOW_MS + 5 * MINUTE);
-    await listManagedGpuPodsLocal({ account_id: s.account_id }, s.deps);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id: s.account_id },
+      s.deps,
+    );
     expect((await row(pod.id)).state).toBe("failed");
     s.pods.set("pod_late77", { id: "pod_late77", name: handle, cost: 0.5 });
     await s.pass();
@@ -573,7 +588,10 @@ describeDb("GPU inventory reconciler", () => {
     });
     const pod = await s.launch();
     s.advance(AMBIGUOUS_WINDOW_MS + 5 * MINUTE);
-    await listManagedGpuPodsLocal({ account_id: s.account_id }, s.deps);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id: s.account_id },
+      s.deps,
+    );
     const held = async () =>
       (
         await getPool().query(

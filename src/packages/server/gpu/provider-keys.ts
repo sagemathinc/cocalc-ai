@@ -29,13 +29,24 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import {
-  getExternalCredential,
   listExternalCredentials,
   revokeExternalCredential,
   upsertExternalCredential,
   type ExternalCredentialSummary,
 } from "@cocalc/server/external-credentials/store";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import {
+  GpuKeyGone,
+  withAuditedGpuKey,
+} from "@cocalc/server/external-credentials/store";
+import {
+  admitDecrypt,
+  bindVerifyUse,
+  currentGpuKeyMeta,
+  requireKeyUse,
+  withKeyUseOutcome,
+  type GpuKeyUse,
+} from "@cocalc/server/gpu/key-use";
 import { clearHostkeysForCredential } from "@cocalc/server/gpu/hostkey-clear";
 import {
   recordKeyEvent,
@@ -136,18 +147,13 @@ async function connectInventory(
     deadline,
   }: { account_id: string; credential_id: string; deadline: number },
   deps: GpuProviderKeyDeps,
+  key_use: GpuKeyUse | undefined,
 ): Promise<boolean> {
   // loaded here: reconcile.ts reads keys through this module
   const { reconcileKey } = await import("@cocalc/server/gpu/reconcile");
   const outcome = await reconcileKey(
-    { credential_id, key_owner_account_id: account_id, deadline },
-    {
-      getReconcile: (a) =>
-        getRunpodCleanupForAccount(a, {
-          ...deps,
-          runpodTimeoutMs: CONNECT_INVENTORY_CALL_MS,
-        }),
-    },
+    { credential_id, key_owner_account_id: account_id, deadline, key_use },
+    { keyDeps: { ...deps, runpodTimeoutMs: CONNECT_INVENTORY_CALL_MS } },
   );
   return outcome.complete === true;
 }
@@ -350,12 +356,20 @@ export async function getGpuProviderKeyStatusLocal(
 }
 
 // The caller has already required fresh auth for this session.
+// `key_use` (5d-2c) is made by the hub API handler when this is the home
+// bay; a forwarded call gets the home bay's own.
 export async function setGpuProviderKey(
   {
     account_id,
     provider,
     api_key,
-  }: { account_id: string; provider: unknown; api_key: unknown },
+    key_use,
+  }: {
+    account_id: string;
+    provider: unknown;
+    api_key: unknown;
+    key_use?: GpuKeyUse;
+  },
   deps: GpuProviderKeyDeps = {},
 ): Promise<GpuProviderKeyStatus> {
   requireProvider(provider);
@@ -365,7 +379,10 @@ export async function setGpuProviderKey(
     deps,
   );
   if (home) return await home.gpuKeySet({ account_id, provider, api_key });
-  return await setGpuProviderKeyLocal({ account_id, provider, api_key }, deps);
+  return await setGpuProviderKeyLocal(
+    { account_id, provider, api_key, key_use },
+    deps,
+  );
 }
 
 // Pods launched with the account's key that may still exist at RunPod. While
@@ -388,19 +405,11 @@ async function countUnfinishedPods(
 
 // Does RunPod reject the stored key itself (401)? Only that counts: a
 // network error, a timeout or any other answer is "don't know".
-async function storedKeyRejectedByRunpod(
-  account_id: string,
-  deps: GpuProviderKeyDeps,
+async function keyRejectedByRunpod(
+  c: Pick<RunpodCleanupCapability, "getProviderIdentity">,
 ): Promise<boolean> {
-  const key = await readLocalKey(account_id, deps).catch(() => undefined);
-  if (!key) return false;
-  const client = new RunpodClient({
-    apiKey: key.apiKey,
-    fetch: deps.fetch,
-    timeoutMs: VERIFY_REQUEST_TIMEOUT_MS,
-  });
   try {
-    await client.getProviderIdentity();
+    await c.getProviderIdentity();
     return false;
   } catch (err) {
     return err instanceof RunpodApiError && err.kind === "auth";
@@ -489,13 +498,37 @@ export async function closeKeyFence(
   );
 }
 
+// `key_use`: the connect's verify, made by the authenticated boundary
+// (5d-2c); its inventory pass reads only the key this connect stores.
 export async function setGpuProviderKeyLocal(
+  opts: {
+    account_id: string;
+    provider: unknown;
+    api_key: unknown;
+    key_use: GpuKeyUse | undefined;
+  },
+  deps: GpuProviderKeyDeps = {},
+): Promise<GpuProviderKeyStatus> {
+  await requireHomeBay(opts.account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["verify"], opts.account_id);
+  return await withKeyUseOutcome(key_use, () =>
+    connectKey({ ...opts, key_use }, deps),
+  );
+}
+
+async function connectKey(
   {
     account_id,
     provider: providerInput,
     api_key,
-  }: { account_id: string; provider: unknown; api_key: unknown },
-  deps: GpuProviderKeyDeps = {},
+    key_use,
+  }: {
+    account_id: string;
+    provider: unknown;
+    api_key: unknown;
+    key_use?: GpuKeyUse;
+  },
+  deps: GpuProviderKeyDeps,
 ): Promise<GpuProviderKeyStatus> {
   // the connect's whole time counts from here (the inventory pass's too)
   const operationStarted = Date.now();
@@ -592,6 +625,11 @@ export async function setGpuProviderKeyLocal(
             [id, previous],
           );
         }
+        // the connect's verify may read this key, and only this one (5d-2c)
+        await bindVerifyUse(client, key_use, {
+          account_id,
+          credential_id: id,
+        });
         // last (after every fence row above): a key for this RunPod account
         // and the account checks on it take turns (5d-2b)
         await lockProviderIdentity(client, {
@@ -606,7 +644,7 @@ export async function setGpuProviderKeyLocal(
   let complete = false;
   if (credential_id) {
     complete = await (
-      deps.connectInventory ?? ((k) => connectInventory(k, deps))
+      deps.connectInventory ?? ((k) => connectInventory(k, deps, key_use))
     )({
       account_id,
       credential_id,
@@ -660,7 +698,13 @@ export async function deleteGpuProviderKey(
     account_id,
     provider,
     force,
-  }: { account_id: string; provider: unknown; force?: unknown },
+    key_use,
+  }: {
+    account_id: string;
+    provider: unknown;
+    force?: unknown;
+    key_use?: GpuKeyUse;
+  },
   deps: GpuProviderKeyDeps = {},
 ): Promise<GpuKeyRemoval> {
   requireProvider(provider);
@@ -672,16 +716,42 @@ export async function deleteGpuProviderKey(
       force: force === true,
     });
   }
-  return await deleteGpuProviderKeyLocal({ account_id, provider, force }, deps);
+  return await deleteGpuProviderKeyLocal(
+    { account_id, provider, force, key_use },
+    deps,
+  );
 }
 
+// `key_use`: the removal's, made by the authenticated boundary (5d-2c)
 export async function deleteGpuProviderKeyLocal(
+  opts: {
+    account_id: string;
+    provider: unknown;
+    force?: unknown;
+    key_use: GpuKeyUse | undefined;
+  },
+  deps: GpuProviderKeyDeps = {},
+): Promise<GpuKeyRemoval> {
+  await requireHomeBay(opts.account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["removal"], opts.account_id);
+  return await withKeyUseOutcome(key_use, () =>
+    removeKey({ ...opts, key_use }, deps),
+  );
+}
+
+async function removeKey(
   {
     account_id,
     provider: providerInput,
     force: forceInput,
-  }: { account_id: string; provider: unknown; force?: unknown },
-  deps: GpuProviderKeyDeps = {},
+    key_use,
+  }: {
+    account_id: string;
+    provider: unknown;
+    force?: unknown;
+    key_use?: GpuKeyUse;
+  },
+  deps: GpuProviderKeyDeps,
 ): Promise<GpuKeyRemoval> {
   const provider = requireProvider(providerInput);
   const started = Date.now();
@@ -742,39 +812,48 @@ export async function deleteGpuProviderKeyLocal(
   // From here the key can't change (a draining key can't be replaced).
   // A key RunPod rejects (401: deleted or revoked there) can't terminate
   // anything, so removing it goes straight to the forced outcome.
-  const rejected =
-    (await unfinished()).length > 0 &&
-    (await (deps.storedKeyRejected ?? storedKeyRejectedByRunpod)(
-      account_id,
-      deps,
-    ));
-
-  // 2. Terminate them with the key while it is still stored (bounded).
-  if (!rejected) {
+  // 2. Terminate them with the key while it is still stored (bounded): one
+  // decrypt, for the rejection check and the whole drain (5d-2c).
+  let rejected = false;
+  const deadline = started + (deps.drainMs ?? KEY_REMOVAL_DRAIN_MS);
+  // the resolver stops at the deadline too, before its next pod (one slow
+  // RunPod call can't turn into a whole batch of them)
+  const guard = async () => {
+    if (Date.now() >= deadline) throw Error("key removal drain deadline");
+  };
+  const drainWith = async (c: RunpodCleanupCapability | undefined) => {
+    rejected = deps.storedKeyRejected
+      ? await deps.storedKeyRejected(account_id, deps)
+      : c != null && c.credential_id === credential_id
+        ? await keyRejectedByRunpod(c)
+        : false;
+    if (rejected) return;
     const drain =
       deps.drain ??
-      ((a: string, guard: () => Promise<void>) =>
-        pods.resolvePendingForAccount(
-          a,
-          {
-            getCleanup: (acct) =>
-              getRunpodCleanupForAccount(acct, {
-                ...deps,
-                runpodTimeoutMs: KEY_REMOVAL_CALL_TIMEOUT_MS,
-              }),
-          },
-          { guard },
-        ));
-    const deadline = started + (deps.drainMs ?? KEY_REMOVAL_DRAIN_MS);
-    // the resolver stops at the deadline too, before its next pod (one slow
-    // RunPod call can't turn into a whole batch of them)
-    const guard = async () => {
-      if (Date.now() >= deadline) throw Error("key removal drain deadline");
-    };
+      (c && c.credential_id === credential_id
+        ? (a: string, g: () => Promise<void>) =>
+            pods.resolvePendingForAccount(a, {}, { guard: g, cleanup: c })
+        : undefined);
+    if (!drain) return;
     for (;;) {
       await drain(account_id, guard).catch(() => {});
       if ((await unfinished()).length === 0 || Date.now() >= deadline) break;
       await new Promise((r) => setTimeout(r, deps.drainPollMs ?? 2_000));
+    }
+  };
+  if ((await unfinished()).length > 0) {
+    if (deps.storedKeyRejected || deps.drain) {
+      // (tests: their seams stand in for RunPod, with no key read)
+      await drainWith(undefined);
+    } else {
+      // a key that can't be read now drains nothing: what is left is
+      // reported below
+      await withRunpodCleanup(
+        account_id,
+        key_use,
+        { ...deps, runpodTimeoutMs: KEY_REMOVAL_CALL_TIMEOUT_MS },
+        drainWith,
+      ).catch(() => {});
     }
   }
 
@@ -863,57 +942,130 @@ async function isAccountHomeBay(account_id: string): Promise<boolean> {
   return (await accountHomeBay(account_id)) === getConfiguredBayId();
 }
 
-async function readLocalKey(
+// Every decrypt of a GPU key is admitted for a capability first and goes
+// through the broker (5d-2c): the key is looked up by metadata, the
+// capability checked and the decrypt recorded in one transaction, and only
+// then is the key read, once, for `fn` alone.
+async function withLocalKey<T>(
   account_id: string,
+  key_use: unknown,
   deps: GpuProviderKeyDeps,
-): Promise<{ id: string; apiKey: string; revision: string } | undefined> {
+  fn: (
+    key: { id: string; apiKey: string; revision: string } | undefined,
+  ) => Promise<T>,
+): Promise<T> {
   await requireHomeBay(account_id, deps);
-  const record = await getExternalCredential({
-    selector: selector(account_id, "runpod"),
+  const meta = await currentGpuKeyMeta(account_id);
+  if (!meta) return await fn(undefined);
+  const decrypt_id = await admitDecrypt(key_use, {
+    account_id,
+    credential_id: meta.credential_id,
   });
-  if (!record || record.revoked || !record.payload) return undefined;
-  // the record's last write: an in-place replacement keeps the id but not this
-  return {
-    id: record.id,
-    apiKey: record.payload,
-    revision: new Date(record.updated).toISOString(),
-  };
+  let entered = false;
+  try {
+    return await withAuditedGpuKey(decrypt_id, meta.credential_id, (apiKey) => {
+      entered = true;
+      return fn({ id: meta.credential_id, apiKey, revision: meta.revision });
+    });
+  } catch (err) {
+    // removed after the metadata was read: there is no key now
+    if (!entered && err instanceof GpuKeyGone) return await fn(undefined);
+    throw err;
+  }
 }
 
-// Custody (both functions below): they run only on the key owner's home bay
+// A client usable only while `scope.open`: every method refuses once the
+// scope that read its key has ended. The client keeps its key in a private
+// field, which the wrapper can't reach either.
+function scopedClient(
+  client: RunpodClient,
+  scope: { open: boolean },
+): RunpodClient {
+  return new Proxy(client, {
+    get(target, prop) {
+      if (!scope.open) throw Error("this RunPod key's use has ended");
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        if (!scope.open) throw Error("this RunPod key's use has ended");
+        return value.apply(target, args);
+      };
+    },
+    set() {
+      return false;
+    },
+  });
+}
+
+async function withScopedClient<T>(
+  account_id: string,
+  key_use: unknown,
+  deps: GpuProviderKeyDeps,
+  fn: (
+    c:
+      | { client: RunpodClient; credential_id: string; revision: string }
+      | undefined,
+  ) => Promise<T>,
+): Promise<T> {
+  return await withLocalKey(account_id, key_use, deps, async (key) => {
+    if (!key) return await fn(undefined);
+    const scope = { open: true };
+    try {
+      const client = new RunpodClient({
+        apiKey: key.apiKey,
+        fetch: deps.fetch,
+        ...(deps.runpodTimeoutMs ? { timeoutMs: deps.runpodTimeoutMs } : {}),
+      });
+      return await fn({
+        client: scopedClient(client, scope),
+        credential_id: key.id,
+        revision: key.revision,
+      });
+    } finally {
+      scope.open = false;
+    }
+  });
+}
+
+// Custody (the functions below): they run only on the key owner's home bay
 // and read the key from the local store; anywhere else they throw. A GPU
 // operation for an account on another bay is routed to that bay as a whole,
 // so the key never crosses the inter-bay bridge. Never log or return a key;
-// RunpodClient hides it from inspect and JSON.
+// RunpodClient hides it from inspect and JSON. What `fn` gets is usable only
+// until it returns.
 
 // Full RunPod access with the account's own key, for launching, starting
-// and inspecting GPUs. Requires the owner's live gpu_provider_keys
-// entitlement.
-export async function getRunpodClientForAccount(
+// and inspecting GPUs, with the id and revision of the stored key it uses
+// (every pod record keeps the id). Requires the owner's live
+// gpu_provider_keys entitlement. `fn` gets undefined when no key is
+// connected.
+export async function withRunpodLaunchAccess<T>(
   account_id: string,
-  deps: GpuProviderKeyDeps = {},
-): Promise<RunpodClient | undefined> {
-  return (await getRunpodLaunchAccessForAccount(account_id, deps))?.client;
-}
-
-// The full client together with the id of the stored key it uses, which
-// every pod record keeps. Same custody and entitlement as above.
-export async function getRunpodLaunchAccessForAccount(
-  account_id: string,
-  deps: GpuProviderKeyDeps = {},
-): Promise<
-  { client: RunpodClient; credential_id: string; revision: string } | undefined
-> {
+  key_use: unknown,
+  deps: GpuProviderKeyDeps,
+  fn: (
+    access:
+      | { client: RunpodClient; credential_id: string; revision: string }
+      | undefined,
+  ) => Promise<T>,
+): Promise<T> {
   if (!(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))) {
     throw Error("Your membership doesn't include using a GPU provider key.");
   }
-  const key = await readLocalKey(account_id, deps);
-  if (!key) return undefined;
-  return {
-    client: new RunpodClient({ apiKey: key.apiKey, fetch: deps.fetch }),
-    credential_id: key.id,
-    revision: key.revision,
-  };
+  return await withScopedClient(account_id, key_use, deps, fn);
+}
+
+// The connected key's id and revision, and the owner's entitlement, from
+// metadata only (no decrypt): what a launch checks again under the fence.
+export async function launchKeyMeta(
+  account_id: string,
+  deps: GpuProviderKeyDeps = {},
+): Promise<{ credential_id: string; revision: string } | undefined> {
+  if (!(await (deps.isEntitled ?? isGpuProviderKeysEntitled)(account_id))) {
+    throw Error("Your membership doesn't include using a GPU provider key.");
+  }
+  await requireHomeBay(account_id, deps);
+  return await currentGpuKeyMeta(account_id);
 }
 
 // What cleanup may do with an account's key: find the pods and storage it
@@ -941,28 +1093,30 @@ export interface RunpodCleanupCapability {
   getAccountBalance(): ReturnType<RunpodClient["getAccountBalance"]>;
 }
 
-export async function getRunpodCleanupForAccount(
+// `fn` gets undefined when no key is stored.
+export async function withRunpodCleanup<T>(
   account_id: string,
-  deps: GpuProviderKeyDeps = {},
-): Promise<RunpodCleanupCapability | undefined> {
-  const key = await readLocalKey(account_id, deps);
-  if (!key) return undefined;
-  const client = new RunpodClient({
-    apiKey: key.apiKey,
-    fetch: deps.fetch,
-    ...(deps.runpodTimeoutMs ? { timeoutMs: deps.runpodTimeoutMs } : {}),
-  });
-  return Object.freeze({
-    credential_id: key.id,
-    getProviderIdentity: () => client.getProviderIdentity(),
-    listPods: (...args: Parameters<RunpodClient["listPods"]>) =>
-      client.listPods(...args),
-    getPod: (podId: string) => client.getPod(podId),
-    listPodBilling: (...args: Parameters<RunpodClient["listPodBilling"]>) =>
-      client.listPodBilling(...args),
-    terminatePod: (podId: string) => client.terminatePod(podId),
-    findPodsByName: (...args: Parameters<RunpodClient["findPodsByName"]>) =>
-      client.findPodsByName(...args),
-    getAccountBalance: () => client.getAccountBalance(),
+  key_use: unknown,
+  deps: GpuProviderKeyDeps,
+  fn: (c: RunpodCleanupCapability | undefined) => Promise<T>,
+): Promise<T> {
+  return await withScopedClient(account_id, key_use, deps, async (access) => {
+    if (!access) return await fn(undefined);
+    const { client } = access;
+    return await fn(
+      Object.freeze({
+        credential_id: access.credential_id,
+        getProviderIdentity: () => client.getProviderIdentity(),
+        listPods: (...args: Parameters<RunpodClient["listPods"]>) =>
+          client.listPods(...args),
+        getPod: (podId: string) => client.getPod(podId),
+        listPodBilling: (...args: Parameters<RunpodClient["listPodBilling"]>) =>
+          client.listPodBilling(...args),
+        terminatePod: (podId: string) => client.terminatePod(podId),
+        findPodsByName: (...args: Parameters<RunpodClient["findPodsByName"]>) =>
+          client.findPodsByName(...args),
+        getAccountBalance: () => client.getAccountBalance(),
+      }),
+    );
   });
 }

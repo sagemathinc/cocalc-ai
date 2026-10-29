@@ -43,11 +43,18 @@ import { revokeExternalCredential } from "@cocalc/server/external-credentials/st
 import { clearHostkeysForCredential } from "@cocalc/server/gpu/hostkey-clear";
 import {
   closeKeyFence,
-  getRunpodCleanupForAccount,
   underKeyFence,
+  withRunpodCleanup,
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
+import {
+  currentGpuKeyMeta,
+  requireKeyUse,
+  withKeyUseOutcome,
+  type GpuKeyCapability,
+  type GpuKeyUse,
+} from "@cocalc/server/gpu/key-use";
 import type { RunpodPodView } from "@cocalc/cloud/runpod/views";
 import {
   markCredentialPodsToTerminate,
@@ -114,21 +121,39 @@ function requireAccount(account_id: unknown): string {
   return account_id;
 }
 
-async function activeCredential(
+// The key, for `fn` only (5d-2c: one audited decrypt for the whole pass);
+// tests stand in with deps.getCleanup.
+async function withActiveCredential<T>(
   account_id: string,
   deps: GpuCompromiseDeps,
-): Promise<RunpodCleanupCapability | undefined> {
-  return await (deps.getCleanup ?? getRunpodCleanupForAccount)(account_id);
+  key_use: GpuKeyCapability | undefined,
+  fn: (c: RunpodCleanupCapability | undefined) => Promise<T>,
+): Promise<T> {
+  if (deps.getCleanup) return await fn(await deps.getCleanup(account_id));
+  return await withRunpodCleanup(account_id, key_use, {}, fn);
 }
 
 // One cleanup pass for a compromised key. Idempotent; safe to run again at
 // any point, by the request or the reaper.
+// `key_use`: the report's own (compromise), or the compromise worker's run
+// (cleanup).
 export async function runCompromiseCleanup(
   account_id: string,
   credential_id: string,
   deps: GpuCompromiseDeps = {},
+  key_use?: GpuKeyCapability,
 ): Promise<GpuCompromiseStatus> {
-  const c = await activeCredential(account_id, deps);
+  return await withActiveCredential(account_id, deps, key_use, (c) =>
+    cleanupPass(account_id, credential_id, deps, c),
+  );
+}
+
+async function cleanupPass(
+  account_id: string,
+  credential_id: string,
+  deps: GpuCompromiseDeps,
+  c: RunpodCleanupCapability | undefined,
+): Promise<GpuCompromiseStatus> {
   // the key is no longer stored (a forced removal ended it), or another key
   // is: nothing to do with this one
   if (!c || c.credential_id !== credential_id) return { closed: false };
@@ -169,7 +194,8 @@ export async function runCompromiseCleanup(
       resolvePendingForAccount(
         a,
         {},
-        { guard, retryBackedOff: opts?.retryBackedOff },
+        // the key already read for this pass
+        { guard, retryBackedOff: opts?.retryBackedOff, cleanup: c },
       ));
   for (let batch = 0; batch < MAX_RESOLVE_BATCHES && !cut; batch++) {
     const r = await resolve(account_id, bounded, {
@@ -408,8 +434,26 @@ export async function reportCompromisedLocal(
     account_id?: string;
     confirm_cocalc_only?: unknown;
     fresh_auth_verified?: boolean;
+    // made by the authenticated boundary (5d-2c)
+    key_use: GpuKeyUse | undefined;
   },
   deps: GpuCompromiseDeps = {},
+): Promise<GpuCompromiseStatus> {
+  const account_id = requireAccount(opts.account_id);
+  const key_use = requireKeyUse(opts.key_use, ["compromise"], account_id);
+  return await withKeyUseOutcome(key_use, () =>
+    reportCompromisedPass({ ...opts, key_use }, deps),
+  );
+}
+
+async function reportCompromisedPass(
+  opts: {
+    account_id?: string;
+    confirm_cocalc_only?: unknown;
+    fresh_auth_verified?: boolean;
+    key_use?: GpuKeyUse;
+  },
+  deps: GpuCompromiseDeps,
 ): Promise<GpuCompromiseStatus> {
   const account_id = requireAccount(opts.account_id);
   if (opts.fresh_auth_verified !== true) {
@@ -423,9 +467,12 @@ export async function reportCompromisedLocal(
       "Confirm that this RunPod account is used only for CoCalc: CoCalc will terminate every pod in it, including ones it didn't start.",
     );
   }
-  const c = await activeCredential(account_id, deps);
-  if (!c) throw Error("No RunPod API key is connected.");
-  const credential_id = c.credential_id;
+  // the connected key, from metadata (no decrypt)
+  const meta = deps.getCleanup
+    ? await deps.getCleanup(account_id)
+    : await currentGpuKeyMeta(account_id);
+  if (!meta) throw Error("No RunPod API key is connected.");
+  const credential_id = meta.credential_id;
   // 1. Before any provider call: the fence is compromised, the pods marked.
   // It must still be the connected key (a replacement may have won the
   // fence first); the cleanup acts only with that same key.
@@ -491,7 +538,12 @@ export async function reportCompromisedLocal(
     );
   });
   // 2. One pass now; the reaper continues.
-  const status = await runCompromiseCleanup(account_id, credential_id, deps);
+  const status = await runCompromiseCleanup(
+    account_id,
+    credential_id,
+    deps,
+    opts.key_use,
+  );
   return { ...status, warning: status.warning ?? NEXT_STEPS_WARNING };
 }
 
@@ -516,6 +568,8 @@ export async function reportCompromised(
     browser_id?: string | null;
     session_hash?: string | null;
     confirm_cocalc_only?: unknown;
+    // made by the hub API handler when this is the home bay (5d-2c)
+    key_use?: GpuKeyUse;
   },
   deps: GpuCompromiseDeps = {},
 ): Promise<GpuCompromiseStatus> {
@@ -533,14 +587,19 @@ export async function reportCompromised(
   };
   const home = await (deps.homeClient ?? compromiseHomeClient)(account_id);
   if (home) return await home.gpuReportCompromised(forwarded);
-  return await reportCompromisedLocal(forwarded, deps);
+  return await reportCompromisedLocal(
+    { ...forwarded, key_use: opts.key_use },
+    deps,
+  );
 }
 
 // The reaper's part: a pass for every compromised key still stored on this
 // bay. `guard` renews the reaper's lease before each one.
+// `key_use`: the compromise worker's run (cleanup)
 export async function continueCompromiseCleanups(
   guard: () => Promise<void>,
   deps: GpuCompromiseDeps = {},
+  key_use?: GpuKeyCapability,
 ): Promise<number> {
   // a cleanup that revoked its key but didn't get to close its fence
   const { rows: revoked } = await getPool().query(
@@ -566,10 +625,12 @@ export async function continueCompromiseCleanups(
     while (next < rows.length) {
       const r = rows[next++];
       await guard();
-      await runCompromiseCleanup(r.key_owner_account_id, r.credential_id, {
-        ...deps,
-        guard,
-      }).catch((err) => {
+      await runCompromiseCleanup(
+        r.key_owner_account_id,
+        r.credential_id,
+        { ...deps, guard },
+        key_use,
+      ).catch((err) => {
         log.warn("a compromise cleanup pass failed", `${err}`);
       });
     }

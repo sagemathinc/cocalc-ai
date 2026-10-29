@@ -25,6 +25,7 @@ import {
 } from "./reaper";
 import { allowStaleWorkers, allowStaleWorkersLocal } from "./admin";
 import { freshInventoryForTests } from "./test-inventory";
+import { testKeyUse } from "./key-use-testing";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -88,7 +89,15 @@ function setup() {
     setEntitled: (v: boolean) => (entitled = v),
     advance: (ms: number) => (clock += ms),
     launch: () =>
-      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, deps),
+      launchGpuPodLocal(
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
+        deps,
+      ),
   };
 }
 
@@ -406,6 +415,7 @@ describeDb("GPU reaper", () => {
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl t";
     const live = await launchGpuPodLocal(
       {
+        key_use: testKeyUse("launch"),
         account_id: s.account_id,
         project_id: PROJECT,
         spec: { ...SPEC, cloud: "COMMUNITY", ssh_public_key: key },
@@ -439,6 +449,7 @@ describeDb("GPU reaper", () => {
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl t";
     const live = await launchGpuPodLocal(
       {
+        key_use: testKeyUse("launch"),
         account_id: s.account_id,
         project_id: PROJECT,
         spec: { ...SPEC, cloud: "COMMUNITY", ssh_public_key: key },
@@ -476,8 +487,12 @@ describeDb("GPU reaper", () => {
     const r = await row(pod.id);
     expect([r.state, r.provider_pod_id]).toEqual(["running", "pod_crash9"]);
     expect(
-      (await listManagedGpuPodsLocal({ account_id: s.account_id }, s.deps))
-        .length,
+      (
+        await listManagedGpuPodsLocal(
+          { key_use: testKeyUse("pod_read"), account_id: s.account_id },
+          s.deps,
+        )
+      ).length,
     ).toBe(1);
   });
 

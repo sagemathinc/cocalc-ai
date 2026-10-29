@@ -183,6 +183,8 @@ describe("hub API argument transforms", () => {
   });
 
   it.each([
+    "gpu.catalog",
+    "gpu.availability",
     "gpu.pods",
     "gpu.launch",
     "gpu.terminate",
@@ -198,6 +200,7 @@ describe("hub API argument transforms", () => {
         agent_id: "agent:forged",
         run_id: "forged-run",
         gpu_agent_auth: { auth_token_fingerprint: "f".repeat(64) },
+        agent: { project_id: "other-project", agent_id: "agent:forged" },
         pod_id: "pod_abc123",
       };
       // a human: bound to the account; agent identity args are dropped
@@ -208,7 +211,7 @@ describe("hub API argument transforms", () => {
       });
       expect(human.account_id).toBe("human");
       expect(human.pod_id).toBe("pod_abc123");
-      for (const k of ["gpu_agent_auth", "agent_id", "run_id"]) {
+      for (const k of ["gpu_agent_auth", "agent_id", "run_id", "agent"]) {
         expect(human).not.toHaveProperty(k);
       }
       // an agent: its account, project and token, never what it passed
@@ -300,43 +303,6 @@ describe("hub API argument transforms", () => {
       ).rejects.toThrow();
     }
   });
-
-  it.each(["gpu.catalog", "gpu.availability"])(
-    "binds %s to the authenticated account, never a forged one",
-    async (name) => {
-      expect(getHubApiPrincipalPolicies()[name]).toBe(
-        "account-or-bound-agent-project",
-      );
-      expect(
-        await transformArgs({
-          name,
-          args: [{ account_id: "forged", cloud: "SECURE" }],
-          account_id: "human",
-        }),
-      ).toEqual([{ account_id: "human", cloud: "SECURE" }]);
-      expect(
-        await transformArgs({
-          name,
-          args: [{ account_id: "forged", project_id: "other-project" }],
-          account_id: "agent-account",
-          project_id: "own-project",
-          auth_actor: "agent",
-        }),
-      ).toEqual([{ account_id: "agent-account", project_id: "own-project" }]);
-      for (const actor of [
-        { project_id: "project" },
-        { host_id: "host" },
-        { account_id: "agent-account", auth_actor: "agent" as const },
-      ]) {
-        expect(
-          isHubApiPrincipalAllowed({
-            policy: getHubApiPrincipalPolicies()[name],
-            ...actor,
-          }),
-        ).toBe(false);
-      }
-    },
-  );
 
   it.each(["agent.registerIdentity", "agent.startFreshConversation"])(
     "binds %s to the authenticated human without requiring fresh auth",

@@ -48,10 +48,19 @@ import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
-  getRunpodCleanupForAccount,
-  getRunpodLaunchAccessForAccount,
+  launchKeyMeta,
+  withRunpodCleanup,
+  withRunpodLaunchAccess,
+  type GpuProviderKeyDeps,
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
+import {
+  KeyUseRefused,
+  requireKeyUse,
+  withKeyUseOutcome,
+  type GpuKeyCapability,
+  type GpuKeyUse,
+} from "@cocalc/server/gpu/key-use";
 import {
   actualCost,
   admitLaunch,
@@ -89,6 +98,8 @@ import {
 export interface GpuPodDeps {
   // for tests
   killSwitchResolveMs?: number;
+  // what the key helpers get (tests: a fake RunPod, the entitlement)
+  keyDeps?: GpuProviderKeyDeps;
   listResolveMs?: number;
   getLaunchAccess?: (
     account_id: string,
@@ -585,6 +596,18 @@ async function accountHomeBay(account_id: string): Promise<string> {
   return `${home_bay_id ?? ""}`.trim() || getConfiguredBayId();
 }
 
+// The key owner's key, for `fn` only (5d-2c: one audited decrypt, under
+// `key_use`); tests stand in with deps.getCleanup.
+async function withCleanupFor<T>(
+  account_id: string,
+  deps: GpuPodDeps,
+  key_use: GpuKeyCapability | undefined,
+  fn: (c: RunpodCleanupCapability | undefined) => Promise<T>,
+): Promise<T> {
+  if (deps.getCleanup) return await fn(await deps.getCleanup(account_id));
+  return await withRunpodCleanup(account_id, key_use, deps.keyDeps ?? {}, fn);
+}
+
 export function requireAccount(account_id: unknown): string {
   if (typeof account_id !== "string" || !isValidUUID(account_id)) {
     throw Error("must be signed in");
@@ -661,16 +684,30 @@ export async function findPod(
 
 // ---- launch ----
 
+type LaunchOpts = {
+  account_id?: string;
+  project_id?: unknown;
+  spec?: unknown;
+  // An agent's launch (step 6b): its verified principal and its own
+  // idempotency key. It needs an approved grant for exactly this launch.
+  agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
+  // made by the authenticated boundary (5d-2c); records how the attempt ended
+  key_use: GpuKeyUse | undefined;
+};
+
 export async function launchGpuPodLocal(
-  opts: {
-    account_id?: string;
-    project_id?: unknown;
-    spec?: unknown;
-    // An agent's launch (step 6b): its verified principal and its own
-    // idempotency key. It needs an approved grant for exactly this launch.
-    agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
-  },
+  opts: LaunchOpts,
   deps: GpuPodDeps = {},
+): Promise<GpuPodSummary> {
+  const account_id = requireAccount(opts.account_id);
+  await requireHomeBay(account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["launch"], account_id);
+  return await withKeyUseOutcome(key_use, () => launchPod(opts, deps));
+}
+
+async function launchPod(
+  opts: LaunchOpts,
+  deps: GpuPodDeps,
 ): Promise<GpuPodSummary> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
@@ -743,162 +780,215 @@ export async function launchGpuPodLocal(
       "launch a GPU",
     ),
   );
-  const priced = await loadLaunchAccess(account_id, deps);
-  let perGpu: number | undefined;
-  try {
-    perGpu = await (deps.listPrice ?? catalogListPrice)(
-      priced.client,
-      spec.gpu_type_id,
-      cloud,
-    );
-  } catch {
-    throw Error("RunPod's prices could not be read. Try again shortly.");
-  }
-  if (perGpu == null) {
-    throw Error(
-      `RunPod lists no ${cloud} price for ${spec.gpu_type_id}; check gpu availability.`,
-    );
-  }
-  const hourly_usd = moneyToDbString(toDecimal(perGpu).times(spec.gpu_count));
-  // what an agent's human approves, exactly
-  const approval = agent ? agentLaunchPayload(spec, perGpu) : undefined;
-
-  // 1. The budget reservation, the intent and its event, in one transaction,
-  // before anything reaches RunPod. The key is read under the account fence
-  // that key replacement and removal also take, so no launch can use a key
-  // that is being replaced or removed. A launch that doesn't fit writes
-  // nothing.
-  let intent: Awaited<ReturnType<typeof insertIntent>>;
-  try {
-    intent = await insertIntent({
-      account_id,
-      project_id,
-      spec,
-      hourly_usd,
-      priced,
-      actor,
-      deps,
-      token,
-      agent:
-        agent && approval
-          ? { ...agent, payload_hash: approval.payload_hash }
-          : undefined,
-    });
-  } catch (err) {
-    if (!(err instanceof NoUsableAgentGrant) || !agent || !approval) throw err;
-    // Nothing was written; ask the human, in a transaction of its own.
-    throw await inTransaction(async (db) => {
-      // serializes this agent's asks with each other and with approvals
-      await (deps.accountWriteFence ?? lockGpuAccountFence)(
-        db,
-        account_id,
-        "ask for a GPU approval",
+  // One decrypt for the whole launch (5d-2c): pricing, the create, the bind
+  // and an ambiguous create's lookup all use the key read here. Under the
+  // fence it is checked again from metadata only (same key, same revision,
+  // still entitled).
+  return await withLaunchAccess(
+    account_id,
+    deps,
+    opts.key_use,
+    async (priced) => {
+      const client = priced.client;
+      let perGpu: number | undefined;
+      try {
+        perGpu = await (deps.listPrice ?? catalogListPrice)(
+          priced.client,
+          spec.gpu_type_id,
+          cloud,
+        );
+      } catch {
+        throw Error("RunPod's prices could not be read. Try again shortly.");
+      }
+      if (perGpu == null) {
+        throw Error(
+          `RunPod lists no ${cloud} price for ${spec.gpu_type_id}; check gpu availability.`,
+        );
+      }
+      const hourly_usd = moneyToDbString(
+        toDecimal(perGpu).times(spec.gpu_count),
       );
-      return await requestAgentLaunch(db, {
-        principal: agent.principal,
-        operation_id: agent.operation_id,
-        payload: approval.payload,
-        payload_hash: approval.payload_hash,
-        now: new Date((deps.now ?? Date.now)()),
-      });
-    });
-  }
-  const { client } = intent;
-  let row = intent.row;
+      // what an agent's human approves, exactly
+      const approval = agent ? agentLaunchPayload(spec, perGpu) : undefined;
 
-  // 2. The create. A terminate that arrived first wins.
-  const creating = await transition(
-    row.id,
-    { state: "creating" },
-    "AND state = 'intent' AND desired_state <> 'terminated'",
+      // 1. The budget reservation, the intent and its event, in one transaction,
+      // before anything reaches RunPod. The key is read under the account fence
+      // that key replacement and removal also take, so no launch can use a key
+      // that is being replaced or removed. A launch that doesn't fit writes
+      // nothing.
+      let intent: Awaited<ReturnType<typeof insertIntent>>;
+      try {
+        intent = await insertIntent({
+          account_id,
+          project_id,
+          spec,
+          hourly_usd,
+          priced,
+          actor,
+          deps,
+          token,
+          agent:
+            agent && approval
+              ? { ...agent, payload_hash: approval.payload_hash }
+              : undefined,
+        });
+      } catch (err) {
+        if (!(err instanceof NoUsableAgentGrant) || !agent || !approval)
+          throw err;
+        // Nothing was written; ask the human, in a transaction of its own.
+        throw await inTransaction(async (db) => {
+          // serializes this agent's asks with each other and with approvals
+          await (deps.accountWriteFence ?? lockGpuAccountFence)(
+            db,
+            account_id,
+            "ask for a GPU approval",
+          );
+          return await requestAgentLaunch(db, {
+            principal: agent.principal,
+            operation_id: agent.operation_id,
+            payload: approval.payload,
+            payload_hash: approval.payload_hash,
+            now: new Date((deps.now ?? Date.now)()),
+          });
+        });
+      }
+      let row = intent.row;
+
+      // 2. The create. A terminate that arrived first wins.
+      const creating = await transition(
+        row.id,
+        { state: "creating" },
+        "AND state = 'intent' AND desired_state <> 'terminated'",
+      );
+      if (!creating) {
+        const failed = await transition(
+          row.id,
+          {
+            state: "failed",
+            reason: "Terminated before it was created.",
+            terminated_at: new Date(),
+          },
+          "AND state = 'intent'",
+          { actor, action: "state", details: { state: "failed" } },
+          // never sent to RunPod: release the reservation
+          { settle: "release" },
+        );
+        return podSummary(failed ?? (await loadPod(row.id)));
+      }
+      row = creating;
+      let created: RunpodPodView;
+      try {
+        created = await client.createPod(
+          buildRunpodCreateBody(row, spec, registration),
+        );
+      } catch (err) {
+        if (refused(err)) {
+          const reason = refusalReason(err);
+          await transition(
+            row.id,
+            { state: "failed", reason, terminated_at: new Date() },
+            "AND state = 'creating'",
+            { actor, action: "state", details: { state: "failed" } },
+            // a definite refusal: no pod exists
+            { settle: "release" },
+          );
+          throw Error(reason);
+        }
+        // Maybe made: find it by its handle before anyone tries again.
+        row =
+          (await transition(
+            row.id,
+            { state: "ambiguous" },
+            "AND state = 'creating'",
+            { actor, action: "state", details: { state: "ambiguous" } },
+          )) ?? (await loadPod(row.id));
+        return podSummary(await resolveAmbiguous(row, client, actor, deps));
+      }
+
+      // 3. Bind. If recording fails, the pod still has its handle: mark the
+      // record ambiguous so it is found by name, and say so.
+      try {
+        return podSummary(await bind(row, created, client, actor));
+      } catch {
+        await transition(
+          row.id,
+          { state: "ambiguous" },
+          "AND state = 'creating' AND provider_pod_id IS NULL",
+          { actor, action: "state", details: { state: "ambiguous" } },
+        ).catch(() => {});
+        throw Error(
+          `RunPod created pod ${row.handle}, but CoCalc couldn't record it yet. It will be found by that name; check gpu pods.`,
+        );
+      }
+    },
   );
-  if (!creating) {
-    const failed = await transition(
-      row.id,
-      {
-        state: "failed",
-        reason: "Terminated before it was created.",
-        terminated_at: new Date(),
-      },
-      "AND state = 'intent'",
-      { actor, action: "state", details: { state: "failed" } },
-      // never sent to RunPod: release the reservation
-      { settle: "release" },
-    );
-    return podSummary(failed ?? (await loadPod(row.id)));
-  }
-  row = creating;
-  let created: RunpodPodView;
-  try {
-    created = await client.createPod(
-      buildRunpodCreateBody(row, spec, registration),
-    );
-  } catch (err) {
-    if (refused(err)) {
-      const reason = refusalReason(err);
-      await transition(
-        row.id,
-        { state: "failed", reason, terminated_at: new Date() },
-        "AND state = 'creating'",
-        { actor, action: "state", details: { state: "failed" } },
-        // a definite refusal: no pod exists
-        { settle: "release" },
-      );
-      throw Error(reason);
-    }
-    // Maybe made: find it by its handle before anyone tries again.
-    row =
-      (await transition(
-        row.id,
-        { state: "ambiguous" },
-        "AND state = 'creating'",
-        { actor, action: "state", details: { state: "ambiguous" } },
-      )) ?? (await loadPod(row.id));
-    return podSummary(await resolveAmbiguous(row, client, actor, deps));
-  }
-
-  // 3. Bind. If recording fails, the pod still has its handle: mark the
-  // record ambiguous so it is found by name, and say so.
-  try {
-    return podSummary(await bind(row, created, client, actor));
-  } catch {
-    await transition(
-      row.id,
-      { state: "ambiguous" },
-      "AND state = 'creating' AND provider_pod_id IS NULL",
-      { actor, action: "state", details: { state: "ambiguous" } },
-    ).catch(() => {});
-    throw Error(
-      `RunPod created pod ${row.handle}, but CoCalc couldn't record it yet. It will be found by that name; check gpu pods.`,
-    );
-  }
 }
 
 const HANDLE_ATTEMPTS = 3;
 
-async function loadLaunchAccess(
+type LaunchAccess = {
+  client: RunpodClient;
+  credential_id: string;
+  revision?: string;
+};
+
+function launchKeyError(err: unknown): Error {
+  // the request's record names the key connected when it came in (5d-2c)
+  if (err instanceof KeyUseRefused) {
+    return Error("Your RunPod API key changed during the launch. Try again.");
+  }
+  if (`${err}`.includes("membership")) {
+    return Error("Your membership doesn't include GPUs on your own key.");
+  }
+  return Error("Your RunPod API key could not be loaded. Try again shortly.");
+}
+
+const NO_KEY =
+  "No RunPod API key is connected. Connect one in Settings → Connectors.";
+
+async function withLaunchAccess<T>(
   account_id: string,
   deps: GpuPodDeps,
-): Promise<{ client: RunpodClient; credential_id: string; revision?: string }> {
-  let access:
-    | { client: RunpodClient; credential_id: string; revision?: string }
-    | undefined;
+  key_use: GpuKeyUse | undefined,
+  fn: (access: LaunchAccess) => Promise<T>,
+): Promise<T> {
+  let entered = false;
+  const run = async (access: LaunchAccess | undefined) => {
+    entered = true;
+    if (!access) throw Error(NO_KEY);
+    return await fn(access);
+  };
   try {
-    access = await (deps.getLaunchAccess ?? getRunpodLaunchAccessForAccount)(
+    if (deps.getLaunchAccess) {
+      return await run(await deps.getLaunchAccess(account_id));
+    }
+    return await withRunpodLaunchAccess(
       account_id,
+      key_use,
+      deps.keyDeps ?? {},
+      run,
     );
   } catch (err) {
-    if (`${err}`.includes("membership")) {
-      throw Error("Your membership doesn't include GPUs on your own key.");
-    }
-    throw Error("Your RunPod API key could not be loaded. Try again shortly.");
+    if (entered) throw err;
+    throw launchKeyError(err);
   }
-  if (!access) {
-    throw Error(
-      "No RunPod API key is connected. Connect one in Settings → Connectors.",
-    );
+}
+
+// The connected key's id and revision under the fence, from metadata only.
+async function launchMeta(
+  account_id: string,
+  deps: GpuPodDeps,
+): Promise<{ credential_id: string; revision?: string }> {
+  let meta: { credential_id: string; revision?: string } | undefined;
+  try {
+    meta = deps.getLaunchAccess
+      ? await deps.getLaunchAccess(account_id)
+      : await launchKeyMeta(account_id, deps.keyDeps);
+  } catch (err) {
+    throw launchKeyError(err);
   }
-  return access;
+  if (!meta) throw Error(NO_KEY);
+  return meta;
 }
 
 async function insertIntent({
@@ -928,7 +1018,7 @@ async function insertIntent({
     operation_id: string;
     payload_hash: string;
   };
-}): Promise<{ row: PodRow; client: RunpodClient }> {
+}): Promise<{ row: PodRow }> {
   const now = (deps.now ?? Date.now)();
   const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
   for (let attempt = 1; ; attempt++) {
@@ -957,10 +1047,7 @@ async function insertIntent({
             )
           : undefined;
         if (agent && !grant) throw new NoUsableAgentGrant();
-        const { client, credential_id, revision } = await loadLaunchAccess(
-          account_id,
-          deps,
-        );
+        const { credential_id, revision } = await launchMeta(account_id, deps);
         if (grant && grant.credential_id !== credential_id) {
           throw Error(
             "Your RunPod key changed since this agent's launch was approved; the agent has to ask again.",
@@ -1042,7 +1129,7 @@ async function insertIntent({
           },
           db,
         );
-        return { row: rows[0], client };
+        return { row: rows[0] };
       });
     } catch (err: any) {
       // A handle collision (80 random bits: vanishingly rare) gets a new one.
@@ -1318,6 +1405,9 @@ export async function resolvePendingForAccount(
     limit = 100,
     guard,
     retryBackedOff = false,
+    key_use,
+    cleanup,
+    runpodTimeoutMs,
   }: {
     actor?: Actor;
     limit?: number;
@@ -1328,6 +1418,12 @@ export async function resolvePendingForAccount(
     // first (never tried, then the earliest backoff), so pods a slow failure
     // keeps holding up still get their turn on later passes
     retryBackedOff?: boolean;
+    // what may decrypt the key for this pass (5d-2c), or the key's use
+    // already open in the caller's scope (one decrypt for many passes)
+    key_use?: GpuKeyCapability;
+    cleanup?: RunpodCleanupCapability;
+    // the per-request timeout of the RunPod client the pass opens
+    runpodTimeoutMs?: number;
   } = {},
 ): Promise<{ full: boolean }> {
   const nowMs = (deps.now ?? Date.now)();
@@ -1365,98 +1461,126 @@ export async function resolvePendingForAccount(
     [account_id, now],
   );
   if (due.rows.length === 0) return { full: stale.length >= limit };
-  const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
-    account_id,
-  ).catch(() => undefined);
-  // Ready work this pass can't act on (no key now, or pods of another key)
-  // backs off like a failed attempt: it is retried later, and doesn't keep
-  // the reaper's sweep from completing (one account's state must not hold
-  // every launch on the bay). 5d alerts on pods it can't reach.
-  await getPool().query(
-    `UPDATE gpu_pods
-        SET reap_attempts = reap_attempts + 1,
-            reap_after = $2::timestamptz + make_interval(mins => LEAST(power(2, LEAST(reap_attempts, 5))::int, 30))
-      WHERE key_owner_account_id = $1
-        AND ($3::uuid IS NULL OR credential_id <> $3::uuid)
-        AND ((desired_state = 'terminated' AND state IN ('running', 'stopped', 'terminating')
-              AND provider_pod_id IS NOT NULL)
-             OR state = 'ambiguous') ${ready}`,
-    [account_id, now, c?.credential_id ?? null],
-  );
-  if (!c) return { full: stale.length >= limit };
-  // Only pods launched with the key now connected: another key may act for
-  // another RunPod account, where these pods don't exist (5c keeps the
-  // launching key until its pods end).
-  // Pods that must go but whose termination RunPod didn't confirm.
-  const { rows: pending } = await getPool().query(
-    `SELECT * FROM gpu_pods
-      WHERE key_owner_account_id = $1 AND credential_id = $4
-        AND desired_state = 'terminated'
-        AND state IN ('running', 'stopped', 'terminating')
-        AND provider_pod_id IS NOT NULL ${pick}
-      ${order} LIMIT $3`,
-    [account_id, now, limit, c.credential_id],
-  );
-  const { rows } = await getPool().query(
-    `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND credential_id = $4
-        AND state = 'ambiguous' ${pick}
-      ${order} LIMIT $3`,
-    [account_id, now, limit, c.credential_id],
-  );
-  const ours = (row: PodRow) => row.credential_id === c.credential_id;
-  // the guard, also run inside a record (an inventory lookup's pages): its
-  // throw stops the pass there too, without counting against the pod
-  let stopped: unknown;
-  const inner = guard
-    ? async () => {
-        try {
-          await guard();
-        } catch (err) {
-          stopped = err;
-          throw err;
-        }
-      }
-    : undefined;
-  const attempt = async (row: PodRow, fn: () => Promise<unknown>) => {
-    // outside the try: a guard that throws stops the pass, not this pod
-    await guard?.();
+  // A key that can't be read now is no key for this pass.
+  const withKey = async (
+    fn: (c: RunpodCleanupCapability | undefined) => Promise<{ full: boolean }>,
+  ): Promise<{ full: boolean }> => {
+    if (cleanup) return await fn(cleanup);
+    if (deps.getCleanup) {
+      return await fn(await deps.getCleanup(account_id).catch(() => undefined));
+    }
+    let entered = false;
     try {
-      await fn();
-    } catch {
-      if (stopped !== undefined) throw stopped;
-      // back off: 1, 2, 4, ... minutes, at most 30
-      const minutes = Math.min(2 ** (row.reap_attempts ?? 0), 30);
-      await getPool().query(
-        `UPDATE gpu_pods SET reap_attempts = reap_attempts + 1,
-           reap_after = $2::timestamptz + make_interval(mins => $3)
-         WHERE id = $1`,
-        [row.id, now, minutes],
+      return await withRunpodCleanup(
+        account_id,
+        key_use,
+        {
+          ...deps.keyDeps,
+          ...(runpodTimeoutMs ? { runpodTimeoutMs } : {}),
+        },
+        async (c) => {
+          entered = true;
+          return await fn(c);
+        },
       );
+    } catch (err) {
+      if (entered) throw err;
+      return await fn(undefined);
     }
   };
-  for (const row of (pending as PodRow[]).filter(ours)) {
-    await attempt(row, async () => {
-      // recorded as terminating before RunPod is asked, as on every path
-      const terminating = await recordTerminating(row, actor);
-      if (!terminating) return;
-      await terminateBound(terminating, c, actor);
-    });
-  }
-  for (const row of (rows as PodRow[]).filter(ours)) {
-    await attempt(row, async () => {
-      // still unresolved (RunPod's inventory couldn't be read, and the
-      // window hasn't closed): a failed attempt, backed off like any other
-      const after = await resolveAmbiguous(row, c, actor, deps, inner);
-      if (after?.state === "ambiguous") {
-        throw Error("the ambiguous create is still unresolved");
+  return await withKey(async (c) => {
+    // Ready work this pass can't act on (no key now, or pods of another key)
+    // backs off like a failed attempt: it is retried later, and doesn't keep
+    // the reaper's sweep from completing (one account's state must not hold
+    // every launch on the bay). 5d alerts on pods it can't reach.
+    await getPool().query(
+      `UPDATE gpu_pods
+          SET reap_attempts = reap_attempts + 1,
+              reap_after = $2::timestamptz + make_interval(mins => LEAST(power(2, LEAST(reap_attempts, 5))::int, 30))
+        WHERE key_owner_account_id = $1
+          AND ($3::uuid IS NULL OR credential_id <> $3::uuid)
+          AND ((desired_state = 'terminated' AND state IN ('running', 'stopped', 'terminating')
+                AND provider_pod_id IS NOT NULL)
+               OR state = 'ambiguous') ${ready}`,
+      [account_id, now, c?.credential_id ?? null],
+    );
+    if (!c) return { full: stale.length >= limit };
+    // Only pods launched with the key now connected: another key may act for
+    // another RunPod account, where these pods don't exist (5c keeps the
+    // launching key until its pods end).
+    // Pods that must go but whose termination RunPod didn't confirm.
+    const { rows: pending } = await getPool().query(
+      `SELECT * FROM gpu_pods
+        WHERE key_owner_account_id = $1 AND credential_id = $4
+          AND desired_state = 'terminated'
+          AND state IN ('running', 'stopped', 'terminating')
+          AND provider_pod_id IS NOT NULL ${pick}
+        ${order} LIMIT $3`,
+      [account_id, now, limit, c.credential_id],
+    );
+    const { rows } = await getPool().query(
+      `SELECT * FROM gpu_pods WHERE key_owner_account_id = $1 AND credential_id = $4
+          AND state = 'ambiguous' ${pick}
+        ${order} LIMIT $3`,
+      [account_id, now, limit, c.credential_id],
+    );
+    const ours = (row: PodRow) => row.credential_id === c.credential_id;
+    // the guard, also run inside a record (an inventory lookup's pages): its
+    // throw stops the pass there too, without counting against the pod
+    let stopped: unknown;
+    const inner = guard
+      ? async () => {
+          try {
+            await guard();
+          } catch (err) {
+            stopped = err;
+            throw err;
+          }
+        }
+      : undefined;
+    const attempt = async (row: PodRow, fn: () => Promise<unknown>) => {
+      // outside the try: a guard that throws stops the pass, not this pod
+      await guard?.();
+      try {
+        await fn();
+      } catch {
+        if (stopped !== undefined) throw stopped;
+        // back off: 1, 2, 4, ... minutes, at most 30
+        const minutes = Math.min(2 ** (row.reap_attempts ?? 0), 30);
+        await getPool().query(
+          `UPDATE gpu_pods SET reap_attempts = reap_attempts + 1,
+             reap_after = $2::timestamptz + make_interval(mins => $3)
+           WHERE id = $1`,
+          [row.id, now, minutes],
+        );
       }
-    });
-  }
-  // a full batch may have more behind it: the caller passes again
-  return {
-    full:
-      stale.length >= limit || pending.length >= limit || rows.length >= limit,
-  };
+    };
+    for (const row of (pending as PodRow[]).filter(ours)) {
+      await attempt(row, async () => {
+        // recorded as terminating before RunPod is asked, as on every path
+        const terminating = await recordTerminating(row, actor);
+        if (!terminating) return;
+        await terminateBound(terminating, c, actor);
+      });
+    }
+    for (const row of (rows as PodRow[]).filter(ours)) {
+      await attempt(row, async () => {
+        // still unresolved (RunPod's inventory couldn't be read, and the
+        // window hasn't closed): a failed attempt, backed off like any other
+        const after = await resolveAmbiguous(row, c, actor, deps, inner);
+        if (after?.state === "ambiguous") {
+          throw Error("the ambiguous create is still unresolved");
+        }
+      });
+    }
+    // a full batch may have more behind it: the caller passes again
+    return {
+      full:
+        stale.length >= limit ||
+        pending.length >= limit ||
+        rows.length >= limit,
+    };
+  });
 }
 
 // A pod listing resolves what it can first, briefly: short RunPod calls and
@@ -1464,25 +1588,19 @@ export async function resolvePendingForAccount(
 // reaper finishes the rest).
 export const LIST_RESOLVE_MS = 10_000;
 const LIST_RESOLVE_CALL_TIMEOUT_MS = 5_000;
-const resolveAmbiguousForAccount = (account_id: string, deps: GpuPodDeps) => {
+const resolveAmbiguousForAccount = (
+  account_id: string,
+  deps: GpuPodDeps,
+  key_use: GpuKeyCapability | undefined,
+) => {
   const deadline = Date.now() + (deps.listResolveMs ?? LIST_RESOLVE_MS);
-  return resolvePendingForAccount(
-    account_id,
-    {
-      ...deps,
-      getCleanup:
-        deps.getCleanup ??
-        ((a: string) =>
-          getRunpodCleanupForAccount(a, {
-            runpodTimeoutMs: LIST_RESOLVE_CALL_TIMEOUT_MS,
-          })),
+  return resolvePendingForAccount(account_id, deps, {
+    key_use,
+    runpodTimeoutMs: LIST_RESOLVE_CALL_TIMEOUT_MS,
+    guard: async () => {
+      if (Date.now() >= deadline) throw Error("pod listing resolve deadline");
     },
-    {
-      guard: async () => {
-        if (Date.now() >= deadline) throw Error("pod listing resolve deadline");
-      },
-    },
-  ).catch(() => ({ full: false }));
+  }).catch(() => ({ full: false }));
 };
 
 // ---- terminate ----
@@ -1635,9 +1753,31 @@ async function terminateBound(
   );
 }
 
+// A terminate's key use (made by the authenticated boundary) records how
+// the attempt ended (5d-2c).
 export async function terminateGpuPodLocal(
-  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
+  opts: {
+    account_id?: string;
+    pod_id?: unknown;
+    agent?: GpuAgentScope;
+    key_use: GpuKeyUse | undefined;
+  },
   deps: GpuPodDeps = {},
+): Promise<{ state: GpuPodSummary["state"] }> {
+  const account_id = requireAccount(opts.account_id);
+  await requireHomeBay(account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["terminate"], account_id);
+  return await withKeyUseOutcome(key_use, () => terminatePod(opts, deps));
+}
+
+async function terminatePod(
+  opts: {
+    account_id?: string;
+    pod_id?: unknown;
+    agent?: GpuAgentScope;
+    key_use?: GpuKeyUse;
+  },
+  deps: GpuPodDeps,
 ): Promise<{ state: GpuPodSummary["state"] }> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
@@ -1675,46 +1815,52 @@ export async function terminateGpuPodLocal(
     if (current.state !== "ambiguous") return { state: current.state };
   }
   // Cleanup access: works after a membership lapse.
-  const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
+  const recorded: PodRow = current;
+  return await withCleanupFor(
     row.key_owner_account_id,
-  );
-  if (!c) {
-    throw Error(
-      "Your RunPod key was removed, so CoCalc can't terminate this pod. Terminate it at RunPod.",
-    );
-  }
-  if (c.credential_id !== row.credential_id) {
-    // The connected key isn't the one that launched this pod, and may act
-    // for another RunPod account: asking it would wrongly report the pod
-    // gone. The terminate stays recorded.
-    throw Error(
-      `This pod was launched with a RunPod key that has since been replaced, so CoCalc can't reach it. Terminate it at RunPod${row.provider_pod_id ? ` (pod ${row.provider_pod_id})` : ` (named ${row.handle})`}.`,
-    );
-  }
-  try {
-    if (current.state === "ambiguous") {
-      current = await resolveAmbiguous(current, c, actor, deps);
-      // Terminated on binding, given up as never made, or still unknown
-      // (then the terminate stays recorded for when it is resolved).
-      if (!current.provider_pod_id || current.state === "terminated") {
-        return { state: current.state };
+    deps,
+    opts.key_use,
+    async (c) => {
+      let current = recorded;
+      if (!c) {
+        throw Error(
+          "Your RunPod key was removed, so CoCalc can't terminate this pod. Terminate it at RunPod.",
+        );
       }
-    }
-    const terminating = await recordTerminating(current, actor);
-    if (!terminating) {
-      throw Error(
-        "CoCalc couldn't record the termination yet, so RunPod wasn't asked. It stays pending and will be retried; try again shortly.",
-      );
-    }
-    return { state: (await terminateBound(terminating, c, actor)).state };
-  } catch (err) {
-    if (err instanceof RunpodApiError) {
-      throw Error(
-        "RunPod didn't confirm the termination. It will be retried; check gpu pods, or terminate it at RunPod.",
-      );
-    }
-    throw err;
-  }
+      if (c.credential_id !== row.credential_id) {
+        // The connected key isn't the one that launched this pod, and may act
+        // for another RunPod account: asking it would wrongly report the pod
+        // gone. The terminate stays recorded.
+        throw Error(
+          `This pod was launched with a RunPod key that has since been replaced, so CoCalc can't reach it. Terminate it at RunPod${row.provider_pod_id ? ` (pod ${row.provider_pod_id})` : ` (named ${row.handle})`}.`,
+        );
+      }
+      try {
+        if (current.state === "ambiguous") {
+          current = await resolveAmbiguous(current, c, actor, deps);
+          // Terminated on binding, given up as never made, or still unknown
+          // (then the terminate stays recorded for when it is resolved).
+          if (!current.provider_pod_id || current.state === "terminated") {
+            return { state: current.state };
+          }
+        }
+        const terminating = await recordTerminating(current, actor);
+        if (!terminating) {
+          throw Error(
+            "CoCalc couldn't record the termination yet, so RunPod wasn't asked. It stays pending and will be retried; try again shortly.",
+          );
+        }
+        return { state: (await terminateBound(terminating, c, actor)).state };
+      } catch (err) {
+        if (err instanceof RunpodApiError) {
+          throw Error(
+            "RunPod didn't confirm the termination. It will be retried; check gpu pods, or terminate it at RunPod.",
+          );
+        }
+        throw err;
+      }
+    },
+  );
 }
 
 // ---- reads ----
@@ -1991,12 +2137,20 @@ export async function reconcileBindPod(
 }
 
 export async function listManagedGpuPodsLocal(
-  opts: { account_id?: string; include_ended?: boolean; agent?: GpuAgentScope },
+  opts: {
+    account_id?: string;
+    include_ended?: boolean;
+    agent?: GpuAgentScope;
+    // the listing's pod_read use (5d-2c): its ambiguous records are
+    // resolved with the key
+    key_use: GpuKeyUse | undefined;
+  },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary[]> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
-  await resolveAmbiguousForAccount(account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["pod_read"], account_id);
+  await resolveAmbiguousForAccount(account_id, deps, key_use);
   const scope = agentScopeSql(opts.agent, 3);
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE ${MINE}${scope.sql}
@@ -2091,12 +2245,15 @@ export async function gpuPodHomeClient(
   });
 }
 
+// `key_use` (5d-2c) is made by the hub API handler when this is the home
+// bay; a forwarded call gets the home bay's own.
 export async function launchGpuPod(
   opts: {
     account_id?: string;
     project_id?: unknown;
     spec?: unknown;
     agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
+    key_use?: GpuKeyUse;
   },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary> {
@@ -2110,11 +2267,19 @@ export async function launchGpuPod(
       ...(opts.agent ? { agent: opts.agent } : {}),
     });
   }
-  return await launchGpuPodLocal({ ...opts, account_id }, deps);
+  return await launchGpuPodLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }
 
 export async function terminateGpuPod(
-  opts: { account_id?: string; pod_id?: unknown; agent?: GpuAgentScope },
+  opts: {
+    account_id?: string;
+    pod_id?: unknown;
+    agent?: GpuAgentScope;
+    key_use?: GpuKeyUse;
+  },
   deps: GpuPodDeps = {},
 ): Promise<{ state: GpuPodSummary["state"] }> {
   const account_id = requireAccount(opts.account_id);
@@ -2125,7 +2290,10 @@ export async function terminateGpuPod(
       pod_id: opts.pod_id,
       ...(opts.agent ? { agent: opts.agent } : {}),
     });
-  return await terminateGpuPodLocal({ ...opts, account_id }, deps);
+  return await terminateGpuPodLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }
 
 // ---- removing a key (5c) ----
@@ -2317,8 +2485,28 @@ export interface GpuKillSwitchResult {
 export const KILL_SWITCH_RESOLVE_MS = 60_000;
 
 export async function killSwitchLocal(
-  opts: { account_id?: string; project_id?: unknown; pause?: unknown },
+  opts: {
+    account_id?: string;
+    project_id?: unknown;
+    pause?: unknown;
+    key_use: GpuKeyUse | undefined;
+  },
   deps: GpuPodDeps = {},
+): Promise<GpuKillSwitchResult> {
+  const account_id = requireAccount(opts.account_id);
+  await requireHomeBay(account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["terminate"], account_id);
+  return await withKeyUseOutcome(key_use, () => killSwitchPods(opts, deps));
+}
+
+async function killSwitchPods(
+  opts: {
+    account_id?: string;
+    project_id?: unknown;
+    pause?: unknown;
+    key_use?: GpuKeyUse;
+  },
+  deps: GpuPodDeps,
 ): Promise<GpuKillSwitchResult> {
   const started = Date.now();
   const account_id = requireAccount(opts.account_id);
@@ -2423,6 +2611,7 @@ export async function killSwitchLocal(
   const deadline =
     started + (deps.killSwitchResolveMs ?? KILL_SWITCH_RESOLVE_MS);
   await resolvePendingForAccount(account_id, deps, {
+    key_use: opts.key_use,
     guard: async () => {
       if (Date.now() >= deadline) throw Error("kill switch resolve deadline");
     },
@@ -2440,7 +2629,12 @@ export async function killSwitchLocal(
 }
 
 export async function killSwitch(
-  opts: { account_id?: string; project_id?: unknown; pause?: unknown },
+  opts: {
+    account_id?: string;
+    project_id?: unknown;
+    pause?: unknown;
+    key_use?: GpuKeyUse;
+  },
   deps: GpuPodDeps = {},
 ): Promise<GpuKillSwitchResult> {
   const account_id = requireAccount(opts.account_id);
@@ -2452,7 +2646,10 @@ export async function killSwitch(
       pause: opts.pause,
     });
   }
-  return await killSwitchLocal({ ...opts, account_id }, deps);
+  return await killSwitchLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }
 
 export async function whoGpuPod(

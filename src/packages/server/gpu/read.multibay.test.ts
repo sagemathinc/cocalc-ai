@@ -16,10 +16,43 @@ const edgeGetCleanup = jest.fn(async () => {
   throw Error("the edge bay must never read the key");
 });
 jest.mock("@cocalc/server/gpu/provider-keys", () => ({
-  getRunpodClientForAccount: (...args) => edgeGetClient(...args),
-  getRunpodCleanupForAccount: (...args) => edgeGetCleanup(...args),
+  withRunpodLaunchAccess: async (a, _u, _d, fn) =>
+    await fn(await edgeGetClient(a)),
+  withRunpodCleanup: async (a, _u, _d, fn) => await fn(await edgeGetCleanup(a)),
   isGpuProviderKeysEntitled: async () => true,
 }));
+// an authorization record is made only on the home bay (5d-2c)
+// (test capabilities: they pass a method's entry check and never decrypt)
+const admitUserKeyUse = jest.fn(async ({ purpose }) =>
+  jest.requireActual("@cocalc/server/gpu/key-use").issueTestKeyUse(purpose),
+);
+const admitAgentKeyUse = jest.fn(async ({ purpose }) =>
+  jest.requireActual("@cocalc/server/gpu/key-use").issueTestKeyUse(purpose),
+);
+jest.mock("@cocalc/server/gpu/key-use", () => ({
+  ...jest.requireActual("@cocalc/server/gpu/key-use"),
+  admitUserKeyUse: (...args) => admitUserKeyUse(...args),
+  admitAgentKeyUse: (...args) => admitAgentKeyUse(...args),
+}));
+// an agent's verified token resolves to its principal (agent-identity has
+// its own tests)
+const AGENT = {
+  account_id: "00000000-1000-4000-8000-000000000001",
+  project_id: "00000000-1000-4000-8000-0000000000aa",
+  agent_id: "agent:a1",
+  run_id: "run-1",
+  expires_at: new Date(Date.now() + 3_600_000),
+};
+jest.mock("@cocalc/server/gpu/agent-identity", () => ({
+  resolveGpuAgentPrincipal: async () => AGENT,
+}));
+// what the hub's auth policy attaches for an agent (never a caller)
+const AGENT_AUTH = {
+  account_id: AGENT.account_id,
+  project_id: AGENT.project_id,
+  auth_token_fingerprint: "a".repeat(64),
+  auth_exp_s: 2_000_000_000,
+};
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
@@ -60,6 +93,7 @@ import {
   getGpuCatalogLocal,
   getGpuPodsLocal,
 } from "./read";
+import { testKeyUse } from "./key-use-testing";
 
 const ACCOUNT = "00000000-1000-4000-8000-000000000001";
 const KEY = "rpa_SYNTHETICKEY0123456789abcdefghijklmnopqrstuv";
@@ -109,15 +143,24 @@ function homeBay() {
   homeImpl = {
     gpuCatalog: async (opts) => {
       received.push(opts);
-      return await getGpuCatalogLocal(opts, deps);
+      return await getGpuCatalogLocal(
+        { ...opts, key_use: testKeyUse("catalog") },
+        deps,
+      );
     },
     gpuAvailability: async (opts) => {
       received.push(opts);
-      return await getGpuAvailabilityLocal(opts, deps);
+      return await getGpuAvailabilityLocal(
+        { ...opts, key_use: testKeyUse("catalog") },
+        deps,
+      );
     },
     gpuPods: async (opts) => {
       received.push(opts);
-      return await getGpuPodsLocal(opts, deps);
+      return await getGpuPodsLocal(
+        { ...opts, key_use: testKeyUse("pod_read") },
+        deps,
+      );
     },
   };
   return { received };
@@ -158,6 +201,7 @@ describe("gpu.* for an account homed on another bay", () => {
     expect(fastRpcRequest).not.toHaveBeenCalled();
     expect(GPU_HOME_BAY_TIMEOUT_MS).toBeGreaterThanOrEqual(120_000);
     expect(home.received).toEqual([{ account_id: ACCOUNT, scope: "account" }]);
+    expect(admitUserKeyUse).not.toHaveBeenCalled();
     expect(edgeGetClient).not.toHaveBeenCalled();
     expect(edgeGetCleanup).not.toHaveBeenCalled();
     const text = wireText();
@@ -193,12 +237,126 @@ describe("gpu.* for an account homed on another bay", () => {
     expect(edgeGetCleanup).not.toHaveBeenCalled();
   });
 
+  it("forwards an agent's catalog and stock reads with its scope, for the home bay's record", async () => {
+    const home = homeBay();
+    await hubGpu.catalog({
+      account_id: ACCOUNT,
+      provider: "runpod",
+      gpu_agent_auth: AGENT_AUTH,
+    } as any);
+    await hubGpu.availability({
+      account_id: ACCOUNT,
+      cloud: "SECURE",
+      gpu_agent_auth: AGENT_AUTH,
+    } as any);
+    const scope = {
+      project_id: AGENT.project_id,
+      agent_id: AGENT.agent_id,
+      run_id: AGENT.run_id,
+    };
+    // the verified scope crosses; the token itself never does
+    expect(home.received).toEqual([
+      { account_id: ACCOUNT, provider: "runpod", agent: scope },
+      { account_id: ACCOUNT, cloud: "SECURE", agent: scope },
+    ]);
+    expect(wireText()).not.toContain("a".repeat(64));
+    // no record on this (not the home) bay
+    expect(admitAgentKeyUse).not.toHaveBeenCalled();
+    expect(admitUserKeyUse).not.toHaveBeenCalled();
+  });
+
+  it("discards an agent scope a person's call supplies, forwarded or not", async () => {
+    const forged = {
+      project_id: AGENT.project_id,
+      agent_id: "agent:forged",
+      run_id: "forged-run",
+    };
+    const home = homeBay();
+    await hubGpu.catalog({ account_id: ACCOUNT, agent: forged } as any);
+    await hubGpu.availability({ account_id: ACCOUNT, agent: forged } as any);
+    await hubGpu.pods({
+      account_id: ACCOUNT,
+      scope: "account",
+      agent: forged,
+    } as any);
+    // nothing about an agent crosses to the home bay (an account-wide
+    // listing would have been refused for an agent)
+    for (const r of home.received) expect(r).not.toHaveProperty("agent");
+    expect(wireText()).not.toContain("agent:forged");
+    // homed here: the owner's record, never an agent's
+    resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-0" });
+    try {
+      for (const call of [
+        () => hubGpu.catalog({ account_id: ACCOUNT, agent: forged } as any),
+        () =>
+          hubGpu.availability({ account_id: ACCOUNT, agent: forged } as any),
+        () =>
+          hubGpu.pods({
+            account_id: ACCOUNT,
+            scope: "account",
+            agent: forged,
+          } as any),
+      ]) {
+        await call().catch(() => undefined);
+      }
+      expect(admitAgentKeyUse).not.toHaveBeenCalled();
+      expect(admitUserKeyUse.mock.calls.map((c: any) => c[0])).toEqual([
+        { account_id: ACCOUNT, purpose: "catalog" },
+        { account_id: ACCOUNT, purpose: "catalog" },
+        { account_id: ACCOUNT, purpose: "pod_read" },
+      ]);
+    } finally {
+      resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-1" });
+    }
+  });
+
+  it("records an agent's catalog read here as the agent's, for an account homed here", async () => {
+    resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-0" });
+    try {
+      await hubGpu
+        .catalog({
+          account_id: ACCOUNT,
+          provider: "runpod",
+          gpu_agent_auth: AGENT_AUTH,
+        } as any)
+        .catch(() => undefined);
+      expect(admitAgentKeyUse).toHaveBeenCalledWith({
+        principal: AGENT,
+        purpose: "catalog",
+      });
+      expect(admitUserKeyUse).not.toHaveBeenCalled();
+      // a caller-supplied project is no agent: the owner's record
+      await hubGpu
+        .catalog({
+          account_id: ACCOUNT,
+          provider: "runpod",
+          project_id: AGENT.project_id,
+        } as any)
+        .catch(() => undefined);
+      expect(admitUserKeyUse).toHaveBeenCalledWith({
+        account_id: ACCOUNT,
+        purpose: "catalog",
+      });
+      expect(admitAgentKeyUse).toHaveBeenCalledTimes(1);
+    } finally {
+      resolveAccountHomeBay.mockResolvedValue({ home_bay_id: "bay-1" });
+    }
+  });
+
   it("runs locally, without crossing, for an account homed here", async () => {
-    resolveAccountHomeBay.mockResolvedValueOnce({ home_bay_id: "bay-0" });
+    // (asked twice: for the record, then for the routing)
+    resolveAccountHomeBay
+      .mockResolvedValueOnce({ home_bay_id: "bay-0" })
+      .mockResolvedValueOnce({ home_bay_id: "bay-0" });
     // The edge mock refuses: this bay was asked for the key itself.
     await expect(
       hubGpu.pods({ account_id: ACCOUNT, scope: "account" }),
     ).rejects.toThrow("Your RunPod API key could not be loaded.");
+    // here, the hub made the read's record
+    expect(admitUserKeyUse).toHaveBeenCalledWith({
+      account_id: ACCOUNT,
+      purpose: "pod_read",
+    });
     expect(edgeGetCleanup).toHaveBeenCalledWith(ACCOUNT);
     expect(wire).toHaveLength(0);
   });

@@ -31,10 +31,14 @@ import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import type { RunpodBillingRecord } from "@cocalc/cloud/runpod/views";
 import { transition, type Actor, type PodRow } from "@cocalc/server/gpu/pods";
 import {
-  getRunpodCleanupForAccount,
+  withRunpodCleanup,
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
 import { raiseAlert } from "@cocalc/server/gpu/alerts";
+import {
+  workerKeyUse,
+  type GpuKeyCapability,
+} from "@cocalc/server/gpu/key-use";
 import {
   adminRecipients,
   emailAdminAboutAlert,
@@ -339,7 +343,14 @@ export async function reconcileKeyBilling(
     credential_id,
     key_owner_account_id,
     deadline,
-  }: { credential_id: string; key_owner_account_id: string; deadline: number },
+    key_use,
+  }: {
+    credential_id: string;
+    key_owner_account_id: string;
+    deadline: number;
+    // the billing worker's run (5d-2c)
+    key_use?: GpuKeyCapability;
+  },
   deps: BillingDeps = {},
 ): Promise<BillingOutcome> {
   const clock = deps.now ?? Date.now;
@@ -360,114 +371,131 @@ export async function reconcileKeyBilling(
     BILLING_PODS_PER_PASS,
   );
   if (pods.length === 0) return out;
-  let c: BillingCapability | undefined;
-  try {
-    c = await (
-      deps.getBilling ??
-      ((a: string) =>
-        getRunpodCleanupForAccount(a, { runpodTimeoutMs: BILLING_CALL_MS }))
-    )(key_owner_account_id);
-  } catch {
-    c = undefined;
-  }
-  // a key CoCalc no longer holds (or another key now) can't be asked
-  if (c && c.credential_id !== credential_id) c = undefined;
-  // every RunPod call ends with the pass's time
-  const within = <T>(call: Promise<T>): Promise<T> => {
-    const left = deadline - clock();
-    call.catch(() => {});
-    if (left <= 0) return Promise.reject(new PassCut("billing pass deadline"));
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const cut = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new PassCut("billing pass deadline")),
-        left,
-      );
-      timer.unref?.();
-    });
-    return Promise.race([call, cut]).finally(() => clearTimeout(timer));
-  };
-  try {
-    for (const due of pods) {
-      await bounded();
-      const now = new Date(clock());
-      const pod = await claimPod(due, now);
-      if (!pod) continue;
-      out.claimed += 1;
-      const ended = new Date(pod.terminated_at!);
-      const tooLate =
-        now.getTime() >= ended.getTime() + BILLING_MISSING_AFTER_MS;
-      let proof: BillingProof = { kind: "incomplete", missing_hours: -1 };
-      if (c) {
-        const from = new Date(pod.running_since ?? pod.created);
-        const records = await within(
-          c.listPodBilling({
-            podId: pod.provider_pod_id!,
-            bucketSize: "hour",
-            startTime: new Date(floorHour(from.getTime())).toISOString(),
-            endTime: new Date(
-              Math.max(
-                ceilHour(ended.getTime()),
-                floorHour(from.getTime()) + HOUR,
-              ),
-            ).toISOString(),
-          }),
-        ).catch((err) => {
-          if (err instanceof PassCut) throw err;
-          log.debug("reading a pod's billing failed", `${err}`);
-          return undefined;
-        });
-        // an answer that came back after the pass's time is not acted on
+  // One decrypt for the pass (5d-2c). A key that can't be read now still
+  // lets the pass mark what has waited too long.
+  const run = async (
+    key: BillingCapability | undefined,
+  ): Promise<BillingOutcome> => {
+    // a key CoCalc no longer holds (or another key now) can't be asked
+    const c = key && key.credential_id === credential_id ? key : undefined;
+    // every RunPod call ends with the pass's time
+    const within = <T>(call: Promise<T>): Promise<T> => {
+      const left = deadline - clock();
+      call.catch(() => {});
+      if (left <= 0)
+        return Promise.reject(new PassCut("billing pass deadline"));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const cut = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new PassCut("billing pass deadline")),
+          left,
+        );
+        timer.unref?.();
+      });
+      return Promise.race([call, cut]).finally(() => clearTimeout(timer));
+    };
+    try {
+      for (const due of pods) {
         await bounded();
-        if (records) {
-          proof = proveBilling(records, {
-            podId: pod.provider_pod_id!,
-            from,
-            to: ended,
+        const now = new Date(clock());
+        const pod = await claimPod(due, now);
+        if (!pod) continue;
+        out.claimed += 1;
+        const ended = new Date(pod.terminated_at!);
+        const tooLate =
+          now.getTime() >= ended.getTime() + BILLING_MISSING_AFTER_MS;
+        let proof: BillingProof = { kind: "incomplete", missing_hours: -1 };
+        if (c) {
+          const from = new Date(pod.running_since ?? pod.created);
+          const records = await within(
+            c.listPodBilling({
+              podId: pod.provider_pod_id!,
+              bucketSize: "hour",
+              startTime: new Date(floorHour(from.getTime())).toISOString(),
+              endTime: new Date(
+                Math.max(
+                  ceilHour(ended.getTime()),
+                  floorHour(from.getTime()) + HOUR,
+                ),
+              ).toISOString(),
+            }),
+          ).catch((err) => {
+            if (err instanceof PassCut) throw err;
+            log.debug("reading a pod's billing failed", `${err}`);
+            return undefined;
           });
+          // an answer that came back after the pass's time is not acted on
+          await bounded();
+          if (records) {
+            proof = proveBilling(records, {
+              podId: pod.provider_pod_id!,
+              from,
+              to: ended,
+            });
+          }
         }
-      }
-      if (proof.kind === "complete") {
-        try {
-          if ((await applyBilling(pod, proof.billed_usd)).applied)
-            out.billed += 1;
-        } catch (err) {
-          if (!(err instanceof BillingInconsistent)) throw err;
-          // rolled back; the alert is written on its own, after
+        if (proof.kind === "complete") {
+          try {
+            if ((await applyBilling(pod, proof.billed_usd)).applied)
+              out.billed += 1;
+          } catch (err) {
+            if (!(err instanceof BillingInconsistent)) throw err;
+            // rolled back; the alert is written on its own, after
+            out.invalid += 1;
+            await raiseAdminAlert({
+              kind: "billing_inconsistent",
+              severity: "critical",
+              dedupe_key: pod.id,
+              key_owner_account_id: pod.key_owner_account_id,
+              credential_id: pod.credential_id,
+              details: { pod_id: pod.id, why: err.message },
+            });
+          }
+          continue;
+        }
+        if (proof.kind === "invalid") {
           out.invalid += 1;
           await raiseAdminAlert({
             kind: "billing_inconsistent",
-            severity: "critical",
+            severity: "warning",
             dedupe_key: pod.id,
             key_owner_account_id: pod.key_owner_account_id,
             credential_id: pod.credential_id,
-            details: { pod_id: pod.id, why: err.message },
+            details: { pod_id: pod.id, why: proof.why },
           });
         }
-        continue;
+        if (tooLate) {
+          if (await markMissing(pod)) out.missing += 1;
+        } else if (proof.kind === "incomplete") {
+          out.not_yet += 1;
+        }
       }
-      if (proof.kind === "invalid") {
-        out.invalid += 1;
-        await raiseAdminAlert({
-          kind: "billing_inconsistent",
-          severity: "warning",
-          dedupe_key: pod.id,
-          key_owner_account_id: pod.key_owner_account_id,
-          credential_id: pod.credential_id,
-          details: { pod_id: pod.id, why: proof.why },
-        });
-      }
-      if (tooLate) {
-        if (await markMissing(pod)) out.missing += 1;
-      } else if (proof.kind === "incomplete") {
-        out.not_yet += 1;
-      }
+    } catch (err) {
+      if (err instanceof PassCut) return { ...out, cut: true };
+      throw err;
     }
-  } catch (err) {
-    if (err instanceof PassCut) return { ...out, cut: true };
-    throw err;
+    return out;
+  };
+  if (deps.getBilling) {
+    return await run(
+      await deps.getBilling(key_owner_account_id).catch(() => undefined),
+    );
   }
-  return out;
+  let entered = false;
+  try {
+    return await withRunpodCleanup(
+      key_owner_account_id,
+      key_use,
+      { runpodTimeoutMs: BILLING_CALL_MS },
+      async (key) => {
+        entered = true;
+        return await run(key);
+      },
+    );
+  } catch (err) {
+    if (entered) throw err;
+    return await run(undefined);
+  }
 }
 
 // Never proven within 48 h: the estimate stays as the pod's spend, and the
@@ -577,7 +605,11 @@ export async function runBillingSweep(
         keys += 1;
         try {
           const r = await reconcileKeyBilling(
-            { ...k, deadline: clock() + keyPassMs },
+            {
+              ...k,
+              deadline: clock() + keyPassMs,
+              key_use: workerKeyUse("billing", token, "billing"),
+            },
             { ...deps, guard: renew },
           );
           billed += r.billed;

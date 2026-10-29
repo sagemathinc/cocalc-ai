@@ -43,6 +43,14 @@ import {
 } from "@cocalc/server/gpu/agent-api";
 import { resolveGpuAgentPrincipal } from "@cocalc/server/gpu/agent-identity";
 import type { GpuAgentPrincipal } from "@cocalc/server/gpu/agent-grants";
+import {
+  admitAgentKeyUse,
+  admitUserKeyUse,
+  isGpuKeyHomeBay,
+  type GpuKeyUse,
+  type GpuKeyUsePurpose,
+} from "@cocalc/server/gpu/key-use";
+import { isValidUUID } from "@cocalc/util/misc";
 
 // The agent principal, only when the account-or-gpu-agent policy attached
 // the verified token (gpu_agent_auth); resolved here, on the bay that
@@ -60,6 +68,26 @@ async function agentPrincipal(
   });
 }
 
+// The authorization record of a method that may decrypt the key (5d-2c),
+// made here, after the hub verified the caller, from that verified identity
+// only, with the method's fixed purpose; only when this bay is the key
+// owner's home (elsewhere the call is forwarded, and the home bay's
+// inter-bay service makes its own).
+async function keyUse(
+  account_id: unknown,
+  purpose: GpuKeyUsePurpose,
+  principal?: GpuAgentPrincipal,
+): Promise<GpuKeyUse | undefined> {
+  if (typeof account_id !== "string" || !isValidUUID(account_id)) {
+    return undefined;
+  }
+  if (principal && principal.account_id !== account_id) return undefined;
+  if (!(await isGpuKeyHomeBay(account_id))) return undefined;
+  return principal
+    ? await admitAgentKeyUse({ principal, purpose })
+    : await admitUserKeyUse({ account_id, purpose });
+}
+
 function scopeOf(p: GpuAgentPrincipal | undefined) {
   return p
     ? {
@@ -73,16 +101,39 @@ function scopeOf(p: GpuAgentPrincipal | undefined) {
     : {};
 }
 
-export const catalog: GpuApi["catalog"] = async (opts = {}) =>
-  await getGpuCatalog(opts);
+// A catalog read decrypts the account's key: an agent's is recorded as the
+// agent's (5d-2c), and forwarded with its scope for the home bay's record.
+export const catalog: GpuApi["catalog"] = async (opts = {}) => {
+  const principal = await agentPrincipal(opts);
+  // (only the verified principal makes an agent scope)
+  const { gpu_agent_auth: _auth, agent: _agent, ...rest } = opts as any;
+  return await getGpuCatalog({
+    ...rest,
+    ...scopeOf(principal),
+    key_use: await keyUse(rest.account_id, "catalog", principal),
+  });
+};
 
-export const availability: GpuApi["availability"] = async (opts = {}) =>
-  await getGpuAvailability(opts);
+export const availability: GpuApi["availability"] = async (opts = {}) => {
+  const principal = await agentPrincipal(opts);
+  // (only the verified principal makes an agent scope)
+  const { gpu_agent_auth: _auth, agent: _agent, ...rest } = opts as any;
+  return await getGpuAvailability({
+    ...rest,
+    ...scopeOf(principal),
+    key_use: await keyUse(rest.account_id, "catalog", principal),
+  });
+};
 
 export const pods: GpuApi["pods"] = async (opts = {}) => {
   const principal = await agentPrincipal(opts);
-  const { gpu_agent_auth: _auth, ...rest } = opts as any;
-  return await getGpuPods({ ...rest, ...scopeOf(principal) });
+  // (only the verified principal makes an agent scope)
+  const { gpu_agent_auth: _auth, agent: _agent, ...rest } = opts as any;
+  return await getGpuPods({
+    ...rest,
+    ...scopeOf(principal),
+    key_use: await keyUse(rest.account_id, "pod_read", principal),
+  });
 };
 
 export async function launch(
@@ -101,6 +152,7 @@ export async function launch(
           },
         }
       : {}),
+    key_use: await keyUse(opts?.account_id, "launch", principal),
   });
 }
 
@@ -112,6 +164,7 @@ export async function terminate(
     account_id: opts?.account_id,
     pod_id: opts?.pod_id,
     ...scopeOf(principal),
+    key_use: await keyUse(opts?.account_id, "terminate", principal),
   });
 }
 
@@ -150,6 +203,7 @@ export async function killSwitch(
     account_id: opts?.account_id,
     project_id: opts?.project_id,
     pause: opts?.pause,
+    key_use: await keyUse(opts?.account_id, "terminate"),
   });
 }
 
@@ -188,6 +242,7 @@ export async function reportCompromised(
     browser_id: opts?.browser_id,
     session_hash: opts?.session_hash,
     confirm_cocalc_only: opts?.confirm_cocalc_only,
+    key_use: await keyUse(opts?.account_id, "compromise"),
   });
 }
 
@@ -224,6 +279,7 @@ export async function sshInfo(
     account_id: opts?.account_id,
     pod_id: opts?.pod_id,
     ...scopeOf(principal),
+    key_use: await keyUse(opts?.account_id, "ssh_info", principal),
   });
 }
 

@@ -17,6 +17,9 @@ import {
   type RealPostgres,
 } from "@cocalc/server/test/real-postgres";
 import { freshInventoryForTests } from "./test-inventory";
+// loaded lazily: the database pool must not load before the test's server
+const testKeyUse = (purpose: any) =>
+  require("./key-use-testing").testKeyUse(purpose);
 
 const describeRealPostgres = postgresBinDir() ? describe : describe.skip;
 
@@ -113,6 +116,7 @@ describeRealPostgres("GPU reconcile passes that overlap", () => {
     };
     const pod = await pods.launchGpuPodLocal(
       {
+        key_use: testKeyUse("launch"),
         account_id,
         project_id: "00000000-1000-4000-8000-0000000000aa",
         spec: {

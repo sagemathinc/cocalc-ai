@@ -475,6 +475,7 @@ import {
   getGpuProviderKeyStatus as getGpuProviderKeyStatusImpl,
   setGpuProviderKey as setGpuProviderKeyImpl,
 } from "@cocalc/server/gpu/provider-keys";
+import { admitUserKeyUse, isGpuKeyHomeBay } from "@cocalc/server/gpu/key-use";
 import type { GpuProvider } from "@cocalc/util/gpu/provider-keys";
 import {
   getProjectArchiveBlockedSummary,
@@ -7458,7 +7459,17 @@ export async function setGpuProviderKey({
     session_hash,
     require_second_factor: false,
   });
-  return await setGpuProviderKeyImpl({ account_id, provider, api_key });
+  // the connect's verify (5d-2c), made after the checks above, when this
+  // bay holds the key (elsewhere the home bay makes its own)
+  const key_use = (await isGpuKeyHomeBay(account_id))
+    ? await admitUserKeyUse({ account_id, purpose: "verify" })
+    : undefined;
+  return await setGpuProviderKeyImpl({
+    account_id,
+    provider,
+    api_key,
+    key_use,
+  });
 }
 
 export async function deleteGpuProviderKey({
@@ -7483,9 +7494,15 @@ export async function deleteGpuProviderKey({
     session_hash,
     require_second_factor: false,
   });
+  // the removal's (5d-2c), made after the checks above, when this bay
+  // holds the key (elsewhere the home bay makes its own)
+  const key_use = (await isGpuKeyHomeBay(account_id))
+    ? await admitUserKeyUse({ account_id, purpose: "removal" })
+    : undefined;
   return await deleteGpuProviderKeyImpl({
     account_id,
     provider,
+    key_use,
     force: force === true,
   });
 }

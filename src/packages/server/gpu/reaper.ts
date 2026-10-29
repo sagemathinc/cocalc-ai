@@ -40,7 +40,14 @@ import {
   type Actor,
   type GpuPodDeps,
 } from "@cocalc/server/gpu/pods";
-import { getRunpodCleanupForAccount } from "@cocalc/server/gpu/provider-keys";
+import {
+  withRunpodCleanup,
+  type RunpodCleanupCapability,
+} from "@cocalc/server/gpu/provider-keys";
+import {
+  workerKeyUse,
+  type GpuKeyCapability,
+} from "@cocalc/server/gpu/key-use";
 import { continueCompromiseCleanups } from "@cocalc/server/gpu/compromise";
 
 const log = getLogger("server:gpu:reaper");
@@ -190,6 +197,36 @@ export async function finishWorkerLease(
     db.release();
   }
   if (!held) throw new LeaseLost("the reaper lease was lost");
+}
+
+// Give back a lease taken for a partial pass (the reconciler's one-key
+// wake): its run closes, and the sweep's watermark and error stay as they
+// were.
+export async function releaseWorkerLease(
+  name: WorkerName,
+  token: string,
+  finished: Date,
+): Promise<void> {
+  const db = await getPool().connect();
+  try {
+    await db.query("BEGIN");
+    const { rows } = await db.query(
+      `UPDATE gpu_worker_leases SET holder = NULL, expires_at = NULL
+        WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`,
+      [name, token, finished],
+    );
+    await db.query(
+      `UPDATE gpu_worker_runs SET finished = $2, outcome = $3
+        WHERE token = $1 AND name = $4 AND finished IS NULL`,
+      [token, finished, rows.length > 0 ? "finished" : "lost", name],
+    );
+    await db.query("COMMIT");
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
 }
 
 const LIVE =
@@ -347,6 +384,7 @@ async function checkCommunitySsh(
   now: Date,
   deps: ReaperDeps,
   renew: () => Promise<void>,
+  key_use: GpuKeyCapability,
 ): Promise<number> {
   let marked = 0;
   let after = "";
@@ -362,7 +400,7 @@ async function checkCommunitySsh(
     );
     for (const p of rows) {
       await renew();
-      marked += await checkCommunityPod(p, deps);
+      marked += await checkCommunityPod(p, deps, key_use);
     }
     if (rows.length < BATCH) return marked;
     after = `${rows[rows.length - 1].id}`;
@@ -371,12 +409,26 @@ async function checkCommunitySsh(
 }
 
 // 1 if the pod is marked for termination, else 0
-async function checkCommunityPod(p: any, deps: ReaperDeps): Promise<number> {
-  const c = await (deps.getCleanup ?? getRunpodCleanupForAccount)(
-    p.key_owner_account_id,
-  ).catch(() => undefined);
-  if (!c || c.credential_id !== p.credential_id) return 0;
-  const live = await c.getPod(p.provider_pod_id).catch(() => null);
+async function checkCommunityPod(
+  p: any,
+  deps: ReaperDeps,
+  key_use: GpuKeyCapability,
+): Promise<number> {
+  // null: no key (or another key now), or RunPod couldn't be asked
+  const look = async (c: RunpodCleanupCapability | undefined) =>
+    !c || c.credential_id !== p.credential_id
+      ? null
+      : await c
+          .getPod(p.provider_pod_id)
+          .then((live) => ({ live }))
+          .catch(() => null);
+  const got = await (
+    deps.getCleanup
+      ? deps.getCleanup(p.key_owner_account_id).then(look)
+      : withRunpodCleanup(p.key_owner_account_id, key_use, {}, look)
+  ).catch(() => null);
+  if (got === null) return 0; // next sweep
+  const { live } = got;
   if (live === null) return 0; // couldn't ask: next sweep
   if (live?.sshDirect?.host && live.sshDirect.port) {
     await recordSeenAddresses(
@@ -408,6 +460,7 @@ async function resolveOwners(
   now: Date,
   deps: ReaperDeps,
   renew: () => Promise<void>,
+  key_use: GpuKeyCapability,
 ): Promise<{ accounts: number; complete: boolean }> {
   let accounts = 0;
   let complete = true;
@@ -435,7 +488,7 @@ async function resolveOwners(
         const { full } = await resolvePendingForAccount(
           key_owner_account_id,
           deps,
-          { actor: REAPER, guard: renew },
+          { actor: REAPER, guard: renew, key_use },
         );
         await renew();
         if (!full) {
@@ -478,10 +531,17 @@ export async function runGpuReaperSweep(deps: ReaperDeps = {}): Promise<{
   heartbeat.unref?.();
   try {
     const unknown = await checkEntitlements(now, deps, renew);
+    // the run's capability for every key it reads (5d-2c)
+    const key_use = workerKeyUse("reaper", token, "reaper");
     const marked =
       (await markForTermination(now, renew, unknown)) +
-      (await checkCommunitySsh(now, deps, renew));
-    const { accounts, complete } = await resolveOwners(now, deps, renew);
+      (await checkCommunitySsh(now, deps, renew, key_use));
+    const { accounts, complete } = await resolveOwners(
+      now,
+      deps,
+      renew,
+      key_use,
+    );
     if (lost) throw new LeaseLost("the reaper lease was lost");
     await finishWorkerLease(
       "reaper",
@@ -526,10 +586,11 @@ export async function runCompromiseSweep(
   }, deps.heartbeatMs ?? 60_000);
   heartbeat.unref?.();
   try {
-    const keys = await continueCompromiseCleanups(renew, {
-      getCleanup: deps.getCleanup,
-      passMs: COMPROMISE_PASS_MS,
-    });
+    const keys = await continueCompromiseCleanups(
+      renew,
+      { getCleanup: deps.getCleanup, passMs: COMPROMISE_PASS_MS },
+      workerKeyUse("compromise", token, "cleanup"),
+    );
     await finishWorkerLease("compromise", token, clock());
     return { ran: true, keys };
   } catch (err) {

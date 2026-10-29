@@ -22,6 +22,7 @@ import {
 } from "./hostkey-clear";
 import { upsertExternalCredential } from "@cocalc/server/external-credentials/store";
 import { freshInventoryForTests } from "./test-inventory";
+import { testKeyUse } from "./key-use-testing";
 
 // The key store, without the site's secret encryption.
 jest.mock("@cocalc/database/settings/secret-settings", () => ({
@@ -126,6 +127,7 @@ async function launched() {
   };
   const pod = await launchGpuPodLocal(
     {
+      key_use: testKeyUse("launch"),
       account_id,
       project_id: PROJECT,
       spec: {
@@ -212,7 +214,10 @@ describeDb("pod host-key registration", () => {
 
     // before registration, sshInfo has no key and isn't ready
     expect(
-      await gpuSshInfoLocal({ account_id, pod_id: pod.handle }, deps),
+      await gpuSshInfoLocal(
+        { key_use: testKeyUse("ssh_info"), account_id, pod_id: pod.handle },
+        deps,
+      ),
     ).toEqual(expect.objectContaining({ ready: false, state: "running" }));
 
     const res = await registerHostKeyLocal({
@@ -236,7 +241,10 @@ describeDb("pod host-key registration", () => {
       },
     ]);
 
-    const info = await gpuSshInfoLocal({ account_id, pod_id: pod.id }, deps);
+    const info = await gpuSshInfoLocal(
+      { key_use: testKeyUse("ssh_info"), account_id, pod_id: pod.id },
+      deps,
+    );
     expect(info).toEqual(
       expect.objectContaining({
         ready: true,
@@ -256,7 +264,10 @@ describeDb("pod host-key registration", () => {
         ({ ...(await deps.getCleanup()), credential_id: randomUUID() }) as any,
     };
     expect(
-      await gpuSshInfoLocal({ account_id, pod_id: pod.id }, replaced),
+      await gpuSshInfoLocal(
+        { key_use: testKeyUse("ssh_info"), account_id, pod_id: pod.id },
+        replaced,
+      ),
     ).toEqual(expect.objectContaining({ ready: false, state: "running" }));
   });
 
@@ -403,7 +414,11 @@ describeDb("pod host-key registration", () => {
 
     expect(
       await deleteGpuProviderKeyLocal(
-        { account_id: pending.account_id, provider: "runpod" },
+        {
+          key_use: testKeyUse("removal"),
+          account_id: pending.account_id,
+          provider: "runpod",
+        },
         REMOVE_DEPS,
       ),
     ).toEqual({ revoked: true });
@@ -425,7 +440,11 @@ describeDb("pod host-key registration", () => {
     ).toBe(401);
     expect(
       await gpuSshInfoLocal(
-        { account_id: pending.account_id, pod_id: registered.pod.id },
+        {
+          key_use: testKeyUse("ssh_info"),
+          account_id: pending.account_id,
+          pod_id: registered.pod.id,
+        },
         registered.deps,
       ),
     ).toEqual(expect.objectContaining({ ready: false }));
@@ -436,7 +455,7 @@ describeDb("pod host-key registration", () => {
     // the clear fails inside the revoking transaction (a crash would too)
     await expect(
       deleteGpuProviderKeyLocal(
-        { account_id, provider: "runpod" },
+        { key_use: testKeyUse("removal"), account_id, provider: "runpod" },
         {
           ...REMOVE_DEPS,
           clearHostkeys: async (opts, client) => {
@@ -456,7 +475,7 @@ describeDb("pod host-key registration", () => {
     // so a retry finds the active key and does both
     expect(
       await deleteGpuProviderKeyLocal(
-        { account_id, provider: "runpod" },
+        { key_use: testKeyUse("removal"), account_id, provider: "runpod" },
         REMOVE_DEPS,
       ),
     ).toEqual({ revoked: true });
@@ -560,7 +579,10 @@ describeDb("pod host-key registration", () => {
         })
       ).status,
     ).toBe(200);
-    await terminateGpuPodLocal({ account_id, pod_id: pod.id }, deps);
+    await terminateGpuPodLocal(
+      { key_use: testKeyUse("terminate"), account_id, pod_id: pod.id },
+      deps,
+    );
     const r = await row(pod.id);
     expect(r.state).toBe("terminated");
     for (const k of [
@@ -586,9 +608,12 @@ describeDb("pod host-key registration", () => {
         })
       ).status,
     ).toBe(401);
-    expect(await gpuSshInfoLocal({ account_id, pod_id: pod.id }, deps)).toEqual(
-      expect.objectContaining({ ready: false, state: "terminated" }),
-    );
+    expect(
+      await gpuSshInfoLocal(
+        { key_use: testKeyUse("ssh_info"), account_id, pod_id: pod.id },
+        deps,
+      ),
+    ).toEqual(expect.objectContaining({ ready: false, state: "terminated" }));
   });
 
   it("refuses to register once a terminate is requested", async () => {
@@ -618,7 +643,10 @@ describeDb("pod host-key registration", () => {
           pod_id: pod.provider_pod_id!,
           host_public_key: HOST_KEY,
         }),
-        terminateGpuPodLocal({ account_id, pod_id: pod.id }, deps),
+        terminateGpuPodLocal(
+          { key_use: testKeyUse("terminate"), account_id, pod_id: pod.id },
+          deps,
+        ),
       ]);
       expect([200, 401, 410]).toContain(reg.status);
       const r = await row(pod.id);
@@ -631,7 +659,14 @@ describeDb("pod host-key registration", () => {
   it("only shows a pod's SSH info to its own accounts", async () => {
     const { pod, deps } = await launched();
     await expect(
-      gpuSshInfoLocal({ account_id: randomUUID(), pod_id: pod.id }, deps),
+      gpuSshInfoLocal(
+        {
+          key_use: testKeyUse("ssh_info"),
+          account_id: randomUUID(),
+          pod_id: pod.id,
+        },
+        deps,
+      ),
     ).rejects.toThrow("No such GPU pod.");
   });
 });

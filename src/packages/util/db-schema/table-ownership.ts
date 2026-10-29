@@ -667,6 +667,24 @@ export const TABLE_OWNERSHIP = {
       "No rebuild: runs restart with the next sweep; an admin alert is raised again by the condition that raised it.",
   }),
 
+  ...entries(
+    [
+      "gpu_key_uses",
+      "gpu_key_use_outcomes",
+      "gpu_key_decrypts",
+      "security_event_outbox",
+    ],
+    {
+      ownership: "audit-local",
+      authority: "local",
+      portability: "rebuildable",
+      notes:
+        "Per-bay audit of GPU provider key decrypts (5d-2c): the authorization record each decrypt presents, a write's outcome, the decrypt itself, and the outbox the future off-host security log consumes. Never key material.",
+      rebuild:
+        "No rebuild: the audit trail covers the decrypts made on this bay; a restore loses the rows written since the backup (the off-host log, once it exists, keeps its own copy).",
+    },
+  ),
+
   ...entries(["gpu_pods", "gpu_pod_events", "gpu_pod_state_intervals"], {
     ownership: "account-home",
     authority: "key_owner_account_id",

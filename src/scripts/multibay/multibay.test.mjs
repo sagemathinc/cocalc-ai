@@ -4683,18 +4683,26 @@ describe("GPU reads run whole on the key owner's home bay", () => {
       cluster,
       bay,
       `const read = server("gpu/read.js");
-       const { getExternalCredential } = server("external-credentials/store.js");
-       const { getRunpodCleanupForAccount } = server("gpu/provider-keys.js");
+       const getPool = require("@cocalc/database/pool").default;
+       const { withRunpodCleanup } = server("gpu/provider-keys.js");
+       const { admitUserKeyUse } = server("gpu/key-use.js");
        const account_id = ${JSON.stringify(account.account_id)};
        const out = {};
        if (${JSON.stringify(method ?? "")}) {
          try { await read[${JSON.stringify(method ?? "")}]({ account_id, scope: "account" }); out.read = "ok"; }
          catch (e) { out.read = String(e?.message ?? e); }
        }
-       const local = await getExternalCredential({ selector: ${JSON.stringify(selector(account.account_id))} });
-       out.local_key = !!local?.payload;
-       try { out.custody = (await getRunpodCleanupForAccount(account_id)) ? "key" : "no key"; }
-       catch (e) { out.custody = String(e?.message ?? e); }
+       // (read directly: the store's readers refuse GPU keys, 5d-2c)
+       const { rows } = await getPool().query(
+         "SELECT 1 FROM external_credentials WHERE owner_account_id = $1 AND kind = 'gpu-provider-api-key' AND revoked IS NULL AND encrypted_payload IS NOT NULL",
+         [account_id]);
+       out.local_key = rows.length > 0;
+       // the key helper, with a read's authorization as a boundary makes it
+       try {
+         out.custody = await withRunpodCleanup(account_id,
+           await admitUserKeyUse({ account_id, purpose: "pod_read" }), {},
+           async (c) => (c ? "key" : "no key"));
+       } catch (e) { out.custody = String(e?.message ?? e); }
        return out;`,
     );
   }
@@ -4730,6 +4738,11 @@ describe("GPU reads run whole on the key owner's home bay", () => {
       cluster,
       ATTACHED,
       `const { getGpuPodsLocal } = server("gpu/read.js");
+       const { admitUserKeyUse } = server("gpu/key-use.js");
+       const getPool = require("@cocalc/database/pool").default;
+       const account_id = ${JSON.stringify(bob.account_id)};
+       // what the inter-bay service makes for a forwarded read
+       const key_use = await admitUserKeyUse({ account_id, purpose: "pod_read" });
        const real = globalThis.fetch;
        const calls = [];
        globalThis.fetch = async (url, init) => {
@@ -4740,8 +4753,12 @@ describe("GPU reads run whole on the key owner's home bay", () => {
          }), { status: 200 });
        };
        try {
-         const result = await getGpuPodsLocal({ account_id: ${JSON.stringify(bob.account_id)}, scope: "account" });
-         return { calls, result };
+         const result = await getGpuPodsLocal({ account_id, scope: "account", key_use });
+         // the decrypt is audited where it happened (5d-2c)
+         const audited = (await getPool().query(
+           "SELECT purpose, outcome, bay_id FROM gpu_key_decrypts WHERE key_use_id = $1",
+           [key_use.id])).rows;
+         return { calls, result, audited };
        } finally {
          globalThis.fetch = real;
        }`,
@@ -4755,6 +4772,9 @@ describe("GPU reads run whole on the key owner's home bay", () => {
     assert.equal(r.result.scope, "account");
     assert.deepEqual(r.result.pods, [
       { id: "pod_mb0001", name: "cc-multibay", status: "RUNNING" },
+    ]);
+    assert.deepEqual(r.audited, [
+      { purpose: "pod_read", outcome: "ok", bay_id: ATTACHED },
     ]);
     assert.ok(!JSON.stringify(r).includes(FAKE_KEY));
   });
@@ -4774,6 +4794,20 @@ describe("GPU reads run whole on the key owner's home bay", () => {
     assert.match(r.read, /No RunPod API key is connected/);
     assert.equal(r.local_key, false);
     assert.match(r.custody, /only on the key owner's home bay/);
+    // the forwarded read's authorization was made on the home bay (the
+    // seed) by its inter-bay service, never on the bay it came from
+    const records = async (bay) =>
+      await runInBay(
+        cluster,
+        bay,
+        `const getPool = require("@cocalc/database/pool").default;
+         return (await getPool().query(
+           "SELECT purpose, bay_id FROM gpu_key_uses WHERE key_owner_account_id = $1 AND purpose = 'pod_read' AND agent_id IS NULL ORDER BY created",
+           [${JSON.stringify(alice.account_id)}])).rows;`,
+      );
+    assert.deepEqual(await records(SEED), [
+      { purpose: "pod_read", bay_id: SEED },
+    ]);
   });
 });
 
@@ -4832,11 +4866,11 @@ describe("connecting and removing a GPU key runs whole on the owner's home bay",
     const home = await runInBay(
       cluster,
       ATTACHED,
-      `const { getExternalCredential } = server("external-credentials/store.js");
-       const row = await getExternalCredential({
-         selector: ${JSON.stringify({ ...selector, owner_account_id: bob.account_id })},
-       });
-       return { active: !!row && !row.revoked };`,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT 1 FROM external_credentials WHERE owner_account_id = $1 AND kind = $2 AND revoked IS NULL",
+         [${JSON.stringify(bob.account_id)}, ${JSON.stringify(selector.kind)}]);
+       return { active: rows.length > 0 };`,
     );
     assert.equal(home.active, false);
     const status = await onSeed(
