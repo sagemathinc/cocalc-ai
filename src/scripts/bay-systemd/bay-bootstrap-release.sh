@@ -1981,6 +1981,9 @@ EOF
   run systemctl enable cocalc-bay.target
   run systemctl enable cocalc-bay-frontdoor.service
   run systemctl enable cocalc-bay-cloudflared.service
+  # A second replica of the tunnel, so a restart of either never takes public
+  # ingress down (bin/bay-cloudflared-watchdog).
+  run systemctl enable cocalc-bay-cloudflared-2.service
   run systemctl enable cocalc-bay-hub-watchdog.timer
   run systemctl enable cocalc-bay-cloudflared-watchdog.timer
   if [[ "$ENABLE_WORKERS" -eq 1 ]]; then
@@ -2000,6 +2003,7 @@ EOF
     run systemctl start cocalc-bay.target
     run systemctl start cocalc-bay-frontdoor.service
     run systemctl start cocalc-bay-cloudflared.service
+    run systemctl start cocalc-bay-cloudflared-2.service
     run systemctl start cocalc-bay-hub-watchdog.timer
     run systemctl start cocalc-bay-cloudflared-watchdog.timer
   fi

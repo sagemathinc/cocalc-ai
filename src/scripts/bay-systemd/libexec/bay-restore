@@ -261,7 +261,7 @@ kill_bay_processes() {
 }
 
 # The bay's ingress, wanted by multi-user.target rather than cocalc-bay.target.
-INGRESS_UNITS=(cocalc-bay-cloudflared.service cocalc-bay-frontdoor.service)
+INGRESS_UNITS=(cocalc-bay-cloudflared.service cocalc-bay-cloudflared-2.service cocalc-bay-frontdoor.service)
 
 # Start the bay on restored data, after the cutover: its target, the services
 # stop_bay stopped outside it, and the ingress units that are enabled. On a

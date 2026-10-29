@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SERVICE="cocalc-bay-cloudflared.service"
 SYSTEMCTL="/usr/bin/systemctl"
 JOURNALCTL="/usr/bin/journalctl"
+CURL="/usr/bin/curl"
+READY_TIMEOUT_S=60
 
 if [[ ! -x "$SYSTEMCTL" ]]; then
   SYSTEMCTL="/bin/systemctl"
@@ -11,29 +12,202 @@ fi
 if [[ ! -x "$JOURNALCTL" ]]; then
   JOURNALCTL="/bin/journalctl"
 fi
+if [[ ! -x "$CURL" ]]; then
+  CURL="/bin/curl"
+fi
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: cocalc-bay-cloudflared-ctl <start|restart|status|is-active>
-       cocalc-bay-cloudflared-ctl journal-since <unix-seconds>
+Usage: cocalc-bay-cloudflared-ctl <start|restart|status|is-active> [replica]
+       cocalc-bay-cloudflared-ctl journal-since <unix-seconds> [replica]
+       cocalc-bay-cloudflared-ctl restart-all
 
-Narrow root helper for the CoCalc bay Cloudflare tunnel service, used by the
-bay user (the cloudflared watchdog runs as cocalc-bay).
+Narrow root helper for the CoCalc bay Cloudflare tunnel services, used by the
+bay user (the cloudflared watchdog runs as cocalc-bay). The tunnel runs as
+replicas of the same tunnel: replica 1 is cocalc-bay-cloudflared.service
+(the default when no replica is given), replica N > 1 is
+cocalc-bay-cloudflared-N.service. start also clears a failed state.
+restart-all restarts every installed replica one at a time, those without a
+ready connection first, waiting for each to have a ready tunnel connection
+before the next; it never restarts a replica while no other replica is ready,
+so public ingress never goes down. Replicas restarted before replica 1 are
+restarted again after it, so they load the tunnel state it refreshed.
 USAGE
 }
 
+# Call only with a replica checked by valid_replica.
+unit_for() {
+  if [[ "$1" == 1 ]]; then
+    printf 'cocalc-bay-cloudflared.service\n'
+  else
+    printf 'cocalc-bay-cloudflared-%s.service\n' "$1"
+  fi
+}
+
+valid_replica() {
+  [[ "$1" =~ ^[1-9]$ ]] || { usage; exit 2; }
+}
+
+unit_installed() {
+  [[ -n "$("$SYSTEMCTL" list-unit-files --no-legend "$1" 2>/dev/null)" ]]
+}
+
+# The replica's metrics address, from its unit environment.
+metrics_address() {
+  local env
+  env="$("$SYSTEMCTL" show --property=Environment --value "$1" 2>/dev/null || true)"
+  sed -n 's/.*COCALC_BAY_CLOUDFLARED_METRICS_ADDRESS=\([^ ]*\).*/\1/p' <<<"$env" | head -n 1
+}
+
+wait_ready() {
+  local unit="$1" address deadline body
+  address="$(metrics_address "$unit")"
+  deadline=$((SECONDS + READY_TIMEOUT_S))
+  while ((SECONDS < deadline)); do
+    if [[ -n "$address" ]]; then
+      if body="$("$CURL" --silent --max-time 2 "http://${address}/ready" 2>/dev/null)" && \
+          [[ "$body" =~ \"readyConnections\":([1-9][0-9]*) ]]; then
+        return 0
+      fi
+    elif "$SYSTEMCTL" --quiet is-active "$unit"; then
+      # No known metrics address: give the tunnel time to register.
+      sleep 10
+      return 0
+    fi
+    sleep 1
+  done
+  echo "cocalc-bay-cloudflared-ctl: ${unit} has no ready tunnel connection after ${READY_TIMEOUT_S}s" >&2
+  return 1
+}
+
+# The unit's tunnel readiness now: "ready" (a ready connection), "none"
+# (it reports zero, or the unit is not running), or "unknown" (no metrics
+# address, no answer, or an
+# answer that cannot be read). Only "ready" counts as another replica
+# carrying traffic, and only "none" lets a replica be restarted without one.
+ready_state() {
+  local unit="$1" address body
+  # A unit that is not running (stopped or failed) serves nothing.
+  if ! "$SYSTEMCTL" --quiet is-active "$unit"; then
+    echo none
+    return
+  fi
+  address="$(metrics_address "$unit")"
+  if [[ -z "$address" ]] ||
+      ! body="$("$CURL" --silent --max-time 2 "http://${address}/ready" 2>/dev/null)"; then
+    echo unknown
+  elif [[ "$body" =~ \"readyConnections\":([0-9]+)[,}] ]]; then
+    if ((BASH_REMATCH[1] > 0)); then echo ready; else echo none; fi
+  else
+    echo unknown
+  fi
+}
+
+# A unit in the failed state must be reset before it can be (re)started.
+restart_unit() {
+  "$SYSTEMCTL" reset-failed "$1" >/dev/null 2>&1 || true
+  "$SYSTEMCTL" --no-pager restart "$1"
+}
+
+start_unit() {
+  "$SYSTEMCTL" reset-failed "$1" >/dev/null 2>&1 || true
+  "$SYSTEMCTL" --no-pager start "$1"
+}
+
+# Restarts one unit of the roll (exits on any failure): a unit that may be
+# serving only while a different replica is ready.
+roll_unit() {
+  local unit="$1" other other_ready=0
+  if ((${#units[@]} > 1)) && [[ "$(ready_state "$unit")" != none ]]; then
+    for other in "${units[@]}"; do
+      [[ "$other" == "$unit" ]] && continue
+      if [[ "$(ready_state "$other")" == ready ]]; then
+        other_ready=1
+        break
+      fi
+    done
+    if ((other_ready == 0)); then
+      echo "cocalc-bay-cloudflared-ctl: not restarting ${unit}: it may be serving and no other replica is known to be ready" >&2
+      exit 1
+    fi
+  fi
+  if ! restart_unit "$unit"; then
+    echo "cocalc-bay-cloudflared-ctl: restarting ${unit} failed; not restarting the other replicas" >&2
+    exit 1
+  fi
+  if ! wait_ready "$unit"; then
+    echo "cocalc-bay-cloudflared-ctl: not restarting the other replicas" >&2
+    exit 1
+  fi
+}
+
 case "${1:-}/$#" in
-  start/1|status/1|is-active/1)
-    exec "$SYSTEMCTL" --no-pager "$1" "$SERVICE"
+  start/1)
+    start_unit "$(unit_for 1)"
+    ;;
+  start/2)
+    valid_replica "$2"
+    start_unit "$(unit_for "$2")"
+    ;;
+  status/1|is-active/1)
+    exec "$SYSTEMCTL" --no-pager "$1" "$(unit_for 1)"
+    ;;
+  status/2|is-active/2)
+    valid_replica "$2"
+    exec "$SYSTEMCTL" --no-pager "$1" "$(unit_for "$2")"
     ;;
   restart/1)
-    # A unit in the failed state must be reset before it can be restarted.
-    "$SYSTEMCTL" reset-failed "$SERVICE" >/dev/null 2>&1 || true
-    exec "$SYSTEMCTL" --no-pager restart "$SERVICE"
+    restart_unit "$(unit_for 1)"
     ;;
-  journal-since/2)
+  restart/2)
+    valid_replica "$2"
+    restart_unit "$(unit_for "$2")"
+    ;;
+  restart-all/1)
+    # Replicas without a ready connection first (restarting them loses
+    # nothing), then those of unknown readiness, then the ready ones; replica
+    # 1 first within each, since it refreshes the tunnel state the others
+    # load. A replica that may be serving is restarted only while a different
+    # replica is ready, and the roll stops at the first replica that does not
+    # come back ready. Replicas restarted before replica 1 are restarted
+    # again after it.
+    units=()
+    for replica in 1 2 3 4 5 6 7 8 9; do
+      unit="$(unit_for "$replica")"
+      unit_installed "$unit" || continue
+      "$SYSTEMCTL" --quiet is-enabled "$unit" 2>/dev/null || [[ "$replica" == 1 ]] || continue
+      units+=("$unit")
+    done
+    not_serving=()
+    unknown=()
+    serving=()
+    for unit in "${units[@]}"; do
+      case "$(ready_state "$unit")" in
+        none) not_serving+=("$unit") ;;
+        unknown) unknown+=("$unit") ;;
+        *) serving+=("$unit") ;;
+      esac
+    done
+    primary="$(unit_for 1)"
+    before_primary=()
+    primary_done=0
+    for unit in "${not_serving[@]}" "${unknown[@]}" "${serving[@]}"; do
+      # (readiness is checked again: an earlier restart may have changed it)
+      roll_unit "$unit"
+      if [[ "$unit" == "$primary" ]]; then
+        primary_done=1
+        for again in "${before_primary[@]}"; do
+          roll_unit "$again"
+        done
+      elif ((primary_done == 0)); then
+        before_primary+=("$unit")
+      fi
+    done
+    ;;
+  journal-since/2|journal-since/3)
     [[ "$2" =~ ^[0-9]{1,12}$ ]] || { usage; exit 2; }
-    exec "$JOURNALCTL" --unit "$SERVICE" --since "@$2" --output short-unix --no-pager
+    valid_replica "${3:-1}"
+    exec "$JOURNALCTL" --unit "$(unit_for "${3:-1}")" --since "@$2" --output short-unix --no-pager
     ;;
   *)
     usage

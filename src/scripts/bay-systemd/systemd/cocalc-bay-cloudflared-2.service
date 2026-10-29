@@ -1,0 +1,36 @@
+[Unit]
+Description=CoCalc Bay Cloudflare Tunnel (replica 2)
+# Replica 1 also creates the tunnel with Cloudflare on a new bay; this one
+# only reuses the tunnel it recorded.
+After=network-online.target cocalc-bay-frontdoor.service cocalc-bay-cloudflared.service
+Wants=cocalc-bay-frontdoor.service
+
+[Service]
+Type=exec
+User=cocalc-bay
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
+EnvironmentFile=-/etc/cocalc/bay-topology.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+EnvironmentFile=-/etc/cocalc/bay-local.env
+Environment=COCALC_REQUIRE_SITE_MASTER_KEY=1
+Environment=COCALC_BAY_CLOUDFLARED_SYSTEMD=1
+# Replicas run the same tunnel; each has its own metrics port (read by the
+# watchdog and cocalc-bay-cloudflared-ctl) and its own config and pid files.
+Environment=COCALC_BAY_CLOUDFLARED_REPLICA=2
+Environment=COCALC_BAY_CLOUDFLARED_METRICS_ADDRESS=127.0.0.1:20242
+LoadCredential=site-master-key:/etc/cocalc/site-master-key
+LoadCredential=site-master-key.keyring:/etc/cocalc/site-master-key.keyring
+ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight cloudflared
+ExecStart=/opt/cocalc/bay/current/bin/bay-cloudflared
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
