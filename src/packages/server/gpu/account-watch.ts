@@ -215,7 +215,8 @@ export interface AccountWatchOutcome {
     | "shared"
     | "stale"
     | "fence"
-    | "no_access";
+    | "no_access"
+    | "no_metrics";
   rate?: "ok" | "warning" | "critical";
   balance?: "ok" | "warning" | "critical" | "deposit" | "window";
 }
@@ -380,6 +381,12 @@ export async function watchProviderAccount(
       });
     }
     throw err;
+  }
+  // An answer with neither number checks nothing: not a sample (the last
+  // state stands, and the next pass asks again).
+  if (balance.balance == null && balance.spendPerHour == null) {
+    log.warn("RunPod's account answer had no balance or spend rate");
+    return { checked: false, reason: "no_metrics" };
   }
   return await finish(asked_at, async (db, w) => {
     const creds = await identityCredentials(identity, db, { active: false });

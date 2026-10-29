@@ -476,6 +476,23 @@ describeDb("GPU provider-account checks", () => {
     expect(await open()).toEqual([expect.stringContaining("read the account")]);
   });
 
+  it("an answer with neither number is no sample: the last state stands", async () => {
+    const owner = randomUUID();
+    const key = await connectKey(owner, randomUUID());
+    await confirm(owner);
+    await watcher(owner, key)(0, { balance: 100, spendPerHour: 0 });
+    expect(await watcher(owner, key)(MINUTE, {})).toEqual({
+      checked: false,
+      reason: "no_metrics",
+    });
+    const { rows } = await getPool().query(
+      "SELECT last_asked_at, last_balance_usd FROM gpu_provider_account_watch WHERE credential_id = $1",
+      [key],
+    );
+    expect(rows[0].last_asked_at).toEqual(at(0));
+    expect(Number(rows[0].last_balance_usd)).toBe(100);
+  });
+
   it("a lease lost while RunPod answers writes nothing", async () => {
     const owner = randomUUID();
     const key = await connectKey(owner, randomUUID());
