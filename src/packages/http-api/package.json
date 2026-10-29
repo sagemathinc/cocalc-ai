@@ -40,7 +40,6 @@
     "@cocalc/database": "workspace:*",
     "@cocalc/server": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "base-64": "^1.0.0",
     "express": "^5.2.1",
     "lodash": "^4.18.1",
     "lru-cache": "^7.18.3",
