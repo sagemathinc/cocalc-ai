@@ -93,6 +93,7 @@ import {
 import { NewDirectModal } from "./new-direct";
 import {
   directAttentionCount,
+  refreshDirect,
   resetDirectForTests,
   useDirectConversations,
 } from "./use-direct";
@@ -113,6 +114,7 @@ const listed = (id: string, extra = {}) => ({
   muted: false,
   pinned: false,
   archived_through: null,
+  messages_version: 1,
   ...extra,
 });
 
@@ -526,4 +528,59 @@ test("a group shows who it's with", () => {
   expect(row).toHaveTextContent("test");
   expect(row).toHaveTextContent("user:bbbb");
   expect(row).toHaveTextContent("user:cccc");
+});
+
+test("a message deleted while the conversation is open disappears: it reloads on a new messages version", async () => {
+  mockApi.listDirect.mockResolvedValue({
+    conversations: [listed("c1", { messages_version: 1 })],
+  });
+  mockApi.getDirect.mockResolvedValue({
+    conversation: listed("c1"),
+    messages: [message("m1", bea, 3000, "oops, a secret")],
+  });
+  render(<DirectConversationView conversation_id="c1" onClose={() => {}} />);
+  await waitFor(() => expect(screen.getByText("oops, a secret")).toBeTruthy());
+  // Bea deletes it: same last activity, a new messages version.
+  mockApi.getDirect.mockResolvedValue({
+    conversation: listed("c1", { messages_version: 2 }),
+    messages: [{ ...message("m1", bea, 3000, ""), deleted: true }],
+  });
+  mockApi.listDirect.mockResolvedValue({
+    conversations: [listed("c1", { messages_version: 2 })],
+  });
+  await act(async () => {
+    refreshDirect();
+  });
+  await waitFor(() => expect(screen.getByText("Message deleted")).toBeTruthy());
+  expect(screen.queryByText("oops, a secret")).toBeNull();
+});
+
+test("New message: switching accounts during a search shows the new account nothing of the old one", async () => {
+  let resolve!: (users: any[]) => void;
+  mockUserSearch.mockReturnValue(new Promise((r) => (resolve = r)));
+  const view = render(
+    <NewDirectModal open onClose={() => {}} onStarted={() => {}} />,
+  );
+  fireEvent.change(
+    screen.getByPlaceholderText("Name, email address, or @username"),
+    { target: { value: "Bea" } },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  // Someone else signs in while the search is out.
+  mockAccount = cy;
+  view.rerender(
+    <NewDirectModal open onClose={() => {}} onStarted={() => {}} />,
+  );
+  await act(async () => {
+    resolve([{ account_id: bea, first_name: "Bea", last_name: "Tester" }]);
+  });
+  expect(screen.queryByRole("region", { name: "Search results" })).toBeNull();
+  expect(screen.queryByText("Bea Tester")).toBeNull();
+  expect(
+    (
+      screen.getByPlaceholderText(
+        "Name, email address, or @username",
+      ) as HTMLInputElement
+    ).value,
+  ).toBe("");
 });

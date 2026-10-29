@@ -343,6 +343,8 @@ export function PeoplePage() {
         />
       </div>
       <NewDirectModal
+        // A new dialog for another account: nothing carries over.
+        key={account_id ?? ""}
         open={newDirect != null}
         personId={newDirect?.personId}
         onClose={() => setNewDirect(null)}

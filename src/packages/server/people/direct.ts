@@ -46,6 +46,7 @@ import {
   recordDirectNotified,
   setDirectMemberState,
   deleteDirectMessage,
+  redactDirectMessageNotice,
   setDirectPersonal,
   unblockDirectSender,
   upsertDirectIndex,
@@ -66,6 +67,7 @@ import {
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
 import { resolveUsernameOwner } from "@cocalc/server/accounts/usernames";
+import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
@@ -184,7 +186,10 @@ async function deliver(rows: DirectFanoutRow[]): Promise<void> {
                   message_id: message.message_id,
                   sender_id: message.sender_id,
                   body: message.body,
+                  // Deleted before it was delivered: never notified.
+                  deleted: message.deleted,
                 },
+          deleted_message_ids: row.deleted_message_ids ?? [],
         });
         await clearDirectFanout({ ...row, revision: conversation.revision });
       } catch (err) {
@@ -660,7 +665,12 @@ export const directControl: InterBayDirectApi = {
     return await getDirectIndex(account_id, conversation_id);
   },
 
-  async upsertIndex({ account_id, conversation, message }) {
+  async upsertIndex({
+    account_id,
+    conversation,
+    message,
+    deleted_message_ids,
+  }) {
     await assertHome(account_id);
     if (!conversation.member_ids.includes(account_id)) {
       throw Error("not a member");
@@ -674,9 +684,27 @@ export const directControl: InterBayDirectApi = {
       return;
     }
     const row = await upsertDirectIndex({ account_id, conversation });
+    // Notices about deleted messages lose their text; email not yet sent is
+    // cancelled. A failure is retried by the owning bay (this is idempotent).
+    for (const message_id of deleted_message_ids ?? []) {
+      requireUuid(message_id, "deleted_message_ids");
+      const changed = await redactDirectMessageNotice({
+        account_id,
+        message_id,
+      });
+      if (changed.length > 0) {
+        await publishProjectedNotificationFeedUpdatesBestEffort({
+          account_id,
+          reason: "projected_upsert",
+          notification_ids: changed,
+        });
+      }
+    }
     // A failure here is retried by the owning bay (the notification is
     // idempotent and recorded once created).
-    if (message != null) await notify(account_id, row, message);
+    if (message != null && !message.deleted) {
+      await notify(account_id, row, message);
+    }
   },
 
   async isBlocked({ account_id, sender_id }) {

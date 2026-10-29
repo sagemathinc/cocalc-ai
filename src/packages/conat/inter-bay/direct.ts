@@ -82,7 +82,12 @@ export interface InterBayDirectApi {
   upsertIndex(opts: {
     account_id: string;
     conversation: DirectConversation;
-    message?: Pick<DirectMessage, "message_id" | "sender_id" | "body"> | null;
+    message?: Pick<
+      DirectMessage,
+      "message_id" | "sender_id" | "body" | "deleted"
+    > | null;
+    // Messages its sender deleted: this member's notices lose their text.
+    deleted_message_ids?: string[];
   }): Promise<void>;
   isBlocked(opts: { account_id: string; sender_id: string }): Promise<boolean>;
   block(opts: {

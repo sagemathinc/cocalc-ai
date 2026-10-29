@@ -57,6 +57,8 @@ export interface DirectConversation {
   // older than what they have, so updates arriving out of order can't undo
   // a newer one.
   revision: number;
+  // Changes only when a message is added or deleted.
+  messages_version: number;
 }
 
 // The one key of a two-person, untitled conversation: there is only one per
@@ -102,6 +104,10 @@ export interface MemberDirectConversation {
   muted: boolean;
   pinned: boolean;
   archived_through: number | null;
+  // Changes when a message is added or deleted (a deletion changes nothing
+  // else a member sees). Not the revision: that also changes when someone
+  // answers a request, which nobody else may learn.
+  messages_version: number;
 }
 
 export function memberView(
@@ -121,6 +127,7 @@ export function memberView(
     muted: c.muted,
     pinned: c.pinned,
     archived_through: c.archived_through,
+    messages_version: c.messages_version,
   };
 }
 

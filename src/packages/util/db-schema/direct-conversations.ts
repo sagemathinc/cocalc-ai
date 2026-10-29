@@ -54,6 +54,10 @@ Table({
       type: "integer",
       desc: "Bumped by every change; home bays apply only newer revisions.",
     },
+    messages_version: {
+      type: "integer",
+      desc: "Bumped when a message is added or deleted (not by anyone's answer to a request): what a member's open view reloads on.",
+    },
   },
 });
 
@@ -113,6 +117,11 @@ Table({
       type: "uuid",
       desc: "Latest message not yet delivered, for the member's notification.",
     },
+    deleted_message_ids: {
+      type: "array",
+      pg_type: "UUID[]",
+      desc: "Messages deleted since the last delivery: the member's notices about them lose their text.",
+    },
     attempts: { type: "integer", desc: "Delivery attempts so far." },
     next_attempt: { type: "timestamp", desc: "Earliest next attempt." },
     last_error: { type: "string", desc: "Last delivery error." },
@@ -158,6 +167,10 @@ Table({
     revision: {
       type: "integer",
       desc: "Owning bay revision of this copy; older updates are ignored.",
+    },
+    messages_version: {
+      type: "integer",
+      desc: "The conversation's messages_version in this copy.",
     },
     notified_message_id: {
       type: "uuid",

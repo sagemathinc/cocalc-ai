@@ -23,7 +23,8 @@ import {
 } from "@cocalc/util/direct-conversations";
 
 const COLUMNS = `conversation_id, member_ids, member_states, created_by,
-  created, last_activity, last_sender_id, preview, title, revision`;
+  created, last_activity, last_sender_id, preview, title, revision,
+  messages_version`;
 
 function ms(value: any): number {
   return new Date(value).valueOf();
@@ -42,6 +43,7 @@ function toConversation(row: any, owner_bay_id: string): DirectConversation {
     preview: row.preview ?? "",
     title: row.title ?? null,
     revision: Number(row.revision ?? 0),
+    messages_version: Number(row.messages_version ?? 0),
   };
 }
 
@@ -56,7 +58,8 @@ function toMessage(row: any): DirectMessage {
   };
 }
 
-const MESSAGE_COLUMNS = "message_id, conversation_id, sender_id, sent, body, deleted";
+const MESSAGE_COLUMNS =
+  "message_id, conversation_id, sender_id, sent, body, deleted";
 
 async function inTransaction<T>(f: (db: PoolClient) => Promise<T>): Promise<T> {
   const client = await getPool().connect();
@@ -82,22 +85,34 @@ async function queueFanout(
   db: PoolClient,
   conversation: DirectConversation,
   message_id: string | null,
+  deleted_message_id: string | null = null,
 ): Promise<void> {
+  // Deleted messages accumulate (none is dropped by a later change) until
+  // delivered.
   await db.query(
     `INSERT INTO direct_fanout_pending
-       (conversation_id, account_id, revision, message_id, attempts,
-        next_attempt, last_error)
-     SELECT $1, member, $2, $3, 0, NOW() + INTERVAL '30 seconds', NULL
+       (conversation_id, account_id, revision, message_id, deleted_message_ids,
+        attempts, next_attempt, last_error)
+     SELECT $1, member, $2, $3,
+       CASE WHEN $5::uuid IS NULL THEN '{}'::uuid[] ELSE ARRAY[$5::uuid] END,
+       0, NOW() + INTERVAL '30 seconds', NULL
      FROM unnest($4::uuid[]) AS member
      ON CONFLICT (conversation_id, account_id) DO UPDATE SET
        revision = GREATEST(direct_fanout_pending.revision, EXCLUDED.revision),
        message_id = COALESCE(EXCLUDED.message_id, direct_fanout_pending.message_id),
+       deleted_message_ids = ARRAY(
+         SELECT DISTINCT unnest(
+           COALESCE(direct_fanout_pending.deleted_message_ids, '{}'::uuid[])
+             || EXCLUDED.deleted_message_ids
+         )
+       ),
        next_attempt = LEAST(direct_fanout_pending.next_attempt, EXCLUDED.next_attempt)`,
     [
       conversation.conversation_id,
       conversation.revision,
       message_id,
       conversation.member_ids,
+      deleted_message_id,
     ],
   );
 }
@@ -228,7 +243,8 @@ async function insertMessage(
        preview = CASE WHEN m.sent >= last_activity
          THEN $4 ELSE preview END,
        last_activity = GREATEST(last_activity, m.sent),
-       revision = revision + 1
+       revision = revision + 1,
+       messages_version = COALESCE(messages_version, 0) + 1
      FROM m
      WHERE conversation_id = $1
      RETURNING ${COLUMNS}`,
@@ -390,6 +406,7 @@ export interface DirectFanoutRow {
   account_id: string;
   revision: number;
   message_id: string | null;
+  deleted_message_ids?: string[];
 }
 
 export async function pendingDirectFanouts({
@@ -402,7 +419,8 @@ export async function pendingDirectFanouts({
   limit?: number;
 }): Promise<DirectFanoutRow[]> {
   const { rows } = await getPool().query(
-    `SELECT conversation_id, account_id, revision, message_id
+    `SELECT conversation_id, account_id, revision, message_id,
+       COALESCE(deleted_message_ids, '{}'::uuid[]) AS deleted_message_ids
      FROM direct_fanout_pending
      WHERE ($1::uuid IS NULL OR conversation_id = $1)
        AND (NOT $2::boolean OR next_attempt <= NOW())
@@ -451,8 +469,8 @@ export async function recordDirectFanoutFailure({
 
 const INDEX_COLUMNS = `conversation_id, owner_bay_id, member_ids, member_states,
   created_by, created, last_activity, last_sender_id, preview, title,
-  revision, last_read, muted, pinned, archived_through, notified_message_id,
-  request_notified`;
+  revision, messages_version, last_read, muted, pinned, archived_through,
+  notified_message_id, request_notified`;
 
 export interface DirectIndexRow extends ListedDirectConversation {
   notified_message_id: string | null;
@@ -488,10 +506,10 @@ export async function upsertDirectIndex({
     `INSERT INTO account_direct_conversations
        (account_id, conversation_id, owner_bay_id, member_ids, member_states,
         created_by, created, last_activity, last_sender_id, preview, title,
-        revision, last_read, muted, notified_message_id, request_notified,
-        updated)
+        revision, messages_version, last_read, muted, notified_message_id,
+        request_notified, updated)
      VALUES ($1, $2, $3, $4::uuid[], $5::jsonb, $6, $7, $8, $9, $10, $11, $12,
-             NULL, FALSE, NULL, FALSE, NOW())
+             $13, NULL, FALSE, NULL, FALSE, NOW())
      ON CONFLICT (account_id, conversation_id) DO UPDATE SET
        owner_bay_id = EXCLUDED.owner_bay_id,
        member_ids = EXCLUDED.member_ids,
@@ -501,6 +519,7 @@ export async function upsertDirectIndex({
        last_sender_id = EXCLUDED.last_sender_id,
        preview = EXCLUDED.preview,
        revision = EXCLUDED.revision,
+       messages_version = EXCLUDED.messages_version,
        updated = NOW()
      WHERE COALESCE(account_direct_conversations.revision, 0) < EXCLUDED.revision`,
     [
@@ -516,6 +535,7 @@ export async function upsertDirectIndex({
       conversation.preview,
       conversation.title,
       conversation.revision,
+      conversation.messages_version ?? 0,
     ],
   );
   void rows;
@@ -673,7 +693,8 @@ export async function deleteDirectMessage({
       `UPDATE direct_conversations SET
          preview = $2,
          last_sender_id = $3,
-         revision = revision + 1
+         revision = revision + 1,
+         messages_version = COALESCE(messages_version, 0) + 1
        WHERE conversation_id = $1
        RETURNING ${COLUMNS}`,
       [
@@ -683,7 +704,7 @@ export async function deleteDirectMessage({
       ],
     );
     const conversation = toConversation(rows[0], owner_bay_id);
-    await queueFanout(db, conversation, null);
+    await queueFanout(db, conversation, null, message_id);
     return conversation;
   });
 }
@@ -810,4 +831,119 @@ export async function releaseDirectRequest(
     "DELETE FROM direct_request_admissions WHERE conversation_id = $1",
     [conversation_id],
   );
+}
+
+export const DELETED_MESSAGE_TEXT = "Message deleted";
+
+// Replace a deleted message's text wherever a notice summary carries it.
+function redactBodyText(value: any): any {
+  if (Array.isArray(value)) return value.map(redactBodyText);
+  if (value == null || typeof value !== "object") return value;
+  const result: Record<string, any> = {};
+  for (const [key, inner] of Object.entries(value)) {
+    result[key] =
+      key === "body_text" && typeof inner === "string"
+        ? DELETED_MESSAGE_TEXT
+        : redactBodyText(inner);
+  }
+  return result;
+}
+
+// On a recipient's home bay, after its sender deleted a message: the notice
+// about it (identified by its dedupe key) no longer carries its text, in the
+// notification itself, its outbox (so a later projection or rebuild can't
+// bring it back), the recipient's notification list, and any email not yet
+// sent, which is cancelled. Email already sent can't be recalled. Returns the
+// notification list ids that changed, to publish.
+export async function redactDirectMessageNotice({
+  account_id,
+  message_id,
+}: {
+  account_id: string;
+  message_id: string;
+}): Promise<string[]> {
+  const dedupe_key = `direct-message:${message_id}:${account_id}`;
+  return await inTransaction(async (db) => {
+    const { rows: targets } = await db.query(
+      `SELECT event_id, notification_id FROM notification_targets
+       WHERE target_account_id = $1 AND dedupe_key = $2`,
+      [account_id, dedupe_key],
+    );
+    if (targets.length === 0) return [];
+    const event_ids = targets.map((t) => t.event_id);
+    const notification_ids = targets.map((t) => t.notification_id);
+    const rewrite = async (
+      table: string,
+      column: string,
+      where: string,
+      params: any[],
+      key: string,
+    ) => {
+      const { rows } = await db.query(
+        `SELECT ${key} AS key, ${column} AS value FROM ${table} WHERE ${where}`,
+        params,
+      );
+      for (const row of rows) {
+        await db.query(
+          `UPDATE ${table} SET ${column} = $2::jsonb WHERE ${key} = $1`,
+          [row.key, JSON.stringify(redactBodyText(row.value))],
+        );
+      }
+    };
+    await rewrite(
+      "notification_events",
+      "payload_json",
+      "event_id = ANY($1::uuid[])",
+      [event_ids],
+      "event_id",
+    );
+    await rewrite(
+      "notification_target_outbox",
+      "payload_json",
+      "notification_id = ANY($1::uuid[]) AND target_account_id = $2",
+      [notification_ids, account_id],
+      "outbox_id",
+    );
+    // Email: not sent yet is cancelled; every copy loses the text.
+    const { rows: emails } = await db.query(
+      `UPDATE notification_email_outbox
+         SET status = CASE WHEN status = 'queued'
+               THEN 'skipped_preference' ELSE status END,
+             last_error = CASE WHEN status = 'queued'
+               THEN 'the message was deleted by its sender' ELSE last_error END,
+             updated_at = NOW()
+       WHERE notification_id = ANY($1::uuid[]) AND target_account_id = $2
+       RETURNING email_id, summary_json`,
+      [notification_ids, account_id],
+    );
+    const projected = new Set<string>(notification_ids);
+    for (const email of emails) {
+      const id = email.summary_json?.projection_notification_id;
+      if (typeof id === "string") projected.add(id);
+      await db.query(
+        `UPDATE notification_email_outbox SET summary_json = $2::jsonb
+         WHERE email_id = $1`,
+        [email.email_id, JSON.stringify(redactBodyText(email.summary_json))],
+      );
+    }
+    const { rows: listed } = await db.query(
+      `SELECT notification_id, summary FROM account_notification_index
+       WHERE account_id = $1 AND notification_id = ANY($2::uuid[])`,
+      [account_id, [...projected]],
+    );
+    for (const row of listed) {
+      await db.query(
+        `UPDATE account_notification_index
+           SET summary = $3::jsonb, revision = COALESCE(revision, 0) + 1,
+               updated_at = NOW()
+         WHERE account_id = $1 AND notification_id = $2`,
+        [
+          account_id,
+          row.notification_id,
+          JSON.stringify(redactBodyText(row.summary)),
+        ],
+      );
+    }
+    return listed.map((row) => row.notification_id);
+  });
 }

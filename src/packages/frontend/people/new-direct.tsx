@@ -12,7 +12,7 @@
 // result says who it is: avatar, collaborator or not, the projects you share,
 // when they were last active and joined, and the email when it matched.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -215,12 +215,18 @@ export function NewDirectModal({
   const [error, setError] = useState("");
   const [uploads, setUploads] = useState(0);
 
+  // Results of a search or start for an earlier account (or an earlier
+  // opening) are dropped: another account never sees them.
+  const generation = useRef(0);
+  const current = () => generation.current;
+
   const collaborators = useMemo(
     () => new Set(people.map((p) => p.account_id)),
     [people],
   );
 
   useEffect(() => {
+    generation.current++;
     if (!open) return;
     const person = people.find((p) => p.account_id === personId);
     setTo(
@@ -239,14 +245,16 @@ export function NewDirectModal({
     setTitle("");
     setBody("");
     setError("");
-    // Only when the dialog opens (people may update meanwhile).
-  }, [open, personId]);
+    // When the dialog opens, or the account changes (people may update
+    // meanwhile without starting over).
+  }, [open, personId, me]);
 
   const full = to.length >= MAX_DIRECT_MEMBERS - 1;
 
   async function search() {
     const q = query.trim();
     if (!q) return;
+    const mine = ++generation.current;
     setSearching(true);
     setError("");
     try {
@@ -285,11 +293,12 @@ export function NewDirectModal({
           });
         }
       }
+      if (mine !== current()) return;
       setResults([...found.values()]);
     } catch (err) {
-      setError(`${err}`);
+      if (mine === current()) setError(`${err}`);
     } finally {
-      setSearching(false);
+      if (mine === current()) setSearching(false);
     }
   }
 
@@ -307,6 +316,7 @@ export function NewDirectModal({
   }
 
   async function start() {
+    const mine = generation.current;
     setBusy(true);
     setError("");
     try {
@@ -320,11 +330,12 @@ export function NewDirectModal({
         body,
       });
       directChanged();
+      if (mine !== current()) return;
       onStarted(conversation);
     } catch (err) {
-      setError(`${err}`);
+      if (mine === current()) setError(`${err}`);
     } finally {
-      setBusy(false);
+      if (mine === current()) setBusy(false);
     }
   }
 

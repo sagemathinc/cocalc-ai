@@ -18,6 +18,11 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({}),
 }));
+const mockPublish = jest.fn(async (_opts: any) => {});
+jest.mock("@cocalc/server/notifications/feed", () => ({
+  publishProjectedNotificationFeedUpdatesBestEffort: (opts: any) =>
+    mockPublish(opts),
+}));
 jest.mock("@cocalc/database/postgres/notifications-core", () => ({
   createNotificationEventGraph: (opts: any) => mockNotify(opts),
   resolveNotificationTargetHomeBays: async ({ account_ids }) =>
@@ -97,6 +102,11 @@ describeDb("direct conversations", () => {
       "projects",
       "account_collaborator_index",
       "account_project_index",
+      "notification_events",
+      "notification_targets",
+      "notification_target_outbox",
+      "notification_email_outbox",
+      "account_notification_index",
       "direct_conversations",
       "direct_messages",
       "direct_fanout_pending",
@@ -117,7 +127,7 @@ describeDb("direct conversations", () => {
     mockBanned.clear();
     mockTierLimits = {};
     await getPool().query(
-      "TRUNCATE projects, account_collaborator_index, account_project_index, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
+      "TRUNCATE projects, account_collaborator_index, account_project_index, notification_events, notification_targets, notification_target_outbox, notification_email_outbox, account_notification_index, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
     );
   });
 
@@ -297,6 +307,7 @@ describeDb("direct conversations", () => {
         "TRUNCATE direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
       );
       const started = await request();
+      const [before] = await listFor(ada);
       const answered = await directHubApi.respondDirect({
         account_id: bea,
         conversation_id: started.conversation_id,
@@ -306,6 +317,8 @@ describeDb("direct conversations", () => {
       const [forAda] = await listFor(ada);
       expectMemberView(forAda);
       expect(forAda.state).toBe("active");
+      // What the sender's view reloads on doesn't move either.
+      expect(forAda.messages_version).toBe(before.messages_version);
       const { conversation } = await directHubApi.getDirect({
         account_id: ada,
         conversation_id: started.conversation_id,
@@ -920,5 +933,92 @@ describeDb("direct conversations", () => {
         message_id: first.message_id,
       }),
     ).rejects.toThrow("message not found");
+  });
+
+  test("deleting a message takes its text out of the recipient's notice, and cancels email not yet sent", async () => {
+    await shareProject();
+    mockPublish.mockClear();
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+      body: "my password is hunter2",
+    });
+    // The notice Bea got, as the notification pipeline stores it on her
+    // home bay (event, target, outbox, her list and a queued email).
+    const call = mockNotify.mock.calls.find(
+      (c) => c[0].targets[0].target_account_id === bea,
+    )![0];
+    const dedupe_key = call.targets[0].dedupe_key;
+    const summary = call.payload_json;
+    expect(summary.body_text).toBe("my password is hunter2");
+    const event_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const notification_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const db = getPool();
+    await db.query(
+      "INSERT INTO notification_events (event_id, kind, payload_json, created_at) VALUES ($1, 'account_notice', $2, NOW())",
+      [event_id, JSON.stringify(summary)],
+    );
+    await db.query(
+      "INSERT INTO notification_targets (event_id, target_account_id, target_home_bay_id, notification_id, dedupe_key, created_at) VALUES ($1, $2, 'bay-0', $3, $4, NOW())",
+      [event_id, bea, notification_id, dedupe_key],
+    );
+    await db.query(
+      "INSERT INTO notification_target_outbox (outbox_id, target_home_bay_id, target_account_id, notification_id, kind, event_type, payload_json, created_at) VALUES (gen_random_uuid(), 'bay-0', $1, $2, 'account_notice', 'notification.upserted', $3, NOW())",
+      [bea, notification_id, JSON.stringify({ summary })],
+    );
+    await db.query(
+      "INSERT INTO account_notification_index (account_id, notification_id, kind, summary, read_state, revision, created_at, updated_at) VALUES ($1, $2, 'account_notice', $3, '{}', 1, NOW(), NOW())",
+      [bea, notification_id, JSON.stringify(summary)],
+    );
+    await db.query(
+      "INSERT INTO notification_email_outbox (email_id, notification_id, target_account_id, status, summary_json, scheduled_at, created_at, updated_at) VALUES (gen_random_uuid(), $1, $2, 'queued', $3, NOW() + INTERVAL '1 hour', NOW(), NOW())",
+      [
+        notification_id,
+        bea,
+        JSON.stringify({
+          summary,
+          event_payload: summary,
+          projection_notification_id: notification_id,
+        }),
+      ],
+    );
+    const first = (
+      await directHubApi.getDirect({
+        account_id: ada,
+        conversation_id: started.conversation_id,
+      })
+    ).messages[0];
+    await directHubApi.deleteDirectMessage({
+      account_id: ada,
+      conversation_id: started.conversation_id,
+      message_id: first.message_id,
+    });
+    // No copy keeps the text, anywhere.
+    for (const [table, column] of [
+      ["notification_events", "payload_json"],
+      ["notification_target_outbox", "payload_json"],
+      ["account_notification_index", "summary"],
+      ["notification_email_outbox", "summary_json"],
+    ]) {
+      const { rows } = await db.query(`SELECT ${column} AS v FROM ${table}`);
+      expect(rows).toHaveLength(1);
+      expect(JSON.stringify(rows[0].v)).not.toContain("hunter2");
+      expect(JSON.stringify(rows[0].v)).toContain("Message deleted");
+    }
+    // The email that wasn't sent yet never will be.
+    const { rows: emails } = await db.query(
+      "SELECT status FROM notification_email_outbox",
+    );
+    expect(emails[0].status).toBe("skipped_preference");
+    // Her open notification list hears of the change.
+    const { rows: listed } = await db.query(
+      "SELECT revision FROM account_notification_index",
+    );
+    expect(Number(listed[0].revision)).toBe(2);
+    expect(mockPublish).toHaveBeenCalledWith({
+      account_id: bea,
+      reason: "projected_upsert",
+      notification_ids: [notification_id],
+    });
   });
 });

@@ -494,6 +494,7 @@ function MessageItem({
           {mine && onDelete && !message.deleted && (
             <Popconfirm
               title="Delete this message for everyone?"
+              description="It's removed from the conversation and from notifications, and email about it that wasn't sent yet is cancelled. Email already sent can't be recalled."
               okText="Delete"
               okButtonProps={{ danger: true }}
               onConfirm={onDelete}
@@ -589,10 +590,11 @@ export function DirectConversationView({
     }
   }, [conversation_id]);
 
-  // Load when opened and whenever the list says something new arrived.
+  // Load when opened and whenever the list says the messages changed: one
+  // added, or one deleted (which changes nothing else you can see).
   useEffect(() => {
     void load();
-  }, [load, listed?.last_activity]);
+  }, [load, listed?.last_activity, listed?.messages_version]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView?.({ block: "end" });
