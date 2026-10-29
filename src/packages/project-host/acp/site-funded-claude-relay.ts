@@ -551,7 +551,7 @@ export async function createSiteFundedClaudeRelay({
         active.extensionSequence = sequence;
         const before = active.reservedMicrousd;
         active.reservedMicrousd = Math.max(before, result.reservedMicrousd);
-        if (active.reservedMicrousd <= before) return;
+        if (active.reservedMicrousd <= before) break;
       } catch (err) {
         logger.warn(
           "site-funded Claude extension failed; keeping what the turn holds",

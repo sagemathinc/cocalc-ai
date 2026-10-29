@@ -302,7 +302,7 @@ async function fundRequest(turn: ActiveTurn): Promise<void> {
       turn.extensionSequence = sequence;
       const before = turn.reservedMicrousd;
       turn.reservedMicrousd = Math.max(before, result.reservedMicrousd);
-      if (turn.reservedMicrousd <= before) return;
+      if (turn.reservedMicrousd <= before) break;
     } catch (err) {
       logger.warn(
         "site-funded Codex extension failed; keeping what the turn holds",

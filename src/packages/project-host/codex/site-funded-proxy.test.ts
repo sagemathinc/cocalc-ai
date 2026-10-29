@@ -1118,6 +1118,23 @@ describe("site-funded Codex proxy with a rolling reservation", () => {
     await proxy.close();
   });
 
+  it("fails closed when an extension is granted but the turn does not grow", async () => {
+    const extend = jest.fn(async () => ({
+      granted: true as const,
+      grantedMicrousd: 0,
+      reservedMicrousd: 1,
+    }));
+    const proxy = await setup(1, extend, true);
+    const refused = await proxy.request();
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.message).toContain(
+      "could not extend this included Codex turn",
+    );
+    expect(extend).toHaveBeenCalledTimes(1);
+    expect(proxy.upstreamRequests()).toBe(0);
+    await proxy.close();
+  });
+
   it("never extends a reservation that is not rolling", async () => {
     const extend = jest.fn();
     const proxy = await setup(1, extend as any, false);
