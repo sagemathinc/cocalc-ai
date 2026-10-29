@@ -37,6 +37,7 @@ import { dirname } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import {
   computeSiteFundedCodexRequestCost,
+  siteFundedCodexFinalRequestHeadroomMicrousd,
   siteFundedExtensionThresholdMicrousd,
   siteFundedTurnEndedMessage,
   type SiteFundedCodexReservation,
@@ -475,6 +476,20 @@ export async function createSiteFundedClaudeRelay({
     if (active.blockedReason) throw new RelayError(403, active.blockedReason);
     // A request starts only while the turn holds more than it has spent: it
     // may then overrun what it holds by at most its own cost.
+    // The hub never lets a rolling turn hold more than its ceiling less one
+    // request's worst case; checked here too, so the ceiling bounds what the
+    // turn spends whatever it holds.
+    if (
+      active.reservation.rolling &&
+      active.committedMicrousd +
+        siteFundedCodexFinalRequestHeadroomMicrousd(active.reservation.policy) >
+        active.reservation.policy.maxTurnCostMicrousd
+    ) {
+      throw new RelayError(
+        403,
+        "This included Claude turn reached its cost limit. Start a new turn, or use your own Claude subscription or Anthropic API key.",
+      );
+    }
     if (
       active.reservation.rolling &&
       active.committedMicrousd >= active.reservedMicrousd

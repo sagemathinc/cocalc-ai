@@ -12,6 +12,7 @@ import {
 import getLogger from "@cocalc/backend/logger";
 import {
   computeSiteFundedCodexRequestCost,
+  siteFundedCodexFinalRequestHeadroomMicrousd,
   siteFundedCodexMaxRequestBodyBytes,
   siteFundedExtensionThresholdMicrousd,
   siteFundedTurnEndedMessage,
@@ -339,6 +340,22 @@ function boundedProviderRequest({
   }
   // A request starts only while the turn holds more than it has spent: it
   // may then overrun what it holds by at most its own cost.
+  // The hub never lets a rolling turn hold more than its ceiling less one
+  // request's worst case; checked here too, so the ceiling bounds what the
+  // turn spends whatever it holds.
+  if (
+    turn.reservation.rolling &&
+    turn.costMicrousd +
+      siteFundedCodexFinalRequestHeadroomMicrousd(turn.policy) >
+      turn.policy.maxTurnCostMicrousd
+  ) {
+    throw Object.assign(
+      new Error(
+        "This included Codex turn reached its cost limit. Start a new turn, or connect your own ChatGPT plan or OpenAI API key.",
+      ),
+      { statusCode: 403 },
+    );
+  }
   if (turn.reservation.rolling && turn.costMicrousd >= turn.reservedMicrousd) {
     throw Object.assign(
       new Error(turn.extensionDenial ?? EXTENSION_UNAVAILABLE),

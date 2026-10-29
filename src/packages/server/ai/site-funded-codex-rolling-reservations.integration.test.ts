@@ -211,12 +211,36 @@ describe("rolling site-funded reservations", () => {
     expect(limit + HEADROOM).toBe(CEILING);
   });
 
-  it("reserves the ceiling once when it leaves no room for a rolling reservation", async () => {
+  it("refuses a rolling turn whose ceiling is below one request's worst case", async () => {
     const opts = admission();
     opts.policy = { ...opts.policy, maxTurnCostMicrousd: HEADROOM };
-    const reservation = await admit(opts);
+    const result = await reserveSiteFundedCodexTurn(opts);
+    expect(result).toMatchObject({ allowed: false, code: "missing_price" });
+    expect((result as any).reason).toContain("not configured safely");
+    // An old host (not rolling) is reserved once, as before.
+    const legacy = admission({ rolling: false });
+    legacy.policy = { ...legacy.policy, maxTurnCostMicrousd: HEADROOM };
+    const reservation = await admit(legacy);
     expect(reservation.rolling).toBeUndefined();
     expect(reservation.reservedMicrousd).toBe(HEADROOM);
+  });
+
+  it("raises a chunk smaller than one request's worst case to it", async () => {
+    const opts = admission();
+    opts.policy = {
+      ...opts.policy,
+      reservationChunkMicrousd: Math.ceil(HEADROOM / 100),
+    };
+    const reservation = await admit(opts);
+    expect(reservation.reservedMicrousd).toBe(HEADROOM);
+    expect(reservation.policy.reservationChunkMicrousd).toBe(HEADROOM);
+    await expect(
+      extendSiteFundedCodexTurn(extension(opts, reservation.reservationId, 1)),
+    ).resolves.toMatchObject({
+      granted: true,
+      grantedMicrousd: HEADROOM,
+      reservedMicrousd: 2 * HEADROOM,
+    });
   });
 
   it("does not report a repeated extension of an ended turn as granted", async () => {

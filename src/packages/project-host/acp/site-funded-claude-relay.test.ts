@@ -858,6 +858,22 @@ describe("site-funded Claude relay with a rolling reservation", () => {
     expect(seen).toHaveLength(2);
   });
 
+  it("never lets a turn start a request that could take it past its ceiling", async () => {
+    const headroom = siteFundedCodexFinalRequestHeadroomMicrousd(rollingPolicy);
+    const tight = {
+      ...rollingPolicy,
+      maxTurnCostMicrousd: COST + headroom - 1,
+    };
+    const extend = jest.fn();
+    // Holds far more than its ceiling allows (the hub never grants this).
+    activateRolling(10 * COST, extend as any, tight);
+    expect((await send(message)).status).toBe(200);
+    const refused = await send(message);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toContain("reached its cost limit");
+    expect(seen).toHaveLength(1);
+  });
+
   it("uses what it holds after a refusal, then stops with the hub's reason", async () => {
     const reason =
       "You have used your weekly included AI allowance. Wait for usage to reset, upgrade your CoCalc membership, or connect a Claude subscription or personal Anthropic API key.";

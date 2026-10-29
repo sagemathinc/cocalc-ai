@@ -1229,7 +1229,7 @@ export const EXTRAS: SettingsExtras = {
   },
   site_funded_codex_max_turn_usd: {
     name: "Maximum Funded Turn Cost (USD)",
-    desc: "The most one turn may spend. A turn holds only one reservation chunk at a time and is extended while the user has allowance left, so this ceiling is not reserved up front. It is also the most that code in the project could spend in one turn if it read the turn's funding credential, so raise it knowing that.",
+    desc: "The most one turn may spend. A turn holds only one reservation chunk at a time and is extended while the user has allowance left, so this ceiling is not reserved up front. It is also the most that code in the project could spend in one turn if it read the turn's funding credential, so raise it knowing that. It must exceed the cost of one request (a few cents), or included turns are refused.",
     default: "0.25",
     valid: onlyPosFloat,
     to_val: toFloat,
@@ -1288,7 +1288,7 @@ export const EXTRAS: SettingsExtras = {
   },
   site_funded_codex_reservation_chunk_usd: {
     name: "Funded Turn Reservation Chunk (USD)",
-    desc: "How much a funded Codex or Claude turn holds at a time. A turn is admitted with one chunk and extended chunk by chunk while the account's included allowance and the pools have room; unused funds are released when it ends.",
+    desc: "How much a funded Codex or Claude turn holds at a time. A turn is admitted with one chunk and extended chunk by chunk while the account's included allowance and the pools have room; unused funds are released when it ends. A chunk smaller than one request's worst case is raised to it.",
     default: "0.10",
     valid: onlyPosFloat,
     to_val: toFloat,
@@ -1376,7 +1376,7 @@ export const EXTRAS: SettingsExtras = {
   },
   site_funded_claude_max_turn_usd: {
     name: "Maximum Funded Claude Turn Cost (USD)",
-    desc: "The most one turn may spend. A turn holds only one reservation chunk at a time and is extended while the user has allowance left, so this ceiling is not reserved up front. It is also the most that code in the project could spend in one turn if it read the turn's funding credential, so raise it knowing that.",
+    desc: "The most one turn may spend. A turn holds only one reservation chunk at a time and is extended while the user has allowance left, so this ceiling is not reserved up front. It is also the most that code in the project could spend in one turn if it read the turn's funding credential, so raise it knowing that. It must exceed the cost of one request (a few cents), or included turns are refused.",
     default: "0.25",
     valid: onlyPosFloat,
     to_val: toFloat,

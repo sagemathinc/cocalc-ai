@@ -589,15 +589,38 @@ export async function reserveSiteFundedCodexTurn(
     // case: a request starts only while it has spent less than it holds, so
     // it never spends more than the ceiling. With no room for that, reserve
     // as before (the ceiling, once).
-    const rollingLimit = siteFundedRollingReservationLimitMicrousd(opts.policy);
     const rolling =
-      !!opts.rolling &&
-      (opts.policy.reservationChunkMicrousd ?? 0) > 0 &&
-      rollingLimit > 0;
+      !!opts.rolling && (opts.policy.reservationChunkMicrousd ?? 0) > 0;
+    // A rolling turn may hold at most its ceiling less one request's worst
+    // case, so it never spends more than its ceiling. A ceiling that leaves
+    // no room for even that bounds nothing: refuse rather than overrun it.
+    const rollingLimit = siteFundedRollingReservationLimitMicrousd(opts.policy);
+    if (rolling && rollingLimit <= 0) {
+      await client.query("ROLLBACK");
+      logger.error(
+        `site-funded ${words.product} per-turn cost limit is below one request's worst case`,
+        {
+          maxTurnCostMicrousd: opts.policy.maxTurnCostMicrousd,
+          headroomMicrousd: siteFundedCodexFinalRequestHeadroomMicrousd(
+            opts.policy,
+          ),
+        },
+      );
+      return denied(
+        "missing_price",
+        `Site-funded ${words.product} is not configured safely: its per-turn cost limit is below the cost of one request. ${words.alternative[0].toUpperCase()}${words.alternative.slice(1)} to continue.`,
+      );
+    }
+    // Each extension adds at least one request's worst case, so one
+    // extension always covers the next request.
+    const chunk = rolling
+      ? Math.max(
+          opts.policy.reservationChunkMicrousd!,
+          siteFundedCodexFinalRequestHeadroomMicrousd(opts.policy),
+        )
+      : 0;
     const requested = Math.min(
-      rolling
-        ? Math.min(opts.policy.reservationChunkMicrousd!, rollingLimit)
-        : opts.policy.maxTurnCostMicrousd,
+      rolling ? Math.min(chunk, rollingLimit) : opts.policy.maxTurnCostMicrousd,
       remaining5h,
       remaining7d,
     );
@@ -615,7 +638,7 @@ export async function reserveSiteFundedCodexTurn(
     // and is extended up to the ceiling. Otherwise the turn may spend only
     // what it reserves now.
     const effectivePolicy: SiteFundedCodexPolicy = rolling
-      ? opts.policy
+      ? { ...opts.policy, reservationChunkMicrousd: chunk }
       : { ...opts.policy, maxTurnCostMicrousd: requested };
     const poolRequested =
       requested + siteFundedCodexFinalRequestHeadroomMicrousd(effectivePolicy);

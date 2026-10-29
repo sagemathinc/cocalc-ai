@@ -1077,6 +1077,26 @@ describe("site-funded Codex proxy with a rolling reservation", () => {
     await proxy.close();
   });
 
+  it("never lets a turn start a request that could take it past its ceiling", async () => {
+    // A turn holding far more than its ceiling allows (the hub never grants
+    // this): the ceiling still bounds what it spends.
+    const headroom = siteFundedCodexFinalRequestHeadroomMicrousd(
+      DEFAULT_SITE_FUNDED_CODEX_POLICY,
+    );
+    const policy = {
+      ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
+      maxTurnCostMicrousd: COST + headroom - 1,
+    };
+    const extend = jest.fn();
+    const proxy = await setup(10 * COST, extend as any, true, policy);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    const refused = await proxy.request();
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.message).toContain("reached its cost limit");
+    expect(proxy.upstreamRequests()).toBe(1);
+    await proxy.close();
+  });
+
   it("never extends a reservation that is not rolling", async () => {
     const extend = jest.fn();
     const proxy = await setup(1, extend as any, false);
