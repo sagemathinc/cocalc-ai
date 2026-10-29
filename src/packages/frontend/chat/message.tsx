@@ -1168,6 +1168,10 @@ export default function Message({
     });
   }, [actions, threadLookup]);
   const threadCodexConfig = threadMetadata?.acp_config;
+  // Its help is about ChatGPT plans and OpenAI keys: never under a Claude (or
+  // other ACP harness) error.
+  const showCodexQuotaHelp =
+    showCodexErrorHelp && threadMetadata?.agent_runtime?.kind !== "acp";
   // A Claude subscription turn that failed on expired sign-in offers
   // "Reconnect Claude" instead of the raw error.
   const claudeSubscriptionCredentialId = useClaudeSubscriptionCredentialId(
@@ -2243,7 +2247,7 @@ export default function Message({
           <CodexQuotaHelp
             message={lastAgentText}
             projectId={project_id}
-            isError={showCodexErrorHelp}
+            isError={showCodexQuotaHelp}
           />
         ) : null}
       </div>
@@ -2468,7 +2472,7 @@ export default function Message({
           <CodexQuotaHelp
             message={lastTimelineAgentText(timelineRows)}
             projectId={project_id}
-            isError={showCodexErrorHelp}
+            isError={showCodexQuotaHelp}
           />
         ) : null}
         {shouldRenderCompletedFinalResponse ? (
@@ -2532,7 +2536,7 @@ export default function Message({
                   <CodexQuotaHelp
                     message={value}
                     projectId={project_id}
-                    isError={showCodexErrorHelp}
+                    isError={showCodexQuotaHelp}
                   />
                 </div>
               </ContextualReply>
@@ -2586,7 +2590,7 @@ export default function Message({
               <CodexQuotaHelp
                 message={value}
                 projectId={project_id}
-                isError={showCodexErrorHelp}
+                isError={showCodexQuotaHelp}
               />
             </div>
           </ContextualReply>

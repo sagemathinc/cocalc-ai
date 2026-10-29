@@ -843,6 +843,58 @@ describe("site-funded Codex provider proxy", () => {
     session.close();
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
   });
+
+  it("tells later requests why the hub ended the turn", async () => {
+    const turn = reservation();
+    const session = await startSiteFundedCodexProxySession({
+      reservation: turn,
+      apiKey: "real-site-key",
+      upstreamBaseUrl: "http://127.0.0.1:1/v1",
+      onUsage: async () => {},
+    });
+    const localUrl = session.baseUrl.replace(
+      "host.containers.internal",
+      "127.0.0.1",
+    );
+    const request = async () => {
+      const response = await fetch(`${localUrl}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ input: "hello" }),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+
+    // The heartbeat found the reservation past its deadline.
+    session.deactivate(turn.reservationId, "duration");
+    await expect(request()).resolves.toEqual({
+      status: 403,
+      body: {
+        error: {
+          message:
+            "This included Codex turn reached its 1-hour limit. Start a new turn to continue, or connect your own ChatGPT plan or OpenAI API key.",
+          type: "site_funded_codex_policy_error",
+        },
+      },
+    });
+    // Settling it afterwards keeps the reason.
+    session.deactivate(turn.reservationId);
+    await expect(request()).resolves.toMatchObject({
+      body: { error: { message: expect.stringContaining("1-hour limit") } },
+    });
+    // A new turn starts clean.
+    const next = reservation();
+    session.activate({ reservation: next, onUsage: async () => {} });
+    session.deactivate(next.reservationId);
+    await expect(request()).resolves.toMatchObject({
+      body: { error: { message: "site-funded Codex turn is not active" } },
+    });
+
+    session.close();
+  });
 });
 
 describe("site-funded Codex provider proxy port", () => {
@@ -906,7 +958,8 @@ describe("site-funded Codex provider proxy port", () => {
     if (!address || typeof address === "string") throw new Error("no port");
     return {
       port: address.port,
-      close: () => new Promise<void>((resolve) => blocker.close(() => resolve())),
+      close: () =>
+        new Promise<void>((resolve) => blocker.close(() => resolve())),
     };
   }
 

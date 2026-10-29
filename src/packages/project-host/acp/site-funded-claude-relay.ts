@@ -37,8 +37,10 @@ import { dirname } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import {
   computeSiteFundedCodexRequestCost,
+  siteFundedTurnEndedMessage,
   type SiteFundedCodexReservation,
   type SiteFundedCodexUsageEvent,
+  type SiteFundedTurnEndReason,
 } from "@cocalc/util/ai/site-funded-codex";
 import {
   SITE_FUNDED_CLAUDE_MAX_WEB_SEARCHES_PER_REQUEST,
@@ -108,7 +110,11 @@ export interface SiteFundedClaudeRelay {
    */
   deactivate(
     reservationId?: string,
-    options?: { timeoutMs?: number },
+    options?: {
+      timeoutMs?: number;
+      /** Set when the hub ended the turn while it ran. */
+      reason?: SiteFundedTurnEndReason;
+    },
   ): Promise<void>;
   close(): Promise<void>;
 }
@@ -122,6 +128,8 @@ type ActiveTurn = SiteFundedClaudeTurn & {
   committedMicrousd: number;
   blockedReason?: string;
   ended: boolean;
+  /** Why the hub ended it while it ran. */
+  endedMessage?: string;
   /** The tail of this turn's requests: each runs after the previous ends. */
   queue: Promise<void>;
   /** Usage events still being recorded; a turn settles after them. */
@@ -438,12 +446,17 @@ export async function createSiteFundedClaudeRelay({
   const token = randomBytes(32).toString("base64url");
   let turn: ActiveTurn | undefined;
   let closing = false;
+  // Why the last turn stopped being funded, when the hub ended it.
+  let endedMessage: string | undefined;
 
   // Checked as each request starts, after the ones before it finished.
   const assertMayStart = (active: ActiveTurn) => {
     if (closing) throw new RelayError(503, "Relay is closed");
     if (active.ended || turn !== active) {
-      throw new RelayError(403, "This included Claude turn has ended.");
+      throw new RelayError(
+        403,
+        active.endedMessage ?? "This included Claude turn has ended.",
+      );
     }
     if (active.blockedReason) throw new RelayError(403, active.blockedReason);
     const policy = active.reservation.policy;
@@ -455,7 +468,11 @@ export async function createSiteFundedClaudeRelay({
     ) {
       throw new RelayError(
         403,
-        "This included Claude turn reached its duration limit. Start a new turn.",
+        siteFundedTurnEndedMessage({
+          provider: "anthropic",
+          reason: "duration",
+          maxTurnDurationMs: policy.maxTurnDurationMs,
+        }),
       );
     }
     if (active.requests >= policy.maxRequestsPerTurn) {
@@ -504,7 +521,8 @@ export async function createSiteFundedClaudeRelay({
     }
     // Not recorded: fund nothing more, and settle only after it is known.
     const persisted = active.onUsage(event).catch((err) => {
-      active.blockedReason = "Included Claude usage could not be recorded.";
+      active.blockedReason =
+        "CoCalc could not save this included Claude turn's usage, so it paused the turn. Start a new turn in a minute, or use your own Claude subscription or Anthropic API key.";
       logger.error("site-funded Claude usage not recorded", {
         reservationId: event.reservationId,
         err: `${err}`,
@@ -759,7 +777,8 @@ export async function createSiteFundedClaudeRelay({
       return fail(
         response,
         403,
-        "No included Claude turn is active. Requests are funded only while CoCalc runs a turn.",
+        (!closing && endedMessage) ||
+          "No included Claude turn is active. Requests are funded only while CoCalc runs a turn.",
       );
     }
     let body: unknown;
@@ -949,6 +968,7 @@ export async function createSiteFundedClaudeRelay({
     token,
     activate: (next) => {
       if (turn) void end(turn, DRAIN_TIMEOUT_MS);
+      endedMessage = undefined;
       turn = {
         ...next,
         startedAt: Date.now(),
@@ -962,13 +982,21 @@ export async function createSiteFundedClaudeRelay({
     },
     deactivate: async (
       reservationId,
-      { timeoutMs = DRAIN_TIMEOUT_MS } = {},
+      { timeoutMs = DRAIN_TIMEOUT_MS, reason } = {},
     ) => {
       const active = turn;
       if (
         active &&
         (!reservationId || active.reservation.reservationId === reservationId)
       ) {
+        if (reason) {
+          active.endedMessage = siteFundedTurnEndedMessage({
+            provider: "anthropic",
+            reason,
+            maxTurnDurationMs: active.reservation.policy.maxTurnDurationMs,
+          });
+          endedMessage = active.endedMessage;
+        }
         await end(active, timeoutMs);
         return;
       }

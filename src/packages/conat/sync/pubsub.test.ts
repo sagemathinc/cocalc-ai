@@ -1,7 +1,7 @@
 import { PubSub } from "./pubsub";
 
 jest.mock("@cocalc/conat/logger", () => ({
-  getLogger: () => ({ warn: jest.fn() }),
+  getLogger: () => ({ warn: jest.fn(), debug: jest.fn() }),
 }));
 
 describe("PubSub explicit client routing", () => {
@@ -80,5 +80,24 @@ describe("PubSub subscription lifecycle", () => {
     expect(change).toHaveBeenCalledWith({ mode: "edit" });
     expect(closed).toHaveBeenCalledTimes(1);
     expect(sub.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PubSub publishing", () => {
+  it("drops a refused publish instead of throwing into the caller", () => {
+    const error = Object.assign(
+      new Error("permission denied publishing to 'project.x.pubsub-cursors'"),
+      { code: 403 },
+    );
+    const publishSync = jest.fn(() => {
+      throw error;
+    });
+    const pubsub = new PubSub({
+      project_id: "00000000-0000-4000-8000-000000000001",
+      name: "cursors",
+      client: { subscribe: () => new Promise(() => {}), publishSync } as any,
+    });
+    expect(() => pubsub.set({ locs: [] })).not.toThrow();
+    expect(publishSync).toHaveBeenCalledTimes(1);
   });
 });

@@ -5,7 +5,10 @@
 
 import getPool from "@cocalc/database/pool";
 import { after, before } from "@cocalc/server/test";
-import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
+import {
+  DEFAULT_SITE_FUNDED_CODEX_POLICY,
+  siteFundedTurnEndedMessage,
+} from "@cocalc/util/ai/site-funded-codex";
 import { uuid } from "@cocalc/util/misc";
 
 const adminAlert = jest.fn();
@@ -141,17 +144,27 @@ describe("site-funded AI health", () => {
       outcome:
         "This included Claude turn reached its cost limit. Start a new turn.",
     });
+    // The time limit, as both providers now word it ("reached its 1-hour
+    // limit").
+    await turn({
+      status: "failed",
+      outcome: siteFundedTurnEndedMessage({
+        provider: "anthropic",
+        reason: "duration",
+        maxTurnDurationMs: 60 * 60_000,
+      }),
+    });
     await turn({ status: "expired", outcome: "turn reservation expired" });
     // An hour ago: outside the window.
     await turn({ status: "failed", outcome: "too old", minutes: 61 });
-    // 1 of 13 is not over 10%.
+    // 1 of 14 is not over 10%.
     await turn({
       status: "failed",
       outcome: "Site-funded usage accounting is temporarily unavailable",
     });
     let health = await getSiteFundedAiHealth();
     expect(health.providers.find((p) => p.provider === "openai")).toMatchObject(
-      { committed: 8, failed: 1, limited: 4, failure_rate_exceeded: false },
+      { committed: 8, failed: 1, limited: 5, failure_rate_exceeded: false },
     );
     expect(siteFundedAiHealthLevel(health)).toBe("healthy");
 
@@ -164,7 +177,7 @@ describe("site-funded AI health", () => {
       {
         committed: 8,
         failed: 2,
-        limited: 4,
+        limited: 5,
         failure_rate_exceeded: true,
         nothing_completes: false,
         top_failures: [
@@ -177,7 +190,7 @@ describe("site-funded AI health", () => {
     );
     expect(siteFundedAiHealthLevel(health)).toBe("warning");
     expect(siteFundedAiHealthSummary(health)).toBe(
-      "anthropic: 0 completed, 0 failed, 0 stopped by limits; openai: 8 completed, 2 failed, 4 stopped by limits (site-funded turns, last 60 minutes).",
+      "anthropic: 0 completed, 0 failed, 0 stopped by limits; openai: 8 completed, 2 failed, 5 stopped by limits (site-funded turns, last 60 minutes).",
     );
     expect(siteFundedAiHealthDetails(health)).toEqual([
       "openai: more than 10% of finished turns failed (not counting limits) in the last 60 minutes",

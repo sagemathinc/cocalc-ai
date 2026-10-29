@@ -29,9 +29,12 @@ export const SITE_AI_MIN_ADMITTED_TURNS = 5;
 // A turn admitted more recently may still be running.
 export const SITE_AI_ADMISSION_SETTLE_MINUTES = 15;
 const PROVIDERS = ["openai", "anthropic"];
-// "reached its emergency cost limit" (Codex, site-funded-proxy.ts) and
-// "reached its cost limit" (Claude, site-funded-claude-relay.ts).
-const LIMIT_OUTCOME = /\b(cost|request|duration) limit\b/i;
+// "reached its emergency cost limit" (Codex, site-funded-proxy.ts), "reached
+// its cost limit" (Claude, site-funded-claude-relay.ts) and "reached its
+// 1-hour limit" (both, siteFundedTurnEndedMessage in util/ai). "CoCalc ended
+// this included turn" is not a limit.
+const LIMIT_OUTCOME =
+  /\b(cost|request|duration) limit\b|\breached its \d+-(hour|minute) limit\b/i;
 const ALERT_SUBJECT = "Site-funded AI turns are failing";
 const ALERT_REMINDER_MINUTES = 6 * 60;
 const TOP_FAILURES = 3;

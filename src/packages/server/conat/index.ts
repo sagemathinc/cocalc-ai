@@ -22,6 +22,7 @@ import { startProjectHardDeleteWorker } from "@cocalc/server/projects/hard-delet
 import { startProjectRecoveryNotificationMaintenance } from "@cocalc/server/projects/recovery-notification-maintenance";
 import { startProjectRecoveryCustomerWarningMaintenance } from "@cocalc/server/projects/recovery-customer-warning-maintenance";
 import { startProjectBackupRepoHealthMaintenance } from "@cocalc/server/project-backup/repo-health";
+import { startProjectBackupRepoSampledCheckMaintenance } from "@cocalc/server/project-backup/repo-sampled-check";
 import { startProjectRecoveryCoverageMaintenance } from "@cocalc/server/projects/recovery-coverage-maintenance";
 import { startMoveLroWorker } from "@cocalc/server/projects/move-worker";
 import { startRootfsPublishLroWorker } from "@cocalc/server/projects/rootfs-publish-worker";
@@ -214,6 +215,7 @@ export function startConatApiBackgroundWorkers(): void {
     startProjectRecoveryCustomerWarningMaintenance();
     startBayBackupHealthMaintenance();
     startProjectBackupRepoHealthMaintenance();
+    startProjectBackupRepoSampledCheckMaintenance();
     startBayBackupMaintenance();
     startBayWalArchiveMaintenance();
   } else {

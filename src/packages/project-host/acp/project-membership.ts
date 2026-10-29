@@ -44,6 +44,7 @@ export function isLocalAcpProjectMember({
  * the hub refuses projects that are not. */
 async function loadUsersFromOwningBay(
   project_id: string,
+  timeout: number,
 ): Promise<{ users?: unknown; users_revision?: number } | undefined> {
   const client = getMasterConatClient();
   const host_id = getLocalHostId();
@@ -53,7 +54,7 @@ async function loadUsersFromOwningBay(
     host_id,
     name: "hosts.getProjectStartMetadata",
     args: [{ project_id }],
-    timeout: OWNING_BAY_TIMEOUT_MS,
+    timeout,
   });
 }
 
@@ -73,20 +74,45 @@ export async function isAcpProjectMember({
 }): Promise<boolean> {
   if (!isValidUUID(account_id) || !isValidUUID(project_id)) return false;
   if (isLocalAcpProjectMember({ account_id, project_id })) return true;
+  return (await confirmProjectMemberWithOwningBay({ account_id, project_id }))
+    .member;
+}
+
+/**
+ * Whether the owning bay lists the account as an owner or collaborator, and
+ * the collaborator revision that answer is about. Use it after the host's own
+ * copy refused the account: when the bay disagrees, its (versioned) list is
+ * stored on the host. Unknown projects and accounts fail, and so does a bay
+ * that cannot be reached.
+ */
+export async function confirmProjectMemberWithOwningBay({
+  account_id,
+  project_id,
+  timeout = OWNING_BAY_TIMEOUT_MS,
+}: {
+  account_id: string;
+  project_id: string;
+  timeout?: number;
+}): Promise<{ member: boolean; users_revision: number | null }> {
+  const refused = { member: false, users_revision: null };
+  if (!isValidUUID(account_id) || !isValidUUID(project_id)) return refused;
   let authoritative: Awaited<ReturnType<typeof loadUsersFromOwningBay>>;
   try {
-    authoritative = await loadUsersFromOwningBay(project_id);
+    authoritative = await loadUsersFromOwningBay(project_id, timeout);
   } catch (err) {
     logger.warn("could not confirm project membership with the owning bay", {
       project_id,
       account_id,
       err: `${err}`,
     });
-    return false;
+    return refused;
   }
-  if (authoritative?.users == null) return false;
+  if (authoritative?.users == null) return refused;
+  const users_revision = Number.isFinite(authoritative.users_revision)
+    ? Number(authoritative.users_revision)
+    : null;
   const member = isMember(authoritative.users, account_id);
-  if (!member) return false;
+  if (!member) return { member: false, users_revision };
   // The local copy wrongly refused a member: record how it differed.
   const local = localProjectRow(project_id);
   logger.warn("host collaborator list was missing a member", {
@@ -120,8 +146,11 @@ export async function isAcpProjectMember({
     authoritative.users_revision != null &&
     newer.users_revision > authoritative.users_revision
   )
-    return isMember(newer.users, account_id);
-  return true;
+    return {
+      member: isMember(newer.users, account_id),
+      users_revision: newer.users_revision,
+    };
+  return { member: true, users_revision };
 }
 
 /** Agent work runs only for senders who may still use the project. */
