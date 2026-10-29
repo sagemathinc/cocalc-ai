@@ -1272,7 +1272,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: principal(account_id), operation_id: "op-1" };
     const launch = () =>
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       );
     const ask = await askedFor(launch());
@@ -1370,12 +1376,40 @@ describeDb("agent GPU launches", () => {
     // the kill switch, for the projects whose approvals it ended
     const other = await k.ask("5", PROJECT);
     n = sent().length;
-    await killSwitchLocal({ account_id: k.account_id }, k.deps);
+    await killSwitchLocal(
+      { key_use: testKeyUse("terminate"), account_id: k.account_id },
+      k.deps,
+    );
     expectNotified(n);
     const { rows } = await getPool().query(
       "SELECT state FROM gpu_agent_requests WHERE request_id = $1",
       [other.req.request_id],
     );
     expect(rows[0].state).toBe("denied");
+  });
+
+  it("keeps an active approval listed however many newer requests there are", async () => {
+    const k = await killSetup();
+    // 101 newer pending requests in the same project, past the list's bound
+    await getPool().query(
+      `INSERT INTO gpu_agent_requests (request_id, account_id, project_id, agent_id, run_id,
+         operation_id, payload, payload_hash, state, created, expires_at)
+       SELECT gen_random_uuid(), $1, $2, 'session:' || repeat(md5(i::text), 2),
+         'session:' || repeat(md5(i::text), 2), 'op-' || i, '{}'::jsonb,
+         repeat('e', 64), 'pending', now() + (i || ' seconds')::interval,
+         now() + interval '20 minutes'
+         FROM generate_series(1, 101) AS i`,
+      [k.account_id, PROJECT],
+    );
+    const views = await listAgentRequestsLocal({
+      account_id: k.account_id,
+      project_id: PROJECT,
+    });
+    expect(views).toHaveLength(100);
+    // the approval (and so its Revoke) is never pushed out by them
+    expect(views[0].grant).toMatchObject({
+      grant_id: k.grant.grant_id,
+      state: "active",
+    });
   });
 });

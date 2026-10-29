@@ -92,7 +92,9 @@ export async function listAgentRequestsLocal(opts: {
         AND ($2::uuid IS NULL OR r.project_id = $2)
         AND ($3::boolean OR (r.state = 'pending' AND r.expires_at > now())
              OR g.state = 'active')
-      ORDER BY r.created DESC
+      -- active approvals first: a run of newer requests must never push an
+      -- approval (and its Revoke) out of the bound
+      ORDER BY (g.state IS NOT DISTINCT FROM 'active') DESC, r.created DESC
       LIMIT 100`,
     [account_id, project_id, opts.include_decided === true],
   );
