@@ -180,11 +180,6 @@ function DirectRow({
                 </span>
               )}
             </span>
-            <span
-              style={{ fontSize: 12, color: UI_COLORS.secondary, flex: "none" }}
-            >
-              <TimeAgo date={conversation.last_activity} />
-            </span>
           </span>
           <span
             style={{
@@ -209,10 +204,14 @@ function DirectRow({
                 }}
               />
             )}
-            <span style={ELLIPSIS}>
+            <span style={{ ...ELLIPSIS, flex: 1 }}>
               {archived
                 ? "Archived"
                 : conversation.preview || "No messages yet"}
+            </span>
+            {/* On the preview line, so the name gets the whole first line. */}
+            <span style={{ fontSize: 12, flex: "none" }}>
+              <TimeAgo date={conversation.last_activity} />
             </span>
           </span>
         </span>
