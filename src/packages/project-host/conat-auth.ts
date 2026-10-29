@@ -295,29 +295,23 @@ function isAccountUnknownLocally({
   return row?.users?.[account_id] == null;
 }
 
-// The owning bay's answers for accounts the host's collaborator list does not
+// The owning bay's refusals for accounts the host's collaborator list does not
 // know, kept briefly so that a non-member cannot turn every publish into a bay
-// call. A collaborator sync clears them (clearAuthCaches), and an answer is
-// used only while the host's list is still the revision it was given against:
-// a newer list stored by any path (e.g., another account's bay lookup) voids
-// it.
-type BayMembershipDecision = {
-  member: boolean;
-  users_revision: number | null;
-};
-const bayMembershipDecisions = new TTL<string, BayMembershipDecision>({
+// call. Only refusals: a grant is never cached, so a removal always takes
+// effect (the next check asks the bay again, unless the host's list by then
+// knows the account). A refusal is used only while that project's local list
+// is unchanged, and a collaborator sync clears them all (clearAuthCaches).
+const bayMembershipRefusals = new TTL<string, string>({
   max: 10_000,
   ttl: 30_000,
 });
 type BayMembershipFlight = {
   account_id: string;
-  generation: number;
   promise: Promise<boolean>;
 };
 const bayMembershipInFlight = new Map<string, BayMembershipFlight>();
 const bayMembershipInFlightByAccount = new Map<string, number>();
 let bayMembershipRunning = 0;
-let bayMembershipGeneration = 0;
 const BAY_MEMBERSHIP_TIMEOUT_MS = 5_000;
 // Bay requests running at once, for the whole host and for one account. When
 // either is full the account is refused at once (and may retry): an account
@@ -325,20 +319,20 @@ const BAY_MEMBERSHIP_TIMEOUT_MS = 5_000;
 const BAY_MEMBERSHIP_MAX_IN_FLIGHT = 32;
 const BAY_MEMBERSHIP_MAX_IN_FLIGHT_PER_ACCOUNT = 4;
 
+// Identifies the host's collaborator list for one project: any change to the
+// row, its revision or its users (a sync, a start, a bay lookup) changes it.
+function localListFingerprint(project_id: string): string {
+  const row = getRow("projects", JSON.stringify({ project_id }));
+  if (row == null) return "no-row";
+  return `${row.users_revision ?? ""}:${JSON.stringify(row.users ?? null)}`;
+}
+
 // The host's collaborator list can lag the owning bay. An archived project has
 // no local row until it starts again, and a browser that is already connected
 // to this host never asks the hub for the project-scoped token whose issue
 // syncs the list. So before refusing an account the list does not know at
 // all, ask the bay. An account the list knows in another role (a viewer) is
 // refused without asking.
-function localUsersRevision(project_id: string): number | null {
-  const revision = getRow(
-    "projects",
-    JSON.stringify({ project_id }),
-  )?.users_revision;
-  return Number.isFinite(revision) ? Number(revision) : null;
-}
-
 async function isProjectMemberConfirmedByBay({
   account_id,
   project_id,
@@ -347,12 +341,8 @@ async function isProjectMemberConfirmedByBay({
   project_id: string;
 }): Promise<boolean> {
   const key = `${account_id}:${project_id}`;
-  const cached = bayMembershipDecisions.get(key);
-  if (
-    cached != null &&
-    cached.users_revision === localUsersRevision(project_id)
-  ) {
-    return cached.member;
+  if (bayMembershipRefusals.get(key) === localListFingerprint(project_id)) {
+    return false;
   }
   let flight = bayMembershipInFlight.get(key);
   if (flight == null) {
@@ -365,13 +355,7 @@ async function isProjectMemberConfirmedByBay({
     }
     flight = startBayMembershipFlight({ key, account_id, project_id });
   }
-  const member = await flight.promise;
-  if (flight.generation !== bayMembershipGeneration) {
-    // A collaborator sync arrived while the bay was asked: the list it stored
-    // decides, not the earlier answer.
-    return isProjectCollaboratorLocal({ account_id, project_id });
-  }
-  return member;
+  return await flight.promise;
 }
 
 function startBayMembershipFlight({
@@ -383,7 +367,6 @@ function startBayMembershipFlight({
   account_id: string;
   project_id: string;
 }): BayMembershipFlight {
-  const generation = bayMembershipGeneration;
   bayMembershipRunning += 1;
   bayMembershipInFlightByAccount.set(
     account_id,
@@ -391,20 +374,17 @@ function startBayMembershipFlight({
   );
   const flight: BayMembershipFlight = {
     account_id,
-    generation,
     promise: (async () => {
-      const revisionBefore = localUsersRevision(project_id);
+      const before = localListFingerprint(project_id);
       let member = false;
-      let answeredRevision: number | null = null;
       try {
         const { confirmProjectMemberWithOwningBay } =
           await import("./acp/project-membership");
-        ({ member, users_revision: answeredRevision } =
-          await confirmProjectMemberWithOwningBay({
-            account_id,
-            project_id,
-            timeout: BAY_MEMBERSHIP_TIMEOUT_MS,
-          }));
+        ({ member } = await confirmProjectMemberWithOwningBay({
+          account_id,
+          project_id,
+          timeout: BAY_MEMBERSHIP_TIMEOUT_MS,
+        }));
       } catch (err) {
         logger.debug("could not confirm project membership with the bay", {
           account_id,
@@ -412,19 +392,15 @@ function startBayMembershipFlight({
           err: `${err}`,
         });
       }
-      // A list newer than the one the bay's answer is about may have been
-      // stored while this request ran (by a sync or another lookup): then
-      // that list decides, not the answer.
-      const revision = localUsersRevision(project_id);
-      const newerListStored =
-        answeredRevision != null
-          ? revision != null && revision > answeredRevision
-          : revision !== revisionBefore;
-      if (newerListStored) {
+      // This project's list changed while the bay was asked (a sync, a start,
+      // or the bay's own list stored by the lookup): the list now on the host
+      // decides, not the answer. Other projects' syncs do not matter.
+      const after = localListFingerprint(project_id);
+      if (after !== before) {
         member = isProjectCollaboratorLocal({ account_id, project_id });
       }
-      if (generation === bayMembershipGeneration) {
-        bayMembershipDecisions.set(key, { member, users_revision: revision });
+      if (!member) {
+        bayMembershipRefusals.set(key, after);
       }
       return member;
     })().finally(() => {
@@ -443,11 +419,7 @@ function startBayMembershipFlight({
 
 function clearAuthCaches() {
   authDecisionCache.clear();
-  bayMembershipDecisions.clear();
-  // Requests already sent still count against the limits until they finish,
-  // but nobody joins them: callers after the sync ask again.
-  bayMembershipInFlight.clear();
-  bayMembershipGeneration += 1;
+  bayMembershipRefusals.clear();
 }
 
 function throwManagedEgressBlocked(account_id: string): never {

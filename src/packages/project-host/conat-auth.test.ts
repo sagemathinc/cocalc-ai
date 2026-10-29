@@ -1108,7 +1108,8 @@ describe("project-host Conat auth", () => {
           subject: cursorSubject,
         }),
       ).resolves.toBe(true);
-      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
+      // A grant is never cached: each check asks again (a refusal is cached).
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(3);
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledWith(
         expect.objectContaining({ account_id, project_id }),
       );
@@ -1214,7 +1215,7 @@ describe("project-host Conat auth", () => {
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
     });
 
-    it("lets a collaborator sync during a bay request decide, for waiting and later callers", async () => {
+    it("lets a collaborator sync during a bay request decide, for waiting and joining callers", async () => {
       mockGetRow.mockReturnValue(undefined);
       const pending: Array<(answer: any) => void> = [];
       mockConfirmProjectMemberWithOwningBay.mockImplementation(
@@ -1240,17 +1241,57 @@ describe("project-host Conat auth", () => {
         subject: fsSubject,
       });
       await new Promise((r) => setImmediate(r));
-      // A caller after the sync does not join the earlier request.
-      expect(pending).toHaveLength(2);
+      expect(pending).toHaveLength(1);
 
+      // The bay's yes predates the sync: the list the sync stored decides,
+      // for the caller that was waiting and for the one that joined.
       pending[0](bay(true));
-      pending[1](bay(false));
       await expect(before).resolves.toBe(false);
       await expect(after).resolves.toBe(false);
       await expect(
         isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
       ).resolves.toBe(false);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
+    });
+
+    it("never reuses a grant after an unversioned list without the account appears", async () => {
+      // A bay without collaborator revisions (rolling upgrade) confirms the
+      // account for a project with no local row.
+      mockGetRow.mockReturnValue(undefined);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(true, null));
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      ).resolves.toBe(true);
+      // The project starts and stores an unversioned list that no longer has
+      // the account; nothing clears the caches.
+      mockGetRow.mockReturnValue({
+        users: { "00000000-1000-4000-8000-000000000009": { group: "owner" } },
+      });
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(false, null));
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      ).resolves.toBe(false);
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not let another project's collaborator sync overrule a bay answer", async () => {
+      mockGetRow.mockReturnValue(undefined);
+      let resolve!: (answer: any) => void;
+      mockConfirmProjectMemberWithOwningBay.mockReturnValue(
+        new Promise<any>((r) => (resolve = r)),
+      );
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      const decision = isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: fsSubject,
+      });
+      await new Promise((r) => setImmediate(r));
+      // A sync of some other project (this project's row is unchanged).
+      clearProjectHostConatAuthCaches();
+      resolve(bay(true));
+      await expect(decision).resolves.toBe(true);
     });
 
     it("bounds the bay requests one account and the host can have running", async () => {
