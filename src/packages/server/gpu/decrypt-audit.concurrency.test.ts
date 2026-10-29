@@ -340,6 +340,67 @@ describeRealPostgres("the GPU decrypt audit", () => {
     expect(await verdict(outside)).toMatchObject({ verdict: "unexplained" });
   });
 
+  it("judges a decrypt that started after its exact record expired as unexplained, at once", async () => {
+    const o = await owner();
+    const { use, id } = await userDecrypt(o, "pod_read");
+    // the decrypt is dated just after the record it presents expired
+    await q(
+      "UPDATE gpu_key_decrypts SET started = (SELECT expires FROM gpu_key_uses WHERE id = $2) + interval '1 millisecond' WHERE id = $1",
+      [id, use.id],
+    );
+    await run(Date.now());
+    expect(await verdict(id)).toMatchObject({ verdict: "unexplained" });
+  });
+
+  it("ends a lost run's authority at its lease's expiry, not when the loss was noticed", async () => {
+    const o = await owner();
+    const token = `t-${randomUUID()}`;
+    const t0 = new Date(Date.now() - 10 * 60_000);
+    // taken ten minutes ago with a one-minute lease, never renewed
+    expect(await reaper.acquireWorkerLease("billing", token, t0, 60_000)).toBe(
+      true,
+    );
+    const { rows } = await q(
+      "SELECT id, lease_expires_at FROM gpu_worker_runs WHERE token = $1",
+      [token],
+    );
+    const run_id = rows[0].id;
+    const inside = randomUUID();
+    const after = randomUUID();
+    const insert = (id: string, at: string) =>
+      q(
+        `INSERT INTO gpu_key_decrypts (id, worker_run_id, worker_name, purpose,
+           key_owner_account_id, credential_id, principal, bay_id, process, started,
+           claimed_at, finished, outcome)
+         VALUES ($1, $2, 'billing', 'billing', $3, $4, 'worker:billing', $5, 'test',
+           ${at}, now(), now(), 'ok')`,
+        [id, run_id, o.account_id, o.credential_id, bay],
+      );
+    await insert(
+      inside,
+      "$6::timestamptz + interval '30 seconds'".replace(
+        "$6",
+        `'${t0.toISOString()}'`,
+      ),
+    );
+    // after the lease expired, before another holder noticed
+    await insert(
+      after,
+      `'${new Date(t0.getTime() + 3 * 60_000).toISOString()}'`,
+    );
+    // another holder takes over now: the old run closes as lost, now
+    expect(
+      await reaper.acquireWorkerLease(
+        "billing",
+        `t-${randomUUID()}`,
+        new Date(),
+      ),
+    ).toBe(true);
+    await run();
+    expect(await verdict(inside)).toMatchObject({ verdict: "explained" });
+    expect(await verdict(after)).toMatchObject({ verdict: "unexplained" });
+  });
+
   it("refuses to judge the home bay away: a decrypt on a bay that isn't the owner's home is unexplained", async () => {
     const o = await owner();
     const { id } = await userDecrypt(o, "pod_read");
@@ -351,6 +412,25 @@ describeRealPostgres("the GPU decrypt audit", () => {
       async () => {},
     );
     expect(await verdict(id)).toMatchObject({ verdict: "unexplained" });
+  });
+
+  it("leaves a decrypt pending while the owner's home bay can't be looked up", async () => {
+    const o = await owner();
+    const { id } = await userDecrypt(o, "pod_read");
+    const out = await audit.auditDecrypts(
+      {
+        now: () => Date.now() + HOUR,
+        homeBayOf: async () => {
+          throw Error("bay directory unavailable");
+        },
+      },
+      async () => {},
+    );
+    expect(out.pending).toBeGreaterThan(0);
+    expect((await verdict(id)).audited_at).toBeNull();
+    // judged by the next pass that can look it up
+    await run();
+    expect(await verdict(id)).toMatchObject({ verdict: "explained" });
   });
 
   it("keeps key material out of its alerts", async () => {

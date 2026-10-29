@@ -592,6 +592,10 @@ Table({
         "CHECK (name IN ('reaper','reconciler','compromise','billing','decrypt_audit'))",
     },
     started: { type: "timestamp", not_null: true },
+    // until when this run holds the lease: set when it is taken and at every
+    // renewal (5d-2c-2: a lost run's authority ends here, not when its loss
+    // was noticed)
+    lease_expires_at: { type: "timestamp" },
     finished: { type: "timestamp" },
     // finished | failed | lost
     outcome: { type: "string", pg_type: "varchar(16)" },

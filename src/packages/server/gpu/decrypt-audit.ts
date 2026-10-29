@@ -13,7 +13,8 @@
 //   the key's owner).
 // - A valid read is judged when its record expired (+60 s), a valid write
 //   when its outcome is recorded or its record expired (+60 s), a worker's
-//   decrypt when its run closed or its lease expired (+60 s). An attempt that
+//   decrypt when its run's authority ended (+60 s). A decrypt after its
+//   record expired, or outside its run's lease, is unexplained. An attempt that
 //   never finished, or a write with no outcome, is decrypt_unresolved (a
 //   warning to admins: a crash, or a bypass).
 // - An admission whose key was never read (never claimed) is recorded as
@@ -100,7 +101,9 @@ export interface DecryptFacts {
     name: string;
     started: Date;
     finished: Date | null;
-    // the lease's expiry, while this run's token still holds it
+    // finished | failed | lost (null while open)
+    outcome: string | null;
+    // until when it held the lease, as last taken or renewed
     lease_expires: Date | null;
   } | null;
 }
@@ -116,11 +119,7 @@ const t = (d: Date | null | undefined) =>
 // bay now (the only bay that may hold or read their key).
 export function judgeDecrypt(
   d: DecryptFacts,
-  {
-    now,
-    thisBay,
-    homeBay,
-  }: { now: number; thisBay: string; homeBay: string | undefined },
+  { now, thisBay, homeBay }: { now: number; thisBay: string; homeBay: string },
 ): Judgement {
   const unexplained = (why: string): Judgement => ({
     mature: true,
@@ -128,7 +127,7 @@ export function judgeDecrypt(
     why,
   });
   // 1. A missing, malformed or mismatched capability: judged at once.
-  if (d.bay_id !== thisBay || (homeBay != null && homeBay !== d.bay_id)) {
+  if (d.bay_id !== thisBay || homeBay !== d.bay_id) {
     return unexplained("not the key owner's home bay");
   }
   if ((d.key_use_id == null) === (d.worker_run_id == null)) {
@@ -157,6 +156,9 @@ export function judgeDecrypt(
     if (u.decrypt_rows > u.max_decrypts) {
       return unexplained("over its record's limit");
     }
+    if (started > t(u.expires)!) {
+      return unexplained("after its authorization record expired");
+    }
     // 2-3. A read when its record expired; a write when its outcome is
     // recorded, or its record expired.
     const expiredAt = t(u.expires)! + MATURITY_GRACE_MS;
@@ -177,13 +179,23 @@ export function judgeDecrypt(
     if (r.name !== d.worker_name || workerForPurpose(d.purpose) !== r.name) {
       return unexplained("not this worker's purpose");
     }
-    // 4. When the run closed, or its lease expired.
-    const closed = t(r.finished) ?? t(r.lease_expires);
-    if (closed == null || now < closed + MATURITY_GRACE_MS) {
+    // 4. When its authority ended: a run that finished or failed held the
+    // lease until then; a lost one only until its lease expired (whenever
+    // the loss was noticed); an open one until its lease's current expiry.
+    const leaseEnd = t(r.lease_expires);
+    const end =
+      r.finished == null
+        ? leaseEnd
+        : r.outcome === "lost"
+          ? Math.min(t(r.finished)!, leaseEnd ?? t(r.finished)!)
+          : t(r.finished);
+    if (end == null) return unexplained("its run never held a lease");
+    const closedAt = t(r.finished) ?? end;
+    if (now < Math.max(end, closedAt) + MATURITY_GRACE_MS) {
       return { mature: false };
     }
     // the run held the lease when the key was read
-    if (started < t(r.started)! || started > closed) {
+    if (started < t(r.started)! || started > end) {
       return unexplained("its run didn't hold the lease then");
     }
   }
@@ -221,13 +233,12 @@ async function batch(
               WHERE x.key_use_id = u.id) AS u_rows,
             o.outcome AS u_outcome,
             r.id AS r_id, r.name AS r_name, ${MS("r.started")} AS r_started_ms,
-            ${MS("r.finished")} AS r_finished_ms,
-            ${MS("l.expires_at")} AS r_lease_ms
+            ${MS("r.finished")} AS r_finished_ms, r.outcome AS r_outcome,
+            ${MS("r.lease_expires_at")} AS r_lease_ms
        FROM gpu_key_decrypts d
        LEFT JOIN gpu_key_uses u ON u.id = d.key_use_id
        LEFT JOIN gpu_key_use_outcomes o ON o.key_use_id = u.id
        LEFT JOIN gpu_worker_runs r ON r.id = d.worker_run_id
-       LEFT JOIN gpu_worker_leases l ON l.name = r.name AND l.holder = r.token
       WHERE d.audited_at IS NULL
         AND ($1::float8 IS NULL OR (${MS("d.started")}, d.id) > ($1::float8, $2::uuid))
       ORDER BY d.started, d.id
@@ -272,6 +283,7 @@ async function batch(
             name: r.r_name,
             started: date(r.r_started_ms)!,
             finished: date(r.r_finished_ms),
+            outcome: r.r_outcome ?? null,
             lease_expires: date(r.r_lease_ms),
           },
   }));
@@ -359,11 +371,11 @@ export interface DecryptAuditDeps {
   holder?: string;
   heartbeatMs?: number;
   // the account's home bay now (default: the bay directory)
-  homeBayOf?: (account_id: string) => Promise<string | undefined>;
+  homeBayOf?: (account_id: string) => Promise<string>;
   sweepMs?: number;
 }
 
-async function homeBayOf(account_id: string): Promise<string | undefined> {
+async function homeBayOf(account_id: string): Promise<string> {
   const { home_bay_id } = await resolveAccountHomeBay({ account_id });
   return `${home_bay_id ?? ""}`.trim() || getConfiguredBayId();
 }
@@ -376,7 +388,8 @@ export async function auditDecrypts(
   const clock = deps.now ?? Date.now;
   const deadline = clock() + (deps.sweepMs ?? SWEEP_MS);
   const thisBay = getConfiguredBayId();
-  const homes = new Map<string, string | undefined>();
+  // (null: the lookup failed this pass)
+  const homes = new Map<string, string | null>();
   const out = { audited: 0, pending: 0, alerts: 0 };
   let after: { started: number; id: string } | undefined;
   for (;;) {
@@ -384,19 +397,21 @@ export async function auditDecrypts(
     for (const d of rows) {
       await guard();
       if (!homes.has(d.key_owner_account_id)) {
-        // a home that can't be looked up now: judged by the other checks
+        // a home that can't be looked up now: the row waits for a pass that
+        // can (never judged without it)
         homes.set(
           d.key_owner_account_id,
           await (deps.homeBayOf ?? homeBayOf)(d.key_owner_account_id).catch(
-            () => undefined,
+            () => null,
           ),
         );
       }
-      const j = judgeDecrypt(d, {
-        now: clock(),
-        thisBay,
-        homeBay: homes.get(d.key_owner_account_id),
-      });
+      const homeBay = homes.get(d.key_owner_account_id);
+      if (homeBay == null) {
+        out.pending += 1;
+        continue;
+      }
+      const j = judgeDecrypt(d, { now: clock(), thisBay, homeBay });
       if (!j.mature) {
         out.pending += 1;
         continue;

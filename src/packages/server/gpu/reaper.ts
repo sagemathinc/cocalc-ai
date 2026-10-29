@@ -113,9 +113,10 @@ export async function acquireWorkerLease(
         [name, now],
       );
       await db.query(
-        `INSERT INTO gpu_worker_runs (id, token, name, started)
-         VALUES (gen_random_uuid(), $1, $2, $3)`,
-        [token, name, now],
+        `INSERT INTO gpu_worker_runs (id, token, name, started, lease_expires_at)
+         VALUES (gen_random_uuid(), $1, $2, $3::timestamptz,
+                 $3::timestamptz + make_interval(secs => $4))`,
+        [token, name, now, ttlMs / 1000],
       );
     }
     await db.query("COMMIT");
@@ -137,10 +138,17 @@ export async function renewWorkerLease(
   now: Date,
   ttlMs = REAPER_LEASE_MS,
 ): Promise<void> {
+  // the run records the same expiry, in the same statement
   const { rows } = await getPool().query(
-    `UPDATE gpu_worker_leases
-        SET expires_at = $3::timestamptz + make_interval(secs => $4)
-      WHERE name = $1 AND holder = $2 AND expires_at >= $3 RETURNING name`,
+    `WITH lease AS (
+       UPDATE gpu_worker_leases
+          SET expires_at = $3::timestamptz + make_interval(secs => $4)
+        WHERE name = $1 AND holder = $2 AND expires_at >= $3
+        RETURNING name, expires_at)
+     UPDATE gpu_worker_runs r SET lease_expires_at = lease.expires_at
+       FROM lease
+      WHERE r.name = lease.name AND r.token = $2 AND r.finished IS NULL
+      RETURNING r.name`,
     [name, token, now, ttlMs / 1000],
   );
   if (rows.length === 0) {
