@@ -665,7 +665,9 @@ the tunnel replica 1 recorded and waits (failing, and restarted by systemd)
 until it exists. Both read `COCALC_BAY_CLOUDFLARED_EXTRA_ENV`, e.g.
 `TUNNEL_TRANSPORT_PROTOCOL=http2`. To restart the tunnel, e.g. to apply new
 tunnel settings, run `cocalc-bay-cloudflared-ctl restart-all`: it restarts the
-replicas one at a time, each ready before the next. `upgrade-bay-release.sh
+replicas one at a time, each ready before the next, never one that may be
+serving while no other replica is ready, and replica 1 before the replicas
+that load its tunnel state. `upgrade-bay-release.sh
 --restart-cloudflared` and the hub's Cloudflare settings do the same.
 
 `cocalc-bay-cloudflared-watchdog.timer` checks each replica every 30 seconds.
@@ -683,9 +685,11 @@ In both cases the local frontdoor must be healthy. Failures spread over all
 connections point at the origin or at clients, so they never trigger a restart.
 Restarts have a 15-minute cooldown per replica and are logged with the edge
 locations in the watchdog unit's journal. A replica is not restarted within
-2 minutes of another replica's restart, nor while the other replicas are up
-without a ready connection (it is then the one carrying traffic); with only one
-replica running, it is restarted as before. Set
+2 minutes of another replica's restart, nor, while it still has a ready
+connection, unless another replica is ready: an enabled replica that is not
+running is started first, and if none comes back the degraded replica keeps
+serving (a degraded tunnel beats none). On a bay configured with one replica
+(the other disabled), it is restarted as before. Set
 `COCALC_BAY_CLOUDFLARED_WATCHDOG_ENABLED=0` to disable the watchdog, and
 `COCALC_BAY_CLOUDFLARED_REPLICAS` (default `1 2`) to change which replicas it
 checks.

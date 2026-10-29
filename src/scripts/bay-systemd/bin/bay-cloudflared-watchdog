@@ -108,10 +108,33 @@ print(value)
 ' <<<"$body"
 }
 
+# Starts replica $1 (enabled, but stopped or failed) and waits for a ready
+# tunnel connection; fails if it does not get one.
+recover_replica() {
+  local replica="$1" ready deadline
+  bay_log "cloudflared watchdog starting $(replica_unit "$replica"), which is enabled but not running"
+  local start_args=(start)
+  [[ "$replica" == 1 ]] || start_args+=("$replica")
+  timeout "${COCALC_BAY_CLOUDFLARED_WATCHDOG_RESTART_TIMEOUT_S}" \
+    "${cloudflared_ctl[@]}" "${start_args[@]}" >/dev/null 2>&1 || return 1
+  deadline=$((SECONDS + COCALC_BAY_CLOUDFLARED_WATCHDOG_READY_TIMEOUT_S))
+  while :; do
+    if systemctl is-active --quiet "$(replica_unit "$replica")" && \
+        ready="$(ready_connections "$(replica_metrics_url "$replica")")" && ((ready > 0)); then
+      return 0
+    fi
+    ((SECONDS >= deadline)) && return 1
+    sleep 1
+  done
+}
+
 # Why replica $1 (with $3 ready connections) must not be restarted now, if
-# anything.
+# anything. A replica still carrying traffic is restarted only while another
+# replica is ready; an enabled replica that is not running is started first.
+# A degraded tunnel beats none.
 restart_blocked_by_other_replicas() {
-  local replica="$1" now="$2" ready="$3" other last other_ready others_active=0
+  local replica="$1" now="$2" ready="$3" other last other_ready others_configured=0
+  local failed=()
   for other in $COCALC_BAY_CLOUDFLARED_REPLICAS; do
     [[ "$other" == "$replica" ]] && continue
     last="$(cat "$(replica_state_dir "$other")/last-restart" 2>/dev/null || printf '0')"
@@ -120,22 +143,38 @@ restart_blocked_by_other_replicas() {
       printf 'replica %s was restarted %ss ago\n' "$other" "$((now - last))"
       return 0
     fi
-    systemctl is-active --quiet "$(replica_unit "$other")" || continue
-    others_active=1
+    if ! systemctl is-active --quiet "$(replica_unit "$other")"; then
+      # Disabled: this bay runs fewer replicas (or ingress is direct).
+      systemctl is-enabled --quiet "$(replica_unit "$other")" 2>/dev/null || continue
+      others_configured=1
+      failed+=("$other")
+      continue
+    fi
+    others_configured=1
     if other_ready="$(ready_connections "$(replica_metrics_url "$other")")" && \
         ((other_ready > 0)); then
       return 1
     fi
   done
-  if ((others_active && ready > 0)); then
-    # This degraded replica is the only one carrying traffic.
-    printf 'no other replica has a ready tunnel connection\n'
-    return 0
+  # Nothing ready to lose here, or the only replica configured: restarting is
+  # the only way to recover. (With every replica down, the first one checked
+  # restarts; the gap holds back the others.)
+  if ((ready == 0 || others_configured == 0)); then
+    return 1
   fi
-  # The only replica (or the others are disabled), or no replica serves at
-  # all: restarting is the only way to recover. (With every replica down,
-  # the first one checked restarts; the gap holds back the others.)
-  return 1
+  # This degraded replica is the only one carrying traffic: bring a stopped
+  # replica back first, and restart this one only once that one is ready.
+  for other in "${failed[@]}"; do
+    if recover_replica "$other"; then
+      return 1
+    fi
+  done
+  if ((${#failed[@]})); then
+    printf 'no other replica has a ready tunnel connection, and replica %s could not be started\n' "${failed[*]}"
+  else
+    printf 'no other replica has a ready tunnel connection\n'
+  fi
+  return 0
 }
 
 check_replica() {

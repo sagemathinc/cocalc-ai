@@ -36,9 +36,17 @@ printf '%s\n' "$*" >> "$WATCHDOG_SYSTEMCTL_LOG"
 case "$1" in
   is-active)
     if [[ "${*: -1}" == cocalc-bay-cloudflared-2.service ]]; then
-      [[ "${FAKE_UNIT2_ACTIVE:-1}" == "1" ]]
+      [[ "${FAKE_UNIT2_ACTIVE:-1}" == "1" || -e "${WATCHDOG_SYSTEMCTL_LOG}.started-2" ]]
     else
       [[ "${FAKE_UNIT_ACTIVE:-1}" == "1" ]]
+    fi
+    ;;
+  is-enabled)
+    [[ "${*: -1}" != cocalc-bay-cloudflared-2.service || "${FAKE_UNIT2_ENABLED:-1}" == "1" ]]
+    ;;
+  start)
+    if [[ "${*: -1}" == cocalc-bay-cloudflared-2.service && "${FAKE_UNIT2_STARTS:-1}" == "1" ]]; then
+      touch "${WATCHDOG_SYSTEMCTL_LOG}.started-2"
     fi
     ;;
   show)
@@ -101,6 +109,7 @@ unit() {
 }
 case "$1" in
   restart) exec systemctl restart "$(unit "${2:-1}")" ;;
+  start) exec systemctl start "$(unit "${2:-1}")" ;;
   journal-since) exec journalctl --unit "$(unit "${3:-1}")" --since "@$2" --output short-unix --no-pager ;;
   *) exit 2 ;;
 esac
@@ -139,9 +148,11 @@ reset_state() {
   : > "$WATCHDOG_SYSTEMCTL_LOG"
   : > "$STDERR_LOG"
   rm -rf "$COCALC_BAY_RUN_DIR"
+  rm -f "${WATCHDOG_SYSTEMCTL_LOG}.started-2"
   export COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD=3
   export FAKE_READY=4 FAKE_FRONTDOOR_HEALTHY=1 FAKE_UNIT_ACTIVE=1
   export FAKE_READY_2=4 FAKE_UNIT2_ACTIVE=1 FAKE_FAILURES_2=""
+  export FAKE_UNIT2_ENABLED=1 FAKE_UNIT2_STARTS=1
   unset FAKE_FAILURE_TS
 }
 
@@ -329,10 +340,137 @@ for _ in 1 2 3 4; do run_watchdog; done
 [[ "$(restart_count)" == "1" ]] || fail "did not restart a replica when none had a ready connection"
 [[ "$(restart_count_2)" == "0" ]] || fail "restarted both replicas when none was ready"
 
-# A bay running a single replica (the other unit inactive) still recovers.
+# A bay running a single replica (the other unit disabled) still recovers.
+reset_state
+export FAKE_FAILURES="0:120" FAKE_UNIT2_ACTIVE=0 FAKE_UNIT2_ENABLED=0
+for _ in 1 2 3; do run_watchdog; done
+[[ "$(restart_count)" == "1" ]] || fail "did not restart the only configured replica"
+grep -q '^start ' "$WATCHDOG_SYSTEMCTL_LOG" && fail "started a disabled replica"
+
+# Replica 2 is enabled but stopped or failed, and replica 1 is degraded but
+# still serving: replica 2 is started first, and replica 1 restarted only
+# once replica 2 is ready.
 reset_state
 export FAKE_FAILURES="0:120" FAKE_UNIT2_ACTIVE=0
 for _ in 1 2 3; do run_watchdog; done
-[[ "$(restart_count)" == "1" ]] || fail "did not restart the only active replica"
+grep -q '^start cocalc-bay-cloudflared-2.service$' "$WATCHDOG_SYSTEMCTL_LOG" || fail "did not start the failed replica 2"
+[[ "$(restart_count)" == "1" ]] || fail "did not restart replica 1 once replica 2 was back"
+# ...and when replica 2 cannot be started, replica 1 (degraded, but the only
+# one serving) is left alone: a degraded tunnel beats none.
+reset_state
+export FAKE_FAILURES="0:120" FAKE_UNIT2_ACTIVE=0 FAKE_UNIT2_STARTS=0
+for _ in 1 2 3 4; do run_watchdog; done
+[[ "$(restart_count)" == "0" ]] || fail "restarted the only serving replica while replica 2 could not start"
+grep -q 'replica 2 could not be started' "$STDERR_LOG" || fail "missing could-not-start log"
+# ...but a replica 1 with nothing ready is still restarted.
+reset_state
+export FAKE_READY=0 FAKE_FAILURES="" FAKE_UNIT2_ACTIVE=0 FAKE_UNIT2_STARTS=0
+for _ in 1 2 3; do run_watchdog; done
+[[ "$(restart_count)" == "1" ]] || fail "did not restart replica 1 with nothing ready"
+
+# ---- The whole state table ----
+# Each replica is ready, degraded (ready connections, one failing every
+# stream), none (running, no ready connection), unknown (running, readiness
+# unreadable), failed (enabled but not running) or disabled; a failed
+# replica either starts again or never does. One watchdog pass at a time
+# (threshold 1), five passes per cell. Every restart of a replica that is
+# serving must happen while the other replica is ready, except on a bay
+# configured with one replica (the other disabled), where restarting the
+# degraded replica is the only way to recover, as before replicas.
+M="${TMP}/matrix"
+mkdir -p "$M"
+cat > "${M}/state.sh" <<'FAKE'
+m_unit_replica() { [[ "$1" == cocalc-bay-cloudflared-2.service ]] && echo 2 || echo 1; }
+# Replica $1's state now: ready, degraded, none, unknown, failed or disabled.
+m_state() {
+  local replica="$1" var="M_STATE_$1"
+  if [[ -e "${MLOG}.restarted.${replica}" || -e "${MLOG}.started.${replica}" ]]; then
+    echo ready
+  else
+    echo "${!var}"
+  fi
+}
+# Its ready connections, or nothing when it does not answer.
+m_ready() {
+  case "$(m_state "$1")" in
+    ready|degraded) echo 4 ;;
+    none) echo 0 ;;
+  esac
+}
+FAKE
+cat > "${M}/systemctl" <<'FAKE'
+#!/usr/bin/env bash
+source "${MDIR}/state.sh"
+replica="$(m_unit_replica "${*: -1}")"
+state="$(m_state "$replica")"
+case "$1" in
+  is-active) [[ "$state" != failed && "$state" != disabled ]]; exit $? ;;
+  is-enabled) [[ "$state" != disabled ]]; exit $? ;;
+  show) printf 'Mon 2026-09-21 01:24:04 UTC\n' ;;
+  start)
+    [[ "$state" == failed && "${M_STARTS}" == 1 ]] && touch "${MLOG}.started.${replica}"
+    echo "start ${replica}" >> "$MLOG" ;;
+  restart)
+    other=$((3 - replica))
+    if [[ -n "$(m_ready "$replica")" && "$(m_ready "$replica")" != 0 || "$state" == unknown ]] &&
+        ! [[ "$(m_ready "$other")" =~ ^[1-9] ]] && [[ "$(m_state "$other")" != disabled ]]; then
+      echo "VIOLATION restart ${replica} (${state}) while replica ${other} is $(m_state "$other")" >> "$MLOG"
+    fi
+    echo "restart ${replica}" >> "$MLOG"
+    touch "${MLOG}.restarted.${replica}" ;;
+esac
+exit 0
+FAKE
+cat > "${M}/curl" <<'FAKE'
+#!/usr/bin/env bash
+source "${MDIR}/state.sh"
+url="${*: -1}"
+case "$url" in
+  *:20241/ready|*:20242/ready)
+    replica=1
+    [[ "$url" == *:20242/ready ]] && replica=2
+    ready="$(m_ready "$replica")"
+    [[ -n "$ready" ]] || exit 7
+    printf '{"status":200,"readyConnections":%s}\n' "$ready" ;;
+  */metrics) ;;
+  *) exit 0 ;;
+esac
+FAKE
+cat > "${M}/journalctl" <<'FAKE'
+#!/usr/bin/env bash
+source "${MDIR}/state.sh"
+replica=1
+[[ "$*" == *cocalc-bay-cloudflared-2.service* ]] && replica=2
+[[ "$(m_state "$replica")" == degraded ]] || exit 0
+ts="$(date +%s.%N)"
+for ((i = 0; i < 120; i++)); do
+  printf '%s bay cloudflared[1]: ERR Request failed error="stream %s canceled by remote" connIndex=0 event=0\n' "$ts" "$i"
+done
+FAKE
+cp "${FAKE_BIN}/cocalc-bay-cloudflared-ctl" "${FAKE_BIN}/sudo" "${FAKE_BIN}/timeout" "$M/"
+chmod 0755 "$M"/*
+export MDIR="$M" MLOG="${M}/log"
+for M_STARTS in 1 0; do
+  for M_STATE_1 in ready degraded none unknown failed disabled; do
+    for M_STATE_2 in ready degraded none unknown failed disabled; do
+      export M_STARTS M_STATE_1 M_STATE_2
+      : > "$MLOG"
+      rm -f "${MLOG}".restarted.* "${MLOG}".started.*
+      rm -rf "$COCALC_BAY_RUN_DIR"
+      for _ in 1 2 3 4 5; do
+        PATH="${M}:${PATH}" COCALC_BAY_CLOUDFLARED_CTL="${M}/cocalc-bay-cloudflared-ctl" \
+          COCALC_BAY_CLOUDFLARED_WATCHDOG_FAILURE_THRESHOLD=1 \
+          COCALC_BAY_CLOUDFLARED_METRICS_URL=http://127.0.0.1:20241 run_watchdog
+      done
+      cell="replica 1 ${M_STATE_1}, replica 2 ${M_STATE_2}, failed replicas start=${M_STARTS}"
+      if grep -q VIOLATION "$MLOG"; then
+        cat "$MLOG" >&2
+        fail "watchdog dropped ingress: ${cell}"
+      fi
+      printf '  %-62s %s\n' "$cell" "$(grep -E '^(start|restart) ' "$MLOG" | tr '\n' ' ')" >> "${TMP}/matrix.txt"
+    done
+  done
+done
+if [[ -n "${WATCHDOG_MATRIX_OUT:-}" ]]; then cp "${TMP}/matrix.txt" "$WATCHDOG_MATRIX_OUT"; fi
 
 echo "bay cloudflared watchdog tests passed"
