@@ -118,8 +118,9 @@ let ensureWorkerPromise:
     }
   | undefined;
 let workerSpawnAttemptCount = 0;
-// pid -> when its control probe started failing (deleted once it answers)
-const workerControlFailingSince = new Map<number, number>();
+// worker process identity -> when its control probe started failing
+// (deleted once it answers)
+const workerControlFailingSince = new Map<string, number>();
 let nextWorkerSpawnAllowedAt = 0;
 
 type WorkerLaunch = {
@@ -404,6 +405,17 @@ function workerDatabaseStateProtectsUnresponsiveWorker(
   return heartbeatIsFresh;
 }
 
+// A worker process, not just its pid: a pid reused by a later worker must not
+// inherit an earlier worker's failures.
+function workerProcessKey(worker: WorkerProcessInfo): string {
+  return [
+    worker.pid,
+    worker.start_time_ticks ?? "",
+    workerIdOf(worker),
+    workerStartedAtMs(worker),
+  ].join(":");
+}
+
 // Record the outcome of this pass's control probe. Returns how long the
 // worker has been failing it (0 while it answers).
 function noteWorkerControlProbe(
@@ -411,29 +423,46 @@ function noteWorkerControlProbe(
   answered: boolean,
   now = Date.now(),
 ): number {
+  const key = workerProcessKey(worker);
   if (answered) {
-    workerControlFailingSince.delete(worker.pid);
+    workerControlFailingSince.delete(key);
     return 0;
   }
-  const since = workerControlFailingSince.get(worker.pid) ?? now;
-  workerControlFailingSince.set(worker.pid, since);
+  const since = workerControlFailingSince.get(key) ?? now;
+  workerControlFailingSince.set(key, since);
   return now - since;
 }
 
 function forgetWorkerControlProbes(observed: WorkerProcessInfo[]): void {
-  const pids = new Set(observed.map((worker) => worker.pid));
-  for (const pid of workerControlFailingSince.keys()) {
-    if (!pids.has(pid)) workerControlFailingSince.delete(pid);
+  const keys = new Set(observed.map(workerProcessKey));
+  for (const key of workerControlFailingSince.keys()) {
+    if (!keys.has(key)) workerControlFailingSince.delete(key);
   }
+}
+
+// A process in uninterruptible sleep ("D") is waiting for the disk. Killing
+// it does not help (the signal waits for the I/O too), and a replacement would
+// wait on the same disk, so no termination for stalls or overdue drains
+// happens while a worker is in it.
+function workerBlockedOnIo(
+  worker: WorkerProcessInfo,
+  reason: string,
+  processState: (pid: number) => string | undefined = readProcessState,
+): boolean {
+  if (processState(worker.pid) !== "D") return false;
+  logger.warn("not terminating ACP worker blocked on I/O", {
+    pid: worker.pid,
+    worker_id: workerIdOf(worker) || null,
+    reason,
+  });
+  return true;
 }
 
 /**
  * Whether a worker that does not answer its control probe should be killed:
  * past its startup grace, failing the probe for a while, not protected by its
  * database state (running turns, fresh heartbeat, a backlog still in grace),
- * and not blocked in the kernel. A process in uninterruptible sleep ("D") is
- * waiting for the disk; killing it does not help (the signal waits for the
- * I/O too), and a replacement would wait on the same disk.
+ * and not blocked on I/O.
  */
 function shouldTerminateUnresponsiveWorker({
   worker,
@@ -449,16 +478,7 @@ function shouldTerminateUnresponsiveWorker({
   if (!workerControlStartupGraceExpired(worker, now)) return false;
   if (failingForMs < ACP_WORKER_UNRESPONSIVE_PROBE_FAILURE_MS) return false;
   if (workerDatabaseStateProtectsUnresponsiveWorker(worker, now)) return false;
-  const state = processState(worker.pid);
-  if (state === "D") {
-    logger.warn("not terminating ACP worker blocked on I/O", {
-      pid: worker.pid,
-      worker_id: workerIdOf(worker) || null,
-      failing_for_ms: failingForMs,
-    });
-    return false;
-  }
-  return true;
+  return !workerBlockedOnIo(worker, "unresponsive_worker", processState);
 }
 
 function acpJobReferenceTimestamp(row: {
@@ -1196,7 +1216,10 @@ async function reconcileProjectHostAcpWorkers({
     )?.status;
     const controlFailingForMs = noteWorkerControlProbe(worker, status != null);
     const row = getAcpWorker(workerIdOf(worker));
-    if (shouldTerminateOverdueDrainingWorker({ worker, status, row })) {
+    if (
+      shouldTerminateOverdueDrainingWorker({ worker, status, row }) &&
+      !workerBlockedOnIo(worker, "overdue_draining_worker")
+    ) {
       logger.warn("terminating overdue draining project-host ACP worker", {
         pid: worker.pid,
         worker_id: workerIdOf(worker) || null,
@@ -1237,6 +1260,10 @@ async function reconcileProjectHostAcpWorkers({
           reason: "worker state changed during stall confirmation",
           confirm_ms: ACP_WORKER_QUEUE_STALL_CONFIRM_MS,
         });
+        workers.push({ ...worker, status: confirmation.status ?? status });
+        continue;
+      }
+      if (workerBlockedOnIo(worker, "queue_stalled_worker")) {
         workers.push({ ...worker, status: confirmation.status ?? status });
         continue;
       }
@@ -1615,6 +1642,7 @@ export const __test__ = {
   noteWorkerControlProbe,
   forgetWorkerControlProbes,
   readProcessState,
+  workerBlockedOnIo,
   staleAcpWorkerRowsToStop,
   shouldTerminateQueueStalledWorker,
   confirmQueueStalledWorkerTermination,

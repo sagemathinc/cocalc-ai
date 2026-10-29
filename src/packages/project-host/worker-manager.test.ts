@@ -828,6 +828,7 @@ describe("ACP worker control startup grace", () => {
 describe("unresponsive ACP workers", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   const worker = {
@@ -921,6 +922,97 @@ describe("unresponsive ACP workers", () => {
     expect(__test__.noteWorkerControlProbe(worker, false, 40_000)).toBe(0);
     __test__.noteWorkerControlProbe(worker, true);
   });
+
+  it("does not let a later worker with the same pid inherit failures", () => {
+    const earlier = { ...worker, start_time_ticks: "100" };
+    const later = { ...worker, start_time_ticks: "200" };
+    expect(__test__.noteWorkerControlProbe(earlier, false, 10_000)).toBe(0);
+    expect(__test__.noteWorkerControlProbe(earlier, false, 40_000)).toBe(
+      30_000,
+    );
+    __test__.forgetWorkerControlProbes([later]);
+    expect(__test__.noteWorkerControlProbe(later, false, 41_000)).toBe(0);
+    expect(__test__.noteWorkerControlProbe(later, false, 45_000)).toBe(4_000);
+    __test__.noteWorkerControlProbe(later, true);
+  });
+
+  it.each([
+    ["D", false],
+    ["S", true],
+  ])(
+    "reconciliation kills a stalled, silent worker only when it is not blocked on I/O (state %s)",
+    async (state, killed) => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      const entryPoint =
+        "/opt/cocalc/project-host/bundles/current/main/index.js";
+      configureProjectHostAcpWorkerLauncher({ entryPoint });
+      const pid = 1301;
+      let alive = true;
+      jest.spyOn(fs, "readdirSync").mockReturnValue([String(pid)] as any);
+      jest.spyOn(fs, "readFileSync").mockImplementation((filename) => {
+        if (String(filename).endsWith("/environ")) {
+          return [
+            "COCALC_PROJECT_HOST_ACP_WORKER=1",
+            "COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY=rolling-v1",
+            "COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT=1000",
+            "COCALC_ACP_INSTANCE_ID=worker-blocked",
+            "PROJECT_HOST_ID=host-1",
+          ].join("\0");
+        }
+        if (String(filename).endsWith("/cmdline")) {
+          return [process.execPath, entryPoint].join("\0");
+        }
+        if (String(filename).endsWith("/stat")) {
+          return `${pid} (node) ${[state, ...Array(18).fill("0"), "4242"].join(" ")}`;
+        }
+        throw new Error(`Unexpected read: ${filename}`);
+      });
+      jest.spyOn(fs, "rmSync").mockImplementation(() => {});
+      const kill = jest
+        .spyOn(process, "kill")
+        .mockImplementation((_pid, signal) => {
+          if (signal === 0) {
+            if (!alive) throw new Error("ESRCH");
+            return true;
+          }
+          alive = false;
+          return true;
+        });
+      // The control channel is silent; the heartbeat is old and a queued
+      // backlog has made no progress: every stall test points at the worker.
+      jest.mocked(acpDaemonControlClient).mockImplementation(
+        () =>
+          ({
+            health: async () => {
+              throw new Error("timeout");
+            },
+            requestDrain: jest.fn(),
+          }) as any,
+      );
+      mockGetAcpWorker.mockReturnValue({
+        worker_id: "worker-blocked",
+        host_id: "host-1",
+        pid,
+        state: "active",
+        started_at: 1_000,
+        last_heartbeat_at: 500_000,
+        last_seen_running_jobs: 0,
+        last_queue_progress_at: 500_000,
+      } as any);
+      mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(500_000);
+
+      const first = __test__.reconcileProjectHostAcpWorkers();
+      await jest.advanceTimersByTimeAsync(5_000);
+      await first;
+      jest.setSystemTime(1_040_000);
+      const second = __test__.reconcileProjectHostAcpWorkers();
+      await jest.advanceTimersByTimeAsync(5_000);
+      await second;
+
+      const terminated = kill.mock.calls.some(([, signal]) => signal !== 0);
+      expect(terminated).toBe(killed);
+    },
+  );
 
   it("reads the kernel state of a process", () => {
     expect(["R", "S"]).toContain(__test__.readProcessState(process.pid));
