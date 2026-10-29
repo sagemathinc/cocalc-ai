@@ -92,6 +92,7 @@ async function turn({
       WHERE reservation_id = $1`,
     [reservationId, status, minutesAgo(minutes)],
   );
+  return fundedTurnId;
 }
 
 // An admission that was first attempted `attempted` minutes ago and allowed
@@ -100,8 +101,8 @@ async function admitted(
   provider: "openai" | "anthropic",
   decided: number,
   attempted = decided,
+  fundedTurnId = uuid(),
 ) {
-  const fundedTurnId = uuid();
   await recordSiteFundedAdmissionLocal({
     fundedTurnId,
     accountId: uuid(),
@@ -245,6 +246,47 @@ describe("site-funded AI health", () => {
     );
   });
 
+  it("does not call admitted turns that closed normally stalled", async () => {
+    for (const outcome of [
+      "app-server runtime closed",
+      "Claude harness closed",
+      "superseded by a new turn",
+      "app-server runtime closed",
+      "app-server runtime closed",
+    ]) {
+      await admitted(
+        "openai",
+        30,
+        30,
+        await turn({ status: "released", outcome }),
+      );
+    }
+    let health = await getSiteFundedAiHealth();
+    expect(health.providers.find((p) => p.provider === "openai")).toMatchObject(
+      {
+        admitted: 5,
+        admitted_ended: 5,
+        committed: 0,
+        nothing_completes: false,
+      },
+    );
+    expect(siteFundedAiHealthLevel(health)).toBe("healthy");
+    // Five that could not be set up are stalled.
+    await getPool().query("DELETE FROM site_ai_admission_attempts");
+    for (let i = 0; i < 5; i++) {
+      await admitted(
+        "openai",
+        30,
+        30,
+        await turn({ status: "released", outcome: "site key unavailable" }),
+      );
+    }
+    health = await getSiteFundedAiHealth();
+    expect(health.providers.find((p) => p.provider === "openai")).toMatchObject(
+      { admitted: 5, admitted_ended: 0, nothing_completes: true },
+    );
+  });
+
   it("needs at least 5 finished turns", async () => {
     await turn({ status: "committed" });
     for (let i = 0; i < 3; i++) await turn({ status: "failed", outcome: "x" });
@@ -271,8 +313,14 @@ describe("site-funded AI health", () => {
       "- openai: turns are admitted but none completed in the last 60 minutes",
     );
 
-    // One completed turn clears it, and the alert state.
+    // A turn that completed without its own admission in the window does
+    // not clear it; one of the admitted turns completing does, and the alert
+    // state with it.
     await turn({ status: "committed" });
+    expect(siteFundedAiHealthLevel(await getSiteFundedAiHealth())).toBe(
+      "critical",
+    );
+    await admitted("openai", 30, 30, await turn({ status: "committed" }));
     expect(await runSiteFundedAiAlertCheck()).toBe(0);
     const { rows } = await getPool().query(
       "SELECT active FROM admin_alert_state WHERE subject = 'Site-funded AI turns are failing'",

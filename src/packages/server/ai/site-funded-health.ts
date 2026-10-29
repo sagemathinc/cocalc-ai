@@ -15,7 +15,8 @@ line, when
   Codex, and expired turns, are limits by design), out of at least 5
   finished turns; or
 - at least 5 turns were admitted (and have had 15 minutes to finish) but
-  none completed.
+  none of them ended as designed (committed, closed normally or stopped by a
+  limit).
 
 It costs nothing: it reads what the turns already record.
 */
@@ -55,14 +56,39 @@ export const FINISHED_TURNS_SQL = `SELECT provider, status, outcome, count(*)::i
     AND status IN ('committed', 'failed', 'expired', 'released')
   GROUP BY provider, status, outcome`;
 
+type TurnEnd = "committed" | "limited" | "closed" | "failed" | "running";
+
+// How a turn ended, from its reservation's status and outcome.
+function turnEnd(status: string | null, outcome: string | null): TurnEnd {
+  const text = outcome ?? "";
+  switch (status) {
+    case "committed":
+      return "committed";
+    case "expired":
+      return "limited";
+    case "interrupted":
+      return "closed";
+    case "released":
+      return RELEASED_FAILURE.test(text) ? "failed" : "closed";
+    case "failed":
+      return LIMIT_OUTCOME.test(text) ? "limited" : "failed";
+    default:
+      // Still active, or no reservation was made.
+      return "running";
+  }
+}
+
 export interface SiteFundedAiProviderHealth {
   provider: string;
   committed: number;
   // Failed for a reason other than a limit.
   failed: number;
   limited: number;
-  // Admitted at least SITE_AI_ADMISSION_SETTLE_MINUTES ago, within the window.
+  // Admitted at least SITE_AI_ADMISSION_SETTLE_MINUTES ago, within the window,
+  // and how many of those turns have ended as designed (committed, closed or
+  // stopped by a limit).
   admitted: number;
+  admitted_ended: number;
   top_failures: { outcome: string; turns: number }[];
   failure_rate_exceeded: boolean;
   nothing_completes: boolean;
@@ -84,16 +110,24 @@ export async function getSiteFundedAiHealth({
       outcome: string | null;
       turns: number;
     }>(FINISHED_TURNS_SQL, [now, SITE_AI_HEALTH_WINDOW_MINUTES]),
-    pool.query<{ provider: string; admitted: number }>(
-      `SELECT provider, count(*)::int AS admitted
-         FROM site_ai_admission_attempts
-        WHERE outcome = 'allowed'
+    // The settled admissions, each with how its own turn ended.
+    pool.query<{
+      provider: string;
+      status: string | null;
+      outcome: string | null;
+      admitted: number;
+    }>(
+      `SELECT a.provider, r.status, r.outcome, count(*)::int AS admitted
+         FROM site_ai_admission_attempts a
+         LEFT JOIN site_ai_turn_reservations r
+           ON r.funded_turn_id = a.funded_turn_id
+        WHERE a.outcome = 'allowed'
           -- When it was allowed: a retry keeps the first attempt's time.
-          AND decided_at >= $1::timestamptz - make_interval(mins => $2)
-          AND decided_at < $1::timestamptz - make_interval(mins => $3)
+          AND a.decided_at >= $1::timestamptz - make_interval(mins => $2)
+          AND a.decided_at < $1::timestamptz - make_interval(mins => $3)
           -- Bounds the scan (attempted_at is indexed; retries are quick).
-          AND attempted_at >= $1::timestamptz - INTERVAL '1 day'
-        GROUP BY provider`,
+          AND a.attempted_at >= $1::timestamptz - INTERVAL '1 day'
+        GROUP BY a.provider, r.status, r.outcome`,
       [now, SITE_AI_HEALTH_WINDOW_MINUTES, SITE_AI_ADMISSION_SETTLE_MINUTES],
     ),
   ]);
@@ -107,6 +141,7 @@ export async function getSiteFundedAiHealth({
         failed: 0,
         limited: 0,
         admitted: 0,
+        admitted_ended: 0,
         top_failures: [],
         failure_rate_exceeded: false,
         nothing_completes: false,
@@ -120,20 +155,12 @@ export async function getSiteFundedAiHealth({
   for (const row of turns.rows) {
     const health = get(row.provider);
     const count = Number(row.turns) || 0;
-    if (
-      row.status === "released" &&
-      !RELEASED_FAILURE.test(row.outcome ?? "")
-    ) {
-      continue;
-    }
-    if (row.status === "committed") {
+    const end = turnEnd(row.status, row.outcome);
+    if (end === "committed") {
       health.committed += count;
-    } else if (
-      row.status === "expired" ||
-      LIMIT_OUTCOME.test(row.outcome ?? "")
-    ) {
+    } else if (end === "limited") {
       health.limited += count;
-    } else {
+    } else if (end === "failed") {
       health.failed += count;
       const outcome = (row.outcome ?? "no reason recorded").slice(
         0,
@@ -143,9 +170,16 @@ export async function getSiteFundedAiHealth({
       counts.set(outcome, (counts.get(outcome) ?? 0) + count);
       failures.set(row.provider, counts);
     }
+    // A normal close is not a finished turn here at all.
   }
   for (const row of admissions.rows) {
-    get(row.provider).admitted += Number(row.admitted) || 0;
+    const health = get(row.provider);
+    const count = Number(row.admitted) || 0;
+    health.admitted += count;
+    const end = turnEnd(row.status, row.outcome);
+    if (end === "committed" || end === "limited" || end === "closed") {
+      health.admitted_ended += count;
+    }
   }
   for (const health of byProvider.values()) {
     health.top_failures = [...(failures.get(health.provider) ?? new Map())]
@@ -157,7 +191,8 @@ export async function getSiteFundedAiHealth({
       finished >= SITE_AI_MIN_FINISHED_TURNS &&
       health.failed / finished > SITE_AI_MAX_FAILURE_RATE;
     health.nothing_completes =
-      health.admitted >= SITE_AI_MIN_ADMITTED_TURNS && health.committed === 0;
+      health.admitted >= SITE_AI_MIN_ADMITTED_TURNS &&
+      health.admitted_ended === 0;
   }
   return {
     window_minutes: SITE_AI_HEALTH_WINDOW_MINUTES,
