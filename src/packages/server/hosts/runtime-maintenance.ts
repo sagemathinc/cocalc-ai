@@ -38,6 +38,17 @@ const SYNTHETIC_PROBE_CLAIM_TIMEOUT_MS = Math.max(
     process.env.COCALC_HOST_SYNTHETIC_PROBE_CLAIM_TIMEOUT_MS ?? 15 * 60_000,
   ),
 );
+/** How old a host's last synthetic probe may be before it is overdue: one
+ * interval between passing probes, plus the time a running probe may take. */
+export function syntheticProbeOverdueAfterMs(): number {
+  return SYNTHETIC_PROBE_SUCCESS_INTERVAL_MS + SYNTHETIC_PROBE_CLAIM_TIMEOUT_MS;
+}
+
+/** How long a running probe may take before its claim is stale. */
+export function syntheticProbeClaimTimeoutMs(): number {
+  return SYNTHETIC_PROBE_CLAIM_TIMEOUT_MS;
+}
+
 const SYNTHETIC_PROBE_RPC_TIMEOUT_MS = Math.max(
   2 * 60_000,
   Number(process.env.COCALC_HOST_SYNTHETIC_PROBE_RPC_TIMEOUT_MS ?? 2 * 60_000),
@@ -749,10 +760,21 @@ async function claimSyntheticProbe(
         ? `${previous.alerted_at}`.trim()
         : undefined,
   };
+  // The outcome this probe replaces, so that health checks can still judge
+  // the host while it runs (synthetic-probe-health.ts). A stale running claim
+  // being taken over passes on the outcome it had kept.
+  const previousStatus =
+    previous.status === "running" ? previous.previous_status : previous.status;
+  const previousCheckedAt =
+    previous.status === "running"
+      ? previous.previous_checked_at
+      : previous.checked_at;
   const probe = {
     status: "running",
     claim_id: claimId,
     claimed_at: new Date().toISOString(),
+    previous_status: sameSession ? previousStatus : undefined,
+    previous_checked_at: sameSession ? previousCheckedAt : undefined,
     host_boot_id: row.metadata?.host_boot_id,
     host_session_id: row.metadata?.host_session_id,
     consecutive_failures: previousFailures,

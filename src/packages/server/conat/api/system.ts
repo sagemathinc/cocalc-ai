@@ -478,6 +478,10 @@ import {
   projectArchiveHostCoverageHealth,
 } from "@cocalc/server/projects/archive-lifecycle-maintenance";
 import {
+  listHostSyntheticProbes,
+  syntheticSmokeHealth,
+} from "@cocalc/server/hosts/synthetic-probe-health";
+import {
   getProjectMembershipAuditHealthStatus,
   projectMembershipAuditHealth,
 } from "@cocalc/server/projects/membership-audit-health";
@@ -2293,6 +2297,7 @@ export async function getLaunchHealth({
     setupResult,
     configResult,
     smokeResult,
+    hostSyntheticProbesResult,
     adminAlertsResult,
     intrusionObservationsResult,
     backupPurgeResult,
@@ -2320,6 +2325,7 @@ export async function getLaunchHealth({
       scope: SERVER_SETTINGS_CONFIG_SCOPE,
     }),
     getLatestLaunchSmokeResult(),
+    listHostSyntheticProbes(),
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
     getHostIntrusionObservationSummary(),
     getBackupPurgeHealth(),
@@ -2988,29 +2994,19 @@ export async function getLaunchHealth({
     launchHealthCheck({
       id: "synthetic-smoke",
       label: "Synthetic smoke probe",
-      level:
-        smokeResult.status === "rejected"
-          ? "critical"
-          : smoke == null
-            ? "unknown"
-            : smoke.status === "succeeded"
-              ? Date.now() - Date.parse(smoke.finished_at) > 60 * 60 * 1000
-                ? "warning"
-                : "healthy"
-              : "critical",
-      summary:
-        smokeResult.status === "rejected"
-          ? "Unable to read the latest synthetic smoke result."
-          : smoke == null
-            ? "No synthetic smoke probe result has been recorded."
-            : `${smoke.status} ${formatDurationMs(smoke.duration_ms)} on project ${smoke.project_id} at ${new Date(smoke.finished_at).toLocaleString()}.`,
-      details:
-        smokeResult.status === "rejected"
-          ? [`${smokeResult.reason}`]
-          : (smoke?.steps.map(
-              (step) =>
-                `${step.label}: ${step.status} in ${formatDurationMs(step.duration_ms)} (${step.summary})`,
-            ) ?? []),
+      ...syntheticSmokeHealth({
+        smoke,
+        smokeError:
+          smokeResult.status === "rejected" ? smokeResult.reason : undefined,
+        hosts:
+          hostSyntheticProbesResult.status === "fulfilled"
+            ? hostSyntheticProbesResult.value
+            : undefined,
+        hostsError:
+          hostSyntheticProbesResult.status === "rejected"
+            ? hostSyntheticProbesResult.reason
+            : undefined,
+      }),
     }),
   ];
 
