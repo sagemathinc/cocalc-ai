@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { ensureProjectBackupRepoSchema } from "@cocalc/server/project-backup";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export interface RestoreDrillAttestation {
@@ -130,20 +131,26 @@ export async function ensureRestoreDrillAttestationTable(): Promise<void> {
 }
 
 // The owning bay reports its active repository shards. A shard only enters this
-// check after a project has a confirmed off-host backup on it.
+// check after a project has a confirmed off-host backup on it. Sealed and
+// draining repositories have a quarterly sampled check instead
+// (project-backup/repo-sampled-check.ts); a repository this bay has no row
+// for (the seed bay's, say) still counts.
 export async function getProjectRestoreDrillHealth(
   bay_id: string,
 ): Promise<ProjectRestoreDrillShardHealth[]> {
   await ensureRestoreDrillAttestationTable();
+  await ensureProjectBackupRepoSchema();
   const { rows } = await getPool().query<ProjectRestoreDrillShardHealth>(
     `WITH active_shards AS (
-       SELECT backup_repo_id, COUNT(*)::integer AS backed_up_projects
-         FROM projects
-        WHERE COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $1) = $1
-          AND deleted IS NOT TRUE
-          AND provisioned IS TRUE AND last_backup IS NOT NULL
-          AND backup_repo_id IS NOT NULL
-        GROUP BY backup_repo_id
+       SELECT p.backup_repo_id, COUNT(*)::integer AS backed_up_projects
+         FROM projects p
+         LEFT JOIN project_backup_repos r ON r.id = p.backup_repo_id
+        WHERE COALESCE(NULLIF(BTRIM(p.owning_bay_id), ''), $1) = $1
+          AND p.deleted IS NOT TRUE
+          AND p.provisioned IS TRUE AND p.last_backup IS NOT NULL
+          AND p.backup_repo_id IS NOT NULL
+          AND COALESCE(r.status, 'active') = 'active'
+        GROUP BY p.backup_repo_id
      )
      SELECT s.backup_repo_id, s.backed_up_projects,
             d.restore_finished_at AS latest_restore_at,
