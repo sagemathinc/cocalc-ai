@@ -78,17 +78,21 @@ wait_ready() {
   return 1
 }
 
-# Whether the unit has a ready tunnel connection now (no metrics address:
-# active counts as ready).
-ready_now() {
+# The unit's tunnel readiness now: "ready" (a ready connection), "none"
+# (it reports zero), or "unknown" (no metrics address, no answer, or an
+# answer that cannot be read). Only "ready" counts as another replica
+# carrying traffic, and only "none" lets a replica be restarted without one.
+ready_state() {
   local unit="$1" address body
   address="$(metrics_address "$unit")"
-  if [[ -z "$address" ]]; then
-    "$SYSTEMCTL" --quiet is-active "$unit"
-    return
+  if [[ -z "$address" ]] ||
+      ! body="$("$CURL" --silent --max-time 2 "http://${address}/ready" 2>/dev/null)"; then
+    echo unknown
+  elif [[ "$body" =~ \"readyConnections\":([0-9]+)[,}] ]]; then
+    if ((BASH_REMATCH[1] > 0)); then echo ready; else echo none; fi
+  else
+    echo unknown
   fi
-  body="$("$CURL" --silent --max-time 2 "http://${address}/ready" 2>/dev/null)" &&
-    [[ "$body" =~ \"readyConnections\":([1-9][0-9]*) ]]
 }
 
 restart_unit() {
@@ -129,24 +133,25 @@ case "${1:-}/$#" in
     not_serving=()
     serving=()
     for unit in "${units[@]}"; do
-      if ready_now "$unit"; then
-        serving+=("$unit")
-      else
+      if [[ "$(ready_state "$unit")" == none ]]; then
         not_serving+=("$unit")
+      else
+        serving+=("$unit")
       fi
     done
     for unit in "${not_serving[@]}" "${serving[@]}"; do
-      if ((${#units[@]} > 1)) && ready_now "$unit"; then
+      # (checked again now: an earlier restart may have changed things)
+      if ((${#units[@]} > 1)) && [[ "$(ready_state "$unit")" != none ]]; then
         other_ready=0
         for other in "${units[@]}"; do
           [[ "$other" == "$unit" ]] && continue
-          if ready_now "$other"; then
+          if [[ "$(ready_state "$other")" == ready ]]; then
             other_ready=1
             break
           fi
         done
         if ((other_ready == 0)); then
-          echo "cocalc-bay-cloudflared-ctl: not restarting ${unit}: it is the only replica with a ready connection" >&2
+          echo "cocalc-bay-cloudflared-ctl: not restarting ${unit}: it may be serving and no other replica is known to be ready" >&2
           exit 1
         fi
       fi

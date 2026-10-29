@@ -137,6 +137,26 @@ bash "$CTL" restart-all || fail "restart-all failed with no replica ready"
 [[ "$(restarts)" == "restart cocalc-bay-cloudflared-2.service restart cocalc-bay-cloudflared.service " ]] ||
   fail "no replica ready: $(restarts)"
 
+# Readiness that cannot be read is not "none": replica 1 answers garbage
+# (it may well be serving) and replica 2 has none. Replica 2 is recovered
+# first; if it does not come back, replica 1 is left alone.
+reset
+export FAKE_READY=garbage FAKE_READY_2=0
+if bash "$CTL" restart-all 2>/dev/null; then fail "restart-all succeeded with replica 2 not recovering"; fi
+[[ "$(restarts)" == "restart cocalc-bay-cloudflared-2.service " ]] ||
+  fail "restarted a replica of unknown readiness without another ready: $(restarts)"
+# ...and once replica 2 is ready, replica 1 is restarted.
+reset
+export FAKE_READY=garbage FAKE_READY_2=0 FAKE_READY_2_AFTER_RESTART=4 FAKE_READY_AFTER_RESTART=4
+bash "$CTL" restart-all || fail "restart-all failed after replica 2 recovered"
+[[ "$(restarts)" == "restart cocalc-bay-cloudflared-2.service restart cocalc-bay-cloudflared.service " ]] ||
+  fail "unknown readiness, replica 2 recovered: $(restarts)"
+# Neither readable: nothing is known to be ready, so nothing is restarted.
+reset
+export FAKE_READY=garbage FAKE_READY_2=garbage
+if bash "$CTL" restart-all 2>/dev/null; then fail "restart-all succeeded with no readiness known"; fi
+[[ -z "$(restarts)" ]] || fail "restarted with no readiness known: $(restarts)"
+
 # A bay with only replica 1 installed.
 reset
 export FAKE_REPLICA2_INSTALLED=0

@@ -1,6 +1,7 @@
 import {
   cloudflaredReplica,
   cloudflaredTunnelArgs,
+  primaryTunnelRunning,
   replicaFileName,
 } from "./cloudflared-systemd";
 
@@ -27,6 +28,33 @@ describe("cloudflared replicas", () => {
         "/s/launchpad-cloudflare/config.yml",
       ),
     ).toBe(false);
+  });
+
+  it("starts another replica only while replica 1's cloudflared runs", () => {
+    const primaryConfigPath = "/s/launchpad-cloudflare/config.yml";
+    const processes = new Map<number, string>([
+      [
+        4242,
+        `/s/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:20241 --config ${primaryConfigPath} run`,
+      ],
+      [
+        4343,
+        "/s/bin/cloudflared tunnel --no-autoupdate --config /s/launchpad-cloudflare/config-2.yml run",
+      ],
+      [4444, "/usr/bin/vim notes.txt"],
+    ]);
+    const cmdline = (pid: number) => processes.get(pid);
+    const check = (pid: number | undefined) =>
+      primaryTunnelRunning({ pid, cmdline, primaryConfigPath });
+    // Replica 1 brought the state up to date and runs cloudflared.
+    expect(check(4242)).toBe(true);
+    // No pid file yet (replica 1 still reconciling after a cold start).
+    expect(check(undefined)).toBe(false);
+    // A stale pid file: the process is gone, or the pid now belongs to
+    // another program or to another replica.
+    expect(check(5555)).toBe(false);
+    expect(check(4444)).toBe(false);
+    expect(check(4343)).toBe(false);
   });
 
   it("pins the metrics address when the replica has one", () => {
