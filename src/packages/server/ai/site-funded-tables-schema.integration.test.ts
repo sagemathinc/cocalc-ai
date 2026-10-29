@@ -7,8 +7,8 @@
 The site-funded AI tables moved from runtime CREATE TABLE code into
 util/db-schema (site-ai-funding.ts). Existing databases have the tables that
 code made, so the schema must describe them exactly: a fresh database built
-from the schema matches the old DDL, and startup sync on the old tables
-changes nothing structural (only index marker comments).
+from the schema matches the old DDL plus the indexes added since, and startup
+sync on the old tables adds just those indexes (and index marker comments).
 */
 
 import getPool from "@cocalc/database/pool";
@@ -148,6 +148,14 @@ const LEGACY_DDL = [
       ON site_ai_admission_attempts(attempted_at)`,
 ];
 
+// Indexes the schema has added since; startup sync creates them on an old
+// database.
+const LATER_INDEXES = [
+  `CREATE INDEX IF NOT EXISTS site_ai_turn_reservations_completed_idx
+      ON site_ai_turn_reservations(completed_at)
+      WHERE status IN ('committed', 'failed', 'expired', 'released')`,
+];
+
 const siteAiSchema = Object.fromEntries(
   TABLES.map((table) => [table, SCHEMA[table]]),
 );
@@ -199,14 +207,18 @@ afterAll(after);
 describe("site-funded AI tables in db-schema", () => {
   let legacy: Record<string, unknown>;
 
-  it("the old runtime DDL builds the reference structure", async () => {
+  it("the old runtime DDL and the later indexes build the reference structure", async () => {
     await dropTables();
-    for (const statement of LEGACY_DDL) await getPool().query(statement);
+    for (const statement of [...LEGACY_DDL, ...LATER_INDEXES]) {
+      await getPool().query(statement);
+    }
     legacy = await structure();
     expect(Object.keys(legacy)).toHaveLength(TABLES.length);
   });
 
-  it("startup sync on the old tables changes nothing structural", async () => {
+  it("startup sync on the old tables adds only the later indexes", async () => {
+    await dropTables();
+    for (const statement of LEGACY_DDL) await getPool().query(statement);
     await syncSchema(siteAiSchema);
     expect(await structure()).toEqual(legacy);
     expect(await schemaNeedsSync(siteAiSchema)).toBe(false);

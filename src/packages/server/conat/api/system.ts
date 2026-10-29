@@ -248,6 +248,12 @@ import {
   projectBackupRepoSampledCheckSummary,
 } from "@cocalc/server/project-backup/repo-sampled-check";
 import {
+  getSiteFundedAiHealth,
+  siteFundedAiHealthDetails,
+  siteFundedAiHealthLevel,
+  siteFundedAiHealthSummary,
+} from "@cocalc/server/ai/site-funded-health";
+import {
   getProjectRecoveryAttemptHealth,
   getProjectRecoveryHealth,
   getProjectRecoveryRecentPayingCompletions,
@@ -2314,6 +2320,7 @@ export async function getLaunchHealth({
     archiveBlockedResult,
     membershipAuditResult,
     sealedRepoChecksResult,
+    siteFundedAiResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2350,6 +2357,10 @@ export async function getLaunchHealth({
         now: new Date(checkedAt),
         seed_managed: projectBackupReposAreSeedManaged(),
       }))(),
+    // Site-funded turns are recorded on the seed bay.
+    getConfiguredBayId() === seedBayId
+      ? getSiteFundedAiHealth({ now: new Date(checkedAt) })
+      : Promise.resolve(undefined),
   ]);
   const membershipAudit =
     membershipAuditResult.status === "fulfilled"
@@ -2712,6 +2723,29 @@ export async function getLaunchHealth({
           ? [`${billingExposureResult.reason}`]
           : billingExposureHealthDetails(billingExposureResult.value),
     }),
+    // Only the seed bay records site-funded turns (and alerts on them).
+    // Another bay omits this check rather than report healthy without data.
+    ...(siteFundedAiResult.status === "rejected"
+      ? [
+          launchHealthCheck({
+            id: "site-funded-ai",
+            label: "Site-funded AI turns",
+            level: "warning",
+            summary: "Unable to read site-funded AI turns.",
+            details: [`${siteFundedAiResult.reason}`],
+          }),
+        ]
+      : siteFundedAiResult.value
+        ? [
+            launchHealthCheck({
+              id: "site-funded-ai",
+              label: "Site-funded AI turns",
+              level: siteFundedAiHealthLevel(siteFundedAiResult.value),
+              summary: siteFundedAiHealthSummary(siteFundedAiResult.value),
+              details: siteFundedAiHealthDetails(siteFundedAiResult.value),
+            }),
+          ]
+        : []),
     launchHealthCheck({
       id: "backup-repos",
       label: "Shared project backup repositories",
