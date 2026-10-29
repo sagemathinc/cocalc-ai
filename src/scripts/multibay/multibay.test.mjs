@@ -4021,7 +4021,7 @@ describe("outgoing support tickets across bays", () => {
     };
     let plan;
     let lastError;
-    for (const deadline = Date.now() + 60_000; Date.now() < deadline;) {
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline; ) {
       try {
         plan = await runInBay(
           cluster,
@@ -5080,6 +5080,85 @@ describe("GPU spend is read on the key owner's home bay", () => {
       r,
       /only on the key owner's home bay|homed on|account \S+ not found/,
     );
+  });
+});
+
+describe("agent GPU requests are listed and declined on the key owner's home bay", () => {
+  // A pending request on bob's home bay (the attached bay) only. The seed,
+  // which has no record of it, lists and declines it through the routed
+  // entry points; the home bay's row is what changes.
+  const REQUEST_ID = "00000000-1000-4000-8000-00000000f201";
+  // only a scope reference on the request (no project row is needed)
+  const PROJECT_ID = "00000000-1000-4000-8000-00000000f202";
+  const SESSION = `session:${"c".repeat(64)}`;
+  async function onSeed(body) {
+    return await runInBay(
+      cluster,
+      SEED,
+      `const api = server("gpu/agent-api.js");
+       const account_id = ${JSON.stringify(bob.account_id)};
+       ${body}`,
+    );
+  }
+  async function homeState() {
+    return await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const { rows } = await getPool().query("SELECT state FROM gpu_agent_requests WHERE request_id = $1", [${JSON.stringify(REQUEST_ID)}]);
+       return rows[0]?.state ?? null;`,
+    );
+  }
+
+  before(async () => {
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       await getPool().query(
+         "INSERT INTO gpu_agent_requests (request_id, account_id, project_id, agent_id, run_id, operation_id, payload, payload_hash, state, created, expires_at) VALUES ($1, $2, $3, $4, $4, 'op-mb', $5, $6, 'pending', now(), now() + interval '30 minutes')",
+         [
+           ${JSON.stringify(REQUEST_ID)},
+           ${JSON.stringify(bob.account_id)},
+           ${JSON.stringify(PROJECT_ID)},
+           ${JSON.stringify(SESSION)},
+           { spec: { gpu_type_id: "NVIDIA RTX A4000", gpu_count: 1, image: "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404", max_runtime_minutes: 10 }, hourly_usd: "0.25", max_cost_usd: "0.05", max_pods: 1 },
+           ${JSON.stringify("d".repeat(64))},
+         ],
+       );`,
+    );
+  });
+
+  it("lists bob's pending request from the seed, without the session's key", async () => {
+    const r = await onSeed(
+      `const views = await api.getAgentRequests({ account_id });
+       const getPool = require(${JSON.stringify("@cocalc/database/pool")}).default;
+       const local = (await getPool().query("SELECT count(*)::int AS n FROM gpu_agent_requests WHERE request_id = $1", [${JSON.stringify(REQUEST_ID)}])).rows[0].n;
+       return { views: views.map((v) => [v.request_id, v.state, v.principal_kind]), raw: JSON.stringify(views), local };`,
+    );
+    assert.deepEqual(r.views, [[REQUEST_ID, "pending", "chat_session"]]);
+    assert.ok(!r.raw.includes("session:"));
+    assert.equal(r.local, 0);
+  });
+
+  it("refuses to decline it on the seed itself", async () => {
+    const r = await onSeed(
+      `try { await api.denyAgentRequestLocal({ account_id, request_id: ${JSON.stringify(REQUEST_ID)} }); return "ran"; }
+       catch (e) { return String(e?.message ?? e); }`,
+    );
+    assert.match(
+      r,
+      /homed on|home bay|account \S+ not found|No such GPU request/,
+    );
+    assert.equal(await homeState(), "pending");
+  });
+
+  it("declines it from the seed: the home bay's request is denied", async () => {
+    const r = await onSeed(
+      `return await api.denyAgentRequest({ account_id, request_id: ${JSON.stringify(REQUEST_ID)} });`,
+    );
+    assert.deepEqual(r, { request_id: REQUEST_ID, state: "denied" });
+    assert.equal(await homeState(), "denied");
   });
 });
 
