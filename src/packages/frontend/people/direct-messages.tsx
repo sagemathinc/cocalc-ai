@@ -10,7 +10,8 @@ import { Alert, Button, Popconfirm, Space, Tag } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
-import { MarkdownInput } from "@cocalc/frontend/editors/markdown-input";
+// The same editor as chat (rich text or Markdown, image paste).
+import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { User } from "@cocalc/frontend/users/user";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -331,6 +332,8 @@ export function DirectConversationView({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [uploads, setUploads] = useState(0);
+  // A new editor after each send clears it (as chat does).
+  const [editorEpoch, setEditorEpoch] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
   // Responses for an earlier load (or after unmounting) are dropped; the
   // view is also keyed by account, so another account starts empty.
@@ -401,6 +404,7 @@ export function DirectConversationView({
       if (!alive.current) return;
       setMessages((current) => mergeMessages(current, [message]));
       setDraft("");
+      setEditorEpoch((n) => n + 1);
       setError("");
       directChanged();
       void load();
@@ -529,6 +533,8 @@ export function DirectConversationView({
             out of view. An auto-height block makes it size to the editor. */}
         <div>
           <MarkdownInput
+            key={editorEpoch}
+            cacheId={`direct-${conversation_id}`}
             value={draft}
             onChange={setDraft}
             enableUpload
@@ -536,7 +542,7 @@ export function DirectConversationView({
             onUploadEnd={() => setUploads((n) => Math.max(0, n - 1))}
             onShiftEnter={(value) => void send(value)}
             placeholder="Write a message (Shift+Enter to send)"
-            autoGrow
+            height="auto"
             autoGrowMaxHeight={240}
             compact
           />

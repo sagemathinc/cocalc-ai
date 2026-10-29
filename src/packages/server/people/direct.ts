@@ -73,7 +73,6 @@ import {
   MAX_DIRECT_MEMBERS,
   directPairKey,
   directPreview,
-  directRoute,
   memberView,
   normalizeDirectBody,
   normalizeDirectMembers,
@@ -272,8 +271,6 @@ async function notify(
     severity: "info",
     origin_label: "Messages",
     notice_type: "direct_message",
-    action_label: kind === "request" ? "Review request" : "Open conversation",
-    action_link: `/people/${directRoute(row.conversation_id)}`,
     conversation_id: row.conversation_id,
   };
   const homes = await resolveNotificationTargetHomeBays({

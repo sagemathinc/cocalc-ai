@@ -24,6 +24,8 @@ export type MentionInfo = TypedMap<{
   body_markdown?: string;
   // Shown literally, never parsed as Markdown (e.g. an unaccepted message).
   body_text?: string;
+  // A direct conversation the notice is about (notice_type direct_message).
+  conversation_id?: string;
   origin_label?: string;
   notice_type?: string;
   request_id?: string;

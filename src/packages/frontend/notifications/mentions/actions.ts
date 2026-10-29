@@ -94,6 +94,7 @@ function buildNotificationMention(
     title: summary.title,
     body_markdown: summary.body_markdown,
     body_text: summary.body_text,
+    conversation_id: summary.conversation_id,
     origin_label: summary.origin_label,
     notice_type: summary.notice_type,
     request_id: summary.request_id,

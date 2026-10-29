@@ -8,7 +8,8 @@
 
 import { useEffect, useState } from "react";
 import { Alert, Button, Form, Input, Modal, Select, Space } from "antd";
-import { MarkdownInput } from "@cocalc/frontend/editors/markdown-input";
+// The same editor as chat (rich text or Markdown, image paste).
+import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import {
   MAX_DIRECT_MEMBERS,
   type MemberDirectConversation,
@@ -174,7 +175,7 @@ export function NewDirectModal({
               onShiftEnter={() => {
                 if (to.length > 0 && body.trim()) void start();
               }}
-              autoGrow
+              height="auto"
               autoGrowMaxHeight={240}
               compact
             />

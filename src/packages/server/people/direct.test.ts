@@ -178,9 +178,13 @@ describeDb("direct conversations", () => {
       source_project_id: null,
       payload_json: {
         notice_type: "direct_message",
-        action_link: `/people/messages/${started.conversation_id}`,
+        conversation_id: started.conversation_id,
       },
     });
+    // Opened by clicking the notification, in the app: no separate link.
+    expect(mockNotify.mock.calls[0][0].payload_json).not.toHaveProperty(
+      "action_link",
+    );
     await directHubApi.sendDirect({
       account_id: bea,
       conversation_id: started.conversation_id,

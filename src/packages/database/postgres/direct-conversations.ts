@@ -213,17 +213,22 @@ async function insertMessage(
     [randomUUID(), conversation_id, sender_id, body],
   );
   const message = toMessage(messages[0]);
+  // Compare with the stored time, not a JavaScript Date: that has only
+  // milliseconds, so a first message sent in the same millisecond as the
+  // conversation was created looked older and never set the preview.
   const { rows } = await db.query(
-    `UPDATE direct_conversations SET
-       last_sender_id = CASE WHEN $2::timestamp >= last_activity
+    `WITH m AS (SELECT sent FROM direct_messages WHERE message_id = $2)
+     UPDATE direct_conversations SET
+       last_sender_id = CASE WHEN m.sent >= last_activity
          THEN $3::uuid ELSE last_sender_id END,
-       preview = CASE WHEN $2::timestamp >= last_activity
+       preview = CASE WHEN m.sent >= last_activity
          THEN $4 ELSE preview END,
-       last_activity = GREATEST(last_activity, $2::timestamp),
+       last_activity = GREATEST(last_activity, m.sent),
        revision = revision + 1
+     FROM m
      WHERE conversation_id = $1
      RETURNING ${COLUMNS}`,
-    [conversation_id, new Date(message.sent), sender_id, directPreview(body)],
+    [conversation_id, message.message_id, sender_id, directPreview(body)],
   );
   if (rows[0] == null) throw Error("conversation not found");
   return { message, conversation: toConversation(rows[0], owner_bay_id) };

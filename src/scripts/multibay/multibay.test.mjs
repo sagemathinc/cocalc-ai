@@ -283,6 +283,20 @@ describe("direct conversations across bays", () => {
     assert.ok(messages.some((m) => m.body === "hello from bay-0"));
   });
 
+  it("shows a new group's first message as its preview", async () => {
+    // Real Postgres keeps microseconds: the first message is usually sent in
+    // the same millisecond the conversation was created, which once left the
+    // preview empty ("No messages yet").
+    for (let i = 0; i < 5; i++) {
+      const started = await carol.client.call("people.startDirect", {
+        member_ids: [dave.account_id],
+        title: `Preview check ${i}`,
+        body: `First message ${i}`,
+      });
+      assert.equal(started.preview, `First message ${i}`);
+    }
+  });
+
   it("refuses the wrong bay's authority", async () => {
     // A home method for dave run on the seed, and an owner method run on the
     // bay that doesn't own the conversation, both fail closed.

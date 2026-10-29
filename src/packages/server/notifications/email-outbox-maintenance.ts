@@ -170,6 +170,17 @@ async function notificationTarget(row: NotificationEmailOutboxRow): Promise<{
   url: string;
 }> {
   const summary = row.summary_json?.summary ?? {};
+  // A direct message links to its conversation on People.
+  const directConversationId = firstNonEmpty(summary.conversation_id);
+  if (
+    firstNonEmpty(summary.notice_type) === "direct_message" &&
+    isValidUUID(directConversationId)
+  ) {
+    return {
+      label: "Open the conversation",
+      url: await siteUrl(`people/messages/${directConversationId}`),
+    };
+  }
   if (firstNonEmpty(summary.notice_type) !== "codex_attention") {
     return {
       label: "Open notifications",
