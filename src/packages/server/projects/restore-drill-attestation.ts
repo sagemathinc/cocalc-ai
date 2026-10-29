@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { getProjectBackupRepoStatuses } from "@cocalc/server/project-backup";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export interface RestoreDrillAttestation {
@@ -130,7 +131,10 @@ export async function ensureRestoreDrillAttestationTable(): Promise<void> {
 }
 
 // The owning bay reports its active repository shards. A shard only enters this
-// check after a project has a confirmed off-host backup on it.
+// check after a project has a confirmed off-host backup on it. Sealed and
+// draining repositories have a quarterly sampled check instead
+// (project-backup/repo-sampled-check.ts). Statuses come from the bay that
+// owns the repositories; one it does not know still counts.
 export async function getProjectRestoreDrillHealth(
   bay_id: string,
 ): Promise<ProjectRestoreDrillShardHealth[]> {
@@ -159,7 +163,10 @@ export async function getProjectRestoreDrillHealth(
       ORDER BY s.backup_repo_id`,
     [bay_id],
   );
-  return rows;
+  const statuses = await getProjectBackupRepoStatuses();
+  return rows.filter(
+    (row) => (statuses.get(row.backup_repo_id) ?? "active") === "active",
+  );
 }
 
 function sha256(value: string, label: string): string {

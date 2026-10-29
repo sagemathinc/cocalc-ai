@@ -1244,6 +1244,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Last health-probe result per shared project-backup repository (project_backup_repos, seed-global). Written by the repository-authoritative bay's probe; operational evidence, no secrets.",
   }),
 
+  ...adHocEntries(["project_backup_repo_sampled_checks"], {
+    ownership: "seed-global",
+    authority: "seed",
+    portability: "stable",
+    source: "server/project-backup/repo-sampled-check.ts",
+    migrate_to_schema: true,
+    notes:
+      "Last quarterly sampled `rustic check` result per sealed shared project-backup repository (project_backup_repos, seed-global). Written by the repository-authoritative bay; operational evidence, no secrets.",
+  }),
+
   ...adHocEntries(["project_app_private_hostnames"], {
     ownership: "project-owning",
     authority: "project_id",

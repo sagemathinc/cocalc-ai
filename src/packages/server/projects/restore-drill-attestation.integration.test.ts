@@ -7,6 +7,7 @@ import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
 import { ensureLroSchema } from "@cocalc/server/lro/lro-db";
 import { PROJECT_RESTORE_DRILLS_SQL } from "@cocalc/server/conat/api/admin-db";
+import { ensureProjectBackupRepoSchema } from "@cocalc/server/project-backup";
 import {
   getProjectRestoreDrillHealth,
   recordRestoreDrillAttestation,
@@ -222,5 +223,38 @@ describe("restore drill operator attestation", () => {
       [missing.project_id],
     );
     expect(await getProjectRestoreDrillHealth(bay_id)).toHaveLength(4);
+  });
+
+  it("counts only active repositories toward the drill target", async () => {
+    await ensureProjectBackupRepoSchema();
+    await getPool().query(
+      "DELETE FROM projects WHERE owning_bay_id = $1 OR owning_bay_id IS NULL",
+      [bay_id],
+    );
+    const byStatus: Record<string, string> = {};
+    for (const status of ["active", "sealed", "draining", "disabled"]) {
+      const { backup_repo_id, project_id } = await seedRestore();
+      byStatus[status] = backup_repo_id;
+      await getPool().query(
+        "UPDATE projects SET provisioned = true, last_backup = now() WHERE project_id = $1",
+        [project_id],
+      );
+      await getPool().query(
+        `INSERT INTO project_backup_repos
+           (id, region, bucket_id, root, secret, status, created, updated)
+         VALUES ($1, 'wnam', $2, $3, 'v1:not-used', $4, now(), now())`,
+        [backup_repo_id, uuid(), `rustic/shared-${status}`, status],
+      );
+    }
+    // A repository this bay has no row for still counts.
+    const unknown = await seedRestore();
+    await getPool().query(
+      "UPDATE projects SET provisioned = true, last_backup = now() WHERE project_id = $1",
+      [unknown.project_id],
+    );
+    const shards = await getProjectRestoreDrillHealth(bay_id);
+    expect(shards.map((row) => row.backup_repo_id).sort()).toEqual(
+      [byStatus.active, unknown.backup_repo_id].sort(),
+    );
   });
 });
