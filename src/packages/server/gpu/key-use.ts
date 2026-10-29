@@ -45,10 +45,7 @@ import {
 } from "@cocalc/util/gpu/runpod";
 
 export type GpuKeyUsePurpose = (typeof GPU_KEY_USE_PURPOSES)[number];
-export type GpuKeyWorkerPurpose =
-  | (typeof GPU_KEY_WORKER_PURPOSES)[number]
-  // 5d-2b's account checks: a decrypt of their own, in the reconciler's run
-  | "account_watch";
+export type GpuKeyWorkerPurpose = (typeof GPU_KEY_WORKER_PURPOSES)[number];
 
 // Each method's purpose fixes what its record allows: how long it may be
 // used (the method's RPC timeout), how many decrypts, and whether it is a

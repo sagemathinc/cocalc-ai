@@ -641,8 +641,8 @@ Table({
 });
 
 // Why a provider key is decrypted (5d-2c). A user or agent action's
-// purposes, then a worker run's (5d-2b's account checks run inside the
-// reconciler's pass, on its decrypt).
+// purposes, then a worker run's (5d-2b's account checks take a decrypt of
+// their own, in the reconciler's run).
 export const GPU_KEY_USE_PURPOSES = [
   "launch",
   "terminate",
@@ -658,6 +658,7 @@ export const GPU_KEY_WORKER_PURPOSES = [
   "reaper",
   "cleanup",
   "reconcile",
+  "account_watch",
   "billing",
 ] as const;
 export const GPU_KEY_DECRYPT_PURPOSES = [

@@ -389,6 +389,49 @@ describeRealPostgres("audited GPU key decrypts", () => {
       await reaper.finishWorkerLease("billing", next, new Date());
     });
 
+    it("commits the account checks' own decrypt in the reconciler's run, through the key helper", async () => {
+      const o = await owner();
+      const token = `t-${randomUUID()}`;
+      expect(
+        await reaper.acquireWorkerLease("reconciler", token, new Date()),
+      ).toBe(true);
+      try {
+        const run = ku.workerKeyUse("reconciler", token, "reconcile");
+        const keys = await import("./provider-keys");
+        // the reconcile pass's decrypt, and nested in it the account
+        // checks' own (as reconcileKey opens them)
+        const seen = await keys.withRunpodCleanup(
+          o.account_id,
+          run,
+          { isHomeBay: async () => true },
+          async (c) =>
+            await keys.withRunpodCleanup(
+              o.account_id,
+              ku.workerKeyUseFor(run, "account_watch"),
+              { isHomeBay: async () => true },
+              async (w) => [c?.credential_id, w?.credential_id],
+            ),
+        );
+        expect(seen).toEqual([o.credential_id, o.credential_id]);
+        const { rows } = await getPool().query(
+          `SELECT d.purpose, d.outcome, d.worker_name FROM gpu_key_decrypts d
+             JOIN gpu_worker_runs r ON r.id = d.worker_run_id
+            WHERE r.token = $1 ORDER BY d.started`,
+          [token],
+        );
+        expect(rows).toEqual([
+          { purpose: "reconcile", outcome: "ok", worker_name: "reconciler" },
+          {
+            purpose: "account_watch",
+            outcome: "ok",
+            worker_name: "reconciler",
+          },
+        ]);
+      } finally {
+        await reaper.finishWorkerLease("reconciler", token, new Date());
+      }
+    });
+
     it("keeps key material out of every audit row", async () => {
       const o = await owner();
       const use = await ku.admitUserKeyUse({

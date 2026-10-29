@@ -108,8 +108,12 @@ describe("GPU key capabilities and decrypts (5d-2c)", () => {
       /workerKeyUseFor\(key_use, "account_watch"\)/,
     );
     const covered = new Set(
-      ["reaper", "cleanup", "reconcile", "billing"].filter((p) =>
-        Object.values(sources).some((t) => t.includes(`token, "${p}")`)),
+      GPU_KEY_WORKER_PURPOSES.filter((p) =>
+        Object.values(sources).some(
+          (t) =>
+            t.includes(`token, "${p}")`) ||
+            t.includes(`workerKeyUseFor(key_use, "${p}")`),
+        ),
       ),
     );
     for (const purpose of GPU_KEY_WORKER_PURPOSES) {
