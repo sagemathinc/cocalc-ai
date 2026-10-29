@@ -94,8 +94,11 @@ const KEY_KIND = "gpu-provider-api-key";
 const RATE_KIND: GpuAlertKind = "account_spend_rate";
 const DROP_KIND: GpuAlertKind = "account_balance_drop";
 const OFF_KIND: GpuAlertKind = "account_checks_disabled";
-// (one open alert of each kind per key)
+// (one open alert of each kind per key; the checks are off for one of two
+// reasons, each its own alert, so neither's text outlives it)
 const DEDUPE = "account";
+const OFF_SHARED = "shared";
+const OFF_NO_ACCESS = "no_access";
 
 export interface ProviderIdentity {
   provider: string;
@@ -253,6 +256,17 @@ export async function watchProviderAccount(
     active: true,
   });
   const observed_at = new Date(clock());
+  const endOff = (db: Db, why: string, at: Date) =>
+    resolveAlert(
+      {
+        credential_id,
+        kind: OFF_KIND,
+        dedupe_key: why,
+        observed_at: at,
+        by: "account_checks_resumed",
+      },
+      db,
+    );
   const exclusive = (keys: string[]) =>
     keys.length === 1 && keys[0] === credential_id;
   // The checks are off while another key uses the account: a co-owner's pods
@@ -273,12 +287,14 @@ export async function watchProviderAccount(
         credential_id,
         kind: OFF_KIND,
         severity: "warning",
-        dedupe_key: DEDUPE,
+        dedupe_key: OFF_SHARED,
         details: { keys_on_account: keys },
-        observed_at,
+        observed_at: at,
       },
       db,
     );
+    // (the account's other reason is unknown now: not said any more)
+    await endOff(db, OFF_NO_ACCESS, at);
   };
   if (!exclusive(active)) {
     await underLiveFence(credential_id, async (db) => {
@@ -342,12 +358,14 @@ export async function watchProviderAccount(
             credential_id,
             kind: OFF_KIND,
             severity: "warning",
-            dedupe_key: DEDUPE,
+            dedupe_key: OFF_NO_ACCESS,
             details: { reason: "no_account_access" },
             observed_at: asked_at,
           },
           db,
         );
+        // the key is the account's only one (finish checked)
+        await endOff(db, OFF_SHARED, asked_at);
         return { checked: false, reason: "no_access" };
       });
     }
@@ -392,7 +410,8 @@ export async function watchProviderAccount(
         },
         db,
       );
-    await resolve(OFF_KIND);
+    await endOff(db, OFF_SHARED, asked_at);
+    await endOff(db, OFF_NO_ACCESS, asked_at);
 
     // The spend rate, on consecutive passes.
     if (balance.spendPerHour != null) {

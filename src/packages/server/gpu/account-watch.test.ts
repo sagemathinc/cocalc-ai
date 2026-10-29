@@ -23,7 +23,7 @@ import {
   watchProviderAccount,
 } from "./account-watch";
 import { resumeGpuLaunchesLocal } from "./budget-api";
-import { onKeyGone } from "./alerts";
+import { listAlertsLocal, onKeyGone } from "./alerts";
 import { reportCompromisedLocal } from "./compromise";
 import { inTransaction } from "./pods";
 import { reconcileKey } from "./reconcile";
@@ -440,6 +440,40 @@ describeDb("GPU provider-account checks", () => {
     expect(await alerts(key)).toEqual([
       { kind: "account_checks_disabled", severity: "warning", resolved: true },
     ]);
+  });
+
+  it("each reason the checks are off is its own alert: no access, then a second key, then back", async () => {
+    const owner = randomUUID();
+    const identity = randomUUID();
+    const key = await connectKey(owner, identity);
+    await confirm(owner);
+    const refuse = (ms: number) =>
+      watchProviderAccount(
+        { credential_id: key, key_owner_account_id: owner },
+        {
+          now: () => T0 + ms,
+          getAccountBalance: async () => {
+            throw new RunpodApiError("forbidden", 200);
+          },
+        },
+      );
+    const open = async () =>
+      (await listAlertsLocal({ account_id: owner }))
+        .filter((a) => a.kind === "account_checks_disabled")
+        .map((a) => a.message);
+    expect((await refuse(MINUTE)).reason).toBe("no_access");
+    expect(await open()).toEqual([expect.stringContaining("read the account")]);
+    const other = await connectKey(randomUUID(), identity);
+    expect((await refuse(2 * MINUTE)).reason).toBe("shared");
+    expect(
+      (await getAccountChecksLocal({ account_id: owner }, here)).state,
+    ).toBe("shared");
+    expect(await open()).toEqual([
+      expect.stringContaining("another key connected to CoCalc uses it"),
+    ]);
+    await revoke(other);
+    expect((await refuse(3 * MINUTE)).reason).toBe("no_access");
+    expect(await open()).toEqual([expect.stringContaining("read the account")]);
   });
 
   it("a sample no newer than the last one changes nothing", async () => {
