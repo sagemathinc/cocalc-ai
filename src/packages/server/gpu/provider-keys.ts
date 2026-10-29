@@ -42,6 +42,7 @@ import {
   type GpuKeyEventActor,
 } from "@cocalc/server/gpu/key-events";
 import { onKeyGone, raiseAlert } from "@cocalc/server/gpu/alerts";
+import { lockProviderIdentity } from "@cocalc/server/gpu/account-watch-db";
 import {
   carryKeyBudget,
   ensureKeyBudget,
@@ -591,6 +592,13 @@ export async function setGpuProviderKeyLocal(
             [id, previous],
           );
         }
+        // last (after every fence row above): a key for this RunPod account
+        // and the account checks on it take turns (5d-2b)
+        await lockProviderIdentity(client, {
+          provider,
+          kind: identity.kind,
+          id: identity.id,
+        });
       },
     }));
   });

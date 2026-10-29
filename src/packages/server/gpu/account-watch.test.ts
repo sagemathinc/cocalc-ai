@@ -24,6 +24,8 @@ import {
 } from "./account-watch";
 import { resumeGpuLaunchesLocal } from "./budget-api";
 import { onKeyGone } from "./alerts";
+import { reportCompromisedLocal } from "./compromise";
+import { inTransaction } from "./pods";
 import { reconcileKey } from "./reconcile";
 
 const describeDb =
@@ -427,15 +429,103 @@ describeDb("GPU provider-account checks", () => {
     ).rejects.toThrow("confirm (true) or withdraw");
   });
 
-  it("the key's removal or replacement ends its account alerts", async () => {
+  const watchRow = async (credential_id: string) =>
+    (
+      await getPool().query(
+        `SELECT confirmed_at IS NOT NULL AS confirmed, disabled_reason, last_asked_at,
+                last_balance_usd, baseline_at, rate_warning_passes
+           FROM gpu_provider_account_watch WHERE credential_id = $1`,
+        [credential_id],
+      )
+    ).rows[0];
+  const ended = {
+    confirmed: false,
+    disabled_reason: null,
+    last_asked_at: null,
+    last_balance_usd: null,
+    baseline_at: null,
+    rate_warning_passes: 0,
+  };
+
+  it("the key's removal or replacement ends its confirmation, samples and account alerts; the new key starts unconfirmed", async () => {
+    const owner = randomUUID();
+    const identity = randomUUID();
+    const key = await connectKey(owner, identity);
+    await confirm(owner);
+    const watch = watcher(owner, key);
+    await watch(0, { balance: 100, spendPerHour: 0 });
+    await watch(30 * MINUTE, { balance: 80 });
+    // (closeKeyFence runs this, in the removal's or replacement's transaction)
+    await onKeyGone({ credential_id: key, by: "removed" });
+    expect((await alerts(key)).every((a) => a.resolved)).toBe(true);
+    expect(await watchRow(key)).toEqual(ended);
+    await revoke(key);
+    await connectKey(owner, identity);
+    expect(
+      (await getAccountChecksLocal({ account_id: owner }, here)).state,
+    ).toBe("off");
+  });
+
+  it("reporting the key compromised ends its confirmation at once (its fence admits nothing)", async () => {
     const owner = randomUUID();
     const key = await connectKey(owner, randomUUID());
     await confirm(owner);
-    const watch = watcher(owner, key);
-    await watch(0, { balance: 100 });
-    await watch(30 * MINUTE, { balance: 80 });
-    await onKeyGone({ credential_id: key, by: "removed" });
-    expect((await alerts(key)).every((a) => a.resolved)).toBe(true);
+    await watcher(owner, key)(0, { balance: 100, spendPerHour: 0 });
+    expect(
+      (await getAccountChecksLocal({ account_id: owner }, here)).state,
+    ).toBe("on");
+    let reads = 0;
+    await reportCompromisedLocal(
+      {
+        account_id: owner,
+        confirm_cocalc_only: true,
+        fresh_auth_verified: true,
+      },
+      {
+        keyFence: async (_a: string, fn: any) => await inTransaction(fn),
+        // the request's check, then nothing for the cleanup pass to do here
+        getCleanup: async () =>
+          ++reads === 1 ? ({ credential_id: key } as any) : undefined,
+      },
+    );
+    expect(await watchRow(key)).toEqual(ended);
+    expect(
+      (await getAccountChecksLocal({ account_id: owner }, here)).state,
+    ).toBe("off");
+  });
+
+  it("another owner's confirmation of the same account replaces it, ending the old key's open account alerts", async () => {
+    const a = randomUUID();
+    const identity = randomUUID();
+    const keyA = await connectKey(a, identity);
+    await confirm(a);
+    const watchA = watcher(a, keyA);
+    await watchA(0, { balance: 100 });
+    expect((await watchA(30 * MINUTE, { balance: 80 })).balance).toBe(
+      "critical",
+    );
+    expect(await alerts(keyA)).toEqual([
+      { kind: "account_balance_drop", severity: "critical", resolved: false },
+    ]);
+    const b = randomUUID();
+    const keyB = await connectKey(b, identity);
+    // two keys on the account: B's checks stay off until one is gone
+    expect((await confirm(b)).state).toBe("shared");
+    expect(await alerts(keyA)).toEqual([
+      { kind: "account_balance_drop", severity: "critical", resolved: true },
+    ]);
+    const { rows } = await getPool().query(
+      "SELECT resolved_by FROM gpu_alerts WHERE credential_id = $1",
+      [keyA],
+    );
+    expect(rows[0].resolved_by).toBe("confirmation_replaced");
+    expect((await getAccountChecksLocal({ account_id: a }, here)).state).toBe(
+      "off",
+    );
+    expect((await watchA(60 * MINUTE, { balance: 70 })).reason).toBe(
+      "unconfirmed",
+    );
+    expect(keyB).toBeTruthy();
   });
 
   it("a complete reconcile pass checks a confirmed account, once, and only then", async () => {

@@ -170,6 +170,7 @@ describeDb("GPU inventory reconciler", () => {
       gpu_worker_leases: SCHEMA.gpu_worker_leases,
       gpu_worker_overrides: SCHEMA.gpu_worker_overrides,
       gpu_alerts: SCHEMA.gpu_alerts,
+      gpu_provider_account_watch: SCHEMA.gpu_provider_account_watch,
       external_credentials: SCHEMA.external_credentials,
     });
     await getPool().query(

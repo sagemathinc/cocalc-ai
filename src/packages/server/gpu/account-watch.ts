@@ -54,6 +54,11 @@ import {
 } from "@cocalc/server/gpu/alerts";
 import { budgetHomeClient } from "@cocalc/server/gpu/budget-api";
 import { inTransaction, requireHomeBay } from "@cocalc/server/gpu/pods";
+import {
+  endAccountAlerts,
+  endAccountWatch,
+  lockProviderIdentity,
+} from "@cocalc/server/gpu/account-watch-db";
 
 const log = getLogger("server:gpu:account-watch");
 
@@ -86,7 +91,6 @@ const KEY_KIND = "gpu-provider-api-key";
 const RATE_KIND: GpuAlertKind = "account_spend_rate";
 const DROP_KIND: GpuAlertKind = "account_balance_drop";
 const OFF_KIND: GpuAlertKind = "account_checks_disabled";
-const ACCOUNT_KINDS = [RATE_KIND, DROP_KIND, OFF_KIND];
 // (one open alert of each kind per key)
 const DEDUPE = "account";
 
@@ -228,30 +232,37 @@ export async function watchProviderAccount(
     active: true,
   });
   const observed_at = new Date(clock());
-  if (active.length !== 1 || active[0] !== credential_id) {
+  const exclusive = (keys: string[]) =>
+    keys.length === 1 && keys[0] === credential_id;
+  // The checks are off while another key uses the account: a co-owner's pods
+  // would be counted against ours. They start over once it is gone.
+  const disable = async (db: Db, w: any, keys: number) => {
+    await db.query(
+      `UPDATE gpu_provider_account_watch
+          SET disabled_reason = 'shared', ${CLEARED_SAMPLES}, updated = now()
+        WHERE id = $1`,
+      [w.id],
+    );
+    await raiseAlert(
+      {
+        key_owner_account_id,
+        credential_id,
+        kind: OFF_KIND,
+        severity: "warning",
+        dedupe_key: DEDUPE,
+        details: { keys_on_account: keys },
+        observed_at,
+      },
+      db,
+    );
+  };
+  if (!exclusive(active)) {
     await underLiveFence(credential_id, async (db) => {
       const w = await lockWatch(db, identity);
       if (!w || w.credential_id !== credential_id || !w.confirmed_at) return;
-      // a co-owner's pods would be counted against ours: start over once it
-      // is gone
-      await db.query(
-        `UPDATE gpu_provider_account_watch
-            SET disabled_reason = 'shared', ${CLEARED_SAMPLES}, updated = now()
-          WHERE id = $1`,
-        [w.id],
-      );
-      await raiseAlert(
-        {
-          key_owner_account_id,
-          credential_id,
-          kind: OFF_KIND,
-          severity: "warning",
-          dedupe_key: DEDUPE,
-          details: { keys_on_account: active.length },
-          observed_at,
-        },
-        db,
-      );
+      await lockProviderIdentity(db, identity);
+      const now = await identityCredentials(identity, db, { active: true });
+      if (!exclusive(now)) await disable(db, w, now.length);
     });
     return { checked: false, reason: "shared" };
   }
@@ -265,6 +276,15 @@ export async function watchProviderAccount(
     // a slower overlapping pass: never moves the samples backward
     if (w.last_asked_at && new Date(w.last_asked_at) >= asked_at) {
       return { checked: false, reason: "stale" } as AccountWatchOutcome;
+    }
+    // Still the only key on the account? A key for it connected while RunPod
+    // was asked commits before this (the connect takes the same lock), and
+    // one connected after waits for this transaction.
+    await lockProviderIdentity(db, identity);
+    const keys = await identityCredentials(identity, db, { active: true });
+    if (!exclusive(keys)) {
+      await disable(db, w, keys.length);
+      return { checked: false, reason: "shared" } as AccountWatchOutcome;
     }
     const creds = await identityCredentials(identity, db, { active: false });
     const E = await expectedSpend(creds, asked_at, db);
@@ -530,8 +550,17 @@ export async function confirmAccountChecksLocal(
       );
     }
     if (confirm) {
-      // (another owner's confirmation of the same account is replaced: the
-      // checks then see two keys and stay off until one is gone)
+      // Another key's confirmation of the same account is replaced (the
+      // checks then see two keys and stay off until one is gone): its
+      // account alerts end with it.
+      const prior = await lockWatch(db, identity);
+      if (prior && prior.credential_id !== credential_id) {
+        await endAccountAlerts(
+          db,
+          prior.credential_id,
+          "confirmation_replaced",
+        );
+      }
       await db.query(
         `INSERT INTO gpu_provider_account_watch (id, provider, provider_account_kind,
            provider_account_id, key_owner_account_id, credential_id, confirmed_at, updated)
@@ -551,34 +580,12 @@ export async function confirmAccountChecksLocal(
         ],
       );
     } else {
-      await db.query(
-        `UPDATE gpu_provider_account_watch
-            SET confirmed_at = NULL, disabled_reason = NULL, ${CLEARED_SAMPLES},
-                updated = now()
-          WHERE provider = $1 AND provider_account_kind = $2 AND provider_account_id = $3
-            AND key_owner_account_id = $4`,
-        [identity.provider, identity.kind, identity.id, account_id],
-      );
-      await endAccountAlerts(db, credential_id, "withdrawn");
+      // (only a confirmation made with this key: never another owner's)
+      await endAccountWatch(db, credential_id, "withdrawn");
     }
     log.debug("account checks", { account_id, confirm });
     return await statusOf(account_id, db);
   });
-}
-
-// The checks were withdrawn: their alerts end (a removed or replaced key's
-// end in onKeyGone).
-export async function endAccountAlerts(
-  db: Db,
-  credential_id: string,
-  by: string,
-): Promise<void> {
-  await db.query(
-    `UPDATE gpu_alerts SET resolved_at = now(), resolved_by = $3,
-            resolved_observed_at = 'infinity'
-      WHERE credential_id = $1 AND kind = ANY($2::text[]) AND resolved_at IS NULL`,
-    [credential_id, ACCOUNT_KINDS, by.slice(0, 40)],
-  );
 }
 
 // On the bay the user is signed in to.

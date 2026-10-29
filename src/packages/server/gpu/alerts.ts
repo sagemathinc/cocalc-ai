@@ -30,6 +30,7 @@ import type {
   GpuAlertKind,
   GpuAlertSeverity,
 } from "@cocalc/util/gpu/types";
+import { endAccountWatch } from "@cocalc/server/gpu/account-watch-db";
 
 export type { GpuAlertKind, GpuAlertSeverity };
 
@@ -173,11 +174,11 @@ export async function onKeyGone(
   await db.query(
     `UPDATE gpu_alerts SET resolved_at = now(), resolved_by = $2,
             resolved_observed_at = 'infinity'
-      WHERE credential_id = $1 AND resolved_at IS NULL
-        AND kind IN ('key_rejected', 'account_spend_rate', 'account_balance_drop',
-                     'account_checks_disabled')`,
+      WHERE credential_id = $1 AND kind = 'key_rejected' AND resolved_at IS NULL`,
     [credential_id, by.slice(0, 40)],
   );
+  // the account checks made with it end too (5d-2b)
+  await endAccountWatch(db, credential_id, by);
 }
 
 // What each kind tells the owner (details carry the specifics).
