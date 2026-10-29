@@ -3211,6 +3211,10 @@ export async function listMyCollaborators({
        SELECT p.project_id, p.users
        FROM projects p
        WHERE (p.users -> $1::text ->> 'group') IN ('owner','collaborator')
+         -- Only projects this bay owns: a local copy of another bay's project
+         -- may be stale (a removed collaborator still in it). Those come
+         -- from the collaborator index, which their owning bays keep current.
+         AND COALESCE(NULLIF(BTRIM(p.owning_bay_id), ''), $4::TEXT) = $4::TEXT
      )
      SELECT
        u.account_id_text::uuid AS account_id,
@@ -3230,7 +3234,7 @@ export async function listMyCollaborators({
        u.account_id_text::uuid
      ORDER BY shared_projects DESC, MAX(a.last_active) DESC NULLS LAST, u.account_id_text::uuid
      LIMIT $3`,
-    [account_id, includeEmail, maxRows],
+    [account_id, includeEmail, maxRows, getConfiguredBayId()],
   );
   const local = await hydrateMyCollaboratorRows(rows, includeEmail);
   return await withOtherBayCollaborators({
