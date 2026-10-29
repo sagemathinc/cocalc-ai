@@ -23,7 +23,7 @@ import {
   watchProviderAccount,
 } from "./account-watch";
 import { resumeGpuLaunchesLocal } from "./budget-api";
-import { listAlertsLocal, onKeyGone } from "./alerts";
+import { listAlertsLocal, onKeyGone, raiseAlert } from "./alerts";
 import { reportCompromisedLocal } from "./compromise";
 import { inTransaction } from "./pods";
 import { reconcileKey } from "./reconcile";
@@ -711,6 +711,54 @@ describeDb("GPU provider-account checks", () => {
       "unconfirmed",
     );
     expect(keyB).toBeTruthy();
+  });
+
+  it("a lease lost while RunPod answers the account read: the pass ends no rejected-key alert", async () => {
+    const owner = randomUUID();
+    const key = await connectKey(owner, randomUUID());
+    await confirm(owner);
+    await raiseAlert({
+      key_owner_account_id: owner,
+      credential_id: key,
+      kind: "key_rejected",
+      severity: "critical",
+      dedupe_key: "key",
+      observed_at: at(0),
+    });
+    let answered = false;
+    await expect(
+      reconcileKey(
+        {
+          credential_id: key,
+          key_owner_account_id: owner,
+          deadline: T0 + HOUR + 30_000,
+        },
+        {
+          now: () => T0 + HOUR,
+          guard: async () => {
+            if (answered) throw Error("lease lost");
+          },
+          getReconcile: async () => ({
+            credential_id: key,
+            listPods: async ({ onPage }: any = {}) => {
+              await onPage?.([]);
+              return [];
+            },
+            getPod: async () => undefined,
+            // an answer with no numbers: the check writes nothing itself
+            getAccountBalance: async () => {
+              answered = true;
+              return {};
+            },
+          }),
+        },
+      ),
+    ).rejects.toThrow("lease lost");
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_alerts WHERE credential_id = $1 AND kind = 'key_rejected' AND resolved_at IS NULL",
+      [key],
+    );
+    expect(rows[0].n).toBe(1);
   });
 
   it("a complete reconcile pass checks a confirmed account, once, and only then", async () => {

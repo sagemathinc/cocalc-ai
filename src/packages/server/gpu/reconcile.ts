@@ -273,7 +273,9 @@ export async function reconcileKey(
       }
     }
     // the reconciliation capability works: a rejected-key alert ends (after
-    // the account checks, whose 401 would say otherwise)
+    // the account checks, whose 401 would say otherwise; and only while this
+    // worker still holds its lease, which a RunPod call may have outlasted)
+    await deps.guard?.();
     await underLiveFence(credential_id, (db) =>
       resolveAlert(
         {
