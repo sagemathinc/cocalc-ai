@@ -12,11 +12,19 @@ jest.mock("@cocalc/server/gpu/provider-keys", () => ({
   isGpuProviderKeysEntitled: jest.fn(async () => true),
 }));
 // the hub's authorization records (5d-2c) have their own tests
-jest.mock("@cocalc/server/gpu/key-use", () => ({
-  ...jest.requireActual("@cocalc/server/gpu/key-use"),
-  admitUserKeyUse: jest.fn(async () => undefined),
-  admitAgentKeyUse: jest.fn(async () => undefined),
-}));
+jest.mock("@cocalc/server/gpu/key-use", () => {
+  const actual = jest.requireActual("@cocalc/server/gpu/key-use");
+  return {
+    ...actual,
+    // (a test capability: passes the method's entry check, never decrypts)
+    admitUserKeyUse: jest.fn(async ({ purpose }) =>
+      actual.issueTestKeyUse(purpose),
+    ),
+    admitAgentKeyUse: jest.fn(async ({ purpose }) =>
+      actual.issueTestKeyUse(purpose),
+    ),
+  };
+});
 // A single bay: every account is homed here.
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
@@ -35,6 +43,7 @@ import {
   getGpuPods,
 } from "./read";
 import * as hubGpu from "@cocalc/server/conat/api/gpu";
+import { testKeyUse } from "./key-use-testing";
 
 const ACCOUNT = "00000000-1000-4000-8000-000000000001";
 const OTHER = "00000000-1000-4000-8000-000000000002";
@@ -178,7 +187,10 @@ beforeEach(() => clearGpuCatalogCache());
 describe("gpu.catalog", () => {
   it("returns the normalized catalog, read with the account's own key", async () => {
     const rp = fakeRunpod(CATALOG_ROUTES);
-    const result = await getGpuCatalog({ account_id: ACCOUNT }, rp);
+    const result = await getGpuCatalog(
+      { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
+      rp,
+    );
     expect(result.provider).toBe("runpod");
     expect(result.catalog.gpuTypes.map((t) => t.id)).toEqual([
       "NVIDIA RTX A4000",
@@ -194,13 +206,25 @@ describe("gpu.catalog", () => {
     let t = 1_000_000;
     const rp = fakeRunpod(CATALOG_ROUTES);
     const deps = { ...rp, now: () => t };
-    await getGpuCatalog({ account_id: ACCOUNT }, deps);
-    await getGpuAvailability({ account_id: ACCOUNT }, deps);
+    await getGpuCatalog(
+      { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
+      deps,
+    );
+    await getGpuAvailability(
+      { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
+      deps,
+    );
     expect(rp.calls).toHaveLength(3);
-    await getGpuCatalog({ account_id: OTHER }, deps);
+    await getGpuCatalog(
+      { key_use: testKeyUse("catalog"), account_id: OTHER },
+      deps,
+    );
     expect(rp.calls).toHaveLength(6);
     t += 30_001;
-    await getGpuCatalog({ account_id: ACCOUNT }, deps);
+    await getGpuCatalog(
+      { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
+      deps,
+    );
     expect(rp.calls).toHaveLength(9);
   });
 
@@ -213,19 +237,25 @@ describe("gpu.catalog", () => {
           ? { status: 503, body: { detail: "down" } }
           : CATALOG_ROUTES["/v2/catalog/datacenters"],
     });
-    await expect(getGpuCatalog({ account_id: ACCOUNT }, rp)).rejects.toThrow(
-      "RunPod returned an unexpected response",
-    );
+    await expect(
+      getGpuCatalog(
+        { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
+        rp,
+      ),
+    ).rejects.toThrow("RunPod returned an unexpected response");
     fail = false;
     await expect(
-      getGpuCatalog({ account_id: ACCOUNT }, rp),
+      getGpuCatalog(
+        { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
+        rp,
+      ),
     ).resolves.toBeDefined();
   });
 
   it("says how to connect a key when none is connected", async () => {
     await expect(
       getGpuCatalog(
-        { account_id: ACCOUNT },
+        { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
         {
           getClient: async () => undefined,
           isEntitled: async () => true,
@@ -249,26 +279,51 @@ describe("gpu.catalog", () => {
     });
     const lapsed = { ...rp, isEntitled: async () => false };
     await expect(
-      getGpuCatalog({ account_id: ACCOUNT }, lapsed),
+      getGpuCatalog(
+        { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
+        lapsed,
+      ),
     ).rejects.toThrow("Your membership doesn't include GPUs on your own key.");
     await expect(
-      getGpuAvailability({ account_id: ACCOUNT }, lapsed),
+      getGpuAvailability(
+        { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
+        lapsed,
+      ),
     ).rejects.toThrow("Your membership doesn't include");
     expect(rp.calls).toHaveLength(0);
     // A lapsed owner can still see what is running (and billing).
     await expect(
-      getGpuPods({ account_id: ACCOUNT, scope: "account" }, lapsed),
+      getGpuPods(
+        {
+          key_use: testKeyUse("pod_read"),
+          account_id: ACCOUNT,
+          scope: "account",
+        },
+        lapsed,
+      ),
     ).resolves.toEqual(expect.objectContaining({ pods: [] }));
     expect(rp.purposes).toEqual(["cleanup"]);
-    await getGpuCatalog({ account_id: ACCOUNT }, rp);
+    await getGpuCatalog(
+      { key_use: testKeyUse("catalog"), account_id: ACCOUNT },
+      rp,
+    );
     expect(rp.purposes).toEqual(["cleanup", "operate"]);
   });
 
   it("requires an account and a known provider", async () => {
     const rp = fakeRunpod(CATALOG_ROUTES);
-    await expect(getGpuCatalog({}, rp)).rejects.toThrow("must be signed in");
     await expect(
-      getGpuCatalog({ account_id: ACCOUNT, provider: "lambda" }, rp),
+      getGpuCatalog({ key_use: testKeyUse("catalog") }, rp),
+    ).rejects.toThrow("must be signed in");
+    await expect(
+      getGpuCatalog(
+        {
+          key_use: testKeyUse("catalog"),
+          account_id: ACCOUNT,
+          provider: "lambda",
+        },
+        rp,
+      ),
     ).rejects.toThrow("unknown GPU provider");
     expect(rp.calls).toHaveLength(0);
   });
@@ -278,7 +333,7 @@ describe("gpu.availability", () => {
   const all = async (filter = {}) =>
     (
       await getGpuAvailability(
-        { account_id: ACCOUNT, ...filter },
+        { key_use: testKeyUse("catalog"), account_id: ACCOUNT, ...filter },
         fakeRunpod(CATALOG_ROUTES),
       )
     ).offers;
@@ -344,7 +399,14 @@ describe("gpu.availability", () => {
       { gpu: [7] },
     ]) {
       await expect(
-        getGpuAvailability({ account_id: ACCOUNT, ...(bad as any) }, rp),
+        getGpuAvailability(
+          {
+            key_use: testKeyUse("catalog"),
+            account_id: ACCOUNT,
+            ...(bad as any),
+          },
+          rp,
+        ),
       ).rejects.toThrow();
     }
     expect(rp.calls).toHaveLength(0);
@@ -368,7 +430,11 @@ describe("gpu.pods", () => {
       },
     });
     const result = await getGpuPods(
-      { account_id: ACCOUNT, scope: "account" },
+      {
+        key_use: testKeyUse("pod_read"),
+        account_id: ACCOUNT,
+        scope: "account",
+      },
       rp,
     );
     expect(result.scope).toBe("account");
@@ -395,18 +461,33 @@ describe("gpu.pods", () => {
       "/v2/pods/pod_gone99": { status: 404, body: { detail: "not found" } },
     });
     const one = await getGpuPods(
-      { account_id: ACCOUNT, scope: "account", pod_id: "pod_abc123" },
+      {
+        key_use: testKeyUse("pod_read"),
+        account_id: ACCOUNT,
+        scope: "account",
+        pod_id: "pod_abc123",
+      },
       rp,
     );
     expect(one.pods.map((p) => p.id)).toEqual(["pod_abc123"]);
     const none = await getGpuPods(
-      { account_id: ACCOUNT, scope: "account", pod_id: "pod_gone99" },
+      {
+        key_use: testKeyUse("pod_read"),
+        account_id: ACCOUNT,
+        scope: "account",
+        pod_id: "pod_gone99",
+      },
       rp,
     );
     expect(none.pods).toEqual([]);
     await expect(
       getGpuPods(
-        { account_id: ACCOUNT, scope: "account", pod_id: "../v2/billing" },
+        {
+          key_use: testKeyUse("pod_read"),
+          account_id: ACCOUNT,
+          scope: "account",
+          pod_id: "../v2/billing",
+        },
         rp,
       ),
     ).rejects.toThrow("invalid pod id");
@@ -427,7 +508,11 @@ describe("gpu.pods", () => {
         },
       });
       const err = await getGpuPods(
-        { account_id: ACCOUNT, scope: "account" },
+        {
+          key_use: testKeyUse("pod_read"),
+          account_id: ACCOUNT,
+          scope: "account",
+        },
         rp,
       ).then(
         () => undefined,
@@ -448,12 +533,22 @@ describe("gpu.pods", () => {
     } as any;
     const deps = { ...rp, listManaged: async () => [record] };
     const one = await getGpuPods(
-      { account_id: ACCOUNT, scope: "account", pod_id: record.handle },
+      {
+        key_use: testKeyUse("pod_read"),
+        account_id: ACCOUNT,
+        scope: "account",
+        pod_id: record.handle,
+      },
       deps,
     );
     expect(one.pods.map((p) => p.id)).toEqual(["pod_abc123"]);
     const none = await getGpuPods(
-      { account_id: ACCOUNT, scope: "account", pod_id: "cc-aaaaaaaaaaaaaaaa" },
+      {
+        key_use: testKeyUse("pod_read"),
+        account_id: ACCOUNT,
+        scope: "account",
+        pod_id: "cc-aaaaaaaaaaaaaaaa",
+      },
       deps,
     );
     expect(none.pods).toEqual([]);
@@ -471,7 +566,7 @@ describe("gpu.pods", () => {
       desired_state: "running",
     } as any;
     const result = await getGpuPods(
-      { account_id: ACCOUNT },
+      { key_use: testKeyUse("pod_read"), account_id: ACCOUNT },
       {
         listManaged: async () => [record],
         getCleanup: async () => undefined,
@@ -500,7 +595,7 @@ describe("gpu.pods", () => {
       },
     });
     const result = await getGpuPods(
-      { account_id: ACCOUNT },
+      { key_use: testKeyUse("pod_read"), account_id: ACCOUNT },
       { ...rp, listManaged: async () => [record] },
     );
     expect(result.records).toEqual([record]);
@@ -511,14 +606,25 @@ describe("gpu.pods", () => {
     expect(text).not.toContain("secret provider text");
     // the account-wide listing still fails hard
     await expect(
-      getGpuPods({ account_id: ACCOUNT, scope: "account" }, rp),
+      getGpuPods(
+        {
+          key_use: testKeyUse("pod_read"),
+          account_id: ACCOUNT,
+          scope: "account",
+        },
+        rp,
+      ),
     ).rejects.toThrow("RunPod rejected your API key");
   });
 
   it("hides why the key could not be loaded", async () => {
     await expect(
       getGpuPods(
-        { account_id: ACCOUNT, scope: "account" },
+        {
+          key_use: testKeyUse("pod_read"),
+          account_id: ACCOUNT,
+          scope: "account",
+        },
         {
           getCleanup: async () => {
             throw Error(`decrypt failed for ${KEY}`);

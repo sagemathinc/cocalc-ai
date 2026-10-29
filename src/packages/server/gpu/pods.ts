@@ -56,6 +56,7 @@ import {
 } from "@cocalc/server/gpu/provider-keys";
 import {
   KeyUseRefused,
+  requireKeyUse,
   withKeyUseOutcome,
   type GpuKeyCapability,
   type GpuKeyUse,
@@ -691,14 +692,17 @@ type LaunchOpts = {
   // idempotency key. It needs an approved grant for exactly this launch.
   agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
   // made by the authenticated boundary (5d-2c); records how the attempt ended
-  key_use?: GpuKeyUse;
+  key_use: GpuKeyUse | undefined;
 };
 
 export async function launchGpuPodLocal(
   opts: LaunchOpts,
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary> {
-  return await withKeyUseOutcome(opts.key_use, () => launchPod(opts, deps));
+  const account_id = requireAccount(opts.account_id);
+  await requireHomeBay(account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["launch"], account_id);
+  return await withKeyUseOutcome(key_use, () => launchPod(opts, deps));
 }
 
 async function launchPod(
@@ -1756,11 +1760,14 @@ export async function terminateGpuPodLocal(
     account_id?: string;
     pod_id?: unknown;
     agent?: GpuAgentScope;
-    key_use?: GpuKeyUse;
+    key_use: GpuKeyUse | undefined;
   },
   deps: GpuPodDeps = {},
 ): Promise<{ state: GpuPodSummary["state"] }> {
-  return await withKeyUseOutcome(opts.key_use, () => terminatePod(opts, deps));
+  const account_id = requireAccount(opts.account_id);
+  await requireHomeBay(account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["terminate"], account_id);
+  return await withKeyUseOutcome(key_use, () => terminatePod(opts, deps));
 }
 
 async function terminatePod(
@@ -2135,16 +2142,15 @@ export async function listManagedGpuPodsLocal(
     include_ended?: boolean;
     agent?: GpuAgentScope;
     // the listing's pod_read use (5d-2c): its ambiguous records are
-    // resolved with the key; without one, they're only listed
-    key_use?: GpuKeyUse;
+    // resolved with the key
+    key_use: GpuKeyUse | undefined;
   },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSummary[]> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
-  if (opts.key_use || deps.getCleanup) {
-    await resolveAmbiguousForAccount(account_id, deps, opts.key_use);
-  }
+  const key_use = requireKeyUse(opts.key_use, ["pod_read"], account_id);
+  await resolveAmbiguousForAccount(account_id, deps, key_use);
   const scope = agentScopeSql(opts.agent, 3);
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_pods WHERE ${MINE}${scope.sql}
@@ -2261,7 +2267,10 @@ export async function launchGpuPod(
       ...(opts.agent ? { agent: opts.agent } : {}),
     });
   }
-  return await launchGpuPodLocal({ ...opts, account_id }, deps);
+  return await launchGpuPodLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }
 
 export async function terminateGpuPod(
@@ -2281,7 +2290,10 @@ export async function terminateGpuPod(
       pod_id: opts.pod_id,
       ...(opts.agent ? { agent: opts.agent } : {}),
     });
-  return await terminateGpuPodLocal({ ...opts, account_id }, deps);
+  return await terminateGpuPodLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }
 
 // ---- removing a key (5c) ----
@@ -2477,13 +2489,14 @@ export async function killSwitchLocal(
     account_id?: string;
     project_id?: unknown;
     pause?: unknown;
-    key_use?: GpuKeyUse;
+    key_use: GpuKeyUse | undefined;
   },
   deps: GpuPodDeps = {},
 ): Promise<GpuKillSwitchResult> {
-  return await withKeyUseOutcome(opts.key_use, () =>
-    killSwitchPods(opts, deps),
-  );
+  const account_id = requireAccount(opts.account_id);
+  await requireHomeBay(account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["terminate"], account_id);
+  return await withKeyUseOutcome(key_use, () => killSwitchPods(opts, deps));
 }
 
 async function killSwitchPods(
@@ -2633,7 +2646,10 @@ export async function killSwitch(
       pause: opts.pause,
     });
   }
-  return await killSwitchLocal({ ...opts, account_id }, deps);
+  return await killSwitchLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }
 
 export async function whoGpuPod(

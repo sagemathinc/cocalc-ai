@@ -28,6 +28,7 @@ import { reportCompromisedLocal } from "./compromise";
 import { inTransaction } from "./pods";
 import { reconcileKey } from "./reconcile";
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
+import { testKeyUse } from "./key-use-testing";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -716,6 +717,7 @@ describeDb("GPU provider-account checks", () => {
     let reads = 0;
     await reportCompromisedLocal(
       {
+        key_use: testKeyUse("compromise"),
         account_id: owner,
         confirm_cocalc_only: true,
         fresh_auth_verified: true,

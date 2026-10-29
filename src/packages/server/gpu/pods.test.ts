@@ -28,6 +28,7 @@ import {
   launchGpuPod,
 } from "./pods";
 import { freshInventoryForTests } from "./test-inventory";
+import { testKeyUse } from "./key-use-testing";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -211,7 +212,15 @@ describeDb("GPU pods", () => {
       credential_id: randomUUID(),
     });
     await expect(
-      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+      launchGpuPodLocal(
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
+        d,
+      ),
     ).rejects.toThrow("Your RunPod API key changed during the launch");
     expect(rp.client.createPod).not.toHaveBeenCalled();
     const { rows } = await getPool().query(
@@ -232,7 +241,15 @@ describeDb("GPU pods", () => {
       revision: `r${++reads}`,
     });
     await expect(
-      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+      launchGpuPodLocal(
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
+        d,
+      ),
     ).rejects.toThrow("Your RunPod API key changed during the launch");
     expect(rp.client.createPod).not.toHaveBeenCalled();
   });
@@ -240,7 +257,12 @@ describeDb("GPU pods", () => {
   it("records the intent, creates the pod by its handle, and binds it", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     expect(pod).toEqual(
@@ -275,13 +297,19 @@ describeDb("GPU pods", () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     await expect(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
         { ...d, isProjectCollaborator: async () => false },
       ),
     ).rejects.toThrow("access denied");
     await expect(
       launchGpuPodLocal(
         {
+          key_use: testKeyUse("launch"),
           account_id,
           project_id: PROJECT,
           spec: { ...SPEC, image: "evil/miner" },
@@ -290,16 +318,34 @@ describeDb("GPU pods", () => {
       ),
     ).rejects.toThrow("image must be one of");
     await expect(
-      launchGpuPodLocal({ account_id, project_id: "x", spec: SPEC }, d),
+      launchGpuPodLocal(
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: "x",
+          spec: SPEC,
+        },
+        d,
+      ),
     ).rejects.toThrow("needs a project");
     await expect(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
         { ...d, isHomeBay: async () => false },
       ),
     ).rejects.toThrow("home bay");
     expect(rp.client.createPod).not.toHaveBeenCalled();
-    expect(await listManagedGpuPodsLocal({ account_id }, d)).toEqual([]);
+    expect(
+      await listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        d,
+      ),
+    ).toEqual([]);
   });
 
   it("marks a refused create failed, with the reason in words", async () => {
@@ -308,10 +354,18 @@ describeDb("GPU pods", () => {
       new RunpodApiError("invalid", 402),
     );
     await expect(
-      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+      launchGpuPodLocal(
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
+        d,
+      ),
     ).rejects.toThrow("balance is too low");
     const [pod] = await listManagedGpuPodsLocal(
-      { account_id, include_ended: true },
+      { key_use: testKeyUse("pod_read"), account_id, include_ended: true },
       d,
     );
     expect(pod.state).toBe("failed");
@@ -335,7 +389,12 @@ describeDb("GPU pods", () => {
         );
       });
       const pod = await launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
         d,
       );
       expect(pod.state).toBe("running");
@@ -351,7 +410,15 @@ describeDb("GPU pods", () => {
         new RunpodApiError("invalid", status),
       );
       await expect(
-        launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+        launchGpuPodLocal(
+          {
+            key_use: testKeyUse("launch"),
+            account_id,
+            project_id: PROJECT,
+            spec: SPEC,
+          },
+          d,
+        ),
       ).rejects.toThrow();
       expect(rp.client.findPodsByName).not.toHaveBeenCalled();
     },
@@ -365,7 +432,12 @@ describeDb("GPU pods", () => {
       throw new RunpodApiError("network");
     });
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     expect(pod.state).toBe("running");
@@ -384,21 +456,32 @@ describeDb("GPU pods", () => {
       throw new RunpodApiError("provider", 503);
     });
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     // Not visible yet: not proof that no pod was made.
     expect(pod.state).toBe("ambiguous");
     // A terminate is kept for when it is resolved.
     expect(
-      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+      await terminateGpuPodLocal(
+        { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+        d,
+      ),
     ).toEqual({ state: "ambiguous" });
     // The pod appears late; the next listing resolves the record, binds it
     // and, as terminate was asked for, terminates it.
     rp.pods.set("pod_late01", { id: "pod_late01", name: handle });
-    await listManagedGpuPodsLocal({ account_id }, d);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     const [ended] = await listManagedGpuPodsLocal(
-      { account_id, include_ended: true },
+      { key_use: testKeyUse("pod_read"), account_id, include_ended: true },
       d,
     );
     expect(ended).toEqual(
@@ -416,14 +499,24 @@ describeDb("GPU pods", () => {
       new RunpodApiError("provider", 503),
     );
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     expect(pod.state).toBe("ambiguous");
     const later = { ...d, now: () => Date.now() + AMBIGUOUS_WINDOW_MS + 1 };
-    expect(await listManagedGpuPodsLocal({ account_id }, later)).toEqual([]);
+    expect(
+      await listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        later,
+      ),
+    ).toEqual([]);
     const [failed] = await listManagedGpuPodsLocal(
-      { account_id, include_ended: true },
+      { key_use: testKeyUse("pod_read"), account_id, include_ended: true },
       later,
     );
     expect(failed.state).toBe("failed");
@@ -441,15 +534,26 @@ describeDb("GPU pods", () => {
       new RunpodApiError("network"),
     );
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     expect(pod.state).toBe("ambiguous");
     rp.pods.set("pod_race01", { id: "pod_race01", name: handle });
     // two listings resolve the same record at once
     await Promise.all([
-      listManagedGpuPodsLocal({ account_id }, d),
-      listManagedGpuPodsLocal({ account_id }, d),
+      listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        d,
+      ),
+      listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        d,
+      ),
     ]);
     const binds = (await events(pod.id)).filter((e) => e.action === "bind");
     expect(binds).toHaveLength(1);
@@ -463,7 +567,12 @@ describeDb("GPU pods", () => {
       new RunpodApiError("network"),
     );
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     expect(pod.state).toBe("ambiguous");
@@ -479,11 +588,20 @@ describeDb("GPU pods", () => {
         return [rp.pods.get("pod_bbbbbb")];
       })
       .mockImplementationOnce(async () => [rp.pods.get("pod_aaaaaa")]);
-    const slow = listManagedGpuPodsLocal({ account_id }, d);
-    await listManagedGpuPodsLocal({ account_id }, d);
+    const slow = listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     release();
     await slow;
-    const [row] = await listManagedGpuPodsLocal({ account_id }, d);
+    const [row] = await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     expect(row.provider_pod_id).toBe("pod_aaaaaa");
     expect([...rp.pods.keys()]).toEqual(["pod_aaaaaa"]);
     const ev = await events(pod.id);
@@ -499,7 +617,12 @@ describeDb("GPU pods", () => {
   it("never records a state change without its event, or the reverse", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     const before = (await events(pod.id)).length;
@@ -510,7 +633,10 @@ describeDb("GPU pods", () => {
     );
     try {
       await expect(
-        terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+        terminateGpuPodLocal(
+          { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+          d,
+        ),
       ).rejects.toThrow();
     } finally {
       await getPool().query(
@@ -529,12 +655,22 @@ describeDb("GPU pods", () => {
   it("retries a handle collision with a new handle", async () => {
     const { deps: d, account_id } = deps(randomUUID());
     const first = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     const handles = [first.handle, newPodHandle()];
     const second = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       { ...d, newHandle: () => handles.shift()! },
     );
     expect(second.handle).not.toBe(first.handle);
@@ -544,22 +680,39 @@ describeDb("GPU pods", () => {
   it("terminates by id, handle or RunPod id, once, recording who", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     expect(
       await terminateGpuPodLocal(
-        { account_id, pod_id: pod.provider_pod_id },
+        {
+          key_use: testKeyUse("terminate"),
+          account_id,
+          pod_id: pod.provider_pod_id,
+        },
         d,
       ),
     ).toEqual({ state: "terminated" });
     expect(rp.pods.size).toBe(0);
     // again: nothing more is sent
     expect(
-      await terminateGpuPodLocal({ account_id, pod_id: pod.id }, d),
+      await terminateGpuPodLocal(
+        { key_use: testKeyUse("terminate"), account_id, pod_id: pod.id },
+        d,
+      ),
     ).toEqual({ state: "terminated" });
     expect(rp.client.terminatePod).toHaveBeenCalledTimes(1);
-    expect(await listManagedGpuPodsLocal({ account_id }, d)).toEqual([]);
+    expect(
+      await listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        d,
+      ),
+    ).toEqual([]);
     const ev = await events(pod.id);
     expect(ev).toContainEqual(
       expect.objectContaining({ actor_kind: "key_owner", action: "terminate" }),
@@ -576,17 +729,28 @@ describeDb("GPU pods", () => {
       return await create(body);
     });
     const launching = launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     let pod;
     for (let i = 0; i < 100 && !pod; i++) {
       await new Promise((r) => setTimeout(r, 10));
-      [pod] = await listManagedGpuPodsLocal({ account_id }, d);
+      [pod] = await listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        d,
+      );
     }
     expect(pod.state).toBe("creating");
     expect(
-      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+      await terminateGpuPodLocal(
+        { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+        d,
+      ),
     ).toEqual({ state: "creating" });
     release();
     expect((await launching).state).toBe("terminated");
@@ -603,15 +767,26 @@ describeDb("GPU pods", () => {
       return await create(body);
     });
     const launching = launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     let pod;
     for (let i = 0; i < 100 && !pod; i++) {
       await new Promise((r) => setTimeout(r, 10));
-      [pod] = await listManagedGpuPodsLocal({ account_id }, d);
+      [pod] = await listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        d,
+      );
     }
-    await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d);
+    await terminateGpuPodLocal(
+      { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+      d,
+    );
     // RunPod fails the first terminate after the bind
     rp.client.terminatePod.mockRejectedValueOnce(
       new RunpodApiError("provider", 503),
@@ -622,14 +797,24 @@ describeDb("GPU pods", () => {
     expect(result.desired_state).toBe("terminated");
     expect(rp.pods.size).toBe(1);
     // the next listing retries, and this time RunPod confirms
-    expect(await listManagedGpuPodsLocal({ account_id }, d)).toEqual([]);
+    expect(
+      await listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        d,
+      ),
+    ).toEqual([]);
     expect(rp.pods.size).toBe(0);
   });
 
   it("never acts on a pod with a key other than the one that launched it", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     // the key was replaced (maybe for another RunPod account)
@@ -640,7 +825,10 @@ describeDb("GPU pods", () => {
     };
     rp.client.terminatePod.mockClear();
     await expect(
-      terminateGpuPodLocal({ account_id, pod_id: pod.handle }, replaced),
+      terminateGpuPodLocal(
+        { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+        replaced,
+      ),
     ).rejects.toThrow(/key that has since been replaced.*pod_/);
     expect(rp.client.terminatePod).not.toHaveBeenCalled();
     // still recorded as live, with the terminate pending
@@ -650,14 +838,22 @@ describeDb("GPU pods", () => {
     );
     expect(rows[0]).toEqual({ state: "running", desired_state: "terminated" });
     // and a listing with the new key doesn't retry it either
-    await listManagedGpuPodsLocal({ account_id }, replaced);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      replaced,
+    );
     expect(rp.client.terminatePod).not.toHaveBeenCalled();
   });
 
   it("asks RunPod to terminate only after recording it, and retries an already-terminating pod", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     // a pending termination, as a failed terminate leaves it
@@ -671,7 +867,10 @@ describeDb("GPU pods", () => {
       "ALTER TABLE gpu_pod_events RENAME TO gpu_pod_events_away",
     );
     try {
-      await listManagedGpuPodsLocal({ account_id }, d).catch(() => {});
+      await listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        d,
+      ).catch(() => {});
     } finally {
       await getPool().query(
         "ALTER TABLE gpu_pod_events_away RENAME TO gpu_pod_events",
@@ -688,7 +887,10 @@ describeDb("GPU pods", () => {
       "UPDATE gpu_pods SET state = 'terminating' WHERE id = $1",
       [pod.id],
     );
-    await listManagedGpuPodsLocal({ account_id }, d);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     expect(rp.client.terminatePod).toHaveBeenCalledWith(pod.provider_pod_id);
     expect(rp.pods.size).toBe(0);
   });
@@ -719,13 +921,21 @@ describeDb("GPU pods", () => {
   it("a direct terminate asks RunPod only once terminating is recorded", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     rp.client.terminatePod.mockClear();
     await failTerminatingEvents(async () => {
       await expect(
-        terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+        terminateGpuPodLocal(
+          { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+          d,
+        ),
       ).rejects.toThrow("couldn't record the termination yet");
     });
     expect(rp.client.terminatePod).not.toHaveBeenCalled();
@@ -736,7 +946,10 @@ describeDb("GPU pods", () => {
     expect(rows[0]).toEqual({ state: "running", desired_state: "terminated" });
     // retried later: terminated
     expect(
-      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+      await terminateGpuPodLocal(
+        { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+        d,
+      ),
     ).toEqual({ state: "terminated" });
     expect(rp.pods.size).toBe(0);
   });
@@ -751,15 +964,26 @@ describeDb("GPU pods", () => {
       return await create(body);
     });
     const launching = launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     let pod;
     for (let i = 0; i < 100 && !pod; i++) {
       await new Promise((r) => setTimeout(r, 10));
-      [pod] = await listManagedGpuPodsLocal({ account_id }, d);
+      [pod] = await listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        d,
+      );
     }
-    await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d);
+    await terminateGpuPodLocal(
+      { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+      d,
+    );
     rp.client.terminatePod.mockClear();
     const result = await failTerminatingEvents(async () => {
       release();
@@ -771,14 +995,22 @@ describeDb("GPU pods", () => {
       "terminated",
     ]);
     // the next listing records it and terminates the pod
-    await listManagedGpuPodsLocal({ account_id }, d);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     expect(rp.pods.size).toBe(0);
   });
 
   it("a CAS miss acts only on a durably terminating record", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     // already terminating (recorded by someone else): retried
@@ -788,7 +1020,10 @@ describeDb("GPU pods", () => {
     );
     rp.client.terminatePod.mockClear();
     expect(
-      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+      await terminateGpuPodLocal(
+        { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+        d,
+      ),
     ).toEqual({ state: "terminated" });
     expect(rp.client.terminatePod).toHaveBeenCalledTimes(1);
   });
@@ -809,7 +1044,12 @@ describeDb("GPU pods", () => {
       new RunpodApiError("provider", 503),
     );
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     expect(pod.provider_pod_id).toBe("pod_dupaaa");
@@ -828,7 +1068,15 @@ describeDb("GPU pods", () => {
     // while its terminate is pending it is a live pod: with the default
     // 2 pods at once, the canonical pod and it leave no room for another
     await expect(
-      launchGpuPodLocal({ account_id, project_id: PROJECT, spec: SPEC }, d),
+      launchGpuPodLocal(
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
+        d,
+      ),
     ).rejects.toThrow("at most 2 pods at once");
     // it holds its RunPod rate ($0.90/h) for its whole allowed hour
     const { rows: pending } = await getPool().query(
@@ -841,7 +1089,10 @@ describeDb("GPU pods", () => {
     await getPool().query(
       "UPDATE gpu_pods SET running_since = now() - interval '20 minutes' WHERE provider_pod_id = 'pod_dupbbb'",
     );
-    const live = await listManagedGpuPodsLocal({ account_id }, d);
+    const live = await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     expect(rp.pods.has("pod_dupbbb")).toBe(false);
     expect(live.map((p) => p.provider_pod_id)).toEqual(["pod_dupaaa"]);
     // its spend is settled onto the canonical pod's layer: 20 min at $0.90/h,
@@ -875,7 +1126,12 @@ describeDb("GPU pods", () => {
       new RunpodApiError("network"),
     );
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     rp.pods.set("pod_racea1", { id: "pod_racea1", name: pod.handle });
@@ -890,11 +1146,20 @@ describeDb("GPU pods", () => {
         return [rp.pods.get("pod_racea1"), rp.pods.get("pod_raceb1")];
       })
       .mockImplementationOnce(async () => [rp.pods.get("pod_raceb1")]);
-    const slow = listManagedGpuPodsLocal({ account_id }, d);
-    await listManagedGpuPodsLocal({ account_id }, d);
+    const slow = listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     release();
     await slow;
-    const [row] = await listManagedGpuPodsLocal({ account_id }, d);
+    const [row] = await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     expect(row.provider_pod_id).toBe("pod_raceb1");
     expect(row.state).toBe("running");
     expect([...rp.pods.keys()]).toEqual(["pod_raceb1"]);
@@ -909,7 +1174,12 @@ describeDb("GPU pods", () => {
       return p;
     });
     const x = await launchGpuPodLocal(
-      { account_id: owner.account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id: owner.account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       owner.deps,
     );
     // Y's unclear create; Y's lookup (wrongly) also returns pod_shared1
@@ -921,12 +1191,20 @@ describeDb("GPU pods", () => {
       new RunpodApiError("network"),
     );
     const y = await launchGpuPodLocal(
-      { account_id: other.account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id: other.account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       other.deps,
     );
     other.rp.pods.set("pod_aaaaaa", { id: "pod_aaaaaa", name: y.handle });
     other.rp.pods.set("pod_shared1", { id: "pod_shared1", name: y.handle });
-    await listManagedGpuPodsLocal({ account_id: other.account_id }, other.deps);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id: other.account_id },
+      other.deps,
+    );
     expect(other.rp.client.terminatePod).not.toHaveBeenCalledWith(
       "pod_shared1",
     );
@@ -941,12 +1219,21 @@ describeDb("GPU pods", () => {
     const owner = deps(randomUUID());
     const other = deps(randomUUID(), owner.rp);
     const pod = await launchGpuPodLocal(
-      { account_id: owner.account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id: owner.account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       owner.deps,
     );
     await expect(
       terminateGpuPodLocal(
-        { account_id: other.account_id, pod_id: pod.handle },
+        {
+          key_use: testKeyUse("terminate"),
+          account_id: other.account_id,
+          pod_id: pod.handle,
+        },
         other.deps,
       ),
     ).rejects.toThrow("No such GPU pod");
@@ -958,7 +1245,7 @@ describeDb("GPU pods", () => {
     ).toEqual([]);
     expect(
       await listManagedGpuPodsLocal(
-        { account_id: other.account_id },
+        { key_use: testKeyUse("pod_read"), account_id: other.account_id },
         other.deps,
       ),
     ).toEqual([]);
@@ -968,7 +1255,12 @@ describeDb("GPU pods", () => {
   it("answers who with the pod's record and its events, and logs the lookup", async () => {
     const { deps: d, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     const [hit] = await whoGpuPodLocal(
@@ -993,7 +1285,12 @@ describeDb("GPU pods", () => {
   it("shows the newest 200 events of a long history", async () => {
     const { deps: d, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     for (let i = 0; i < 205; i++) {
@@ -1011,7 +1308,12 @@ describeDb("GPU pods", () => {
     const { deps: d, account_id } = deps(randomUUID());
     await expect(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
         { ...d, getLaunchAccess: async () => undefined },
       ),
     ).rejects.toThrow("No RunPod API key is connected");
@@ -1028,11 +1330,21 @@ describeDb("GPU pods left behind and seen again", () => {
     // two launches whose server died: one before sending, one mid-create
     // (RunPod made that pod)
     const a = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     const b = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     rp.pods.clear();
@@ -1046,12 +1358,15 @@ describeDb("GPU pods left behind and seen again", () => {
       [b.id],
     );
     expect(STALE_CREATE_MS).toBeLessThan(60 * 60_000);
-    const live = await listManagedGpuPodsLocal({ account_id }, d);
+    const live = await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     expect(live.map((p) => [p.id, p.state, p.provider_pod_id])).toEqual([
       [b.id, "running", "pod_crash1"],
     ]);
     const [ended] = await listManagedGpuPodsLocal(
-      { account_id, include_ended: true },
+      { key_use: testKeyUse("pod_read"), account_id, include_ended: true },
       d,
     ).then((all) => all.filter((p) => p.id === a.id));
     expect(ended.state).toBe("failed");
@@ -1060,7 +1375,12 @@ describeDb("GPU pods left behind and seen again", () => {
   it("terminates a crash-left create's pod without any listing first", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     // the server died mid-create; RunPod made the pod
@@ -1072,7 +1392,10 @@ describeDb("GPU pods left behind and seen again", () => {
     );
     rp.client.terminatePod.mockClear();
     expect(
-      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+      await terminateGpuPodLocal(
+        { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+        d,
+      ),
     ).toEqual({ state: "terminated" });
     expect(rp.client.findPodsByName).toHaveBeenCalledWith(
       pod.handle,
@@ -1085,7 +1408,12 @@ describeDb("GPU pods left behind and seen again", () => {
   it("fails a crash-left intent on terminate, with no RunPod call", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     await getPool().query(
@@ -1095,7 +1423,10 @@ describeDb("GPU pods left behind and seen again", () => {
     rp.client.findPodsByName.mockClear();
     rp.client.terminatePod.mockClear();
     expect(
-      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+      await terminateGpuPodLocal(
+        { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+        d,
+      ),
     ).toEqual({ state: "failed" });
     expect(rp.client.findPodsByName).not.toHaveBeenCalled();
     expect(rp.client.terminatePod).not.toHaveBeenCalled();
@@ -1104,7 +1435,12 @@ describeDb("GPU pods left behind and seen again", () => {
   it("leaves a fresh create in flight on terminate", async () => {
     const { deps: d, rp, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     await getPool().query(
@@ -1113,7 +1449,10 @@ describeDb("GPU pods left behind and seen again", () => {
     );
     rp.client.findPodsByName.mockClear();
     expect(
-      await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, d),
+      await terminateGpuPodLocal(
+        { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+        d,
+      ),
     ).toEqual({ state: "creating" });
     expect(rp.client.findPodsByName).not.toHaveBeenCalled();
     const { rows } = await getPool().query(
@@ -1126,21 +1465,34 @@ describeDb("GPU pods left behind and seen again", () => {
   it("leaves a fresh intent or create alone", async () => {
     const { deps: d, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     await getPool().query(
       "UPDATE gpu_pods SET state = 'creating', provider_pod_id = NULL WHERE id = $1",
       [pod.id],
     );
-    const [row] = await listManagedGpuPodsLocal({ account_id }, d);
+    const [row] = await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      d,
+    );
     expect(row.state).toBe("creating");
   });
 
   it("keeps old live pods when ended ones are included", async () => {
     const { deps: d, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     await getPool().query(
@@ -1148,7 +1500,7 @@ describeDb("GPU pods left behind and seen again", () => {
       [pod.id],
     );
     const all = await listManagedGpuPodsLocal(
-      { account_id, include_ended: true },
+      { key_use: testKeyUse("pod_read"), account_id, include_ended: true },
       d,
     );
     expect(all.map((p) => p.id)).toEqual([pod.id]);
@@ -1157,7 +1509,12 @@ describeDb("GPU pods left behind and seen again", () => {
   it("records each new IP once, and who finds the pod by an earlier IP", async () => {
     const { deps: d, account_id } = deps(randomUUID());
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       d,
     );
     const view = (ip: string) => ({
@@ -1184,6 +1541,7 @@ describe("routing", () => {
     const remote = { gpuLaunch: jest.fn(async () => ({ id: "x" }) as any) };
     await launchGpuPod(
       {
+        key_use: testKeyUse("launch"),
         account_id,
         project_id: PROJECT,
         spec: SPEC,

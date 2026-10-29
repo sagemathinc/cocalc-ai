@@ -326,30 +326,26 @@ describeRealPostgres("audited GPU key decrypts", () => {
       expect(decrypts).not.toHaveBeenCalled();
     });
 
-    it("lets a connect's verify read only a key stored after its record", async () => {
+    it("lets a connect's verify read only the key its own store bound it to, once", async () => {
       const o = await owner();
-      const early = await ku.admitUserKeyUse({
+      const verify = await ku.admitUserKeyUse({
         account_id: o.account_id,
         purpose: "verify",
       });
-      // the key was stored before this record: not this connect's
-      const before = await ku.admitUserKeyUse({
-        account_id: o.account_id,
-        purpose: "verify",
-      });
-      await getPool().query(
-        "UPDATE gpu_key_uses SET created = now() + interval '1 second' WHERE id = $1",
-        [before.id],
-      );
-      await expect(ku.admitDecrypt(before, o)).rejects.toThrow(
+      // unbound: no key at all
+      await expect(ku.admitDecrypt(verify, o)).rejects.toThrow(
         ku.KeyUseRefused,
       );
-      // stored after the record (as a connect stores it)
-      await getPool().query(
-        "UPDATE external_credentials SET updated = now() + interval '1 minute' WHERE id = $1",
-        [o.credential_id],
-      );
-      expect(await ku.admitDecrypt(early, o)).toBeTruthy();
+      await ku.bindVerifyUse(getPool(), verify, o);
+      // bound once: never again, to anything
+      const other = await owner();
+      await expect(
+        ku.bindVerifyUse(getPool(), verify, {
+          account_id: o.account_id,
+          credential_id: other.credential_id,
+        }),
+      ).rejects.toThrow(ku.KeyUseRefused);
+      expect(await ku.admitDecrypt(verify, o)).toBeTruthy();
     });
 
     it("admits a worker's decrypt only while its named run is open and holds the lease", async () => {

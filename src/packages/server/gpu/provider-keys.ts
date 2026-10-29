@@ -41,7 +41,9 @@ import {
 } from "@cocalc/server/external-credentials/store";
 import {
   admitDecrypt,
+  bindVerifyUse,
   currentGpuKeyMeta,
+  requireKeyUse,
   withKeyUseOutcome,
   type GpuKeyUse,
 } from "@cocalc/server/gpu/key-use";
@@ -503,11 +505,15 @@ export async function setGpuProviderKeyLocal(
     account_id: string;
     provider: unknown;
     api_key: unknown;
-    key_use?: GpuKeyUse;
+    key_use: GpuKeyUse | undefined;
   },
   deps: GpuProviderKeyDeps = {},
 ): Promise<GpuProviderKeyStatus> {
-  return await withKeyUseOutcome(opts.key_use, () => connectKey(opts, deps));
+  await requireHomeBay(opts.account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["verify"], opts.account_id);
+  return await withKeyUseOutcome(key_use, () =>
+    connectKey({ ...opts, key_use }, deps),
+  );
 }
 
 async function connectKey(
@@ -619,6 +625,11 @@ async function connectKey(
             [id, previous],
           );
         }
+        // the connect's verify may read this key, and only this one (5d-2c)
+        await bindVerifyUse(client, key_use, {
+          account_id,
+          credential_id: id,
+        });
         // last (after every fence row above): a key for this RunPod account
         // and the account checks on it take turns (5d-2b)
         await lockProviderIdentity(client, {
@@ -717,11 +728,15 @@ export async function deleteGpuProviderKeyLocal(
     account_id: string;
     provider: unknown;
     force?: unknown;
-    key_use?: GpuKeyUse;
+    key_use: GpuKeyUse | undefined;
   },
   deps: GpuProviderKeyDeps = {},
 ): Promise<GpuKeyRemoval> {
-  return await withKeyUseOutcome(opts.key_use, () => removeKey(opts, deps));
+  await requireHomeBay(opts.account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["removal"], opts.account_id);
+  return await withKeyUseOutcome(key_use, () =>
+    removeKey({ ...opts, key_use }, deps),
+  );
 }
 
 async function removeKey(

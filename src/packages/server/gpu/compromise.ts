@@ -50,6 +50,7 @@ import {
 import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 import {
   currentGpuKeyMeta,
+  requireKeyUse,
   withKeyUseOutcome,
   type GpuKeyCapability,
   type GpuKeyUse,
@@ -434,12 +435,14 @@ export async function reportCompromisedLocal(
     confirm_cocalc_only?: unknown;
     fresh_auth_verified?: boolean;
     // made by the authenticated boundary (5d-2c)
-    key_use?: GpuKeyUse;
+    key_use: GpuKeyUse | undefined;
   },
   deps: GpuCompromiseDeps = {},
 ): Promise<GpuCompromiseStatus> {
-  return await withKeyUseOutcome(opts.key_use, () =>
-    reportCompromisedPass(opts, deps),
+  const account_id = requireAccount(opts.account_id);
+  const key_use = requireKeyUse(opts.key_use, ["compromise"], account_id);
+  return await withKeyUseOutcome(key_use, () =>
+    reportCompromisedPass({ ...opts, key_use }, deps),
   );
 }
 

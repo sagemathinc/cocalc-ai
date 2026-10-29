@@ -39,6 +39,7 @@ import {
   raiseAdminAlert,
 } from "./admin-alerts";
 import { freshInventoryForTests } from "./test-inventory";
+import { testKeyUse } from "./key-use-testing";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -110,10 +111,18 @@ function setup() {
   // a pod that ran and ended (settled at its estimate)
   const endedPod = async () => {
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       deps,
     );
-    await terminateGpuPodLocal({ account_id, pod_id: pod.id }, deps);
+    await terminateGpuPodLocal(
+      { key_use: testKeyUse("terminate"), account_id, pod_id: pod.id },
+      deps,
+    );
     return await row(pod.id);
   };
   // the billing pass, at `hours` after the pod ended
@@ -532,7 +541,12 @@ describeDb("GPU billing reconciliation", () => {
       }) as any;
     await expect(
       launchGpuPodLocal(
-        { account_id: refused.account_id, project_id: PROJECT, spec: SPEC },
+        {
+          key_use: testKeyUse("launch"),
+          account_id: refused.account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
         refused.deps,
       ),
     ).rejects.toThrow();
@@ -558,7 +572,12 @@ describeDb("GPU billing reconciliation", () => {
         credential_id: s.credential_id,
       }) as any;
     const p = await launchGpuPodLocal(
-      { account_id: s.account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id: s.account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       s.deps,
     );
     expect(p.state).toBe("ambiguous");
@@ -778,7 +797,12 @@ describeDb("GPU billing reconciliation", () => {
     it("a stale effective time never closes an interval before it began", async () => {
       const s = setup();
       const pod = await launchGpuPodLocal(
-        { account_id: s.account_id, project_id: PROJECT, spec: SPEC },
+        {
+          key_use: testKeyUse("launch"),
+          account_id: s.account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+        },
         s.deps,
       );
       const { rows: open } = await getPool().query(

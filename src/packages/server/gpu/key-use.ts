@@ -109,6 +109,21 @@ function issue<T extends GpuKeyCapability>(cap: T): T {
   return frozen;
 }
 
+// Test capabilities (key-use-testing.ts): accepted where a method only
+// requires one, refused by every decrypt admission.
+const testIssued = new WeakSet<object>();
+
+export function issueTestKeyUse(purpose: GpuKeyUsePurpose): GpuKeyUse {
+  const cap = issue({
+    kind: "use",
+    id: `test-${randomBytes(8).toString("hex")}`,
+    purpose,
+    key_owner_account_id: "test",
+  } as const);
+  testIssued.add(cap);
+  return cap;
+}
+
 export function isGpuKeyCapability(cap: unknown): cap is GpuKeyCapability {
   return typeof cap === "object" && cap != null && issued.has(cap);
 }
@@ -168,7 +183,8 @@ async function insertUse(opts: {
   const policy = USE_POLICY[opts.purpose];
   if (!policy) throw Error("unknown GPU key purpose");
   // A connect's verify reads the key it stores itself, after this record:
-  // it names no credential (see admitDecrypt).
+  // it names none yet, and is bound to that key once, in the store's
+  // transaction (bindVerifyUse).
   const credential_id =
     opts.purpose === "verify"
       ? null
@@ -286,7 +302,7 @@ export async function admitDecrypt(
   cap: unknown,
   key: { account_id: string; credential_id: string },
 ): Promise<string> {
-  if (!isGpuKeyCapability(cap)) {
+  if (!isGpuKeyCapability(cap) || testIssued.has(cap)) {
     throw new KeyUseRefused("no valid capability for this key");
   }
   const db = await getPool().connect();
@@ -343,9 +359,9 @@ type Admitted = {
   principal: string;
 };
 
-// A record: unexpired, for this owner, purpose and key, under its limit
-// (row-locked and counted in this transaction). A connect's verify names no
-// key: it may read only a key of its owner stored after the record was made.
+// A record: unexpired, for this owner, purpose and exact key, under its
+// limit (row-locked and counted in this transaction). A connect's verify
+// admits only the key its own connect bound it to.
 async function admitUse(
   db: PoolClient,
   cap: GpuKeyUse,
@@ -357,12 +373,7 @@ async function admitUse(
       WHERE u.id = $1 AND u.authorized AND u.decrypts < u.max_decrypts
         AND u.expires > now() AND u.purpose = $2
         AND u.key_owner_account_id = $3 AND u.bay_id = $5
-        AND (u.credential_id = $4
-             OR (u.purpose = 'verify' AND u.credential_id IS NULL
-                 AND EXISTS (SELECT 1 FROM external_credentials c
-                              WHERE c.id = $4 AND c.owner_account_id = $3
-                                AND c.kind = $6 AND c.revoked IS NULL
-                                AND c.updated >= u.created)))
+        AND u.credential_id = $4
       RETURNING u.principal_account_id, u.agent_id`,
     [
       cap.id,
@@ -370,7 +381,6 @@ async function admitUse(
       key.account_id,
       key.credential_id,
       getConfiguredBayId(),
-      GPU_PROVIDER_API_KEY_KIND,
     ],
   );
   const r = rows[0];
@@ -410,6 +420,37 @@ async function admitRun(
     worker_name: cap.worker,
     principal: `worker:${cap.worker}`,
   };
+}
+
+// A connect's verify record is bound, once, to the key that connect
+// stored: in the store's own transaction, before any decrypt, so its
+// inventory pass can read that key and no other (not another connect's,
+// stored meanwhile). Throws if the record isn't an unbound verify of this
+// owner: the store then doesn't happen.
+export async function bindVerifyUse(
+  db: Pick<PoolClient, "query">,
+  cap: unknown,
+  key: { account_id: string; credential_id: string },
+): Promise<void> {
+  if (
+    !isGpuKeyCapability(cap) ||
+    cap.kind !== "use" ||
+    cap.purpose !== "verify"
+  ) {
+    throw new KeyUseRefused("not this connect's verify");
+  }
+  // (a test capability has no record; no decrypt ever admits it)
+  if (testIssued.has(cap)) return;
+  if (cap.key_owner_account_id !== key.account_id) {
+    throw new KeyUseRefused("not this connect's verify");
+  }
+  const { rowCount } = await db.query(
+    `UPDATE gpu_key_uses SET credential_id = $3
+      WHERE id = $1 AND purpose = 'verify' AND key_owner_account_id = $2
+        AND credential_id IS NULL AND expires > now()`,
+    [cap.id, key.account_id, key.credential_id],
+  );
+  if (rowCount !== 1) throw new KeyUseRefused("this connect's verify is used");
 }
 
 // ---- outcomes ----
@@ -459,16 +500,19 @@ export async function withKeyUseOutcome<T>(
   }
 }
 
-// What a *Local method that may decrypt must be given: refused (before any
-// key read) without one of this purpose.
+// What a *Local method that may decrypt must be given, checked at its entry
+// before anything is read or changed: a capability this process issued, of
+// the method's own purpose, for this account.
 export function requireKeyUse(
   cap: unknown,
   purposes: readonly GpuKeyUsePurpose[],
+  account_id: string,
 ): GpuKeyUse {
   if (
     !isGpuKeyCapability(cap) ||
     cap.kind !== "use" ||
-    !purposes.includes(cap.purpose)
+    !purposes.includes(cap.purpose) ||
+    (cap.key_owner_account_id !== account_id && !testIssued.has(cap))
   ) {
     throw new KeyUseRefused(
       "This GPU request wasn't authorized on the key owner's home bay. Try again.",

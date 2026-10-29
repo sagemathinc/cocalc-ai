@@ -36,6 +36,7 @@ import { gpuSshInfoLocal } from "./hostkey";
 import { runGpuReaperSweep } from "./reaper";
 import { resumeGpuLaunchesLocal } from "./budget-api";
 import { freshInventoryForTests } from "./test-inventory";
+import { testKeyUse } from "./key-use-testing";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -199,7 +200,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: principal(account_id), operation_id: "op-1" };
     const ask = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -217,7 +224,13 @@ describeDb("agent GPU launches", () => {
     ).toBe(0);
     const again = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -241,13 +254,20 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: principal(account_id), operation_id: "op-1" };
     const first = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
     const second = await askedFor(
       launchGpuPodLocal(
         {
+          key_use: testKeyUse("launch"),
           account_id,
           project_id: PROJECT,
           spec: { ...SPEC, max_runtime_minutes: 120 },
@@ -274,7 +294,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: principal(account_id), operation_id: "op-1" };
     const launch = () =>
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       );
     const first = await askedFor(launch());
@@ -302,6 +328,7 @@ describeDb("agent GPU launches", () => {
     const ask = await askedFor(
       launchGpuPodLocal(
         {
+          key_use: testKeyUse("launch"),
           account_id,
           project_id: PROJECT,
           spec: SPEC,
@@ -326,7 +353,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: principal(account_id), operation_id: "op-1" };
     const ask = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -400,7 +433,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: p, operation_id: "op-1" };
     const ask = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -414,7 +453,13 @@ describeDb("agent GPU launches", () => {
       approveDeps,
     );
     const pod = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC, agent },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+        agent,
+      },
       deps,
     );
     expect(rp.client.createPod).toHaveBeenCalledTimes(1);
@@ -441,7 +486,13 @@ describeDb("agent GPU launches", () => {
     // the grant is one launch: the same launch again needs a new approval
     const again = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -455,7 +506,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: p, operation_id: "op-1" };
     const ask = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -486,6 +543,7 @@ describeDb("agent GPU launches", () => {
       await askedFor(
         launchGpuPodLocal(
           {
+            key_use: testKeyUse("launch"),
             account_id,
             project_id,
             spec: SPEC,
@@ -499,6 +557,7 @@ describeDb("agent GPU launches", () => {
     await askedFor(
       launchGpuPodLocal(
         {
+          key_use: testKeyUse("launch"),
           account_id,
           project_id: PROJECT,
           spec: SPEC,
@@ -510,6 +569,7 @@ describeDb("agent GPU launches", () => {
     await askedFor(
       launchGpuPodLocal(
         {
+          key_use: testKeyUse("launch"),
           account_id,
           project_id: PROJECT,
           spec: { ...SPEC, gpu_count: 2 },
@@ -522,6 +582,7 @@ describeDb("agent GPU launches", () => {
     await expect(
       launchGpuPodLocal(
         {
+          key_use: testKeyUse("launch"),
           account_id,
           project_id: PROJECT,
           spec: SPEC,
@@ -534,6 +595,7 @@ describeDb("agent GPU launches", () => {
     // the same session (a refreshed token, same fingerprint) still can
     await launchGpuPodLocal(
       {
+        key_use: testKeyUse("launch"),
         account_id,
         project_id: PROJECT,
         spec: SPEC,
@@ -552,7 +614,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: principal(account_id), operation_id: "op-1" };
     const ask = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -566,7 +634,12 @@ describeDb("agent GPU launches", () => {
       approveDeps,
     );
     const human = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       deps,
     );
     const kinds = await getPool().query(
@@ -584,7 +657,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: p, operation_id: "op-1" };
     const ask = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -602,6 +681,7 @@ describeDb("agent GPU launches", () => {
     await askedFor(
       launchGpuPodLocal(
         {
+          key_use: testKeyUse("launch"),
           account_id,
           project_id: PROJECT,
           spec: SPEC,
@@ -643,7 +723,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: principal(account_id), operation_id: "op-1" };
     const ask = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -686,7 +772,13 @@ describeDb("agent GPU launches", () => {
     expect(layer).toEqual({ state: "revoked", revoked_reason: "owner" });
     await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -699,7 +791,13 @@ describeDb("agent GPU launches", () => {
     const agent = { principal: p, operation_id: "op-1" };
     const ask = await askedFor(
       launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       ),
     );
@@ -713,11 +811,22 @@ describeDb("agent GPU launches", () => {
       approveDeps,
     );
     const mine = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC, agent },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+        agent,
+      },
       deps,
     );
     const human = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       deps,
     );
     const scope = { project_id: PROJECT, agent_id: p.agent_id };
@@ -728,7 +837,7 @@ describeDb("agent GPU launches", () => {
     // the same agent in another project
     const elsewhere = { ...scope, project_id: OTHER_PROJECT };
     const listed = await listManagedGpuPodsLocal(
-      { account_id, agent: scope },
+      { key_use: testKeyUse("pod_read"), account_id, agent: scope },
       deps,
     );
     expect(listed.map((x) => x.handle)).toEqual([mine.handle]);
@@ -736,18 +845,29 @@ describeDb("agent GPU launches", () => {
     expect(listed[0].agent_id).toBe("chat-session");
     const seen = JSON.stringify([
       listed,
-      await listManagedGpuPodsLocal({ account_id }, deps),
+      await listManagedGpuPodsLocal(
+        { key_use: testKeyUse("pod_read"), account_id },
+        deps,
+      ),
       await whoGpuPodLocal({ account_id, query: mine.handle }, deps),
     ]);
     expect(seen).not.toContain("session:");
     expect(seen).not.toContain("a".repeat(64));
     for (const nobody of [other, elsewhere]) {
       expect(
-        await listManagedGpuPodsLocal({ account_id, agent: nobody }, deps),
+        await listManagedGpuPodsLocal(
+          { key_use: testKeyUse("pod_read"), account_id, agent: nobody },
+          deps,
+        ),
       ).toEqual([]);
       await expect(
         gpuSshInfoLocal(
-          { account_id, pod_id: mine.handle, agent: nobody },
+          {
+            key_use: testKeyUse("ssh_info"),
+            account_id,
+            pod_id: mine.handle,
+            agent: nobody,
+          },
           deps,
         ),
       ).rejects.toThrow("No such GPU pod");
@@ -772,18 +892,36 @@ describeDb("agent GPU launches", () => {
       ),
     ).toEqual([]);
     await expect(
-      gpuSshInfoLocal({ account_id, pod_id: human.handle, agent: scope }, deps),
+      gpuSshInfoLocal(
+        {
+          key_use: testKeyUse("ssh_info"),
+          account_id,
+          pod_id: human.handle,
+          agent: scope,
+        },
+        deps,
+      ),
     ).rejects.toThrow("No such GPU pod");
     // another session can't clean up this session's pod, nor the human's
     await expect(
       terminateGpuPodLocal(
-        { account_id, pod_id: mine.handle, agent: other },
+        {
+          key_use: testKeyUse("terminate"),
+          account_id,
+          pod_id: mine.handle,
+          agent: other,
+        },
         deps,
       ),
     ).rejects.toThrow("No such GPU pod");
     await expect(
       terminateGpuPodLocal(
-        { account_id, pod_id: human.handle, agent: scope },
+        {
+          key_use: testKeyUse("terminate"),
+          account_id,
+          pod_id: human.handle,
+          agent: scope,
+        },
         deps,
       ),
     ).rejects.toThrow("No such GPU pod");
@@ -796,6 +934,7 @@ describeDb("agent GPU launches", () => {
     const regAsk = await askedFor(
       launchGpuPodLocal(
         {
+          key_use: testKeyUse("launch"),
           account_id,
           project_id: PROJECT,
           spec: SPEC,
@@ -819,6 +958,7 @@ describeDb("agent GPU launches", () => {
     );
     const regPod = await launchGpuPodLocal(
       {
+        key_use: testKeyUse("launch"),
         account_id,
         project_id: PROJECT,
         spec: SPEC,
@@ -832,12 +972,20 @@ describeDb("agent GPU launches", () => {
       run_id: "run-2",
     };
     expect(
-      (await listManagedGpuPodsLocal({ account_id, agent: run2 }, deps)).map(
-        (x) => x.handle,
-      ),
+      (
+        await listManagedGpuPodsLocal(
+          { key_use: testKeyUse("pod_read"), account_id, agent: run2 },
+          deps,
+        )
+      ).map((x) => x.handle),
     ).toEqual([regPod.handle]);
     await terminateGpuPodLocal(
-      { account_id, pod_id: regPod.handle, agent: run2 },
+      {
+        key_use: testKeyUse("terminate"),
+        account_id,
+        pod_id: regPod.handle,
+        agent: run2,
+      },
       deps,
     );
     const runs = await getPool().query(
@@ -854,7 +1002,12 @@ describeDb("agent GPU launches", () => {
     expect(
       (
         await terminateGpuPodLocal(
-          { account_id, pod_id: mine.handle, agent: scope },
+          {
+            key_use: testKeyUse("terminate"),
+            account_id,
+            pod_id: mine.handle,
+            agent: scope,
+          },
           deps,
         )
       ).state,
@@ -873,7 +1026,13 @@ describeDb("agent GPU launches", () => {
       };
       const ask = await askedFor(
         launchGpuPodLocal(
-          { account_id, project_id: PROJECT, spec: SPEC, agent },
+          {
+            key_use: testKeyUse("launch"),
+            account_id,
+            project_id: PROJECT,
+            spec: SPEC,
+            agent,
+          },
           deps,
         ),
       );
@@ -887,7 +1046,13 @@ describeDb("agent GPU launches", () => {
         approveDeps,
       );
       const pod = await launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       );
       launched.push({ grant_id: grant.grant_id, pod_id: pod.id });
@@ -898,7 +1063,12 @@ describeDb("agent GPU launches", () => {
       [credential_id],
     );
     const human = await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: SPEC },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: SPEC,
+      },
       deps,
     );
     const state = async (id: string) =>
@@ -946,7 +1116,13 @@ describeDb("agent GPU launches", () => {
       };
       const req = await askedFor(
         launchGpuPodLocal(
-          { account_id: s.account_id, project_id: project, spec: SPEC, agent },
+          {
+            key_use: testKeyUse("launch"),
+            account_id: s.account_id,
+            project_id: project,
+            spec: SPEC,
+            agent,
+          },
           s.deps,
         ),
       );
@@ -966,6 +1142,7 @@ describeDb("agent GPU launches", () => {
     const launch = (agent = approved.agent) =>
       launchGpuPodLocal(
         {
+          key_use: testKeyUse("launch"),
           account_id: s.account_id,
           project_id: agent.principal.project_id,
           spec: SPEC,
@@ -996,7 +1173,12 @@ describeDb("agent GPU launches", () => {
   it("the kill switch revokes an agent's grant, and its pause refuses even a new approval's launch", async () => {
     const k = await killSetup();
     expect(
-      (await killSwitchLocal({ account_id: k.account_id }, k.deps)).paused,
+      (
+        await killSwitchLocal(
+          { key_use: testKeyUse("terminate"), account_id: k.account_id },
+          k.deps,
+        )
+      ).paused,
     ).toBe(true);
     expect(await k.grantState()).toEqual({
       state: "revoked",
@@ -1020,7 +1202,10 @@ describeDb("agent GPU launches", () => {
 
   it("after kill and resume, the old grant stays revoked: the human approves again", async () => {
     const k = await killSetup();
-    await killSwitchLocal({ account_id: k.account_id }, k.deps);
+    await killSwitchLocal(
+      { key_use: testKeyUse("terminate"), account_id: k.account_id },
+      k.deps,
+    );
     await resumeGpuLaunchesLocal(
       { account_id: k.account_id, fresh_auth_verified: true },
       { accountWriteFence: fence },
@@ -1038,7 +1223,10 @@ describeDb("agent GPU launches", () => {
 
   it("a request pending at the kill can't be approved after it", async () => {
     const k = await killSetup();
-    await killSwitchLocal({ account_id: k.account_id }, k.deps);
+    await killSwitchLocal(
+      { key_use: testKeyUse("terminate"), account_id: k.account_id },
+      k.deps,
+    );
     await expect(k.approve()).rejects.toThrow("the agent has to ask again");
     const { rows } = await getPool().query(
       "SELECT state FROM gpu_agent_requests WHERE request_id = $1",
@@ -1054,7 +1242,12 @@ describeDb("agent GPU launches", () => {
     const otherGrant = await k.approve(other.req);
     const otherPending = await k.ask("4", OTHER_PROJECT);
     const r = await killSwitchLocal(
-      { account_id: k.account_id, project_id: PROJECT, pause: false },
+      {
+        key_use: testKeyUse("terminate"),
+        account_id: k.account_id,
+        project_id: PROJECT,
+        pause: false,
+      },
       k.deps,
     );
     expect(r.paused).toBe(false);

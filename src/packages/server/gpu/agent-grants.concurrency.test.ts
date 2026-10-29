@@ -18,6 +18,9 @@ import {
   type RealPostgres,
 } from "@cocalc/server/test/real-postgres";
 import { freshInventoryForTests } from "./test-inventory";
+// loaded lazily: the database pool must not load before the test's server
+const testKeyUse = (purpose: any) =>
+  require("./key-use-testing").testKeyUse(purpose);
 
 const describeRealPostgres = postgresBinDir() ? describe : describe.skip;
 
@@ -139,7 +142,13 @@ describeRealPostgres("agent GPU grants under concurrency", () => {
     };
     const launch = () =>
       pods.launchGpuPodLocal(
-        { account_id, project_id: PROJECT, spec: SPEC, agent },
+        {
+          key_use: testKeyUse("launch"),
+          account_id,
+          project_id: PROJECT,
+          spec: SPEC,
+          agent,
+        },
         deps,
       );
     const ask = await launch().then(
@@ -322,7 +331,7 @@ describeRealPostgres("agent GPU grants under concurrency", () => {
     const launching = s.launch();
     await held;
     const killing = pods.killSwitchLocal(
-      { account_id: s.account_id },
+      { key_use: testKeyUse("terminate"), account_id: s.account_id },
       { isHomeBay: async () => true },
     );
     await waitForLockWaiters(query, 1);
@@ -341,7 +350,7 @@ describeRealPostgres("agent GPU grants under concurrency", () => {
     const s = await setup();
     const fence = heldFence();
     const killing = pods.killSwitchLocal(
-      { account_id: s.account_id },
+      { key_use: testKeyUse("terminate"), account_id: s.account_id },
       {
         isHomeBay: async () => true,
         accountWriteFence: fence.accountWriteFence,

@@ -122,6 +122,48 @@ describe("GPU key capabilities and decrypts (5d-2c)", () => {
     }
   });
 
+  it("keeps test capabilities out of production code", () => {
+    expect(callers("issueTestKeyUse")).toEqual([
+      "server/gpu/key-use-testing.ts",
+    ]);
+    for (const [f, text] of Object.entries(sources)) {
+      expect([
+        f,
+        /from "[^"]*key-use-testing"|require\("[^"]*key-use-testing"\)/.test(
+          text,
+        ),
+      ]).toEqual([f, false]);
+    }
+  });
+
+  it("requires each decrypting entry point's own capability at its entry", () => {
+    const entries: Record<string, [string, string]> = {
+      launchGpuPodLocal: ["server/gpu/pods.ts", "launch"],
+      terminateGpuPodLocal: ["server/gpu/pods.ts", "terminate"],
+      killSwitchLocal: ["server/gpu/pods.ts", "terminate"],
+      listManagedGpuPodsLocal: ["server/gpu/pods.ts", "pod_read"],
+      getGpuPodsLocal: ["server/gpu/read.ts", "pod_read"],
+      getGpuCatalogLocal: ["server/gpu/read.ts", "catalog"],
+      getGpuAvailabilityLocal: ["server/gpu/read.ts", "catalog"],
+      gpuSshInfoLocal: ["server/gpu/hostkey.ts", "ssh_info"],
+      setGpuProviderKeyLocal: ["server/gpu/provider-keys.ts", "verify"],
+      deleteGpuProviderKeyLocal: ["server/gpu/provider-keys.ts", "removal"],
+      reportCompromisedLocal: ["server/gpu/compromise.ts", "compromise"],
+    };
+    for (const [fn, [file, purpose]] of Object.entries(entries)) {
+      const text = sources[file];
+      const start = text.indexOf(`export async function ${fn}(`);
+      expect([fn, start >= 0]).toEqual([fn, true]);
+      const body = text.slice(start, text.indexOf("\n}\n", start));
+      expect([
+        fn,
+        body.includes(`requireKeyUse(opts.key_use, ["${purpose}"]`),
+      ]).toEqual([fn, true]);
+      // a required property, not an optional one
+      expect([fn, /key_use\?:/.test(body)]).toEqual([fn, false]);
+    }
+  });
+
   it("decrypts a GPU key only through the broker, from the key helpers", () => {
     expect(callers("withAuditedGpuKey")).toEqual([
       "server/gpu/provider-keys.ts",

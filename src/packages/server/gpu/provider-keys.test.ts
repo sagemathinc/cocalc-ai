@@ -93,6 +93,7 @@ import {
   isGpuProviderKeysEntitled,
   setGpuProviderKey,
 } from "./provider-keys";
+import { testKeyUse } from "./key-use-testing";
 
 const ACCOUNT = "00000000-1000-4000-8000-000000000001";
 const KEY = "rpa_SYNTHETICKEY0123456789abcdefghijklmnopqrstuv";
@@ -192,7 +193,12 @@ describe("GPU provider keys", () => {
       TEMPLATE_DELETED,
     ]);
     const status = await setGpuProviderKey(
-      { account_id: ACCOUNT, provider: "runpod", api_key: ` ${KEY}\n` },
+      {
+        key_use: testKeyUse("verify"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        api_key: ` ${KEY}\n`,
+      },
       { fetch, isEntitled: entitled },
     );
     expect(urls).toEqual([
@@ -245,7 +251,12 @@ describe("GPU provider keys", () => {
     const before = Date.now();
     const connectInventory = jest.fn(async () => true);
     const status = await setGpuProviderKey(
-      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      {
+        key_use: testKeyUse("verify"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        api_key: KEY,
+      },
       { fetch, isEntitled: entitled, connectInventory },
     );
     expect(status.inventory).toBe("complete");
@@ -272,7 +283,12 @@ describe("GPU provider keys", () => {
       TEMPLATE_DELETED,
     ]);
     const status = await setGpuProviderKey(
-      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      {
+        key_use: testKeyUse("verify"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        api_key: KEY,
+      },
       {
         fetch,
         isEntitled: entitled,
@@ -295,7 +311,12 @@ describe("GPU provider keys", () => {
       TEMPLATE_DELETED,
     ]);
     await setGpuProviderKey(
-      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      {
+        key_use: testKeyUse("verify"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        api_key: KEY,
+      },
       { fetch, isEntitled: entitled },
     );
     expect(upsertMock.mock.calls[0][0].metadata).toMatchObject({
@@ -309,7 +330,12 @@ describe("GPU provider keys", () => {
     const { fetch, urls } = fakeFetch([]);
     await expect(
       setGpuProviderKey(
-        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        {
+          key_use: testKeyUse("verify"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+          api_key: KEY,
+        },
         { fetch, isEntitled: async () => false },
       ),
     ).rejects.toThrow("membership");
@@ -330,7 +356,12 @@ describe("GPU provider keys", () => {
     async (_, response, message) => {
       const { fetch } = fakeFetch([response]);
       const err = await setGpuProviderKey(
-        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        {
+          key_use: testKeyUse("verify"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+          api_key: KEY,
+        },
         { fetch, isEntitled: entitled },
       ).catch((e) => e);
       expect(err.message).toContain(message);
@@ -347,7 +378,12 @@ describe("GPU provider keys", () => {
     ]);
     await expect(
       setGpuProviderKey(
-        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        {
+          key_use: testKeyUse("verify"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+          api_key: KEY,
+        },
         { fetch, isEntitled: entitled },
       ),
     ).rejects.toThrow("can't manage pods");
@@ -359,14 +395,24 @@ describe("GPU provider keys", () => {
     for (const api_key of ["", "short", `${KEY} ${KEY}`]) {
       await expect(
         setGpuProviderKey(
-          { account_id: ACCOUNT, provider: "runpod", api_key },
+          {
+            key_use: testKeyUse("verify"),
+            account_id: ACCOUNT,
+            provider: "runpod",
+            api_key,
+          },
           { fetch, isEntitled: entitled },
         ),
       ).rejects.toThrow("valid RunPod API key");
     }
     await expect(
       setGpuProviderKey(
-        { account_id: ACCOUNT, provider: "aws", api_key: KEY },
+        {
+          key_use: testKeyUse("verify"),
+          account_id: ACCOUNT,
+          provider: "aws",
+          api_key: KEY,
+        },
         { fetch, isEntitled: entitled },
       ),
     ).rejects.toThrow("unknown GPU provider");
@@ -394,13 +440,21 @@ describe("GPU provider keys", () => {
 
   it("removes the account's key, and reports when there was none", async () => {
     expect(
-      await deleteGpuProviderKey({ account_id: ACCOUNT, provider: "runpod" }),
+      await deleteGpuProviderKey({
+        key_use: testKeyUse("removal"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+      }),
     ).toEqual({ revoked: false });
     expect(revokeMock).not.toHaveBeenCalled();
     expect(clearHostkeysMock).not.toHaveBeenCalled();
     listMock.mockResolvedValue([summary({})]);
     expect(
-      await deleteGpuProviderKey({ account_id: ACCOUNT, provider: "runpod" }),
+      await deleteGpuProviderKey({
+        key_use: testKeyUse("removal"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+      }),
     ).toEqual({ revoked: true });
     expect(localGetMock).not.toHaveBeenCalled();
     expect(revokeMock).toHaveBeenCalledWith({
@@ -526,7 +580,12 @@ describe("GPU provider keys", () => {
       TEMPLATE_DELETED,
     ]);
     await setGpuProviderKey(
-      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      {
+        key_use: testKeyUse("verify"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        api_key: KEY,
+      },
       { fetch, isEntitled: entitled },
     );
     expect(urls.filter((u) => u.endsWith("/v2/pods"))).toHaveLength(1);
@@ -550,7 +609,12 @@ describe("GPU provider keys", () => {
     }) as unknown as typeof globalThis.fetch;
     await expect(
       setGpuProviderKey(
-        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        {
+          key_use: testKeyUse("verify"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+          api_key: KEY,
+        },
         { fetch: slow, isEntitled: entitled, verifyDeadlineMs: 10 },
       ),
     ).rejects.toThrow("too long");
@@ -566,7 +630,12 @@ describe("GPU provider keys", () => {
     ]);
     await expect(
       setGpuProviderKey(
-        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        {
+          key_use: testKeyUse("verify"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+          api_key: KEY,
+        },
         { fetch, isEntitled: entitled },
       ),
     ).rejects.toThrow("can't manage pods");
@@ -591,7 +660,12 @@ describe("GPU provider keys", () => {
     );
     await expect(
       setGpuProviderKey(
-        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        {
+          key_use: testKeyUse("verify"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+          api_key: KEY,
+        },
         { fetch, isEntitled: entitled },
       ),
     ).rejects.toThrow("removed while this one was being checked");
@@ -610,7 +684,12 @@ describe("GPU provider keys", () => {
       { ...summary({}), revoked: new Date(Date.now() - 60_000) },
     ]);
     await setGpuProviderKey(
-      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      {
+        key_use: testKeyUse("verify"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        api_key: KEY,
+      },
       { fetch, isEntitled: entitled },
     );
     expect(upsertMock).toHaveBeenCalled();
@@ -628,7 +707,12 @@ describe("GPU provider keys", () => {
       { ...summary({}), revoked: new Date(Date.now() - 200) },
     ]);
     await setGpuProviderKey(
-      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      {
+        key_use: testKeyUse("verify"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        api_key: KEY,
+      },
       { fetch, isEntitled: entitled },
     );
     expect(upsertMock).toHaveBeenCalled();
@@ -655,10 +739,18 @@ describe("GPU provider keys", () => {
     const deps = { homeClient, isEntitled, fetch: fetch as any };
     const op = { account_id: ACCOUNT, provider: "runpod" };
     expect(await getGpuProviderKeyStatus(op, deps)).toEqual(status);
-    expect(await setGpuProviderKey({ ...op, api_key: KEY }, deps)).toEqual(
-      status,
-    );
-    expect(await deleteGpuProviderKey(op, deps)).toEqual({ revoked: true });
+    expect(
+      await setGpuProviderKey(
+        { key_use: testKeyUse("verify"), ...op, api_key: KEY },
+        deps,
+      ),
+    ).toEqual(status);
+    expect(
+      await deleteGpuProviderKey(
+        { ...op, key_use: testKeyUse("removal") },
+        deps,
+      ),
+    ).toEqual({ revoked: true });
     expect(remote.gpuKeyStatus).toHaveBeenCalledWith(op);
     expect(remote.gpuKeySet).toHaveBeenCalledWith({ ...op, api_key: KEY });
     expect(remote.gpuKeyDelete).toHaveBeenCalledWith({ ...op, force: false });
@@ -694,7 +786,11 @@ describe("GPU provider keys", () => {
     const homeClient = jest.fn();
     await expect(
       deleteGpuProviderKey(
-        { account_id: ACCOUNT, provider: "other" },
+        {
+          key_use: testKeyUse("removal"),
+          account_id: ACCOUNT,
+          provider: "other",
+        },
         { homeClient },
       ),
     ).rejects.toThrow("unknown GPU provider");
@@ -708,11 +804,17 @@ describe("GPU provider keys", () => {
       "home bay",
     );
     await expect(
-      setGpuProviderKeyLocal({ ...op, api_key: KEY }, away),
+      setGpuProviderKeyLocal(
+        { key_use: testKeyUse("verify"), ...op, api_key: KEY },
+        away,
+      ),
     ).rejects.toThrow("home bay");
-    await expect(deleteGpuProviderKeyLocal(op, away)).rejects.toThrow(
-      "home bay",
-    );
+    await expect(
+      deleteGpuProviderKeyLocal(
+        { ...op, key_use: testKeyUse("removal") },
+        away,
+      ),
+    ).rejects.toThrow("home bay");
     for (const m of [listMock, upsertMock, revokeMock, localGetMock]) {
       expect(m).not.toHaveBeenCalled();
     }
@@ -724,7 +826,12 @@ describe("GPU provider keys", () => {
     const { fetch, urls } = fakeFetch([]);
     await expect(
       setGpuProviderKeyLocal(
-        { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+        {
+          key_use: testKeyUse("verify"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+          api_key: KEY,
+        },
         { ...home, fetch, isEntitled: entitled },
       ),
     ).rejects.toThrow("can't be replaced yet");
@@ -741,7 +848,11 @@ describe("GPU provider keys", () => {
     };
     expect(
       await deleteGpuProviderKeyLocal(
-        { account_id: ACCOUNT, provider: "runpod" },
+        {
+          key_use: testKeyUse("removal"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+        },
         drained,
       ),
     ).toEqual({
@@ -754,7 +865,11 @@ describe("GPU provider keys", () => {
     podsLeft = [];
     expect(
       await deleteGpuProviderKeyLocal(
-        { account_id: ACCOUNT, provider: "runpod" },
+        {
+          key_use: testKeyUse("removal"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+        },
         drained,
       ),
     ).toEqual({ revoked: true });
@@ -765,7 +880,12 @@ describe("GPU provider keys", () => {
     listMock.mockResolvedValue([summary({})]);
     podsLeft = [{ id: "p1", handle: "cc-aaaaaaaaaaaaaaaa" }];
     const result = await deleteGpuProviderKeyLocal(
-      { account_id: ACCOUNT, provider: "runpod", force: true },
+      {
+        key_use: testKeyUse("removal"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        force: true,
+      },
       { ...home, drainMs: 0, storedKeyRejected: async () => false },
     );
     expect(result).toEqual({
@@ -788,7 +908,12 @@ describe("GPU provider keys", () => {
       TEMPLATE_DELETED,
     ]);
     await setGpuProviderKeyLocal(
-      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      {
+        key_use: testKeyUse("verify"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        api_key: KEY,
+      },
       { ...home, fetch, isEntitled: entitled },
     );
     expect(upsertMock).toHaveBeenCalled();
@@ -802,7 +927,11 @@ describe("GPU provider keys", () => {
     const { fetch } = fakeFetch([{ status: 401, body: { detail: "nope" } }]);
     expect(
       await deleteGpuProviderKeyLocal(
-        { account_id: ACCOUNT, provider: "runpod" },
+        {
+          key_use: testKeyUse("removal"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+        },
         { ...home, fetch },
       ),
     ).toEqual(
@@ -820,7 +949,11 @@ describe("GPU provider keys", () => {
     const { fetch } = fakeFetch([{ status: 503, body: {} }]);
     expect(
       await deleteGpuProviderKeyLocal(
-        { account_id: ACCOUNT, provider: "runpod" },
+        {
+          key_use: testKeyUse("removal"),
+          account_id: ACCOUNT,
+          provider: "runpod",
+        },
         { ...home, fetch, drainMs: 0 },
       ),
     ).toEqual({ revoked: false, remaining: ["cc-aaaaaaaaaaaaaaaa"] });
@@ -855,7 +988,12 @@ describe("GPU provider keys", () => {
         const { fetch, urls } = verify();
         await expect(
           setGpuProviderKeyLocal(
-            { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+            {
+              key_use: testKeyUse("verify"),
+              account_id: ACCOUNT,
+              provider: "runpod",
+              api_key: KEY,
+            },
             { ...home, ...rejected, fetch, isEntitled: entitled },
           ),
         ).rejects.toThrow("can't be replaced yet");
@@ -872,7 +1010,11 @@ describe("GPU provider keys", () => {
       ]);
       expect(
         await deleteGpuProviderKeyLocal(
-          { account_id: ACCOUNT, provider: "runpod" },
+          {
+            key_use: testKeyUse("removal"),
+            account_id: ACCOUNT,
+            provider: "runpod",
+          },
           { ...home, ...rejected },
         ),
       ).toEqual({ revoked: true });
@@ -889,7 +1031,12 @@ describe("GPU provider keys", () => {
       TEMPLATE_DELETED,
     ]);
     await setGpuProviderKeyLocal(
-      { account_id: ACCOUNT, provider: "runpod", api_key: KEY },
+      {
+        key_use: testKeyUse("verify"),
+        account_id: ACCOUNT,
+        provider: "runpod",
+        api_key: KEY,
+      },
       { ...home, fetch, isEntitled: entitled },
     );
     // one store transaction: the old key revoked, a new row (a new id), and

@@ -53,7 +53,7 @@ import {
   withRunpodCleanup,
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
-import type { GpuKeyUse } from "@cocalc/server/gpu/key-use";
+import { requireKeyUse, type GpuKeyUse } from "@cocalc/server/gpu/key-use";
 import { parseEd25519PublicKey } from "@cocalc/util/gpu/ssh-key";
 import type { GpuHostKeyResult, GpuPodSshInfo } from "@cocalc/util/gpu/types";
 
@@ -194,12 +194,13 @@ export async function gpuSshInfoLocal(
     pod_id?: unknown;
     agent?: GpuAgentScope;
     // made by the authenticated boundary (5d-2c)
-    key_use?: GpuKeyUse;
+    key_use: GpuKeyUse | undefined;
   },
   deps: GpuPodDeps = {},
 ): Promise<GpuPodSshInfo> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
+  const key_use = requireKeyUse(opts.key_use, ["ssh_info"], account_id);
   // an agent sees only the pods it launched in its project
   const pod: any = await findPod(account_id, opts.pod_id, opts.agent);
   if (!pod) throw Error("No such GPU pod.");
@@ -238,7 +239,7 @@ export async function gpuSshInfoLocal(
   };
   const got = deps.getCleanup
     ? await read(await deps.getCleanup(pod.key_owner_account_id))
-    : await withRunpodCleanup(pod.key_owner_account_id, opts.key_use, {}, read);
+    : await withRunpodCleanup(pod.key_owner_account_id, key_use, {}, read);
   if (!got) return info;
   const { live } = got;
   const direct = live?.sshDirect;
@@ -271,5 +272,8 @@ export async function gpuSshInfo(
       pod_id: opts.pod_id,
       ...(opts.agent ? { agent: opts.agent } : {}),
     });
-  return await gpuSshInfoLocal({ ...opts, account_id }, deps);
+  return await gpuSshInfoLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }

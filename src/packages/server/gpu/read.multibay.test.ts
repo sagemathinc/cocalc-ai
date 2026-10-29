@@ -22,8 +22,13 @@ jest.mock("@cocalc/server/gpu/provider-keys", () => ({
   isGpuProviderKeysEntitled: async () => true,
 }));
 // an authorization record is made only on the home bay (5d-2c)
-const admitUserKeyUse = jest.fn(async () => undefined);
-const admitAgentKeyUse = jest.fn(async () => undefined);
+// (test capabilities: they pass a method's entry check and never decrypt)
+const admitUserKeyUse = jest.fn(async ({ purpose }) =>
+  jest.requireActual("@cocalc/server/gpu/key-use").issueTestKeyUse(purpose),
+);
+const admitAgentKeyUse = jest.fn(async ({ purpose }) =>
+  jest.requireActual("@cocalc/server/gpu/key-use").issueTestKeyUse(purpose),
+);
 jest.mock("@cocalc/server/gpu/key-use", () => ({
   ...jest.requireActual("@cocalc/server/gpu/key-use"),
   admitUserKeyUse: (...args) => admitUserKeyUse(...args),
@@ -88,6 +93,7 @@ import {
   getGpuCatalogLocal,
   getGpuPodsLocal,
 } from "./read";
+import { testKeyUse } from "./key-use-testing";
 
 const ACCOUNT = "00000000-1000-4000-8000-000000000001";
 const KEY = "rpa_SYNTHETICKEY0123456789abcdefghijklmnopqrstuv";
@@ -137,15 +143,24 @@ function homeBay() {
   homeImpl = {
     gpuCatalog: async (opts) => {
       received.push(opts);
-      return await getGpuCatalogLocal(opts, deps);
+      return await getGpuCatalogLocal(
+        { ...opts, key_use: testKeyUse("catalog") },
+        deps,
+      );
     },
     gpuAvailability: async (opts) => {
       received.push(opts);
-      return await getGpuAvailabilityLocal(opts, deps);
+      return await getGpuAvailabilityLocal(
+        { ...opts, key_use: testKeyUse("catalog") },
+        deps,
+      );
     },
     gpuPods: async (opts) => {
       received.push(opts);
-      return await getGpuPodsLocal(opts, deps);
+      return await getGpuPodsLocal(
+        { ...opts, key_use: testKeyUse("pod_read") },
+        deps,
+      );
     },
   };
   return { received };

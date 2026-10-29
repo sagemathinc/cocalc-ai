@@ -33,7 +33,7 @@ import {
   type RunpodCleanupCapability,
 } from "@cocalc/server/gpu/provider-keys";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import type { GpuKeyUse } from "@cocalc/server/gpu/key-use";
+import { requireKeyUse, type GpuKeyUse } from "@cocalc/server/gpu/key-use";
 import {
   listManagedGpuPodsLocal,
   type GpuAgentScope,
@@ -249,14 +249,20 @@ async function cachedCatalog(
 
 // `key_use` (5d-2c): the catalog read's, made by the authenticated boundary
 export async function getGpuCatalogLocal(
-  opts: { account_id?: string; provider?: unknown; key_use?: GpuKeyUse },
+  opts: {
+    account_id?: string;
+    provider?: unknown;
+    agent?: GpuAgentScope;
+    key_use: GpuKeyUse | undefined;
+  },
   deps: GpuReadDeps = {},
 ): Promise<GpuCatalogResult> {
   const account_id = requireAccount(opts.account_id);
+  const key_use = requireKeyUse(opts.key_use, ["catalog"], account_id);
   const provider = requireProvider(opts.provider);
   return {
     provider,
-    catalog: await cachedCatalog(account_id, deps, opts.key_use),
+    catalog: await cachedCatalog(account_id, deps, key_use),
   };
 }
 
@@ -380,15 +386,17 @@ export async function getGpuAvailabilityLocal(
   opts: {
     account_id?: string;
     provider?: unknown;
-    key_use?: GpuKeyUse;
+    agent?: GpuAgentScope;
+    key_use: GpuKeyUse | undefined;
   } & GpuAvailabilityFilter,
   deps: GpuReadDeps = {},
 ): Promise<GpuAvailabilityResult> {
   const account_id = requireAccount(opts.account_id);
+  const key_use = requireKeyUse(opts.key_use, ["catalog"], account_id);
   const provider = requireProvider(opts.provider);
   // Validate before any provider call.
   normalizeFilter(opts);
-  const catalog = await cachedCatalog(account_id, deps, opts.key_use);
+  const catalog = await cachedCatalog(account_id, deps, key_use);
   return {
     provider,
     as_of: catalog.as_of,
@@ -408,12 +416,12 @@ export async function getGpuPodsLocal(
     // an agent (step 6b): only the managed pods it launched in its project
     agent?: GpuAgentScope;
     // the listing's pod_read use, made by the authenticated boundary (5d-2c)
-    key_use?: GpuKeyUse;
+    key_use: GpuKeyUse | undefined;
   },
   deps: GpuReadDeps = {},
 ): Promise<GpuPodsResult> {
-  const key_use = opts.key_use;
   const account_id = requireAccount(opts.account_id);
+  const key_use = requireKeyUse(opts.key_use, ["pod_read"], account_id);
   const provider = requireProvider(opts.provider);
   const podId = opts.pod_id;
   if (podId != null && !(typeof podId === "string" && POD_ID.test(podId))) {
@@ -550,7 +558,10 @@ export async function getGpuCatalog(
       forwarded(account_id, opts, ["provider", "agent"]) as any,
     );
   }
-  return await getGpuCatalogLocal({ ...opts, account_id }, deps);
+  return await getGpuCatalogLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }
 
 export async function getGpuAvailability(
@@ -569,7 +580,10 @@ export async function getGpuAvailability(
       forwarded(account_id, opts, ["provider", "agent", ...FILTER_KEYS]) as any,
     );
   }
-  return await getGpuAvailabilityLocal({ ...opts, account_id }, deps);
+  return await getGpuAvailabilityLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }
 
 export async function getGpuPods(
@@ -597,5 +611,8 @@ export async function getGpuPods(
       ]) as any,
     );
   }
-  return await getGpuPodsLocal({ ...opts, account_id }, deps);
+  return await getGpuPodsLocal(
+    { ...opts, account_id, key_use: opts.key_use },
+    deps,
+  );
 }

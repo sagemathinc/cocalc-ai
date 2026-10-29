@@ -34,6 +34,7 @@ import {
 import { freshInventoryForTests } from "./test-inventory";
 import { acknowledgeAlertLocal, listAlertsLocal, raiseAlert } from "./alerts";
 import { releaseQuarantinedLocal } from "./pods";
+import { testKeyUse } from "./key-use-testing";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -101,7 +102,12 @@ function setup({ cost = 0.5 }: { cost?: number } = {}) {
   const launch = async (spec: object = {}) => {
     await stored;
     return await launchGpuPodLocal(
-      { account_id, project_id: PROJECT, spec: { ...SPEC, ...spec } },
+      {
+        key_use: testKeyUse("launch"),
+        account_id,
+        project_id: PROJECT,
+        spec: { ...SPEC, ...spec },
+      },
       deps,
     );
   };
@@ -199,7 +205,7 @@ describeDb("GPU budgets", () => {
     );
     expect(rp.client.createPod).toHaveBeenCalledTimes(2);
     const pods = await listManagedGpuPodsLocal(
-      { account_id, include_ended: true },
+      { key_use: testKeyUse("pod_read"), account_id, include_ended: true },
       deps,
     );
     expect(pods).toHaveLength(2);
@@ -213,7 +219,10 @@ describeDb("GPU budgets", () => {
       "UPDATE gpu_pods SET running_since = now() - interval '30 minutes' WHERE id = $1",
       [pod.id],
     );
-    await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, deps);
+    await terminateGpuPodLocal(
+      { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+      deps,
+    );
     const layer = await keyLayer(credential_id);
     expect(n(layer.reserved_usd)).toBe(0);
     expect(n(layer.spent_usd)).toBeCloseTo(0.25, 3);
@@ -240,7 +249,10 @@ describeDb("GPU budgets", () => {
       "UPDATE gpu_pods SET running_since = now() - interval '30 minutes' WHERE id = $1",
       [pod.id],
     );
-    await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, deps);
+    await terminateGpuPodLocal(
+      { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+      deps,
+    );
     // 30 minutes at the reserved $0.50/h
     expect(n((await keyLayer(credential_id)).spent_usd)).toBeCloseTo(0.25, 3);
   });
@@ -271,7 +283,10 @@ describeDb("GPU budgets", () => {
     for (const p of rp.pods.values()) {
       p.startedAt = new Date(started).toISOString();
     }
-    await listManagedGpuPodsLocal({ account_id }, deps);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      deps,
+    );
     const { rows } = await getPool().query(
       "SELECT state, running_since FROM gpu_pods WHERE id = $1",
       [pending.id],
@@ -280,7 +295,10 @@ describeDb("GPU budgets", () => {
     expect(
       Math.abs(new Date(rows[0].running_since).getTime() - started),
     ).toBeLessThan(2000);
-    await terminateGpuPodLocal({ account_id, pod_id: pending.handle }, deps);
+    await terminateGpuPodLocal(
+      { key_use: testKeyUse("terminate"), account_id, pod_id: pending.handle },
+      deps,
+    );
     // 12 minutes at $0.50/h
     expect(n((await keyLayer(credential_id)).spent_usd)).toBeCloseTo(0.1, 3);
   });
@@ -297,7 +315,10 @@ describeDb("GPU budgets", () => {
       "UPDATE gpu_pods SET running_since = now() - interval '3 hours' WHERE id = $1",
       [pod.id],
     );
-    await terminateGpuPodLocal({ account_id, pod_id: pod.handle }, deps);
+    await terminateGpuPodLocal(
+      { key_use: testKeyUse("terminate"), account_id, pod_id: pod.handle },
+      deps,
+    );
     const layer = await keyLayer(credential_id);
     // factual: more than authorized, recorded anyway
     expect(n(layer.spent_usd)).toBeCloseTo(1.5, 3);
@@ -336,7 +357,10 @@ describeDb("GPU budgets", () => {
     const pod = await launch();
     expect(pod.state).toBe("ambiguous");
     const later = { ...deps, now: () => Date.now() + AMBIGUOUS_WINDOW_MS + 1 };
-    await listManagedGpuPodsLocal({ account_id }, later);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      later,
+    );
     const [r] = await reservations(pod.id);
     expect(r.state).toBe("quarantined");
     // still held: a late, charging pod may show up
@@ -420,7 +444,10 @@ describeDb("GPU budgets", () => {
       [pod.id],
     );
     expect(n((await keyLayer(credential_id)).reserved_usd)).toBe(0.5);
-    await listManagedGpuPodsLocal({ account_id }, deps);
+    await listManagedGpuPodsLocal(
+      { key_use: testKeyUse("pod_read"), account_id },
+      deps,
+    );
     const [r] = await reservations(pod.id);
     expect(r.state).toBe("settled");
     expect(n(r.spent_usd)).toBe(0);
@@ -442,7 +469,7 @@ describeDb("GPU budgets", () => {
         return await terminate(id);
       });
       const listed = await listManagedGpuPodsLocal(
-        { account_id: s.account_id },
+        { key_use: testKeyUse("pod_read"), account_id: s.account_id },
         { ...s.deps, listResolveMs: 100 },
       );
       expect(s.rp.client.terminatePod).toHaveBeenCalledTimes(1);
@@ -461,7 +488,7 @@ describeDb("GPU budgets", () => {
         return await terminate(id);
       });
       const result = await killSwitchLocal(
-        { account_id: s.account_id },
+        { key_use: testKeyUse("terminate"), account_id: s.account_id },
         { ...s.deps, killSwitchResolveMs: 1_500 },
       );
       expect(s.rp.client.terminatePod).toHaveBeenCalledTimes(1);
@@ -474,7 +501,12 @@ describeDb("GPU budgets", () => {
       const s = setup();
       await s.stored; // connected; no fence or layer yet
       expect(
-        (await killSwitchLocal({ account_id: s.account_id }, s.deps)).paused,
+        (
+          await killSwitchLocal(
+            { key_use: testKeyUse("terminate"), account_id: s.account_id },
+            s.deps,
+          )
+        ).paused,
       ).toBe(true);
       await expect(s.launch()).rejects.toThrow("paused by your kill switch");
     });
@@ -487,7 +519,10 @@ describeDb("GPU budgets", () => {
         "INSERT INTO gpu_key_fences (credential_id, key_owner_account_id, state, created, updated) VALUES ($1, $2, 'closed', now(), now())",
         [old, s.account_id],
       );
-      await killSwitchLocal({ account_id: s.account_id }, s.deps);
+      await killSwitchLocal(
+        { key_use: testKeyUse("terminate"), account_id: s.account_id },
+        s.deps,
+      );
       const { rows } = await getPool().query(
         "SELECT credential_id, kill_switch_at FROM gpu_key_fences WHERE key_owner_account_id = $1",
         [s.account_id],
@@ -508,12 +543,21 @@ describeDb("GPU budgets", () => {
       const s = setup();
       await s.launch();
       expect(
-        (await killSwitchLocal({ account_id: s.account_id }, s.deps)).paused,
+        (
+          await killSwitchLocal(
+            { key_use: testKeyUse("terminate"), account_id: s.account_id },
+            s.deps,
+          )
+        ).paused,
       ).toBe(true);
       expect(
         (
           await killSwitchLocal(
-            { account_id: s.account_id, pause: false },
+            {
+              key_use: testKeyUse("terminate"),
+              account_id: s.account_id,
+              pause: false,
+            },
             s.deps,
           )
         ).paused,
@@ -526,8 +570,12 @@ describeDb("GPU budgets", () => {
         [none.credential_id],
       );
       expect(
-        (await killSwitchLocal({ account_id: none.account_id }, none.deps))
-          .paused,
+        (
+          await killSwitchLocal(
+            { key_use: testKeyUse("terminate"), account_id: none.account_id },
+            none.deps,
+          )
+        ).paused,
       ).toBe(false);
     });
 
@@ -536,7 +584,7 @@ describeDb("GPU budgets", () => {
       const a = await s.launch();
       const b = await s.launch();
       const result = await killSwitchLocal(
-        { account_id: s.account_id },
+        { key_use: testKeyUse("terminate"), account_id: s.account_id },
         s.deps,
       );
       expect(result).toEqual({ marked: 2, remaining: 0, paused: true });
@@ -570,12 +618,21 @@ describeDb("GPU budgets", () => {
       const other = "00000000-1000-4000-8000-0000000000bb";
       const here = await s.launch();
       const there = await launchGpuPodLocal(
-        { account_id: s.account_id, project_id: other, spec: SPEC },
+        {
+          key_use: testKeyUse("launch"),
+          account_id: s.account_id,
+          project_id: other,
+          spec: SPEC,
+        },
         s.deps,
       );
       expect(
         await killSwitchLocal(
-          { account_id: s.account_id, project_id: PROJECT },
+          {
+            key_use: testKeyUse("terminate"),
+            account_id: s.account_id,
+            project_id: PROJECT,
+          },
           s.deps,
         ),
       ).toEqual({ marked: 1, remaining: 0, paused: false });
@@ -583,7 +640,12 @@ describeDb("GPU budgets", () => {
       expect(s.rp.pods.has(there.provider_pod_id!)).toBe(true);
       await expect(
         killSwitchLocal(
-          { account_id: s.account_id, project_id: PROJECT, pause: true },
+          {
+            key_use: testKeyUse("terminate"),
+            account_id: s.account_id,
+            project_id: PROJECT,
+            pause: true,
+          },
           s.deps,
         ),
       ).rejects.toThrow("whole key");
@@ -602,7 +664,10 @@ describeDb("GPU budgets", () => {
         new RunpodApiError("provider", 503),
       );
       expect(
-        await killSwitchLocal({ account_id: s.account_id }, s.deps),
+        await killSwitchLocal(
+          { key_use: testKeyUse("terminate"), account_id: s.account_id },
+          s.deps,
+        ),
       ).toEqual({ marked: 1, remaining: 1, paused: true });
       // resume is the human override for both pauses
       await resumeGpuLaunchesLocal(
@@ -628,7 +693,11 @@ describeDb("GPU budgets", () => {
       // terminate at once
       expect(
         await killSwitchLocal(
-          { account_id: s.account_id, pause: false },
+          {
+            key_use: testKeyUse("terminate"),
+            account_id: s.account_id,
+            pause: false,
+          },
           s.deps,
         ),
       ).toEqual({ marked: 0, remaining: 0, paused: false });
@@ -640,7 +709,11 @@ describeDb("GPU budgets", () => {
     const pod = await s.launch();
     const seen: boolean[] = [];
     const result = await deleteGpuProviderKeyLocal(
-      { account_id: s.account_id, provider: "runpod" },
+      {
+        key_use: testKeyUse("removal"),
+        account_id: s.account_id,
+        provider: "runpod",
+      },
       {
         isHomeBay: async () => true,
         storedKeyRejected: async () => false,
@@ -676,12 +749,21 @@ describeDb("GPU budgets", () => {
     // without force, the key stays while the pod drains
     expect(
       await deleteGpuProviderKeyLocal(
-        { account_id: s.account_id, provider: "runpod" },
+        {
+          key_use: testKeyUse("removal"),
+          account_id: s.account_id,
+          provider: "runpod",
+        },
         removal,
       ),
     ).toEqual({ revoked: false, remaining: [pod.handle] });
     const result = await deleteGpuProviderKeyLocal(
-      { account_id: s.account_id, provider: "runpod", force: true },
+      {
+        key_use: testKeyUse("removal"),
+        account_id: s.account_id,
+        provider: "runpod",
+        force: true,
+      },
       removal,
     );
     expect(result).toEqual(
@@ -711,9 +793,12 @@ describeDb("GPU budgets", () => {
       "forced_removal",
     ]);
     // outside management: the kill switch neither marks nor counts it
-    expect(await killSwitchLocal({ account_id: s.account_id }, s.deps)).toEqual(
-      expect.objectContaining({ marked: 0, remaining: 0 }),
-    );
+    expect(
+      await killSwitchLocal(
+        { key_use: testKeyUse("terminate"), account_id: s.account_id },
+        s.deps,
+      ),
+    ).toEqual(expect.objectContaining({ marked: 0, remaining: 0 }));
   });
 
   it("a forced removal tells the owner: an alert per unmanaged pod and its held budget; what can't be checked anymore becomes theirs to acknowledge", async () => {
@@ -732,7 +817,12 @@ describeDb("GPU budgets", () => {
       new RunpodApiError("provider", 503),
     );
     await deleteGpuProviderKeyLocal(
-      { account_id: s.account_id, provider: "runpod", force: true },
+      {
+        key_use: testKeyUse("removal"),
+        account_id: s.account_id,
+        provider: "runpod",
+        force: true,
+      },
       {
         isHomeBay: async () => true,
         storedKeyRejected: async () => false,
@@ -926,13 +1016,21 @@ describeDb("GPU budgets", () => {
       const { deps } = account(s);
       await expect(
         reportCompromisedLocal(
-          { account_id: s.account_id, confirm_cocalc_only: true },
+          {
+            key_use: testKeyUse("compromise"),
+            account_id: s.account_id,
+            confirm_cocalc_only: true,
+          },
           deps,
         ),
       ).rejects.toThrow("sign in again");
       await expect(
         reportCompromisedLocal(
-          { account_id: s.account_id, fresh_auth_verified: true },
+          {
+            key_use: testKeyUse("compromise"),
+            account_id: s.account_id,
+            fresh_auth_verified: true,
+          },
           deps,
         ),
       ).rejects.toThrow("used only for CoCalc");
@@ -948,6 +1046,7 @@ describeDb("GPU budgets", () => {
       expect(
         await reportCompromisedLocal(
           {
+            key_use: testKeyUse("compromise"),
             account_id: s.account_id,
             confirm_cocalc_only: true,
             fresh_auth_verified: true,
@@ -976,7 +1075,11 @@ describeDb("GPU budgets", () => {
       await expect(s.launch()).rejects.toThrow("reported compromised");
       await expect(
         deleteGpuProviderKeyLocal(
-          { account_id: s.account_id, provider: "runpod" },
+          {
+            key_use: testKeyUse("removal"),
+            account_id: s.account_id,
+            provider: "runpod",
+          },
           { isHomeBay: async () => true },
         ),
       ).rejects.toThrow("still cleaning up");
@@ -1072,6 +1175,7 @@ describeDb("GPU budgets", () => {
       a.cleanup.listPods.mockResolvedValue([]);
       await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1104,9 +1208,12 @@ describeDb("GPU budgets", () => {
         confirm_cocalc_only: true,
         fresh_auth_verified: true,
       };
-      expect(await reportCompromisedLocal(report, a.deps)).toEqual(
-        expect.objectContaining({ closed: false }),
-      );
+      expect(
+        await reportCompromisedLocal(
+          { ...report, key_use: testKeyUse("compromise") },
+          a.deps,
+        ),
+      ).toEqual(expect.objectContaining({ closed: false }));
       expect(
         await runCompromiseCleanup(s.account_id, s.credential_id, a.deps),
       ).toEqual(
@@ -1149,6 +1256,7 @@ describeDb("GPU budgets", () => {
       a.cleanup.listPods.mockRejectedValue(new RunpodApiError("auth", 401));
       const result = await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1188,6 +1296,7 @@ describeDb("GPU budgets", () => {
       );
       await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1217,6 +1326,7 @@ describeDb("GPU budgets", () => {
       const a = account(s);
       const result = await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1251,6 +1361,7 @@ describeDb("GPU budgets", () => {
       });
       const result = await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1282,6 +1393,7 @@ describeDb("GPU budgets", () => {
       });
       const result = await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1320,6 +1432,7 @@ describeDb("GPU budgets", () => {
       });
       const result = await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1358,6 +1471,7 @@ describeDb("GPU budgets", () => {
       // start compromised (as a report leaves it), then run a worker pass
       await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1408,6 +1522,7 @@ describeDb("GPU budgets", () => {
       );
       await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1537,6 +1652,7 @@ describeDb("GPU budgets", () => {
       };
       await reportCompromisedLocal(
         {
+          key_use: testKeyUse("compromise"),
           account_id: s.account_id,
           confirm_cocalc_only: true,
           fresh_auth_verified: true,
@@ -1724,6 +1840,7 @@ describeDb("GPU budgets", () => {
       await expect(
         reportCompromisedLocal(
           {
+            key_use: testKeyUse("compromise"),
             account_id: s.account_id,
             confirm_cocalc_only: true,
             fresh_auth_verified: true,
@@ -1743,7 +1860,11 @@ describeDb("GPU budgets", () => {
       expect(log).toEqual([]);
       expect(
         await deleteGpuProviderKeyLocal(
-          { account_id: s.account_id, provider: "runpod" },
+          {
+            key_use: testKeyUse("removal"),
+            account_id: s.account_id,
+            provider: "runpod",
+          },
           { isHomeBay: async () => true },
         ),
       ).toEqual({ revoked: true });
@@ -1754,7 +1875,11 @@ describeDb("GPU budgets", () => {
       await s.launch();
       const a = account(s);
       const removal = deleteGpuProviderKeyLocal(
-        { account_id: s.account_id, provider: "runpod" },
+        {
+          key_use: testKeyUse("removal"),
+          account_id: s.account_id,
+          provider: "runpod",
+        },
         {
           isHomeBay: async () => true,
           storedKeyRejected: async () => false,
@@ -1763,6 +1888,7 @@ describeDb("GPU budgets", () => {
           drain: async () => {
             await reportCompromisedLocal(
               {
+                key_use: testKeyUse("compromise"),
                 account_id: s.account_id,
                 confirm_cocalc_only: true,
                 fresh_auth_verified: true,
@@ -1801,6 +1927,7 @@ describeDb("GPU budgets", () => {
       await expect(
         reportCompromisedLocal(
           {
+            key_use: testKeyUse("compromise"),
             account_id: s.account_id,
             confirm_cocalc_only: true,
             fresh_auth_verified: true,
