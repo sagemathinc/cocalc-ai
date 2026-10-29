@@ -202,6 +202,29 @@ export function isHubApiPrincipalAllowed({
   return false;
 }
 
+// An account's request (auth_session_hash is set by the request handler from
+// the caller's own connection, null if it has none) may not name any other
+// session in its arguments, whatever transform the method uses: fresh-auth
+// checks trust opts.session_hash.
+function refuseNominatedSession(
+  args: any[],
+  auth_session_hash: string | null,
+): void {
+  const bound = auth_session_hash || null;
+  for (const arg of Array.isArray(args) ? args : []) {
+    if (arg == null || typeof arg !== "object") continue;
+    const named = (arg as any).session_hash;
+    if (named != null && named !== "" && named !== bound) {
+      throw Object.assign(
+        new Error(
+          "session_hash must be the caller's own authenticated session",
+        ),
+        { code: 403 },
+      );
+    }
+  }
+}
+
 export function transformArgs({
   name,
   args,
@@ -225,6 +248,13 @@ export function transformArgs({
   auth_iat_s?: number;
   auth_exp_s?: number;
 }) {
+  if (account_id && auth_session_hash !== undefined) {
+    try {
+      refuseNominatedSession(args, auth_session_hash);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
   const [group, functionName] = name.split(".");
   return HubApiStructure[group]?.[functionName]({
     args,

@@ -3454,6 +3454,10 @@ export interface AuthenticatedCaller {
   bay_id?: string;
   bay_credential_id?: string;
   socket_return?: string;
+  // Only on Hub API requests from an account connection: that account and its
+  // authenticated session (null when it has none, e.g. an API key).
+  account_id?: string;
+  auth_session_hash?: string | null;
 }
 
 export class MessageData<T = any> {

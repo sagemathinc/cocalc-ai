@@ -5,7 +5,7 @@
 
 import type { AccountAuthSessionRow } from "@cocalc/server/auth/auth-sessions";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
-import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
+import { resolveFreshAuthSessionHash } from "@cocalc/server/conat/socketio/fresh-auth-session";
 import {
   getImpersonationSessionBySessionHash,
   type ImpersonationSessionRow,
@@ -169,12 +169,11 @@ export async function requireDangerousSessionAuthLocal({
   if (!accountId) {
     throw new Error("must be signed in");
   }
-  const sessionHash =
-    `${session_hash ?? ""}`.trim() ||
-    getBrowserAuthSessionHash({
-      account_id: accountId,
-      browser_id: `${browser_id ?? ""}`.trim(),
-    });
+  const sessionHash = resolveFreshAuthSessionHash({
+    account_id: accountId,
+    browser_id,
+    session_hash,
+  });
   if (!sessionHash) {
     throw freshAuthRequired();
   }
