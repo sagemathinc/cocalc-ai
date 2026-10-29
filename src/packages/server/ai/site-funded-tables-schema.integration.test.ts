@@ -87,6 +87,15 @@ const LEGACY_DDL = [
   `CREATE INDEX IF NOT EXISTS site_ai_turn_reservations_active_idx
       ON site_ai_turn_reservations(status, expires_at)
       WHERE status = 'active'`,
+  // Columns db-schema added later, for rolling reservations.
+  `ALTER TABLE site_ai_turn_reservations
+      ADD COLUMN IF NOT EXISTS rolling BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE site_ai_turn_reservations
+      ADD COLUMN IF NOT EXISTS idle_timeout_ms INTEGER`,
+  `ALTER TABLE site_ai_turn_reservations
+      ADD COLUMN IF NOT EXISTS extension_sequence INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE site_ai_turn_reservations
+      ADD COLUMN IF NOT EXISTS last_extension_microusd BIGINT NOT NULL DEFAULT 0`,
   `CREATE TABLE IF NOT EXISTS site_ai_speech_reservations (
       request_id UUID PRIMARY KEY,
       account_id UUID NOT NULL,

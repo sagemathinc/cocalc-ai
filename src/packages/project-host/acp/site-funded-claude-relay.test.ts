@@ -11,6 +11,8 @@ import { DEFAULT_SITE_FUNDED_CLAUDE_POLICY } from "@cocalc/util/ai/site-funded-c
 import {
   computeSiteFundedCodexRequestCost,
   siteFundedCodexFinalRequestHeadroomMicrousd,
+  siteFundedExtensionThresholdMicrousd,
+  type SiteFundedCodexExtension,
   type SiteFundedCodexUsageEvent,
 } from "@cocalc/util/ai/site-funded-codex";
 import {
@@ -772,5 +774,172 @@ describe("site-funded Claude relay", () => {
     const late = await send(message);
     expect(late.status).toBe(403);
     expect(seen).toEqual([]);
+  });
+});
+
+describe("site-funded Claude relay with a rolling reservation", () => {
+  const rollingPolicy = { ...policy, maxRequestsPerTurn: 100 };
+  const THRESHOLD = siteFundedExtensionThresholdMicrousd(rollingPolicy);
+  // Each reply below reports 10 input and 5 output tokens.
+  const COST = computeSiteFundedCodexRequestCost({
+    model: rollingPolicy.model,
+    usage: { inputTokens: 10, outputTokens: 5 },
+  }).costMicrousd;
+
+  function activateRolling(
+    reservedMicrousd: number,
+    extend: jest.Mock<Promise<SiteFundedCodexExtension>, [any]>,
+    turnPolicy = rollingPolicy,
+  ) {
+    relay.activate({
+      reservation: {
+        reservationId: "reservation-1",
+        policy: turnPolicy,
+        reservedMicrousd,
+        rolling: true,
+      } as any,
+      apiKey: "sk-ant-site-key",
+      onUsage: async (event) => {
+        usage.push(event);
+      },
+      extend,
+    });
+  }
+
+  it("extends before requests run low, one request at a time", async () => {
+    // The threshold covers a whole request's worst case, even when that is
+    // more than half a chunk (Claude's is).
+    expect(THRESHOLD).toBeGreaterThanOrEqual(
+      siteFundedCodexFinalRequestHeadroomMicrousd(rollingPolicy),
+    );
+    const extend = jest.fn(async ({ sequence }: { sequence: number }) => ({
+      granted: true as const,
+      grantedMicrousd: THRESHOLD,
+      reservedMicrousd: THRESHOLD * (sequence + 1),
+    }));
+    activateRolling(THRESHOLD - 1, extend);
+    reply = () => ({
+      ...jsonReply({ input_tokens: 10, output_tokens: 5 })(),
+      delayMs: 20,
+    });
+    const results = await Promise.all([
+      send(message),
+      send(message),
+      send(message),
+    ]);
+    expect(results.map(({ status }) => status)).toEqual([200, 200, 200]);
+    // Serialized: never two provider requests at once.
+    expect(maxInFlight).toBe(1);
+    expect(extend).toHaveBeenCalledTimes(1);
+    expect(extend.mock.calls[0][0]).toMatchObject({ sequence: 1 });
+  });
+
+  it("keeps extending when a chunk is smaller than one request's worst case", async () => {
+    const headroom = siteFundedCodexFinalRequestHeadroomMicrousd(rollingPolicy);
+    const chunk = Math.ceil(headroom / 4);
+    const smallChunks = { ...rollingPolicy, reservationChunkMicrousd: chunk };
+    expect(siteFundedExtensionThresholdMicrousd(smallChunks)).toBe(headroom);
+    let reserved = 1;
+    const extend = jest.fn(async () => {
+      reserved += chunk;
+      return {
+        granted: true as const,
+        grantedMicrousd: chunk,
+        reservedMicrousd: reserved,
+      };
+    });
+    activateRolling(1, extend, smallChunks);
+    expect((await send(message)).status).toBe(200);
+    // 1 + 4 chunks is the first total of at least one request's worst case.
+    expect(extend.mock.calls.map(([opts]) => opts.sequence)).toEqual([
+      1, 2, 3, 4,
+    ]);
+    expect((await send(message)).status).toBe(200);
+    expect(seen).toHaveLength(2);
+  });
+
+  it("never lets a turn start a request that could take it past its ceiling", async () => {
+    const headroom = siteFundedCodexFinalRequestHeadroomMicrousd(rollingPolicy);
+    const tight = {
+      ...rollingPolicy,
+      maxTurnCostMicrousd: COST + headroom - 1,
+    };
+    const extend = jest.fn();
+    // Holds far more than its ceiling allows (the hub never grants this).
+    activateRolling(10 * COST, extend as any, tight);
+    expect((await send(message)).status).toBe(200);
+    const refused = await send(message);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toContain("reached its cost limit");
+    expect(seen).toHaveLength(1);
+  });
+
+  it("fails closed when every extension a request may make still leaves it short", async () => {
+    let reserved = 1;
+    const extend = jest.fn(async () => {
+      reserved += 1;
+      return {
+        granted: true as const,
+        grantedMicrousd: 1,
+        reservedMicrousd: reserved,
+      };
+    });
+    activateRolling(1, extend);
+    const refused = await send(message);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toContain(
+      "could not extend this included Claude turn",
+    );
+    expect(extend).toHaveBeenCalledTimes(20);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("fails closed when an extension is granted but the turn does not grow", async () => {
+    const extend = jest.fn(async () => ({
+      granted: true as const,
+      grantedMicrousd: 0,
+      reservedMicrousd: 1,
+    }));
+    activateRolling(1, extend);
+    const refused = await send(message);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toContain(
+      "could not extend this included Claude turn",
+    );
+    expect(extend).toHaveBeenCalledTimes(1);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("uses what it holds after a refusal, then stops with the hub's reason", async () => {
+    const reason =
+      "You have used your weekly included AI allowance. Wait for usage to reset, upgrade your CoCalc membership, or connect a Claude subscription or personal Anthropic API key.";
+    const extend = jest.fn(async () => ({
+      granted: false as const,
+      code: "account_limit_7d" as const,
+      reason,
+      reservedMicrousd: COST,
+    }));
+    activateRolling(COST, extend);
+    expect((await send(message)).status).toBe(200);
+    const refused = await send(message);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toContain("weekly included AI allowance");
+    expect(refused.body).not.toContain("Codex");
+    expect(extend).toHaveBeenCalledTimes(1);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("does not blame the allowance when the hub cannot be reached", async () => {
+    const extend = jest.fn(async () => {
+      throw new Error("hub unreachable");
+    });
+    activateRolling(COST, extend);
+    expect((await send(message)).status).toBe(200);
+    const paused = await send(message);
+    expect(paused.status).toBe(403);
+    expect(paused.body).toContain("could not extend this included Claude turn");
+    // Retried before the second request too.
+    expect(extend).toHaveBeenCalledTimes(2);
+    expect(extend.mock.calls.map(([opts]) => opts.sequence)).toEqual([1, 1]);
   });
 });

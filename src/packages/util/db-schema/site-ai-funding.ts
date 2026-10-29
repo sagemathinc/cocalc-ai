@@ -355,6 +355,32 @@ Table({
       type: "uuid",
       desc: "For a Claude turn, the site key (site_ai_provider_keys) that funds it.",
     },
+    rolling: {
+      type: "boolean",
+      pg_default: "false",
+      not_null: true,
+      pg_null_backfill: "false",
+      desc: "Admitted with one chunk and extended chunk by chunk while the turn runs (else reserved once, at admission).",
+    },
+    idle_timeout_ms: {
+      type: "integer",
+      desc: "For a rolling reservation, how long without a heartbeat before it expires.",
+    },
+    extension_sequence: {
+      type: "integer",
+      pg_default: "0",
+      not_null: true,
+      pg_null_backfill: "0",
+      desc: "Sequence number of the last extension, so a repeated extension request grants once.",
+    },
+    last_extension_microusd: {
+      type: "integer",
+      pg_type: BIGINT,
+      pg_default: "0",
+      not_null: true,
+      pg_null_backfill: "0",
+      desc: "What the last extension granted.",
+    },
   },
 });
 

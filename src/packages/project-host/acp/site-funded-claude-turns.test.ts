@@ -31,6 +31,7 @@ function setup() {
     heartbeat: jest.fn(async () => true),
     finish: jest.fn(async () => {}),
     persistUsage: jest.fn(async () => {}),
+    extend: jest.fn(),
   };
   const turns = createSiteFundedClaudeTurns({
     relay,
@@ -55,7 +56,11 @@ describe("site-funded Claude turns", () => {
     );
     expect(deps.getKey).toHaveBeenCalledWith("reservation-1");
     expect(relay.activate).toHaveBeenCalledWith(
-      expect.objectContaining({ apiKey: "sk-ant-site-key" }),
+      expect.objectContaining({
+        apiKey: "sk-ant-site-key",
+        // The relay extends the reservation through the hub as it runs.
+        extend: deps.extend,
+      }),
     );
     await turns.end({ status: "committed" });
     expect(relay.deactivate).toHaveBeenCalledWith("reservation-1");

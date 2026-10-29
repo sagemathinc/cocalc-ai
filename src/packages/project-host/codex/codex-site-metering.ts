@@ -12,6 +12,8 @@ import {
   computeSiteFundedCodexRequestCost,
   siteFundedTurnEndReason,
   type SiteFundedCodexAdmission,
+  type SiteFundedCodexExtension,
+  type SiteFundedCodexReservation,
   type SiteFundedCodexUsageEvent,
 } from "@cocalc/util/ai/site-funded-codex";
 import { startSiteFundedCodexProxySession } from "./site-funded-proxy";
@@ -531,6 +533,9 @@ export async function reserveSiteFundedTurn({
         path,
         // Old hubs know only Codex: send the field only when it matters.
         ...(provider === "openai" ? {} : { provider }),
+        // Extended as the turn runs; an old hub ignores this and reserves the
+        // whole turn up front.
+        rolling: true,
       },
     ],
     timeout: 20_000,
@@ -556,6 +561,36 @@ export async function heartbeatSiteFundedTurn(
     timeout: 15_000,
   });
   return !!result?.active;
+}
+
+/**
+ * Asks the hub to extend a rolling reservation. Throws when the hub cannot be
+ * reached or fails: the caller then keeps to what the turn already holds.
+ */
+export async function extendSiteFundedTurn({
+  reservation,
+  sequence,
+}: {
+  reservation: SiteFundedCodexReservation;
+  sequence: number;
+}): Promise<SiteFundedCodexExtension> {
+  const caller = getHubCaller();
+  if (!caller) {
+    throw new Error("Site-funded AI extension is temporarily unavailable.");
+  }
+  return (await callHub({
+    ...caller,
+    name: "hosts.extendSiteFundedCodexTurn",
+    args: [
+      {
+        reservation_id: reservation.reservationId,
+        account_id: reservation.accountId,
+        funded_turn_id: reservation.fundedTurnId,
+        sequence,
+      },
+    ],
+    timeout: 20_000,
+  })) as SiteFundedCodexExtension;
 }
 
 /** The site key funding an active Claude turn on this host. */
@@ -617,6 +652,7 @@ export async function beginSiteFundedCodexTurn({
           funded_turn_id: request.fundedTurnId,
           idempotency_key: request.idempotencyKey,
           path: request.path,
+          rolling: true,
         },
       ],
       timeout: 20_000,
@@ -635,6 +671,7 @@ export async function beginSiteFundedCodexTurn({
       reservation: admission.reservation,
       apiKey,
       onUsage: persistUsageEvent,
+      extend: extendSiteFundedTurn,
     });
   } catch (err) {
     await finishSiteFundedTurn({
@@ -719,6 +756,7 @@ export async function beginSiteFundedCodexTurn({
           proxySession.activate({
             reservation: nextAdmission.reservation,
             onUsage: persistUsageEvent,
+            extend: extendSiteFundedTurn,
           });
         } catch (err) {
           await finishSiteFundedTurn({

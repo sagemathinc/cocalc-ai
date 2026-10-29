@@ -9,7 +9,10 @@ import type { PoolClient } from "@cocalc/database/pool";
 import {
   computeSiteFundedCodexRequestCost,
   siteFundedCodexFinalRequestHeadroomMicrousd,
+  siteFundedRollingReservationLimitMicrousd,
   type SiteFundedCodexAdmission,
+  type SiteFundedCodexExtension,
+  type SiteFundedCodexExtensionDenialCode,
   type SiteFundedCodexPoolId,
   type SiteFundedCodexPoolStatus,
   type SiteFundedCodexPolicy,
@@ -21,7 +24,10 @@ import {
 } from "@cocalc/util/ai/site-funded-codex";
 import { uuid } from "@cocalc/util/misc";
 import { ensureAiSessionsSchema } from "./acp-sessions";
-import { selectSiteFundedProviderKey } from "./site-funded-provider-keys";
+import {
+  selectSiteFundedProviderKey,
+  siteFundedProviderKeyRoomMicrousd,
+} from "./site-funded-provider-keys";
 
 const logger = getLogger("server:ai:site-funded-codex-reservations");
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -54,6 +60,24 @@ export type ReserveSiteFundedCodexTurnOptions = {
   accountCredited5hMicrousdByFundedTurn?: Record<string, number>;
   accountCredited7dMicrousdByFundedTurn?: Record<string, number>;
   surface?: string;
+  /**
+   * The host extends the reservation while the turn runs: admit it with one
+   * chunk (policy.reservationChunkMicrousd) instead of the turn's ceiling.
+   */
+  rolling?: boolean;
+};
+
+export type ExtendSiteFundedCodexTurnOptions = {
+  reservationId: string;
+  hostId: string;
+  accountId: string;
+  fundedTurnId: string;
+  /** One more than the last granted extension; a repeat returns its grant. */
+  sequence: number;
+  accountRemaining5hMicrousd?: number | null;
+  accountRemaining7dMicrousd?: number | null;
+  accountCredited5hMicrousdByFundedTurn?: Record<string, number>;
+  accountCredited7dMicrousdByFundedTurn?: Record<string, number>;
 };
 
 export type FinishSiteFundedCodexTurnOptions = {
@@ -124,6 +148,12 @@ export function siteAiFundingPeriodBounds(now = new Date()): {
   return periodBounds(now);
 }
 
+// A rolling reservation whose host stopped heartbeating is abandoned.
+const IDLE_SQL = `(idle_timeout_ms IS NOT NULL
+  AND heartbeat_at <= NOW() - idle_timeout_ms * INTERVAL '1 millisecond')`;
+// Usable: active, within its lifetime, and (if rolling) not idle.
+const LIVE_SQL = `(status = 'active' AND expires_at > NOW() AND NOT ${IDLE_SQL})`;
+
 function reservationFromRow(row: any): SiteFundedCodexReservation {
   return {
     reservationId: row.reservation_id,
@@ -144,6 +174,7 @@ function reservationFromRow(row: any): SiteFundedCodexReservation {
     status: row.status,
     provider: row.provider ?? "openai",
     providerKeyId: row.provider_key_id ?? undefined,
+    ...(row.rolling ? { rolling: true } : {}),
   };
 }
 
@@ -188,10 +219,10 @@ async function expireCurrentPeriodReservations({
   const { rows } = await client.query(
     `
       SELECT reservation_id, reserved_microusd, pool_reserved_microusd,
-             committed_microusd
+             committed_microusd, expires_at <= NOW() AS lifetime_over
       FROM site_ai_turn_reservations
       WHERE pool_id = $1 AND period_start = $2 AND status = 'active'
-        AND expires_at <= NOW()
+        AND (expires_at <= NOW() OR ${IDLE_SQL})
       FOR UPDATE
     `,
     [poolId, periodStart],
@@ -205,9 +236,15 @@ async function expireCurrentPeriodReservations({
     await client.query(
       `UPDATE site_ai_turn_reservations
        SET status = 'expired', committed_microusd = $2,
-           completed_at = NOW(), outcome = 'turn reservation expired'
+           completed_at = NOW(), outcome = $3
        WHERE reservation_id = $1`,
-      [row.reservation_id, reservationCommitted],
+      [
+        row.reservation_id,
+        reservationCommitted,
+        row.lifetime_over
+          ? "turn reservation expired"
+          : "turn reservation idle: no heartbeat",
+      ],
     );
   }
   if (rows.length > 0) {
@@ -548,8 +585,39 @@ export async function reserveSiteFundedCodexTurn(
       opts.accountRemaining7dMicrousd == null
         ? Number.MAX_SAFE_INTEGER
         : Math.max(0, opts.accountRemaining7dMicrousd - uncredited7dMicrousd);
+    // A rolling turn is admitted with one chunk and extended as it runs.
+    const rolling =
+      !!opts.rolling && (opts.policy.reservationChunkMicrousd ?? 0) > 0;
+    // A rolling turn may hold at most its ceiling less one request's worst
+    // case, so it never spends more than its ceiling. A ceiling that leaves
+    // no room for even that bounds nothing: refuse rather than overrun it.
+    const rollingLimit = siteFundedRollingReservationLimitMicrousd(opts.policy);
+    if (rolling && rollingLimit <= 0) {
+      await client.query("ROLLBACK");
+      logger.error(
+        `site-funded ${words.product} per-turn cost limit is below one request's worst case`,
+        {
+          maxTurnCostMicrousd: opts.policy.maxTurnCostMicrousd,
+          headroomMicrousd: siteFundedCodexFinalRequestHeadroomMicrousd(
+            opts.policy,
+          ),
+        },
+      );
+      return denied(
+        "missing_price",
+        `Site-funded ${words.product} is not configured safely: its per-turn cost limit is below the cost of one request. ${words.alternative[0].toUpperCase()}${words.alternative.slice(1)} to continue.`,
+      );
+    }
+    // Each extension adds at least one request's worst case, so one
+    // extension always covers the next request.
+    const chunk = rolling
+      ? Math.max(
+          opts.policy.reservationChunkMicrousd!,
+          siteFundedCodexFinalRequestHeadroomMicrousd(opts.policy),
+        )
+      : 0;
     const requested = Math.min(
-      opts.policy.maxTurnCostMicrousd,
+      rolling ? Math.min(chunk, rollingLimit) : opts.policy.maxTurnCostMicrousd,
       remaining5h,
       remaining7d,
     );
@@ -563,10 +631,12 @@ export async function reserveSiteFundedCodexTurn(
           : `You have used your 5-hour included AI allowance. Wait for usage to reset, upgrade your CoCalc membership, or ${words.alternative}.`,
       );
     }
-    const effectivePolicy: SiteFundedCodexPolicy = {
-      ...opts.policy,
-      maxTurnCostMicrousd: requested,
-    };
+    // A rolling turn's policy keeps its ceiling: it holds `requested` now
+    // and is extended up to the ceiling. Otherwise the turn may spend only
+    // what it reserves now.
+    const effectivePolicy: SiteFundedCodexPolicy = rolling
+      ? { ...opts.policy, reservationChunkMicrousd: chunk }
+      : { ...opts.policy, maxTurnCostMicrousd: requested };
     const poolRequested =
       requested + siteFundedCodexFinalRequestHeadroomMicrousd(effectivePolicy);
     if (
@@ -622,10 +692,11 @@ export async function reserveSiteFundedCodexTurn(
           owning_bay_id, membership_tier, policy_version, model, reasoning,
           service_tier, policy, surface, reserved_microusd,
           pool_reserved_microusd, status, expires_at, provider,
-          provider_key_id
+          provider_key_id, rolling, idle_timeout_ms
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-          $14, $15, $16::jsonb, $17, $18, $19, 'active', $20, $21, $22
+          $14, $15, $16::jsonb, $17, $18, $19, 'active', $20, $21, $22,
+          $23, $24
         )
         RETURNING *
       `,
@@ -652,6 +723,8 @@ export async function reserveSiteFundedCodexTurn(
         expiresAt,
         provider,
         providerKeyId ?? null,
+        rolling,
+        rolling ? (effectivePolicy.idleTimeoutMs ?? null) : null,
       ],
     );
     await client.query(
@@ -684,7 +757,7 @@ export async function heartbeatSiteFundedCodexTurn({
     `
       UPDATE site_ai_turn_reservations
       SET heartbeat_at = NOW()
-      WHERE reservation_id = $1 AND status = 'active' AND expires_at > NOW()
+      WHERE reservation_id = $1 AND ${LIVE_SQL}
     `,
     [reservationId],
   );
@@ -818,12 +891,237 @@ export async function recordSiteFundedCodexUsageEvent(
   }
 }
 
-export async function finishSiteFundedCodexTurn(
-  opts: FinishSiteFundedCodexTurnOptions,
-): Promise<SiteFundedCodexReservation> {
+async function lockFundingPeriods(
+  client: DbClient,
+  { pool_id, period_start }: { pool_id: string; period_start: unknown },
+): Promise<void> {
+  for (const poolId of [GLOBAL_POOL_ID, pool_id]) {
+    await client.query(
+      `SELECT pool_id FROM site_ai_funding_periods
+       WHERE pool_id = $1 AND period_start = $2 FOR UPDATE`,
+      [poolId, period_start],
+    );
+  }
+}
+
+function extensionDenied(
+  code: SiteFundedCodexExtensionDenialCode,
+  reason: string,
+  reservedMicrousd: number,
+): SiteFundedCodexExtension {
+  return { granted: false, code, reason, reservedMicrousd };
+}
+
+/**
+ * Extends a rolling reservation by one chunk, or less: never past the turn's
+ * ceiling, the account's remaining 5-hour and weekly allowance (less every
+ * active turn's uncredited reservation, this one included), the pools, or
+ * (Claude) its site key's monthly room. Adds only the grant to what the
+ * reservation and the pools hold.
+ */
+export async function extendSiteFundedCodexTurn(
+  opts: ExtendSiteFundedCodexTurnOptions,
+): Promise<SiteFundedCodexExtension> {
+  if (!Number.isSafeInteger(opts.sequence) || opts.sequence < 1) {
+    throw new Error("site-funded extension sequence must be positive");
+  }
+  const where = await getPool().query(
+    `SELECT pool_id, period_start FROM site_ai_turn_reservations
+     WHERE reservation_id = $1`,
+    [opts.reservationId],
+  );
+  if (!where.rows[0])
+    throw new Error("site-funded Codex reservation not found");
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await lockFundingPeriods(client, where.rows[0]);
+    const found = await client.query(
+      `SELECT *, ${LIVE_SQL} AS live FROM site_ai_turn_reservations
+       WHERE reservation_id = $1 FOR UPDATE`,
+      [opts.reservationId],
+    );
+    const row = found.rows[0];
+    if (!row) throw new Error("site-funded Codex reservation not found");
+    if (
+      `${row.host_id}` !== opts.hostId ||
+      `${row.account_id}` !== opts.accountId ||
+      `${row.funded_turn_id}` !== opts.fundedTurnId
+    ) {
+      throw new Error("site-funded Codex reservation does not belong to host");
+    }
+    const reserved = int(row.reserved_microusd);
+    const lastSequence = int(row.extension_sequence);
+    const provider: SiteFundedProvider = row.provider ?? "openai";
+    const words = fundedWording(provider);
+    const denied = async (
+      code: SiteFundedCodexExtensionDenialCode,
+      reason: string,
+    ) => {
+      await client.query("COMMIT");
+      return extensionDenied(code, reason, reserved);
+    };
+    const ended = () =>
+      denied(
+        "inactive",
+        `This included ${words.product} turn has ended. Start a new turn to continue.`,
+      );
+    if (opts.sequence === lastSequence) {
+      if (!row.live) return await ended();
+      // A repeated request: report what it granted, never grant twice.
+      await client.query("COMMIT");
+      return {
+        granted: true,
+        grantedMicrousd: int(row.last_extension_microusd),
+        reservedMicrousd: reserved,
+      };
+    }
+    if (opts.sequence !== lastSequence + 1) {
+      throw new Error(
+        `site-funded extension sequence ${opts.sequence} follows ${lastSequence}`,
+      );
+    }
+    if (!row.rolling || !row.live) return await ended();
+    const policy: SiteFundedCodexPolicy = row.policy;
+    const chunk = policy.reservationChunkMicrousd ?? 0;
+    const ceilingRoom =
+      siteFundedRollingReservationLimitMicrousd(policy) - reserved;
+    if (chunk <= 0 || ceilingRoom <= 0) {
+      return await denied(
+        "turn_limit",
+        `This included ${words.product} turn reached its cost limit. Start a new turn, or ${words.alternative}.`,
+      );
+    }
+    const accountReservations = await client.query<{
+      funded_turn_id: string;
+      reserved_microusd: unknown;
+    }>(
+      `SELECT funded_turn_id, reserved_microusd
+       FROM site_ai_turn_reservations
+       WHERE status = 'active' AND account_id = $1`,
+      [row.account_id],
+    );
+    const remaining = (
+      total: number | null | undefined,
+      credits: Record<string, number> | undefined,
+    ) =>
+      total == null
+        ? Number.MAX_SAFE_INTEGER
+        : Math.max(
+            0,
+            total -
+              uncreditedActiveReservationMicrousd(
+                accountReservations.rows,
+                credits,
+              ),
+          );
+    const remaining5h = remaining(
+      opts.accountRemaining5hMicrousd,
+      opts.accountCredited5hMicrousdByFundedTurn,
+    );
+    const remaining7d = remaining(
+      opts.accountRemaining7dMicrousd,
+      opts.accountCredited7dMicrousdByFundedTurn,
+    );
+    if (remaining7d <= 0) {
+      return await denied(
+        "account_limit_7d",
+        `You have used your weekly included AI allowance. Wait for usage to reset, upgrade your CoCalc membership, or ${words.alternative}.`,
+      );
+    }
+    if (remaining5h <= 0) {
+      return await denied(
+        "account_limit_5h",
+        `You have used your 5-hour included AI allowance. Wait for usage to reset, upgrade your CoCalc membership, or ${words.alternative}.`,
+      );
+    }
+    const periods = await client.query(
+      `SELECT * FROM site_ai_funding_periods
+       WHERE pool_id = ANY($1::TEXT[]) AND period_start = $2`,
+      [[GLOBAL_POOL_ID, row.pool_id], row.period_start],
+    );
+    let poolRoom = Number.MAX_SAFE_INTEGER;
+    for (const period of periods.rows) {
+      poolRoom = Math.min(
+        poolRoom,
+        int(period.limit_microusd) -
+          int(period.committed_microusd) -
+          int(period.reserved_microusd),
+      );
+    }
+    if (poolRoom <= 0) {
+      return await denied(
+        "global_pool",
+        `CoCalc's included ${words.product} capacity is temporarily exhausted. Try again after the weekly pool resets, upgrade your CoCalc membership for more included ${words.model} usage, or ${words.alternative}.`,
+      );
+    }
+    let keyRoom = Number.MAX_SAFE_INTEGER;
+    if (row.provider_key_id) {
+      keyRoom = await siteFundedProviderKeyRoomMicrousd({
+        client,
+        keyId: row.provider_key_id,
+      });
+      if (keyRoom <= 0) {
+        return await denied(
+          "provider_keys_exhausted",
+          `CoCalc's included ${words.product} capacity is used up for this month. Try again later or ${words.alternative}.`,
+        );
+      }
+    }
+    const grant = Math.min(
+      chunk,
+      ceilingRoom,
+      remaining5h,
+      remaining7d,
+      poolRoom,
+      keyRoom,
+    );
+    const updated = await client.query(
+      `UPDATE site_ai_turn_reservations
+       SET reserved_microusd = reserved_microusd + $2,
+           pool_reserved_microusd = pool_reserved_microusd + $2,
+           extension_sequence = $3, last_extension_microusd = $2,
+           heartbeat_at = NOW()
+       WHERE reservation_id = $1
+       RETURNING reserved_microusd`,
+      [opts.reservationId, grant, opts.sequence],
+    );
+    await client.query(
+      `UPDATE site_ai_funding_periods
+       SET reserved_microusd = reserved_microusd + $3, updated_at = NOW()
+       WHERE pool_id = ANY($1::TEXT[]) AND period_start = $2`,
+      [[row.pool_id, GLOBAL_POOL_ID], row.period_start, grant],
+    );
+    await client.query("COMMIT");
+    return {
+      granted: true,
+      grantedMicrousd: grant,
+      reservedMicrousd: int(updated.rows[0].reserved_microusd),
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function finishSiteFundedCodexTurn(
+  opts: FinishSiteFundedCodexTurnOptions,
+): Promise<SiteFundedCodexReservation> {
+  // Every writer locks the funding periods before the reservation (as
+  // admission, extension and expiry do), so none of them can deadlock.
+  const where = await getPool().query(
+    `SELECT pool_id, period_start FROM site_ai_turn_reservations
+     WHERE reservation_id = $1`,
+    [opts.reservationId],
+  );
+  if (!where.rows[0])
+    throw new Error("site-funded Codex reservation not found");
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await lockFundingPeriods(client, where.rows[0]);
     const found = await client.query(
       `SELECT * FROM site_ai_turn_reservations WHERE reservation_id = $1 FOR UPDATE`,
       [opts.reservationId],
@@ -992,7 +1290,7 @@ export async function reconcileTerminalSiteFundedCodexReservations({
 export async function expireAbandonedSiteFundedCodexReservations(): Promise<number> {
   const { rows } = await getPool().query(
     `SELECT DISTINCT pool_id, period_start FROM site_ai_turn_reservations
-     WHERE status = 'active' AND expires_at <= NOW()`,
+     WHERE status = 'active' AND (expires_at <= NOW() OR ${IDLE_SQL})`,
   );
   let expired = 0;
   for (const row of rows) {
@@ -1009,7 +1307,7 @@ export async function expireAbandonedSiteFundedCodexReservations(): Promise<numb
       const before = await client.query(
         `SELECT COUNT(*)::int AS count FROM site_ai_turn_reservations
          WHERE pool_id = $1 AND period_start = $2 AND status = 'active'
-           AND expires_at <= NOW()`,
+           AND (expires_at <= NOW() OR ${IDLE_SQL})`,
         [row.pool_id, row.period_start],
       );
       await expireCurrentPeriodReservations({

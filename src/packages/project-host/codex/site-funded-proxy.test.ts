@@ -5,8 +5,12 @@
 
 import { createServer, request as httpRequest } from "node:http";
 import {
+  computeSiteFundedCodexRequestCost,
   DEFAULT_SITE_FUNDED_CODEX_POLICY,
   SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES,
+  siteFundedCodexFinalRequestHeadroomMicrousd,
+  siteFundedExtensionThresholdMicrousd,
+  type SiteFundedCodexExtension,
   type SiteFundedCodexReservation,
   type SiteFundedCodexUsageEvent,
 } from "@cocalc/util/ai/site-funded-codex";
@@ -875,7 +879,7 @@ describe("site-funded Codex provider proxy", () => {
       body: {
         error: {
           message:
-            "This included Codex turn reached its 1-hour limit. Start a new turn to continue, or connect your own ChatGPT plan or OpenAI API key.",
+            "This included Codex turn reached its 24-hour limit. Start a new turn to continue, or connect your own ChatGPT plan or OpenAI API key.",
           type: "site_funded_codex_policy_error",
         },
       },
@@ -883,7 +887,7 @@ describe("site-funded Codex provider proxy", () => {
     // Settling it afterwards keeps the reason.
     session.deactivate(turn.reservationId);
     await expect(request()).resolves.toMatchObject({
-      body: { error: { message: expect.stringContaining("1-hour limit") } },
+      body: { error: { message: expect.stringContaining("24-hour limit") } },
     });
     // A new turn starts clean.
     const next = reservation();
@@ -894,6 +898,249 @@ describe("site-funded Codex provider proxy", () => {
     });
 
     session.close();
+  });
+});
+
+describe("site-funded Codex proxy with a rolling reservation", () => {
+  // Each provider response reports this usage.
+  const USAGE = { input_tokens: 200_000, output_tokens: 2_000 };
+  const COST = computeSiteFundedCodexRequestCost({
+    model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
+    usage: {
+      inputTokens: USAGE.input_tokens,
+      outputTokens: USAGE.output_tokens,
+    },
+  }).costMicrousd;
+  const THRESHOLD = siteFundedExtensionThresholdMicrousd(
+    DEFAULT_SITE_FUNDED_CODEX_POLICY,
+  );
+
+  async function setup(
+    reservedMicrousd: number,
+    extend: jest.Mock<Promise<SiteFundedCodexExtension>, [any]>,
+    rolling = true,
+    policy = DEFAULT_SITE_FUNDED_CODEX_POLICY,
+  ) {
+    let upstreamRequests = 0;
+    const upstream = createServer(async (_request, response) => {
+      upstreamRequests += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({ id: `resp-${upstreamRequests}`, usage: USAGE }),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      upstream.listen(0, "127.0.0.1", resolve),
+    );
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    const session = await startSiteFundedCodexProxySession({
+      reservation: {
+        ...reservation(),
+        policy,
+        reservedMicrousd,
+        ...(rolling ? { rolling: true } : {}),
+      },
+      apiKey: "real-site-key",
+      upstreamBaseUrl: `http://127.0.0.1:${address.port}/v1`,
+      onUsage: async () => {},
+      extend,
+    });
+    const localUrl = session.baseUrl.replace(
+      "host.containers.internal",
+      "127.0.0.1",
+    );
+    const request = async () => {
+      const response = await fetch(`${localUrl}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ input: "hello" }),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    return {
+      request,
+      upstreamRequests: () => upstreamRequests,
+      close: async () => {
+        session.close();
+        await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      },
+    };
+  }
+
+  it("extends before a request when what is left is below one request's worst case", async () => {
+    const extend = jest.fn(async ({ sequence }: { sequence: number }) => ({
+      granted: true as const,
+      grantedMicrousd: THRESHOLD,
+      reservedMicrousd: THRESHOLD * (sequence + 1),
+    }));
+    // Holds a little less than the threshold: extended before the first.
+    const proxy = await setup(THRESHOLD - 1, extend);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    expect(extend).toHaveBeenCalledTimes(1);
+    expect(extend.mock.calls[0][0]).toMatchObject({ sequence: 1 });
+    await proxy.close();
+  });
+
+  it("uses what it holds after a refusal, then stops with the hub's reason", async () => {
+    const reason =
+      "You have used your 5-hour included AI allowance. It resets at 18:00 UTC.";
+    const extend = jest.fn(async () => ({
+      granted: false as const,
+      code: "account_limit_5h" as const,
+      reason,
+      reservedMicrousd: COST,
+    }));
+    const proxy = await setup(COST, extend);
+    // What it holds funds one more request.
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    await expect(proxy.request()).resolves.toEqual({
+      status: 403,
+      body: {
+        error: { message: reason, type: "site_funded_codex_policy_error" },
+      },
+    });
+    // A refusal is final: not asked again.
+    await proxy.request();
+    expect(extend).toHaveBeenCalledTimes(1);
+    expect(proxy.upstreamRequests()).toBe(1);
+    await proxy.close();
+  });
+
+  it("retries an extension that failed, and says so when the turn runs out meanwhile", async () => {
+    const extend = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("hub unreachable"))
+      .mockResolvedValueOnce({
+        granted: true,
+        grantedMicrousd: 2 * COST,
+        reservedMicrousd: 3 * COST,
+      })
+      .mockRejectedValue(new Error("hub unreachable"));
+    const proxy = await setup(COST, extend);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    // Retried (same sequence: the first never succeeded) and granted; it
+    // still holds less than a request's worst case, so it asks again (2),
+    // which fails: it keeps what it holds.
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    expect(extend.mock.calls.map(([opts]) => opts.sequence)).toEqual([1, 1, 2]);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    // Spent all it holds while the hub is unreachable: paused, and not
+    // blamed on the user's allowance.
+    const paused = await proxy.request();
+    expect(paused.status).toBe(403);
+    expect(paused.body.error.message).toContain(
+      "could not extend this included Codex turn",
+    );
+    expect(paused.body.error.message).not.toContain("allowance");
+    expect(proxy.upstreamRequests()).toBe(3);
+    await proxy.close();
+  });
+
+  it("keeps extending when a chunk is smaller than one request's worst case", async () => {
+    const headroom = siteFundedCodexFinalRequestHeadroomMicrousd(
+      DEFAULT_SITE_FUNDED_CODEX_POLICY,
+    );
+    const chunk = Math.ceil(headroom / 4);
+    const policy = {
+      ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
+      reservationChunkMicrousd: chunk,
+    };
+    // Below one request's worst case, so that is the threshold.
+    expect(siteFundedExtensionThresholdMicrousd(policy)).toBe(headroom);
+    let reserved = 1;
+    const extend = jest.fn(async () => {
+      reserved += chunk;
+      return {
+        granted: true as const,
+        grantedMicrousd: chunk,
+        reservedMicrousd: reserved,
+      };
+    });
+    // Holds almost nothing: one request extends until it holds a whole
+    // request's worst case, then starts.
+    const proxy = await setup(1, extend, true, policy);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    // 1 + 4 chunks is the first total of at least the headroom.
+    expect(extend.mock.calls.map(([opts]) => opts.sequence)).toEqual([
+      1, 2, 3, 4,
+    ]);
+    // That request cost more than a chunk: the turn has spent past what it
+    // held, and the next request extends as many times as it takes.
+    expect(COST).toBeGreaterThan(chunk);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    expect(reserved - 2 * COST).toBeGreaterThanOrEqual(0);
+    expect(proxy.upstreamRequests()).toBe(2);
+    await proxy.close();
+  });
+
+  it("never lets a turn start a request that could take it past its ceiling", async () => {
+    // A turn holding far more than its ceiling allows (the hub never grants
+    // this): the ceiling still bounds what it spends.
+    const headroom = siteFundedCodexFinalRequestHeadroomMicrousd(
+      DEFAULT_SITE_FUNDED_CODEX_POLICY,
+    );
+    const policy = {
+      ...DEFAULT_SITE_FUNDED_CODEX_POLICY,
+      maxTurnCostMicrousd: COST + headroom - 1,
+    };
+    const extend = jest.fn();
+    const proxy = await setup(10 * COST, extend as any, true, policy);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    const refused = await proxy.request();
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.message).toContain("reached its cost limit");
+    expect(proxy.upstreamRequests()).toBe(1);
+    await proxy.close();
+  });
+
+  it("fails closed when every extension a request may make still leaves it short", async () => {
+    let reserved = 1;
+    const extend = jest.fn(async () => {
+      reserved += 1;
+      return {
+        granted: true as const,
+        grantedMicrousd: 1,
+        reservedMicrousd: reserved,
+      };
+    });
+    const proxy = await setup(1, extend, true);
+    const refused = await proxy.request();
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.message).toContain(
+      "could not extend this included Codex turn",
+    );
+    expect(extend).toHaveBeenCalledTimes(20);
+    expect(proxy.upstreamRequests()).toBe(0);
+    await proxy.close();
+  });
+
+  it("fails closed when an extension is granted but the turn does not grow", async () => {
+    const extend = jest.fn(async () => ({
+      granted: true as const,
+      grantedMicrousd: 0,
+      reservedMicrousd: 1,
+    }));
+    const proxy = await setup(1, extend, true);
+    const refused = await proxy.request();
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.message).toContain(
+      "could not extend this included Codex turn",
+    );
+    expect(extend).toHaveBeenCalledTimes(1);
+    expect(proxy.upstreamRequests()).toBe(0);
+    await proxy.close();
+  });
+
+  it("never extends a reservation that is not rolling", async () => {
+    const extend = jest.fn();
+    const proxy = await setup(1, extend as any, false);
+    await expect(proxy.request()).resolves.toMatchObject({ status: 200 });
+    expect(extend).not.toHaveBeenCalled();
+    await proxy.close();
   });
 });
 
