@@ -91,10 +91,12 @@ export async function listAgentRequestsLocal(opts: {
       WHERE r.account_id = $1
         AND ($2::uuid IS NULL OR r.project_id = $2)
         AND ($3::boolean OR (r.state = 'pending' AND r.expires_at > now())
-             OR g.state = 'active')
-      -- active approvals first: a run of newer requests must never push an
-      -- approval (and its Revoke) out of the bound
-      ORDER BY (g.state IS NOT DISTINCT FROM 'active') DESC, r.created DESC
+             OR (g.state = 'active' AND g.expires_at > now()))
+      -- live approvals first: a run of newer requests must never push one
+      -- (and its Revoke) out of the bound. An approval past its expiry that
+      -- the 5-minute sweep hasn't closed yet counts as ended, never ahead.
+      ORDER BY (g.state = 'active' AND g.expires_at > now()) IS TRUE DESC,
+               r.created DESC
       LIMIT 100`,
     [account_id, project_id, opts.include_decided === true],
   );
@@ -116,7 +118,12 @@ export async function listAgentRequestsLocal(opts: {
       ? {
           grant: {
             grant_id: r.grant_id,
-            state: r.grant_state,
+            // ended at its expiry even before the sweep says so
+            state:
+              r.grant_state === "active" &&
+              new Date(r.grant_expires_at) <= new Date()
+                ? "expired"
+                : r.grant_state,
             expires_at: new Date(r.grant_expires_at).toISOString(),
             launches_used: r.launches_used,
           },

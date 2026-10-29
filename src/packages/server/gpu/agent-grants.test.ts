@@ -1412,4 +1412,47 @@ describeDb("agent GPU launches", () => {
       state: "active",
     });
   });
+
+  it("never lets approvals past their expiry, not yet swept, crowd out new requests", async () => {
+    const k = await killSetup();
+    // 101 approvals whose grants expired but are still marked active (the
+    // sweep hasn't run), all newer than the pending request
+    await getPool().query(
+      `WITH reqs AS (
+         INSERT INTO gpu_agent_requests (request_id, account_id, project_id, agent_id, run_id,
+           operation_id, payload, payload_hash, state, created, expires_at)
+         SELECT gen_random_uuid(), $1, $2, 'session:' || repeat(md5(i::text), 2),
+           'session:' || repeat(md5(i::text), 2), 'op-x' || i, '{}'::jsonb,
+           repeat('f', 64), 'approved', now() + (i || ' seconds')::interval,
+           now() - interval '1 minute'
+           FROM generate_series(1, 101) AS i
+         RETURNING *)
+       INSERT INTO gpu_agent_grants (grant_id, request_id, account_id, project_id, agent_id,
+         run_id, operation_id, payload_hash, credential_id, layer_id, launches_allowed,
+         launches_used, state, created, expires_at)
+       SELECT gen_random_uuid(), request_id, account_id, project_id, agent_id, run_id,
+         operation_id, payload_hash, $3, gen_random_uuid(), 1, 0, 'active', created,
+         now() - interval '1 minute'
+         FROM reqs`,
+      [k.account_id, PROJECT, k.credential_id],
+    );
+    const views = await listAgentRequestsLocal({
+      account_id: k.account_id,
+      project_id: PROJECT,
+    });
+    // only the live approval and the pending request: nothing expired
+    expect(views.map((v) => v.request_id).sort()).toEqual(
+      [k.grant.request_id, k.pending.req.request_id].sort(),
+    );
+    expect(views[0].grant?.grant_id).toBe(k.grant.grant_id);
+    // and with decided ones included, an unswept expired approval says so
+    const all = await listAgentRequestsLocal({
+      account_id: k.account_id,
+      project_id: PROJECT,
+      include_decided: true,
+    });
+    const stale = all.filter((v) => v.payload_hash === "f".repeat(64));
+    expect(stale.length).toBeGreaterThan(0);
+    for (const v of stale) expect(v.grant?.state).toBe("expired");
+  });
 });
