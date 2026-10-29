@@ -81,6 +81,18 @@ describe("document build paths", () => {
       );
     });
 
+    it("works with HOME at the filesystem root", () => {
+      const root = { HOME: "/" };
+      expect(normalizeDocumentPath("/paper.tex", root)).toBe("/paper.tex");
+      expect(normalizeDocumentPath("/papers/a.tex", root)).toBe(
+        "/papers/a.tex",
+      );
+      expect(documentProcessPath("/papers/a.tex", root)).toBe("/papers/a.tex");
+      expect(() => normalizeDocumentPath("/", root)).toThrow(
+        "must identify a file",
+      );
+    });
+
     it("accepts the real path of a HOME that is a symlink", () => {
       const base = realpathSync(mkdtempSync(path.join(tmpdir(), "docbuild-")));
       try {

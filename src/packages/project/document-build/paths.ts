@@ -42,8 +42,15 @@ function documentHomeAliases(home: string): string[] {
   return [...aliases];
 }
 
+// Whether candidate is home or below it (by path.relative, so that a home of
+// "/" works too).
 function within(candidate: string, home: string): boolean {
-  return candidate === home || candidate.startsWith(`${home}/`);
+  const relative = path.posix.relative(home, candidate);
+  return (
+    relative !== ".." &&
+    !relative.startsWith("../") &&
+    !path.posix.isAbsolute(relative)
+  );
 }
 
 export function normalizeDocumentPath(
