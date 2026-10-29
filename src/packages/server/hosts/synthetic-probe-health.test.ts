@@ -73,6 +73,8 @@ describe("syntheticSmokeHealth", () => {
     const running = (claimedMinutesAgo: number, extra = {}) => ({
       status: "running",
       claimed_at: minutesAgo(claimedMinutesAgo),
+      previous_status: "passed",
+      previous_checked_at: minutesAgo(claimedMinutesAgo + 30),
       passed_checks: 7,
       consecutive_failures: 0,
       ...extra,
@@ -93,10 +95,31 @@ describe("syntheticSmokeHealth", () => {
     // A host's first probe has no passing result to stand for.
     expect(
       syntheticSmokeHealth({
-        hosts: [host("new-host", running(3, { passed_checks: 0 }))],
+        hosts: [
+          host(
+            "new-host",
+            running(3, {
+              passed_checks: 0,
+              previous_status: undefined,
+              previous_checked_at: undefined,
+            }),
+          ),
+        ],
         now,
       }).level,
     ).toBe("warning");
+    // A pass that was already overdue does not become current because a new
+    // probe was claimed (e.g. maintenance resuming after an outage).
+    const overdue = syntheticSmokeHealth({
+      hosts: [
+        host("resumed", running(2, { previous_checked_at: minutesAgo(120) })),
+      ],
+      now,
+    });
+    expect(overdue.level).toBe("warning");
+    expect(overdue.details[0]).toMatch(
+      /last passed 120 min ago \(a probe is running\)$/,
+    );
     // Past the claim timeout (15 min) the claim is stale, well before the
     // 45-minute pass window.
     const stale = syntheticSmokeHealth({

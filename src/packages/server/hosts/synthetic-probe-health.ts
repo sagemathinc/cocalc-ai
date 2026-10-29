@@ -106,10 +106,11 @@ function hostProbeState(
     };
   }
   if (status === "running") {
-    // A probe in progress replaced the previous result but kept its counters:
-    // it stands for the previous outcome while it runs (a retry after
-    // failures is still failing), and for nothing once its claim is stale
-    // (runtime-maintenance's claim timeout).
+    // A probe in progress stands for the outcome it replaced
+    // (previous_status, previous_checked_at, kept by the claim), judged as
+    // that outcome would be: a retry after failures is still failing, and a
+    // pass counts only while it is not overdue. Once the claim itself is
+    // stale (runtime-maintenance's claim timeout) it stands for nothing.
     const claimedAt = timestampMs(probe.claimed_at);
     if (claimedAt == null || now - claimedAt > claimTimeoutMs) {
       return {
@@ -127,10 +128,17 @@ function hostProbeState(
         detail: `failed ${failures} time${failures === 1 ? "" : "s"} in a row; a retry is running`,
       };
     }
-    if (!(Number(probe.passed_checks) > 0)) {
+    const previousCheckedAt = timestampMs(probe.previous_checked_at);
+    if (probe.previous_status !== "passed" || previousCheckedAt == null) {
       return {
         kind: "overdue",
-        detail: "its first synthetic probe is running",
+        detail: "a synthetic probe is running with no earlier pass to go on",
+      };
+    }
+    if (now - previousCheckedAt > overdueAfterMs) {
+      return {
+        kind: "overdue",
+        detail: `last passed ${minutes(now - previousCheckedAt)} ago (a probe is running)`,
       };
     }
     return { kind: "passing" };

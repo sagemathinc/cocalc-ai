@@ -760,10 +760,21 @@ async function claimSyntheticProbe(
         ? `${previous.alerted_at}`.trim()
         : undefined,
   };
+  // The outcome this probe replaces, so that health checks can still judge
+  // the host while it runs (synthetic-probe-health.ts). A stale running claim
+  // being taken over passes on the outcome it had kept.
+  const previousStatus =
+    previous.status === "running" ? previous.previous_status : previous.status;
+  const previousCheckedAt =
+    previous.status === "running"
+      ? previous.previous_checked_at
+      : previous.checked_at;
   const probe = {
     status: "running",
     claim_id: claimId,
     claimed_at: new Date().toISOString(),
+    previous_status: sameSession ? previousStatus : undefined,
+    previous_checked_at: sameSession ? previousCheckedAt : undefined,
     host_boot_id: row.metadata?.host_boot_id,
     host_session_id: row.metadata?.host_session_id,
     consecutive_failures: previousFailures,
