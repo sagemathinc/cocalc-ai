@@ -384,6 +384,7 @@ export function NewDirectModal({
                       action={
                         <Button
                           size="small"
+                          aria-label={`Add ${r.name}`}
                           disabled={
                             added || full || (!r.collaborator && !r.username)
                           }

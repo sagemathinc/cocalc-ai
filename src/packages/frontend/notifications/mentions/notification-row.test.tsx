@@ -170,7 +170,11 @@ describe("NotificationRow", () => {
     );
     expect(screen.queryByText("Open conversation")).toBeNull();
     expect(screen.getByRole("listitem").querySelector("a[href]")).toBeNull();
-    fireEvent.click(screen.getByText("Message from Bea"));
+    // A native button: reachable and usable from the keyboard.
+    const open = screen.getByRole("button", { name: "Message from Bea" });
+    open.focus();
+    expect(open).toHaveFocus();
+    fireEvent.click(open);
     await waitFor(() =>
       expect(setState).toHaveBeenCalledWith({
         people_route: "messages/dm-1",

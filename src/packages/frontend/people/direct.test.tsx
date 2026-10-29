@@ -346,7 +346,7 @@ test("New message: collaborators are found by name, with what tells them apart",
   expect(results).toHaveTextContent("Bea Tester");
   expect(results).toHaveTextContent("Collaborator");
   expect(results).toHaveTextContent("1 shared project");
-  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add Bea Tester" }));
   expect(screen.getByRole("region", { name: "Recipients" })).toHaveTextContent(
     "Sending to 1 person",
   );
@@ -384,7 +384,7 @@ test("New message: anyone else only by exact @username, as a message request", a
   expect(results).toHaveTextContent("Message request");
   expect(results).toHaveTextContent("@cy");
   expect(results).toHaveTextContent("No shared projects");
-  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add Cy" }));
   fireEvent.change(screen.getByLabelText("Composer"), {
     target: { value: "Hello" },
   });

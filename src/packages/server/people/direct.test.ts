@@ -821,7 +821,8 @@ describeDb("direct conversations", () => {
       conversation_id,
     });
     expect(messages.map((m) => m.body)).toEqual(["One", "Two"]);
-    // Show everything again; unknown or ill-typed settings are refused.
+    // Show everything again; unknown, ill-typed or malformed settings are
+    // refused, not ignored.
     await directHubApi.setDirectState({
       account_id: bea,
       conversation_id,
@@ -836,6 +837,24 @@ describeDb("direct conversations", () => {
         patch: { pinned: "yes" } as any,
       }),
     ).rejects.toThrow("invalid pinned");
+    for (const [patch, error] of [
+      [{ pinned: true, owner_bay_id: "bay-9" }, "invalid field: owner_bay_id"],
+      [{ bogus: true }, "invalid field: bogus"],
+      [[{ pinned: true }], "invalid patch"],
+      ["pinned", "invalid patch"],
+      [null, "invalid patch"],
+    ] as const) {
+      await expect(
+        directHubApi.setDirectState({
+          account_id: bea,
+          conversation_id,
+          patch: patch as any,
+        }),
+      ).rejects.toThrow(error);
+    }
+    // Nothing was changed by the refused patches.
+    [forBea] = await listFor(bea);
+    expect(forBea.pinned).toBe(true);
     // Only members.
     await expect(
       directHubApi.setDirectState({

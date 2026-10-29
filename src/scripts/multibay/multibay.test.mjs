@@ -297,6 +297,55 @@ describe("direct conversations across bays", () => {
     }
   });
 
+  it("lets only the sender delete a message, for both bays' members", async () => {
+    // Deleting goes from the sender's home bay to the owning bay, which
+    // clears it and sends the new preview to each member's home bay.
+    const sent = await carol.client.call("people.sendDirect", {
+      conversation_id: carol.direct,
+      body: "pasted by mistake",
+    });
+    await eventually(
+      async () =>
+        (await dave.client.call("people.listDirect", {})).conversations.find(
+          (c) =>
+            c.conversation_id === carol.direct &&
+            c.preview === "pasted by mistake",
+        ),
+      { what: "the mistaken message in dave's list" },
+    );
+    await assert.rejects(
+      dave.client.call("people.deleteDirectMessage", {
+        conversation_id: carol.direct,
+        message_id: sent.message_id,
+      }),
+      /message not found/,
+    );
+    await carol.client.call("people.deleteDirectMessage", {
+      conversation_id: carol.direct,
+      message_id: sent.message_id,
+    });
+    for (const member of [carol, dave]) {
+      const { messages } = await member.client.call("people.getDirect", {
+        conversation_id: carol.direct,
+      });
+      const deleted = messages.find((m) => m.message_id === sent.message_id);
+      assert.equal(deleted.body, "");
+      assert.equal(deleted.deleted, true);
+      // Each home bay's list falls back to the latest message that remains.
+      await eventually(
+        async () =>
+          (
+            await member.client.call("people.listDirect", {})
+          ).conversations.find(
+            (c) =>
+              c.conversation_id === carol.direct &&
+              c.preview === "hello from bay-0",
+          ),
+        { what: "the preview without the deleted message, on each home bay" },
+      );
+    }
+  });
+
   it("refuses the wrong bay's authority", async () => {
     // A home method for dave run on the seed, and an owner method run on the
     // bay that doesn't own the conversation, both fail closed.

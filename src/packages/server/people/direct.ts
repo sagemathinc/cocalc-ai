@@ -339,9 +339,18 @@ async function resolveDirectUsername(value: unknown): Promise<string | null> {
   }
 }
 
-// Only known fields, with the right types (it comes from a browser).
+const DIRECT_PERSONAL_FIELDS = new Set(["muted", "pinned", "archived_through"]);
+
+// Only known fields, with the right types (it comes from a browser):
+// anything else is refused, not ignored.
 function normalizeDirectPersonalPatch(patch: unknown): DirectPersonalPatch {
-  const p = (patch ?? {}) as Record<string, unknown>;
+  if (patch == null || typeof patch !== "object" || Array.isArray(patch)) {
+    throw Error("invalid patch");
+  }
+  const p = patch as Record<string, unknown>;
+  for (const key of Object.keys(p)) {
+    if (!DIRECT_PERSONAL_FIELDS.has(key)) throw Error(`invalid field: ${key}`);
+  }
   const result: DirectPersonalPatch = {};
   for (const key of ["muted", "pinned"] as const) {
     if (p[key] === undefined) continue;
@@ -350,7 +359,10 @@ function normalizeDirectPersonalPatch(patch: unknown): DirectPersonalPatch {
   }
   if (p.archived_through !== undefined) {
     const value = p.archived_through;
-    if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) {
+    if (
+      value !== null &&
+      (typeof value !== "number" || !Number.isFinite(value))
+    ) {
       throw Error("invalid archived_through");
     }
     result.archived_through = value;

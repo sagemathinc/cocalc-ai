@@ -456,10 +456,36 @@ export function NotificationRow(props: Props) {
     if (kind === "account_notice") {
       return (
         <>
-          <strong>
-            {agentName && !title?.includes(agentName) ? `${agentName} · ` : ""}
-            {title ?? "Notification"}
-          </strong>
+          {directConversationId ? (
+            // A direct message: its title is the (keyboard reachable) way to
+            // open the conversation; clicking anywhere on the row also works.
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void openDirectTarget(directConversationId);
+              }}
+              style={{
+                border: "none",
+                background: "transparent",
+                padding: 0,
+                font: "inherit",
+                fontWeight: 600,
+                color: "inherit",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              {title ?? "Message"}
+            </button>
+          ) : (
+            <strong>
+              {agentName && !title?.includes(agentName)
+                ? `${agentName} · `
+                : ""}
+              {title ?? "Notification"}
+            </strong>
+          )}
           {notice_type === "codex_attention" &&
           (attention_state ?? "pending") === "pending" ? (
             <Tag color="gold" style={{ marginLeft: 8 }}>
