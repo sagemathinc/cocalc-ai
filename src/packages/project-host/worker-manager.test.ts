@@ -687,9 +687,9 @@ describe("ACP worker control startup grace", () => {
       pid: 1004,
       state: "active",
       started_at: 1_000,
-      last_heartbeat_at: 70_000,
+      last_heartbeat_at: 30_000,
       last_seen_running_jobs: 0,
-      last_queue_progress_at: 70_000,
+      last_queue_progress_at: 30_000,
     });
 
     expect(
@@ -822,6 +822,109 @@ describe("ACP worker control startup grace", () => {
         200_000,
       ),
     ).toBe(false);
+  });
+});
+
+describe("unresponsive ACP workers", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  const worker = {
+    pid: 1201,
+    env: {
+      COCALC_ACP_INSTANCE_ID: "worker-quiet",
+      COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT: "1000",
+    },
+    cmdline: ["project-host:acp-worker"],
+  } as any;
+  const now = 1_000_000;
+  function row(last_heartbeat_at: number) {
+    return {
+      worker_id: "worker-quiet",
+      host_id: "host-1",
+      bundle_version: "current",
+      bundle_path: "/opt/cocalc/project-host/bundles/current",
+      pid: 1201,
+      state: "active",
+      started_at: 1_000,
+      last_heartbeat_at,
+      last_seen_running_jobs: 0,
+      last_queue_progress_at: last_heartbeat_at,
+    } as any;
+  }
+  const sleeping = () => "S";
+
+  it("terminates an idle worker that has failed its probe for 30 s with a heartbeat over 60 s old", () => {
+    mockGetAcpWorker.mockReturnValue(row(now - 61_000));
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 30_000,
+        now,
+        processState: sleeping,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a worker after one missed probe", () => {
+    mockGetAcpWorker.mockReturnValue(row(now - 61_000));
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 0,
+        now,
+        processState: sleeping,
+      }),
+    ).toBe(false);
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 29_000,
+        now,
+        processState: sleeping,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a worker whose heartbeat stalled for less than 60 s", () => {
+    // A slow disk can hold the worker's event loop for tens of seconds.
+    mockGetAcpWorker.mockReturnValue(row(now - 20_000));
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 30_000,
+        now,
+        processState: sleeping,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not kill a worker blocked on I/O", () => {
+    mockGetAcpWorker.mockReturnValue(row(now - 120_000));
+    expect(
+      __test__.shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: 120_000,
+        now,
+        processState: () => "D",
+      }),
+    ).toBe(false);
+  });
+
+  it("measures probe failure from the first failed pass and resets on an answer", () => {
+    expect(__test__.noteWorkerControlProbe(worker, false, 10_000)).toBe(0);
+    expect(__test__.noteWorkerControlProbe(worker, false, 25_000)).toBe(15_000);
+    expect(__test__.noteWorkerControlProbe(worker, true, 27_000)).toBe(0);
+    expect(__test__.noteWorkerControlProbe(worker, false, 29_000)).toBe(0);
+    __test__.forgetWorkerControlProbes([]);
+    expect(__test__.noteWorkerControlProbe(worker, false, 40_000)).toBe(0);
+    __test__.noteWorkerControlProbe(worker, true);
+  });
+
+  it("reads the kernel state of a process", () => {
+    expect(["R", "S"]).toContain(__test__.readProcessState(process.pid));
+    expect(__test__.readProcessState(2 ** 31 - 2)).toBeUndefined();
   });
 });
 
