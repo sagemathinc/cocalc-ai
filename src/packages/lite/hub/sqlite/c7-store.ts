@@ -40,7 +40,9 @@ export interface C7TurnContext extends C7TurnKey {
 export type C7Origin = "source" | "local";
 
 // An immutable hub-ingress envelope (§2.2). `n` and `time` are assigned
-// inside admission; `body` is the payload exactly as received.
+// inside admission; `body` is the payload exactly as received, taken once as
+// canonical JSON. Every consumer (the hash, the queue row, the projector and
+// the hub) gets its own parse of that one text.
 export interface C7Envelope {
   kind: "in";
   project_id: string;
@@ -71,6 +73,9 @@ export interface C7Winner extends C7CloseCandidate {
   h_close: string;
 }
 
+// A stored close candidate. Closes are keyed (K, attempt, "close", k): `k`
+// numbers an attempt's close candidates in their own namespace, never shared
+// with input ordinals (§2.2: "a close is never an ordinal").
 export interface C7CloseEnvelope {
   kind: "close";
   project_id: string;
@@ -78,7 +83,7 @@ export interface C7CloseEnvelope {
   message_date: string;
   attempt_id: string;
   attempt_gen: number;
-  n: number;
+  k: number;
   candidate: C7CloseCandidate;
 }
 
@@ -141,17 +146,28 @@ export interface C7Projector {
   ): C7Projection;
 }
 
+// The class an input was given at admission. Only `live` inputs are ever
+// processed by the hub, at admission or on replay.
+export type C7InputClass = "live" | "stale" | "late" | "malformed";
+
 export type C7AdmitResult =
   | { result: "admitted"; envelope: C7Envelope }
   | {
       result: "refused";
       reason: "stale" | "late" | "malformed" | "no_attempt";
-      envelope?: C7Envelope;
     }
   | { result: "storage_failed"; error: unknown };
 
 export type C7ReplayResult =
-  | { result: "duplicate" }
+  // A stored row that matches its record exactly. `process` is true only for
+  // a live input, and `envelope` is then its own parse of the stored text.
+  | {
+      result: "duplicate";
+      kind: "in" | "close";
+      class: string;
+      process: boolean;
+      envelope?: C7Envelope;
+    }
   | { result: "refused"; reason: "collision" | "gap" }
   | { result: "storage_failed"; error: unknown };
 
@@ -176,8 +192,8 @@ function fault(point: string): void {
 // ---------------------------------------------------------------------------
 // The process-level pending flags (§2.2): turns whose admission failed and
 // whose durable c7_incomplete write hasn't committed yet. An entry outlives
-// the writer that recorded it; it is removed only after the durable write has
-// committed.
+// the writer that recorded it; it is removed only after a transaction that
+// wrote the flag to the turn's lease row has committed.
 
 const pendingIncomplete = new Set<string>();
 
@@ -194,18 +210,20 @@ export function hasPendingIncomplete(key: C7TurnKey): boolean {
 }
 
 // Writes K's pending flag durably, if there is one. Returns true when nothing
-// is pending any more. A failure leaves the entry in place.
+// is pending any more. A failure, or a missing lease row, keeps the entry.
 export function flushPendingIncomplete(key: C7TurnKey): boolean {
   if (!hasPendingIncomplete(key)) return true;
   const db = database();
+  let written = false;
   try {
     transaction(db, () => {
-      writeIncompleteInTx(db, key);
+      written = writeIncompleteInTx(db, key);
       fault("flush:before-commit");
     });
   } catch {
     return false;
   }
+  if (!written) return false;
   pendingIncomplete.delete(turnKeyString(key));
   return true;
 }
@@ -251,6 +269,9 @@ function initSchema(db: SqliteDatabase): void {
       `ALTER TABLE acp_turns ADD COLUMN c7_incomplete INTEGER NOT NULL DEFAULT 0`,
     );
   }
+  // One record per admitted input (kind "in", by ordinal n) and per close
+  // candidate (kind "close", by candidate index k), with the attempt_gen it
+  // was admitted under, its hash and its class.
   db.exec(`
     CREATE TABLE IF NOT EXISTS c7_input (
       project_id TEXT NOT NULL,
@@ -259,12 +280,14 @@ function initSchema(db: SqliteDatabase): void {
       attempt_id TEXT NOT NULL,
       kind TEXT NOT NULL,
       n INTEGER NOT NULL,
+      attempt_gen INTEGER NOT NULL,
       origin TEXT,
       h TEXT NOT NULL,
       class TEXT NOT NULL,
       PRIMARY KEY (project_id, path, message_date, attempt_id, kind, n)
     )
   `);
+  // The queue: insert-once rows, read back in commit order (qseq).
   db.exec(`
     CREATE TABLE IF NOT EXISTS c7_queue (
       project_id TEXT NOT NULL,
@@ -274,6 +297,7 @@ function initSchema(db: SqliteDatabase): void {
       attempt_id TEXT NOT NULL,
       kind TEXT NOT NULL,
       n INTEGER NOT NULL,
+      qseq INTEGER NOT NULL,
       envelope TEXT NOT NULL,
       h TEXT NOT NULL,
       hub_seq INTEGER,
@@ -281,6 +305,9 @@ function initSchema(db: SqliteDatabase): void {
       PRIMARY KEY (project_id, path, message_date, attempt_gen, attempt_id, kind, n)
     )
   `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS c7_queue_order_idx ON c7_queue(project_id, path, message_date, qseq)`,
+  );
   db.exec(
     `CREATE INDEX IF NOT EXISTS c7_queue_created_idx ON c7_queue(created_at)`,
   );
@@ -293,6 +320,7 @@ function initSchema(db: SqliteDatabase): void {
       turn_id TEXT NOT NULL,
       state TEXT,
       last_attempt_gen INTEGER NOT NULL DEFAULT 0,
+      next_qseq INTEGER NOT NULL DEFAULT 1,
       invalidated_code TEXT,
       late_count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (project_id, path, message_date)
@@ -341,6 +369,9 @@ function initSchema(db: SqliteDatabase): void {
       created_at INTEGER NOT NULL
     )
   `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS c7_object_class_created_idx ON c7_object(class, created_at)`,
+  );
   db.exec(`
     CREATE TABLE IF NOT EXISTS c7_object_dep (
       object_id TEXT NOT NULL,
@@ -366,6 +397,7 @@ function transaction<T>(db: SqliteDatabase, fn: () => T): T {
   let result: T;
   try {
     result = fn();
+    fault("tx:before-commit");
   } catch (err) {
     try {
       db.exec("ROLLBACK");
@@ -395,12 +427,14 @@ interface LeaseRow {
   attempt_gen: number;
   c7_incomplete: number;
   state: string;
+  owner_instance_id: string;
 }
 
 function readLease(db: SqliteDatabase, key: C7TurnKey): LeaseRow | undefined {
   return db
     .prepare(
-      `SELECT attempt_id, attempt_gen, c7_incomplete, state FROM acp_turns
+      `SELECT attempt_id, attempt_gen, c7_incomplete, state, owner_instance_id
+       FROM acp_turns
        WHERE project_id = ? AND path = ? AND message_date = ?`,
     )
     .get(key.project_id, key.path, key.message_date) as LeaseRow | undefined;
@@ -425,13 +459,14 @@ export function getC7Winner(key: C7TurnKey): C7Winner | undefined {
 interface TurnRow {
   state: string | null;
   last_attempt_gen: number;
+  next_qseq: number;
   invalidated_code: string | null;
 }
 
 function readTurn(db: SqliteDatabase, key: C7TurnKey): TurnRow | undefined {
   return db
     .prepare(
-      `SELECT state, last_attempt_gen, invalidated_code FROM c7_turn
+      `SELECT state, last_attempt_gen, next_qseq, invalidated_code FROM c7_turn
        WHERE project_id = ? AND path = ? AND message_date = ?`,
     )
     .get(key.project_id, key.path, key.message_date) as TurnRow | undefined;
@@ -483,7 +518,7 @@ function countLate(db: SqliteDatabase, key: C7TurnKey): void {
   ).run(key.project_id, key.path, key.message_date);
 }
 
-function nextOrdinal(
+function nextIndex(
   db: SqliteDatabase,
   key: C7TurnKey,
   attempt_id: string,
@@ -507,14 +542,16 @@ function recordInput(
   attempt_id: string,
   kind: "in" | "close",
   n: number,
+  attempt_gen: number,
   origin: C7Origin | null,
   h: string,
   klass: string,
 ): void {
   db.prepare(
     `INSERT INTO c7_input
-       (project_id, path, message_date, attempt_id, kind, n, origin, h, class)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (project_id, path, message_date, attempt_id, kind, n, attempt_gen,
+        origin, h, class)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     key.project_id,
     key.path,
@@ -522,16 +559,19 @@ function recordInput(
     attempt_id,
     kind,
     n,
+    attempt_gen,
     origin,
     h,
     klass,
   );
 }
 
-// Insert-once: a queue row is never replaced (§2.2, step 2).
+// Insert-once (§2.2, step 2), numbered in commit order: qseq is allocated
+// from the turn's row inside the same transaction, so the queue reads back in
+// the order admissions committed, inputs and closes merged.
 function writeQueueRow(
   db: SqliteDatabase,
-  key: C7TurnKey,
+  turn: C7TurnContext,
   attempt_gen: number,
   attempt_id: string,
   kind: "in" | "close",
@@ -541,32 +581,49 @@ function writeQueueRow(
   hub_seq: number | null,
   now: number,
 ): void {
+  const row = ensureTurn(db, turn);
+  const qseq = Number(row.next_qseq);
+  const changes = db
+    .prepare(
+      `INSERT INTO c7_queue
+         (project_id, path, message_date, attempt_gen, attempt_id, kind, n,
+          qseq, envelope, h, hub_seq, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT DO NOTHING`,
+    )
+    .run(
+      turn.project_id,
+      turn.path,
+      turn.message_date,
+      attempt_gen,
+      attempt_id,
+      kind,
+      n,
+      qseq,
+      envelope,
+      h,
+      hub_seq,
+      now,
+    ).changes;
+  if (Number(changes) !== 1) {
+    // The input record is new, so its queue row must be too.
+    throw new Error("c7: queue row already exists for a new input");
+  }
   db.prepare(
-    `INSERT INTO c7_queue
-       (project_id, path, message_date, attempt_gen, attempt_id, kind, n,
-        envelope, h, hub_seq, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT DO NOTHING`,
-  ).run(
-    key.project_id,
-    key.path,
-    key.message_date,
-    attempt_gen,
-    attempt_id,
-    kind,
-    n,
-    envelope,
-    h,
-    hub_seq,
-    now,
-  );
+    `UPDATE c7_turn SET next_qseq = ?
+     WHERE project_id = ? AND path = ? AND message_date = ?`,
+  ).run(qseq + 1, turn.project_id, turn.path, turn.message_date);
 }
 
-function writeIncompleteInTx(db: SqliteDatabase, key: C7TurnKey): void {
-  db.prepare(
-    `UPDATE acp_turns SET c7_incomplete = 1
-     WHERE project_id = ? AND path = ? AND message_date = ?`,
-  ).run(key.project_id, key.path, key.message_date);
+// Returns true when exactly the turn's lease row now carries the flag.
+function writeIncompleteInTx(db: SqliteDatabase, key: C7TurnKey): boolean {
+  const changes = db
+    .prepare(
+      `UPDATE acp_turns SET c7_incomplete = 1
+       WHERE project_id = ? AND path = ? AND message_date = ?`,
+    )
+    .run(key.project_id, key.path, key.message_date).changes;
+  return Number(changes) === 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -579,7 +636,6 @@ function appendProjection(
   now: number,
 ): void {
   for (const object of projection.objects) {
-    const sha = sha256Bytes(object.body);
     db.prepare(
       `INSERT INTO c7_object
          (object_id, project_id, path, thread_id, class, bytes, sha256, body, created_at)
@@ -591,7 +647,7 @@ function appendProjection(
       turn.thread_id,
       object.class,
       object.body.byteLength,
-      sha,
+      sha256Bytes(object.body),
       object.body,
       now,
     );
@@ -601,6 +657,7 @@ function appendProjection(
          VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
       ).run(object.object_id, turn.project_id, turn.path, dep);
     }
+    fault("projection:after-object");
   }
   if (projection.events.length === 0) return;
   db.prepare(
@@ -634,6 +691,7 @@ function appendProjection(
       JSON.stringify(event),
     );
     seq += 1;
+    fault("projection:after-event");
   }
   db.prepare(
     `UPDATE c7_thread SET next_seq = ?
@@ -681,7 +739,7 @@ function decideCloseInTx(db: SqliteDatabase, args: DecideArgs): C7DecideResult {
   }
   const attempt_gen =
     lease?.attempt_id === attempt_id ? Number(lease.attempt_gen) : 0;
-  const n = nextOrdinal(db, turn, attempt_id, "close");
+  const k = nextIndex(db, turn, attempt_id, "close");
   const closeEnvelope: C7CloseEnvelope = {
     kind: "close",
     project_id: turn.project_id,
@@ -689,20 +747,20 @@ function decideCloseInTx(db: SqliteDatabase, args: DecideArgs): C7DecideResult {
     message_date: turn.message_date,
     attempt_id,
     attempt_gen,
-    n,
+    k,
     candidate: args.candidate,
   };
   const envelopeText = canonicalJson(closeEnvelope);
   const h = sha256Hex(envelopeText);
   const record = (klass: string) => {
-    recordInput(db, turn, attempt_id, "close", n, null, h, klass);
+    recordInput(db, turn, attempt_id, "close", k, attempt_gen, null, h, klass);
     writeQueueRow(
       db,
       turn,
       attempt_gen,
       attempt_id,
       "close",
-      n,
+      k,
       envelopeText,
       h,
       null,
@@ -804,6 +862,17 @@ function refuseInTx(
 // ---------------------------------------------------------------------------
 // Admission (§2.2)
 
+function inputHash(e: {
+  origin: C7Origin;
+  n: number;
+  time: number;
+  body: unknown;
+}): string {
+  return sha256Hex(
+    canonicalJson({ origin: e.origin, n: e.n, time: e.time, body: e.body }),
+  );
+}
+
 export function admitInitial(args: {
   turn: C7TurnContext;
   attempt_id: string;
@@ -813,11 +882,13 @@ export function admitInitial(args: {
   projector: C7Projector;
   now?: number;
 }): C7AdmitResult {
-  const { turn, attempt_id, origin, body, projector } = args;
+  const { turn, attempt_id, origin, projector } = args;
   const now = args.now ?? Date.now();
-  let db: SqliteDatabase;
   try {
-    db = database();
+    // One owned snapshot of the body: its canonical text is taken once, and
+    // every consumer below gets its own parse of that text.
+    const bodyText = canonicalJson(args.body);
+    const db = database();
     flushPendingIncomplete(turn);
     return transaction(db, (): C7AdmitResult => {
       const lease = readLease(db, turn);
@@ -826,7 +897,7 @@ export function admitInitial(args: {
       }
       const current = lease.attempt_id === attempt_id;
       const attempt_gen = current ? Number(lease.attempt_gen) : 0;
-      const n = nextOrdinal(db, turn, attempt_id, "in");
+      const n = nextIndex(db, turn, attempt_id, "in");
       const envelope: C7Envelope = {
         kind: "in",
         project_id: turn.project_id,
@@ -837,19 +908,21 @@ export function admitInitial(args: {
         n,
         origin,
         time: now,
-        body,
+        body: JSON.parse(bodyText),
       };
       const text = canonicalJson(envelope);
-      const h = sha256Hex(canonicalJson({ origin, n, time: now, body }));
+      const h = inputHash(envelope);
       const row = ensureTurn(db, turn);
       const late = readWinner(db, turn) != null;
-      let klass: "live" | "stale" | "late" | "malformed";
+      let klass: C7InputClass;
       if (late) klass = "late";
       else if (!current) klass = "stale";
-      else if (projector.validate(parseState(row), envelope) === "malformed")
+      else if (
+        projector.validate(parseState(row), JSON.parse(text)) === "malformed"
+      )
         klass = "malformed";
       else klass = "live";
-      recordInput(db, turn, attempt_id, "in", n, origin, h, klass);
+      recordInput(db, turn, attempt_id, "in", n, attempt_gen, origin, h, klass);
       fault("admit:after-record");
       writeQueueRow(
         db,
@@ -868,13 +941,13 @@ export function admitInitial(args: {
         const cutover = Number(row.last_attempt_gen) !== attempt_gen;
         const projection = projector.input(
           parseState(row),
-          envelope,
+          JSON.parse(text) as C7Envelope,
           projectionContext(turn, attempt_gen, cutover),
         );
         appendProjection(db, turn, projection, now);
         writeState(db, turn, projection.state, attempt_gen);
         fault("admit:before-commit");
-        return { result: "admitted", envelope };
+        return { result: "admitted", envelope: JSON.parse(text) };
       }
       if (klass === "malformed") {
         refuseInTx(
@@ -889,11 +962,12 @@ export function admitInitial(args: {
         countLate(db, turn);
       }
       fault("admit:before-commit");
-      return { result: "refused", reason: klass, envelope };
+      return { result: "refused", reason: klass };
     });
   } catch (error) {
-    // A storage failure: nothing was written. The hub still processes the
-    // input for the chat, so the turn is incomplete from now on.
+    // A storage failure (or a body that has no canonical JSON): nothing was
+    // written. The hub still processes the input for the chat, so the turn
+    // is incomplete from now on.
     markPendingIncomplete(turn);
     return { result: "storage_failed", error };
   }
@@ -904,13 +978,71 @@ export interface C7QueueRow {
   attempt_id: string;
   kind: "in" | "close";
   n: number;
+  qseq: number;
   envelope: string;
   h: string;
   hub_seq: number | null;
 }
 
+interface StoredIdentity {
+  kind: "in" | "close";
+  attempt_id: string;
+  attempt_gen: number;
+  index: number;
+  h: string;
+}
+
+// Parses a stored row and recomputes its identity and hash. Anything that
+// doesn't parse into a well-formed envelope of this turn returns undefined.
+function storedIdentity(
+  turn: C7TurnKey,
+  row: C7QueueRow,
+): StoredIdentity | undefined {
+  try {
+    const parsed = JSON.parse(row.envelope) as any;
+    if (parsed == null || typeof parsed !== "object") return undefined;
+    if (
+      parsed.project_id !== turn.project_id ||
+      parsed.path !== turn.path ||
+      parsed.message_date !== turn.message_date
+    ) {
+      return undefined;
+    }
+    if (parsed.kind === "in") {
+      if (
+        typeof parsed.n !== "number" ||
+        typeof parsed.time !== "number" ||
+        (parsed.origin !== "source" && parsed.origin !== "local")
+      ) {
+        return undefined;
+      }
+      return {
+        kind: "in",
+        attempt_id: parsed.attempt_id,
+        attempt_gen: parsed.attempt_gen,
+        index: parsed.n,
+        h: inputHash(parsed),
+      };
+    }
+    if (parsed.kind === "close") {
+      if (typeof parsed.k !== "number") return undefined;
+      return {
+        kind: "close",
+        attempt_id: parsed.attempt_id,
+        attempt_gen: parsed.attempt_gen,
+        index: parsed.k,
+        h: sha256Hex(canonicalJson(parsed)),
+      };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Replay of a stored queue row (§2.2): a duplicate, or an integrity refusal.
-// A refused row is never processed.
+// A refused row is never processed, and only a duplicate of a live input is
+// processable.
 export function replayRow(args: {
   turn: C7TurnContext;
   row: C7QueueRow;
@@ -922,28 +1054,10 @@ export function replayRow(args: {
   try {
     const db = database();
     return transaction(db, (): C7ReplayResult => {
-      const parsed = JSON.parse(row.envelope) as C7Envelope | C7CloseEnvelope;
-      const h =
-        parsed.kind === "in"
-          ? sha256Hex(
-              canonicalJson({
-                origin: parsed.origin,
-                n: parsed.n,
-                time: parsed.time,
-                body: parsed.body,
-              }),
-            )
-          : sha256Hex(canonicalJson(parsed));
-      const identity =
-        parsed.kind === row.kind &&
-        parsed.n === row.n &&
-        parsed.attempt_id === row.attempt_id &&
-        parsed.project_id === turn.project_id &&
-        parsed.path === turn.path &&
-        parsed.message_date === turn.message_date;
+      const identity = storedIdentity(turn, row);
       const recorded = db
         .prepare(
-          `SELECT h FROM c7_input
+          `SELECT attempt_gen, h, class FROM c7_input
            WHERE project_id = ? AND path = ? AND message_date = ?
              AND attempt_id = ? AND kind = ? AND n = ?`,
         )
@@ -954,9 +1068,28 @@ export function replayRow(args: {
           row.attempt_id,
           row.kind,
           row.n,
-        ) as { h: string } | undefined;
-      if (identity && recorded && recorded.h === h && row.h === h) {
-        return { result: "duplicate" };
+        ) as { attempt_gen: number; h: string; class: string } | undefined;
+      const exact =
+        identity != null &&
+        recorded != null &&
+        identity.kind === row.kind &&
+        identity.attempt_id === row.attempt_id &&
+        identity.index === row.n &&
+        identity.attempt_gen === row.attempt_gen &&
+        Number(recorded.attempt_gen) === row.attempt_gen &&
+        identity.h === recorded.h &&
+        row.h === recorded.h;
+      if (exact) {
+        const process = row.kind === "in" && recorded!.class === "live";
+        return {
+          result: "duplicate",
+          kind: row.kind,
+          class: recorded!.class,
+          process,
+          ...(process
+            ? { envelope: JSON.parse(row.envelope) as C7Envelope }
+            : {}),
+        };
       }
       const reason = recorded ? "collision" : "gap";
       refuseInTx(
@@ -970,17 +1103,21 @@ export function replayRow(args: {
       return { result: "refused", reason };
     });
   } catch (error) {
+    // A genuine storage failure (a bad stored row is an integrity refusal,
+    // above): the incomplete fence is set before any fallback runs.
+    markPendingIncomplete(turn);
     return { result: "storage_failed", error };
   }
 }
 
+// The turn's queue in commit order: inputs and closes merged.
 export function listC7QueueRows(key: C7TurnKey): C7QueueRow[] {
   return database()
     .prepare(
-      `SELECT attempt_gen, attempt_id, kind, n, envelope, h, hub_seq
+      `SELECT attempt_gen, attempt_id, kind, n, qseq, envelope, h, hub_seq
        FROM c7_queue
        WHERE project_id = ? AND path = ? AND message_date = ?
-       ORDER BY attempt_gen ASC, kind ASC, n ASC`,
+       ORDER BY qseq ASC`,
     )
     .all(key.project_id, key.path, key.message_date) as C7QueueRow[];
 }
@@ -1064,7 +1201,10 @@ export function startC7LeaseAttempt(args: {
     );
     fault("cutover:before-commit");
     const lease = readLease(db, key);
-    return { attempt_gen: Number(lease?.attempt_gen ?? 1) };
+    if (lease?.attempt_id !== args.attempt_id) {
+      throw new Error("c7: cutover did not take effect");
+    }
+    return { attempt_gen: Number(lease.attempt_gen) };
   });
   // Only after the commit: the inherited flag is durable now.
   if (inherited) pendingIncomplete.delete(turnKeyString(key));
@@ -1103,25 +1243,44 @@ export function heartbeatC7Lease(args: {
   return Number(changes) > 0;
 }
 
-// The lease ends only with a winner, and never because of a stale writer.
+// The lease state that follows a winner.
+export function leaseStateForWinner(
+  winner: C7Winner,
+): "completed" | "error" | "aborted" {
+  if (winner.outcome === "error") {
+    return winner.code === "aborted" ? "aborted" : "error";
+  }
+  return "completed";
+}
+
+// The lease ends only with a winner, never because of a stale writer, and
+// only for its own owner while it is still running. The lease state follows
+// the winner, not the caller's local decision.
 export function finalizeC7Lease(args: {
   turn: C7TurnContext;
   owner_instance_id: string;
   attempt_id: string;
   attempt_gen: number;
-  state: "completed" | "error" | "aborted";
   reason?: string;
   projector: C7Projector;
   now?: number;
-}): { ended: boolean; stale: boolean; winner: C7Winner | null } {
+}): {
+  ended: boolean;
+  stale: boolean;
+  winner: C7Winner | null;
+  state?: "completed" | "error" | "aborted";
+} {
   const db = database();
   const now = args.now ?? Date.now();
   flushPendingIncomplete(args.turn);
   return transaction(db, () => {
     const lease = readLease(db, args.turn);
     if (
-      lease?.attempt_id !== args.attempt_id ||
-      Number(lease?.attempt_gen) !== args.attempt_gen
+      lease == null ||
+      lease.attempt_id !== args.attempt_id ||
+      Number(lease.attempt_gen) !== args.attempt_gen ||
+      lease.owner_instance_id !== args.owner_instance_id ||
+      lease.state !== "running"
     ) {
       return { ended: false, stale: true, winner: null };
     }
@@ -1136,26 +1295,34 @@ export function finalizeC7Lease(args: {
     if (decided.winner == null) {
       return { ended: false, stale: true, winner: null };
     }
+    const state = leaseStateForWinner(decided.winner);
     fault("finalize:before-update");
-    db.prepare(
-      `UPDATE acp_turns
-        SET state = ?, reason = COALESCE(?, reason), heartbeat_at = ?, ended_at = ?
-        WHERE project_id = ? AND path = ? AND message_date = ?
-          AND owner_instance_id = ? AND state = 'running'
-          AND attempt_id = ? AND attempt_gen = ?`,
-    ).run(
-      args.state,
-      args.reason ?? null,
-      now,
-      now,
-      args.turn.project_id,
-      args.turn.path,
-      args.turn.message_date,
-      args.owner_instance_id,
-      args.attempt_id,
-      args.attempt_gen,
-    );
-    return { ended: true, stale: false, winner: decided.winner };
+    const changes = db
+      .prepare(
+        `UPDATE acp_turns
+          SET state = ?, reason = COALESCE(?, reason), heartbeat_at = ?, ended_at = ?
+          WHERE project_id = ? AND path = ? AND message_date = ?
+            AND owner_instance_id = ? AND state = 'running'
+            AND attempt_id = ? AND attempt_gen = ?`,
+      )
+      .run(
+        state,
+        args.reason ?? null,
+        now,
+        now,
+        args.turn.project_id,
+        args.turn.path,
+        args.turn.message_date,
+        args.owner_instance_id,
+        args.attempt_id,
+        args.attempt_gen,
+      ).changes;
+    if (Number(changes) !== 1) {
+      // The precheck held in this transaction, so this can't happen; roll
+      // back rather than leave a winner without its lease ending.
+      throw new Error("c7: lease finalization matched no row");
+    }
+    return { ended: true, stale: false, winner: decided.winner, state };
   });
 }
 
@@ -1200,6 +1367,7 @@ export function fenceC7Project(args: {
         projector: args.projector,
         now,
       });
+      fault("fence:after-decide");
     }
     fault("fence:before-update");
     return Number(
@@ -1249,19 +1417,29 @@ export function readC7Log(args: {
   return { events };
 }
 
-// One read: the whole committed body, or nothing.
+export const DERIVED_TTL_MS = 24 * 60 * 60 * 1000;
+
+// One read: the whole committed body, or nothing. A derived object (a page
+// or a reset snapshot) older than 24 hours is gone at read time, whether or
+// not the sweeper has run yet.
 export function readC7Object(
   object_id: string,
   thread: { project_id: string; path: string; thread_id: string },
+  now: number = Date.now(),
 ): { bytes: number; sha256: string; body: Uint8Array } | undefined {
   const row = database()
     .prepare(
       `SELECT bytes, sha256, body FROM c7_object
-       WHERE object_id = ? AND project_id = ? AND path = ? AND thread_id = ?`,
+       WHERE object_id = ? AND project_id = ? AND path = ? AND thread_id = ?
+         AND NOT (class IN ('page', 'reset') AND created_at <= ?)`,
     )
-    .get(object_id, thread.project_id, thread.path, thread.thread_id) as
-    | { bytes: number; sha256: string; body: Uint8Array }
-    | undefined;
+    .get(
+      object_id,
+      thread.project_id,
+      thread.path,
+      thread.thread_id,
+      now - DERIVED_TTL_MS,
+    ) as { bytes: number; sha256: string; body: Uint8Array } | undefined;
   return row;
 }
 
@@ -1288,24 +1466,34 @@ export function deleteC7TurnObjects(key: C7TurnKey): number {
   });
 }
 
-const DERIVED_TTL_MS = 24 * 60 * 60 * 1000;
+const EXPIRE_BATCH = 200;
 
 // Pages and reset snapshots are derived and expire after 24 hours (§2.6).
+// The sweeper deletes in small transactions, so it never holds the write lock
+// for long; reads already refuse expired objects (readC7Object).
 export function expireC7DerivedObjects(now: number = Date.now()): number {
   const db = database();
-  return transaction(db, () => {
-    const ids = db
-      .prepare(
-        `SELECT object_id FROM c7_object
-         WHERE class IN ('page', 'reset') AND created_at < ?`,
-      )
-      .all(now - DERIVED_TTL_MS) as Array<{ object_id: string }>;
-    for (const { object_id } of ids) {
-      db.prepare(`DELETE FROM c7_object WHERE object_id = ?`).run(object_id);
-      db.prepare(`DELETE FROM c7_object_dep WHERE object_id = ?`).run(
-        object_id,
-      );
-    }
-    return ids.length;
-  });
+  let total = 0;
+  for (;;) {
+    const deleted = transaction(db, () => {
+      const ids = db
+        .prepare(
+          `SELECT object_id FROM c7_object
+           WHERE class IN ('page', 'reset') AND created_at <= ?
+           LIMIT ?`,
+        )
+        .all(now - DERIVED_TTL_MS, EXPIRE_BATCH) as Array<{
+        object_id: string;
+      }>;
+      for (const { object_id } of ids) {
+        db.prepare(`DELETE FROM c7_object WHERE object_id = ?`).run(object_id);
+        db.prepare(`DELETE FROM c7_object_dep WHERE object_id = ?`).run(
+          object_id,
+        );
+      }
+      return ids.length;
+    });
+    total += deleted;
+    if (deleted < EXPIRE_BATCH) return total;
+  }
 }

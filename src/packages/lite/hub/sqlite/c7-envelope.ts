@@ -28,13 +28,29 @@ function encode(value: unknown, where: string): string {
       return JSON.stringify(value);
     case "object": {
       if (Array.isArray(value)) {
-        return `[${value.map((x, i) => encode(x, `${where}[${i}]`)).join(",")}]`;
+        const items: string[] = [];
+        for (let i = 0; i < value.length; i++) {
+          // a sparse array's hole has no JSON form: refuse it
+          if (!(i in value)) {
+            throw new Error(`canonicalJson: array hole at ${where}[${i}]`);
+          }
+          items.push(encode(value[i], `${where}[${i}]`));
+        }
+        return `[${items.join(",")}]`;
       }
       const proto = Object.getPrototypeOf(value);
       if (proto !== Object.prototype && proto !== null) {
         throw new Error(`canonicalJson: non-plain object at ${where}`);
       }
       const record = value as Record<string, unknown>;
+      for (const key of Object.keys(record)) {
+        // a getter could give a different value on another traversal
+        if (Object.getOwnPropertyDescriptor(record, key)?.get != null) {
+          throw new Error(
+            `canonicalJson: accessor property at ${where}.${key}`,
+          );
+        }
+      }
       const keys = Object.keys(record)
         .filter((key) => record[key] !== undefined)
         .sort();
