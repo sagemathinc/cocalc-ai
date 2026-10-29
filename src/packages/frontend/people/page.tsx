@@ -309,15 +309,17 @@ export function PeoplePage() {
           }
           items={[
             {
+              // In a project, with its collaborators.
               key: "conversations",
-              label: "Conversations",
+              label: "Project Conversations",
               children: conversationsTab,
             },
             {
+              // In no project: anyone you message directly.
               key: "messages",
               label: directAttention
-                ? `Messages (${directAttention})`
-                : "Messages",
+                ? `Direct Messages (${directAttention})`
+                : "Direct Messages",
               children: (
                 <DirectMessagesTab
                   conversation_id={route.direct_id}

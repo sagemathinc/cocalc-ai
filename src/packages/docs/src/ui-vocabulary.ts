@@ -1423,7 +1423,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   },
   ...(
     [
-      ["conversations", "Conversations"],
+      ["conversations", "Project Conversations"],
       ["collaborators", "Collaborators"],
       ["invites", "Invites"],
     ] as const
@@ -1435,10 +1435,22 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         def("frontend/people/page.tsx", `key: "${key}", label: "${label}",`),
       ],
       usedIn: [
-        conventions("with the tabs Conversations, Collaborators and Invites"),
+        conventions(
+          "with the tabs Project Conversations, Direct Messages, Collaborators and Invites",
+        ),
       ],
     }),
   ),
+  {
+    id: "people.tabs.messages",
+    label: "Direct Messages",
+    anchors: [def("frontend/people/page.tsx", ': "Direct Messages",')],
+    usedIn: [
+      conventions(
+        "with the tabs Project Conversations, Direct Messages, Collaborators and Invites",
+      ),
+    ],
+  },
   {
     id: "people.invite",
     label: "Invite to projects",

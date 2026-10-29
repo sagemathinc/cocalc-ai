@@ -31,7 +31,9 @@ export function DirectNames({
   conversation,
   account_id,
 }: {
-  conversation: Pick<MemberDirectConversation, "member_ids" | "title">;
+  conversation: Pick<MemberDirectConversation, "member_ids"> & {
+    title?: string | null;
+  };
   account_id?: string;
 }) {
   const others = conversation.member_ids.filter((id) => id !== account_id);
@@ -45,6 +47,41 @@ export function DirectNames({
         </span>
       ))}
     </>
+  );
+}
+
+// Who a conversation is with (everyone but you), with small avatars: shown
+// under a group's title so it's always clear who reads it.
+export function DirectMembers({
+  conversation,
+  account_id,
+}: {
+  conversation: Pick<MemberDirectConversation, "member_ids">;
+  account_id?: string;
+}) {
+  const others = conversation.member_ids.filter((id) => id !== account_id);
+  return (
+    <span
+      aria-label="Members"
+      style={{
+        display: "inline-flex",
+        flexWrap: "wrap",
+        gap: "4px 10px",
+        alignItems: "center",
+        fontSize: 13,
+        color: UI_COLORS.secondary,
+      }}
+    >
+      {others.map((id) => (
+        <span
+          key={id}
+          style={{ display: "inline-flex", gap: 4, alignItems: "center" }}
+        >
+          <Avatar account_id={id} size={18} no_tooltip />
+          <User account_id={id} />
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -100,6 +137,22 @@ function DirectRow({
             }}
           >
             <DirectNames conversation={conversation} account_id={account_id} />
+            {conversation.title && (
+              // A group: who it's with, after its title.
+              <span
+                style={{
+                  fontWeight: 400,
+                  color: UI_COLORS.secondary,
+                  marginLeft: 6,
+                }}
+              >
+                ·{" "}
+                <DirectNames
+                  conversation={{ member_ids: conversation.member_ids }}
+                  account_id={account_id}
+                />
+              </span>
+            )}
           </span>
           <span
             style={{ fontSize: 12, color: UI_COLORS.secondary, flex: "none" }}
@@ -463,13 +516,18 @@ export function DirectConversationView({
           aria-label="Back to messages"
           onClick={onClose}
         />
-        <h2 style={{ margin: 0, fontSize: 16, flex: 1, minWidth: 0 }}>
-          {shown ? (
-            <DirectNames conversation={shown} account_id={account_id} />
-          ) : (
-            "Conversation"
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontSize: 16 }}>
+            {shown ? (
+              <DirectNames conversation={shown} account_id={account_id} />
+            ) : (
+              "Conversation"
+            )}
+          </h2>
+          {shown?.title && (
+            <DirectMembers conversation={shown} account_id={account_id} />
           )}
-        </h2>
+        </div>
         {shown?.state === "active" && (
           <Tooltip
             title={
