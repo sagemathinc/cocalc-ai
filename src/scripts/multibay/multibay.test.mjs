@@ -1185,6 +1185,78 @@ describe("cross-bay collaboration", () => {
   });
 });
 
+describe("shared-project counts for collaborators on other bays", () => {
+  // Gina (attached bay) and Hank (seed) share a project on each bay. Gina's
+  // home bay counts both in her collaborator index. Code from before
+  // collaborators on other bays counted only the local project; a later
+  // snapshot of the seed's project with the same members must still repair
+  // that count, through the normal forwarding from the owning bay.
+  let gina; // homed on the attached bay
+  let hank; // homed on the seed
+  let hankProject; // owned by the seed
+
+  const sharedCount = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT common_project_count FROM account_collaborator_index WHERE account_id=$1 AND collaborator_account_id=$2",
+         [${JSON.stringify(gina.account_id)}, ${JSON.stringify(hank.account_id)}]);
+       return rows[0]?.common_project_count ?? null;`,
+    );
+
+  before(async () => {
+    gina = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "gina",
+    });
+    hank = await createAccount(cluster, { home_bay_id: SEED, name: "hank" });
+    gina.client = await client(gina);
+    hank.client = await client(hank);
+    const ginaProject = await createProject(gina.client, "gina-local");
+    await invite(gina, hank, ginaProject);
+    hankProject = await createProject(hank.client, "hank-remote");
+    await invite(hank, gina, hankProject);
+    await eventually(() => listed(gina.client, hankProject), {
+      what: "hank's project in gina's list",
+    });
+  });
+
+  it("counts both shared projects on the account's home bay", async () => {
+    await eventually(async () => (await sharedCount()) === 2, {
+      timeoutMs: 60_000,
+      what: "two shared projects with hank in gina's collaborator index",
+    });
+  });
+
+  it("repairs a stale count when the other bay's project is forwarded again unchanged", async () => {
+    // The state an earlier rollout left: hank is gina's collaborator (through
+    // her local project), but the seed's project was never counted.
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE account_collaborator_index SET common_project_count=1 WHERE account_id=$1 AND collaborator_account_id=$2",
+         [${JSON.stringify(gina.account_id)}, ${JSON.stringify(hank.account_id)}]);`,
+    );
+    assert.equal(await sharedCount(), 1);
+    // A rename on the owning bay forwards the project, with the same
+    // members, to gina's home bay.
+    await assertCrossBayRename(
+      hank.client,
+      gina.client,
+      hankProject,
+      "hank-remote renamed",
+    );
+    await eventually(async () => (await sharedCount()) === 2, {
+      timeoutMs: 60_000,
+      what: "the stale count repaired to two",
+    });
+  });
+});
+
 describe("a project managed from the other bay", () => {
   // Every call below is made by an account homed on the bay that does NOT
   // own the project, so each one crosses the fabric to the owner.
