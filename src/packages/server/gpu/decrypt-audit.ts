@@ -295,6 +295,7 @@ async function batch(
 async function record(
   d: DecryptFacts,
   j: Extract<Judgement, { mature: true }>,
+  ownerHere: boolean,
 ): Promise<boolean> {
   const db = await getPool().connect();
   try {
@@ -304,7 +305,7 @@ async function record(
         WHERE id = $1 AND audited_at IS NULL`,
       [d.id, j.verdict],
     );
-    if (rowCount) await alertFor(db, d, j);
+    if (rowCount) await alertFor(db, d, j, ownerHere);
     await db.query("COMMIT");
     return !!rowCount;
   } catch (err) {
@@ -315,10 +316,15 @@ async function record(
   }
 }
 
+// `ownerHere`: the key owner's alerts are read on their home bay, so the
+// owner's warning is written only when that is this bay. Otherwise (a decrypt
+// away from the owner's home) the admins' alert says the owner wasn't told,
+// for an admin to follow up.
 async function alertFor(
   db: Db,
   d: DecryptFacts,
   j: Extract<Judgement, { mature: true }>,
+  ownerHere: boolean,
 ): Promise<void> {
   // what the alerts say: never key material
   const details = {
@@ -327,6 +333,7 @@ async function alertFor(
     at: new Date(d.started).toISOString(),
     bay_id: d.bay_id,
     why: j.why,
+    ...(j.verdict === "unexplained" ? { owner_notified: ownerHere } : {}),
   };
   if (j.verdict === "unexplained") {
     await raiseAdminAlert(
@@ -340,6 +347,7 @@ async function alertFor(
       },
       db,
     );
+    if (!ownerHere) return;
     await raiseAlert(
       {
         key_owner_account_id: d.key_owner_account_id,
@@ -417,7 +425,7 @@ export async function auditDecrypts(
         out.pending += 1;
         continue;
       }
-      if (await record(d, j)) {
+      if (await record(d, j, homeBay === thisBay)) {
         out.audited += 1;
         if (j.verdict === "unexplained" || j.verdict === "unresolved") {
           out.alerts += 1;

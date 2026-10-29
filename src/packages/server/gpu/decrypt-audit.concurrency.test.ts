@@ -271,6 +271,9 @@ describeRealPostgres("the GPU decrypt audit", () => {
       details: expect.objectContaining({ why: expect.any(String) }),
     });
     expect(await ownerAlert(o.credential_id)).toEqual({ severity: "warning" });
+    expect(
+      (await adminAlert(o.credential_id, "unexplained_decrypt")).details,
+    ).toMatchObject({ owner_notified: true });
   });
 
   it("flags a record used past its limit", async () => {
@@ -417,6 +420,13 @@ describeRealPostgres("the GPU decrypt audit", () => {
       async () => {},
     );
     expect(await verdict(id)).toMatchObject({ verdict: "unexplained" });
+    // the owner reads alerts on their home bay: none is written here, and
+    // the admins' alert says so
+    expect(await ownerAlert(o.credential_id)).toBe(undefined);
+    expect(await adminAlert(o.credential_id, "unexplained_decrypt")).toEqual({
+      severity: "critical",
+      details: expect.objectContaining({ owner_notified: false }),
+    });
   });
 
   it("leaves a decrypt pending while the owner's home bay can't be looked up", async () => {
