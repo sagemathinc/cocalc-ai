@@ -4,7 +4,8 @@
  */
 
 import { Badge } from "antd";
-import { CSSProperties, useRef } from "react";
+import { useRef } from "react";
+import type { CSSProperties } from "react";
 import { useUnreadConversationCount } from "./use-conversations";
 
 // Read by screen readers, not shown.
