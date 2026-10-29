@@ -231,6 +231,46 @@ test("switching accounts announces nothing false while the new list loads", asyn
   expect(screen.getByRole("status").textContent).toBe("");
 });
 
+// Every state Status rendered, including the first, before any effect.
+const rendered: string[] = [];
+function Status() {
+  const { conversations, loading, error } = useConversations(true);
+  const state = `${loading ? "loading" : "loaded"}:${conversations.length}:${error ?? "ok"}`;
+  rendered.push(state);
+  return <span>{state}</span>;
+}
+
+test("a new account doesn't inherit the previous account's error", async () => {
+  mockList.mockRejectedValue(new Error("bay down"));
+  const view = render(<Status />);
+  await flush();
+  expect(screen.getByText("loaded:0:Error: bay down")).toBeTruthy();
+  mockAccount = another;
+  mockList.mockReturnValue(deferred<any>().promise);
+  view.rerender(<Status />);
+  await flush();
+  expect(screen.getByText("loading:0:ok")).toBeTruthy();
+});
+
+test("after everyone unmounts, a later mount loads again instead of showing the old list", async () => {
+  mockList.mockResolvedValue({
+    conversations: [conv("c1")],
+    unavailable_bays: 0,
+  });
+  const first = render(<Status />);
+  await flush();
+  expect(screen.getByText("loaded:1:ok")).toBeTruthy();
+  first.unmount();
+  // Same account, later; the list hasn't arrived yet.
+  mockList.mockReturnValue(deferred<any>().promise);
+  rendered.length = 0;
+  render(<Status />);
+  await flush();
+  // Never the old list as loaded, not even on the first render.
+  expect(rendered).not.toContain("loaded:1:ok");
+  expect(screen.getByText("loading:0:ok")).toBeTruthy();
+});
+
 test("a consumer that mounts while the list changes still sees the change", async () => {
   mockList.mockResolvedValue({
     conversations: [conv("c1")],

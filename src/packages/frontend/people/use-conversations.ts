@@ -29,8 +29,16 @@ type Snapshot = Omit<ConversationsState, "refresh"> & {
 
 const NONE: ListedConversation[] = [];
 
+// Every field, so that starting over (it is merged into the snapshot) also
+// clears the previous account's error.
 function empty(account_id?: string): Snapshot {
-  return { conversations: NONE, loading: true, unavailableBays: 0, account_id };
+  return {
+    conversations: NONE,
+    loading: true,
+    error: undefined,
+    unavailableBays: 0,
+    account_id,
+  };
 }
 
 // One conversation list for the whole page: the People page, its sidebar and
@@ -152,7 +160,12 @@ function acquire(account_id: string): () => void {
       return;
     }
     users.delete(account_id);
-    if (watching?.account_id === account_id) stopWatching();
+    if (watching?.account_id === account_id) {
+      stopWatching();
+      // Nobody is watching: the list would only go stale. The next user
+      // starts over, loading.
+      update(empty());
+    }
   };
 }
 
