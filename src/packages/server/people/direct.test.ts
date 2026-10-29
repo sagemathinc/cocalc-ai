@@ -764,10 +764,10 @@ describeDb("direct conversations", () => {
       conversation_id: started.conversation_id,
       read_through: forBea.last_activity,
     });
-    await directHubApi.setDirectMuted({
+    await directHubApi.setDirectState({
       account_id: bea,
       conversation_id: started.conversation_id,
-      muted: true,
+      patch: { muted: true },
     });
     [forBea] = await listFor(bea);
     expect(forBea.last_read).toBe(forBea.last_activity);
@@ -781,5 +781,125 @@ describeDb("direct conversations", () => {
     expect(notifiedTo(bea)).toBe(0);
     [forBea] = await listFor(bea);
     expect(forBea.preview).toBe("Two");
+  });
+
+  test("pin and archive are each member's own, and survive new messages", async () => {
+    await shareProject();
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+      body: "One",
+    });
+    const conversation_id = started.conversation_id;
+    await directHubApi.setDirectState({
+      account_id: bea,
+      conversation_id,
+      patch: { pinned: true, archived_through: Date.now() + 3_600_000 },
+    });
+    let [forBea] = await listFor(bea);
+    expect(forBea.pinned).toBe(true);
+    // Archiving can't reach into the future: at most now.
+    expect(forBea.archived_through).not.toBeNull();
+    expect(forBea.archived_through!).toBeLessThanOrEqual(Date.now());
+    const archivedThrough = forBea.archived_through;
+    // A new message (a new snapshot from the owner) keeps both.
+    await directHubApi.sendDirect({
+      account_id: ada,
+      conversation_id,
+      body: "Two",
+    });
+    [forBea] = await listFor(bea);
+    expect(forBea.pinned).toBe(true);
+    expect(forBea.archived_through).toBe(archivedThrough);
+    expect(forBea.last_activity).toBeGreaterThan(archivedThrough!);
+    // Archive hides nothing for anyone else, and deletes nothing.
+    const [forAda] = await listFor(ada);
+    expect(forAda.pinned).toBe(false);
+    expect(forAda.archived_through).toBeNull();
+    const { messages } = await directHubApi.getDirect({
+      account_id: bea,
+      conversation_id,
+    });
+    expect(messages.map((m) => m.body)).toEqual(["One", "Two"]);
+    // Show everything again; unknown or ill-typed settings are refused.
+    await directHubApi.setDirectState({
+      account_id: bea,
+      conversation_id,
+      patch: { archived_through: null },
+    });
+    [forBea] = await listFor(bea);
+    expect(forBea.archived_through).toBeNull();
+    await expect(
+      directHubApi.setDirectState({
+        account_id: bea,
+        conversation_id,
+        patch: { pinned: "yes" } as any,
+      }),
+    ).rejects.toThrow("invalid pinned");
+    // Only members.
+    await expect(
+      directHubApi.setDirectState({
+        account_id: cy,
+        conversation_id,
+        patch: { pinned: true },
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("a sender deletes their own message for everyone; nobody else can", async () => {
+    await shareProject();
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+      body: "Oops, wrong paste",
+    });
+    const conversation_id = started.conversation_id;
+    const reply = await directHubApi.sendDirect({
+      account_id: bea,
+      conversation_id,
+      body: "What was that?",
+    });
+    const first = (
+      await directHubApi.getDirect({ account_id: ada, conversation_id })
+    ).messages[0];
+    // Not yours: refused, for the other member too.
+    await expect(
+      directHubApi.deleteDirectMessage({
+        account_id: bea,
+        conversation_id,
+        message_id: first.message_id,
+      }),
+    ).rejects.toThrow("message not found");
+    await directHubApi.deleteDirectMessage({
+      account_id: ada,
+      conversation_id,
+      message_id: first.message_id,
+    });
+    const { messages } = await directHubApi.getDirect({
+      account_id: bea,
+      conversation_id,
+    });
+    expect(messages[0]).toMatchObject({
+      message_id: first.message_id,
+      body: "",
+      deleted: true,
+    });
+    expect(messages[1].body).toBe("What was that?");
+    // Deleting the latest message shows the one before it in the list.
+    await directHubApi.deleteDirectMessage({
+      account_id: bea,
+      conversation_id,
+      message_id: reply.message_id,
+    });
+    const [forAda] = await listFor(ada);
+    expect(forAda.preview).toBe("");
+    // Once deleted, it can't be deleted again.
+    await expect(
+      directHubApi.deleteDirectMessage({
+        account_id: ada,
+        conversation_id,
+        message_id: first.message_id,
+      }),
+    ).rejects.toThrow("message not found");
   });
 });

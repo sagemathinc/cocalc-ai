@@ -13,6 +13,7 @@ import type {
   DirectConversation,
   DirectMemberState,
   DirectMessage,
+  DirectPersonalPatch,
   DirectResponse,
   ListedDirectConversation,
 } from "@cocalc/util/direct-conversations";
@@ -50,6 +51,12 @@ export interface InterBayDirectApi {
     conversation_id: string;
     action: DirectResponse;
   }): Promise<DirectConversation>;
+  // The sender deletes their own message, for everyone.
+  deleteMessage(opts: {
+    account_id: string;
+    conversation_id: string;
+    message_id: string;
+  }): Promise<void>;
   // Every member's standing, for the trusted caller deciding whether to reuse
   // a conversation (never passed to a browser).
   standings(opts: {
@@ -91,10 +98,10 @@ export interface InterBayDirectApi {
     conversation_id: string;
     read_through: number;
   }): Promise<void>;
-  setMuted(opts: {
+  setPersonal(opts: {
     account_id: string;
     conversation_id: string;
-    muted: boolean;
+    patch: DirectPersonalPatch;
   }): Promise<void>;
 }
 

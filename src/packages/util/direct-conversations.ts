@@ -72,6 +72,18 @@ export interface ListedDirectConversation extends DirectConversation {
   state: DirectMemberState;
   last_read: number | null;
   muted: boolean;
+  pinned: boolean;
+  // Archived: messages up to this time are hidden from this member (not
+  // deleted; they can show them again).
+  archived_through: number | null;
+}
+
+// A member's own settings for a conversation.
+export interface DirectPersonalPatch {
+  muted?: boolean;
+  pinned?: boolean;
+  // A time to archive through (now, normally), or null to show everything.
+  archived_through?: number | null;
 }
 
 // What a member's browser gets: their own standing only. Others' standings
@@ -88,6 +100,8 @@ export interface MemberDirectConversation {
   state: DirectMemberState;
   last_read: number | null;
   muted: boolean;
+  pinned: boolean;
+  archived_through: number | null;
 }
 
 export function memberView(
@@ -105,6 +119,8 @@ export function memberView(
     state: c.state,
     last_read: c.last_read,
     muted: c.muted,
+    pinned: c.pinned,
+    archived_through: c.archived_through,
   };
 }
 
@@ -113,7 +129,9 @@ export interface DirectMessage {
   conversation_id: string;
   sender_id: string;
   sent: number;
+  // Empty once deleted by its sender.
   body: string;
+  deleted?: boolean;
 }
 
 export function normalizeDirectBody(body: unknown): string {

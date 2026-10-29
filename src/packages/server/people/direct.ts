@@ -45,7 +45,8 @@ import {
   recordDirectFanoutFailure,
   recordDirectNotified,
   setDirectMemberState,
-  setDirectMuted,
+  deleteDirectMessage,
+  setDirectPersonal,
   unblockDirectSender,
   upsertDirectIndex,
   type DirectFanoutRow,
@@ -81,6 +82,7 @@ import {
   type DirectConversation,
   type DirectMemberState,
   type DirectMessage,
+  type DirectPersonalPatch,
   type DirectResponse,
   type ListedDirectConversation,
   type MemberDirectConversation,
@@ -337,6 +339,25 @@ async function resolveDirectUsername(value: unknown): Promise<string | null> {
   }
 }
 
+// Only known fields, with the right types (it comes from a browser).
+function normalizeDirectPersonalPatch(patch: unknown): DirectPersonalPatch {
+  const p = (patch ?? {}) as Record<string, unknown>;
+  const result: DirectPersonalPatch = {};
+  for (const key of ["muted", "pinned"] as const) {
+    if (p[key] === undefined) continue;
+    if (typeof p[key] !== "boolean") throw Error(`invalid ${key}`);
+    result[key] = p[key];
+  }
+  if (p.archived_through !== undefined) {
+    const value = p.archived_through;
+    if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) {
+      throw Error("invalid archived_through");
+    }
+    result.archived_through = value;
+  }
+  return result;
+}
+
 export const directControl: InterBayDirectApi = {
   // ---- owner ----
   async create({
@@ -468,6 +489,19 @@ export const directControl: InterBayDirectApi = {
     return conversation;
   },
 
+  async deleteMessage({ account_id, conversation_id, message_id }) {
+    requireUuid(message_id, "message_id");
+    // A member who can still see it; only the sender's own message matches.
+    await memberRecord(account_id, conversation_id);
+    await deleteDirectMessage({
+      conversation_id,
+      message_id,
+      sender_id: account_id,
+      owner_bay_id: bay(),
+    });
+    await deliverNow(conversation_id);
+  },
+
   async standings({ account_id, conversation_id }) {
     const { conversation } = await memberRecord(account_id, conversation_id, {
       allowLeft: true,
@@ -597,6 +631,8 @@ export const directControl: InterBayDirectApi = {
         state: conversation.member_states[account_id] ?? "active",
         last_read: null,
         muted: false,
+        pinned: false,
+        archived_through: null,
       }
     );
   },
@@ -653,9 +689,14 @@ export const directControl: InterBayDirectApi = {
     await markDirectRead({ account_id, conversation_id, read_through });
   },
 
-  async setMuted({ account_id, conversation_id, muted }) {
+  async setPersonal({ account_id, conversation_id, patch }) {
     await assertHome(account_id);
-    await setDirectMuted({ account_id, conversation_id, muted: !!muted });
+    requireUuid(conversation_id, "conversation_id");
+    await setDirectPersonal({
+      account_id,
+      conversation_id,
+      patch: normalizeDirectPersonalPatch(patch),
+    });
   },
 };
 
@@ -796,18 +837,39 @@ export const directHubApi = {
     ).markRead({ account_id: account_id!, conversation_id, read_through });
   },
 
-  async setDirectMuted({
+  // Your own settings: mute, pin, archive (archived_through: a time, or
+  // null to show everything again).
+  async setDirectState({
     account_id,
     conversation_id,
-    muted,
+    patch,
   }: {
     account_id?: string;
     conversation_id: string;
-    muted: boolean;
-  }) {
+    patch: DirectPersonalPatch;
+  }): Promise<void> {
+    await listedOrThrow(account_id!, conversation_id);
     await (
       await home(account_id!)
-    ).setMuted({ account_id: account_id!, conversation_id, muted });
+    ).setPersonal({ account_id: account_id!, conversation_id, patch });
+  },
+
+  // Delete a message you sent, for everyone.
+  async deleteDirectMessage({
+    account_id,
+    conversation_id,
+    message_id,
+  }: {
+    account_id?: string;
+    conversation_id: string;
+    message_id: string;
+  }): Promise<void> {
+    const listed = await listedOrThrow(account_id!, conversation_id);
+    await owner(listed.owner_bay_id).deleteMessage({
+      account_id: account_id!,
+      conversation_id,
+      message_id,
+    });
   },
 
   // Someone to message by their exact username (usernames are public, in

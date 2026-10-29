@@ -68,7 +68,11 @@ Table({
     conversation_id: { type: "uuid", desc: "Conversation it belongs to." },
     sender_id: { type: "uuid", desc: "Account that sent it." },
     sent: { type: "timestamp", desc: "When it was sent." },
-    body: { type: "string", desc: "Markdown, bounded." },
+    body: { type: "string", desc: "Markdown, bounded; empty once deleted." },
+    deleted: {
+      type: "timestamp",
+      desc: "When its sender deleted it (for everyone); the body is cleared.",
+    },
   },
 });
 
@@ -146,6 +150,11 @@ Table({
       desc: "Activity time this member has read through.",
     },
     muted: { type: "boolean", desc: "This member muted it." },
+    pinned: { type: "boolean", desc: "This member pinned it." },
+    archived_through: {
+      type: "timestamp",
+      desc: "This member archived messages up to this time: hidden from them, not deleted.",
+    },
     revision: {
       type: "integer",
       desc: "Owning bay revision of this copy; older updates are ignored.",

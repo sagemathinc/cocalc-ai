@@ -15,6 +15,7 @@ import type { PoolClient } from "@cocalc/database/pool";
 import {
   DIRECT_MESSAGES_PAGE,
   directPreview,
+  type DirectPersonalPatch,
   type DirectConversation,
   type DirectMemberState,
   type DirectMessage,
@@ -50,9 +51,12 @@ function toMessage(row: any): DirectMessage {
     conversation_id: row.conversation_id,
     sender_id: row.sender_id,
     sent: ms(row.sent),
-    body: row.body,
+    body: row.deleted == null ? row.body : "",
+    ...(row.deleted == null ? {} : { deleted: true }),
   };
 }
+
+const MESSAGE_COLUMNS = "message_id, conversation_id, sender_id, sent, body, deleted";
 
 async function inTransaction<T>(f: (db: PoolClient) => Promise<T>): Promise<T> {
   const client = await getPool().connect();
@@ -209,7 +213,7 @@ async function insertMessage(
   const { rows: messages } = await db.query(
     `INSERT INTO direct_messages (message_id, conversation_id, sender_id, sent, body)
      VALUES ($1, $2, $3, clock_timestamp(), $4)
-     RETURNING message_id, conversation_id, sender_id, sent, body`,
+     RETURNING ${MESSAGE_COLUMNS}`,
     [randomUUID(), conversation_id, sender_id, body],
   );
   const message = toMessage(messages[0]);
@@ -322,7 +326,7 @@ export async function getDirectMessage(
   message_id: string,
 ): Promise<DirectMessage | null> {
   const { rows } = await getPool().query(
-    `SELECT message_id, conversation_id, sender_id, sent, body
+    `SELECT ${MESSAGE_COLUMNS}
      FROM direct_messages WHERE message_id = $1`,
     [message_id],
   );
@@ -340,7 +344,7 @@ export async function listDirectMessages({
   limit?: number;
 }): Promise<DirectMessage[]> {
   const { rows } = await getPool().query(
-    `SELECT message_id, conversation_id, sender_id, sent, body
+    `SELECT ${MESSAGE_COLUMNS}
      FROM direct_messages
      WHERE conversation_id = $1 AND ($2::timestamp IS NULL OR sent < $2)
      ORDER BY sent DESC
@@ -447,7 +451,8 @@ export async function recordDirectFanoutFailure({
 
 const INDEX_COLUMNS = `conversation_id, owner_bay_id, member_ids, member_states,
   created_by, created, last_activity, last_sender_id, preview, title,
-  revision, last_read, muted, notified_message_id, request_notified`;
+  revision, last_read, muted, pinned, archived_through, notified_message_id,
+  request_notified`;
 
 export interface DirectIndexRow extends ListedDirectConversation {
   notified_message_id: string | null;
@@ -461,6 +466,9 @@ function toListed(row: any, account_id: string): DirectIndexRow {
     state: conversation.member_states[account_id] ?? "active",
     last_read: row.last_read == null ? null : ms(row.last_read),
     muted: !!row.muted,
+    pinned: !!row.pinned,
+    archived_through:
+      row.archived_through == null ? null : ms(row.archived_through),
     notified_message_id: row.notified_message_id ?? null,
     request_notified: !!row.request_notified,
   };
@@ -592,20 +600,92 @@ export async function markDirectRead({
   );
 }
 
-export async function setDirectMuted({
+// A member's own settings (mute, pin, archive), on their home bay. Only the
+// given fields change. Archiving can't reach into the future.
+export async function setDirectPersonal({
   account_id,
   conversation_id,
-  muted,
+  patch,
 }: {
   account_id: string;
   conversation_id: string;
-  muted: boolean;
+  patch: DirectPersonalPatch;
 }): Promise<void> {
+  const archive = patch.archived_through;
   await getPool().query(
-    `UPDATE account_direct_conversations SET muted = $3, updated = NOW()
+    `UPDATE account_direct_conversations SET
+       muted = COALESCE($3, muted),
+       pinned = COALESCE($4, pinned),
+       archived_through = CASE
+         WHEN NOT $5::boolean THEN archived_through
+         -- LEAST ignores NULL, so null (show everything) is handled first.
+         WHEN $6::timestamp IS NULL THEN NULL
+         ELSE LEAST($6::timestamp, NOW()) END,
+       updated = NOW()
      WHERE account_id = $1 AND conversation_id = $2`,
-    [account_id, conversation_id, muted],
+    [
+      account_id,
+      conversation_id,
+      patch.muted ?? null,
+      patch.pinned ?? null,
+      archive !== undefined,
+      archive == null ? null : new Date(archive),
+    ],
   );
+}
+
+// The sender deletes their own message for everyone: its text is cleared and
+// a placeholder stays. If it was the latest, the preview shows the latest
+// message that remains.
+export async function deleteDirectMessage({
+  conversation_id,
+  message_id,
+  sender_id,
+  owner_bay_id,
+}: {
+  conversation_id: string;
+  message_id: string;
+  sender_id: string;
+  owner_bay_id: string;
+}): Promise<DirectConversation> {
+  return await inTransaction(async (db) => {
+    const { rows: locked } = await db.query(
+      `SELECT ${COLUMNS} FROM direct_conversations
+       WHERE conversation_id = $1 FOR UPDATE`,
+      [conversation_id],
+    );
+    if (locked[0] == null) throw Error("conversation not found");
+    const { rows: deleted } = await db.query(
+      `UPDATE direct_messages SET body = '', deleted = NOW()
+       WHERE message_id = $1 AND conversation_id = $2 AND sender_id = $3
+         AND deleted IS NULL
+       RETURNING message_id`,
+      [message_id, conversation_id, sender_id],
+    );
+    if (deleted[0] == null) throw Error("message not found");
+    const { rows: latest } = await db.query(
+      `SELECT sender_id, body FROM direct_messages
+       WHERE conversation_id = $1 AND deleted IS NULL
+       ORDER BY sent DESC LIMIT 1`,
+      [conversation_id],
+    );
+    const { rows } = await db.query(
+      `UPDATE direct_conversations SET
+         preview = $2,
+         last_sender_id = $3,
+         revision = revision + 1
+       WHERE conversation_id = $1
+       RETURNING ${COLUMNS}`,
+      [
+        conversation_id,
+        latest[0] == null ? "" : directPreview(latest[0].body),
+        latest[0]?.sender_id ?? null,
+      ],
+    );
+    const conversation = toConversation(rows[0], owner_bay_id);
+    await queueFanout(db, conversation, null);
+    return conversation;
+  });
 }
 
 export async function blockDirectSender(

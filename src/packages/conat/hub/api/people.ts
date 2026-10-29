@@ -5,6 +5,7 @@
 
 import type {
   DirectMessage,
+  DirectPersonalPatch,
   DirectResponse,
   MemberDirectConversation,
 } from "@cocalc/util/direct-conversations";
@@ -77,10 +78,18 @@ export interface PeopleApi {
     conversation_id: string;
     read_through: number;
   }): Promise<void>;
-  setDirectMuted(opts: {
+  // Your own settings: mute, pin, archive (archived_through: a time, or
+  // null to show everything again).
+  setDirectState(opts: {
     account_id?: string;
     conversation_id: string;
-    muted: boolean;
+    patch: DirectPersonalPatch;
+  }): Promise<void>;
+  // Delete a message you sent, for everyone.
+  deleteDirectMessage(opts: {
+    account_id?: string;
+    conversation_id: string;
+    message_id: string;
   }): Promise<void>;
   // Someone to message by exact username (never an account id or email), or
   // null. Start the conversation with the username.
@@ -189,7 +198,8 @@ export const people = {
   sendDirect: authFirstRequireAccount,
   respondDirect: authFirstRequireAccount,
   markDirectRead: authFirstRequireAccount,
-  setDirectMuted: authFirstRequireAccount,
+  setDirectState: authFirstRequireAccount,
+  deleteDirectMessage: authFirstRequireAccount,
   findDirectRecipient: authFirstRequireAccount,
   listConversations: authFirstRequireAccount,
   getConversation: authFirstRequireAccount,
