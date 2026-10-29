@@ -9,6 +9,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 jest.mock("./runtime-maintenance", () => ({
   syntheticProbeOverdueAfterMs: () => 45 * 60_000,
+  syntheticProbeClaimTimeoutMs: () => 15 * 60_000,
 }));
 
 import {
@@ -68,15 +69,42 @@ describe("syntheticSmokeHealth", () => {
     expect(health.summary).toContain("older than 1 hour");
   });
 
-  it("counts a probe that is running now as current", () => {
+  it("lets a probe that is running now stand for the previous result", () => {
+    const running = (claimedMinutesAgo: number, extra = {}) => ({
+      status: "running",
+      claimed_at: minutesAgo(claimedMinutesAgo),
+      passed_checks: 7,
+      consecutive_failures: 0,
+      ...extra,
+    });
+    expect(
+      syntheticSmokeHealth({ hosts: [host("oceania-1", running(3))], now })
+        .level,
+    ).toBe("healthy");
+    // A retry after a failure is still a failure until it passes.
+    const retry = syntheticSmokeHealth({
+      hosts: [host("oceania-1", running(3, { consecutive_failures: 2 }))],
+      now,
+    });
+    expect(retry.level).toBe("critical");
+    expect(retry.details[0]).toMatch(
+      /failed 2 times in a row; a retry is running$/,
+    );
+    // A host's first probe has no passing result to stand for.
     expect(
       syntheticSmokeHealth({
-        hosts: [
-          host("oceania-1", { status: "running", claimed_at: minutesAgo(3) }),
-        ],
+        hosts: [host("new-host", running(3, { passed_checks: 0 }))],
         now,
       }).level,
-    ).toBe("healthy");
+    ).toBe("warning");
+    // Past the claim timeout (15 min) the claim is stale, well before the
+    // 45-minute pass window.
+    const stale = syntheticSmokeHealth({
+      hosts: [host("oceania-1", running(20))],
+      now,
+    });
+    expect(stale.level).toBe("warning");
+    expect(stale.details[0]).toMatch(/running for 20 min$/);
   });
 
   it("is healthy with a recent admin smoke and keeps its steps", () => {

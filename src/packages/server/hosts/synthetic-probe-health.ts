@@ -18,7 +18,10 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { syntheticProbeOverdueAfterMs } from "./runtime-maintenance";
+import {
+  syntheticProbeClaimTimeoutMs,
+  syntheticProbeOverdueAfterMs,
+} from "./runtime-maintenance";
 
 // An admin smoke run counts as current for this long.
 export const ADMIN_SMOKE_FRESH_MS = 60 * 60 * 1000;
@@ -73,6 +76,7 @@ function hostProbeState(
   row: HostSyntheticProbeRow,
   now: number,
   overdueAfterMs: number,
+  claimTimeoutMs: number,
 ): HostProbeState {
   const probe = row.metadata?.runtime_synthetic_probe ?? {};
   const status = `${probe.status ?? ""}`.trim();
@@ -102,18 +106,34 @@ function hostProbeState(
     };
   }
   if (status === "running") {
-    // (a probe in progress replaces the previous result)
+    // A probe in progress replaced the previous result but kept its counters:
+    // it stands for the previous outcome while it runs (a retry after
+    // failures is still failing), and for nothing once its claim is stale
+    // (runtime-maintenance's claim timeout).
     const claimedAt = timestampMs(probe.claimed_at);
-    if (claimedAt != null && now - claimedAt <= overdueAfterMs) {
-      return { kind: "passing" };
+    if (claimedAt == null || now - claimedAt > claimTimeoutMs) {
+      return {
+        kind: "overdue",
+        detail:
+          claimedAt == null
+            ? "a probe is running with no start time"
+            : `a probe has been running for ${minutes(now - claimedAt)}`,
+      };
     }
-    return {
-      kind: "overdue",
-      detail:
-        claimedAt == null
-          ? "a probe is running with no start time"
-          : `a probe has been running for ${minutes(now - claimedAt)}`,
-    };
+    const failures = Number(probe.consecutive_failures) || 0;
+    if (failures > 0) {
+      return {
+        kind: "failing",
+        detail: `failed ${failures} time${failures === 1 ? "" : "s"} in a row; a retry is running`,
+      };
+    }
+    if (!(Number(probe.passed_checks) > 0)) {
+      return {
+        kind: "overdue",
+        detail: "its first synthetic probe is running",
+      };
+    }
+    return { kind: "passing" };
   }
   const checkedAt = timestampMs(probe.checked_at);
   if (status === "passed" && checkedAt != null) {
@@ -141,6 +161,7 @@ export function syntheticSmokeHealth({
   hostsError,
   now = Date.now(),
   overdueAfterMs = syntheticProbeOverdueAfterMs(),
+  claimTimeoutMs = syntheticProbeClaimTimeoutMs(),
 }: {
   smoke?: LaunchSmokeResult | null;
   smokeError?: unknown;
@@ -148,6 +169,7 @@ export function syntheticSmokeHealth({
   hostsError?: unknown;
   now?: number;
   overdueAfterMs?: number;
+  claimTimeoutMs?: number;
 }): { level: LaunchHealthLevel; summary: string; details: string[] } {
   const details: string[] = [];
   const parts: string[] = [];
@@ -184,7 +206,7 @@ export function syntheticSmokeHealth({
     details.push(`Host probes: unable to read: ${hostsError}`);
   } else {
     for (const row of hosts ?? []) {
-      const state = hostProbeState(row, now, overdueAfterMs);
+      const state = hostProbeState(row, now, overdueAfterMs, claimTimeoutMs);
       if (state.kind === "passing") passing += 1;
       else if (state.kind === "failing")
         failing.push(`${hostLabel(row)}: ${state.detail}`);
