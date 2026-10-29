@@ -37,6 +37,13 @@ import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
 const logger = getLogger("launchpad:cloudflared-systemd");
 const execFile = promisify(execFileCb);
 
+// How long the hub lets cocalc-bay-cloudflared-ctl restart-all run. With two
+// replicas it restarts at most three times (a replica restarted before replica
+// 1 is restarted again after it), each waiting up to the units'
+// TimeoutStopSec (20 s) to stop and the helper's READY_TIMEOUT_S (60 s) for a
+// ready connection; plus slack for starting.
+export const CLOUDFLARED_ROLLING_RESTART_TIMEOUT_S = 3 * (20 + 60 + 10) + 30;
+
 type CloudflaredState = {
   tunnel: CloudflareTunnel;
   configPath: string;

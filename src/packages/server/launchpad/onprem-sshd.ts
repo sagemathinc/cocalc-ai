@@ -21,6 +21,7 @@ import { which } from "@cocalc/backend/which";
 import ssh from "micro-key-producer/ssh.js";
 import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
 import { ensureLocalCloudflaredBinary } from "./cloudflared-installer";
+import { CLOUDFLARED_ROLLING_RESTART_TIMEOUT_S } from "./cloudflared-systemd";
 import {
   ensureCloudflareTunnelForHub,
   ensureCloudflareTunnelHostname,
@@ -194,8 +195,7 @@ async function restartSystemdCloudflared(): Promise<{
         SYSTEMD_CLOUDFLARED_CTL,
         rolling ? "restart-all" : "restart",
       ],
-      // (each replica may take up to 60 s to become ready)
-      timeout: rolling ? 150 : 30,
+      timeout: rolling ? CLOUDFLARED_ROLLING_RESTART_TIMEOUT_S : 30,
       err_on_exit: false,
     });
     if (exit_code !== 0) {

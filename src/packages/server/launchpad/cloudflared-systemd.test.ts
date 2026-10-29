@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
+  CLOUDFLARED_ROLLING_RESTART_TIMEOUT_S,
   cloudflaredReplica,
   cloudflaredTunnelArgs,
   primaryTunnelRunning,
@@ -84,5 +87,34 @@ describe("cloudflared replicas", () => {
       "/c/config.yml",
       "run",
     ]);
+  });
+});
+
+describe("cloudflared rolling restart timeout", () => {
+  it("covers restart-all's worst case: three restarts, each stopping and becoming ready", () => {
+    const bay = join(__dirname, "../../../scripts/bay-systemd");
+    const ready = Number(
+      /^READY_TIMEOUT_S=(\d+)$/m.exec(
+        readFileSync(join(bay, "sbin/cocalc-bay-cloudflared-ctl"), "utf8"),
+      )?.[1],
+    );
+    const stop = Math.max(
+      ...[
+        "cocalc-bay-cloudflared.service",
+        "cocalc-bay-cloudflared-2.service",
+      ].map((unit) =>
+        Number(
+          /^TimeoutStopSec=(\d+)$/m.exec(
+            readFileSync(join(bay, "systemd", unit), "utf8"),
+          )?.[1],
+        ),
+      ),
+    );
+    expect(ready).toBeGreaterThan(0);
+    expect(stop).toBeGreaterThan(0);
+    // A replica rolled before replica 1, replica 1, then that replica again.
+    expect(CLOUDFLARED_ROLLING_RESTART_TIMEOUT_S).toBeGreaterThanOrEqual(
+      3 * (stop + ready),
+    );
   });
 });
