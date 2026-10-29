@@ -5577,6 +5577,11 @@ OVERSIZED_SCAN_MAX_SUBPATHS = 1000
 OVERSIZED_SCAN_MAX_RUNTIME_SECONDS = 10 * 60
 # One open directory per level: well below the open-file limit.
 OVERSIZED_SCAN_MAX_DEPTH = 512
+# scan-changed-since: whether anything in a project changed after a time (its
+# latest snapshot). The caller only needs to know whether anything besides its
+# own runtime files changed, so a few paths are enough.
+CHANGED_SINCE_MAX_PATHS = 64
+CHANGED_SINCE_MAX_RUNTIME_SECONDS = 60
 # The unprivileged caller cannot signal this root-owned helper, so its own
 # timeout cannot stop Rustic. Supervise every child here instead.
 RUSTIC_MAX_RUNTIME_SECONDS = 12 * 60 * 60
@@ -6125,6 +6130,150 @@ def scan_oversized_files(
     return report
 
 
+# The change walk, run by scan_changed_since like the oversized-file walk (the
+# tree as working directory, directories opened relative to their parent
+# without following symlinks, one filesystem). It prints the path ("." for
+# the top) of each entry whose ctime is at or after the given time, each
+# followed by \\0, and stops after the given number. ctime moves with every
+# write, chmod, rename and link and, on the parent directory, every delete;
+# an unprivileged process cannot set it. The top-level .snapshots directory
+# only holds the project's snapshots, so managing them is not a change.
+# Arguments: time in ns, maximum paths, maximum depth.
+CHANGED_SINCE_WALK_PROGRAM = """
+import os, sys
+since_ns, max_paths, max_depth = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+out = sys.stdout.buffer
+# O_NOATIME: reading a directory must not write its access time, which on a
+# relatime mount would change the subvolume the caller checks is unchanged.
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NOATIME
+found = 0
+def report(path):
+    global found
+    out.write(path + b"\\0")
+    found += 1
+    if found >= max_paths:
+        out.flush()
+        sys.exit(0)
+try:
+    root = os.open(".", flags)
+    info = os.fstat(root)
+    root_dev = info.st_dev
+    if info.st_ctime_ns >= since_ns:
+        report(b".")
+    stack = [(root, os.scandir(root), b"")]
+    while stack:
+        fd, entries, rel = stack[-1]
+        entry = next(entries, None)
+        if entry is None:
+            entries.close()
+            os.close(fd)
+            stack.pop()
+            continue
+        if not rel and entry.name == ".snapshots":
+            continue
+        name = os.fsencode(entry.name)
+        try:
+            st = entry.stat(follow_symlinks=False)
+            if st.st_ctime_ns >= since_ns:
+                report(rel + name)
+            if not entry.is_dir(follow_symlinks=False) or st.st_dev != root_dev:
+                continue
+            if len(stack) >= max_depth:
+                sys.exit("directory tree too deep to scan for changes")
+            child = os.open(entry.name, flags, dir_fd=fd)
+        except FileNotFoundError:
+            continue  # removed since it was listed: its directory changed
+        stack.append((child, os.scandir(child), rel + name + b"/"))
+    out.flush()
+except OSError as err:
+    sys.exit(f"change scan: {err.strerror}")
+"""
+
+
+def scan_changed_since(datafd, *, since_ns, deadline):
+    """Up to CHANGED_SINCE_MAX_PATHS paths changed at or after since_ns,
+    without reading any file."""
+    # Isolated: the working directory is the user's tree, which must not
+    # supply modules to a root Python.
+    args = [
+        sys.executable or "/usr/bin/python3",
+        "-I",
+        "-S",
+        "-c",
+        CHANGED_SINCE_WALK_PROGRAM,
+        str(since_ns),
+        str(CHANGED_SINCE_MAX_PATHS),
+        str(OVERSIZED_SCAN_MAX_DEPTH),
+    ]
+    paths = []
+    pending = bytearray()
+
+    def on_stdout(chunk):
+        pending.extend(chunk)
+        while True:
+            end = pending.find(b"\0")
+            if end < 0:
+                break
+            paths.append(os.fsdecode(bytes(pending[:end])))
+            del pending[: end + 1]
+        if (
+            len(paths) > CHANGED_SINCE_MAX_PATHS
+            or len(pending) > OVERSIZED_FILES_MAX_RECORD_BYTES
+        ):
+            fail("change scan produced unbounded output")
+
+    status = run_supervised(
+        args,
+        deadline=deadline,
+        on_stdout=on_stdout,
+        cwd=f"/proc/self/fd/{datafd}",
+        env={"LANG": "C", "PATH": "/usr/bin:/bin"},
+        pass_fds=(datafd,),
+    )
+    if status != 0 or pending:
+        fail("unable to scan for changes")
+    return {
+        "since_ns": since_ns,
+        "paths": paths,
+        "truncated": len(paths) >= CHANGED_SINCE_MAX_PATHS,
+    }
+
+
+def run_scan_changed_since(argv, allowed_roots=ALLOWED_ROOTS):
+    """Print, as JSON, project-relative paths changed at or after --since-ns."""
+    values = {}
+    i = 1
+    while i < len(argv):
+        option = argv[i]
+        if option not in ("--root", "--path", "--since-ns") or i + 1 >= len(argv):
+            fail(f"invalid scan option: {option}")
+        key = option[2:]
+        if key in values:
+            fail(f"duplicate scan option: {option}")
+        values[key] = argv[i + 1]
+        i += 2
+    for key in ("root", "path", "since-ns"):
+        if key not in values:
+            fail(f"missing --{key}")
+    validate_relative(values["path"], allow_root=True)
+    since = values["since-ns"]
+    if not since or len(since) > 20 or any(c not in "0123456789" for c in since):
+        fail("invalid --since-ns")
+    deadline = time.monotonic() + CHANGED_SINCE_MAX_RUNTIME_SECONDS
+    rootfd = open_root(values["root"], allowed_roots)
+    datafd = None
+    try:
+        datafd = openat2(
+            rootfd, values["path"], O_PATH | os.O_DIRECTORY | os.O_CLOEXEC
+        )
+        report = scan_changed_since(datafd, since_ns=int(since), deadline=deadline)
+    finally:
+        if datafd is not None:
+            os.close(datafd)
+        os.close(rootfd)
+    print(json.dumps(report, ensure_ascii=True, separators=(",", ":")))
+
+
 def run_scan_oversized_files(argv, allowed_roots=ALLOWED_ROOTS):
     """Print the files a project backup would skip, as JSON on stdout.
 
@@ -6594,6 +6743,8 @@ def parse_uint(value, name, maximum=(2**53 - 1)):
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
     if argv and argv[0] == "scan-oversized-files":
         return run_scan_oversized_files(argv, allowed_roots)
+    if argv and argv[0] == "scan-changed-since":
+        return run_scan_changed_since(argv, allowed_roots)
     if argv and argv[0] in RUSTIC_COMMANDS:
         return run_rustic(argv, allowed_roots, rustic_candidates)
     if argv and argv[0] in ANCHORED_COMMANDS:
@@ -10952,6 +11103,25 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --root "$ALLOWED_PATH_ROOT" \
       --path "$ALLOWED_PATH_REL" \
       "${scan_args[@]}"
+    ;;
+  project-changed-since)
+    if [ "$#" -ne 3 ] || [ "$2" != "--since-ns" ]; then
+      echo "usage: cocalc-runtime-storage project-changed-since <src> --since-ns <n>" >&2
+      exit 2
+    fi
+    src="$1"
+    since_ns="$3"
+    case "$since_ns" in
+      ''|*[!0-9]*)
+        deny "project-changed-since-bad-args" "$since_ns"
+        ;;
+    esac
+    require_allowed_path_parts "$src"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+      scan-changed-since \
+      --root "$ALLOWED_PATH_ROOT" \
+      --path "$ALLOWED_PATH_REL" \
+      --since-ns "$since_ns"
     ;;
   project-rustic-restore)
     if [ "$#" -ne 3 ] && [ "$#" -ne 4 ]; then

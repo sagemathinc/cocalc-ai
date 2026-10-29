@@ -284,10 +284,12 @@ import {
 } from "./rootfs-runtime-contract";
 import {
   ProjectRusticUnsupportedError,
+  projectChangedSince,
   projectOversizedFiles,
   projectRusticBackup,
   projectRusticRestore,
 } from "./project-rustic";
+import { changedBeyondRuntimeFiles } from "./project-runtime-changes";
 import {
   isMissingRusticRepositoryError,
   looksLikeMissingBackupBucketError,
@@ -3492,6 +3494,45 @@ export async function inspectScheduledSnapshots({
       };
     },
   );
+}
+
+/** Whether anything in a project's files changed at or after `since` (ms),
+ * by ctime, which only root can set back: "none", "changed", or "unknown" when
+ * that can't be told (no privileged helper, a lifecycle operation holds the
+ * volume, or its btrfs generation moved during the scan). The runtime's own
+ * log and pid file don't count (project-runtime-changes.ts). */
+export async function projectFilesChangedSince({
+  project_id,
+  since,
+}: {
+  project_id: string;
+  since: number;
+}): Promise<"none" | "changed" | "unknown"> {
+  if (projectVolumeLifecycleBusy(project_id)) return "unknown";
+  const generation = currentProjectVolumeLifecycleGeneration(project_id);
+  const result = await withCurrentProjectVolumeLifecycleLock(
+    project_id,
+    generation,
+    async () => {
+      const vol = await getVolumeUnchecked(project_id);
+      if (!(await exists(vol.path))) return "unknown" as const;
+      const before = await getGeneration(vol.path, { cache: false });
+      const scan = await projectChangedSince({
+        src: vol.path,
+        sinceMs: since,
+      });
+      if (scan == null) return "unknown" as const;
+      // Written while the scan ran: a directory it already passed may have
+      // changed after it was looked at.
+      if ((await getGeneration(vol.path, { cache: false })) !== before) {
+        return "unknown" as const;
+      }
+      return changedBeyondRuntimeFiles(scan)
+        ? ("changed" as const)
+        : ("none" as const);
+    },
+  );
+  return result ?? "unknown";
 }
 
 async function allSnapshotUsage({

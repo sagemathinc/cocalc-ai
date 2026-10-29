@@ -914,6 +914,73 @@ secret_access_key = "secret"
             with self.assertRaisesRegex(ValueError, "unable to scan"):
                 self.scan_tree(deep)
 
+    def run_changed_since(self, root: Path, since_ns: int, path: str = "project") -> dict:
+        run_scan = self.helper_namespace()["run_scan_changed_since"]
+        stdout = io.StringIO()
+        with mock.patch("sys.stdout", stdout):
+            run_scan(
+                [
+                    "scan-changed-since",
+                    "--root", str(root),
+                    "--path", path,
+                    "--since-ns", str(since_ns),
+                ],
+                allowed_roots={str(root)},
+            )
+        return json.loads(stdout.getvalue())
+
+    def test_scan_changed_since(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = root / "project"
+            (project / "a" / "deep").mkdir(parents=True)
+            (project / ".snapshots" / "old").mkdir(parents=True)
+            (project / "a" / "deep" / "file").write_text("x")
+            (project / "gone").write_text("x")
+            (project / "mode").write_text("x")
+            (project / "forged").write_text("x")
+            # An access time older than the mtime: relatime would update it.
+            os.utime(project / "a", (0, os.stat(project / "a").st_mtime))
+            time.sleep(0.05)
+            since = time.time_ns()
+            time.sleep(0.05)
+            self.assertEqual(
+                self.run_changed_since(root, since),
+                {"since_ns": since, "paths": [], "truncated": False},
+            )
+            # Looking writes no access time (O_NOATIME).
+            self.assertEqual(os.stat(project / "a").st_atime, 0)
+            # Creating and deleting snapshots is not a change to the files.
+            (project / ".snapshots" / "new").mkdir()
+            (project / ".snapshots" / "old").rmdir()
+            self.assertEqual(self.run_changed_since(root, since)["paths"], [])
+            # A write deep down; a delete, seen on its directory; a chmod; and
+            # an mtime set back, which cannot set back the ctime.
+            (project / "a" / "deep" / "file").write_text("y")
+            (project / "gone").unlink()
+            os.chmod(project / "mode", 0o600)
+            os.utime(project / "forged", (0, 0))
+            # A new symlink is a change, but it is never followed.
+            (project / "a" / "escape").symlink_to("/")
+            report = self.run_changed_since(root, since)
+            self.assertEqual(
+                sorted(report["paths"]),
+                [".", "a", "a/deep/file", "a/escape", "forged", "mode"],
+            )
+            self.assertFalse(report["truncated"])
+            # Only the first CHANGED_SINCE_MAX_PATHS paths are listed.
+            limit = self.helper_namespace()["CHANGED_SINCE_MAX_PATHS"]
+            for i in range(limit + 10):
+                (project / f"n{i}").touch()
+            report = self.run_changed_since(root, since)
+            self.assertEqual(len(report["paths"]), limit)
+            self.assertTrue(report["truncated"])
+            for bad in ("", "-1", "12a", "1" * 21):
+                with self.assertRaisesRegex(ValueError, "invalid --since-ns"):
+                    self.run_changed_since(root, bad)  # type: ignore[arg-type]
+            with self.assertRaises(ValueError):
+                self.run_changed_since(root, since, path="../project")
+
     def test_scan_stops_and_nothing_follows_when_caller_is_killed(self) -> None:
         # Killing sudo during the scan stops the walk, and the helper starts
         # no Rustic afterwards (it once took the new parent for its caller).

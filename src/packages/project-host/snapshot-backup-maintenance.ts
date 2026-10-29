@@ -27,6 +27,7 @@ import {
   pruneDeferredSnapshots,
   runScheduledSnapshotMaintenance,
   inspectScheduledSnapshots,
+  projectFilesChangedSince,
   snapshotPruneBusy,
 } from "./file-server";
 import {
@@ -53,7 +54,7 @@ import { createMaintenanceStarvationQueue } from "./maintenance-starvation";
 import type { StarvedMaintenance } from "./maintenance-starvation";
 import { recoveryFailureReason } from "./recovery-failure-reason";
 import { setSnapshotBackupMaintenanceGate } from "./snapshot-backup-gate";
-import { onProjectChangeReported } from "./last-edited";
+import { markProjectLastChanged, onProjectChangeReported } from "./last-edited";
 import {
   listLeasedMaintenanceSchedules,
   listPendingMaintenanceReports,
@@ -929,6 +930,9 @@ function reobservationEnabled(
 }
 
 const DEFAULT_REOBSERVE_PARALLELISM = 1;
+// A snapshot's name is its time, taken just before it was made; files changed
+// this long before still count as changed after it (a harmless extra look).
+const CHANGE_SCAN_MARGIN_MS = 60_000;
 // What the full update defaults to when the bay sends no limit.
 const DEFAULT_SNAPSHOT_LIMIT = 250;
 
@@ -937,6 +941,11 @@ export interface SnapshotReobservationStats {
   observed: number;
   /** Of those observed: changed, but the next snapshot is not due yet. */
   interval_wait: number;
+  /** Of those observed: only snapshot bookkeeping or the runtime's own files
+   * moved the generation; no file changed since the latest snapshot. */
+  files_unchanged: number;
+  /** Files changed that the bay never recorded: now recorded. */
+  unrecorded_change: number;
   /** Needed the full update (changed and due, at the limit, volume
    * unavailable). */
   fallback: number;
@@ -955,6 +964,8 @@ export interface SnapshotReobservationStats {
 const reobservationStats: SnapshotReobservationStats = {
   observed: 0,
   interval_wait: 0,
+  files_unchanged: 0,
+  unrecorded_change: 0,
   fallback: 0,
   prune_queued: 0,
   dropped: 0,
@@ -2134,11 +2145,36 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               : undefined;
           const intervalWaiting =
             intervalDueAt != null && intervalDueAt > Date.now();
+          // Changed, yet the bay records no change since the latest snapshot
+          // (so no due time): usually only our own snapshot bookkeeping in
+          // .snapshots moved the generation. Look at the files: only if none
+          // changed since that snapshot is it unchanged. A change the bay
+          // never recorded is recorded now, so the schedule takes it.
+          let changed = inspected?.changed === true;
+          if (
+            inspected?.changed &&
+            intervalDueAt == null &&
+            inspected.latest_snapshot_at != null
+          ) {
+            const files = await projectFilesChangedSince({
+              project_id,
+              since:
+                Date.parse(inspected.latest_snapshot_at) -
+                CHANGE_SCAN_MARGIN_MS,
+            });
+            if (files === "none") {
+              changed = false;
+              reobservationStats.files_unchanged++;
+            } else if (files === "changed") {
+              markProjectLastChanged(project_id);
+              reobservationStats.unrecorded_change++;
+            }
+          }
           // Otherwise only an unchanged project under its limit can be
           // confirmed by reading; anything else needs the full update.
           if (
             inspected == null ||
-            (inspected.changed && !intervalWaiting) ||
+            (changed && !intervalWaiting) ||
             inspected.snapshot_count >=
               (row.max_snapshots_per_project ?? DEFAULT_SNAPSHOT_LIMIT)
           ) {
