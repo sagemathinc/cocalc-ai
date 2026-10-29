@@ -30,7 +30,13 @@ const VISUALLY_HIDDEN: CSSProperties = {
 // It is empty until something was unread for this account, and while a
 // list is loading (after signing in as someone else, the count is 0 only
 // because nothing has arrived yet), so nothing false is announced.
-export function PeopleUnreadBadge() {
+//
+// `announce={false}` is for a second copy shown at the same time (the People
+// item in a menu): it keeps the count in its accessible name but has no live
+// region, so each change is announced once, by the main badge.
+export function PeopleUnreadBadge({
+  announce = true,
+}: { announce?: boolean } = {}) {
   const { count, loaded, account_id } = useUnreadConversations();
   // The account that had something unread, if it is still this one.
   const hadUnreadFor = useRef<string | undefined>(undefined);
@@ -55,9 +61,14 @@ export function PeopleUnreadBadge() {
           style={{ marginLeft: 8 }}
         />
       )}
-      <span role="status" aria-live="polite" style={VISUALLY_HIDDEN}>
-        {label}
-      </span>
+      {announce ? (
+        <span role="status" aria-live="polite" style={VISUALLY_HIDDEN}>
+          {label}
+        </span>
+      ) : (
+        loaded &&
+        count > 0 && <span style={VISUALLY_HIDDEN}>{` ${label}`}</span>
+      )}
     </>
   );
 }

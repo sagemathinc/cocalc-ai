@@ -71,3 +71,19 @@ test("the visible badge shows the count and is hidden from screen readers", () =
   const { container: empty } = render(<PeopleUnreadBadge />);
   expect(empty.querySelector(".ant-badge")).toBeNull();
 });
+
+test("a copy with announce={false} has no live region but keeps the count in its name", () => {
+  mockUnread = { count: 2, loaded: true, account_id: A };
+  const { container } = render(
+    <>
+      <PeopleUnreadBadge />
+      <PeopleUnreadBadge announce={false} />
+    </>,
+  );
+  // Exactly one live region, so a change is announced once.
+  expect(screen.getAllByRole("status")).toHaveLength(1);
+  expect(container.querySelectorAll("[aria-live]")).toHaveLength(1);
+  // The quiet copy still names the count for whoever reads that item.
+  expect(container.textContent).toContain(" 2 unread conversations");
+  expect(container.querySelectorAll(".ant-badge")).toHaveLength(2);
+});

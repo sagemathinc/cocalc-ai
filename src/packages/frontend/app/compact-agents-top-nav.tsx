@@ -83,7 +83,8 @@ export function CompactAgentsTopNav({
       label: (
         <>
           People
-          <PeopleUnreadBadge />
+          {/* The sidebar's badge announces changes; this one only shows. */}
+          <PeopleUnreadBadge announce={false} />
         </>
       ),
     },
