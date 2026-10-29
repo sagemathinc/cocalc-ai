@@ -84,12 +84,22 @@ export function NewConversationModal({
   const [member_ids, setMemberIds] = useState<string[]>(
     personId ? [personId] : [],
   );
+  const [title, setTitle] = useState("");
+  const [mode, setMode] = useState<"new" | "existing">("new");
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   // Each opening starts over: the modal stays mounted, and a project chosen
-  // for one person may not be shared with the next.
+  // for one person may not be shared with the next. A title, mode or path
+  // left from a cancelled attempt could otherwise submit the wrong thing.
   useEffect(() => {
     if (!open) return;
     setProjectId(undefined);
     setMemberIds(personId ? [personId] : []);
+    setTitle("");
+    setMode("new");
+    setPath("");
+    setError("");
   }, [open, personId]);
   // Only people in the chosen project can be in it, except the person it was
   // started for: they are kept, and a project without them is refused below.
@@ -106,11 +116,6 @@ export function NewConversationModal({
     !!personId &&
     !!project_id &&
     !people.some((p) => p.account_id === personId);
-  const [title, setTitle] = useState("");
-  const [mode, setMode] = useState<"new" | "existing">("new");
-  const [path, setPath] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
 
   async function submit() {
     if (!project_id) {

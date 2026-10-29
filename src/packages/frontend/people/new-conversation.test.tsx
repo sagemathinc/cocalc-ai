@@ -51,6 +51,7 @@ jest.mock("@cocalc/frontend/projects/select-project", () => ({
         .filter(([, project]) => mockIgnoreFilter || filter(project))
         .map(([id, project]) => (
           <button
+            type="button"
             key={id}
             aria-pressed={value === id}
             onClick={() => onChange(id)}
@@ -160,4 +161,33 @@ test("started from a person, a project where they're only a viewer can't drop th
       member_ids: [bob],
     }),
   );
+});
+
+test("reopening clears the title, file choice and error of a cancelled attempt", async () => {
+  mockCreate.mockRejectedValueOnce(new Error("boom"));
+  const { rerender } = render(modal({ open: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Project one" }));
+  fireEvent.change(screen.getByLabelText("Title"), {
+    target: { value: "Old plans" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(screen.getByText("Error: boom")).toBeTruthy());
+  fireEvent.click(screen.getByLabelText("An existing .chat file"));
+  fireEvent.change(screen.getByPlaceholderText("e.g., notes/team.chat"), {
+    target: { value: "old.chat" },
+  });
+  rerender(modal({ open: false }));
+  rerender(modal({ open: true }));
+  expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("");
+  expect(
+    (screen.getByLabelText("A new chat file") as HTMLInputElement).checked,
+  ).toBe(true);
+  expect(screen.queryByPlaceholderText("e.g., notes/team.chat")).toBeNull();
+  expect(screen.queryByText("Error: boom")).toBeNull();
+  // A project alone doesn't make the stale attempt submittable.
+  fireEvent.click(screen.getByRole("button", { name: "Project one" }));
+  expect(
+    (screen.getByRole("button", { name: "Create" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
 });
