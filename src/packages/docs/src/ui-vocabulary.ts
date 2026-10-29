@@ -1409,13 +1409,14 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "nav.people",
     label: "People",
     anchors: [
-      // The sidebar section's header button, as shown, and its label prop,
-      // which names the section and its Expand or Collapse toggle.
-      def(WORKSPACE_PAGE, "> People </Button>"),
+      // The sidebar section's header button, as shown (with its unread
+      // count), and its label prop, which names the section and its Expand
+      // or Collapse toggle.
+      def(WORKSPACE_PAGE, "> People <PeopleUnreadBadge /> </Button>"),
       def(WORKSPACE_PAGE, 'label="People"'),
       def(
         "frontend/app/compact-agents-top-nav.tsx",
-        '{ key: "people", icon: <Icon name="users" />, label: "People" }',
+        "<> People <PeopleUnreadBadge /> </>",
       ),
       def("frontend/people/page.tsx", ">People</h1>"),
     ],

@@ -88,6 +88,9 @@ jest.mock("./connection-indicator", () => ({
   ConnectionIndicator: () => null,
 }));
 jest.mock("./notifications", () => ({ Notification: () => null }));
+jest.mock("@cocalc/frontend/people/unread-badge", () => ({
+  PeopleUnreadBadge: () => <span data-testid="people-badge" />,
+}));
 
 import { CompactAgentsTopNav } from "./compact-agents-top-nav";
 
@@ -117,6 +120,12 @@ describe("compact Agents navigation", () => {
     expect(
       screen.queryByRole("menuitem", { name: "Manage agents and connections" }),
     ).toBeNull();
+  });
+
+  it("the menu's People item shows the unread badge", () => {
+    render(<CompactAgentsTopNav isLoggedIn pageStyle={pageStyle} />);
+    fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
+    expect(screen.getAllByTestId("people-badge")).toHaveLength(1);
   });
 
   it("routes project navigation without a reload", () => {

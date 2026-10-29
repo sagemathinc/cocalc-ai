@@ -175,6 +175,7 @@ import { isLibraryChatAgent } from "./library-chat";
 import { NewArtifactDialog } from "./new-artifact-dialog";
 import { sharedArtifactCatalog } from "./artifact-catalog-store";
 import { PeopleSidebar } from "@cocalc/frontend/people/people-sidebar";
+import { PeopleUnreadBadge } from "@cocalc/frontend/people/unread-badge";
 import {
   newArtifactRequest,
   toggleSidebarRequest,
@@ -5525,6 +5526,7 @@ export function MyAgentsWorkspacePage({
                       }}
                     >
                       People
+                      <PeopleUnreadBadge />
                     </Button>
                   }
                 >
