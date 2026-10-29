@@ -29,8 +29,10 @@ jest.mock("./auth-public-key", () => ({
   getProjectHostAuthPublicKey: jest.fn(() => "public-key"),
 }));
 
+let mockProjectUsersGeneration = 0;
 jest.mock("./sqlite/projects", () => ({
   getProject: (...args: any[]) => mockGetProject(...args),
+  projectUsersGeneration: () => mockProjectUsersGeneration,
 }));
 
 jest.mock("./sqlite/account-revocations", () => ({
@@ -1273,6 +1275,28 @@ describe("project-host Conat auth", () => {
         isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
       ).resolves.toBe(false);
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(2);
+    });
+
+    it("lets a list changed and changed back during a bay request decide", async () => {
+      // Unversioned lists (rolling upgrade): the account is added, the bay
+      // says yes, and the account is removed again, all while the request is
+      // pending; the list then looks as it did before.
+      const other = "00000000-1000-4000-8000-000000000009";
+      mockGetRow.mockReturnValue({ users: { [other]: { group: "owner" } } });
+      let resolve!: (answer: any) => void;
+      mockConfirmProjectMemberWithOwningBay.mockReturnValue(
+        new Promise<any>((r) => (resolve = r)),
+      );
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      const decision = isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: fsSubject,
+      });
+      await new Promise((r) => setImmediate(r));
+      mockProjectUsersGeneration += 2;
+      resolve(bay(true, null));
+      await expect(decision).resolves.toBe(false);
     });
 
     it("does not let another project's collaborator sync overrule a bay answer", async () => {

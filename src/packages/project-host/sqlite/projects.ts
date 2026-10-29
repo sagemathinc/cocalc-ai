@@ -273,6 +273,22 @@ function validContentEpoch(value: unknown): number {
     : 0;
 }
 
+// Per project, how often its stored collaborator list changed in this
+// process (a change and its undo count twice): conat auth compares it across
+// an owning-bay lookup (conat-auth.ts).
+const projectUsersGenerations = new Map<string, number>();
+
+export function projectUsersGeneration(project_id: string): number {
+  return projectUsersGenerations.get(project_id) ?? 0;
+}
+
+function bumpProjectUsersGeneration(project_id: string): void {
+  projectUsersGenerations.set(
+    project_id,
+    projectUsersGeneration(project_id) + 1,
+  );
+}
+
 export function upsertProject(row: ProjectRow) {
   ensureProjectsTable();
   const db = getDatabase();
@@ -572,6 +588,13 @@ export function upsertProject(row: ProjectRow) {
     });
   }
 
+  if (
+    Object.keys(existing).length === 0 ||
+    JSON.stringify(existing.users ?? null) !== JSON.stringify(users ?? null) ||
+    (existing.users_revision ?? null) !== (users_revision ?? null)
+  ) {
+    bumpProjectUsersGeneration(row.project_id);
+  }
   // Also mirror into the generic data table for changefeeds/UI.
   upsertRow("projects", pk, {
     ...existing,
@@ -857,6 +880,7 @@ export function deleteProjectLocal(project_id: string) {
   const db = getDatabase();
   db.prepare("DELETE FROM projects WHERE project_id=?").run(project_id);
   deleteRow("projects", JSON.stringify({ project_id }));
+  bumpProjectUsersGeneration(project_id);
   releaseProjectPortLease(project_id);
   deleteProjectVolumeQuotas(project_id);
 }

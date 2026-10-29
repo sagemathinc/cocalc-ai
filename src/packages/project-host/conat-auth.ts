@@ -56,7 +56,7 @@ import getLogger from "@cocalc/backend/logger";
 import { checkAmbientCookieRequest } from "./browser-origin-policy";
 import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
 import { isValidUUID } from "@cocalc/util/misc";
-import { getProject } from "./sqlite/projects";
+import { getProject, projectUsersGeneration } from "./sqlite/projects";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
 import {
   resolveProjectHostBrowserSessionFromCookieHeader,
@@ -376,6 +376,7 @@ function startBayMembershipFlight({
     account_id,
     promise: (async () => {
       const before = localListFingerprint(project_id);
+      const generationBefore = projectUsersGeneration(project_id);
       let member = false;
       try {
         const { confirmProjectMemberWithOwningBay } =
@@ -395,8 +396,13 @@ function startBayMembershipFlight({
       // This project's list changed while the bay was asked (a sync, a start,
       // or the bay's own list stored by the lookup): the list now on the host
       // decides, not the answer. Other projects' syncs do not matter.
+      // (the generation also catches a change undone meanwhile, which
+      // leaves the list looking the same)
       const after = localListFingerprint(project_id);
-      if (after !== before) {
+      if (
+        after !== before ||
+        projectUsersGeneration(project_id) !== generationBefore
+      ) {
         member = isProjectCollaboratorLocal({ account_id, project_id });
       }
       if (!member) {
