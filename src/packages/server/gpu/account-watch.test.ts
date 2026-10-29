@@ -27,6 +27,7 @@ import { onKeyGone } from "./alerts";
 import { reportCompromisedLocal } from "./compromise";
 import { inTransaction } from "./pods";
 import { reconcileKey } from "./reconcile";
+import { RunpodApiError } from "@cocalc/cloud/runpod/client";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -368,6 +369,75 @@ describeDb("GPU provider-account checks", () => {
     expect(ended).toBeTruthy();
   });
 
+  it("a pod a forced removal left unmanaged counts for nothing, so provider spend isn't explained away", async () => {
+    const owner = randomUUID();
+    const identity = randomUUID();
+    const old = await connectKey(owner, identity);
+    const id = await pod(owner, old, {
+      state: "running",
+      cost_per_hr: 3,
+      intervals: [["running", 0, undefined]],
+    });
+    expect((await expectedRate([old])).toNumber()).toBeCloseTo(3.05);
+    expect((await expectedSpend([old], at(HOUR))).toNumber()).toBeCloseTo(3.05);
+    await getPool().query(
+      "UPDATE gpu_pods SET unmanaged_at = $2 WHERE id = $1",
+      [id, at(10 * MINUTE)],
+    );
+    await revoke(old);
+    expect((await expectedRate([old])).toNumber()).toBe(0);
+    expect((await expectedSpend([old], at(HOUR))).toNumber()).toBe(0);
+    // a new key on the same account, confirmed: $3/h of spend is RunPod's
+    // alone now (over 0 x 2 + $2/h), so it alerts
+    const key = await connectKey(owner, identity);
+    await confirm(owner);
+    const watch = watcher(owner, key);
+    await watch(HOUR, { spendPerHour: 3 });
+    expect((await watch(HOUR + MINUTE, { spendPerHour: 3 })).rate).toBe(
+      "critical",
+    );
+  });
+
+  it("a key RunPod won't show the account's balance: the checks say so, without a pause, until a sample succeeds", async () => {
+    const owner = randomUUID();
+    const key = await connectKey(owner, randomUUID());
+    await confirm(owner);
+    await watcher(owner, key)(0, { balance: 100, spendPerHour: 0 });
+    const refused = await watchProviderAccount(
+      { credential_id: key, key_owner_account_id: owner },
+      {
+        now: () => T0 + MINUTE,
+        getAccountBalance: async () => {
+          throw new RunpodApiError("forbidden", 200);
+        },
+      },
+    );
+    expect(refused).toEqual({ checked: false, reason: "no_access" });
+    expect(
+      (await getAccountChecksLocal({ account_id: owner }, here)).state,
+    ).toBe("no_access");
+    expect(await alerts(key)).toEqual([
+      { kind: "account_checks_disabled", severity: "warning", resolved: false },
+    ]);
+    expect(await paused(key)).toBe(null);
+    const { rows } = await getPool().query(
+      "SELECT last_asked_at, last_balance_usd FROM gpu_provider_account_watch WHERE credential_id = $1",
+      [key],
+    );
+    expect(rows[0]).toEqual({ last_asked_at: null, last_balance_usd: null });
+    // RunPod answers again: on, and the warning ends
+    expect(
+      (await watcher(owner, key)(2 * MINUTE, { balance: 100, spendPerHour: 0 }))
+        .checked,
+    ).toBe(true);
+    expect(
+      (await getAccountChecksLocal({ account_id: owner }, here)).state,
+    ).toBe("on");
+    expect(await alerts(key)).toEqual([
+      { kind: "account_checks_disabled", severity: "warning", resolved: true },
+    ]);
+  });
+
   it("a sample no newer than the last one changes nothing", async () => {
     const owner = randomUUID();
     const key = await connectKey(owner, randomUUID());
@@ -600,5 +670,14 @@ describeDb("GPU provider-account checks", () => {
       (await getAccountChecksLocal({ account_id: owner }, here))
         .last_checked_at,
     ).toBe(at(HOUR).toISOString());
+    // RunPod refuses the account read after a complete inventory: the pass
+    // stays complete, and the checks say no_access
+    getAccountBalance.mockRejectedValueOnce(
+      new RunpodApiError("forbidden", 200),
+    );
+    expect((await pass(2 * HOUR)).complete).toBe(true);
+    expect(
+      (await getAccountChecksLocal({ account_id: owner }, here)).state,
+    ).toBe("no_access");
   });
 });

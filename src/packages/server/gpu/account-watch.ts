@@ -41,7 +41,10 @@ import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { isValidUUID } from "@cocalc/util/misc";
-import type { RunpodAccountBalance } from "@cocalc/cloud/runpod/client";
+import {
+  RunpodApiError,
+  type RunpodAccountBalance,
+} from "@cocalc/cloud/runpod/client";
 import type { InterBayGpuApi } from "@cocalc/conat/inter-bay/api";
 import type { GpuAccountChecks } from "@cocalc/util/gpu/types";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
@@ -142,6 +145,9 @@ const POD_RATE = `COALESCE(p.cost_per_hr, (
 
 // E(t): CoCalc's expected spend for the identity's pods up to `t`, from the
 // observed-state ledger. Never billed amounts (5d-2a checks those per pod).
+// Only managed pods: one a forced removal left unmanaged is out of CoCalc's
+// sight (the owner was told to terminate it at RunPod), and the confirmation
+// it was under ended with that removal.
 export async function expectedSpend(
   credential_ids: string[],
   t: Date,
@@ -153,13 +159,13 @@ export async function expectedSpend(
        COALESCE((SELECT SUM(${POD_RATE} * EXTRACT(EPOCH FROM
                    (LEAST(COALESCE(i.ended, $2), $2) - i.started)) / 3600)
           FROM gpu_pod_state_intervals i JOIN gpu_pods p ON p.id = i.pod_id
-         WHERE p.credential_id = ANY($1::uuid[])
+         WHERE p.credential_id = ANY($1::uuid[]) AND p.unmanaged_at IS NULL
            AND i.state IN ('running', 'terminating') AND i.started < $2), 0)
        AS compute,
        COALESCE((SELECT SUM(EXTRACT(EPOCH FROM
                    (LEAST(COALESCE(p.terminated_at, $2), $2) - p.running_since)) / 3600)
           FROM gpu_pods p
-         WHERE p.credential_id = ANY($1::uuid[])
+         WHERE p.credential_id = ANY($1::uuid[]) AND p.unmanaged_at IS NULL
            AND p.running_since IS NOT NULL AND p.running_since < $2), 0)
        AS disk_hours`,
     [credential_ids, t],
@@ -181,7 +187,8 @@ export async function expectedRate(
                          THEN ${POD_RATE} ELSE 0 END), 0) AS compute,
        COUNT(*) FILTER (WHERE p.state IN ('running', 'stopped', 'terminating'))
          AS disks
-       FROM gpu_pods p WHERE p.credential_id = ANY($1::uuid[])`,
+       FROM gpu_pods p
+      WHERE p.credential_id = ANY($1::uuid[]) AND p.unmanaged_at IS NULL`,
     [credential_ids],
   );
   return toDecimal(rows[0].compute ?? 0).plus(
@@ -199,7 +206,13 @@ export interface AccountWatchOutcome {
   checked: boolean;
   // why not: no identity, not confirmed, a second key, a stale sample,
   // or the key's fence isn't live
-  reason?: "unidentified" | "unconfirmed" | "shared" | "stale" | "fence";
+  reason?:
+    | "unidentified"
+    | "unconfirmed"
+    | "shared"
+    | "stale"
+    | "fence"
+    | "no_access";
   rate?: "ok" | "warning" | "critical";
   balance?: "ok" | "warning" | "critical" | "deposit" | "window";
 }
@@ -267,7 +280,42 @@ export async function watchProviderAccount(
     return { checked: false, reason: "shared" };
   }
   const asked_at = new Date(clock());
-  const balance = await deps.getAccountBalance();
+  let balance: RunpodAccountBalance;
+  try {
+    balance = await deps.getAccountBalance();
+  } catch (err) {
+    // The key can list pods but not read the account: the checks can't run
+    // until it can. Say so (the status, and a warning), rather than look on.
+    if (
+      err instanceof RunpodApiError &&
+      (err.kind === "forbidden" || err.kind === "auth")
+    ) {
+      await underLiveFence(credential_id, async (db) => {
+        const w = await lockWatch(db, identity);
+        if (!w || w.credential_id !== credential_id || !w.confirmed_at) return;
+        await db.query(
+          `UPDATE gpu_provider_account_watch
+              SET disabled_reason = 'no_access', ${CLEARED_SAMPLES}, updated = now()
+            WHERE id = $1`,
+          [w.id],
+        );
+        await raiseAlert(
+          {
+            key_owner_account_id,
+            credential_id,
+            kind: OFF_KIND,
+            severity: "warning",
+            dedupe_key: DEDUPE,
+            details: { reason: "no_account_access" },
+            observed_at: asked_at,
+          },
+          db,
+        );
+      });
+      return { checked: false, reason: "no_access" };
+    }
+    throw err;
+  }
   const outcome = await underLiveFence(credential_id, async (db) => {
     const w = await lockWatch(db, identity);
     if (!w || w.credential_id !== credential_id || !w.confirmed_at) {
@@ -495,7 +543,12 @@ async function statusOf(account_id: string, db: Db): Promise<GpuAccountChecks> {
   const active = await identityCredentials(identity, db, { active: true });
   const iso = (d: any) => (d == null ? null : new Date(d).toISOString());
   return {
-    state: active.length === 1 ? "on" : "shared",
+    state:
+      active.length !== 1
+        ? "shared"
+        : w.disabled_reason === "no_access"
+          ? "no_access"
+          : "on",
     confirmed_at: iso(w.confirmed_at),
     last_checked_at: iso(w.last_asked_at),
   };

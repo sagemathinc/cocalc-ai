@@ -221,7 +221,10 @@ function view(r: any): GpuAlertView {
     message:
       r.kind === "unknown_pod" && r.details?.unverifiable === true
         ? "A pod CoCalc didn't start was on the RunPod account of a key that has since been removed or replaced, so CoCalc can't check it anymore. Look at RunPod's Pods page, terminate it if it's still there, then acknowledge this alert."
-        : (MESSAGES[r.kind as GpuAlertKind] ?? ""),
+        : r.kind === "account_checks_disabled" &&
+            r.details?.reason === "no_account_access"
+          ? "You confirmed this RunPod account for CoCalc's account checks, but RunPod doesn't let this key read the account's balance and spend rate, so CoCalc can't compare them with your pods. Connect a key with read access to the account (RunPod's \"All\" or read-write permission), or withdraw the confirmation (cocalc gpu account-checks --withdraw)."
+          : (MESSAGES[r.kind as GpuAlertKind] ?? ""),
     details: r.details ?? null,
     opened: iso(r.opened)!,
     last_seen: iso(r.last_seen)!,
