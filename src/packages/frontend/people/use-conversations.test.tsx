@@ -45,7 +45,17 @@ import {
   unreadConversationCount,
   useConversations,
 } from "./use-conversations";
-import { PeopleUnreadBadge } from "./unread-badge";
+import { PeopleUnreadAnnouncer, PeopleUnreadBadge } from "./unread-badge";
+
+// The navigation badge and the app's announcer, as the app shows them.
+function Unread() {
+  return (
+    <>
+      <PeopleUnreadBadge />
+      <PeopleUnreadAnnouncer />
+    </>
+  );
+}
 
 const conv = (id: string, extra = {}) => ({
   conversation_id: id,
@@ -126,7 +136,7 @@ test("the page, sidebar and badge share one list, refreshed by a chat notificati
     <>
       <List />
       <List />
-      <PeopleUnreadBadge />
+      <Unread />
     </>,
   );
   await flush();
@@ -158,7 +168,7 @@ test("no badge when nothing is unread", async () => {
     conversations: [conv("c1", { last_read: 3000 })],
     unavailable_bays: 0,
   });
-  const { container } = render(<PeopleUnreadBadge />);
+  const { container } = render(<Unread />);
   await flush();
   expect(container.textContent).toBe("");
 });
@@ -176,7 +186,7 @@ test("a list loaded for one account is not shown for another", async () => {
     conversations: [conv("c1")],
     unavailable_bays: 0,
   });
-  const first = render(<PeopleUnreadBadge />);
+  const first = render(<Unread />);
   await flush();
   expect(screen.getByRole("status")).toHaveTextContent("1 unread conversation");
   first.unmount();
@@ -184,7 +194,7 @@ test("a list loaded for one account is not shown for another", async () => {
   mockAccount = another;
   const pending = deferred<any>();
   mockList.mockReturnValue(pending.promise);
-  const { container } = render(<PeopleUnreadBadge />);
+  const { container } = render(<Unread />);
   expect(container.textContent).toBe("");
   pending.resolve({ conversations: [], unavailable_bays: 0 });
   await flush();
@@ -194,11 +204,11 @@ test("a list loaded for one account is not shown for another", async () => {
 test("a response for the previous account is dropped after a switch", async () => {
   const forMe = deferred<any>();
   mockList.mockReturnValueOnce(forMe.promise);
-  const view = render(<PeopleUnreadBadge />);
+  const view = render(<Unread />);
   mockAccount = another;
   const forAnother = deferred<any>();
   mockList.mockReturnValueOnce(forAnother.promise);
-  view.rerender(<PeopleUnreadBadge />);
+  view.rerender(<Unread />);
   await flush();
   // The first account's answer arrives late.
   forMe.resolve({ conversations: [conv("c1")], unavailable_bays: 0 });
@@ -214,14 +224,14 @@ test("switching accounts announces nothing false while the new list loads", asyn
     conversations: [conv("c1")],
     unavailable_bays: 0,
   });
-  const view = render(<PeopleUnreadBadge />);
+  const view = render(<Unread />);
   await flush();
   expect(screen.getByRole("status")).toHaveTextContent("1 unread conversation");
   // Someone else signs in, without the badge unmounting.
   mockAccount = another;
   const forAnother = deferred<any>();
   mockList.mockReturnValueOnce(forAnother.promise);
-  view.rerender(<PeopleUnreadBadge />);
+  view.rerender(<Unread />);
   await flush();
   // Loading: not "No unread conversations", which isn't known yet.
   expect(screen.getByRole("status").textContent).toBe("");

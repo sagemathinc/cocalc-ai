@@ -21,22 +21,12 @@ const VISUALLY_HIDDEN: CSSProperties = {
   border: 0,
 };
 
-// How many conversations for you have something you haven't read, next to
-// People in the navigation. No badge when there are none.
-//
-// The count changes in the background (polling, notifications), so screen
-// readers hear it through a polite live region that stays mounted: it says
-// the new count, and "No unread conversations" once they have all been read.
-// It is empty until something was unread for this account, and while a
-// list is loading (after signing in as someone else, the count is 0 only
-// because nothing has arrived yet), so nothing false is announced.
-//
-// `announce={false}` is for a second copy shown at the same time (the People
-// item in a menu): it keeps the count in its accessible name but has no live
-// region, so each change is announced once, by the main badge.
-export function PeopleUnreadBadge({
-  announce = true,
-}: { announce?: boolean } = {}) {
+// What to say about unread conversations, or "" for nothing: the count, and
+// "No unread conversations" once they have all been read. Nothing until
+// something was unread for this account, and nothing while a list is loading
+// (after signing in as someone else, the count is 0 only because nothing has
+// arrived yet), so nothing false is said.
+function useUnreadLabel(): { count: number; loaded: boolean; label: string } {
   const { count, loaded, account_id } = useUnreadConversations();
   // The account that had something unread, if it is still this one.
   const hadUnreadFor = useRef<string | undefined>(undefined);
@@ -49,26 +39,40 @@ export function PeopleUnreadBadge({
       : hadUnreadFor.current != null
         ? "No unread conversations"
         : "";
+  return { count, loaded, label };
+}
+
+// The one place screen readers hear unread-count changes, which happen in
+// the background (polling, notifications): a polite live region, mounted
+// once for the whole app (app/page.tsx) and never hidden, whatever badges
+// are shown or hidden (a collapsed sidebar, a closed menu, Lite).
+export function PeopleUnreadAnnouncer() {
+  const { label } = useUnreadLabel();
+  return (
+    <span role="status" aria-live="polite" style={VISUALLY_HIDDEN}>
+      {label}
+    </span>
+  );
+}
+
+// How many conversations for you have something you haven't read, next to
+// People in the navigation (the sidebar, the menu). No badge when there are
+// none. It announces nothing itself (PeopleUnreadAnnouncer does, once), but
+// keeps the count in the item's accessible name.
+export function PeopleUnreadBadge() {
+  const { count, loaded, label } = useUnreadLabel();
+  if (!loaded || count === 0) return null;
   return (
     <>
-      {loaded && count > 0 && (
-        <Badge
-          count={count}
-          overflowCount={99}
-          size="small"
-          title={label}
-          aria-hidden
-          style={{ marginLeft: 8 }}
-        />
-      )}
-      {announce ? (
-        <span role="status" aria-live="polite" style={VISUALLY_HIDDEN}>
-          {label}
-        </span>
-      ) : (
-        loaded &&
-        count > 0 && <span style={VISUALLY_HIDDEN}>{` ${label}`}</span>
-      )}
+      <Badge
+        count={count}
+        overflowCount={99}
+        size="small"
+        title={label}
+        aria-hidden
+        style={{ marginLeft: 8 }}
+      />
+      <span style={VISUALLY_HIDDEN}>{` ${label}`}</span>
     </>
   );
 }

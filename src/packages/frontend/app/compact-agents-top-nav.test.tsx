@@ -89,9 +89,7 @@ jest.mock("./connection-indicator", () => ({
 }));
 jest.mock("./notifications", () => ({ Notification: () => null }));
 jest.mock("@cocalc/frontend/people/unread-badge", () => ({
-  PeopleUnreadBadge: ({ announce = true }: { announce?: boolean }) => (
-    <span data-testid="people-badge" data-announce={String(announce)} />
-  ),
+  PeopleUnreadBadge: () => <span data-testid="people-badge" />,
 }));
 
 import { CompactAgentsTopNav } from "./compact-agents-top-nav";
@@ -124,12 +122,10 @@ describe("compact Agents navigation", () => {
     ).toBeNull();
   });
 
-  it("the menu's People badge doesn't announce (the sidebar's does)", () => {
+  it("the menu's People item shows the unread badge", () => {
     render(<CompactAgentsTopNav isLoggedIn pageStyle={pageStyle} />);
     fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
-    const badges = screen.getAllByTestId("people-badge");
-    expect(badges).toHaveLength(1);
-    expect(badges[0].getAttribute("data-announce")).toBe("false");
+    expect(screen.getAllByTestId("people-badge")).toHaveLength(1);
   });
 
   it("routes project navigation without a reload", () => {
