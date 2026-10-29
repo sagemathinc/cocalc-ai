@@ -517,6 +517,33 @@ describeDb("GPU provider-account checks", () => {
     expect(await alerts(key)).toEqual([]);
   });
 
+  it("a lease lost while waiting for the locks writes nothing", async () => {
+    const owner = randomUUID();
+    const key = await connectKey(owner, randomUUID());
+    await confirm(owner);
+    // the check before the locks passes; the one after them fails
+    let checks = 0;
+    await expect(
+      watchProviderAccount(
+        { credential_id: key, key_owner_account_id: owner },
+        {
+          now: () => T0,
+          getAccountBalance: async () => ({ balance: 1, spendPerHour: 99 }),
+          guard: async () => {
+            if (++checks > 1) throw Error("lease lost");
+          },
+        },
+      ),
+    ).rejects.toThrow("lease lost");
+    expect(checks).toBe(2);
+    const { rows } = await getPool().query(
+      "SELECT last_asked_at FROM gpu_provider_account_watch WHERE credential_id = $1",
+      [key],
+    );
+    expect(rows[0].last_asked_at).toBe(null);
+    expect(await alerts(key)).toEqual([]);
+  });
+
   it("a sample no newer than the last one changes nothing", async () => {
     const owner = randomUUID();
     const key = await connectKey(owner, randomUUID());

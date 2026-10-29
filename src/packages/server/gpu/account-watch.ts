@@ -331,6 +331,9 @@ export async function watchProviderAccount(
           await disable(db, w, keys.length, at);
           return { checked: false, reason: "shared" } as AccountWatchOutcome;
         }
+        // and the lease still held now that the locks are (waiting for them
+        // may have outlasted it)
+        await deps.guard?.();
         return await apply(db, w);
       })) ?? { checked: false, reason: "fence" }
     );
