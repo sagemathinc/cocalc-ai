@@ -133,6 +133,52 @@ export type SiteFundedCodexReservation = {
   providerKeyId?: string;
 };
 
+/**
+ * Why an included turn stopped being funded while it ran: it reached its
+ * time limit, or the hub ended its reservation (it expired or was revoked).
+ */
+export type SiteFundedTurnEndReason = "duration" | "ended";
+
+/** Why the hub no longer holds this reservation active, as seen at `now`. */
+export function siteFundedTurnEndReason(
+  reservation: Pick<SiteFundedCodexReservation, "expiresAt">,
+  now = Date.now(),
+): SiteFundedTurnEndReason {
+  const expiresAt = Date.parse(reservation.expiresAt ?? "");
+  // The hub's clock may run a little ahead of this host's.
+  return Number.isFinite(expiresAt) && now >= expiresAt - 60_000
+    ? "duration"
+    : "ended";
+}
+
+function formatTurnDuration(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes % 60 === 0) return `${minutes / 60}-hour`;
+  return `${minutes}-minute`;
+}
+
+/** What a person is told once an included turn is no longer funded. */
+export function siteFundedTurnEndedMessage({
+  provider,
+  reason,
+  maxTurnDurationMs,
+}: {
+  provider?: SiteFundedProvider;
+  reason: SiteFundedTurnEndReason;
+  maxTurnDurationMs: number;
+}): string {
+  const claude = provider === "anthropic";
+  const product = claude ? "Claude" : "Codex";
+  const alternative = claude
+    ? "use your own Claude subscription or Anthropic API key"
+    : "connect your own ChatGPT plan or OpenAI API key";
+  const what =
+    reason === "duration"
+      ? `This included ${product} turn reached its ${formatTurnDuration(maxTurnDurationMs)} limit.`
+      : `CoCalc ended this included ${product} turn.`;
+  return `${what} Start a new turn to continue, or ${alternative}.`;
+}
+
 export type SiteFundedCodexUsageEvent = SiteFundedCodexRequestUsage & {
   eventId: string;
   reservationId: string;

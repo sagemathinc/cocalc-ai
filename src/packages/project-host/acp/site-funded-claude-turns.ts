@@ -11,7 +11,10 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
-import type { SiteFundedUsageWarning } from "@cocalc/util/ai/site-funded-codex";
+import {
+  siteFundedTurnEndReason,
+  type SiteFundedUsageWarning,
+} from "@cocalc/util/ai/site-funded-codex";
 import {
   finishSiteFundedTurn,
   getSiteFundedClaudeKey,
@@ -120,8 +123,13 @@ export function createSiteFundedClaudeTurns({
         void deps
           .heartbeat(reservation.reservationId)
           .then((stillActive) => {
-            // The hub ended it (expired, say): stop funding at once.
-            if (!stillActive) void relay.deactivate(reservation.reservationId);
+            // The hub ended it (its time limit, say): stop funding at once,
+            // and tell later requests why.
+            if (!stillActive) {
+              void relay.deactivate(reservation.reservationId, {
+                reason: siteFundedTurnEndReason(reservation),
+              });
+            }
           })
           .catch((err) =>
             logger.warn("site-funded Claude heartbeat failed", {
