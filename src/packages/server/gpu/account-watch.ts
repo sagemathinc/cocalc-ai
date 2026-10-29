@@ -327,13 +327,13 @@ export async function watchProviderAccount(
         }
         await lockProviderIdentity(db, identity);
         const keys = await identityCredentials(identity, db, { active: true });
+        // and the lease still held now that the locks are (waiting for them
+        // may have outlasted it), before either outcome writes
+        await deps.guard?.();
         if (!exclusive(keys)) {
           await disable(db, w, keys.length, at);
           return { checked: false, reason: "shared" } as AccountWatchOutcome;
         }
-        // and the lease still held now that the locks are (waiting for them
-        // may have outlasted it)
-        await deps.guard?.();
         return await apply(db, w);
       })) ?? { checked: false, reason: "fence" }
     );
