@@ -1149,6 +1149,97 @@ describe("project-host Conat auth", () => {
       expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
     });
 
+    it("lets a collaborator sync during a bay request decide, for waiting and later callers", async () => {
+      mockGetRow.mockReturnValue(undefined);
+      const pending: Array<(member: boolean) => void> = [];
+      mockConfirmProjectMemberWithOwningBay.mockImplementation(
+        () => new Promise<boolean>((r) => pending.push(r)),
+      );
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      const before = isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: fsSubject,
+      });
+      await new Promise((r) => setImmediate(r));
+      expect(pending).toHaveLength(1);
+
+      // The sync stores a list without the account (it was removed).
+      mockGetRow.mockReturnValue({
+        users: { "00000000-1000-4000-8000-000000000009": { group: "owner" } },
+      });
+      clearProjectHostConatAuthCaches();
+      const after = isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: fsSubject,
+      });
+      await new Promise((r) => setImmediate(r));
+      // A caller after the sync does not join the earlier request.
+      expect(pending).toHaveLength(2);
+
+      pending[0](true);
+      pending[1](false);
+      await expect(before).resolves.toBe(false);
+      await expect(after).resolves.toBe(false);
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject: fsSubject }),
+      ).resolves.toBe(false);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(2);
+    });
+
+    it("bounds the bay requests one account and the host can have running", async () => {
+      mockGetRow.mockReturnValue(undefined);
+      const pending: Array<(member: boolean) => void> = [];
+      mockConfirmProjectMemberWithOwningBay.mockImplementation(
+        () => new Promise<boolean>((r) => pending.push(r)),
+      );
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      const uuid = (prefix: string, i: number) =>
+        `${prefix}-1000-4000-8000-${i.toString(16).padStart(12, "0")}`;
+      const decisions: Promise<boolean>[] = [];
+      // One account, many projects: only 4 requests, the rest refused at once.
+      for (let i = 0; i < 10; i++) {
+        decisions.push(
+          isAllowed({
+            user: { account_id },
+            type: "pub",
+            subject: `fs.project-${uuid("00000000", 100 + i)}`,
+          }),
+        );
+      }
+      await new Promise((r) => setImmediate(r));
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(4);
+      await expect(Promise.all(decisions.slice(4))).resolves.toEqual(
+        Array(6).fill(false),
+      );
+      // Many accounts: at most 32 requests on the host.
+      for (let a = 0; a < 20; a++) {
+        for (let i = 0; i < 4; i++) {
+          decisions.push(
+            isAllowed({
+              user: { account_id: uuid("00000001", a) },
+              type: "pub",
+              subject: `fs.project-${uuid("00000002", i)}`,
+            }),
+          );
+        }
+      }
+      await new Promise((r) => setImmediate(r));
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(32);
+      for (const resolve of pending) resolve(true);
+      await Promise.all(decisions);
+      // Finished requests free their places.
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(true);
+      await expect(
+        isAllowed({
+          user: { account_id },
+          type: "pub",
+          subject: `fs.project-${uuid("00000000", 999)}`,
+        }),
+      ).resolves.toBe(true);
+    });
+
     it("does not ask the bay for an account the row knows in another role", async () => {
       mockGetRow.mockReturnValue({
         users: {

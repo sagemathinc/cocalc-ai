@@ -302,9 +302,21 @@ const bayMembershipDecisions = new TTL<string, boolean>({
   max: 10_000,
   ttl: 30_000,
 });
-const bayMembershipInFlight = new Map<string, Promise<boolean>>();
+type BayMembershipFlight = {
+  account_id: string;
+  generation: number;
+  promise: Promise<boolean>;
+};
+const bayMembershipInFlight = new Map<string, BayMembershipFlight>();
+const bayMembershipInFlightByAccount = new Map<string, number>();
+let bayMembershipRunning = 0;
 let bayMembershipGeneration = 0;
 const BAY_MEMBERSHIP_TIMEOUT_MS = 5_000;
+// Bay requests running at once, for the whole host and for one account. When
+// either is full the account is refused at once (and may retry): an account
+// cannot queue up requests for many projects.
+const BAY_MEMBERSHIP_MAX_IN_FLIGHT = 32;
+const BAY_MEMBERSHIP_MAX_IN_FLIGHT_PER_ACCOUNT = 4;
 
 // The host's collaborator list can lag the owning bay. An archived project has
 // no local row until it starts again, and a browser that is already connected
@@ -322,10 +334,45 @@ async function isProjectMemberConfirmedByBay({
   const key = `${account_id}:${project_id}`;
   const cached = bayMembershipDecisions.get(key);
   if (cached != null) return cached;
-  let pending = bayMembershipInFlight.get(key);
-  if (pending == null) {
-    const generation = bayMembershipGeneration;
-    pending = (async () => {
+  let flight = bayMembershipInFlight.get(key);
+  if (flight == null) {
+    const accountInFlight = bayMembershipInFlightByAccount.get(account_id) ?? 0;
+    if (
+      bayMembershipRunning >= BAY_MEMBERSHIP_MAX_IN_FLIGHT ||
+      accountInFlight >= BAY_MEMBERSHIP_MAX_IN_FLIGHT_PER_ACCOUNT
+    ) {
+      return false;
+    }
+    flight = startBayMembershipFlight({ key, account_id, project_id });
+  }
+  const member = await flight.promise;
+  if (flight.generation !== bayMembershipGeneration) {
+    // A collaborator sync arrived while the bay was asked: the list it stored
+    // decides, not the earlier answer.
+    return isProjectCollaboratorLocal({ account_id, project_id });
+  }
+  return member;
+}
+
+function startBayMembershipFlight({
+  key,
+  account_id,
+  project_id,
+}: {
+  key: string;
+  account_id: string;
+  project_id: string;
+}): BayMembershipFlight {
+  const generation = bayMembershipGeneration;
+  bayMembershipRunning += 1;
+  bayMembershipInFlightByAccount.set(
+    account_id,
+    (bayMembershipInFlightByAccount.get(account_id) ?? 0) + 1,
+  );
+  const flight: BayMembershipFlight = {
+    account_id,
+    generation,
+    promise: (async () => {
       let member = false;
       try {
         const { confirmProjectMemberWithOwningBay } =
@@ -342,20 +389,30 @@ async function isProjectMemberConfirmedByBay({
           err: `${err}`,
         });
       }
-      // (an answer from before a collaborator sync is not kept)
       if (generation === bayMembershipGeneration) {
         bayMembershipDecisions.set(key, member);
       }
       return member;
-    })().finally(() => bayMembershipInFlight.delete(key));
-    bayMembershipInFlight.set(key, pending);
-  }
-  return await pending;
+    })().finally(() => {
+      bayMembershipRunning -= 1;
+      const left = (bayMembershipInFlightByAccount.get(account_id) ?? 1) - 1;
+      if (left > 0) bayMembershipInFlightByAccount.set(account_id, left);
+      else bayMembershipInFlightByAccount.delete(account_id);
+      if (bayMembershipInFlight.get(key) === flight) {
+        bayMembershipInFlight.delete(key);
+      }
+    }),
+  };
+  bayMembershipInFlight.set(key, flight);
+  return flight;
 }
 
 function clearAuthCaches() {
   authDecisionCache.clear();
   bayMembershipDecisions.clear();
+  // Requests already sent still count against the limits until they finish,
+  // but nobody joins them: callers after the sync ask again.
+  bayMembershipInFlight.clear();
   bayMembershipGeneration += 1;
 }
 
