@@ -902,6 +902,17 @@ export function DirectConversationView({
   );
 }
 
+// On a narrow screen (a phone, or high zoom) there is no room for the list
+// beside an open conversation: show the conversation alone. Its "Back to
+// messages" button returns to the list.
+const NARROW_CSS = `
+@media (max-width: 767px) {
+  .direct-list-with-detail {
+    display: none;
+  }
+}
+`;
+
 // The Messages tab: the list, and the open conversation beside it.
 export function DirectMessagesTab({
   conversation_id,
@@ -919,6 +930,7 @@ export function DirectMessagesTab({
   const open = conversation_id != null;
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 12 }}>
+      <style>{NARROW_CSS}</style>
       <div
         style={{
           width: open ? 340 : "100%",
@@ -926,7 +938,9 @@ export function DirectMessagesTab({
           flex: "0 0 auto",
           overflowY: "auto",
         }}
-        className={open ? "people-list-with-detail" : undefined}
+        className={
+          open ? "people-list-with-detail direct-list-with-detail" : undefined
+        }
       >
         {error && <Alert role="alert" type="error" title={error} />}
         {loading && conversations.length === 0 ? (

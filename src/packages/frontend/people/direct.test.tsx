@@ -273,6 +273,38 @@ test("switching accounts never leaves the previous account's messages on screen"
   expect(screen.queryByText("private for Ada")).toBeNull();
 });
 
+test("on a narrow screen an open conversation replaces the list", async () => {
+  mockApi.listDirect.mockResolvedValue({ conversations: [listed("c1")] });
+  mockApi.getDirect.mockResolvedValue({
+    conversation: listed("c1"),
+    messages: [],
+  });
+  const { container, rerender } = render(
+    <DirectMessagesTab onOpen={() => {}} onClose={() => {}} />,
+  );
+  // jsdom applies no media queries: check the rule and where it applies.
+  const css = container.querySelector("style")?.textContent ?? "";
+  expect(css).toMatch(
+    /@media \(max-width: 767px\)\s*{\s*\.direct-list-with-detail\s*{\s*display: none;/,
+  );
+  // With nothing open, the list is all there is: it is never hidden.
+  expect(container.querySelector(".direct-list-with-detail")).toBeNull();
+  rerender(
+    <DirectMessagesTab
+      conversation_id="c1"
+      onOpen={() => {}}
+      onClose={() => {}}
+    />,
+  );
+  expect(container.querySelector(".direct-list-with-detail")).not.toBeNull();
+  // The conversation has its way back to the list.
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Back to messages" }),
+    ).toBeTruthy(),
+  );
+});
+
 test("a request's messages are plain text until accepted: no image loads", async () => {
   const request = listed("c3", { state: "requested", created_by: bea });
   mockApi.listDirect.mockResolvedValue({ conversations: [request] });
