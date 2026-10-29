@@ -279,6 +279,63 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
     expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
   });
 
+  describe("quota relief for deletes", () => {
+    // Prod 2026-10-29: raising and lowering a project's limit around every
+    // deleted snapshot cost ~15 s each (the delete itself ~0.2 s), and a prune
+    // deletes several, in the paying snapshot lane.
+    const deleteCalls = () =>
+      btrfsMock.mock.calls.filter(([{ args }]) => args[1] === "delete");
+
+    it("leaves the limit alone when there is room for the delete", async () => {
+      const subvolume = createSubvolumeWithSnapshots(["snap1"]) as any;
+      subvolume.quota.get = jest.fn(async () => ({ size: 10_000, used: 100 }));
+      const withTemporaryQuotaOverride = jest.fn();
+      subvolume.filesystem.opts.withTemporaryQuotaOverride =
+        withTemporaryQuotaOverride;
+      await new SubvolumeSnapshots(subvolume).delete("snap1");
+      expect(withTemporaryQuotaOverride).not.toHaveBeenCalled();
+      expect(subvolume.quota.set).not.toHaveBeenCalled();
+      expect(deleteCalls()).toHaveLength(1);
+    });
+
+    it("raises the limit once for all of a prune's deletes", async () => {
+      const day = 24 * 60 * 60_000;
+      const names = [3, 2, 1].map((days) =>
+        new Date(Date.now() - days * day).toISOString(),
+      );
+      const subvolume = createSubvolumeWithSnapshots(names) as any;
+      const withTemporaryQuotaOverride = jest.fn(
+        async ({ run }: { run: () => Promise<void> }) => await run(),
+      );
+      subvolume.filesystem.opts.withTemporaryQuotaOverride =
+        withTemporaryQuotaOverride;
+      const snapshots = new SubvolumeSnapshots(subvolume);
+      snapshots.readdir = jest.fn(async () => [...names]);
+      const { pruneRollingSnapshots } = await import("./snapshots");
+      // retention keeps none of them
+      await expect(
+        pruneRollingSnapshots({
+          snapshots,
+          counts: { frequent: 0, daily: 0, weekly: 0, monthly: 0 },
+        }),
+      ).resolves.toBe(3);
+      expect(withTemporaryQuotaOverride).toHaveBeenCalledTimes(1);
+      expect(deleteCalls()).toHaveLength(3);
+    });
+
+    it("relieves a delete refused for quota after all, once more", async () => {
+      const subvolume = createSubvolumeWithSnapshots(["snap1"]) as any;
+      subvolume.quota.get = jest.fn(async () => ({ size: 10_000, used: 100 }));
+      btrfsMock.mockRejectedValueOnce(
+        new Error("ERROR: Could not destroy subvolume: Disk quota exceeded"),
+      );
+      await new SubvolumeSnapshots(subvolume).delete("snap1");
+      expect(deleteCalls()).toHaveLength(2);
+      expect(subvolume.quota.set).toHaveBeenNthCalledWith(1, 10_050);
+      expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 10_000);
+    });
+  });
+
   it("creates a replacement before pruning at a one-snapshot limit", async () => {
     const snapshots = new SubvolumeSnapshots(createSubvolume() as any);
     const old = new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString();

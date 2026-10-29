@@ -1424,9 +1424,11 @@ export async function deleteVolume(
         if (clearSnapshots) {
           try {
             const snapshots = await vol.snapshots.readdir();
-            for (const snapshot of snapshots) {
-              await vol.snapshots.delete(snapshot);
-            }
+            await vol.snapshots.batchDeletes(async () => {
+              for (const snapshot of snapshots) {
+                await vol.snapshots.delete(snapshot);
+              }
+            });
           } catch (err) {
             logger.warn("deleteVolume: snapshot cleanup failed", {
               project_id,
