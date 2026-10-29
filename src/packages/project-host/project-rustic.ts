@@ -24,7 +24,8 @@ type ProjectRusticCommand =
   | "project-rustic-backup"
   | "project-rustic-backup-maintenance"
   | "project-rustic-restore"
-  | "project-oversized-files";
+  | "project-oversized-files"
+  | "project-changed-since";
 
 export class ProjectRusticUnsupportedError extends Error {
   constructor(
@@ -313,6 +314,54 @@ export async function projectOversizedFiles({
     if (err instanceof ProjectRusticUnsupportedError) {
       return null;
     }
+    throw err;
+  }
+}
+
+// src-relative paths whose ctime is at or after sinceMs ("." for src itself),
+// without reading any file: only the first few, and truncated if there were
+// more. foreign_filesystem: the walk met a nested subvolume or mount, whose
+// changes it can't see. Null where the privileged helper is missing or
+// predates this scan.
+export async function projectChangedSince({
+  src,
+  sinceMs,
+  timeoutMs = 90_000,
+}: {
+  src: string;
+  sinceMs: number;
+  timeoutMs?: number;
+}): Promise<{
+  paths: string[];
+  truncated: boolean;
+  foreign_filesystem: boolean;
+} | null> {
+  if (!existsSync(STORAGE_WRAPPER)) return null;
+  if (!Number.isSafeInteger(sinceMs) || sinceMs < 0) {
+    throw new Error(`invalid change scan time: ${sinceMs}`);
+  }
+  try {
+    const { stdout } = await runProjectRustic({
+      command: "project-changed-since",
+      args: [src, "--since-ns", `${BigInt(sinceMs) * 1_000_000n}`],
+      timeoutMs,
+    });
+    const report = JSON.parse(stdout.trim());
+    if (
+      !Array.isArray(report?.paths) ||
+      !report.paths.every((path: unknown) => typeof path === "string") ||
+      typeof report.truncated !== "boolean" ||
+      typeof report.foreign_filesystem !== "boolean"
+    ) {
+      throw new Error("invalid change scan report");
+    }
+    return {
+      paths: report.paths,
+      truncated: report.truncated,
+      foreign_filesystem: report.foreign_filesystem,
+    };
+  } catch (err) {
+    if (err instanceof ProjectRusticUnsupportedError) return null;
     throw err;
   }
 }
