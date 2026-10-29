@@ -3,6 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 // The C7 store (S6a r10 §2.2, §2.5, §2.6) with a stub projector: admission,
 // replay, the terminal arbiter, pendingIncomplete, the lease CAS, the fence
 // and objects, with injected faults at each transaction step.
@@ -14,7 +17,9 @@ import {
 } from "../../sqlite/acp-database";
 import {
   __clearPendingIncompleteForTests,
+  __getC7MutationForTests,
   __setC7FaultHook,
+  __setC7MutationForTests,
   admitInitial,
   decideClose,
   deleteC7TurnObjects,
@@ -1356,4 +1361,92 @@ describe("C1 r3: the 24-hour boundary, exactly", () => {
       expect(expireC7DerivedObjects(T0 + DAY)).toBe(1);
     });
   }
+});
+
+describe("C1 r4: the COMMIT-catch control detects its mutant", () => {
+  it("has the mutation switch off by default", () => {
+    expect(__getC7MutationForTests()).toBeUndefined();
+  });
+
+  it("is set by nothing outside the tests", () => {
+    // every non-test source file under lite/hub
+    const hub = join(__dirname, "..", "..");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== "__tests__" && entry.name !== "node_modules") {
+            walk(path);
+          }
+        } else if (
+          /\.tsx?$/.test(entry.name) &&
+          !/\.test\.tsx?$/.test(entry.name)
+        ) {
+          files.push(path);
+        }
+      }
+    };
+    walk(hub);
+    const uses = files.flatMap((file) =>
+      readFileSync(file, "utf8")
+        .split("\n")
+        .filter((line) => line.includes("__setC7MutationForTests"))
+        .map((line) => `${file}: ${line.trim()}`),
+    );
+    // only its own definition, in c7-store.ts
+    expect(uses).toHaveLength(1);
+    expect(uses[0]).toMatch(
+      /c7-store\.ts: export function __setC7MutationForTests\(/,
+    );
+  });
+
+  it("fails the deferred-FK COMMIT control when the COMMIT catch skips its ROLLBACK", () => {
+    start("A");
+    admit("A", { x: 0 });
+    const db = getAcpDatabase();
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec(
+      `CREATE TABLE IF NOT EXISTS c7_test_parent (id INTEGER PRIMARY KEY)`,
+    );
+    db.exec(`CREATE TABLE IF NOT EXISTS c7_test_child (
+      parent INTEGER REFERENCES c7_test_parent(id) DEFERRABLE INITIALLY DEFERRED)`);
+    let failed: any;
+    let retry: any;
+    let childRows: any;
+    try {
+      __setC7MutationForTests("skip-commit-rollback");
+      __setC7FaultHook((p) => {
+        if (p === "tx:before-commit") {
+          db.prepare(`INSERT INTO c7_test_child (parent) VALUES (999)`).run();
+        }
+      });
+      failed = admit("A", { x: 1 });
+      __setC7FaultHook(undefined);
+      // the deliberately leaked transaction is still open, so what the real
+      // control asserts no longer holds
+      childRows = db.prepare(`SELECT COUNT(*) AS c FROM c7_test_child`).get();
+      retry = admit("A", { x: 2 });
+    } finally {
+      __setC7FaultHook(undefined);
+      __setC7MutationForTests(undefined);
+      try {
+        db.exec("ROLLBACK"); // unwind the leaked transaction
+      } catch {
+        // already gone
+      }
+      db.exec("DELETE FROM c7_test_child");
+      db.exec("PRAGMA foreign_keys = OFF");
+      __clearPendingIncompleteForTests();
+    }
+    expect(failed.result).toBe("storage_failed");
+    expect(String(failed.error)).toMatch(/FOREIGN KEY/i);
+    // the control detects the mutant: the child row survived, and the retry
+    // couldn't even begin
+    expect(childRows).toMatchObject({ c: 1 });
+    expect(retry.result).toBe("storage_failed");
+    expect(String(retry.error)).toMatch(/within a transaction/i);
+    // and after the finally, the store works again
+    expect(admit("A", { x: 3 }).result).toBe("admitted");
+  });
 });

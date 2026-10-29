@@ -199,6 +199,21 @@ function fault(point: string): void {
   faultHook?.(point);
 }
 
+// Mutation switch (tests only): lets a test break one handler on purpose, to
+// prove that its control detects the breakage. Off by default; nothing
+// outside the tests may set it (a test checks both).
+export type C7Mutation = "skip-commit-rollback";
+
+let mutation: C7Mutation | undefined;
+
+export function __setC7MutationForTests(value?: C7Mutation): void {
+  mutation = value;
+}
+
+export function __getC7MutationForTests(): C7Mutation | undefined {
+  return mutation;
+}
+
 // ---------------------------------------------------------------------------
 // The process-level pending flags (§2.2): turns whose admission failed and
 // whose durable c7_incomplete write hasn't committed yet. An entry outlives
@@ -423,10 +438,12 @@ function transaction<T>(db: SqliteDatabase, fn: () => T): T {
     fault("tx:commit");
     db.exec("COMMIT");
   } catch (err) {
-    try {
-      db.exec("ROLLBACK");
-    } catch {
-      // ignore
+    if (mutation !== "skip-commit-rollback") {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        // ignore
+      }
     }
     throw err;
   }
