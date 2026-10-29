@@ -393,4 +393,36 @@ describe("terminalServer", () => {
       expect(listed.has(`reap-bulk-${i}`)).toBe(i >= 8);
     }
   });
+
+  it("allows 64 sessions and 128 sockets by default", async () => {
+    expect(process.env.COCALC_TERMINAL_MAX_SESSIONS).toBeUndefined();
+    expect(process.env.COCALC_TERMINAL_MAX_ACTIVE_SOCKETS).toBeUndefined();
+    const { ptys, connect } = fakeTerminalServer();
+    const sockets: any[] = [];
+    for (let i = 0; i < 64; i++) {
+      const { socket, request } = connect();
+      sockets.push(socket);
+      await request({
+        cmd: "spawn",
+        command: "bash",
+        options: { id: `limit-${i}` },
+      });
+    }
+    const extra = connect();
+    sockets.push(extra.socket);
+    await expect(
+      extra.request({
+        cmd: "spawn",
+        command: "bash",
+        options: { id: "limit-64" },
+      }),
+    ).rejects.toThrow("terminal session limit reached");
+    // A second socket on every session (another browser tab) still fits.
+    while (sockets.length < 128) sockets.push(connect().socket);
+    expect(sockets.some((socket) => socket.end.mock.calls.length)).toBe(false);
+    const rejected = connect().socket;
+    expect(rejected.end).toHaveBeenCalled();
+    for (const pty of ptys) pty.emit("exit");
+    for (const socket of sockets) socket.emit("closed");
+  });
 });
