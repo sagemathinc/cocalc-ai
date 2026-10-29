@@ -7,6 +7,7 @@ import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
 import { ensureLroSchema } from "@cocalc/server/lro/lro-db";
 import { PROJECT_RESTORE_DRILLS_SQL } from "@cocalc/server/conat/api/admin-db";
+import { ensureProjectBackupRepoSchema } from "@cocalc/server/project-backup";
 import {
   getProjectRestoreDrillHealth,
   recordRestoreDrillAttestation,
@@ -225,6 +226,7 @@ describe("restore drill operator attestation", () => {
   });
 
   it("counts only active repositories toward the drill target", async () => {
+    await ensureProjectBackupRepoSchema();
     await getPool().query(
       "DELETE FROM projects WHERE owning_bay_id = $1 OR owning_bay_id IS NULL",
       [bay_id],

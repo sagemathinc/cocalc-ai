@@ -2018,6 +2018,27 @@ export function projectBackupReposAreSeedManaged(): boolean {
   return shouldUseSeedManagedProjectBackups();
 }
 
+// The status of each shared repository, from the bay that owns them (the
+// seed bay, for an attached bay: it has no project_backup_repos rows).
+export async function getProjectBackupRepoStatuses(): Promise<
+  Map<string, string | null>
+> {
+  if (shouldUseSeedManagedProjectBackups()) {
+    const cluster = getClusterConfig();
+    const { getInterBayBridge } =
+      await import("@cocalc/server/inter-bay/bridge");
+    const { repos } = await getInterBayBridge()
+      .hostConnection(cluster.seed_bay_id, { timeout_ms: 30_000 })
+      .getSeedProjectBackupShards({ region: null });
+    return new Map(repos.map((repo) => [repo.id, repo.status]));
+  }
+  await ensureProjectBackupRepoSchema();
+  const { rows } = await pool().query<{ id: string; status: string | null }>(
+    "SELECT id, status FROM project_backup_repos",
+  );
+  return new Map(rows.map((row) => [row.id, row.status]));
+}
+
 function shouldUseSeedManagedProjectBackups(): boolean {
   const cluster = getClusterConfig();
   return (

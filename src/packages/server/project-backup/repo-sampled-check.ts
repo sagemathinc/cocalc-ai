@@ -19,7 +19,9 @@ days per repository, a read-only and bounded `rustic check`:
   decrypted and hashed, which finds corrupt packs.
 
 It never writes to a repository. It uses no local cache, checks one
-repository per hourly run, runs under nice, and stops after CHECK_TIMEOUT_MS.
+repository per hourly run and runs under nice. Each rustic command has a
+timeout: 10 minutes for the listing, an hour for a check (and an hour for the
+one retry when a chosen snapshot was forgotten meanwhile).
 Bucket egress from R2 is free; a check costs a few thousand read requests.
 
 Each result is recorded in project_backup_repo_sampled_checks. Admin health
