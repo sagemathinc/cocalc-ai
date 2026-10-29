@@ -38,6 +38,10 @@ case "${args[0]}" in
     [[ "$unit" == cocalc-bay-cloudflared-2.service && "${FAKE_RESTART2_FAILS:-0}" == 1 ]] && exit 1
     touch "${LOG}.restarted.${unit}"
     exit 0 ;;
+  is-active)
+    # FAKE_UNIT1_INACTIVE: replica 1 stopped or failed until restarted.
+    [[ "$unit" == cocalc-bay-cloudflared.service && "${FAKE_UNIT1_INACTIVE:-0}" == 1 && ! -e "${LOG}.restarted.${unit}" ]] && exit 3
+    exit 0 ;;
 esac
 exit 0
 FAKE
@@ -74,7 +78,7 @@ reset() {
   : > "$LOG"
   rm -f "${LOG}".restarted.*
   export FAKE_READY=4 FAKE_READY_2=4 FAKE_RESTART2_FAILS=0 FAKE_REPLICA2_INSTALLED=1
-  unset FAKE_READY_AFTER_RESTART FAKE_READY_2_AFTER_RESTART
+  unset FAKE_READY_AFTER_RESTART FAKE_READY_2_AFTER_RESTART FAKE_UNIT1_INACTIVE
 }
 
 # The original forms still mean replica 1; a replica argument selects another.
@@ -156,6 +160,14 @@ reset
 export FAKE_READY=garbage FAKE_READY_2=garbage
 if bash "$CTL" restart-all 2>/dev/null; then fail "restart-all succeeded with no readiness known"; fi
 [[ -z "$(restarts)" ]] || fail "restarted with no readiness known: $(restarts)"
+
+# Replica 1 is stopped or failed (its metrics do not answer) while replica 2
+# serves: it is recovered first, then replica 2.
+reset
+export FAKE_UNIT1_INACTIVE=1 FAKE_READY=garbage FAKE_READY_AFTER_RESTART=4
+bash "$CTL" restart-all || fail "restart-all failed recovering an inactive replica 1"
+[[ "$(restarts)" == "restart cocalc-bay-cloudflared.service restart cocalc-bay-cloudflared-2.service " ]] ||
+  fail "did not recover the inactive replica first: $(restarts)"
 
 # A bay with only replica 1 installed.
 reset

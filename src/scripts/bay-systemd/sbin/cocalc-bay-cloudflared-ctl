@@ -79,11 +79,17 @@ wait_ready() {
 }
 
 # The unit's tunnel readiness now: "ready" (a ready connection), "none"
-# (it reports zero), or "unknown" (no metrics address, no answer, or an
+# (it reports zero, or the unit is not running), or "unknown" (no metrics
+# address, no answer, or an
 # answer that cannot be read). Only "ready" counts as another replica
 # carrying traffic, and only "none" lets a replica be restarted without one.
 ready_state() {
   local unit="$1" address body
+  # A unit that is not running (stopped or failed) serves nothing.
+  if ! "$SYSTEMCTL" --quiet is-active "$unit"; then
+    echo none
+    return
+  fi
   address="$(metrics_address "$unit")"
   if [[ -z "$address" ]] ||
       ! body="$("$CURL" --silent --max-time 2 "http://${address}/ready" 2>/dev/null)"; then
