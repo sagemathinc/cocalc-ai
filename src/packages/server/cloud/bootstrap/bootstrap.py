@@ -6137,7 +6137,8 @@ def scan_oversized_files(
 # followed by \\0, and stops after the given number. ctime moves with every
 # write, chmod, rename and link and, on the parent directory, every delete;
 # an unprivileged process cannot set it. The top-level .snapshots directory
-# only holds the project's snapshots, so managing them is not a change.
+# only holds the project's snapshots, so managing them is not a change. Any
+# other directory on another filesystem ends the walk with status 3.
 # Arguments: time in ns, maximum paths, maximum depth.
 CHANGED_SINCE_WALK_PROGRAM = """
 import os, sys
@@ -6176,8 +6177,14 @@ try:
             st = entry.stat(follow_symlinks=False)
             if st.st_ctime_ns >= since_ns:
                 report(rel + name)
-            if not entry.is_dir(follow_symlinks=False) or st.st_dev != root_dev:
+            if not entry.is_dir(follow_symlinks=False):
                 continue
+            if st.st_dev != root_dev:
+                # A nested subvolume or mount: changes below it move neither
+                # the ctimes seen here nor the project's generation. Can't
+                # tell (exit status 3).
+                out.flush()
+                sys.exit(3)
             if len(stack) >= max_depth:
                 sys.exit("directory tree too deep to scan for changes")
             child = os.open(entry.name, flags, dir_fd=fd)
@@ -6194,7 +6201,7 @@ def scan_changed_since(datafd, *, since_ns, deadline):
     """Up to CHANGED_SINCE_MAX_PATHS paths changed at or after since_ns,
     without reading any file."""
     # Isolated: the working directory is the user's tree, which must not
-    # supply modules to a root Python.
+    # supply modules to a root Python (needs Python >= 3.11: -I implies -P).
     args = [
         sys.executable or "/usr/bin/python3",
         "-I",
@@ -6230,12 +6237,14 @@ def scan_changed_since(datafd, *, since_ns, deadline):
         env={"LANG": "C", "PATH": "/usr/bin:/bin"},
         pass_fds=(datafd,),
     )
-    if status != 0 or pending:
+    foreign_filesystem = status == 3
+    if (status != 0 and not foreign_filesystem) or pending:
         fail("unable to scan for changes")
     return {
         "since_ns": since_ns,
         "paths": paths,
         "truncated": len(paths) >= CHANGED_SINCE_MAX_PATHS,
+        "foreign_filesystem": foreign_filesystem,
     }
 
 

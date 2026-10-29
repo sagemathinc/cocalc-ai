@@ -306,7 +306,7 @@ describe("project rustic wrapper", () => {
       mockedExecuteCode.mockResolvedValue({
         type: "blocking",
         stdout:
-          '{"since_ns":1793298000000000000,"paths":[".cache/cocalc/project/log"],"truncated":false}\n',
+          '{"since_ns":1793298000000000000,"paths":[".cache/cocalc/project/log"],"truncated":false,"foreign_filesystem":false}\n',
         stderr: "",
         exit_code: 0,
       } as any);
@@ -318,6 +318,7 @@ describe("project rustic wrapper", () => {
       ).resolves.toEqual({
         paths: [".cache/cocalc/project/log"],
         truncated: false,
+        foreign_filesystem: false,
       });
       expect(mockedExecuteCode.mock.calls[0][0].args).toEqual([
         "-n",

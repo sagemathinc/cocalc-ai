@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import pwd
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -946,7 +947,12 @@ secret_access_key = "secret"
             time.sleep(0.05)
             self.assertEqual(
                 self.run_changed_since(root, since),
-                {"since_ns": since, "paths": [], "truncated": False},
+                {
+                    "since_ns": since,
+                    "paths": [],
+                    "truncated": False,
+                    "foreign_filesystem": False,
+                },
             )
             # Looking writes no access time (O_NOATIME).
             self.assertEqual(os.stat(project / "a").st_atime, 0)
@@ -980,6 +986,53 @@ secret_access_key = "secret"
                     self.run_changed_since(root, bad)  # type: ignore[arg-type]
             with self.assertRaises(ValueError):
                 self.run_changed_since(root, since, path="../project")
+
+    def test_scan_changed_since_runtime_directory(self) -> None:
+        # A file deleted next to the runtime's log shows only as the
+        # directory's change, reported along with the log.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime = root / "project" / ".cache" / "cocalc" / "project"
+            runtime.mkdir(parents=True)
+            (runtime / "log").write_text("x")
+            (runtime / "important").write_text("x")
+            time.sleep(0.05)
+            since = time.time_ns()
+            time.sleep(0.05)
+            (runtime / "log").write_text("y")
+            (runtime / "important").unlink()
+            self.assertEqual(
+                sorted(self.run_changed_since(root, since)["paths"]),
+                [".cache/cocalc/project", ".cache/cocalc/project/log"],
+            )
+
+    @unittest.skipUnless(shutil.which("btrfs"), "needs btrfs-progs")
+    def test_scan_changed_since_nested_subvolume(self) -> None:
+        # Changes below a nested subvolume or mount move neither the ctimes the
+        # walk sees nor the project's generation: it can't tell.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = root / "project"
+            project.mkdir()
+            nested = project / "nested"
+            created = subprocess.run(
+                ["btrfs", "subvolume", "create", str(nested)],
+                capture_output=True,
+            )
+            if created.returncode != 0:
+                self.skipTest("cannot create a btrfs subvolume here")
+            try:
+                time.sleep(0.05)
+                since = time.time_ns()
+                time.sleep(0.05)
+                (nested / "file").write_text("x")
+                report = self.run_changed_since(root, since)
+                self.assertTrue(report["foreign_filesystem"])
+            finally:
+                subprocess.run(
+                    ["btrfs", "subvolume", "delete", str(nested)],
+                    capture_output=True,
+                )
 
     def test_scan_stops_and_nothing_follows_when_caller_is_killed(self) -> None:
         # Killing sudo during the scan stops the walk, and the helper starts

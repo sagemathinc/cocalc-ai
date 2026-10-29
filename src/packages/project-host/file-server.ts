@@ -3499,7 +3499,8 @@ export async function inspectScheduledSnapshots({
 /** Whether anything in a project's files changed at or after `since` (ms),
  * by ctime, which only root can set back: "none", "changed", or "unknown" when
  * that can't be told (no privileged helper, a lifecycle operation holds the
- * volume, or its btrfs generation moved during the scan). The runtime's own
+ * volume, a nested subvolume or mount, or the volume's btrfs generation moved
+ * during the scan). The runtime's own
  * log and pid file don't count (project-runtime-changes.ts). */
 export async function projectFilesChangedSince({
   project_id,
@@ -3521,7 +3522,7 @@ export async function projectFilesChangedSince({
         src: vol.path,
         sinceMs: since,
       });
-      if (scan == null) return "unknown" as const;
+      if (scan == null || scan.foreign_filesystem) return "unknown" as const;
       // Written while the scan ran: a directory it already passed may have
       // changed after it was looked at.
       if ((await getGeneration(vol.path, { cache: false })) !== before) {
