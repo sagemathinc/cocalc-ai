@@ -564,6 +564,11 @@ export async function createSiteFundedClaudeRelay({
         return;
       }
     }
+    if (active.reservedMicrousd - active.committedMicrousd >= threshold) return;
+    // Still short after every extension one request may make (the hub raises
+    // a chunk to a request's worst case, so this means something is off):
+    // don't forward the request underfunded.
+    throw new RelayError(403, EXTENSION_UNAVAILABLE);
   };
 
   // Synchronous up to queueing the event, so its usage is recorded before

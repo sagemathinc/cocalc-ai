@@ -1300,7 +1300,7 @@ export const EXTRAS: SettingsExtras = {
   },
   site_funded_codex_idle_timeout_seconds: {
     name: "Funded Turn Idle Timeout (seconds)",
-    desc: "A funded Codex or Claude turn whose project host sends no heartbeat for this long is treated as abandoned and its reservation released. A running turn heartbeats every 30 seconds, also while it waits on a long tool call.",
+    desc: "A funded Codex or Claude turn whose project host sends no heartbeat for this long is treated as abandoned and its reservation released. A running turn heartbeats every 30 seconds, also while it waits on a long tool call; values under 120 seconds are raised to 120.",
     default: "900",
     valid: only_pos_int,
     to_val: to_int,

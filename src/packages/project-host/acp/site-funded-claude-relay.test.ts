@@ -874,6 +874,26 @@ describe("site-funded Claude relay with a rolling reservation", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("fails closed when every extension a request may make still leaves it short", async () => {
+    let reserved = 1;
+    const extend = jest.fn(async () => {
+      reserved += 1;
+      return {
+        granted: true as const,
+        grantedMicrousd: 1,
+        reservedMicrousd: reserved,
+      };
+    });
+    activateRolling(1, extend);
+    const refused = await send(message);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toContain(
+      "could not extend this included Claude turn",
+    );
+    expect(extend).toHaveBeenCalledTimes(20);
+    expect(seen).toHaveLength(0);
+  });
+
   it("uses what it holds after a refusal, then stops with the hub's reason", async () => {
     const reason =
       "You have used your weekly included AI allowance. Wait for usage to reset, upgrade your CoCalc membership, or connect a Claude subscription or personal Anthropic API key.";

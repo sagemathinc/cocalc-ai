@@ -34,6 +34,8 @@ function positiveUsdMicrousd(value: unknown, fallback: number): number {
   }
 }
 
+const MIN_IDLE_TIMEOUT_SECONDS = 120;
+
 // Shared by Codex and Claude: how much a turn holds at a time, and how long
 // without a heartbeat before it counts as abandoned.
 function rollingReservationPolicy(
@@ -45,11 +47,16 @@ function rollingReservationPolicy(
       settings.site_funded_codex_reservation_chunk_usd,
       defaults.reservationChunkMicrousd ?? 100_000,
     ),
+    // Hosts heartbeat every 30 seconds: never call a turn idle before it
+    // missed several.
     idleTimeoutMs:
-      positiveInteger(
-        settings.site_funded_codex_idle_timeout_seconds,
-        (defaults.idleTimeoutMs ?? 15 * 60_000) / 1_000,
-        24 * 60 * 60,
+      Math.max(
+        MIN_IDLE_TIMEOUT_SECONDS,
+        positiveInteger(
+          settings.site_funded_codex_idle_timeout_seconds,
+          (defaults.idleTimeoutMs ?? 15 * 60_000) / 1_000,
+          24 * 60 * 60,
+        ),
       ) * 1_000,
   };
 }

@@ -585,10 +585,7 @@ export async function reserveSiteFundedCodexTurn(
       opts.accountRemaining7dMicrousd == null
         ? Number.MAX_SAFE_INTEGER
         : Math.max(0, opts.accountRemaining7dMicrousd - uncredited7dMicrousd);
-    // A rolling turn may hold at most its ceiling less one request's worst
-    // case: a request starts only while it has spent less than it holds, so
-    // it never spends more than the ceiling. With no room for that, reserve
-    // as before (the ceiling, once).
+    // A rolling turn is admitted with one chunk and extended as it runs.
     const rolling =
       !!opts.rolling && (opts.policy.reservationChunkMicrousd ?? 0) > 0;
     // A rolling turn may hold at most its ceiling less one request's worst

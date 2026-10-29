@@ -315,6 +315,11 @@ async function fundRequest(turn: ActiveTurn): Promise<void> {
       return;
     }
   }
+  if (turn.reservedMicrousd - turn.costMicrousd >= threshold) return;
+  // Still short after every extension one request may make (the hub raises a
+  // chunk to a request's worst case, so this means something is off): don't
+  // forward the request underfunded.
+  throw Object.assign(new Error(EXTENSION_UNAVAILABLE), { statusCode: 403 });
 }
 
 function boundedProviderRequest({

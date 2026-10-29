@@ -43,6 +43,28 @@ describe("site-funded Codex policy", () => {
     expect(config.globalConcurrency).toBe(12);
   });
 
+  it("reads the rolling-reservation settings, never calling a turn idle between heartbeats", () => {
+    const config = siteFundedCodexConfigurationFromSettings({
+      site_funded_codex_reservation_chunk_usd: "0.05",
+      site_funded_codex_idle_timeout_seconds: "600",
+    });
+    expect(config.policy).toMatchObject({
+      reservationChunkMicrousd: 50_000,
+      idleTimeoutMs: 600_000,
+    });
+    // Hosts heartbeat every 30 seconds: a shorter idle timeout is raised.
+    expect(
+      siteFundedCodexConfigurationFromSettings({
+        site_funded_codex_idle_timeout_seconds: "10",
+      }).policy.idleTimeoutMs,
+    ).toBe(120_000);
+    expect(
+      siteFundedClaudeConfigurationFromSettings({
+        site_funded_codex_idle_timeout_seconds: "10",
+      }).policy.idleTimeoutMs,
+    ).toBe(120_000);
+  });
+
   it("keeps low reasoning available as an explicit override", () => {
     const config = siteFundedCodexConfigurationFromSettings({
       site_funded_codex_reasoning: "low",
