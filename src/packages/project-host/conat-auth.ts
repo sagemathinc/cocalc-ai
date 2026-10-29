@@ -696,10 +696,20 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         presence?.account_id === userId &&
         user.auth_scopes?.includes(BROWSER_RUNTIME_PRESENCE_AUTH_SCOPE) ===
           true &&
-        isProjectCollaboratorLocal({
+        // (the same fallback as other project subjects: a refused heartbeat
+        // would let idle maintenance stop a project its user is working in)
+        (isProjectCollaboratorLocal({
           account_id: userId,
           project_id: presence.project_id,
-        })
+        }) ||
+          (isAccountUnknownLocally({
+            account_id: userId,
+            project_id: presence.project_id,
+          }) &&
+            (await isProjectMemberConfirmedByBay({
+              account_id: userId,
+              project_id: presence.project_id,
+            }))))
       );
     }
     // (an agent and its account share a user id, but not permissions)

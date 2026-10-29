@@ -1346,6 +1346,36 @@ describe("project-host Conat auth", () => {
       ).resolves.toBe(true);
     });
 
+    it("asks the bay for a runtime presence heartbeat too, but never for a wrong scope", async () => {
+      // Refused heartbeats would let idle maintenance stop the project.
+      mockGetRow.mockReturnValue(undefined);
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(true));
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      const subject = browserRuntimePresenceSubject({ project_id, account_id });
+      const browser = {
+        account_id,
+        auth_scopes: [BROWSER_RUNTIME_PRESENCE_AUTH_SCOPE],
+      };
+      await expect(
+        isAllowed({ user: browser, type: "pub", subject }),
+      ).resolves.toBe(true);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
+      // Without the scope, or to subscribe, the bay is not asked at all.
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject }),
+      ).resolves.toBe(false);
+      await expect(
+        isAllowed({ user: browser, type: "sub", subject }),
+      ).resolves.toBe(false);
+      expect(mockConfirmProjectMemberWithOwningBay).toHaveBeenCalledTimes(1);
+      // And a bay refusal is a refusal.
+      mockConfirmProjectMemberWithOwningBay.mockResolvedValue(bay(false));
+      clearProjectHostConatAuthCaches();
+      await expect(
+        isAllowed({ user: browser, type: "pub", subject }),
+      ).resolves.toBe(false);
+    });
+
     it("does not ask the bay for an account the row knows in another role", async () => {
       mockGetRow.mockReturnValue({
         users: {
