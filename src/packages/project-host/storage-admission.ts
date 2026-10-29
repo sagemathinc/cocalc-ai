@@ -270,8 +270,62 @@ function elapsedMs(since: number, at: number): number {
   return at >= since ? at - since : Infinity;
 }
 
+// Per device ("major:minor"): when maintenance last did I/O there, in an
+// interval that found every disk it used idle.
+type IdleMaintenanceIo = Map<string, number>;
+
+// The gate also reads 60 s PSI averages, which keep a throttled backup's
+// stall after its last I/O: between its reads, or once it has finished.
+// Intervals without maintenance I/O therefore keep the last idle verdict
+// while every disk it recently used stays idle. A busy one of those disks,
+// or maintenance I/O on a busy or unknown disk, ends it, so a real outside
+// stall is still counted. avg60 decays exponentially (by 1/e every 60 s),
+// so the verdict lasts 180 s after a disk's last such I/O: by then under 5%
+// of any stall remains, below the contended threshold.
+const MAINTENANCE_IDLE_HOLD_MS = 180_000;
+
+function maintenanceDisksIdleHeld(
+  previous: DiskActivity | undefined,
+  next: DiskActivity | undefined,
+  held: IdleMaintenanceIo | undefined,
+  maxUtilization: number,
+): { idle: boolean; held?: IdleMaintenanceIo } {
+  if (!previous || !next) return { idle: false };
+  const elapsed = next.at_ms - previous.at_ms;
+  if (!(elapsed > 0)) return { idle: false };
+  // Disks whose maintenance stall can still be in the averages: one of them
+  // busy now makes that stall possibly real contention.
+  const recent: IdleMaintenanceIo = new Map(
+    [...(held ?? [])].filter(
+      ([, at]) => elapsedMs(at, next.at_ms) <= MAINTENANCE_IDLE_HOLD_MS,
+    ),
+  );
+  for (const device of recent.keys()) {
+    const before = previous.busy_ms.get(device);
+    const after = next.busy_ms.get(device);
+    if (before == null || after == null) return { idle: false };
+    if ((after - before) / elapsed >= maxUtilization) return { idle: false };
+  }
+  if (maintenanceStallOnIdleDisks(previous, next, maxUtilization)) {
+    for (const [device, ios] of next.maintenance_ios) {
+      if (ios > (previous.maintenance_ios.get(device) ?? 0)) {
+        recent.set(device, next.at_ms);
+      }
+    }
+    return { idle: true, held: recent };
+  }
+  if (recent.size === 0) return { idle: false };
+  for (const [device, ios] of next.maintenance_ios) {
+    if (ios > (previous.maintenance_ios.get(device) ?? 0)) {
+      return { idle: false };
+    }
+  }
+  return { idle: true, held: recent };
+}
+
 let lastDiskActivity: DiskActivity | undefined;
 let lastDisksIdle = false;
+let lastIdleMaintenanceIo: IdleMaintenanceIo | undefined;
 
 function readMaintenanceDisksIdle(): boolean {
   const at = Date.now();
@@ -282,9 +336,10 @@ function readMaintenanceDisksIdle(): boolean {
     return lastDisksIdle;
   }
   const next = readDiskActivity(at);
-  const idle = maintenanceStallOnIdleDisks(
+  const { idle, held } = maintenanceDisksIdleHeld(
     lastDiskActivity,
     next,
+    lastIdleMaintenanceIo,
     finiteNonNegative(
       process.env.COCALC_PROJECT_HOST_STORAGE_MAINTENANCE_IDLE_UTILIZATION,
       DEFAULT_MAINTENANCE_IDLE_UTILIZATION,
@@ -292,7 +347,28 @@ function readMaintenanceDisksIdle(): boolean {
   );
   lastDiskActivity = next;
   lastDisksIdle = idle;
+  lastIdleMaintenanceIo = held;
   return idle;
+}
+
+// Starts still preparing their volumes: the project's state says "starting"
+// only after that, but the preparation already takes the btrfs mutation lock
+// several times, and background mutations must not slip in between.
+let preparingStarts = 0;
+
+// Returns the function that ends it; calling that again does nothing.
+export function beginStartPreparation(): () => void {
+  preparingStarts++;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    preparingStarts--;
+  };
+}
+
+export function preparingStartCount(): number {
+  return preparingStarts;
 }
 
 function defaultReadInputs(): StorageAdmissionInputs {
@@ -315,7 +391,7 @@ function defaultReadInputs(): StorageAdmissionInputs {
     maintenance_io_full_avg60: maintenance.avg60,
     maintenance_io_capped: readIoMaxCapped(MAINTENANCE_IO_MAX),
     maintenance_disks_idle: readMaintenanceDisksIdle(),
-    starting_projects: projectCounts.starting ?? 0,
+    starting_projects: (projectCounts.starting ?? 0) + preparingStartCount(),
     stopping_projects: projectCounts.stopping ?? 0,
     btrfs_mutation_locks: locks.length,
     btrfs_mutation_waiters: locks.reduce(
@@ -1040,5 +1116,6 @@ export const _test = {
   parseDiskstatsBusyMs,
   parseIoStatIos,
   maintenanceStallOnIdleDisks,
+  maintenanceDisksIdleHeld,
   maxDefined,
 };

@@ -307,6 +307,64 @@ describe("users table helpers", () => {
     expect(userMap.getIn(["acct-remote", "collaborator"])).toBeUndefined();
   });
 
+  it("asks again later when changes outdate every answer", async () => {
+    jest.useFakeTimers();
+    try {
+      signedIn = true;
+      accountId = "acct-me";
+      const feed = new MockFeed();
+      getSharedAccountDStream.mockResolvedValue(feed);
+      const { addOtherBayCollaborators, recreate_users_table } =
+        await import("./table");
+      recreate_users_table();
+      await flush();
+      await flush();
+      // Each answer is outdated by a feed event that arrives meanwhile.
+      let churning = true;
+      listMyCollaborators.mockImplementation(async () => {
+        if (churning) {
+          feed.emit("change", {
+            type: "collaborator.remove",
+            account_id: "acct-me",
+            collaborator_account_id: "acct-gone",
+            ts: 1,
+          });
+        }
+        return [remoteRow("acct-remote")];
+      });
+      await addOtherBayCollaborators();
+      expect(listMyCollaborators).toHaveBeenCalledTimes(3);
+      expect(userMap.has("acct-remote")).toBe(false);
+      // The changes stop; the scheduled retry adds them.
+      churning = false;
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect(listMyCollaborators).toHaveBeenCalledTimes(4);
+      expect(userMap.getIn(["acct-remote", "collaborator"])).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("asks again later when a request fails", async () => {
+    jest.useFakeTimers();
+    try {
+      signedIn = true;
+      accountId = "acct-me";
+      listMyCollaborators
+        .mockRejectedValueOnce(new Error("timeout"))
+        .mockResolvedValueOnce([remoteRow("acct-remote")]);
+      const { addOtherBayCollaborators } = await import("./table");
+      await addOtherBayCollaborators();
+      expect(listMyCollaborators).toHaveBeenCalledTimes(1);
+      expect(userMap.has("acct-remote")).toBe(false);
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect(listMyCollaborators).toHaveBeenCalledTimes(2);
+      expect(userMap.getIn(["acct-remote", "collaborator"])).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("a snapshot installed while a request is pending wins", async () => {
     signedIn = true;
     accountId = "acct-me";

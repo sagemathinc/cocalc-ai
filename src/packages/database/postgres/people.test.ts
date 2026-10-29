@@ -91,6 +91,149 @@ test("adding the same file twice returns one conversation", async () => {
   expect(a.path).toBe("/home/user/notes/team.chat");
 });
 
+test("members: the creator first, then who it is with, each a collaborator", async () => {
+  const c = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "with-bob.chat",
+    title: "With Bob",
+    member_ids: [bob, alice, bob.toUpperCase()],
+  });
+  expect(c.member_ids).toEqual([alice, bob]);
+  // Nobody has written yet.
+  expect(c.participant_ids).toEqual([]);
+  expect(
+    (
+      await getConversation({
+        account_id: bob,
+        project_id,
+        conversation_id: c.conversation_id,
+      })
+    )?.member_ids,
+  ).toEqual([alice, bob]);
+  // Without members, the creator alone.
+  const solo = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "solo.chat",
+    title: "Solo",
+  });
+  expect(solo.member_ids).toEqual([alice]);
+  // Someone outside the project can't be in it, nor can a viewer.
+  await setUsers(project_id, {
+    [alice]: "owner",
+    [bob]: "collaborator",
+    [viewer]: "viewer",
+  });
+  for (const outsider of [viewer, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"]) {
+    await expect(
+      createConversationRecord({
+        account_id: alice,
+        project_id,
+        path: "outsider.chat",
+        title: "Outsider",
+        member_ids: [outsider],
+      }),
+    ).rejects.toThrow("must be a collaborator");
+  }
+  await expect(
+    createConversationRecord({
+      account_id: alice,
+      project_id,
+      path: "bad.chat",
+      title: "Bad",
+      member_ids: ["not-a-uuid"],
+    }),
+  ).rejects.toThrow("invalid member");
+});
+
+test("people added at the same time are all kept", async () => {
+  const carol = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  await setUsers(project_id, {
+    [alice]: "owner",
+    [bob]: "collaborator",
+    [carol]: "collaborator",
+  });
+  const created = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "together.chat",
+    title: "Together",
+  });
+  // Hold each member UPDATE until both callers have read the record and
+  // reached it, then let them run: the race that loses one of them.
+  const pool = getPool();
+  const query = pool.query.bind(pool);
+  const held: (() => void)[] = [];
+  const spy = jest.spyOn(pool, "query").mockImplementation(((
+    sql: any,
+    ...rest: any[]
+  ) => {
+    if (
+      typeof sql === "string" &&
+      /^\s*UPDATE project_conversations (c )?SET member_ids/.test(sql)
+    ) {
+      return new Promise((resolve, reject) => {
+        held.push(() => query(sql, ...rest).then(resolve, reject));
+        if (held.length === 2) held.forEach((run) => run());
+      });
+    }
+    return query(sql, ...rest);
+  }) as any);
+  try {
+    await Promise.all(
+      [bob, carol].map((member) =>
+        createConversationRecord({
+          account_id: alice,
+          project_id,
+          path: "together.chat",
+          title: "Together",
+          member_ids: [member],
+        }),
+      ),
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(held).toHaveLength(2);
+  const { rows } = await getPool().query(
+    "SELECT member_ids FROM project_conversations WHERE conversation_id = $1",
+    [created.conversation_id],
+  );
+  expect([...rows[0].member_ids].sort()).toEqual([alice, bob, carol].sort());
+});
+
+test("adding a registered file with people adds them, never dropping any", async () => {
+  // Registered without members (as by an owning bay before members existed).
+  const before = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "later.chat",
+    title: "Later",
+  });
+  await getPool().query(
+    "UPDATE project_conversations SET member_ids = NULL WHERE conversation_id = $1",
+    [before.conversation_id],
+  );
+  const after = await createConversationRecord({
+    account_id: alice,
+    project_id,
+    path: "later.chat",
+    title: "Later",
+    member_ids: [bob],
+  });
+  expect(after.conversation_id).toBe(before.conversation_id);
+  expect(after.member_ids).toEqual([alice, bob]);
+  // Bob re-adding it without people changes nothing.
+  const again = await createConversationRecord({
+    account_id: bob,
+    project_id,
+    path: "later.chat",
+    title: "Later",
+  });
+  expect(again.member_ids).toEqual([alice, bob]);
+});
+
 test("at capacity, existing registrations are unchanged but new paths fail", async () => {
   await getPool().query(
     `INSERT INTO project_conversations

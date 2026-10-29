@@ -6,6 +6,7 @@ import { join } from "path";
 import { PassThrough } from "node:stream";
 import { project_id as liteProjectId } from "@cocalc/project/data";
 import { getLiteConatClient } from "./runtime-client";
+import { forwardUploadChunkStream } from "@cocalc/backend/upload-chunk-forward";
 
 function envNumber(name: string, fallback: number): number {
   const n = Number(process.env[name]);
@@ -31,41 +32,6 @@ const errors: { [key: string]: string[] } = {};
 const finished: { [key: string]: { state: boolean; cb: () => void } } = {};
 const stateMeta: { [key: string]: { created: number; touched: number } } = {};
 const streams: Record<string, PassThrough | undefined> = {};
-
-function forwardUploadChunkStream({
-  chunkStream,
-  totalStream,
-  onError,
-  onDone,
-}: {
-  chunkStream: PassThrough;
-  totalStream: PassThrough;
-  onError: (err: unknown) => void;
-  onDone: () => void;
-}): void {
-  const finish = () => {
-    try {
-      onDone();
-    } catch (err) {
-      logger.warn("upload chunk completion callback failed", { err: `${err}` });
-    }
-  };
-  void (async () => {
-    for await (const data of chunkStream) {
-      totalStream.write(data);
-    }
-  })().then(finish, (err) => {
-    totalStream.destroy();
-    try {
-      onError(err);
-    } catch (callbackErr) {
-      logger.warn("upload chunk error callback failed", {
-        err: `${callbackErr}`,
-      });
-    }
-    finish();
-  });
-}
 
 function waitForReady(register: (cb: () => void) => void): Promise<void> {
   return new Promise<void>((resolve) => register(resolve));

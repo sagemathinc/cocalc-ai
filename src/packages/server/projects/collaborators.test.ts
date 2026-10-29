@@ -1268,6 +1268,40 @@ describe("project collaborators local bay access", () => {
     ]);
   });
 
+  it("off mode counts other bays' projects for local collaborators, and orders and limits after merging", async () => {
+    delete process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS;
+    const REMOTE = "66666666-6666-4666-8666-666666666666";
+    // The local list is already full (limit 1).
+    queryMock = jest.fn(async () => ({
+      rows: [
+        { account_id: TARGET_ACCOUNT_ID, name: "Local", shared_projects: 1 },
+      ],
+    }));
+    // Someone shares more projects with the account on other bays.
+    listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => [
+      { account_id: REMOTE, name: "Other Bay", shared_projects: 4 },
+      { account_id: TARGET_ACCOUNT_ID, name: "Projected", shared_projects: 3 },
+    ]);
+    const { listMyCollaborators } = await import("./collaborators");
+    await expect(
+      listMyCollaborators({ account_id: ACCOUNT_ID, limit: 1 }),
+    ).resolves.toEqual([
+      expect.objectContaining({ account_id: REMOTE, shared_projects: 4 }),
+    ]);
+    // The local collaborator gets the index's count, which includes the
+    // projects on other bays.
+    await expect(
+      listMyCollaborators({ account_id: ACCOUNT_ID, limit: 20 }),
+    ).resolves.toEqual([
+      expect.objectContaining({ account_id: REMOTE, shared_projects: 4 }),
+      expect.objectContaining({
+        account_id: TARGET_ACCOUNT_ID,
+        name: "Local",
+        shared_projects: 3,
+      }),
+    ]);
+  });
+
   it.each(["prefer", "only"])(
     "%s mode names projected collaborators this bay has no name for",
     async (mode) => {

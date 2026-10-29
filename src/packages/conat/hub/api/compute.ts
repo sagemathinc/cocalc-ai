@@ -567,11 +567,15 @@ export interface ComputeApi
     project_id: string;
     include_expired?: boolean;
   }) => Promise<ComputeAgentGrant[]>;
+  // operation_id and request_revision name the pending request the owner
+  // reviewed (metadata.pending_request); a replaced request is refused
   approveAgentGrant: (opts: {
     account_id?: string;
     browser_id?: string;
     session_hash?: string;
     grant_id: string;
+    operation_id: string;
+    request_revision: string;
   }) => Promise<ComputeAgentGrant>;
   revokeAgentGrant: (opts: {
     account_id?: string;

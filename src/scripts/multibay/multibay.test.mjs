@@ -1396,6 +1396,96 @@ describe("cross-bay collaboration", () => {
   });
 });
 
+describe("project conversations with members across bays", () => {
+  // The project is owned by the seed; Erin, homed on the attached bay,
+  // starts a conversation with its owner. Her bay routes the call to the
+  // owning bay, which stores the record with both of them as members.
+  let frank; // homed on the seed, owns the project
+  let erin; // homed on the attached bay
+  let project_id;
+
+  const conversationRows = async (bay, path) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT conversation_id, path, member_ids FROM project_conversations WHERE project_id=$1 AND path LIKE $2",
+         [${JSON.stringify(project_id)}, "%" + ${JSON.stringify(path)}]);
+       return rows;`,
+    );
+
+  before(async () => {
+    frank = await createAccount(cluster, { home_bay_id: SEED, name: "frank" });
+    erin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "erin",
+    });
+    frank.client = await client(frank);
+    erin.client = await client(erin);
+    project_id = await createProject(frank.client, "frank-erin");
+    await invite(frank, erin, project_id);
+    await eventually(() => listed(erin.client, project_id), {
+      what: "frank's project in erin's list",
+    });
+  });
+
+  it("creates the record on the owning bay with everyone it is with", async () => {
+    const conversation = await erin.client.call("people.addConversation", {
+      project_id,
+      path: "plans.chat",
+      title: "Plans",
+      member_ids: [frank.account_id],
+    });
+    assert.deepEqual(
+      [...conversation.member_ids].sort(),
+      [erin.account_id, frank.account_id].sort(),
+    );
+    const owned = await conversationRows(SEED, "plans.chat");
+    assert.equal(owned.length, 1);
+    assert.equal(owned[0].conversation_id, conversation.conversation_id);
+    assert.deepEqual(
+      [...owned[0].member_ids].sort(),
+      [erin.account_id, frank.account_id].sort(),
+    );
+    // Only the owning bay keeps the record.
+    assert.deepEqual(await conversationRows(ATTACHED, "plans.chat"), []);
+  });
+
+  it("recognizes an owning bay without the method, and it creates nothing", async () => {
+    // An owner running older code doesn't have createRecordWithMembers. Call
+    // a method the seed doesn't have, over the real fabric, and check that
+    // the refusal is what addConversation treats as "fail, don't create the
+    // record without its members".
+    const result = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+       const { ownerLacksMethod } = server("people/api.js");
+       const { createInterBayPeopleClient } = require("@cocalc/conat/inter-bay/people");
+       const api = createInterBayPeopleClient({
+         client: getInterBayFabricClient(),
+         bay_id: ${JSON.stringify(SEED)},
+       });
+       try {
+         await api.createRecordWithMembersFromTheFuture({
+           account_id: ${JSON.stringify(erin.account_id)},
+           project_id: ${JSON.stringify(project_id)},
+           path: "future.chat",
+           title: "Future",
+           member_ids: [${JSON.stringify(frank.account_id)}],
+         });
+         return { accepted: true };
+       } catch (err) {
+         return { accepted: false, lacks: ownerLacksMethod(err), message: String(err) };
+       }`,
+    );
+    assert.equal(result.accepted, false);
+    assert.equal(result.lacks, true, result.message);
+    assert.deepEqual(await conversationRows(SEED, "future.chat"), []);
+  });
+});
+
 describe("a project managed from the other bay", () => {
   // Every call below is made by an account homed on the bay that does NOT
   // own the project, so each one crosses the fabric to the owner.
@@ -1531,6 +1621,78 @@ describe("a project managed from the other bay", () => {
           ?.group === "owner",
       { what: "alice to be the owner again in her list" },
     );
+  });
+});
+
+describe("shared-project counts for collaborators on other bays", () => {
+  // Gina (attached bay) and Hank (seed) share a project on each bay. Gina's
+  // home bay counts both in her collaborator index. Code from before
+  // collaborators on other bays counted only the local project; a later
+  // snapshot of the seed's project with the same members must still repair
+  // that count, through the normal forwarding from the owning bay.
+  let gina; // homed on the attached bay
+  let hank; // homed on the seed
+  let hankProject; // owned by the seed
+
+  const sharedCount = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT common_project_count FROM account_collaborator_index WHERE account_id=$1 AND collaborator_account_id=$2",
+         [${JSON.stringify(gina.account_id)}, ${JSON.stringify(hank.account_id)}]);
+       return rows[0]?.common_project_count ?? null;`,
+    );
+
+  before(async () => {
+    gina = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "gina",
+    });
+    hank = await createAccount(cluster, { home_bay_id: SEED, name: "hank" });
+    gina.client = await client(gina);
+    hank.client = await client(hank);
+    const ginaProject = await createProject(gina.client, "gina-local");
+    await invite(gina, hank, ginaProject);
+    hankProject = await createProject(hank.client, "hank-remote");
+    await invite(hank, gina, hankProject);
+    await eventually(() => listed(gina.client, hankProject), {
+      what: "hank's project in gina's list",
+    });
+  });
+
+  it("counts both shared projects on the account's home bay", async () => {
+    await eventually(async () => (await sharedCount()) === 2, {
+      timeoutMs: 60_000,
+      what: "two shared projects with hank in gina's collaborator index",
+    });
+  });
+
+  it("repairs a stale count when the other bay's project is forwarded again unchanged", async () => {
+    // The state an earlier rollout left: hank is gina's collaborator (through
+    // her local project), but the seed's project was never counted.
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE account_collaborator_index SET common_project_count=1 WHERE account_id=$1 AND collaborator_account_id=$2",
+         [${JSON.stringify(gina.account_id)}, ${JSON.stringify(hank.account_id)}]);`,
+    );
+    assert.equal(await sharedCount(), 1);
+    // A rename on the owning bay forwards the project, with the same
+    // members, to gina's home bay.
+    await assertCrossBayRename(
+      hank.client,
+      gina.client,
+      hankProject,
+      "hank-remote renamed",
+    );
+    await eventually(async () => (await sharedCount()) === 2, {
+      timeoutMs: 60_000,
+      what: "the stale count repaired to two",
+    });
   });
 });
 
@@ -4232,7 +4394,7 @@ describe("outgoing support tickets across bays", () => {
     };
     let plan;
     let lastError;
-    for (const deadline = Date.now() + 60_000; Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline;) {
       try {
         plan = await runInBay(
           cluster,

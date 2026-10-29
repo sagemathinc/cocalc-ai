@@ -634,6 +634,24 @@ describe("account_collaborator_index rebuild", () => {
     await getPool().query("TRUNCATE account_collaborator_index");
     expect(await apply(users, users)).toEqual(["collaborator.upsert"]);
     expect(await collaboratorIds()).toEqual([COLLAB_B]);
+    // Same members and the row exists, but its shared-project count is stale
+    // (e.g. recorded before this project counted): repaired too.
+    const count = async () =>
+      (
+        await getPool().query(
+          "SELECT common_project_count FROM account_collaborator_index WHERE account_id = $1 AND collaborator_account_id = $2",
+          [ACCOUNT_ID, COLLAB_B],
+        )
+      ).rows[0]?.common_project_count;
+    expect(await count()).toBe(1);
+    await getPool().query(
+      "UPDATE account_collaborator_index SET common_project_count = 7 WHERE account_id = $1",
+      [ACCOUNT_ID],
+    );
+    await apply(users, users);
+    expect(await count()).toBe(1);
+    // And once right, an unchanged snapshot changes nothing again.
+    expect(await apply(users, users)).toEqual([]);
     // Removed from the project: gone, even with a stale local copy of the
     // project that still lists both, and a later rebuild doesn't bring it back.
     await getPool().query(

@@ -3211,6 +3211,10 @@ export async function listMyCollaborators({
        SELECT p.project_id, p.users
        FROM projects p
        WHERE (p.users -> $1::text ->> 'group') IN ('owner','collaborator')
+         -- Only projects this bay owns: a local copy of another bay's project
+         -- may be stale (a removed collaborator still in it). Those come
+         -- from the collaborator index, which their owning bays keep current.
+         AND COALESCE(NULLIF(BTRIM(p.owning_bay_id), ''), $4::TEXT) = $4::TEXT
      )
      SELECT
        u.account_id_text::uuid AS account_id,
@@ -3230,7 +3234,7 @@ export async function listMyCollaborators({
        u.account_id_text::uuid
      ORDER BY shared_projects DESC, MAX(a.last_active) DESC NULLS LAST, u.account_id_text::uuid
      LIMIT $3`,
-    [account_id, includeEmail, maxRows],
+    [account_id, includeEmail, maxRows, getConfiguredBayId()],
   );
   const local = await hydrateMyCollaboratorRows(rows, includeEmail);
   return await withOtherBayCollaborators({
@@ -3281,11 +3285,13 @@ async function withNames<
   }
 }
 
-// The query above sees only projects this bay owns. People met only in
-// projects on other bays are in the account's collaborator index (kept
-// current from their owning bays), so add those it doesn't already list.
-// Best effort: without the index the local list is still right as far as
-// it goes.
+// The query above sees only projects this bay owns. People met in projects
+// on other bays are in the account's collaborator index (kept current from
+// their owning bays), which counts every project shared with them. So add
+// those the local list lacks, give those it has the index's count when that
+// is larger, and only then order and limit: someone with more shared
+// projects elsewhere is not cut off by a full local list. Best effort:
+// without the index the local list is still right as far as it goes.
 async function withOtherBayCollaborators({
   account_id,
   local,
@@ -3297,18 +3303,26 @@ async function withOtherBayCollaborators({
   includeEmail: boolean;
   maxRows: number;
 }): Promise<MyCollaboratorRow[]> {
-  if (local.length >= maxRows) return local;
   try {
-    const listed = new Set(local.map((row) => row.account_id));
     const projected = await listProjectedMyCollaboratorsForAccount({
       account_id,
       limit: maxRows,
       include_email: includeEmail,
     });
+    const projectedCount = new Map(
+      projected.map((row) => [row.account_id, row.shared_projects ?? 0]),
+    );
+    const listed = new Set(local.map((row) => row.account_id));
+    const merged = local.map((row) => {
+      const count = projectedCount.get(row.account_id) ?? 0;
+      return count > (row.shared_projects ?? 0)
+        ? { ...row, shared_projects: count }
+        : row;
+    });
     const extra = await withNames(
       projected.filter((row) => !listed.has(row.account_id)),
     );
-    return [...local, ...extra].slice(0, maxRows);
+    return [...merged, ...extra].sort(byMostSharedProjects).slice(0, maxRows);
   } catch (err) {
     logger.warn("collaborators on other bays unavailable", {
       account_id,
@@ -3316,6 +3330,21 @@ async function withOtherBayCollaborators({
     });
     return local;
   }
+}
+
+// The order of listMyCollaborators: most shared projects, then most
+// recently active, then account id.
+function byMostSharedProjects(
+  a: MyCollaboratorRow,
+  b: MyCollaboratorRow,
+): number {
+  const shared = (b.shared_projects ?? 0) - (a.shared_projects ?? 0);
+  if (shared !== 0) return shared;
+  const active = (row: MyCollaboratorRow) =>
+    row.last_active == null ? -Infinity : new Date(row.last_active).valueOf();
+  const recent = active(b) - active(a);
+  if (recent !== 0 && !Number.isNaN(recent)) return recent;
+  return a.account_id < b.account_id ? -1 : a.account_id > b.account_id ? 1 : 0;
 }
 
 async function allowUrlsInEmails({
