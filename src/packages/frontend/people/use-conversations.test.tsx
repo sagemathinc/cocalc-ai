@@ -133,7 +133,7 @@ test("the page, sidebar and badge share one list, refreshed by a chat notificati
   // One request for all three.
   expect(mockList).toHaveBeenCalledTimes(1);
   expect(screen.getAllByText("1 listed")).toHaveLength(2);
-  expect(screen.getByLabelText("1 unread conversation")).toBeTruthy();
+  expect(screen.getByRole("status")).toHaveTextContent("1 unread conversation");
 
   // Someone writes: a notification about a chat file arrives.
   mockList.mockResolvedValue({
@@ -148,7 +148,9 @@ test("the page, sidebar and badge share one list, refreshed by a chat notificati
   await flush();
   expect(mockList).toHaveBeenCalledTimes(2);
   expect(screen.getAllByText("2 listed")).toHaveLength(2);
-  expect(screen.getByLabelText("2 unread conversations")).toBeTruthy();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "2 unread conversations",
+  );
 });
 
 test("no badge when nothing is unread", async () => {
@@ -176,7 +178,7 @@ test("a list loaded for one account is not shown for another", async () => {
   });
   const first = render(<PeopleUnreadBadge />);
   await flush();
-  expect(screen.getByLabelText("1 unread conversation")).toBeTruthy();
+  expect(screen.getByRole("status")).toHaveTextContent("1 unread conversation");
   first.unmount();
   // Someone else signs in; their own list has nothing unread.
   mockAccount = another;
