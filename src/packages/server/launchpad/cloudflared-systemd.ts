@@ -4,16 +4,17 @@
  */
 
 import { execFile as execFileCb, spawn } from "node:child_process";
-import { unlinkSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import {
   chmod,
   mkdir,
   readFile,
+  rename,
   stat,
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
@@ -35,6 +36,13 @@ import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
 
 const logger = getLogger("launchpad:cloudflared-systemd");
 const execFile = promisify(execFileCb);
+
+// How long the hub lets cocalc-bay-cloudflared-ctl restart-all run. With two
+// replicas it restarts at most three times (a replica restarted before replica
+// 1 is restarted again after it), each waiting up to the units'
+// TimeoutStopSec (20 s) to stop and the helper's READY_TIMEOUT_S (60 s) for a
+// ready connection; plus slack for starting.
+export const CLOUDFLARED_ROLLING_RESTART_TIMEOUT_S = 3 * (20 + 60 + 10) + 30;
 
 type CloudflaredState = {
   tunnel: CloudflareTunnel;
@@ -136,9 +144,97 @@ function cloudflaredStateDir(): string {
   return configured ?? join(secrets, "launchpad-cloudflare");
 }
 
-function cloudflaredPidFilePath(): string {
+// Replicas of the same tunnel run side by side, one systemd unit each
+// (COCALC_BAY_CLOUDFLARED_REPLICA), so that restarting one never takes public
+// ingress down. Each has its own config, credentials and pid file, since
+// starting a replica stops any cloudflared still running from its config.
+// Replica 1, the default, keeps the original file names and is the only one
+// that creates or updates the tunnel with Cloudflare; the others use the
+// tunnel it recorded.
+export function cloudflaredReplica(
+  value = process.env.COCALC_BAY_CLOUDFLARED_REPLICA,
+): number {
+  const raw = clean(value);
+  if (raw == null) return 1;
+  if (!/^[1-9]$/.test(raw)) {
+    throw new Error(`invalid COCALC_BAY_CLOUDFLARED_REPLICA: ${raw}`);
+  }
+  return Number(raw);
+}
+
+export function replicaFileName(name: string, replica = cloudflaredReplica()) {
+  if (replica === 1) return name;
+  const dot = name.lastIndexOf(".");
+  return dot > 0
+    ? `${name.slice(0, dot)}-${replica}${name.slice(dot)}`
+    : `${name}-${replica}`;
+}
+
+function cloudflaredPidFilePath(replica = cloudflaredReplica()): string {
   const configured = clean(process.env.COCALC_LAUNCHPAD_CLOUDFLARED_PID_FILE);
-  return configured ?? join(cloudflaredStateDir(), "cloudflared.pid");
+  if (configured) {
+    // (one pid file setting shared by every replica's environment)
+    return join(
+      dirname(configured),
+      replicaFileName(basename(configured), replica),
+    );
+  }
+  return join(
+    cloudflaredStateDir(),
+    replicaFileName("cloudflared.pid", replica),
+  );
+}
+
+// Other replicas start only while replica 1's cloudflared runs: replica 1
+// starts it only after bringing the tunnel state (tunnel.json) up to date
+// with Cloudflare in that same run. Otherwise, e.g. both starting together
+// after a tunnel or hostname change, they could pick up the old tunnel.json,
+// connect to the old tunnel and look like redundancy they are not. (Replica
+// 1's pid file and process are what releases before replicas also wrote, so
+// this works during an upgrade too.)
+export function primaryTunnelRunning({
+  pid,
+  cmdline,
+  primaryConfigPath,
+}: {
+  pid: number | undefined;
+  cmdline: (pid: number) => string | undefined;
+  primaryConfigPath: string;
+}): boolean {
+  if (!(pid && Number.isInteger(pid) && pid > 0)) return false;
+  const args = cmdline(pid);
+  if (!args) return false;
+  return (
+    args.includes("cloudflared") &&
+    args.includes(" tunnel ") &&
+    args.includes(primaryConfigPath)
+  );
+}
+
+function processCmdline(pid: number): string | undefined {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").join(" ");
+  } catch {
+    return undefined;
+  }
+}
+
+/** cloudflared's arguments; the metrics address is pinned per replica. */
+export function cloudflaredTunnelArgs({
+  configPath,
+  metricsAddress = clean(process.env.COCALC_BAY_CLOUDFLARED_METRICS_ADDRESS),
+}: {
+  configPath: string;
+  metricsAddress?: string;
+}): string[] {
+  return [
+    "tunnel",
+    "--no-autoupdate",
+    ...(metricsAddress ? ["--metrics", metricsAddress] : []),
+    "--config",
+    configPath,
+    "run",
+  ];
 }
 
 function parsePid(raw: string): number | undefined {
@@ -241,7 +337,7 @@ async function stopCloudflaredPids(pids: Iterable<number>): Promise<void> {
 
 async function stopManagedLaunchpadCloudflared(): Promise<void> {
   const pidPath = cloudflaredPidFilePath();
-  const configPath = join(cloudflaredStateDir(), "config.yml");
+  const configPath = join(cloudflaredStateDir(), replicaFileName("config.yml"));
   const persistedPid = await readPidFile(pidPath);
   const pids = [
     ...(await listCloudflaredPidsForConfig(configPath)),
@@ -480,29 +576,58 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
 
   const cfDir = cloudflaredStateDir();
   await mkdir(cfDir, { recursive: true });
+  const replica = cloudflaredReplica();
+  const primary = replica === 1;
   const tunnelPath = join(cfDir, "tunnel.json");
-  const credentialsPath = join(cfDir, "credentials.json");
-  const configPath = join(cfDir, "config.yml");
+  const credentialsPath = join(cfDir, replicaFileName("credentials.json"));
+  const configPath = join(cfDir, replicaFileName("config.yml"));
   const pidPath = cloudflaredPidFilePath();
 
   let tunnel: CloudflareTunnel | undefined;
-  try {
-    const existing = await loadCloudflaredStateFile(tunnelPath);
-    tunnel = await ensureCloudflareTunnelForHub({ existing });
+  if (!primary) {
+    if (
+      !primaryTunnelRunning({
+        pid: await readPidFile(cloudflaredPidFilePath(1)),
+        cmdline: processCmdline,
+        primaryConfigPath: join(cfDir, "config.yml"),
+      })
+    ) {
+      // Fail (systemd retries) rather than serve a tunnel replica 1 may be
+      // about to replace.
+      throw new Error(
+        `cloudflared replica ${replica} is waiting for replica 1 to bring the tunnel state up to date`,
+      );
+    }
+    tunnel = await loadCloudflaredStateFile(tunnelPath);
     if (!tunnel) {
-      cloudflaredLastError =
-        "Cloudflare tunnel configuration missing or incomplete.";
-      logger.warn(cloudflaredLastError);
+      // Fail (systemd retries) rather than create a second tunnel next to
+      // the one replica 1 is creating.
+      throw new Error(
+        `cloudflared replica ${replica} is waiting for replica 1 to record the tunnel in ${tunnelPath}`,
+      );
+    }
+  } else {
+    try {
+      const existing = await loadCloudflaredStateFile(tunnelPath);
+      tunnel = await ensureCloudflareTunnelForHub({ existing });
+      if (!tunnel) {
+        cloudflaredLastError =
+          "Cloudflare tunnel configuration missing or incomplete.";
+        logger.warn(cloudflaredLastError);
+        return null;
+      }
+      // Other replicas read this file while it is written: replace it whole.
+      const temporary = `${tunnelPath}.${process.pid}.tmp`;
+      await writeFile(temporary, JSON.stringify(tunnel, null, 2), {
+        mode: 0o600,
+      });
+      await chmod(temporary, 0o600);
+      await rename(temporary, tunnelPath);
+    } catch (err) {
+      cloudflaredLastError = String(err);
+      logger.warn("cloudflare tunnel ensure failed", { err });
       return null;
     }
-    await writeFile(tunnelPath, JSON.stringify(tunnel, null, 2), {
-      mode: 0o600,
-    });
-    await chmod(tunnelPath, 0o600);
-  } catch (err) {
-    cloudflaredLastError = String(err);
-    logger.warn("cloudflare tunnel ensure failed", { err });
-    return null;
   }
 
   const { origin, noTLSVerify } = resolveCloudflaredOrigin();
@@ -522,6 +647,7 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
   const additionalIngress: Array<{ hostname: string; origin: string }> = [];
   const fundingApproval = await resolveFundingApprovalConfiguration();
   if (fundingApproval.state === "configured") {
+    // (replica 1 registers the hostname with Cloudflare; the rest only route it)
     const approvalUrl = new URL(fundingApproval.config.origin);
     const approvalPort = fundingApproval.config.listen_port;
     {
@@ -534,12 +660,14 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
         hostname: approvalUrl.hostname,
         origin: `http://127.0.0.2:${approvalPort}`,
       });
-      await ensureCloudflareTunnelHostname({
-        tunnel,
-        hostname: approvalUrl.hostname,
-        allowOutsideConfiguredDns: true,
-        protectExisting: true,
-      });
+      if (primary) {
+        await ensureCloudflareTunnelHostname({
+          tunnel,
+          hostname: approvalUrl.hostname,
+          allowOutsideConfiguredDns: true,
+          protectExisting: true,
+        });
+      }
     }
   }
   await writeCloudflaredCredentials(credentialsPath, tunnel);
@@ -576,16 +704,11 @@ export async function runLaunchpadCloudflaredForeground(): Promise<void> {
 
   await stopManagedLaunchpadCloudflared();
 
-  const args = [
-    "tunnel",
-    "--no-autoupdate",
-    "--config",
-    prepared.configPath,
-    "run",
-  ];
+  const args = cloudflaredTunnelArgs({ configPath: prepared.configPath });
   logger.info("starting systemd-managed cloudflared", {
     hostname: prepared.tunnel.hostname,
     origin: prepared.origin,
+    replica: cloudflaredReplica(),
   });
   const child = spawn(prepared.cloudflaredBin, args, {
     env: process.env,

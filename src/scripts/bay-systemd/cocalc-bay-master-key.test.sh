@@ -28,9 +28,13 @@ cat > "${TMP_ROOT}/bin/systemctl" <<EOF
 echo "\$*" >> "${TMP_ROOT}/systemctl.log"
 case "\$1" in
   list-units) echo "cocalc-bay-hub@1.service loaded active running hub"; echo "cocalc-bay-hub@2.service loaded active running hub" ;;
-  is-active) [[ "\$3" == cocalc-bay-frontdoor.service ]]; exit \$? ;;
+  is-active) [[ "\$3" == cocalc-bay-frontdoor.service || "\$3" == cocalc-bay-cloudflared.service ]]; exit \$? ;;
 esac
 exit 0
+EOF
+cat > "${TMP_ROOT}/bin/cloudflared-ctl" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "${TMP_ROOT}/cloudflared-ctl.log"
 EOF
 # The database report a dry-run reencrypt would print: rows under each key.
 cat > "${TMP_ROOT}/bin/systemd-run" <<EOF
@@ -44,6 +48,7 @@ export COCALC_BAY_CONFIG_DIR="$etc"
 export COCALC_BAY_MASTER_KEY_TEST=1
 export COCALC_BAY_USER=no-such-bay-user
 export SYSTEMCTL="${TMP_ROOT}/bin/systemctl"
+export CLOUDFLARED_CTL="${TMP_ROOT}/bin/cloudflared-ctl"
 export SYSTEMD_RUN="${TMP_ROOT}/bin/systemd-run"
 export COCALC_BAY_MASTER_KEY_RESTART_PAUSE=0
 # Some test containers have a group-writable /.
@@ -112,6 +117,12 @@ bash "$TOOL" retire "$id2" >/dev/null 2>&1 && fail "retired the active key"
 bash "$TOOL" restart >/dev/null
 [[ "$(grep '^restart' "${TMP_ROOT}/systemctl.log" | tr '\n' ' ')" == "restart cocalc-bay-hub@1.service restart cocalc-bay-hub@2.service restart cocalc-bay-frontdoor.service " ]] ||
   fail "restart order: $(cat "${TMP_ROOT}/systemctl.log")"
+# The tunnel's replicas are rolled by the helper, which waits for each to be
+# ready (never a plain restart of both).
+[[ "$(cat "${TMP_ROOT}/cloudflared-ctl.log")" == "restart-all" ]] ||
+  fail "the tunnel was not restarted replica by replica: $(cat "${TMP_ROOT}/cloudflared-ctl.log" 2>/dev/null)"
+! grep -q '^restart cocalc-bay-cloudflared' "${TMP_ROOT}/systemctl.log" ||
+  fail "restarted a tunnel replica directly"
 
 # Root refuses to run node from a directory others can write; a link to a
 # trusted node is resolved once and only its checked target is run.

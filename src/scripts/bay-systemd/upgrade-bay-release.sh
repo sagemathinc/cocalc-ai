@@ -115,6 +115,7 @@ Options:
                               deploy; default only rolls hub workers
   --restart-cloudflared       restart the Cloudflare tunnel after frontdoor
                               startup to apply tunnel origin/config changes
+                              (its replicas one at a time, so ingress stays up)
   --restart-bay-service <svc> restart exactly one bay service after staging:
                               conat-router, conat-persist, frontdoor,
                               cloudflared, or peer-health
@@ -659,7 +660,11 @@ case "$BAY_SERVICE" in
     systemctl restart cocalc-bay-frontdoor.service
     ;;
   cloudflared)
-    systemctl restart cocalc-bay-cloudflared.service
+    # Replica by replica, each ready before the next (replica 2 first, which
+    # a bay upgraded from a single replica starts here), so public ingress
+    # stays up.
+    systemctl enable --now cocalc-bay-cloudflared-2.service
+    /usr/local/sbin/cocalc-bay-cloudflared-ctl restart-all
     ;;
   peer-health)
     systemctl restart cocalc-bay-peer-health.service
@@ -679,6 +684,7 @@ case "$BAY_SERVICE" in
     ;;
   cloudflared)
     systemctl is-active --quiet cocalc-bay-cloudflared.service
+    systemctl is-active --quiet cocalc-bay-cloudflared-2.service
     ;;
   *)
     bay_run bay-health
@@ -757,8 +763,11 @@ systemctl start cocalc-bay.target
 systemctl restart cocalc-bay-frontdoor.service
 bay_run bay-frontdoor-health
 if [[ "$RESTART_CLOUDFLARED" -eq 1 ]]; then
-  systemctl restart cocalc-bay-cloudflared.service
+  # Replica by replica (replica 2 first), so public ingress stays up.
+  systemctl enable --now cocalc-bay-cloudflared-2.service
+  /usr/local/sbin/cocalc-bay-cloudflared-ctl restart-all
   systemctl is-active --quiet cocalc-bay-cloudflared.service
+  systemctl is-active --quiet cocalc-bay-cloudflared-2.service
 fi
 
 credential_dir="$(mktemp -d /run/cocalc-bay-deploy-credentials.XXXXXX)"
