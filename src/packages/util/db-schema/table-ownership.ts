@@ -205,9 +205,9 @@ export const TABLE_OWNERSHIP = {
     {
       ownership: "account-home",
       authority: "account_id",
-      portability: "unsupported",
+      portability: "portable",
       notes:
-        "A member's index of their direct conversations (owning bay, read state, mute), their blocks, and the message requests they started (the daily quota ledger), kept on the member's home bay; the index is updated by fan-out from each conversation's owning bay. Rehome remains unsafe until these tables have explicit migration tests.",
+        "A member's index of their direct conversations (owning bay, read state, mute, pin, archive), their blocks, the message requests they started (the daily quota ledger) and deleted-message tombstones, kept on the member's home bay; the index is updated by fan-out from each conversation's owning bay. Account rehome copies them (server/accounts/rehome.ts PORTABLE_STATE_TABLES). Every write takes the account-rehome fence in its transaction, so none lands on the old home during a move; a refused fan-out stays pending and is retried at the new home. The old home drops its copies of direct-message notice text. Covered by the multibay scenarios for direct messages across and during a rehome.",
     },
   ),
   ...entries(

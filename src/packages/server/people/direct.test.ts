@@ -134,8 +134,16 @@ describeDb("direct conversations", () => {
     mockBanned.clear();
     mockTierLimits = {};
     await getPool().query(
-      "TRUNCATE projects, account_collaborator_index, account_project_index, notification_events, notification_targets, notification_target_outbox, notification_email_outbox, account_notification_index, account_direct_deleted_messages, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
+      "TRUNCATE accounts, projects, account_collaborator_index, account_project_index, notification_events, notification_targets, notification_target_outbox, notification_email_outbox, account_notification_index, account_direct_deleted_messages, direct_conversations, direct_messages, direct_fanout_pending, direct_request_admissions, account_direct_conversations, account_direct_blocks",
     );
+    // Each one homed here: direct-message state is written only on its
+    // owner's home bay (the account-rehome fence checks).
+    for (const account_id of [ada, bea, cy]) {
+      await getPool().query(
+        "INSERT INTO accounts (account_id, created, home_bay_id) VALUES ($1, NOW(), NULL)",
+        [account_id],
+      );
+    }
   });
 
   async function shareProject(owning_bay_id: string | null = null) {
@@ -449,6 +457,95 @@ describeDb("direct conversations", () => {
     });
     await upsertDirectIndex({ account_id: bea, conversation: before! });
     expect(await listFor(bea)).toEqual([]);
+  });
+
+  test("while an account is being rehomed, its direct-message state takes no writes; a delivery waits and lands afterwards", async () => {
+    await shareProject();
+    const started = await directHubApi.startDirect({
+      account_id: ada,
+      member_ids: [bea],
+      body: "Hi Bea",
+    });
+    const conversation_id = started.conversation_id;
+    // A rehome of Bea is running (the canonical fence reads this table).
+    await getPool().query(
+      `CREATE TABLE IF NOT EXISTS account_rehome_operations (
+         op_id UUID, account_id UUID, source_bay_id TEXT, dest_bay_id TEXT,
+         stage TEXT, status TEXT, created_at TIMESTAMP)`,
+    );
+    await getPool().query(
+      `INSERT INTO account_rehome_operations
+         VALUES ($1, $2, 'bay-0', 'bay-1', 'source_flipped', 'running', NOW())`,
+      [randomUUID(), bea],
+    );
+    try {
+      const refused = /account rehome .* is running/;
+      // Ada can still write: her message is kept for Bea's new home.
+      await directHubApi.sendDirect({
+        account_id: ada,
+        conversation_id,
+        body: "during the move",
+      });
+      expect((await listFor(bea))[0].preview).toBe("Hi Bea");
+      const { rows: pending } = await getPool().query(
+        "SELECT count(*)::int AS n FROM direct_fanout_pending WHERE account_id = $1",
+        [bea],
+      );
+      expect(pending[0].n).toBe(1);
+      // Nothing of Bea's changes meanwhile: blocks, settings, read state, a
+      // request's charge, a deleted message's tombstone.
+      await expect(
+        directControl.block({ account_id: bea, blocked_account_id: cy }),
+      ).rejects.toThrow(refused);
+      await expect(
+        directControl.setPersonal({
+          account_id: bea,
+          conversation_id,
+          patch: { pinned: true },
+        }),
+      ).rejects.toThrow(refused);
+      await expect(
+        directControl.markRead({
+          account_id: bea,
+          conversation_id,
+          read_through: Date.now(),
+        }),
+      ).rejects.toThrow(refused);
+      await expect(
+        directDb.admitDirectRequest({
+          account_id: bea,
+          conversation_id: randomUUID(),
+          recipients: 1,
+          requests_per_day: 20,
+          recipients_per_day: 40,
+        }),
+      ).rejects.toThrow(refused);
+      await expect(
+        directDb.recordDirectMessageDeletion({
+          account_id: bea,
+          message_id: randomUUID(),
+        }),
+      ).rejects.toThrow(refused);
+      const { rows: written } = await getPool().query(
+        `SELECT (SELECT count(*) FROM account_direct_blocks WHERE account_id = $1)::int AS blocks,
+                (SELECT count(*) FROM direct_request_admissions WHERE account_id = $1)::int AS admissions,
+                (SELECT count(*) FROM account_direct_deleted_messages WHERE account_id = $1)::int AS tombstones`,
+        [bea],
+      );
+      expect(written[0]).toEqual({ blocks: 0, admissions: 0, tombstones: 0 });
+    } finally {
+      await getPool().query(
+        "UPDATE account_rehome_operations SET status = 'completed' WHERE account_id = $1",
+        [bea],
+      );
+    }
+    // Once the move is over, the delivery is retried (at the account's home).
+    await getPool().query(
+      "UPDATE direct_fanout_pending SET next_attempt = NOW()",
+    );
+    await retryDirectFanouts();
+    expect((await listFor(bea))[0].preview).toBe("during the move");
+    await getPool().query("DROP TABLE account_rehome_operations");
   });
 
   test("a failed notification is retried until it is created, and only once", async () => {

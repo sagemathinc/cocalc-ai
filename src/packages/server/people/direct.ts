@@ -649,7 +649,7 @@ export const directControl: InterBayDirectApi = {
     // it is still this attempt's.
     const ours = result.conversation.conversation_id === conversation_id;
     if (requests > 0 && !ours) {
-      await releaseDirectRequest(conversation_id);
+      await releaseDirectRequest(account_id, conversation_id);
     }
     const created = result.created || ours;
     const { conversation } = result;

@@ -4394,7 +4394,7 @@ describe("outgoing support tickets across bays", () => {
     };
     let plan;
     let lastError;
-    for (const deadline = Date.now() + 60_000; Date.now() < deadline;) {
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline; ) {
       try {
         plan = await runInBay(
           cluster,
@@ -5077,6 +5077,202 @@ describe("direct messages across a rehome", () => {
         ),
       { what: "jack's new message in ivy's list after the move" },
     );
+  });
+});
+
+describe("direct messages during a rehome", () => {
+  // While an account moves, its direct-message state takes no writes on the
+  // old home: the rehome's snapshot can't miss a deletion, block or request
+  // charge. A deletion delivered meanwhile stays pending at the owning bay
+  // and lands on the new home after the move. The move is held, after its
+  // snapshot, by a lock on the destination's copy of the state.
+  let rex; // an admin, to rehome
+  let nia; // homed on the seed, moved to the attached bay
+  let oto; // homed on the attached bay; writes to nia
+  let pat; // someone nia tries to block during the move
+  const SECRET = "deleted during the move yak5519";
+
+  const copies = async (bay, account_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const id = ${JSON.stringify(account_id)};
+       const like = "%" + ${JSON.stringify(SECRET)} + "%";
+       const count = async (sql) => Number((await getPool().query(sql, [id, like])).rows[0].n);
+       return {
+         events: await count(\`SELECT count(*) AS n FROM notification_events e
+           JOIN notification_targets t ON t.event_id = e.event_id
+           WHERE t.target_account_id = $1 AND e.payload_json::text LIKE $2\`),
+         outbox: await count(\`SELECT count(*) AS n FROM notification_target_outbox
+           WHERE target_account_id = $1 AND payload_json::text LIKE $2\`),
+         email: await count(\`SELECT count(*) AS n FROM notification_email_outbox
+           WHERE target_account_id = $1 AND summary_json::text LIKE $2\`),
+         list: await count(\`SELECT count(*) AS n FROM account_notification_index
+           WHERE account_id = $1 AND summary::text LIKE $2\`),
+       };`,
+    );
+
+  before(async () => {
+    rex = await createAccount(cluster, { home_bay_id: SEED, name: "rex" });
+    nia = await createAccount(cluster, { home_bay_id: SEED, name: "nia" });
+    oto = await createAccount(cluster, { home_bay_id: ATTACHED, name: "oto" });
+    pat = await createAccount(cluster, { home_bay_id: ATTACHED, name: "pat" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(rex.account_id)}]);`,
+    );
+    rex.client = await client(rex);
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         \`UPDATE account_auth_sessions
+             SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"dev_cli_fresh_auth": true}'::jsonb
+           WHERE account_id = $1\`,
+         [${JSON.stringify(rex.account_id)}]);`,
+    );
+    nia.client = await client(nia);
+    oto.client = await client(oto);
+    const project_id = await createProject(nia.client, "nia-oto");
+    await invite(nia, oto, project_id);
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          ATTACHED,
+          `const { areCollaborators } = require("@cocalc/database/postgres/direct-conversations");
+           return await areCollaborators(${JSON.stringify(oto.account_id)}, ${JSON.stringify(nia.account_id)}, ${JSON.stringify(ATTACHED)});`,
+        ),
+      { timeoutMs: 60_000, what: "nia as oto's collaborator on bay-1" },
+    );
+  });
+
+  it("a deletion and a block attempted mid-move don't get lost; the deletion lands on the new home", async () => {
+    const started = await oto.client.call("people.startDirect", {
+      member_ids: [nia.account_id],
+      body: SECRET,
+    });
+    const { messages } = await oto.client.call("people.getDirect", {
+      conversation_id: started.conversation_id,
+    });
+    const secret = messages.find((m) => m.body === SECRET);
+    await eventually(
+      async () => (await copies(SEED, nia.account_id)).list > 0,
+      { what: "the notice in nia's list on her old home" },
+    );
+
+    // Hold the move after its snapshot: the destination's copy waits on this.
+    const held = runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const db = await getPool().connect();
+       try {
+         await db.query("BEGIN");
+         await db.query("LOCK TABLE account_direct_deleted_messages IN ACCESS EXCLUSIVE MODE");
+         await db.query("SELECT pg_sleep(20)");
+         await db.query("COMMIT");
+       } finally {
+         db.release();
+       }`,
+      { timeoutMs: 90_000 },
+    );
+    await sleep(2_000);
+    const moved = rex.client.call("system.rehomeAccount", {
+      user_account_id: nia.account_id,
+      dest_bay_id: ATTACHED,
+      reason: "multibay direct messages during a rehome",
+      timeout: 180_000,
+    });
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          SEED,
+          `const getPool = require("@cocalc/database/pool").default;
+           const { rows } = await getPool().query(
+             "SELECT stage FROM account_rehome_operations WHERE account_id=$1 AND status='running'",
+             [${JSON.stringify(nia.account_id)}]);
+           return rows[0]?.stage === "source_flipped";`,
+        ),
+      { timeoutMs: 30_000, what: "the move past its snapshot" },
+    );
+    await sleep(1_000);
+
+    // Mid-move: the deletion is delivered to the old home, which refuses it.
+    await oto.client.call("people.deleteDirectMessage", {
+      conversation_id: started.conversation_id,
+      message_id: secret.message_id,
+    });
+    const midMove = await runInBay(
+      cluster,
+      SEED,
+      `const { directControl } = server("people/direct.js");
+       const { admitDirectRequest } = require("@cocalc/database/postgres/direct-conversations");
+       const out = {};
+       try {
+         await directControl.block({ account_id: ${JSON.stringify(nia.account_id)}, blocked_account_id: ${JSON.stringify(pat.account_id)} });
+         out.block = "allowed";
+       } catch (err) { out.block = err.message; }
+       try {
+         await admitDirectRequest({ account_id: ${JSON.stringify(nia.account_id)}, conversation_id: require("node:crypto").randomUUID(), recipients: 1, requests_per_day: 20, recipients_per_day: 40 });
+         out.admit = "allowed";
+       } catch (err) { out.admit = err.message; }
+       const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT count(*)::int AS n FROM account_direct_deleted_messages WHERE account_id=$1",
+         [${JSON.stringify(nia.account_id)}]);
+       out.tombstones = rows[0].n;
+       return out;`,
+    );
+    assert.match(midMove.block, /account rehome .* is running/);
+    assert.match(midMove.admit, /account rehome .* is running/);
+    assert.equal(midMove.tombstones, 0);
+
+    await held;
+    const rehomed = await moved;
+    assert.equal(rehomed.home_bay_id, ATTACHED);
+
+    // The pending deletion is retried at nia's new home.
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          ATTACHED,
+          `const getPool = require("@cocalc/database/pool").default;
+           const { rows } = await getPool().query(
+             "SELECT 1 FROM account_direct_deleted_messages WHERE account_id=$1 AND message_id=$2",
+             [${JSON.stringify(nia.account_id)}, ${JSON.stringify(secret.message_id)}]);
+           return rows.length > 0;`,
+        ),
+      {
+        timeoutMs: 150_000,
+        intervalMs: 2_000,
+        what: "the deletion's tombstone on nia's new home",
+      },
+    );
+    const none = { events: 0, outbox: 0, email: 0, list: 0 };
+    await eventually(
+      async () => (await copies(ATTACHED, nia.account_id)).list === 0,
+      { what: "the text gone from nia's list on her new home" },
+    );
+    assert.deepEqual(await copies(ATTACHED, nia.account_id), none);
+    assert.deepEqual(await copies(SEED, nia.account_id), none);
+    // After the move, nia's writes work on her new home.
+    const blocked = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { directControl } = server("people/direct.js");
+       await directControl.block({ account_id: ${JSON.stringify(nia.account_id)}, blocked_account_id: ${JSON.stringify(pat.account_id)} });
+       return await directControl.isBlocked({ account_id: ${JSON.stringify(nia.account_id)}, sender_id: ${JSON.stringify(pat.account_id)} });`,
+    );
+    assert.equal(blocked, true);
   });
 });
 

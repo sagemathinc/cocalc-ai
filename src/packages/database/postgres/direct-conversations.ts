@@ -13,6 +13,10 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import {
+  assertAccountNotRehoming,
+  assertAccountWriteOnHomeBay,
+} from "./account-rehome-fence";
+import {
   DIRECT_MESSAGES_PAGE,
   directPreview,
   type DirectPersonalPatch,
@@ -74,6 +78,24 @@ async function inTransaction<T>(f: (db: PoolClient) => Promise<T>): Promise<T> {
   } finally {
     client.release();
   }
+}
+
+// Every write of a member's direct-message state on their home bay runs in a
+// transaction that first takes the account-rehome fence: none commits while
+// the account is being moved to another bay, or once it lives elsewhere, so
+// a rehome's snapshot of this state can't miss one. A refused fan-out
+// delivery stays pending at the owning bay, which retries it at the
+// account's new home.
+async function inHomeTransaction<T>(
+  account_id: string,
+  action: string,
+  f: (db: PoolClient) => Promise<T>,
+): Promise<T> {
+  return await inTransaction(async (db) => {
+    await assertAccountNotRehoming({ db, account_id, action });
+    await assertAccountWriteOnHomeBay({ db, account_id, action });
+    return await f(db);
+  });
 }
 
 // ---- owning bay ----
@@ -510,8 +532,9 @@ export async function upsertDirectIndex({
   account_id: string;
   conversation: DirectConversation;
 }): Promise<DirectIndexRow> {
-  const { rows } = await getPool().query(
-    `INSERT INTO account_direct_conversations
+  await inHomeTransaction(account_id, "record a direct conversation", (db) =>
+    db.query(
+      `INSERT INTO account_direct_conversations
        (account_id, conversation_id, owner_bay_id, member_ids, member_states,
         created_by, created, last_activity, last_sender_id, preview, title,
         revision, messages_version, last_read, muted, notified_message_id,
@@ -530,23 +553,23 @@ export async function upsertDirectIndex({
        messages_version = EXCLUDED.messages_version,
        updated = NOW()
      WHERE COALESCE(account_direct_conversations.revision, 0) < EXCLUDED.revision`,
-    [
-      account_id,
-      conversation.conversation_id,
-      conversation.owner_bay_id,
-      conversation.member_ids,
-      JSON.stringify(conversation.member_states),
-      conversation.created_by,
-      new Date(conversation.created),
-      new Date(conversation.last_activity),
-      conversation.last_sender_id,
-      conversation.preview,
-      conversation.title,
-      conversation.revision,
-      conversation.messages_version ?? 0,
-    ],
+      [
+        account_id,
+        conversation.conversation_id,
+        conversation.owner_bay_id,
+        conversation.member_ids,
+        JSON.stringify(conversation.member_states),
+        conversation.created_by,
+        new Date(conversation.created),
+        new Date(conversation.last_activity),
+        conversation.last_sender_id,
+        conversation.preview,
+        conversation.title,
+        conversation.revision,
+        conversation.messages_version ?? 0,
+      ],
+    ),
   );
-  void rows;
   const current = await getDirectIndexRow(
     account_id,
     conversation.conversation_id,
@@ -622,12 +645,14 @@ export async function markDirectRead({
   conversation_id: string;
   read_through: number;
 }): Promise<void> {
-  await getPool().query(
-    `UPDATE account_direct_conversations
+  await inHomeTransaction(account_id, "mark a direct conversation read", (db) =>
+    db.query(
+      `UPDATE account_direct_conversations
      SET last_read = GREATEST(COALESCE(last_read, 'epoch'::timestamp), LEAST($3::timestamp, last_activity)),
          updated = NOW()
      WHERE account_id = $1 AND conversation_id = $2`,
-    [account_id, conversation_id, new Date(read_through)],
+      [account_id, conversation_id, new Date(read_through)],
+    ),
   );
 }
 
@@ -643,8 +668,12 @@ export async function setDirectPersonal({
   patch: DirectPersonalPatch;
 }): Promise<void> {
   const archive = patch.archived_through;
-  await getPool().query(
-    `UPDATE account_direct_conversations SET
+  await inHomeTransaction(
+    account_id,
+    "change direct conversation settings",
+    (db) =>
+      db.query(
+        `UPDATE account_direct_conversations SET
        muted = COALESCE($3, muted),
        pinned = COALESCE($4, pinned),
        archived_through = CASE
@@ -654,14 +683,15 @@ export async function setDirectPersonal({
          ELSE LEAST($6::timestamp, NOW()) END,
        updated = NOW()
      WHERE account_id = $1 AND conversation_id = $2`,
-    [
-      account_id,
-      conversation_id,
-      patch.muted ?? null,
-      patch.pinned ?? null,
-      archive !== undefined,
-      archive == null ? null : new Date(archive),
-    ],
+        [
+          account_id,
+          conversation_id,
+          patch.muted ?? null,
+          patch.pinned ?? null,
+          archive !== undefined,
+          archive == null ? null : new Date(archive),
+        ],
+      ),
   );
 }
 
@@ -724,10 +754,12 @@ export async function blockDirectSender(
   account_id: string,
   blocked_account_id: string,
 ): Promise<void> {
-  await getPool().query(
-    `INSERT INTO account_direct_blocks (account_id, blocked_account_id, created)
-     VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
-    [account_id, blocked_account_id],
+  await inHomeTransaction(account_id, "block someone", (db) =>
+    db.query(
+      `INSERT INTO account_direct_blocks (account_id, blocked_account_id, created)
+       VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
+      [account_id, blocked_account_id],
+    ),
   );
 }
 
@@ -735,10 +767,12 @@ export async function unblockDirectSender(
   account_id: string,
   blocked_account_id: string,
 ): Promise<void> {
-  await getPool().query(
-    `DELETE FROM account_direct_blocks
-     WHERE account_id = $1 AND blocked_account_id = $2`,
-    [account_id, blocked_account_id],
+  await inHomeTransaction(account_id, "unblock someone", (db) =>
+    db.query(
+      `DELETE FROM account_direct_blocks
+       WHERE account_id = $1 AND blocked_account_id = $2`,
+      [account_id, blocked_account_id],
+    ),
   );
 }
 
@@ -808,7 +842,7 @@ export async function admitDirectRequest({
   requests_per_day: number;
   recipients_per_day: number;
 }): Promise<void> {
-  await inTransaction(async (db) => {
+  await inHomeTransaction(account_id, "send a message request", async (db) => {
     await db.query(
       "SELECT pg_advisory_xact_lock(hashtext('direct-request-admission'), hashtext($1::text))",
       [account_id],
@@ -836,11 +870,15 @@ export async function admitDirectRequest({
 }
 
 export async function releaseDirectRequest(
+  account_id: string,
   conversation_id: string,
 ): Promise<void> {
-  await getPool().query(
-    "DELETE FROM direct_request_admissions WHERE conversation_id = $1",
-    [conversation_id],
+  await inHomeTransaction(account_id, "release a message request", (db) =>
+    db.query(
+      `DELETE FROM direct_request_admissions
+       WHERE conversation_id = $1 AND account_id = $2`,
+      [conversation_id, account_id],
+    ),
   );
 }
 
@@ -1048,16 +1086,20 @@ export async function withUndeletedDirectMessage<T>(
   { account_id, message_id }: { account_id: string; message_id: string },
   f: (db: PoolClient) => Promise<T>,
 ): Promise<{ ran: boolean; result?: T }> {
-  return await inTransaction(async (db) => {
-    await lockDirectMessageNotice(db, account_id, message_id);
-    const { rows } = await db.query(
-      `SELECT 1 FROM account_direct_deleted_messages
+  return await inHomeTransaction(
+    account_id,
+    "notify of a message",
+    async (db) => {
+      await lockDirectMessageNotice(db, account_id, message_id);
+      const { rows } = await db.query(
+        `SELECT 1 FROM account_direct_deleted_messages
        WHERE account_id = $1 AND message_id = $2`,
-      [account_id, message_id],
-    );
-    if (rows.length > 0) return { ran: false };
-    return { ran: true, result: await f(db) };
-  });
+        [account_id, message_id],
+      );
+      if (rows.length > 0) return { ran: false };
+      return { ran: true, result: await f(db) };
+    },
+  );
 }
 
 // A deleted message, on a member's home bay: its tombstone and the redaction
@@ -1070,16 +1112,20 @@ export async function recordDirectMessageDeletion({
   account_id: string;
   message_id: string;
 }): Promise<string[]> {
-  return await inTransaction(async (db) => {
-    await lockDirectMessageNotice(db, account_id, message_id);
-    await db.query(
-      `INSERT INTO account_direct_deleted_messages (account_id, message_id, created)
+  return await inHomeTransaction(
+    account_id,
+    "record a deleted message",
+    async (db) => {
+      await lockDirectMessageNotice(db, account_id, message_id);
+      await db.query(
+        `INSERT INTO account_direct_deleted_messages (account_id, message_id, created)
        VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
-      [account_id, message_id],
-    );
-    return await redactDirectMessageNoticeWithClient(db, {
-      account_id,
-      message_id,
-    });
-  });
+        [account_id, message_id],
+      );
+      return await redactDirectMessageNoticeWithClient(db, {
+        account_id,
+        message_id,
+      });
+    },
+  );
 }
