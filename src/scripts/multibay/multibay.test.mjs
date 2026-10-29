@@ -4713,6 +4713,147 @@ describe("Sagebrush retention emails across a rehome", () => {
   });
 });
 
+describe("direct messages across a rehome", () => {
+  // Each member's conversation list, own settings, blocks, request quota and
+  // deleted-message tombstones live on their home bay. A rehome moves them,
+  // so nothing disappears and no one blocked can start a new request.
+  let mod; // an admin, to rehome
+  let ivy; // homed on the seed, then moved to the attached bay
+  let jack; // homed on the attached bay
+  let kim; // someone ivy blocked
+  let conversation_id;
+
+  const directRow = async (bay, account_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT pinned, muted FROM account_direct_conversations WHERE account_id=$1 AND conversation_id=$2",
+         [${JSON.stringify(account_id)}, ${JSON.stringify(conversation_id)}]);
+       return rows[0] ?? null;`,
+    );
+  const blocked = async (bay) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const { isDirectBlocked } = require("@cocalc/database/postgres/direct-conversations");
+       return await isDirectBlocked(${JSON.stringify(ivy.account_id)}, ${JSON.stringify(kim.account_id)});`,
+    );
+
+  before(async () => {
+    mod = await createAccount(cluster, { home_bay_id: SEED, name: "mod" });
+    ivy = await createAccount(cluster, { home_bay_id: SEED, name: "ivy" });
+    jack = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "jack",
+    });
+    kim = await createAccount(cluster, { home_bay_id: ATTACHED, name: "kim" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(mod.account_id)}]);`,
+    );
+    mod.client = await client(mod);
+    // An admin's rehome needs a second factor: this session counts as one,
+    // as a dev CLI sign-in does outside production.
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         \`UPDATE account_auth_sessions
+             SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"dev_cli_fresh_auth": true}'::jsonb
+           WHERE account_id = $1\`,
+         [${JSON.stringify(mod.account_id)}]);`,
+    );
+    ivy.client = await client(ivy);
+    jack.client = await client(jack);
+    const project_id = await createProject(ivy.client, "ivy-jack");
+    await invite(ivy, jack, project_id);
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          ATTACHED,
+          `const { areCollaborators } = require("@cocalc/database/postgres/direct-conversations");
+           return await areCollaborators(${JSON.stringify(jack.account_id)}, ${JSON.stringify(ivy.account_id)}, ${JSON.stringify(ATTACHED)});`,
+        ),
+      { timeoutMs: 60_000, what: "ivy as jack's collaborator on bay-1" },
+    );
+    const started = await jack.client.call("people.startDirect", {
+      member_ids: [ivy.account_id],
+      body: "before the move",
+    });
+    conversation_id = started.conversation_id;
+    await eventually(
+      async () =>
+        (await ivy.client.call("people.listDirect", {})).conversations.some(
+          (c) => c.conversation_id === conversation_id,
+        ),
+      { what: "jack's message in ivy's list" },
+    );
+    await ivy.client.call("people.setDirectState", {
+      conversation_id,
+      patch: { pinned: true, muted: true },
+    });
+    await runInBay(
+      cluster,
+      SEED,
+      `const { blockDirectSender } = require("@cocalc/database/postgres/direct-conversations");
+       await blockDirectSender(${JSON.stringify(ivy.account_id)}, ${JSON.stringify(kim.account_id)});`,
+    );
+    assert.deepEqual(await directRow(SEED, ivy.account_id), {
+      pinned: true,
+      muted: true,
+    });
+    assert.equal(await blocked(SEED), true);
+  });
+
+  it("moves the conversation list, settings and blocks to the new home bay", async () => {
+    const rehomed = await mod.client.call("system.rehomeAccount", {
+      user_account_id: ivy.account_id,
+      dest_bay_id: ATTACHED,
+      reason: "multibay direct messages",
+    });
+    assert.equal(rehomed.home_bay_id, ATTACHED);
+    assert.deepEqual(await directRow(ATTACHED, ivy.account_id), {
+      pinned: true,
+      muted: true,
+    });
+    assert.equal(await blocked(ATTACHED), true);
+    // Signed in again, now on the new home bay: the conversation is listed,
+    // with ivy's own settings and its history.
+    ivy.home_bay_id = ATTACHED;
+    ivy.client = await client(ivy);
+    const listed = (
+      await ivy.client.call("people.listDirect", {})
+    ).conversations.find((c) => c.conversation_id === conversation_id);
+    assert.ok(listed, "the conversation in ivy's list after the move");
+    assert.equal(listed.pinned, true);
+    assert.equal(listed.preview, "before the move");
+  });
+
+  it("delivers a new message to the member's new home bay", async () => {
+    await jack.client.call("people.sendDirect", {
+      conversation_id,
+      body: "after the move",
+    });
+    await eventually(
+      async () =>
+        (await ivy.client.call("people.listDirect", {})).conversations.find(
+          (c) =>
+            c.conversation_id === conversation_id &&
+            c.preview === "after the move",
+        ),
+      { what: "jack's new message in ivy's list after the move" },
+    );
+  });
+});
+
 describe("bay registry registration is bound to the calling bay", () => {
   // The attached bay, with its real fabric credential, tries to rewrite the
   // seed's registry entry. Both hops must refuse: the registry (bay_id must

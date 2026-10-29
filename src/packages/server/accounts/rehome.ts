@@ -83,6 +83,12 @@ const PORTABLE_STATE_TABLES = [
   "account_entitlement_overrides",
   "account_entitlement_override_events",
   "membership_grants",
+  // Direct messages: each member's conversation list and own settings, who
+  // they blocked, their daily request quota, and deleted-message tombstones.
+  "account_direct_conversations",
+  "account_direct_blocks",
+  "direct_request_admissions",
+  "account_direct_deleted_messages",
 ] as const;
 
 type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
@@ -388,7 +394,15 @@ async function replacePortableRows({
                   ? ["account_id", "request_id"]
                   : table === "account_entitlement_overrides"
                     ? ["account_id"]
-                    : ["id"];
+                    : table === "account_direct_conversations"
+                      ? ["account_id", "conversation_id"]
+                      : table === "account_direct_blocks"
+                        ? ["account_id", "blocked_account_id"]
+                        : table === "direct_request_admissions"
+                          ? ["conversation_id"]
+                          : table === "account_direct_deleted_messages"
+                            ? ["account_id", "message_id"]
+                            : ["id"];
   if (table === "api_keys") {
     await db.query(
       `
@@ -819,6 +833,10 @@ async function loadPortableState(
     account_entitlement_override_events,
     account_persist_files,
     membershipPortableState,
+    account_direct_conversations,
+    account_direct_blocks,
+    direct_request_admissions,
+    account_direct_deleted_messages,
   ] = await Promise.all([
     loadPortableRows("account_project_index", account_id),
     loadPortableRows("account_collaborator_index", account_id),
@@ -837,6 +855,10 @@ async function loadPortableState(
     loadPortableRows("account_entitlement_override_events", account_id),
     loadAccountPersistState(account_id),
     getMembershipPortableState(account_id),
+    loadPortableRows("account_direct_conversations", account_id),
+    loadPortableRows("account_direct_blocks", account_id),
+    loadPortableRows("direct_request_admissions", account_id),
+    loadPortableRows("account_direct_deleted_messages", account_id),
   ]);
   return {
     target_account_id: account_id,
@@ -857,6 +879,10 @@ async function loadPortableState(
     admin_assigned_memberships,
     account_entitlement_overrides,
     account_entitlement_override_events,
+    account_direct_conversations,
+    account_direct_blocks,
+    direct_request_admissions,
+    account_direct_deleted_messages,
     account_persist_files,
     membership_grants: membershipPortableState.membership_grants,
     membership_packages: membershipPortableState.membership_packages,
@@ -1523,6 +1549,10 @@ async function copyLegacyAccountRehomeState({
   membership_packages,
   membership_package_assignments,
   membership_side_effects_outbox,
+  account_direct_conversations,
+  account_direct_blocks,
+  direct_request_admissions,
+  account_direct_deleted_messages,
 }: AccountRehomeStateCopyRequest): Promise<void> {
   const accountId = normalizeUuid("target_account_id", target_account_id);
   normalizeBayId("source_bay_id", source_bay_id);
@@ -1559,6 +1589,18 @@ async function copyLegacyAccountRehomeState({
     account_id: accountId,
     rows: remember_me ?? [],
   });
+  for (const [table, rows] of [
+    ["account_direct_conversations", account_direct_conversations],
+    ["account_direct_blocks", account_direct_blocks],
+    ["direct_request_admissions", direct_request_admissions],
+    ["account_direct_deleted_messages", account_direct_deleted_messages],
+  ] as const) {
+    await replacePortableRows({
+      table,
+      account_id: accountId,
+      rows: rows ?? [],
+    });
+  }
   await replacePortableRows({
     table: "account_auth_sessions",
     account_id: accountId,
