@@ -187,6 +187,9 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.rolloutHostManagedComponents": hostFromOpts,
   "hosts.getHostRuntimeDeploymentStatus": hostFromOpts,
   // Project control reads and stop run on the owning bay's handlers.
+  // A GPU launch is decided on the project's bay: its funding approval (if
+  // any) lives there, and it forwards to the payer's home bay.
+  "gpu.launch": projectFromOpts,
   "projects.stop": projectFromOpts,
   "projects.getProjectState": projectFromOpts,
   // the archive job and its project live on the owning bay

@@ -4,7 +4,6 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { admitProjectKeyUse } from "@cocalc/server/gpu/key-use";
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { createInterBayHubApiHandler } from "@cocalc/conat/inter-bay/hub-api";
 import { createInterBaySessionAuthHandler } from "@cocalc/conat/inter-bay/session-auth";
@@ -1299,10 +1298,12 @@ async function startAccountLocalService(): Promise<void> {
         ...opts,
         key_use: await gpuKeyUse(opts, "removal"),
       }),
+    // on the caller's home bay: the project's approval first (unless
+    // own_key), then the caller's own key (project-launch.ts)
     gpuLaunch: async (opts) =>
       await (
-        await import("@cocalc/server/gpu/pods")
-      ).launchGpuPodLocal({
+        await import("@cocalc/server/gpu/project-launch")
+      ).launchOnHome({
         ...opts,
         key_use: await gpuKeyUse(opts, "launch"),
       }),
@@ -1416,27 +1417,28 @@ async function startAccountLocalService(): Promise<void> {
         await import("@cocalc/server/gpu/project-funding")
       ).projectFundingEndedOnProjectLocal(opts),
     // A funded launch (PROJECT_FUNDING.md §5): only from the project's
-    // current owning bay; the key use is made here, at this boundary, bound
-    // to exactly the approval and layer the launch names.
-    gpuProjectFundingLaunch: async (opts) => {
-      const { verifyProjectFundedLaunch } =
-        await import("@cocalc/server/gpu/project-funding");
-      const v = await verifyProjectFundedLaunch(opts);
-      const key_use = await admitProjectKeyUse({
-        key_owner_account_id: v.funder_account_id,
-        purpose: "launch",
-        binding: v.binding,
-      });
-      return await (
-        await import("@cocalc/server/gpu/pods")
-      ).launchGpuPodLocal({
-        account_id: v.funder_account_id,
-        project_id: v.project_id,
+    // current owning bay; see projectFundedLaunchAtHome.
+    gpuProjectFundingLaunch: async (opts) =>
+      await (await import("./gpu-key-use")).projectFundedLaunchAtHome(opts),
+    gpuProjectLaunchRoute: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding-routes")
+      ).routeProjectLaunchLocal({
+        project_id: opts.project_id,
+        actor: opts.actor,
         spec: opts.spec,
-        key_use,
-        funding: v.funding,
-      });
-    },
+        source_bay_id: opts.source_bay_id,
+      }),
+    gpuProjectFundingRequest: async (opts) => ({
+      request_id: await (
+        await import("@cocalc/server/gpu/project-funding-routes")
+      ).recordProjectFundingRequestLocal({
+        project_id: opts.project_id,
+        actor: opts.actor,
+        spec: opts.spec,
+        source_bay_id: opts.source_bay_id,
+      }),
+    }),
     computeOwnerResources: async (opts) =>
       (
         await import("@cocalc/server/compute/owner-resource-routing")

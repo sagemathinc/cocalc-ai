@@ -137,9 +137,37 @@ export const pods: GpuApi["pods"] = async (opts = {}) => {
   });
 };
 
+// A launch (PROJECT_FUNDING.md §5). The project itself (its credential)
+// launches only under its funding approval, and only on the project's own
+// bay. A person or agent launches on their home bay: the project's approval
+// first (unless own_key), then their own key; a person without a usable key
+// asks the project for approval instead (project-launch.ts).
 export async function launch(
   opts: Parameters<GpuApi["launch"]>[0],
 ): ReturnType<GpuApi["launch"]> {
+  const projectAuth = (opts as any)?.gpu_project_auth;
+  if (projectAuth?.project_id) {
+    const {
+      ProjectApprovalRequired,
+      recordProjectFundingRequestLocal,
+      routeProjectLaunchLocal,
+    } = await import("@cocalc/server/gpu/project-funding-routes");
+    const routed = await routeProjectLaunchLocal({
+      project_id: projectAuth.project_id,
+      actor: { kind: "project" },
+      spec: opts?.spec,
+    });
+    if (routed.status === "launched") return routed.pod;
+    const request_id = await recordProjectFundingRequestLocal({
+      project_id: projectAuth.project_id,
+      actor: { kind: "project" },
+      spec: opts?.spec,
+    }).catch(() => undefined);
+    throw new ProjectApprovalRequired(
+      "This project has no approval to use GPUs. A collaborator with their own RunPod key can approve GPU use in this project, paid by their account: they'll see the request at the top of the project.",
+      request_id,
+    );
+  }
   const principal = await agentPrincipal(opts);
   return await launchGpuPod({
     account_id: opts?.account_id,
@@ -153,6 +181,7 @@ export async function launch(
           },
         }
       : {}),
+    own_key: opts?.own_key === true,
     key_use: await keyUse(opts?.account_id, "launch", principal),
   });
 }

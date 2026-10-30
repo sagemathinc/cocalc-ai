@@ -13,7 +13,8 @@ export type HubApiPrincipalPolicy =
   | "account-or-compute-agent"
   | "account-or-host-or-compute-agent"
   | "account-or-bound-agent-project"
-  | "account-or-gpu-agent";
+  | "account-or-gpu-agent"
+  | "account-or-gpu-agent-or-project";
 
 export interface HubApiArgTransformContext {
   args: any[];
@@ -400,3 +401,42 @@ export const authFirstRequireAccountOrGpuAgent = declareHubApiPrincipalPolicy(
     return await authFirstRequireAccount(context);
   },
 );
+
+// A GPU launch may also come from the project itself (its terminal or code,
+// with the project's credential): then only the project is known, never an
+// account, and it can launch only under the project's funding approval
+// (PROJECT_FUNDING.md §5). gpu_project_auth marks that verified case; a
+// caller can never pass it, nor any other identity.
+export const authFirstRequireAccountOrGpuAgentOrProject =
+  declareHubApiPrincipalPolicy(
+    "account-or-gpu-agent-or-project",
+    async (context) => {
+      const opts = firstArg(context.args);
+      delete opts.gpu_project_auth;
+      for (const k of [
+        "approval_id",
+        "layer_id",
+        "actor",
+        "funding",
+        "source_bay_id",
+      ]) {
+        delete opts[k];
+      }
+      if (
+        !context.account_id &&
+        context.project_id &&
+        context.auth_actor !== "agent" &&
+        !context.host_id
+      ) {
+        delete opts.account_id;
+        delete opts.agent;
+        delete opts.agent_id;
+        delete opts.run_id;
+        delete opts.gpu_agent_auth;
+        opts.project_id = context.project_id;
+        opts.gpu_project_auth = { project_id: context.project_id };
+        return context.args;
+      }
+      return await authFirstRequireAccountOrGpuAgent(context);
+    },
+  );

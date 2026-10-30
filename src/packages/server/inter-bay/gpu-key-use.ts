@@ -10,6 +10,7 @@
 
 import {
   admitAgentKeyUse,
+  admitProjectKeyUse,
   admitUserKeyUse,
   isGpuKeyHomeBay,
   type GpuKeyUse,
@@ -43,4 +44,33 @@ export async function forwardedGpuKeyUse(
     });
   }
   return await admitUserKeyUse({ account_id, purpose });
+}
+
+// A launch under a project funding approval, at the funder's home bay's
+// boundary (PROJECT_FUNDING.md §5): the project's current owning bay sent
+// it (verified), the key use is made here, bound to exactly the approval
+// and layer it names, and admission pins that layer. Called by the
+// inter-bay service, and in process when the project's bay is this bay.
+export async function projectFundedLaunchAtHome(
+  req: import("@cocalc/util/gpu/project-funding").ProjectFundingLaunchRequest,
+): Promise<import("@cocalc/util/gpu/types").GpuPodSummary> {
+  const { verifyProjectFundedLaunch } =
+    await import("@cocalc/server/gpu/project-funding");
+  const v = await verifyProjectFundedLaunch(req);
+  if (!(await isGpuKeyHomeBay(v.funder_account_id))) {
+    throw Error("A funded launch must reach the funder's home bay.");
+  }
+  const key_use = await admitProjectKeyUse({
+    key_owner_account_id: v.funder_account_id,
+    purpose: "launch",
+    binding: v.binding,
+  });
+  const { launchGpuPodLocal } = await import("@cocalc/server/gpu/pods");
+  return await launchGpuPodLocal({
+    account_id: v.funder_account_id,
+    project_id: v.project_id,
+    spec: req.spec,
+    key_use,
+    funding: v.funding,
+  });
 }

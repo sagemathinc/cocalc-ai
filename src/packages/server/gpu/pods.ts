@@ -628,7 +628,7 @@ async function isProjectCollaborator(account_id: string, project_id: string) {
 const MINE = `(key_owner_account_id = $1 OR beneficiary_account_id = $1)`;
 
 // A principal as it may arrive from another bay (its expiry as text).
-type GpuAgentPrincipalWire = Omit<GpuAgentPrincipal, "expires_at"> & {
+export type GpuAgentPrincipalWire = Omit<GpuAgentPrincipal, "expires_at"> & {
   expires_at: Date | string;
 };
 
@@ -985,13 +985,22 @@ function launchKeyError(err: unknown): Error {
     return Error("Your RunPod API key changed during the launch. Try again.");
   }
   if (`${err}`.includes("membership")) {
-    return Error("Your membership doesn't include GPUs on your own key.");
+    return Error(NOT_ENTITLED);
   }
   return Error("Your RunPod API key could not be loaded. Try again shortly.");
 }
 
 const NO_KEY =
   "No RunPod API key is connected. Connect one in Settings → Connectors.";
+const NOT_ENTITLED = "Your membership doesn't include GPUs on your own key.";
+
+// The caller has no own key to launch with (none connected, or their
+// membership doesn't include GPUs on one): in a project, a request for its
+// funding approval is the way forward instead.
+export function isNoOwnKeyError(err: unknown): boolean {
+  const m = `${(err as any)?.message ?? err}`;
+  return m === NO_KEY || m === NOT_ENTITLED;
+}
 
 async function withLaunchAccess<T>(
   account_id: string,
@@ -2316,12 +2325,16 @@ export async function gpuPodHomeClient(
 
 // `key_use` (5d-2c) is made by the hub API handler when this is the home
 // bay; a forwarded call gets the home bay's own.
+// On the caller's home bay (forwarded there if needed): the project's
+// funding approval first, unless own_key, then the caller's own key
+// (project-launch.ts).
 export async function launchGpuPod(
   opts: {
     account_id?: string;
     project_id?: unknown;
     spec?: unknown;
     agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
+    own_key?: boolean;
     key_use?: GpuKeyUse;
   },
   deps: GpuPodDeps = {},
@@ -2334,12 +2347,18 @@ export async function launchGpuPod(
       project_id: opts.project_id,
       spec: opts.spec,
       ...(opts.agent ? { agent: opts.agent } : {}),
+      ...(opts.own_key === true ? { own_key: true } : {}),
     });
   }
-  return await launchGpuPodLocal(
-    { ...opts, account_id, key_use: opts.key_use },
-    deps,
-  );
+  const { launchOnHome } = await import("@cocalc/server/gpu/project-launch");
+  return await launchOnHome({
+    account_id,
+    project_id: opts.project_id,
+    spec: opts.spec,
+    ...(opts.agent ? { agent: opts.agent } : {}),
+    own_key: opts.own_key === true,
+    key_use: opts.key_use,
+  });
 }
 
 export async function terminateGpuPod(

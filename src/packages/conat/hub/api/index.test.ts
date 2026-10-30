@@ -182,11 +182,98 @@ describe("hub API argument transforms", () => {
     ).toThrow("agent project is required");
   });
 
+  it("lets the project itself call gpu.launch, only as itself, never claiming an account or agent", async () => {
+    const name = "gpu.launch";
+    expect(getHubApiPrincipalPolicies()[name]).toBe(
+      "account-or-gpu-agent-or-project",
+    );
+    const forged = {
+      account_id: "forged",
+      project_id: "other-project",
+      agent: { project_id: "other-project", agent_id: "agent:forged" },
+      gpu_agent_auth: { auth_token_fingerprint: "f".repeat(64) },
+      gpu_project_auth: { project_id: "other-project" },
+      approval_id: "a",
+      layer_id: "l",
+      actor: { kind: "user" },
+      funding: {},
+      source_bay_id: "bay",
+      spec: { gpu_type_id: "x" },
+    };
+    // the project's credential: its own project, a marker only the policy sets
+    expect(
+      await transformArgs({
+        name,
+        args: [{ ...forged }],
+        project_id: "own-project",
+      }),
+    ).toEqual([
+      {
+        project_id: "own-project",
+        spec: { gpu_type_id: "x" },
+        gpu_project_auth: { project_id: "own-project" },
+      },
+    ]);
+    // a person: bound to the account; no project marker, no routing ids
+    const [human] = await transformArgs({
+      name,
+      args: [{ ...forged }],
+      account_id: "human",
+    });
+    expect(human.account_id).toBe("human");
+    for (const k of [
+      "gpu_project_auth",
+      "gpu_agent_auth",
+      "agent",
+      "approval_id",
+      "layer_id",
+      "actor",
+      "funding",
+      "source_bay_id",
+    ]) {
+      expect(human).not.toHaveProperty(k);
+    }
+    // an agent: as for the other GPU calls
+    const [agent] = await transformArgs({
+      name,
+      args: [{ ...forged }],
+      account_id: "agent-account",
+      project_id: "own-project",
+      auth_actor: "agent",
+      auth_token_fingerprint: "a".repeat(64),
+      auth_iat_s: 100,
+      auth_exp_s: 200,
+    });
+    expect(agent).toMatchObject({
+      account_id: "agent-account",
+      project_id: "own-project",
+    });
+    expect(agent).not.toHaveProperty("gpu_project_auth");
+    expect(
+      isHubApiPrincipalAllowed({
+        policy: "account-or-gpu-agent-or-project",
+        project_id: "p",
+      }),
+    ).toBe(true);
+    for (const actor of [
+      { host_id: "host" },
+      { project_id: "p", host_id: "host" },
+      { project_id: "p", auth_actor: "agent" as const },
+      {},
+    ]) {
+      expect(
+        isHubApiPrincipalAllowed({
+          policy: "account-or-gpu-agent-or-project",
+          ...actor,
+        }),
+      ).toBe(false);
+    }
+  });
+
   it.each([
     "gpu.catalog",
     "gpu.availability",
     "gpu.pods",
-    "gpu.launch",
     "gpu.terminate",
     "gpu.who",
     "gpu.sshInfo",

@@ -34,6 +34,7 @@ import type {
 import {
   authFirstRequireAccount,
   authFirstRequireAccountOrGpuAgent,
+  authFirstRequireAccountOrGpuAgentOrProject,
   authFirstRequireAccountWithBoundSession,
 } from "./util";
 
@@ -48,7 +49,9 @@ export const gpu = {
   catalog: authFirstRequireAccountOrGpuAgent,
   availability: authFirstRequireAccountOrGpuAgent,
   pods: authFirstRequireAccountOrGpuAgent,
-  launch: authFirstRequireAccountOrGpuAgent,
+  // and the project itself (terminal, code), only under its funding
+  // approval (PROJECT_FUNDING.md); runs on the project's owning bay
+  launch: authFirstRequireAccountOrGpuAgentOrProject,
   terminate: authFirstRequireAccountOrGpuAgent,
   who: authFirstRequireAccountOrGpuAgent,
   // the human's side of agent launches (step 6b)
@@ -227,11 +230,17 @@ export interface GpuApi {
   // An agent's launch also needs an operation_id (its idempotency key) and
   // its human's approval of exactly this launch: without one it fails, with
   // a message naming the request the human is asked to approve.
+  // In a project with an active funding approval, a launch is paid by the
+  // approval (a person or, if allowed, an agent) unless own_key; the
+  // project itself can launch only that way. Without an approval, a launch
+  // that can't use the caller's own key records a request the project's
+  // collaborators see, and fails with code gpu_project_approval_required.
   launch: (opts: {
     account_id?: string;
     project_id: string;
     spec: GpuLaunchSpec;
     operation_id?: string;
+    own_key?: boolean;
     timeout?: number;
   }) => Promise<GpuPodSummary>;
   // The account's agent GPU requests and grants, newest first.

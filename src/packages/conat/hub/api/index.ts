@@ -202,6 +202,10 @@ export function isHubApiPrincipalAllowed({
   if (policy === "account-or-gpu-agent") {
     return auth_actor === "agent" ? !!(account_id && project_id) : !!account_id;
   }
+  if (policy === "account-or-gpu-agent-or-project") {
+    if (auth_actor === "agent") return !!(account_id && project_id);
+    return !!account_id || (!!project_id && !host_id);
+  }
   if (policy === "account-or-bound-agent-project") {
     return !!account_id && (auth_actor !== "agent" || !!project_id);
   }

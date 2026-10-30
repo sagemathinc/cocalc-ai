@@ -28,6 +28,7 @@ import {
   applyProjectFundingMessage,
   PROJECT_FUNDING_LEASE_MS,
   PROJECT_FUNDING_PROVIDERS,
+  PROJECT_FUNDING_REQUEST_TTL_MS,
   type ProjectFundingDeliverRequest,
   type ProjectFundingDeliverResult,
   type ProjectFundingReserveRequest,
@@ -476,4 +477,238 @@ export async function enqueueProjectFundingMessage(
       m.now ?? new Date(),
     ],
   );
+}
+
+// ---- launches in a project (PROJECT_FUNDING.md §5) ----
+
+export type ProjectLaunchActor =
+  | { kind: "project" }
+  | { kind: "user"; account_id: string }
+  | {
+      kind: "agent";
+      account_id: string;
+      // the verified agent principal's project, ids (attribution)
+      project_id: string;
+      agent_id: string;
+      run_id?: string;
+    };
+
+export type ProjectLaunchRoute =
+  | {
+      status: "launched";
+      pod: import("@cocalc/util/gpu/types").GpuPodSummary;
+    }
+  // no active approval: the caller decides (own key, or a request)
+  | { status: "no_approval" }
+  // the approval doesn't allow agents: an agent uses its own path (6b)
+  | { status: "agents_not_allowed" };
+
+export interface ProjectLaunchDeps extends ProjectFundingRouteDeps {
+  // for tests: the launch at the funder's home bay
+  fundedLaunch?: (
+    req: import("@cocalc/util/gpu/project-funding").ProjectFundingLaunchRequest,
+  ) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary>;
+}
+
+export class ProjectFundingRetry extends Error {
+  readonly retryable = true;
+}
+
+// On the project's owning bay: who may launch here, and with which active
+// approval. The actor comes from verified auth: the project's own
+// credential, a signed-in account, or a verified agent token.
+export async function routeProjectLaunchLocal(
+  opts: {
+    project_id: unknown;
+    actor: ProjectLaunchActor;
+    spec: unknown;
+    // a person's or agent's launch arrives from their home bay (or is made
+    // on it, in process): that bay must be the actor account's home
+    source_bay_id?: string;
+  },
+  deps: ProjectLaunchDeps = {},
+): Promise<ProjectLaunchRoute> {
+  const project_id = requireId(opts.project_id, "project_id");
+  const actor = opts.actor;
+  if (actor.kind !== "project") {
+    await assertSentByAccountHome(
+      opts.source_bay_id ?? getConfiguredBayId(),
+      requireId(actor.account_id, "account_id"),
+      deps,
+    );
+  }
+  const { rows: projects } = await getPool().query(
+    "SELECT owning_bay_id, deleted, users FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  const p = projects[0];
+  if (!p || p.deleted) throw Error("project not found or access denied");
+  const owner = `${p.owning_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  if (owner !== getConfiguredBayId()) {
+    throw new ProjectFundingRetry(
+      "This project is moving between servers right now; try again in a minute.",
+    );
+  }
+  if (actor.kind !== "project") {
+    requireId(actor.account_id, "account_id");
+    if (!isCollaborator({ deleted: false, users: p.users }, actor.account_id)) {
+      throw Error("project not found or access denied");
+    }
+    if (actor.kind === "agent" && actor.project_id !== project_id) {
+      throw Error("An agent can launch only in its own project.");
+    }
+  }
+  const { rows } = await getPool().query(
+    `SELECT * FROM project_compute_approvals
+      WHERE project_id = $1 AND provider = 'runpod' AND kind = 'approval'
+        AND state = 'active'`,
+    [project_id],
+  );
+  const route = rows[0];
+  if (!route) return { status: "no_approval" };
+  // (H decides authoritatively; this only picks the agent's path)
+  if (actor.kind === "agent" && route.display?.agents_allowed === false) {
+    return { status: "agents_not_allowed" };
+  }
+  const req = {
+    source_bay_id: getConfiguredBayId(),
+    project_id,
+    approval_id: route.approval_id,
+    layer_id: route.layer_id,
+    funder_account_id: route.funder_account_id,
+    actor:
+      actor.kind === "project"
+        ? { kind: "project" as const }
+        : actor.kind === "user"
+          ? { kind: "user" as const, account_id: actor.account_id }
+          : {
+              kind: "agent" as const,
+              account_id: actor.account_id,
+              agent_id: actor.agent_id,
+              run_id: actor.run_id,
+            },
+    spec: opts.spec,
+  };
+  const pod = await (deps.fundedLaunch ?? defaultFundedLaunch)(req);
+  return { status: "launched", pod };
+}
+
+async function defaultFundedLaunch(
+  req: import("@cocalc/util/gpu/project-funding").ProjectFundingLaunchRequest,
+) {
+  const home = await accountHomeBay(req.funder_account_id);
+  if (home === getConfiguredBayId()) {
+    const { projectFundedLaunchAtHome } =
+      await import("@cocalc/server/inter-bay/gpu-key-use");
+    return await projectFundedLaunchAtHome(req);
+  }
+  const { createInterBayAccountLocalClient } =
+    await import("@cocalc/conat/inter-bay/api");
+  const { getInterBayFabricClient } =
+    await import("@cocalc/server/inter-bay/fabric");
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home,
+    timeout: 60_000,
+  }).gpuProjectFundingLaunch(req);
+}
+
+export class ProjectApprovalRequired extends Error {
+  readonly code = "gpu_project_approval_required";
+  constructor(
+    message: string,
+    readonly request_id: string | undefined,
+  ) {
+    super(message);
+  }
+}
+
+// What a request shows: the launch it was made for, no prices (the
+// project's bay has no key to price it with).
+function requestSummary(spec: unknown): Record<string, unknown> {
+  const s: any = spec ?? {};
+  const out: Record<string, unknown> = {};
+  if (typeof s.gpu_type_id === "string") {
+    out.gpu_type_id = s.gpu_type_id.slice(0, 64);
+  }
+  if (Number.isInteger(s.gpu_count)) out.gpu_count = s.gpu_count;
+  if (Number.isInteger(s.max_runtime_minutes)) {
+    out.max_runtime_minutes = s.max_runtime_minutes;
+  }
+  return out;
+}
+
+// Record (or refresh) the project's one pending request, so its
+// collaborators see that GPU use was asked for. Returns its id, or
+// undefined while the project is moving.
+export async function recordProjectFundingRequestLocal(
+  opts: {
+    project_id: string;
+    actor: ProjectLaunchActor;
+    spec: unknown;
+    source_bay_id?: string;
+  },
+  deps: ProjectFundingRouteDeps = {},
+): Promise<string | undefined> {
+  const project_id = requireId(opts.project_id, "project_id");
+  if (opts.actor.kind !== "project") {
+    await assertSentByAccountHome(
+      opts.source_bay_id ?? getConfiguredBayId(),
+      requireId(opts.actor.account_id, "account_id"),
+      deps,
+    );
+  }
+  const now = (deps.now ?? (() => new Date()))();
+  const expires = new Date(now.getTime() + PROJECT_FUNDING_REQUEST_TTL_MS);
+  const actor_account_id =
+    opts.actor.kind === "project" ? null : opts.actor.account_id;
+  const result = await withRouteWrite(project_id, async (db, project) => {
+    if (project == null || project.deleted) return undefined;
+    if (
+      opts.actor.kind !== "project" &&
+      !isCollaborator(project, opts.actor.account_id)
+    ) {
+      return undefined;
+    }
+    // expired requests stop being pending first
+    await db.query(
+      `UPDATE project_compute_approvals SET state = 'expired', updated = now()
+        WHERE project_id = $1 AND kind = 'request' AND state = 'pending'
+          AND request_expires_at <= $2`,
+      [project_id, now],
+    );
+    const { rows } = await db.query(
+      `UPDATE project_compute_approvals
+          SET actor_kind = $2, actor_account_id = $3, request_summary = $4,
+              request_expires_at = $5, updated = now()
+        WHERE project_id = $1 AND kind = 'request' AND state = 'pending'
+          AND provider = 'runpod'
+        RETURNING id`,
+      [
+        project_id,
+        opts.actor.kind,
+        actor_account_id,
+        JSON.stringify(requestSummary(opts.spec)),
+        expires,
+      ],
+    );
+    if (rows[0]) return rows[0].id as string;
+    const id = randomUUID();
+    await db.query(
+      `INSERT INTO project_compute_approvals
+         (id, kind, project_id, provider, state, actor_kind, actor_account_id,
+          request_summary, request_expires_at, version, created, updated)
+       VALUES ($1, 'request', $2, 'runpod', 'pending', $3, $4, $5, $6, 0, now(), now())`,
+      [
+        id,
+        project_id,
+        opts.actor.kind,
+        actor_account_id,
+        JSON.stringify(requestSummary(opts.spec)),
+        expires,
+      ],
+    );
+    return id;
+  });
+  return typeof result === "string" ? result : undefined;
 }
