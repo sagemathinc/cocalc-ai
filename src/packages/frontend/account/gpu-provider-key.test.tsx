@@ -92,6 +92,22 @@ describe("GpuProviderKeySection", () => {
     expect(screen.queryByDisplayValue(KEY)).toBeNull();
   });
 
+  it("keeps the key field out of password managers, masked until shown", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue(DISCONNECTED);
+    render(<GpuProviderKeySection />);
+    const input = (await screen.findByLabelText(
+      "RunPod API key",
+    )) as HTMLInputElement;
+    expect(input.type).toBe("text");
+    expect(input.getAttribute("autocomplete")).toBe("off");
+    expect(input.hasAttribute("data-1p-ignore")).toBe(true);
+    expect(input.getAttribute("data-lpignore")).toBe("true");
+    expect(input.getAttribute("data-bwignore")).toBe("true");
+    // (jsdom drops -webkit-text-security, so only the toggle is checked)
+    await userEvent.click(screen.getByLabelText("Show key"));
+    expect(screen.getByLabelText("Hide key")).toBeTruthy();
+  });
+
   it("says the RunPod account is still being checked until the first inventory", async () => {
     mockSystem.getGpuProviderKeyStatus.mockResolvedValue({
       ...CONNECTED,

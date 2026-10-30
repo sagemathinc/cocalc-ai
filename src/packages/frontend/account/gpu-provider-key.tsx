@@ -17,7 +17,9 @@ import {
   Spin,
   Typography,
 } from "antd";
+import { EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type React from "react";
 
 export const CHECKING_POLL_MS = 15_000;
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
@@ -48,6 +50,7 @@ export function GpuProviderKeySection() {
   const [status, setStatus] = useState<GpuProviderKeyStatus>();
   const [loadError, setLoadError] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
   const [replacing, setReplacing] = useState(false);
   const [busy, setBusy] = useState(false);
   // Set synchronously, so a save and a removal can never both start, even
@@ -188,9 +191,35 @@ export function GpuProviderKeySection() {
         checks it with RunPod before saving it, and never shows it again.
       </Typography.Paragraph>
       <Space.Compact style={{ width: "100%" }}>
-        <Input.Password
+        {/* Not a password input: browsers and password managers then offer
+            to fill or save it as a site password. The key is masked with
+            CSS instead, and the managers' opt-out attributes are set. */}
+        <Input
           aria-label="RunPod API key"
+          type="text"
+          name="runpod-api-key"
           autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore="true"
+          data-form-type="other"
+          styles={{
+            input: showKey
+              ? {}
+              : ({ WebkitTextSecurity: "disc" } as React.CSSProperties),
+          }}
+          suffix={
+            <Button
+              type="text"
+              size="small"
+              aria-label={showKey ? "Hide key" : "Show key"}
+              icon={showKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+              onClick={() => setShowKey(!showKey)}
+            />
+          }
           placeholder="RunPod API key"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
