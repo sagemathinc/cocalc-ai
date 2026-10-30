@@ -14,13 +14,17 @@ new owner merges them in one transaction.
 - Request rows (no funder) keep whichever copy was updated last; a pending
   request that would make two pending for the project is superseded.
 
-The project rehome write fence that keeps these writes out of the cutover is
-the approval state machine's (a later change); this module only copies.
+The merge runs under the project rehome fence and, in the same transaction,
+removes this bay's import marker (project_rehome_imports): from then on the
+approval state machine may write here (server/gpu/project-funding-routes.ts
+refuses with 'rehoming' while the marker exists).
 */
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { lockProjectRehomeFence } from "@cocalc/database/postgres/project-rehome-fence";
 import {
   mergeProjectFundingRoute,
+  PROJECT_FUNDING_LEASE_MS,
   type ProjectComputeApprovalPortableRow,
   type ProjectFundingRoute,
 } from "@cocalc/util/gpu/project-funding";
@@ -144,8 +148,23 @@ async function upsert(
   );
 }
 
-// Merge the old owner's rows into this bay's, in one transaction. Returns
-// how many rows changed.
+// The first accept of a rehome on its destination: the project's portable
+// state is still to come.
+export async function markProjectRehomeImport(
+  db: Db,
+  { project_id, source_bay_id }: { project_id: string; source_bay_id: string },
+): Promise<void> {
+  await lockProjectRehomeFence({ db, project_id });
+  await db.query(
+    `INSERT INTO project_rehome_imports (project_id, source_bay_id, started)
+     VALUES ($1, $2, now())
+     ON CONFLICT (project_id) DO UPDATE SET source_bay_id = EXCLUDED.source_bay_id`,
+    [project_id, source_bay_id],
+  );
+}
+
+// Merge the old owner's rows into this bay's and end the import, in one
+// transaction. Returns how many rows changed.
 export async function mergeProjectComputeApprovals({
   project_id,
   rows,
@@ -154,10 +173,10 @@ export async function mergeProjectComputeApprovals({
   rows: ProjectComputeApprovalPortableRow[] | undefined;
 }): Promise<number> {
   const incoming = (rows ?? []).filter((r) => r?.project_id === project_id);
-  if (!incoming.length) return 0;
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await lockProjectRehomeFence({ db: client, project_id });
     const { rows: existingRows } = await client.query(
       `SELECT * FROM project_compute_approvals WHERE project_id = $1 ORDER BY id FOR UPDATE`,
       [project_id],
@@ -170,12 +189,22 @@ export async function mergeProjectComputeApprovals({
     );
     const byId = new Map(existing.map((r) => [r.id, r]));
     let changed = 0;
+    // A pending slot gets a fresh lease here: the rehome may have taken
+    // longer than what was left of it, and the funder's bay is still to
+    // activate it (it now resolves this bay).
+    const lease = new Date(Date.now() + PROJECT_FUNDING_LEASE_MS).toISOString();
     // approvals first, so a superseded request never blocks one
     for (const row of incoming.filter((r) => r.kind === "approval")) {
       const mine = byApproval.get(row.approval_id);
-      const merged = mine
+      let merged = mine
         ? fromRoute(mine, mergeProjectFundingRoute(toRoute(mine), toRoute(row)))
         : row;
+      if (
+        merged.state === "pending" &&
+        (merged.lease_expires_at == null || merged.lease_expires_at < lease)
+      ) {
+        merged = { ...merged, lease_expires_at: lease };
+      }
       if (mine && JSON.stringify(merged) === JSON.stringify(mine)) continue;
       await upsert(client, merged);
       changed += 1;
@@ -204,6 +233,10 @@ export async function mergeProjectComputeApprovals({
       await upsert(client, next);
       changed += 1;
     }
+    await client.query(
+      "DELETE FROM project_rehome_imports WHERE project_id = $1",
+      [project_id],
+    );
     await client.query("COMMIT");
     return changed;
   } catch (err) {

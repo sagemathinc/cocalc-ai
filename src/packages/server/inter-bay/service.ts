@@ -1398,6 +1398,22 @@ async function startAccountLocalService(): Promise<void> {
       await (
         await import("@cocalc/server/gpu/hostkey")
       ).registerHostKeyLocal(opts),
+    gpuProjectFundingReserve: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding-routes")
+      ).reserveProjectFundingSlotLocal(opts),
+    gpuProjectFundingDeliver: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding-routes")
+      ).deliverProjectFundingMessageLocal(opts),
+    gpuProjectFundingStatus: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding-routes")
+      ).projectFundingStatusLocal(opts),
+    gpuProjectFundingEndedOnProject: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding")
+      ).projectFundingEndedOnProjectLocal(opts),
     computeOwnerResources: async (opts) =>
       (
         await import("@cocalc/server/compute/owner-resource-routing")

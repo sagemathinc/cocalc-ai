@@ -39,6 +39,7 @@ import { initGpuReaper } from "@cocalc/server/gpu/reaper";
 import { initGpuReconciler } from "@cocalc/server/gpu/reconcile";
 import { initGpuBilling } from "@cocalc/server/gpu/billing";
 import { initGpuDecryptAudit } from "@cocalc/server/gpu/decrypt-audit";
+import { initProjectFunding } from "@cocalc/server/gpu/project-funding";
 import { eraseRevokedExternalCredentialPayloads } from "@cocalc/server/external-credentials/store";
 import { clearStaleHostkeyTokens } from "@cocalc/server/gpu/hostkey-clear";
 import { closeExpiredAgentGrants } from "@cocalc/server/gpu/agent-api";
@@ -430,6 +431,9 @@ async function startServer(): Promise<void> {
     initGpuBilling();
     // and the audit of every GPU key decrypt (5d-2c-2)
     initGpuDecryptAudit();
+    // and project funding approvals: cross-bay messages, slot leases,
+    // unacknowledged activations and approvals past their end
+    initProjectFunding();
     // GPU pods' host-key registration verifiers are retired a window after
     // use or expiry (a report never sweeps other rows). Indexed and
     // idempotent, so every API hub can run it.

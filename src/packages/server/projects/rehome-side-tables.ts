@@ -134,6 +134,12 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Project funding requests and approval routes move with the project: rehome copies them in its portable state with a version-aware merge, and every write is behind the project rehome write fence.",
   },
+  project_rehome_imports: {
+    table: "project_rehome_imports",
+    status: "operation-local",
+    reason:
+      "The destination's own marker that a rehome's portable state hasn't merged yet; it belongs to that operation on that bay.",
+  },
   project_rootfs_states: {
     table: "project_rootfs_states",
     status: "not-portable",

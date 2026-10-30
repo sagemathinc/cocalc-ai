@@ -87,6 +87,7 @@ describeDb("project funding rows in project rehome", () => {
   beforeAll(async () => {
     await syncSchema({
       project_compute_approvals: SCHEMA.project_compute_approvals,
+      project_rehome_imports: SCHEMA.project_rehome_imports,
     });
   });
 

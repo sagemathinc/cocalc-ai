@@ -216,3 +216,18 @@ Table({
     created: { type: "timestamp", not_null: true, pg_default: "now()" },
   },
 });
+
+// On a rehome's destination bay: the project is owned here (or about to be)
+// but its portable state hasn't been merged yet. Set by the first accept,
+// removed in the transaction that merges the portable state; writes that
+// need the project's portable rows (project funding) refuse with a
+// retryable 'rehoming' meanwhile.
+Table({
+  name: "project_rehome_imports",
+  rules: { primary_key: "project_id" },
+  fields: {
+    project_id: { type: "uuid", not_null: true },
+    source_bay_id: { type: "string", pg_type: "varchar(200)", not_null: true },
+    started: { type: "timestamp", not_null: true, pg_default: "now()" },
+  },
+});
