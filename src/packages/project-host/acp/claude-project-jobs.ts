@@ -178,15 +178,15 @@ export class ClaudeProjectJobs {
   private wakeReopened() {
     for (const resolve of [...this.reopened]) resolve();
   }
-  /** Wait (bounded) for a fence to lift; returns how long it waited. */
-  private async waitForReopen(): Promise<number> {
+  /** Wait (bounded) for a fence to lift; how long, and whether it waited. */
+  private async waitForReopen(): Promise<{ waited: boolean; ms: number }> {
     if (
       !this.cleanupBlocked ||
       this.closed ||
       this.paused ||
       this.fenceWaitMs <= 0
     )
-      return 0;
+      return { waited: false, ms: 0 };
     const started = Date.now();
     await new Promise<void>((resolve) => {
       const done = () => {
@@ -197,13 +197,15 @@ export class ClaudeProjectJobs {
       const timer = setTimeout(done, this.fenceWaitMs);
       this.reopened.add(done);
     });
-    return Date.now() - started;
+    return { waited: true, ms: Date.now() - started };
   }
   /** Wait out a fence, then recheck authority; returns how long it waited. */
   private async admitAfterFence(): Promise<number> {
-    const waited = await this.waitForReopen();
-    if (waited > 0 && !this.cleanupBlocked) await this.reauthorize?.();
-    return waited;
+    // Any wait (even one that ends within the same millisecond) yielded to
+    // other work, so authority is checked again.
+    const { waited, ms } = await this.waitForReopen();
+    if (waited && !this.cleanupBlocked) await this.reauthorize?.();
+    return ms;
   }
   private fenceError(waitedMs = 0): Error {
     return Error(
@@ -568,6 +570,8 @@ export class ClaudeProjectJobs {
   /** Return every pending wait now, with whatever output is available. */
   releaseWaits() {
     for (const done of [...this.waits]) done();
+    // A call waiting out a fence returns too (failing if still fenced).
+    this.wakeReopened();
   }
   async close() {
     this.closed = true;

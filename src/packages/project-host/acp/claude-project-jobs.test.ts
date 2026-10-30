@@ -607,3 +607,27 @@ test("a peer canceled by a fence keeps it until the peer is accounted for", asyn
   runs[2].finish({ code: 0, stdout: "", stderr: "", cleanupConfirmed: true });
   await jobs.close();
 });
+
+test("new user guidance ends a wait for a fence, too", async () => {
+  const execute = jest.fn(async () => ({
+    code: 130,
+    stdout: "",
+    stderr: "",
+    cleanupConfirmed: false,
+  }));
+  const jobs = new ClaudeProjectJobs(execute as any, { fenceWaitMs: 60_000 });
+  try {
+    await jobs.start({ script: "a", yield_time_ms: 1000 });
+    const started = Date.now();
+    const waiting = jobs.start({ script: "b" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Guidance is waiting: the call returns now, still fenced, rather than
+    // holding it for up to a minute.
+    jobs.releaseWaits();
+    await expect(waiting).rejects.toThrow("cleanup is unconfirmed");
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally {
+    await jobs.close();
+  }
+});

@@ -765,7 +765,7 @@ os.close(r)
 if MODE != 'success': time.sleep(60)
 """.replace("DETACH", repr(detach)).replace("MODE", repr(mode))
                 command = "/usr/bin/python3 - <<'PY'\n" + script + "\nPY"
-                proc = subprocess.Popen(["/usr/bin/python3", "-I", "-c", source, "run", project_id, str(uuid.uuid4()), str(owner.pid), "1500" if mode in ("deadline", "wedged-guard") else "30000"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                proc = subprocess.Popen(["/usr/bin/python3", "-I", "-c", source, "run", project_id, str(uuid.uuid4()), str(owner.pid), "1500" if mode in ("deadline", "wedged-guard") else "120000" if mode == "lease-expiry" else "30000"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 config = {"args": ["exec", "fixture", command], "env": {"PATH": str(path) + ":/usr/bin:/bin"}}
                 proc.stdin.write((json.dumps(config) + "\n").encode())
                 proc.stdin.flush()
@@ -775,7 +775,9 @@ if MODE != 'success': time.sleep(60)
                 output = ""
                 escaped = None
                 proof = None
-                until = time.monotonic() + 20
+                # The lease of a live but silent caller expires after 30 s; the
+                # deadline above is later, so this case exercises the lease.
+                until = time.monotonic() + (60 if mode == "lease-expiry" else 20)
                 triggered = False
                 while time.monotonic() < until and proof is None:
                     if mode not in ("lease-expiry",) and not proc.stdin.closed:
