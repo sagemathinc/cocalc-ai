@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260912-v56"
+HELPER_SCHEMA_VERSION = "20261030-v57"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -11406,6 +11406,77 @@ PY' bash "$tree"
     esac
     emit_bees_status "$mountpoint"
     ;;
+  bees-gate)
+    # The project-host BEES gate: freeze BEES while it would hurt (frozen
+    # tasks hold no locks and keep their state), thaw it with a 1-CPU cap
+    # when it may run, or stop it for good (kill what is in its cgroup and
+    # leave the cgroup thawed, so a later BEES does not start frozen).
+    if [ "$#" -ne 2 ]; then
+      echo "usage: cocalc-runtime-storage bees-gate <mountpoint> freeze|thaw|stop" >&2
+      exit 2
+    fi
+    mountpoint="$1"
+    action="$2"
+    check_args "$mountpoint" "$action"
+    case "$mountpoint" in
+      /mnt/cocalc|/mnt/cocalc/*)
+        ;;
+      *)
+        deny "bees-mountpoint-not-allowed" "$mountpoint"
+        ;;
+    esac
+    pool="$(bees_cgroup)"
+    case "$action" in
+      freeze)
+        # Also before BEES ever started (a fresh boot): an empty cgroup,
+        # frozen, so the BEES started next attaches to it frozen.
+        # configure_bees_cgroup sets its limits when BEES starts.
+        mkdir -p "$pool"
+        if [ ! -w "${pool}/cgroup.freeze" ]; then
+          echo "BEES_GATE_FREEZE_FAILED reason=no-cgroup-freeze mountpoint=${mountpoint}" >&2
+          exit 1
+        fi
+        printf '1\n' > "${pool}/cgroup.freeze"
+        ;;
+      thaw)
+        if [ -d "$pool" ]; then
+          configure_bees_cgroup "$pool" "$mountpoint"
+          # One CPU, not io.max: a low io.max can turn BEES into a
+          # filesystem-wide lock holder (configure_bees_cgroup).
+          printf '%s %s\n' "$BEES_CGROUP_CPU_PERIOD" "$BEES_CGROUP_CPU_PERIOD" > "${pool}/cpu.max"
+          printf '0\n' > "${pool}/cgroup.freeze"
+        fi
+        ;;
+      stop)
+        # Thaw only once the cgroup is proven empty: thawing a BEES that is
+        # still there would revive it.
+        if [ -d "$pool" ]; then
+          if [ ! -w "${pool}/cgroup.kill" ]; then
+            echo "BEES_GATE_STOP_FAILED reason=no-cgroup-kill mountpoint=${mountpoint}" >&2
+            exit 1
+          fi
+          printf '1\n' > "${pool}/cgroup.kill"
+          stopped=""
+          for _ in $(seq 1 50); do
+            if grep -q '^populated 0' "${pool}/cgroup.events" 2>/dev/null; then
+              stopped=1
+              break
+            fi
+            sleep 0.1
+          done
+          if [ -z "$stopped" ]; then
+            echo "BEES_GATE_STOP_FAILED reason=still-populated mountpoint=${mountpoint}" >&2
+            exit 1
+          fi
+          printf '0\n' > "${pool}/cgroup.freeze"
+        fi
+        ;;
+      *)
+        deny "bees-gate-action-not-allowed" "$action"
+        ;;
+    esac
+    echo "BEES_GATE action=${action} mountpoint=${mountpoint}" >&2
+    ;;
   bees)
     check_args "$@"
     mountpoint=""
@@ -11440,8 +11511,10 @@ PY' bash "$tree"
     fi
     pool="$(bees_cgroup)"
     configure_bees_cgroup "$pool" "$mountpoint"
-    attach_pid_to_project_pool_storage "$$" "$pool" || true
+    # Before joining the cgroup: the BEES gate may hold it frozen, which
+    # freezes this wrapper too (the project host waits for this line).
     echo "BEES_STARTING mountpoint=${mountpoint} pid=$$" >&2
+    attach_pid_to_project_pool_storage "$$" "$pool" || true
     if [ -x /usr/local/libexec/cocalc-bees ]; then
       exec /usr/bin/ionice -c3 /usr/bin/nice -n 19 /usr/local/libexec/cocalc-bees "$@"
     fi

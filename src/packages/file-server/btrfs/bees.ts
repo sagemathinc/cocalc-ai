@@ -22,6 +22,8 @@ interface Options {
   verbose?: number;
   // hash table size: default 1G
   size?: string;
+  // run just before BEES is spawned (e.g. freeze its cgroup: bees-gate.ts)
+  beforeSpawn?: () => Promise<void>;
 }
 
 const children: ChildProcess[] = [];
@@ -43,6 +45,7 @@ export default async function bees(
     workerCount = Math.min(4, availableParallelism()),
     verbose = 1,
     size = "1G",
+    beforeSpawn,
   }: Options = {},
 ): Promise<BeesStartResult> {
   if (beesDisabledByEnv()) {
@@ -69,6 +72,7 @@ export default async function bees(
     args.push("-c", `${Math.max(1, Math.floor(workerCount))}`);
   }
   args.push(mountpoint);
+  await beforeSpawn?.();
   logger.debug(`Running 'sudo -n ${STORAGE_WRAPPER} ${args.join(" ")}'`);
   const child = spawn("sudo", ["-n", STORAGE_WRAPPER, ...args], {
     detached: true,

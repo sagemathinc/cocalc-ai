@@ -267,7 +267,10 @@ import {
 import { setSnapshotPreparer } from "@cocalc/file-server/btrfs/snapshot-preparer";
 import { backupsInFlight, withBackupParallelLimit } from "./backup-queue";
 import { decideSnapshotPrune } from "./snapshot-prune-gate";
-import { getStorageAdmissionStatus } from "./storage-admission";
+import {
+  getStorageAdmissionStatus,
+  lifecycleActiveNow,
+} from "./storage-admission";
 import { createSharedWorkLimit } from "./shared-work-limit";
 export { getBackupExecutionStatus } from "./backup-queue";
 import {
@@ -6099,6 +6102,9 @@ export async function initFileServer({
     return servers;
   }
 
+  // The BEES gate keeps BEES frozen while projects start or stop; it checks
+  // every second, so it reads the live count, not the 5 s admission sample.
+  const beesLifecycleActive = () => lifecycleActiveNow() > 0;
   if (fs == null) {
     if (fileServerMountpoint) {
       const resolvedRusticRepo = await resolveRusticRepo();
@@ -6110,6 +6116,7 @@ export async function initFileServer({
         mount: fileServerMountpoint,
         rustic: resolvedRusticRepo,
         withTemporaryQuotaOverride: withManagedTemporaryQuotaOverride,
+        beesLifecycleActive,
       });
     } else {
       const imageDir = join(data, "btrfs", "image");
@@ -6131,6 +6138,7 @@ export async function initFileServer({
         mount: mountPoint,
         rustic: resolvedRusticRepo,
         withTemporaryQuotaOverride: withManagedTemporaryQuotaOverride,
+        beesLifecycleActive,
       });
     }
   }
