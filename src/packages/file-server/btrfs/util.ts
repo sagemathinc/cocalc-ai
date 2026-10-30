@@ -145,23 +145,55 @@ export function refusedByStorageWrapper(err: unknown): boolean {
 // maintenance cgroup's io.max, even for background work: measured on prod
 // 10-30, such commits took 5-7 s (median, up to 45 s) from there against
 // 0.4 s for the same commands run unthrottled. Unknown subcommands count as
-// writes.
-const READ_ONLY_BTRFS_SUBCOMMANDS: Record<string, readonly string[] | "all"> = {
-  subvolume: ["show", "list", "get-default", "find-new", "sync"],
-  filesystem: ["show", "df", "du", "usage"],
-  qgroup: ["show"],
-  property: ["get", "list"],
-  device: ["stats", "usage"],
-  scrub: ["status"],
-  balance: ["status"],
-  "inspect-internal": "all",
+// writes, and so do the options listed for a subcommand that make it write
+// (long options, or short ones that may be combined, as in -cz).
+const READ_ONLY_BTRFS_SUBCOMMANDS: Record<
+  string,
+  Record<string, { long?: string[]; short?: string }>
+> = {
+  subvolume: {
+    show: {},
+    list: {},
+    "get-default": {},
+    "find-new": {},
+    sync: {},
+  },
+  filesystem: { show: {}, df: {}, du: {}, usage: {} },
+  // --sync forces a sync of the filesystem
+  qgroup: { show: { long: ["--sync"] } },
+  property: { get: {}, list: {} },
+  // -z/--reset resets the persisted counters
+  device: { stats: { long: ["--reset"], short: "z" }, usage: {} },
+  scrub: { status: {} },
+  balance: { status: {} },
+  "inspect-internal": {
+    "dump-super": {},
+    "dump-tree": {},
+    "inode-resolve": {},
+    "list-chunks": {},
+    "logical-resolve": {},
+    "map-swapfile": {},
+    "min-dev-size": {},
+    rootid: {},
+    "subvolid-resolve": {},
+    "tree-stats": {},
+  },
 };
 
 export function btrfsCommandOnlyReads(args: readonly string[]): boolean {
-  const [group, sub] = args.filter((arg) => !arg.startsWith("-"));
-  const allowed = READ_ONLY_BTRFS_SUBCOMMANDS[group ?? ""];
-  if (allowed == null) return false;
-  return allowed === "all" || allowed.includes(sub ?? "");
+  const [group = "", sub = ""] = args.filter((arg) => !arg.startsWith("-"));
+  const own = (object: object, key: string) =>
+    Object.prototype.hasOwnProperty.call(object, key);
+  if (!own(READ_ONLY_BTRFS_SUBCOMMANDS, group)) return false;
+  const subcommands = READ_ONLY_BTRFS_SUBCOMMANDS[group];
+  if (!own(subcommands, sub)) return false;
+  const read = subcommands[sub];
+  return !args.some((arg) =>
+    arg.startsWith("--")
+      ? (read.long ?? []).includes(arg.split("=")[0])
+      : arg.startsWith("-") &&
+        [...(read.short ?? "")].some((flag) => arg.slice(1).includes(flag)),
+  );
 }
 
 export async function btrfs(

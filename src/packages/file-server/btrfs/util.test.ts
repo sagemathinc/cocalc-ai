@@ -71,6 +71,8 @@ describe("btrfs privileged command routing", () => {
       ["qgroup", "limit", "1000", "/mnt/dest", "/mnt"],
       ["qgroup", "assign", "--no-rescan", "/mnt/dest", "1/1", "/mnt"],
       ["quota", "disable", "/mnt"],
+      ["qgroup", "show", "--sync", "-reF", "/mnt"],
+      ["device", "stats", "--reset", "/mnt"],
       ["some-future", "command"],
     ];
     for (const priority of ["scheduled", "scavenger"] as const) {
@@ -97,6 +99,8 @@ describe("btrfs privileged command routing", () => {
       ["property", "get", "-ts", "/mnt/x", "ro"],
       ["filesystem", "du", "-s", "/mnt/x"],
       ["inspect-internal", "rootid", "/mnt/x"],
+      ["device", "stats", "-c", "/mnt"],
+      ["qgroup", "show", "--raw", "/mnt"],
     ]) {
       expect(btrfsCommandOnlyReads(args)).toBe(true);
     }
@@ -105,6 +109,15 @@ describe("btrfs privileged command routing", () => {
       ["property", "set", "-ts", "/mnt/x", "ro", "true"],
       ["qgroup", "destroy", "1/1", "/mnt"],
       ["filesystem", "resize", "max", "/mnt"],
+      // @review on #1516: options that make a listed subcommand write
+      ["qgroup", "show", "--sync", "/mnt"],
+      ["device", "stats", "-z", "/mnt"],
+      ["device", "stats", "-cz", "/mnt"],
+      ["device", "stats", "--reset", "/mnt"],
+      // only the listed inspect-internal commands, and no prototype keys
+      ["inspect-internal", "some-future-command", "/mnt"],
+      ["constructor", "name"],
+      ["subvolume", "constructor"],
       [],
     ]) {
       expect(btrfsCommandOnlyReads(args)).toBe(false);
