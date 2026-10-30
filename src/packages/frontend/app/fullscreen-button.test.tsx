@@ -1,5 +1,6 @@
 /** @jest-environment jsdom */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { IntlProvider } from "react-intl";
 import { FullscreenButton } from "./fullscreen-button";
 
@@ -25,21 +26,38 @@ const renderButton = () =>
 
 beforeEach(() => toggle_fullscreen.mockClear());
 
-it("shows a labeled exit button in default fullscreen", () => {
+it("exits by keyboard and moves focus to the enter button", async () => {
+  const user = userEvent.setup();
   fullscreen = "default";
-  renderButton();
-  fireEvent.click(screen.getByRole("button", { name: /exit fullscreen/i }));
+  const { rerender } = renderButton();
+  const exit = screen.getByRole("button", { name: /exit fullscreen/i });
+  exit.focus();
+  await user.keyboard("{Enter}");
   expect(toggle_fullscreen).toHaveBeenCalledTimes(1);
+  // the page store leaves fullscreen: the exit button unmounts
+  fullscreen = undefined;
+  // (new props stand in for the store subscription that re-renders it)
+  rerender(
+    <IntlProvider locale="en">
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>,
+  );
+  expect(screen.queryByRole("button", { name: /exit fullscreen/i })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /enter fullscreen/i }),
+  ).toHaveFocus();
 });
 
-it("shows a keyboard-reachable enter button outside fullscreen", () => {
+it("enters by keyboard from a focusable button", async () => {
+  const user = userEvent.setup();
   fullscreen = undefined;
   renderButton();
-  expect(screen.queryByRole("button", { name: /exit fullscreen/i })).toBeNull();
   const enter = screen.getByRole("button", { name: /enter fullscreen/i });
-  enter.focus();
+  // a plain mount (no exit just before) does not take focus
+  expect(enter).not.toHaveFocus();
+  await user.tab();
   expect(enter).toHaveFocus();
-  fireEvent.click(enter);
+  await user.keyboard(" ");
   expect(toggle_fullscreen).toHaveBeenCalledTimes(1);
 });
 

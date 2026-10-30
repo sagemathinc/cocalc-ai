@@ -4,6 +4,7 @@
  */
 
 import { Button } from "antd";
+import { useEffect, useRef } from "react";
 import { useIntl } from "react-intl";
 
 import {
@@ -38,6 +39,20 @@ const EXIT_BUTTON_STYLE: CSS = {
   boxShadow: `0 1px 4px ${UI_COLORS.shadow}`,
 } as const;
 
+// Set when the exit button is activated: the exit button unmounts, so the
+// enter button that mounts next (top nav or agents sidebar) takes the focus
+// instead of leaving it on the body. Expires so that a later mount, e.g.
+// after a resize, never steals focus.
+let focusEnterOnMount = false;
+let focusEnterTimer: ReturnType<typeof setTimeout> | undefined;
+
+function exitAndKeepFocus(toggle: () => void): void {
+  focusEnterOnMount = true;
+  clearTimeout(focusEnterTimer);
+  focusEnterTimer = setTimeout(() => (focusEnterOnMount = false), 1000);
+  toggle();
+}
+
 interface Props {
   pageStyle: PageStyle;
 }
@@ -49,6 +64,14 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
   const intl = useIntl();
   const fullscreen = useTypedRedux("page", "fullscreen");
   const page_actions = useActions("page");
+  const enterRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (focusEnterOnMount && enterRef.current != null) {
+      focusEnterOnMount = false;
+      enterRef.current.focus();
+    }
+  }, [fullscreen]);
 
   if (fullscreen == "kiosk" || fullscreen == "project") {
     // no button, since can't get out.
@@ -66,7 +89,9 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
           size="small"
           style={EXIT_BUTTON_STYLE}
           icon={<Icon name="compress" />}
-          onClick={() => page_actions.toggle_fullscreen()}
+          onClick={() =>
+            exitAndKeepFocus(() => page_actions.toggle_fullscreen())
+          }
         >
           {label}
         </Button>
@@ -97,6 +122,7 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
   return (
     <Tip title={tooltip} placement={"bottomRight"} delayShow={2000}>
       <Button
+        ref={enterRef}
         type="text"
         className={TOP_BAR_ELEMENT_CLASS}
         style={button_style}
