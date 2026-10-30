@@ -151,6 +151,25 @@ test("a test warns about what a scheduled run won't have", () => {
     ).length,
     2,
   );
+  // The directory itself, in a shell and quoted in other languages.
+  for (const script of [
+    "ls /tmp",
+    "TMPDIR=/tmp make check",
+    'import os; print(os.listdir("/tmp"))',
+    "from pathlib import Path; Path('/tmp').glob('*')",
+    "find /tmp -name x",
+  ]) {
+    assert.equal(scheduledRunWarnings(script).length, 1, script);
+  }
+  // Not /tmp: a tmp directory elsewhere, or a longer name.
+  for (const script of [
+    "ls ~/proj/tmp",
+    "ls $HOME/tmp/x",
+    "ls /tmpfiles",
+    "cat /tmp.d/x",
+  ]) {
+    assert.deepEqual(scheduledRunWarnings(script), [], script);
+  }
   // An ordinary script: nothing to warn about.
   assert.deepEqual(
     scheduledRunWarnings(

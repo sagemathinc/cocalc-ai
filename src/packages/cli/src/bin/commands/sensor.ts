@@ -107,7 +107,8 @@ export function scheduledRunWarnings(script: string): string[] {
     warnings.push(
       "This script reads /run/secrets. Scheduled runs don't have the project's secrets: this test can pass while every scheduled run fails. Use a scheduled prompt (it runs in your turn) for work that needs a secret.",
     );
-  if (/(^|[^\w.~-])\/tmp\//.test(script))
+  // /tmp itself or anything in it (not ~/x/tmp, /tmpfiles or /tmp.d).
+  if (/(^|[^\w.~-])\/tmp(?![\w.-])/.test(script))
     warnings.push(
       "This script uses /tmp. A scheduled run starts with an empty /tmp, and nothing there is kept between runs: keep what must last in $COCALC_SENSOR_STATE.",
     );
