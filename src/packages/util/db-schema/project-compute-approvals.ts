@@ -168,15 +168,24 @@ Table({
 
 // Messages between the funder's home bay and the project's owning bay, in
 // order per approval: each is delivered until the receiver's transaction has
-// committed and acknowledged it. (approval_id, kind, version) identifies a
-// message; resending it is harmless. The receiver is resolved at each attempt
+// committed and acknowledged it. (approval_id, target, version) identifies a
+// message (pod counts: in their own version sequence); resending it is
+// harmless. The receiver is resolved at each attempt
 // (the project's current owning bay, or the funder's current home).
 Table({
   name: "project_funding_outbox",
   rules: {
     primary_key: "id",
     pg_indexes: ["approval_id", "next_attempt_at", "delivered_at"],
-    pg_unique_indexes: ["(approval_id, kind, version)"],
+    // Each direction (target) numbers its approval-state messages by the
+    // approval version, so one version is one message per direction; pod
+    // counts have their own version sequence. (The pods index lists its
+    // columns in another order: generated index names are truncated and
+    // must differ.)
+    pg_unique_indexes: [
+      "(approval_id, target, version) WHERE kind <> 'pods'",
+      "(target, approval_id, version) WHERE kind = 'pods'",
+    ],
   },
   fields: {
     id: { type: "uuid", not_null: true },

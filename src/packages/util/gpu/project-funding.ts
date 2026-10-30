@@ -63,9 +63,12 @@ export class ProjectFundingError extends Error {
 }
 
 function usdString(value: unknown, label: string, positive: boolean): string {
+  // Up to 10 fractional digits, so an already-normalized amount
+  // ("400.0000000000") is accepted again; but only whole cents.
   if (
     typeof value !== "string" ||
-    !/^(0|[1-9]\d{0,9})(\.\d{1,2})?$/.test(value)
+    !/^(0|[1-9]\d{0,9})(\.\d{1,10})?$/.test(value) ||
+    toDecimal(value).decimalPlaces() > 2
   ) {
     throw new ProjectFundingError(
       `${label} must be a decimal amount in dollars and cents, like "400" or "12.50".`,
@@ -197,7 +200,37 @@ export interface ProjectFundingDisplay {
   funder_name?: string;
   max_hourly_usd?: string;
   max_concurrent_pods?: number;
+  max_gpu_count?: number;
   max_runtime_minutes?: number;
+  allowed_gpu_type_ids?: string[];
+  cloud?: (typeof PROJECT_FUNDING_CLOUDS)[number];
+}
+
+// The display snapshot of normalized terms (every approved cap), with the
+// approval's end and the funder's name.
+export function projectFundingDisplay(
+  terms: ProjectFundingTerms,
+  ends_at: Date,
+  funder_name?: string,
+): ProjectFundingDisplay {
+  const t = normalizeProjectFundingTerms(terms);
+  const display: ProjectFundingDisplay = {
+    authorized_usd: t.authorized_usd,
+    ends_at: ends_at.toISOString(),
+    agents_allowed: t.agents_allowed,
+  };
+  if (funder_name != null) display.funder_name = funder_name;
+  for (const k of [
+    "max_hourly_usd",
+    "max_concurrent_pods",
+    "max_gpu_count",
+    "max_runtime_minutes",
+    "allowed_gpu_type_ids",
+    "cloud",
+  ] as const) {
+    if (t[k] != null) (display as any)[k] = t[k];
+  }
+  return display;
 }
 
 export type ProjectFundingEndedReason =

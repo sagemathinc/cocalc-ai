@@ -8,6 +8,7 @@ import {
   canonicalProjectFundingTerms,
   mergeProjectFundingRoute,
   normalizeProjectFundingTerms,
+  projectFundingDisplay,
   ProjectFundingError,
   routeMayHavePods,
   type ProjectFundingDisplay,
@@ -101,6 +102,127 @@ describe("normalizeProjectFundingTerms", () => {
       provider: "runpod",
     } as any);
     expect(a).toBe(b);
+  });
+});
+
+describe("normalized terms compose (validate once, hash later)", () => {
+  const terms = {
+    provider: "runpod",
+    authorized_usd: "400",
+    max_hourly_usd: "12.5",
+    days: 7,
+    agents_allowed: false,
+  };
+
+  it("accepts its own output: normalize is idempotent", () => {
+    const once = normalizeProjectFundingTerms(terms);
+    expect(normalizeProjectFundingTerms(once)).toEqual(once);
+  });
+
+  it("canonicalizes already-normalized money fields to the same string", () => {
+    const once = normalizeProjectFundingTerms(terms);
+    expect(once.authorized_usd).toMatch(/^400\.0+$/);
+    expect(once.max_hourly_usd).toMatch(/^12\.50+$/);
+    expect(canonicalProjectFundingTerms(once)).toBe(
+      canonicalProjectFundingTerms(terms as any),
+    );
+  });
+
+  it("still refuses sub-cent amounts written with trailing zeros", () => {
+    for (const bad of ["1.2340000000", "0.001"]) {
+      expect(() =>
+        normalizeProjectFundingTerms({ ...terms, authorized_usd: bad }),
+      ).toThrow(ProjectFundingError);
+      expect(() =>
+        normalizeProjectFundingTerms({ ...terms, max_hourly_usd: bad }),
+      ).toThrow(ProjectFundingError);
+    }
+  });
+});
+
+describe("projectFundingDisplay", () => {
+  it("carries every approved cap, so P can show the actual terms", () => {
+    const d = projectFundingDisplay(
+      {
+        provider: "runpod",
+        authorized_usd: "400",
+        days: 7,
+        agents_allowed: true,
+        max_hourly_usd: "5",
+        max_concurrent_pods: 2,
+        max_gpu_count: 4,
+        max_runtime_minutes: 120,
+        allowed_gpu_type_ids: ["NVIDIA A100 80GB PCIe"],
+        cloud: "SECURE",
+      },
+      new Date("2026-11-08T12:00:00Z"),
+      "Ada",
+    );
+    expect(d).toMatchObject({
+      ends_at: "2026-11-08T12:00:00.000Z",
+      agents_allowed: true,
+      funder_name: "Ada",
+      max_concurrent_pods: 2,
+      max_gpu_count: 4,
+      max_runtime_minutes: 120,
+      allowed_gpu_type_ids: ["NVIDIA A100 80GB PCIe"],
+      cloud: "SECURE",
+    });
+    expect(Number(d.authorized_usd)).toBe(400);
+    expect(Number(d.max_hourly_usd)).toBe(5);
+  });
+
+  it("leaves out caps that weren't set", () => {
+    const d = projectFundingDisplay(
+      {
+        provider: "runpod",
+        authorized_usd: "50",
+        days: 1,
+        agents_allowed: false,
+      },
+      new Date("2026-11-02T00:00:00Z"),
+    );
+    expect(Object.keys(d).sort()).toEqual([
+      "agents_allowed",
+      "authorized_usd",
+      "ends_at",
+    ]);
+  });
+
+  it("travels whole in activate and update messages", () => {
+    const display = projectFundingDisplay(
+      {
+        provider: "runpod",
+        authorized_usd: "400",
+        days: 7,
+        agents_allowed: true,
+        max_gpu_count: 4,
+        allowed_gpu_type_ids: ["B", "A"],
+        cloud: "COMMUNITY",
+      },
+      new Date("2026-11-08T12:00:00Z"),
+    );
+    const active = applyProjectFundingMessage(
+      pending(),
+      { ...activate, display },
+      NOW,
+    ).route;
+    expect(active.display).toEqual(display);
+    const updated = applyProjectFundingMessage(
+      active,
+      {
+        kind: "update",
+        approval_id: A,
+        version: 3,
+        display: { ...display, max_gpu_count: 2 },
+      },
+      NOW,
+    ).route;
+    expect(updated.display).toMatchObject({
+      max_gpu_count: 2,
+      allowed_gpu_type_ids: ["A", "B"],
+      cloud: "COMMUNITY",
+    });
   });
 });
 
