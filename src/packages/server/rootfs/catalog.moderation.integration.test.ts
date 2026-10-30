@@ -180,6 +180,54 @@ describeDb("RootFS catalog moderation flags", () => {
     });
   });
 
+  it("an owner re-save answers with the stored block and hide, not the request", async () => {
+    // The catalog lookup behind the response reads these too.
+    await syncSchema({
+      accounts: SCHEMA.accounts,
+      projects: SCHEMA.projects,
+      rootfs_releases: SCHEMA.rootfs_releases,
+    });
+    const blockedImage = "docker.io/example/blocked:1";
+    await save(owner, { image: blockedImage });
+    const blockedId = (
+      await getPool().query(
+        "SELECT image_id FROM rootfs_images WHERE owner_id=$1 AND runtime_image=$2",
+        [owner, blockedImage],
+      )
+    ).rows[0].image_id;
+    await save(admin, {
+      image_id: blockedId,
+      image: blockedImage,
+      blocked: true,
+      blocked_reason: "malware",
+    });
+    const blocked = await saveRootfsImage({
+      account_id: owner,
+      body: { image_id: blockedId, image: blockedImage, label: "Renamed" },
+    });
+    expect(blocked).toMatchObject({
+      id: blockedId,
+      blocked: true,
+      blocked_reason: "malware",
+    });
+
+    const hiddenImage = "docker.io/example/hidden:1";
+    await save(owner, { image: hiddenImage });
+    const hiddenId = (
+      await getPool().query(
+        "SELECT image_id FROM rootfs_images WHERE owner_id=$1 AND runtime_image=$2",
+        [owner, hiddenImage],
+      )
+    ).rows[0].image_id;
+    await save(admin, { image_id: hiddenId, image: hiddenImage, hidden: true });
+    const hidden = await saveRootfsImage({
+      account_id: owner,
+      body: { image_id: hiddenId, image: hiddenImage, label: "Renamed" },
+    });
+    expect(hidden).toMatchObject({ id: hiddenId, hidden: true });
+    expect(hidden.blocked).not.toBe(true);
+  });
+
   it("an admin can still clear the flags", async () => {
     const image = "docker.io/example/third:1";
     await save(owner, { image });
