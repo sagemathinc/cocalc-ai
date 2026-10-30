@@ -9,7 +9,12 @@ import {
   parseSensorWake,
   sensorWatchScript,
 } from "@cocalc/conat/agents/sensors";
-import { agentWatch, exitWatcherArgs, watchedPath } from "./sensor";
+import {
+  agentWatch,
+  exitWatcherArgs,
+  scheduledRunWarnings,
+  watchedPath,
+} from "./sensor";
 
 test("an exit watcher's command reports its output and exit code, and the watcher wakes on it", () => {
   const home = mkdtempSync(join(tmpdir(), "sensor-exit-"));
@@ -128,5 +133,29 @@ test("an agent watcher names a peer as agent send does, from its last turn on", 
   assert.throws(
     () => agentWatch("ops0 on alpha", "ended", directory),
     /external agent/,
+  );
+});
+
+test("a test warns about what a scheduled run won't have", () => {
+  const secrets = scheduledRunWarnings(
+    'key=$(cat /run/secrets/cocalc/STRIPE_KEY)\ncurl -H "Authorization: $key" https://example.com',
+  );
+  assert.equal(secrets.length, 1);
+  assert.match(secrets[0], /Scheduled runs don't have the project's secrets/);
+  const tmp = scheduledRunWarnings("cat /tmp/last-seen.txt");
+  assert.equal(tmp.length, 1);
+  assert.match(tmp[0], /empty \/tmp/);
+  assert.equal(
+    scheduledRunWarnings(
+      "cat ~/.local/share/cocalc/runtime/x.json; ls /run/secrets",
+    ).length,
+    2,
+  );
+  // An ordinary script: nothing to warn about.
+  assert.deepEqual(
+    scheduledRunWarnings(
+      'gh pr checks 12 --repo a/b | grep -q fail && echo \'{"wake":true}\'; echo "$COCALC_SENSOR_STATE" ~/proj/tmp/x',
+    ),
+    [],
   );
 });
