@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  follow-redirects@<1.16.1: ^1.16.1
+  follow-redirects@<1.16.2: ^1.16.2
   es5-ext@<0.10.63: ^0.10.63
   undici@<5.28.3: ^5.28.4
   undici@>=7.0.0 <7.30.1: ~7.30.1
@@ -32,7 +32,7 @@ overrides:
   js-yaml@<4.3.2: ^4.3.2
   glob@>=10.2.0 <10.5.0: '>=10.5.0'
   glob@>=11.0.0 <11.1.0: '>=11.1.0'
-  node-forge@<1.4.0: '>=1.4.0'
+  node-forge@<1.4.2: '>=1.4.2'
   lodash@<4.18.0: '>=4.18.0'
   lodash-es@<4.18.0: '>=4.18.0'
   handlebars@<4.7.10: '>=4.7.10'
@@ -93,7 +93,7 @@ patchedDependencies:
   codemirror@5.65.20: 4ad13d7e47bf077e8a10b59454b70fa6b415f1085ffd53c965a7ab9f17213b59
   dropzone@5.9.3: be96936e7311bf6c69b2316841bc586344ec9388ef93ff008eebe8aabac14b25
   fs-ext@2.1.1: 8de34bb8636073ff75cba28e1092a4e6bd4b0f9f8b2cc05b5fc95f80d978408b
-  node-forge@1.4.0: b6876574a5de19521a766856b293aeae2689848c5d8dab03f93040be0a64b8b4
+  node-forge@1.4.2: 6983a5cd849a87d4512b4c56904c0ee344f371d64a3b87be8cd0eae733904625
   react-native@0.86.0: 819a86370123ff39cbe333ff82ea3e4f8d49433219fdbf243e439cd00435e40f
   slate-dom@0.123.0: 101a60905431ccd64999277906f82afb8c60c9087075ab65e815bb726ff5b856
   slate-react@0.124.0: 480c324a03628679a405b79a110bbd6bd6802f7d1379a491163e19156c5d7c85
@@ -8289,8 +8289,8 @@ packages:
   flow-enums-runtime@0.0.6:
     resolution: {integrity: sha512-3PYnM29RFXwvAN6Pc/scUfkI7RwhQ/xqyLUyPNlXUp9S40zI8nup9tUSrTLSVnWGBN38FNiGWbwZOB6uR4OGdw==}
 
-  follow-redirects@1.16.1:
-    resolution: {integrity: sha512-FNvFGzoMLWmE6Yj9spb/zjd7yiNCHiAW9/Tg9CXrQ8wuu32HtlJOwWO11OJafl5FfY3DxTdQ0vj42zU1kvv5jg==}
+  follow-redirects@1.16.2:
+    resolution: {integrity: sha512-/kVP2U8z596Ia0gwFrwyIeo74ta5aVmSeU1FfAUMAmcEP5EP7zydmag3SLiN64NaRKef3lxsq7i/g7ltJQDGow==}
     engines: {node: '>=4.0'}
     peerDependencies:
       debug: '*'
@@ -9865,8 +9865,8 @@ packages:
     resolution: {integrity: sha512-dRB78srN/l6gqWulah9SrxeYnxeddIG30+GOqK/9OlLVyLg3HPnr6SqOWTWOXKRwC2eGYCkZ59NNuSgvSrpgOA==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
-  node-forge@1.4.0:
-    resolution: {integrity: sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==}
+  node-forge@1.4.2:
+    resolution: {integrity: sha512-rRtAR5XLJ8gCKd9du4qrKAsgCG1ObGP4gLeNJMa4vYSeq4bmBMOJk5IHkrviBV0q7uoAJlVd8HEQYQSVUb4FGQ==}
     engines: {node: '>= 6.13.0'}
 
   node-gyp-build@4.8.4:
@@ -13509,7 +13509,7 @@ snapshots:
       glob: 13.0.6
       lan-network: 0.2.1
       multitars: 1.0.1
-      node-forge: 1.4.0(patch_hash=b6876574a5de19521a766856b293aeae2689848c5d8dab03f93040be0a64b8b4)
+      node-forge: 1.4.2(patch_hash=6983a5cd849a87d4512b4c56904c0ee344f371d64a3b87be8cd0eae733904625)
       npm-package-arg: 11.0.3
       ora: 3.4.0
       picomatch: 4.0.5
@@ -13545,7 +13545,7 @@ snapshots:
 
   '@expo/code-signing-certificates@0.0.6':
     dependencies:
-      node-forge: 1.4.0(patch_hash=b6876574a5de19521a766856b293aeae2689848c5d8dab03f93040be0a64b8b4)
+      node-forge: 1.4.2(patch_hash=6983a5cd849a87d4512b4c56904c0ee344f371d64a3b87be8cd0eae733904625)
 
   '@expo/config-plugins@57.0.7(@typescript/typescript6@6.0.2)':
     dependencies:
@@ -17007,7 +17007,7 @@ snapshots:
 
   axios@1.20.0(debug@4.4.3):
     dependencies:
-      follow-redirects: 1.16.1(debug@4.4.3)
+      follow-redirects: 1.16.2(debug@4.4.3)
       form-data: 4.0.6
       https-proxy-agent: 5.0.1
       proxy-from-env: 2.1.0
@@ -18896,7 +18896,7 @@ snapshots:
 
   flow-enums-runtime@0.0.6: {}
 
-  follow-redirects@1.16.1(debug@4.4.3):
+  follow-redirects@1.16.2(debug@4.4.3):
     optionalDependencies:
       debug: 4.4.3
 
@@ -19313,7 +19313,7 @@ snapshots:
   http-proxy-3@2.0.2:
     dependencies:
       debug: 4.4.3
-      follow-redirects: 1.16.1(debug@4.4.3)
+      follow-redirects: 1.16.2(debug@4.4.3)
     transitivePeerDependencies:
       - supports-color
 
@@ -20966,7 +20966,7 @@ snapshots:
       fetch-blob: 3.2.0
       formdata-polyfill: 4.0.10
 
-  node-forge@1.4.0(patch_hash=b6876574a5de19521a766856b293aeae2689848c5d8dab03f93040be0a64b8b4): {}
+  node-forge@1.4.2(patch_hash=6983a5cd849a87d4512b4c56904c0ee344f371d64a3b87be8cd0eae733904625): {}
 
   node-gyp-build@4.8.4: {}
 
@@ -22192,7 +22192,7 @@ snapshots:
 
   selfsigned@3.0.1:
     dependencies:
-      node-forge: 1.4.0(patch_hash=b6876574a5de19521a766856b293aeae2689848c5d8dab03f93040be0a64b8b4)
+      node-forge: 1.4.2(patch_hash=6983a5cd849a87d4512b4c56904c0ee344f371d64a3b87be8cd0eae733904625)
 
   semver-compare@1.0.0: {}
 
