@@ -61,23 +61,31 @@ function setup({
   failOn,
   freshAuthMissing,
   remote = [],
-}: { failOn?: string; freshAuthMissing?: boolean; remote?: string[] } = {}) {
+  unknownBay = [],
+  mode = "multi-bay",
+}: {
+  failOn?: string;
+  freshAuthMissing?: boolean;
+  remote?: string[];
+  unknownBay?: string[];
+  mode?: string;
+} = {}) {
   const calls: Array<{ name: string; args: any }> = [];
   const overrides = new Map<string, number>([[HOST_B, 2]]);
   let globalOverride: number | null = null;
+  // owning bays as the federated listing reports them: `remote` hosts are
+  // on bay-1, `unknownBay` hosts have none recorded
+  const bayOf = (id: string) =>
+    remote.includes(id) ? "bay-1" : unknownBay.includes(id) ? null : "bay-0";
   const hosts = [
-    { id: HOST_A, name: "host-a", status: "running" },
-    { id: HOST_B, name: "host-b", status: "running" },
-    { id: HOST_OFF, name: "host-off", status: "off" },
+    { id: HOST_A, name: "host-a", status: "running", bay_id: bayOf(HOST_A) },
+    { id: HOST_B, name: "host-b", status: "running", bay_id: bayOf(HOST_B) },
+    { id: HOST_OFF, name: "host-off", status: "off", bay_id: bayOf(HOST_OFF) },
   ];
   const hub = {
     system: {
-      // this command's bay is bay-0; hosts listed in `remote` are on bay-1
-      getBayLoad: async () => ({ bay_id: "bay-0" }),
-      getHostBay: async ({ host_id }: any) => ({
-        host_id,
-        bay_id: remote.includes(host_id) ? "bay-1" : "bay-0",
-      }),
+      // this command's bay is bay-0
+      getBayLoad: async () => ({ bay_id: "bay-0", deployment_mode: mode }),
       getParallelOpsStatus: async () =>
         WORKERS.map((w) =>
           w.worker_kind === "project-move" && globalOverride != null
@@ -473,6 +481,36 @@ test("a host on another bay is reported, never changed: these calls run where re
     "host-a",
   );
   assert.match(g.output()[0].error, /on bay bay-1/);
+});
+
+test("a host with no recorded bay is local only on a single-bay deployment", async () => {
+  const multi = setup({ unknownBay: [HOST_A] });
+  await multi.run(
+    "set",
+    "--worker",
+    "project-host-backup-execution",
+    "--limit",
+    "1",
+    "--host",
+    "host-a",
+  );
+  assert.deepEqual(multi.calls, []);
+  assert.match(multi.output()[0].result, /bay is unknown/);
+  process.exitCode = 0;
+  const single = setup({ unknownBay: [HOST_A], mode: "single-bay" });
+  await single.run(
+    "set",
+    "--worker",
+    "project-host-backup-execution",
+    "--limit",
+    "1",
+    "--host",
+    "host-a",
+  );
+  assert.deepEqual(
+    single.calls.map((c) => c.args.scope_id),
+    [HOST_A],
+  );
 });
 
 test("a missing fresh sign-in says to run cocalc auth elevate", async () => {

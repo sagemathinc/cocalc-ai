@@ -31,6 +31,8 @@ interface HostRef {
   id: string;
   name: string;
   status?: string;
+  // the owning bay, from the (federated) host listing
+  bay_id?: string | null;
   // a name that couldn't be resolved: reported, the rest still run
   error?: string;
 }
@@ -133,20 +135,25 @@ export async function targetHosts(
 
 // The bay this command talks to, and a check that a host is owned by it:
 // the per-host limit calls run where they are received, so a host on
-// another bay would get an override its own bay never reads.
+// another bay would get an override its own bay never reads. The owner is
+// the federated host row's bay_id (a lookup on this bay would default an
+// unknown host to this bay). A host with no recorded bay counts as local
+// only on a single-bay deployment.
 function localBayCheck(ctx: any) {
-  let local: Promise<string> | undefined;
+  let local: Promise<{ bay_id: string; deployment_mode?: string }> | undefined;
   return async (host: HostRef): Promise<void> => {
-    local ??= ctx.hub.system
-      .getBayLoad({})
-      .then((info: { bay_id: string }) => info.bay_id);
-    const [here, owner] = await Promise.all([
-      local,
-      ctx.hub.system.getHostBay({ host_id: host.id }),
-    ]);
-    if (owner.bay_id !== here) {
+    local ??= ctx.hub.system.getBayLoad({});
+    const here = await local!;
+    const owner = `${host.bay_id ?? ""}`.trim();
+    if (!owner) {
+      if (here.deployment_mode === "single-bay") return;
       throw new Error(
-        `host is on bay ${owner.bay_id}, not ${here}; run this against that bay`,
+        `host's bay is unknown on this multibay deployment; not changed`,
+      );
+    }
+    if (owner !== here.bay_id) {
+      throw new Error(
+        `host is on bay ${owner}, not ${here.bay_id}; run this against that bay`,
       );
     }
   };
