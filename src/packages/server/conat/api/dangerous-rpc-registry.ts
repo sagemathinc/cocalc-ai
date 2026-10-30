@@ -92,6 +92,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "raising a GPU budget loosens what the key may spend; checked in setGpuBudget, which lets a reduction through without it (narrowing)",
   },
+  "gpu.projectTerminate": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "only narrows: marks one of the project's own funded pods for termination (the reaper ends it); allowed to the project and its collaborators, never widens spending",
+  },
   "gpu.terminate": {
     decision: "fresh-auth-not-required",
     reason: "narrowing: ends a pod the caller pays for or is responsible for",

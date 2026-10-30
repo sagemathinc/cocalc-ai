@@ -52,6 +52,10 @@ export const gpu = {
   // and the project itself (terminal, code), only under its funding
   // approval (PROJECT_FUNDING.md); runs on the project's owning bay
   launch: authFirstRequireAccountOrGpuAgentOrProject,
+  // the project's funded pods: the project itself, its collaborators, its
+  // agents (PROJECT_FUNDING.md §7)
+  projectPods: authFirstRequireAccountOrGpuAgentOrProject,
+  projectTerminate: authFirstRequireAccountOrGpuAgentOrProject,
   terminate: authFirstRequireAccountOrGpuAgent,
   who: authFirstRequireAccountOrGpuAgent,
   // the human's side of agent launches (step 6b)
@@ -243,6 +247,25 @@ export interface GpuApi {
     own_key?: boolean;
     timeout?: number;
   }) => Promise<GpuPodSummary>;
+  // The GPUs a project's funding approvals pay for (live, and ended within a
+  // day): for the project itself, any collaborator, or an agent in it. A
+  // funder whose bay can't be reached is listed in incomplete, never
+  // silently left out; next_cursor pages through more funders.
+  projectPods: (opts: {
+    account_id?: string;
+    project_id: string;
+    cursor?: string;
+  }) => Promise<{
+    pods: GpuPodSummary[];
+    incomplete: { approval_id: string; error: string }[];
+    next_cursor?: string;
+  }>;
+  // Terminate one of them (the reaper ends it shortly).
+  projectTerminate: (opts: {
+    account_id?: string;
+    project_id: string;
+    pod_id: string;
+  }) => Promise<{ found: boolean; state?: string }>;
   // The account's agent GPU requests and grants, newest first.
   agentRequests: (opts?: {
     account_id?: string;

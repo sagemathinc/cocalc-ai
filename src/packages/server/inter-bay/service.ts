@@ -1430,6 +1430,40 @@ async function startAccountLocalService(): Promise<void> {
         source_bay_id: opts.source_bay_id,
         operation_id: opts.operation_id,
       }),
+    gpuProjectPodsAtFunder: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding")
+      ).projectPodsAtFunderLocal(opts),
+    gpuProjectTerminateAtFunder: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding")
+      ).projectTerminateAtFunderLocal(opts),
+    gpuProjectPodsRoute: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding-routes")
+      ).listProjectPodsLocal({
+        project_id: opts.project_id,
+        actor: opts.actor,
+        source_bay_id: opts.source_bay_id,
+        cursor: opts.cursor,
+      }),
+    gpuProjectTerminateRoute: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding-routes")
+      ).terminateProjectPodLocal({
+        project_id: opts.project_id,
+        actor: opts.actor,
+        source_bay_id: opts.source_bay_id,
+        pod_id: opts.pod_id,
+      }),
+    gpuProjectPodsHome: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-launch")
+      ).projectPodsOnHome(opts),
+    gpuProjectTerminateHome: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-launch")
+      ).projectTerminateOnHome(opts),
     gpuProjectFundingRequest: async (opts) => ({
       request_id: await (
         await import("@cocalc/server/gpu/project-funding-routes")

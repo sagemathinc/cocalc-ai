@@ -591,3 +591,54 @@ export interface ProjectFundingRequestRequest {
   actor: { kind: "user"; account_id: string };
   spec: unknown;
 }
+
+// ---- a project's funded pods (PROJECT_FUNDING.md §7) ----
+
+export type ProjectPodsActor =
+  | { kind: "project" }
+  | { kind: "user"; account_id: string }
+  | {
+      kind: "agent";
+      account_id: string;
+      project_id: string;
+      agent_id: string;
+      run_id?: string;
+    };
+
+export interface ProjectPodsPageResult {
+  pods: import("@cocalc/util/gpu/types").GpuPodSummary[];
+  incomplete: { approval_id: string; error: string }[];
+  next_cursor?: string;
+}
+
+// P -> H: the pods of these approvals of this project
+export interface ProjectPodsAtFunderRequest {
+  source_bay_id: string;
+  project_id: string;
+  approval_ids: string[];
+}
+
+export interface ProjectTerminateAtFunderRequest extends ProjectPodsAtFunderRequest {
+  pod_id: string;
+  actor: {
+    kind: "project" | "user" | "agent";
+    account_id?: string;
+    agent_id?: string;
+    run_id?: string;
+  };
+}
+
+// actor's home -> P
+export interface ProjectPodsRouteRequest {
+  source_bay_id: string;
+  project_id: string;
+  actor: Exclude<ProjectPodsActor, { kind: "project" }>;
+  cursor?: string;
+}
+
+export interface ProjectTerminateRouteRequest {
+  source_bay_id: string;
+  project_id: string;
+  actor: Exclude<ProjectPodsActor, { kind: "project" }>;
+  pod_id: string;
+}

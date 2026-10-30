@@ -754,3 +754,275 @@ export async function recordProjectFundingRequestLocal(
 }
 
 const APPROVED = Symbol("approved");
+
+// ---- the pod locator, on the funder's home bay (PROJECT_FUNDING.md §7) ----
+
+// A pod counts as live until the provider proved it gone: every state but
+// terminated and failed, and any pod left unmanaged.
+export const LIVE_POD_SQL = `(state NOT IN ('terminated', 'failed') OR unmanaged_at IS NOT NULL)`;
+
+// Recount an approval's live pods; if the count changed, bump its own
+// version and queue a 'pods' message for the project's bay, all in the
+// caller's transaction (the one that changed a pod). Returns the new count.
+export async function syncProjectFundingPodLocator(
+  db: Db,
+  approval_id: string,
+): Promise<number | undefined> {
+  const { rows } = await db.query(
+    `SELECT id, project_id, key_owner_account_id, live_pods, pods_version
+       FROM gpu_budget_layers
+      WHERE approval_id = $1 AND scope_kind = 'project' FOR UPDATE`,
+    [approval_id],
+  );
+  const layer = rows[0];
+  if (!layer) return undefined;
+  const { rows: n } = await db.query(
+    `SELECT count(*)::int AS n FROM gpu_pods WHERE approval_id = $1 AND ${LIVE_POD_SQL}`,
+    [approval_id],
+  );
+  const live = n[0].n;
+  if (live === layer.live_pods) return live;
+  const version = layer.pods_version + 1;
+  await db.query(
+    `UPDATE gpu_budget_layers SET live_pods = $2, pods_version = $3, updated = now()
+      WHERE id = $1`,
+    [layer.id, live, version],
+  );
+  await enqueueProjectFundingMessage(db, {
+    approval_id,
+    project_id: layer.project_id,
+    target: "project",
+    funder_account_id: layer.key_owner_account_id,
+    kind: "pods",
+    version,
+    payload: { live_pods: live },
+  });
+  return live;
+}
+
+// ---- the project's funded pods, from the project's bay (§7) ----
+
+export interface ProjectPodsPage {
+  pods: import("@cocalc/util/gpu/types").GpuPodSummary[];
+  // approvals whose funder's bay couldn't be asked: their pods are missing
+  // from this page, never silently
+  incomplete: { approval_id: string; error: string }[];
+  // more approvals to ask, from this cursor
+  next_cursor?: string;
+}
+
+export interface ProjectPodCalls {
+  pods(req: {
+    source_bay_id: string;
+    project_id: string;
+    approval_ids: string[];
+  }): Promise<{
+    pods: import("@cocalc/util/gpu/types").GpuPodSummary[];
+    truncated: boolean;
+  }>;
+  terminate(
+    req: import("@cocalc/util/gpu/project-funding").ProjectTerminateAtFunderRequest,
+  ): Promise<{ found: boolean; state?: string }>;
+}
+
+export interface ProjectPodsDeps extends ProjectFundingRouteDeps {
+  // for tests: the calls to a funder's home bay
+  funderPods?: (funder_account_id: string) => Promise<ProjectPodCalls>;
+}
+
+const PODS_PAGE = 10;
+// the most approval ids one request to a funder's bay names (it takes 50)
+const FUNDER_CHUNK = 50;
+
+async function defaultFunderPods(
+  funder_account_id: string,
+): Promise<ProjectPodCalls> {
+  const home = await accountHomeBay(funder_account_id);
+  if (home === getConfiguredBayId()) {
+    const h = await import("@cocalc/server/gpu/project-funding");
+    return {
+      pods: (req) => h.projectPodsAtFunderLocal(req),
+      terminate: (req) => h.projectTerminateAtFunderLocal(req),
+    };
+  }
+  const { createInterBayAccountLocalClient } =
+    await import("@cocalc/conat/inter-bay/api");
+  const { getInterBayFabricClient } =
+    await import("@cocalc/server/inter-bay/fabric");
+  const client = createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home,
+    timeout: 30_000,
+  });
+  return {
+    pods: (req) => client.gpuProjectPodsAtFunder(req),
+    terminate: (req) => client.gpuProjectTerminateAtFunder(req),
+  };
+}
+
+// The caller may see the project's funded pods: the project itself, or a
+// collaborator (or their agent in this project) whose home bay sent it.
+// Returns the approvals (grouped by funder) that may still pay for a pod.
+async function projectPodRoutes(
+  opts: {
+    project_id: unknown;
+    actor: ProjectLaunchActor;
+    source_bay_id?: string;
+  },
+  deps: ProjectFundingRouteDeps,
+) {
+  const project_id = requireId(opts.project_id, "project_id");
+  const actor = opts.actor;
+  if (actor.kind !== "project") {
+    await assertSentByAccountHome(
+      opts.source_bay_id ?? getConfiguredBayId(),
+      requireId(actor.account_id, "account_id"),
+      deps,
+    );
+  }
+  const snapshot = await withRouteWrite(project_id, async (db, project) => {
+    if (project == null || project.deleted) {
+      throw Error("project not found or access denied");
+    }
+    if (actor.kind !== "project") {
+      if (!isCollaborator(project, actor.account_id)) {
+        throw Error("project not found or access denied");
+      }
+      if (actor.kind === "agent" && actor.project_id !== project_id) {
+        throw Error("An agent can see only its own project's GPUs.");
+      }
+    }
+    // every approval that may still pay for a pod, whatever its age
+    const { rows } = await db.query(
+      `SELECT approval_id, funder_account_id FROM project_compute_approvals
+        WHERE project_id = $1 AND kind = 'approval'
+          AND (state = 'active' OR live_pods > 0)
+        ORDER BY created DESC, id`,
+      [project_id],
+    );
+    return { rows };
+  });
+  if ("status" in snapshot) {
+    throw new ProjectFundingRetry(
+      "This project is moving between servers right now; try again in a minute.",
+    );
+  }
+  return { project_id, routes: snapshot.rows as any[] };
+}
+
+export async function listProjectPodsLocal(
+  opts: {
+    project_id: unknown;
+    actor: ProjectLaunchActor;
+    source_bay_id?: string;
+    cursor?: string;
+  },
+  deps: ProjectPodsDeps = {},
+): Promise<ProjectPodsPage> {
+  const { project_id, routes } = await projectPodRoutes(opts, deps);
+  const start = Math.max(0, parseInt(`${opts.cursor ?? "0"}`, 10) || 0);
+  const page = routes.slice(start, start + PODS_PAGE);
+  const byFunder = new Map<string, string[]>();
+  for (const r of page) {
+    byFunder.set(r.funder_account_id, [
+      ...(byFunder.get(r.funder_account_id) ?? []),
+      r.approval_id,
+    ]);
+  }
+  const pods: ProjectPodsPage["pods"] = [];
+  const incomplete: ProjectPodsPage["incomplete"] = [];
+  for (const [funder, approval_ids] of byFunder) {
+    try {
+      const calls = await (deps.funderPods ?? defaultFunderPods)(funder);
+      const answer = await calls.pods({
+        source_bay_id: getConfiguredBayId(),
+        project_id,
+        approval_ids,
+      });
+      pods.push(...answer.pods);
+      if (answer.truncated) {
+        // never silently: these approvals have more pods than shown
+        for (const approval_id of approval_ids) {
+          incomplete.push({
+            approval_id,
+            error:
+              "more pods than one answer lists; terminate some or ask the funder",
+          });
+        }
+      }
+    } catch (err) {
+      for (const approval_id of approval_ids) {
+        incomplete.push({ approval_id, error: `${err}`.slice(0, 200) });
+      }
+    }
+  }
+  return {
+    pods,
+    incomplete,
+    ...(start + PODS_PAGE < routes.length
+      ? { next_cursor: `${start + PODS_PAGE}` }
+      : {}),
+  };
+}
+
+// Mark one of the project's funded pods for termination (the reaper ends
+// it): asked of each funder that may pay for one, until one has it.
+export async function terminateProjectPodLocal(
+  opts: {
+    project_id: unknown;
+    actor: ProjectLaunchActor;
+    source_bay_id?: string;
+    pod_id: unknown;
+  },
+  deps: ProjectPodsDeps = {},
+): Promise<{ found: boolean; state?: string }> {
+  const pod_id = `${opts.pod_id ?? ""}`.trim();
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(pod_id)) {
+    throw Error("Give a pod id or handle.");
+  }
+  const { project_id, routes } = await projectPodRoutes(opts, deps);
+  const byFunder = new Map<string, string[]>();
+  for (const r of routes) {
+    byFunder.set(r.funder_account_id, [
+      ...(byFunder.get(r.funder_account_id) ?? []),
+      r.approval_id,
+    ]);
+  }
+  // who asked, exactly: an agent with its verified agent and run
+  const actor =
+    opts.actor.kind === "project"
+      ? { kind: "project" as const }
+      : opts.actor.kind === "user"
+        ? { kind: "user" as const, account_id: opts.actor.account_id }
+        : {
+            kind: "agent" as const,
+            account_id: opts.actor.account_id,
+            agent_id: opts.actor.agent_id,
+            run_id: opts.actor.run_id,
+          };
+  let lastError: unknown;
+  for (const [funder, ids] of byFunder) {
+    // every approval of this funder, in chunks the funder's bay takes
+    for (let i = 0; i < ids.length; i += FUNDER_CHUNK) {
+      try {
+        const calls = await (deps.funderPods ?? defaultFunderPods)(funder);
+        const r = await calls.terminate({
+          source_bay_id: getConfiguredBayId(),
+          project_id,
+          approval_ids: ids.slice(i, i + FUNDER_CHUNK),
+          pod_id,
+          actor,
+        });
+        if (r.found) return r;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+  }
+  if (lastError) {
+    throw Error(
+      `Some of this project's GPU funders couldn't be reached; try again. (${lastError})`,
+    );
+  }
+  return { found: false };
+}

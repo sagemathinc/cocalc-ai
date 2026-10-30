@@ -52,6 +52,7 @@ import {
   type GpuKeyUsePurpose,
 } from "@cocalc/server/gpu/key-use";
 import { isValidUUID } from "@cocalc/util/misc";
+import type { InterBayGpuApi } from "@cocalc/conat/inter-bay/api";
 
 // The agent principal, only when the account-or-gpu-agent policy attached
 // the verified token (gpu_agent_auth); resolved here, on the bay that
@@ -189,6 +190,85 @@ export async function launch(
     own_key: opts?.own_key === true,
     key_use: await keyUse(opts?.account_id, "launch", principal),
   });
+}
+
+// A project's funded pods (PROJECT_FUNDING.md §7): the project itself on
+// its own bay; a person or agent from their home bay.
+async function projectPodsCall<T>(
+  opts: any,
+  asProject: (project_id: string) => Promise<T>,
+  asActor: (a: {
+    account_id: string;
+    project_id: string;
+    agent?: { project_id: string; agent_id: string; run_id?: string };
+  }) => Promise<T>,
+  remote: (
+    home: InterBayGpuApi,
+    a: {
+      account_id: string;
+      project_id: string;
+      agent?: { project_id: string; agent_id: string; run_id?: string };
+    },
+  ) => Promise<T>,
+): Promise<T> {
+  const projectAuth = opts?.gpu_project_auth;
+  if (projectAuth?.project_id) return await asProject(projectAuth.project_id);
+  const principal = await agentPrincipal(opts);
+  const account_id = `${opts?.account_id ?? ""}`;
+  if (!isValidUUID(account_id)) throw Error("must be signed in");
+  const a = {
+    account_id,
+    project_id: `${opts?.project_id ?? ""}`,
+    ...(principal
+      ? {
+          agent: {
+            project_id: principal.project_id,
+            agent_id: principal.agent_id,
+            run_id: principal.run_id,
+          },
+        }
+      : {}),
+  };
+  const { gpuPodHomeClient } = await import("@cocalc/server/gpu/pods");
+  const home = await gpuPodHomeClient(account_id);
+  return home ? await remote(home, a) : await asActor(a);
+}
+
+export async function projectPods(
+  opts: Parameters<GpuApi["projectPods"]>[0],
+): ReturnType<GpuApi["projectPods"]> {
+  const routes = await import("@cocalc/server/gpu/project-funding-routes");
+  const launch = await import("@cocalc/server/gpu/project-launch");
+  return await projectPodsCall(
+    opts,
+    (project_id) =>
+      routes.listProjectPodsLocal({
+        project_id,
+        actor: { kind: "project" },
+        cursor: opts?.cursor,
+      }),
+    (a) => launch.projectPodsOnHome({ ...a, cursor: opts?.cursor }),
+    (home, a) => home.gpuProjectPodsHome({ ...a, cursor: opts?.cursor }),
+  );
+}
+
+export async function projectTerminate(
+  opts: Parameters<GpuApi["projectTerminate"]>[0],
+): ReturnType<GpuApi["projectTerminate"]> {
+  const routes = await import("@cocalc/server/gpu/project-funding-routes");
+  const launch = await import("@cocalc/server/gpu/project-launch");
+  const pod_id = `${opts?.pod_id ?? ""}`;
+  return await projectPodsCall(
+    opts,
+    (project_id) =>
+      routes.terminateProjectPodLocal({
+        project_id,
+        actor: { kind: "project" },
+        pod_id,
+      }),
+    (a) => launch.projectTerminateOnHome({ ...a, pod_id }),
+    (home, a) => home.gpuProjectTerminateHome({ ...a, pod_id }),
+  );
 }
 
 export async function terminate(
