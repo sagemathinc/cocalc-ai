@@ -386,8 +386,16 @@ describe("initCodexProjectRunner", () => {
       expect(args).toContain('web_search="disabled"');
       expect(args).toContain('model_provider="cocalc-openai-api-key"');
       expect(args).toContain("model_context_window=128000");
-      expect(args).toContain("OPENAI_API_KEY=site-funded-proxy-token");
-      expect(args).not.toContain("OPENAI_API_KEY=real-site-key");
+      // The proxy token reaches podman through its environment: the host's
+      // process list shows argv to every host user.
+      expect(args).toEqual(expect.arrayContaining(["-e", "OPENAI_API_KEY"]));
+      expect(args.join(" ")).not.toContain("site-funded-proxy-token");
+      expect(args.join(" ")).not.toContain("real-site-key");
+      expect(spawnMock.mock.calls[0][2].env).toMatchObject({
+        XDG_RUNTIME_DIR: "/tmp/cocalc-podman-runtime",
+        CONTAINERS_CGROUP_MANAGER: "cgroupfs",
+        OPENAI_API_KEY: "site-funded-proxy-token",
+      });
       expect(spawned.runtimeEnv?.OPENAI_API_KEY).toBeUndefined();
       // Codex's shell never records the token, and an old snapshot that did
       // is gone before the app-server starts.
@@ -1059,13 +1067,9 @@ describe("initCodexProjectRunner", () => {
         "-e",
         "LOGNAME=user",
         "-e",
-        expect.stringMatching(
-          /^COCALC_BEARER_TOKEN_FILE=\/home\/user\/\.local\/share\/cocalc\/runtime\/\.cocalc-agent-[^/]+\/token$/,
-        ),
+        "COCALC_BEARER_TOKEN_FILE",
         "-e",
-        expect.stringMatching(
-          /^COCALC_AGENT_TOKEN_FILE=\/home\/user\/\.local\/share\/cocalc\/runtime\/\.cocalc-agent-[^/]+\/token$/,
-        ),
+        "COCALC_AGENT_TOKEN_FILE",
         "-e",
         "COCALC_PROFILE=_env",
         "-e",
@@ -1084,7 +1088,9 @@ describe("initCodexProjectRunner", () => {
         "stdio://",
       ]),
     );
-    expect(args).not.toContain("OPENAI_API_KEY=secret-key");
+    expect(args).not.toContain("OPENAI_API_KEY");
+    expect(args.join(" ")).not.toContain("secret-key");
+    expect(options.env.OPENAI_API_KEY).toBeUndefined();
     expect(args).not.toContain('web_search="disabled"');
     expect(args).toContain("COCALC_AGENT_MENTION_REFERENCES_FILE=");
     expect(args.join(" ")).not.toContain("/stale/previous-turn.json");
@@ -1097,10 +1103,16 @@ describe("initCodexProjectRunner", () => {
       env: {
         XDG_RUNTIME_DIR: "/tmp/cocalc-podman-runtime",
         CONTAINERS_CGROUP_MANAGER: "cgroupfs",
+        COCALC_BEARER_TOKEN_FILE: expect.stringMatching(
+          /^\/home\/user\/\.local\/share\/cocalc\/runtime\/\.cocalc-agent-[^/]+\/token$/,
+        ),
+        COCALC_AGENT_TOKEN_FILE: expect.stringMatching(
+          /^\/home\/user\/\.local\/share\/cocalc\/runtime\/\.cocalc-agent-[^/]+\/token$/,
+        ),
       },
     });
     expect(spawned.authSource).toBe("account-api-key");
-    expect(spawned.logArgs).toContain("COCALC_BEARER_TOKEN_FILE=***");
+    expect(spawned.logArgs).toContain("COCALC_BEARER_TOKEN_FILE");
     expect(spawned.logArgs).not.toContain("issued-project-host-token");
     expect(spawned.runtimeEnv).toMatchObject({
       COCALC_API_URL: "http://host.containers.internal:7103",
@@ -1271,14 +1283,21 @@ describe("initCodexProjectRunner", () => {
     expect(args).toEqual(
       expect.arrayContaining([
         "-e",
-        "HTTPS_PROXY=http://cocalc-codex:restricted-token@host.containers.internal:43128",
+        "HTTPS_PROXY",
         "-e",
-        "https_proxy=http://cocalc-codex:restricted-token@host.containers.internal:43128",
+        "https_proxy",
         "--config",
         "features.respect_system_proxy=true",
       ]),
     );
-    expect(spawned.logArgs).toContain("HTTPS_PROXY=***");
+    // The proxy URL carries a credential: podman gets it from its env.
+    expect(args.join(" ")).not.toContain("restricted-token");
+    expect(spawnMock.mock.calls[0][2].env).toMatchObject({
+      HTTPS_PROXY:
+        "http://cocalc-codex:restricted-token@host.containers.internal:43128",
+      https_proxy:
+        "http://cocalc-codex:restricted-token@host.containers.internal:43128",
+    });
     expect(spawned.logArgs).not.toContain("restricted-token");
     expect(spawned.runtimeEnv?.HTTPS_PROXY).toBeUndefined();
     expect(startRestrictedCodexEgressProxySessionMock).toHaveBeenCalledTimes(1);
@@ -1323,7 +1342,7 @@ describe("initCodexProjectRunner", () => {
       .mount.mockResolvedValue(path.join(tmp, "rootfs"));
     jest
       .requireMock("@cocalc/project-runner/run/env")
-      .getEnvironment.mockResolvedValue({});
+      .getEnvironment.mockResolvedValue({ OPENAI_API_KEY: "project-env-key" });
     jest
       .requireMock("@cocalc/backend/podman")
       .mountArg.mockImplementation(
@@ -1368,6 +1387,12 @@ describe("initCodexProjectRunner", () => {
       "-c",
       "PATH=/usr/bin:/bin exec sleep infinity",
     ]);
+    // podman run gets the key by name, not on the host's argv.
+    expect(runCall![1]).toEqual(
+      expect.arrayContaining(["-e", "OPENAI_API_KEY"]),
+    );
+    expect(runCall![1].join(" ")).not.toContain("project-env-key");
+    expect(runCall![2].env.OPENAI_API_KEY).toBe("project-env-key");
 
     proc.emit("close", 0, null);
   });
@@ -1407,17 +1432,21 @@ describe("initCodexProjectRunner", () => {
       },
     });
 
-    const [, args] = spawnMock.mock.calls[0];
+    const [, args, options] = spawnMock.mock.calls[0];
     expect(args).toEqual(
       expect.arrayContaining([
         "-e",
-        expect.stringMatching(/^COCALC_BEARER_TOKEN_FILE=\/home\/user\//),
+        "COCALC_BEARER_TOKEN_FILE",
         "-e",
-        expect.stringMatching(/^COCALC_AGENT_TOKEN_FILE=\/home\/user\//),
+        "COCALC_AGENT_TOKEN_FILE",
         "-e",
         "COCALC_ACCOUNT_ID=00000000-0000-4000-8000-000000000001",
       ]),
     );
+    expect(options.env).toMatchObject({
+      COCALC_BEARER_TOKEN_FILE: expect.stringMatching(/^\/home\/user\//),
+      COCALC_AGENT_TOKEN_FILE: expect.stringMatching(/^\/home\/user\//),
+    });
     expect(spawned.runtimeEnv).toMatchObject({
       COCALC_BEARER_TOKEN_FILE: expect.stringMatching(
         /^\/home\/user\/\.local\/share\/cocalc\/runtime\//,
@@ -2816,5 +2845,33 @@ describe("getBuiltinClaudeSkillMount", () => {
     await expect(
       getBuiltinClaudeSkillMount(projectHome, packagedSkills),
     ).resolves.toEqual([]);
+  });
+});
+
+describe("pushPodmanEnv", () => {
+  it("passes credentials to podman by name, never on argv", async () => {
+    const { pushPodmanEnv } = await import("./codex/codex-project");
+    const proxy = "http://cocalc-codex:proxy-secret@host.containers.internal:1";
+    const credentials = {
+      OPENAI_API_KEY: "sk-secret",
+      COCALC_BEARER_TOKEN: "bearer-secret",
+      COCALC_AGENT_TOKEN: "agent-secret",
+      COCALC_BEARER_TOKEN_FILE: "/home/user/token",
+      HTTPS_PROXY: proxy,
+      https_proxy: proxy,
+    };
+    const args = ["exec"];
+    const env = pushPodmanEnv(args, { FOO: "bar", ...credentials });
+    expect(args).toEqual([
+      "exec",
+      "-e",
+      "FOO=bar",
+      ...Object.keys(credentials).flatMap((key) => ["-e", key]),
+    ]);
+    expect(env).toEqual({
+      XDG_RUNTIME_DIR: "/tmp/cocalc-podman-runtime",
+      CONTAINERS_CGROUP_MANAGER: "cgroupfs",
+      ...credentials,
+    });
   });
 });

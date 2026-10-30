@@ -447,6 +447,30 @@ async function scrubBrokenProjectCodexAuthArtifacts(
   }
 }
 
+// Environment variables that hold a credential, or the path to one. This is
+// the one list for both passing env to podman and redacting it from logs.
+const CREDENTIAL_ENV_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PROXY)/i;
+
+// Adds `-e` options for env to args and returns the environment to spawn
+// podman with. Every host user can read a process's argv, so credentials go
+// by name only (`-e NAME` without a value): podman reads the value from its
+// own environment, which only the same uid can read.
+export function pushPodmanEnv(
+  args: string[],
+  env: Record<string, string>,
+): NodeJS.ProcessEnv {
+  const spawnEnv = podmanEnv();
+  for (const key in env) {
+    if (CREDENTIAL_ENV_NAME.test(key)) {
+      args.push("-e", key);
+      spawnEnv[key] = env[key];
+    } else {
+      args.push("-e", `${key}=${env[key]}`);
+    }
+  }
+  return spawnEnv;
+}
+
 function redactPodmanArgs(args: string[]): string {
   const redacted = [...args];
   for (let i = 0; i < redacted.length - 1; i++) {
@@ -455,7 +479,7 @@ function redactPodmanArgs(args: string[]): string {
     const j = raw.indexOf("=");
     if (j === -1) continue;
     const key = raw.slice(0, j);
-    if (/(KEY|TOKEN|SECRET|PASSWORD|PROXY)/i.test(key)) {
+    if (CREDENTIAL_ENV_NAME.test(key)) {
       redacted[i + 1] = `${key}=***`;
     }
   }
@@ -1527,10 +1551,12 @@ async function podman(
     timeoutMs = PODMAN_TIMEOUT_MS,
     label,
     launcher,
+    env = podmanEnv(),
   }: {
     timeoutMs?: number;
     label?: string;
     launcher?: ReturnType<typeof projectPoolPodmanLauncher>;
+    env?: NodeJS.ProcessEnv;
   } = {},
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -1540,7 +1566,7 @@ async function podman(
       {
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
-        env: podmanEnv(),
+        env,
       },
       (err, stdout, stderr) => {
         if (!err) {
@@ -1938,9 +1964,7 @@ async function ensureContainer({
   }
   env.COCALC_API_URL = resolveProjectRuntimeApiUrl(env.COCALC_API_URL);
   applyProjectRuntimeCliEnv(env, accountId);
-  for (const key in env) {
-    args.push("-e", `${key}=${env[key]}`);
-  }
+  const spawnEnv = pushPodmanEnv(args, env);
 
   args.push(mountArg({ source: home, target: PROJECT_RUNTIME_HOME }));
   // Best effort: the project home mount may already provide this path.
@@ -2062,6 +2086,7 @@ async function ensureContainer({
   await podman(args, {
     label: "container run",
     launcher: projectPoolPodmanLauncher(projectId),
+    env: spawnEnv,
   });
   try {
     await verifyProjectContainerInPool({ project_id: projectId, name });
@@ -2232,9 +2257,7 @@ export async function spawnCodexInProjectContainer({
     // is enabled. The proxy itself only permits authenticated OpenAI tunnels.
     codexArgs = ["--config", RESPECT_SYSTEM_PROXY_CONFIG, ...codexArgs];
   }
-  for (const key in execEnv) {
-    execArgs.push("-e", `${key}=${execEnv[key]}`);
-  }
+  const spawnEnv = pushPodmanEnv(execArgs, execEnv);
   execArgs.push(info.name, info.codexPath, ...codexArgs);
   logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
   const launcher = projectPoolPodmanLauncher(projectId);
@@ -2242,7 +2265,7 @@ export async function spawnCodexInProjectContainer({
   try {
     proc = spawn(launcher.command, [...launcher.argsPrefix, ...execArgs], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: podmanEnv(),
+      env: spawnEnv,
     });
   } catch (err) {
     restrictedEgress?.close();
@@ -2556,9 +2579,7 @@ async function spawnCodexAppServerInProjectRuntime({
     await removeIsolatedCodexHome(isolatedCodexHomeHostPath);
     throw err;
   }
-  for (const key in execEnv) {
-    execArgs.push("-e", `${key}=${execEnv[key]}`);
-  }
+  const spawnEnv = pushPodmanEnv(execArgs, execEnv);
   const codexArgs: string[] = [];
   const providerArgs = siteFundedTurn
     ? getManagedOpenAiProviderArgs(authRuntime, {
@@ -2616,7 +2637,7 @@ async function spawnCodexAppServerInProjectRuntime({
   try {
     proc = spawn(launcher.command, [...launcher.argsPrefix, ...execArgs], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: podmanEnv(),
+      env: spawnEnv,
     });
   } catch (err) {
     restrictedEgress?.close();
