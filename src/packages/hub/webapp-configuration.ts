@@ -18,6 +18,7 @@ import type { PostgreSQL } from "@cocalc/database/postgres/types";
 import { get_passport_manager, PassportManager } from "@cocalc/server/hub/auth";
 import { EXTRAS as SERVER_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { site_settings_conf as SITE_SETTINGS_CONF } from "@cocalc/util/schema";
+import { ThemeKeys } from "@cocalc/util/db-schema/site-whitelabeling";
 import type { CustomAIModelPublic } from "@cocalc/util/types/ai";
 import { parseDomain, ParseResultType } from "parse-domain";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
@@ -35,6 +36,8 @@ import { getProjectRuntimeConfiguration } from "@cocalc/server/launchpad/project
 import { computeVmUiEnabled } from "@cocalc/server/compute/config";
 
 const logger = getLogger("hub:webapp-config");
+
+const THEME_KEYS = new Set<string>(ThemeKeys);
 
 const CACHE = new LRU({ max: 1000, ttl: 30 * 1000 });
 const WEBAPP_CONFIG_SLOW_STEP_MS = 100;
@@ -188,7 +191,10 @@ export class WebappConfiguration {
     if (data != null) {
       // post-process data, but do not set default values…
       const theme: Theme = {};
-      for (const [key, value] of Object.entries(data.theme)) {
+      for (const [key, value] of Object.entries(data.theme ?? {})) {
+        // A stored theme may only override the whitelabeling keys, never
+        // other site settings.
+        if (!THEME_KEYS.has(key)) continue;
         const config = SITE_SETTINGS_CONF[key] ?? SERVER_SETTINGS_EXTRAS[key];
         if (typeof config?.to_val == "function") {
           theme[key] = config.to_val(value, data.theme);
