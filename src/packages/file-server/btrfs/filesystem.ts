@@ -249,6 +249,20 @@ export class Filesystem {
     this.beesReconcileTimer.unref?.();
   }
 
+  // With the gate, BEES starts frozen when its cgroup exists (e.g. after a
+  // restart), rather than running until the gate's first freeze.
+  private async freezeBeforeBeesStarts(): Promise<void> {
+    try {
+      await applyBeesGateAction(this.opts.mount, "freeze");
+    } catch (err) {
+      // the gate retries, or runs BEES ungated on an older root helper
+      logger.debug("unable to freeze BEES before it starts", {
+        mount: this.opts.mount,
+        err: `${err}`,
+      });
+    }
+  }
+
   // One gate for the life of this filesystem; it acts on the BEES cgroup, so
   // it covers a restarted or adopted BEES too.
   private startBeesGate(): void {
@@ -353,7 +367,12 @@ export class Filesystem {
     }
     this.beesRunningExternally = false;
     try {
-      const result = await bees(this.opts.mount);
+      const result = await bees(
+        this.opts.mount,
+        beesGateEnabled()
+          ? { beforeSpawn: () => this.freezeBeforeBeesStarts() }
+          : {},
+      );
       if (result.status === "disabled") {
         this.bees = undefined;
         this.beesDisabledByConfig = true;

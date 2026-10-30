@@ -226,12 +226,13 @@ export class BeesGate {
       mount: this.opts.mount,
       config: this.config,
     });
-    await this.tick();
-    if (this.unsupported) return;
+    // The timers first: a slow first freeze must not hold off the sampler
+    // (stop() clears them if the root helper turns out not to know the gate).
     this.timer = setInterval(() => void this.tick(), this.intervalMs);
     this.timer.unref?.();
     this.sampleTimer = setInterval(() => void this.sample(), this.sampleMs);
     this.sampleTimer.unref?.();
+    await this.tick();
   }
 
   // After stop, nothing in flight acts or changes state: a new gate (e.g. of

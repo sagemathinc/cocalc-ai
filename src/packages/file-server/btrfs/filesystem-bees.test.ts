@@ -144,6 +144,45 @@ describe("BEES process supervision", () => {
     expect(gate.stop).toHaveBeenCalled();
   });
 
+  // Codex on #1503: with the gate, BEES starts frozen (when its cgroup
+  // exists) rather than running until the gate's first freeze.
+  it("freezes the BEES cgroup just before it starts BEES, only with the gate", async () => {
+    mockedApplyGate.mockReset();
+    mockedApplyGate.mockResolvedValue(undefined);
+    const order: string[] = [];
+    mockedApplyGate.mockImplementation(async (_mount, action) => {
+      order.push(action);
+    });
+    mockedBees.mockImplementation(async (_mount, options) => {
+      await options?.beforeSpawn?.();
+      order.push("spawn");
+      return { status: "started", child: childProcess() };
+    });
+    const gated = new Filesystem({
+      mount: "/mnt/cocalc",
+      rustic: "/tmp/rustic.toml",
+    });
+    await (gated as any).startBees("startup");
+    expect(order).toEqual(["freeze", "spawn"]);
+    gated.close();
+
+    order.length = 0;
+    mockedGateEnabled.mockReturnValue(false);
+    try {
+      const ungated = new Filesystem({
+        mount: "/mnt/cocalc",
+        rustic: "/tmp/rustic.toml",
+      });
+      await (ungated as any).startBees("startup");
+      expect(order[0]).toBe("spawn");
+      ungated.close();
+    } finally {
+      mockedGateEnabled.mockReturnValue(true);
+      mockedApplyGate.mockReset();
+      mockedApplyGate.mockResolvedValue(undefined);
+    }
+  });
+
   // Prod 2026-10-30: BEES was frozen and then turned off with
   // COCALC_DISABLE_BEES; the frozen BEES must not outlive the daemon.
   it("stops a leftover BEES when BEES is turned off", async () => {
