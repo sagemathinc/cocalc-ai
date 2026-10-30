@@ -17,6 +17,7 @@ import {
   planCreate,
   extractSupportBlobDocuments,
   extractSupportImages,
+  listedImageUrlSet,
   getImage,
   getAttachment,
   list,
@@ -226,6 +227,117 @@ describe("admin support API", () => {
     expect(redacted).not.toContain("private.txt");
     expect(redacted).toContain(PROJECT_ID);
     expect(redacted).toContain("[REDACTED_PATH]");
+  });
+
+  // Redact text the way ticket bodies are shown: with the images list that
+  // extractSupportImages returns for the same text.
+  function redactWithImages(text: string, site: string): string {
+    const images = extractSupportImages(text, site);
+    return redactSupportText(text, 100_000, {
+      listedImageUrls: listedImageUrlSet(images),
+    });
+  }
+
+  it("keeps host names, paths and listed blob image links readable", () => {
+    const redacted = redactWithImages(
+      [
+        `- Image: https://cocalc.ai/blobs/bug.jpg?uuid=${IMAGE_UUID}`,
+        `Report: https://cocalc.ai/blobs/report.pdf?uuid=${INLINE_IMAGE_UUID}`,
+        `Shot: https://cocalc.ai/blobs/shot.png?uuid=33333333-3333-4333-8333-333333333333&token=abc`,
+        `Elsewhere: https://evil.example/blobs/x.png?uuid=44444444-4444-4444-8444-444444444444`,
+        "Docs: https://docs.example.edu/guide/setup.html",
+        "Contact: bob.smith@student.example.ac.uk",
+      ].join("\n"),
+      "https://cocalc.ai",
+    );
+    // A blob image link the images list returns keeps its uuid.
+    expect(redacted).toContain(
+      `https://cocalc.ai/blobs/bug.jpg?uuid=${IMAGE_UUID}`,
+    );
+    // Document blobs, extra parameters and other origins stay redacted.
+    expect(redacted).toContain("https://cocalc.ai/blobs/report.pdf?REDACTED");
+    expect(redacted).toContain("https://cocalc.ai/blobs/shot.png?REDACTED");
+    expect(redacted).toContain("https://evil.example/blobs/x.png?REDACTED");
+    expect(redacted).not.toContain("44444444-4444-4444-8444-444444444444");
+    // Dotted host names and paths are not mistaken for tokens.
+    expect(redacted).toContain("https://docs.example.edu/guide/setup.html");
+    // Email addresses are redacted whole, not just their domains.
+    expect(redacted).not.toContain("bob.smith");
+    expect(redacted).toContain("[REDACTED_EMAIL]");
+  });
+
+  it("keeps blob image uuids only under the configured base path", () => {
+    const text = [
+      `https://example.com/cocalc/blobs/a.png?uuid=${IMAGE_UUID}`,
+      `https://example.com/other/blobs/b.png?uuid=${INLINE_IMAGE_UUID}`,
+    ].join("\n");
+    const redacted = redactWithImages(text, "https://example.com/cocalc");
+    expect(redacted).toContain(
+      `https://example.com/cocalc/blobs/a.png?uuid=${IMAGE_UUID}`,
+    );
+    expect(redacted).toContain(
+      "https://example.com/other/blobs/b.png?REDACTED",
+    );
+    // Without a listed image set, every query string is redacted.
+    const unlisted = redactSupportText(text, 10_000);
+    expect(unlisted).not.toContain(IMAGE_UUID);
+    expect(unlisted).not.toContain(INLINE_IMAGE_UUID);
+  });
+
+  it("keeps uuids only for links actually in the capped, deduplicated list", () => {
+    const uuidFor = (i: number) =>
+      `${i.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+    const links = Array.from(
+      { length: 21 },
+      (_, i) => `https://cocalc.ai/blobs/img${i}.png?uuid=${uuidFor(i)}`,
+    );
+    const capped = redactWithImages(links.join("\n"), "https://cocalc.ai");
+    // The images list is capped at 20 links; the 21st is not listed.
+    expect(capped).toContain(uuidFor(19));
+    expect(capped).not.toContain(uuidFor(20));
+    expect(capped).toContain("https://cocalc.ai/blobs/img20.png?REDACTED");
+
+    // The list keeps the first URL for a uuid; another path with the same
+    // uuid is not listed.
+    const duplicate = redactWithImages(
+      [
+        `https://cocalc.ai/blobs/first.png?uuid=${IMAGE_UUID}`,
+        `https://cocalc.ai/blobs/second.png?uuid=${IMAGE_UUID}`,
+      ].join("\n"),
+      "https://cocalc.ai",
+    );
+    expect(duplicate).toContain(
+      `https://cocalc.ai/blobs/first.png?uuid=${IMAGE_UUID}`,
+    );
+    expect(duplicate).toContain("https://cocalc.ai/blobs/second.png?REDACTED");
+  });
+
+  it("redacts compact JOSE tokens, bearer values and PASETO tokens", () => {
+    const b64url = (value: string) =>
+      Buffer.from(value, "utf8").toString("base64url");
+    // A valid header with leading whitespace does not start with "eyJ".
+    const spacedHeader = b64url('{ "alg":"HS256","typ":"JWT"}');
+    expect(spacedHeader.startsWith("eyJ")).toBe(false);
+    const spacedToken = `${spacedHeader}.${b64url('{"sub":"1"}')}.c2lnbmF0dXJl`;
+    const plainToken = `${b64url('{"alg":"RS256"}')}.${b64url('{"sub":"2"}')}.c2ln`;
+    const redacted = redactSupportText(
+      [
+        `token one ${spacedToken}`,
+        `token two ${plainToken}`,
+        "Authorization: Bearer abcdefghijklmnop.qrstuv",
+        "bearer xyz0123456789abcdef",
+        "paseto v4.local.QUJDREVGR0hJSktMTU5PUFFSU1RVVldY",
+        "plain host www.example.co.uk and file notes.v2.txt",
+      ].join("\n"),
+      10_000,
+    );
+    expect(redacted).not.toContain(spacedHeader);
+    expect(redacted).not.toContain(plainToken);
+    expect(redacted).not.toContain("abcdefghijklmnop");
+    expect(redacted).not.toContain("xyz0123456789abcdef");
+    expect(redacted).not.toContain("QUJDREVGR0hJSktMTU5PUFFSU1RVVldY");
+    expect(redacted).toContain("www.example.co.uk");
+    expect(redacted).toContain("notes.v2.txt");
   });
 
   it("extracts only validated images from the configured CoCalc site", () => {
