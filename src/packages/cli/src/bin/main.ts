@@ -1876,7 +1876,9 @@ async function withContext(
       commandName,
       error,
     );
-    process.exitCode = 1;
+    // a command may say how it failed (e.g. gpu launch: 3, needs approval)
+    const code = (error as any)?.cli_exit_code;
+    process.exitCode = Number.isInteger(code) && code > 0 ? code : 1;
   } finally {
     closeCommandContext(ctx);
   }
