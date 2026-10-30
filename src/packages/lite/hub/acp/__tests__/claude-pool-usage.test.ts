@@ -1,7 +1,9 @@
 import {
   beginClaudePoolTurnUsage,
   endClaudePoolTurnUsage,
+  measuredTurns,
   noteClaudePoolRateLimit,
+  pendingTurnCostAccounts,
   resetClaudePoolUsage,
   restoreTurnCosts,
   takeTurnCosts,
@@ -74,5 +76,36 @@ describe("per-turn usage of an Auto turn", () => {
     expect(takeTurnCosts(account_id)).toEqual([
       { credential_id: A, cost: 0.01 },
     ]);
+  });
+});
+
+describe("bounded on a long-lived host", () => {
+  const now = Date.now();
+  it("drops an account's observations after an hour, with no later call from it", () => {
+    restoreTurnCosts(account_id, [{ credential_id: A, cost: 0.01 }], now);
+    expect(pendingTurnCostAccounts(now + 59 * 60_000)).toBe(1);
+    expect(pendingTurnCostAccounts(now + 61 * 60_000)).toBe(0);
+  });
+
+  it("keeps at most 1000 accounts, dropping the oldest", () => {
+    for (let i = 0; i < 1_005; i++)
+      restoreTurnCosts(
+        `account-${i}`,
+        [{ credential_id: A, cost: 0.01 }],
+        now + i,
+      );
+    expect(pendingTurnCostAccounts(now + 2_000)).toBe(1_000);
+    expect(takeTurnCosts("account-0", now + 2_000)).toBeUndefined();
+    expect(takeTurnCosts("account-1004", now + 2_000)).toHaveLength(1);
+  });
+
+  it("drops a turn that never ended once a day has passed", () => {
+    beginClaudePoolTurnUsage(request(A), now);
+    expect(measuredTurns()).toBe(1);
+    beginClaudePoolTurnUsage(
+      { ...request(A), chat: { project_id, path: "b.chat", thread_id: "u" } },
+      now + 25 * 3600_000,
+    );
+    expect(measuredTurns()).toBe(1);
   });
 });

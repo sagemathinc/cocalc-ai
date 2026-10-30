@@ -68,8 +68,10 @@ export interface ClaudePoolPickResult {
   /** Display names of the picked and the current subscription. */
   label?: string;
   current_label?: string;
-  /** Nothing in the pool can take a turn now: when one can (ISO time). */
+  /** Nothing in the pool can take a turn now: when one can (ISO time), and
+   * which one (a new turn is admitted on it, then held). */
   hold_until?: string;
+  next_credential_id?: string;
   /** The pool has no subscription. */
   empty?: true;
 }

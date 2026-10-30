@@ -7,7 +7,12 @@
 // credentials and their reported limits live. Each turn of an Auto agent asks
 // here which subscription to use; the pick reserves part of that
 // subscription's 5-hour window for the turn.
+//
+// Every pick for an account runs in one transaction holding a per-account
+// lock, and reservations are stored on the credentials, so picks in any hub
+// process of the bay see each other. Nothing is kept in memory.
 
+import { createHash } from "node:crypto";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type {
   ClaudePoolPickRequest,
@@ -17,12 +22,16 @@ import {
   CLAUDE_POOL_EXCLUDED_METADATA_KEY,
   CLAUDE_POOL_LIMITED_METADATA_KEY,
   CLAUDE_POOL_RESERVATION_MS,
+  CLAUDE_POOL_RESERVATIONS_METADATA_KEY,
   CLAUDE_TURN_COSTS_METADATA_KEY,
   appendTurnCostSamples,
   claudePoolMemberFromMetadata,
+  claudePoolReservedAmount,
   claudeTurnCostEstimate,
+  parseClaudePoolReservations,
   parseTurnCostSamples,
   pickClaudePoolCredential,
+  type ClaudePoolReservations,
 } from "@cocalc/util/ai/claude-pool";
 import {
   ANTHROPIC_API_PROVIDER,
@@ -32,10 +41,7 @@ import {
   agentPaymentTargetKey,
   validateAgentPaymentTarget,
 } from "@cocalc/util/ai/agent-payment-selection";
-import {
-  listExternalCredentials,
-  setExternalCredentialMetadataValueById,
-} from "@cocalc/server/external-credentials/store";
+import { updateExternalCredentialMetadataLocked } from "@cocalc/server/external-credentials/store";
 
 const HOUR_MS = 3600_000;
 // A limit without a reset time: try that subscription again after this long.
@@ -44,36 +50,33 @@ const MAX_TURN_COSTS = 20;
 
 interface PoolCredential {
   id: string;
-  metadata: Record<string, any> | null;
+  metadata: Record<string, any>;
 }
+
+type MetadataUpdate = { id: string; key: string; value: unknown };
 
 export interface ClaudePoolStore {
-  list(account_id: string): Promise<PoolCredential[]>;
-  setMetadata(opts: {
-    account_id: string;
-    id: string;
-    key: string;
-    value: unknown;
-  }): Promise<boolean>;
+  /** Serialized per account across the bay: read the account's Claude
+   * subscriptions, then set the returned metadata values atomically. */
+  locked<T>(
+    account_id: string,
+    fn: (
+      rows: PoolCredential[],
+    ) => Promise<{ result: T; updates: MetadataUpdate[] }>,
+  ): Promise<T>;
 }
 
-const selector = (owner_account_id: string) => ({
-  provider: ANTHROPIC_API_PROVIDER,
-  kind: CLAUDE_SUBSCRIPTION_KIND,
-  scope: "account" as const,
-  owner_account_id,
-});
-
 const defaultStore: ClaudePoolStore = {
-  async list(account_id) {
-    return await listExternalCredentials(selector(account_id));
-  },
-  async setMetadata({ account_id, id, key, value }) {
-    return await setExternalCredentialMetadataValueById({
-      id,
-      selector: selector(account_id),
-      key,
-      value,
+  async locked(account_id, fn) {
+    return await updateExternalCredentialMetadataLocked({
+      selector: {
+        provider: ANTHROPIC_API_PROVIDER,
+        kind: CLAUDE_SUBSCRIPTION_KIND,
+        scope: "account",
+        owner_account_id: account_id,
+      },
+      lock: "claude-pool",
+      fn,
     });
   },
 };
@@ -83,48 +86,6 @@ let store = defaultStore;
 /** Tests only. */
 export function setClaudePoolStoreForTests(next?: ClaudePoolStore) {
   store = next ?? defaultStore;
-  reservations.clear();
-  locks.clear();
-}
-
-// Turns running now, by account and conversation: the share of a 5-hour
-// window each is expected to use. In this hub process only, and kept for at
-// most CLAUDE_POOL_RESERVATION_MS: a heuristic that keeps simultaneous turns
-// from all landing on the same subscription, not an accounting.
-const reservations = new Map<
-  string,
-  Map<string, { credential_id: string; amount: number; expires: number }>
->();
-
-function reservedBy(account_id: string, now: number): Map<string, number> {
-  const mine = reservations.get(account_id);
-  const total = new Map<string, number>();
-  if (!mine) return total;
-  for (const [key, r] of mine) {
-    if (r.expires <= now) {
-      mine.delete(key);
-      continue;
-    }
-    total.set(r.credential_id, (total.get(r.credential_id) ?? 0) + r.amount);
-  }
-  if (mine.size === 0) reservations.delete(account_id);
-  return total;
-}
-
-// One pick at a time per account, so simultaneous turns see each other's
-// reservations.
-const locks = new Map<string, Promise<unknown>>();
-
-async function serialized<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const previous = locks.get(key) ?? Promise.resolve();
-  const run = previous.then(fn, fn);
-  const settled = run.catch(() => undefined);
-  locks.set(key, settled);
-  try {
-    return await run;
-  } finally {
-    if (locks.get(key) === settled) locks.delete(key);
-  }
 }
 
 function label(row: PoolCredential | undefined): string | undefined {
@@ -143,6 +104,14 @@ export function claudePoolCredentials<T extends PoolCredential>(
   );
 }
 
+// Opaque in credential metadata (which the owner's browser lists).
+function turnKey(target: { project_id: string; thread_id: string }): string {
+  return createHash("sha256")
+    .update(agentPaymentTargetKey(target))
+    .digest("hex")
+    .slice(0, 32);
+}
+
 export async function pickClaudePool(
   opts: { account_id: string } & ClaudePoolPickRequest,
   now = () => Date.now(),
@@ -150,11 +119,16 @@ export async function pickClaudePool(
   const { account_id } = opts;
   requireUuid(account_id, "account_id");
   const target = validateAgentPaymentTarget(opts.target);
-  const turn = agentPaymentTargetKey(target);
-  return await serialized(account_id, async () => {
-    const rows = await store.list(account_id);
-    const byId = new Map(rows.map((row) => [row.id, row]));
+  const turn = turnKey(target);
+  return await store.locked(account_id, async (rows) => {
     const t = now();
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const changed = new Map<string, Record<string, unknown>>();
+    const set = (id: string, key: string, value: unknown) => {
+      const row = byId.get(id)!;
+      row.metadata = { ...row.metadata, [key]: value };
+      changed.set(id, { ...(changed.get(id) ?? {}), [key]: value });
+    };
 
     // A limit just reached: skip that subscription until it resets.
     const limited = opts.limited;
@@ -167,17 +141,7 @@ export async function pickClaudePool(
       const until = new Date(
         Math.min(t + 7 * 24 * HOUR_MS, Math.max(t + 60_000, resets)),
       ).toISOString();
-      const row = byId.get(limited.credential_id)!;
-      await store.setMetadata({
-        account_id,
-        id: row.id,
-        key: CLAUDE_POOL_LIMITED_METADATA_KEY,
-        value: { until },
-      });
-      row.metadata = {
-        ...row.metadata,
-        [CLAUDE_POOL_LIMITED_METADATA_KEY]: { until },
-      };
+      set(limited.credential_id, CLAUDE_POOL_LIMITED_METADATA_KEY, { until });
     }
 
     // Observed turns refine the cost estimate.
@@ -190,21 +154,24 @@ export async function pickClaudePool(
       ]);
     }
     for (const [id, add] of costs) {
-      const row = byId.get(id)!;
-      const value = appendTurnCostSamples(
-        row.metadata?.[CLAUDE_TURN_COSTS_METADATA_KEY],
+      const next = appendTurnCostSamples(
+        byId.get(id)!.metadata?.[CLAUDE_TURN_COSTS_METADATA_KEY],
         add,
       );
-      await store.setMetadata({
-        account_id,
-        id,
-        key: CLAUDE_TURN_COSTS_METADATA_KEY,
-        value,
-      });
-      row.metadata = {
-        ...row.metadata,
-        [CLAUDE_TURN_COSTS_METADATA_KEY]: value,
-      };
+      if (next.samples.length > 0)
+        set(id, CLAUDE_TURN_COSTS_METADATA_KEY, next);
+    }
+
+    // Running turns, without this conversation's previous one (this turn
+    // replaces it) and without expired ones.
+    const reservations = new Map<string, ClaudePoolReservations>();
+    for (const row of rows) {
+      const stored = row.metadata?.[CLAUDE_POOL_RESERVATIONS_METADATA_KEY];
+      const current = parseClaudePoolReservations(stored, t);
+      delete current[turn];
+      reservations.set(row.id, current);
+      if (stored != null && JSON.stringify(stored) !== JSON.stringify(current))
+        set(row.id, CLAUDE_POOL_RESERVATIONS_METADATA_KEY, current);
     }
 
     const pool = claudePoolCredentials(rows);
@@ -212,10 +179,6 @@ export async function pickClaudePool(
       opts.current_credential_id != null
         ? label(byId.get(opts.current_credential_id))
         : undefined;
-    if (pool.length === 0) return { empty: true };
-    // This turn replaces the conversation's previous reservation.
-    reservations.get(account_id)?.delete(turn);
-    const reserved = reservedBy(account_id, t);
     const cost = claudeTurnCostEstimate(
       pool.flatMap((row) =>
         parseTurnCostSamples(row.metadata?.[CLAUDE_TURN_COSTS_METADATA_KEY]),
@@ -223,34 +186,49 @@ export async function pickClaudePool(
     );
     const members = pool.map((row) => ({
       ...claudePoolMemberFromMetadata(row.id, row.metadata, t),
-      reserved: reserved.get(row.id) ?? 0,
+      reserved: claudePoolReservedAmount(reservations.get(row.id) ?? {}),
     }));
-    const pick = pickClaudePoolCredential({
-      members,
-      cost,
-      current: opts.current_credential_id,
-      now: t,
-    });
-    if (!("credential_id" in pick)) {
-      return {
+    const pick =
+      pool.length === 0
+        ? undefined
+        : pickClaudePoolCredential({
+            members,
+            cost,
+            current: opts.current_credential_id,
+            now: t,
+          });
+    let result: ClaudePoolPickResult;
+    if (!pick) {
+      result = { empty: true };
+    } else if (!("credential_id" in pick)) {
+      result = {
         ...(pick.hold_until != null
           ? { hold_until: new Date(pick.hold_until).toISOString() }
           : {}),
+        ...(pick.next_credential_id
+          ? { next_credential_id: pick.next_credential_id }
+          : {}),
+        ...(current_label ? { current_label } : {}),
+      };
+    } else {
+      set(pick.credential_id, CLAUDE_POOL_RESERVATIONS_METADATA_KEY, {
+        ...reservations.get(pick.credential_id),
+        [turn]: {
+          amount: cost.typical,
+          expires: t + CLAUDE_POOL_RESERVATION_MS,
+        },
+      });
+      const picked = label(byId.get(pick.credential_id));
+      result = {
+        credential_id: pick.credential_id,
+        ...(picked ? { label: picked } : {}),
         ...(current_label ? { current_label } : {}),
       };
     }
-    let mine = reservations.get(account_id);
-    if (!mine) reservations.set(account_id, (mine = new Map()));
-    mine.set(turn, {
-      credential_id: pick.credential_id,
-      amount: cost.typical,
-      expires: t + CLAUDE_POOL_RESERVATION_MS,
-    });
-    const picked = label(byId.get(pick.credential_id));
-    return {
-      credential_id: pick.credential_id,
-      ...(picked ? { label: picked } : {}),
-      ...(current_label ? { current_label } : {}),
-    };
+    const updates: MetadataUpdate[] = [];
+    for (const [id, values] of changed)
+      for (const [key, value] of Object.entries(values))
+        updates.push({ id, key, value });
+    return { result, updates };
   });
 }

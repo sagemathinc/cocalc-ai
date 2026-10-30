@@ -60,12 +60,13 @@ export function setPaymentSelectionResolver(
 }
 
 // The account's stored choice for this conversation (shared by all of its
-// devices), for turns that arrive without one: agent messages, CLI sends,
-// sensor wakes. Undefined when nothing is stored or the hub cannot answer.
+// devices), for turns that arrive without one: Auto agents, agent messages,
+// CLI sends, sensor wakes. Undefined when nothing is stored; "unavailable"
+// when the hub did not answer, which is not the same as nothing stored.
 async function storedPaymentSelection<T>(
   request: AcpJobRequest,
   provider: AgentPaymentProvider,
-): Promise<{ selection?: T; default?: T } | undefined> {
+): Promise<{ selection?: T; default?: T } | "unavailable" | undefined> {
   const thread_id = request.chat?.thread_id;
   if (!thread_id) return;
   try {
@@ -85,8 +86,17 @@ async function storedPaymentSelection<T>(
       ...(fallback ? { default: fallback } : {}),
     };
   } catch {
-    // Older hubs lack this API; keep the previous behavior.
-    return;
+    return "unavailable";
+  }
+}
+
+/** A Claude Code turn with no credential whose payment could not be looked
+ * up: it may be an Auto agent's, so never run it on the project secret. */
+export class PaymentSelectionUnavailableError extends Error {
+  constructor() {
+    super(
+      "CoCalc could not look up how this agent is paid (your account's home server did not answer). Try again in a moment.",
+    );
   }
 }
 
@@ -106,11 +116,12 @@ export async function withClaudePoolControlCredential<T extends AcpRequest>(
     profile.id !== "claude-code"
   )
     return request;
-  const stored = await storedPaymentSelection<ClaudePaymentSelection>(
+  const answer = await storedPaymentSelection<ClaudePaymentSelection>(
     request,
     "claude-code",
   );
-  const pool = stored && claudePoolSelection(stored.selection, stored.default);
+  if (answer === "unavailable") throw new PaymentSelectionUnavailableError();
+  const pool = answer && claudePoolSelection(answer.selection, answer.default);
   if (!pool) return request;
   const { harness_pool: _pool, ...admitted } = await admitClaudePoolTurn(
     request,
@@ -140,11 +151,14 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       request.runtime.profile.id === "claude-code";
     let harness_credential = request.harness_credential;
     let harness_pool: AcpRequest["harness_pool"];
+    let lookupFailed = false;
     if (claudeCode && !harness_credential) {
-      const stored = await storedPaymentSelection<ClaudePaymentSelection>(
+      const answer = await storedPaymentSelection<ClaudePaymentSelection>(
         request,
         "claude-code",
       );
+      lookupFailed = answer === "unavailable";
+      const stored = answer === "unavailable" ? undefined : answer;
       const pool =
         stored && claudePoolSelection(stored.selection, stored.default);
       if (pool) {
@@ -203,6 +217,9 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       // An Auto agent that has no stored choice here keeps picking.
       if (admitted.harness_pool) harness_pool = admitted.harness_pool;
     }
+    // Never the project secret because the account's choice is unknown.
+    if (claudeCode && !harness_credential && !harness_pool && lookupFailed)
+      throw new PaymentSelectionUnavailableError();
     if (harness_pool) {
       return prepareHarnessRequest(
         await admitClaudePoolTurn(
@@ -229,10 +246,12 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   }
   let storedCredentialId: string | undefined;
   if (preference === "subscription" && !request.config?.credentialId) {
-    const stored = await storedPaymentSelection<CodexPaymentSelection>(
+    const answer = await storedPaymentSelection<CodexPaymentSelection>(
       request,
       "codex",
     );
+    // Unanswered: the hub uses the designated default subscription.
+    const stored = answer === "unavailable" ? undefined : answer;
     // This agent's subscription, else the account's chosen default; with
     // neither, the hub uses the designated default subscription.
     storedCredentialId =

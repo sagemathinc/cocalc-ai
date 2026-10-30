@@ -108,20 +108,15 @@ export async function admitClaudePoolTurn<T extends AcpRequest>(
 ): Promise<T> {
   const result = await pick({ ...request, harness_pool: pool });
   if (result.empty) throw new ClaudePoolEmptyError();
-  // Nothing has room now: admit on the current subscription; dispatch holds
-  // the turn until one has.
+  // Nothing has room now: admit on the current subscription, else the one
+  // with room first; dispatch then holds the turn until one has.
   const credential_id =
     result.credential_id ??
     (request.harness_credential?.mode === "account-subscription"
       ? request.harness_credential.credentialId
-      : undefined);
-  if (!credential_id) {
-    if (result.hold_until)
-      throw new Error(
-        "Every Claude subscription in Auto is at its usage limit. Try again later.",
-      );
-    throw new ClaudePoolEmptyError();
-  }
+      : undefined) ??
+    result.next_credential_id;
+  if (!credential_id) throw new ClaudePoolEmptyError();
   return {
     ...request,
     harness_pool: pool,

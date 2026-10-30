@@ -20,20 +20,30 @@ function usage(five: number, week: number, weekResetsIn: number) {
 
 function setup(rows: { id: string; metadata: Record<string, any> }[]) {
   const writes: { id: string; key: string; value: any }[] = [];
+  let chain: Promise<unknown> = Promise.resolve();
   setClaudePoolStoreForTests({
-    list: async (owner) => {
+    locked: (owner, fn) => {
       expect(owner).toBe(account_id);
-      return rows.map((row) => ({ ...row, metadata: { ...row.metadata } }));
-    },
-    setMetadata: async ({ id, key, value }) => {
-      writes.push({ id, key, value });
-      const row = rows.find((r) => r.id === id)!;
-      row.metadata = { ...row.metadata, [key]: value };
-      return true;
+      const run = chain.then(async () => {
+        const { result, updates } = await fn(
+          rows.map((row) => ({ ...row, metadata: { ...row.metadata } })),
+        );
+        for (const { id, key, value } of updates) {
+          writes.push({ id, key, value });
+          const row = rows.find((r) => r.id === id)!;
+          row.metadata = { ...row.metadata, [key]: value };
+        }
+        return result;
+      });
+      chain = run.catch(() => undefined);
+      return run;
     },
   });
   return writes;
 }
+
+const without = (writes: { key: string }[], key: string) =>
+  writes.filter((w) => w.key !== key);
 
 const target = (thread_id: string) => ({ project_id, thread_id });
 
@@ -88,7 +98,7 @@ describe("pickClaudePool", () => {
       () => now,
     );
     expect(result.credential_id).toBe(B);
-    expect(writes).toEqual([
+    expect(without(writes, "claude_pool_reservations")).toEqual([
       {
         id: A,
         key: "claude_pool_limited",
@@ -111,7 +121,10 @@ describe("pickClaudePool", () => {
     ]);
     expect(
       await pickClaudePool({ account_id, target: target("t1") }, () => now),
-    ).toEqual({ hold_until: new Date(now + 2 * HOUR).toISOString() });
+    ).toEqual({
+      hold_until: new Date(now + 2 * HOUR).toISOString(),
+      next_credential_id: A,
+    });
   });
 
   it("spreads simultaneous turns using reservations", async () => {
@@ -154,7 +167,7 @@ describe("pickClaudePool", () => {
       },
       () => now,
     );
-    expect(writes).toEqual([
+    expect(without(writes, "claude_pool_reservations")).toEqual([
       { id: A, key: "claude_turn_costs", value: { samples: [0.04] } },
     ]);
   });
@@ -170,5 +183,38 @@ describe("pickClaudePool", () => {
         () => now,
       ),
     ).rejects.toThrow();
+  });
+});
+
+describe("reservations on the credentials", () => {
+  it("are stored opaquely, replaced by the conversation's next turn, and expire", async () => {
+    const rows = [
+      { id: A, metadata: { claude_usage: usage(0.1, 0.1, 10 * HOUR) } },
+    ];
+    setup(rows);
+    await pickClaudePool({ account_id, target: target("t1") }, () => now);
+    const stored = (rows[0].metadata as any).claude_pool_reservations;
+    const keys = Object.keys(stored);
+    expect(keys).toHaveLength(1);
+    // No project or thread id in the owner's credential metadata.
+    expect(keys[0]).toMatch(/^[a-f0-9]{32}$/);
+    expect(JSON.stringify(stored)).not.toMatch(/t1|2222/);
+    await pickClaudePool({ account_id, target: target("t1") }, () => now);
+    expect(
+      Object.keys((rows[0].metadata as any).claude_pool_reservations),
+    ).toEqual(keys);
+    await pickClaudePool({ account_id, target: target("t2") }, () => now);
+    expect(
+      Object.keys((rows[0].metadata as any).claude_pool_reservations),
+    ).toHaveLength(2);
+    // Later, another account's turn is not needed to drop expired ones:
+    // the next pick for this account prunes them.
+    await pickClaudePool(
+      { account_id, target: target("t3") },
+      () => now + 11 * 60_000,
+    );
+    expect(
+      Object.keys((rows[0].metadata as any).claude_pool_reservations),
+    ).toHaveLength(1);
   });
 });

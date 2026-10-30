@@ -15,6 +15,7 @@ import {
   pinCodexCredentialAtAdmission,
   setCodexCredentialAdmissionResolver,
   setPaymentSelectionResolver,
+  withClaudePoolControlCredential,
 } from "../codex-credential-admission";
 import { setClaudePoolPicker } from "../claude-pool";
 import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
@@ -411,4 +412,105 @@ describe("Auto: the Claude subscription pool", () => {
     } as any);
     expect(codex.harness_pool).toBeUndefined();
   });
+});
+
+describe("the stored selection cannot be looked up", () => {
+  const runtime = {
+    version: 1 as const,
+    kind: "acp" as const,
+    profile: {
+      version: 2 as const,
+      kind: "acp" as const,
+      id: "claude-code",
+      revision: "0.81.1",
+      cwd: "/home/user",
+      executionPolicy: "full-access" as const,
+      credentialMode: "project-managed" as const,
+    },
+  };
+  afterEach(() => {
+    setPaymentSelectionResolver();
+    setClaudePoolPicker();
+  });
+
+  test("a Claude turn with no credential fails closed, never on the project secret", async () => {
+    setPaymentSelectionResolver(async () => {
+      throw new Error("home bay timeout");
+    });
+    const picker = jest.fn();
+    setClaudePoolPicker(picker);
+    await expect(
+      pinCodexCredentialAtAdmission({
+        ...request(),
+        config: undefined,
+        runtime,
+      } as any),
+    ).rejects.toThrow(/could not look up how this agent is paid/);
+    expect(picker).not.toHaveBeenCalled();
+    // Discovery and forks too.
+    await expect(
+      withClaudePoolControlCredential({
+        ...request(),
+        config: undefined,
+        runtime,
+      } as any),
+    ).rejects.toThrow(/could not look up how this agent is paid/);
+  });
+
+  test("a turn that names its credential does not need the lookup", async () => {
+    setPaymentSelectionResolver(async () => {
+      throw new Error("home bay timeout");
+    });
+    const credential = {
+      version: 1,
+      provider: "anthropic",
+      mode: "project-secret",
+    } as const;
+    const admitted = await pinCodexCredentialAtAdmission({
+      ...request(),
+      config: undefined,
+      runtime,
+      harness_credential: credential,
+    } as any);
+    expect(admitted.harness_credential).toEqual(credential);
+  });
+});
+
+test("a new Auto turn when every subscription is at its limit is admitted, to be held", async () => {
+  const next = "00000000-0000-4000-8000-0000000000cc";
+  setPaymentSelectionResolver(async () => ({
+    selection: {
+      version: 1,
+      provider: "claude-code",
+      mode: "subscription-pool",
+    },
+  }));
+  setClaudePoolPicker(async () => ({
+    hold_until: new Date(Date.now() + 3600_000).toISOString(),
+    next_credential_id: next,
+  }));
+  try {
+    const admitted = await pinCodexCredentialAtAdmission({
+      ...request(),
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.81.1",
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+    } as any);
+    expect(admitted.harness_pool).toEqual({});
+    expect(admitted.harness_credential?.credentialId).toBe(next);
+  } finally {
+    setPaymentSelectionResolver();
+    setClaudePoolPicker();
+  }
 });

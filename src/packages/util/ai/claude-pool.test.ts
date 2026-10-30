@@ -7,6 +7,8 @@ import {
   claudePoolMemberFromMetadata,
   claudePoolWindows,
   claudeTurnCostEstimate,
+  claudePoolReservedAmount,
+  parseClaudePoolReservations,
   parseTurnCostSamples,
   pickClaudePoolCredential,
   type ClaudePoolMember,
@@ -193,14 +195,17 @@ describe("pick", () => {
         cost,
         now,
       }),
-    ).toEqual({ hold_until: now + 2 * HOUR });
+    ).toEqual({ hold_until: now + 2 * HOUR, next_credential_id: "b" });
     expect(
       pickClaudePoolCredential({
         members: [member("a", { five: 0.85, reserved: 0.1 })],
         cost,
         now,
       }),
-    ).toEqual({ hold_until: now + CLAUDE_POOL_RESERVATION_MS });
+    ).toEqual({
+      hold_until: now + CLAUDE_POOL_RESERVATION_MS,
+      next_credential_id: "a",
+    });
     expect(pickClaudePoolCredential({ members: [], cost, now })).toEqual({});
   });
 
@@ -249,5 +254,23 @@ describe("forecast", () => {
     );
     expect(forecast.ratePerHour).toBeGreaterThan(0);
     expect(forecast.runsOutAt).toBeUndefined();
+  });
+});
+
+describe("reservations", () => {
+  it("keeps only valid ones still in effect", () => {
+    const r = parseClaudePoolReservations(
+      {
+        aa: { amount: 0.02, expires: now + 60_000 },
+        bb: { amount: 0.02, expires: now - 1 },
+        cc: { amount: 7, expires: now + 60_000 },
+        "not-hex": { amount: 0.02, expires: now + 60_000 },
+        dd: { amount: 0.03, expires: now + 48 * HOUR },
+      },
+      now,
+    );
+    expect(Object.keys(r)).toEqual(["aa"]);
+    expect(claudePoolReservedAmount(r)).toBeCloseTo(0.02);
+    expect(parseClaudePoolReservations([1, 2], now)).toEqual({});
   });
 });

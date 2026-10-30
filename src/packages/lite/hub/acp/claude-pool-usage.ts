@@ -10,28 +10,65 @@
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { claudeRateLimitSnapshot } from "@cocalc/util/ai/claude-usage";
 
-const MAX_PENDING_COSTS = 20;
-const pendingCosts = new Map<
-  string,
-  Array<{ credential_id: string; cost: number }>
->();
+type TurnCost = { credential_id: string; cost: number };
 
-export function takeTurnCosts(account_id: string) {
-  const costs = pendingCosts.get(account_id);
+// Per account, until its next pick sends them. Observations are only a
+// refinement, so an account that picks no more loses them: each entry is
+// dropped after PENDING_TTL_MS, and at most MAX_ACCOUNTS are kept in all.
+const MAX_PENDING_COSTS = 20;
+const MAX_ACCOUNTS = 1_000;
+const PENDING_TTL_MS = 60 * 60_000;
+const pendingCosts = new Map<string, { costs: TurnCost[]; at: number }>();
+
+function evictPending(now: number): void {
+  // Oldest first: an entry is re-inserted on each change.
+  for (const [account_id, entry] of pendingCosts) {
+    if (pendingCosts.size <= MAX_ACCOUNTS && now - entry.at < PENDING_TTL_MS)
+      break;
+    pendingCosts.delete(account_id);
+  }
+}
+
+function setPending(account_id: string, costs: TurnCost[], now: number) {
   pendingCosts.delete(account_id);
-  return costs;
+  pendingCosts.set(account_id, {
+    costs: costs.slice(-MAX_PENDING_COSTS),
+    at: now,
+  });
+  evictPending(now);
+}
+
+export function takeTurnCosts(
+  account_id: string,
+  now = Date.now(),
+): TurnCost[] | undefined {
+  evictPending(now);
+  const entry = pendingCosts.get(account_id);
+  pendingCosts.delete(account_id);
+  return entry?.costs;
 }
 
 export function restoreTurnCosts(
   account_id: string,
-  costs: Array<{ credential_id: string; cost: number }>,
+  costs: TurnCost[],
+  now = Date.now(),
 ): void {
-  pendingCosts.set(
+  setPending(
     account_id,
-    [...costs, ...(pendingCosts.get(account_id) ?? [])].slice(
-      -MAX_PENDING_COSTS,
-    ),
+    [...costs, ...(pendingCosts.get(account_id)?.costs ?? [])],
+    now,
   );
+}
+
+/** For tests: how many accounts have observations waiting. */
+export function pendingTurnCostAccounts(now = Date.now()): number {
+  evictPending(now);
+  return pendingCosts.size;
+}
+
+/** For tests: how many turns are being measured. */
+export function measuredTurns(): number {
+  return turns.size;
 }
 
 export function resetClaudePoolUsage(): void {
@@ -43,12 +80,15 @@ export function resetClaudePoolUsage(): void {
 // of the turn, on the same window.
 type TurnUsage = {
   account_id: string;
+  started: number;
   credential_id: string;
   first?: { utilization: number; resets_at: number };
   last?: { utilization: number; resets_at: number };
 };
 const turns = new Map<string, TurnUsage>();
 const MAX_TURNS = 10_000;
+// A turn that never ended (its worker died) is dropped after this long.
+const TURN_TTL_MS = 24 * 60 * 60_000;
 
 function conversationKey(c: {
   projectId: string;
@@ -59,7 +99,10 @@ function conversationKey(c: {
 }
 
 /** An Auto turn starts on a subscription: measure what it uses. */
-export function beginClaudePoolTurnUsage(request: AcpRequest): void {
+export function beginClaudePoolTurnUsage(
+  request: AcpRequest,
+  now = Date.now(),
+): void {
   const credential = request.harness_credential;
   if (
     !request.harness_pool ||
@@ -68,15 +111,22 @@ export function beginClaudePoolTurnUsage(request: AcpRequest): void {
     !request.chat.thread_id
   )
     return;
-  if (turns.size >= MAX_TURNS) turns.clear();
-  turns.set(
-    conversationKey({
-      projectId: request.project_id,
-      path: request.chat.path,
-      threadId: request.chat.thread_id,
-    }),
-    { account_id: request.account_id, credential_id: credential.credentialId },
-  );
+  const key = conversationKey({
+    projectId: request.project_id,
+    path: request.chat.path,
+    threadId: request.chat.thread_id,
+  });
+  turns.delete(key);
+  // Oldest first: drop turns that never ended, and keep the total bounded.
+  for (const [old, turn] of turns) {
+    if (turns.size < MAX_TURNS && now - turn.started < TURN_TTL_MS) break;
+    turns.delete(old);
+  }
+  turns.set(key, {
+    account_id: request.account_id,
+    credential_id: credential.credentialId,
+    started: now,
+  });
 }
 
 /** A rate-limit report from a running harness. */
@@ -98,7 +148,10 @@ export function noteClaudePoolRateLimit(
  * reports from the same 5-hour window count. Rough: other turns on the same
  * subscription meanwhile are included, and the first response's own usage
  * is not. */
-export function endClaudePoolTurnUsage(request: AcpRequest): void {
+export function endClaudePoolTurnUsage(
+  request: AcpRequest,
+  now = Date.now(),
+): void {
   if (!request.chat?.path || !request.chat.thread_id) return;
   const key = conversationKey({
     projectId: request.project_id,
@@ -110,7 +163,12 @@ export function endClaudePoolTurnUsage(request: AcpRequest): void {
   if (!turn?.first || !turn.last) return;
   const cost = turn.last.utilization - turn.first.utilization;
   if (!(cost >= 0) || cost > 1) return;
-  const costs = pendingCosts.get(turn.account_id) ?? [];
-  costs.push({ credential_id: turn.credential_id, cost });
-  pendingCosts.set(turn.account_id, costs.slice(-MAX_PENDING_COSTS));
+  setPending(
+    turn.account_id,
+    [
+      ...(pendingCosts.get(turn.account_id)?.costs ?? []),
+      { credential_id: turn.credential_id, cost },
+    ],
+    now,
+  );
 }

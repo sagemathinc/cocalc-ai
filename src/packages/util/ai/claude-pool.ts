@@ -20,6 +20,10 @@ export const CLAUDE_POOL_EXCLUDED_METADATA_KEY = "claude_pool_excluded";
 export const CLAUDE_POOL_LIMITED_METADATA_KEY = "claude_pool_limited";
 /** Credential metadata: { samples: number[] }, recent per-turn 5-hour usage. */
 export const CLAUDE_TURN_COSTS_METADATA_KEY = "claude_turn_costs";
+/** Credential metadata: turns running on it now, by an opaque turn key:
+ * { [turn]: { amount, expires } } (expires in ms). */
+export const CLAUDE_POOL_RESERVATIONS_METADATA_KEY = "claude_pool_reservations";
+const MAX_RESERVATIONS = 100;
 
 const HOUR_MS = 3600_000;
 const FIVE_HOURS_MS = 5 * HOUR_MS;
@@ -63,6 +67,41 @@ export function appendTurnCostSamples(
       -MAX_TURN_COST_SAMPLES,
     ),
   };
+}
+
+export type ClaudePoolReservations = Record<
+  string,
+  { amount: number; expires: number }
+>;
+
+/** The stored reservations still in effect (expired and invalid dropped). */
+export function parseClaudePoolReservations(
+  value: unknown,
+  now = Date.now(),
+): ClaudePoolReservations {
+  const result: ClaudePoolReservations = {};
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return result;
+  const entries = Object.entries(value as Record<string, any>)
+    .filter(
+      ([key, r]) =>
+        /^[a-f0-9]{1,64}$/.test(key) &&
+        isSample(r?.amount) &&
+        typeof r?.expires === "number" &&
+        r.expires > now &&
+        r.expires <= now + 24 * HOUR_MS,
+    )
+    .sort(([, a], [, b]) => b.expires - a.expires)
+    .slice(0, MAX_RESERVATIONS);
+  for (const [key, r] of entries)
+    result[key] = { amount: r.amount, expires: r.expires };
+  return result;
+}
+
+export function claudePoolReservedAmount(
+  reservations: ClaudePoolReservations,
+): number {
+  return Object.values(reservations).reduce((sum, r) => sum + r.amount, 0);
 }
 
 export interface ClaudeTurnCostEstimate {
@@ -200,9 +239,9 @@ export function claudePoolScore(
 
 export type ClaudePoolPick =
   | { credential_id: string }
-  /** Nothing can take a turn now; the earliest time one can (none if the
-   * pool is empty). */
-  | { hold_until?: number };
+  /** Nothing can take a turn now: the earliest time one can, and which one
+   * (none if the pool is empty). */
+  | { hold_until?: number; next_credential_id?: string };
 
 /**
  * The subscription for the next turn: eligible if a heavy turn still fits
@@ -224,12 +263,18 @@ export function pickClaudePoolCredential({
   const eligible = members
     .filter((member) => claudePoolAvailableAt(member, cost, now) <= now)
     .map((member) => ({ member, score: claudePoolScore(member, now) }));
-  if (eligible.length === 0)
+  if (eligible.length === 0) {
+    const next = members
+      .map((member) => ({
+        member,
+        at: claudePoolAvailableAt(member, cost, now),
+      }))
+      .reduce((a, b) => (b.at < a.at ? b : a));
     return {
-      hold_until: Math.min(
-        ...members.map((member) => claudePoolAvailableAt(member, cost, now)),
-      ),
+      hold_until: next.at,
+      next_credential_id: next.member.credential_id,
     };
+  }
   // Ties go to the earlier member, so the choice is deterministic.
   const best = eligible.reduce((a, b) => (b.score > a.score ? b : a));
   const kept = eligible.find((x) => x.member.credential_id === current);
