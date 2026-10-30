@@ -197,6 +197,7 @@ export class BeesGate {
   // (one at a time, so the last one written is the latest state).
   private applied?: boolean;
   private syncing = false;
+  private lastWriteAt = -Infinity;
   private lastInputs?: BeesGateInputs;
   // [time, longest commit seen then (ms, a conservative bound)]
   private commitSamples: Array<[number, number]> = [];
@@ -204,11 +205,13 @@ export class BeesGate {
   private readonly now: () => number;
   private readonly config: BeesGateConfig;
   private readonly sampleMs: number;
+  private readonly intervalMs: number;
 
   constructor(private readonly opts: BeesGateOptions) {
     this.now = opts.now ?? Date.now;
     this.config = opts.config ?? DEFAULT_BEES_GATE_CONFIG;
     this.sampleMs = opts.sampleMs ?? 1_000;
+    this.intervalMs = opts.intervalMs ?? 30_000;
     this.state = { frozen: true, since_ms: this.now(), reason: "startup" };
   }
 
@@ -219,10 +222,7 @@ export class BeesGate {
     });
     await this.tick();
     if (this.unsupported) return;
-    this.timer = setInterval(
-      () => void this.tick(),
-      this.opts.intervalMs ?? 30_000,
-    );
+    this.timer = setInterval(() => void this.tick(), this.intervalMs);
     this.timer.unref?.();
     this.sampleTimer = setInterval(() => void this.sample(), this.sampleMs);
     this.sampleTimer.unref?.();
@@ -253,7 +253,7 @@ export class BeesGate {
   async sample(): Promise<void> {
     // Checked before the read too: a hung commit_stats read must not hide a
     // project start, and its samples going stale must freeze BEES.
-    await this.freezeIfNeeded();
+    await this.watch();
     // One read at a time: under the I/O stalls this gate is for, a read can
     // take longer than the period.
     if (this.sampling || this.stopped) return;
@@ -263,7 +263,7 @@ export class BeesGate {
     } finally {
       this.sampling = false;
     }
-    await this.freezeIfNeeded();
+    await this.watch();
   }
 
   // A failed check counts as lifecycle activity (unsafe).
@@ -275,28 +275,33 @@ export class BeesGate {
     }
   }
 
-  // Freezes a running BEES without the decision's other inputs, which may be
-  // stuck behind the same I/O stall.
-  private async freezeIfNeeded(): Promise<void> {
+  // Every sample, apart from the decision and its inputs (which may be stuck
+  // behind the same I/O stall): freezes a running BEES when a project starts
+  // or stops or commits are slow or unknown; retries a failed write; and
+  // writes the state again every interval, so a late write of a stopped gate
+  // (e.g. the old daemon's during a rolling upgrade) is undone even while a
+  // decision is stuck.
+  private async watch(): Promise<void> {
     if (this.stopped || !this.synced) return;
-    if (this.state.frozen) {
-      // a freeze that failed is retried every sample, not every decision
-      if (this.applied !== true) await this.syncCgroup();
-      return;
+    if (!this.state.frozen) {
+      const lifecycle = this.lifecycleActive();
+      const worst = this.worstCommitMs();
+      if (lifecycle || worst == null || worst > this.config.freezeCommitMs) {
+        const reason = lifecycle ? "lifecycle_active" : "slow_commit";
+        this.state = { frozen: true, since_ms: this.now(), reason };
+        logger.info("BEES gate: freeze", {
+          mount: this.opts.mount,
+          reason,
+          worst_commit_ms: worst,
+        });
+      }
     }
-    const lifecycle = this.lifecycleActive();
-    const worst = this.worstCommitMs();
-    if (!lifecycle && worst != null && worst <= this.config.freezeCommitMs) {
-      return;
+    if (
+      this.applied !== this.state.frozen ||
+      this.now() - this.lastWriteAt >= this.intervalMs
+    ) {
+      await this.syncCgroup();
     }
-    const reason = lifecycle ? "lifecycle_active" : "slow_commit";
-    this.state = { frozen: true, since_ms: this.now(), reason };
-    logger.info("BEES gate: freeze", {
-      mount: this.opts.mount,
-      reason,
-      worst_commit_ms: worst,
-    });
-    await this.syncCgroup();
   }
 
   async tick(): Promise<void> {
@@ -326,9 +331,8 @@ export class BeesGate {
           this.state = next;
         }
       }
-      // Every decision writes the state again, changed or not: a write still
-      // running when an earlier gate stopped (e.g. the old daemon's during a
-      // rolling upgrade) cannot leave the cgroup out of step for long.
+      // (written again, changed or not; the sampler does so too, in case
+      // this decision gets stuck: see watch)
       await this.syncCgroup();
     } catch (err) {
       logger.warn("BEES gate tick failed", { err: `${err}` });
@@ -355,6 +359,7 @@ export class BeesGate {
         if (!(await this.apply(frozen ? "freeze" : "thaw"))) return;
         if (this.stopped) return;
         this.applied = frozen;
+        this.lastWriteAt = this.now();
         if (!this.synced) {
           this.synced = true;
           this.state = {

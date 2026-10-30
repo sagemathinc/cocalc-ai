@@ -314,12 +314,14 @@ describe("the BEES gate", () => {
     function timed(lifecycle: () => boolean) {
       const actions: string[] = [];
       let hang = false;
+      let inputsHang = false;
       let reads = 0;
       const pending: Array<(s: string) => void> = [];
       const g = new BeesGate({
         mount: "/mnt/cocalc",
         lifecycleActive: lifecycle,
-        readInputs: async () => calmHost,
+        readInputs: async () =>
+          inputsHang ? await new Promise<never>(() => {}) : calmHost,
         readCommitStats: async () => {
           reads += 1;
           return hang
@@ -334,6 +336,7 @@ describe("the BEES gate", () => {
         g,
         actions,
         hang: () => (hang = true),
+        hangInputs: () => (inputsHang = true),
         reads: () => reads,
         release: () => pending.forEach((resolve) => resolve(quiet)),
       };
@@ -356,6 +359,20 @@ describe("the BEES gate", () => {
       expect(t.reads()).toBe(reads);
       t.g.stop();
       t.release();
+    });
+
+    // @review on #1503: a decision stuck on its inputs (statfs, io pressure)
+    // must not stop the state from being written again.
+    it("undoes a late write of a stopped gate while a decision is stuck", async () => {
+      const t = timed(() => false);
+      await t.g.start();
+      t.hangInputs();
+      await jest.advanceTimersByTimeAsync(MIN);
+      t.actions.push("thaw"); // the old daemon's late thaw
+      await jest.advanceTimersByTimeAsync(31_000);
+      expect(t.actions.slice(-2)).toEqual(["thaw", "freeze"]);
+      expect(t.g.getStatus()).toMatchObject({ applied: true, frozen: true });
+      t.g.stop();
     });
 
     it("freezes once its commit samples go stale, before the next decision", async () => {
