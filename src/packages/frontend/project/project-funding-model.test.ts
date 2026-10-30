@@ -1,6 +1,7 @@
 import {
   approvalLine,
   fundingTerms,
+  keyRaiseTarget,
   requestLine,
 } from "./project-funding-model";
 
@@ -53,5 +54,17 @@ describe("project funding model", () => {
     expect(approvalLine({ ...base, state: "active" }, true)).toMatch(
       /paid by your RunPod account: up to \$50.00 until .* \(not agents\)\./,
     );
+  });
+
+  it("raises the key budget by exactly the shortfall, as a new total", () => {
+    expect(keyRaiseTarget({ available: 50, authorized: 400 }, 100)).toBe(
+      "450.00",
+    );
+    expect(
+      keyRaiseTarget({ available: 50, authorized: 400 }, 40),
+    ).toBeUndefined();
+    // overspent (negative available): the whole amount is missing
+    expect(keyRaiseTarget({ available: -5, authorized: 20 }, 10)).toBe("30.00");
+    expect(keyRaiseTarget(undefined, 10)).toBeUndefined();
   });
 });

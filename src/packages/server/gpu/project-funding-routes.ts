@@ -1080,11 +1080,14 @@ export async function projectFundingStateLocal(
     if (project == null || project.deleted) {
       throw Error("project not found or access denied");
     }
-    if (
-      actor.kind !== "project" &&
-      !isCollaborator(project, actor.account_id)
-    ) {
-      throw Error("project not found or access denied");
+    if (actor.kind !== "project") {
+      if (!isCollaborator(project, actor.account_id)) {
+        throw Error("project not found or access denied");
+      }
+      // an agent sees only its own project's funding
+      if (actor.kind === "agent" && actor.project_id !== project_id) {
+        throw Error("An agent can see only its own project's GPU funding.");
+      }
     }
     const { rows: approvals } = await db.query(
       `SELECT * FROM project_compute_approvals

@@ -299,7 +299,9 @@ export interface GpuApi {
   // The approvals the caller funds.
   fundedProjects: (opts?: {
     account_id?: string;
-  }) => Promise<import("@cocalc/util/gpu/project-funding").FundedProject[]>;
+  }) => Promise<
+    import("@cocalc/util/gpu/project-funding").FundedProjectsResult
+  >;
   // Terminate one of them (the reaper ends it shortly).
   projectTerminate: (opts: {
     account_id?: string;

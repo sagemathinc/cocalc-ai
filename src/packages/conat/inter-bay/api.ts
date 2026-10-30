@@ -4404,7 +4404,9 @@ export interface InterBayGpuApi {
   }) => Promise<import("@cocalc/conat/hub/api/gpu").ProjectFundingView>;
   gpuFundedProjects: (opts: {
     account_id: string;
-  }) => Promise<import("@cocalc/util/gpu/project-funding").FundedProject[]>;
+  }) => Promise<
+    import("@cocalc/util/gpu/project-funding").FundedProjectsResult
+  >;
   gpuProjectFundingSpendAtFunder: (
     opts: import("@cocalc/util/gpu/project-funding").ProjectFundingSpendAtFunderRequest,
   ) => Promise<import("@cocalc/util/gpu/project-funding").ProjectFundingSpend>;

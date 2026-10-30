@@ -1452,19 +1452,41 @@ export async function projectFundingSpendAtFunderLocal(
   };
 }
 
-// The approvals an account funds (newest first, the last 200).
+// The approvals an account funds: every one still able to spend (active),
+// however many and however old, then the newest ended ones (at most
+// `history`), saying when older ones were left out.
 export async function fundedProjectsLocal(opts: {
   account_id?: string;
-}): Promise<import("@cocalc/util/gpu/project-funding").FundedProject[]> {
+  history?: number;
+}): Promise<import("@cocalc/util/gpu/project-funding").FundedProjectsResult> {
   const account_id = requireAccount(opts.account_id);
-  const { rows } = await getPool().query(
+  const history = Math.max(0, Math.min(opts.history ?? 100, 500));
+  const { rows: live } = await getPool().query(
     `SELECT * FROM gpu_budget_layers
       WHERE key_owner_account_id = $1 AND scope_kind = 'project'
-      ORDER BY created DESC LIMIT 200`,
+        AND state IN ('active', 'scheduled', 'suspended')
+      ORDER BY created DESC`,
     [account_id],
   );
-  return rows.map((l) => {
-    const v = projectFundingView(l);
+  const { rows: ended } = await getPool().query(
+    `SELECT * FROM gpu_budget_layers
+      WHERE key_owner_account_id = $1 AND scope_kind = 'project'
+        AND state NOT IN ('active', 'scheduled', 'suspended')
+      ORDER BY created DESC LIMIT $2`,
+    [account_id, history + 1],
+  );
+  const rows = [...live, ...ended.slice(0, history)];
+  return {
+    approvals: rows.map(fundedRow),
+    history_truncated: ended.length > history,
+  };
+}
+
+function fundedRow(
+  l: any,
+): import("@cocalc/util/gpu/project-funding").FundedProject {
+  const v = projectFundingView(l);
+  {
     return {
       approval_id: v.approval_id,
       project_id: v.project_id,
@@ -1480,5 +1502,5 @@ export async function fundedProjectsLocal(opts: {
       live_pods: l.live_pods,
       version: v.version,
     };
-  });
+  }
 }

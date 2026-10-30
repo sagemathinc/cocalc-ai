@@ -21,13 +21,19 @@ const usd = (v: string) => `$${Number(v).toFixed(2)}`;
 export function FundedProjectsSection() {
   const projectMap = useTypedRedux("projects", "project_map");
   const [rows, setRows] = useState<FundedProject[]>();
+  // older ended approvals weren't listed (every active one always is)
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string>();
   const [ending, setEnding] = useState<FundedProject>();
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      setRows(await webapp_client.conat_client.hub.gpu.fundedProjects({}));
+      const result = await webapp_client.conat_client.hub.gpu.fundedProjects(
+        {},
+      );
+      setRows(result.approvals);
+      setTruncated(result.history_truncated);
       setError(undefined);
     } catch (err) {
       setError(`${(err as Error)?.message ?? err}`);
@@ -112,6 +118,11 @@ export function FundedProjectsSection() {
             },
           ]}
         />
+      ) : null}
+      {truncated ? (
+        <Text type="secondary">
+          Every active approval is listed; older ended ones are not.
+        </Text>
       ) : null}
       <Modal
         open={ending != null}

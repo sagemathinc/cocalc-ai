@@ -699,3 +699,10 @@ export interface FundedProject extends ProjectFundingSpend {
   live_pods: number;
   version: number;
 }
+
+// What "Projects you fund" lists: every approval still able to spend, and
+// the newest ended ones (history_truncated says older ones aren't shown).
+export interface FundedProjectsResult {
+  approvals: FundedProject[];
+  history_truncated: boolean;
+}
