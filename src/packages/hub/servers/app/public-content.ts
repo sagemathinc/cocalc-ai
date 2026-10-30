@@ -6,6 +6,7 @@
 import type { Request, Response, Router } from "express";
 
 import basePath from "@cocalc/backend/base-path";
+import { getLogger } from "@cocalc/backend/logger";
 import { getFeedData } from "@cocalc/database/postgres/news";
 import getCustomize from "@cocalc/database/settings/customize";
 import { capitalize } from "@cocalc/util/misc";
@@ -25,6 +26,8 @@ import {
 } from "@cocalc/util/types/news";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { servePublicShell } from "./public-shell";
+
+const logger = getLogger("hub:public-content");
 
 function redirectCompatibility(target: string) {
   return function (_req: Request, res: Response): void {
@@ -205,7 +208,10 @@ export default function initPublicContent(router: Router): void {
       res.setHeader("Cache-Control", "public, max-age=3600");
       res.send(await renderRss(req));
     } catch (err) {
-      res.status(500).send(`${err}`);
+      logger.warn("rendering the news RSS feed failed", err);
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.status(500).send("Internal server error");
     }
   });
 
@@ -215,7 +221,9 @@ export default function initPublicContent(router: Router): void {
       res.setHeader("Cache-Control", "public, max-age=3600");
       res.json(await renderJsonFeed(req));
     } catch (err) {
-      res.status(500).json({ error: `${err}` });
+      logger.warn("rendering the news JSON feed failed", err);
+      res.setHeader("Cache-Control", "no-store");
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 
