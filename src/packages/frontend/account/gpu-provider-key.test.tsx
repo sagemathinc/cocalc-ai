@@ -103,9 +103,29 @@ describe("GpuProviderKeySection", () => {
     expect(input.hasAttribute("data-1p-ignore")).toBe(true);
     expect(input.getAttribute("data-lpignore")).toBe("true");
     expect(input.getAttribute("data-bwignore")).toBe("true");
-    // (jsdom drops -webkit-text-security, so only the toggle is checked)
-    await userEvent.click(screen.getByLabelText("Show key"));
-    expect(screen.getByLabelText("Hide key")).toBeTruthy();
+    // (jsdom drops -webkit-text-security, so the toggle's state is checked)
+    const show = screen.getByRole("button", { name: "Show key" });
+    expect(show.getAttribute("aria-pressed")).toBe("false");
+    show.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(show.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("starts each new key entry masked, even after the last one was shown", async () => {
+    mockSystem.getGpuProviderKeyStatus.mockResolvedValue(DISCONNECTED);
+    mockSystem.setGpuProviderKey.mockResolvedValue(CONNECTED);
+    render(<GpuProviderKeySection />);
+    await userEvent.type(await screen.findByLabelText("RunPod API key"), KEY);
+    await userEvent.click(screen.getByRole("button", { name: "Show key" }));
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Replace key" }),
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Show key" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
   });
 
   it("says the RunPod account is still being checked until the first inventory", async () => {
