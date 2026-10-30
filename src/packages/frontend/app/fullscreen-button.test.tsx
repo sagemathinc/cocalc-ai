@@ -1,0 +1,194 @@
+/** @jest-environment jsdom */
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { IntlProvider } from "react-intl";
+import { FullscreenButton } from "./fullscreen-button";
+import { handOffFullscreenFocusIfFocused } from "./fullscreen-focus";
+
+let fullscreen: string | undefined;
+const toggle_fullscreen = jest.fn();
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  React: require("react"),
+  useActions: () => ({ toggle_fullscreen }),
+  useTypedRedux: () => fullscreen,
+}));
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: ({ name }) => <span data-testid={name} />,
+  Tip: ({ children }) => children,
+}));
+
+const pageStyle = { fontSizeIcons: "18px" } as any;
+const renderButton = () =>
+  render(
+    <IntlProvider locale="en">
+      <FullscreenButton pageStyle={pageStyle} />
+    </IntlProvider>,
+  );
+
+beforeEach(() => toggle_fullscreen.mockClear());
+
+it("exits by keyboard and moves focus to the enter button", async () => {
+  const user = userEvent.setup();
+  fullscreen = "default";
+  const { rerender } = renderButton();
+  const exit = screen.getByRole("button", { name: /exit fullscreen/i });
+  exit.focus();
+  await user.keyboard("{Enter}");
+  expect(toggle_fullscreen).toHaveBeenCalledTimes(1);
+  // the page store leaves fullscreen: the exit button unmounts
+  fullscreen = undefined;
+  // (new props stand in for the store subscription that re-renders it)
+  rerender(
+    <IntlProvider locale="en">
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>,
+  );
+  expect(screen.queryByRole("button", { name: /exit fullscreen/i })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /enter fullscreen/i }),
+  ).toHaveFocus();
+});
+
+it("enters by keyboard and moves focus to the exit button", async () => {
+  const user = userEvent.setup();
+  fullscreen = undefined;
+  const { rerender } = renderButton();
+  const enter = screen.getByRole("button", { name: /enter fullscreen/i });
+  // a plain mount (no transition just before) does not take focus
+  expect(enter).not.toHaveFocus();
+  await user.tab();
+  expect(enter).toHaveFocus();
+  await user.keyboard(" ");
+  expect(toggle_fullscreen).toHaveBeenCalledTimes(1);
+  fullscreen = "default";
+  rerender(
+    <IntlProvider locale="en">
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>,
+  );
+  expect(
+    screen.getByRole("button", { name: /exit fullscreen/i }),
+  ).toHaveFocus();
+});
+
+it("skips an inert copy of the control when taking the hand-off", async () => {
+  const user = userEvent.setup();
+  fullscreen = undefined;
+  // a retained, inert pane renders its own copy before the visible one
+  const Page = () => (
+    <IntlProvider locale="en">
+      <div inert>
+        <FullscreenButton pageStyle={{ ...pageStyle }} />
+      </div>
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>
+  );
+  const { rerender } = render(<Page />);
+  const [, enter] = screen.getAllByRole("button", {
+    name: /enter fullscreen/i,
+  });
+  enter.focus();
+  await user.keyboard("{Enter}");
+  fullscreen = "default";
+  rerender(<Page />);
+  const [inertExit, exit] = screen.getAllByRole("button", {
+    name: /exit fullscreen/i,
+  });
+  expect(inertExit.closest("[inert]")).not.toBeNull();
+  expect(exit).toHaveFocus();
+});
+
+it("keeps focus when the browser leaves fullscreen while exit has focus", () => {
+  fullscreen = "default";
+  const { rerender } = renderButton();
+  screen.getByRole("button", { name: /exit fullscreen/i }).focus();
+  // what PageActions.browser_fullscreen_changed does before clearing the mode
+  handOffFullscreenFocusIfFocused();
+  fullscreen = undefined;
+  rerender(
+    <IntlProvider locale="en">
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>,
+  );
+  expect(
+    screen.getByRole("button", { name: /enter fullscreen/i }),
+  ).toHaveFocus();
+});
+
+it("leaves focus alone when the browser leaves fullscreen elsewhere", () => {
+  fullscreen = "default";
+  const { rerender } = render(
+    <IntlProvider locale="en">
+      <button>Editor</button>
+      <FullscreenButton pageStyle={pageStyle} />
+    </IntlProvider>,
+  );
+  const editor = screen.getByRole("button", { name: "Editor" });
+  editor.focus();
+  handOffFullscreenFocusIfFocused();
+  fullscreen = undefined;
+  rerender(
+    <IntlProvider locale="en">
+      <button>Editor</button>
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>,
+  );
+  expect(editor).toHaveFocus();
+});
+
+it("on narrow layouts, focuses the marked app-shell control after exit", async () => {
+  const user = userEvent.setup();
+  fullscreen = "default";
+  // narrow: the page renders the button only in fullscreen, and no enter
+  // button replaces it; the compact nav's marked control is there instead
+  const Narrow = () => (
+    <IntlProvider locale="en">
+      {/* an inactive workspace pane keeps an inert copy of the navigation */}
+      <div inert>
+        <button data-fullscreen-exit-focus="">More navigation</button>
+      </div>
+      <nav className="smc-top-bar">
+        <button>Projects</button>
+        <button data-fullscreen-exit-focus="">More navigation</button>
+      </nav>
+      {fullscreen && <FullscreenButton pageStyle={{ ...pageStyle }} />}
+    </IntlProvider>
+  );
+  const { rerender } = render(<Narrow />);
+  screen.getByRole("button", { name: /exit fullscreen/i }).focus();
+  await user.keyboard("{Enter}");
+  fullscreen = undefined;
+  rerender(<Narrow />);
+  // the visible control, not the inert copy that comes first in the DOM
+  const [inert, visible] = screen.getAllByRole("button", {
+    name: "More navigation",
+  });
+  expect(inert.closest("[inert]")).not.toBeNull();
+  expect(visible.closest("[inert]")).toBeNull();
+  await waitFor(() => expect(visible).toHaveFocus());
+});
+
+it("renders no second exit control where it is enter-only", () => {
+  fullscreen = "default";
+  const { container } = render(
+    <IntlProvider locale="en">
+      <FullscreenButton pageStyle={pageStyle} enterOnly />
+    </IntlProvider>,
+  );
+  expect(container).toBeEmptyDOMElement();
+  fullscreen = undefined;
+  render(
+    <IntlProvider locale="en">
+      <FullscreenButton pageStyle={pageStyle} enterOnly />
+    </IntlProvider>,
+  );
+  expect(
+    screen.getByRole("button", { name: /enter fullscreen/i }),
+  ).toBeInTheDocument();
+});
+
+it.each(["kiosk", "project"])("renders no control in %s mode", (mode) => {
+  fullscreen = mode;
+  const { container } = renderButton();
+  expect(container).toBeEmptyDOMElement();
+});

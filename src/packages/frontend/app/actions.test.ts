@@ -3,7 +3,12 @@
 import { redux, project_redux_name } from "@cocalc/frontend/app-framework";
 import { set_url, rememberProjectsView } from "@cocalc/frontend/history";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
-import { PageActions } from "./actions";
+import {
+  isFullscreen,
+  onFullscreenChange,
+} from "@cocalc/frontend/misc/fullscreen";
+import { init_actions, PageActions } from "./actions";
+import { handOffFullscreenFocusIfFocused } from "./fullscreen-focus";
 import { init_store } from "./store";
 import { setNotificationsOpen } from "../notifications/drawer-state";
 import { openLibrary } from "../agents/library-navigation";
@@ -57,7 +62,11 @@ jest.mock("@cocalc/frontend/i18n/get-intl", () => ({
 jest.mock("@cocalc/frontend/misc/fullscreen", () => ({
   exitFullscreen: jest.fn(),
   isFullscreen: jest.fn(),
+  onFullscreenChange: jest.fn(),
   requestFullscreen: jest.fn(),
+}));
+jest.mock("./fullscreen-focus", () => ({
+  handOffFullscreenFocusIfFocused: jest.fn(),
 }));
 jest.mock("@cocalc/frontend/project/websocket/connect", () => ({
   disconnect_from_project: jest.fn(),
@@ -428,5 +437,42 @@ describe("only recent projects stay open", () => {
     await actions.set_active_tab(C);
     expect(projects().get("open_projects").toJS()).toEqual([B, C]);
     expect(page().get("active_top_tab")).toBe(C);
+  });
+});
+
+describe("following the browser out of fullscreen", () => {
+  it("clears the default fullscreen mode when the browser leaves fullscreen", () => {
+    jest.mocked(isFullscreen).mockReturnValue(false);
+    actions.setState({ fullscreen: "default" });
+    actions.browser_fullscreen_changed();
+    expect(page().get("fullscreen")).toBeUndefined();
+    // the focused exit button unmounts: hand its focus off
+    expect(handOffFullscreenFocusIfFocused).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the default mode while the browser is still fullscreen", () => {
+    jest.mocked(isFullscreen).mockReturnValue(true);
+    actions.setState({ fullscreen: "default" });
+    actions.browser_fullscreen_changed();
+    expect(page().get("fullscreen")).toBe("default");
+  });
+
+  it.each(["kiosk", "project"] as const)("leaves %s mode alone", (mode) => {
+    jest.mocked(isFullscreen).mockReturnValue(false);
+    actions.setState({ fullscreen: mode });
+    actions.browser_fullscreen_changed();
+    expect(page().get("fullscreen")).toBe(mode);
+    expect(handOffFullscreenFocusIfFocused).not.toHaveBeenCalled();
+  });
+
+  it("registers the listener when the page actions are created", () => {
+    redux.removeActions("page");
+    init_actions();
+    expect(onFullscreenChange).toHaveBeenCalledTimes(1);
+    const handler = jest.mocked(onFullscreenChange).mock.calls[0][0];
+    jest.mocked(isFullscreen).mockReturnValue(false);
+    redux.getActions("page").setState({ fullscreen: "default" });
+    handler();
+    expect(page().get("fullscreen")).toBeUndefined();
   });
 });

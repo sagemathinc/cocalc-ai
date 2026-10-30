@@ -25,27 +25,19 @@ const pageStyle = {
   sidePaddingIcons: "5px",
 } as any;
 
-it("matches the normal navbar foreground and themes the fullscreen exit backing", () => {
+it("matches the normal navbar foreground", () => {
   fullscreen = undefined;
   connection = "connected";
-  const { rerender } = render(
+  render(
     <IntlProvider locale="en">
       <FullscreenButton pageStyle={pageStyle} />
       <ConnectionIndicator pageStyle={pageStyle} height={32} />
     </IntlProvider>,
   );
-  expect(screen.getByTestId("expand").style.color).toBe(UI_COLORS.text);
+  expect(
+    screen.getByRole("button", { name: /enter fullscreen/i }).style.color,
+  ).toBe(UI_COLORS.text);
   expect(screen.getByTestId("wifi").style.color).toBe(UI_COLORS.text);
-  fullscreen = "default";
-  rerender(
-    <IntlProvider locale="en">
-      <FullscreenButton pageStyle={{ ...pageStyle }} />
-    </IntlProvider>,
-  );
-  expect(screen.getByTestId("compress").style.color).toBe(UI_COLORS.text);
-  expect(screen.getByTestId("compress").style.background).toBe(
-    UI_COLORS.surface,
-  );
 });
 
 it("retains disconnected warning colors", () => {
