@@ -15,6 +15,7 @@ const mockCountRecentAutomaticArchives = jest.fn();
 const mockCountRunningArchivesByHost = jest.fn();
 const mockClaimAutomaticJob = jest.fn();
 const mockListQueuedProjectArchiveLifecycleJobs = jest.fn();
+const mockFailStuckManualArchiveJobs = jest.fn(async () => [] as string[]);
 
 const clientQuery = jest.fn();
 const mockReleaseArchiveFreeze = jest.fn();
@@ -70,6 +71,8 @@ jest.mock("./archive-lifecycle-db", () => ({
   countRunningArchivesByHost: (...args: any[]) =>
     mockCountRunningArchivesByHost(...args),
   createProjectArchiveLifecycleJob: jest.fn(),
+  failStuckManualArchiveJobs: (...args: any[]) =>
+    mockFailStuckManualArchiveJobs(...args),
   listQueuedProjectArchiveLifecycleJobs: (...args: any[]) =>
     mockListQueuedProjectArchiveLifecycleJobs(...args),
   listRecoverableProjectArchiveLifecycleJobs:
@@ -220,6 +223,29 @@ describe("project archive lifecycle recovery", () => {
       reason: job.reason,
       expected_host_id: job.host_id,
     });
+  });
+
+  // Prod los-angeles-1, 2026-10-30: the bay restarted 8 s into a manual
+  // archive, whose job stayed "running" and held the host's only archive slot.
+  it("fails a manual archive that never finished before admitting any job", async () => {
+    mockFailStuckManualArchiveJobs.mockClear();
+    mockGetServerSettings.mockResolvedValue({
+      automatic_project_archiving_enabled: false,
+    });
+    mockListRecoverableProjectArchiveLifecycleJobs.mockResolvedValue([]);
+    mockFailStuckManualArchiveJobs.mockResolvedValueOnce([
+      "77777777-7777-4777-8777-777777777777",
+    ]);
+
+    await runProjectArchiveLifecycleOnce();
+
+    expect(mockFailStuckManualArchiveJobs).toHaveBeenCalledTimes(1);
+    expect(
+      mockFailStuckManualArchiveJobs.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      mockListRecoverableProjectArchiveLifecycleJobs.mock
+        .invocationCallOrder[0],
+    );
   });
 });
 

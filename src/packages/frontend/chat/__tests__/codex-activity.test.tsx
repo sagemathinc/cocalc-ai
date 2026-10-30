@@ -425,6 +425,36 @@ describe("CodexActivity terminal rows", () => {
     ).not.toBeNull();
   });
 
+  it("shows which Claude subscription an Auto turn uses, and a move", () => {
+    render(
+      React.createElement(CodexActivity, {
+        expanded: true,
+        events: [
+          {
+            type: "event",
+            seq: 1,
+            time: 1000,
+            event: { type: "payment", mode: "auto", label: "max-a" },
+          } as any,
+          {
+            type: "event",
+            seq: 2,
+            time: 2000,
+            event: {
+              type: "payment",
+              mode: "auto",
+              label: "max-b",
+              moved: true,
+              previous_label: "max-a",
+            },
+          } as any,
+        ],
+      }),
+    );
+    expect(screen.getByText("Using max-a")).not.toBeNull();
+    expect(screen.getByText("Moved to max-b from max-a")).not.toBeNull();
+  });
+
   it('renders "No output." after the terminal block', () => {
     const { container } = render(
       React.createElement(TerminalRow, {

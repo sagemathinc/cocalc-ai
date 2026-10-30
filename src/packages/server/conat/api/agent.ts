@@ -86,6 +86,7 @@ export const listPaymentSelections = payments.listPaymentSelections;
 export const setPaymentSelections = payments.setPaymentSelections;
 export const copyPaymentSelection = payments.copyPaymentSelection;
 export const resolvePaymentSelection = payments.resolvePaymentSelection;
+export const pickClaudePoolSubscription = payments.pickClaudePoolSubscription;
 export const reportRuntime = identities.reportRuntime;
 export const credentialUpdatedAt = identities.credentialUpdatedAt;
 export const reportStatus = identities.reportStatus;

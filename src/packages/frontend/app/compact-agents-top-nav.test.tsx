@@ -64,6 +64,12 @@ jest.mock("@cocalc/frontend/app-framework", () => {
   };
 });
 
+const handOffFullscreenFocus = jest.fn();
+jest.mock("./fullscreen-focus", () => ({
+  FULLSCREEN_EXIT_FOCUS: "data-fullscreen-exit-focus",
+  handOffFullscreenFocus: () => handOffFullscreenFocus(),
+}));
+
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: { name: string }) => <span data-icon={name} />,
 }));
@@ -150,6 +156,21 @@ describe("compact Agents navigation", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Open in project" }));
 
     expect(onOpenInProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands focus off to the fullscreen control from the keyboard menu", async () => {
+    const user = userEvent.setup();
+    render(<CompactAgentsTopNav isLoggedIn pageStyle={pageStyle} />);
+    screen.getByRole("button", { name: "More navigation" }).focus();
+    await user.keyboard("{Enter}");
+    screen.getByRole("menuitem", { name: "Fullscreen" }).focus();
+    await user.keyboard("{Enter}");
+    expect(handOffFullscreenFocus).toHaveBeenCalledTimes(1);
+    expect(toggleFullscreen).toHaveBeenCalledTimes(1);
+    // armed before the transition unmounts the menu and this nav
+    expect(handOffFullscreenFocus.mock.invocationCallOrder[0]).toBeLessThan(
+      toggleFullscreen.mock.invocationCallOrder[0],
+    );
   });
 
   it("closes on Escape and restores focus to the trigger", async () => {

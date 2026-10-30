@@ -3,6 +3,12 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import {
+  CLAUDE_POOL_LABEL,
+  CLAUDE_POOL_OPTION_LABEL,
+  CLAUDE_POOL_VALUE,
+  ClaudePoolPanel,
+} from "@cocalc/frontend/chat/claude-pool";
 import { Button, Modal, Select, Space, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
@@ -44,6 +50,8 @@ export function NewAgentClaudeControls({
   settings,
   onSettings,
   credential,
+  auto = false,
+  onAuto,
   credentials,
   credentialsLoaded,
   onCredential,
@@ -62,6 +70,10 @@ export function NewAgentClaudeControls({
   settings: HarnessSessionSettings;
   onSettings: (settings: HarnessSessionSettings) => void;
   credential: AcpHarnessCredential;
+  /** Auto: each turn picks one of the account's subscriptions (credential
+   * is then one of them, for loading the model options). */
+  auto?: boolean;
+  onAuto?: (auto: boolean) => void;
   credentials: ExternalCredentialInfo[];
   credentialsLoaded: boolean;
   onCredential: (credential: AcpHarnessCredential) => void;
@@ -105,15 +117,20 @@ export function NewAgentClaudeControls({
   // while selected even before that is known.
   const membership =
     useSiteFundedClaudeAvailable() || credential.mode === "site-funded";
-  const options = newAgentClaudeCredentialOptions(
-    credentials,
-    false,
-    membership,
-  );
-  const value = newAgentClaudeCredentialValue(credential);
   const hasSubscription = credentials.some(
     (row) => !row.revoked && row.kind === CLAUDE_SUBSCRIPTION_KIND,
   );
+  const offerAuto = !!onAuto && (hasSubscription || auto);
+  const options = [
+    ...(offerAuto
+      ? [{ value: CLAUDE_POOL_VALUE, label: CLAUDE_POOL_OPTION_LABEL }]
+      : []),
+    ...newAgentClaudeCredentialOptions(credentials, false, membership),
+  ];
+  const value =
+    auto && offerAuto
+      ? CLAUDE_POOL_VALUE
+      : newAgentClaudeCredentialValue(credential);
   // Only known-missing setup is onboarding. Unknown metadata or configured
   // credentials must retain the normal discovery/error path.
   const needsConnection =
@@ -133,9 +150,11 @@ export function NewAgentClaudeControls({
   const unavailableCredential =
     credentialsLoaded && !options.some((option) => option.value === value);
   const payment =
-    newAgentClaudeCredentialOptions(credentials, true, membership).find(
-      (option) => option.value === value,
-    )?.label ?? "Choose payment method";
+    value === CLAUDE_POOL_VALUE
+      ? CLAUDE_POOL_LABEL
+      : (newAgentClaudeCredentialOptions(credentials, true, membership).find(
+          (option) => option.value === value,
+        )?.label ?? "Choose payment method");
   const configuration = (
     <Space orientation="vertical" style={{ width: "100%", minWidth: 0 }}>
       <Typography.Text strong>Payment method</Typography.Text>
@@ -153,10 +172,27 @@ export function NewAgentClaudeControls({
         }
         style={{ width: "100%" }}
         popupMatchSelectWidth={false}
-        onChange={(next: string) =>
-          onCredential(claudeCredentialFromValue(next))
-        }
+        onChange={(next: string) => {
+          if (next === CLAUDE_POOL_VALUE) {
+            onAuto?.(true);
+            // Model options load with one of the subscriptions.
+            if (credential.mode !== "account-subscription")
+              onCredential(
+                preferredClaudeCredential(undefined, credentials, false),
+              );
+            return;
+          }
+          onAuto?.(false);
+          onCredential(claudeCredentialFromValue(next));
+        }}
       />
+      {value === CLAUDE_POOL_VALUE && (
+        <ClaudePoolPanel
+          credentials={credentials}
+          disabled={disabled}
+          onCredentials={(rows) => onCredentials(() => rows)}
+        />
+      )}
       {unavailableCredential && (
         <div role="alert">
           The previously selected Claude connection is unavailable or revoked.

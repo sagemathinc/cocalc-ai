@@ -18,6 +18,8 @@ export interface CollectionMenuAction {
   key: string;
   label: string;
   onClick: () => void;
+  // Shown as destructive (red), e.g. remove.
+  danger?: boolean;
 }
 export interface CollectionControls {
   pinned: boolean;
@@ -273,7 +275,9 @@ function CollectionMenu({
         if (!open) button.current?.focus();
       }}
       menu={{
-        items: open ? actions.map(({ key, label }) => ({ key, label })) : [],
+        items: open
+          ? actions.map(({ key, label, danger }) => ({ key, label, danger }))
+          : [],
         onClick: ({ key }) => {
           setOpen(false);
           button.current?.focus();

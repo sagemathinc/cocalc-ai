@@ -1548,7 +1548,17 @@ async function upsertRootfsRow({
   digest?: string | null;
   content_key?: string | null;
   release_id?: string | null;
-}): Promise<{ image_id: string; slug: string; entry?: RootfsImageEntry }> {
+}): Promise<{
+  image_id: string;
+  slug: string;
+  entry?: RootfsImageEntry;
+  // The moderation state as stored: an owner's save keeps an admin's.
+  moderation: {
+    hidden: boolean;
+    blocked: boolean;
+    blocked_reason?: string;
+  };
+}> {
   const pool = getPool();
   const admin = await isAdmin(account_id);
   const image = trimString(body.image);
@@ -1695,7 +1705,11 @@ async function upsertRootfsRow({
     operation: "save",
   });
 
-  await pool.query(
+  const { rows: savedRows } = await pool.query<{
+    hidden: boolean | null;
+    blocked: boolean | null;
+    blocked_reason: string | null;
+  }>(
     `INSERT INTO rootfs_images
       (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, default_jupyter_kernel, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, slug, theme, content, content_warnings, created, updated)
      VALUES
@@ -1761,7 +1775,8 @@ async function upsertRootfsRow({
       theme = EXCLUDED.theme,
       content = CASE WHEN $28 THEN EXCLUDED.content ELSE rootfs_images.content END,
       content_warnings = CASE WHEN $28 THEN EXCLUDED.content_warnings ELSE rootfs_images.content_warnings END,
-      updated = NOW()`,
+      updated = NOW()
+     RETURNING hidden, blocked, blocked_reason`,
     [
       image_id,
       release_id ?? null,
@@ -1870,11 +1885,20 @@ async function upsertRootfsRow({
     }
   }
 
+  const saved = savedRows[0];
   const manifest = await listVisibleRootfsImages(account_id);
   return {
     image_id,
     slug,
     entry: manifest.images.find((item) => item.id === image_id),
+    moderation: {
+      hidden: saved?.hidden === true,
+      blocked: saved?.blocked === true,
+      blocked_reason:
+        saved?.blocked === true
+          ? (trimString(saved.blocked_reason) ?? undefined)
+          : undefined,
+    },
   };
 }
 
@@ -1885,7 +1909,7 @@ export async function saveRootfsImage({
   account_id: string;
   body: RootfsCatalogSaveBody;
 }): Promise<RootfsImageEntry> {
-  const { image_id, slug, entry } = await upsertRootfsRow({
+  const { image_id, slug, entry, moderation } = await upsertRootfsRow({
     account_id,
     body,
   });
@@ -1913,8 +1937,6 @@ export async function saveRootfsImage({
       prepull: body.prepull,
       tags,
     });
-  const hidden = admin && body.hidden === true;
-  const blocked = admin && body.blocked === true;
   const contentResult =
     hasOwn(body, "content") && body.content != null
       ? normalizeRootfsContentManifest(body.content)
@@ -1934,9 +1956,11 @@ export async function saveRootfsImage({
       visibility,
       official,
       prepull,
-      hidden,
-      blocked,
-      blocked_reason: blocked ? trimString(body.blocked_reason) : undefined,
+      // As stored, not as requested: an owner's save keeps an admin's
+      // moderation, and the catalog lookup above omits such an entry.
+      hidden: moderation.hidden,
+      blocked: moderation.blocked,
+      blocked_reason: moderation.blocked_reason,
       arch: arch as RootfsImageArch,
       gpu,
       size_gb: size_gb ?? undefined,
@@ -1990,7 +2014,7 @@ export async function publishProjectRootfsCatalogEntry({
     requested_size_bytes: artifact.size_bytes,
     operation: "publish",
   });
-  const { image_id, slug, entry } = await upsertRootfsRow({
+  const { image_id, slug, entry, moderation } = await upsertRootfsRow({
     account_id,
     body: {
       image: artifact.image,
@@ -2041,7 +2065,9 @@ export async function publishProjectRootfsCatalogEntry({
       visibility,
       official: false,
       prepull: false,
-      hidden: body.hidden === true,
+      hidden: moderation.hidden,
+      blocked: moderation.blocked,
+      blocked_reason: moderation.blocked_reason,
       size_gb,
       tags,
       theme: normalizeTheme(body.theme) ?? undefined,

@@ -49,6 +49,33 @@ export interface ResolvedAgentPaymentSelection {
   default?: AgentPaymentSelection;
 }
 
+/** Auto: pick one of the account's pooled Claude subscriptions for a turn. */
+export interface ClaudePoolPickRequest {
+  /** The conversation the turn is in; a later pick for it replaces this
+   * turn's reservation. */
+  target: AgentPaymentTarget;
+  /** The conversation's subscription now: kept while it is eligible. */
+  current_credential_id?: string;
+  /** A turn on this subscription just hit its limit (resets_at in seconds,
+   * as Claude reports it). */
+  limited?: { credential_id: string; resets_at?: number };
+  /** Per-turn 5-hour usage observed since the last pick (fractions). */
+  turn_costs?: Array<{ credential_id: string; cost: number }>;
+}
+
+export interface ClaudePoolPickResult {
+  credential_id?: string;
+  /** Display names of the picked and the current subscription. */
+  label?: string;
+  current_label?: string;
+  /** Nothing in the pool can take a turn now: when one can (ISO time), and
+   * which one (a new turn is admitted on it, then held). */
+  hold_until?: string;
+  next_credential_id?: string;
+  /** The pool has no subscription. */
+  empty?: true;
+}
+
 export interface AgentPaymentSelectionsApi {
   get(
     opts: AgentPaymentHomeRequest & {
@@ -78,6 +105,10 @@ export interface AgentPaymentSelectionsApi {
       provider: AgentPaymentProvider;
     },
   ): Promise<ResolvedAgentPaymentSelection>;
+  /** Pick, and reserve for the turn, a pooled Claude subscription. */
+  pickClaudePool(
+    opts: AgentPaymentHomeRequest & ClaudePoolPickRequest,
+  ): Promise<ClaudePoolPickResult>;
 }
 
 export function agentPaymentSelectionsSubject(bay_id: string): string {

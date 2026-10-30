@@ -37,6 +37,7 @@ import type { AcpAttentionStoredRecord } from "../../sqlite/acp-attention";
 import {
   pinCodexCredentialAtAdmission,
   setCodexCredentialAdmissionResolver,
+  setPaymentSelectionResolver,
 } from "../codex-credential-admission";
 import { setHarnessLauncher } from "../harness-runtime";
 import { hubApi } from "../../api";
@@ -211,6 +212,9 @@ beforeAll(() => {
 afterAll(() => closeAcpDatabase());
 
 beforeEach(() => {
+  // The account has no stored payment choice (an answer: a failed lookup
+  // would refuse Claude turns that carry no credential).
+  setPaymentSelectionResolver(async () => ({}));
   mockAuthorizeRpcExecution.mockReset().mockResolvedValue({});
   hubApi.agent.authorizeRpcExecution = mockAuthorizeRpcExecution;
   const db = getAcpDatabase();
@@ -266,6 +270,7 @@ afterEach(async () => {
     delete hubApi.agent.authorizeRpcExecution;
   else hubApi.agent.authorizeRpcExecution = originalAuthorizeRpcExecution;
   setCodexCredentialAdmissionResolver();
+  setPaymentSelectionResolver();
   await disposeAcpAgents();
   configureAcpDetachedWorkerRunning(undefined);
   if (originalDetached === undefined)

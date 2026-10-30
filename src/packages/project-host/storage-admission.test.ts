@@ -3,12 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { countProjectsByStates } from "./sqlite/projects";
 import {
   _test,
   beginStartPreparation,
   createStorageAdmissionController,
+  lifecycleActiveNow,
   preparingStartCount,
 } from "./storage-admission";
+
+jest.mock("./sqlite/projects", () => ({
+  ...jest.requireActual("./sqlite/projects"),
+  countProjectsByStates: jest.fn(() => ({ starting: 0, stopping: 0 })),
+}));
 
 describe("storage admission controller", () => {
   // Most tests here are about how pressure is classified and what each
@@ -1334,7 +1341,7 @@ describe("a start preparing its volumes", () => {
       }),
     });
     expect(controller.backgroundDeferralReason()).toBeUndefined();
-    const end = beginStartPreparation();
+    const preparation = beginStartPreparation("project-1", "check_quota");
     expect(preparingStartCount()).toBe(1);
     expect(
       controller.admit({ operation_kind: "scheduled_snapshot" }),
@@ -1342,10 +1349,46 @@ describe("a start preparing its volumes", () => {
     expect(controller.backgroundDeferralReason()).toBe("lifecycle_active");
     // Ended when the state says "starting", and again in the start's
     // finally (also on failure): the second call does nothing.
-    end();
-    end();
+    preparation.end();
+    preparation.end();
     expect(preparingStartCount()).toBe(0);
     now += 60_000;
     expect(controller.backgroundDeferralReason()).toBeUndefined();
   });
+
+  // Prod montreal-1, 2026-10-29: a first start hung in its scratch volume
+  // step and never ended; counted as lifecycle activity, it held every
+  // scheduled snapshot on the host off for 80 minutes, until a restart.
+  it("counts only for a bounded time", () => {
+    const started = 5_000_000;
+    const hung = beginStartPreparation("project-1", "check_quota", started);
+    hung.setPhase("check_quota.reconcile");
+    const other = beginStartPreparation(
+      "project-2",
+      "check_quota",
+      started + 9 * 60_000,
+    );
+    expect(preparingStartCount(started + 9 * 60_000)).toBe(2);
+    expect(preparingStartCount(started + 10 * 60_000)).toBe(1);
+    expect(preparingStartCount(started + 19 * 60_000)).toBe(0);
+    // a clock stepped back keeps it counted
+    expect(preparingStartCount(started - 60_000)).toBe(2);
+    hung.end();
+    other.end();
+    expect(preparingStartCount(started + 60_000)).toBe(0);
+  });
+});
+
+// Codex on #1503: the BEES gate checks every second, so it must see a start
+// or stop that begins and ends between two admission samples.
+test("lifecycleActiveNow counts live starts, stops and start preparations", () => {
+  const counts = jest.mocked(countProjectsByStates);
+  counts.mockReturnValueOnce({ starting: 0, stopping: 0 });
+  expect(lifecycleActiveNow()).toBe(0);
+  counts.mockReturnValueOnce({ starting: 1, stopping: 2 });
+  expect(lifecycleActiveNow()).toBe(3);
+  const preparation = beginStartPreparation("project-1", "check_quota");
+  counts.mockReturnValueOnce({ starting: 0, stopping: 0 });
+  expect(lifecycleActiveNow()).toBe(1);
+  preparation.end();
 });

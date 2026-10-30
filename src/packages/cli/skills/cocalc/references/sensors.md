@@ -55,6 +55,16 @@ cocalc sensor delete <id>
 - Test before proposing, then tell the user what it does and that it waits
   for approval in your Sensors dialog (the Connectors menu of this chat).
   Any change needs approval again.
+- A scheduled run is not your turn's environment: it is a fresh container
+  with the project's software and files, but **not the project's secrets**
+  (`/run/secrets`, `$COCALC_SECRETS`), with an empty `/tmp`, and without your runtime files.
+  `sensor test` runs the script here, where those exist, so a test can pass
+  while every scheduled run fails; it warns about each of them it sees in the
+  script. Work that needs a secret belongs in a scheduled prompt (it runs in
+  your turn), not a script sensor.
+- After 5 failed runs in a row a sensor pauses itself, and the person it runs
+  as is notified. Check `cocalc sensor show <id>` (its runs and output) after
+  proposing one, and again later.
 - A scheduled prompt (`"kind": "prompt"`) sends you a fixed prompt on a
   schedule, like a daily briefing. People can also set these up themselves.
 - A `[Sensor wake]` turn is not from a person, and its data comes from

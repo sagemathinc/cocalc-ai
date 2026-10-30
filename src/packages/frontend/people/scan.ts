@@ -12,6 +12,7 @@ import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/projec
 import { resolveProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { normalizeConversationPath } from "@cocalc/util/people";
+import { LANGUAGE_MODEL_PREFIXES } from "@cocalc/util/db-schema/ai-models";
 
 export const SCAN_MAX_RESULTS = 2000;
 // Places that hold agent or tool chats, caches and snapshots, not
@@ -64,8 +65,36 @@ export function parseFdOutput(home: string, stdout: string): string[] {
 
 export interface ProjectScanResult {
   project_id: string;
+  // Conversations between people (AI chats are left out).
   paths: string[];
+  // How many AI chats were found and left out.
+  skipped: number;
   truncated: boolean;
+}
+
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// What marks a chat file as a conversation with AI, not between people: a
+// thread configured for an agent (Codex and other ACP agents), or a message
+// from a language model (its sender id is the model's name).
+export const AI_CHAT_PATTERN = [
+  '"agent_kind":"acp"',
+  '"acp_config":\\{',
+  `"sender_id":"(${LANGUAGE_MODEL_PREFIXES.map(escapeRegex).join("|")})`,
+].join("|");
+
+export function ripgrepOptions(): string[] {
+  const options = [
+    "--files-with-matches",
+    "--hidden",
+    "--no-ignore",
+    "--glob",
+    "*.chat",
+  ];
+  for (const exclude of SCAN_EXCLUDES) options.push("--glob", `!${exclude}`);
+  return options;
 }
 
 export async function scanProject(
@@ -84,12 +113,37 @@ export async function scanProject(
   if (output.code && !output.stdout?.length) {
     throw Error(Buffer.from(output.stderr ?? "").toString() || "scan failed");
   }
-  const paths = parseFdOutput(home, Buffer.from(output.stdout).toString());
+  const found = parseFdOutput(home, Buffer.from(output.stdout).toString());
+  const ai =
+    found.length === 0 ? new Set<string>() : await aiChats(project, home);
+  const paths = found.filter((path) => !ai.has(path));
   return {
     project_id,
     paths,
-    truncated: !!output.truncated || paths.length >= SCAN_MAX_RESULTS,
+    skipped: found.length - paths.length,
+    truncated: !!output.truncated || found.length >= SCAN_MAX_RESULTS,
   };
+}
+
+// The AI chats in the project, searched on its host in one pass. If the
+// search fails, the scan fails: an AI chat must not be imported by mistake.
+async function aiChats(project, home: string): Promise<Set<string>> {
+  const output = await project.fs().ripgrep(home, AI_CHAT_PATTERN, {
+    options: ripgrepOptions(),
+    timeout: 30_000,
+    maxSize: 4_000_000,
+  });
+  // ripgrep exits 1 when nothing matches.
+  if (output.code && output.code !== 1) {
+    throw Error(
+      Buffer.from(output.stderr ?? "").toString() ||
+        "could not check which chats are with AI",
+    );
+  }
+  if (output.truncated) {
+    throw Error("too many AI chats to check");
+  }
+  return new Set(parseFdOutput(home, Buffer.from(output.stdout).toString()));
 }
 
 export async function fileModified(

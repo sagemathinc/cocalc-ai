@@ -30,6 +30,7 @@ import {
   countRecentAutomaticArchives,
   countRunningArchivesByHost,
   createProjectArchiveLifecycleJob,
+  failStuckManualArchiveJobs,
   listQueuedProjectArchiveLifecycleJobs,
   listRecoverableProjectArchiveLifecycleJobs,
   type ProjectArchiveLifecycleJob,
@@ -1324,6 +1325,13 @@ export async function runProjectArchiveLifecycleOnce(): Promise<ProjectArchiveLi
   const config = await loadProjectArchiveLifecycleConfig();
   const summary = emptySummary(config);
   const startedAt = Date.now();
+  // Before any admission: such a job would hold its host's archive slot.
+  const stuck = await failStuckManualArchiveJobs();
+  if (stuck.length > 0) {
+    logger.warn("failed manual archive jobs that never finished", {
+      job_ids: stuck,
+    });
+  }
   const recoverable = await listRecoverableProjectArchiveLifecycleJobs(
     config.batchLimit,
   );

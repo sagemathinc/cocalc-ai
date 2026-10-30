@@ -3,7 +3,9 @@ import { parseAcpHarnessCredential } from "@cocalc/util/ai/runtime";
 import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
 import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
+  readClaudePoolSelection,
   readHarnessCredentialSelection,
+  writeClaudePoolSelection,
   writeHarnessCredentialSelection,
 } from "../harness-credential-selection";
 import {
@@ -261,4 +263,46 @@ test("only subscription credentials accept a boolean connector preference", () =
     credential,
   );
   expect(() => parse({ ...credential, claudeAiConnectors: "false" })).toThrow();
+});
+
+describe("Auto", () => {
+  it("sends no credential: the host picks a subscription for each turn", async () => {
+    writeHarnessCredentialSelection({ ...scope, credential: subscription(A) });
+    await settle();
+    writeClaudePoolSelection({ ...scope, connectors: false });
+    await settle();
+    expect(readHarnessCredentialSelection(scope)).toBeUndefined();
+    expect(readClaudePoolSelection(scope)).toEqual({
+      version: 1,
+      provider: "claude-code",
+      mode: "subscription-pool",
+      claude_ai_connectors: false,
+    });
+    expect(server.rows.get(`thread:${PROJECT}:thread-a:claude-code`)).toEqual({
+      version: 1,
+      provider: "claude-code",
+      mode: "subscription-pool",
+      claude_ai_connectors: false,
+    });
+    // Choosing a subscription again leaves Auto.
+    writeHarnessCredentialSelection({ ...scope, credential: subscription(B) });
+    await settle();
+    expect(readClaudePoolSelection(scope)).toBeUndefined();
+    expect(readHarnessCredentialSelection(scope)).toEqual(subscription(B));
+  });
+
+  it("an agent following an Auto default is on Auto", async () => {
+    writeClaudePoolSelection(scope);
+    await settle();
+    // The first choice became the default; agents follow it.
+    expect(server.rows.get("default:claude-code")).toMatchObject({
+      mode: "subscription-pool",
+    });
+    expect(
+      readClaudePoolSelection({ ...scope, threadKey: "thread-b" }),
+    ).toBeTruthy();
+    expect(
+      readClaudePoolSelection({ accountId: "account-a", forNewAgent: true }),
+    ).toBeTruthy();
+  });
 });

@@ -740,6 +740,73 @@ WHERE id=$1 AND ${ownershipClause(2)} AND revoked IS NULL
   return !!rowCount;
 }
 
+/**
+ * Read one selector's active credentials and change their metadata in a
+ * single transaction, serialized with every other caller using the same
+ * `lock` for this selector (in any process of the bay): `fn` sees the rows
+ * and returns its result and the metadata values to set.
+ */
+export async function updateExternalCredentialMetadataLocked<T>({
+  selector,
+  lock,
+  fn,
+}: {
+  selector: ExternalCredentialSelector;
+  lock: string;
+  fn: (rows: { id: string; metadata: Record<string, any> }[]) => Promise<{
+    result: T;
+    updates: { id: string; key: string; value: unknown }[];
+  }>;
+}): Promise<T> {
+  const normalized = normalizeSelector(selector);
+  if (!/^[a-z][a-z0-9_-]{0,63}$/.test(lock))
+    throw new Error("invalid credential lock name");
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `${lock}:${selectorLockKey(normalized)}`,
+    ]);
+    const { rows } = await client.query<{
+      id: string;
+      metadata: Record<string, any> | null;
+    }>(
+      `
+SELECT id, metadata FROM external_credentials
+WHERE ${ownershipClause(1)} AND revoked IS NULL
+ORDER BY created
+FOR UPDATE
+      `,
+      [...selectorValues(normalized)],
+    );
+    const { result, updates } = await fn(
+      rows.map((row) => ({ id: row.id, metadata: row.metadata ?? {} })),
+    );
+    const ids = new Set(rows.map((row) => row.id));
+    for (const { id, key, value } of updates) {
+      if (!ids.has(id)) throw new Error("credential not locked");
+      if (!/^[a-z][a-z0-9_]{0,63}$/.test(key))
+        throw new Error("invalid credential metadata key");
+      const json = JSON.stringify(value ?? null);
+      if (json.length > 16 * 1024)
+        throw new Error("credential metadata value is too large");
+      await client.query(
+        `UPDATE external_credentials
+         SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), ARRAY[$2::text], $3::jsonb, true)
+         WHERE id=$1`,
+        [id, key, json],
+      );
+    }
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function ensureDefaultExternalCredential({
   selector,
   metadataKey,

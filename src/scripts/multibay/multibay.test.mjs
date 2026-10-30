@@ -772,6 +772,138 @@ describe("a held sign-in turn asks the account's home bay (I4c)", () => {
   });
 });
 
+describe("Auto picks a Claude subscription on the account's home bay", () => {
+  // The project (and its host) on the seed; the account (bob) homed on the
+  // attached bay, with its Claude subscriptions. Each turn of an Auto agent
+  // asks the seed, which picks (and reserves) on bob's home bay.
+  const host_id = randomUUID();
+  const hour = 3600;
+  let project_id;
+  let soon; // its week resets soonest: Auto uses it first
+  let later;
+  const selector = () => ({
+    provider: "anthropic",
+    kind: "claude-subscription-home-v1",
+    scope: "account",
+    owner_account_id: bob.account_id,
+  });
+  const usage = (week, resetsIn) => {
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      observed_at: new Date().toISOString(),
+      windows: {
+        five_hour: { utilization: 0.1, resets_at: now + 2 * hour },
+        seven_day: { utilization: week, resets_at: now + resetsIn },
+      },
+    };
+  };
+  const pick = async (extra = {}, host = host_id) =>
+    await runInBay(
+      cluster,
+      SEED,
+      `return await server("agents/payment-selections.js").pickClaudePoolSubscription(${JSON.stringify(
+        {
+          host_id: host,
+          account_id: bob.account_id,
+          target: { project_id, thread_id: "auto-1" },
+          ...extra,
+        },
+      )});`,
+    );
+  const onHome = async (body) => await runInBay(cluster, ATTACHED, body);
+  const metadata = async (id) =>
+    await onHome(
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT metadata FROM external_credentials WHERE id=$1", [${JSON.stringify(id)}]);
+       return rows[0]?.metadata ?? null;`,
+    );
+
+  before(async () => {
+    const owner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "auto-owner",
+    });
+    project_id = await createProject(await client(owner), "auto-pool");
+    assert.equal(await owningBay(project_id), SEED);
+    await runInBay(
+      cluster,
+      SEED,
+      `const pool = require("@cocalc/database/pool").default();
+       await pool.query(
+         "INSERT INTO project_hosts (id, name, status, bay_id, metadata, created, updated) VALUES ($1, 'auto host', 'off', $2, '{}', NOW(), NOW())",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(SEED)}],
+       );
+       await pool.query(
+         "UPDATE projects SET host_id=$1, users = users || jsonb_build_object($3::text, jsonb_build_object('group','collaborator')) WHERE project_id=$2",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(project_id)}, ${JSON.stringify(bob.account_id)}],
+       );`,
+    );
+    const create = async (label, claude_usage) =>
+      (
+        await onHome(
+          `return await server("external-credentials/store.js").createExternalCredential({
+             selector: ${JSON.stringify(selector())},
+             payload: "not-a-real-token-" + ${JSON.stringify(label)},
+             metadata: ${JSON.stringify({ label, claude_usage })},
+           });`,
+        )
+      ).id;
+    soon = await create("Max soon", usage(0.3, 10 * hour));
+    later = await create("Max later", usage(0.3, 100 * hour));
+  });
+
+  it("picks across bays, marks a limit there, and never returns a secret", async () => {
+    const first = await pick();
+    assert.equal(first.credential_id, soon, JSON.stringify(first));
+    assert.equal(first.label, "Max soon");
+    assert.doesNotMatch(JSON.stringify(first), /not-a-real-token/);
+    // A turn on it hit its limit: the home bay marks it, and Auto moves on.
+    const resets_at = Math.floor(Date.now() / 1000) + 2 * hour;
+    const moved = await pick({
+      current_credential_id: soon,
+      limited: { credential_id: soon, resets_at },
+      turn_costs: [{ credential_id: later, cost: 0.04 }],
+    });
+    assert.equal(moved.credential_id, later, JSON.stringify(moved));
+    assert.equal(moved.current_label, "Max soon");
+    assert.equal(
+      (await metadata(soon)).claude_pool_limited.until,
+      new Date(resets_at * 1000).toISOString(),
+    );
+    assert.deepEqual((await metadata(later)).claude_turn_costs, {
+      samples: [0.04],
+    });
+  });
+
+  it("follows the owner's choice of subscriptions, made through their home", async () => {
+    // Bob takes "later" out of Auto (soon is still marked limited).
+    const c = bob.client;
+    await c.call("system.setClaudeSubscriptionInPool", {
+      id: later,
+      in_pool: false,
+    });
+    assert.equal((await metadata(later)).claude_pool_excluded, true);
+    const held = await pick();
+    assert.equal(held.credential_id, undefined, JSON.stringify(held));
+    assert.ok(Date.parse(held.hold_until) > Date.now(), JSON.stringify(held));
+    await c.call("system.setClaudeSubscriptionInPool", {
+      id: soon,
+      in_pool: false,
+    });
+    assert.deepEqual(await pick(), { empty: true });
+    await c.call("system.setClaudeSubscriptionInPool", {
+      id: later,
+      in_pool: true,
+    });
+    assert.equal((await pick()).credential_id, later);
+  });
+
+  it("refuses a host that does not run the project", async () => {
+    await assert.rejects(pick({}, randomUUID()));
+  });
+});
+
 describe("inspecting a sent message's turn across bays", () => {
   // The sender's agent runs in a seed-owned project; the recipient's project
   // (and its host) live on the attached bay, which is also the account's
@@ -2513,6 +2645,126 @@ describe("host reads across bays", () => {
        return rows[0]?.dismissed ?? null;`,
     );
     assert.equal(dismissed, true, "dismissed on the host's bay");
+  });
+});
+
+describe("a host's calls about a project on another bay", () => {
+  // A host on the attached bay runs a project the seed owns. The host calls
+  // the hub on its own bay, as a host; each call runs on the project's bay.
+  const host_id = randomUUID();
+  let project_id;
+
+  const asHost = async (name, opts, as_host = host_id) =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const { conat } = require("@cocalc/backend/conat");
+       const callHub = require("@cocalc/conat/hub/call-hub").default;
+       return (await callHub({
+         client: conat(),
+         host_id: ${JSON.stringify(as_host)},
+         name: ${JSON.stringify(name)},
+         args: [${JSON.stringify(opts)}],
+         timeout: 30_000,
+       })) ?? null;`,
+    );
+  const onSeed = async (sql, params) =>
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(${JSON.stringify(sql)}, ${JSON.stringify(params)});
+       return rows;`,
+    );
+  const forwarded = async (name) => {
+    const [{ t }] = await onSeed(
+      "SELECT to_regclass('hub_api_forwarded_calls') AS t",
+      [],
+    );
+    if (t == null) return 0; // nothing forwarded to the seed yet
+    const [{ n }] = await onSeed(
+      "SELECT COUNT(*)::INT AS n FROM hub_api_forwarded_calls WHERE name=$1 AND source_bay_id=$2 AND finished IS NOT NULL",
+      [name, ATTACHED],
+    );
+    return n;
+  };
+
+  before(async () => {
+    // Its own owner: alice's project limit is needed by later scenarios.
+    const owner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "hester",
+    });
+    project_id = await createProject(await client(owner), "hosted-elsewhere");
+    assert.equal(await owningBay(project_id), SEED);
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO project_hosts (id, name, status, metadata, created, updated, bay_id) VALUES ($1, 'remote-runner', 'running', $2, NOW(), NOW(), $3)",
+         [${JSON.stringify(host_id)}, ${JSON.stringify({ owner: alice.account_id })}, ${JSON.stringify(ATTACHED)}]);`,
+    );
+    await onSeed("UPDATE projects SET host_id=$1 WHERE project_id=$2", [
+      host_id,
+      project_id,
+    ]);
+  });
+
+  it("reads the project's start metadata on the project's bay", async () => {
+    const count = await forwarded("hosts.getProjectStartMetadata");
+    const metadata = await asHost("hosts.getProjectStartMetadata", {
+      project_id,
+    });
+    assert.equal(metadata?.title, "hosted-elsewhere");
+    assert.equal(await forwarded("hosts.getProjectStartMetadata"), count + 1);
+    // Another host does not run it: the project's bay refuses.
+    await assert.rejects(
+      asHost("hosts.getProjectStartMetadata", { project_id }, randomUUID()),
+      /is not assigned to host/,
+    );
+  });
+
+  it("records activity and changes on the project's bay", async () => {
+    const [{ last_edited: editedBefore }] = await onSeed(
+      "SELECT last_edited FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    await asHost("hosts.touchProject", { project_id });
+    await asHost("hosts.markProjectChanged", { project_id, generation: 7 });
+    const [row] = await onSeed(
+      "SELECT last_edited, last_changed_generation::INT AS generation FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    assert.ok(
+      new Date(row.last_edited) > new Date(editedBefore ?? 0),
+      "touched on the project's bay",
+    );
+    assert.equal(row.generation, 7);
+    assert.equal(await forwarded("hosts.touchProject"), 1);
+    assert.equal(await forwarded("hosts.markProjectChanged"), 1);
+  });
+
+  it("keeps the project's backup index on the project's bay", async () => {
+    const backup_id = randomUUID();
+    await asHost("hosts.recordProjectBackupIndex", {
+      project_id,
+      backup_id,
+      backup_time: new Date().toISOString(),
+      status: "complete",
+    });
+    const listed = await asHost("hosts.getProjectBackupIndexes", {
+      project_id,
+    });
+    assert.ok(
+      listed.some((index) => index.backup_id === backup_id),
+      JSON.stringify(listed),
+    );
+    await asHost("hosts.deleteProjectBackupIndex", { project_id, backup_id });
+    const after = await asHost("hosts.getProjectBackupIndexes", {
+      project_id,
+    });
+    assert.ok(!after.some((index) => index.backup_id === backup_id));
   });
 });
 

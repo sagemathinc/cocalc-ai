@@ -25,6 +25,8 @@ import type {
 } from "@cocalc/util/ai/agent-payment-selection";
 import type {
   AgentPaymentSelectionsResult,
+  ClaudePoolPickRequest,
+  ClaudePoolPickResult,
   ResolvedAgentPaymentSelection,
   SetAgentPaymentSelectionsRequest,
 } from "@cocalc/conat/inter-bay/agent-payment-selections";
@@ -87,6 +89,7 @@ export const agent = {
   setPaymentSelections: authFirstRequireAccount,
   copyPaymentSelection: authFirstRequireAccount,
   resolvePaymentSelection: authFirstRequireHostWithAccountTarget,
+  pickClaudePoolSubscription: authFirstRequireHostWithAccountTarget,
   reportRuntime: authFirstRequireHostWithAccountTarget,
   credentialUpdatedAt: authFirstRequireHostWithAccountTarget,
   reportStatus: authFirstRequireHostWithAccountTarget,
@@ -586,6 +589,11 @@ export interface AgentApi {
       provider: AgentPaymentProvider;
     },
   ): Promise<ResolvedAgentPaymentSelection>;
+  /** Host admitting a turn of an Auto agent: which of the account's pooled
+   * Claude subscriptions pays for it (reserved for the turn). */
+  pickClaudePoolSubscription(
+    opts: AgentHostAuth & ClaudePoolPickRequest,
+  ): Promise<ClaudePoolPickResult>;
   /**
    * Host starting a turn of an issued identity run: the @name peers use for
    * this agent and its networks, for the turn context. Undefined when the

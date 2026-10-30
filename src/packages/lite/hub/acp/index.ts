@@ -9,6 +9,7 @@ import {
   toolRanOf,
   parseTurnOutcome,
   turnFailureOf,
+  withTurnFailure,
   turnOutcomeOf,
   type TurnFailure,
   type TurnOutcome,
@@ -367,7 +368,16 @@ import {
 } from "./worker-manager";
 import { buildCodexRuntimeEnv } from "./runtime-env";
 import { validateAttentionAnswers } from "@cocalc/ai/acp";
-import { pinCodexCredentialAtAdmission } from "./codex-credential-admission";
+import {
+  pinCodexCredentialAtAdmission,
+  withClaudePoolControlCredential,
+} from "./codex-credential-admission";
+import {
+  beginClaudePoolTurnUsage,
+  claudePoolAfterLimit,
+  dispatchClaudePoolTurn,
+  endClaudePoolTurnUsage,
+} from "./claude-pool";
 import {
   prepareHarnessRequest,
   harnessProfileKey,
@@ -2340,6 +2350,16 @@ function stashLimitNotice(message_id: string, notice: StashedLimitNotice) {
  * shared "paused" notice only if a continuation was queued, else the turn's
  * ordinary error notice (it will not resume on its own).
  */
+/** An Auto turn that moved to another subscription is not paused: drop its
+ * limit notice. */
+function dropLimitNotice(message_id: string | undefined): void {
+  if (!message_id) return;
+  const stashed = stashedLimitNotices.get(message_id);
+  if (!stashed) return;
+  stashedLimitNotices.delete(message_id);
+  if (stashed.timer) clearTimeout(stashed.timer);
+}
+
 async function publishLimitNoticeAfterHold(
   message_id: string | undefined,
   held: boolean,
@@ -8293,7 +8313,9 @@ async function executeAcpRequest({
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
 }): Promise<AcpExecutionResult> {
   const reqId = randomUUID();
-  request = prepareHarnessRequest(request);
+  // Auto: the subscription this turn runs on, picked now.
+  const pool = await dispatchClaudePoolTurn(request);
+  request = prepareHarnessRequest(pool.request);
   const harness = request.runtime?.kind === "acp";
   const startedAt = Date.now();
   const { config } = request;
@@ -8539,6 +8561,20 @@ async function executeAcpRequest({
         if (memory.event) {
           await wrappedStream({ type: "event", event: memory.event });
         }
+        if (pool.hold) {
+          // Every subscription in Auto is at its limit: held like a turn
+          // that reached one, until one has room.
+          throw withTurnFailure(
+            new Error(
+              "Every Claude subscription in Auto is at its usage limit.",
+            ),
+            pool.hold,
+          );
+        }
+        if (pool.event) {
+          await wrappedStream({ type: "event", event: pool.event });
+        }
+        beginClaudePoolTurnUsage(request);
         // The person's local time (and place, if they allow it), so the
         // agent does not assume UTC for "today" or "6am".
         const userTimeContext = agentUserTimeContext(
@@ -8635,6 +8671,7 @@ async function executeAcpRequest({
         }
       }
     } finally {
+      endClaudePoolTurnUsage(request);
       terminalState = chatWriter?.getTerminalState() ?? terminalState;
       terminalError =
         terminalState === "error"
@@ -9606,6 +9643,32 @@ async function enqueueLimitHold({
   let delayMs = limitHoldDelayMs(outcome, base);
   if (delayMs == null) return undefined;
   const failed = decodeAcpJobRequest(job);
+  // Auto: continue on another subscription now, or hold until one has room.
+  const moved =
+    outcome.state === "failed" && failed.chat?.agent_rpc_report == null
+      ? await claudePoolAfterLimit(failed, outcome.failure)
+      : undefined;
+  let notice = LIMIT_HOLD_NOTICE;
+  let held_because =
+    "The previous attempt stopped because a usage limit was reached; CoCalc held this turn until the limit reset.";
+  if (moved?.credential_id) {
+    delayMs = 0;
+    const from = moved.current_label ?? "its Claude subscription";
+    const to = moved.label ?? "another Claude subscription";
+    notice = `**Usage limit reached on ${from}: continuing on ${to}.**`;
+    held_because = `The previous attempt stopped because the usage limit of ${from} was reached; CoCalc continued this turn on ${to} (Auto).`;
+  } else if (moved?.hold_until) {
+    const until = Date.parse(moved.hold_until);
+    if (Number.isFinite(until))
+      delayMs = Math.max(
+        ACP_LIMIT_HOLD_MARGIN_MS,
+        until - base + ACP_LIMIT_HOLD_MARGIN_MS,
+      );
+    notice =
+      "**Conversation paused because every Claude subscription in Auto reached a usage limit.**";
+    held_because =
+      "The previous attempt stopped because a usage limit was reached, and every Claude subscription in Auto was at its limit; CoCalc held this turn until one had room.";
+  }
   // Another agent's message: resume while its report can still be sent
   // (its capability expires a week after the message). If the limit has
   // not reset by then, the turn ends there and the sender hears so.
@@ -9614,7 +9677,7 @@ async function enqueueLimitHold({
   );
   if (reportable != null) {
     delayMs = Math.min(delayMs, reportable - HOLD_REPORT_MARGIN_MS - base);
-    if (delayMs < 60_000) return undefined;
+    if (delayMs < 60_000 && !moved?.credential_id) return undefined;
   }
   // A delivery report starts one turn (the hub records it).
   if (failed.chat?.agent_rpc_report) return undefined;
@@ -9624,19 +9687,26 @@ async function enqueueLimitHold({
   const held = await enqueueRecoveryContinuationForJob({
     client,
     job,
-    interruptedNotice: LIMIT_HOLD_NOTICE,
+    interruptedNotice: notice,
     recoveryReason: "usage limit hold",
     delayMs,
     maxRetries: ACP_LIMIT_HOLD_MAX_RETRIES,
     // Not after the sender withdrew it (that clears the intent).
     requireParentFenceIntent: ACP_HOLD_INTENT,
     recoveryGuidance: [
-      "The previous attempt stopped because a usage limit was reached; CoCalc held this turn until the limit reset.",
+      held_because,
       ranTools
         ? "It had already run tools before it stopped: check the current state of what it was doing before you continue, and do not repeat completed steps."
         : "It had not run any tools before it stopped.",
     ].join(" "),
   });
+  if (held && moved?.credential_id) {
+    // Runs on the new one even if the next pick cannot reach the home bay.
+    const from = failed.harness_credential;
+    if (from?.mode === "account-subscription")
+      repinHeldCredential(held, from.credentialId, moved.credential_id);
+    dropLimitNotice(failed.chat?.message_id);
+  }
   if (held)
     logger.info("held ACP turn until its usage limit resets", {
       failed_op_id: job.op_id,
@@ -13630,15 +13700,17 @@ async function handleAcpControlRequestNow(
         });
       },
     });
-    const result = await forkHarnessSession({
-      project_id,
-      account_id: request.account_id,
-      runtime: source.runtime,
-      session_id: source.sessionId,
-      harness_credential: request.harness_credential,
-      prompt: "",
-      chat: { project_id, path, thread_id },
-    } as AcpRequest);
+    const result = await forkHarnessSession(
+      await withClaudePoolControlCredential({
+        project_id,
+        account_id: request.account_id,
+        runtime: source.runtime,
+        session_id: source.sessionId,
+        harness_credential: request.harness_credential,
+        prompt: "",
+        chat: { project_id, path, thread_id },
+      } as AcpRequest),
+    );
     return { ok: true, forked_session_id: result.sessionId };
   }
   if (request.action === "discover_harness_v1") {
@@ -13655,14 +13727,16 @@ async function handleAcpControlRequestNow(
     });
     return {
       ok: true,
-      harness: await discoverHarnessControls({
-        project_id,
-        account_id: request.account_id,
-        harness_credential: request.harness_credential,
-        runtime,
-        prompt: "",
-        chat: { project_id, path, thread_id },
-      } as AcpRequest),
+      harness: await discoverHarnessControls(
+        await withClaudePoolControlCredential({
+          project_id,
+          account_id: request.account_id,
+          harness_credential: request.harness_credential,
+          runtime,
+          prompt: "",
+          chat: { project_id, path, thread_id },
+        } as AcpRequest),
+      ),
     };
   }
   if (request.action === "prepare_fresh_conversation") {

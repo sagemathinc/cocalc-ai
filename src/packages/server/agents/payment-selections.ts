@@ -36,6 +36,7 @@ import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
+import { pickClaudePool } from "./claude-pool";
 
 const logger = getLogger("server:agents:payment-selections");
 
@@ -308,6 +309,12 @@ export const paymentSelectionsHome: AgentPaymentSelectionsApi = {
       ...(result.defaults[p] ? { default: result.defaults[p] } : {}),
     };
   },
+
+  async pickClaudePool(opts) {
+    await assertHome(opts.account_id, opts.home_bay_id);
+    const { home_bay_id: _home, ...request } = opts;
+    return await pickClaudePool(request);
+  },
 };
 
 /** Attach this account's payment selections to its named agents (home bay). */
@@ -447,6 +454,30 @@ export const resolvePaymentSelection: AgentApi["resolvePaymentSelection"] =
         home_bay_id,
         target,
         provider: provider(opts.provider),
+      }),
+    );
+  };
+
+// Auto: a host admitting a turn asks which pooled subscription pays for it.
+// The same project access check as resolvePaymentSelection; the pick is
+// only ever among the account's own subscriptions.
+export const pickClaudePoolSubscription: AgentApi["pickClaudePoolSubscription"] =
+  async (opts) => {
+    const target = validateAgentPaymentTarget(opts.target);
+    await assertProjectHostAgentTokenAccess({
+      host_id: opts.host_id!,
+      account_id: opts.account_id!,
+      project_id: target.project_id,
+    });
+    const account_id = opts.account_id!;
+    return withHome(account_id, (api, home_bay_id) =>
+      api.pickClaudePool({
+        account_id,
+        home_bay_id,
+        target,
+        current_credential_id: opts.current_credential_id,
+        limited: opts.limited,
+        turn_costs: opts.turn_costs,
       }),
     );
   };

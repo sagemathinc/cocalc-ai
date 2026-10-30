@@ -81,7 +81,9 @@ import type { HarnessProfileDraft } from "@cocalc/frontend/chat/harness-profile"
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
 import {
+  readClaudePoolSelection,
   readHarnessCredentialSelection,
+  writeClaudePoolSelection,
   writeHarnessCredentialSelection,
 } from "@cocalc/frontend/chat/harness-credential-selection";
 import {
@@ -816,6 +818,17 @@ function NewAgentPanel({
   // Only a choice made in this form wins over the preferred credential; a
   // remembered one is kept while it still exists.
   const claudeCredentialChosen = useRef(false);
+  // Auto: the account's subscriptions, one picked for each turn.
+  const [claudeAuto, setClaudeAuto] = useState<boolean>(
+    () =>
+      restoredPreparation?.settings?.claudeAuto ??
+      !!readClaudePoolSelection({
+        accountId: boundAccount.accountId,
+        projectId: selectionThread?.projectId,
+        threadKey: selectionThread?.threadId,
+        forNewAgent: true,
+      }),
+  );
   const [claudeCredential, setClaudeCredential] =
     useState<AcpHarnessCredential>(
       () =>
@@ -1138,7 +1151,16 @@ function NewAgentPanel({
               ? executionConfig.credentialId
               : undefined,
         });
-        if (runtimeKind === "claude-code") {
+        if (runtimeKind === "claude-code" && claudeAuto) {
+          writeClaudePoolSelection({
+            accountId: boundAccount.accountId,
+            projectId: targetProjectId,
+            threadKey: threadId,
+            connectors:
+              claudeCredential.mode !== "account-subscription" ||
+              claudeCredential.claudeAiConnectors !== false,
+          });
+        } else if (runtimeKind === "claude-code") {
           writeHarnessCredentialSelection({
             accountId: boundAccount.accountId,
             projectId: targetProjectId,
@@ -1158,7 +1180,7 @@ function NewAgentPanel({
                 },
               }
             : runtimeKind === "claude-code"
-              ? { claudeCredential }
+              ? { claudeCredential, ...(claudeAuto ? { claudeAuto } : {}) }
               : undefined;
         created = { projectId: targetProjectId, path, threadId };
         pendingRef.current = created;
@@ -2330,6 +2352,11 @@ function NewAgentPanel({
                 settings={harnessSettings}
                 onSettings={setHarnessSettings}
                 credential={claudeCredential}
+                auto={claudeAuto}
+                onAuto={(auto) => {
+                  claudeCredentialChosen.current = true;
+                  setClaudeAuto(auto);
+                }}
                 credentials={anthropicCredentials}
                 credentialsLoaded={claudeCredentialsLoaded}
                 onCredential={(credential) => {

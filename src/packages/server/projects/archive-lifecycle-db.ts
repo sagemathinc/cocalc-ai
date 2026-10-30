@@ -307,6 +307,51 @@ export async function updateProjectArchiveLifecycleJob({
   );
 }
 
+// A manual archive runs inside the call that created its job, so a hub restart
+// during it leaves the job "running" for good. That job then counts as its
+// host's running archive, and automatic archiving there stops (prod
+// los-angeles-1, 2026-10-30: the bay restarted 8 s into one). While the call
+// runs it refreshes the job (MANUAL_ARCHIVE_HEARTBEAT_MS), so a job not
+// refreshed for this long belongs to a call that is gone: fail it.
+export const STUCK_MANUAL_ARCHIVE_MS = 30 * 60_000;
+export const MANUAL_ARCHIVE_HEARTBEAT_MS = 5 * 60_000;
+
+export async function touchRunningProjectArchiveLifecycleJob(
+  job_id: string,
+): Promise<void> {
+  await ensureProjectArchiveLifecycleSchema();
+  await getPool().query(
+    `UPDATE ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
+        SET updated_at = NOW()
+      WHERE id = $1
+        AND status = 'running'`,
+    [job_id],
+  );
+}
+
+export async function failStuckManualArchiveJobs(
+  staleMs = STUCK_MANUAL_ARCHIVE_MS,
+): Promise<string[]> {
+  await ensureProjectArchiveLifecycleSchema();
+  const { rows } = await getPool().query<{ id: string }>(
+    `UPDATE ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
+        SET status = 'failed',
+            completed_at = NOW(),
+            failure_category = 'stuck-manual-archive',
+            error = $2,
+            updated_at = NOW()
+      WHERE reason = 'manual'
+        AND status = 'running'
+        AND updated_at < NOW() - make_interval(secs => $1::double precision)
+      RETURNING id::text AS id`,
+    [
+      staleMs / 1000,
+      "the manual archive did not finish (e.g. the hub restarted during it)",
+    ],
+  );
+  return rows.map(({ id }) => id);
+}
+
 export async function countRecentAutomaticArchives(): Promise<number> {
   await ensureProjectArchiveLifecycleSchema();
   const { rows } = await getPool().query<{ count: string }>(

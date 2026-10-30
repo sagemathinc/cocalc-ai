@@ -30,6 +30,7 @@ import {
   ensureBtrfsQuotaModeDetails,
   type BtrfsQuotaRuntimeDetails,
 } from "./quota-mode";
+import { applyBeesGateAction, BeesGate, beesGateEnabled } from "./bees-gate";
 import {
   collectBeesTelemetry,
   recordBeesTelemetryError,
@@ -82,6 +83,10 @@ export interface Options {
     current_used: number;
     run: () => Promise<T>;
   }) => Promise<T> | undefined;
+
+  // Whether projects are starting or stopping now: the BEES gate keeps BEES
+  // frozen meanwhile (bees-gate.ts).
+  beesLifecycleActive?: () => boolean;
 }
 
 let mountLock = false;
@@ -98,6 +103,9 @@ export class Filesystem {
   private beesTelemetryRunning = false;
   private beesDisabledByConfig = false;
   private beesStopping = false;
+  private beesGate?: BeesGate;
+  private beesUngated = false;
+  private beesReconcileTimer?: NodeJS.Timeout;
   private quotaRuntime?: BtrfsQuotaRuntimeDetails;
   private beesLastExit?: {
     code: number | null;
@@ -169,10 +177,15 @@ export class Filesystem {
 
   close = () => {
     this.beesStopping = true;
+    this.beesGate?.stop();
     this.beesRunningExternally = false;
     if (this.beesRestartTimer) {
       clearTimeout(this.beesRestartTimer);
       this.beesRestartTimer = undefined;
+    }
+    if (this.beesReconcileTimer) {
+      clearTimeout(this.beesReconcileTimer);
+      this.beesReconcileTimer = undefined;
     }
     if (this.beesTelemetryTimer) {
       clearInterval(this.beesTelemetryTimer);
@@ -202,10 +215,73 @@ export class Filesystem {
       external: this.beesRunningExternally,
       restartAttempts: this.beesRestartAttempts,
       restartPending: this.beesRestartTimer != null,
+      cgroupReconcilePending: this.beesReconcileTimer != null,
       lastExit: this.beesLastExit,
       telemetry: this.beesTelemetry,
+      gate: this.beesGate?.getStatus(),
     };
   };
+
+  // Without the gate the BEES cgroup must end up as an earlier gate cannot
+  // leave it: "stop" (BEES off) is retried until the root helper proves the
+  // cgroup empty (it leaves a BEES it could not kill frozen, never thawed);
+  // "thaw" (BEES ungated) is repeated every minute, since a freeze still
+  // running when the previous daemon's gate stopped can land after it.
+  private async reconcileBeesCgroup(action: "stop" | "thaw"): Promise<void> {
+    if (this.beesStopping) return;
+    let done = false;
+    try {
+      await applyBeesGateAction(this.opts.mount, action);
+      done = action === "stop";
+    } catch (err) {
+      // An older root helper never froze BEES: nothing to undo.
+      if (/\bSECURITY_DENY code=unsupported-command\b/.test(`${err}`)) return;
+      logger.warn(`unable to ${action} BEES; retrying`, {
+        mount: this.opts.mount,
+        err: `${err}`,
+      });
+    }
+    if (done || this.beesStopping) return;
+    this.beesReconcileTimer = setTimeout(() => {
+      this.beesReconcileTimer = undefined;
+      void this.reconcileBeesCgroup(action);
+    }, 60_000);
+    this.beesReconcileTimer.unref?.();
+  }
+
+  // With the gate, BEES starts frozen when its cgroup exists (e.g. after a
+  // restart), rather than running until the gate's first freeze.
+  private async freezeBeforeBeesStarts(): Promise<void> {
+    try {
+      await applyBeesGateAction(this.opts.mount, "freeze");
+    } catch (err) {
+      // the gate retries, or runs BEES ungated on an older root helper
+      logger.debug("unable to freeze BEES before it starts", {
+        mount: this.opts.mount,
+        err: `${err}`,
+      });
+    }
+  }
+
+  // One gate for the life of this filesystem; it acts on the BEES cgroup, so
+  // it covers a restarted or adopted BEES too.
+  private startBeesGate(): void {
+    if (this.beesGate || this.beesStopping || this.beesUngated) return;
+    if (!beesGateEnabled()) {
+      this.beesUngated = true;
+      logger.warn("BEES gate turned off; BEES runs ungated", {
+        mount: this.opts.mount,
+      });
+      void this.reconcileBeesCgroup("thaw");
+      return;
+    }
+    this.beesGate = new BeesGate({
+      mount: this.opts.mount,
+      filesystemUuid: this.quotaRuntime?.filesystem_uuid,
+      lifecycleActive: () => this.opts.beesLifecycleActive?.() ?? false,
+    });
+    void this.beesGate.start();
+  }
 
   private async refreshBeesTelemetry(): Promise<void> {
     if (this.beesTelemetryRunning || this.beesStopping) return;
@@ -291,7 +367,12 @@ export class Filesystem {
     }
     this.beesRunningExternally = false;
     try {
-      const result = await bees(this.opts.mount);
+      const result = await bees(
+        this.opts.mount,
+        beesGateEnabled()
+          ? { beforeSpawn: () => this.freezeBeforeBeesStarts() }
+          : {},
+      );
       if (result.status === "disabled") {
         this.bees = undefined;
         this.beesDisabledByConfig = true;
@@ -299,12 +380,16 @@ export class Filesystem {
           mount: this.opts.mount,
           reason,
         });
+        // A BEES started by an earlier daemon (e.g. frozen before BEES was
+        // turned off) is nobody's now: stop it.
+        await this.reconcileBeesCgroup("stop");
         return;
       }
       if (result.status === "already-running") {
         this.bees = undefined;
         this.beesRunningExternally = true;
         this.beesDisabledByConfig = false;
+        this.startBeesGate();
         const details = {
           mount: this.opts.mount,
           reason,
@@ -332,6 +417,7 @@ export class Filesystem {
         pid: child.pid,
         reason,
       });
+      this.startBeesGate();
       child.once("exit", (code, signal) => {
         if (this.bees !== child) return;
         this.bees = undefined;

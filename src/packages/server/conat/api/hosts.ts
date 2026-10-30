@@ -1988,32 +1988,7 @@ export async function recordProjectBackup({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .hostConnection(ownership.bay_id)
-      .recordProjectBackup({ host_id, project_id, time, generation });
-    return;
-  }
-  await recordProjectBackupLocalInternal({
-    host_id,
-    project_id,
-    time,
-    generation,
-  });
-}
-
-export async function recordProjectBackupLocal({
-  host_id,
-  project_id,
-  time,
-  generation,
-}: {
-  host_id?: string;
-  project_id: string;
-  time: Date;
-  generation?: number | null;
-}): Promise<void> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await recordProjectBackupLocalInternal({
     host_id,
     project_id,
@@ -2055,69 +2030,7 @@ export async function recordProjectBackupIndex({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .hostConnection(ownership.bay_id)
-      .recordProjectBackupIndex({
-        host_id,
-        project_id,
-        backup_id,
-        backup_time,
-        status,
-        storage_backend,
-        object_key,
-        compression,
-        sqlite_bytes,
-        object_bytes,
-        sha256,
-        error,
-      });
-    return;
-  }
-  await recordProjectBackupIndexLocalInternal({
-    host_id,
-    project_id,
-    backup_id,
-    backup_time,
-    status,
-    storage_backend,
-    object_key,
-    compression,
-    sqlite_bytes,
-    object_bytes,
-    sha256,
-    error,
-  });
-}
-
-export async function recordProjectBackupIndexLocal({
-  host_id,
-  project_id,
-  backup_id,
-  backup_time,
-  status,
-  storage_backend,
-  object_key,
-  compression,
-  sqlite_bytes,
-  object_bytes,
-  sha256,
-  error,
-}: {
-  host_id?: string;
-  project_id: string;
-  backup_id: string;
-  backup_time: Date | string;
-  status: "complete" | "failed";
-  storage_backend?: "r2-object-store";
-  object_key?: string | null;
-  compression?: string | null;
-  sqlite_bytes?: number | null;
-  object_bytes?: number | null;
-  sha256?: string | null;
-  error?: string | null;
-}): Promise<void> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await recordProjectBackupIndexLocalInternal({
     host_id,
     project_id,
@@ -2147,22 +2060,7 @@ export async function getProjectBackupIndexes({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .hostConnection(ownership.bay_id)
-      .getProjectBackupIndexes({ host_id, project_id });
-  }
-  return await getProjectBackupIndexesLocalInternal({ host_id, project_id });
-}
-
-export async function getProjectBackupIndexesLocal({
-  host_id,
-  project_id,
-}: {
-  host_id?: string;
-  project_id: string;
-}): Promise<ProjectBackupIndexRecord[]> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   return await getProjectBackupIndexesLocalInternal({ host_id, project_id });
 }
 
@@ -2181,29 +2079,7 @@ export async function syncProjectBackupIndexes({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .hostConnection(ownership.bay_id)
-      .syncProjectBackupIndexes({ host_id, project_id, backup_ids });
-    return;
-  }
-  await syncProjectBackupIndexesLocalInternal({
-    host_id,
-    project_id,
-    backup_ids,
-  });
-}
-
-export async function syncProjectBackupIndexesLocal({
-  host_id,
-  project_id,
-  backup_ids,
-}: {
-  host_id?: string;
-  project_id: string;
-  backup_ids: string[];
-}): Promise<void> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await syncProjectBackupIndexesLocalInternal({
     host_id,
     project_id,
@@ -2226,29 +2102,7 @@ export async function deleteProjectBackupIndex({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .hostConnection(ownership.bay_id)
-      .deleteProjectBackupIndex({ host_id, project_id, backup_id });
-    return;
-  }
-  await deleteProjectBackupIndexLocalInternal({
-    host_id,
-    project_id,
-    backup_id,
-  });
-}
-
-export async function deleteProjectBackupIndexLocal({
-  host_id,
-  project_id,
-  backup_id,
-}: {
-  host_id?: string;
-  project_id: string;
-  backup_id: string;
-}): Promise<void> {
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   await deleteProjectBackupIndexLocalInternal({
     host_id,
     project_id,
@@ -2273,6 +2127,7 @@ export async function touchProject({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const activeAccountIds = Array.from(
     new Set(
       [account_id, ...(account_ids ?? [])].filter(
@@ -2349,13 +2204,7 @@ export async function markProjectChanged({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
-    await getInterBayBridge()
-      .hostConnection(ownership.bay_id)
-      .markProjectChanged({ host_id, project_id, changed_at, generation });
-    return;
-  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
   const updated = await markProjectChangedLocalInternal({
     host_id,
     project_id,
@@ -2456,26 +2305,21 @@ export async function getProjectStartMetadata({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
-  const local = await getProjectStartMetadataLocal({
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  const metadata = await getProjectStartMetadataLocal({
     host_id,
     project_id,
     allowMissing: true,
   });
-  if (local) {
-    return local;
-  }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .hostConnection(ownership.bay_id)
-      .getProjectStartMetadata({ host_id, project_id });
+  if (metadata) {
+    return metadata;
   }
   throw new Error(
     `project ${project_id} is not assigned to host ${host_id} or is unavailable`,
   );
 }
 
-export async function getProjectStartMetadataLocal({
+async function getProjectStartMetadataLocal({
   host_id,
   project_id,
   allowMissing = false,

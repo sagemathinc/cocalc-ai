@@ -95,6 +95,32 @@ async function readSpec(opts: { file?: string; stdin?: boolean }) {
 }
 
 /**
+ * What a script reads that a scheduled run won't have. A test runs here, in
+ * the agent's own environment; a scheduled run is a fresh container with the
+ * project's software and files but not its secrets (/run/secrets), with an
+ * empty /tmp and without the agent runtime's files. A script that passes the
+ * test can still fail every scheduled run (and pause itself) because of these.
+ */
+export function scheduledRunWarnings(script: string): string[] {
+  const warnings: string[] = [];
+  // The mount itself, or $COCALC_SECRETS (the documented way to find it).
+  if (/\/run\/secrets\b|\bCOCALC_SECRETS\b/.test(script))
+    warnings.push(
+      "This script reads the project's secrets (/run/secrets, $COCALC_SECRETS). Scheduled runs don't have them: this test can pass while every scheduled run fails. Use a scheduled prompt (it runs in your turn) for work that needs a secret.",
+    );
+  // /tmp itself or anything in it (not ~/x/tmp, /tmpfiles or /tmp.d).
+  if (/(^|[^\w.~-])\/tmp(?![\w.-])/.test(script))
+    warnings.push(
+      "This script uses /tmp. A scheduled run starts with an empty /tmp, and nothing there is kept between runs: keep what must last in $COCALC_SENSOR_STATE.",
+    );
+  if (/\.local\/share\/cocalc\/runtime\b/.test(script))
+    warnings.push(
+      "This script reads the agent runtime directory (~/.local/share/cocalc/runtime), which scheduled runs don't have.",
+    );
+  return warnings;
+}
+
+/**
  * Run a script spec's code here once, the way a scheduled run does (a login
  * shell in this project's software, the body as an argument, the sensor
  * variables), and report what the run would do. It uses this turn's
@@ -134,6 +160,7 @@ async function testSpec(spec: any) {
     child.on("error", reject);
     child.on("close", (code) => resolve({ code, stdout, stderr }));
   });
+  const warnings = scheduledRunWarnings(checked.script);
   let wake: unknown;
   let wake_error: string | undefined;
   try {
@@ -159,6 +186,7 @@ async function testSpec(spec: any) {
     stdout: result.stdout.slice(-4000),
     stderr: result.stderr.slice(-4000),
     state_file: join(dir, "state.json"),
+    ...(warnings.length ? { warnings } : {}),
   };
 }
 

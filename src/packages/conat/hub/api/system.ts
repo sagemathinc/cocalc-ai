@@ -148,6 +148,7 @@ export const system = {
   listExternalCredentials: authFirstRequireAccount,
   updateCodexSubscriptionLabel: authFirstRequireAccount,
   updateClaudeSubscriptionLabel: authFirstRequireAccount,
+  setClaudeSubscriptionInPool: authFirstRequireAccount,
   revokeExternalCredential: authFirstRequireAccount,
   setOpenAiApiKey: authFirstRequireAccount,
   deleteOpenAiApiKey: authFirstRequireAccount,
@@ -2892,6 +2893,13 @@ export interface System {
     account_id?: string;
     id: string;
     label?: string;
+  }) => Promise<{ updated: boolean }>;
+
+  // Whether Auto agents may use this Claude subscription (all may by default).
+  setClaudeSubscriptionInPool: (opts: {
+    account_id?: string;
+    id: string;
+    in_pool: boolean;
   }) => Promise<{ updated: boolean }>;
 
   revokeExternalCredential: (opts: {

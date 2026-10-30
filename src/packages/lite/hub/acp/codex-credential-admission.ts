@@ -13,7 +13,9 @@ import {
 } from "@cocalc/util/ai/runtime";
 import { prepareHarnessRequest } from "./harness-runtime";
 import { decodeAcpJobRequest, latestHumanHarnessJob } from "../sqlite/acp-jobs";
+import { admitClaudePoolTurn } from "./claude-pool";
 import {
+  claudePoolSelection,
   codexCredentialFromSelection,
   harnessCredentialFromSelection,
   type AgentPaymentProvider,
@@ -58,12 +60,13 @@ export function setPaymentSelectionResolver(
 }
 
 // The account's stored choice for this conversation (shared by all of its
-// devices), for turns that arrive without one: agent messages, CLI sends,
-// sensor wakes. Undefined when nothing is stored or the hub cannot answer.
+// devices), for turns that arrive without one: Auto agents, agent messages,
+// CLI sends, sensor wakes. Undefined when nothing is stored; "unavailable"
+// when the hub did not answer, which is not the same as nothing stored.
 async function storedPaymentSelection<T>(
   request: AcpJobRequest,
   provider: AgentPaymentProvider,
-): Promise<{ selection?: T; default?: T } | undefined> {
+): Promise<{ selection?: T; default?: T } | "unavailable" | undefined> {
   const thread_id = request.chat?.thread_id;
   if (!thread_id) return;
   try {
@@ -83,9 +86,48 @@ async function storedPaymentSelection<T>(
       ...(fallback ? { default: fallback } : {}),
     };
   } catch {
-    // Older hubs lack this API; keep the previous behavior.
-    return;
+    return "unavailable";
   }
+}
+
+/** A Claude Code turn with no credential whose payment could not be looked
+ * up: it may be an Auto agent's, so never run it on the project secret. */
+export class PaymentSelectionUnavailableError extends Error {
+  constructor() {
+    super(
+      "CoCalc could not look up how this agent is paid (your account's home server did not answer). Try again in a moment.",
+    );
+  }
+}
+
+/**
+ * Discovery and forks send the browser's credential; for an Auto agent there
+ * is none, so use a subscription picked from the pool. Otherwise unchanged.
+ */
+export async function withClaudePoolControlCredential<T extends AcpRequest>(
+  request: T,
+): Promise<T> {
+  const profile = request.runtime?.profile as
+    | { version?: number; id?: string }
+    | undefined;
+  if (
+    request.harness_credential ||
+    profile?.version !== 2 ||
+    profile.id !== "claude-code"
+  )
+    return request;
+  const answer = await storedPaymentSelection<ClaudePaymentSelection>(
+    request,
+    "claude-code",
+  );
+  if (answer === "unavailable") throw new PaymentSelectionUnavailableError();
+  const pool = answer && claudePoolSelection(answer.selection, answer.default);
+  if (!pool) return request;
+  const { harness_pool: _pool, ...admitted } = await admitClaudePoolTurn(
+    request,
+    pool.claude_ai_connectors === false ? { claude_ai_connectors: false } : {},
+  );
+  return admitted as T;
 }
 
 export function setCodexCredentialAdmissionResolver(
@@ -98,17 +140,35 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   request: T,
 ): Promise<T> {
   reportAgentRuntimeOnce(request);
+  // Only admission decides whether a turn uses Auto.
+  if (request.harness_pool !== undefined) {
+    const { harness_pool: _ignored, ...rest } = request;
+    request = rest as T;
+  }
   if (request.runtime !== undefined) {
     const claudeCode =
       request.runtime.profile.version === 2 &&
       request.runtime.profile.id === "claude-code";
     let harness_credential = request.harness_credential;
+    let harness_pool: AcpRequest["harness_pool"];
     if (claudeCode && !harness_credential) {
-      const stored = await storedPaymentSelection<ClaudePaymentSelection>(
+      const answer = await storedPaymentSelection<ClaudePaymentSelection>(
         request,
         "claude-code",
       );
-      if (stored)
+      // The account's choice is unknown: never the project secret, and
+      // never a stale earlier choice (the last human turn's credential).
+      if (answer === "unavailable")
+        throw new PaymentSelectionUnavailableError();
+      const stored = answer;
+      const pool =
+        stored && claudePoolSelection(stored.selection, stored.default);
+      if (pool) {
+        harness_pool =
+          pool.claude_ai_connectors === false
+            ? { claude_ai_connectors: false }
+            : {};
+      } else if (stored)
         harness_credential = harnessCredentialFromSelection(
           stored.selection,
           stored.default,
@@ -119,7 +179,8 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       (request.chat?.agent_rpc_execution ||
         request.chat?.sensor_wake ||
         request.chat?.agent_rpc_report) &&
-      !harness_credential
+      !harness_credential &&
+      !harness_pool
     ) {
       // Nothing stored yet: fall back to this account's last human turn.
       const previous = latestHumanHarnessJob({
@@ -155,6 +216,19 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
           "Recipient runtime changed; send a message in the recipient agent to confirm its payment method.",
         );
       harness_credential = admitted.harness_credential;
+      // An Auto agent that has no stored choice here keeps picking.
+      if (admitted.harness_pool) harness_pool = admitted.harness_pool;
+    }
+    if (harness_pool) {
+      return prepareHarnessRequest(
+        await admitClaudePoolTurn(
+          {
+            ...request,
+            ...(harness_credential ? { harness_credential } : {}),
+          } as AcpRequest,
+          harness_pool,
+        ),
+      ) as T;
     }
     return prepareHarnessRequest({
       ...request,
@@ -171,10 +245,12 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   }
   let storedCredentialId: string | undefined;
   if (preference === "subscription" && !request.config?.credentialId) {
-    const stored = await storedPaymentSelection<CodexPaymentSelection>(
+    const answer = await storedPaymentSelection<CodexPaymentSelection>(
       request,
       "codex",
     );
+    // Unanswered: the hub uses the designated default subscription.
+    const stored = answer === "unavailable" ? undefined : answer;
     // This agent's subscription, else the account's chosen default; with
     // neither, the hub uses the designated default subscription.
     storedCredentialId =

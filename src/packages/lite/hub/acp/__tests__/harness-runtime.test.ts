@@ -12,6 +12,7 @@ import {
 import {
   pinCodexCredentialAtAdmission,
   setCodexCredentialAdmissionResolver,
+  setPaymentSelectionResolver,
 } from "../codex-credential-admission";
 import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
 import {
@@ -73,6 +74,8 @@ function claudeRequest(): AcpRequest {
 const original = process.env.COCALC_ACP_HARNESSES;
 
 test("network Claude admission reuses only this account's private human selection", async () => {
+  // Nothing stored for the agent (an answer, not a failed lookup).
+  setPaymentSelectionResolver(async () => ({}));
   const source = claudeRequest();
   source.harness_credential = {
     version: 1,
@@ -113,6 +116,7 @@ test("network Claude admission reuses only this account's private human selectio
   await expect(pinCodexCredentialAtAdmission(changed)).rejects.toThrow(
     /runtime changed/,
   );
+  setPaymentSelectionResolver();
 });
 
 test("fork source must match the saved native ID and complete runtime snapshot", () => {

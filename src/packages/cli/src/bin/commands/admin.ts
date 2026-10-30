@@ -69,6 +69,7 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 import { registerReceivablesCommand } from "./admin/receivables";
 import { registerCrmCommand } from "./admin/crm";
+import { registerParallelOpsCommand } from "./admin/parallel-ops";
 import { registerAdminUsernameCommand } from "./personal-urls";
 
 const ADMIN_HOST_INTRUSION_SNAPSHOT_TIMEOUT_MS = 130_000;
@@ -1241,6 +1242,7 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     resolveAccountByIdentifier,
     isValidUUID,
   });
+  registerParallelOpsCommand(admin, { withContext });
 
   async function resolveTargetAccountId(
     ctx: any,

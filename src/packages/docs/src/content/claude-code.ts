@@ -161,6 +161,18 @@ account's most recent human turn in the recipient
 thread; it may ask you to send a message with the selected payment method first.
 Never work around a rejected delivery by borrowing another account's credentials.
 
+### Auto: several Claude subscriptions
+
+Choose **Auto: choose a Claude subscription for each turn** for an agent, or
+for many agents with **Set payment method** on the Agents page. Each turn then
+runs on one of your subscriptions: one where a large turn (learned from your
+recent turns) still fits in its five-hour window, preferring the week that
+resets soonest, and staying on the same one unless another has much more room.
+When a turn reaches a limit it continues on another subscription; if all are
+at their limits, it waits for the first to have room. Auto's settings choose
+which subscriptions it may use and show how long your weekly limits last.
+Pinned agents never move.
+
 CoCalc checks credential authority when admitting and running work and before
 mediated project commands. Disconnect prevents future authorized use; it
 cannot undo completed work or provider usage. Provider-side session revocation

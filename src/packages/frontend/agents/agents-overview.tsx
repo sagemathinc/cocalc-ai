@@ -10,18 +10,15 @@
 
 import { PageSearchBox } from "@cocalc/frontend/search/page-search-box";
 import { useListQuery } from "@cocalc/frontend/search/list-query";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { Alert, Button, Grid, Select, Tabs, Typography } from "antd";
+import { displayOrder } from "@cocalc/frontend/components/collection-selection";
 import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
-import { Alert, Button, Checkbox, Grid, Select, Tabs, Typography } from "antd";
-import {
-  displayOrder,
-  rangeSelection,
-} from "@cocalc/frontend/components/collection-selection";
+  SelectAllCheckbox,
+  SelectItemCheckbox,
+  SelectionToolbar,
+  useCollectionSelection,
+} from "@cocalc/frontend/components/collection-selection-ui";
 import {
   agentPaymentSummary,
   paymentGroups,
@@ -174,11 +171,7 @@ export function AgentsOverview(props: Props) {
   const payments = useAgentPayments(active);
   // Phones: two-line rows and compact controls.
   const narrow = !!Grid.useBreakpoint().xs;
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [paymentOpen, setPaymentOpen] = useState(false);
-  const anchor = useRef<string | undefined>(undefined);
-  // Selection is for your own agents; switching tabs starts over.
-  useEffect(() => setSelectedIds([]), [tab]);
 
   const projectTitle = (id: string) =>
     (project_map?.getIn([id, "title"]) as string | undefined) ?? "";
@@ -237,40 +230,24 @@ export function AgentsOverview(props: Props) {
       sort,
     );
   const items = visible(tab === "mine" ? mineItems : sharedItems);
+  // Selection is for your own agents; switching tabs starts over.
   const selecting = tab === "mine";
-  const selected = new Set(selectedIds);
+  const selection = useCollectionSelection({
+    order: selecting
+      ? displayOrder(
+          items.map((item) => item.id),
+          minePins,
+          group === "project"
+            ? (x) => items.find((item) => item.id === x)?.project_id ?? ""
+            : undefined,
+        )
+      : [],
+    resetKey: tab,
+  });
+  const selectedIds = selection.selectedIds;
   const selectedAgents = mineItems
-    .filter((item) => selected.has(item.id))
+    .filter((item) => selection.isSelected(item.id))
     .map((item) => item.mine!);
-  const allSelected =
-    items.length > 0 && items.every((item) => selected.has(item.id));
-  function toggleSelected(id: string, on: boolean, shift: boolean) {
-    if (shift && anchor.current != null) {
-      setSelectedIds(
-        rangeSelection({
-          order: displayOrder(
-            items.map((item) => item.id),
-            minePins,
-            group === "project"
-              ? (x) => items.find((item) => item.id === x)?.project_id ?? ""
-              : undefined,
-          ),
-          selected: selectedIds,
-          anchor: anchor.current,
-          id,
-          on,
-          selectable: () => true,
-        }),
-      );
-    } else {
-      setSelectedIds(
-        on
-          ? [...selectedIds.filter((x) => x !== id), id]
-          : selectedIds.filter((x) => x !== id),
-      );
-    }
-    anchor.current = id;
-  }
   const paymentTargets = selectedAgents.map((agent) => ({
     project_id: agent.endpoint.project_id,
     thread_id: agent.thread_id,
@@ -379,25 +356,11 @@ export function AgentsOverview(props: Props) {
               </div>
             );
             const checkbox = selecting ? (
-              // Shift-click selects a range; keep it from also selecting text.
-              <span
-                onMouseDown={(e) => {
-                  if (e.shiftKey) e.preventDefault();
-                }}
-                style={{ display: "inline-flex" }}
-              >
-                <Checkbox
-                  aria-label={`Select @${item.name}`}
-                  checked={selected.has(item.id)}
-                  onChange={(e) =>
-                    toggleSelected(
-                      item.id,
-                      e.target.checked,
-                      !!(e.nativeEvent as MouseEvent | undefined)?.shiftKey,
-                    )
-                  }
-                />
-              </span>
+              <SelectItemCheckbox
+                id={item.id}
+                label={`Select @${item.name}`}
+                selection={selection}
+              />
             ) : undefined;
             const cardProps = {
               item,
@@ -492,19 +455,11 @@ export function AgentsOverview(props: Props) {
             }}
           >
             {selecting && items.length > 0 ? (
-              <Checkbox
-                aria-label="Select all agents"
-                checked={allSelected}
-                indeterminate={!allSelected && selectedIds.length > 0}
-                onChange={(e) =>
-                  setSelectedIds(
-                    e.target.checked ? items.map((item) => item.id) : [],
-                  )
-                }
-              >
-                {count(items.length)}
-                {selectedIds.length > 0 && ` · ${selectedIds.length} selected`}
-              </Checkbox>
+              <SelectAllCheckbox
+                label="Select all agents"
+                count={count(items.length)}
+                selection={selection}
+              />
             ) : (
               count(items.length)
             )}
@@ -512,12 +467,8 @@ export function AgentsOverview(props: Props) {
               ? " · Refreshing..."
               : ""}
           </div>
-          {selecting && selectedIds.length > 0 && (
-            <span
-              role="toolbar"
-              aria-label="Selected agents"
-              style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}
-            >
+          {selecting && (
+            <SelectionToolbar label="Selected agents" selection={selection}>
               <Button
                 size="small"
                 disabled={!canSetPayment}
@@ -549,14 +500,7 @@ export function AgentsOverview(props: Props) {
               >
                 Remove…
               </Button>
-              <Button
-                size="small"
-                type="text"
-                onClick={() => setSelectedIds([])}
-              >
-                Clear
-              </Button>
-            </span>
+            </SelectionToolbar>
           )}
           <Select
             aria-label="Sort agents"

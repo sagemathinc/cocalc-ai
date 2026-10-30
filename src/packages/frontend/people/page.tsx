@@ -99,7 +99,7 @@ export function PeoplePage() {
       <div
         style={{
           width: selected ? 340 : "100%",
-          maxWidth: selected ? 340 : 820,
+          maxWidth: selected ? 340 : undefined,
           flex: "0 0 auto",
           overflowY: "auto",
           display: selected ? undefined : "block",
@@ -122,6 +122,7 @@ export function PeoplePage() {
             preferences={preferences}
             view={selected ? "list" : preferences.value.view}
             compact={selected != null}
+            bulk={selected == null}
             selected={selected?.conversation_id}
             onSelect={(c) => navigate(conversationRoute(c))}
             emptyText={

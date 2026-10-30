@@ -129,6 +129,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "agent.pickClaudePoolSubscription": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "agent.reportRuntime": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
@@ -700,10 +704,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
-  "hosts.deleteProjectBackupIndexLocal": {
-    decision: "internal-auth-only",
-    reason: INTERNAL_AUTH_ONLY,
-  },
   "hosts.drainHost": {
     decision: "fresh-auth-required",
     reason: "moves projects away from a host",
@@ -848,14 +848,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },
-  "hosts.recordProjectBackupIndexLocal": {
-    decision: "fresh-auth-not-required",
-    reason: TELEMETRY_ONLY,
-  },
-  "hosts.recordProjectBackupLocal": {
-    decision: "fresh-auth-not-required",
-    reason: TELEMETRY_ONLY,
-  },
   "hosts.recordServiceAdmissionDenial": {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
@@ -990,10 +982,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "bulk project stop on a host can disrupt many runtimes",
   },
   "hosts.syncProjectBackupIndexes": {
-    decision: "fresh-auth-not-required",
-    reason: TELEMETRY_ONLY,
-  },
-  "hosts.syncProjectBackupIndexesLocal": {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },
@@ -1941,5 +1929,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.updateClaudeSubscriptionLabel": {
     decision: "fresh-auth-not-required",
     reason: "updates only the signed-in account's credential display label",
+  },
+  "system.setClaudeSubscriptionInPool": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "chooses which of the signed-in account's own Claude subscriptions its Auto agents may use; references only",
   },
 };
