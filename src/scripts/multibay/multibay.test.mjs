@@ -772,6 +772,138 @@ describe("a held sign-in turn asks the account's home bay (I4c)", () => {
   });
 });
 
+describe("Auto picks a Claude subscription on the account's home bay", () => {
+  // The project (and its host) on the seed; the account (bob) homed on the
+  // attached bay, with its Claude subscriptions. Each turn of an Auto agent
+  // asks the seed, which picks (and reserves) on bob's home bay.
+  const host_id = randomUUID();
+  const hour = 3600;
+  let project_id;
+  let soon; // its week resets soonest: Auto uses it first
+  let later;
+  const selector = () => ({
+    provider: "anthropic",
+    kind: "claude-subscription-home-v1",
+    scope: "account",
+    owner_account_id: bob.account_id,
+  });
+  const usage = (week, resetsIn) => {
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      observed_at: new Date().toISOString(),
+      windows: {
+        five_hour: { utilization: 0.1, resets_at: now + 2 * hour },
+        seven_day: { utilization: week, resets_at: now + resetsIn },
+      },
+    };
+  };
+  const pick = async (extra = {}, host = host_id) =>
+    await runInBay(
+      cluster,
+      SEED,
+      `return await server("agents/payment-selections.js").pickClaudePoolSubscription(${JSON.stringify(
+        {
+          host_id: host,
+          account_id: bob.account_id,
+          target: { project_id, thread_id: "auto-1" },
+          ...extra,
+        },
+      )});`,
+    );
+  const onHome = async (body) => await runInBay(cluster, ATTACHED, body);
+  const metadata = async (id) =>
+    await onHome(
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT metadata FROM external_credentials WHERE id=$1", [${JSON.stringify(id)}]);
+       return rows[0]?.metadata ?? null;`,
+    );
+
+  before(async () => {
+    const owner = await createAccount(cluster, {
+      home_bay_id: SEED,
+      name: "auto-owner",
+    });
+    project_id = await createProject(await client(owner), "auto-pool");
+    assert.equal(await owningBay(project_id), SEED);
+    await runInBay(
+      cluster,
+      SEED,
+      `const pool = require("@cocalc/database/pool").default();
+       await pool.query(
+         "INSERT INTO project_hosts (id, name, status, bay_id, metadata, created, updated) VALUES ($1, 'auto host', 'off', $2, '{}', NOW(), NOW())",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(SEED)}],
+       );
+       await pool.query(
+         "UPDATE projects SET host_id=$1, users = users || jsonb_build_object($3::text, jsonb_build_object('group','collaborator')) WHERE project_id=$2",
+         [${JSON.stringify(host_id)}, ${JSON.stringify(project_id)}, ${JSON.stringify(bob.account_id)}],
+       );`,
+    );
+    const create = async (label, claude_usage) =>
+      (
+        await onHome(
+          `return await server("external-credentials/store.js").createExternalCredential({
+             selector: ${JSON.stringify(selector())},
+             payload: "not-a-real-token-" + ${JSON.stringify(label)},
+             metadata: ${JSON.stringify({ label, claude_usage })},
+           });`,
+        )
+      ).id;
+    soon = await create("Max soon", usage(0.3, 10 * hour));
+    later = await create("Max later", usage(0.3, 100 * hour));
+  });
+
+  it("picks across bays, marks a limit there, and never returns a secret", async () => {
+    const first = await pick();
+    assert.equal(first.credential_id, soon, JSON.stringify(first));
+    assert.equal(first.label, "Max soon");
+    assert.doesNotMatch(JSON.stringify(first), /not-a-real-token/);
+    // A turn on it hit its limit: the home bay marks it, and Auto moves on.
+    const resets_at = Math.floor(Date.now() / 1000) + 2 * hour;
+    const moved = await pick({
+      current_credential_id: soon,
+      limited: { credential_id: soon, resets_at },
+      turn_costs: [{ credential_id: later, cost: 0.04 }],
+    });
+    assert.equal(moved.credential_id, later, JSON.stringify(moved));
+    assert.equal(moved.current_label, "Max soon");
+    assert.equal(
+      (await metadata(soon)).claude_pool_limited.until,
+      new Date(resets_at * 1000).toISOString(),
+    );
+    assert.deepEqual((await metadata(later)).claude_turn_costs, {
+      samples: [0.04],
+    });
+  });
+
+  it("follows the owner's choice of subscriptions, made through their home", async () => {
+    // Bob takes "later" out of Auto (soon is still marked limited).
+    const c = bob.client;
+    await c.call("system.setClaudeSubscriptionInPool", {
+      id: later,
+      in_pool: false,
+    });
+    assert.equal((await metadata(later)).claude_pool_excluded, true);
+    const held = await pick();
+    assert.equal(held.credential_id, undefined, JSON.stringify(held));
+    assert.ok(Date.parse(held.hold_until) > Date.now(), JSON.stringify(held));
+    await c.call("system.setClaudeSubscriptionInPool", {
+      id: soon,
+      in_pool: false,
+    });
+    assert.deepEqual(await pick(), { empty: true });
+    await c.call("system.setClaudeSubscriptionInPool", {
+      id: later,
+      in_pool: true,
+    });
+    assert.equal((await pick()).credential_id, later);
+  });
+
+  it("refuses a host that does not run the project", async () => {
+    await assert.rejects(pick({}, randomUUID()));
+  });
+});
+
 describe("inspecting a sent message's turn across bays", () => {
   // The sender's agent runs in a seed-owned project; the recipient's project
   // (and its host) live on the attached bay, which is also the account's

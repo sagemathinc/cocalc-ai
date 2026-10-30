@@ -3,6 +3,20 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ClaudeCredentialList } from "../claude-credential-list";
 
+const setClaudeSubscriptionInPool = jest.fn(async () => ({ updated: true }));
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: {
+      hub: {
+        system: {
+          setClaudeSubscriptionInPool: (...args: any[]) =>
+            (setClaudeSubscriptionInPool as any)(...args),
+        },
+      },
+    },
+  },
+}));
+
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: ({ date }: { date: string }) => <span>at {date}</span>,
 }));
@@ -55,8 +69,8 @@ test("one row per payment method, with every subscription's usage and the select
     />,
   );
   const radios = screen.getAllByRole("radio");
-  // Two subscriptions, the API key and the project secret.
-  expect(radios).toHaveLength(4);
+  // Auto, two subscriptions, the API key and the project secret.
+  expect(radios).toHaveLength(5);
   expect(
     (
       screen.getByRole("radio", {
@@ -133,4 +147,75 @@ test("offers included Claude when the membership includes it", async () => {
     screen.getByText("CoCalc Membership (Claude Haiku 5.5)"),
   );
   expect(onChange).toHaveBeenCalledWith("site-funded");
+});
+
+test("Auto is offered once there is a subscription", async () => {
+  const onChange = jest.fn();
+  const { rerender } = render(
+    <ClaudeCredentialList
+      credentials={[credentials[2]]}
+      value="project-secret"
+      loaded
+      onChange={onChange}
+    />,
+  );
+  expect(screen.queryByRole("radio", { name: /Auto/ })).toBeNull();
+  rerender(
+    <ClaudeCredentialList
+      credentials={credentials}
+      value="project-secret"
+      loaded
+      onChange={onChange}
+    />,
+  );
+  await userEvent.click(screen.getByRole("radio", { name: /Auto/ }));
+  expect(onChange).toHaveBeenCalledWith("subscription-pool");
+});
+
+test("with Auto: which subscriptions it uses, and how long they last", async () => {
+  setClaudeSubscriptionInPool.mockClear();
+  const onCredentials = jest.fn();
+  render(
+    <ClaudeCredentialList
+      credentials={credentials}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+      onCredentials={onCredentials}
+    />,
+  );
+  expect(
+    (screen.getByRole("radio", { name: /Auto/ }) as HTMLInputElement).checked,
+  ).toBe(true);
+  // Both subscriptions have room; office has used 60% of its week.
+  expect(screen.getByRole("status").textContent).toMatch(
+    /2 of 2 subscriptions with room now\. About 1\.4 of 2 weekly limits left/,
+  );
+  const office = screen.getByRole("checkbox", { name: "office" });
+  expect((office as HTMLInputElement).checked).toBe(true);
+  // API keys are never in Auto.
+  expect(screen.queryByRole("checkbox", { name: "Team key" })).toBeNull();
+  await userEvent.click(office);
+  expect(setClaudeSubscriptionInPool).toHaveBeenCalledWith({
+    id: "00000000-0000-4000-8000-000000000001",
+    in_pool: false,
+  });
+  await waitFor(() => expect(onCredentials).toHaveBeenCalled());
+  const rows = (onCredentials.mock.calls[0] as any[])[0];
+  expect(rows[0].metadata.claude_pool_excluded).toBe(true);
+});
+
+test("an Auto with nothing left to use says so", () => {
+  render(
+    <ClaudeCredentialList
+      credentials={credentials.map((row: any) => ({
+        ...row,
+        metadata: { ...row.metadata, claude_pool_excluded: true },
+      }))}
+      value="subscription-pool"
+      loaded
+      onChange={jest.fn()}
+    />,
+  );
+  expect(screen.getByText(/Auto has no subscription to use/)).toBeTruthy();
 });

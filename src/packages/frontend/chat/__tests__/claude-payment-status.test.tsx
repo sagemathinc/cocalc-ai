@@ -8,7 +8,10 @@ import {
   claudePaymentLabel,
   claudePaymentName,
 } from "../claude-payment-status";
-import { writeHarnessCredentialSelection } from "../harness-credential-selection";
+import {
+  writeClaudePoolSelection,
+  writeHarnessCredentialSelection,
+} from "../harness-credential-selection";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -254,4 +257,34 @@ test("the footer names included Claude as CoCalc Membership", () => {
   expect(claudePaymentName("site-funded", undefined)).toBe("CoCalc Membership");
   // Nothing else changes.
   expect(claudePaymentLabel(undefined)).toBe("Project API key");
+});
+
+test("an Auto agent's footer says Auto, and its details summarize the pool", async () => {
+  writeClaudePoolSelection({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-a",
+  });
+  listCredentials.mockResolvedValue([
+    {
+      id: credentialId,
+      kind: "claude-subscription-home-v1",
+      revoked: null,
+      metadata: { label: "max-a" },
+    },
+  ] as any);
+  render(
+    <ClaudePaymentStatus
+      projectId="project-a"
+      threadKey="thread-a"
+      onConfigure={jest.fn()}
+    />,
+  );
+  const button = await screen.findByRole("button", {
+    name: "Auto: Claude subscriptions: payment settings",
+  });
+  act(() => button.focus());
+  expect(
+    await screen.findByText(/1 of 1 subscription with room now/),
+  ).toBeTruthy();
 });

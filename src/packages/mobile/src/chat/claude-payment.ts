@@ -114,6 +114,8 @@ export function describeClaudePayment(payment: ClaudePayment): string {
     payment.selection,
     payment.fallback,
   );
+  // Auto: the host picks one of the account's subscriptions for each turn.
+  if (!effective) return "Auto: Claude subscriptions";
   if (effective.provider !== "anthropic" || effective.mode === "project-secret")
     return "Project ANTHROPIC_API_KEY";
   const credential = payment.credentials.find(

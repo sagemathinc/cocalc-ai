@@ -1,4 +1,5 @@
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
+import { noteClaudePoolRateLimit } from "./claude-pool-usage";
 import type { AcpAgent } from "@cocalc/ai/acp";
 import type { CodexAttentionHandler } from "@cocalc/ai/acp";
 import type { HarnessBinding, HarnessLauncher } from "@cocalc/ai/acp/harness";
@@ -376,6 +377,13 @@ export async function createHarnessAgent(
     (binding, sessionId) => factory(binding, { ...conversation, sessionId }),
     attention,
     authorityValidator,
-    rateLimitRecorder,
+    (binding, rateLimit) => {
+      rateLimitRecorder?.(binding, rateLimit);
+      noteClaudePoolRateLimit(
+        { projectId: binding.projectId, ...conversation },
+        (binding.credential as { credentialId?: string }).credentialId,
+        rateLimit,
+      );
+    },
   );
 }

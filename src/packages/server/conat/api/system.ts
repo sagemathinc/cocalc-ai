@@ -102,7 +102,9 @@ import {
   revokeExternalCredentialBySelectorRouted,
   upsertExternalCredentialRouted,
   updateExternalCredentialLabelByIdRouted,
+  setExternalCredentialMetadataValueByIdRouted,
 } from "@cocalc/server/external-credentials/routing";
+import { CLAUDE_POOL_EXCLUDED_METADATA_KEY } from "@cocalc/util/ai/claude-pool";
 import {
   assertProjectCollaboratorAccessAllowRemote,
   resolveProjectReferenceAllowRemote,
@@ -7347,6 +7349,33 @@ export async function updateClaudeSubscriptionLabel({
       owner_account_id: account_id,
     },
     label: normalizedLabel || undefined,
+  });
+  return { updated };
+}
+
+// Auto agents use every connected Claude subscription unless taken out here.
+export async function setClaudeSubscriptionInPool({
+  account_id,
+  id,
+  in_pool,
+}: {
+  account_id?: string;
+  id: string;
+  in_pool: boolean;
+}) {
+  if (!account_id) throw Error("must be signed in");
+  if (!id) throw Error("id must be specified");
+  if (typeof in_pool !== "boolean") throw Error("in_pool must be a boolean");
+  const updated = await setExternalCredentialMetadataValueByIdRouted({
+    id,
+    selector: {
+      provider: ANTHROPIC_API_PROVIDER,
+      kind: CLAUDE_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    key: CLAUDE_POOL_EXCLUDED_METADATA_KEY,
+    value: !in_pool,
   });
   return { updated };
 }

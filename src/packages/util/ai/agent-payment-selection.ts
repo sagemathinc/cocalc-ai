@@ -42,6 +42,14 @@ export type ClaudePaymentSelection =
       credential_id: string;
       /** Only stored when turned off; omitted means connectors are enabled. */
       claude_ai_connectors?: false;
+    }
+  /** Auto: the host picks one of the account's pooled subscriptions for each
+   * turn, and moves the agent to another when one reaches its limit. */
+  | {
+      version: 1;
+      provider: "claude-code";
+      mode: "subscription-pool";
+      claude_ai_connectors?: false;
     };
 
 export type AgentPaymentSelection =
@@ -171,13 +179,24 @@ export function parseAgentPaymentSelection(
         credential_id: credential(obj),
       };
     }
+    if (
+      obj.claude_ai_connectors !== undefined &&
+      obj.claude_ai_connectors !== false
+    )
+      throw Error("invalid claude_ai_connectors");
+    if (obj.mode === "subscription-pool") {
+      only(obj, [...base, "claude_ai_connectors"]);
+      return {
+        version: 1,
+        provider: "claude-code",
+        mode: "subscription-pool",
+        ...(obj.claude_ai_connectors === false
+          ? { claude_ai_connectors: false as const }
+          : {}),
+      };
+    }
     if (obj.mode === "account-subscription") {
       only(obj, [...base, "credential_id", "claude_ai_connectors"]);
-      if (
-        obj.claude_ai_connectors !== undefined &&
-        obj.claude_ai_connectors !== false
-      )
-        throw Error("invalid claude_ai_connectors");
       return {
         version: 1,
         provider: "claude-code",
@@ -203,18 +222,41 @@ export function agentPaymentProviderForRuntime(runtime?: {
     : undefined;
 }
 
-/** Resolve a Claude Code selection, following "default" once. */
+/** The selection that applies, following "default" once. */
+export function effectiveClaudeSelection(
+  selection: ClaudePaymentSelection | undefined,
+  fallback?: ClaudePaymentSelection,
+): ClaudePaymentSelection | undefined {
+  return !selection || selection.mode === "default"
+    ? fallback && fallback.mode !== "default"
+      ? fallback
+      : undefined
+    : selection;
+}
+
+/** The Auto selection when it applies: each turn's subscription is picked
+ * by the host, so there is no credential to send. */
+export function claudePoolSelection(
+  selection: ClaudePaymentSelection | undefined,
+  fallback?: ClaudePaymentSelection,
+): Extract<ClaudePaymentSelection, { mode: "subscription-pool" }> | undefined {
+  const effective = effectiveClaudeSelection(selection, fallback);
+  return effective?.mode === "subscription-pool" ? effective : undefined;
+}
+
+/** Resolve a Claude Code selection, following "default" once. Undefined for
+ * Auto: the host picks a subscription for each turn. */
 export function harnessCredentialFromSelection(
   selection: ClaudePaymentSelection | undefined,
   fallback?: ClaudePaymentSelection,
-): AcpHarnessCredential {
-  const effective =
-    !selection || selection.mode === "default"
-      ? fallback && fallback.mode !== "default"
-        ? fallback
-        : undefined
-      : selection;
-  if (!effective || effective.mode === "project-secret")
+): AcpHarnessCredential | undefined {
+  const effective = effectiveClaudeSelection(selection, fallback);
+  if (effective?.mode === "subscription-pool") return;
+  if (
+    !effective ||
+    effective.mode === "default" ||
+    effective.mode === "project-secret"
+  )
     return { version: 1, provider: "anthropic", mode: "project-secret" };
   if (effective.mode === "membership")
     return { version: 1, provider: "anthropic", mode: "site-funded" };

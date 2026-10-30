@@ -4,6 +4,7 @@
  */
 
 import {
+  claudePoolSelection,
   harnessCredentialFromSelection,
   parseAgentPaymentSelection,
   selectionFromHarnessCredential,
@@ -69,5 +70,46 @@ describe("site-funded Claude payment selection", () => {
         claude,
       ),
     ).toThrow("Unsupported ACP harness credential field");
+  });
+});
+
+describe("Auto (the Claude subscription pool)", () => {
+  const pool = {
+    version: 1,
+    provider: "claude-code",
+    mode: "subscription-pool",
+  } as const;
+
+  it("parses Auto, with connectors off at most", () => {
+    expect(parseAgentPaymentSelection(pool)).toEqual(pool);
+    expect(
+      parseAgentPaymentSelection({ ...pool, claude_ai_connectors: false }),
+    ).toEqual({ ...pool, claude_ai_connectors: false });
+    expect(() =>
+      parseAgentPaymentSelection({ ...pool, claude_ai_connectors: true }),
+    ).toThrow("invalid claude_ai_connectors");
+    expect(() =>
+      parseAgentPaymentSelection({ ...pool, credential_id: "x" }),
+    ).toThrow("unsupported agent payment selection field");
+  });
+
+  it("has no credential: the host picks one for each turn", () => {
+    expect(harnessCredentialFromSelection(pool)).toBeUndefined();
+    expect(claudePoolSelection(pool)).toEqual(pool);
+    // As the default an agent follows.
+    const follows = {
+      version: 1,
+      provider: "claude-code",
+      mode: "default",
+    } as const;
+    expect(harnessCredentialFromSelection(follows, pool)).toBeUndefined();
+    expect(claudePoolSelection(follows, pool)).toEqual(pool);
+    // An agent's own choice wins over an Auto default.
+    expect(
+      claudePoolSelection(
+        { version: 1, provider: "claude-code", mode: "project-secret" },
+        pool,
+      ),
+    ).toBeUndefined();
   });
 });

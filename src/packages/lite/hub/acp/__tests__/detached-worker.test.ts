@@ -63,6 +63,7 @@ import {
   harnessRuntimeKey,
   prepareHarnessRequest,
 } from "../harness-runtime";
+import { setClaudePoolPicker } from "../claude-pool";
 import {
   enqueueAcpInterrupt,
   listPendingAcpInterrupts,
@@ -768,6 +769,203 @@ it.each([
     }
   },
 );
+
+describe("Auto (the Claude subscription pool)", () => {
+  const A = "33333333-3333-4333-8333-333333333333";
+  const B = "44444444-4444-4444-8444-444444444444";
+
+  async function runPoolTurn({
+    picks,
+    failWith,
+    picker = jest.fn(async () => picks.shift() ?? {}),
+  }: {
+    picks: any[];
+    failWith?: () => Error;
+    picker?: jest.Mock;
+  }) {
+    setClaudePoolPicker(picker);
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const base = prepareHarnessRequest({
+      ...makeRequest(),
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.93.0",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: A,
+      },
+    });
+    const request = { ...base, harness_pool: {} };
+    const job = enqueueAcpJob(request);
+    const syncdb = makeSyncdb([
+      {
+        event: "chat-thread-config",
+        thread_id: request.chat!.thread_id,
+        agent_kind: "acp",
+        agent_runtime: request.runtime,
+      },
+    ]);
+    jest.mocked(chatServer.acquireChatSyncDB).mockResolvedValue(syncdb as any);
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const evaluate = jest.fn(async ({ stream }: any) => {
+      if (failWith) throw failWith();
+      await stream({ type: "summary", finalResponse: "done" });
+    });
+    // The agent for whichever subscription the turn runs on.
+    const unregister = [A, B].map((credentialId) =>
+      acpTestInternals.registerInterruptAgentForTests(
+        harnessRuntimeKey({
+          ...request,
+          harness_credential: { ...request.harness_credential!, credentialId },
+        } as any),
+        request.project_id,
+        // Moving to another subscription retires the previous agent.
+        { evaluate, dispose: async () => {} } as any,
+        true,
+      ),
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      const before = Date.now();
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      return {
+        before,
+        evaluate,
+        picker,
+        held: listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+      };
+    } finally {
+      for (const stop of unregister) stop();
+      setHarnessLauncher();
+      setClaudePoolPicker();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+    }
+  }
+
+  const limit = (resets_at: number) => () =>
+    withTurnFailure(new Error("Claude could not run this request."), {
+      kind: "limit",
+      scope: "credential",
+      credential_id: A,
+      resets_at,
+    });
+
+  it("runs each turn on the subscription picked when it starts", async () => {
+    const { evaluate, picker } = await runPoolTurn({
+      picks: [{ credential_id: B, label: "max-b", current_label: "max-a" }],
+    });
+    expect(picker).toHaveBeenCalledWith(
+      expect.objectContaining({ current_credential_id: A }),
+    );
+    expect(evaluate).toHaveBeenCalledTimes(1);
+    expect(evaluate.mock.calls[0][0].harness_credential).toMatchObject({
+      mode: "account-subscription",
+      credentialId: B,
+    });
+  });
+
+  it("continues at once on another subscription when one hits its limit", async () => {
+    const resets_at = Date.now() + 3 * 60 * 60_000;
+    const { before, held, picker } = await runPoolTurn({
+      picks: [
+        { credential_id: A, label: "max-a" },
+        { credential_id: B, label: "max-b", current_label: "max-a" },
+      ],
+      failWith: limit(resets_at),
+    });
+    expect(picker).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        limited: { credential_id: A, resets_at: Math.round(resets_at / 1000) },
+      }),
+    );
+    expect(held).toHaveLength(1);
+    expect(held[0]).toMatchObject({
+      state: "queued",
+      recovery_reason: "usage limit hold",
+    });
+    expect(Number(held[0].available_at ?? before)).toBeLessThan(
+      before + 10_000,
+    );
+    const resumed = decodeAcpJobRequest(held[0]);
+    expect(resumed.harness_credential).toMatchObject({ credentialId: B });
+    expect(resumed.harness_pool).toEqual({});
+    expect(`${resumed.prompt}`).toMatch(/max-a was reached/);
+    expect(`${resumed.prompt}`).toMatch(/continued this turn on max-b/);
+  });
+
+  it("holds until one has room when every subscription is at its limit", async () => {
+    const resets_at = Date.now() + 3 * 60 * 60_000;
+    const hold_until = Date.now() + 60 * 60_000;
+    const { held } = await runPoolTurn({
+      picks: [
+        { credential_id: A },
+        { hold_until: new Date(hold_until).toISOString() },
+      ],
+      failWith: limit(resets_at),
+    });
+    expect(held).toHaveLength(1);
+    expect(
+      Math.abs(Number(held[0].available_at) - (hold_until + 60_000)),
+    ).toBeLessThan(10_000);
+    expect(`${decodeAcpJobRequest(held[0]).prompt}`).toMatch(
+      /every Claude subscription in Auto/,
+    );
+  });
+
+  it("holds a turn without running it when nothing has room at the start", async () => {
+    const hold_until = Date.now() + 2 * 60 * 60_000;
+    const until = new Date(hold_until).toISOString();
+    const { evaluate, held } = await runPoolTurn({
+      picks: [{ hold_until: until }, { hold_until: until }],
+    });
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(held).toHaveLength(1);
+    expect(
+      Math.abs(Number(held[0].available_at) - (hold_until + 60_000)),
+    ).toBeLessThan(10_000);
+  });
+
+  it("runs on the admitted subscription when the home bay cannot answer", async () => {
+    const picker = jest.fn(async () => {
+      throw Error("unreachable");
+    });
+    const { evaluate } = await runPoolTurn({ picks: [], picker });
+    expect(picker).toHaveBeenCalled();
+    expect(evaluate).toHaveBeenCalledTimes(1);
+    expect(evaluate.mock.calls[0][0].harness_credential).toMatchObject({
+      credentialId: A,
+    });
+  });
+});
 
 it.each(["created-by-preceding-turn", ""])(
   "passes refreshed human queue context %j to a cold ACP runtime with admitted settings",
