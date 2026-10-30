@@ -450,12 +450,21 @@ test("trusted MCP helper executes only through the scoped project socket", async
       /^printf %s '[A-Za-z0-9+/=]+' \| base64 -d \| .* --json agent send 'ops0' --stdin$/,
     );
     expect(sendScript).not.toContain("rm -rf");
+    // Past the CLI's 50 s messaging deadline, so its receipt comes back.
+    expect(execute.mock.calls.at(-1)?.[3]).toMatchObject({ timeoutMs: 90_000 });
     const sendCalls = execute.mock.calls.length;
     const badName = await request(21, "tools/call", {
       name: "agent_send",
       arguments: { to: "ops0; rm -rf ~", message: "x" },
     });
     expect(badName.result?.isError ?? !!badName.error).toBe(true);
+    expect(execute.mock.calls.length).toBe(sendCalls);
+    // The CLI's own 32 KiB limit, checked before anything runs.
+    const tooLong = await request(22, "tools/call", {
+      name: "agent_send",
+      arguments: { to: "ops0", message: "x".repeat(32 * 1024 + 1) },
+    });
+    expect(tooLong.result?.isError ?? !!tooLong.error).toBe(true);
     expect(execute.mock.calls.length).toBe(sendCalls);
     execute.mockImplementationOnce(async () => ({
       code: 0,

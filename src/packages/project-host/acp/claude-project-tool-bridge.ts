@@ -169,7 +169,12 @@ export async function runAgentMemoryTool(
 
 // An agent name as `cocalc agent destinations` lists it (optionally with @).
 const AGENT_NAME = /^@?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const MAX_AGENT_MESSAGE_BYTES = 64 * 1024;
+// `cocalc agent send`'s own limit (chat-agents.ts)
+const MAX_AGENT_MESSAGE_BYTES = 32 * 1024;
+// Past the CLI's 50 s messaging RPC deadline (agent-message.ts), so its
+// receipt (attempt id, or an uncertain delivery) always comes back; a
+// retry after a cut-off send could duplicate the message.
+const AGENT_SEND_TIMEOUT_MS = 90_000;
 
 // Messages another agent with the same CLI command and identity as
 // `cocalc agent send`, built here from validated arguments (no shell from the
@@ -189,7 +194,13 @@ export async function runAgentSendTool(
     );
   const b64 = Buffer.from(message, "utf8").toString("base64");
   const script = `printf %s '${b64}' | base64 -d | ${COCALC_CLI} --json agent send ${shellQuote(to.replace(/^@/, ""))} --stdin`;
-  const out = await runCaptured(execute, script, signal, 1_000_000);
+  const out = await runCaptured(
+    execute,
+    script,
+    signal,
+    1_000_000,
+    AGENT_SEND_TIMEOUT_MS,
+  );
   const json = (text: string): any => {
     try {
       return JSON.parse(text);

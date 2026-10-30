@@ -304,7 +304,7 @@ const tools = [
         },
         message: {
           type: "string",
-          description: "The message (Markdown), at most 64 KB",
+          description: "The message (Markdown), at most 32 KB",
         },
       },
       required: ["to", "message"],

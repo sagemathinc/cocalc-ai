@@ -28,12 +28,13 @@ export async function runCaptured(
   script: string,
   signal: AbortSignal,
   maxStdout: number,
+  timeoutMs = STEP_TIMEOUT_MS,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   let stdout = "";
   let stderr = "";
   let overflow = false;
   const result = await execute(script, undefined, signal, {
-    timeoutMs: STEP_TIMEOUT_MS,
+    timeoutMs,
     onOutput: (stream, data) => {
       if (stream === "stdout") {
         if (stdout.length + data.length > maxStdout) overflow = true;
