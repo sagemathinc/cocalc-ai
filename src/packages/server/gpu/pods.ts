@@ -17,7 +17,7 @@ Everything here runs on the key owner's home bay (the *Local functions); the
 routed entry points at the bottom forward the whole operation there.
 */
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
   RunpodApiError,
@@ -716,16 +716,38 @@ export interface ProjectFundedLaunch {
 }
 
 // The stable key of a funded launch's operation (stored per approval).
+// The whole actor (kind, account, agent, run) and the operation, as an
+// unambiguous tuple's digest: another run of the same agent, or ids that
+// only differ in where a ':' falls, are other operations.
 export function launchOperationKey(f: ProjectFundedLaunch): string | null {
   if (f.operation_id == null) return null;
-  return [
-    f.actor_kind,
-    f.actor_account_id ?? "-",
-    f.agent_id ?? "-",
-    f.operation_id,
-  ]
-    .join(":")
-    .slice(0, 400);
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        "funded-launch-operation/v1",
+        f.actor_kind,
+        f.actor_account_id ?? null,
+        f.agent_id ?? null,
+        f.run_id ?? null,
+        f.operation_id,
+      ]),
+    )
+    .digest("hex");
+}
+
+// A salted digest of the whole normalized request (SSH key and env values
+// included, which the stored spec omits): a retry must be exactly the same
+// launch. Stored as "<salt>:<digest>"; the values themselves never are.
+export function launchRequestDigest(spec: GpuLaunchSpec, salt: string): string {
+  return `${salt}:${createHash("sha256")
+    .update(`${salt}\n${canonical(spec)}`)
+    .digest("hex")}`;
+}
+
+function sameLaunchRequest(stored: string | null, spec: GpuLaunchSpec) {
+  if (!stored) return false;
+  const salt = stored.slice(0, stored.indexOf(":"));
+  return launchRequestDigest(spec, salt) === stored;
 }
 
 // Canonical JSON (sorted keys), to compare a stored spec with a retry's.
@@ -1146,7 +1168,7 @@ async function insertIntent({
             [funding.approval_id, opKey],
           );
           if (done[0]) {
-            if (canonical(done[0].spec) !== canonical(storedSpec(spec))) {
+            if (!sameLaunchRequest(done[0].launch_request_digest, spec)) {
               throw Error(
                 "This operation id was already used for a different launch; use a new one.",
               );
@@ -1207,10 +1229,11 @@ async function insertIntent({
              data_center_id, state, desired_state, max_runtime_minutes, deadline,
              ssh_key_fingerprint, hostkey_token_id, hostkey_verifier,
              hostkey_expires, agent_id, turn_id, approval_id, actor_kind,
-             actor_account_id, actor_project_id, launch_operation_key, created, updated)
+             actor_account_id, actor_project_id, launch_operation_key,
+             launch_request_digest, created, updated)
            VALUES ($1, $2, $3, $4, 'runpod', $19, $5, $6, $7, $8, $9, $10, 'intent',
              'running', $11, $12, $13, $14, $15, $16, $17, $18, $20, $21, $22, $5,
-             $23, now(), now())
+             $23, $24, now(), now())
            RETURNING *`,
           [
             id,
@@ -1236,6 +1259,9 @@ async function insertIntent({
             actor.kind,
             actor.account_id ?? null,
             opKey,
+            opKey
+              ? launchRequestDigest(spec, randomBytes(8).toString("hex"))
+              : null,
           ],
         );
         await openFirstStateInterval(db, rows[0]);

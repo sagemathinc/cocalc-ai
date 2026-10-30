@@ -173,6 +173,7 @@ function funded(
     kind: "project" | "user" | "agent";
     account_id?: string;
     agent_id?: string;
+    run_id?: string;
     operation_id?: string;
   } = {
     kind: "project",
@@ -192,7 +193,7 @@ function funded(
         actor_account_id: actor.account_id,
         agent_id:
           actor.kind === "agent" ? (actor.agent_id ?? "agent:a1") : undefined,
-        run_id: actor.kind === "agent" ? "run-1" : undefined,
+        run_id: actor.kind === "agent" ? (actor.run_id ?? "run-1") : undefined,
         operation_id: actor.operation_id,
       },
     },
@@ -357,9 +358,10 @@ describeDb("launches under a project funding approval", () => {
 
   it("makes one pod per funded operation: a retry gets it back, never a second paid pod", async () => {
     const s = await setup();
-    const a = await approve(s);
+    const a = await approve(s, { authorized_usd: "50" });
     await getPool().query(
-      `UPDATE gpu_budget_layers SET max_concurrent_pods = 10
+      `UPDATE gpu_budget_layers SET max_concurrent_pods = 20, max_gpu_count = 20,
+              authorized_usd = 100
         WHERE credential_id = $1 AND scope_kind = 'key'`,
       [s.credential_id],
     );
@@ -383,10 +385,33 @@ describeDb("launches under a project funding approval", () => {
       [a.approval_id],
     );
     expect(pods[0].n).toBe(1);
-    // the same id for a different launch is refused
+    // the same id for a different launch is refused: the spec, the SSH key,
+    // an env value
+    const KEY1 =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+    for (const other of [
+      { ...SPEC, max_runtime_minutes: 30 },
+      { ...SPEC, ssh_public_key: KEY1 },
+      { ...SPEC, env: { MODE: "b" } },
+    ]) {
+      await expect(funded(s, a, agent, other)).rejects.toThrow(
+        /already used for a different launch/,
+      );
+    }
+    // and an env value differing from a first launch's is refused too
+    const withEnv = { ...agent, operation_id: "op-env" };
+    await funded(s, a, withEnv, { ...SPEC, env: { MODE: "a" } });
     await expect(
-      funded(s, a, agent, { ...SPEC, max_runtime_minutes: 30 }),
+      funded(s, a, withEnv, { ...SPEC, env: { MODE: "b" } }),
     ).rejects.toThrow(/already used for a different launch/);
+    const { rows: stored } = await getPool().query(
+      "SELECT launch_operation_key, launch_request_digest, spec FROM gpu_pods WHERE id = $1",
+      [first.id],
+    );
+    expect(stored[0].launch_operation_key).toMatch(/^[0-9a-f]{64}$/);
+    expect(stored[0].launch_request_digest).toMatch(
+      /^[0-9a-f]{16}:[0-9a-f]{64}$/,
+    );
     // another agent's (or person's) same id is its own operation
     const other = await funded(s, a, { ...agent, agent_id: "agent:a2" });
     expect(other.id).not.toBe(first.id);
@@ -396,7 +421,21 @@ describeDb("launches under a project funding approval", () => {
       operation_id: "op-1",
     });
     expect(person.id).not.toBe(first.id);
-    expect(s.rp.client.createPod).toHaveBeenCalledTimes(3);
+    // another run of the same agent, same id: its own operation
+    const nextRun = await funded(s, a, { ...agent, run_id: "run-2" });
+    expect(nextRun.id).not.toBe(first.id);
+    // ':' inside ids can't make two operations collide
+    const x = await funded(s, a, {
+      ...agent,
+      agent_id: "agent:a",
+      operation_id: "b:c",
+    });
+    const y = await funded(s, a, {
+      ...agent,
+      agent_id: "agent:a:b",
+      operation_id: "c",
+    });
+    expect(x.id).not.toBe(y.id);
   });
 
   it("refuses a funded agent launch without an operation id at the boundary", async () => {
