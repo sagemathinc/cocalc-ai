@@ -5,6 +5,7 @@
 
 import { SafetyCertificateOutlined } from "@ant-design/icons";
 import { Alert, Button, Radio, Space, Tag, Typography } from "antd";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import type { CSSProperties } from "react";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import type {
@@ -332,10 +333,10 @@ function RuntimeCodexAttentionCard({
           );
           if (result.ok && next) acceptRecord(next);
         }
-      } catch (err) {
-        if (!disposed && record.state === "pending") {
-          setError(`Unable to refresh this request: ${err}`);
-        }
+      } catch {
+        // A background refresh: a dropped connection is retried at the next
+        // poll and is not the person's concern. Errors from their own
+        // actions are still shown.
       } finally {
         if (!disposed && record.state === "pending") {
           timer = setTimeout(() => void refresh(), POLL_MS);
@@ -442,17 +443,15 @@ function RuntimeCodexAttentionCard({
     }
   };
 
-  const updateDelivery = async (action: "acknowledge" | "snooze") => {
+  // Acknowledge stops the email reminder for a request still waiting.
+  const acknowledge = async () => {
     setSubmitting(true);
     setError(undefined);
     try {
       const result = await webapp_client.conat_client.attentionAcp({
-        action,
+        action: "acknowledge",
         project_id: record.project_id,
         attention_id: record.attention_id,
-        ...(action === "snooze"
-          ? { snoozed_until: Date.now() + 5 * 60_000 }
-          : {}),
       });
       if (!result.ok || !result.record) {
         throw new Error(result.error ?? "The request could not be updated.");
@@ -916,18 +915,10 @@ function RuntimeCodexAttentionCard({
                 >
                   Approve in CoCalc
                 </Button>
-                <Button
+                <AcknowledgeButton
                   disabled={submitting || record.acknowledged_at != null}
-                  onClick={() => void updateDelivery("acknowledge")}
-                >
-                  Acknowledge
-                </Button>
-                <Button
-                  disabled={submitting}
-                  onClick={() => void updateDelivery("snooze")}
-                >
-                  Snooze 5 minutes
-                </Button>
+                  onClick={() => void acknowledge()}
+                />
               </Space>
             ) : answerable ? (
               <Space wrap>
@@ -946,18 +937,10 @@ function RuntimeCodexAttentionCard({
                 >
                   Decline
                 </Button>
-                <Button
+                <AcknowledgeButton
                   disabled={submitting || record.acknowledged_at != null}
-                  onClick={() => void updateDelivery("acknowledge")}
-                >
-                  Acknowledge
-                </Button>
-                <Button
-                  disabled={submitting}
-                  onClick={() => void updateDelivery("snooze")}
-                >
-                  Snooze 5 minutes
-                </Button>
+                  onClick={() => void acknowledge()}
+                />
               </Space>
             ) : staleWithAnswer ? (
               <Button
@@ -972,5 +955,21 @@ function RuntimeCodexAttentionCard({
         )}
       </Space>
     </section>
+  );
+}
+
+function AcknowledgeButton({
+  disabled,
+  onClick,
+}: {
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip title="You have seen this: no email reminder about it">
+      <Button disabled={disabled} onClick={onClick}>
+        Acknowledge
+      </Button>
+    </Tooltip>
   );
 }

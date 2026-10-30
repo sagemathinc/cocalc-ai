@@ -10,7 +10,16 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { useReaderFullScreen } from "../reader-full-screen";
-import { ChatReaderView } from "../reader-view";
+import {
+  ChatReaderView,
+  clearRememberedReaderSelectionsForTests,
+} from "../reader-view";
+import {
+  clearViewedTurnsForTests,
+  noteSentFromReader,
+  readerTurnKey,
+  viewedTurn,
+} from "../reader-viewed-turn";
 import type { ReaderChange, ReaderState } from "../reader-model";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -118,6 +127,13 @@ function setup(initial: any[], readCount = 0, props: object = {}) {
     setMessages: (messages: any[]) => act(() => setMessages(messages)),
   };
 }
+
+// Each test starts with nothing open (the open message is remembered across
+// remounts, and every test uses the same thread).
+beforeEach(() => {
+  clearRememberedReaderSelectionsForTests();
+  clearViewedTurnsForTests();
+});
 
 const options = () => screen.getAllByRole("option");
 const isUnread = (option: HTMLElement) =>
@@ -1062,4 +1078,105 @@ describe("the list's width", () => {
       screen.queryByRole("separator", { name: /Resize the message list/ }),
     ).toBeNull();
   });
+});
+
+test("the open message survives a remount (the frame splitting for an artifact)", async () => {
+  localStorage.removeItem("cocalc-chat-reader-view");
+  setup(thread, 4);
+  await user().click(screen.getByText(/first question/));
+  expect(screen.getByRole("article")).toHaveTextContent("first answer");
+  cleanupAll();
+  setup(thread, 4);
+  expect(screen.getByRole("article")).toHaveTextContent("first answer");
+  expect(
+    options().find((o) => o.getAttribute("aria-selected") === "true"),
+  ).toHaveTextContent("first question");
+  // Another thread has its own.
+  cleanupAll();
+  setup(thread, 4, { threadId: "thread-2" });
+  expect(screen.queryByRole("article")).not.toBeInTheDocument();
+});
+
+test("records the open turn, and whether it is the newest", async () => {
+  localStorage.removeItem("cocalc-chat-reader-view");
+  setup(thread, 4);
+  const key = readerTurnKey(undefined, undefined, "thread-1");
+  await user().click(screen.getByText(/first question/));
+  expect(viewedTurn(key)).toMatchObject({
+    item_id: "p1",
+    latest: false,
+    preview: "first question",
+  });
+  await user().click(screen.getByText(/third question/));
+  expect(viewedTurn(key)).toMatchObject({ item_id: "p3", latest: true });
+});
+
+test("after sending from an earlier turn: a button goes to the new message's turn", async () => {
+  localStorage.removeItem("cocalc-chat-reader-view");
+  const { setMessages } = setup(thread, 4);
+  await user().click(screen.getByText(/first question/));
+  const key = readerTurnKey(undefined, undefined, "thread-1");
+  act(() => noteSentFromReader(key, "p4"));
+  // Not yet in the thread: nothing to go to.
+  expect(
+    screen.queryByRole("button", { name: "Go to your message" }),
+  ).not.toBeInTheDocument();
+  setMessages([...thread, person("p4", "about the first one", 5)]);
+  // The open message stays: no switch.
+  expect(screen.getByRole("article")).toHaveTextContent("first answer");
+  await user().click(
+    await screen.findByRole("button", { name: "Go to your message" }),
+  );
+  expect(screen.getByRole("article")).toHaveTextContent("about the first one");
+  expect(
+    screen.queryByRole("button", { name: "Go to your message" }),
+  ).not.toBeInTheDocument();
+});
+
+test("two readers of one thread (two frames) each keep their own open turn", async () => {
+  localStorage.removeItem("cocalc-chat-reader-view");
+  const actions: any = {
+    getThreadReadCount: () => 4,
+    getReaderState: () => ({}),
+    getReaderStars: () => [],
+    updateReaderState: jest.fn(),
+    updateReaderStars: jest.fn(),
+    markThreadRead: jest.fn(),
+  };
+  const reader = (scope: string) => (
+    <div data-testid={scope}>
+      <ChatReaderView
+        actions={actions}
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        readerScope={scope}
+      />
+    </div>
+  );
+  const a = render(reader("a"));
+  const b = render(reader("b"));
+  const keyA = readerTurnKey(undefined, undefined, "thread-1", "a");
+  const keyB = readerTurnKey(undefined, undefined, "thread-1", "b");
+  await user().click(within(a.getByTestId("a")).getByText(/first question/));
+  await user().click(within(b.getByTestId("b")).getByText(/third question/));
+  expect(viewedTurn(keyA)).toMatchObject({ item_id: "p1", latest: false });
+  expect(viewedTurn(keyB)).toMatchObject({ item_id: "p3", latest: true });
+  // A message sent from a's composer is offered in a only.
+  act(() => noteSentFromReader(keyA, "p2"));
+  expect(
+    within(a.getByTestId("a")).getByRole("button", {
+      name: "Go to your message",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    within(b.getByTestId("b")).queryByRole("button", {
+      name: "Go to your message",
+    }),
+  ).not.toBeInTheDocument();
+  // Closing one frame leaves the other's state alone.
+  b.unmount();
+  expect(viewedTurn(keyB)).toBeUndefined();
+  expect(viewedTurn(keyA)).toMatchObject({ item_id: "p1", latest: false });
+  a.unmount();
 });

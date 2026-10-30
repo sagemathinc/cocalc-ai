@@ -20,6 +20,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, Tooltip } from "@cocalc/frontend/components";
+import { useId } from "react";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import {
   useChatVisualViewport,
@@ -66,6 +67,11 @@ import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadMenu, stripThreadHtml } from "./chatroom-thread-menu";
 import { requestThreadSearch } from "./thread-search-request";
 import { useChatReaderMode } from "./reader-view";
+import {
+  noteSentFromReader,
+  readerReplyContext,
+  readerTurnKey,
+} from "./reader-viewed-turn";
 import {
   ChatRoomThreadPanel,
   resolveSelectedThreadRunningCodexMessage,
@@ -1329,6 +1335,7 @@ function ChatPanelContent({
           input: pending.input,
           postOnly: pending.postOnly,
           acp_prompt: pending.acp_prompt,
+          acp_context: pending.acp_context,
           artifact_feedback: pending.artifact_feedback,
           sender_id: pending.sender_id,
           reply_thread_id: pending.reply_thread_id,
@@ -1838,6 +1845,9 @@ function ChatPanelContent({
   const selectedThreadReadSignatureRef = useRef<string | null>(null);
 
   const [readerMode, setReaderMode] = useChatReaderMode(project_id, path);
+  // This chat frame's reader and composer (another frame may show the same
+  // thread, with another turn open).
+  const readerScope = useId();
   // The reader takes the keys when the person turns it on with one of its
   // buttons, in this chat; never when a chat simply opens in it.
   const readerChatKey = `${project_id ?? ""}:${path ?? ""}`;
@@ -2110,6 +2120,16 @@ function ChatPanelContent({
           existingThreadMetadata?.agent_model ??
           existingThreadMetadata?.acp_config?.model,
       });
+    // Written while an earlier turn was open in the reader: the agent is told
+    // which (the message shown in the chat stays as typed).
+    const viewedNote = readerReplyContext({
+      readerMode,
+      agentTurn: isCodexSubmit,
+      projectId: project_id,
+      path,
+      threadId: reply_thread_id,
+      scope: readerScope,
+    });
     if (isCodexSubmit && !aiAgentPolicyAllowed) {
       Modal.error({
         title: "AI integrations are disabled",
@@ -2279,6 +2299,7 @@ function ChatPanelContent({
       sender_id: account_id,
       input: resolvedInput,
       acp_prompt: feedbackPrompt || undefined,
+      acp_context: viewedNote,
       artifact_feedback: feedback,
       date: chatIdentity.date,
       message_id: chatIdentity.message_id,
@@ -2312,6 +2333,7 @@ function ChatPanelContent({
       parent_message_id,
       input: resolvedInput,
       acp_prompt: feedbackPrompt || undefined,
+      acp_context: viewedNote,
       artifact_feedback: feedback,
       send_mode: sendMode,
       name: newThreadName,
@@ -2322,6 +2344,12 @@ function ChatPanelContent({
       skipDraftDelete: !pendingStored,
       postOnly: opts?.postOnly,
     });
+    // The reader offers to go to the turn with this message.
+    if (timeStamp && readerMode && reply_thread_id && chatIdentity.message_id)
+      noteSentFromReader(
+        readerTurnKey(project_id, path, reply_thread_id, readerScope),
+        chatIdentity.message_id,
+      );
     if (!timeStamp) {
       await removePendingChatSend(pendingChatSend);
       // If send preconditions fail after optimistic clear (e.g. transient
@@ -2761,6 +2789,7 @@ function ChatPanelContent({
         }
         mobile={narrow}
         readerMode={readerMode}
+        readerScope={readerScope}
         onReaderModeChange={toggleReaderMode}
         readerAutoFocus={readerAutoFocus}
         readStateVersion={effectiveReadStateVersion}

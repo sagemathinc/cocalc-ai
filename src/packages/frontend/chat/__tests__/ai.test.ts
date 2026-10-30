@@ -146,6 +146,26 @@ describe("processAI Codex dispatch", () => {
     );
   });
 
+  it("adds the interface's context after the prompt the person wrote", async () => {
+    const actions = makeActions();
+    const message = makeMessage({
+      acp_context: "[Context from the CoCalc interface: an earlier turn]",
+      history: [
+        {
+          author_id: "00000000-1000-4000-8000-000000000001",
+          content: "@codex why did this fail?",
+          date: "2025-02-02T00:00:00.000Z",
+        },
+      ],
+    });
+    await processAI({ actions, message, threadModel: "codex-agent" });
+    const input = (processAcpLLM as jest.Mock).mock.calls.at(-1)[0].input;
+    expect(input).toMatch(/why did this fail\?/);
+    expect(input).toMatch(
+      /\n\n\[Context from the CoCalc interface: an earlier turn\]$/,
+    );
+  });
+
   it("prefers acp_prompt and preserves immediate send mode", async () => {
     const actions = makeActions();
     const message = makeMessage({
