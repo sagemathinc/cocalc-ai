@@ -17,7 +17,9 @@ import {
   Spin,
   Typography,
 } from "antd";
+import { EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type React from "react";
 
 export const CHECKING_POLL_MS = 15_000;
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
@@ -188,12 +190,9 @@ export function GpuProviderKeySection() {
         checks it with RunPod before saving it, and never shows it again.
       </Typography.Paragraph>
       <Space.Compact style={{ width: "100%" }}>
-        <Input.Password
-          aria-label="RunPod API key"
-          autoComplete="off"
-          placeholder="RunPod API key"
+        <KeyInput
           value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
+          onChange={setApiKey}
           onPressEnter={() => void connect()}
         />
         <Button
@@ -403,5 +402,55 @@ export function GpuProviderKeySection() {
       )}
       <FreshAuthModal {...freshAuthModalProps} />
     </Panel>
+  );
+}
+
+// Not a password input: browsers and password managers then offer to fill or
+// save it as a site password. The key is masked with CSS instead, and the
+// managers' opt-out attributes are set. Whether it is shown is state of this
+// field, so each new key entry starts masked.
+function KeyInput({
+  value,
+  onChange,
+  onPressEnter,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onPressEnter: () => void;
+}) {
+  const [showKey, setShowKey] = useState(false);
+  return (
+    <Input
+      aria-label="RunPod API key"
+      type="text"
+      name="runpod-api-key"
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
+      data-1p-ignore
+      data-lpignore="true"
+      data-bwignore="true"
+      data-form-type="other"
+      styles={{
+        input: showKey
+          ? {}
+          : ({ WebkitTextSecurity: "disc" } as React.CSSProperties),
+      }}
+      suffix={
+        <Button
+          type="text"
+          size="small"
+          aria-label="Show key"
+          aria-pressed={showKey}
+          icon={showKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+          onClick={() => setShowKey(!showKey)}
+        />
+      }
+      placeholder="RunPod API key"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onPressEnter={onPressEnter}
+    />
   );
 }
