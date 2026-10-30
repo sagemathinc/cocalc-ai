@@ -34,8 +34,10 @@ import {
   clearProjectArchiveLifecycleFinalBackup,
   createProjectArchiveLifecycleJob,
   getProjectArchiveLifecycleFinalBackup,
+  MANUAL_ARCHIVE_HEARTBEAT_MS,
   recordProjectArchiveLifecycleFinalBackup,
   type ProjectArchiveLifecycleFinalBackup,
+  touchRunningProjectArchiveLifecycleJob,
   updateProjectArchiveLifecycleJob,
 } from "./archive-lifecycle-db";
 import { isArchiveBackupFailureReopenSafe } from "./backup-freeze-recovery";
@@ -573,6 +575,17 @@ export async function archiveProjectStorage({
     jobId = job?.id;
   }
   if (!jobId) throw new Error("archive lifecycle job is required");
+  // A manual archive's job shows it is alive while this call runs; only an
+  // interrupted call leaves it to failStuckManualArchiveJobs.
+  const manualJobId = jobId;
+  const heartbeat = automatic
+    ? undefined
+    : setInterval(() => {
+        void touchRunningProjectArchiveLifecycleJob(manualJobId).catch(
+          () => undefined,
+        );
+      }, MANUAL_ARCHIVE_HEARTBEAT_MS);
+  heartbeat?.unref?.();
 
   let hostCleanupCompleted = false;
   let expectedArchiveGeneration: number | undefined;
@@ -840,5 +853,7 @@ export async function archiveProjectStorage({
       );
     }
     throw err;
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
   }
 }
