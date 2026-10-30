@@ -149,6 +149,7 @@ export async function launch(
   if (projectAuth?.project_id) {
     const {
       ProjectApprovalRequired,
+      isProjectFundingRetry,
       recordProjectFundingRequestLocal,
       routeProjectLaunchLocal,
     } = await import("@cocalc/server/gpu/project-funding-routes");
@@ -162,7 +163,11 @@ export async function launch(
       project_id: projectAuth.project_id,
       actor: { kind: "project" },
       spec: opts?.spec,
-    }).catch(() => undefined);
+    }).catch((e) => {
+      // approved meanwhile: the answer is to launch again
+      if (isProjectFundingRetry(e)) throw e;
+      return undefined;
+    });
     throw new ProjectApprovalRequired(
       "This project has no approval to use GPUs. A collaborator with their own RunPod key can approve GPU use in this project, paid by their account: they'll see the request at the top of the project.",
       request_id,

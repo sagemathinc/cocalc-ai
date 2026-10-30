@@ -93,6 +93,7 @@ interface Setup {
   credential_id: string;
   podDeps: any;
   fundDeps: ProjectFundingDeps;
+  rp: ReturnType<typeof fakeRunpod>;
 }
 
 async function setup(): Promise<Setup> {
@@ -140,7 +141,15 @@ async function setup(): Promise<Setup> {
     accountWriteFence: fence,
     siteUrl: async () => "https://cocalc.test",
   };
-  return { funder, student, project_id, credential_id, podDeps, fundDeps };
+  return {
+    funder,
+    student,
+    project_id,
+    credential_id,
+    podDeps,
+    fundDeps,
+    rp,
+  } as Setup;
 }
 
 async function approve(s: Setup, terms: Record<string, unknown> = {}) {
@@ -160,7 +169,12 @@ async function approve(s: Setup, terms: Record<string, unknown> = {}) {
 function funded(
   s: Setup,
   a: { approval_id: string; layer_id: string },
-  actor: { kind: "project" | "user" | "agent"; account_id?: string } = {
+  actor: {
+    kind: "project" | "user" | "agent";
+    account_id?: string;
+    agent_id?: string;
+    operation_id?: string;
+  } = {
     kind: "project",
   },
   spec: Record<string, unknown> = SPEC,
@@ -176,8 +190,10 @@ function funded(
         layer_id: a.layer_id,
         actor_kind: actor.kind,
         actor_account_id: actor.account_id,
-        agent_id: actor.kind === "agent" ? "agent:a1" : undefined,
+        agent_id:
+          actor.kind === "agent" ? (actor.agent_id ?? "agent:a1") : undefined,
         run_id: actor.kind === "agent" ? "run-1" : undefined,
+        operation_id: actor.operation_id,
       },
     },
     s.podDeps,
@@ -337,6 +353,71 @@ describeDb("launches under a project funding approval", () => {
     );
     expect(await reservedOn(own.id)).toEqual(["key"]);
     expect((await pod(own.id)).approval_id).toBeNull();
+  });
+
+  it("makes one pod per funded operation: a retry gets it back, never a second paid pod", async () => {
+    const s = await setup();
+    const a = await approve(s);
+    await getPool().query(
+      `UPDATE gpu_budget_layers SET max_concurrent_pods = 10
+        WHERE credential_id = $1 AND scope_kind = 'key'`,
+      [s.credential_id],
+    );
+    const agent = {
+      kind: "agent" as const,
+      account_id: s.student,
+      operation_id: "op-1",
+    };
+    const first = await funded(s, a, agent);
+    // the answer was lost; the agent retries the same operation
+    const again = await funded(s, a, agent);
+    expect(again.id).toBe(first.id);
+    expect(s.rp.client.createPod).toHaveBeenCalledTimes(1);
+    const { rows } = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_pod_reservations WHERE pod_id = $1",
+      [first.id],
+    );
+    expect(rows[0].n).toBe(2);
+    const { rows: pods } = await getPool().query(
+      "SELECT count(*)::int AS n FROM gpu_pods WHERE approval_id = $1",
+      [a.approval_id],
+    );
+    expect(pods[0].n).toBe(1);
+    // the same id for a different launch is refused
+    await expect(
+      funded(s, a, agent, { ...SPEC, max_runtime_minutes: 30 }),
+    ).rejects.toThrow(/already used for a different launch/);
+    // another agent's (or person's) same id is its own operation
+    const other = await funded(s, a, { ...agent, agent_id: "agent:a2" });
+    expect(other.id).not.toBe(first.id);
+    const person = await funded(s, a, {
+      kind: "user",
+      account_id: s.student,
+      operation_id: "op-1",
+    });
+    expect(person.id).not.toBe(first.id);
+    expect(s.rp.client.createPod).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses a funded agent launch without an operation id at the boundary", async () => {
+    await expect(
+      verifyProjectFundedLaunch(
+        {
+          source_bay_id: "bay-p",
+          project_id: randomUUID(),
+          approval_id: randomUUID(),
+          layer_id: randomUUID(),
+          funder_account_id: randomUUID(),
+          actor: {
+            kind: "agent",
+            account_id: randomUUID(),
+            agent_id: "agent:a1",
+          },
+          spec: SPEC,
+        },
+        { assertSentByProjectBay: async () => {} },
+      ),
+    ).rejects.toThrow(/operation id/);
   });
 
   it("binds the key use to exactly one approval", async () => {

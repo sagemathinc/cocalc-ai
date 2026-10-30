@@ -29,6 +29,7 @@ import {
   PROJECT_FUNDING_LEASE_MS,
   PROJECT_FUNDING_PROVIDERS,
   PROJECT_FUNDING_REQUEST_TTL_MS,
+  LAUNCH_OPERATION_ID,
   type ProjectFundingDeliverRequest,
   type ProjectFundingDeliverResult,
   type ProjectFundingReserveRequest,
@@ -512,6 +513,16 @@ export interface ProjectLaunchDeps extends ProjectFundingRouteDeps {
 
 export class ProjectFundingRetry extends Error {
   readonly retryable = true;
+  readonly code = "gpu_project_funding_retry";
+}
+
+// (across bays an error keeps its message, not its class)
+export function isProjectFundingRetry(err: unknown): boolean {
+  return (
+    err instanceof ProjectFundingRetry ||
+    (err as any)?.code === "gpu_project_funding_retry" ||
+    /moving between servers|was just approved/.test(`${(err as any)?.message}`)
+  );
 }
 
 // On the project's owning bay: who may launch here, and with which active
@@ -525,11 +536,22 @@ export async function routeProjectLaunchLocal(
     // a person's or agent's launch arrives from their home bay (or is made
     // on it, in process): that bay must be the actor account's home
     source_bay_id?: string;
+    // the launch's idempotency key (required for an agent)
+    operation_id?: string;
   },
   deps: ProjectLaunchDeps = {},
 ): Promise<ProjectLaunchRoute> {
   const project_id = requireId(opts.project_id, "project_id");
   const actor = opts.actor;
+  const operation_id = opts.operation_id;
+  if (
+    (operation_id != null || actor.kind === "agent") &&
+    !LAUNCH_OPERATION_ID.test(`${operation_id ?? ""}`)
+  ) {
+    throw Error(
+      "An agent's GPU launch needs an operation id (cocalc gpu launch --operation <id>).",
+    );
+  }
   if (actor.kind !== "project") {
     await assertSentByAccountHome(
       opts.source_bay_id ?? getConfiguredBayId(),
@@ -537,34 +559,38 @@ export async function routeProjectLaunchLocal(
       deps,
     );
   }
-  const { rows: projects } = await getPool().query(
-    "SELECT owning_bay_id, deleted, users FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  const p = projects[0];
-  if (!p || p.deleted) throw Error("project not found or access denied");
-  const owner = `${p.owning_bay_id ?? ""}`.trim() || getConfiguredBayId();
-  if (owner !== getConfiguredBayId()) {
+  // The decision is taken from a snapshot under the project rehome fence
+  // (no rehome running here, no import pending, this bay owns the project),
+  // in a short transaction released before the funder's bay is called: a
+  // bay that is giving the project up, or hasn't received its approvals
+  // yet, never answers 'no approval' (which would send the caller to their
+  // own key).
+  const snapshot = await withRouteWrite(project_id, async (db, project) => {
+    if (project == null || project.deleted) {
+      throw Error("project not found or access denied");
+    }
+    if (actor.kind !== "project") {
+      if (!isCollaborator(project, actor.account_id)) {
+        throw Error("project not found or access denied");
+      }
+      if (actor.kind === "agent" && actor.project_id !== project_id) {
+        throw Error("An agent can launch only in its own project.");
+      }
+    }
+    const { rows } = await db.query(
+      `SELECT * FROM project_compute_approvals
+        WHERE project_id = $1 AND provider = 'runpod' AND kind = 'approval'
+          AND state = 'active'`,
+      [project_id],
+    );
+    return { route: rows[0] ?? null };
+  });
+  if ("status" in snapshot) {
     throw new ProjectFundingRetry(
       "This project is moving between servers right now; try again in a minute.",
     );
   }
-  if (actor.kind !== "project") {
-    requireId(actor.account_id, "account_id");
-    if (!isCollaborator({ deleted: false, users: p.users }, actor.account_id)) {
-      throw Error("project not found or access denied");
-    }
-    if (actor.kind === "agent" && actor.project_id !== project_id) {
-      throw Error("An agent can launch only in its own project.");
-    }
-  }
-  const { rows } = await getPool().query(
-    `SELECT * FROM project_compute_approvals
-      WHERE project_id = $1 AND provider = 'runpod' AND kind = 'approval'
-        AND state = 'active'`,
-    [project_id],
-  );
-  const route = rows[0];
+  const route = snapshot.route;
   if (!route) return { status: "no_approval" };
   // (H decides authoritatively; this only picks the agent's path)
   if (actor.kind === "agent" && route.display?.agents_allowed === false) {
@@ -587,6 +613,7 @@ export async function routeProjectLaunchLocal(
               agent_id: actor.agent_id,
               run_id: actor.run_id,
             },
+    ...(operation_id != null ? { operation_id } : {}),
     spec: opts.spec,
   };
   const pod = await (deps.fundedLaunch ?? defaultFundedLaunch)(req);
@@ -670,6 +697,14 @@ export async function recordProjectFundingRequestLocal(
     ) {
       return undefined;
     }
+    // Approved meanwhile (between routing and now): no request, launch again.
+    const { rows: active } = await db.query(
+      `SELECT 1 FROM project_compute_approvals
+        WHERE project_id = $1 AND provider = 'runpod' AND kind = 'approval'
+          AND state IN ('pending', 'active')`,
+      [project_id],
+    );
+    if (active.length > 0) return APPROVED;
     // expired requests stop being pending first
     await db.query(
       `UPDATE project_compute_approvals SET state = 'expired', updated = now()
@@ -710,5 +745,12 @@ export async function recordProjectFundingRequestLocal(
     );
     return id;
   });
+  if (result === APPROVED) {
+    throw new ProjectFundingRetry(
+      "GPU use in this project was just approved; launch again.",
+    );
+  }
   return typeof result === "string" ? result : undefined;
 }
+
+const APPROVED = Symbol("approved");

@@ -1428,6 +1428,7 @@ async function startAccountLocalService(): Promise<void> {
         actor: opts.actor,
         spec: opts.spec,
         source_bay_id: opts.source_bay_id,
+        operation_id: opts.operation_id,
       }),
     gpuProjectFundingRequest: async (opts) => ({
       request_id: await (

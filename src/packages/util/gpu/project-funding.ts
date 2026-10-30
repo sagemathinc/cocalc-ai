@@ -551,8 +551,13 @@ export interface ProjectFundingLaunchRequest {
     agent_id?: string;
     run_id?: string;
   };
+  // the launch's idempotency key, chosen by the caller (required for an
+  // agent): the same actor and operation under one approval is one pod
+  operation_id?: string;
   spec: unknown;
 }
+
+export const LAUNCH_OPERATION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 // A person's or agent's launch, from their home bay to the project's owning
 // bay (which must find source_bay_id is the actor's home): the project's
@@ -569,6 +574,8 @@ export interface ProjectLaunchRouteRequest {
         agent_id: string;
         run_id?: string;
       };
+  // required for an agent (its 6b operation id), optional for a person
+  operation_id?: string;
   spec: unknown;
 }
 

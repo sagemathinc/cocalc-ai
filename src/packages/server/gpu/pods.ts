@@ -710,6 +710,35 @@ export interface ProjectFundedLaunch {
   // an agent's canonical ids (attribution only)
   agent_id?: string;
   run_id?: string;
+  // the launch's idempotency key: the same actor and operation under this
+  // approval is one pod (a retry gets it back, never a second one)
+  operation_id?: string;
+}
+
+// The stable key of a funded launch's operation (stored per approval).
+export function launchOperationKey(f: ProjectFundedLaunch): string | null {
+  if (f.operation_id == null) return null;
+  return [
+    f.actor_kind,
+    f.actor_account_id ?? "-",
+    f.agent_id ?? "-",
+    f.operation_id,
+  ]
+    .join(":")
+    .slice(0, 400);
+}
+
+// Canonical JSON (sorted keys), to compare a stored spec with a retry's.
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v != null && typeof v === "object") {
+    return `{${Object.keys(v as object)
+      .sort()
+      .filter((k) => (v as any)[k] !== undefined)
+      .map((k) => `${JSON.stringify(k)}:${canonical((v as any)[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v);
 }
 
 export async function launchGpuPodLocal(
@@ -876,6 +905,8 @@ async function launchPod(
               ? { ...agent, payload_hash: approval.payload_hash }
               : undefined,
         });
+        // a retried funded operation: its pod, as it is
+        if (intent.replay) return podSummary(await loadPod(intent.row.id));
       } catch (err) {
         if (!(err instanceof NoUsableAgentGrant) || !agent || !approval)
           throw err;
@@ -1076,7 +1107,7 @@ async function insertIntent({
     payload_hash: string;
   };
   funding?: ProjectFundedLaunch;
-}): Promise<{ row: PodRow }> {
+}): Promise<{ row: PodRow; replay?: boolean }> {
   const now = (deps.now ?? Date.now)();
   const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
   for (let attempt = 1; ; attempt++) {
@@ -1105,6 +1136,24 @@ async function insertIntent({
             )
           : undefined;
         if (agent && !grant) throw new NoUsableAgentGrant();
+        // A funded launch's operation already made its pod (a retry after a
+        // lost answer): that pod, never a second one. The unique index on
+        // (approval_id, launch_operation_key) settles a race.
+        const opKey = funding ? launchOperationKey(funding) : null;
+        if (funding && opKey) {
+          const { rows: done } = await db.query(
+            `SELECT * FROM gpu_pods WHERE approval_id = $1 AND launch_operation_key = $2`,
+            [funding.approval_id, opKey],
+          );
+          if (done[0]) {
+            if (canonical(done[0].spec) !== canonical(storedSpec(spec))) {
+              throw Error(
+                "This operation id was already used for a different launch; use a new one.",
+              );
+            }
+            return { row: done[0], replay: true };
+          }
+        }
         const { credential_id, revision } = await launchMeta(account_id, deps);
         if (grant && grant.credential_id !== credential_id) {
           throw Error(
@@ -1158,10 +1207,10 @@ async function insertIntent({
              data_center_id, state, desired_state, max_runtime_minutes, deadline,
              ssh_key_fingerprint, hostkey_token_id, hostkey_verifier,
              hostkey_expires, agent_id, turn_id, approval_id, actor_kind,
-             actor_account_id, actor_project_id, created, updated)
+             actor_account_id, actor_project_id, launch_operation_key, created, updated)
            VALUES ($1, $2, $3, $4, 'runpod', $19, $5, $6, $7, $8, $9, $10, 'intent',
              'running', $11, $12, $13, $14, $15, $16, $17, $18, $20, $21, $22, $5,
-             now(), now())
+             $23, now(), now())
            RETURNING *`,
           [
             id,
@@ -1186,6 +1235,7 @@ async function insertIntent({
             funding?.approval_id ?? null,
             actor.kind,
             actor.account_id ?? null,
+            opKey,
           ],
         );
         await openFirstStateInterval(db, rows[0]);

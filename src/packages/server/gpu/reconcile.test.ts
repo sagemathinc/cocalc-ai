@@ -601,7 +601,10 @@ describeDb("GPU inventory reconciler", () => {
           [pod.id],
         )
       ).rows.map((r: any) => `${r.scope_kind}:${r.state}`);
-    expect(await held()).toEqual(["beneficiary:quarantined", "key:quarantined"]);
+    expect(await held()).toEqual([
+      "beneficiary:quarantined",
+      "key:quarantined",
+    ]);
     await releaseQuarantinedLocal(
       { account_id: s.account_id, pod_id: pod.id, fresh_auth_verified: true },
       s.deps,

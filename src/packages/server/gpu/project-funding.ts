@@ -33,6 +33,7 @@ import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import type { InterBayGpuApi } from "@cocalc/conat/inter-bay/api";
 import {
   canonicalProjectFundingTerms,
+  LAUNCH_OPERATION_ID,
   normalizeProjectFundingTerms,
   projectFundingDisplay,
   PROJECT_FUNDING_LEASE_MS,
@@ -1151,6 +1152,13 @@ export async function verifyProjectFundedLaunch(
   if (kind === "agent" && !clip(req.actor.agent_id)) {
     throw Error("An agent's funded launch needs its agent id.");
   }
+  const operation_id = req.operation_id;
+  if (
+    (operation_id != null || kind === "agent") &&
+    !LAUNCH_OPERATION_ID.test(`${operation_id ?? ""}`)
+  ) {
+    throw Error("An agent's funded launch needs its operation id.");
+  }
   await (deps.assertSentByProjectBay ?? defaultAssertSentByProjectBay)(
     req.source_bay_id,
     project_id,
@@ -1181,6 +1189,7 @@ export async function verifyProjectFundedLaunch(
       actor_account_id,
       agent_id: kind === "agent" ? clip(req.actor.agent_id) : undefined,
       run_id: kind === "agent" ? clip(req.actor.run_id) : undefined,
+      operation_id: operation_id ?? undefined,
     },
   };
 }

@@ -84,7 +84,7 @@ export async function launchOnHome(
 ): Promise<GpuPodSummary> {
   const { isNoOwnKeyError, launchGpuPodLocal } =
     await import("@cocalc/server/gpu/pods");
-  const { ProjectApprovalRequired } =
+  const { ProjectApprovalRequired, isProjectFundingRetry } =
     await import("@cocalc/server/gpu/project-funding-routes");
   const project_id = `${opts.project_id ?? ""}`;
   const principal = opts.agent?.principal;
@@ -105,6 +105,7 @@ export async function launchOnHome(
             run_id: principal.run_id,
           }
         : { kind: "user", account_id: opts.account_id },
+      ...(opts.agent ? { operation_id: opts.agent.operation_id } : {}),
       spec: opts.spec,
     });
     if (routed.status === "launched") return routed.pod;
@@ -130,7 +131,11 @@ export async function launchOnHome(
         actor: { kind: "user", account_id: opts.account_id },
         spec: opts.spec,
       })
-      .catch(() => ({ request_id: undefined }));
+      .catch((e) => {
+        // approved meanwhile: the answer is to launch again
+        if (isProjectFundingRetry(e)) throw e;
+        return { request_id: undefined };
+      });
     throw new ProjectApprovalRequired(
       `${(err as Error).message} Or a collaborator with their own RunPod key can approve GPU use in this project, paid by their account: they'll see your request at the top of the project.`,
       request_id,

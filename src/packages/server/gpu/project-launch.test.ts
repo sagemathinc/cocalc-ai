@@ -164,6 +164,7 @@ describeDb("routing a launch on the project's bay", () => {
           run_id: "run-1",
         },
         spec: SPEC,
+        operation_id: "op-1",
       },
       d,
     );
@@ -202,6 +203,7 @@ describeDb("routing a launch on the project's bay", () => {
             agent_id: "agent:a1",
           },
           spec: SPEC,
+          operation_id: "op-1",
         },
         d,
       ),
@@ -240,10 +242,149 @@ describeDb("routing a launch on the project's bay", () => {
             agent_id: "agent:a1",
           },
           spec: SPEC,
+          operation_id: "op-1",
         },
         deps(),
       ),
     ).toEqual({ status: "agents_not_allowed" });
+  });
+
+  it("never answers 'no approval' while the project is moving: import pending, or a rehome running", async () => {
+    // destination before its merge: an import marker
+    const dest = await world({ route: "none" });
+    await getPool().query(
+      `INSERT INTO project_rehome_imports (project_id, source_bay_id) VALUES ($1, 'old')`,
+      [dest.project_id],
+    );
+    const d = deps();
+    await expect(
+      routeProjectLaunchLocal(
+        { project_id: dest.project_id, actor: { kind: "project" }, spec: SPEC },
+        d,
+      ),
+    ).rejects.toThrow(ProjectFundingRetry);
+    // source while its rehome runs (an approval is here, but frozen)
+    await getPool().query(
+      `CREATE TABLE IF NOT EXISTS project_rehome_operations (
+         op_id TEXT PRIMARY KEY, project_id UUID, status TEXT, stage TEXT,
+         source_bay_id TEXT, dest_bay_id TEXT, created_at TIMESTAMPTZ DEFAULT now())`,
+    );
+    const src = await world();
+    await getPool().query(
+      `INSERT INTO project_rehome_operations (op_id, project_id, status, stage, source_bay_id, dest_bay_id)
+       VALUES ($1, $2, 'running', 'source_flipped', 'here', 'there')`,
+      [randomUUID(), src.project_id],
+    );
+    await expect(
+      routeProjectLaunchLocal(
+        {
+          project_id: src.project_id,
+          actor: { kind: "user", account_id: src.student },
+          spec: SPEC,
+        },
+        d,
+      ),
+    ).rejects.toThrow(ProjectFundingRetry);
+    expect(d.calls).toEqual([]);
+    // and on the home bay the retry is the answer: no own-key fallback
+    const own = jest.fn();
+    await expect(
+      launchOnHome(
+        {
+          account_id: dest.student,
+          project_id: dest.project_id,
+          spec: SPEC,
+          key_use: undefined,
+        },
+        {
+          projectBay: async () => ({
+            route: (req: any) => routeProjectLaunchLocal(req, d),
+            request: async () => ({}),
+          }),
+          launchOwnKey: own,
+        },
+      ),
+    ).rejects.toThrow(ProjectFundingRetry);
+    expect(own).not.toHaveBeenCalled();
+  });
+
+  it("records no request once the project was approved between routing and asking", async () => {
+    const w = await world({ route: "none" });
+    const d = deps();
+    // routing found no approval...
+    expect(
+      await routeProjectLaunchLocal(
+        { project_id: w.project_id, actor: { kind: "project" }, spec: SPEC },
+        d,
+      ),
+    ).toEqual({ status: "no_approval" });
+    // ...then a collaborator approved (the slot is active) before the ask
+    await getPool().query(
+      `INSERT INTO project_compute_approvals
+         (id, kind, project_id, provider, state, approval_id, funder_account_id,
+          funder_bay_id, layer_id, version)
+       VALUES ($1, 'approval', $2, 'runpod', 'active', $3, $4, 'bay-h', $5, 2)`,
+      [randomUUID(), w.project_id, randomUUID(), w.funder, randomUUID()],
+    );
+    await expect(
+      recordProjectFundingRequestLocal(
+        { project_id: w.project_id, actor: { kind: "project" }, spec: SPEC },
+        d,
+      ),
+    ).rejects.toThrow(ProjectFundingRetry);
+    expect(await requests(w.project_id)).toEqual([]);
+    // and the home bay passes that on instead of "needs approval"
+    await expect(
+      launchOnHome(
+        {
+          account_id: w.student,
+          project_id: w.project_id,
+          spec: SPEC,
+          own_key: false,
+          key_use: undefined,
+        },
+        {
+          projectBay: async () => ({
+            route: async () => ({ status: "no_approval" as const }),
+            request: async (req: any) => ({
+              request_id: await recordProjectFundingRequestLocal(req, d),
+            }),
+          }),
+          launchOwnKey: async () => {
+            throw Error(
+              "No RunPod API key is connected. Connect one in Settings → Connectors.",
+            );
+          },
+        },
+      ),
+    ).rejects.toThrow(/just approved/);
+  });
+
+  it("requires an operation id for an agent, and passes it on with the route", async () => {
+    const w = await world();
+    const d = deps();
+    const agent = {
+      kind: "agent" as const,
+      account_id: w.student,
+      project_id: w.project_id,
+      agent_id: "agent:a1",
+    };
+    await expect(
+      routeProjectLaunchLocal(
+        { project_id: w.project_id, actor: agent, spec: SPEC },
+        d,
+      ),
+    ).rejects.toThrow(/operation id/);
+    await routeProjectLaunchLocal(
+      {
+        project_id: w.project_id,
+        actor: agent,
+        spec: SPEC,
+        operation_id: "op-7",
+      },
+      d,
+    );
+    expect(d.calls[0].operation_id).toBe("op-7");
   });
 
   it("asks to retry when this bay no longer owns the project", async () => {
