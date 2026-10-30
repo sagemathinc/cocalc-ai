@@ -215,7 +215,7 @@ export class Filesystem {
       external: this.beesRunningExternally,
       restartAttempts: this.beesRestartAttempts,
       restartPending: this.beesRestartTimer != null,
-      cgroupRetryPending: this.beesReconcileTimer != null,
+      cgroupReconcilePending: this.beesReconcileTimer != null,
       lastExit: this.beesLastExit,
       telemetry: this.beesTelemetry,
       gate: this.beesGate?.getStatus(),
@@ -224,12 +224,15 @@ export class Filesystem {
 
   // Without the gate the BEES cgroup must end up as an earlier gate cannot
   // leave it: "stop" (BEES off) is retried until the root helper proves the
-  // cgroup empty (it leaves a BEES it could not kill frozen, never thawed),
-  // "thaw" (BEES ungated) until the cgroup is thawed.
+  // cgroup empty (it leaves a BEES it could not kill frozen, never thawed);
+  // "thaw" (BEES ungated) is repeated every minute, since a freeze still
+  // running when the previous daemon's gate stopped can land after it.
   private async reconcileBeesCgroup(action: "stop" | "thaw"): Promise<void> {
     if (this.beesStopping) return;
+    let done = false;
     try {
       await applyBeesGateAction(this.opts.mount, action);
+      done = action === "stop";
     } catch (err) {
       // An older root helper never froze BEES: nothing to undo.
       if (/\bSECURITY_DENY code=unsupported-command\b/.test(`${err}`)) return;
@@ -237,12 +240,13 @@ export class Filesystem {
         mount: this.opts.mount,
         err: `${err}`,
       });
-      this.beesReconcileTimer = setTimeout(() => {
-        this.beesReconcileTimer = undefined;
-        void this.reconcileBeesCgroup(action);
-      }, 60_000);
-      this.beesReconcileTimer.unref?.();
     }
+    if (done || this.beesStopping) return;
+    this.beesReconcileTimer = setTimeout(() => {
+      this.beesReconcileTimer = undefined;
+      void this.reconcileBeesCgroup(action);
+    }, 60_000);
+    this.beesReconcileTimer.unref?.();
   }
 
   // One gate for the life of this filesystem; it acts on the BEES cgroup, so

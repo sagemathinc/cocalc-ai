@@ -179,12 +179,12 @@ describe("BEES process supervision", () => {
 
     await jest.advanceTimersByTimeAsync(60_000);
     expect(mockedApplyGate).toHaveBeenCalledTimes(2);
-    expect(filesystem.getBeesStatus().cgroupRetryPending).toBe(false);
+    expect(filesystem.getBeesStatus().cgroupReconcilePending).toBe(false);
     filesystem.close();
   });
 
   // Codex and @review on #1503: an earlier gate may have left BEES frozen.
-  it("thaws the BEES cgroup, retrying, when the gate is turned off", async () => {
+  it("keeps the BEES cgroup thawed when the gate is turned off", async () => {
     mockedGate.mockClear();
     mockedApplyGate.mockReset();
     mockedApplyGate
@@ -203,9 +203,15 @@ describe("BEES process supervision", () => {
       expect(mockedApplyGate).toHaveBeenCalledWith("/mnt/cocalc", "thaw");
       await jest.advanceTimersByTimeAsync(60_000);
       expect(mockedApplyGate).toHaveBeenCalledTimes(2);
-      expect(filesystem.getBeesStatus().cgroupRetryPending).toBe(false);
+      // and again every minute: the previous daemon's gate may still have
+      // had a freeze running
+      expect(filesystem.getBeesStatus().cgroupReconcilePending).toBe(true);
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(mockedApplyGate).toHaveBeenCalledTimes(3);
+      expect(mockedApplyGate).toHaveBeenLastCalledWith("/mnt/cocalc", "thaw");
       expect(mockedGate).not.toHaveBeenCalled();
       filesystem.close();
+      expect(filesystem.getBeesStatus().cgroupReconcilePending).toBe(false);
     } finally {
       mockedGateEnabled.mockReturnValue(true);
     }

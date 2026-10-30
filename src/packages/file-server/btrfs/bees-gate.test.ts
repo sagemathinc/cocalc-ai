@@ -154,12 +154,20 @@ describe("the BEES gate", () => {
     });
     return { g, advance: (ms: number) => (now += ms) };
   }
+  // Each decision writes the state again (see syncCgroup), so the tests
+  // look at the changes: consecutive repeats are collapsed.
+  const pushChange = (actions: string[], action: string) => {
+    if (actions[actions.length - 1] !== action) actions.push(action);
+  };
   const recorder = () => {
     const actions: string[] = [];
+    const calls: string[] = [];
     return {
       actions,
+      calls,
       apply: async (action: string) => {
-        actions.push(action);
+        calls.push(action);
+        pushChange(actions, action);
       },
     };
   };
@@ -226,7 +234,7 @@ describe("the BEES gate", () => {
     const { g, advance } = gate({
       apply: async (action) => {
         if (fail) throw Error("timeout");
-        actions.push(action);
+        pushChange(actions, action);
       },
     });
     await g.start();
@@ -319,7 +327,7 @@ describe("the BEES gate", () => {
             : quiet;
         },
         apply: async (action) => {
-          actions.push(action);
+          pushChange(actions, action);
         },
       });
       return {
@@ -369,7 +377,7 @@ describe("the BEES gate", () => {
   // @review on #1503: a stopped gate (e.g. of the daemon being replaced)
   // must not act on anything it was waiting for.
   it("does nothing after stop, whatever was in flight", async () => {
-    const { actions, apply } = recorder();
+    const { actions, calls, apply } = recorder();
     let release: (s: string) => void = () => {};
     let hang = false;
     let releaseInputs: () => void = () => {};
@@ -393,12 +401,106 @@ describe("the BEES gate", () => {
     hang = true;
     const sample = g.sample();
     g.stop();
+    const before = calls.length;
     releaseInputs();
     release("commits 2\ncur_commit_ms 9000\nlast_commit_ms 100\n");
     await Promise.all([tick, sample]);
     await g.sample();
     await g.tick();
     expect(actions).toEqual(["freeze"]);
+    expect(calls.length).toBe(before);
     expect(g.getStatus()).toMatchObject({ frozen: true, reason: "startup" });
+  });
+
+  // @review and Codex on #1503: a write of the previous daemon's gate that
+  // lands after this gate's freeze is undone by the next decision.
+  it("writes its state again at every decision", async () => {
+    let cgroupFrozen: boolean | undefined;
+    const { g, advance } = gate({
+      apply: async (action) => {
+        cgroupFrozen = action === "freeze";
+      },
+    });
+    await g.start();
+    expect(cgroupFrozen).toBe(true);
+    cgroupFrozen = false; // the old daemon's late thaw
+    advance(MIN);
+    await g.sample();
+    await g.tick();
+    expect(cgroupFrozen).toBe(true);
+    g.stop();
+  });
+
+  it("writes one action at a time, the latest state last", async () => {
+    const calls: string[] = [];
+    let releaseThaw: () => void = () => {};
+    let starting = false;
+    const { g, advance } = gate({
+      lifecycle: () => starting,
+      apply: async (action) => {
+        calls.push(action);
+        if (action === "thaw") {
+          await new Promise<void>((resolve) => (releaseThaw = resolve));
+        }
+      },
+    });
+    await g.start();
+    advance(10 * MIN);
+    await g.sample();
+    const tick = g.tick(); // its thaw hangs
+    await Promise.resolve();
+    starting = true;
+    await g.sample(); // can't write while the thaw runs
+    expect(calls).toEqual(["freeze", "thaw"]);
+    releaseThaw();
+    await tick;
+    expect(calls).toEqual(["freeze", "thaw", "freeze"]);
+    expect(g.getStatus()).toMatchObject({
+      applied: true,
+      frozen: true,
+      reason: "lifecycle_active",
+    });
+    g.stop();
+  });
+
+  it("treats a gap between commit samples, or a failed lifecycle check, as unsafe", async () => {
+    const { actions, apply } = recorder();
+    let lifecycle: () => boolean = () => false;
+    let now = 0;
+    const g = new BeesGate({
+      mount: "/mnt/cocalc",
+      lifecycleActive: () => lifecycle(),
+      now: () => now,
+      readInputs: async () => calmHost,
+      readCommitStats: async () => quiet,
+      apply: apply as any,
+      intervalMs: 3_600_000,
+      sampleMs: 1_000,
+    });
+    const sampleFor = async (ms: number) => {
+      for (let t = 0; t < ms; t += 1_000) {
+        now += 1_000;
+        await g.sample();
+      }
+    };
+    await g.start();
+    await sampleFor(10 * MIN);
+    await g.tick();
+    expect(actions).toEqual(["freeze", "thaw"]);
+    // 6 s without a sample (e.g. an event loop stall), then a calm one
+    now += 6_000;
+    await g.sample();
+    expect(actions).toEqual(["freeze", "thaw", "freeze"]);
+    expect(g.getStatus().reason).toBe("slow_commit");
+    await sampleFor(10 * MIN);
+    await g.tick();
+    expect(actions).toEqual(["freeze", "thaw", "freeze", "thaw"]);
+    lifecycle = () => {
+      throw Error("database is locked");
+    };
+    await sampleFor(1_000);
+    expect(actions).toEqual(["freeze", "thaw", "freeze", "thaw", "freeze"]);
+    expect(g.getStatus().reason).toBe("lifecycle_active");
+    g.stop();
   });
 });

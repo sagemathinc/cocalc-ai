@@ -188,12 +188,15 @@ export class BeesGate {
   private sampleTimer?: NodeJS.Timeout;
   private ticking = false;
   private sampling = false;
-  private freezing = false;
   private stopped = false;
   private unsupported = false;
-  // Whether the cgroup is known to match this.state: false until a freeze
-  // succeeds (a restart or handoff may have left it either way).
+  // False until the first freeze succeeds (a restart or handoff may have left
+  // the cgroup either way).
   private synced = false;
+  // What this gate last wrote to the cgroup, and whether a write is running
+  // (one at a time, so the last one written is the latest state).
+  private applied?: boolean;
+  private syncing = false;
   private lastInputs?: BeesGateInputs;
   // [time, longest commit seen then (ms, a conservative bound)]
   private commitSamples: Array<[number, number]> = [];
@@ -237,7 +240,7 @@ export class BeesGate {
   getStatus() {
     return {
       enabled: !this.unsupported,
-      applied: this.synced,
+      applied: this.synced && this.applied === this.state.frozen,
       frozen: this.state.frozen,
       since: new Date(this.state.since_ms).toISOString(),
       reason: this.state.reason,
@@ -263,80 +266,110 @@ export class BeesGate {
     await this.freezeIfNeeded();
   }
 
+  // A failed check counts as lifecycle activity (unsafe).
+  private lifecycleActive(): boolean {
+    try {
+      return this.opts.lifecycleActive();
+    } catch {
+      return true;
+    }
+  }
+
   // Freezes a running BEES without the decision's other inputs, which may be
   // stuck behind the same I/O stall.
   private async freezeIfNeeded(): Promise<void> {
-    if (this.stopped || this.freezing || !this.synced || this.state.frozen) {
+    if (this.stopped || !this.synced) return;
+    if (this.state.frozen) {
+      // a freeze that failed is retried every sample, not every decision
+      if (this.applied !== true) await this.syncCgroup();
       return;
     }
-    const lifecycle = this.opts.lifecycleActive();
+    const lifecycle = this.lifecycleActive();
     const worst = this.worstCommitMs();
     if (!lifecycle && worst != null && worst <= this.config.freezeCommitMs) {
       return;
     }
     const reason = lifecycle ? "lifecycle_active" : "slow_commit";
-    this.freezing = true;
-    try {
-      if ((await this.apply("freeze")) && !this.stopped) {
-        this.state = { frozen: true, since_ms: this.now(), reason };
-        logger.info("BEES frozen", {
-          mount: this.opts.mount,
-          reason,
-          worst_commit_ms: worst,
-        });
-      }
-    } finally {
-      this.freezing = false;
-    }
+    this.state = { frozen: true, since_ms: this.now(), reason };
+    logger.info("BEES gate: freeze", {
+      mount: this.opts.mount,
+      reason,
+      worst_commit_ms: worst,
+    });
+    await this.syncCgroup();
   }
 
   async tick(): Promise<void> {
     if (this.ticking || this.unsupported || this.stopped) return;
     this.ticking = true;
     try {
-      if (!this.synced) {
-        // Freeze first, whatever the cgroup holds; the frozen period starts
-        // when that succeeds.
-        if ((await this.apply("freeze")) && !this.stopped) {
+      if (this.synced) {
+        const inputs: BeesGateInputs = {
+          ...(await (this.opts.readInputs ?? (() => this.readInputs()))()),
+          worst_commit_ms: this.worstCommitMs(),
+          lifecycle_active: this.lifecycleActive(),
+        };
+        if (this.stopped) return;
+        this.lastInputs = inputs;
+        const next = decideBeesGate(
+          this.state,
+          inputs,
+          this.now(),
+          this.config,
+        );
+        if (next.frozen !== this.state.frozen) {
+          logger.info(next.frozen ? "BEES gate: freeze" : "BEES gate: thaw", {
+            mount: this.opts.mount,
+            reason: next.reason,
+            inputs,
+          });
+          this.state = next;
+        }
+      }
+      // Every decision writes the state again, changed or not: a write still
+      // running when an earlier gate stopped (e.g. the old daemon's during a
+      // rolling upgrade) cannot leave the cgroup out of step for long.
+      await this.syncCgroup();
+    } catch (err) {
+      logger.warn("BEES gate tick failed", { err: `${err}` });
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  // Writes this.state to the cgroup, one write at a time; if the state
+  // changes during a write, writes again, so the last write is the latest.
+  // Until the first freeze succeeds only a freeze is written, and the frozen
+  // period starts then.
+  private async syncCgroup(): Promise<void> {
+    if (this.syncing) return;
+    this.syncing = true;
+    try {
+      let first = true;
+      while (
+        !this.stopped &&
+        (first || this.applied !== (this.synced ? this.state.frozen : true))
+      ) {
+        first = false;
+        const frozen = this.synced ? this.state.frozen : true;
+        if (!(await this.apply(frozen ? "freeze" : "thaw"))) return;
+        if (this.stopped) return;
+        this.applied = frozen;
+        if (!this.synced) {
           this.synced = true;
           this.state = {
             frozen: true,
             since_ms: this.now(),
             reason: "startup",
           };
-          logger.info("BEES frozen", {
+          logger.info("BEES gate: freeze", {
             mount: this.opts.mount,
             reason: "startup",
           });
         }
-        return;
       }
-      const inputs: BeesGateInputs = {
-        ...(await (this.opts.readInputs ?? (() => this.readInputs()))()),
-        worst_commit_ms: this.worstCommitMs(),
-        lifecycle_active: this.opts.lifecycleActive(),
-      };
-      if (this.stopped) return;
-      this.lastInputs = inputs;
-      const next = decideBeesGate(this.state, inputs, this.now(), this.config);
-      if (next.frozen === this.state.frozen) return;
-      // A thaw waits for a freeze in flight (it would undo it at once).
-      if (!next.frozen && this.freezing) return;
-      if (
-        (await this.apply(next.frozen ? "freeze" : "thaw")) &&
-        !this.stopped
-      ) {
-        logger.info(next.frozen ? "BEES frozen" : "BEES thawed", {
-          mount: this.opts.mount,
-          reason: next.reason,
-          inputs,
-        });
-        this.state = next;
-      }
-    } catch (err) {
-      logger.warn("BEES gate tick failed", { err: `${err}` });
     } finally {
-      this.ticking = false;
+      this.syncing = false;
     }
   }
 
@@ -400,10 +433,18 @@ export class BeesGate {
       worst = Infinity;
     }
     const now = this.now();
+    // So may a gap (a slow read, an event loop stall): commits that ended in
+    // it were never seen.
+    const last = this.commitSamples[this.commitSamples.length - 1]?.[0];
+    if (last != null && now - last > this.staleMs()) worst = Infinity;
     this.commitSamples = this.commitSamples.filter(
       ([at]) => now - at < COMMIT_WINDOW_MS,
     );
     this.commitSamples.push([now, worst]);
+  }
+
+  private staleMs(): number {
+    return 5 * this.sampleMs;
   }
 
   // The longest commit in about the last minute; undefined (unsafe) without
@@ -414,7 +455,7 @@ export class BeesGate {
       ([at]) => now - at < COMMIT_WINDOW_MS,
     );
     const newest = recent[recent.length - 1]?.[0];
-    if (newest == null || now - newest > 5 * this.sampleMs) return undefined;
+    if (newest == null || now - newest > this.staleMs()) return undefined;
     return Math.max(...recent.map(([, ms]) => ms));
   }
 

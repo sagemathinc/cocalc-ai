@@ -422,6 +422,15 @@ export function preparingStartCount(now = Date.now()): number {
   return count;
 }
 
+// Projects starting or stopping now, not as of the last sample: for callers
+// that must not miss a short start or stop between samples (the BEES gate).
+export function lifecycleActiveNow(now = Date.now()): number {
+  const counts = countProjectsByStates(["starting", "stopping"]);
+  return (
+    (counts.starting ?? 0) + (counts.stopping ?? 0) + preparingStartCount(now)
+  );
+}
+
 function defaultReadInputs(): StorageAdmissionInputs {
   const projectCounts = countProjectsByStates(["starting", "stopping"]);
   const locks = getBtrfsMutationLockStatus();

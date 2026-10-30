@@ -3,12 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { countProjectsByStates } from "./sqlite/projects";
 import {
   _test,
   beginStartPreparation,
   createStorageAdmissionController,
+  lifecycleActiveNow,
   preparingStartCount,
 } from "./storage-admission";
+
+jest.mock("./sqlite/projects", () => ({
+  ...jest.requireActual("./sqlite/projects"),
+  countProjectsByStates: jest.fn(() => ({ starting: 0, stopping: 0 })),
+}));
 
 describe("storage admission controller", () => {
   // Most tests here are about how pressure is classified and what each
@@ -1370,4 +1377,18 @@ describe("a start preparing its volumes", () => {
     other.end();
     expect(preparingStartCount(started + 60_000)).toBe(0);
   });
+});
+
+// Codex on #1503: the BEES gate checks every second, so it must see a start
+// or stop that begins and ends between two admission samples.
+test("lifecycleActiveNow counts live starts, stops and start preparations", () => {
+  const counts = jest.mocked(countProjectsByStates);
+  counts.mockReturnValueOnce({ starting: 0, stopping: 0 });
+  expect(lifecycleActiveNow()).toBe(0);
+  counts.mockReturnValueOnce({ starting: 1, stopping: 2 });
+  expect(lifecycleActiveNow()).toBe(3);
+  const preparation = beginStartPreparation("project-1", "check_quota");
+  counts.mockReturnValueOnce({ starting: 0, stopping: 0 });
+  expect(lifecycleActiveNow()).toBe(1);
+  preparation.end();
 });
