@@ -522,7 +522,7 @@ test("a new command waits out a brief fence, then runs", async () => {
         confirmCleanup: options.onCleanupConfirmed,
       }),
     );
-  const jobs = new ClaudeProjectJobs(execute, 10_000);
+  const jobs = new ClaudeProjectJobs(execute, { fenceWaitMs: 10_000 });
   try {
     await jobs.start({ script: "a", yield_time_ms: 0 });
     runs[0].finish({
@@ -552,7 +552,7 @@ test("a fence that outlasts the wait fails with a retryable message", async () =
     stderr: "",
     cleanupConfirmed: false,
   }));
-  const jobs = new ClaudeProjectJobs(execute as any, 50);
+  const jobs = new ClaudeProjectJobs(execute as any, { fenceWaitMs: 50 });
   try {
     const first = await jobs.start({ script: "a", yield_time_ms: 1000 });
     const started = Date.now();

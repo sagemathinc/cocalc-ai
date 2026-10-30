@@ -504,3 +504,44 @@ test("a bridge authorization failure drains synchronous tools before allowing a 
     await bridge.close();
   }
 });
+
+// #1501 review: a call that waits out a fence was authorized before the wait;
+// if authority is revoked meanwhile, it must not start once the fence lifts.
+test("a call waiting out a fence checks authority again before it starts", async () => {
+  const previous = process.env.COCALC_PROJECT_TOOL_FENCE_WAIT_MS;
+  process.env.COCALC_PROJECT_TOOL_FENCE_WAIT_MS = "10000";
+  let confirmCleanup!: () => void;
+  const execute = jest.fn<
+    Promise<SandboxExecResult>,
+    Parameters<ProjectJobExecutor>
+  >(async (_script, _cwd, _signal, options) => {
+    confirmCleanup = options.onCleanupConfirmed;
+    return { code: 130, stdout: "", stderr: "", cleanupConfirmed: false };
+  });
+  const authorize = jest.fn(async () => {});
+  const bridge = await createClaudeProjectToolBridge(
+    "fixture",
+    execute,
+    authorize,
+  );
+  process.env.COCALC_PROJECT_TOOL_FENCE_WAIT_MS = previous;
+  try {
+    // The first command's cleanup is unconfirmed: the session is fenced.
+    await request(bridge.directory, "project_exec", {
+      script: "first",
+      yield_time_ms: 1000,
+    });
+    const waiting = request(bridge.directory, "project_exec", {
+      script: "second",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(execute).toHaveBeenCalledTimes(1);
+    // Authority is revoked while the call waits; then the fence lifts.
+    authorize.mockRejectedValue(Error("revoked"));
+    confirmCleanup();
+    expect((await waiting).stderr).toBe("revoked");
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally {
+    await bridge.close();
+  }
+});

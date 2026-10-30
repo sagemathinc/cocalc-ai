@@ -121,10 +121,20 @@ export class ClaudeProjectJobs {
   private waits = new Set<() => void>();
   // Calls waiting for the fence to lift (or for close).
   private reopened = new Set<() => void>();
+  private fenceWaitMs: number;
+  private reauthorize?: () => Promise<void>;
   constructor(
     private execute: ProjectJobExecutor,
-    private fenceWaitMs = defaultFenceWaitMs(),
-  ) {}
+    options: {
+      fenceWaitMs?: number;
+      // Checked again after waiting out a fence, before any work starts: the
+      // caller's authority was checked before the wait and may since be gone.
+      reauthorize?: () => Promise<void>;
+    } = {},
+  ) {
+    this.fenceWaitMs = options.fenceWaitMs ?? defaultFenceWaitMs();
+    this.reauthorize = options.reauthorize;
+  }
 
   private wake(job: Job) {
     for (const resolve of [...job.changed]) resolve();
@@ -189,6 +199,12 @@ export class ClaudeProjectJobs {
     });
     return Date.now() - started;
   }
+  /** Wait out a fence, then recheck authority; returns how long it waited. */
+  private async admitAfterFence(): Promise<number> {
+    const waited = await this.waitForReopen();
+    if (waited > 0 && !this.cleanupBlocked) await this.reauthorize?.();
+    return waited;
+  }
   private fenceError(waitedMs = 0): Error {
     return Error(
       cleanupUnconfirmed(
@@ -236,7 +252,7 @@ export class ClaudeProjectJobs {
   async start(args: Record<string, unknown>) {
     // A brief fence lifts within seconds: wait for it rather than fail.
     // (no await unless fenced, so an open call keeps its ordering)
-    const waited = this.cleanupBlocked ? await this.waitForReopen() : 0;
+    const waited = this.cleanupBlocked ? await this.admitAfterFence() : 0;
     this.assertOpen(waited);
     const { script, cwd, request_id: requestId } = args;
     if (
@@ -303,7 +319,7 @@ export class ClaudeProjectJobs {
     options,
   ) => {
     // (no await unless fenced, so an open call keeps its ordering)
-    const waited = this.cleanupBlocked ? await this.waitForReopen() : 0;
+    const waited = this.cleanupBlocked ? await this.admitAfterFence() : 0;
     this.assertOpen(waited);
     signal.throwIfAborted();
     const job = this.createJob(options.timeoutMs, "", undefined, true);

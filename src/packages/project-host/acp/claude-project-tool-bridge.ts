@@ -203,7 +203,10 @@ export async function createClaudeProjectToolBridge(
     | Parameters<ClaudeProjectToolBridge["setAsyncQuestionHandler"]>[0]
     | undefined;
   let generation = new AbortController();
-  const jobs = new ClaudeProjectJobs(execute);
+  const jobs = new ClaudeProjectJobs(execute, {
+    // A call that waited out a cleanup fence checks authority again first.
+    reauthorize: async () => (await checkAuthority()).throwIfAborted(),
+  });
   let authorityCheck: Promise<AbortSignal> | undefined;
   // Share checks (including failed-check cleanup) so an older result cannot
   // invalidate a newly authorized generation. Explicit cancel/close stay final
