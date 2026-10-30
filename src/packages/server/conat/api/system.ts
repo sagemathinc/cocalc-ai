@@ -8302,9 +8302,11 @@ export async function recordManagedProjectEgress({
       err: `${err}`,
     });
   }
-  // Runtime detector evidence is authoritative only from the host currently
-  // assigned to the project. Project-authenticated callers may report usage,
-  // but cannot manufacture evidence that stops a project or bans its owner.
+  // Only hosts may call this (see the hub API policy), and runtime detector
+  // evidence is authoritative only from the host currently assigned to the
+  // project. This check stays as a second line of defense, so that a caller
+  // without host_id can never manufacture evidence that stops a project or
+  // bans its owner.
   const effectiveBandwidthRelayEvidence =
     host_id && abuseSettings?.enforcement_enabled
       ? bandwidth_relay_evidence
@@ -8316,7 +8318,7 @@ export async function recordManagedProjectEgress({
   });
   const result = await recordManagedProjectEgressRaw({
     // Project attribution is authoritative in project state. Never let a
-    // project- or host-scoped telemetry caller nominate another account.
+    // host-scoped telemetry caller nominate another account.
     account_id: resolvedProjectId ? undefined : account_id,
     project_id: resolvedProjectId,
     category,

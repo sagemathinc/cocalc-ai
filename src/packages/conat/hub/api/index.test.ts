@@ -879,7 +879,6 @@ describe("hub API argument transforms", () => {
 
   it("restricts managed metering RPCs to project or host principals", async () => {
     const rpcNames = [
-      "system.recordManagedProjectEgress",
       "system.getManagedProjectEgressPolicy",
       "system.recordManagedProjectCpuUsage",
     ];
@@ -937,6 +936,38 @@ describe("hub API argument transforms", () => {
         }),
       ).rejects.toThrow("must be a project or host");
     }
+  });
+
+  it("accepts managed egress reports only from hosts", async () => {
+    // The host measures the egress it serves; a project's own byte count is
+    // never trusted.
+    const name = "system.recordManagedProjectEgress";
+    const report = {
+      project_id: "spoofed-project",
+      host_id: "spoofed-host",
+      account_id: "account-for-download-attribution",
+      category: "file-download",
+      bytes: 1,
+    };
+    const hostArgs = await transformArgs({
+      name,
+      args: [{ ...report }],
+      host_id: "host-1",
+    });
+    expect(hostArgs[0].host_id).toBe("host-1");
+    expect(hostArgs[0].project_id).toBe("spoofed-project");
+    expect(hostArgs[0].account_id).toBeUndefined();
+
+    await expect(
+      transformArgs({
+        name,
+        args: [{ ...report }],
+        project_id: "project-1",
+      }),
+    ).rejects.toThrow("must be a host");
+    await expect(
+      transformArgs({ name, args: [{ ...report }], account_id: "acct-1" }),
+    ).rejects.toThrow("must be a host");
   });
 
   it("requires account auth for name and local UI helpers without reshaping args", async () => {

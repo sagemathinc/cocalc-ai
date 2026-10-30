@@ -203,7 +203,10 @@ export const system = {
   listBrowserSessions: authFirstRequireAccount,
   removeBrowserSession: authFirstRequireAccount,
   issueBrowserSignInCookie: authFirstRequireAccount,
-  recordManagedProjectEgress: authFirstRequireProjectOrHost,
+  // Only hosts report egress: they measure what they serve. A project's own
+  // byte count is not trusted (it could inflate it to exhaust its owner's
+  // egress allowance, or under-report).
+  recordManagedProjectEgress: authFirstRequireHost,
   getManagedProjectEgressPolicy: authFirstRequireProjectOrHost,
   recordManagedProjectCpuUsage: authFirstRequireProjectOrHost,
   recordServiceAdmissionDenial: authFirstRequireProject,
