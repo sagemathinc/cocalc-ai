@@ -141,7 +141,7 @@ test("a test warns about what a scheduled run won't have", () => {
     'key=$(cat /run/secrets/cocalc/STRIPE_KEY)\ncurl -H "Authorization: $key" https://example.com',
   );
   assert.equal(secrets.length, 1);
-  assert.match(secrets[0], /Scheduled runs don't have the project's secrets/);
+  assert.match(secrets[0], /Scheduled runs don't have them/);
   const tmp = scheduledRunWarnings("cat /tmp/last-seen.txt");
   assert.equal(tmp.length, 1);
   assert.match(tmp[0], /empty \/tmp/);
@@ -151,6 +151,15 @@ test("a test warns about what a scheduled run won't have", () => {
     ).length,
     2,
   );
+  // Through $COCALC_SECRETS, as the docs show, in a shell and in Python.
+  for (const script of [
+    'curl -H "Authorization: $(cat "$COCALC_SECRETS/TOKEN")" https://x',
+    'token = (Path(os.environ["COCALC_SECRETS"]) / "MY_API_TOKEN").read_text()',
+  ]) {
+    const warnings = scheduledRunWarnings(script);
+    assert.equal(warnings.length, 1, script);
+    assert.match(warnings[0], /Scheduled runs don't have them/);
+  }
   // The directory itself, in a shell and quoted in other languages.
   for (const script of [
     "ls /tmp",

@@ -103,9 +103,10 @@ async function readSpec(opts: { file?: string; stdin?: boolean }) {
  */
 export function scheduledRunWarnings(script: string): string[] {
   const warnings: string[] = [];
-  if (/\/run\/secrets\b/.test(script))
+  // The mount itself, or $COCALC_SECRETS (the documented way to find it).
+  if (/\/run\/secrets\b|\bCOCALC_SECRETS\b/.test(script))
     warnings.push(
-      "This script reads /run/secrets. Scheduled runs don't have the project's secrets: this test can pass while every scheduled run fails. Use a scheduled prompt (it runs in your turn) for work that needs a secret.",
+      "This script reads the project's secrets (/run/secrets, $COCALC_SECRETS). Scheduled runs don't have them: this test can pass while every scheduled run fails. Use a scheduled prompt (it runs in your turn) for work that needs a secret.",
     );
   // /tmp itself or anything in it (not ~/x/tmp, /tmpfiles or /tmp.d).
   if (/(^|[^\w.~-])\/tmp(?![\w.-])/.test(script))

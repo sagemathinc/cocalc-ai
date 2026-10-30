@@ -463,7 +463,7 @@ cocalc sensor propose --file spec.json
 
 \`test\` runs the script once and reports whether it would wake the agent.
 It runs in the agent's own environment; a scheduled run is a fresh container
-without the project's secrets (\`/run/secrets\`), with an empty \`/tmp\`, so
+without the project's secrets (\`/run/secrets\`, \`$COCALC_SECRETS\`), with an empty \`/tmp\`, so
 \`test\` warns when the script uses either. After 5 failed runs in a row a
 sensor pauses itself and its person is notified.
 \`propose\` records the exact spec for review; nothing runs until a person

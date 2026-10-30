@@ -57,7 +57,7 @@ cocalc sensor delete <id>
   Any change needs approval again.
 - A scheduled run is not your turn's environment: it is a fresh container
   with the project's software and files, but **not the project's secrets**
-  (`/run/secrets`), with an empty `/tmp`, and without your runtime files.
+  (`/run/secrets`, `$COCALC_SECRETS`), with an empty `/tmp`, and without your runtime files.
   `sensor test` runs the script here, where those exist, so a test can pass
   while every scheduled run fails; it warns about each of them it sees in the
   script. Work that needs a secret belongs in a scheduled prompt (it runs in
