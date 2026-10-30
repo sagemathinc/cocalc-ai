@@ -17,7 +17,7 @@ host is calm, and frozen again as soon as it is not.
 
 import { readFile, statfs } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
-import { refusedByStorageWrapper, sudo } from "./util";
+import { sudo } from "./util";
 
 const logger = getLogger("file-server:btrfs:bees-gate");
 
@@ -159,33 +159,50 @@ export interface BeesGateOptions {
   mount: string;
   filesystemUuid?: string;
   lifecycleActive: () => boolean;
+  // decisions (free space, io pressure, thawing)
   intervalMs?: number;
+  // commit and lifecycle samples, which freeze a running BEES at once
+  sampleMs?: number;
   config?: BeesGateConfig;
   now?: () => number;
-  readInputs?: () => Promise<Omit<BeesGateInputs, "lifecycle_active">>;
+  readInputs?: () => Promise<
+    Omit<BeesGateInputs, "lifecycle_active" | "worst_commit_ms">
+  >;
+  readCommitStats?: () => Promise<string>;
   apply?: (action: BeesGateAction) => Promise<void>;
 }
+
+// Only this denial means an older root helper without "bees-gate"; any other
+// failure (e.g. the BEES cgroup policy refusing a thaw) is retried.
+function gateUnsupported(err: unknown): boolean {
+  return /\bSECURITY_DENY code=unsupported-command\b/.test(
+    `${(err as any)?.message ?? err}`,
+  );
+}
+
+const COMMIT_WINDOW_MS = 60_000;
 
 export class BeesGate {
   private state: BeesGateState;
   private timer?: NodeJS.Timeout;
+  private sampleTimer?: NodeJS.Timeout;
   private ticking = false;
   private unsupported = false;
-  // Whether the cgroup is known to match this.state (false until the first
-  // action succeeds: a restart or handoff may have left it either way).
+  // Whether the cgroup is known to match this.state: false until a freeze
+  // succeeds (a restart or handoff may have left it either way).
   private synced = false;
   private lastInputs?: BeesGateInputs;
-  // commit samples within the window: [time, worst ms seen at that sample]
+  // [time, longest commit seen then (ms, a conservative bound)]
   private commitSamples: Array<[number, number]> = [];
   private lastCommits?: number;
   private readonly now: () => number;
   private readonly config: BeesGateConfig;
+  private readonly sampleMs: number;
 
   constructor(private readonly opts: BeesGateOptions) {
     this.now = opts.now ?? Date.now;
     this.config = opts.config ?? DEFAULT_BEES_GATE_CONFIG;
-    // Frozen from the start (applied on the first tick, whatever an earlier
-    // daemon left), so BEES runs only after a full frozen period.
+    this.sampleMs = opts.sampleMs ?? 1_000;
     this.state = { frozen: true, since_ms: this.now(), reason: "startup" };
   }
 
@@ -201,11 +218,14 @@ export class BeesGate {
       this.opts.intervalMs ?? 30_000,
     );
     this.timer.unref?.();
+    this.sampleTimer = setInterval(() => void this.sample(), this.sampleMs);
+    this.sampleTimer.unref?.();
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
-    this.timer = undefined;
+    if (this.sampleTimer) clearInterval(this.sampleTimer);
+    this.timer = this.sampleTimer = undefined;
   }
 
   getStatus() {
@@ -219,19 +239,49 @@ export class BeesGate {
     };
   }
 
+  /** Between decisions: freeze a running BEES at once when a project starts
+   * or stops or a commit runs long, rather than at the next decision. */
+  async sample(): Promise<void> {
+    await this.sampleCommit();
+    if (!this.synced || this.state.frozen) return;
+    if (
+      this.opts.lifecycleActive() ||
+      (this.worstCommitMs() ?? Infinity) > this.config.freezeCommitMs
+    ) {
+      await this.tick();
+    }
+  }
+
   async tick(): Promise<void> {
     if (this.ticking || this.unsupported) return;
     this.ticking = true;
     try {
+      if (!this.synced) {
+        // Freeze first, whatever the cgroup holds; the frozen period starts
+        // when that succeeds.
+        if (await this.apply("freeze")) {
+          this.synced = true;
+          this.state = {
+            frozen: true,
+            since_ms: this.now(),
+            reason: "startup",
+          };
+          logger.info("BEES frozen", {
+            mount: this.opts.mount,
+            reason: "startup",
+          });
+        }
+        return;
+      }
       const inputs: BeesGateInputs = {
         ...(await (this.opts.readInputs ?? (() => this.readInputs()))()),
+        worst_commit_ms: this.worstCommitMs(),
         lifecycle_active: this.opts.lifecycleActive(),
       };
       this.lastInputs = inputs;
       const next = decideBeesGate(this.state, inputs, this.now(), this.config);
-      if (this.synced && next.frozen === this.state.frozen) return;
+      if (next.frozen === this.state.frozen) return;
       if (await this.apply(next.frozen ? "freeze" : "thaw")) {
-        this.synced = true;
         logger.info(next.frozen ? "BEES frozen" : "BEES thawed", {
           mount: this.opts.mount,
           reason: next.reason,
@@ -253,7 +303,7 @@ export class BeesGate {
       )(action);
       return true;
     } catch (err) {
-      if (refusedByStorageWrapper(err)) {
+      if (gateUnsupported(err)) {
         // An older root helper without "bees-gate": BEES runs as before.
         this.unsupported = true;
         this.stop();
@@ -274,10 +324,52 @@ export class BeesGate {
     }
   }
 
-  private async readInputs(): Promise<
-    Omit<BeesGateInputs, "lifecycle_active">
-  > {
+  // Sampled every second: a commit that lasts a second or more is seen while
+  // it runs (cur_commit_ms, plus the sampling period to be safe), and the
+  // last one when it ends; shorter ones are below every threshold.
+  private async sampleCommit(): Promise<void> {
+    const read =
+      this.opts.readCommitStats ??
+      (this.opts.filesystemUuid
+        ? () =>
+            readFile(
+              `/sys/fs/btrfs/${this.opts.filesystemUuid}/commit_stats`,
+              "utf8",
+            )
+        : undefined);
+    if (!read) return;
     const now = this.now();
+    try {
+      const stats = parseCommitStats(await read());
+      let worst = stats.cur_commit_ms ? stats.cur_commit_ms + this.sampleMs : 0;
+      if (
+        this.lastCommits != null &&
+        stats.commits != null &&
+        stats.commits > this.lastCommits
+      ) {
+        worst = Math.max(worst, stats.last_commit_ms ?? 0);
+      }
+      this.lastCommits = stats.commits;
+      this.commitSamples = this.commitSamples.filter(
+        ([at]) => now - at < COMMIT_WINDOW_MS,
+      );
+      this.commitSamples.push([now, worst]);
+    } catch {}
+  }
+
+  // The longest commit in about the last minute; undefined (unsafe) without
+  // samples covering it.
+  private worstCommitMs(): number | undefined {
+    const now = this.now();
+    const recent = this.commitSamples.filter(
+      ([at]) => now - at < COMMIT_WINDOW_MS,
+    );
+    return recent.length ? Math.max(...recent.map(([, ms]) => ms)) : undefined;
+  }
+
+  private async readInputs(): Promise<
+    Omit<BeesGateInputs, "lifecycle_active" | "worst_commit_ms">
+  > {
     let free_fraction: number | undefined;
     try {
       const s = await statfs(this.opts.mount);
@@ -287,39 +379,10 @@ export class BeesGate {
     try {
       io = parseIoSomeAverages(await readFile("/proc/pressure/io", "utf8"));
     } catch {}
-    let worst_commit_ms: number | undefined;
-    if (this.opts.filesystemUuid) {
-      try {
-        const stats = parseCommitStats(
-          await readFile(
-            `/sys/fs/btrfs/${this.opts.filesystemUuid}/commit_stats`,
-            "utf8",
-          ),
-        );
-        // the commit running now, and the last one if it finished since
-        let worst = stats.cur_commit_ms ?? 0;
-        if (
-          this.lastCommits != null &&
-          stats.commits != null &&
-          stats.commits > this.lastCommits
-        ) {
-          worst = Math.max(worst, stats.last_commit_ms ?? 0);
-        }
-        this.lastCommits = stats.commits;
-        // keep about two ticks of samples
-        const windowMs = 2 * (this.opts.intervalMs ?? 30_000);
-        this.commitSamples = this.commitSamples.filter(
-          ([at]) => now - at < windowMs,
-        );
-        this.commitSamples.push([now, worst]);
-        worst_commit_ms = Math.max(...this.commitSamples.map(([, ms]) => ms));
-      } catch {}
-    }
     return {
       free_fraction,
       io_some_avg10: io.avg10,
       io_some_avg60: io.avg60,
-      worst_commit_ms,
     };
   }
 }

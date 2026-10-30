@@ -123,45 +123,64 @@ describe("BEES gate inputs", () => {
 });
 
 describe("the BEES gate", () => {
-  function gate(
-    inputs: () => Omit<BeesGateInputs, "lifecycle_active">,
-    apply: (action: string) => Promise<void>,
-  ) {
+  const quiet = "commits 1\ncur_commit_ms 0\nlast_commit_ms 100\n";
+  const { worst_commit_ms: _w, lifecycle_active: _l, ...calmHost } = calm;
+
+  function gate({
+    inputs = () => calmHost,
+    commits = () => quiet,
+    lifecycle = () => false,
+    apply,
+  }: {
+    inputs?: () => Omit<BeesGateInputs, "lifecycle_active" | "worst_commit_ms">;
+    commits?: () => string;
+    lifecycle?: () => boolean;
+    apply: (action: string) => Promise<void>;
+  }) {
     let now = 0;
     const g = new BeesGate({
       mount: "/mnt/cocalc",
-      lifecycleActive: () => false,
+      lifecycleActive: lifecycle,
       now: () => now,
       readInputs: async () => inputs(),
+      readCommitStats: async () => commits(),
       apply: apply as any,
       intervalMs: 3_600_000,
+      sampleMs: 3_600_000,
     });
     return { g, advance: (ms: number) => (now += ms) };
   }
-
-  it("freezes at start, then thaws and freezes as conditions change", async () => {
+  const recorder = () => {
     const actions: string[] = [];
-    let current: Omit<BeesGateInputs, "lifecycle_active"> = {
-      ...calm,
-      free_fraction: 0.5,
-    };
-    const { g, advance } = gate(
-      () => current,
-      async (action) => {
+    return {
+      actions,
+      apply: async (action: string) => {
         actions.push(action);
       },
-    );
+    };
+  };
+
+  // Review of #1503: a cgroup left frozen by an earlier daemon must not stay
+  // frozen when BEES may run; the gate applies its state on the first tick.
+  it("freezes first whatever the cgroup holds, thaws after the frozen period, and freezes again on a slow commit", async () => {
+    const { actions, apply } = recorder();
+    let commits = quiet;
+    const { g, advance } = gate({ apply, commits: () => commits });
     await g.start();
     expect(actions).toEqual(["freeze"]);
-    current = calm;
+    expect(g.getStatus()).toMatchObject({ applied: true, frozen: true });
     advance(5 * MIN);
+    await g.sample();
     await g.tick();
     expect(actions).toEqual(["freeze"]);
     advance(5 * MIN);
+    await g.sample();
     await g.tick();
     expect(actions).toEqual(["freeze", "thaw"]);
-    current = { ...calm, worst_commit_ms: 9_000 };
-    await g.tick();
+    // A commit still running after 4.5 s: with the sampling period that is
+    // over the 5 s freeze threshold, so BEES freezes at once.
+    commits = "commits 2\ncur_commit_ms 4500\nlast_commit_ms 100\n";
+    await g.sample();
     expect(actions).toEqual(["freeze", "thaw", "freeze"]);
     expect(g.getStatus()).toMatchObject({
       frozen: true,
@@ -170,52 +189,79 @@ describe("the BEES gate", () => {
     g.stop();
   });
 
-  // Review of #1503: a cgroup left frozen by an earlier daemon must not stay
-  // frozen when BEES may run; the gate applies its state on the first tick.
-  it("brings a cgroup left frozen or thawed by an earlier daemon in line, then thaws after the frozen period", async () => {
+  it("freezes a running BEES at once when a project starts", async () => {
+    const { actions, apply } = recorder();
+    let starting = false;
+    const { g, advance } = gate({ apply, lifecycle: () => starting });
+    await g.start();
+    advance(10 * MIN);
+    await g.sample();
+    await g.tick();
+    expect(actions).toEqual(["freeze", "thaw"]);
+    starting = true;
+    await g.sample();
+    expect(actions).toEqual(["freeze", "thaw", "freeze"]);
+    expect(g.getStatus().reason).toBe("lifecycle_active");
+    g.stop();
+  });
+
+  it("does not thaw without commit samples", async () => {
+    const { actions, apply } = recorder();
+    const { g, advance } = gate({ apply });
+    await g.start();
+    advance(20 * MIN);
+    await g.tick();
+    expect(actions).toEqual(["freeze"]);
+    g.stop();
+  });
+
+  // Codex on #1503: the frozen period must start at a successful freeze.
+  it("keeps asking to freeze until it succeeds, and starts the frozen period then", async () => {
+    let fail = true;
     const actions: string[] = [];
-    const { g, advance } = gate(
-      () => calm,
-      async (action) => {
+    const { g, advance } = gate({
+      apply: async (action) => {
+        if (fail) throw Error("timeout");
         actions.push(action);
       },
-    );
+    });
     await g.start();
+    expect(g.getStatus()).toMatchObject({ enabled: true, applied: false });
+    advance(20 * MIN);
+    await g.sample();
+    fail = false;
+    await g.tick();
     expect(actions).toEqual(["freeze"]);
-    expect(g.getStatus()).toMatchObject({ applied: true, frozen: true });
+    await g.sample();
+    await g.tick();
+    expect(actions).toEqual(["freeze"]);
     advance(10 * MIN);
+    await g.sample();
     await g.tick();
     expect(actions).toEqual(["freeze", "thaw"]);
     g.stop();
   });
 
-  it("runs BEES ungated when the root helper does not know the gate", async () => {
-    const { g } = gate(
-      () => ({ ...calm, free_fraction: 0.5 }),
-      async () => {
+  it("runs BEES ungated only when the root helper does not know the gate", async () => {
+    const old = gate({
+      apply: async () => {
         throw Error("SECURITY_DENY code=unsupported-command detail=bees-gate");
       },
-    );
-    await g.start();
-    expect(g.getStatus().enabled).toBe(false);
-  });
+    });
+    await old.g.start();
+    expect(old.g.getStatus().enabled).toBe(false);
 
-  it("retries an action that failed for another reason", async () => {
-    let fail = true;
-    const actions: string[] = [];
-    const { g } = gate(
-      () => ({ ...calm, free_fraction: 0.5 }),
-      async (action) => {
-        if (fail) throw Error("timeout");
-        actions.push(action);
+    // another refusal (e.g. the BEES cgroup policy) is retried
+    const other = gate({
+      apply: async () => {
+        throw Error("SECURITY_DENY code=project-io-policy-invalid detail=bees");
       },
-    );
-    await g.start();
-    expect(g.getStatus()).toMatchObject({ enabled: true, applied: false });
-    fail = false;
-    await g.tick();
-    expect(actions).toEqual(["freeze"]);
-    expect(g.getStatus()).toMatchObject({ applied: true, frozen: true });
-    g.stop();
+    });
+    await other.g.start();
+    expect(other.g.getStatus()).toMatchObject({
+      enabled: true,
+      applied: false,
+    });
+    other.g.stop();
   });
 });
