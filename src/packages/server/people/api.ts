@@ -8,6 +8,7 @@
 // conversation list is built on the home bay with one request per owning bay.
 
 import { notifyIdentityWatchers } from "@cocalc/server/agents/identity-watchers";
+import { directHubApi } from "./direct";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type { PeopleApi } from "@cocalc/conat/hub/api/people";
 import {
@@ -64,6 +65,12 @@ function remote(bay_id: string): InterBayPeopleApi {
     client: getInterBayFabricClient(),
     bay_id,
   });
+}
+
+// How an owning bay running older code refuses a method it doesn't have, as
+// it arrives over the inter-bay fabric.
+export function ownerLacksMethod(err: unknown): boolean {
+  return /unknown service method|is not a function/.test(`${err}`);
 }
 
 function local(bay_id: string): boolean {
@@ -210,6 +217,23 @@ export const peopleControl: InterBayPeopleApi = {
       project_id,
       path,
       title,
+    });
+  },
+
+  async createRecordWithMembers({
+    account_id,
+    project_id,
+    path,
+    title,
+    member_ids,
+  }) {
+    await assertOwner(project_id);
+    return await createConversationRecord({
+      account_id,
+      project_id,
+      path,
+      title,
+      member_ids,
     });
   },
 
@@ -458,6 +482,7 @@ export const peopleControl: InterBayPeopleApi = {
 
 /** Browser-facing hub API; account_id is bound by the auth policy. */
 export const peopleApi: PeopleApi = {
+  ...directHubApi,
   async listConversations({ account_id }) {
     return await (await home(account_id!)).listConversations({ account_id });
   },
@@ -468,10 +493,26 @@ export const peopleApi: PeopleApi = {
     ).getRecord({ account_id: account_id!, project_id, conversation_id });
   },
 
-  async addConversation({ account_id, project_id, path, title }) {
-    const c = await (
-      await owner(project_id)
-    ).createRecord({ account_id: account_id!, project_id, path, title });
+  async addConversation({ account_id, project_id, path, title, member_ids }) {
+    const api = await owner(project_id);
+    const opts = { account_id: account_id!, project_id, path, title };
+    let c: Conversation;
+    if (member_ids != null && member_ids.length > 0) {
+      try {
+        c = await api.createRecordWithMembers({ ...opts, member_ids });
+      } catch (err) {
+        // An owning bay that predates members: fail rather than create a
+        // conversation that silently leaves them out.
+        if (ownerLacksMethod(err)) {
+          throw Error(
+            "This project's server does not support conversation members yet. Try again in a few minutes.",
+          );
+        }
+        throw err;
+      }
+    } else {
+      c = await api.createRecord(opts);
+    }
     await markReadBestEffort(account_id!, c);
     return c;
   },

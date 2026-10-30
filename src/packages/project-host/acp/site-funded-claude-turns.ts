@@ -11,8 +11,12 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
-import type { SiteFundedUsageWarning } from "@cocalc/util/ai/site-funded-codex";
 import {
+  siteFundedTurnEndReason,
+  type SiteFundedUsageWarning,
+} from "@cocalc/util/ai/site-funded-codex";
+import {
+  extendSiteFundedTurn,
   finishSiteFundedTurn,
   getSiteFundedClaudeKey,
   heartbeatSiteFundedTurn,
@@ -44,6 +48,7 @@ export type SiteFundedClaudeTurnsDeps = {
   heartbeat: typeof heartbeatSiteFundedTurn;
   finish: typeof finishSiteFundedTurn;
   persistUsage: typeof persistSiteFundedUsageEvent;
+  extend?: typeof extendSiteFundedTurn;
 };
 
 const defaultDeps: SiteFundedClaudeTurnsDeps = {
@@ -52,6 +57,7 @@ const defaultDeps: SiteFundedClaudeTurnsDeps = {
   heartbeat: heartbeatSiteFundedTurn,
   finish: finishSiteFundedTurn,
   persistUsage: persistSiteFundedUsageEvent,
+  extend: extendSiteFundedTurn,
 };
 
 export function createSiteFundedClaudeTurns({
@@ -107,6 +113,7 @@ export function createSiteFundedClaudeTurns({
           reservation,
           apiKey,
           onUsage: deps.persistUsage,
+          extend: deps.extend,
         });
       } catch (err) {
         await deps.finish({
@@ -120,8 +127,13 @@ export function createSiteFundedClaudeTurns({
         void deps
           .heartbeat(reservation.reservationId)
           .then((stillActive) => {
-            // The hub ended it (expired, say): stop funding at once.
-            if (!stillActive) void relay.deactivate(reservation.reservationId);
+            // The hub ended it (its time limit, say): stop funding at once,
+            // and tell later requests why.
+            if (!stillActive) {
+              void relay.deactivate(reservation.reservationId, {
+                reason: siteFundedTurnEndReason(reservation),
+              });
+            }
           })
           .catch((err) =>
             logger.warn("site-funded Claude heartbeat failed", {

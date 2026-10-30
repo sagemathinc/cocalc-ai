@@ -72,7 +72,14 @@ export class PubSub extends EventEmitter {
   };
 
   set = (obj) => {
-    this.client.publishSync(this.subject, obj);
+    // Ephemeral state: a refused or failed publish (e.g., while the project
+    // host does not yet list this account) is dropped, not thrown into the
+    // editor that set it.
+    try {
+      this.client.publishSync(this.subject, obj);
+    } catch (err) {
+      logger.debug("publish failed", { subject: this.subject, err });
+    }
   };
 
   private subscribe = async () => {

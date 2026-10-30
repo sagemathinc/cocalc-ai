@@ -15,6 +15,8 @@ import {
   SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES,
   siteFundedCodexFinalRequestHeadroomMicrousd,
   siteFundedCodexMaxRequestBodyBytes,
+  siteFundedTurnEndedMessage,
+  siteFundedTurnEndReason,
   siteFundedTurnUsageWarning,
   siteFundedUsageWarning,
   usdToMicrousd,
@@ -216,5 +218,48 @@ describe("site-funded usage warnings", () => {
       " It resets in about 2 h 10 min, at Oct 27, 14:10 UTC.",
     );
     expect(formatSiteFundedLimitDetail(undefined, now)).toBe("");
+  });
+});
+
+describe("site-funded turn end messages", () => {
+  it("names the provider, the time limit and what to do", () => {
+    expect(
+      siteFundedTurnEndedMessage({
+        reason: "duration",
+        maxTurnDurationMs: 60 * 60_000,
+      }),
+    ).toBe(
+      "This included Codex turn reached its 1-hour limit. Start a new turn to continue, or connect your own ChatGPT plan or OpenAI API key.",
+    );
+    expect(
+      siteFundedTurnEndedMessage({
+        provider: "anthropic",
+        reason: "duration",
+        maxTurnDurationMs: 90 * 60_000,
+      }),
+    ).toBe(
+      "This included Claude turn reached its 90-minute limit. Start a new turn to continue, or use your own Claude subscription or Anthropic API key.",
+    );
+    expect(
+      siteFundedTurnEndedMessage({
+        provider: "anthropic",
+        reason: "ended",
+        maxTurnDurationMs: 60 * 60_000,
+      }),
+    ).toBe(
+      "CoCalc ended this included Claude turn. Start a new turn to continue, or use your own Claude subscription or Anthropic API key.",
+    );
+  });
+
+  it("calls a turn past its deadline a time limit, else ended", () => {
+    const now = Date.parse("2026-10-29T12:00:00Z");
+    const expiresAt = (offsetMs: number) => ({
+      expiresAt: new Date(now + offsetMs).toISOString(),
+    });
+    expect(siteFundedTurnEndReason(expiresAt(-1_000), now)).toBe("duration");
+    // The hub's clock may be a little ahead.
+    expect(siteFundedTurnEndReason(expiresAt(30_000), now)).toBe("duration");
+    expect(siteFundedTurnEndReason(expiresAt(20 * 60_000), now)).toBe("ended");
+    expect(siteFundedTurnEndReason({ expiresAt: "" }, now)).toBe("ended");
   });
 });

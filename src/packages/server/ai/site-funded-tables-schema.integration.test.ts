@@ -7,8 +7,8 @@
 The site-funded AI tables moved from runtime CREATE TABLE code into
 util/db-schema (site-ai-funding.ts). Existing databases have the tables that
 code made, so the schema must describe them exactly: a fresh database built
-from the schema matches the old DDL, and startup sync on the old tables
-changes nothing structural (only index marker comments).
+from the schema matches the old DDL plus the indexes added since, and startup
+sync on the old tables adds just those indexes (and index marker comments).
 */
 
 import getPool from "@cocalc/database/pool";
@@ -87,6 +87,15 @@ const LEGACY_DDL = [
   `CREATE INDEX IF NOT EXISTS site_ai_turn_reservations_active_idx
       ON site_ai_turn_reservations(status, expires_at)
       WHERE status = 'active'`,
+  // Columns db-schema added later, for rolling reservations.
+  `ALTER TABLE site_ai_turn_reservations
+      ADD COLUMN IF NOT EXISTS rolling BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE site_ai_turn_reservations
+      ADD COLUMN IF NOT EXISTS idle_timeout_ms INTEGER`,
+  `ALTER TABLE site_ai_turn_reservations
+      ADD COLUMN IF NOT EXISTS extension_sequence INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE site_ai_turn_reservations
+      ADD COLUMN IF NOT EXISTS last_extension_microusd BIGINT NOT NULL DEFAULT 0`,
   `CREATE TABLE IF NOT EXISTS site_ai_speech_reservations (
       request_id UUID PRIMARY KEY,
       account_id UUID NOT NULL,
@@ -137,6 +146,14 @@ const LEGACY_DDL = [
     )`,
   `CREATE INDEX IF NOT EXISTS site_ai_admission_attempts_attempted_idx
       ON site_ai_admission_attempts(attempted_at)`,
+];
+
+// Indexes the schema has added since; startup sync creates them on an old
+// database.
+const LATER_INDEXES = [
+  `CREATE INDEX IF NOT EXISTS site_ai_turn_reservations_completed_idx
+      ON site_ai_turn_reservations(completed_at)
+      WHERE status IN ('committed', 'failed', 'expired', 'released')`,
 ];
 
 const siteAiSchema = Object.fromEntries(
@@ -190,14 +207,18 @@ afterAll(after);
 describe("site-funded AI tables in db-schema", () => {
   let legacy: Record<string, unknown>;
 
-  it("the old runtime DDL builds the reference structure", async () => {
+  it("the old runtime DDL and the later indexes build the reference structure", async () => {
     await dropTables();
-    for (const statement of LEGACY_DDL) await getPool().query(statement);
+    for (const statement of [...LEGACY_DDL, ...LATER_INDEXES]) {
+      await getPool().query(statement);
+    }
     legacy = await structure();
     expect(Object.keys(legacy)).toHaveLength(TABLES.length);
   });
 
-  it("startup sync on the old tables changes nothing structural", async () => {
+  it("startup sync on the old tables adds only the later indexes", async () => {
+    await dropTables();
+    for (const statement of LEGACY_DDL) await getPool().query(statement);
     await syncSchema(siteAiSchema);
     expect(await structure()).toEqual(legacy);
     expect(await schemaNeedsSync(siteAiSchema)).toBe(false);

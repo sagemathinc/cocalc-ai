@@ -68,6 +68,8 @@ jest.mock("@cocalc/server/project-backup", () => ({
   getDeletedProjectBackupConfigForDeletion: (...args: any[]) =>
     getDeletedProjectBackupConfigForDeletionMock(...args),
   getProjectBackupConfigForDeletion: jest.fn(),
+  // No status known: every shard counts toward restore drill coverage.
+  getProjectBackupRepoStatuses: jest.fn(async () => new Map()),
   releaseProjectBackupRepoAssignment: (...args: any[]) =>
     releaseProjectBackupRepoAssignmentMock(...args),
   resolveProjectBackupRepoAssignment: (...args: any[]) =>

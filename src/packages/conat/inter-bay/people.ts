@@ -40,6 +40,16 @@ export interface InterBayPeopleApi {
     path: string;
     title: string;
   }): Promise<Conversation>;
+  // createRecord with who it is with besides the creator. A separate method,
+  // so an owner that predates members rejects it (unknown method) instead of
+  // creating the record without them.
+  createRecordWithMembers(opts: {
+    account_id: string;
+    project_id: string;
+    path: string;
+    title: string;
+    member_ids: string[];
+  }): Promise<Conversation>;
   touch(opts: {
     account_id: string;
     project_id: string;

@@ -69,6 +69,8 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "invite_email_daily_count",
   "invite_email_hourly_count",
   "invite_email_recipients_per_batch",
+  "direct_message_requests_per_day",
+  "direct_message_request_recipients_per_day",
   "invite_email_pending_per_project",
   "invite_email_pending_per_course",
   "invite_email_resend_cooldown_minutes",

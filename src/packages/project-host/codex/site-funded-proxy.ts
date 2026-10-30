@@ -12,10 +12,15 @@ import {
 import getLogger from "@cocalc/backend/logger";
 import {
   computeSiteFundedCodexRequestCost,
+  siteFundedCodexFinalRequestHeadroomMicrousd,
   siteFundedCodexMaxRequestBodyBytes,
+  siteFundedExtensionThresholdMicrousd,
+  siteFundedTurnEndedMessage,
   type SiteFundedCodexPolicy,
   type SiteFundedCodexReservation,
   type SiteFundedCodexUsageEvent,
+  type SiteFundedExtend,
+  type SiteFundedTurnEndReason,
 } from "@cocalc/util/ai/site-funded-codex";
 import { siteFundedCodexProxyPorts } from "./site-funded-proxy-port";
 
@@ -50,15 +55,29 @@ export function siteFundedUsageEventId(
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// Extensions one request may make (each of at most one chunk).
+const MAX_EXTENSIONS_PER_REQUEST = 20;
+const EXTENSION_UNAVAILABLE =
+  "CoCalc could not extend this included Codex turn's funding right now, so it paused the turn. Start a new turn in a minute, or connect your own ChatGPT plan or OpenAI API key.";
+
 type ActiveTurn = {
   reservation: SiteFundedCodexReservation;
   policy: SiteFundedCodexPolicy;
   startedAt: number;
   requestSequence: number;
   costMicrousd: number;
+  /** What the turn holds; a rolling reservation grows as it is extended. */
+  reservedMicrousd: number;
+  extend?: SiteFundedExtend;
+  /** The last granted extension. */
+  extensionSequence: number;
+  /** The hub's reason for refusing more: the turn ends once it uses up what it holds. */
+  extensionDenial?: string;
   requestQueueTail: Promise<void>;
   requestQueueDepth: number;
   closed: boolean;
+  /** Why the hub ended this turn while it ran. */
+  endedMessage?: string;
   blockedReason?: string;
   onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
 };
@@ -69,6 +88,8 @@ type Session = {
   upstreamBaseUrl: string;
   closed: boolean;
   activeTurn?: ActiveTurn;
+  /** Why the last turn stopped being funded, when the hub ended it. */
+  endedMessage?: string;
 };
 
 export type SiteFundedProxySession = {
@@ -79,8 +100,10 @@ export type SiteFundedProxySession = {
   activate: (opts: {
     reservation: SiteFundedCodexReservation;
     onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
+    extend?: SiteFundedExtend;
   }) => void;
-  deactivate: (reservationId: string) => void;
+  /** Stops funding the turn; `reason` when the hub ended it while it ran. */
+  deactivate: (reservationId: string, reason?: SiteFundedTurnEndReason) => void;
   close: () => void;
 };
 
@@ -253,6 +276,52 @@ function assertAllowedTools(tools: unknown): void {
   }
 }
 
+/**
+ * Before a request of a rolling turn starts: extend the reservation while
+ * what is left is below one request's worst case (or half a chunk). A refusal
+ * is final; a failure is retried before the next request.
+ */
+async function fundRequest(turn: ActiveTurn): Promise<void> {
+  if (!turn.reservation.rolling || !turn.extend) return;
+  if (turn.closed || turn.blockedReason || turn.extensionDenial) return;
+  const threshold = siteFundedExtensionThresholdMicrousd(turn.policy);
+  // A chunk may be smaller than one request's worst case: keep extending
+  // until the turn holds enough, is refused, fails, or stops growing.
+  for (let attempt = 0; attempt < MAX_EXTENSIONS_PER_REQUEST; attempt += 1) {
+    if (turn.reservedMicrousd - turn.costMicrousd >= threshold) return;
+    const sequence = turn.extensionSequence + 1;
+    try {
+      const result = await turn.extend({
+        reservation: turn.reservation,
+        sequence,
+      });
+      if (!result.granted) {
+        turn.extensionDenial = result.reason;
+        return;
+      }
+      turn.extensionSequence = sequence;
+      const before = turn.reservedMicrousd;
+      turn.reservedMicrousd = Math.max(before, result.reservedMicrousd);
+      if (turn.reservedMicrousd <= before) break;
+    } catch (err) {
+      logger.warn(
+        "site-funded Codex extension failed; keeping what the turn holds",
+        {
+          reservationId: turn.reservation.reservationId,
+          sequence,
+          err: `${err}`,
+        },
+      );
+      return;
+    }
+  }
+  if (turn.reservedMicrousd - turn.costMicrousd >= threshold) return;
+  // Still short after every extension one request may make (the hub raises a
+  // chunk to a request's worst case, so this means something is off): don't
+  // forward the request underfunded.
+  throw Object.assign(new Error(EXTENSION_UNAVAILABLE), { statusCode: 403 });
+}
+
 function boundedProviderRequest({
   body,
   turn,
@@ -266,17 +335,45 @@ function boundedProviderRequest({
     });
   }
   if (turn.closed) {
-    throw Object.assign(new Error("site-funded Codex turn is closed"), {
-      statusCode: 403,
-    });
+    throw Object.assign(
+      new Error(turn.endedMessage ?? "site-funded Codex turn is closed"),
+      { statusCode: 403 },
+    );
   }
   if (turn.blockedReason) {
     throw Object.assign(new Error(turn.blockedReason), { statusCode: 403 });
   }
+  // A request starts only while the turn holds more than it has spent: it
+  // may then overrun what it holds by at most its own cost.
+  // The hub never lets a rolling turn hold more than its ceiling less one
+  // request's worst case; checked here too, so the ceiling bounds what the
+  // turn spends whatever it holds.
+  if (
+    turn.reservation.rolling &&
+    turn.costMicrousd +
+      siteFundedCodexFinalRequestHeadroomMicrousd(turn.policy) >
+      turn.policy.maxTurnCostMicrousd
+  ) {
+    throw Object.assign(
+      new Error(
+        "This included Codex turn reached its cost limit. Start a new turn, or connect your own ChatGPT plan or OpenAI API key.",
+      ),
+      { statusCode: 403 },
+    );
+  }
+  if (turn.reservation.rolling && turn.costMicrousd >= turn.reservedMicrousd) {
+    throw Object.assign(
+      new Error(turn.extensionDenial ?? EXTENSION_UNAVAILABLE),
+      { statusCode: 403 },
+    );
+  }
   if (Date.now() - turn.startedAt >= turn.policy.maxTurnDurationMs) {
     throw Object.assign(
       new Error(
-        "This included Codex turn reached its emergency duration limit. Start a new turn, upgrade your CoCalc membership, or connect a ChatGPT plan or personal OpenAI API key.",
+        siteFundedTurnEndedMessage({
+          reason: "duration",
+          maxTurnDurationMs: turn.policy.maxTurnDurationMs,
+        }),
       ),
       { statusCode: 403 },
     );
@@ -391,11 +488,13 @@ class SiteFundedCodexProxy {
     reservation,
     apiKey,
     onUsage,
+    extend,
     upstreamBaseUrl = DEFAULT_UPSTREAM_BASE_URL,
   }: {
     reservation: SiteFundedCodexReservation;
     apiKey: string;
     onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
+    extend?: SiteFundedExtend;
     upstreamBaseUrl?: string;
   }): Promise<SiteFundedProxySession> {
     const port = await this.ensureListening();
@@ -403,15 +502,20 @@ class SiteFundedCodexProxy {
     const makeActiveTurn = ({
       reservation,
       onUsage,
+      extend,
     }: {
       reservation: SiteFundedCodexReservation;
       onUsage: (event: SiteFundedCodexUsageEvent) => Promise<void>;
+      extend?: SiteFundedExtend;
     }): ActiveTurn => ({
       reservation,
       policy: reservation.policy,
       startedAt: Date.now(),
       requestSequence: 0,
       costMicrousd: 0,
+      reservedMicrousd: reservation.reservedMicrousd,
+      extend,
+      extensionSequence: 0,
       requestQueueTail: Promise.resolve(),
       requestQueueDepth: 0,
       closed: false,
@@ -422,7 +526,7 @@ class SiteFundedCodexProxy {
       apiKey,
       upstreamBaseUrl: upstreamBaseUrl.replace(/\/$/, ""),
       closed: false,
-      activeTurn: makeActiveTurn({ reservation, onUsage }),
+      activeTurn: makeActiveTurn({ reservation, onUsage, extend }),
     };
     this.sessions.set(token, session);
     return {
@@ -438,12 +542,20 @@ class SiteFundedCodexProxy {
           throw new Error("site-funded Codex proxy already has an active turn");
         }
         session.activeTurn = makeActiveTurn(opts);
+        session.endedMessage = undefined;
       },
-      deactivate: (reservationId) => {
+      deactivate: (reservationId, reason) => {
         const turn = session.activeTurn;
         if (!turn || turn.reservation.reservationId !== reservationId) return;
         turn.closed = true;
         session.activeTurn = undefined;
+        turn.endedMessage = reason
+          ? siteFundedTurnEndedMessage({
+              reason,
+              maxTurnDurationMs: turn.policy.maxTurnDurationMs,
+            })
+          : undefined;
+        session.endedMessage = turn.endedMessage;
       },
       close: () => {
         session.closed = true;
@@ -507,7 +619,11 @@ class SiteFundedCodexProxy {
       usage: event,
     });
     turn.costMicrousd += cost.costMicrousd;
-    if (turn.costMicrousd >= turn.policy.maxTurnCostMicrousd) {
+    // A rolling turn is checked as each request starts (it may be extended).
+    if (
+      !turn.reservation.rolling &&
+      turn.costMicrousd >= turn.policy.maxTurnCostMicrousd
+    ) {
       turn.blockedReason =
         "This included Codex turn reached its emergency cost limit. Start a new turn, upgrade your CoCalc membership, or connect a ChatGPT plan or personal OpenAI API key.";
     }
@@ -515,7 +631,7 @@ class SiteFundedCodexProxy {
       await turn.onUsage(event);
     } catch (err) {
       turn.blockedReason =
-        "Site-funded usage accounting is temporarily unavailable.";
+        "CoCalc could not save this included Codex turn's usage, so it paused the turn. Start a new turn in a minute, or connect your own ChatGPT plan or OpenAI API key.";
       logger.error("failed to persist site-funded Codex provider usage", {
         reservationId: turn.reservation.reservationId,
         requestSequence,
@@ -557,7 +673,11 @@ class SiteFundedCodexProxy {
     }
     const turn = session.activeTurn;
     if (!turn || turn.closed) {
-      jsonResponse(response, 403, "site-funded Codex turn is not active");
+      jsonResponse(
+        response,
+        403,
+        session.endedMessage ?? "site-funded Codex turn is not active",
+      );
       return;
     }
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
@@ -611,6 +731,10 @@ class SiteFundedCodexProxy {
       }
       let body: any;
       try {
+        // Requests of a turn run one at a time (this queue), so what the
+        // turn holds is checked, and extended, with the previous request's
+        // usage counted.
+        await fundRequest(turn);
         // Recheck turn limits after waiting because the preceding request may
         // have closed or exhausted this turn while persisting its usage.
         body = boundedProviderRequest({ body: requestedBody, turn });

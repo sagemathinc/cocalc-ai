@@ -205,9 +205,11 @@ export async function probeProjectBackupRepo(
 // run of that kind takes longer.
 export const PROBE_PROFILE_PREFIX = "cocalc-backup-repo-probe-";
 export const PRUNE_PLAN_PROFILE_PREFIX = "cocalc-backup-repo-prune-plan-";
+export const SAMPLED_CHECK_PROFILE_PREFIX = "cocalc-backup-repo-sampled-check-";
 const PROFILE_MAX_AGE_MS: Record<string, number> = {
   [PROBE_PROFILE_PREFIX]: 10 * 60 * 1000,
   [PRUNE_PLAN_PROFILE_PREFIX]: 3 * 60 * 60 * 1000,
+  [SAMPLED_CHECK_PROFILE_PREFIX]: 3 * 60 * 60 * 1000,
 };
 
 // Write the repository's profile to a new temporary directory, run fn with

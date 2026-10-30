@@ -57,6 +57,11 @@ function accountNoticeCategory(opts: {
   ) {
     return "ai";
   }
+  // A direct message is addressed to you, like an @mention: the same
+  // notification and email setting.
+  if (noticeType === "direct_message") {
+    return "mentions";
+  }
   if (noticeType.startsWith("onboarding_")) {
     return "onboarding";
   }

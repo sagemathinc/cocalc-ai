@@ -4,6 +4,7 @@ import getLogger from "@cocalc/backend/logger";
 import { join } from "path";
 import { lstat, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { type SnapshotCounts, updateRollingSnapshots } from "./snapshots";
 import { ConatError } from "@cocalc/conat/core/client";
 import { type SnapshotUsage } from "@cocalc/conat/files/file-server";
@@ -31,6 +32,21 @@ const BTRFS_SUBVOLUME_ROOT_INO = 256;
 const DEFAULT_CLEANUP_QUOTA_RELIEF_BYTES = 1024 ** 3;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const cleanupChains = new Map<string, Promise<void>>();
+
+// The deletes of a subvolume's snapshots run inside batchDeletes: one quota
+// decision (and relief, if needed) for all of them.
+interface DeleteBatch {
+  path: string;
+  relieved: boolean;
+  deleted: number;
+}
+const deleteBatch = new AsyncLocalStorage<DeleteBatch>();
+
+function isQuotaExceeded(err: unknown): boolean {
+  return /Disk quota exceeded|EDQUOT/.test(
+    `${(err as any)?.message ?? err ?? ""}`,
+  );
+}
 
 async function withCleanupChain<T>(
   path: string,
@@ -370,7 +386,75 @@ export class SubvolumeSnapshots {
     if (await this.subvolume.fs.exists(this.lockPath(name))) {
       throw Error(`snapshot ${name} is locked`);
     }
-    await this.withCleanupQuotaRelief({
+    const batch = deleteBatch.getStore();
+    if (batch?.path !== this.subvolume.path) {
+      // on its own: a batch of one
+      await this.batchDeletes(async () => await this.delete(name));
+      return;
+    }
+    try {
+      await this.deleteSnapshotSubvolume(name);
+    } catch (err) {
+      if (batch.relieved || !isQuotaExceeded(err)) throw err;
+      // There was room when the batch began, but not now: once more, relieved.
+      invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
+      await withSubvolumeQuotaRelief({
+        subvolume: this.subvolume,
+        operation: "delete-snapshot",
+        run: async () => await this.deleteSnapshotSubvolume(name),
+      });
+    }
+    batch.deleted += 1;
+  };
+
+  /**
+   * Run several deletes (this.delete) with one quota decision for all of them.
+   * A delete charges a little metadata to the subvolume's quota, so at or near
+   * its limit it needs the limit raised (withSubvolumeQuotaRelief): raised
+   * once for the whole batch, not once per snapshot. With room for it already,
+   * the limit is left alone. Raising and lowering a limit takes seconds on a
+   * busy host, and pruning deletes several snapshots at a time.
+   */
+  batchDeletes = async <T>(run: () => Promise<T>): Promise<T> => {
+    if (deleteBatch.getStore()?.path === this.subvolume.path) {
+      return await run();
+    }
+    const batch: DeleteBatch = {
+      path: this.subvolume.path,
+      relieved: !(await this.hasRoomToDelete()),
+      deleted: 0,
+    };
+    const go = async () =>
+      await deleteBatch.run(batch, async () => {
+        try {
+          return await run();
+        } finally {
+          if (batch.deleted > 0) {
+            invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
+          }
+        }
+      });
+    if (!batch.relieved) return await go();
+    return await withSubvolumeQuotaRelief({
+      subvolume: this.subvolume,
+      operation: "delete-snapshot",
+      run: go,
+    });
+  };
+
+  private hasRoomToDelete = async (): Promise<boolean> => {
+    if (btrfsQuotasDisabled()) return true;
+    const quota = await this.subvolume.quota.get();
+    return (
+      !quota.size ||
+      quota.size <= 0 ||
+      quota.size - quota.used >= cleanupQuotaReliefBytes()
+    );
+  };
+
+  private deleteSnapshotSubvolume = async (name: string) => {
+    await withBtrfsMutationLock({
+      mount: this.subvolume.filesystem.opts.mount,
       operation: "delete-snapshot",
       run: async () => {
         const snapshotPath = this.snapshotAbsolutePath(name);
@@ -378,7 +462,6 @@ export class SubvolumeSnapshots {
           args: ["subvolume", "delete", snapshotPath],
         });
         invalidateSubvolumeMetadata(snapshotPath);
-        invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
       },
     });
   };

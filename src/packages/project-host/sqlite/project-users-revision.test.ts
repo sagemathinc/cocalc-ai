@@ -9,7 +9,12 @@
 // and one sent before a collaborator change can arrive after it.
 
 import { closeDatabase } from "@cocalc/lite/hub/sqlite/database";
-import { getProject, upsertProject } from "./projects";
+import {
+  deleteProjectLocal,
+  getProject,
+  projectUsersGeneration,
+  upsertProject,
+} from "./projects";
 import { projectServesComputer } from "../computers";
 
 // updateProjectUsers (hub/projects.ts) stores each copy with upsertProject,
@@ -117,5 +122,22 @@ describe("the host's collaborator copy is versioned", () => {
       users: ownerOnly,
       users_revision: 3,
     });
+  });
+  it("counts every change of the stored list, including one that is undone", async () => {
+    // conat auth compares this across an owning-bay lookup; an unversioned
+    // list changed and changed back must not look unchanged.
+    const start = projectUsersGeneration(project_id);
+    await updateProjectUsers({ project_id, users: ownerOnly });
+    const created = projectUsersGeneration(project_id);
+    expect(created).toBeGreaterThan(start);
+    await updateProjectUsers({ project_id, users: withCollaborator });
+    await updateProjectUsers({ project_id, users: ownerOnly });
+    expect(projectUsersGeneration(project_id)).toBe(created + 2);
+    // Other updates of the row leave it alone.
+    upsertProject({ project_id, state: "running" });
+    await updateProjectUsers({ project_id, users: ownerOnly });
+    expect(projectUsersGeneration(project_id)).toBe(created + 2);
+    deleteProjectLocal(project_id);
+    expect(projectUsersGeneration(project_id)).toBe(created + 3);
   });
 });

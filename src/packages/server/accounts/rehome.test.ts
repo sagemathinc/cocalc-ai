@@ -41,6 +41,14 @@ jest.mock("@cocalc/database/pool", () => ({
   })),
 }));
 
+const redactDirectMessageNoticesForMovedAccountMock = jest.fn(
+  async (_account_id: string) => undefined,
+);
+jest.mock("@cocalc/database/postgres/direct-conversations", () => ({
+  redactDirectMessageNoticesForMovedAccount: (account_id: string) =>
+    redactDirectMessageNoticesForMovedAccountMock(account_id),
+}));
+
 jest.mock("@cocalc/backend/logger", () => {
   const logger = jest.fn(() => ({
     debug: jest.fn(),
@@ -132,6 +140,15 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
 }));
 
 const OTHER_ACCOUNT_FOR_FINALIZE = "99999999-9999-4999-8999-999999999999";
+
+// Account-home direct-message state that a rehome moves.
+const DIRECT_TABLES = [
+  "account_direct_conversations",
+  "account_direct_blocks",
+  "direct_request_admissions",
+  "account_direct_deleted_messages",
+];
+const DIRECT_CONVERSATION_ID = "77777777-7777-4777-8777-777777777777";
 
 describe("account rehome", () => {
   const OP_ID = "11111111-1111-4111-8111-111111111111";
@@ -296,6 +313,13 @@ describe("account rehome", () => {
       ) {
         return { rows: [], rowCount: 0 };
       }
+      if (
+        DIRECT_TABLES.some((table) =>
+          sql.includes(`DELETE FROM "${table}" WHERE account_id=$1`),
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('DELETE FROM "membership_grants" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
@@ -417,6 +441,11 @@ describe("account rehome", () => {
       home_bay_id: "bay-2",
     });
     expect(clearAccountPersistStateMock).toHaveBeenCalledWith(
+      TARGET_ACCOUNT_ID,
+    );
+    // The old home drops the text of its direct-message notices for the
+    // account: deletions now reach only the new home.
+    expect(redactDirectMessageNoticesForMovedAccountMock).toHaveBeenCalledWith(
       TARGET_ACCOUNT_ID,
     );
     // The destination's own row flips to "homed here" only after the
@@ -659,6 +688,42 @@ describe("account rehome", () => {
           ],
         };
       }
+      if (sql.includes('FROM "account_direct_conversations"')) {
+        return {
+          rows: [
+            {
+              rows: [
+                {
+                  account_id: TARGET_ACCOUNT_ID,
+                  conversation_id: DIRECT_CONVERSATION_ID,
+                  pinned: true,
+                  muted: true,
+                },
+              ],
+            },
+          ],
+        };
+      }
+      if (sql.includes('FROM "account_direct_blocks"')) {
+        return {
+          rows: [
+            {
+              rows: [
+                {
+                  account_id: TARGET_ACCOUNT_ID,
+                  blocked_account_id: REQUESTED_BY,
+                },
+              ],
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes('FROM "direct_request_admissions"') ||
+        sql.includes('FROM "account_direct_deleted_messages"')
+      ) {
+        return { rows: [{ rows: [] }] };
+      }
       if (sql.includes('FROM "membership_grants"')) {
         return {
           rows: [
@@ -814,6 +879,13 @@ describe("account rehome", () => {
       ) {
         return { rows: [], rowCount: 0 };
       }
+      if (
+        DIRECT_TABLES.some((table) =>
+          sql.includes(`DELETE FROM "${table}" WHERE account_id=$1`),
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('DELETE FROM "membership_grants" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
@@ -917,6 +989,24 @@ describe("account rehome", () => {
             membership_class: "member",
           }),
         ],
+        // Direct messages: the account's conversation list with its own
+        // settings, and whom it blocked.
+        account_direct_conversations: [
+          expect.objectContaining({
+            account_id: TARGET_ACCOUNT_ID,
+            conversation_id: DIRECT_CONVERSATION_ID,
+            pinned: true,
+            muted: true,
+          }),
+        ],
+        account_direct_blocks: [
+          expect.objectContaining({
+            account_id: TARGET_ACCOUNT_ID,
+            blocked_account_id: REQUESTED_BY,
+          }),
+        ],
+        direct_request_admissions: [],
+        account_direct_deleted_messages: [],
         account_entitlement_override_events: [
           expect.objectContaining({
             id: "override-event-1",
@@ -1004,6 +1094,13 @@ describe("account rehome", () => {
         sql.includes("WHERE o.owner_account_id=$1")
       ) {
         return { rows: [{ rows: [] }] };
+      }
+      if (
+        DIRECT_TABLES.some((table) =>
+          sql.includes(`DELETE FROM "${table}" WHERE account_id=$1`),
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
       }
       if (sql.includes('DELETE FROM "membership_grants" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };

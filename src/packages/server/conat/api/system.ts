@@ -242,6 +242,18 @@ import {
   projectBackupRepoHealthSummary,
 } from "@cocalc/server/project-backup/repo-health";
 import {
+  getProjectBackupRepoSampledCheckHealth,
+  projectBackupRepoSampledCheckDetails,
+  projectBackupRepoSampledCheckLevel,
+  projectBackupRepoSampledCheckSummary,
+} from "@cocalc/server/project-backup/repo-sampled-check";
+import {
+  getSiteFundedAiHealth,
+  siteFundedAiHealthDetails,
+  siteFundedAiHealthLevel,
+  siteFundedAiHealthSummary,
+} from "@cocalc/server/ai/site-funded-health";
+import {
   getProjectRecoveryAttemptHealth,
   getProjectRecoveryHealth,
   getProjectRecoveryRecentPayingCompletions,
@@ -467,6 +479,10 @@ import {
   projectArchiveBlockedHealth,
   projectArchiveHostCoverageHealth,
 } from "@cocalc/server/projects/archive-lifecycle-maintenance";
+import {
+  listHostSyntheticProbes,
+  syntheticSmokeHealth,
+} from "@cocalc/server/hosts/synthetic-probe-health";
 import {
   getProjectMembershipAuditHealthStatus,
   projectMembershipAuditHealth,
@@ -2290,6 +2306,7 @@ export async function getLaunchHealth({
     setupResult,
     configResult,
     smokeResult,
+    hostSyntheticProbesResult,
     adminAlertsResult,
     intrusionObservationsResult,
     backupPurgeResult,
@@ -2299,6 +2316,8 @@ export async function getLaunchHealth({
     archiveHostCoverageResult,
     archiveBlockedResult,
     membershipAuditResult,
+    sealedRepoChecksResult,
+    siteFundedAiResult,
   ] = await Promise.allSettled([
     getPool().query("SELECT 1"),
     getServerSettings(),
@@ -2317,6 +2336,7 @@ export async function getLaunchHealth({
       scope: SERVER_SETTINGS_CONFIG_SCOPE,
     }),
     getLatestLaunchSmokeResult(),
+    listHostSyntheticProbes(),
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
     getHostIntrusionObservationSummary(),
     getBackupPurgeHealth(),
@@ -2329,6 +2349,15 @@ export async function getLaunchHealth({
     getProjectArchiveHostCoverage(),
     getProjectArchiveBlockedSummary(),
     getProjectMembershipAuditHealthStatus(),
+    (async () =>
+      await getProjectBackupRepoSampledCheckHealth({
+        now: new Date(checkedAt),
+        seed_managed: projectBackupReposAreSeedManaged(),
+      }))(),
+    // Site-funded turns are recorded on the seed bay.
+    getConfiguredBayId() === seedBayId
+      ? getSiteFundedAiHealth({ now: new Date(checkedAt) })
+      : Promise.resolve(undefined),
   ]);
   const membershipAudit =
     membershipAuditResult.status === "fulfilled"
@@ -2392,6 +2421,10 @@ export async function getLaunchHealth({
           projectRestoreDrillsResult.value,
           new Date(checkedAt),
         )
+      : undefined;
+  const sealedRepoChecks =
+    sealedRepoChecksResult.status === "fulfilled"
+      ? sealedRepoChecksResult.value
       : undefined;
   const projectRecoveryAttempts =
     projectRecoveryAttemptsResult.status === "fulfilled"
@@ -2687,6 +2720,29 @@ export async function getLaunchHealth({
           ? [`${billingExposureResult.reason}`]
           : billingExposureHealthDetails(billingExposureResult.value),
     }),
+    // Only the seed bay records site-funded turns (and alerts on them).
+    // Another bay omits this check rather than report healthy without data.
+    ...(siteFundedAiResult.status === "rejected"
+      ? [
+          launchHealthCheck({
+            id: "site-funded-ai",
+            label: "Site-funded AI turns",
+            level: "warning",
+            summary: "Unable to read site-funded AI turns.",
+            details: [`${siteFundedAiResult.reason}`],
+          }),
+        ]
+      : siteFundedAiResult.value
+        ? [
+            launchHealthCheck({
+              id: "site-funded-ai",
+              label: "Site-funded AI turns",
+              level: siteFundedAiHealthLevel(siteFundedAiResult.value),
+              summary: siteFundedAiHealthSummary(siteFundedAiResult.value),
+              details: siteFundedAiHealthDetails(siteFundedAiResult.value),
+            }),
+          ]
+        : []),
     launchHealthCheck({
       id: "backup-repos",
       label: "Shared project backup repositories",
@@ -2764,6 +2820,10 @@ export async function getLaunchHealth({
               ? "critical"
               : projectRecoveryAttemptsResult.status === "rejected" ||
                   projectRestoreDrills?.level === "warning" ||
+                  sealedRepoChecksResult.status === "rejected" ||
+                  (sealedRepoChecks != null &&
+                    projectBackupRepoSampledCheckLevel(sealedRepoChecks) ===
+                      "warning") ||
                   projectRecoveryObjectivesResult.status === "rejected" ||
                   (projectRecoveryObjectives?.ready &&
                     projectRecoveryObjectives.rows.some((row) => {
@@ -2792,7 +2852,7 @@ export async function getLaunchHealth({
                 : "healthy",
       summary: !projectRecovery
         ? "Unable to read project recovery status."
-        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry; ${stalledPayingQueues.length} paying host queues with no recent completion${projectRecoveryPayingCompletionsResult.status === "rejected" ? " (completion history unavailable)" : ""}${projectRecovery.parked_hosts.length ? `; ${projectRecovery.parked_hosts.reduce((sum, host) => sum + host.projects, 0)} projects on ${projectRecovery.parked_hosts.length} hosts stopped on purpose not counted` : ""}. ${projectRestoreDrills ? `${projectRestoreDrills.current}/${projectRestoreDrills.current + projectRestoreDrills.missing + projectRestoreDrills.stale + projectRestoreDrills.failed} active backup shards have a passing remote-only restore drill within 30 days (${projectRestoreDrills.failed} latest failed, ${projectRestoreDrills.missing} missing, ${projectRestoreDrills.stale} stale).` : "Restore drill coverage unavailable."}${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}${customerWarningScanProblem ? ` ${customerWarningScanProblem}.` : ""}`,
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry; ${stalledPayingQueues.length} paying host queues with no recent completion${projectRecoveryPayingCompletionsResult.status === "rejected" ? " (completion history unavailable)" : ""}${projectRecovery.parked_hosts.length ? `; ${projectRecovery.parked_hosts.reduce((sum, host) => sum + host.projects, 0)} projects on ${projectRecovery.parked_hosts.length} hosts stopped on purpose not counted` : ""}. ${projectRestoreDrills ? `${projectRestoreDrills.current}/${projectRestoreDrills.current + projectRestoreDrills.missing + projectRestoreDrills.stale + projectRestoreDrills.failed} active backup shards have a passing remote-only restore drill within 30 days (${projectRestoreDrills.failed} latest failed, ${projectRestoreDrills.missing} missing, ${projectRestoreDrills.stale} stale).` : "Restore drill coverage unavailable."} ${sealedRepoChecks ? projectBackupRepoSampledCheckSummary(sealedRepoChecks) : "Sealed backup repository checks unavailable."}${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}${customerWarningScanProblem ? ` ${customerWarningScanProblem}.` : ""}`,
       details:
         projectRecoveryResult.status === "rejected"
           ? [`${projectRecoveryResult.reason}`]
@@ -2816,6 +2876,15 @@ export async function getLaunchHealth({
                       `Unable to read project restore drill coverage: ${projectRestoreDrillsResult.reason}`,
                     ]
                   : (projectRestoreDrills?.details ?? [])),
+                ...(sealedRepoChecksResult.status === "rejected"
+                  ? [
+                      `Unable to read sealed backup repository checks: ${sealedRepoChecksResult.reason}`,
+                    ]
+                  : sealedRepoChecks
+                    ? projectBackupRepoSampledCheckDetails(
+                        sealedRepoChecks,
+                      ).slice(0, 12)
+                    : []),
                 settings?.project_recovery_notifications_enabled
                   ? `Operator notifications enabled; on-call administrator ${recoveryOncallAccountId || "not configured"}; critical email backend ${recoveryCriticalEmailBackend || "not configured"}`
                   : "Operator notifications disabled until the named on-call administrator and alert switch are configured",
@@ -2985,29 +3054,19 @@ export async function getLaunchHealth({
     launchHealthCheck({
       id: "synthetic-smoke",
       label: "Synthetic smoke probe",
-      level:
-        smokeResult.status === "rejected"
-          ? "critical"
-          : smoke == null
-            ? "unknown"
-            : smoke.status === "succeeded"
-              ? Date.now() - Date.parse(smoke.finished_at) > 60 * 60 * 1000
-                ? "warning"
-                : "healthy"
-              : "critical",
-      summary:
-        smokeResult.status === "rejected"
-          ? "Unable to read the latest synthetic smoke result."
-          : smoke == null
-            ? "No synthetic smoke probe result has been recorded."
-            : `${smoke.status} ${formatDurationMs(smoke.duration_ms)} on project ${smoke.project_id} at ${new Date(smoke.finished_at).toLocaleString()}.`,
-      details:
-        smokeResult.status === "rejected"
-          ? [`${smokeResult.reason}`]
-          : (smoke?.steps.map(
-              (step) =>
-                `${step.label}: ${step.status} in ${formatDurationMs(step.duration_ms)} (${step.summary})`,
-            ) ?? []),
+      ...syntheticSmokeHealth({
+        smoke,
+        smokeError:
+          smokeResult.status === "rejected" ? smokeResult.reason : undefined,
+        hosts:
+          hostSyntheticProbesResult.status === "fulfilled"
+            ? hostSyntheticProbesResult.value
+            : undefined,
+        hostsError:
+          hostSyntheticProbesResult.status === "rejected"
+            ? hostSyntheticProbesResult.reason
+            : undefined,
+      }),
     }),
   ];
 

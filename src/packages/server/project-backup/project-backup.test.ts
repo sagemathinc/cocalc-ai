@@ -183,7 +183,7 @@ describe("project-backup", () => {
             projects_per_shard: 500,
             authoritative_bay_id: "bay-0",
             regions: [],
-            repos: [],
+            repos: settings.seed_repos ?? [],
           })),
         })),
       })),
@@ -500,6 +500,9 @@ describe("project-backup", () => {
           rowCount: settings.backup_record_assignment_changed_at_update ? 0 : 1,
         };
       }
+      if (sql === "SELECT id, status FROM project_backup_repos") {
+        return { rows: repoStateRows() };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
   });
@@ -746,6 +749,36 @@ describe("project-backup", () => {
           sql.includes("backup_repo_id IS DISTINCT FROM"),
       ),
     ).toBe(true);
+  });
+
+  it("reads repository statuses locally, or from the seed bay on an attached bay", async () => {
+    settings = {
+      repos: [
+        repoRow({ id: REPO_IDS[0] }),
+        repoRow({ id: REPO_IDS[1], status: "sealed" }),
+      ],
+    };
+    const { getProjectBackupRepoStatuses } = await import("./index");
+    expect([...(await getProjectBackupRepoStatuses())]).toEqual([
+      [REPO_IDS[0], "active"],
+      [REPO_IDS[1], "sealed"],
+    ]);
+
+    settings = {
+      cluster_role: "attached",
+      seed_bay_id: "bay-0",
+      bay_id: "bay-1",
+      // The attached bay has none of the rows.
+      repos: [],
+      seed_repos: [
+        { id: REPO_IDS[2], status: "draining" },
+        { id: REPO_IDS[3], status: null },
+      ],
+    };
+    expect([...(await getProjectBackupRepoStatuses())]).toEqual([
+      [REPO_IDS[2], "draining"],
+      [REPO_IDS[3], null],
+    ]);
   });
 
   it("builds a seed-managed project backup config without a local project row", async () => {

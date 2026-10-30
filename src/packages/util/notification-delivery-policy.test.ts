@@ -56,6 +56,25 @@ describe("notification delivery policy", () => {
     });
   });
 
+  it("routes direct messages like mentions, charged to the sender", () => {
+    expect(
+      resolveNotificationDeliveryPolicy({
+        kind: "account_notice",
+        origin_kind: "system",
+        actor_account_id: "sender",
+        target_account_id: "target",
+        summary: { notice_type: "direct_message", origin_label: "Messages" },
+        preferences: { email: { mentions: "digest", support: "none" } },
+      }),
+    ).toMatchObject({
+      category: "mentions",
+      lane: "notification",
+      delivery_mode: "digest",
+      creates_in_app: true,
+      responsible_account_id: "sender",
+    });
+  });
+
   it("routes followed chat thread replies separately from direct mentions", () => {
     expect(
       resolveNotificationDeliveryPolicy({

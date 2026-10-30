@@ -27,10 +27,11 @@ import {
   normalizeAlias,
   normalizeConversationPath,
   normalizeConversationTitle,
+  normalizeMemberIds,
 } from "@cocalc/util/people";
 
 const COLUMNS = `conversation_id, project_id, path, title, created_by, created,
-  last_activity, last_sender_id, participant_ids`;
+  last_activity, last_sender_id, participant_ids, member_ids`;
 
 // Same rule as project collaborator access: owner or collaborator of a
 // project that is not deleted. Viewers are not conversation participants.
@@ -56,6 +57,7 @@ function toConversation(row: any): Conversation {
     last_activity: new Date(row.last_activity).valueOf(),
     last_sender_id: row.last_sender_id ?? null,
     participant_ids: row.participant_ids ?? [],
+    member_ids: row.member_ids ?? [],
   };
 }
 
@@ -72,28 +74,63 @@ async function assertCollaborator(
   }
 }
 
+// The members who are not owners or collaborators of the project.
+async function nonCollaborators(
+  project_id: string,
+  member_ids: string[],
+): Promise<string[]> {
+  const { rows } = await getPool().query(
+    `SELECT m.id FROM unnest($2::uuid[]) AS m(id)
+     WHERE NOT EXISTS (
+       SELECT 1 FROM projects p
+       WHERE p.project_id = $1
+         AND p.deleted IS NOT TRUE
+         AND p.users -> m.id::text ->> 'group' IN ('owner', 'collaborator')
+     )`,
+    [project_id, member_ids],
+  );
+  return rows.map((row) => row.id);
+}
+
 // Idempotent on (project_id, path): adding a file that is already a
-// conversation returns the existing record unchanged.
+// conversation returns the existing record, with any requested members added
+// (so a retry, or adding a registered file with people, never drops them).
+// member_ids are who it is with besides the creator; each must be a
+// collaborator.
 export async function createConversationRecord({
   account_id,
   project_id,
   path,
   title,
+  member_ids,
 }: {
   account_id: string;
   project_id: string;
   path: string;
   title: string;
+  member_ids?: string[];
 }): Promise<Conversation> {
   path = normalizeConversationPath(path);
   title = normalizeConversationTitle(title);
+  const members = normalizeMemberIds(account_id, member_ids);
+  // Members asked for explicitly (with the caller), to add to an existing
+  // record; none means leave it as it is.
+  const requested = member_ids?.length ? members : undefined;
   await assertCollaborator(account_id, project_id);
+  const outside = await nonCollaborators(project_id, members);
+  if (outside.length > 0) {
+    throw Error(
+      "everyone in the conversation must be a collaborator on this project",
+    );
+  }
   const { rows: registered } = await getPool().query(
     `SELECT ${COLUMNS} FROM project_conversations
      WHERE project_id = $1 AND path = $2`,
     [project_id, path],
   );
-  if (registered[0] != null) return toConversation(registered[0]);
+  if (registered[0] != null) {
+    return await addMembers(toConversation(registered[0]), requested);
+  }
   const { rows: counts } = await getPool().query(
     "SELECT count(*)::int AS n FROM project_conversations WHERE project_id = $1",
     [project_id],
@@ -104,11 +141,11 @@ export async function createConversationRecord({
   const { rows } = await getPool().query(
     `INSERT INTO project_conversations
        (conversation_id, project_id, path, title, created_by, created,
-        last_activity, participant_ids)
-     VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), ARRAY[]::uuid[])
+        last_activity, participant_ids, member_ids)
+     VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), ARRAY[]::uuid[], $6::uuid[])
      ON CONFLICT (project_id, path) DO NOTHING
      RETURNING ${COLUMNS}`,
-    [randomUUID(), project_id, path, title, account_id],
+    [randomUUID(), project_id, path, title, account_id, members],
   );
   if (rows[0] != null) return toConversation(rows[0]);
   const existing = await getPool().query(
@@ -117,7 +154,50 @@ export async function createConversationRecord({
     [project_id, path],
   );
   if (existing.rows[0] == null) throw Error("conversation was not created");
-  return toConversation(existing.rows[0]);
+  return await addMembers(toConversation(existing.rows[0]), requested);
+}
+
+// The stored members followed by the requested ones, each once, in order.
+// Records from before members existed count their creator. Evaluated inside
+// the UPDATE, so a concurrent addition is never lost: the second UPDATE waits
+// for the first and recomputes from its result.
+const MERGED_MEMBERS = `(
+  SELECT array_agg(m.id ORDER BY m.ord) FROM (
+    SELECT id, min(ord) AS ord
+      FROM unnest(
+        COALESCE(NULLIF(c.member_ids, '{}'), ARRAY[c.created_by]) || $3::uuid[]
+      ) WITH ORDINALITY AS t(id, ord)
+     GROUP BY id
+  ) m
+)`;
+
+// Add requested members (already checked to be collaborators) to an existing
+// record, atomically.
+async function addMembers(
+  c: Conversation,
+  member_ids?: string[],
+): Promise<Conversation> {
+  if (!member_ids?.length) return c;
+  const { rows } = await getPool().query(
+    `UPDATE project_conversations c SET member_ids = ${MERGED_MEMBERS}
+     WHERE c.project_id = $1 AND c.conversation_id = $2
+       AND cardinality(${MERGED_MEMBERS}) <= $4
+     RETURNING ${COLUMNS}`,
+    [
+      c.project_id,
+      c.conversation_id,
+      member_ids,
+      MAX_CONVERSATION_PARTICIPANTS,
+    ],
+  );
+  if (rows[0] != null) return toConversation(rows[0]);
+  const { rows: current } = await getPool().query(
+    `SELECT ${COLUMNS} FROM project_conversations
+     WHERE project_id = $1 AND conversation_id = $2`,
+    [c.project_id, c.conversation_id],
+  );
+  if (current[0] == null) return c;
+  throw Error(`at most ${MAX_CONVERSATION_PARTICIPANTS} members`);
 }
 
 // Only projects where account_id is currently a collaborator contribute rows,

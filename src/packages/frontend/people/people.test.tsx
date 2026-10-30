@@ -8,8 +8,10 @@ import userEvent from "@testing-library/user-event";
 import type { ListedConversation } from "@cocalc/util/people";
 import { ConversationCollection } from "./conversation-collection";
 import {
+  conversationPeople,
   isMentioned,
   isUnread,
+  isWith,
   matchesPerson,
   matchesScope,
   matchesSearch,
@@ -72,6 +74,14 @@ describe("scope rules", () => {
     expect(
       matchesScope(conversation("a", "A", { following: true }), "for-you", me),
     ).toBe(true);
+    // Started with me: for me before I write, and on my page for them.
+    const withMe = conversation("a", "A", { member_ids: [other, me] });
+    expect(matchesScope(withMe, "for-you", me)).toBe(true);
+    expect(isWith(withMe, me)).toBe(true);
+    expect(isWith(conversation("a", "A"), me)).toBe(false);
+    expect(
+      conversationPeople({ participant_ids: [other], member_ids: [me, other] }),
+    ).toEqual([other, me]);
     const mentioned = conversation("a", "A", { mentioned_at: 4000 });
     expect(isMentioned(mentioned)).toBe(true);
     expect(matchesScope(mentioned, "for-you", me)).toBe(true);

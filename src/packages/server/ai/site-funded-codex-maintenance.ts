@@ -11,10 +11,13 @@ import {
   reconcileTerminalSiteFundedCodexReservations,
 } from "./site-funded-codex-reservations";
 import { pruneSiteFundedAdmissions } from "./site-funded-admissions";
+import { runSiteFundedAiAlertCheck } from "./site-funded-health";
 
 const logger = getLogger("server:ai:site-funded-codex-maintenance");
 const INTERVAL_MS = 60_000;
+const ALERT_CHECK_INTERVAL_MS = 5 * 60_000;
 let started = false;
+let lastAlertCheckAt = 0;
 
 export function startSiteFundedCodexMaintenance(): void {
   if (started || getConfiguredBayId() !== getConfiguredClusterSeedBayId()) {
@@ -43,6 +46,17 @@ export function startSiteFundedCodexMaintenance(): void {
       await pruneSiteFundedAdmissions();
     } catch (err) {
       logger.warn("site-funded admission pruning failed", { err: `${err}` });
+    }
+    if (Date.now() - lastAlertCheckAt >= ALERT_CHECK_INTERVAL_MS) {
+      lastAlertCheckAt = Date.now();
+      try {
+        const problems = await runSiteFundedAiAlertCheck();
+        if (problems > 0) {
+          logger.warn("site-funded AI turns are failing", { problems });
+        }
+      } catch (err) {
+        logger.warn("site-funded AI alert check failed", { err: `${err}` });
+      }
     }
   };
   void run();

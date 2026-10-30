@@ -27,6 +27,23 @@ export function isMentioned(c: ListedConversation): boolean {
   );
 }
 
+// Someone the conversation is with: started with them, or they wrote in it.
+export function isWith(c: ListedConversation, account_id: string): boolean {
+  return (
+    (c.member_ids ?? []).includes(account_id) ||
+    c.participant_ids.includes(account_id)
+  );
+}
+
+// Everyone it is with, for avatars: writers first (most recent first), then
+// members who have not written yet.
+export function conversationPeople(c: {
+  participant_ids: string[];
+  member_ids?: string[];
+}): string[] {
+  return Array.from(new Set([...c.participant_ids, ...(c.member_ids ?? [])]));
+}
+
 export function matchesScope(
   c: ListedConversation,
   scope: Scope,
@@ -45,8 +62,7 @@ export function matchesScope(
         c.following ||
         isMentioned(c) ||
         (account_id != null &&
-          (c.created_by === account_id ||
-            c.participant_ids.includes(account_id)))
+          (c.created_by === account_id || isWith(c, account_id)))
       );
   }
 }

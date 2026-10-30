@@ -13,8 +13,12 @@ const mockOwner = jest.fn();
 const mockRemoteRecord = jest.fn();
 const mockRemoteState = jest.fn();
 const mockRemoteRead = jest.fn();
+const mockRemoteCreate = jest.fn();
+const mockRemoteCreateWithMembers = jest.fn();
 const mockRemoteClient = jest.fn((_opts: unknown) => ({
   getRecord: mockRemoteRecord,
+  createRecord: mockRemoteCreate,
+  createRecordWithMembers: mockRemoteCreateWithMembers,
   setState: mockRemoteState,
   markRead: mockRemoteRead,
 }));
@@ -241,5 +245,58 @@ describeDb("People home/owner routing and alias retirement", () => {
     await expect(peopleControl.markRead(read)).rejects.toThrow(
       "stale account-home route",
     );
+  });
+});
+
+describe("conversation members and an owning bay that predates them", () => {
+  const bob = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const record = {
+    conversation_id: newId,
+    project_id,
+    path: "/home/user/a.chat",
+    title: "A",
+    created_by: account_id,
+    created: 1,
+    last_activity: 1,
+    participant_ids: [],
+  };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockHome.mockResolvedValue({ home_bay_id: "bay-0" });
+    mockOwner.mockResolvedValue({ bay_id: "bay-1" });
+    mockRemoteRead.mockResolvedValue({});
+  });
+
+  test("members go to createRecordWithMembers; an old owner fails, creating nothing", async () => {
+    mockRemoteCreateWithMembers.mockRejectedValue(
+      Error("unknown service method 'createRecordWithMembers'"),
+    );
+    await expect(
+      peopleApi.addConversation({
+        account_id,
+        project_id,
+        path: record.path,
+        title: "A",
+        member_ids: [bob],
+      }),
+    ).rejects.toThrow("does not support conversation members");
+    expect(mockRemoteCreateWithMembers).toHaveBeenCalledWith(
+      expect.objectContaining({ member_ids: [bob] }),
+    );
+    expect(mockRemoteCreate).not.toHaveBeenCalled();
+  });
+
+  test("without members, the original createRecord", async () => {
+    mockRemoteCreate.mockResolvedValue(record);
+    await peopleApi.addConversation({
+      account_id,
+      project_id,
+      path: record.path,
+      title: "A",
+    });
+    expect(mockRemoteCreate).toHaveBeenCalledWith(
+      expect.not.objectContaining({ member_ids: expect.anything() }),
+    );
+    expect(mockRemoteCreateWithMembers).not.toHaveBeenCalled();
   });
 });

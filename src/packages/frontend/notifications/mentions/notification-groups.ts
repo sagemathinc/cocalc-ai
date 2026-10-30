@@ -45,6 +45,7 @@ function dedupeKey(mention: MentionInfo): string | undefined {
     mention.get("thread_id") ?? "",
     mention.get("title") ?? "",
     mention.get("body_markdown") ?? "",
+    mention.get("body_text") ?? "",
     mention.get("origin_label") ?? "",
     mention.get("action_link") ?? "",
     mention.get("action_label") ?? "",

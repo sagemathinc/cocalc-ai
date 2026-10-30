@@ -3,6 +3,8 @@ const confirmProjectMaintenanceAssignmentMock = jest.fn();
 const getMasterConatClientMock = jest.fn();
 const pruneDeferredSnapshotsMock = jest.fn();
 const inspectScheduledSnapshotsMock = jest.fn();
+const projectFilesChangedSinceMock = jest.fn();
+const markProjectLastChangedMock = jest.fn();
 const runScheduledSnapshotMaintenanceMock = jest.fn();
 const runScheduledBackupMaintenanceMock = jest.fn();
 const listProjectBackupIdsMock = jest.fn();
@@ -35,6 +37,8 @@ jest.mock("./sqlite/maintenance-ledger", () => ({
 jest.mock("./last-edited", () => ({
   onProjectChangeReported: (listener: (project_id: string) => void) =>
     onProjectChangeReportedMock(listener),
+  markProjectLastChanged: (...args: any[]) =>
+    markProjectLastChangedMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -77,6 +81,8 @@ jest.mock("./file-server", () => ({
     pruneDeferredSnapshotsMock(...args),
   inspectScheduledSnapshots: (...args: any[]) =>
     inspectScheduledSnapshotsMock(...args),
+  projectFilesChangedSince: (...args: any[]) =>
+    projectFilesChangedSinceMock(...args),
   snapshotPruneBusy: () => ({ backupsInFlight: 0, lifecycleActive: 0 }),
 }));
 
@@ -132,6 +138,7 @@ describe("snapshot-backup-maintenance", () => {
     runScheduledSnapshotMaintenanceMock.mockResolvedValue(undefined);
     // by default the read-only look can't confirm anything: the full update
     inspectScheduledSnapshotsMock.mockResolvedValue(undefined);
+    projectFilesChangedSinceMock.mockResolvedValue("unknown");
     runScheduledBackupMaintenanceMock.mockResolvedValue(undefined);
     listProjectBackupIdsMock.mockResolvedValue([]);
     reportProjectMaintenanceMock.mockResolvedValue(undefined);
@@ -3568,6 +3575,100 @@ describe("deferred snapshot prunes", () => {
         observed: 1,
         interval_wait: 1,
         fallback: 0,
+      });
+      // The bay recorded the change: no need to look at the files.
+      expect(projectFilesChangedSinceMock).not.toHaveBeenCalled();
+    });
+
+    describe("changed, though the bay records no change since the latest snapshot", () => {
+      // Prod asia-1, 2026-10-29: about 1000 stopped free projects stayed
+      // "unknown". Pruning snapshots in .snapshots moves the generation, so
+      // the look says changed; the bay has no change, so there is no due time,
+      // and the fallback queued behind all due work never ran.
+      beforeEach(() => {
+        inspectScheduledSnapshotsMock.mockResolvedValue({
+          latest_snapshot_at: lastSnapshot,
+          changed: true,
+          snapshot_count: 5,
+          expired: 0,
+        });
+        admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
+          admitted: false,
+          would_defer: true,
+          starvation_override: false,
+          reason: "io_pressure_recovery",
+          operation_id: operation_kind,
+          release: releaseStorageOperationMock,
+        }));
+      });
+
+      const sweep = async () => {
+        const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+          await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-reobserve",
+        });
+        await settle();
+      };
+
+      it("reports it unchanged when no file changed since that snapshot", async () => {
+        projectFilesChangedSinceMock.mockResolvedValue("none");
+        await sweep();
+        expect(projectFilesChangedSinceMock).toHaveBeenCalledWith({
+          project_id: "proj-idle",
+          // a minute before the snapshot's own time
+          since: Date.parse(lastSnapshot) - 60_000,
+        });
+        expect(admitStorageOperationMock).not.toHaveBeenCalled();
+        expect(markProjectLastChangedMock).not.toHaveBeenCalled();
+        expect(snapshotReports()).toEqual([
+          expect.objectContaining({
+            project_id: "proj-idle",
+            outcome: "skipped",
+            reason: "no_content_change",
+            latest_snapshot_at: lastSnapshot,
+          }),
+        ]);
+        const { getSnapshotReobservationStats } =
+          await import("./snapshot-backup-maintenance");
+        expect(getSnapshotReobservationStats()).toMatchObject({
+          observed: 1,
+          files_unchanged: 1,
+          fallback: 0,
+        });
+      });
+
+      it("never reports it unchanged when files changed: records the change for the bay", async () => {
+        projectFilesChangedSinceMock.mockResolvedValue("changed");
+        await sweep();
+        expect(markProjectLastChangedMock).toHaveBeenCalledWith("proj-idle");
+        expect(snapshotReports()).not.toContainEqual(
+          expect.objectContaining({ reason: "no_content_change" }),
+        );
+        const { getSnapshotReobservationStats } =
+          await import("./snapshot-backup-maintenance");
+        expect(getSnapshotReobservationStats()).toMatchObject({
+          observed: 0,
+          unrecorded_change: 1,
+          fallback: 1,
+        });
+      });
+
+      it("falls back to the full update when it can't tell", async () => {
+        projectFilesChangedSinceMock.mockResolvedValue("unknown");
+        await sweep();
+        expect(markProjectLastChangedMock).not.toHaveBeenCalled();
+        expect(snapshotReports()).not.toContainEqual(
+          expect.objectContaining({ reason: "no_content_change" }),
+        );
+        const { getSnapshotReobservationStats } =
+          await import("./snapshot-backup-maintenance");
+        expect(getSnapshotReobservationStats()).toMatchObject({
+          observed: 0,
+          files_unchanged: 0,
+          unrecorded_change: 0,
+          fallback: 1,
+        });
       });
     });
 

@@ -15,6 +15,7 @@ import {
   normalizeConversationPath,
   type ListedConversation,
 } from "@cocalc/util/people";
+import { directRoute } from "@cocalc/util/direct-conversations";
 
 const TTL_MS = 60_000;
 let cached: { at: number; list: Promise<ListedConversation[]> } | undefined;
@@ -110,6 +111,15 @@ export function useNotificationConversation(
     };
   }, [relevant, project_id, path]);
   return conversation;
+}
+
+// A direct conversation (in no project), on People's Direct Messages tab.
+export async function openDirectConversation(
+  conversation_id: string,
+): Promise<void> {
+  const page = redux.getActions("page");
+  page.setState({ people_route: directRoute(conversation_id) });
+  await page.set_active_tab("people");
 }
 
 export async function openConversation(

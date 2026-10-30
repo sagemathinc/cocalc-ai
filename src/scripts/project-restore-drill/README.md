@@ -33,9 +33,12 @@ project-deletion operations. Never delete projects by matching a title.
   option asserts the local bay, it does not route a query to another bay.
   Make separate campaigns for other bays. The runner checks the
   reservation before creation and checks project ownership/placement afterward.
-- Include sealed repositories with confirmed backups when selecting coverage,
-  not only currently writable repositories. The runner tests a fresh marker,
-  not every historical customer snapshot.
+- Select the active repositories with confirmed backups: admin health counts
+  only those toward the 30-day drill target. Sealed and draining repositories
+  get a quarterly sampled `rustic check` instead
+  (`src/packages/server/project-backup/repo-sampled-check.ts`), reported
+  separately on the same health line. The runner tests a fresh marker, not
+  every historical customer snapshot.
 
 ```json
 [

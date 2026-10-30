@@ -8,6 +8,7 @@ import { withBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-ca
 
 import {
   ProjectRusticUnsupportedError,
+  projectChangedSince,
   projectRusticBackup,
   projectRusticRestore,
 } from "./project-rustic";
@@ -15,6 +16,17 @@ import {
 jest.mock("@cocalc/backend/execute-code", () => ({
   executeCode: jest.fn(),
 }));
+
+// The privileged wrapper is installed (it isn't where tests run).
+jest.mock("node:fs", () => {
+  const actual = jest.requireActual("node:fs");
+  return {
+    ...actual,
+    existsSync: (path: string) =>
+      path === "/usr/local/sbin/cocalc-runtime-storage" ||
+      actual.existsSync(path),
+  };
+});
 
 const mockedExecuteCode = jest.mocked(executeCode);
 
@@ -287,6 +299,64 @@ describe("project rustic wrapper", () => {
         timeoutMs: 30_000,
       }),
     ).rejects.toBeInstanceOf(ProjectRusticUnsupportedError);
+  });
+
+  describe("change scan", () => {
+    it("asks for paths changed since a time, in nanoseconds", async () => {
+      mockedExecuteCode.mockResolvedValue({
+        type: "blocking",
+        stdout:
+          '{"since_ns":1793298000000000000,"paths":[".cache/cocalc/project/log"],"truncated":false,"foreign_filesystem":false}\n',
+        stderr: "",
+        exit_code: 0,
+      } as any);
+      await expect(
+        projectChangedSince({
+          src: "/mnt/cocalc/project-1",
+          sinceMs: 1_793_298_000_000,
+        }),
+      ).resolves.toEqual({
+        paths: [".cache/cocalc/project/log"],
+        truncated: false,
+        foreign_filesystem: false,
+      });
+      expect(mockedExecuteCode.mock.calls[0][0].args).toEqual([
+        "-n",
+        "/usr/local/sbin/cocalc-runtime-storage",
+        "project-changed-since",
+        "/mnt/cocalc/project-1",
+        "--since-ns",
+        "1793298000000000000",
+      ]);
+    });
+
+    it("is unavailable, not an error, where the wrapper predates it", async () => {
+      mockedExecuteCode.mockResolvedValue({
+        type: "blocking",
+        stdout: "",
+        stderr:
+          "SECURITY_DENY code=unsupported-command detail=project-changed-since",
+        exit_code: 2,
+      } as any);
+      await expect(
+        projectChangedSince({ src: "/mnt/cocalc/project-1", sinceMs: 1 }),
+      ).resolves.toBeNull();
+    });
+
+    it("rejects a malformed report and a bad time", async () => {
+      mockedExecuteCode.mockResolvedValue({
+        type: "blocking",
+        stdout: '{"paths":[1],"truncated":false}',
+        stderr: "",
+        exit_code: 0,
+      } as any);
+      await expect(
+        projectChangedSince({ src: "/mnt/cocalc/project-1", sinceMs: 1 }),
+      ).rejects.toThrow("invalid change scan report");
+      await expect(
+        projectChangedSince({ src: "/mnt/cocalc/project-1", sinceMs: -1 }),
+      ).rejects.toThrow("invalid change scan time");
+    });
   });
 
   it("treats old wrappers that reject --parent as unsupported", async () => {

@@ -21,7 +21,7 @@ export type {
 } from "./site-funded-codex-prices";
 
 export const MICROUSD_PER_USD = 1_000_000;
-export const SITE_FUNDED_CODEX_POLICY_VERSION = 7;
+export const SITE_FUNDED_CODEX_POLICY_VERSION = 8;
 // Provider requests can contain base64 images, so HTTP bytes do not map to
 // context tokens. Keep an independent host-memory safety limit instead.
 export const SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024;
@@ -33,8 +33,23 @@ export type SiteFundedCodexPolicy = {
   reasoning: "low" | "medium";
   serviceTier: "standard";
   maxConcurrentTurnsPerAccount: number;
+  /**
+   * The most one turn may spend, its last request included (a ceiling, not
+   * reserved up front when the reservation is rolling). It also bounds what
+   * the turn's provider credential could spend if code in the project read
+   * it.
+   */
   maxTurnCostMicrousd: number;
+  /** A turn's hard lifetime: it ends then, however busy. */
   maxTurnDurationMs: number;
+  /**
+   * A rolling reservation holds this much at a time and is extended chunk by
+   * chunk while the turn runs. Absent on policies from before rolling
+   * reservations.
+   */
+  reservationChunkMicrousd?: number;
+  /** A rolling reservation expires after this long without a heartbeat. */
+  idleTimeoutMs?: number;
   contextWindowTokens: number;
   autoCompactTokenLimit: number;
   maxOutputTokensPerRequest: number;
@@ -60,11 +75,14 @@ export const DEFAULT_SITE_FUNDED_CODEX_POLICY: SiteFundedCodexPolicy = {
   // fallback conservative when an entitlement is missing or malformed.
   maxConcurrentTurnsPerAccount: 2,
   maxTurnCostMicrousd: 250_000,
-  maxTurnDurationMs: 60 * 60_000,
+  maxTurnDurationMs: 24 * 60 * 60_000,
+  reservationChunkMicrousd: 100_000,
+  idleTimeoutMs: 15 * 60_000,
   contextWindowTokens: 128_000,
   autoCompactTokenLimit: 96_000,
   maxOutputTokensPerRequest: 32_000,
-  maxRequestsPerTurn: 256,
+  // A safety cap only: a turn normally ends at its allowance.
+  maxRequestsPerTurn: 10_000,
   allowFastMode: false,
   allowUltraOrMultiAgent: false,
   allowedProviderTools: [],
@@ -131,7 +149,119 @@ export type SiteFundedCodexReservation = {
   provider?: SiteFundedProvider;
   /** The site key this turn is funded by (site-funded Claude). */
   providerKeyId?: string;
+  /**
+   * Holds one chunk at a time, extended with extendSiteFundedCodexTurn while
+   * the turn runs. Absent: reserved once, at admission.
+   */
+  rolling?: boolean;
 };
+
+/** Why a rolling reservation could not be extended. */
+export type SiteFundedCodexExtensionDenialCode =
+  | "account_limit_5h"
+  | "account_limit_7d"
+  | "global_pool"
+  | "provider_keys_exhausted"
+  /** The turn reached its per-turn ceiling (maxTurnCostMicrousd). */
+  | "turn_limit"
+  /** The reservation is no longer active, or is not rolling. */
+  | "inactive";
+
+export type SiteFundedCodexExtension =
+  | {
+      granted: true;
+      /** What this extension added. */
+      grantedMicrousd: number;
+      /** The reservation's total after it. */
+      reservedMicrousd: number;
+    }
+  | {
+      granted: false;
+      code: SiteFundedCodexExtensionDenialCode;
+      reason: string;
+      resetAt?: string;
+      reservedMicrousd: number;
+    };
+
+/** Asks the hub for more of a rolling reservation (throws when unreachable). */
+export type SiteFundedExtend = (opts: {
+  reservation: SiteFundedCodexReservation;
+  sequence: number;
+}) => Promise<SiteFundedCodexExtension>;
+
+/**
+ * The most a rolling reservation may hold: its ceiling less one request's
+ * worst case. A request starts only while the turn has spent less than it
+ * holds, so the turn never spends more than its ceiling.
+ */
+export function siteFundedRollingReservationLimitMicrousd(
+  policy: SiteFundedCodexPolicy,
+): number {
+  return (
+    policy.maxTurnCostMicrousd -
+    siteFundedCodexFinalRequestHeadroomMicrousd(policy)
+  );
+}
+
+/**
+ * When a rolling reservation should be extended: before a request starts with
+ * less than this left, so a request normally starts with a whole request's
+ * worst case reserved.
+ */
+export function siteFundedExtensionThresholdMicrousd(
+  policy: SiteFundedCodexPolicy,
+): number {
+  return Math.max(
+    Math.ceil((policy.reservationChunkMicrousd ?? 0) / 2),
+    siteFundedCodexFinalRequestHeadroomMicrousd(policy),
+  );
+}
+
+/**
+ * Why an included turn stopped being funded while it ran: it reached its
+ * time limit, or the hub ended its reservation (it expired or was revoked).
+ */
+export type SiteFundedTurnEndReason = "duration" | "ended";
+
+/** Why the hub no longer holds this reservation active, as seen at `now`. */
+export function siteFundedTurnEndReason(
+  reservation: Pick<SiteFundedCodexReservation, "expiresAt">,
+  now = Date.now(),
+): SiteFundedTurnEndReason {
+  const expiresAt = Date.parse(reservation.expiresAt ?? "");
+  // The hub's clock may run a little ahead of this host's.
+  return Number.isFinite(expiresAt) && now >= expiresAt - 60_000
+    ? "duration"
+    : "ended";
+}
+
+function formatTurnDuration(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes % 60 === 0) return `${minutes / 60}-hour`;
+  return `${minutes}-minute`;
+}
+
+/** What a person is told once an included turn is no longer funded. */
+export function siteFundedTurnEndedMessage({
+  provider,
+  reason,
+  maxTurnDurationMs,
+}: {
+  provider?: SiteFundedProvider;
+  reason: SiteFundedTurnEndReason;
+  maxTurnDurationMs: number;
+}): string {
+  const claude = provider === "anthropic";
+  const product = claude ? "Claude" : "Codex";
+  const alternative = claude
+    ? "use your own Claude subscription or Anthropic API key"
+    : "connect your own ChatGPT plan or OpenAI API key";
+  const what =
+    reason === "duration"
+      ? `This included ${product} turn reached its ${formatTurnDuration(maxTurnDurationMs)} limit.`
+      : `CoCalc ended this included ${product} turn.`;
+  return `${what} Start a new turn to continue, or ${alternative}.`;
+}
 
 export type SiteFundedCodexUsageEvent = SiteFundedCodexRequestUsage & {
   eventId: string;

@@ -80,6 +80,7 @@ import "./oauth";
 import "./password-reset";
 import "./payment-fulfillments";
 import "./people";
+import "./direct-conversations";
 import "./personal-library";
 import "./project-backup-indexes";
 import "./project-backup-repos";

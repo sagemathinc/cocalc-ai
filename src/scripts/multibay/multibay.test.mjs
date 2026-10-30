@@ -186,6 +186,217 @@ describe("routing by ownership", () => {
   });
 });
 
+describe("direct conversations across bays", () => {
+  // Two collaborators homed on different bays. A pair's conversation is owned
+  // by the home bay of the smaller account id; each member's index row lives
+  // on that member's home bay, delivered by the owner over the real fabric.
+  let carol; // homed on the seed
+  let dave; // homed on the attached bay
+
+  const directRows = async (bay, conversation_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const id = ${JSON.stringify(conversation_id)};
+       const c = await getPool().query(
+         "SELECT conversation_id FROM direct_conversations WHERE conversation_id=$1", [id]);
+       const i = await getPool().query(
+         "SELECT account_id FROM account_direct_conversations WHERE conversation_id=$1 ORDER BY account_id", [id]);
+       return { owners: c.rows.map(() => ${JSON.stringify(bay)}), indexed: i.rows.map((r) => r.account_id) };`,
+    );
+
+  before(async () => {
+    carol = await createAccount(cluster, { home_bay_id: SEED, name: "carol" });
+    dave = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "dave",
+    });
+    carol.client = await client(carol);
+    dave.client = await client(dave);
+    const project_id = await createProject(carol.client, "carol-dave");
+    await invite(carol, dave, project_id);
+    // Each home bay must see the other as a collaborator before starting.
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          ATTACHED,
+          `const { areCollaborators } = require("@cocalc/database/postgres/direct-conversations");
+           return await areCollaborators(${JSON.stringify(dave.account_id)}, ${JSON.stringify(carol.account_id)}, ${JSON.stringify(ATTACHED)});`,
+        ),
+      { timeoutMs: 60_000, what: "carol as dave's collaborator on bay-1" },
+    );
+  });
+
+  it("converges both directions of a pair on one conversation, owned by one bay", async () => {
+    const [fromCarol, fromDave] = await Promise.all([
+      carol.client.call("people.startDirect", {
+        member_ids: [dave.account_id],
+      }),
+      dave.client.call("people.startDirect", {
+        member_ids: [carol.account_id],
+      }),
+    ]);
+    assert.equal(fromCarol.conversation_id, fromDave.conversation_id);
+    carol.direct = fromCarol.conversation_id;
+    carol.directCreator = fromCarol.created_by;
+    const expectedOwner =
+      [carol.account_id, dave.account_id].sort()[0] === carol.account_id
+        ? SEED
+        : ATTACHED;
+    const other = expectedOwner === SEED ? ATTACHED : SEED;
+    assert.deepEqual((await directRows(expectedOwner, carol.direct)).owners, [
+      expectedOwner,
+    ]);
+    assert.deepEqual((await directRows(other, carol.direct)).owners, []);
+    // Each member's index row is on that member's home bay only.
+    await eventually(
+      async () =>
+        (await directRows(SEED, carol.direct)).indexed.join() ===
+          carol.account_id &&
+        (await directRows(ATTACHED, carol.direct)).indexed.join() ===
+          dave.account_id,
+      { what: "each member indexed on their own home bay" },
+    );
+  });
+
+  it("delivers a message to the other bay's member, unread", async () => {
+    await carol.client.call("people.sendDirect", {
+      conversation_id: carol.direct,
+      body: "hello from bay-0",
+    });
+    const seen = await eventually(
+      async () =>
+        (await dave.client.call("people.listDirect", {})).conversations.find(
+          (row) =>
+            row.conversation_id === carol.direct &&
+            row.last_sender_id === carol.account_id &&
+            row.preview === "hello from bay-0",
+        ),
+      { what: "carol's message in dave's list" },
+    );
+    assert.equal(seen.state, "active");
+    const { messages } = await dave.client.call("people.getDirect", {
+      conversation_id: carol.direct,
+    });
+    assert.ok(messages.some((m) => m.body === "hello from bay-0"));
+  });
+
+  it("shows a new group's first message as its preview", async () => {
+    // Real Postgres keeps microseconds: the first message is usually sent in
+    // the same millisecond the conversation was created, which once left the
+    // preview empty ("No messages yet").
+    for (let i = 0; i < 5; i++) {
+      const started = await carol.client.call("people.startDirect", {
+        member_ids: [dave.account_id],
+        title: `Preview check ${i}`,
+        body: `First message ${i}`,
+      });
+      assert.equal(started.preview, `First message ${i}`);
+    }
+  });
+
+  it("lets only the sender delete a message, for both bays' members", async () => {
+    // Deleting goes from the sender's home bay to the owning bay, which
+    // clears it and sends the new preview to each member's home bay.
+    const sent = await carol.client.call("people.sendDirect", {
+      conversation_id: carol.direct,
+      body: "pasted by mistake",
+    });
+    await eventually(
+      async () =>
+        (await dave.client.call("people.listDirect", {})).conversations.find(
+          (c) =>
+            c.conversation_id === carol.direct &&
+            c.preview === "pasted by mistake",
+        ),
+      { what: "the mistaken message in dave's list" },
+    );
+    await assert.rejects(
+      dave.client.call("people.deleteDirectMessage", {
+        conversation_id: carol.direct,
+        message_id: sent.message_id,
+      }),
+      /message not found/,
+    );
+    await carol.client.call("people.deleteDirectMessage", {
+      conversation_id: carol.direct,
+      message_id: sent.message_id,
+    });
+    for (const member of [carol, dave]) {
+      const { messages } = await member.client.call("people.getDirect", {
+        conversation_id: carol.direct,
+      });
+      const deleted = messages.find((m) => m.message_id === sent.message_id);
+      assert.equal(deleted.body, "");
+      assert.equal(deleted.deleted, true);
+      // Each home bay's list falls back to the latest message that remains.
+      await eventually(
+        async () =>
+          (
+            await member.client.call("people.listDirect", {})
+          ).conversations.find(
+            (c) =>
+              c.conversation_id === carol.direct &&
+              c.preview === "hello from bay-0",
+          ),
+        { what: "the preview without the deleted message, on each home bay" },
+      );
+    }
+  });
+
+  it("refuses the wrong bay's authority", async () => {
+    // A home method for dave run on the seed, and an owner method run on the
+    // bay that doesn't own the conversation, both fail closed.
+    const notOwner =
+      [carol.account_id, dave.account_id].sort()[0] === carol.account_id
+        ? ATTACHED
+        : SEED;
+    const result = await runInBay(
+      cluster,
+      SEED,
+      `const { directControl } = server("people/direct.js");
+       const out = {};
+       try { await directControl.list({ account_id: ${JSON.stringify(dave.account_id)} }); out.home = "allowed"; }
+       catch (err) { out.home = err.message; }
+       return out;`,
+    );
+    assert.match(result.home, /stale account-home route/);
+    const owned = await runInBay(
+      cluster,
+      notOwner,
+      `const { directControl } = server("people/direct.js");
+       try {
+         await directControl.send({ account_id: ${JSON.stringify(carol.account_id)}, conversation_id: ${JSON.stringify(carol.direct)}, body: "forged" });
+         return "allowed";
+       } catch (err) { return err.message; }`,
+    );
+    assert.notEqual(owned, "allowed");
+  });
+
+  it("refuses new conversations from someone blocked on another bay", async () => {
+    // Blocking blocks whoever started the conversation: either of the two
+    // concurrent starts may have created it.
+    const created_by = carol.directCreator;
+    const [blocked, blocker] =
+      created_by === carol.account_id ? [carol, dave] : [dave, carol];
+    await blocker.client.call("people.respondDirect", {
+      conversation_id: carol.direct,
+      action: "block",
+    });
+    // The block is checked on the blocker's home bay, the other bay.
+    assert.notEqual(blocked.home_bay_id, blocker.home_bay_id);
+    await assert.rejects(
+      blocked.client.call("people.startDirect", {
+        member_ids: [blocker.account_id],
+        title: "a group after the block",
+      }),
+      /can't message this person/,
+    );
+  });
+});
+
 describe("agent delivery reports across bays", () => {
   // The seed forwards a report about a message to the bay that owns the
   // sender's project, over the real fabric; only that bay may write it, and
@@ -1185,6 +1396,96 @@ describe("cross-bay collaboration", () => {
   });
 });
 
+describe("project conversations with members across bays", () => {
+  // The project is owned by the seed; Erin, homed on the attached bay,
+  // starts a conversation with its owner. Her bay routes the call to the
+  // owning bay, which stores the record with both of them as members.
+  let frank; // homed on the seed, owns the project
+  let erin; // homed on the attached bay
+  let project_id;
+
+  const conversationRows = async (bay, path) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT conversation_id, path, member_ids FROM project_conversations WHERE project_id=$1 AND path LIKE $2",
+         [${JSON.stringify(project_id)}, "%" + ${JSON.stringify(path)}]);
+       return rows;`,
+    );
+
+  before(async () => {
+    frank = await createAccount(cluster, { home_bay_id: SEED, name: "frank" });
+    erin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "erin",
+    });
+    frank.client = await client(frank);
+    erin.client = await client(erin);
+    project_id = await createProject(frank.client, "frank-erin");
+    await invite(frank, erin, project_id);
+    await eventually(() => listed(erin.client, project_id), {
+      what: "frank's project in erin's list",
+    });
+  });
+
+  it("creates the record on the owning bay with everyone it is with", async () => {
+    const conversation = await erin.client.call("people.addConversation", {
+      project_id,
+      path: "plans.chat",
+      title: "Plans",
+      member_ids: [frank.account_id],
+    });
+    assert.deepEqual(
+      [...conversation.member_ids].sort(),
+      [erin.account_id, frank.account_id].sort(),
+    );
+    const owned = await conversationRows(SEED, "plans.chat");
+    assert.equal(owned.length, 1);
+    assert.equal(owned[0].conversation_id, conversation.conversation_id);
+    assert.deepEqual(
+      [...owned[0].member_ids].sort(),
+      [erin.account_id, frank.account_id].sort(),
+    );
+    // Only the owning bay keeps the record.
+    assert.deepEqual(await conversationRows(ATTACHED, "plans.chat"), []);
+  });
+
+  it("recognizes an owning bay without the method, and it creates nothing", async () => {
+    // An owner running older code doesn't have createRecordWithMembers. Call
+    // a method the seed doesn't have, over the real fabric, and check that
+    // the refusal is what addConversation treats as "fail, don't create the
+    // record without its members".
+    const result = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { getInterBayFabricClient } = server("inter-bay/fabric.js");
+       const { ownerLacksMethod } = server("people/api.js");
+       const { createInterBayPeopleClient } = require("@cocalc/conat/inter-bay/people");
+       const api = createInterBayPeopleClient({
+         client: getInterBayFabricClient(),
+         bay_id: ${JSON.stringify(SEED)},
+       });
+       try {
+         await api.createRecordWithMembersFromTheFuture({
+           account_id: ${JSON.stringify(erin.account_id)},
+           project_id: ${JSON.stringify(project_id)},
+           path: "future.chat",
+           title: "Future",
+           member_ids: [${JSON.stringify(frank.account_id)}],
+         });
+         return { accepted: true };
+       } catch (err) {
+         return { accepted: false, lacks: ownerLacksMethod(err), message: String(err) };
+       }`,
+    );
+    assert.equal(result.accepted, false);
+    assert.equal(result.lacks, true, result.message);
+    assert.deepEqual(await conversationRows(SEED, "future.chat"), []);
+  });
+});
+
 describe("a project managed from the other bay", () => {
   // Every call below is made by an account homed on the bay that does NOT
   // own the project, so each one crosses the fabric to the owner.
@@ -1320,6 +1621,78 @@ describe("a project managed from the other bay", () => {
           ?.group === "owner",
       { what: "alice to be the owner again in her list" },
     );
+  });
+});
+
+describe("shared-project counts for collaborators on other bays", () => {
+  // Gina (attached bay) and Hank (seed) share a project on each bay. Gina's
+  // home bay counts both in her collaborator index. Code from before
+  // collaborators on other bays counted only the local project; a later
+  // snapshot of the seed's project with the same members must still repair
+  // that count, through the normal forwarding from the owning bay.
+  let gina; // homed on the attached bay
+  let hank; // homed on the seed
+  let hankProject; // owned by the seed
+
+  const sharedCount = async () =>
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT common_project_count FROM account_collaborator_index WHERE account_id=$1 AND collaborator_account_id=$2",
+         [${JSON.stringify(gina.account_id)}, ${JSON.stringify(hank.account_id)}]);
+       return rows[0]?.common_project_count ?? null;`,
+    );
+
+  before(async () => {
+    gina = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "gina",
+    });
+    hank = await createAccount(cluster, { home_bay_id: SEED, name: "hank" });
+    gina.client = await client(gina);
+    hank.client = await client(hank);
+    const ginaProject = await createProject(gina.client, "gina-local");
+    await invite(gina, hank, ginaProject);
+    hankProject = await createProject(hank.client, "hank-remote");
+    await invite(hank, gina, hankProject);
+    await eventually(() => listed(gina.client, hankProject), {
+      what: "hank's project in gina's list",
+    });
+  });
+
+  it("counts both shared projects on the account's home bay", async () => {
+    await eventually(async () => (await sharedCount()) === 2, {
+      timeoutMs: 60_000,
+      what: "two shared projects with hank in gina's collaborator index",
+    });
+  });
+
+  it("repairs a stale count when the other bay's project is forwarded again unchanged", async () => {
+    // The state an earlier rollout left: hank is gina's collaborator (through
+    // her local project), but the seed's project was never counted.
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE account_collaborator_index SET common_project_count=1 WHERE account_id=$1 AND collaborator_account_id=$2",
+         [${JSON.stringify(gina.account_id)}, ${JSON.stringify(hank.account_id)}]);`,
+    );
+    assert.equal(await sharedCount(), 1);
+    // A rename on the owning bay forwards the project, with the same
+    // members, to gina's home bay.
+    await assertCrossBayRename(
+      hank.client,
+      gina.client,
+      hankProject,
+      "hank-remote renamed",
+    );
+    await eventually(async () => (await sharedCount()) === 2, {
+      timeoutMs: 60_000,
+      what: "the stale count repaired to two",
+    });
   });
 });
 
@@ -4499,6 +4872,408 @@ describe("Sagebrush retention emails across a rehome", () => {
     assert.deepEqual(r.notices, [[sage.account_id, true]], JSON.stringify(r));
     assert.equal(r.row.sync_enabled, true);
     assert.equal(r.row.accepted, true);
+  });
+});
+
+describe("direct messages across a rehome", () => {
+  // Each member's conversation list, own settings, blocks, request quota and
+  // deleted-message tombstones live on their home bay. A rehome moves them,
+  // so nothing disappears and no one blocked can start a new request.
+  let mod; // an admin, to rehome
+  let ivy; // homed on the seed, then moved to the attached bay
+  let jack; // homed on the attached bay
+  let kim; // someone ivy blocked
+  let conversation_id;
+  let secret; // a message ivy is notified of, deleted after the move
+  const SECRET = "secret before the move zebra7731";
+
+  // Copies of the secret's text on a bay: in its notification graph and
+  // emails (for ivy), and in ivy's notification list.
+  const copies = async (bay) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const ivy = ${JSON.stringify(ivy.account_id)};
+       const like = "%" + ${JSON.stringify(SECRET)} + "%";
+       const count = async (sql) => Number((await getPool().query(sql, [ivy, like])).rows[0].n);
+       return {
+         events: await count(\`SELECT count(*) AS n FROM notification_events e
+           JOIN notification_targets t ON t.event_id = e.event_id
+           WHERE t.target_account_id = $1 AND e.payload_json::text LIKE $2\`),
+         outbox: await count(\`SELECT count(*) AS n FROM notification_target_outbox
+           WHERE target_account_id = $1 AND payload_json::text LIKE $2\`),
+         email: await count(\`SELECT count(*) AS n FROM notification_email_outbox
+           WHERE target_account_id = $1 AND summary_json::text LIKE $2\`),
+         list: await count(\`SELECT count(*) AS n FROM account_notification_index
+           WHERE account_id = $1 AND summary::text LIKE $2\`),
+       };`,
+    );
+
+  const directRow = async (bay, account_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT pinned, muted FROM account_direct_conversations WHERE account_id=$1 AND conversation_id=$2",
+         [${JSON.stringify(account_id)}, ${JSON.stringify(conversation_id)}]);
+       return rows[0] ?? null;`,
+    );
+  const blocked = async (bay) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const { isDirectBlocked } = require("@cocalc/database/postgres/direct-conversations");
+       return await isDirectBlocked(${JSON.stringify(ivy.account_id)}, ${JSON.stringify(kim.account_id)});`,
+    );
+
+  before(async () => {
+    mod = await createAccount(cluster, { home_bay_id: SEED, name: "mod" });
+    ivy = await createAccount(cluster, { home_bay_id: SEED, name: "ivy" });
+    jack = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "jack",
+    });
+    kim = await createAccount(cluster, { home_bay_id: ATTACHED, name: "kim" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(mod.account_id)}]);`,
+    );
+    mod.client = await client(mod);
+    // An admin's rehome needs a second factor: this session counts as one,
+    // as a dev CLI sign-in does outside production.
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         \`UPDATE account_auth_sessions
+             SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"dev_cli_fresh_auth": true}'::jsonb
+           WHERE account_id = $1\`,
+         [${JSON.stringify(mod.account_id)}]);`,
+    );
+    ivy.client = await client(ivy);
+    jack.client = await client(jack);
+    const project_id = await createProject(ivy.client, "ivy-jack");
+    await invite(ivy, jack, project_id);
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          ATTACHED,
+          `const { areCollaborators } = require("@cocalc/database/postgres/direct-conversations");
+           return await areCollaborators(${JSON.stringify(jack.account_id)}, ${JSON.stringify(ivy.account_id)}, ${JSON.stringify(ATTACHED)});`,
+        ),
+      { timeoutMs: 60_000, what: "ivy as jack's collaborator on bay-1" },
+    );
+    const started = await jack.client.call("people.startDirect", {
+      member_ids: [ivy.account_id],
+      body: "before the move",
+    });
+    conversation_id = started.conversation_id;
+    await eventually(
+      async () =>
+        (await ivy.client.call("people.listDirect", {})).conversations.some(
+          (c) => c.conversation_id === conversation_id,
+        ),
+      { what: "jack's message in ivy's list" },
+    );
+    // A notice for ivy, on her old home, with the message's text.
+    secret = await jack.client.call("people.sendDirect", {
+      conversation_id,
+      body: SECRET,
+    });
+    await eventually(async () => (await copies(SEED)).list > 0, {
+      what: "the notice about the secret in ivy's notification list",
+    });
+    await ivy.client.call("people.setDirectState", {
+      conversation_id,
+      patch: { pinned: true, muted: true },
+    });
+    await runInBay(
+      cluster,
+      SEED,
+      `const { blockDirectSender } = require("@cocalc/database/postgres/direct-conversations");
+       await blockDirectSender(${JSON.stringify(ivy.account_id)}, ${JSON.stringify(kim.account_id)});`,
+    );
+    assert.deepEqual(await directRow(SEED, ivy.account_id), {
+      pinned: true,
+      muted: true,
+    });
+    assert.equal(await blocked(SEED), true);
+  });
+
+  it("moves the conversation list, settings and blocks to the new home bay", async () => {
+    const rehomed = await mod.client.call("system.rehomeAccount", {
+      user_account_id: ivy.account_id,
+      dest_bay_id: ATTACHED,
+      reason: "multibay direct messages",
+    });
+    assert.equal(rehomed.home_bay_id, ATTACHED);
+    assert.deepEqual(await directRow(ATTACHED, ivy.account_id), {
+      pinned: true,
+      muted: true,
+    });
+    assert.equal(await blocked(ATTACHED), true);
+    // Signed in again, now on the new home bay: the conversation is listed,
+    // with ivy's own settings and its history.
+    ivy.home_bay_id = ATTACHED;
+    ivy.client = await client(ivy);
+    const listed = (
+      await ivy.client.call("people.listDirect", {})
+    ).conversations.find((c) => c.conversation_id === conversation_id);
+    assert.ok(listed, "the conversation in ivy's list after the move");
+    assert.equal(listed.pinned, true);
+    assert.equal(listed.preview, SECRET);
+    // The notification list moved with ivy, text included; the old home
+    // keeps no copy of the text (deletions no longer reach it).
+    assert.ok((await copies(ATTACHED)).list > 0);
+    assert.deepEqual(await copies(SEED), {
+      events: 0,
+      outbox: 0,
+      email: 0,
+      list: 0,
+    });
+  });
+
+  it("deleting a message after the move removes its text from the moved notification list", async () => {
+    await jack.client.call("people.deleteDirectMessage", {
+      conversation_id,
+      message_id: secret.message_id,
+    });
+    await eventually(async () => (await copies(ATTACHED)).list === 0, {
+      what: "the secret gone from ivy's notification list on her new home",
+    });
+    assert.deepEqual(await copies(ATTACHED), {
+      events: 0,
+      outbox: 0,
+      email: 0,
+      list: 0,
+    });
+    assert.deepEqual(await copies(SEED), {
+      events: 0,
+      outbox: 0,
+      email: 0,
+      list: 0,
+    });
+  });
+
+  it("delivers a new message to the member's new home bay", async () => {
+    await jack.client.call("people.sendDirect", {
+      conversation_id,
+      body: "after the move",
+    });
+    await eventually(
+      async () =>
+        (await ivy.client.call("people.listDirect", {})).conversations.find(
+          (c) =>
+            c.conversation_id === conversation_id &&
+            c.preview === "after the move",
+        ),
+      { what: "jack's new message in ivy's list after the move" },
+    );
+  });
+});
+
+describe("direct messages during a rehome", () => {
+  // While an account moves, its direct-message state takes no writes on the
+  // old home: the rehome's snapshot can't miss a deletion, block or request
+  // charge. A deletion delivered meanwhile stays pending at the owning bay
+  // and lands on the new home after the move. The move is held, after its
+  // snapshot, by a lock on the destination's copy of the state.
+  let rex; // an admin, to rehome
+  let nia; // homed on the seed, moved to the attached bay
+  let oto; // homed on the attached bay; writes to nia
+  let pat; // someone nia tries to block during the move
+  const SECRET = "deleted during the move yak5519";
+
+  const copies = async (bay, account_id) =>
+    await runInBay(
+      cluster,
+      bay,
+      `const getPool = require("@cocalc/database/pool").default;
+       const id = ${JSON.stringify(account_id)};
+       const like = "%" + ${JSON.stringify(SECRET)} + "%";
+       const count = async (sql) => Number((await getPool().query(sql, [id, like])).rows[0].n);
+       return {
+         events: await count(\`SELECT count(*) AS n FROM notification_events e
+           JOIN notification_targets t ON t.event_id = e.event_id
+           WHERE t.target_account_id = $1 AND e.payload_json::text LIKE $2\`),
+         outbox: await count(\`SELECT count(*) AS n FROM notification_target_outbox
+           WHERE target_account_id = $1 AND payload_json::text LIKE $2\`),
+         email: await count(\`SELECT count(*) AS n FROM notification_email_outbox
+           WHERE target_account_id = $1 AND summary_json::text LIKE $2\`),
+         list: await count(\`SELECT count(*) AS n FROM account_notification_index
+           WHERE account_id = $1 AND summary::text LIKE $2\`),
+       };`,
+    );
+
+  before(async () => {
+    rex = await createAccount(cluster, { home_bay_id: SEED, name: "rex" });
+    nia = await createAccount(cluster, { home_bay_id: SEED, name: "nia" });
+    oto = await createAccount(cluster, { home_bay_id: ATTACHED, name: "oto" });
+    pat = await createAccount(cluster, { home_bay_id: ATTACHED, name: "pat" });
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+         [${JSON.stringify(rex.account_id)}]);`,
+    );
+    rex.client = await client(rex);
+    await runInBay(
+      cluster,
+      SEED,
+      `const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         \`UPDATE account_auth_sessions
+             SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"dev_cli_fresh_auth": true}'::jsonb
+           WHERE account_id = $1\`,
+         [${JSON.stringify(rex.account_id)}]);`,
+    );
+    nia.client = await client(nia);
+    oto.client = await client(oto);
+    const project_id = await createProject(nia.client, "nia-oto");
+    await invite(nia, oto, project_id);
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          ATTACHED,
+          `const { areCollaborators } = require("@cocalc/database/postgres/direct-conversations");
+           return await areCollaborators(${JSON.stringify(oto.account_id)}, ${JSON.stringify(nia.account_id)}, ${JSON.stringify(ATTACHED)});`,
+        ),
+      { timeoutMs: 60_000, what: "nia as oto's collaborator on bay-1" },
+    );
+  });
+
+  it("a deletion and a block attempted mid-move don't get lost; the deletion lands on the new home", async () => {
+    const started = await oto.client.call("people.startDirect", {
+      member_ids: [nia.account_id],
+      body: SECRET,
+    });
+    const { messages } = await oto.client.call("people.getDirect", {
+      conversation_id: started.conversation_id,
+    });
+    const secret = messages.find((m) => m.body === SECRET);
+    await eventually(
+      async () => (await copies(SEED, nia.account_id)).list > 0,
+      { what: "the notice in nia's list on her old home" },
+    );
+
+    // Hold the move after its snapshot: the destination's copy waits on this
+    // table, which delivering the deletion to oto (on this bay) doesn't use.
+    const held = runInBay(
+      cluster,
+      ATTACHED,
+      `const getPool = require("@cocalc/database/pool").default;
+       const db = await getPool().connect();
+       try {
+         await db.query("BEGIN");
+         await db.query("LOCK TABLE direct_request_admissions IN ACCESS EXCLUSIVE MODE");
+         await db.query("SELECT pg_sleep(20)");
+         await db.query("COMMIT");
+       } finally {
+         db.release();
+       }`,
+      { timeoutMs: 90_000 },
+    );
+    await sleep(2_000);
+    const moved = rex.client.call("system.rehomeAccount", {
+      user_account_id: nia.account_id,
+      dest_bay_id: ATTACHED,
+      reason: "multibay direct messages during a rehome",
+      timeout: 180_000,
+    });
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          SEED,
+          `const getPool = require("@cocalc/database/pool").default;
+           const { rows } = await getPool().query(
+             "SELECT stage FROM account_rehome_operations WHERE account_id=$1 AND status='running'",
+             [${JSON.stringify(nia.account_id)}]);
+           return rows[0]?.stage === "source_flipped";`,
+        ),
+      { timeoutMs: 30_000, what: "the move past its snapshot" },
+    );
+    await sleep(1_000);
+
+    // Mid-move: the deletion is delivered to the old home, which refuses it.
+    await oto.client.call("people.deleteDirectMessage", {
+      conversation_id: started.conversation_id,
+      message_id: secret.message_id,
+    });
+    const midMove = await runInBay(
+      cluster,
+      SEED,
+      `const { directControl } = server("people/direct.js");
+       const { admitDirectRequest } = require("@cocalc/database/postgres/direct-conversations");
+       const out = {};
+       try {
+         await directControl.block({ account_id: ${JSON.stringify(nia.account_id)}, blocked_account_id: ${JSON.stringify(pat.account_id)} });
+         out.block = "allowed";
+       } catch (err) { out.block = err.message; }
+       try {
+         await admitDirectRequest({ account_id: ${JSON.stringify(nia.account_id)}, conversation_id: require("node:crypto").randomUUID(), recipients: 1, requests_per_day: 20, recipients_per_day: 40 });
+         out.admit = "allowed";
+       } catch (err) { out.admit = err.message; }
+       const getPool = require("@cocalc/database/pool").default;
+       const { rows } = await getPool().query(
+         "SELECT count(*)::int AS n FROM account_direct_deleted_messages WHERE account_id=$1",
+         [${JSON.stringify(nia.account_id)}]);
+       out.tombstones = rows[0].n;
+       return out;`,
+    );
+    assert.match(midMove.block, /account rehome .* is running/);
+    assert.match(midMove.admit, /account rehome .* is running/);
+    assert.equal(midMove.tombstones, 0);
+
+    await held;
+    const rehomed = await moved;
+    assert.equal(rehomed.home_bay_id, ATTACHED);
+
+    // The pending deletion is retried at nia's new home.
+    await eventually(
+      async () =>
+        await runInBay(
+          cluster,
+          ATTACHED,
+          `const getPool = require("@cocalc/database/pool").default;
+           const { rows } = await getPool().query(
+             "SELECT 1 FROM account_direct_deleted_messages WHERE account_id=$1 AND message_id=$2",
+             [${JSON.stringify(nia.account_id)}, ${JSON.stringify(secret.message_id)}]);
+           return rows.length > 0;`,
+        ),
+      {
+        timeoutMs: 150_000,
+        intervalMs: 2_000,
+        what: "the deletion's tombstone on nia's new home",
+      },
+    );
+    const none = { events: 0, outbox: 0, email: 0, list: 0 };
+    await eventually(
+      async () => (await copies(ATTACHED, nia.account_id)).list === 0,
+      { what: "the text gone from nia's list on her new home" },
+    );
+    assert.deepEqual(await copies(ATTACHED, nia.account_id), none);
+    assert.deepEqual(await copies(SEED, nia.account_id), none);
+    // After the move, nia's writes work on her new home.
+    const blocked = await runInBay(
+      cluster,
+      ATTACHED,
+      `const { directControl } = server("people/direct.js");
+       await directControl.block({ account_id: ${JSON.stringify(nia.account_id)}, blocked_account_id: ${JSON.stringify(pat.account_id)} });
+       return await directControl.isBlocked({ account_id: ${JSON.stringify(nia.account_id)}, sender_id: ${JSON.stringify(pat.account_id)} });`,
+    );
+    assert.equal(blocked, true);
   });
 });
 

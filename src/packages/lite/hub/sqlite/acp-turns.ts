@@ -86,6 +86,11 @@ function ensureInit(): void {
   }
 }
 
+// For tables that extend acp_turns (the turn ledger): make sure it exists.
+export function ensureAcpTurnsSchema(): void {
+  ensureInit();
+}
+
 function keyFromContext(context: AcpChatContext): AcpTurnLeaseKey {
   return {
     project_id: context.project_id,

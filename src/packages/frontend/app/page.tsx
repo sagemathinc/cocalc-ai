@@ -41,6 +41,7 @@ import { removeShellPlaceholder } from "./shell-placeholder";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
 import { NotificationsDrawer } from "../notifications/drawer";
+import { PeopleUnreadAnnouncer } from "../people/unread-badge";
 import { SettingsDrawer } from "../account/settings-drawer";
 import { useAppContext } from "./context";
 import { CocalcErrorBoundary } from "./error-boundary";
@@ -406,6 +407,11 @@ export const Page: React.FC = () => {
     >
       {show_connection && <ConnectionInfo />}
       <NotificationsDrawer />
+      {/* The one announcer of unread conversations, wherever the badges are. */}
+      {is_logged_in &&
+        !examMode &&
+        fullscreen !== "kiosk" &&
+        fullscreen !== "project" && <PeopleUnreadAnnouncer />}
       <SettingsDrawer />
       <VersionWarning />
       {showPostSurfaceBanners ? (

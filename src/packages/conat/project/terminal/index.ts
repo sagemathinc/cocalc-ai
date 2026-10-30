@@ -90,14 +90,16 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return fallback;
 }
 
+// Sockets count across all sessions, so this stays at twice the session
+// limit: a second browser tab on every session still fits.
 const MAX_ACTIVE_SOCKETS = parsePositiveInt(
   process.env.COCALC_TERMINAL_MAX_ACTIVE_SOCKETS,
-  64,
+  128,
 );
 
 const MAX_SESSIONS = parsePositiveInt(
   process.env.COCALC_TERMINAL_MAX_SESSIONS,
-  32,
+  64,
 );
 
 const SOCKET_KEEP_ALIVE = parsePositiveInt(
@@ -185,8 +187,10 @@ const sizes: { [id: string]: { rows: number; cols: number }[] } = {};
 // Sessions whose process ended, oldest first.  What they printed stays
 // readable (an agent reads the output of a command it spawned), but only for
 // the most recent ones, so ended sessions cannot pile up in memory or the list.
+// Each keeps up to MAX_HISTORY_LENGTH of output, so this does not grow with
+// the session limit.
 const ended = new Set<string>();
-const MAX_ENDED_SESSIONS = MAX_SESSIONS;
+const MAX_ENDED_SESSIONS = 32;
 
 // Forget a session once its process is gone, whether or not anyone is
 // connected: a CLI spawn disconnects at once, and its session must not stay

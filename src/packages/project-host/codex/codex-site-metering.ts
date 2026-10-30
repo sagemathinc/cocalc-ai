@@ -8,9 +8,13 @@ import {
 import { getMasterConatClient } from "../master-conat-client";
 import { getLocalHostId } from "../sqlite/hosts";
 import { getDatabase, initDatabase } from "@cocalc/lite/hub/sqlite/database";
-import type {
-  SiteFundedCodexAdmission,
-  SiteFundedCodexUsageEvent,
+import {
+  computeSiteFundedCodexRequestCost,
+  siteFundedTurnEndReason,
+  type SiteFundedCodexAdmission,
+  type SiteFundedCodexExtension,
+  type SiteFundedCodexReservation,
+  type SiteFundedCodexUsageEvent,
 } from "@cocalc/util/ai/site-funded-codex";
 import { startSiteFundedCodexProxySession } from "./site-funded-proxy";
 
@@ -206,6 +210,108 @@ function enqueueOutbox(kind: OutboxRecord["kind"], payload: unknown): void {
     .run(kind, JSON.stringify(payload), Date.now());
 }
 
+// One SQLite lock must not end a funded turn. A record that cannot be written
+// is kept in memory, in order, and written before any later record: the hub
+// accepts a reservation's usage events only in sequence, and its settlement
+// after them.
+type PendingOutboxRecord = {
+  kind: OutboxRecord["kind"];
+  payload: unknown;
+  reservationId?: string;
+  costMicrousd: number;
+};
+
+const pendingOutbox: PendingOutboxRecord[] = [];
+const OUTBOX_WRITE_RETRY_DELAYS_MS = [100, 500];
+const PENDING_OUTBOX_RETRY_MS = 5_000;
+// A turn is paused only when this much of its usage is in memory alone, so a
+// host crash during an outage loses at most this.
+export const SITE_FUNDED_MAX_UNSAVED_USAGE_EVENTS = 3;
+export const SITE_FUNDED_MAX_UNSAVED_USAGE_MICROUSD = 50_000;
+
+let pendingOutboxRetry: NodeJS.Timeout | undefined;
+
+/** Writes the records held in memory, in order; false if one still fails. */
+function writePendingOutbox(): boolean {
+  while (pendingOutbox.length) {
+    const next = pendingOutbox[0];
+    try {
+      enqueueOutbox(next.kind, next.payload);
+    } catch (err) {
+      logger.warn("site-funded outbox write failed; keeping it in memory", {
+        kind: next.kind,
+        reservationId: next.reservationId,
+        pending: pendingOutbox.length,
+        err: `${err}`,
+      });
+      return false;
+    }
+    pendingOutbox.shift();
+  }
+  return true;
+}
+
+function schedulePendingOutboxRetry(): void {
+  if (pendingOutboxRetry) return;
+  pendingOutboxRetry = setTimeout(() => {
+    pendingOutboxRetry = undefined;
+    if (!writePendingOutbox()) {
+      schedulePendingOutboxRetry();
+      return;
+    }
+    void flushSiteFundedCodexOutbox().catch((err) =>
+      logger.warn("site-funded outbox flush failed", { err: `${err}` }),
+    );
+  }, PENDING_OUTBOX_RETRY_MS);
+  pendingOutboxRetry.unref?.();
+}
+
+/** Queues a record after every earlier one, retrying a busy database. */
+async function writeOutbox(
+  kind: OutboxRecord["kind"],
+  payload: unknown,
+  {
+    reservationId,
+    costMicrousd = 0,
+  }: Omit<Partial<PendingOutboxRecord>, "kind" | "payload"> = {},
+): Promise<void> {
+  pendingOutbox.push({ kind, payload, reservationId, costMicrousd });
+  if (writePendingOutbox()) return;
+  for (const delayMs of OUTBOX_WRITE_RETRY_DELAYS_MS) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (writePendingOutbox()) return;
+  }
+  schedulePendingOutboxRetry();
+}
+
+/** The usage of a reservation that is only in memory. */
+function unsavedUsage(reservationId: string): {
+  events: number;
+  costMicrousd: number;
+} {
+  let events = 0;
+  let costMicrousd = 0;
+  for (const record of pendingOutbox) {
+    if (record.kind !== "usage" || record.reservationId !== reservationId) {
+      continue;
+    }
+    events += 1;
+    costMicrousd += record.costMicrousd;
+  }
+  return { events, costMicrousd };
+}
+
+/** Sends what is queued; a failure here is retried by the next flush. */
+async function flushOutboxQuietly(): Promise<void> {
+  try {
+    await flushSiteFundedCodexOutbox();
+  } catch (err) {
+    logger.warn("site-funded outbox flush failed; will retry", {
+      err: `${err}`,
+    });
+  }
+}
+
 const OUTBOX_SCAN_BATCH_SIZE = 100;
 
 let flushingOutbox: Promise<void> | undefined;
@@ -258,6 +364,8 @@ async function sendOutboxRecord(
 }
 
 async function flushSiteFundedCodexOutboxImpl(): Promise<void> {
+  // Records still in memory are newer than every row: write them first.
+  writePendingOutbox();
   const caller = getHubCaller();
   if (!caller) return;
   ensureOutbox();
@@ -336,13 +444,40 @@ export async function flushSiteFundedCodexOutbox(): Promise<void> {
 // Shared by every site-funded provider (Codex and Claude): reservations,
 // usage and settlement all go through the same durable outbox.
 
-/** Records one funded provider request's usage: durable, then retried. */
+/**
+ * Records one funded provider request's usage: durable, then retried. Throws
+ * only when too much of the turn's usage could not be saved, so the caller
+ * stops funding it; that usage is still kept and retried.
+ */
 export async function persistSiteFundedUsageEvent(
   event: SiteFundedCodexUsageEvent,
 ): Promise<void> {
-  // Queued synchronously, in the order of the calls.
-  enqueueOutbox("usage", event);
-  await flushSiteFundedCodexOutbox();
+  let costMicrousd: number;
+  try {
+    costMicrousd = computeSiteFundedCodexRequestCost({
+      model: event.model,
+      usage: event,
+    }).costMicrousd;
+  } catch {
+    // Unpriced usage is never left unsaved for long.
+    costMicrousd = Number.POSITIVE_INFINITY;
+  }
+  // Queued in the order of the calls.
+  await writeOutbox("usage", event, {
+    reservationId: event.reservationId,
+    costMicrousd,
+  });
+  const unsaved = unsavedUsage(event.reservationId);
+  if (
+    unsaved.events >= SITE_FUNDED_MAX_UNSAVED_USAGE_EVENTS ||
+    unsaved.costMicrousd > SITE_FUNDED_MAX_UNSAVED_USAGE_MICROUSD
+  ) {
+    throw new Error(
+      `site-funded usage could not be saved (${unsaved.events} events pending)`,
+    );
+  }
+  if (unsaved.events > 0) return;
+  await flushOutboxQuietly();
 }
 
 const persistUsageEvent = persistSiteFundedUsageEvent;
@@ -353,8 +488,10 @@ export async function finishSiteFundedTurn(finish: {
   status: "committed" | "interrupted" | "failed" | "released";
   outcome?: string;
 }): Promise<void> {
-  enqueueOutbox("finish", finish);
-  await flushSiteFundedCodexOutbox();
+  await writeOutbox("finish", finish, {
+    reservationId: finish.reservation_id,
+  });
+  await flushOutboxQuietly();
 }
 
 /** Reserves a funded turn on the hub; a refusal throws with its code. */
@@ -396,6 +533,9 @@ export async function reserveSiteFundedTurn({
         path,
         // Old hubs know only Codex: send the field only when it matters.
         ...(provider === "openai" ? {} : { provider }),
+        // Extended as the turn runs; an old hub ignores this and reserves the
+        // whole turn up front.
+        rolling: true,
       },
     ],
     timeout: 20_000,
@@ -421,6 +561,36 @@ export async function heartbeatSiteFundedTurn(
     timeout: 15_000,
   });
   return !!result?.active;
+}
+
+/**
+ * Asks the hub to extend a rolling reservation. Throws when the hub cannot be
+ * reached or fails: the caller then keeps to what the turn already holds.
+ */
+export async function extendSiteFundedTurn({
+  reservation,
+  sequence,
+}: {
+  reservation: SiteFundedCodexReservation;
+  sequence: number;
+}): Promise<SiteFundedCodexExtension> {
+  const caller = getHubCaller();
+  if (!caller) {
+    throw new Error("Site-funded AI extension is temporarily unavailable.");
+  }
+  return (await callHub({
+    ...caller,
+    name: "hosts.extendSiteFundedCodexTurn",
+    args: [
+      {
+        reservation_id: reservation.reservationId,
+        account_id: reservation.accountId,
+        funded_turn_id: reservation.fundedTurnId,
+        sequence,
+      },
+    ],
+    timeout: 20_000,
+  })) as SiteFundedCodexExtension;
 }
 
 /** The site key funding an active Claude turn on this host. */
@@ -482,6 +652,7 @@ export async function beginSiteFundedCodexTurn({
           funded_turn_id: request.fundedTurnId,
           idempotency_key: request.idempotencyKey,
           path: request.path,
+          rolling: true,
         },
       ],
       timeout: 20_000,
@@ -500,14 +671,14 @@ export async function beginSiteFundedCodexTurn({
       reservation: admission.reservation,
       apiKey,
       onUsage: persistUsageEvent,
+      extend: extendSiteFundedTurn,
     });
   } catch (err) {
-    enqueueOutbox("finish", {
+    await finishSiteFundedTurn({
       reservation_id: admission.reservation.reservationId,
       status: "released",
       outcome: "provider proxy failed to start",
     });
-    await flushSiteFundedCodexOutbox();
     throw err;
   }
   let runtimeClosed = false;
@@ -531,7 +702,13 @@ export async function beginSiteFundedCodexTurn({
         timeout: 15_000,
       })
         .then((result) => {
-          if (!result?.active) proxySession.deactivate(reservationId);
+          // Requests after this are told why: its time limit, say.
+          if (!result?.active) {
+            proxySession.deactivate(
+              reservationId,
+              siteFundedTurnEndReason(currentAdmission.reservation),
+            );
+          }
         })
         .catch((err) => {
           logger.warn("site-funded Codex heartbeat failed", {
@@ -550,12 +727,11 @@ export async function beginSiteFundedCodexTurn({
       finished = true;
       clearInterval(heartbeat);
       proxySession.deactivate(reservationId);
-      enqueueOutbox("finish", {
+      await finishSiteFundedTurn({
         reservation_id: reservationId,
         status,
         outcome,
       });
-      await flushSiteFundedCodexOutbox();
     };
     activeFinish = finish;
 
@@ -580,14 +756,14 @@ export async function beginSiteFundedCodexTurn({
           proxySession.activate({
             reservation: nextAdmission.reservation,
             onUsage: persistUsageEvent,
+            extend: extendSiteFundedTurn,
           });
         } catch (err) {
-          enqueueOutbox("finish", {
+          await finishSiteFundedTurn({
             reservation_id: nextAdmission.reservation.reservationId,
             status: "released",
             outcome: "provider proxy failed to activate",
           });
-          await flushSiteFundedCodexOutbox();
           throw err;
         }
         return createTurnRuntime(nextAdmission);

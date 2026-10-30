@@ -1409,13 +1409,14 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "nav.people",
     label: "People",
     anchors: [
-      // The sidebar section's header button, as shown, and its label prop,
-      // which names the section and its Expand or Collapse toggle.
-      def(WORKSPACE_PAGE, "> People </Button>"),
+      // The sidebar section's header button, as shown (with its unread
+      // count), and its label prop, which names the section and its Expand
+      // or Collapse toggle.
+      def(WORKSPACE_PAGE, "> People <PeopleUnreadBadge /> </Button>"),
       def(WORKSPACE_PAGE, 'label="People"'),
       def(
         "frontend/app/compact-agents-top-nav.tsx",
-        '{ key: "people", icon: <Icon name="users" />, label: "People" }',
+        "<> People <PeopleUnreadBadge /> </>",
       ),
       def("frontend/people/page.tsx", ">People</h1>"),
     ],
@@ -1423,7 +1424,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   },
   ...(
     [
-      ["conversations", "Conversations"],
+      ["conversations", "Project Conversations"],
       ["collaborators", "Collaborators"],
       ["invites", "Invites"],
     ] as const
@@ -1435,10 +1436,22 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         def("frontend/people/page.tsx", `key: "${key}", label: "${label}",`),
       ],
       usedIn: [
-        conventions("with the tabs Conversations, Collaborators and Invites"),
+        conventions(
+          "with the tabs Project Conversations, Direct Messages, Collaborators and Invites",
+        ),
       ],
     }),
   ),
+  {
+    id: "people.tabs.messages",
+    label: "Direct Messages",
+    anchors: [def("frontend/people/page.tsx", ': "Direct Messages",')],
+    usedIn: [
+      conventions(
+        "with the tabs Project Conversations, Direct Messages, Collaborators and Invites",
+      ),
+    ],
+  },
   {
     id: "people.invite",
     label: "Invite to projects",

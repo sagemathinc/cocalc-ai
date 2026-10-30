@@ -74,6 +74,20 @@ const ACP_WORKER_DB_HEARTBEAT_STALE_MS = Math.max(
   5_000,
   Number(process.env.COCALC_ACP_WORKER_DB_HEARTBEAT_STALE_MS ?? 15_000),
 );
+// An unresponsive worker is killed only after its control channel has failed
+// for this long and its database heartbeat is this stale. Busy hosts stall
+// (btrfs commits of tens of seconds), and both the worker and this supervisor
+// stand still with them: a single missed probe is not a dead worker.
+const ACP_WORKER_UNRESPONSIVE_PROBE_FAILURE_MS = Math.max(
+  0,
+  Number(process.env.COCALC_ACP_WORKER_UNRESPONSIVE_PROBE_FAILURE_MS ?? 30_000),
+);
+const ACP_WORKER_UNRESPONSIVE_HEARTBEAT_STALE_MS = Math.max(
+  ACP_WORKER_DB_HEARTBEAT_STALE_MS,
+  Number(
+    process.env.COCALC_ACP_WORKER_UNRESPONSIVE_HEARTBEAT_STALE_MS ?? 60_000,
+  ),
+);
 const ACP_WORKER_DRAIN_TERMINATE_MS = Math.max(
   30_000,
   Number(process.env.COCALC_ACP_WORKER_DRAIN_TERMINATE_MS ?? 120_000),
@@ -104,6 +118,9 @@ let ensureWorkerPromise:
     }
   | undefined;
 let workerSpawnAttemptCount = 0;
+// worker process identity -> when its control probe started failing
+// (deleted once it answers)
+const workerControlFailingSince = new Map<string, number>();
 let nextWorkerSpawnAllowedAt = 0;
 
 type WorkerLaunch = {
@@ -205,6 +222,18 @@ function readWorkerPid(): number | undefined {
     if (!raw) return;
     const pid = Number(raw);
     return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return;
+  }
+}
+
+// The kernel scheduling state of a process ("R", "S", "D", ...), from
+// /proc/<pid>/stat, whose second field (the command) may contain spaces and
+// parentheses.
+function readProcessState(pid: number): string | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ", 1)[0] || undefined;
   } catch {
     return;
   }
@@ -366,7 +395,7 @@ function workerDatabaseStateProtectsUnresponsiveWorker(
   const heartbeatIsFresh =
     Number.isFinite(lastHeartbeatAt) &&
     lastHeartbeatAt > 0 &&
-    now - lastHeartbeatAt <= ACP_WORKER_DB_HEARTBEAT_STALE_MS;
+    now - lastHeartbeatAt <= ACP_WORKER_UNRESPONSIVE_HEARTBEAT_STALE_MS;
   if (heartbeatIsFresh && Number(row.background_terminal_processes ?? 0) > 0) {
     return true;
   }
@@ -374,6 +403,82 @@ function workerDatabaseStateProtectsUnresponsiveWorker(
     return !shouldTerminateQueueStalledWorker({ worker, row, now });
   }
   return heartbeatIsFresh;
+}
+
+// A worker process, not just its pid: a pid reused by a later worker must not
+// inherit an earlier worker's failures.
+function workerProcessKey(worker: WorkerProcessInfo): string {
+  return [
+    worker.pid,
+    worker.start_time_ticks ?? "",
+    workerIdOf(worker),
+    workerStartedAtMs(worker),
+  ].join(":");
+}
+
+// Record the outcome of this pass's control probe. Returns how long the
+// worker has been failing it (0 while it answers).
+function noteWorkerControlProbe(
+  worker: WorkerProcessInfo,
+  answered: boolean,
+  now = Date.now(),
+): number {
+  const key = workerProcessKey(worker);
+  if (answered) {
+    workerControlFailingSince.delete(key);
+    return 0;
+  }
+  const since = workerControlFailingSince.get(key) ?? now;
+  workerControlFailingSince.set(key, since);
+  return now - since;
+}
+
+function forgetWorkerControlProbes(observed: WorkerProcessInfo[]): void {
+  const keys = new Set(observed.map(workerProcessKey));
+  for (const key of workerControlFailingSince.keys()) {
+    if (!keys.has(key)) workerControlFailingSince.delete(key);
+  }
+}
+
+// A process in uninterruptible sleep ("D") is waiting for the disk. Killing
+// it does not help (the signal waits for the I/O too), and a replacement would
+// wait on the same disk, so no termination for stalls or overdue drains
+// happens while a worker is in it.
+function workerBlockedOnIo(
+  worker: WorkerProcessInfo,
+  reason: string,
+  processState: (pid: number) => string | undefined = readProcessState,
+): boolean {
+  if (processState(worker.pid) !== "D") return false;
+  logger.warn("not terminating ACP worker blocked on I/O", {
+    pid: worker.pid,
+    worker_id: workerIdOf(worker) || null,
+    reason,
+  });
+  return true;
+}
+
+/**
+ * Whether a worker that does not answer its control probe should be killed:
+ * past its startup grace, failing the probe for a while, not protected by its
+ * database state (running turns, fresh heartbeat, a backlog still in grace),
+ * and not blocked on I/O.
+ */
+function shouldTerminateUnresponsiveWorker({
+  worker,
+  failingForMs,
+  now = Date.now(),
+  processState = readProcessState,
+}: {
+  worker: WorkerProcessInfo;
+  failingForMs: number;
+  now?: number;
+  processState?: (pid: number) => string | undefined;
+}): boolean {
+  if (!workerControlStartupGraceExpired(worker, now)) return false;
+  if (failingForMs < ACP_WORKER_UNRESPONSIVE_PROBE_FAILURE_MS) return false;
+  if (workerDatabaseStateProtectsUnresponsiveWorker(worker, now)) return false;
+  return !workerBlockedOnIo(worker, "unresponsive_worker", processState);
 }
 
 function acpJobReferenceTimestamp(row: {
@@ -1103,13 +1208,18 @@ async function reconcileProjectHostAcpWorkers({
       status: await getWorkerStatus(worker),
     })),
   );
+  forgetWorkerControlProbes(observedWorkers);
   const workers: WorkerWithStatus[] = [];
   for (const worker of observedWorkers) {
     const status = workerStatuses.find(
       (entry) => entry.worker.pid === worker.pid,
     )?.status;
+    const controlFailingForMs = noteWorkerControlProbe(worker, status != null);
     const row = getAcpWorker(workerIdOf(worker));
-    if (shouldTerminateOverdueDrainingWorker({ worker, status, row })) {
+    if (
+      shouldTerminateOverdueDrainingWorker({ worker, status, row }) &&
+      !workerBlockedOnIo(worker, "overdue_draining_worker")
+    ) {
       logger.warn("terminating overdue draining project-host ACP worker", {
         pid: worker.pid,
         worker_id: workerIdOf(worker) || null,
@@ -1153,6 +1263,10 @@ async function reconcileProjectHostAcpWorkers({
         workers.push({ ...worker, status: confirmation.status ?? status });
         continue;
       }
+      if (workerBlockedOnIo(worker, "queue_stalled_worker")) {
+        workers.push({ ...worker, status: confirmation.status ?? status });
+        continue;
+      }
       logger.warn("terminating queue-stalled project-host ACP worker", {
         pid: worker.pid,
         worker_id: workerIdOf(worker) || null,
@@ -1177,8 +1291,10 @@ async function reconcileProjectHostAcpWorkers({
     if (
       status == null &&
       isExpectedWorkerProcess(worker, launch) &&
-      workerControlStartupGraceExpired(worker) &&
-      !workerDatabaseStateProtectsUnresponsiveWorker(worker)
+      shouldTerminateUnresponsiveWorker({
+        worker,
+        failingForMs: controlFailingForMs,
+      })
     ) {
       logger.warn("terminating unresponsive active project-host ACP worker", {
         pid: worker.pid,
@@ -1186,7 +1302,8 @@ async function reconcileProjectHostAcpWorkers({
         bundle_version: workerBundleVersionOf(worker, launch),
         bundle_path: workerBundlePathOf(worker, launch),
         control_startup_grace_ms: ACP_WORKER_CONTROL_STARTUP_GRACE_MS,
-        db_heartbeat_stale_ms: ACP_WORKER_DB_HEARTBEAT_STALE_MS,
+        control_failing_for_ms: controlFailingForMs,
+        db_heartbeat_stale_ms: ACP_WORKER_UNRESPONSIVE_HEARTBEAT_STALE_MS,
       });
       await terminateWorker(worker, "unresponsive_worker");
       continue;
@@ -1521,6 +1638,11 @@ export const __test__ = {
   resetProjectHostAcpWorkerSpawnBackoff,
   workerDatabaseStateProtectsUnresponsiveWorker,
   workerControlStartupGraceExpired,
+  shouldTerminateUnresponsiveWorker,
+  noteWorkerControlProbe,
+  forgetWorkerControlProbes,
+  readProcessState,
+  workerBlockedOnIo,
   staleAcpWorkerRowsToStop,
   shouldTerminateQueueStalledWorker,
   confirmQueueStalledWorkerTermination,

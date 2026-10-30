@@ -136,6 +136,12 @@ export function normalizeMembershipEffectiveLimits(
     invite_email_recipients_per_batch: normalizeNonNegativeInteger(
       usageLimits?.invite_email_recipients_per_batch,
     ),
+    direct_message_requests_per_day: normalizeNonNegativeInteger(
+      usageLimits?.direct_message_requests_per_day,
+    ),
+    direct_message_request_recipients_per_day: normalizeNonNegativeInteger(
+      usageLimits?.direct_message_request_recipients_per_day,
+    ),
     invite_email_pending_per_project: normalizeNonNegativeInteger(
       usageLimits?.invite_email_pending_per_project,
     ),

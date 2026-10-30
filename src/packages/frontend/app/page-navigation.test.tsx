@@ -108,6 +108,9 @@ jest.mock("../notifications/drawer", () => ({
   NotificationsDrawer: () => null,
 }));
 jest.mock("../account/settings-drawer", () => ({ SettingsDrawer: () => null }));
+jest.mock("../people/unread-badge", () => ({
+  PeopleUnreadAnnouncer: () => <span data-testid="people-unread-announcer" />,
+}));
 jest.mock("./error-boundary", () => ({
   CocalcErrorBoundary: ({ children }) => children,
 }));
@@ -239,4 +242,33 @@ test("project pages show the show-sidebar control in their own top row", () => {
   activeTab = "settings";
   mounted.rerender(view());
   expect(mockActiveContent.mock.lastCall[0].navigation).not.toBeNull();
+});
+
+test.each([
+  ["full CoCalc, wide", false, false],
+  ["full CoCalc, narrow (the sidebar is hidden)", false, true],
+  ["Lite", true, false],
+])(
+  "%s: the app mounts the one unread announcer, outside any sidebar or menu",
+  (_label, lite, isNarrow) => {
+    isLite = lite;
+    narrow = isNarrow;
+    render(view());
+    const announcers = screen.getAllByTestId("people-unread-announcer");
+    expect(announcers).toHaveLength(1);
+    // Not inside the workspace content, where the sidebar and menus live.
+    expect(
+      screen.getByRole("region", { name: "Workspace content" }),
+    ).not.toContainElement(announcers[0]);
+  },
+);
+
+test.each([
+  ["signed out", () => (loggedIn = false)],
+  ["exam mode", () => (examMode = true)],
+  ["kiosk", () => (fullscreen = "kiosk")],
+])("%s: no unread announcer", (_label, set) => {
+  set();
+  render(view());
+  expect(screen.queryByTestId("people-unread-announcer")).toBeNull();
 });

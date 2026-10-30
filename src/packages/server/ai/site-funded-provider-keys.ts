@@ -278,6 +278,37 @@ export async function selectSiteFundedProviderKey({
   return undefined;
 }
 
+/**
+ * What one key can still fund this month, holding its row: a rolling Claude
+ * reservation is extended only on the key it was admitted on.
+ */
+export async function siteFundedProviderKeyRoomMicrousd({
+  client,
+  keyId,
+  now = new Date(),
+}: {
+  client: PoolClient;
+  keyId: string;
+  now?: Date;
+}): Promise<number> {
+  const locked = await client.query(
+    `SELECT monthly_limit_microusd, reset_day, reset_hour
+     FROM site_ai_provider_keys
+     WHERE key_id = $1 AND enabled
+     FOR UPDATE`,
+    [keyId],
+  );
+  const key = locked.rows[0];
+  if (!key) return 0;
+  const { start } = siteFundedKeyPeriodBounds({
+    resetDay: int(key.reset_day),
+    resetHour: int(key.reset_hour),
+    now,
+  });
+  const exposure = await keyExposureMicrousd(client, keyId, start);
+  return Math.max(0, int(key.monthly_limit_microusd) - exposure);
+}
+
 /** The secret of a key, for the host running a turn it funds. */
 export async function getSiteFundedProviderKeySecret(
   keyId: string,
