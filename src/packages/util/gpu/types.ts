@@ -176,6 +176,8 @@ export interface GpuPodSummary {
   desired_state: GpuPodDesiredState;
   key_owner_account_id: string;
   beneficiary_account_id: string;
+  // the project funding approval that pays for it, if one does
+  approval_id?: string;
   project_id?: string;
   agent_id?: string;
   gpu_type_id: string;

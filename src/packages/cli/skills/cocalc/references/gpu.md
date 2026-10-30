@@ -94,6 +94,38 @@ registered agent), until it ends.
   When your session ends, no new launch is possible, but the pod runs to its
   maximum runtime: terminate it yourself when the work is done.
 
+## A project's GPU funding
+
+A collaborator can approve GPU use in a project, paid by **their own** RunPod
+account, up to an amount and until a date (Settings → GPUs in the project,
+or the banner at the top of the project). Then anyone who can run code in
+the project can launch under it — including you, if the approval allows
+agents. A launch's `paid_by` says whose money pays: the project's funding
+approval (and its id) or a key owner's own RunPod key.
+
+```bash
+cocalc gpu funding                 # this project's approval: who pays, what's left, until when
+cocalc gpu funding pods            # the GPUs it pays for (also ended ones, a day back)
+cocalc gpu funding terminate cc-…  # end one of them
+```
+
+- **From the project's terminal (no signed-in account) give `--gpu`**:
+  templates can't pick a GPU there, and `--dry-run`/`--max-cost` need a
+  signed-in account. The approval's own limits (amount, $/h, pods, runtime,
+  its end date) bound every launch; a pod must end before the approval does.
+- **No approval and no key of your own**: `launch` exits with code 3 and the
+  message says a request was recorded. **Stop and tell the human**: a
+  collaborator with a RunPod key approves it in the project; then run the
+  same launch again. Don't retry in a loop.
+- **An agent whose project's approval doesn't allow agents** uses the
+  per-launch approval below, on its human's own key.
+- `--own-key` launches on the caller's own key even when the project is
+  funded.
+- Only the funder can lower (`cocalc gpu funding lower <approval-id>`) or end
+  (`cocalc gpu funding end <approval-id>`) an approval; raising it needs a
+  fresh sign-in in the browser. `cocalc gpu funding list` shows the approvals
+  you gave.
+
 ## Facts
 
 - **Secure Cloud is the default.** It gives the direct SSH endpoint that

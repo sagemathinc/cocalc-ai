@@ -97,6 +97,7 @@ export async function changeProjectFunding(
     session_hash?: string | null;
     approval_id?: unknown;
     change?: Record<string, unknown>;
+    narrow_only?: boolean;
   },
   deps: ProjectFundingApiDeps = {},
 ) {
@@ -108,6 +109,7 @@ export async function changeProjectFunding(
     approval_id: opts.approval_id,
     change: opts.change,
     fresh_auth_verified,
+    narrow_only: opts.narrow_only === true,
   };
   const home = await (deps.homeClient ?? budgetHomeClient)(account_id);
   if (home) return await home.gpuChangeProjectFunding(forwarded);

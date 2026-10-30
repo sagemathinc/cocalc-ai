@@ -142,6 +142,10 @@ export function podRecordRow(
     cloud: r.cloud,
     deadline: r.deadline,
     pod_id: r.provider_pod_id ?? null,
+    // whose money: a project's funding approval, or the key owner's own key
+    paid_by: r.approval_id
+      ? `the project's GPU funding (approval ${r.approval_id})`
+      : `the RunPod key of account ${r.key_owner_account_id}`,
     reason: r.reason ?? null,
   };
 }
@@ -158,6 +162,67 @@ export function podRows(result: GpuPodsResult) {
     data_center: p.dataCenterId ?? null,
     created: p.createdAt ?? null,
   }));
+}
+
+// The project has no GPU funding approval and the caller no key of their
+// own (PROJECT_FUNDING.md §5): the request is recorded and shown to the
+// project's collaborators. Exit code 3, so scripts can tell it apart.
+export const APPROVAL_REQUIRED_EXIT_CODE = 3;
+
+export function approvalRequired(err: unknown): Error | undefined {
+  const message = `${(err as any)?.message ?? err}`;
+  if (
+    (err as any)?.code !== "gpu_project_approval_required" &&
+    !/approve GPU use in this project/.test(message)
+  ) {
+    return undefined;
+  }
+  return Object.assign(
+    new Error(
+      `${message}\nCheck with: cocalc gpu funding   (then run the same launch again)`,
+    ),
+    { cli_exit_code: APPROVAL_REQUIRED_EXIT_CODE },
+  );
+}
+
+function isPrincipalRefusal(err: unknown): boolean {
+  return /principal 'project' is not permitted|not permitted for 'gpu\./.test(
+    `${(err as any)?.message ?? err}`,
+  );
+}
+
+function fundingRows(state: any) {
+  if (state?.approval) {
+    const a = state.approval;
+    const d = a.display ?? {};
+    return {
+      project_id: state.project_id,
+      funded_by: d.funder_name ?? a.funder_account_id,
+      state: a.state,
+      amount_usd: d.authorized_usd ?? null,
+      spent_usd: a.spend?.spent_usd ?? null,
+      available_usd: a.spend?.available_usd ?? null,
+      until: d.ends_at ?? null,
+      agents_allowed: d.agents_allowed ?? null,
+      live_pods: a.live_pods,
+      approval_id: a.approval_id,
+    };
+  }
+  if (state?.request) {
+    return {
+      project_id: state.project_id,
+      funded_by: null,
+      requested: state.request.summary,
+      requested_by: state.request.actor_kind,
+      requested_at: state.request.created,
+      next: "A collaborator with their own RunPod key can approve GPU use at the top of the project in the browser.",
+    };
+  }
+  return {
+    project_id: state?.project_id,
+    funded_by: null,
+    next: "Nobody pays for GPUs in this project. A collaborator with their own RunPod key can approve GPU use in the project's settings (GPUs) in the browser.",
+  };
 }
 
 export function registerGpuCommand(
@@ -366,6 +431,10 @@ export function registerGpuCommand(
       "--operation <id>",
       "for agents: this launch's id, the same when it is run again after your human approved it (default: derived from the launch)",
     )
+    .option(
+      "--own-key",
+      "pay with your own RunPod key even when the project has a GPU funding approval",
+    )
     .action(async (opts, command: Command) =>
       run(
         command,
@@ -380,12 +449,23 @@ export function registerGpuCommand(
               "--ssh-public-key can't be combined with --ssh or --template, which make the pod's key here",
             );
           }
-          const plan = await planGpuLaunch(api, {
-            template: opts.template,
-            spec: explicitSpecFromOptions(opts),
-            price: !!opts.dryRun,
-            max_cost_usd: opts.maxCost,
-          });
+          let plan: Awaited<ReturnType<typeof planGpuLaunch>>;
+          try {
+            plan = await planGpuLaunch(api, {
+              template: opts.template,
+              spec: explicitSpecFromOptions(opts),
+              price: !!opts.dryRun,
+              max_cost_usd: opts.maxCost,
+            });
+          } catch (err) {
+            // the project's own credential can launch, not browse prices
+            if (isPrincipalRefusal(err)) {
+              throw new Error(
+                "From a project terminal, give the GPU with --gpu (see the project's GPU funding with `cocalc gpu funding`); --dry-run and --max-cost need a signed-in account.",
+              );
+            }
+            throw err;
+          }
           const spec = plan.spec;
           const ssh = !!opts.ssh || !!plan.template?.ssh;
           const kernel = !!plan.template?.kernel && opts.connect !== false;
@@ -418,12 +498,13 @@ export function registerGpuCommand(
               project_id,
               spec,
               operation_id: opts.operation ?? launchOperationId(spec),
+              ...(opts.ownKey ? { own_key: true } : {}),
             });
           } catch (err) {
             // Kept without an answer (`connect` adopts it by fingerprint if
             // the pod was made after all); otherwise adopted or removed.
             if (key) await settleLaunchKey(api, key, err, deps.connect);
-            throw err;
+            throw approvalRequired(err) ?? err;
           }
           if (key) {
             if (pod.state === "failed") {
@@ -722,6 +803,121 @@ export function registerGpuCommand(
             .join("; "),
         }));
       }),
+    );
+
+  const funding = gpu
+    .command("funding")
+    .description(
+      "who pays for GPUs in a project: a collaborator's approval, paid by their own RunPod account (with no subcommand: this project's)",
+    )
+    .option("--project <project-id>", "the project (default: this project)")
+    .action(async (opts, command: Command) =>
+      run(command, "funding", async (api, ctx) => {
+        const project_id = opts.project ?? process.env.COCALC_PROJECT_ID;
+        if (!project_id)
+          throw new Error("--project is required outside a project");
+        const state = await api.projectFunding({ project_id });
+        return isJson(ctx) ? state : fundingRows(state);
+      }),
+    );
+
+  funding
+    .command("pods")
+    .description(
+      "the GPUs a project's funding approvals pay for (live, and ended within a day)",
+    )
+    .option("--project <project-id>", "the project (default: this project)")
+    .option("--cursor <cursor>", "the next page, from a previous answer")
+    .action(async (opts, command: Command) =>
+      run(command, "funding pods", async (api, ctx) => {
+        const project_id = opts.project ?? process.env.COCALC_PROJECT_ID;
+        if (!project_id)
+          throw new Error("--project is required outside a project");
+        const page = await api.projectPods({
+          project_id,
+          ...(opts.cursor ? { cursor: opts.cursor } : {}),
+        });
+        if (isJson(ctx)) return page;
+        if (page.incomplete.length > 0 || page.next_cursor) {
+          return {
+            pods: page.pods.map((p) => podRecordRow(p)),
+            incomplete: page.incomplete,
+            next_cursor: page.next_cursor ?? null,
+          };
+        }
+        return page.pods.map((p) => podRecordRow(p));
+      }),
+    );
+
+  funding
+    .command("terminate <pod>")
+    .description(
+      "terminate one of the GPUs the project's funding pays for (CoCalc ends it within a minute or two)",
+    )
+    .option("--project <project-id>", "the project (default: this project)")
+    .action(async (pod: string, opts, command: Command) =>
+      run(command, "funding terminate", async (api) => {
+        const project_id = opts.project ?? process.env.COCALC_PROJECT_ID;
+        if (!project_id)
+          throw new Error("--project is required outside a project");
+        const r = await api.projectTerminate({ project_id, pod_id: pod });
+        if (!r.found)
+          throw new Error(`no GPU ${pod} is paid for in this project`);
+        return r;
+      }),
+    );
+
+  funding
+    .command("list")
+    .description(
+      "the projects whose GPU use you approved (your RunPod key pays)",
+    )
+    .action(async (_opts, command: Command) =>
+      run(command, "funding list", async (api, ctx) => {
+        const result = await api.fundedProjects({});
+        if (isJson(ctx) || !result.history_truncated) {
+          return isJson(ctx) ? result : result.approvals;
+        }
+        return {
+          approvals: result.approvals,
+          note: "Every active approval is listed; older ended ones are not.",
+        };
+      }),
+    );
+
+  funding
+    .command("lower <approval-id>")
+    .description(
+      "lower an approval you gave (raising it needs you to sign in again, in the browser)",
+    )
+    .option("--amount <usd>", "the new amount", positiveNumber("--amount"))
+    .option("--no-agents", "agents in the project may no longer use it")
+    .action(async (approvalId: string, opts, command: Command) =>
+      run(command, "funding lower", async (api) => {
+        const change: Record<string, unknown> = {};
+        if (opts.amount != null) change.authorized_usd = opts.amount.toFixed(2);
+        if (opts.agents === false) change.agents_allowed = false;
+        if (Object.keys(change).length === 0) {
+          throw new Error("give --amount and/or --no-agents");
+        }
+        // the server refuses any raise in this mode, fresh sign-in or not
+        return await api.changeProjectFunding({
+          approval_id: approvalId,
+          change,
+          narrow_only: true,
+        });
+      }),
+    );
+
+  funding
+    .command("end <approval-id>")
+    .description(
+      "end an approval you gave: no new GPU in that project on your account, and CoCalc terminates the GPUs it paid for",
+    )
+    .action(async (approvalId: string, _opts, command: Command) =>
+      run(command, "funding end", async (api) =>
+        api.revokeProjectFunding({ approval_id: approvalId }),
+      ),
     );
 
   const agent = gpu

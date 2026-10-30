@@ -313,6 +313,7 @@ export async function changeProjectFunding(
     session_hash: opts?.session_hash,
     approval_id: opts?.approval_id,
     change: opts?.change,
+    narrow_only: opts?.narrow_only === true,
   });
 }
 

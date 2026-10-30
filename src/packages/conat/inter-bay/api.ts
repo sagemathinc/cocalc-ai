@@ -4397,6 +4397,7 @@ export interface InterBayGpuApi {
     approval_id: unknown;
     change?: Record<string, unknown>;
     fresh_auth_verified: boolean;
+    narrow_only?: boolean;
   }) => Promise<import("@cocalc/conat/hub/api/gpu").ProjectFundingView>;
   gpuRevokeProjectFunding: (opts: {
     account_id: string;

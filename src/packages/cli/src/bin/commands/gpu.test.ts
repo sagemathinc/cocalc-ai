@@ -83,6 +83,7 @@ const RECORD_ROW = {
   cloud: "SECURE",
   deadline: "2026-10-27T22:00:00.000Z",
   pod_id: "pod_abc123",
+  paid_by: "the RunPod key of account 00000000-1000-4000-8000-000000000001",
   reason: null,
 };
 
@@ -110,7 +111,11 @@ const AGENT_REQUEST = {
 
 function harness(
   globals: Record<string, unknown> = {},
-  { fail = false }: { fail?: boolean } = {},
+  {
+    fail = false,
+    launchError,
+    funding,
+  }: { fail?: boolean; launchError?: Error; funding?: unknown } = {},
 ) {
   const calls: Array<{ name: string; args: unknown }> = [];
   const outputs: unknown[] = [];
@@ -146,7 +151,41 @@ function harness(
           launch: async (args) => {
             calls.push({ name: "launch", args });
             observe();
+            if (launchError) throw launchError;
             return RECORD;
+          },
+          projectFunding: async (args) => {
+            calls.push({ name: "projectFunding", args });
+            observe();
+            return funding ?? { project_id: (args as any).project_id };
+          },
+          projectPods: async (args) => {
+            calls.push({ name: "projectPods", args });
+            observe();
+            return {
+              pods: [RECORD],
+              incomplete: [{ approval_id: "a2", error: "bay down" }],
+            };
+          },
+          projectTerminate: async (args) => {
+            calls.push({ name: "projectTerminate", args });
+            observe();
+            return { found: (args as any).pod_id === RECORD.handle };
+          },
+          fundedProjects: async (args) => {
+            calls.push({ name: "fundedProjects", args });
+            observe();
+            return { approvals: [], history_truncated: false };
+          },
+          changeProjectFunding: async (args) => {
+            calls.push({ name: "changeProjectFunding", args });
+            observe();
+            return { approval_id: (args as any).approval_id };
+          },
+          revokeProjectFunding: async (args) => {
+            calls.push({ name: "revokeProjectFunding", args });
+            observe();
+            return { approval_id: (args as any).approval_id, state: "revoked" };
           },
           terminate: async (args) => {
             calls.push({ name: "terminate", args });
@@ -1186,4 +1225,167 @@ it("a launch's operation id is stable for the same launch, and --operation overr
   assert.equal(op(b), op(a));
   assert.notEqual(op(c), op(a));
   assert.equal(op(d), "my-op");
+});
+
+const PROJECT = "00000000-1000-4000-8000-0000000000aa";
+
+it("shows a project's GPU funding: who pays, or the request, or that nobody does", async () => {
+  const funded = harness(
+    {},
+    {
+      funding: {
+        project_id: PROJECT,
+        approval: {
+          approval_id: "a1",
+          state: "active",
+          funder_account_id: "f",
+          live_pods: 1,
+          display: {
+            authorized_usd: "400",
+            ends_at: "2026-11-08T00:00:00Z",
+            agents_allowed: true,
+            funder_name: "Prof Ada",
+          },
+          spend: {
+            authorized_usd: "400",
+            spent_usd: "80",
+            reserved_usd: "7.6",
+            available_usd: "312.4",
+          },
+        },
+      },
+    },
+  );
+  await funded.run("funding", "--project", PROJECT);
+  assert.deepEqual(funded.calls, [
+    { name: "projectFunding", args: { project_id: PROJECT } },
+  ]);
+  assert.equal((funded.outputs[0] as any).funded_by, "Prof Ada");
+  assert.equal((funded.outputs[0] as any).available_usd, "312.4");
+  // pods, not GPUs (a pod may have several)
+  assert.equal((funded.outputs[0] as any).live_pods, 1);
+  assert.equal("live_gpus" in (funded.outputs[0] as any), false);
+  const none = harness();
+  await none.run("funding", "--project", PROJECT);
+  assert.match((none.outputs[0] as any).next, /Nobody pays/);
+});
+
+it("lists the project's funded pods, saying which funders couldn't be asked", async () => {
+  const h = harness();
+  await h.run("funding", "pods", "--project", PROJECT);
+  const out = h.outputs[0] as any;
+  assert.equal(out.pods.length, 1);
+  assert.deepEqual(out.incomplete, [{ approval_id: "a2", error: "bay down" }]);
+});
+
+it("terminates a funded pod, and says when the project pays for no such GPU", async () => {
+  const h = harness();
+  await h.run("funding", "terminate", RECORD.handle, "--project", PROJECT);
+  assert.deepEqual(h.outputs[0], { found: true });
+  const missing = harness();
+  await assert.rejects(
+    missing.run(
+      "funding",
+      "terminate",
+      "cc-zzzzzzzzzzzzzzzz",
+      "--project",
+      PROJECT,
+    ),
+    /no GPU/,
+  );
+});
+
+it("lowers and ends an approval", async () => {
+  const h = harness();
+  await h.run("funding", "lower", "a1", "--amount", "100", "--no-agents");
+  await h.run("funding", "end", "a1");
+  assert.deepEqual(
+    h.calls.map((c) => [c.name, c.args]),
+    [
+      [
+        "changeProjectFunding",
+        {
+          approval_id: "a1",
+          change: { authorized_usd: "100.00", agents_allowed: false },
+          narrow_only: true,
+        },
+      ],
+      ["revokeProjectFunding", { approval_id: "a1" }],
+    ],
+  );
+  await assert.rejects(h.run("funding", "lower", "a1"), /--amount/);
+});
+
+it("launches with --own-key, and exits 3 when the project needs an approval", async () => {
+  const own = harness();
+  await own.run(
+    "launch",
+    "--project",
+    PROJECT,
+    "--gpu",
+    "NVIDIA RTX A5000",
+    "--max-runtime",
+    "60",
+    "--own-key",
+  );
+  assert.equal(
+    (own.calls.find((c) => c.name === "launch")!.args as any).own_key,
+    true,
+  );
+  const err = Object.assign(
+    new Error(
+      "This project has no approval to use GPUs. A collaborator with their own RunPod key can approve GPU use in this project, paid by their account: they'll see the request at the top of the project.",
+    ),
+    { code: "gpu_project_approval_required" },
+  );
+  const needs = harness({}, { launchError: err });
+  await assert.rejects(
+    needs.run(
+      "launch",
+      "--project",
+      PROJECT,
+      "--gpu",
+      "NVIDIA RTX A5000",
+      "--max-runtime",
+      "60",
+    ),
+    (e: any) => {
+      assert.equal(e.cli_exit_code, 3);
+      assert.match(e.message, /cocalc gpu funding/);
+      return true;
+    },
+  );
+});
+
+it("says whose money pays in a launch's row", async () => {
+  const funded = harness();
+  (RECORD as any).approval_id = "00000000-1000-4000-8000-0000000000ee";
+  try {
+    await funded.run(
+      "launch",
+      "--project",
+      PROJECT,
+      "--gpu",
+      "NVIDIA RTX A5000",
+      "--max-runtime",
+      "60",
+    );
+    assert.match(
+      (funded.outputs[0] as any).paid_by,
+      /project's GPU funding \(approval 00000000-1000-4000-8000-0000000000ee\)/,
+    );
+  } finally {
+    delete (RECORD as any).approval_id;
+  }
+  const own = harness();
+  await own.run(
+    "launch",
+    "--project",
+    PROJECT,
+    "--gpu",
+    "NVIDIA RTX A5000",
+    "--max-runtime",
+    "60",
+  );
+  assert.match((own.outputs[0] as any).paid_by, /RunPod key of account/);
 });
