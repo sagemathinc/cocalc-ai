@@ -6,6 +6,10 @@
 // The Messages tab on People: direct conversations, in no project.
 
 import {
+  directViewKey,
+  useShowingConversation,
+} from "@cocalc/frontend/notifications/viewing";
+import {
   useCallback,
   useEffect,
   useRef,
@@ -548,6 +552,8 @@ export function DirectConversationView({
   onClose: () => void;
 }) {
   const account_id = useTypedRedux("account", "account_id");
+  // Notifications about this conversation aren't counted while it is shown.
+  useShowingConversation(directViewKey(conversation_id));
   const { conversations } = useDirectConversations(true);
   const listed = conversations.find(
     (c) => c.conversation_id === conversation_id,

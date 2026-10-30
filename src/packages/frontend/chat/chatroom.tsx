@@ -159,6 +159,10 @@ import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-s
 import { useCodexAttentionSummary } from "./use-codex-attention";
 import type { ChatInputControl } from "./input";
 import {
+  chatViewKey,
+  useShowingConversation,
+} from "@cocalc/frontend/notifications/viewing";
+import {
   claimPendingChatSend,
   getPendingChatBrowserSessionId,
   isCurrentPendingChatSession,
@@ -683,6 +687,12 @@ function ChatPanelContent({
   isCurrent = true,
 }: ChatPanelProps) {
   const narrow = useNarrowChatViewport();
+  // Notifications about this chat aren't counted while it is shown.
+  useShowingConversation(
+    isCurrent && isVisible && tabIsVisible
+      ? chatViewKey(project_id, path)
+      : undefined,
+  );
   const embeddingOptions = useChatEmbeddingOptions();
   const standalone =
     variant === "default" && !embeddingOptions.disableConversationFocus;

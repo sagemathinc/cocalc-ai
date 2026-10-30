@@ -47,6 +47,7 @@ export function ScanDialog({
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
   const [refreshed, setRefreshed] = useState(0);
+  const [skipped, setSkipped] = useState(0);
   const [found, setFound] = useState<Found[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
@@ -89,6 +90,7 @@ export function ScanDialog({
     setDone(0);
     setTotal(ids.length);
     setRefreshed(0);
+    setSkipped(0);
     setFound([]);
     setErrors([]);
     const titles = new Map(projects.map((p) => [p.project_id, p.title]));
@@ -99,6 +101,7 @@ export function ScanDialog({
         const started = Date.now();
         try {
           const result = await scanProject(project_id, scanned.get(project_id));
+          setSkipped((n) => n + result.skipped);
           const fresh: Found[] = [];
           for (const path of result.paths) {
             if (known.has(`${project_id}:${path}`)) {
@@ -186,7 +189,9 @@ export function ScanDialog({
       <Typography.Paragraph type="secondary">
         Finds .chat files changed since you last scanned each project, without
         starting it. Conversations you already have get their latest activity;
-        new files can be added below. Agent chats in ~/.local are skipped.
+        new files can be added below. Chats with AI (Codex and other agents, or
+        a language model) are not conversations between people: they are
+        skipped.
       </Typography.Paragraph>
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
         <Input
@@ -291,6 +296,8 @@ export function ScanDialog({
             />
             {done} of {total} scanned · {refreshed} conversations updated ·{" "}
             {found.length} new files
+            {skipped > 0 &&
+              ` · ${skipped} AI ${skipped === 1 ? "chat" : "chats"} skipped`}
           </span>
         )}
       </div>

@@ -4,7 +4,7 @@
  */
 
 import { useState, type CSSProperties, type ReactNode } from "react";
-import { Alert, Typography } from "antd";
+import { Alert, Button, Modal, Typography } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { AvatarStack } from "@cocalc/frontend/account/avatar/avatar-stack";
 import { TimeAgo } from "@cocalc/frontend/components";
@@ -13,6 +13,13 @@ import {
   type CollectionView,
 } from "@cocalc/frontend/components/collection";
 import { moveVisibleCollectionPin } from "@cocalc/frontend/components/collection-order";
+import { displayOrder } from "@cocalc/frontend/components/collection-selection";
+import {
+  SelectAllCheckbox,
+  SelectItemCheckbox,
+  SelectionToolbar,
+  useCollectionSelection,
+} from "@cocalc/frontend/components/collection-selection-ui";
 import type { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type {
@@ -56,6 +63,7 @@ export function ConversationCollection({
   selected,
   onSelect,
   compact = false,
+  bulk = false,
   emptyText = "No conversations yet.",
 }: {
   conversations: ListedConversation[];
@@ -65,6 +73,8 @@ export function ConversationCollection({
   onSelect: (conversation: ListedConversation) => void;
   // A narrow column beside an open conversation: two-line rows.
   compact?: boolean;
+  // Checkboxes and actions for the selected conversations.
+  bulk?: boolean;
   emptyText?: string;
 }) {
   const account_id = useTypedRedux("account", "account_id");
@@ -72,12 +82,8 @@ export function ConversationCollection({
   const [error, setError] = useState("");
   const [aliasFor, setAliasFor] = useState<ListedConversation>();
   const [busyIds, setBusyIds] = useState<string[]>([]);
-
-  if (conversations.length === 0) {
-    return (
-      <Typography.Paragraph type="secondary">{emptyText}</Typography.Paragraph>
-    );
-  }
+  // A bulk action is running: no second one meanwhile.
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const order = preferences?.value.order ?? [];
   const pinnedIds = conversations
@@ -89,6 +95,76 @@ export function ConversationCollection({
     ...pinnedIds.filter((id) => !order.includes(id)),
   ];
   const pins = fullOrder.filter((id) => pinnedIds.includes(id));
+  const selection = useCollectionSelection({
+    order: bulk
+      ? displayOrder(
+          conversations.map((c) => c.conversation_id),
+          pins,
+        )
+      : [],
+  });
+
+  if (conversations.length === 0) {
+    return (
+      <Typography.Paragraph type="secondary">{emptyText}</Typography.Paragraph>
+    );
+  }
+
+  const selectedConversations = conversations.filter((c) =>
+    selection.isSelected(c.conversation_id),
+  );
+
+  // Each one, a few at a time (a selection can be thousands), reporting
+  // what failed; the list reloads either way. One batch at a time.
+  async function forEach(
+    list: ListedConversation[],
+    action: (c: ListedConversation) => Promise<unknown>,
+  ) {
+    if (bulkBusy) return;
+    setBulkBusy(true);
+    setError("");
+    try {
+      const failed = await eachBounded(list, BULK_CONCURRENCY, action);
+      if (failed.length > 0) {
+        setError(`${failed.length} of ${list.length} failed: ${failed[0]}`);
+      }
+    } finally {
+      setBulkBusy(false);
+      conversationsChanged();
+    }
+  }
+
+  const markRead = (list: ListedConversation[]) =>
+    forEach(
+      list.filter((c) => isUnread(c, account_id)),
+      (c) =>
+        peopleApi().markRead({
+          project_id: c.project_id,
+          conversation_id: c.conversation_id,
+          read_through: c.last_activity,
+        }),
+    );
+
+  function confirmRemove(list: ListedConversation[]) {
+    const one = list.length === 1;
+    Modal.confirm({
+      title: one
+        ? `Remove "${list[0].title}" from the conversation list?`
+        : `Remove ${list.length} conversations from the conversation list?`,
+      content: `It is removed for everyone in ${one ? "its project" : "their projects"}. The chat ${one ? "file and its messages are" : "files and their messages are"} kept, and can be added again.`,
+      okText: "Remove",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await forEach(list, (c) =>
+          peopleApi().removeConversation({
+            project_id: c.project_id,
+            conversation_id: c.conversation_id,
+          }),
+        );
+        selection.clear();
+      },
+    });
+  }
 
   async function update(c: ListedConversation, patch: PersonalStatePatch) {
     setError("");
@@ -116,6 +192,51 @@ export function ConversationCollection({
       }
     >
       {error && <Alert role="alert" type="error" title={error} />}
+      {bulk && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: 8,
+            marginBottom: 4,
+            color: UI_COLORS.secondary,
+            fontSize: 13,
+          }}
+        >
+          <span role="status" aria-atomic="true" style={{ flex: "0 1 auto" }}>
+            <SelectAllCheckbox
+              label="Select all conversations"
+              count={`${conversations.length} ${conversations.length === 1 ? "conversation" : "conversations"}`}
+              selection={selection}
+            />
+          </span>
+          <SelectionToolbar
+            label="Selected conversations"
+            selection={selection}
+          >
+            <Button
+              size="small"
+              loading={bulkBusy}
+              disabled={
+                bulkBusy ||
+                !selectedConversations.some((c) => isUnread(c, account_id))
+              }
+              onClick={() => void markRead(selectedConversations)}
+            >
+              Mark read
+            </Button>
+            <Button
+              size="small"
+              danger
+              disabled={bulkBusy}
+              onClick={() => confirmRemove(selectedConversations)}
+            >
+              Remove…
+            </Button>
+          </SelectionToolbar>
+        </div>
+      )}
       <Collection<ListedConversation>
         items={conversations}
         itemId={(c) => c.conversation_id}
@@ -166,18 +287,16 @@ export function ConversationCollection({
                     {
                       key: "read",
                       label: "Mark read",
-                      onClick: () =>
-                        void peopleApi()
-                          .markRead({
-                            project_id: c.project_id,
-                            conversation_id: c.conversation_id,
-                            read_through: c.last_activity,
-                          })
-                          .then(conversationsChanged)
-                          .catch((err) => setError(`${err}`)),
+                      onClick: () => void markRead([c]),
                     },
                   ]
                 : []),
+              {
+                key: "remove",
+                label: "Remove from list...",
+                danger: true,
+                onClick: () => confirmRemove([c]),
+              },
             ],
             `Options for ${c.title}`,
           );
@@ -198,6 +317,14 @@ export function ConversationCollection({
             current,
             project: projectTitle(c),
             onOpen: () => onSelect(c),
+            checkbox: bulk ? (
+              <SelectItemCheckbox
+                id={c.conversation_id}
+                // Titles repeat across projects: name the row fully.
+                label={`Select ${c.title} (${projectTitle(c) ? `${projectTitle(c)}: ` : ""}${c.path})`}
+                selection={selection}
+              />
+            ) : undefined,
           };
           return compact ? (
             <CompactRow {...props} actions={actions} />
@@ -223,6 +350,33 @@ export function ConversationCollection({
   );
 }
 
+const BULK_CONCURRENCY = 4;
+
+// Run action on each item, at most `limit` at once; the errors of those that
+// failed.
+export async function eachBounded<T>(
+  items: T[],
+  limit: number,
+  action: (item: T) => Promise<unknown>,
+): Promise<string[]> {
+  const failed: string[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      try {
+        await action(item);
+      } catch (err) {
+        failed.push(`${err}`);
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return failed;
+}
+
 const CONTROLS_STYLE: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -246,6 +400,7 @@ interface ItemProps {
   project: string;
   onOpen: () => void;
   actions: ReactNode;
+  checkbox?: ReactNode;
 }
 
 function Title({ c, unread, mentioned }: ItemProps) {
@@ -349,6 +504,7 @@ function GridCard(props: ItemProps) {
         </span>
       </button>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {props.checkbox}
         <People c={c} />
         <span
           style={{
@@ -368,7 +524,7 @@ function GridCard(props: ItemProps) {
 
 // One-line row with fixed columns: title, project, people, activity, actions.
 function ListRow(props: ItemProps) {
-  const { c, current, project, onOpen, actions } = props;
+  const { c, current, project, onOpen, actions, checkbox } = props;
   return (
     <div
       style={{
@@ -384,6 +540,7 @@ function ListRow(props: ItemProps) {
         boxShadow: current ? `inset 3px 0 ${UI_COLORS.link}` : undefined,
       }}
     >
+      {checkbox}
       <button
         type="button"
         aria-current={current ? "true" : undefined}
