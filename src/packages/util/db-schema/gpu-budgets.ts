@@ -178,6 +178,13 @@ Table({
         type: "check",
         expression: `(scope_kind = 'agent') = (grant_id IS NOT NULL)`,
       },
+      // A project layer is exactly one project funding approval
+      // (PROJECT_FUNDING.md); no other layer has one.
+      {
+        name: "gpu_budget_layers_project_approval",
+        type: "check",
+        expression: `(scope_kind = 'project') = (approval_id IS NOT NULL)`,
+      },
       {
         name: "gpu_budget_layers_dates",
         type: "check",
@@ -198,6 +205,7 @@ Table({
       "(credential_id, course_instance_id) WHERE scope_kind = 'course'",
       "(parent_id, beneficiary_account_id) WHERE scope_kind = 'grant'",
       "(grant_id) WHERE scope_kind = 'agent'",
+      "(approval_id) WHERE scope_kind = 'project'",
     ],
   },
   fields: {
@@ -227,6 +235,28 @@ Table({
     agent_id: { type: "string", pg_type: "varchar(128)" },
     // the gpu_agent_grants row an agent layer funds (step 6b)
     grant_id: { type: "uuid" },
+    // A project funding approval's id (scope_kind 'project'): the project's
+    // owning bay routes launches here by it, and admission pins exactly this
+    // layer.
+    approval_id: { type: "uuid" },
+    // Whether agents working in the project may launch under the approval;
+    // authoritative here (the project's bay only displays it).
+    agents_allowed: { type: "boolean", not_null: true, pg_default: "true" },
+    // When the project's owning bay acknowledged the approval active; until
+    // then nothing is routed here, and the reconciler resolves it.
+    activation_acked_at: { type: "timestamp" },
+    // When the layer stopped admitting for good (revoked, expired or
+    // closed): the decrypt audit's authoritative end of validity.
+    ended_at: { type: "timestamp" },
+    // The pod locator sent to the project's owning bay: pods of this layer
+    // not yet proved gone, and its own monotone version.
+    live_pods: {
+      type: "integer",
+      not_null: true,
+      pg_default: "0",
+      pg_check: "CHECK (live_pods >= 0)",
+    },
+    pods_version: { type: "integer", not_null: true, pg_default: "0" },
     // When set, no new launch is admitted, but the layer stays active for its
     // running pods (an agent grant's run ended). A revoked layer's pods are
     // terminated by the reaper instead.
@@ -282,7 +312,7 @@ Table({
       type: "string",
       pg_type: "varchar(32)",
       pg_check:
-        "CHECK (revoked_reason IN ('owner','course_binding_lost','student_project_lost','key_cleanup','expired'))",
+        "CHECK (revoked_reason IN ('owner','course_binding_lost','student_project_lost','key_cleanup','expired','activation_failed','funder_left_project','project_deleted'))",
     },
     version: { type: "integer", not_null: true, pg_default: "1" },
     ...timestamps(),
@@ -672,7 +702,14 @@ export const GPU_KEY_DECRYPT_PURPOSES = [
   ...GPU_KEY_WORKER_PURPOSES,
 ] as const;
 // what admitted a user or agent action, fixed when its record is made
-export const GPU_KEY_USE_RULES = ["owner", "beneficiary", "agent"] as const;
+// project: a launch or project read under a project funding approval, bound
+// to its exact layer (PROJECT_FUNDING.md)
+export const GPU_KEY_USE_RULES = [
+  "owner",
+  "beneficiary",
+  "agent",
+  "project",
+] as const;
 export const GPU_KEY_USE_OUTCOMES = ["succeeded", "failed", "unknown"] as const;
 
 // The authorization record of one user or agent action on a provider key
@@ -684,6 +721,13 @@ Table({
   rules: {
     primary_key: "id",
     pg_indexes: ["key_owner_account_id", "created", "audited_at"],
+    pg_constraints: [
+      {
+        name: "gpu_key_uses_project_binding",
+        type: "check",
+        expression: `(rule = 'project') = (project_id IS NOT NULL AND approval_id IS NOT NULL AND layer_id IS NOT NULL AND source_bay_id IS NOT NULL AND actor_kind IS NOT NULL)`,
+      },
+    ],
   },
   fields: {
     id: { type: "string", pg_type: "varchar(32)", not_null: true },
@@ -710,6 +754,19 @@ Table({
     },
     // what the rule refers to (the pod a beneficiary acts on), if anything
     rule_ref: { type: "string", pg_type: "varchar(200)" },
+    // rule 'project': the exact approval, its layer, the project and the
+    // project's owning bay that forwarded the call (authenticated), and who
+    // acted; principal_account_id is then the acting account, or the key
+    // owner as payer when the actor is the project itself
+    project_id: { type: "uuid" },
+    approval_id: { type: "uuid" },
+    layer_id: { type: "uuid" },
+    source_bay_id: { type: "string", pg_type: "varchar(200)" },
+    actor_kind: {
+      type: "string",
+      pg_type: "varchar(16)",
+      pg_check: "CHECK (actor_kind IN ('project','user','agent'))",
+    },
     request_id: { type: "string", pg_type: "varchar(200)" },
     bay_id: { type: "string", pg_type: "varchar(200)", not_null: true },
     created: { type: "timestamp", not_null: true },

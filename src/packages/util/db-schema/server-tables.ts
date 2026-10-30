@@ -63,6 +63,7 @@ import "./external-credentials";
 import "./global-config";
 import "./gpu-agent-grants";
 import "./gpu-budgets";
+import "./project-compute-approvals";
 import "./gpu-pods";
 import "./growth-analytics";
 import "./public-home-experiment-counts";

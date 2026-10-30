@@ -3,6 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  mergeProjectComputeApprovals,
+  readProjectComputeApprovals,
+} from "@cocalc/server/gpu/project-funding-portable";
 import getLogger from "@cocalc/backend/logger";
 import { setProjectMembershipAuditContext } from "@cocalc/database/postgres/schema/project-membership-audit";
 import { dstream } from "@cocalc/backend/conat/sync";
@@ -598,8 +602,11 @@ async function readPortableProjectState(
   project_id: string,
 ): Promise<ProjectControlPortableProjectState> {
   const project_log = await readLocalProjectLogRows(project_id);
+  const project_compute_approvals =
+    await readProjectComputeApprovals(project_id);
   return {
     project_log,
+    ...(project_compute_approvals.length ? { project_compute_approvals } : {}),
   };
 }
 
@@ -618,6 +625,16 @@ async function mergePortableProjectState({
     log.info("project rehome copied project log rows", {
       project_id,
       copied,
+    });
+  }
+  const approvals = await mergeProjectComputeApprovals({
+    project_id,
+    rows: portable_state?.project_compute_approvals,
+  });
+  if (approvals) {
+    log.info("project rehome merged project funding rows", {
+      project_id,
+      approvals,
     });
   }
 }

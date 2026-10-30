@@ -32,6 +32,7 @@ Table({
       "key_owner_account_id",
       "beneficiary_account_id",
       "project_id",
+      "approval_id",
       "state",
       "machine_id",
       "public_ip",
@@ -83,7 +84,25 @@ Table({
     beneficiary_account_id: {
       type: "uuid",
       not_null: true,
-      desc: "Account responsible for the pod; set at launch, never changed.",
+      desc: "Account responsible for the pod; set at launch, never changed. Under a project funding approval it is the acting account if one is known, else the payer (the key owner): a payer/responsibility field, never evidence of who acted (see actor_*).",
+    },
+    approval_id: {
+      type: "uuid",
+      desc: "The project funding approval that pays for the pod (its layer is gpu_budget_layers.approval_id); set at launch, never changed.",
+    },
+    actor_kind: {
+      type: "string",
+      pg_type: "varchar(16)",
+      pg_check: "CHECK (actor_kind IN ('user','agent','project'))",
+      desc: "Who launched it, from verified auth: a person, an agent, or the project itself (its terminal or code, which can't tell which collaborator acted). Null for pods from before this column.",
+    },
+    actor_account_id: {
+      type: "uuid",
+      desc: "The verified acting account; null when the project itself launched it.",
+    },
+    actor_project_id: {
+      type: "uuid",
+      desc: "The project whose credential or agent launched it.",
     },
     project_id: { type: "uuid", desc: "Project the pod was launched for." },
     grant_id: { type: "uuid", desc: "Budget grant layer that funds it." },
@@ -251,6 +270,9 @@ Table({
       pg_check: oneOf("actor_kind", GPU_ACTOR_KINDS),
     },
     actor_account_id: { type: "uuid" },
+    // the project whose credential or agent acted (actor_kind 'project', or
+    // an agent or person working under a project funding approval)
+    actor_project_id: { type: "uuid" },
     agent_id: { type: "string", pg_type: "varchar(128)" },
     turn_id: {
       type: "string",

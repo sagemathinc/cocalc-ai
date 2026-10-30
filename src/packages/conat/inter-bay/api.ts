@@ -71,6 +71,7 @@ import type {
   ChatSpeechTranscriptionResult,
 } from "@cocalc/conat/hub/api/system";
 import type { ProjectRootfsStateEntry } from "@cocalc/util/rootfs-images";
+import type { ProjectComputeApprovalPortableRow } from "@cocalc/util/gpu/project-funding";
 import type {
   ExternalCredentialSelector,
   Host,
@@ -479,6 +480,8 @@ export interface ProjectControlAcceptRehomeRequest {
 
 export interface ProjectControlPortableProjectState {
   project_log?: ProjectLogRow[];
+  // project funding requests and approval routes (merged by version)
+  project_compute_approvals?: ProjectComputeApprovalPortableRow[];
 }
 
 export interface ProjectControlRehomeResponse {

@@ -34,7 +34,10 @@ export type TableAuthorityKey =
   | "mixed";
 
 export type TablePortabilityStatus =
-  "portable" | "rebuildable" | "stable" | "unsupported";
+  | "portable"
+  | "rebuildable"
+  | "stable"
+  | "unsupported";
 
 export type TableReferenceField =
   | "account_id"
@@ -684,6 +687,28 @@ export const TABLE_OWNERSHIP = {
         "No rebuild: the audit trail covers the decrypts made on this bay; a restore loses the rows written since the backup (the off-host log, once it exists, keeps its own copy).",
     },
   ),
+
+  ...entries(["project_compute_approvals"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "portable",
+    notes:
+      "Project funding approvals for bring-your-own-key compute, on the project's owning bay: requests and each approval's routing record and pod locator. A projection of the funder's budget layer (on funder_account_id's home bay), never the money authority; actor_account_id is attribution only. Project rehome copies it (version-aware merge), behind the project rehome write fence.",
+  }),
+
+  ...entries(["project_funding_outbox"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      project_id:
+        "The approval's project; routing only (as is funder_account_id).",
+    },
+    notes:
+      "Ordered, versioned messages between a funder's home bay and a project's owning bay about project funding approvals, retried until the receiver commits. Each bay keeps the messages it sends.",
+    rebuild:
+      "The funder's bay reconciles from its budget layers: unacknowledged activations, ended layers and pod counts are sent again.",
+  }),
 
   ...entries(["gpu_pods", "gpu_pod_events", "gpu_pod_state_intervals"], {
     ownership: "account-home",
