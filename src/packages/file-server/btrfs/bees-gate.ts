@@ -188,6 +188,8 @@ export class BeesGate {
   private sampleTimer?: NodeJS.Timeout;
   private ticking = false;
   private sampling = false;
+  private freezing = false;
+  private stopped = false;
   private unsupported = false;
   // Whether the cgroup is known to match this.state: false until a freeze
   // succeeds (a restart or handoff may have left it either way).
@@ -223,7 +225,10 @@ export class BeesGate {
     this.sampleTimer.unref?.();
   }
 
+  // After stop, nothing in flight acts or changes state: a new gate (e.g. of
+  // the next daemon) owns the cgroup.
   stop(): void {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     if (this.sampleTimer) clearInterval(this.sampleTimer);
     this.timer = this.sampleTimer = undefined;
@@ -243,32 +248,56 @@ export class BeesGate {
   /** Between decisions: freeze a running BEES at once when a project starts
    * or stops or a commit runs long, rather than at the next decision. */
   async sample(): Promise<void> {
-    // One at a time: under the I/O stalls this gate is for, a read can take
-    // longer than the period (and then the samples go stale: unsafe).
-    if (this.sampling) return;
+    // Checked before the read too: a hung commit_stats read must not hide a
+    // project start, and its samples going stale must freeze BEES.
+    await this.freezeIfNeeded();
+    // One read at a time: under the I/O stalls this gate is for, a read can
+    // take longer than the period.
+    if (this.sampling || this.stopped) return;
     this.sampling = true;
     try {
       await this.sampleCommit();
-      if (!this.synced || this.state.frozen) return;
-      if (
-        this.opts.lifecycleActive() ||
-        (this.worstCommitMs() ?? Infinity) > this.config.freezeCommitMs
-      ) {
-        await this.tick();
-      }
     } finally {
       this.sampling = false;
+    }
+    await this.freezeIfNeeded();
+  }
+
+  // Freezes a running BEES without the decision's other inputs, which may be
+  // stuck behind the same I/O stall.
+  private async freezeIfNeeded(): Promise<void> {
+    if (this.stopped || this.freezing || !this.synced || this.state.frozen) {
+      return;
+    }
+    const lifecycle = this.opts.lifecycleActive();
+    const worst = this.worstCommitMs();
+    if (!lifecycle && worst != null && worst <= this.config.freezeCommitMs) {
+      return;
+    }
+    const reason = lifecycle ? "lifecycle_active" : "slow_commit";
+    this.freezing = true;
+    try {
+      if ((await this.apply("freeze")) && !this.stopped) {
+        this.state = { frozen: true, since_ms: this.now(), reason };
+        logger.info("BEES frozen", {
+          mount: this.opts.mount,
+          reason,
+          worst_commit_ms: worst,
+        });
+      }
+    } finally {
+      this.freezing = false;
     }
   }
 
   async tick(): Promise<void> {
-    if (this.ticking || this.unsupported) return;
+    if (this.ticking || this.unsupported || this.stopped) return;
     this.ticking = true;
     try {
       if (!this.synced) {
         // Freeze first, whatever the cgroup holds; the frozen period starts
         // when that succeeds.
-        if (await this.apply("freeze")) {
+        if ((await this.apply("freeze")) && !this.stopped) {
           this.synced = true;
           this.state = {
             frozen: true,
@@ -287,10 +316,16 @@ export class BeesGate {
         worst_commit_ms: this.worstCommitMs(),
         lifecycle_active: this.opts.lifecycleActive(),
       };
+      if (this.stopped) return;
       this.lastInputs = inputs;
       const next = decideBeesGate(this.state, inputs, this.now(), this.config);
       if (next.frozen === this.state.frozen) return;
-      if (await this.apply(next.frozen ? "freeze" : "thaw")) {
+      // A thaw waits for a freeze in flight (it would undo it at once).
+      if (!next.frozen && this.freezing) return;
+      if (
+        (await this.apply(next.frozen ? "freeze" : "thaw")) &&
+        !this.stopped
+      ) {
         logger.info(next.frozen ? "BEES frozen" : "BEES thawed", {
           mount: this.opts.mount,
           reason: next.reason,
@@ -306,6 +341,7 @@ export class BeesGate {
   }
 
   private async apply(action: BeesGateAction): Promise<boolean> {
+    if (this.stopped) return false;
     try {
       await (
         this.opts.apply ?? ((a) => applyBeesGateAction(this.opts.mount, a))

@@ -133,7 +133,9 @@ describe("the BEES gate", () => {
     sampleMs = 3_600_000,
     apply,
   }: {
-    inputs?: () => Omit<BeesGateInputs, "lifecycle_active" | "worst_commit_ms">;
+    inputs?: () =>
+      | Omit<BeesGateInputs, "lifecycle_active" | "worst_commit_ms">
+      | Promise<Omit<BeesGateInputs, "lifecycle_active" | "worst_commit_ms">>;
     commits?: () => string | Promise<string>;
     lifecycle?: () => boolean;
     sampleMs?: number;
@@ -295,36 +297,108 @@ describe("the BEES gate", () => {
     g.stop();
   });
 
-  it("treats commit samples as unknown once sampling falls behind, and samples one at a time", async () => {
+  // @review on #1503: production timers, with a commit_stats read that hangs
+  // under the I/O stall.
+  describe("on its own timers", () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    function timed(lifecycle: () => boolean) {
+      const actions: string[] = [];
+      let hang = false;
+      let reads = 0;
+      const pending: Array<(s: string) => void> = [];
+      const g = new BeesGate({
+        mount: "/mnt/cocalc",
+        lifecycleActive: lifecycle,
+        readInputs: async () => calmHost,
+        readCommitStats: async () => {
+          reads += 1;
+          return hang
+            ? await new Promise<string>((resolve) => pending.push(resolve))
+            : quiet;
+        },
+        apply: async (action) => {
+          actions.push(action);
+        },
+      });
+      return {
+        g,
+        actions,
+        hang: () => (hang = true),
+        reads: () => reads,
+        release: () => pending.forEach((resolve) => resolve(quiet)),
+      };
+    }
+
+    it("freezes within a second when a project starts while a commit read hangs", async () => {
+      let starting = false;
+      const t = timed(() => starting);
+      await t.g.start();
+      await jest.advanceTimersByTimeAsync(10 * MIN + 30_000);
+      expect(t.actions).toEqual(["freeze", "thaw"]);
+      t.hang();
+      await jest.advanceTimersByTimeAsync(1_500);
+      const reads = t.reads();
+      starting = true;
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(t.actions).toEqual(["freeze", "thaw", "freeze"]);
+      expect(t.g.getStatus().reason).toBe("lifecycle_active");
+      // the hung read is not repeated
+      expect(t.reads()).toBe(reads);
+      t.g.stop();
+      t.release();
+    });
+
+    it("freezes once its commit samples go stale, before the next decision", async () => {
+      const t = timed(() => false);
+      await t.g.start();
+      await jest.advanceTimersByTimeAsync(10 * MIN + 30_000);
+      expect(t.actions).toEqual(["freeze", "thaw"]);
+      t.hang();
+      await jest.advanceTimersByTimeAsync(4_000);
+      expect(t.actions).toEqual(["freeze", "thaw"]);
+      await jest.advanceTimersByTimeAsync(3_000);
+      expect(t.actions).toEqual(["freeze", "thaw", "freeze"]);
+      expect(t.g.getStatus().reason).toBe("slow_commit");
+      t.g.stop();
+      t.release();
+    });
+  });
+
+  // @review on #1503: a stopped gate (e.g. of the daemon being replaced)
+  // must not act on anything it was waiting for.
+  it("does nothing after stop, whatever was in flight", async () => {
     const { actions, apply } = recorder();
     let release: (s: string) => void = () => {};
     let hang = false;
-    let reads = 0;
+    let releaseInputs: () => void = () => {};
+    let slowInputs = false;
     const { g, advance } = gate({
       apply,
-      sampleMs: 1_000,
-      commits: () => {
-        reads += 1;
-        return hang
-          ? new Promise<string>((resolve) => (release = resolve))
-          : quiet;
-      },
+      commits: () =>
+        hang ? new Promise<string>((resolve) => (release = resolve)) : quiet,
+      inputs: () =>
+        slowInputs
+          ? new Promise((resolve) => (releaseInputs = () => resolve(calmHost)))
+          : calmHost,
     });
     await g.start();
     advance(10 * MIN);
     await g.sample();
-    await g.tick();
-    expect(actions).toEqual(["freeze", "thaw"]);
+    // a calm decision (would thaw) waiting on its inputs
+    slowInputs = true;
+    const tick = g.tick();
+    // a slow commit waiting on its read
     hang = true;
-    const first = g.sample();
-    void g.sample();
-    void g.sample();
-    expect(reads).toBe(2);
-    advance(6_000);
-    await g.tick();
-    expect(actions).toEqual(["freeze", "thaw", "freeze"]);
-    release(quiet);
-    await first;
+    const sample = g.sample();
     g.stop();
+    releaseInputs();
+    release("commits 2\ncur_commit_ms 9000\nlast_commit_ms 100\n");
+    await Promise.all([tick, sample]);
+    await g.sample();
+    await g.tick();
+    expect(actions).toEqual(["freeze"]);
+    expect(g.getStatus()).toMatchObject({ frozen: true, reason: "startup" });
   });
 });
