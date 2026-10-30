@@ -82,6 +82,9 @@ export const GPU_ACTOR_KINDS = [
   "pod",
   // provider billing reconciliation (5d-2a)
   "billing",
+  // the project itself (its terminal or code, under a project funding
+  // approval): which collaborator acted is unknown
+  "project",
 ] as const;
 export type GpuActorKind = (typeof GPU_ACTOR_KINDS)[number];
 

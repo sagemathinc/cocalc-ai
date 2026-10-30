@@ -128,6 +128,12 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Runtime slots represent current resource allocation and must be reacquired on the destination instead of copied.",
   },
+  project_compute_approvals: {
+    table: "project_compute_approvals",
+    status: "portable",
+    reason:
+      "Project funding requests and approval routes move with the project: rehome copies them in its portable state with a version-aware merge, and every write is behind the project rehome write fence.",
+  },
   project_rootfs_states: {
     table: "project_rootfs_states",
     status: "not-portable",

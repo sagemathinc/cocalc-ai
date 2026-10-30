@@ -577,10 +577,10 @@ describeDb("GPU inventory reconciler", () => {
       )
     ).rows[0].id;
     await getPool().query(
-      `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind, parent_id, parent_scope_kind, project_id, authorized_usd, state, starts_at, ends_at, created, updated)
-       SELECT $1, credential_id, key_owner_account_id, 'project', id, 'key', $2, 50, state, starts_at, ends_at, now(), now()
+      `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind, parent_id, parent_scope_kind, project_id, approval_id, authorized_usd, state, starts_at, ends_at, created, updated)
+       SELECT $1, credential_id, key_owner_account_id, 'project', id, 'key', $2, $4, 50, state, starts_at, ends_at, now(), now()
          FROM gpu_budget_layers WHERE id = $3`,
-      [randomUUID(), PROJECT, keyLayer],
+      [randomUUID(), PROJECT, keyLayer, randomUUID()],
     );
     s.client.createPod.mockImplementationOnce(async (body: any) => {
       handle = body.name;
