@@ -21,6 +21,7 @@ import {
   countRunningArchivesByHost,
   clearProjectArchiveLifecycleFinalBackup,
   createProjectArchiveLifecycleJob,
+  failStuckManualArchiveJobs,
   getProjectArchiveLifecycleFinalBackup,
   listQueuedProjectArchiveLifecycleJobs,
   listRecoverableProjectArchiveLifecycleJobs,
@@ -69,6 +70,22 @@ describe("project archive lifecycle job persistence", () => {
     expect(sql.match(/\$7::VARCHAR\(32\)/g)).toHaveLength(2);
     expect(sql).not.toMatch(/\$7(?!::VARCHAR\(32\))/);
     expect(parameters[6]).toBe("report-only");
+  });
+
+  it("fails only manual archive jobs left running past the bound", async () => {
+    query.mockResolvedValue({
+      rows: [{ id: "77777777-7777-4777-8777-777777777777" }],
+    });
+
+    expect(await failStuckManualArchiveJobs()).toEqual([
+      "77777777-7777-4777-8777-777777777777",
+    ]);
+    const [sql, parameters] = query.mock.calls[0];
+    expect(sql).toContain("reason = 'manual'");
+    expect(sql).toContain("status = 'running'");
+    expect(sql).toContain("failure_category = 'stuck-manual-archive'");
+    expect(sql).toContain("updated_at < NOW() - make_interval");
+    expect(parameters[0]).toBe(30 * 60);
   });
 
   it("casts every terminal status parameter reference consistently", async () => {
