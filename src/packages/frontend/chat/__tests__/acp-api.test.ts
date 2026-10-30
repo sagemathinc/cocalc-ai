@@ -1292,6 +1292,8 @@ describe("queued ACP controls", () => {
       message_id: "user-msg-missing",
       thread_id: "thread-missing",
       acp_prompt: "hidden retry context",
+      // The interface's note (which turn was open) is kept, once.
+      acp_context: "[earlier turn]",
       history: [
         {
           author_id: "user-1",
@@ -1334,7 +1336,7 @@ describe("queued ACP controls", () => {
     expect(mockStreamAcp).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "proj",
-        prompt: "hidden retry context",
+        prompt: "hidden retry context\n\n[earlier turn]",
         chat: expect.objectContaining({
           user_message_content: "@codex retry this",
           user_message_date: new Date(8300).toISOString(),
@@ -1372,6 +1374,26 @@ describe("resubmitAcpTurnAsNew", () => {
       skipDraftDelete: true,
     });
     expect(mockControlAcp).not.toHaveBeenCalled();
+  });
+
+  it("keeps the interface's note about which turn was open", () => {
+    const sendChat = jest.fn(() => "2026-10-04T00:00:00.000Z");
+    const message = {
+      message_id: "user-1",
+      thread_id: "thread-1",
+      history: [{ content: "why?" }],
+      acp_context: "[earlier turn]",
+    } as any;
+    expect(
+      resubmitAcpTurnAsNew({ actions: { sendChat } as any, message }),
+    ).toBe(true);
+    expect(sendChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: "why?",
+        acp_prompt: undefined,
+        acp_context: "[earlier turn]",
+      }),
+    );
   });
 
   it("refuses a message without content or thread", () => {

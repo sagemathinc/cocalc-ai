@@ -1132,3 +1132,51 @@ test("after sending from an earlier turn: a button goes to the new message's tur
     screen.queryByRole("button", { name: "Go to your message" }),
   ).not.toBeInTheDocument();
 });
+
+test("two readers of one thread (two frames) each keep their own open turn", async () => {
+  localStorage.removeItem("cocalc-chat-reader-view");
+  const actions: any = {
+    getThreadReadCount: () => 4,
+    getReaderState: () => ({}),
+    getReaderStars: () => [],
+    updateReaderState: jest.fn(),
+    updateReaderStars: jest.fn(),
+    markThreadRead: jest.fn(),
+  };
+  const reader = (scope: string) => (
+    <div data-testid={scope}>
+      <ChatReaderView
+        actions={actions}
+        threadId="thread-1"
+        messages={thread}
+        accountId="acct"
+        readerScope={scope}
+      />
+    </div>
+  );
+  const a = render(reader("a"));
+  const b = render(reader("b"));
+  const keyA = readerTurnKey(undefined, undefined, "thread-1", "a");
+  const keyB = readerTurnKey(undefined, undefined, "thread-1", "b");
+  await user().click(within(a.getByTestId("a")).getByText(/first question/));
+  await user().click(within(b.getByTestId("b")).getByText(/third question/));
+  expect(viewedTurn(keyA)).toMatchObject({ item_id: "p1", latest: false });
+  expect(viewedTurn(keyB)).toMatchObject({ item_id: "p3", latest: true });
+  // A message sent from a's composer is offered in a only.
+  act(() => noteSentFromReader(keyA, "p2"));
+  expect(
+    within(a.getByTestId("a")).getByRole("button", {
+      name: "Go to your message",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    within(b.getByTestId("b")).queryByRole("button", {
+      name: "Go to your message",
+    }),
+  ).not.toBeInTheDocument();
+  // Closing one frame leaves the other's state alone.
+  b.unmount();
+  expect(viewedTurn(keyB)).toBeUndefined();
+  expect(viewedTurn(keyA)).toMatchObject({ item_id: "p1", latest: false });
+  a.unmount();
+});

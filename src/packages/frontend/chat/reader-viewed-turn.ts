@@ -24,12 +24,17 @@ export interface ViewedTurn {
 const MAX_VIEWED = 200;
 const viewed = new Map<string, ViewedTurn>();
 
+/**
+ * One reader and its composer: a chat open in two frames has two, each with
+ * its own open turn (scope tells them apart).
+ */
 export function readerTurnKey(
   projectId: string | undefined,
   path: string | undefined,
   threadId: string,
+  scope = "",
 ): string {
-  return JSON.stringify([projectId ?? "", path ?? "", threadId]);
+  return JSON.stringify([projectId ?? "", path ?? "", threadId, scope]);
 }
 
 export function setViewedTurn(key: string, turn: ViewedTurn | undefined) {
@@ -93,10 +98,14 @@ export function readerReplyContext(opts: {
   projectId?: string;
   path?: string;
   threadId?: string;
+  /** The composer's own reader (see readerTurnKey). */
+  scope?: string;
 }): string | undefined {
   if (!opts.readerMode || !opts.agentTurn || !opts.threadId) return;
   return viewedTurnNote(
-    viewedTurn(readerTurnKey(opts.projectId, opts.path, opts.threadId)),
+    viewedTurn(
+      readerTurnKey(opts.projectId, opts.path, opts.threadId, opts.scope),
+    ),
   );
 }
 

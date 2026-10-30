@@ -290,7 +290,10 @@ export function ChatReaderView({
   runningStatus,
   searchJump,
   searchDates,
+  readerScope,
 }: {
+  /** This reader and its composer (see readerTurnKey). */
+  readerScope?: string;
   actions: ChatActions;
   threadId: string;
   /** The thread's messages, in order. */
@@ -439,8 +442,12 @@ export function ChatReaderView({
     () => items.filter((item) => isItemStarred(item, stars)).length,
     [items, stars],
   );
-  const turnKey = readerTurnKey(projectId, path, threadId);
-  const [selectedId, setSelectedId] = useRememberedSelection(turnKey);
+  // The open turn is remembered per thread; what this reader shows its
+  // composer is its own (another frame may show the same thread).
+  const turnKey = readerTurnKey(projectId, path, threadId, readerScope);
+  const [selectedId, setSelectedId] = useRememberedSelection(
+    readerTurnKey(projectId, path, threadId),
+  );
   // The open message over the whole window, as the reader shows it: paging
   // with Newer and Older (or j and k) stays full screen.
   const [fullScreenWanted, setFullScreen] = useState(false);

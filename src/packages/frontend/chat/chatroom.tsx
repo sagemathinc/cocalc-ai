@@ -20,6 +20,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, Tooltip } from "@cocalc/frontend/components";
+import { useId } from "react";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import {
   useChatVisualViewport,
@@ -1844,6 +1845,9 @@ function ChatPanelContent({
   const selectedThreadReadSignatureRef = useRef<string | null>(null);
 
   const [readerMode, setReaderMode] = useChatReaderMode(project_id, path);
+  // This chat frame's reader and composer (another frame may show the same
+  // thread, with another turn open).
+  const readerScope = useId();
   // The reader takes the keys when the person turns it on with one of its
   // buttons, in this chat; never when a chat simply opens in it.
   const readerChatKey = `${project_id ?? ""}:${path ?? ""}`;
@@ -2124,6 +2128,7 @@ function ChatPanelContent({
       projectId: project_id,
       path,
       threadId: reply_thread_id,
+      scope: readerScope,
     });
     if (isCodexSubmit && !aiAgentPolicyAllowed) {
       Modal.error({
@@ -2342,7 +2347,7 @@ function ChatPanelContent({
     // The reader offers to go to the turn with this message.
     if (timeStamp && readerMode && reply_thread_id && chatIdentity.message_id)
       noteSentFromReader(
-        readerTurnKey(project_id, path, reply_thread_id),
+        readerTurnKey(project_id, path, reply_thread_id, readerScope),
         chatIdentity.message_id,
       );
     if (!timeStamp) {
@@ -2784,6 +2789,7 @@ function ChatPanelContent({
         }
         mobile={narrow}
         readerMode={readerMode}
+        readerScope={readerScope}
         onReaderModeChange={toggleReaderMode}
         readerAutoFocus={readerAutoFocus}
         readStateVersion={effectiveReadStateVersion}

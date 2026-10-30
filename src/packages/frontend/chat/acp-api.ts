@@ -183,10 +183,12 @@ function stripCodexMentions(value: string): string {
 }
 
 function getRetryInput(message: ChatMessage): string {
-  return (
+  const prompt =
     `${field<string>(message, "acp_prompt") ?? ""}`.trim() ||
-    stripCodexMentions(latestMessageContent(message))
-  );
+    stripCodexMentions(latestMessageContent(message));
+  // The interface's context, as the first attempt had it (see actions/ai).
+  const context = `${field<string>(message, "acp_context") ?? ""}`.trim();
+  return context && prompt ? `${prompt}\n\n${context}` : prompt;
 }
 
 function setAcpMessageState({
@@ -843,6 +845,8 @@ export function resubmitAcpTurnAsNew({
     input,
     acp_prompt:
       `${field<string>(message, "acp_prompt") ?? ""}`.trim() || undefined,
+    acp_context:
+      `${field<string>(message, "acp_context") ?? ""}`.trim() || undefined,
     reply_thread_id: threadId,
     preserveSelectedThread: true,
     skipDraftDelete: true,

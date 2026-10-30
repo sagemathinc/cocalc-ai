@@ -574,6 +574,8 @@ interface ChatRoomThreadPanelProps {
   mobile?: boolean;
   /** Show the selected thread in the reader instead of the log. */
   readerMode?: boolean;
+  /** This chat's reader and composer (see reader-viewed-turn). */
+  readerScope?: string;
   /** Over the whole chat (its composer too): where the questions panel goes. */
   attentionPanelHost?: HTMLElement | null;
   onReaderModeChange?: (on: boolean) => void;
@@ -631,6 +633,7 @@ export function ChatRoomThreadPanel({
   readOnly = false,
   mobile = false,
   readerMode = false,
+  readerScope,
   attentionPanelHost,
   onReaderModeChange,
   readerAutoFocus = false,
@@ -3231,6 +3234,7 @@ export function ChatRoomThreadPanel({
         ) : null}
         {showReader ? (
           <ChatReaderView
+            readerScope={readerScope}
             actions={actions}
             threadId={selectedThreadId}
             messages={readerMessages}
