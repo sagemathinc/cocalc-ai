@@ -567,7 +567,7 @@ function hashFingerprint(namespace: string, value: string): string {
     .slice(0, 16)}`;
 }
 
-function sanitizeUrl(raw: string): string {
+function sanitizeUrl(raw: string, configuredSiteUrl?: string): string {
   const trailing = raw.match(/[.,;:!?)]*$/)?.[0] ?? "";
   const value = trailing ? raw.slice(0, -trailing.length) : raw;
   try {
@@ -575,10 +575,12 @@ function sanitizeUrl(raw: string): string {
     url.username = "";
     url.password = "";
     url.hash = "";
-    // Keep the uuid of a CoCalc blob *image* (e.g. a pasted screenshot): the
-    // same URL is already returned in the ticket's images list. Other query
+    // Keep the uuid of a CoCalc blob *image* (e.g. a pasted screenshot) only
+    // when the ticket's images list returns this same URL. Other query
     // strings, including document blobs, stay redacted.
-    if (url.search && !isSupportBlobImageQuery(url)) url.search = "?REDACTED";
+    if (url.search && !isListedSupportImageUrl(value, url, configuredSiteUrl)) {
+      url.search = "?REDACTED";
+    }
     const projectMatch = url.pathname.match(
       /^(.*\/projects\/[0-9a-f-]{36})(?:\/.*)?$/i,
     );
@@ -653,23 +655,21 @@ function supportImageExtension(filename: string): string {
   return match?.[1] ?? "";
 }
 
-function isSupportBlobImageQuery(url: URL): boolean {
-  const name = url.pathname.match(/\/blobs\/([^/]+)$/)?.[1];
-  if (name == null) return false;
-  let filename: string;
-  try {
-    filename = decodeURIComponent(name);
-  } catch {
-    return false;
-  }
-  if (!SAFE_SUPPORT_IMAGE_EXTENSIONS.has(supportImageExtension(filename))) {
-    return false;
-  }
+function isListedSupportImageUrl(
+  value: string,
+  url: URL,
+  configuredSiteUrl?: string,
+): boolean {
+  if (!configuredSiteUrl) return false;
   const params = [...url.searchParams.keys()];
+  if (params.length !== 1 || params[0] !== "uuid") return false;
+  const images = extractSupportImages(value, configuredSiteUrl);
+  if (images.length !== 1 || images[0].url == null) return false;
+  const listed = new URL(images[0].url);
   return (
-    params.length === 1 &&
-    params[0] === "uuid" &&
-    isValidUUID(url.searchParams.get("uuid") ?? "")
+    listed.origin === url.origin &&
+    listed.pathname === url.pathname &&
+    listed.searchParams.get("uuid") === url.searchParams.get("uuid")
   );
 }
 
@@ -836,9 +836,36 @@ function zendeskAttachmentImages(
     .slice(0, MAX_IMAGES_PER_COMMENT);
 }
 
-export function redactSupportText(value: unknown, maxChars: number): string {
+function isCompactJoseToken(candidate: string): boolean {
+  const header = candidate.split(".", 1)[0];
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(header, "base64url").toString("utf8"),
+    );
+    return (
+      decoded != null &&
+      typeof decoded === "object" &&
+      !Array.isArray(decoded) &&
+      typeof decoded.alg === "string"
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function redactSupportText(
+  value: unknown,
+  maxChars: number,
+  { configuredSiteUrl }: { configuredSiteUrl?: string } = {},
+): string {
   let text = `${value ?? ""}`;
-  text = text.replace(/https?:\/\/[^\s<>"']+/gi, sanitizeUrl);
+  text = text.replace(/https?:\/\/[^\s<>"']+/gi, (match) =>
+    sanitizeUrl(match, configuredSiteUrl),
+  );
+  text = text.replace(
+    /\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi,
+    "$1 [REDACTED_SECRET]",
+  );
   text = text.replace(
     /\b(account[_ -]?id)\s*[:=]\s*["']?[0-9a-f-]{36}["']?/gi,
     "$1=[REDACTED_ACCOUNT_ID]",
@@ -847,11 +874,17 @@ export function redactSupportText(value: unknown, maxChars: number): string {
     /\b(authorization|api[_ -]?key|access[_ -]?token|token|password|passwd|secret)\b\s*[:=]\s*[^\s,;]+/gi,
     "$1=[REDACTED_SECRET]",
   );
-  // JSON Web Tokens: three base64url segments with a "{"-encoded header.
-  // A looser dotted pattern also matched host names and paths (cocalc.ai/...,
-  // student.university.ac.uk), which hid links and email domains.
+  // Compact JWS/JWE tokens, recognized by a protected header that decodes to
+  // a JSON object with "alg". A plain dotted pattern also matched host names
+  // and paths (cocalc.ai/..., student.university.ac.uk), hiding links and
+  // email domains.
   text = text.replace(
-    /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+    /\b[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]*){2,4}/g,
+    (match) => (isCompactJoseToken(match) ? "[REDACTED_TOKEN]" : match),
+  );
+  // PASETO tokens.
+  text = text.replace(
+    /\bv[1-4]\.(?:local|public)\.[A-Za-z0-9_-]{16,}(?:\.[A-Za-z0-9_-]+)?/g,
     "[REDACTED_TOKEN]",
   );
   text = text.replace(
@@ -1013,7 +1046,7 @@ function normalizeTicketComment(
         : "staff_or_system",
     public: !!comment.public,
     created_at: safeDate(comment.created_at),
-    body: redactSupportText(body, MAX_COMMENT_CHARS),
+    body: redactSupportText(body, MAX_COMMENT_CHARS, { configuredSiteUrl }),
     images,
     attachments: attachments
       .map(attachmentReference)
@@ -1555,6 +1588,7 @@ export async function show(
       description: redactSupportText(
         ticket.description,
         Math.min(MAX_DESCRIPTION_CHARS, Math.floor(maxBytes / 2)),
+        { configuredSiteUrl },
       ),
       images: extractSupportImages(ticket.description, configuredSiteUrl),
       documents: extractSupportBlobDocuments(

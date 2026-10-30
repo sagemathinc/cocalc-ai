@@ -228,33 +228,81 @@ describe("admin support API", () => {
     expect(redacted).toContain("[REDACTED_PATH]");
   });
 
-  it("keeps host names, paths and blob image links readable", () => {
+  it("keeps host names, paths and listed blob image links readable", () => {
     const redacted = redactSupportText(
       [
         `- Image: https://cocalc.ai/blobs/bug.jpg?uuid=${IMAGE_UUID}`,
         `Report: https://cocalc.ai/blobs/report.pdf?uuid=${IMAGE_UUID}`,
         `Shot: https://cocalc.ai/blobs/shot.png?uuid=${IMAGE_UUID}&token=abc`,
+        `Elsewhere: https://evil.example/blobs/x.png?uuid=${INLINE_IMAGE_UUID}`,
         "Docs: https://docs.example.edu/guide/setup.html",
         "Contact: bob.smith@student.example.ac.uk",
-        "Header: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlX3ZhbHVl",
       ].join("\n"),
       10_000,
+      { configuredSiteUrl: "https://cocalc.ai" },
     );
-    // Image blob links keep their uuid; the same URL is in the images list.
+    // A blob image link the images list returns keeps its uuid.
     expect(redacted).toContain(
       `https://cocalc.ai/blobs/bug.jpg?uuid=${IMAGE_UUID}`,
     );
-    // Document blobs and other query strings stay redacted.
+    // Document blobs, extra parameters and other origins stay redacted.
     expect(redacted).toContain("https://cocalc.ai/blobs/report.pdf?REDACTED");
     expect(redacted).toContain("https://cocalc.ai/blobs/shot.png?REDACTED");
+    expect(redacted).toContain("https://evil.example/blobs/x.png?REDACTED");
+    expect(redacted).not.toContain(INLINE_IMAGE_UUID);
     // Dotted host names and paths are not mistaken for tokens.
     expect(redacted).toContain("https://docs.example.edu/guide/setup.html");
     // Email addresses are redacted whole, not just their domains.
     expect(redacted).not.toContain("bob.smith");
     expect(redacted).toContain("[REDACTED_EMAIL]");
-    // JSON Web Tokens are still redacted.
-    expect(redacted).not.toContain("eyJhbGciOiJIUzI1NiJ9");
-    expect(redacted).toContain("[REDACTED_TOKEN]");
+  });
+
+  it("keeps blob image uuids only under the configured base path", () => {
+    const text = [
+      `https://example.com/cocalc/blobs/a.png?uuid=${IMAGE_UUID}`,
+      `https://example.com/other/blobs/b.png?uuid=${INLINE_IMAGE_UUID}`,
+    ].join("\n");
+    const redacted = redactSupportText(text, 10_000, {
+      configuredSiteUrl: "https://example.com/cocalc",
+    });
+    expect(redacted).toContain(
+      `https://example.com/cocalc/blobs/a.png?uuid=${IMAGE_UUID}`,
+    );
+    expect(redacted).toContain(
+      "https://example.com/other/blobs/b.png?REDACTED",
+    );
+    // Without the site URL, every query string is redacted.
+    const noSite = redactSupportText(text, 10_000);
+    expect(noSite).not.toContain(IMAGE_UUID);
+    expect(noSite).not.toContain(INLINE_IMAGE_UUID);
+  });
+
+  it("redacts compact JOSE tokens, bearer values and PASETO tokens", () => {
+    const b64url = (value: string) =>
+      Buffer.from(value, "utf8").toString("base64url");
+    // A valid header with leading whitespace does not start with "eyJ".
+    const spacedHeader = b64url('{ "alg":"HS256","typ":"JWT"}');
+    expect(spacedHeader.startsWith("eyJ")).toBe(false);
+    const spacedToken = `${spacedHeader}.${b64url('{"sub":"1"}')}.c2lnbmF0dXJl`;
+    const plainToken = `${b64url('{"alg":"RS256"}')}.${b64url('{"sub":"2"}')}.c2ln`;
+    const redacted = redactSupportText(
+      [
+        `token one ${spacedToken}`,
+        `token two ${plainToken}`,
+        "Authorization: Bearer abcdefghijklmnop.qrstuv",
+        "bearer xyz0123456789abcdef",
+        "paseto v4.local.QUJDREVGR0hJSktMTU5PUFFSU1RVVldY",
+        "plain host www.example.co.uk and file notes.v2.txt",
+      ].join("\n"),
+      10_000,
+    );
+    expect(redacted).not.toContain(spacedHeader);
+    expect(redacted).not.toContain(plainToken);
+    expect(redacted).not.toContain("abcdefghijklmnop");
+    expect(redacted).not.toContain("xyz0123456789abcdef");
+    expect(redacted).not.toContain("QUJDREVGR0hJSktMTU5PUFFSU1RVVldY");
+    expect(redacted).toContain("www.example.co.uk");
+    expect(redacted).toContain("notes.v2.txt");
   });
 
   it("extracts only validated images from the configured CoCalc site", () => {
