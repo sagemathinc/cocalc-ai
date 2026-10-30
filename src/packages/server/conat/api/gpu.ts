@@ -200,14 +200,14 @@ async function projectPodsCall<T>(
   asActor: (a: {
     account_id: string;
     project_id: string;
-    agent?: { project_id: string; agent_id: string };
+    agent?: { project_id: string; agent_id: string; run_id?: string };
   }) => Promise<T>,
   remote: (
     home: InterBayGpuApi,
     a: {
       account_id: string;
       project_id: string;
-      agent?: { project_id: string; agent_id: string };
+      agent?: { project_id: string; agent_id: string; run_id?: string };
     },
   ) => Promise<T>,
 ): Promise<T> {
@@ -224,6 +224,7 @@ async function projectPodsCall<T>(
           agent: {
             project_id: principal.project_id,
             agent_id: principal.agent_id,
+            run_id: principal.run_id,
           },
         }
       : {}),

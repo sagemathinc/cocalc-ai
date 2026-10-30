@@ -597,7 +597,13 @@ export interface ProjectFundingRequestRequest {
 export type ProjectPodsActor =
   | { kind: "project" }
   | { kind: "user"; account_id: string }
-  | { kind: "agent"; account_id: string; project_id: string; agent_id: string };
+  | {
+      kind: "agent";
+      account_id: string;
+      project_id: string;
+      agent_id: string;
+      run_id?: string;
+    };
 
 export interface ProjectPodsPageResult {
   pods: import("@cocalc/util/gpu/types").GpuPodSummary[];
@@ -614,7 +620,12 @@ export interface ProjectPodsAtFunderRequest {
 
 export interface ProjectTerminateAtFunderRequest extends ProjectPodsAtFunderRequest {
   pod_id: string;
-  actor: { kind: "project" | "user" | "agent"; account_id?: string };
+  actor: {
+    kind: "project" | "user" | "agent";
+    account_id?: string;
+    agent_id?: string;
+    run_id?: string;
+  };
 }
 
 // actor's home -> P

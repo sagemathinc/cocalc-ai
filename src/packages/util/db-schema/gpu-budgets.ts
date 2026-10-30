@@ -257,6 +257,9 @@ Table({
       pg_check: "CHECK (live_pods >= 0)",
     },
     pods_version: { type: "integer", not_null: true, pg_default: "0" },
+    // when the binding check last asked the project's bay about this
+    // approval: every approval advances through the scan
+    binding_checked_at: { type: "timestamp" },
     // When set, no new launch is admitted, but the layer stays active for its
     // running pods (an agent grant's run ended). A revoked layer's pods are
     // terminated by the reaper instead.

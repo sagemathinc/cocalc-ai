@@ -392,7 +392,7 @@ describeDb("a project's funded pods", () => {
           { ...req, approval_ids: [a.approval_id, b.approval_id] },
           ok,
         )
-      ).map((p) => p.id),
+      ).pods.map((p) => p.id),
     ).toEqual([mine.id]);
     expect(
       await projectTerminateAtFunderLocal(
@@ -500,7 +500,7 @@ describeDb("a project's funded pods", () => {
       funderPods: async () => ({
         pods: async (req: any) => {
           asked.push(req.approval_ids);
-          return [];
+          return { pods: [], truncated: false };
         },
         terminate: async () => ({ found: false }),
       }),
@@ -548,5 +548,143 @@ describeDb("a project's funded pods", () => {
         local(s),
       ),
     ).toEqual({ found: false });
+  });
+
+  it("checks every approval's binding in turn, past any batch", async () => {
+    const worlds: Setup[] = [];
+    const approvals: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const w = await setup();
+      worlds.push(w);
+      approvals.push((await approve(w)).approval_id);
+    }
+    // only these three are candidates for this test
+    await getPool().query(
+      `UPDATE gpu_budget_layers SET binding_checked_at = now() + interval '1 hour'
+        WHERE scope_kind = 'project' AND approval_id <> ALL($1::uuid[])`,
+      [approvals],
+    );
+    const deps = { ...worlds[0].fundDeps, batch: 2 };
+    await checkProjectFundingBindings(deps);
+    // the one not reached in the first pass loses its binding
+    const unchecked = (
+      await getPool().query(
+        `SELECT approval_id FROM gpu_budget_layers
+          WHERE approval_id = ANY($1::uuid[]) AND binding_checked_at IS NULL`,
+        [approvals],
+      )
+    ).rows.map((r) => r.approval_id);
+    expect(unchecked).toHaveLength(1);
+    const w = worlds[approvals.indexOf(unchecked[0])];
+    await getPool().query(
+      "UPDATE projects SET users = users - $2 WHERE project_id = $1",
+      [w.project_id, w.funder],
+    );
+    await checkProjectFundingBindings(deps);
+    expect(await layerOf(unchecked[0])).toMatchObject({
+      state: "revoked",
+      revoked_reason: "funder_left_project",
+    });
+  });
+
+  it("says when a funder holds more pods than one answer lists", async () => {
+    const s = await setup();
+    const a = await approve(s);
+    await funded(s, a);
+    await funded(s, a);
+    const req = {
+      source_bay_id: getConfiguredBayId(),
+      project_id: s.project_id,
+      approval_ids: [a.approval_id],
+    };
+    const r = await projectPodsAtFunderLocal(req, {
+      assertSentByProjectBay: async () => {},
+      podLimit: 1,
+    });
+    expect(r.pods).toHaveLength(1);
+    expect(r.truncated).toBe(true);
+    await deliver(s, a.approval_id);
+    const page = await listProjectPodsLocal(
+      { project_id: s.project_id, actor: { kind: "project" } },
+      {
+        ...local(s),
+        funderPods: async () => ({
+          pods: (x: any) =>
+            projectPodsAtFunderLocal(x, {
+              assertSentByProjectBay: async () => {},
+              podLimit: 1,
+            }),
+          terminate: async () => ({ found: false }),
+        }),
+      },
+    );
+    expect(page.incomplete).toEqual([
+      {
+        approval_id: a.approval_id,
+        error: expect.stringContaining("more pods"),
+      },
+    ]);
+  });
+
+  it("terminates a pod of any of a funder's approvals, beyond the first 50", async () => {
+    const s = await setup();
+    const a = await approve(s);
+    const pod = await funded(s, a);
+    await deliver(s, a.approval_id);
+    // 55 newer routes of the same funder that still count a pod (listed first)
+    for (let i = 0; i < 55; i++) {
+      await getPool().query(
+        `INSERT INTO project_compute_approvals
+           (id, kind, project_id, provider, state, approval_id, funder_account_id,
+            funder_bay_id, layer_id, version, ended_reason, ended_at, live_pods,
+            pods_version, created)
+         VALUES ($1, 'approval', $2, 'runpod', 'ended', $3, $4, 'bay-h', $5, 3,
+                 'revoked', now(), 1, 1, now() + interval '1 day')`,
+        [randomUUID(), s.project_id, randomUUID(), s.funder, randomUUID()],
+      );
+    }
+    expect(
+      await terminateProjectPodLocal(
+        {
+          project_id: s.project_id,
+          actor: { kind: "project" },
+          pod_id: pod.id,
+        },
+        local(s),
+      ),
+    ).toMatchObject({ found: true });
+  });
+
+  it("records the exact agent and run that terminated a pod", async () => {
+    const s = await setup();
+    const a = await approve(s);
+    const pod = await funded(s, a);
+    await deliver(s, a.approval_id);
+    await terminateProjectPodLocal(
+      {
+        project_id: s.project_id,
+        actor: {
+          kind: "agent",
+          account_id: s.student,
+          project_id: s.project_id,
+          agent_id: "agent:a7",
+          run_id: "run-7",
+        },
+        pod_id: pod.id,
+      },
+      local(s),
+    );
+    const ev = (
+      await getPool().query(
+        "SELECT actor_kind, actor_account_id, agent_id, turn_id FROM gpu_pod_events WHERE pod_id = $1 AND action = 'terminate'",
+        [pod.id],
+      )
+    ).rows[0];
+    expect(ev).toEqual({
+      actor_kind: "agent",
+      actor_account_id: s.student,
+      agent_id: "agent:a7",
+      turn_id: "run-7",
+    });
   });
 });

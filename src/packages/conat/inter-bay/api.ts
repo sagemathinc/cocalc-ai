@@ -4359,7 +4359,10 @@ export interface InterBayGpuApi {
   // the account's call forwarded like gpuLaunch.
   gpuProjectPodsAtFunder: (
     opts: import("@cocalc/util/gpu/project-funding").ProjectPodsAtFunderRequest,
-  ) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]>;
+  ) => Promise<{
+    pods: import("@cocalc/util/gpu/types").GpuPodSummary[];
+    truncated: boolean;
+  }>;
   gpuProjectTerminateAtFunder: (
     opts: import("@cocalc/util/gpu/project-funding").ProjectTerminateAtFunderRequest,
   ) => Promise<{ found: boolean; state?: string }>;
@@ -4374,7 +4377,7 @@ export interface InterBayGpuApi {
   gpuProjectPodsHome: (opts: {
     account_id: string;
     project_id: string;
-    agent?: { project_id: string; agent_id: string };
+    agent?: { project_id: string; agent_id: string; run_id?: string };
     cursor?: string;
   }) => Promise<
     import("@cocalc/util/gpu/project-funding").ProjectPodsPageResult
@@ -4382,7 +4385,7 @@ export interface InterBayGpuApi {
   gpuProjectTerminateHome: (opts: {
     account_id: string;
     project_id: string;
-    agent?: { project_id: string; agent_id: string };
+    agent?: { project_id: string; agent_id: string; run_id?: string };
     pod_id: string;
   }) => Promise<{ found: boolean; state?: string }>;
 }

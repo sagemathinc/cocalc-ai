@@ -1172,17 +1172,24 @@ export async function reconcileProjectFundingLocators(): Promise<number> {
 // still exists and the funder is still a collaborator. A lost binding ends
 // the approval (and the reaper its pods). Returns how many ended.
 export async function checkProjectFundingBindings(
-  deps: ProjectFundingDeps = {},
+  deps: ProjectFundingDeps & { batch?: number } = {},
 ): Promise<number> {
   const now = (deps.now ?? (() => new Date()))();
+  // least recently checked first, and every checked one moves to the back,
+  // so all approvals advance through the scan whatever their number
   const { rows } = await getPool().query(
     `SELECT * FROM gpu_budget_layers
       WHERE scope_kind = 'project' AND state = 'active'
         AND activation_acked_at IS NOT NULL
-      ORDER BY updated LIMIT 500`,
+      ORDER BY binding_checked_at NULLS FIRST, id LIMIT $1`,
+    [deps.batch ?? 500],
   );
   let ended = 0;
   for (const layer of rows) {
+    await getPool().query(
+      "UPDATE gpu_budget_layers SET binding_checked_at = now() WHERE id = $1",
+      [layer.id],
+    );
     try {
       const p = await (deps.projectBay ?? defaultProjectBay)(layer.project_id);
       const s = await p.status({
@@ -1220,11 +1227,15 @@ export async function checkProjectFundingBindings(
 // project; a pod is reachable only by its own immutable project and an
 // approval layer of that same project. No key is read: the listing comes
 // from CoCalc's records, and a terminate is carried out by the reaper.
+// at most this many pods per answer; more is said, never silently dropped
+export const PROJECT_PODS_LIMIT = 200;
+
 async function projectPodRows(
   db: Db,
   project_id: string,
   approval_ids: string[],
   pod?: string,
+  limit = PROJECT_PODS_LIMIT,
 ) {
   const ids = approval_ids.filter((id) => isValidUUID(id)).slice(0, 50);
   if (ids.length === 0) return [];
@@ -1238,7 +1249,7 @@ async function projectPodRows(
         ${ref == null ? "" : "AND (p.id::text = $3 OR p.handle = $3)"}
         AND (${LIVE_POD_SQL.replace(/state/g, "p.state").replace(/unmanaged_at/g, "p.unmanaged_at")}
              OR p.terminated_at > now() - interval '1 day')
-      ORDER BY p.created DESC LIMIT 200`,
+      ORDER BY p.created DESC LIMIT ${Math.max(1, Math.floor(limit)) + 1}`,
     ref == null ? [project_id, ids] : [project_id, ids, ref],
   );
   return rows;
@@ -1250,17 +1261,30 @@ export async function projectPodsAtFunderLocal(
     project_id: string;
     approval_ids: string[];
   },
-  deps: ProjectFundingDeps = {},
-): Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]> {
+  deps: ProjectFundingDeps & { podLimit?: number } = {},
+): Promise<{
+  pods: import("@cocalc/util/gpu/types").GpuPodSummary[];
+  // more pods than this answer holds: the caller says so
+  truncated: boolean;
+}> {
   const project_id = requireId(req?.project_id, "project_id");
   await (deps.assertSentByProjectBay ?? defaultAssertSentByProjectBay)(
     req.source_bay_id,
     project_id,
   );
   const { podSummary } = await import("@cocalc/server/gpu/pods");
-  return (
-    await projectPodRows(getPool(), project_id, req.approval_ids ?? [])
-  ).map(podSummary);
+  const limit = deps.podLimit ?? PROJECT_PODS_LIMIT;
+  const rows = await projectPodRows(
+    getPool(),
+    project_id,
+    req.approval_ids ?? [],
+    undefined,
+    limit,
+  );
+  return {
+    pods: rows.slice(0, limit).map(podSummary),
+    truncated: rows.length > limit,
+  };
 }
 
 export async function projectTerminateAtFunderLocal(
@@ -1269,7 +1293,12 @@ export async function projectTerminateAtFunderLocal(
     project_id: string;
     approval_ids: string[];
     pod_id: string;
-    actor: { kind: "project" | "user" | "agent"; account_id?: string };
+    actor: {
+      kind: "project" | "user" | "agent";
+      account_id?: string;
+      agent_id?: string;
+      run_id?: string;
+    };
   },
   deps: ProjectFundingDeps = {},
 ): Promise<{ found: boolean; state?: string }> {
@@ -1305,6 +1334,13 @@ export async function projectTerminateAtFunderLocal(
           kind === "user" || kind === "agent"
             ? requireId(req.actor.account_id, "account_id")
             : undefined,
+        ...(kind === "agent"
+          ? {
+              agent_id:
+                `${req.actor.agent_id ?? ""}`.slice(0, 128) || undefined,
+              run_id: `${req.actor.run_id ?? ""}`.slice(0, 128) || undefined,
+            }
+          : {}),
       },
       "terminate",
       { from_project: project_id },

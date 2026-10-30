@@ -816,14 +816,13 @@ export interface ProjectPodCalls {
     source_bay_id: string;
     project_id: string;
     approval_ids: string[];
-  }): Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]>;
-  terminate(req: {
-    source_bay_id: string;
-    project_id: string;
-    approval_ids: string[];
-    pod_id: string;
-    actor: { kind: "project" | "user" | "agent"; account_id?: string };
-  }): Promise<{ found: boolean; state?: string }>;
+  }): Promise<{
+    pods: import("@cocalc/util/gpu/types").GpuPodSummary[];
+    truncated: boolean;
+  }>;
+  terminate(
+    req: import("@cocalc/util/gpu/project-funding").ProjectTerminateAtFunderRequest,
+  ): Promise<{ found: boolean; state?: string }>;
 }
 
 export interface ProjectPodsDeps extends ProjectFundingRouteDeps {
@@ -832,6 +831,8 @@ export interface ProjectPodsDeps extends ProjectFundingRouteDeps {
 }
 
 const PODS_PAGE = 10;
+// the most approval ids one request to a funder's bay names (it takes 50)
+const FUNDER_CHUNK = 50;
 
 async function defaultFunderPods(
   funder_account_id: string,
@@ -933,13 +934,22 @@ export async function listProjectPodsLocal(
   for (const [funder, approval_ids] of byFunder) {
     try {
       const calls = await (deps.funderPods ?? defaultFunderPods)(funder);
-      pods.push(
-        ...(await calls.pods({
-          source_bay_id: getConfiguredBayId(),
-          project_id,
-          approval_ids,
-        })),
-      );
+      const answer = await calls.pods({
+        source_bay_id: getConfiguredBayId(),
+        project_id,
+        approval_ids,
+      });
+      pods.push(...answer.pods);
+      if (answer.truncated) {
+        // never silently: these approvals have more pods than shown
+        for (const approval_id of approval_ids) {
+          incomplete.push({
+            approval_id,
+            error:
+              "more pods than one answer lists; terminate some or ask the funder",
+          });
+        }
+      }
     } catch (err) {
       for (const approval_id of approval_ids) {
         incomplete.push({ approval_id, error: `${err}`.slice(0, 200) });
@@ -978,24 +988,35 @@ export async function terminateProjectPodLocal(
       r.approval_id,
     ]);
   }
+  // who asked, exactly: an agent with its verified agent and run
   const actor =
     opts.actor.kind === "project"
       ? { kind: "project" as const }
-      : { kind: opts.actor.kind, account_id: opts.actor.account_id };
+      : opts.actor.kind === "user"
+        ? { kind: "user" as const, account_id: opts.actor.account_id }
+        : {
+            kind: "agent" as const,
+            account_id: opts.actor.account_id,
+            agent_id: opts.actor.agent_id,
+            run_id: opts.actor.run_id,
+          };
   let lastError: unknown;
-  for (const [funder, approval_ids] of byFunder) {
-    try {
-      const calls = await (deps.funderPods ?? defaultFunderPods)(funder);
-      const r = await calls.terminate({
-        source_bay_id: getConfiguredBayId(),
-        project_id,
-        approval_ids,
-        pod_id,
-        actor,
-      });
-      if (r.found) return r;
-    } catch (err) {
-      lastError = err;
+  for (const [funder, ids] of byFunder) {
+    // every approval of this funder, in chunks the funder's bay takes
+    for (let i = 0; i < ids.length; i += FUNDER_CHUNK) {
+      try {
+        const calls = await (deps.funderPods ?? defaultFunderPods)(funder);
+        const r = await calls.terminate({
+          source_bay_id: getConfiguredBayId(),
+          project_id,
+          approval_ids: ids.slice(i, i + FUNDER_CHUNK),
+          pod_id,
+          actor,
+        });
+        if (r.found) return r;
+      } catch (err) {
+        lastError = err;
+      }
     }
   }
   if (lastError) {

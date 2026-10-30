@@ -148,7 +148,7 @@ export async function launchOnHome(
 type HomeActorOpts = {
   account_id: string;
   project_id: string;
-  agent?: { project_id: string; agent_id: string };
+  agent?: { project_id: string; agent_id: string; run_id?: string };
 };
 
 function actorOf(opts: HomeActorOpts) {
@@ -158,6 +158,7 @@ function actorOf(opts: HomeActorOpts) {
         account_id: opts.account_id,
         project_id: opts.agent.project_id,
         agent_id: opts.agent.agent_id,
+        ...(opts.agent.run_id ? { run_id: opts.agent.run_id } : {}),
       }
     : { kind: "user" as const, account_id: opts.account_id };
 }
