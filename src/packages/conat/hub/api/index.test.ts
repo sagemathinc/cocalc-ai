@@ -187,6 +187,11 @@ describe("hub API argument transforms", () => {
     expect(getHubApiPrincipalPolicies()[name]).toBe(
       "account-or-gpu-agent-or-project",
     );
+    for (const other of ["gpu.projectPods", "gpu.projectTerminate"]) {
+      expect(getHubApiPrincipalPolicies()[other]).toBe(
+        "account-or-gpu-agent-or-project",
+      );
+    }
     const forged = {
       account_id: "forged",
       project_id: "other-project",

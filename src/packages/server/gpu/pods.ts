@@ -227,6 +227,8 @@ function storedSpec(spec: GpuLaunchSpec) {
 
 export interface PodRow {
   id: string;
+  // the project funding approval that pays for it, if any
+  approval_id?: string | null;
   handle: string;
   key_owner_account_id: string;
   credential_id: string;
@@ -299,7 +301,7 @@ export interface Actor {
 }
 
 // A standalone event (a lookup, a duplicate terminated at RunPod).
-async function recordEvent(
+export async function recordEvent(
   pod_id: string,
   actor: Actor,
   action: GpuPodAction,
@@ -461,6 +463,16 @@ export async function transition(
     if (opts.after) row = (await opts.after(db, row)) || row;
     if (event) {
       await recordEvent(id, event.actor, event.action, event.details, db);
+    }
+    // a funded pod that ended moves its approval's locator, in this
+    // transaction (PROJECT_FUNDING.md §7). Only a settling (terminal)
+    // change: its layers are already locked above, in the global lock order.
+    // A pod revived after an end is counted again by the locator's
+    // reconciliation.
+    if (row.approval_id && opts.settle && row.state !== before) {
+      const { syncProjectFundingPodLocator } =
+        await import("@cocalc/server/gpu/project-funding-routes");
+      await syncProjectFundingPodLocator(db, row.approval_id);
     }
     return row;
   });
@@ -1266,6 +1278,12 @@ async function insertIntent({
         );
         await openFirstStateInterval(db, rows[0]);
         await insertReservations(db, id, admission, spec.gpu_count);
+        if (funding) {
+          // the approval's locator counts this pod from its intent on
+          const { syncProjectFundingPodLocator } =
+            await import("@cocalc/server/gpu/project-funding-routes");
+          await syncProjectFundingPodLocator(db, funding.approval_id);
+        }
         if (grant) await consumeGrantLaunch(db, grant.grant_id);
         await recordEvent(
           id,

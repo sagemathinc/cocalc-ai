@@ -4354,6 +4354,37 @@ export interface InterBayGpuApi {
     opts: import("@cocalc/util/gpu/project-funding").ProjectFundingRequestRequest,
   ) => Promise<{ request_id?: string }>;
   // (gpuLaunch's own_key: skip the project's approval)
+  // A project's funded pods (§7). On a funder's home, from the project's
+  // bay; on the project's bay, from the actor's home; on the actor's home,
+  // the account's call forwarded like gpuLaunch.
+  gpuProjectPodsAtFunder: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectPodsAtFunderRequest,
+  ) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]>;
+  gpuProjectTerminateAtFunder: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectTerminateAtFunderRequest,
+  ) => Promise<{ found: boolean; state?: string }>;
+  gpuProjectPodsRoute: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectPodsRouteRequest,
+  ) => Promise<
+    import("@cocalc/util/gpu/project-funding").ProjectPodsPageResult
+  >;
+  gpuProjectTerminateRoute: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectTerminateRouteRequest,
+  ) => Promise<{ found: boolean; state?: string }>;
+  gpuProjectPodsHome: (opts: {
+    account_id: string;
+    project_id: string;
+    agent?: { project_id: string; agent_id: string };
+    cursor?: string;
+  }) => Promise<
+    import("@cocalc/util/gpu/project-funding").ProjectPodsPageResult
+  >;
+  gpuProjectTerminateHome: (opts: {
+    account_id: string;
+    project_id: string;
+    agent?: { project_id: string; agent_id: string };
+    pod_id: string;
+  }) => Promise<{ found: boolean; state?: string }>;
 }
 
 export interface InterBayAccountLocalApi
@@ -8443,6 +8474,18 @@ export function createInterBayAccountLocalClient({
       await gpuClient.gpuProjectLaunchRoute(opts),
     gpuProjectFundingRequest: async (opts) =>
       await gpuClient.gpuProjectFundingRequest(opts),
+    gpuProjectPodsAtFunder: async (opts) =>
+      await gpuClient.gpuProjectPodsAtFunder(opts),
+    gpuProjectTerminateAtFunder: async (opts) =>
+      await gpuClient.gpuProjectTerminateAtFunder(opts),
+    gpuProjectPodsRoute: async (opts) =>
+      await gpuClient.gpuProjectPodsRoute(opts),
+    gpuProjectTerminateRoute: async (opts) =>
+      await gpuClient.gpuProjectTerminateRoute(opts),
+    gpuProjectPodsHome: async (opts) =>
+      await gpuClient.gpuProjectPodsHome(opts),
+    gpuProjectTerminateHome: async (opts) =>
+      await gpuClient.gpuProjectTerminateHome(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -9064,6 +9107,17 @@ export function createInterBayAccountLocalHandler({
           await impl.gpuProjectLaunchRoute(opts),
         gpuProjectFundingRequest: async (opts) =>
           await impl.gpuProjectFundingRequest(opts),
+        gpuProjectPodsAtFunder: async (opts) =>
+          await impl.gpuProjectPodsAtFunder(opts),
+        gpuProjectTerminateAtFunder: async (opts) =>
+          await impl.gpuProjectTerminateAtFunder(opts),
+        gpuProjectPodsRoute: async (opts) =>
+          await impl.gpuProjectPodsRoute(opts),
+        gpuProjectTerminateRoute: async (opts) =>
+          await impl.gpuProjectTerminateRoute(opts),
+        gpuProjectPodsHome: async (opts) => await impl.gpuProjectPodsHome(opts),
+        gpuProjectTerminateHome: async (opts) =>
+          await impl.gpuProjectTerminateHome(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({

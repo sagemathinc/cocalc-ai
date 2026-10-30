@@ -142,3 +142,75 @@ export async function launchOnHome(
     );
   }
 }
+
+// ---- a project's funded pods, asked from the actor's home (§7) ----
+
+type HomeActorOpts = {
+  account_id: string;
+  project_id: string;
+  agent?: { project_id: string; agent_id: string };
+};
+
+function actorOf(opts: HomeActorOpts) {
+  return opts.agent
+    ? {
+        kind: "agent" as const,
+        account_id: opts.account_id,
+        project_id: opts.agent.project_id,
+        agent_id: opts.agent.agent_id,
+      }
+    : { kind: "user" as const, account_id: opts.account_id };
+}
+
+async function projectBayPods(project_id: string) {
+  const { resolveProjectBay } =
+    await import("@cocalc/server/inter-bay/directory");
+  const owner = (await resolveProjectBay(project_id))?.bay_id;
+  const bay = `${owner ?? ""}`.trim() || getConfiguredBayId();
+  if (bay === getConfiguredBayId()) {
+    const r = await import("@cocalc/server/gpu/project-funding-routes");
+    return {
+      pods: (req: any) => r.listProjectPodsLocal(req),
+      terminate: (req: any) => r.terminateProjectPodLocal(req),
+    };
+  }
+  const { createInterBayAccountLocalClient } =
+    await import("@cocalc/conat/inter-bay/api");
+  const { getInterBayFabricClient } =
+    await import("@cocalc/server/inter-bay/fabric");
+  const client = createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: bay,
+    timeout: 60_000,
+  });
+  return {
+    pods: (req: any) => client.gpuProjectPodsRoute(req),
+    terminate: (req: any) => client.gpuProjectTerminateRoute(req),
+  };
+}
+
+export async function projectPodsOnHome(
+  opts: HomeActorOpts & { cursor?: string },
+) {
+  return await (
+    await projectBayPods(opts.project_id)
+  ).pods({
+    source_bay_id: getConfiguredBayId(),
+    project_id: opts.project_id,
+    actor: actorOf(opts),
+    cursor: opts.cursor,
+  });
+}
+
+export async function projectTerminateOnHome(
+  opts: HomeActorOpts & { pod_id: string },
+) {
+  return await (
+    await projectBayPods(opts.project_id)
+  ).terminate({
+    source_bay_id: getConfiguredBayId(),
+    project_id: opts.project_id,
+    actor: actorOf(opts),
+    pod_id: opts.pod_id,
+  });
+}

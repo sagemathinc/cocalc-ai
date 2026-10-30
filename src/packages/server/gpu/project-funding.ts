@@ -57,6 +57,8 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { every } from "@cocalc/server/gpu/reaper";
 import {
+  LIVE_POD_SQL,
+  syncProjectFundingPodLocator,
   deliverProjectFundingMessageLocal,
   enqueueProjectFundingMessage,
   expireProjectFundingLeases,
@@ -1103,6 +1105,9 @@ export const PROJECT_FUNDING_RECONCILE_INTERVAL_MS = 60_000;
 
 // Every API hub delivers its bay's outbox (claims are row-locked) and
 // reconciles (idempotent, under the same fences as the API).
+export const PROJECT_FUNDING_BINDING_INTERVAL_MS = 5 * 60_000;
+export const PROJECT_FUNDING_LOCATOR_INTERVAL_MS = 10 * 60_000;
+
 export function initProjectFunding(): void {
   every(
     "project_funding_outbox",
@@ -1117,6 +1122,196 @@ export function initProjectFunding(): void {
     },
     PROJECT_FUNDING_RECONCILE_INTERVAL_MS,
   );
+  every(
+    "project_funding_bindings",
+    () => checkProjectFundingBindings(),
+    PROJECT_FUNDING_BINDING_INTERVAL_MS,
+  );
+  every(
+    "project_funding_locator",
+    () => reconcileProjectFundingLocators(),
+    PROJECT_FUNDING_LOCATOR_INTERVAL_MS,
+  );
+}
+
+// ---- the locator's reconciliation and the binding check (§3, §7) ----
+
+// Recount live pods for every approval that might have any: the layers
+// that are active or record a positive count, and (so a wrong zero is
+// found too) every approval of a pod that is actually live. Returns how
+// many counts changed.
+export async function reconcileProjectFundingLocators(): Promise<number> {
+  const { rows } = await getPool().query(
+    `SELECT approval_id FROM gpu_budget_layers
+      WHERE scope_kind = 'project' AND (state = 'active' OR live_pods > 0)
+     UNION
+     SELECT DISTINCT approval_id FROM gpu_pods
+      WHERE approval_id IS NOT NULL AND ${LIVE_POD_SQL}`,
+  );
+  let changed = 0;
+  for (const { approval_id } of rows) {
+    const before = await getPool().query(
+      "SELECT live_pods FROM gpu_budget_layers WHERE approval_id = $1",
+      [approval_id],
+    );
+    const after = await inTransaction(async (db) => {
+      const { rows: l } = await db.query(
+        `SELECT credential_id FROM gpu_budget_layers WHERE approval_id = $1`,
+        [approval_id],
+      );
+      if (!l[0]) return undefined;
+      await lockKeyFence(db, l[0].credential_id);
+      return await syncProjectFundingPodLocator(db, approval_id);
+    }).catch(() => undefined);
+    if (after != null && after !== before.rows[0]?.live_pods) changed += 1;
+  }
+  return changed;
+}
+
+// Every active approval's binding, asked of the project's bay: the project
+// still exists and the funder is still a collaborator. A lost binding ends
+// the approval (and the reaper its pods). Returns how many ended.
+export async function checkProjectFundingBindings(
+  deps: ProjectFundingDeps = {},
+): Promise<number> {
+  const now = (deps.now ?? (() => new Date()))();
+  const { rows } = await getPool().query(
+    `SELECT * FROM gpu_budget_layers
+      WHERE scope_kind = 'project' AND state = 'active'
+        AND activation_acked_at IS NOT NULL
+      ORDER BY updated LIMIT 500`,
+  );
+  let ended = 0;
+  for (const layer of rows) {
+    try {
+      const p = await (deps.projectBay ?? defaultProjectBay)(layer.project_id);
+      const s = await p.status({
+        source_bay_id: getConfiguredBayId(),
+        project_id: layer.project_id,
+        approval_id: layer.approval_id,
+        funder_account_id: layer.key_owner_account_id,
+      });
+      if (s.status === "rehoming") continue;
+      const lost: ProjectFundingEndedReason | undefined = s.project_deleted
+        ? "project_deleted"
+        : s.status === "found" && !s.funder_is_collaborator
+          ? "funder_left_project"
+          : undefined;
+      if (!lost) continue;
+      const did = await inTransaction(async (db) => {
+        await (deps.accountWriteFence ?? lockGpuAccountFence)(
+          db,
+          layer.key_owner_account_id,
+          "end a project's GPU funding",
+        );
+        return await endLayer(db, layer, lost, null, now);
+      });
+      if (did) ended += 1;
+    } catch {
+      // the next pass asks again
+    }
+  }
+  return ended;
+}
+
+// ---- the project's pods, at the funder's home (§7) ----
+
+// Only the project's current owning bay asks, naming approvals of that
+// project; a pod is reachable only by its own immutable project and an
+// approval layer of that same project. No key is read: the listing comes
+// from CoCalc's records, and a terminate is carried out by the reaper.
+async function projectPodRows(
+  db: Db,
+  project_id: string,
+  approval_ids: string[],
+  pod?: string,
+) {
+  const ids = approval_ids.filter((id) => isValidUUID(id)).slice(0, 50);
+  if (ids.length === 0) return [];
+  const ref = pod == null ? null : `${pod}`.trim();
+  const { rows } = await db.query(
+    `SELECT p.* FROM gpu_pods p
+       JOIN gpu_budget_layers l
+         ON l.approval_id = p.approval_id AND l.scope_kind = 'project'
+        AND l.project_id = p.project_id
+      WHERE p.project_id = $1 AND p.approval_id = ANY($2::uuid[])
+        ${ref == null ? "" : "AND (p.id::text = $3 OR p.handle = $3)"}
+        AND (${LIVE_POD_SQL.replace(/state/g, "p.state").replace(/unmanaged_at/g, "p.unmanaged_at")}
+             OR p.terminated_at > now() - interval '1 day')
+      ORDER BY p.created DESC LIMIT 200`,
+    ref == null ? [project_id, ids] : [project_id, ids, ref],
+  );
+  return rows;
+}
+
+export async function projectPodsAtFunderLocal(
+  req: {
+    source_bay_id: string;
+    project_id: string;
+    approval_ids: string[];
+  },
+  deps: ProjectFundingDeps = {},
+): Promise<import("@cocalc/util/gpu/types").GpuPodSummary[]> {
+  const project_id = requireId(req?.project_id, "project_id");
+  await (deps.assertSentByProjectBay ?? defaultAssertSentByProjectBay)(
+    req.source_bay_id,
+    project_id,
+  );
+  const { podSummary } = await import("@cocalc/server/gpu/pods");
+  return (
+    await projectPodRows(getPool(), project_id, req.approval_ids ?? [])
+  ).map(podSummary);
+}
+
+export async function projectTerminateAtFunderLocal(
+  req: {
+    source_bay_id: string;
+    project_id: string;
+    approval_ids: string[];
+    pod_id: string;
+    actor: { kind: "project" | "user" | "agent"; account_id?: string };
+  },
+  deps: ProjectFundingDeps = {},
+): Promise<{ found: boolean; state?: string }> {
+  const project_id = requireId(req?.project_id, "project_id");
+  await (deps.assertSentByProjectBay ?? defaultAssertSentByProjectBay)(
+    req.source_bay_id,
+    project_id,
+  );
+  const { recordEvent } = await import("@cocalc/server/gpu/pods");
+  return await inTransaction(async (db) => {
+    const [pod] = await projectPodRows(
+      db,
+      project_id,
+      req.approval_ids ?? [],
+      `${req.pod_id ?? ""}`,
+    );
+    if (!pod) return { found: false };
+    if (["terminated", "failed"].includes(pod.state)) {
+      return { found: true, state: pod.state };
+    }
+    await db.query(
+      `UPDATE gpu_pods SET desired_state = 'terminated',
+              reason = COALESCE(reason, 'Terminated from its project.'), updated = now()
+        WHERE id = $1 AND state NOT IN ('terminated', 'failed')`,
+      [pod.id],
+    );
+    const kind = req.actor?.kind;
+    await recordEvent(
+      pod.id,
+      {
+        kind: kind === "user" || kind === "agent" ? kind : "project",
+        account_id:
+          kind === "user" || kind === "agent"
+            ? requireId(req.actor.account_id, "account_id")
+            : undefined,
+      },
+      "terminate",
+      { from_project: project_id },
+      db,
+    );
+    return { found: true, state: pod.state };
+  });
 }
 
 // ---- a funded launch, at this (the funder's home) bay's boundary ----
