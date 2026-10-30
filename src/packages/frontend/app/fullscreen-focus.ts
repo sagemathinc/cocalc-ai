@@ -45,11 +45,19 @@ export function handOffFullscreenFocusIfFocused(): void {
   }
 }
 
-// Called by a fullscreen control after it mounts or changes mode.
+// Called by a fullscreen control after it mounts or changes mode. An inert
+// copy (a retained hidden pane) can't take focus and leaves the hand-off for
+// the visible one.
 export function takeFullscreenFocus(el: HTMLElement | null): void {
-  if (!pending || el == null) return;
+  if (!pending || el == null || !tryFocus(el)) return;
   pending = false;
+  clearTimeout(timer);
+}
+
+function tryFocus(el: HTMLElement): boolean {
+  if (el.closest(UNFOCUSABLE_ANCESTOR) != null) return false;
   el.focus();
+  return document.activeElement === el;
 }
 
 function focusFallback(): void {
@@ -62,10 +70,8 @@ function focusFallback(): void {
       ".smc-top-bar button, .smc-top-bar a[href]",
     ),
   ];
+  // keep the first candidate that actually takes focus
   for (const el of candidates) {
-    if (el.closest(UNFOCUSABLE_ANCESTOR) != null) continue;
-    el.focus();
-    // keep the first candidate that actually takes focus
-    if (document.activeElement === el) return;
+    if (tryFocus(el)) return;
   }
 }

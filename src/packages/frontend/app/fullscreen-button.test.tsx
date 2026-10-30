@@ -71,6 +71,33 @@ it("enters by keyboard and moves focus to the exit button", async () => {
   ).toHaveFocus();
 });
 
+it("skips an inert copy of the control when taking the hand-off", async () => {
+  const user = userEvent.setup();
+  fullscreen = undefined;
+  // a retained, inert pane renders its own copy before the visible one
+  const Page = () => (
+    <IntlProvider locale="en">
+      <div inert>
+        <FullscreenButton pageStyle={{ ...pageStyle }} />
+      </div>
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>
+  );
+  const { rerender } = render(<Page />);
+  const [, enter] = screen.getAllByRole("button", {
+    name: /enter fullscreen/i,
+  });
+  enter.focus();
+  await user.keyboard("{Enter}");
+  fullscreen = "default";
+  rerender(<Page />);
+  const [inertExit, exit] = screen.getAllByRole("button", {
+    name: /exit fullscreen/i,
+  });
+  expect(inertExit.closest("[inert]")).not.toBeNull();
+  expect(exit).toHaveFocus();
+});
+
 it("keeps focus when the browser leaves fullscreen while exit has focus", () => {
   fullscreen = "default";
   const { rerender } = renderButton();

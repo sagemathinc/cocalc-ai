@@ -23,7 +23,10 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { ConnectionIndicator } from "./connection-indicator";
 import { BrowserUpdateIndicator } from "./update-indicator";
 import openSupportTab from "@cocalc/frontend/support/open";
-import { FULLSCREEN_EXIT_FOCUS } from "./fullscreen-focus";
+import {
+  FULLSCREEN_EXIT_FOCUS,
+  handOffFullscreenFocus,
+} from "./fullscreen-focus";
 import type { PageStyle } from "./top-nav-consts";
 import { PeopleUnreadBadge } from "@cocalc/frontend/people/unread-badge";
 
@@ -132,6 +135,8 @@ export function CompactAgentsTopNav({
         pageActions.show_connection(true);
         return;
       case "fullscreen":
+        // the menu and this nav unmount: the fullscreen control takes focus
+        handOffFullscreenFocus();
         pageActions.toggle_fullscreen();
         return;
       default:
