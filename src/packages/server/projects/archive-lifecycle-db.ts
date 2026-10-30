@@ -308,11 +308,26 @@ export async function updateProjectArchiveLifecycleJob({
 }
 
 // A manual archive runs inside the call that created its job, so a hub restart
-// (or a hang) during it leaves the job "running" for good. That job then
-// counts as its host's running archive, and automatic archiving there stops
-// (prod los-angeles-1, 2026-10-30: the bay restarted 8 s into one). Manual
-// archives take seconds: fail one that has not changed for this long.
+// during it leaves the job "running" for good. That job then counts as its
+// host's running archive, and automatic archiving there stops (prod
+// los-angeles-1, 2026-10-30: the bay restarted 8 s into one). While the call
+// runs it refreshes the job (MANUAL_ARCHIVE_HEARTBEAT_MS), so a job not
+// refreshed for this long belongs to a call that is gone: fail it.
 export const STUCK_MANUAL_ARCHIVE_MS = 30 * 60_000;
+export const MANUAL_ARCHIVE_HEARTBEAT_MS = 5 * 60_000;
+
+export async function touchRunningProjectArchiveLifecycleJob(
+  job_id: string,
+): Promise<void> {
+  await ensureProjectArchiveLifecycleSchema();
+  await getPool().query(
+    `UPDATE ${PROJECT_ARCHIVE_LIFECYCLE_TABLE}
+        SET updated_at = NOW()
+      WHERE id = $1
+        AND status = 'running'`,
+    [job_id],
+  );
+}
 
 export async function failStuckManualArchiveJobs(
   staleMs = STUCK_MANUAL_ARCHIVE_MS,

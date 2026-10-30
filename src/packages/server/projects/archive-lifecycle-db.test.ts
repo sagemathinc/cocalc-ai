@@ -23,6 +23,9 @@ import {
   createProjectArchiveLifecycleJob,
   failStuckManualArchiveJobs,
   getProjectArchiveLifecycleFinalBackup,
+  MANUAL_ARCHIVE_HEARTBEAT_MS,
+  STUCK_MANUAL_ARCHIVE_MS,
+  touchRunningProjectArchiveLifecycleJob,
   listQueuedProjectArchiveLifecycleJobs,
   listRecoverableProjectArchiveLifecycleJobs,
   recordProjectArchiveLifecycleFinalBackup,
@@ -86,6 +89,20 @@ describe("project archive lifecycle job persistence", () => {
     expect(sql).toContain("failure_category = 'stuck-manual-archive'");
     expect(sql).toContain("updated_at < NOW() - make_interval");
     expect(parameters[0]).toBe(30 * 60);
+  });
+
+  it("refreshes only a running job, well within the stuck bound", async () => {
+    await touchRunningProjectArchiveLifecycleJob(
+      "77777777-7777-4777-8777-777777777777",
+    );
+    const [sql, parameters] = query.mock.calls[0];
+    expect(sql).toContain("SET updated_at = NOW()");
+    expect(sql).toContain("status = 'running'");
+    expect(parameters).toEqual(["77777777-7777-4777-8777-777777777777"]);
+    // a live call refreshes its job several times before it could look stuck
+    expect(
+      STUCK_MANUAL_ARCHIVE_MS / MANUAL_ARCHIVE_HEARTBEAT_MS,
+    ).toBeGreaterThanOrEqual(5);
   });
 
   it("casts every terminal status parameter reference consistently", async () => {
