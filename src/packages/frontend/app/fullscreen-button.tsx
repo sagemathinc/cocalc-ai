@@ -74,11 +74,10 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
     );
   }
 
-  // Not in fullscreen: the nav icon that enters it.
-  const icon_style: CSS = {
+  // Not in fullscreen: the nav button that enters it.
+  const button_style: CSS = {
     fontSize: fontSizeIcons,
     color: UI_COLORS.text,
-    cursor: "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -90,17 +89,20 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
     id: "app.fullscreen-button.tooltip",
     defaultMessage: "Fullscreen mode, focused on the current document or page.",
   });
+  const label = intl.formatMessage({
+    id: "app.fullscreen-button.enter",
+    defaultMessage: "Enter fullscreen",
+  });
 
   return (
     <Tip title={tooltip} placement={"bottomRight"} delayShow={2000}>
-      <Icon
+      <Button
+        type="text"
         className={TOP_BAR_ELEMENT_CLASS}
-        style={icon_style}
-        name="expand"
-        aria-label={tooltip}
-        onClick={(_) => {
-          page_actions.toggle_fullscreen();
-        }}
+        style={button_style}
+        icon={<Icon name="expand" />}
+        aria-label={label}
+        onClick={() => page_actions.toggle_fullscreen()}
       />
     </Tip>
   );

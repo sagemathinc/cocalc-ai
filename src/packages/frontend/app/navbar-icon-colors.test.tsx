@@ -34,7 +34,9 @@ it("matches the normal navbar foreground", () => {
       <ConnectionIndicator pageStyle={pageStyle} height={32} />
     </IntlProvider>,
   );
-  expect(screen.getByTestId("expand").style.color).toBe(UI_COLORS.text);
+  expect(
+    screen.getByRole("button", { name: /enter fullscreen/i }).style.color,
+  ).toBe(UI_COLORS.text);
   expect(screen.getByTestId("wifi").style.color).toBe(UI_COLORS.text);
 });
 

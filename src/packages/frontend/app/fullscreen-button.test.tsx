@@ -11,13 +11,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => fullscreen,
 }));
 jest.mock("@cocalc/frontend/components", () => ({
-  Icon: ({ name, onClick, ...props }) => (
-    <span
-      data-testid={name}
-      onClick={onClick}
-      aria-label={props["aria-label"]}
-    />
-  ),
+  Icon: ({ name }) => <span data-testid={name} />,
   Tip: ({ children }) => children,
 }));
 
@@ -38,11 +32,14 @@ it("shows a labeled exit button in default fullscreen", () => {
   expect(toggle_fullscreen).toHaveBeenCalledTimes(1);
 });
 
-it("shows the enter icon outside fullscreen", () => {
+it("shows a keyboard-reachable enter button outside fullscreen", () => {
   fullscreen = undefined;
   renderButton();
   expect(screen.queryByRole("button", { name: /exit fullscreen/i })).toBeNull();
-  fireEvent.click(screen.getByTestId("expand"));
+  const enter = screen.getByRole("button", { name: /enter fullscreen/i });
+  enter.focus();
+  expect(enter).toHaveFocus();
+  fireEvent.click(enter);
   expect(toggle_fullscreen).toHaveBeenCalledTimes(1);
 });
 
