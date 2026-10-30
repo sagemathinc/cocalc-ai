@@ -1692,7 +1692,10 @@ export async function* readLinesBackward(
     const { size } = await handle.stat();
     const stop = Math.max(0, size - maxBytes);
     let position = size;
-    let carry = Buffer.alloc(0);
+    // The pieces of the line being read, in file order. They are joined once,
+    // when the line's start is found: concatenating per chunk would recopy a
+    // long record for every chunk it spans.
+    let pieces: Buffer[] = [];
     while (position > stop) {
       const length = Math.min(chunkBytes, position - stop);
       position -= length;
@@ -1708,16 +1711,24 @@ export async function* readLinesBackward(
         if (bytesRead === 0) break;
         read += bytesRead;
       }
-      const buffer = carry.length ? Buffer.concat([chunk, carry]) : chunk;
-      let end = buffer.length;
-      for (let i = buffer.length - 1; i >= 0; i -= 1) {
-        if (buffer[i] !== 0x0a) continue;
-        yield buffer.toString("utf8", i + 1, end);
+      let end = length;
+      for (let i = length - 1; i >= 0; i -= 1) {
+        if (chunk[i] !== 0x0a) continue;
+        if (pieces.length) {
+          yield Buffer.concat([chunk.subarray(i + 1, end), ...pieces]).toString(
+            "utf8",
+          );
+          pieces = [];
+        } else {
+          yield chunk.toString("utf8", i + 1, end);
+        }
         end = i;
       }
-      carry = buffer.subarray(0, end);
+      if (end > 0) pieces.unshift(chunk.subarray(0, end));
     }
-    if (position === 0 && carry.length) yield carry.toString("utf8");
+    if (position === 0 && pieces.length) {
+      yield Buffer.concat(pieces).toString("utf8");
+    }
   } finally {
     await handle.close();
   }

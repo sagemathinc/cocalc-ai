@@ -8032,7 +8032,8 @@ describe("readLinesBackward", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "codex-rollout-tail-"));
     try {
       const file = path.join(dir, "rollout.jsonl");
-      const lines = ["first", "ünïcødé ✓ 🚀", "", "a".repeat(40), "last"];
+      // One record spans many chunks, with multibyte characters cut by them.
+      const lines = ["first", "ünïcødé ✓ 🚀", "", "é🚀a".repeat(40), "last"];
       writeFileSync(file, `${lines.join("\n")}\n`);
       expect(await collect(file, { chunkBytes: 7 })).toEqual([
         "",
