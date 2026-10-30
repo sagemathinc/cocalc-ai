@@ -104,6 +104,8 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
+import { chatViewKey, directViewKey, showingConversation } from "../viewing";
+
 describe("MentionsActions realtime feed", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -512,6 +514,96 @@ describe("MentionsActions realtime feed", () => {
     await flushMicrotasks();
 
     expect(showCodexTurnCompletionToastBestEffortMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a notification about the conversation the person is reading is read at once", async () => {
+    let mentionsStore = ImmutableMap({ mentions: ImmutableMap() });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        if (name === "mentions") {
+          return mentionsStore;
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((patch) => {
+        if (patch.mentions != null) {
+          mentionsStore = mentionsStore.merge(patch.mentions);
+        }
+      }),
+      removeActions: jest.fn(),
+    } as any;
+    const actions = new MentionsActions("mentions", redux);
+    actions._init();
+    await flush();
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    const hasFocus = jest.spyOn(document, "hasFocus").mockReturnValue(true);
+    const stopDirect = showingConversation(directViewKey("dm-1"));
+    const stopChat = showingConversation(chatViewKey("proj-1", "team.chat"));
+    try {
+      const arrive = (notification_id: string, extra: object) =>
+        feed.emit("change", {
+          type: "notification.upsert",
+          account_id: "acct-1",
+          reason: "projected_upsert",
+          ts: Date.now(),
+          notification: {
+            notification_id,
+            kind: "account_notice",
+            project_id: null,
+            summary: { title: "Message" },
+            read_state: { read: false, saved: false },
+            created_at: "2026-04-05T00:00:00.000Z",
+            updated_at: "2026-04-05T00:00:00.000Z",
+            ...extra,
+          },
+        });
+      const read = (id: string) =>
+        mentionsStore.getIn(["mentions", id, "users", "acct-1", "read"]);
+      // The open direct conversation, and the open chat (by its full path).
+      arrive("n-dm", {
+        summary: { notice_type: "direct_message", conversation_id: "dm-1" },
+      });
+      arrive("n-chat", {
+        kind: "mention",
+        project_id: "proj-1",
+        summary: { path: "/home/user/team.chat" },
+      });
+      // Another conversation: counted as usual.
+      arrive("n-other", {
+        summary: { notice_type: "direct_message", conversation_id: "dm-2" },
+      });
+      await flushMicrotasks();
+      expect(read("n-dm")).toBe(true);
+      expect(read("n-chat")).toBe(true);
+      expect(read("n-other")).toBe(false);
+      const marked =
+        mockedWebappClient.conat_client.hub.notifications.markRead.mock.calls.map(
+          ([opts]) => opts,
+        );
+      expect(marked).toEqual(
+        expect.arrayContaining([
+          { notification_ids: ["n-dm"], read: true },
+          { notification_ids: ["n-chat"], read: true },
+        ]),
+      );
+      expect(marked).not.toContainEqual(
+        expect.objectContaining({ notification_ids: ["n-other"] }),
+      );
+      // Not looking (another window has focus): counted as usual.
+      hasFocus.mockReturnValue(false);
+      arrive("n-away", {
+        summary: { notice_type: "direct_message", conversation_id: "dm-1" },
+      });
+      await flushMicrotasks();
+      expect(read("n-away")).toBe(false);
+    } finally {
+      stopDirect();
+      stopChat();
+      hasFocus.mockRestore();
+    }
   });
 
   it("does not leave notifications loading forever after a transient refresh failure", async () => {

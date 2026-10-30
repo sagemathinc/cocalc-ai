@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { isAboutShownConversation } from "../viewing";
 import { fromJS, Map } from "immutable";
 
 import { Actions } from "@cocalc/frontend/app-framework";
@@ -606,7 +607,7 @@ export class MentionsActions extends Actions<MentionsState> {
             row: event.notification,
           });
         }
-        const mention = buildNotificationMention(account_id, {
+        let mention = buildNotificationMention(account_id, {
           ...event.notification,
           created_at: event.notification.created_at
             ? new Date(event.notification.created_at)
@@ -623,12 +624,26 @@ export class MentionsActions extends Actions<MentionsState> {
           });
           return;
         }
+        // About a conversation the person is reading right now: read already.
+        const readNow =
+          event.reason === "projected_upsert" &&
+          !event.notification.read_state?.read &&
+          isAboutShownConversation(event.notification);
+        if (readNow) {
+          mention = mention.setIn(["users", account_id, "read"], true);
+        }
         this.setState({
           mentions: this.getMentions()
             .set(event.notification.notification_id, mention)
             .sort(mentionSort) as MentionsMap,
         });
         this.notificationRowProjectionVersion += 1;
+        if (readNow) {
+          void this.updateReadState({
+            notification_ids: [event.notification.notification_id],
+            read: true,
+          }).catch(() => {});
+        }
         return;
       }
       case "notification.remove":
