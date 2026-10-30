@@ -139,12 +139,40 @@ export function refusedByStorageWrapper(err: unknown): boolean {
   return /\bSECURITY_DENY\b/.test(`${(err as any)?.message ?? err}`);
 }
 
+// The btrfs subcommands that only read. Anything else (snapshot, delete,
+// property set, qgroup changes, ...) ends in a transaction commit that every
+// fsync on the host waits for, so it must not run throttled by the
+// maintenance cgroup's io.max, even for background work: measured on prod
+// 10-30, such commits took 5-7 s (median, up to 45 s) from there against
+// 0.4 s for the same commands run unthrottled. Unknown subcommands count as
+// writes.
+const READ_ONLY_BTRFS_SUBCOMMANDS: Record<string, readonly string[] | "all"> = {
+  subvolume: ["show", "list", "get-default", "find-new", "sync"],
+  filesystem: ["show", "df", "du", "usage"],
+  qgroup: ["show"],
+  property: ["get", "list"],
+  device: ["stats", "usage"],
+  scrub: ["status"],
+  balance: ["status"],
+  "inspect-internal": "all",
+};
+
+export function btrfsCommandOnlyReads(args: readonly string[]): boolean {
+  const [group, sub] = args.filter((arg) => !arg.startsWith("-"));
+  const allowed = READ_ONLY_BTRFS_SUBCOMMANDS[group ?? ""];
+  if (allowed == null) return false;
+  return allowed === "all" || allowed.includes(sub ?? "");
+}
+
 export async function btrfs(
   opts: Partial<ExecuteCodeOptions & { desc?: string }>,
 ) {
   return await sudo({
     ...opts,
-    command: isBackgroundBtrfsMutation() ? "btrfs-maintenance" : "btrfs",
+    command:
+      isBackgroundBtrfsMutation() && btrfsCommandOnlyReads(opts.args ?? [])
+        ? "btrfs-maintenance"
+        : "btrfs",
   });
 }
 
