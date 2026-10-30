@@ -13,6 +13,10 @@ import {
 const PROJECT = "6b0f0b1e-2a1f-4b7e-8d7c-0c2f8a9b1c3d";
 
 describe("hub API routes", () => {
+  it("never edge-routes gpu.launch: agents can't be routed, and the launch routes itself (actor's home, then the project's bay)", () => {
+    expect(getHubApiRoute("gpu.launch")).toBeUndefined();
+  });
+
   it("routes only real methods that accounts can call", () => {
     for (const name of getHubApiRoutedMethods()) {
       expect([name, getHubApiPrincipalPolicy(name)]).toEqual([name, "account"]);
