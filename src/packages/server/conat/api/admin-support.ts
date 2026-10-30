@@ -575,7 +575,10 @@ function sanitizeUrl(raw: string): string {
     url.username = "";
     url.password = "";
     url.hash = "";
-    if (url.search) url.search = "?REDACTED";
+    // Keep the uuid of a CoCalc blob *image* (e.g. a pasted screenshot): the
+    // same URL is already returned in the ticket's images list. Other query
+    // strings, including document blobs, stay redacted.
+    if (url.search && !isSupportBlobImageQuery(url)) url.search = "?REDACTED";
     const projectMatch = url.pathname.match(
       /^(.*\/projects\/[0-9a-f-]{36})(?:\/.*)?$/i,
     );
@@ -648,6 +651,26 @@ function attachmentReference(
 function supportImageExtension(filename: string): string {
   const match = filename.toLowerCase().match(/(\.[a-z0-9]+)$/);
   return match?.[1] ?? "";
+}
+
+function isSupportBlobImageQuery(url: URL): boolean {
+  const name = url.pathname.match(/\/blobs\/([^/]+)$/)?.[1];
+  if (name == null) return false;
+  let filename: string;
+  try {
+    filename = decodeURIComponent(name);
+  } catch {
+    return false;
+  }
+  if (!SAFE_SUPPORT_IMAGE_EXTENSIONS.has(supportImageExtension(filename))) {
+    return false;
+  }
+  const params = [...url.searchParams.keys()];
+  return (
+    params.length === 1 &&
+    params[0] === "uuid" &&
+    isValidUUID(url.searchParams.get("uuid") ?? "")
+  );
 }
 
 function stripTrailingUrlPunctuation(value: string): string {
@@ -824,8 +847,11 @@ export function redactSupportText(value: unknown, maxChars: number): string {
     /\b(authorization|api[_ -]?key|access[_ -]?token|token|password|passwd|secret)\b\s*[:=]\s*[^\s,;]+/gi,
     "$1=[REDACTED_SECRET]",
   );
+  // JSON Web Tokens: three base64url segments with a "{"-encoded header.
+  // A looser dotted pattern also matched host names and paths (cocalc.ai/...,
+  // student.university.ac.uk), which hid links and email domains.
   text = text.replace(
-    /\b[A-Z][A-Z0-9+/_-]*\.[A-Z0-9+/_-]+\.[A-Z0-9+/_-]+\b/gi,
+    /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
     "[REDACTED_TOKEN]",
   );
   text = text.replace(

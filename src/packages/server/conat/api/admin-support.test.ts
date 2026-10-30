@@ -228,6 +228,35 @@ describe("admin support API", () => {
     expect(redacted).toContain("[REDACTED_PATH]");
   });
 
+  it("keeps host names, paths and blob image links readable", () => {
+    const redacted = redactSupportText(
+      [
+        `- Image: https://cocalc.ai/blobs/bug.jpg?uuid=${IMAGE_UUID}`,
+        `Report: https://cocalc.ai/blobs/report.pdf?uuid=${IMAGE_UUID}`,
+        `Shot: https://cocalc.ai/blobs/shot.png?uuid=${IMAGE_UUID}&token=abc`,
+        "Docs: https://docs.example.edu/guide/setup.html",
+        "Contact: bob.smith@student.example.ac.uk",
+        "Header: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlX3ZhbHVl",
+      ].join("\n"),
+      10_000,
+    );
+    // Image blob links keep their uuid; the same URL is in the images list.
+    expect(redacted).toContain(
+      `https://cocalc.ai/blobs/bug.jpg?uuid=${IMAGE_UUID}`,
+    );
+    // Document blobs and other query strings stay redacted.
+    expect(redacted).toContain("https://cocalc.ai/blobs/report.pdf?REDACTED");
+    expect(redacted).toContain("https://cocalc.ai/blobs/shot.png?REDACTED");
+    // Dotted host names and paths are not mistaken for tokens.
+    expect(redacted).toContain("https://docs.example.edu/guide/setup.html");
+    // Email addresses are redacted whole, not just their domains.
+    expect(redacted).not.toContain("bob.smith");
+    expect(redacted).toContain("[REDACTED_EMAIL]");
+    // JSON Web Tokens are still redacted.
+    expect(redacted).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    expect(redacted).toContain("[REDACTED_TOKEN]");
+  });
+
   it("extracts only validated images from the configured CoCalc site", () => {
     const images = extractSupportImages(
       [
