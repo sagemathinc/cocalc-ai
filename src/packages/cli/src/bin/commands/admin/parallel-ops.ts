@@ -18,7 +18,7 @@ import type {
   ParallelOpsLimitResolution,
   ParallelOpsWorkerStatus,
 } from "@cocalc/conat/hub/api/system";
-import { listHosts, resolveHost } from "../../core/project-resolve";
+import { listHosts } from "../../core/project-resolve";
 
 export type ParallelOpsCommandDeps = {
   withContext: any;
@@ -105,17 +105,25 @@ export async function targetHosts(
       "this worker's limit is per host: give --host <id|name> (repeatable) or --all-hosts",
     );
   }
+  // Matched against the admin host list itself, by id or name: an unknown
+  // or deleted id is an error, never a stand-in (an override stored for a
+  // host that doesn't exist would do nothing).
+  const known = (await listHosts(ctx, { admin_view: true })) as HostRef[];
   const out: HostRef[] = [];
   for (const id of opts.host) {
-    try {
-      out.push((await resolveHost(ctx, id, { admin_view: true })) as HostRef);
-    } catch (err) {
+    const byId = known.find((h) => h.id === id);
+    const byName = known.filter((h) => h.name === id);
+    if (byId) out.push(byId);
+    else if (byName.length === 1) out.push(byName[0]);
+    else
       out.push({
         id: "",
         name: id,
-        error: `${(err as Error)?.message ?? err}`,
+        error:
+          byName.length > 1
+            ? `host name '${id}' is ambiguous: ${byName.map((h) => h.id).join(", ")}`
+            : `host '${id}' not found`,
       });
-    }
   }
   return out;
 }

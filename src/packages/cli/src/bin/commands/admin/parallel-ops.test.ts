@@ -411,6 +411,26 @@ test("a per-provider worker is set globally; there is no --provider", async () =
   );
 });
 
+test("a host id that isn't in the admin host list is an error, not a stand-in", async () => {
+  const h = setup();
+  const UNKNOWN = "44444444-4444-4444-8444-444444444444";
+  await h.run(
+    "set",
+    "--worker",
+    "project-host-backup-execution",
+    "--limit",
+    "1",
+    "--host",
+    UNKNOWN,
+  );
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(
+    h.output().map((r: any) => [r.host, r.result]),
+    [[UNKNOWN, `error: host '${UNKNOWN}' not found`]],
+  );
+  assert.equal(process.exitCode, 1);
+});
+
 test("a missing fresh sign-in says to run cocalc auth elevate", async () => {
   const h = setup({ freshAuthMissing: true });
   await h.run(
