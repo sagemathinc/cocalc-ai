@@ -201,7 +201,11 @@ export class BeesGate {
   private lastInputs?: BeesGateInputs;
   // [time, longest commit seen then (ms, a conservative bound)]
   private commitSamples: Array<[number, number]> = [];
-  private lastCommits?: number;
+  private lastCommitStats?: {
+    at: number;
+    commits: number;
+    cur_commit_ms: number;
+  };
   private readonly now: () => number;
   private readonly config: BeesGateConfig;
   private readonly sampleMs: number;
@@ -423,16 +427,24 @@ export class BeesGate {
     if (!read) return;
     let worst: number;
     try {
-      const stats = parseCommitStats(await read());
-      worst = stats.cur_commit_ms ? stats.cur_commit_ms + this.sampleMs : 0;
-      if (
-        this.lastCommits != null &&
-        stats.commits != null &&
-        stats.commits > this.lastCommits
-      ) {
-        worst = Math.max(worst, stats.last_commit_ms ?? 0);
+      const { commits, cur_commit_ms, last_commit_ms } = parseCommitStats(
+        await read(),
+      );
+      if (commits == null || cur_commit_ms == null || last_commit_ms == null) {
+        throw Error("incomplete commit_stats");
       }
-      this.lastCommits = stats.commits;
+      const at = this.now();
+      worst = cur_commit_ms ? cur_commit_ms + this.sampleMs : 0;
+      const prev = this.lastCommitStats;
+      if (prev != null && commits > prev.commits) {
+        worst = Math.max(worst, last_commit_ms);
+        if (commits - prev.commits > 1) {
+          // Earlier commits ended unseen between the reads: each lasted at
+          // most the time between them, plus what was running at the first.
+          worst = Math.max(worst, at - prev.at + prev.cur_commit_ms);
+        }
+      }
+      this.lastCommitStats = { at, commits, cur_commit_ms };
     } catch {
       // A missed sample may hide a slow commit: unsafe for the whole window.
       worst = Infinity;

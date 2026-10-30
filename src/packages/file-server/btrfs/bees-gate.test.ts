@@ -520,4 +520,51 @@ describe("the BEES gate", () => {
     expect(g.getStatus().reason).toBe("lifecycle_active");
     g.stop();
   });
+
+  // Codex on #1503: what the samples cannot vouch for is unsafe.
+  it("treats incomplete commit stats, or commits that ended unseen between slow reads, as unsafe", async () => {
+    const { actions, apply } = recorder();
+    let now = 0;
+    let stats = "commits 1\ncur_commit_ms 0\nlast_commit_ms 100\n";
+    const g = new BeesGate({
+      mount: "/mnt/cocalc",
+      lifecycleActive: () => false,
+      now: () => now,
+      readInputs: async () => calmHost,
+      readCommitStats: async () => stats,
+      apply: apply as any,
+      intervalMs: 3_600_000,
+      sampleMs: 1_000,
+    });
+    const sampleFor = async (ms: number) => {
+      for (let t = 0; t < ms; t += 1_000) {
+        now += 1_000;
+        await g.sample();
+      }
+    };
+    await g.start();
+    await sampleFor(10 * MIN);
+    await g.tick();
+    expect(actions).toEqual(["freeze", "thaw"]);
+    // several commits per second at the normal pace are fine
+    stats = "commits 4\ncur_commit_ms 0\nlast_commit_ms 100\n";
+    await sampleFor(1_000);
+    expect(actions).toEqual(["freeze", "thaw"]);
+    stats = "commits 4\n"; // truncated
+    await sampleFor(1_000);
+    expect(actions).toEqual(["freeze", "thaw", "freeze"]);
+    stats = "commits 4\ncur_commit_ms 0\nlast_commit_ms 100\n";
+    await sampleFor(10 * MIN);
+    await g.tick();
+    expect(actions).toEqual(["freeze", "thaw", "freeze", "thaw"]);
+    // 2.5 s between reads (under the staleness bound), and two commits ended
+    // in it: one may have taken 2.5 s, over the thaw threshold
+    now += 2_500;
+    stats = "commits 6\ncur_commit_ms 0\nlast_commit_ms 100\n";
+    await g.sample();
+    await sampleFor(2_000);
+    await g.tick();
+    expect(g.getStatus().inputs?.worst_commit_ms).toBe(2_500);
+    g.stop();
+  });
 });
