@@ -82,6 +82,8 @@ export function ConversationCollection({
   const [error, setError] = useState("");
   const [aliasFor, setAliasFor] = useState<ListedConversation>();
   const [busyIds, setBusyIds] = useState<string[]>([]);
+  // A bulk action is running: no second one meanwhile.
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const order = preferences?.value.order ?? [];
   const pinnedIds = conversations
@@ -112,22 +114,24 @@ export function ConversationCollection({
     selection.isSelected(c.conversation_id),
   );
 
-  // Each one, reporting what failed; the list reloads either way.
+  // Each one, a few at a time (a selection can be thousands), reporting
+  // what failed; the list reloads either way. One batch at a time.
   async function forEach(
     list: ListedConversation[],
     action: (c: ListedConversation) => Promise<unknown>,
   ) {
+    if (bulkBusy) return;
+    setBulkBusy(true);
     setError("");
-    const results = await Promise.allSettled(list.map(action));
-    const failed = results.filter(
-      (r): r is PromiseRejectedResult => r.status === "rejected",
-    );
-    if (failed.length > 0) {
-      setError(
-        `${failed.length} of ${list.length} failed: ${failed[0].reason}`,
-      );
+    try {
+      const failed = await eachBounded(list, BULK_CONCURRENCY, action);
+      if (failed.length > 0) {
+        setError(`${failed.length} of ${list.length} failed: ${failed[0]}`);
+      }
+    } finally {
+      setBulkBusy(false);
+      conversationsChanged();
     }
-    conversationsChanged();
   }
 
   const markRead = (list: ListedConversation[]) =>
@@ -213,7 +217,9 @@ export function ConversationCollection({
           >
             <Button
               size="small"
+              loading={bulkBusy}
               disabled={
+                bulkBusy ||
                 !selectedConversations.some((c) => isUnread(c, account_id))
               }
               onClick={() => void markRead(selectedConversations)}
@@ -223,6 +229,7 @@ export function ConversationCollection({
             <Button
               size="small"
               danger
+              disabled={bulkBusy}
               onClick={() => confirmRemove(selectedConversations)}
             >
               Remove…
@@ -313,7 +320,8 @@ export function ConversationCollection({
             checkbox: bulk ? (
               <SelectItemCheckbox
                 id={c.conversation_id}
-                label={`Select ${c.title}`}
+                // Titles repeat across projects: name the row fully.
+                label={`Select ${c.title} (${projectTitle(c) ? `${projectTitle(c)}: ` : ""}${c.path})`}
                 selection={selection}
               />
             ) : undefined,
@@ -340,6 +348,33 @@ export function ConversationCollection({
       />
     </div>
   );
+}
+
+const BULK_CONCURRENCY = 4;
+
+// Run action on each item, at most `limit` at once; the errors of those that
+// failed.
+export async function eachBounded<T>(
+  items: T[],
+  limit: number,
+  action: (item: T) => Promise<unknown>,
+): Promise<string[]> {
+  const failed: string[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      try {
+        await action(item);
+      } catch (err) {
+        failed.push(`${err}`);
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return failed;
 }
 
 const CONTROLS_STYLE: CSSProperties = {

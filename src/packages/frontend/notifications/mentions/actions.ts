@@ -639,10 +639,14 @@ export class MentionsActions extends Actions<MentionsState> {
         });
         this.notificationRowProjectionVersion += 1;
         if (readNow) {
+          // If the server didn't take it, show it as the server has it.
           void this.updateReadState({
             notification_ids: [event.notification.notification_id],
             read: true,
-          }).catch(() => {});
+          }).catch(async (err) => {
+            console.warn("WARNING: notifications mark error -- ", err);
+            await this.refresh();
+          });
         }
         return;
       }

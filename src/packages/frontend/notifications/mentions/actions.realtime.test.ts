@@ -592,6 +592,23 @@ describe("MentionsActions realtime feed", () => {
       expect(marked).not.toContainEqual(
         expect.objectContaining({ notification_ids: ["n-other"] }),
       );
+      // If the server rejects the mark, the list is reloaded from it.
+      const lists =
+        mockedWebappClient.conat_client.hub.notifications.list.mock.calls
+          .length;
+      mockedWebappClient.conat_client.hub.notifications.markRead.mockRejectedValueOnce(
+        new Error("bay unavailable"),
+      );
+      const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+      arrive("n-rejected", {
+        summary: { notice_type: "direct_message", conversation_id: "dm-1" },
+      });
+      await flush();
+      expect(
+        mockedWebappClient.conat_client.hub.notifications.list.mock.calls
+          .length,
+      ).toBeGreaterThan(lists);
+      warn.mockRestore();
       // Not looking (another window has focus): counted as usual.
       hasFocus.mockReturnValue(false);
       arrive("n-away", {

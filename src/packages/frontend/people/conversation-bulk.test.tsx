@@ -6,7 +6,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ListedConversation } from "@cocalc/util/people";
-import { ConversationCollection } from "./conversation-collection";
+import { ConversationCollection, eachBounded } from "./conversation-collection";
 
 const me = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -86,10 +86,10 @@ test("select some, then remove them from the list, after confirming", async () =
   const user = userEvent.setup();
   show();
   expect(screen.queryByRole("toolbar")).toBeNull();
-  await user.click(screen.getByRole("checkbox", { name: "Select Alpha" }));
+  await user.click(screen.getByRole("checkbox", { name: /^Select Alpha / }));
   // Shift-click selects the range in the order shown.
   await user.keyboard("{Shift>}");
-  await user.click(screen.getByRole("checkbox", { name: "Select Gamma" }));
+  await user.click(screen.getByRole("checkbox", { name: /^Select Gamma / }));
   await user.keyboard("{/Shift}");
   expect(
     screen.getByRole("checkbox", { name: "Select all conversations" }),
@@ -149,4 +149,73 @@ test("each row's menu can remove it from the list too", async () => {
 test("beside an open conversation (no bulk): no checkboxes", () => {
   show(false);
   expect(screen.queryByRole("checkbox")).toBeNull();
+});
+
+test("conversations with the same title have distinct checkbox names", () => {
+  render(
+    <ConversationCollection
+      conversations={[
+        conversation("x", "Notes", { path: "/home/user/a/notes.chat" }),
+        conversation("y", "Notes", { path: "/home/user/b/notes.chat" }),
+      ]}
+      view="list"
+      onSelect={() => {}}
+      bulk
+    />,
+  );
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Select Notes (/home/user/a/notes.chat)",
+    }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Select Notes (/home/user/b/notes.chat)",
+    }),
+  ).toBeTruthy();
+});
+
+test("bulk actions run a few at a time, and report each failure", async () => {
+  let running = 0;
+  let most = 0;
+  const failed = await eachBounded(
+    Array.from({ length: 20 }, (_, i) => i),
+    4,
+    async (i) => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      running -= 1;
+      if (i % 7 === 0) throw Error(`no ${i}`);
+    },
+  );
+  expect(most).toBe(4);
+  expect(failed.sort()).toEqual(["Error: no 0", "Error: no 14", "Error: no 7"]);
+});
+
+test("while a bulk action runs, its buttons are disabled", async () => {
+  const user = userEvent.setup();
+  let release!: () => void;
+  mockMarkRead.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (release = resolve)),
+  );
+  show();
+  await user.click(
+    screen.getByRole("checkbox", { name: "Select all conversations" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Mark read" }));
+  const toolbar = screen.getByRole("toolbar", {
+    name: "Selected conversations",
+  });
+  await waitFor(() =>
+    expect(
+      within(toolbar).getByRole("button", { name: "Remove…" }),
+    ).toBeDisabled(),
+  );
+  release();
+  await waitFor(() =>
+    expect(
+      within(toolbar).getByRole("button", { name: "Remove…" }),
+    ).not.toBeDisabled(),
+  );
 });
