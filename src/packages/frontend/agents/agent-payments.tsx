@@ -30,6 +30,10 @@ import {
   refreshPaymentSelections,
 } from "@cocalc/frontend/chat/payment-selection-store";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
+import {
+  CLAUDE_POOL_LABEL,
+  CLAUDE_POOL_OPTION_LABEL,
+} from "@cocalc/frontend/chat/claude-pool";
 import type { AgentRuntimeSummary } from "@cocalc/util/ai/agent-runtime-kind";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
 import { ClaudeSubscriptionConnect } from "@cocalc/frontend/chat/claude-subscription-connect";
@@ -192,6 +196,7 @@ export function selectionLabel(
   }
   if (selection.mode === "project-secret") return "Project secret";
   if (selection.mode === "membership") return "CoCalc Membership";
+  if (selection.mode === "subscription-pool") return CLAUDE_POOL_LABEL;
   return credentialLabel(payments.credentials, selection.credential_id);
 }
 
@@ -242,6 +247,7 @@ export function agentPaymentSummary(
 
 const KEEP = "keep";
 const FOLLOW = "default";
+const POOL = "subscription-pool";
 
 export interface PaymentTargetAgent {
   project_id: string;
@@ -312,6 +318,9 @@ export function SetPaymentModal({
   const claudeOptions = [
     { value: KEEP, label: "Leave unchanged" },
     { value: FOLLOW, label: "Follow my default credential" },
+    ...(claudeCredentials.some((c) => c.mode === "account-subscription")
+      ? [{ value: POOL, label: CLAUDE_POOL_OPTION_LABEL }]
+      : []),
     ...claudeCredentials.map((c) => ({
       value: `${c.mode}:${c.id}`,
       label: c.label,
@@ -337,6 +346,8 @@ export function SetPaymentModal({
       return { version: 1, provider: "claude-code", mode: "project-secret" };
     if (value === "membership")
       return { version: 1, provider: "claude-code", mode: "membership" };
+    if (value === POOL)
+      return { version: 1, provider: "claude-code", mode: "subscription-pool" };
     const [mode, id] = value.split(":") as [
       "account-subscription" | "account-api-key",
       string,

@@ -18,6 +18,11 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { MembershipAIAllowance } from "./membership-ai-allowance";
 import {
+  CLAUDE_POOL_OPTION_LABEL,
+  CLAUDE_POOL_VALUE,
+  ClaudePoolPanel,
+} from "./claude-pool";
+import {
   newAgentClaudeCredentialOptions,
   SITE_FUNDED_CLAUDE_VALUE,
 } from "@cocalc/frontend/agents/claude-credential-options";
@@ -148,21 +153,36 @@ export function ClaudeCredentialList({
   disabled,
   membership = false,
   onChange,
+  onCredentials,
 }: {
   credentials: ExternalCredentialInfo[];
   /** Offer included Claude (CoCalc Membership). */
   membership?: boolean;
-  // "account-subscription:<id>", "account-api-key:<id>" or "project-secret".
+  // "account-subscription:<id>", "account-api-key:<id>", "project-secret",
+  // or CLAUDE_POOL_VALUE (Auto).
   value: string;
   loaded: boolean;
   disabled?: boolean;
   onChange: (value: string) => void;
+  /** Auto's settings changed the list (which subscriptions it uses). */
+  onCredentials?: (rows: ExternalCredentialInfo[]) => void;
 }) {
-  const options = newAgentClaudeCredentialOptions(
+  const credentialOptions = newAgentClaudeCredentialOptions(
     credentials,
     false,
     membership,
   );
+  const subscriptionCount = credentialOptions.filter((option) =>
+    option.value.startsWith("account-subscription:"),
+  ).length;
+  // Auto, once there is a subscription to choose from (or it is chosen).
+  const options = [
+    ...(subscriptionCount > 0 || value === CLAUDE_POOL_VALUE
+      ? [{ value: CLAUDE_POOL_VALUE, label: CLAUDE_POOL_OPTION_LABEL }]
+      : []),
+    ...credentialOptions,
+  ];
+  const auto = value === CLAUDE_POOL_VALUE;
   const known = options.some((option) => option.value === value);
   const byId = new Map(credentials.map((row) => [row.id, row]));
   const hasSubscription = options.some((option) =>
@@ -212,7 +232,12 @@ export function ClaudeCredentialList({
                     </Typography.Text>
                   )}
                 </div>
-                {subscription && row ? (
+                {option.value === CLAUDE_POOL_VALUE ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Uses whichever of your subscriptions has room, and moves on
+                    when one reaches its limit.
+                  </Typography.Text>
+                ) : subscription && row ? (
                   <SubscriptionUsage row={row} />
                 ) : option.value === SITE_FUNDED_CLAUDE_VALUE ? (
                   <MembershipAIAllowance />
@@ -233,6 +258,22 @@ export function ClaudeCredentialList({
           </Radio>
         )}
       </Radio.Group>
+      {auto && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: "6px 8px",
+            borderRadius: 6,
+            border: `1px solid ${UI_COLORS.border}`,
+          }}
+        >
+          <ClaudePoolPanel
+            credentials={credentials}
+            onCredentials={onCredentials}
+            disabled={disabled}
+          />
+        </div>
+      )}
       {hasSubscription && (
         <Typography.Paragraph
           type="secondary"

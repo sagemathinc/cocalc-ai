@@ -108,6 +108,10 @@ export type AcpRequest = {
   runtime?: AcpHarnessRuntime;
   // Private admission snapshot. Never source this from shared chat config.
   harness_credential?: AcpHarnessCredential;
+  // Set at admission when the account pays with Auto: each dispatch picks
+  // harness_credential from the account's pooled Claude subscriptions.
+  // Host-set only; admission drops any value a client sends.
+  harness_pool?: { claude_ai_connectors?: false };
   project_id: string;
   account_id: string;
   prompt: string;
@@ -430,6 +434,17 @@ export type AcpStreamEvent =
       type: "memory";
       state: "loaded" | "unavailable";
       notes?: number;
+    }
+  | {
+      // An Auto agent's turn: the Claude subscription it runs on, by the name
+      // its owner gave it, and whether it moved there from another one (a
+      // limit, or much more room). Display only, and project-visible: never
+      // credential ids or usage numbers.
+      type: "payment";
+      mode: "auto";
+      label?: string;
+      moved?: boolean;
+      previous_label?: string;
     }
   | {
       // The turn was admitted, but the account has used most of an included

@@ -1376,6 +1376,25 @@ function createEventEntry({
       level: event.state === "loaded" ? "info" : "error",
     };
   }
+  if (event?.type === "payment" && event.mode === "auto") {
+    const name = (value: unknown) =>
+      typeof value === "string" && value.trim()
+        ? value.trim().slice(0, 60)
+        : undefined;
+    const label = name(event.label) ?? "a Claude subscription";
+    const previous = name(event.previous_label);
+    return {
+      kind: "status",
+      id: `payment-${seq}`,
+      seq,
+      time,
+      label: "Auto",
+      detail: event.moved
+        ? `Moved to ${label}${previous ? ` from ${previous}` : ""}`
+        : `Using ${label}`,
+      level: "info",
+    };
+  }
   if (
     event?.type === "usage_warning" &&
     (event.window === "5h" || event.window === "7d")

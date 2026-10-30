@@ -12,8 +12,14 @@ import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { claudeSubscriptionName } from "@cocalc/frontend/agents/claude-credential-options";
 import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
+  readClaudePoolSelection,
   readHarnessCredentialSelection,
 } from "./harness-credential-selection";
+import {
+  CLAUDE_POOL_LABEL,
+  CLAUDE_POOL_VALUE,
+  ClaudePoolForecast,
+} from "./claude-pool";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { ClaudeUsageLimitWarning } from "./claude-credential-list";
 
@@ -114,6 +120,7 @@ export function claudePaymentName(
 }
 
 export function claudePaymentLabel(mode: string | undefined): string {
+  if (mode === CLAUDE_POOL_VALUE) return CLAUDE_POOL_LABEL;
   return mode === "account-subscription"
     ? "Claude subscription"
     : mode === "account-api-key"
@@ -150,6 +157,8 @@ export function useClaudePaymentLabel(
       : undefined,
   );
   if (!projectId || !threadKey) return undefined;
+  if (readClaudePoolSelection({ accountId, projectId, threadKey }))
+    return CLAUDE_POOL_LABEL;
   return claudePaymentName(selection?.mode, row);
 }
 
@@ -183,11 +192,12 @@ export function ClaudePaymentStatus({
     credential?.mode === "account-api-key"
       ? credential.credentialId
       : undefined;
+  const pool = !!readClaudePoolSelection({ accountId, projectId, threadKey });
   return (
     <PaymentStatus
-      key={JSON.stringify([accountId, projectId, credential])}
+      key={JSON.stringify([accountId, projectId, credential, pool])}
       credentialId={credentialId}
-      mode={credential?.mode ?? "project-secret"}
+      mode={pool ? CLAUDE_POOL_VALUE : (credential?.mode ?? "project-secret")}
       onConfigure={onConfigure}
     />
   );
@@ -210,6 +220,21 @@ function PaymentStatus({
   const credential = useClaudeCredential(credentialId);
   const [loading, setLoading] = useState(false);
   const subscription = mode === "account-subscription";
+  const pool = mode === CLAUDE_POOL_VALUE;
+  const [poolRows, setPoolRows] = useState<ExternalCredentialInfo[]>();
+  // Auto's summary: the latest stored usage of every subscription.
+  useEffect(() => {
+    if (!open || !pool) return;
+    let active = true;
+    void listClaudeCredentials(true)
+      .then((rows) => {
+        if (active) setPoolRows(rows);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [open, pool]);
   const label = claudePaymentLabel(mode);
   // Opening the details reloads, so the usage shown is the latest stored.
   useEffect(() => {
@@ -255,7 +280,22 @@ function PaymentStatus({
           <div style={{ width: 290, maxWidth: "calc(100vw - 48px)" }}>
             <Typography.Text strong>{label}</Typography.Text>
             {name && name !== label && <div>{name}</div>}
-            {subscription ? (
+            {pool ? (
+              <div style={{ marginTop: 8 }}>
+                {poolRows ? (
+                  <ClaudePoolForecast credentials={poolRows} />
+                ) : (
+                  <div role="status">Loading subscription usage...</div>
+                )}
+                <Typography.Paragraph
+                  type="secondary"
+                  style={{ fontSize: 12, margin: "8px 0 0" }}
+                >
+                  Each turn uses one of your Claude subscriptions; the
+                  conversation shows which.
+                </Typography.Paragraph>
+              </div>
+            ) : subscription ? (
               <>
                 <div role="status">
                   {loading && !credential

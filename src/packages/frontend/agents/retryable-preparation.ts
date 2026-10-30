@@ -25,6 +25,8 @@ import type { NewAgentRuntimeKind } from "./new-agent-runtime-select";
 export interface PreparedFirstAgentSettings {
   codexConfig?: CodexThreadConfig & { credentialId?: string };
   claudeCredential?: AcpHarnessCredential;
+  /** Pay with Auto (claudeCredential then only loads the model options). */
+  claudeAuto?: boolean;
 }
 
 export interface PreparedFirstAgent {

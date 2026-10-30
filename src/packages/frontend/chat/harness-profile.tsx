@@ -26,9 +26,12 @@ import { ClaudeProjectSecretModal } from "./claude-project-secret-modal";
 import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
 import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
+  readClaudePoolSelection,
   readHarnessCredentialSelection,
+  writeClaudePoolSelection,
   writeHarnessCredentialSelection,
 } from "./harness-credential-selection";
+import { CLAUDE_POOL_VALUE } from "./claude-pool";
 import { ClaudeSubscriptionManage } from "./claude-subscription-manage";
 import { ClaudeCredentialList } from "./claude-credential-list";
 import { DocsLink } from "@cocalc/frontend/docs/link";
@@ -153,10 +156,15 @@ function ClaudeCredentialControl({
     projectId,
     threadKey,
   });
-  const [value, setValue] = useState(claudeSelectionValue(selection));
+  const pool = readClaudePoolSelection({ accountId, projectId, threadKey });
+  const [value, setValue] = useState(
+    pool ? CLAUDE_POOL_VALUE : claudeSelectionValue(selection),
+  );
   const [connectorsEnabled, setConnectorsEnabled] = useState(
-    selection?.mode !== "account-subscription" ||
-      selection.claudeAiConnectors !== false,
+    pool
+      ? pool.claude_ai_connectors !== false
+      : selection?.mode !== "account-subscription" ||
+          selection.claudeAiConnectors !== false,
   );
   useEffect(() => {
     let disposed = false;
@@ -169,11 +177,18 @@ function ClaudeCredentialControl({
         projectId,
         threadKey,
       });
+      const currentPool = readClaudePoolSelection({
+        accountId,
+        projectId,
+        threadKey,
+      });
       setConnectorsEnabled(
-        current?.mode !== "account-subscription" ||
-          current.claudeAiConnectors !== false,
+        currentPool
+          ? currentPool.claude_ai_connectors !== false
+          : current?.mode !== "account-subscription" ||
+              current.claudeAiConnectors !== false,
       );
-      setValue(claudeSelectionValue(current));
+      setValue(currentPool ? CLAUDE_POOL_VALUE : claudeSelectionValue(current));
     };
     refresh();
     // The same list (and usage) as the footer's payment popover: reloaded
@@ -249,14 +264,23 @@ function ClaudeCredentialControl({
         value={value}
         loaded={credentialsLoaded}
         membership={membership || value === SITE_FUNDED_CLAUDE_VALUE}
+        onCredentials={setCredentials}
         onChange={(next) => {
-          const credential = claudeCredentialFromValue(next);
-          writeHarnessCredentialSelection({
-            accountId,
-            projectId,
-            threadKey,
-            credential,
-          });
+          if (next === CLAUDE_POOL_VALUE) {
+            writeClaudePoolSelection({
+              accountId,
+              projectId,
+              threadKey,
+              connectors: connectorsEnabled,
+            });
+          } else {
+            writeHarnessCredentialSelection({
+              accountId,
+              projectId,
+              threadKey,
+              credential: claudeCredentialFromValue(next),
+            });
+          }
           setValue(next);
         }}
       />
@@ -287,6 +311,8 @@ function ClaudeCredentialControl({
         onDisconnected={(id) => {
           const remaining = credentials.filter((row) => row.id !== id);
           setCredentials(remaining);
+          // Auto just stops using it.
+          if (value === CLAUDE_POOL_VALUE) return;
           // Fall back to another subscription, never to the project secret:
           // with none left, the user chooses (connect or pick a key).
           const next = preferredClaudeCredential(undefined, remaining);
@@ -317,6 +343,25 @@ function ClaudeCredentialControl({
           await listClaudeCredentials(true);
         }}
       >
+        {value === CLAUDE_POOL_VALUE &&
+          credentials.some(
+            (row) =>
+              row.kind === CLAUDE_SUBSCRIPTION_KIND &&
+              claudeConnectorsAvailable(credentials, row.id),
+          ) && (
+            <ClaudeConnectorPreference
+              enabled={connectorsEnabled}
+              onChange={(enabled) => {
+                writeClaudePoolSelection({
+                  accountId,
+                  projectId,
+                  threadKey,
+                  connectors: enabled,
+                });
+                setConnectorsEnabled(enabled);
+              }}
+            />
+          )}
         {value.startsWith("account-subscription:") &&
           claudeConnectorsAvailable(
             credentials,

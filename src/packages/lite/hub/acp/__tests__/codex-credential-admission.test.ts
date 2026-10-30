@@ -16,6 +16,7 @@ import {
   setCodexCredentialAdmissionResolver,
   setPaymentSelectionResolver,
 } from "../codex-credential-admission";
+import { setClaudePoolPicker } from "../claude-pool";
 import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
 import { decodeAcpJobRequest, enqueueAcpJob } from "../../sqlite/acp-jobs";
 
@@ -301,4 +302,113 @@ test("an agent message refuses a turn nothing can pay for, before queueing", asy
   // A person's own turn keeps its existing behavior and error text.
   const own = { ...request(), config: { paymentSource: "auto" as const } };
   await expect(pinCodexCredentialAtAdmission(own)).resolves.toBe(own);
+});
+
+describe("Auto: the Claude subscription pool", () => {
+  const picked = "00000000-0000-4000-8000-0000000000bb";
+  const runtime = {
+    version: 1 as const,
+    kind: "acp" as const,
+    profile: {
+      version: 2 as const,
+      kind: "acp" as const,
+      id: "claude-code",
+      revision: "0.81.1",
+      cwd: "/home/user",
+      executionPolicy: "full-access" as const,
+      credentialMode: "project-managed" as const,
+    },
+  };
+  const claudeTurn = (extra: Record<string, unknown> = {}) =>
+    ({ ...request(), config: undefined, runtime, ...extra }) as any;
+  afterEach(() => {
+    setPaymentSelectionResolver();
+    setClaudePoolPicker();
+  });
+
+  test("a turn of an Auto agent runs on the subscription the home bay picks", async () => {
+    setPaymentSelectionResolver(async () => ({
+      selection: {
+        version: 1,
+        provider: "claude-code",
+        mode: "subscription-pool",
+        claude_ai_connectors: false,
+      },
+    }));
+    const picker = jest.fn(async () => ({ credential_id: picked }));
+    setClaudePoolPicker(picker);
+    const admitted = await pinCodexCredentialAtAdmission(claudeTurn());
+    expect(picker).toHaveBeenCalledWith({
+      account_id: accountId,
+      target: { project_id: projectId, thread_id: "thread-1" },
+    });
+    expect(admitted.harness_pool).toEqual({ claude_ai_connectors: false });
+    expect(admitted.harness_credential).toEqual({
+      version: 1,
+      provider: "anthropic",
+      mode: "account-subscription",
+      credentialId: picked,
+      claudeAiConnectors: false,
+    });
+  });
+
+  test("an Auto agent message picks the same way", async () => {
+    setPaymentSelectionResolver(async () => ({
+      default: {
+        version: 1,
+        provider: "claude-code",
+        mode: "subscription-pool",
+      },
+    }));
+    setClaudePoolPicker(async () => ({ credential_id: picked }));
+    const admitted = await pinCodexCredentialAtAdmission(
+      claudeTurn({
+        chat: { ...request().chat, agent_rpc_execution: { version: 3 } },
+      }),
+    );
+    expect(admitted.harness_pool).toEqual({});
+    expect(admitted.harness_credential?.credentialId).toBe(picked);
+  });
+
+  test("an empty pool refuses the turn", async () => {
+    setPaymentSelectionResolver(async () => ({
+      selection: {
+        version: 1,
+        provider: "claude-code",
+        mode: "subscription-pool",
+      },
+    }));
+    setClaudePoolPicker(async () => ({ empty: true }));
+    await expect(pinCodexCredentialAtAdmission(claudeTurn())).rejects.toThrow(
+      /Auto has no Claude subscription/,
+    );
+  });
+
+  test("only admission marks a turn as Auto: a client's marker is dropped", async () => {
+    const pinned = randomUUID();
+    const picker = jest.fn();
+    setClaudePoolPicker(picker);
+    const admitted = await pinCodexCredentialAtAdmission(
+      claudeTurn({
+        harness_pool: {},
+        harness_credential: {
+          version: 1,
+          provider: "anthropic",
+          mode: "account-subscription",
+          credentialId: pinned,
+        },
+      }),
+    );
+    expect(picker).not.toHaveBeenCalled();
+    expect(admitted.harness_pool).toBeUndefined();
+    expect(admitted.harness_credential?.credentialId).toBe(pinned);
+    // A Codex turn too.
+    setCodexCredentialAdmissionResolver(async () => ({ source: "none" }));
+    const codex = await pinCodexCredentialAtAdmission({
+      ...request(),
+      config: { paymentSource: "auto" as const },
+      harness_pool: {},
+    } as any);
+    expect(codex.harness_pool).toBeUndefined();
+  });
 });

@@ -13,7 +13,9 @@ import {
 } from "@cocalc/util/ai/runtime";
 import { prepareHarnessRequest } from "./harness-runtime";
 import { decodeAcpJobRequest, latestHumanHarnessJob } from "../sqlite/acp-jobs";
+import { admitClaudePoolTurn } from "./claude-pool";
 import {
+  claudePoolSelection,
   codexCredentialFromSelection,
   harnessCredentialFromSelection,
   type AgentPaymentProvider,
@@ -88,6 +90,35 @@ async function storedPaymentSelection<T>(
   }
 }
 
+/**
+ * Discovery and forks send the browser's credential; for an Auto agent there
+ * is none, so use a subscription picked from the pool. Otherwise unchanged.
+ */
+export async function withClaudePoolControlCredential<T extends AcpRequest>(
+  request: T,
+): Promise<T> {
+  const profile = request.runtime?.profile as
+    | { version?: number; id?: string }
+    | undefined;
+  if (
+    request.harness_credential ||
+    profile?.version !== 2 ||
+    profile.id !== "claude-code"
+  )
+    return request;
+  const stored = await storedPaymentSelection<ClaudePaymentSelection>(
+    request,
+    "claude-code",
+  );
+  const pool = stored && claudePoolSelection(stored.selection, stored.default);
+  if (!pool) return request;
+  const { harness_pool: _pool, ...admitted } = await admitClaudePoolTurn(
+    request,
+    pool.claude_ai_connectors === false ? { claude_ai_connectors: false } : {},
+  );
+  return admitted as T;
+}
+
 export function setCodexCredentialAdmissionResolver(
   next?: CodexCredentialAdmissionResolver,
 ): void {
@@ -98,17 +129,30 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   request: T,
 ): Promise<T> {
   reportAgentRuntimeOnce(request);
+  // Only admission decides whether a turn uses Auto.
+  if (request.harness_pool !== undefined) {
+    const { harness_pool: _ignored, ...rest } = request;
+    request = rest as T;
+  }
   if (request.runtime !== undefined) {
     const claudeCode =
       request.runtime.profile.version === 2 &&
       request.runtime.profile.id === "claude-code";
     let harness_credential = request.harness_credential;
+    let harness_pool: AcpRequest["harness_pool"];
     if (claudeCode && !harness_credential) {
       const stored = await storedPaymentSelection<ClaudePaymentSelection>(
         request,
         "claude-code",
       );
-      if (stored)
+      const pool =
+        stored && claudePoolSelection(stored.selection, stored.default);
+      if (pool) {
+        harness_pool =
+          pool.claude_ai_connectors === false
+            ? { claude_ai_connectors: false }
+            : {};
+      } else if (stored)
         harness_credential = harnessCredentialFromSelection(
           stored.selection,
           stored.default,
@@ -119,7 +163,8 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       (request.chat?.agent_rpc_execution ||
         request.chat?.sensor_wake ||
         request.chat?.agent_rpc_report) &&
-      !harness_credential
+      !harness_credential &&
+      !harness_pool
     ) {
       // Nothing stored yet: fall back to this account's last human turn.
       const previous = latestHumanHarnessJob({
@@ -155,6 +200,19 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
           "Recipient runtime changed; send a message in the recipient agent to confirm its payment method.",
         );
       harness_credential = admitted.harness_credential;
+      // An Auto agent that has no stored choice here keeps picking.
+      if (admitted.harness_pool) harness_pool = admitted.harness_pool;
+    }
+    if (harness_pool) {
+      return prepareHarnessRequest(
+        await admitClaudePoolTurn(
+          {
+            ...request,
+            ...(harness_credential ? { harness_credential } : {}),
+          } as AcpRequest,
+          harness_pool,
+        ),
+      ) as T;
     }
     return prepareHarnessRequest({
       ...request,

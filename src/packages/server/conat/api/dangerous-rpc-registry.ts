@@ -131,6 +131,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "agent.pickClaudePoolSubscription": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "agent.reportRuntime": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
@@ -1935,5 +1939,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.updateClaudeSubscriptionLabel": {
     decision: "fresh-auth-not-required",
     reason: "updates only the signed-in account's credential display label",
+  },
+  "system.setClaudeSubscriptionInPool": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "chooses which of the signed-in account's own Claude subscriptions its Auto agents may use; references only",
   },
 };
