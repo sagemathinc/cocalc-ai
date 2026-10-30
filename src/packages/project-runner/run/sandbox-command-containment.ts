@@ -391,7 +391,7 @@ export function runContainedSandboxCommand({
         stdout: "",
         stderr: confirmed
           ? ""
-          : "Project job cleanup is unconfirmed; execution is blocked pending runtime recovery",
+          : "Project job cleanup is unconfirmed: the command may have been stopped early (e.g. after a host stall). The runtime rechecks automatically within about 30 seconds; new project commands wait for that check, so retry in 30 seconds if one reports paused project tools.",
         code: confirmed ? proof!.code : null,
         cleanupConfirmed: confirmed,
       });

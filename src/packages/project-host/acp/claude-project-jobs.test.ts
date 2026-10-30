@@ -4,6 +4,10 @@ import {
 } from "./claude-project-jobs";
 import type { SandboxExecResult } from "@cocalc/project-runner/run/sandbox-exec";
 
+// These tests are about the fence itself: a fenced call fails at once (the
+// bounded wait for a brief fence has its own tests).
+process.env.COCALC_PROJECT_TOOL_FENCE_WAIT_MS = "0";
+
 function fixture() {
   const runs: {
     signal: AbortSignal;
@@ -497,8 +501,69 @@ test("unconfirmed cleanup says what happens next and what clears it", async () =
   try {
     await jobs.start({ script: "grep", yield_time_ms: 1000 });
     await expect(jobs.start({ script: "echo alive" })).rejects.toThrow(
-      /rechecks automatically.*new agent session starts with its project tools open, and so does a project restart/,
+      /temporary: it rechecks automatically.*Retry in 30 seconds.*a new agent session or a project restart also reopens them/,
     );
+  } finally {
+    await jobs.close();
+  }
+});
+
+// wstein, 2026-10-30: a 16 s stall left one job's cleanup unproven; recovery
+// proved it 5 s later, but the agent read the fence as final and stopped.
+test("a new command waits out a brief fence, then runs", async () => {
+  const runs: {
+    finish: (result: SandboxExecResult) => void;
+    confirmCleanup: () => void;
+  }[] = [];
+  const execute: ProjectJobExecutor = (_s, _c, _signal, options) =>
+    new Promise((resolve) =>
+      runs.push({
+        finish: resolve,
+        confirmCleanup: options.onCleanupConfirmed,
+      }),
+    );
+  const jobs = new ClaudeProjectJobs(execute, { fenceWaitMs: 10_000 });
+  try {
+    await jobs.start({ script: "a", yield_time_ms: 0 });
+    runs[0].finish({
+      code: 130,
+      stdout: "",
+      stderr: "",
+      cleanupConfirmed: false,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    const next = jobs.start({ script: "b", yield_time_ms: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runs).toHaveLength(1);
+    // The runtime's recovery proves the cleanup: the waiting command runs.
+    runs[0].confirmCleanup();
+    expect((await next).status).toBe("running");
+    expect(runs).toHaveLength(2);
+    runs[1].finish({ code: 0, stdout: "", stderr: "", cleanupConfirmed: true });
+  } finally {
+    await jobs.close();
+  }
+});
+
+test("a fence that outlasts the wait fails with a retryable message", async () => {
+  const execute = jest.fn(async () => ({
+    code: 130,
+    stdout: "",
+    stderr: "",
+    cleanupConfirmed: false,
+  }));
+  const jobs = new ClaudeProjectJobs(execute as any, { fenceWaitMs: 50 });
+  try {
+    const first = await jobs.start({ script: "a", yield_time_ms: 1000 });
+    const started = Date.now();
+    const error = await jobs.start({ script: "b" }).then(
+      () => undefined,
+      (err: Error) => err,
+    );
+    expect(Date.now() - started).toBeGreaterThanOrEqual(40);
+    expect(error?.message).toContain(`job ${first.job_id}`);
+    expect(error?.message).toMatch(/temporary.*Retry in 30 seconds/);
+    expect(execute).toHaveBeenCalledTimes(1);
   } finally {
     await jobs.close();
   }
@@ -541,4 +606,28 @@ test("a peer canceled by a fence keeps it until the peer is accounted for", asyn
   expect(next.status).toBe("running");
   runs[2].finish({ code: 0, stdout: "", stderr: "", cleanupConfirmed: true });
   await jobs.close();
+});
+
+test("new user guidance ends a wait for a fence, too", async () => {
+  const execute = jest.fn(async () => ({
+    code: 130,
+    stdout: "",
+    stderr: "",
+    cleanupConfirmed: false,
+  }));
+  const jobs = new ClaudeProjectJobs(execute as any, { fenceWaitMs: 60_000 });
+  try {
+    await jobs.start({ script: "a", yield_time_ms: 1000 });
+    const started = Date.now();
+    const waiting = jobs.start({ script: "b" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Guidance is waiting: the call returns now, still fenced, rather than
+    // holding it for up to a minute.
+    jobs.releaseWaits();
+    await expect(waiting).rejects.toThrow("cleanup is unconfirmed");
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally {
+    await jobs.close();
+  }
 });

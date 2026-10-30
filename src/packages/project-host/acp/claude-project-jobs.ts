@@ -53,11 +53,24 @@ export const MAX_WAIT = 120_000;
 const MAX_TIMEOUT = 86_400_000;
 const RETENTION = 600_000;
 const OUTPUT_BYTES = 1024 * 1024;
+// A fence is usually brief (the runtime rechecks 5 s after it and then every
+// 30 s), so a new tool call waits this long for it to lift before failing.
+function defaultFenceWaitMs(): number {
+  const ms = Number(process.env.COCALC_PROJECT_TOOL_FENCE_WAIT_MS ?? 60_000);
+  return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, 90_000) : 60_000;
+}
 // Says what happens next: the runtime keeps checking, and tools reopen on its
 // proof. The fence belongs to this agent session (controller): a new session
-// starts without it, as does a project restart.
-const CLEANUP_UNCONFIRMED =
-  "Project job cleanup is unconfirmed, so this agent session cannot start more project tools until the runtime confirms that the job's processes are gone. It rechecks automatically about every 30 seconds, so try again in a minute. If this lasts more than a few minutes, tell the user: a new agent session starts with its project tools open, and so does a project restart.";
+// starts without it, as does a project restart. Agents must read it as
+// temporary, not as a reason to stop.
+function cleanupUnconfirmed(jobIds: string[], waitedMs: number): string {
+  const jobs = jobIds.length ? ` (job ${jobIds.join(", ")})` : "";
+  const waited =
+    waitedMs >= 1000
+      ? ` This call already waited ${Math.round(waitedMs / 1000)} s.`
+      : "";
+  return `Project tools are paused for a moment: an earlier command's cleanup is unconfirmed${jobs}, so the runtime has not yet confirmed that its processes are gone. This is temporary: it rechecks automatically about every 30 seconds, and project tools reopen by themselves.${waited} Retry in 30 seconds. If it still fails after a few minutes, tell the user; a new agent session or a project restart also reopens them.`;
+}
 const PAGE_BYTES = 64 * 1024;
 let activeJobs = 0;
 
@@ -106,7 +119,22 @@ export class ClaudeProjectJobs {
   // Jobs whose cleanup is unproven; tools reopen once this is empty.
   private unproven = new Set<Job>();
   private waits = new Set<() => void>();
-  constructor(private execute: ProjectJobExecutor) {}
+  // Calls waiting for the fence to lift (or for close).
+  private reopened = new Set<() => void>();
+  private fenceWaitMs: number;
+  private reauthorize?: () => Promise<void>;
+  constructor(
+    private execute: ProjectJobExecutor,
+    options: {
+      fenceWaitMs?: number;
+      // Checked again after waiting out a fence, before any work starts: the
+      // caller's authority was checked before the wait and may since be gone.
+      reauthorize?: () => Promise<void>;
+    } = {},
+  ) {
+    this.fenceWaitMs = options.fenceWaitMs ?? defaultFenceWaitMs();
+    this.reauthorize = options.reauthorize;
+  }
 
   private wake(job: Job) {
     for (const resolve of [...job.changed]) resolve();
@@ -144,7 +172,48 @@ export class ClaudeProjectJobs {
     if (this.cleanupBlocked && this.unproven.size === 0) {
       this.cleanupBlocked = false;
       logger.info("project tools reopened: every fenced job's cleanup proven");
+      this.wakeReopened();
     }
+  }
+  private wakeReopened() {
+    for (const resolve of [...this.reopened]) resolve();
+  }
+  /** Wait (bounded) for a fence to lift; how long, and whether it waited. */
+  private async waitForReopen(): Promise<{ waited: boolean; ms: number }> {
+    if (
+      !this.cleanupBlocked ||
+      this.closed ||
+      this.paused ||
+      this.fenceWaitMs <= 0
+    )
+      return { waited: false, ms: 0 };
+    const started = Date.now();
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.reopened.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, this.fenceWaitMs);
+      this.reopened.add(done);
+    });
+    return { waited: true, ms: Date.now() - started };
+  }
+  /** Wait out a fence, then recheck authority; returns how long it waited. */
+  private async admitAfterFence(): Promise<number> {
+    // Any wait (even one that ends within the same millisecond) yielded to
+    // other work, so authority is checked again.
+    const { waited, ms } = await this.waitForReopen();
+    if (waited && !this.cleanupBlocked) await this.reauthorize?.();
+    return ms;
+  }
+  private fenceError(waitedMs = 0): Error {
+    return Error(
+      cleanupUnconfirmed(
+        [...this.unproven].filter((job) => !job.transient).map((job) => job.id),
+        waitedMs,
+      ),
+    );
   }
   private prune() {
     for (const [id, job] of this.jobs)
@@ -154,8 +223,8 @@ export class ClaudeProjectJobs {
       )
         this.jobs.delete(id);
   }
-  private assertOpen() {
-    if (this.cleanupBlocked) throw Error(CLEANUP_UNCONFIRMED);
+  private assertOpen(waitedMs = 0) {
+    if (this.cleanupBlocked) throw this.fenceError(waitedMs);
     if (this.closed || this.paused) throw Error("Project tool is closed");
   }
   private get(id: unknown): Job {
@@ -183,7 +252,10 @@ export class ClaudeProjectJobs {
     this.wake(job);
   }
   async start(args: Record<string, unknown>) {
-    this.assertOpen();
+    // A brief fence lifts within seconds: wait for it rather than fail.
+    // (no await unless fenced, so an open call keeps its ordering)
+    const waited = this.cleanupBlocked ? await this.admitAfterFence() : 0;
+    this.assertOpen(waited);
     const { script, cwd, request_id: requestId } = args;
     if (
       typeof script !== "string" ||
@@ -196,7 +268,11 @@ export class ClaudeProjectJobs {
       throw Error("Invalid project command");
     const timeoutMs = integer(args.timeout_ms, DEFAULT_TIMEOUT, MAX_TIMEOUT);
     if (!timeoutMs) throw Error("Command timeout must be positive");
-    const waitMs = integer(args.yield_time_ms, DEFAULT_WAIT, MAX_WAIT);
+    // The fence wait counts against the caller's wait (one bridge socket).
+    const waitMs = Math.max(
+      0,
+      integer(args.yield_time_ms, DEFAULT_WAIT, MAX_WAIT) - waited,
+    );
     const fingerprint = createHash("sha256")
       .update(JSON.stringify([script, cwd, timeoutMs]))
       .digest("hex");
@@ -244,14 +320,16 @@ export class ClaudeProjectJobs {
     signal,
     options,
   ) => {
-    this.assertOpen();
+    // (no await unless fenced, so an open call keeps its ordering)
+    const waited = this.cleanupBlocked ? await this.admitAfterFence() : 0;
+    this.assertOpen(waited);
     signal.throwIfAborted();
     const job = this.createJob(options.timeoutMs, "", undefined, true);
     const abort = () => this.stop(job, "canceled");
     signal.addEventListener("abort", abort, { once: true });
     const result = this.run(job, script, cwd, options)
       .then((result) => {
-        if (result.cleanupConfirmed !== true) throw Error(CLEANUP_UNCONFIRMED);
+        if (result.cleanupConfirmed !== true) throw this.fenceError();
         job.abort.signal.throwIfAborted();
         return result;
       })
@@ -360,7 +438,7 @@ export class ClaudeProjectJobs {
       .catch((error) => {
         if (executionStarted) {
           this.blockCleanup(job);
-          this.append(job, "stderr", CLEANUP_UNCONFIRMED);
+          this.append(job, "stderr", this.fenceError().message);
         } else {
           // Stopped before it was handed to the executor: nothing ran, so it
           // holds no fence (it may be a peer a fence just stopped).
@@ -370,7 +448,7 @@ export class ClaudeProjectJobs {
           job.status = "failed";
           this.append(job, "stderr", "Project command failed to execute");
         }
-        throw executionStarted ? Error(CLEANUP_UNCONFIRMED) : error;
+        throw executionStarted ? this.fenceError() : error;
       })
       .finally(() => {
         clearTimeout(timer);
@@ -481,6 +559,7 @@ export class ClaudeProjectJobs {
   }
   async cancelAll() {
     this.paused = true;
+    this.wakeReopened();
     const jobs = [...this.jobs.values()];
     for (const job of jobs) this.stop(job, "canceled");
     await Promise.all(jobs.map((job) => job.done));
@@ -491,9 +570,12 @@ export class ClaudeProjectJobs {
   /** Return every pending wait now, with whatever output is available. */
   releaseWaits() {
     for (const done of [...this.waits]) done();
+    // A call waiting out a fence returns too (failing if still fenced).
+    this.wakeReopened();
   }
   async close() {
     this.closed = true;
+    this.wakeReopened();
     await this.cancelAll();
     // The runtime retains only the recovery callback after close, not output.
     for (const job of this.jobs.values()) job.output = [];

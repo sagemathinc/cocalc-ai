@@ -12,6 +12,10 @@ import {
 } from "./claude-cli-lease";
 import { ClaudeProjectJobs } from "./claude-project-jobs";
 
+// These tests are about the fence itself: a fenced call fails at once (the
+// bounded wait for a brief fence has its own tests).
+process.env.COCALC_PROJECT_TOOL_FENCE_WAIT_MS = "0";
+
 const mockSpawn = jest.fn();
 const mockExecFile = jest.fn();
 jest.mock("node:child_process", () => ({
