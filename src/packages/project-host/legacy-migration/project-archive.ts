@@ -56,6 +56,20 @@ const PROJECT_ARCHIVE_MAX_FILE_BYTES = Math.max(
   1,
   envToInt("COCALC_PROJECT_ARCHIVE_MAX_FILE_BYTES", 8 * 1024 * 1024 * 1024),
 );
+// e.g. "8 GiB" for the default per-file limit
+function formatArchiveBytes(bytes: number): string {
+  for (const [unit, size] of [
+    ["GiB", 1024 ** 3],
+    ["MiB", 1024 ** 2],
+    ["KiB", 1024],
+  ] as const) {
+    if (bytes >= size) {
+      const n = bytes / size;
+      return `${Number.isInteger(n) ? n : n.toFixed(1)} ${unit}`;
+    }
+  }
+  return `${bytes} bytes`;
+}
 const PROJECT_ARCHIVE_SKIPPED_FILE_REPORT_LIMIT = Math.max(
   0,
   envToInt("COCALC_PROJECT_ARCHIVE_SKIPPED_FILE_REPORT_LIMIT", 100),
@@ -1181,6 +1195,19 @@ export function createLegacyProjectArchiveHandlers({
           max_uncompressed_bytes,
           lro,
         });
+        if (
+          file_count === 0 &&
+          (skipped_file_count > 0 || unsafe_path_count > 0)
+        ) {
+          // Not empty: everything restorable was skipped (too large, or an
+          // unsafe path).  Fail, so the import stays retryable and nobody
+          // takes the user's data for an empty project.
+          throw new Error(
+            skipped_file_count > 0
+              ? `legacy project archive has no restorable files: ${skipped_file_count} file(s) exceed the ${formatArchiveBytes(PROJECT_ARCHIVE_MAX_FILE_BYTES)} per-file limit (COCALC_PROJECT_ARCHIVE_MAX_FILE_BYTES)`
+              : `legacy project archive has no restorable files: ${unsafe_path_count} path(s) are unsafe to extract`,
+          );
+        }
         if (file_count === 0) {
           // The legacy project had no files, or only CoCalc's own state, which
           // is never restored.  That is a complete restore with nothing to

@@ -23,6 +23,9 @@ import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 
 const tmp = mkdtempSync(join(tmpdir(), "cocalc-archive-empty-"));
+// a small per-file limit, so a "too large" file is cheap to make (read when
+// project-archive loads, below)
+process.env.COCALC_PROJECT_ARCHIVE_MAX_FILE_BYTES = "1024";
 
 jest.mock("@cocalc/backend/data", () => ({ data: join(tmp, "data") }));
 jest.mock("../lro/stream", () => ({ publishLroEvent: async () => {} }));
@@ -76,6 +79,13 @@ describe("legacy project restore of an archive with no files", () => {
 
   beforeAll(async () => {
     archives.empty = archiveOf(() => {});
+    // its only file is over the per-file limit: user data, not an empty
+    // project
+    archives.oversize = archiveOf((src) => {
+      mkdirSync(join(src, ".smc", "local_hub"), { recursive: true });
+      writeFileSync(join(src, ".smc", "local_hub", "local_hub.port"), "6000\n");
+      writeFileSync(join(src, "big.dat"), Buffer.alloc(4096, 1));
+    });
     archives.state = archiveOf((src) => {
       mkdirSync(join(src, ".smc", "local_hub"), { recursive: true });
       writeFileSync(join(src, ".smc", "local_hub", "local_hub.port"), "6000\n");
@@ -132,4 +142,21 @@ describe("legacy project restore of an archive with no files", () => {
       expect(backupExempt).toEqual([project_id]);
     },
   );
+
+  it("still fails when every restorable file was skipped as too large, naming the limit", async () => {
+    const project_id = "00000000-0000-4000-8000-000000000135";
+    await expect(
+      handlers.restoreProjectArchive({
+        project_id,
+        download: { url: `${base}/oversize` } as any,
+      }),
+    ).rejects.toThrow(
+      /no restorable files: 1 file\(s\) exceed the 1 KiB per-file limit \(COCALC_PROJECT_ARCHIVE_MAX_FILE_BYTES\)/,
+    );
+    // nothing applied, and not marked as an empty restore
+    expect(readFileSync(join(home, "new-work.txt"), "utf8")).toBe("keep me\n");
+    expect(existsSync(join(home, "big.dat"))).toBe(false);
+    expect(projectSnapshots).toEqual([]);
+    expect(backupExempt).toEqual([]);
+  });
 });
