@@ -337,12 +337,15 @@ export function PersonDetail({
   onBack,
   onOpenConversation,
   onStartConversation,
+  onMessage,
 }: {
   account_id: string;
   conversations: ListedConversation[];
   onBack: () => void;
   onOpenConversation: (conversation: ListedConversation) => void;
   onStartConversation: () => void;
+  // A direct conversation with them, in no project.
+  onMessage?: () => void;
 }) {
   const person = usePeople().find((p) => p.account_id === account_id);
   const shared = useCollaboratorProjects(account_id);
@@ -377,9 +380,16 @@ export function PersonDetail({
         {person?.alias && (
           <span style={{ color: UI_COLORS.link }}>@{person.alias}</span>
         )}
-        <Button type="primary" onClick={onStartConversation}>
-          Start conversation
-        </Button>
+        {onMessage && (
+          <Button
+            type="primary"
+            icon={<Icon name="comment" />}
+            onClick={onMessage}
+          >
+            Message
+          </Button>
+        )}
+        <Button onClick={onStartConversation}>Start conversation</Button>
         <Button
           icon={<Icon name="robot" />}
           onClick={() =>

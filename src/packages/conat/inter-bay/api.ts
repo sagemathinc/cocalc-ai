@@ -1017,6 +1017,10 @@ export interface AccountRehomeStateCopyRequest {
   membership_packages?: Record<string, unknown>[];
   membership_package_assignments?: Record<string, unknown>[];
   membership_side_effects_outbox?: Record<string, unknown>[];
+  account_direct_conversations?: Record<string, unknown>[];
+  account_direct_blocks?: Record<string, unknown>[];
+  direct_request_admissions?: Record<string, unknown>[];
+  account_direct_deleted_messages?: Record<string, unknown>[];
 }
 
 export interface AccountLocalUpsertMembershipGrantRequest {

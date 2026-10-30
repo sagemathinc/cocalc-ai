@@ -4,6 +4,12 @@
  */
 
 import type {
+  DirectMessage,
+  DirectPersonalPatch,
+  DirectResponse,
+  MemberDirectConversation,
+} from "@cocalc/util/direct-conversations";
+import type {
   Conversation,
   ListedConversation,
   PeopleStateKind,
@@ -33,6 +39,65 @@ export interface ConversationList {
 }
 
 export interface PeopleApi {
+  // Direct conversations, in no project (@cocalc/util/direct-conversations).
+  listDirect(opts: {
+    account_id?: string;
+  }): Promise<{ conversations: MemberDirectConversation[] }>;
+  // Start a conversation (or reuse the one with that person), optionally
+  // with a first message. member_ids must be collaborators; anyone else is
+  // named by exact username and gets a message request.
+  startDirect(opts: {
+    account_id?: string;
+    member_ids?: string[];
+    usernames?: string[];
+    title?: string | null;
+    body?: string | null;
+  }): Promise<MemberDirectConversation>;
+  // A page of messages, oldest first, before an optional time.
+  getDirect(opts: {
+    account_id?: string;
+    conversation_id: string;
+    before?: number | null;
+  }): Promise<{
+    conversation: MemberDirectConversation;
+    messages: DirectMessage[];
+  }>;
+  sendDirect(opts: {
+    account_id?: string;
+    conversation_id: string;
+    body: string;
+  }): Promise<DirectMessage>;
+  // Answer a message request (or block the person who started it).
+  respondDirect(opts: {
+    account_id?: string;
+    conversation_id: string;
+    action: DirectResponse;
+  }): Promise<MemberDirectConversation>;
+  markDirectRead(opts: {
+    account_id?: string;
+    conversation_id: string;
+    read_through: number;
+  }): Promise<void>;
+  // Your own settings: mute, pin, archive (archived_through: a time, or
+  // null to show everything again).
+  setDirectState(opts: {
+    account_id?: string;
+    conversation_id: string;
+    patch: DirectPersonalPatch;
+  }): Promise<void>;
+  // Delete a message you sent, for everyone.
+  deleteDirectMessage(opts: {
+    account_id?: string;
+    conversation_id: string;
+    message_id: string;
+  }): Promise<void>;
+  // Someone to message by exact username (never an account id or email), or
+  // null. Start the conversation with the username.
+  findDirectRecipient(opts: {
+    account_id?: string;
+    username: string;
+  }): Promise<{ account_id: string; name: string; username: string } | null>;
+
   listConversations(opts: { account_id?: string }): Promise<ConversationList>;
   // The shared record only (no personal state), for opening a link.
   getConversation(opts: ConversationRef): Promise<Conversation | null>;
@@ -130,6 +195,15 @@ export interface PeopleApi {
 }
 
 export const people = {
+  listDirect: authFirstRequireAccount,
+  startDirect: authFirstRequireAccount,
+  getDirect: authFirstRequireAccount,
+  sendDirect: authFirstRequireAccount,
+  respondDirect: authFirstRequireAccount,
+  markDirectRead: authFirstRequireAccount,
+  setDirectState: authFirstRequireAccount,
+  deleteDirectMessage: authFirstRequireAccount,
+  findDirectRecipient: authFirstRequireAccount,
   listConversations: authFirstRequireAccount,
   getConversation: authFirstRequireAccount,
   addConversation: authFirstRequireAccount,

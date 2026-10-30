@@ -28,6 +28,7 @@ import { isConversationStoragePath } from "@cocalc/util/people";
 import { setNotificationsOpen } from "../drawer-state";
 import {
   openConversation,
+  openDirectConversation,
   useNotificationConversation,
 } from "./conversation-lookup";
 
@@ -103,6 +104,8 @@ export function NotificationRow(props: Props) {
     fragment_id,
     title,
     body_markdown,
+    body_text,
+    conversation_id,
     origin_label,
     notice_type,
     request_id,
@@ -190,6 +193,22 @@ export function NotificationRow(props: Props) {
     markReadState(is_read ? "unread" : "read");
   }
 
+  // A direct message opens in People, in the app (no page load).
+  const directConversationId =
+    kind === "account_notice" && notice_type === "direct_message"
+      ? conversation_id
+      : undefined;
+
+  async function openDirectTarget(conversation_id: string): Promise<void> {
+    try {
+      await openDirectConversation(conversation_id);
+      setNotificationsOpen(false);
+      markReadState("read");
+    } catch (err) {
+      logger.warn("Unable to open direct conversation", err);
+    }
+  }
+
   async function clickNotificationTarget(): Promise<void> {
     if (!project_id || !path) return;
     // Following a notification leaves the drawer, which would otherwise cover
@@ -229,7 +248,8 @@ export function NotificationRow(props: Props) {
   }
 
   function renderActionLink() {
-    if (!action_link || isProjectAccessRequestNotice) {
+    // A direct message notice opens by clicking it: no separate link.
+    if (!action_link || isProjectAccessRequestNotice || directConversationId) {
       return null;
     }
     return (
@@ -436,10 +456,36 @@ export function NotificationRow(props: Props) {
     if (kind === "account_notice") {
       return (
         <>
-          <strong>
-            {agentName && !title?.includes(agentName) ? `${agentName} · ` : ""}
-            {title ?? "Notification"}
-          </strong>
+          {directConversationId ? (
+            // A direct message: its title is the (keyboard reachable) way to
+            // open the conversation; clicking anywhere on the row also works.
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void openDirectTarget(directConversationId);
+              }}
+              style={{
+                border: "none",
+                background: "transparent",
+                padding: 0,
+                font: "inherit",
+                fontWeight: 600,
+                color: "inherit",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              {title ?? "Message"}
+            </button>
+          ) : (
+            <strong>
+              {agentName && !title?.includes(agentName)
+                ? `${agentName} · `
+                : ""}
+              {title ?? "Notification"}
+            </strong>
+          )}
           {notice_type === "codex_attention" &&
           (attention_state ?? "pending") === "pending" ? (
             <Tag color="gold" style={{ marginLeft: 8 }}>
@@ -459,7 +505,18 @@ export function NotificationRow(props: Props) {
               <TimeAgo date={(latestTime ?? time).getTime()} />.
             </div>
           ) : null}
-          {body_markdown ? (
+          {body_text ? (
+            <div
+              style={{
+                ...MARKDOWN_STYLE,
+                margin: IS_MOBILE ? "4px 0" : "4px 10px",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {body_text}
+            </div>
+          ) : body_markdown ? (
             <StaticMarkdown
               style={{
                 ...MARKDOWN_STYLE,
@@ -518,8 +575,11 @@ export function NotificationRow(props: Props) {
     );
   }
 
-  const onClick =
-    project_id && path ? () => void clickNotificationTarget() : undefined;
+  const onClick = directConversationId
+    ? () => void openDirectTarget(directConversationId)
+    : project_id && path
+      ? () => void clickNotificationTarget()
+      : undefined;
 
   return (
     <li

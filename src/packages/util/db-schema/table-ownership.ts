@@ -195,6 +195,32 @@ export const TABLE_OWNERSHIP = {
     },
   ),
 
+  ...entries(
+    [
+      "account_direct_conversations",
+      "account_direct_blocks",
+      "account_direct_deleted_messages",
+      "direct_request_admissions",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "portable",
+      notes:
+        "A member's index of their direct conversations (owning bay, read state, mute, pin, archive), their blocks, the message requests they started (the daily quota ledger) and deleted-message tombstones, kept on the member's home bay; the index is updated by fan-out from each conversation's owning bay. Account rehome copies them (server/accounts/rehome.ts PORTABLE_STATE_TABLES). Every write takes the account-rehome fence in its transaction, so none lands on the old home during a move; a refused fan-out stays pending and is retried at the new home. The old home drops its copies of direct-message notice text. Covered by the multibay scenarios for direct messages across and during a rehome.",
+    },
+  ),
+  ...entries(
+    ["direct_conversations", "direct_messages", "direct_fanout_pending"],
+    {
+      ownership: "stable-bay",
+      authority: "bay_id",
+      portability: "stable",
+      notes:
+        "Direct conversations and their messages, stored on the bay where they were started (the creator's home bay then); members on any bay reach them through that bay. Account rehome does not move them.",
+    },
+  ),
+
   ...entries(["admin_assigned_memberships"], {
     ownership: "account-home",
     authority: "account_id",

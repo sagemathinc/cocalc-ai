@@ -405,6 +405,35 @@ describe("notification email outbox maintenance", () => {
     expect(message.text).not.toContain("/notifications");
   });
 
+  it("links a direct message email to its conversation on People", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        summary_json: {
+          summary: {
+            notice_type: "direct_message",
+            conversation_id: "22222222-2222-4222-8222-222222222222",
+            body_text: "Hi there",
+          },
+        },
+      },
+    ]);
+    const sender = jest.fn(async () => undefined);
+
+    await sendQueuedNotificationEmailBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+
+    const message = sender.mock.calls[0]?.[0];
+    const expected =
+      "https://cocalc.test/people/messages/22222222-2222-4222-8222-222222222222";
+    expect(message.text).toContain(`Open the conversation: ${expected}`);
+    expect(message.html).toContain(`href="${expected}"`);
+    expect(message.text).not.toContain("/notifications");
+  });
+
   it("renders mention spans as readable text in immediate notification email", async () => {
     claimQueuedNotificationEmails.mockResolvedValue([
       {
@@ -434,6 +463,35 @@ describe("notification email outbox maintenance", () => {
     expect(message.html).toContain("&amp; confirm");
     expect(message.html).not.toContain("&lt;span");
     expect(message.html).not.toContain("user-mention");
+  });
+
+  it("shows a plain-text body literally, never as Markdown", async () => {
+    const body_text =
+      "[x] see http://2130706433:3000/admin and [link](https://x.example) <b>hi</b> $y$";
+    claimQueuedNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        summary_json: { summary: { body_text, body_markdown: "**ignored**" } },
+      },
+    ]);
+    const sender = jest.fn(async () => undefined);
+
+    await sendQueuedNotificationEmailBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+
+    const message = sender.mock.calls[0]?.[0];
+    expect(message.text).toContain(body_text);
+    expect(message.text).not.toContain("ignored");
+    expect(message.html).toContain(
+      "[x] see http://2130706433:3000/admin and [link](https://x.example) &lt;b&gt;hi&lt;/b&gt; $y$",
+    );
+    expect(message.html).not.toContain('href="http://2130706433');
+    expect(message.html).not.toContain('href="https://x.example');
+    expect(message.html).not.toContain("<b>");
+    expect(message.html).not.toContain("<input");
   });
 
   it("renders markdown in immediate notification email html", async () => {
