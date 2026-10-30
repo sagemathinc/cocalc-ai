@@ -1773,7 +1773,7 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.recordManagedProjectEgress": {
     decision: "fresh-auth-not-required",
     reason:
-      "project- or host-scoped accounting with canonical project attribution and server-side abuse enforcement",
+      "host-scoped accounting with canonical project attribution and server-side abuse enforcement",
   },
   "hosts.updateProjectApiRelayUsage": {
     decision: "fresh-auth-not-required",
