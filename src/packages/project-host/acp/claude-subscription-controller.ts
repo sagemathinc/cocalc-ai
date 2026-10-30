@@ -404,7 +404,7 @@ Current project tool server: ${CLAUDE_PROJECT_MCP_NAME}.
 You also have WebSearch and WebFetch for current information from the web, and task list tools for tracking multi-step work, which CoCalc shows to the user as a checklist.
 ${CLAUDE_PROJECT_JOB_GUIDANCE}
 Use the exact installed CLI command: "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js".
-The project_exec environment contains the runtime-issued CoCalc agent identity for registered agents. Message other agents there, not in this isolated controller: \`"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" agent destinations\` lists who you can message and \`... agent send NAME --stdin\` sends one message (see the skill's Agent Messaging section and \`agent --help\`). Never substitute account credentials if agent identity or network access is unavailable.
+The project_exec environment contains the runtime-issued CoCalc agent identity for registered agents. Message other agents there, not in this isolated controller: \`"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" agent destinations\` lists who you can message, and the mcp__${CLAUDE_PROJECT_MCP_NAME}__agent_send tool (or \`... agent send NAME --stdin\`) sends one message; agent_send and the memory tools work even while your other project tools are briefly paused (see the skill's Agent Messaging section and \`agent --help\`). Never substitute account credentials if agent identity or network access is unavailable.
 
 <cocalc-skill>
 ${skill}

@@ -223,8 +223,8 @@ export class ClaudeProjectJobs {
       )
         this.jobs.delete(id);
   }
-  private assertOpen(waitedMs = 0) {
-    if (this.cleanupBlocked) throw this.fenceError(waitedMs);
+  private assertOpen(waitedMs = 0, { fenced = true } = {}) {
+    if (fenced && this.cleanupBlocked) throw this.fenceError(waitedMs);
     if (this.closed || this.paused) throw Error("Project tool is closed");
   }
   private get(id: unknown): Job {
@@ -341,13 +341,46 @@ export class ClaudeProjectJobs {
     return result;
   };
 
+  /**
+   * Like executeTool, but neither refused nor held by a cleanup fence: for
+   * the fixed commands the bridge itself builds (agent memory and messaging),
+   * so an agent can still record or report while its other tools are paused.
+   * No agent-supplied script runs this way, and a step whose own cleanup is
+   * unconfirmed still fences everything else.
+   */
+  readonly executeTrustedTool: ProjectJobExecutor = async (
+    script,
+    cwd,
+    signal,
+    options,
+  ) => {
+    this.assertOpen(0, { fenced: false });
+    signal.throwIfAborted();
+    const job = this.createJob(options.timeoutMs, "", undefined, true, false);
+    const abort = () => this.stop(job, "canceled");
+    signal.addEventListener("abort", abort, { once: true });
+    const result = this.run(job, script, cwd, options)
+      .then((result) => {
+        if (result.cleanupConfirmed !== true) throw this.fenceError();
+        job.abort.signal.throwIfAborted();
+        return result;
+      })
+      .finally(() => signal.removeEventListener("abort", abort));
+    job.done = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  };
+
   private createJob(
     timeoutMs: number,
     fingerprint: string,
     requestId?: string,
     transient = false,
+    fenced = true,
   ): Job {
-    this.assertOpen();
+    this.assertOpen(0, { fenced });
     this.prune();
     if (
       !transient &&

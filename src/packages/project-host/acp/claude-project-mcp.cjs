@@ -290,6 +290,28 @@ const tools = [
     },
   },
   {
+    name: "agent_send",
+    description:
+      "Send one message to another agent in your Agent Network, as `cocalc agent send NAME --stdin` does with this turn's agent identity. It works even while your other project tools are briefly paused. A reply arrives as a new message in your thread: do not poll for it. To see who you can message, or for attachments and other options, use project_exec with `cocalc agent destinations` / `cocalc agent send --help`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: {
+          type: "string",
+          pattern: "^@?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          description:
+            "The agent's name, as `cocalc agent destinations` lists it",
+        },
+        message: {
+          type: "string",
+          description: "The message (Markdown), at most 64 KB",
+        },
+      },
+      required: ["to", "message"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "request_user_input_async",
     description:
       "Ask the user one to three short questions while continuing useful work. Returns immediately after saving a question card; the reply arrives as a user message during this turn, or a continuation if the turn has finished. Do not poll or stop unrelated work waiting for a reply. Use only for missing information, preferences, or clarification, never authentication, secrets, or permission escalation. Use a unique request_id and reuse it only when retrying the identical request.",

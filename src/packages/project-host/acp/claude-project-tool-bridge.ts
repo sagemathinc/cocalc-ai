@@ -167,6 +167,43 @@ export async function runAgentMemoryTool(
   };
 }
 
+// An agent name as `cocalc agent destinations` lists it (optionally with @).
+const AGENT_NAME = /^@?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const MAX_AGENT_MESSAGE_BYTES = 64 * 1024;
+
+// Messages another agent with the same CLI command and identity as
+// `cocalc agent send`, built here from validated arguments (no shell from the
+// agent), so it can run while the agent's other project tools are paused.
+export async function runAgentSendTool(
+  execute: ProjectJobExecutor,
+  args: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const to = typeof args.to === "string" ? args.to : "";
+  const message = typeof args.message === "string" ? args.message : "";
+  if (!AGENT_NAME.test(to)) throw Error("Invalid agent name");
+  if (!message.trim()) throw Error("Message is empty");
+  if (Buffer.byteLength(message) > MAX_AGENT_MESSAGE_BYTES)
+    throw Error(
+      `Message too long: over ${MAX_AGENT_MESSAGE_BYTES} bytes; attach a file with project_exec and \`agent send --attach\` instead`,
+    );
+  const b64 = Buffer.from(message, "utf8").toString("base64");
+  const script = `printf %s '${b64}' | base64 -d | ${COCALC_CLI} --json agent send ${shellQuote(to.replace(/^@/, ""))} --stdin`;
+  const out = await runCaptured(execute, script, signal, 1_000_000);
+  const json = (text: string): any => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  };
+  const parsed = json(out.stdout) ?? json(out.stderr);
+  if (parsed?.ok) return parsed.data;
+  return {
+    error: parsed?.error?.message ?? (out.stderr.trim() || "agent send failed"),
+  };
+}
+
 export interface ClaudeProjectToolBridge {
   directory: string;
   cancel(): Promise<void>;
@@ -302,10 +339,18 @@ export async function createClaudeProjectToolBridge(
             result = await writeProjectFile(jobs.executeTool, args, signal);
           else if (tool === "project_edit_file")
             result = await editProjectFile(jobs.executeTool, args, signal);
+          // Fixed commands built here, not by the agent: they run even
+          // while its other tools are paused by a cleanup fence.
           else if (tool.startsWith("memory_"))
             result = await runAgentMemoryTool(
-              jobs.executeTool,
+              jobs.executeTrustedTool,
               tool,
+              args,
+              signal,
+            );
+          else if (tool === "agent_send")
+            result = await runAgentSendTool(
+              jobs.executeTrustedTool,
               args,
               signal,
             );

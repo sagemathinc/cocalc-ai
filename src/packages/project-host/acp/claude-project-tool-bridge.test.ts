@@ -427,8 +427,36 @@ test("trusted MCP helper executes only through the scoped project socket", async
       "memory_read",
       "memory_write",
       "memory_delete",
+      "agent_send",
       "request_user_input_async",
     ]);
+    // A message to another agent: the bridge builds the command; neither the
+    // name nor the message reaches the shell.
+    execute.mockImplementationOnce(async () => ({
+      code: 0,
+      cleanupConfirmed: true,
+      stdout: JSON.stringify({ ok: true, data: { outcome: "accepted" } }),
+      stderr: "",
+    }));
+    const sent = await request(20, "tools/call", {
+      name: "agent_send",
+      arguments: { to: "@ops0", message: "done; $(rm -rf ~) `x`" },
+    });
+    expect(JSON.parse(sent.result.content[0].text)).toEqual({
+      outcome: "accepted",
+    });
+    const sendScript = execute.mock.calls.at(-1)?.[0] as string;
+    expect(sendScript).toMatch(
+      /^printf %s '[A-Za-z0-9+/=]+' \| base64 -d \| .* --json agent send 'ops0' --stdin$/,
+    );
+    expect(sendScript).not.toContain("rm -rf");
+    const sendCalls = execute.mock.calls.length;
+    const badName = await request(21, "tools/call", {
+      name: "agent_send",
+      arguments: { to: "ops0; rm -rf ~", message: "x" },
+    });
+    expect(badName.result?.isError ?? !!badName.error).toBe(true);
+    expect(execute.mock.calls.length).toBe(sendCalls);
     execute.mockImplementationOnce(async () => ({
       code: 0,
       cleanupConfirmed: true,
@@ -694,7 +722,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       socket.on("end", () => resolve(response));
     });
     expect(unauthorized).toContain("Invalid project tool request");
-    expect(execute).toHaveBeenCalledTimes(11);
+    expect(execute).toHaveBeenCalledTimes(12);
   } finally {
     child.kill("SIGKILL");
     await bridge.close();

@@ -30,7 +30,12 @@ const tools: [string, Record<string, unknown>][] = [
   ["memory_read", { name: "notes" }],
   ["memory_write", { name: "notes", description: "notes", body: "new" }],
   ["memory_delete", { name: "notes" }],
+  ["agent_send", { to: "ops0", message: "hello" }],
 ];
+// Fixed commands the bridge builds (agent memory and messaging) are not held
+// by the fence; everything that can run agent-supplied work is.
+const fencedTools = tools.filter(([tool]) => tool.startsWith("project_"));
+const trustedTools = tools.filter(([tool]) => !tool.startsWith("project_"));
 const ok: SandboxExecResult = {
   code: 0,
   stdout: "",
@@ -71,10 +76,11 @@ describe.each(["unconfirmed", "missing", "rejected"])(
     test.each(tools)(
       "%s fences every other execution tool, even after resume",
       async (tool, args) => {
-        let confirm = () => {};
+        const proofs: (() => void)[] = [];
+        const confirm = () => proofs.forEach((proof) => proof());
         const execute: ProjectJobExecutor = jest.fn(
           async (_script, _cwd, _signal, options) => {
-            confirm = options.onCleanupConfirmed;
+            proofs.push(options.onCleanupConfirmed);
             if (failure === "rejected") throw Error("executor failed");
             return {
               ...ok,
@@ -89,19 +95,34 @@ describe.each(["unconfirmed", "missing", "rejected"])(
           else expect(first.stderr).toContain("cleanup is unconfirmed");
           await bridge.cancel();
           bridge.resume();
-          for (const [next, nextArgs] of tools) {
+          for (const [next, nextArgs] of fencedTools) {
             expect(
               (await request(bridge.directory, next, nextArgs)).stderr,
             ).toContain("cleanup is unconfirmed");
           }
           expect(execute).toHaveBeenCalledTimes(1);
-          // A trusted late proof that the job's processes are gone reopens
+          // Memory and agent messaging still run while fenced (an agent can
+          // still report), and their own unconfirmed cleanup keeps the fence.
+          for (const [next, nextArgs] of trustedTools) {
+            await request(bridge.directory, next, nextArgs);
+          }
+          expect(execute).toHaveBeenCalledTimes(1 + trustedTools.length);
+          expect(
+            (
+              await request(bridge.directory, "project_exec", {
+                script: "true",
+              })
+            ).stderr,
+          ).toContain("cleanup is unconfirmed");
+          // A trusted late proof that every job's processes are gone reopens
           // the session: the next tool runs again (and here fences again,
           // because this executor never confirms cleanup).
           confirm();
           bridge.resume();
-          await request(bridge.directory, "memory_list", {});
-          expect(execute).toHaveBeenCalledTimes(2);
+          await request(bridge.directory, "project_read_file", {
+            path: "notes.txt",
+          });
+          expect(execute).toHaveBeenCalledTimes(2 + trustedTools.length);
         } finally {
           confirm();
           await bridge.close();
