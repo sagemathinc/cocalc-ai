@@ -17,6 +17,7 @@ import { Icon, Tip } from "@cocalc/frontend/components";
 
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
+  FULLSCREEN_EXIT_FOCUS,
   NAV_HEIGHT_PX,
   PageStyle,
   TOP_BAR_ELEMENT_CLASS,
@@ -41,24 +42,45 @@ const EXIT_BUTTON_STYLE: CSS = {
 
 // Set when the exit button is activated: the exit button unmounts, so the
 // enter button that mounts next (top nav or agents sidebar) takes the focus
-// instead of leaving it on the body. Expires so that a later mount, e.g.
-// after a resize, never steals focus.
+// instead of leaving it on the body. Narrow layouts render no enter button;
+// there the marked app-shell control (FULLSCREEN_EXIT_FOCUS, the compact
+// nav's "More navigation") or else the first top-bar control takes it. The
+// intent is short-lived, so a later mount (e.g. a resize) never steals focus.
+const FALLBACK_DELAY_MS = 150;
 let focusEnterOnMount = false;
 let focusEnterTimer: ReturnType<typeof setTimeout> | undefined;
+
+function focusFallback(): void {
+  const active = document.activeElement;
+  if (active != null && active !== document.body) return;
+  const target =
+    document.querySelector<HTMLElement>(`[${FULLSCREEN_EXIT_FOCUS}]`) ??
+    document.querySelector<HTMLElement>(
+      ".smc-top-bar button, .smc-top-bar a[href]",
+    );
+  target?.focus();
+}
 
 function exitAndKeepFocus(toggle: () => void): void {
   focusEnterOnMount = true;
   clearTimeout(focusEnterTimer);
-  focusEnterTimer = setTimeout(() => (focusEnterOnMount = false), 1000);
+  focusEnterTimer = setTimeout(() => {
+    if (!focusEnterOnMount) return;
+    focusEnterOnMount = false;
+    focusFallback();
+  }, FALLBACK_DELAY_MS);
   toggle();
 }
 
 interface Props {
   pageStyle: PageStyle;
+  // Only the enter control: the page renders the one exit control after the
+  // banners, so other placements (the agents sidebar) must not add another.
+  enterOnly?: boolean;
 }
 
 export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
-  const { pageStyle } = props;
+  const { pageStyle, enterOnly } = props;
   const { fontSizeIcons } = pageStyle;
 
   const intl = useIntl();
@@ -79,6 +101,7 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
   }
 
   if (fullscreen === "default") {
+    if (enterOnly) return null;
     const label = intl.formatMessage({
       id: "app.fullscreen-button.exit",
       defaultMessage: "Exit fullscreen",

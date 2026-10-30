@@ -71,7 +71,9 @@ export function SidebarStatus() {
       />
       <span style={{ flex: 1 }} />
       <AppearanceControl compact />
-      {!pageStyle.isNarrow && <FullscreenButton pageStyle={pageStyle} />}
+      {!pageStyle.isNarrow && (
+        <FullscreenButton pageStyle={pageStyle} enterOnly />
+      )}
     </div>
   );
 }

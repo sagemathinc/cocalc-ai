@@ -23,7 +23,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { ConnectionIndicator } from "./connection-indicator";
 import { BrowserUpdateIndicator } from "./update-indicator";
 import openSupportTab from "@cocalc/frontend/support/open";
-import type { PageStyle } from "./top-nav-consts";
+import { FULLSCREEN_EXIT_FOCUS, type PageStyle } from "./top-nav-consts";
 import { PeopleUnreadBadge } from "@cocalc/frontend/people/unread-badge";
 
 export function CompactAgentsTopNav({
@@ -184,6 +184,7 @@ export function CompactAgentsTopNav({
         <span ref={menuTriggerRef}>
           <Button
             aria-label="More navigation"
+            {...{ [FULLSCREEN_EXIT_FOCUS]: "" }}
             type="text"
             style={{
               color: foregroundColor ?? UI_COLORS.text,
