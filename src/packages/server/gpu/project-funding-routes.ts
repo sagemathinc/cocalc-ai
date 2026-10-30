@@ -1026,3 +1026,124 @@ export async function terminateProjectPodLocal(
   }
   return { found: false };
 }
+
+// ---- what the project shows about its funding (§6) ----
+
+export interface ProjectFundingStateDeps extends ProjectFundingRouteDeps {
+  // for tests: the funder's spend on an approval
+  funderSpend?: (
+    funder_account_id: string,
+    req: import("@cocalc/util/gpu/project-funding").ProjectFundingSpendAtFunderRequest,
+  ) => Promise<import("@cocalc/util/gpu/project-funding").ProjectFundingSpend>;
+}
+
+async function defaultFunderSpend(
+  funder_account_id: string,
+  req: import("@cocalc/util/gpu/project-funding").ProjectFundingSpendAtFunderRequest,
+) {
+  const home = await accountHomeBay(funder_account_id);
+  if (home === getConfiguredBayId()) {
+    const h = await import("@cocalc/server/gpu/project-funding");
+    return await h.projectFundingSpendAtFunderLocal(req);
+  }
+  const { createInterBayAccountLocalClient } =
+    await import("@cocalc/conat/inter-bay/api");
+  const { getInterBayFabricClient } =
+    await import("@cocalc/server/inter-bay/fabric");
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home,
+    timeout: 15_000,
+  }).gpuProjectFundingSpendAtFunder(req);
+}
+
+// The project's funding as it shows it: for the project itself, or a
+// collaborator (or their agent) whose home bay asked.
+export async function projectFundingStateLocal(
+  opts: {
+    project_id: unknown;
+    actor: ProjectLaunchActor;
+    source_bay_id?: string;
+  },
+  deps: ProjectFundingStateDeps = {},
+): Promise<import("@cocalc/util/gpu/project-funding").ProjectFundingState> {
+  const project_id = requireId(opts.project_id, "project_id");
+  const actor = opts.actor;
+  if (actor.kind !== "project") {
+    await assertSentByAccountHome(
+      opts.source_bay_id ?? getConfiguredBayId(),
+      requireId(actor.account_id, "account_id"),
+      deps,
+    );
+  }
+  const snapshot = await withRouteWrite(project_id, async (db, project) => {
+    if (project == null || project.deleted) {
+      throw Error("project not found or access denied");
+    }
+    if (
+      actor.kind !== "project" &&
+      !isCollaborator(project, actor.account_id)
+    ) {
+      throw Error("project not found or access denied");
+    }
+    const { rows: approvals } = await db.query(
+      `SELECT * FROM project_compute_approvals
+        WHERE project_id = $1 AND provider = 'runpod' AND kind = 'approval'
+          AND state IN ('pending', 'active')`,
+      [project_id],
+    );
+    const { rows: requests } = await db.query(
+      `SELECT * FROM project_compute_approvals
+        WHERE project_id = $1 AND provider = 'runpod' AND kind = 'request'
+          AND state = 'pending' AND (request_expires_at IS NULL OR request_expires_at > now())`,
+      [project_id],
+    );
+    return { approval: approvals[0], request: requests[0] };
+  });
+  if ("status" in snapshot) {
+    throw new ProjectFundingRetry(
+      "This project is moving between servers right now; try again in a minute.",
+    );
+  }
+  const out: import("@cocalc/util/gpu/project-funding").ProjectFundingState = {
+    project_id,
+  };
+  const a = snapshot.approval;
+  if (a) {
+    out.approval = {
+      approval_id: a.approval_id,
+      state: a.state,
+      funder_account_id: a.funder_account_id,
+      display: a.display ?? null,
+      live_pods: a.live_pods,
+    };
+    if (a.state === "active") {
+      try {
+        out.approval.spend = await (deps.funderSpend ?? defaultFunderSpend)(
+          a.funder_account_id,
+          {
+            source_bay_id: getConfiguredBayId(),
+            project_id,
+            approval_id: a.approval_id,
+          },
+        );
+      } catch {
+        // shown without spend
+      }
+    }
+  } else if (snapshot.request) {
+    const r = snapshot.request;
+    out.request = {
+      id: r.id,
+      actor_kind: r.actor_kind ?? null,
+      actor_account_id: r.actor_account_id ?? null,
+      summary: r.request_summary ?? null,
+      created: new Date(r.created).toISOString(),
+      expires_at:
+        r.request_expires_at == null
+          ? null
+          : new Date(r.request_expires_at).toISOString(),
+    };
+  }
+  return out;
+}

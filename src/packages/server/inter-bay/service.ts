@@ -1464,6 +1464,38 @@ async function startAccountLocalService(): Promise<void> {
       await (
         await import("@cocalc/server/gpu/project-launch")
       ).projectTerminateOnHome(opts),
+    gpuApproveProjectFunding: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding")
+      ).approveProjectFundingLocal(opts),
+    gpuChangeProjectFunding: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding")
+      ).changeProjectFundingLocal(opts),
+    gpuRevokeProjectFunding: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding")
+      ).revokeProjectFundingLocal(opts),
+    gpuFundedProjects: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding")
+      ).fundedProjectsLocal(opts),
+    gpuProjectFundingSpendAtFunder: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding")
+      ).projectFundingSpendAtFunderLocal(opts),
+    gpuProjectFundingStateRoute: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-funding-routes")
+      ).projectFundingStateLocal({
+        project_id: opts.project_id,
+        actor: opts.actor,
+        source_bay_id: opts.source_bay_id,
+      }),
+    gpuProjectFundingStateHome: async (opts) =>
+      await (
+        await import("@cocalc/server/gpu/project-launch")
+      ).projectFundingStateOnHome(opts),
     gpuProjectFundingRequest: async (opts) => ({
       request_id: await (
         await import("@cocalc/server/gpu/project-funding-routes")

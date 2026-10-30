@@ -1424,3 +1424,61 @@ export async function verifyProjectFundedLaunch(
     },
   };
 }
+
+// The spend of one approval, for its project's display: only the project's
+// current owning bay asks, about an approval of that project.
+export async function projectFundingSpendAtFunderLocal(
+  req: import("@cocalc/util/gpu/project-funding").ProjectFundingSpendAtFunderRequest,
+  deps: ProjectFundingDeps = {},
+): Promise<import("@cocalc/util/gpu/project-funding").ProjectFundingSpend> {
+  const project_id = requireId(req?.project_id, "project_id");
+  const approval_id = requireId(req.approval_id, "approval_id");
+  await (deps.assertSentByProjectBay ?? defaultAssertSentByProjectBay)(
+    req.source_bay_id,
+    project_id,
+  );
+  const { rows } = await getPool().query(
+    `SELECT * FROM gpu_budget_layers
+      WHERE approval_id = $1 AND project_id = $2 AND scope_kind = 'project'`,
+    [approval_id, project_id],
+  );
+  if (!rows[0]) throw Error("No such approval.");
+  const v = projectFundingView(rows[0]);
+  return {
+    authorized_usd: v.authorized_usd,
+    spent_usd: v.spent_usd,
+    reserved_usd: v.reserved_usd,
+    available_usd: v.available_usd,
+  };
+}
+
+// The approvals an account funds (newest first, the last 200).
+export async function fundedProjectsLocal(opts: {
+  account_id?: string;
+}): Promise<import("@cocalc/util/gpu/project-funding").FundedProject[]> {
+  const account_id = requireAccount(opts.account_id);
+  const { rows } = await getPool().query(
+    `SELECT * FROM gpu_budget_layers
+      WHERE key_owner_account_id = $1 AND scope_kind = 'project'
+      ORDER BY created DESC LIMIT 200`,
+    [account_id],
+  );
+  return rows.map((l) => {
+    const v = projectFundingView(l);
+    return {
+      approval_id: v.approval_id,
+      project_id: v.project_id,
+      state: v.state,
+      activated: v.activated,
+      authorized_usd: v.authorized_usd,
+      spent_usd: v.spent_usd,
+      reserved_usd: v.reserved_usd,
+      available_usd: v.available_usd,
+      starts_at: v.starts_at,
+      ends_at: v.ends_at,
+      agents_allowed: v.agents_allowed,
+      live_pods: l.live_pods,
+      version: v.version,
+    };
+  });
+}

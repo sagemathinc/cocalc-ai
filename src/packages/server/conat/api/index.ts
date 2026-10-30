@@ -576,4 +576,5 @@ const AGENT_HUB_API_METHODS = new Set([
   // the funded pods of the agent's own project (PROJECT_FUNDING.md §7)
   "gpu.projectPods",
   "gpu.projectTerminate",
+  "gpu.projectFunding",
 ]);
