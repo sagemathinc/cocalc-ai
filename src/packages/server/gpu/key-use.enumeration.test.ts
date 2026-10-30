@@ -60,7 +60,11 @@ const BOUNDARIES = [
 
 describe("GPU key capabilities and decrypts (5d-2c)", () => {
   it("makes user and agent records only at the authenticated boundaries", () => {
-    for (const ctor of ["admitUserKeyUse", "admitAgentKeyUse"]) {
+    for (const ctor of [
+      "admitUserKeyUse",
+      "admitAgentKeyUse",
+      "admitProjectKeyUse",
+    ]) {
       for (const f of callers(ctor)) {
         expect([ctor, f, BOUNDARIES.includes(f)]).toEqual([ctor, f, true]);
       }
@@ -157,7 +161,10 @@ describe("GPU key capabilities and decrypts (5d-2c)", () => {
       const body = text.slice(start, text.indexOf("\n}\n", start));
       expect([
         fn,
-        body.includes(`requireKeyUse(opts.key_use, ["${purpose}"]`),
+        body
+          .replace(/\s+/g, " ")
+          .replace(/\( /g, "(")
+          .includes(`requireKeyUse(opts.key_use, ["${purpose}"]`),
       ]).toEqual([fn, true]);
       // a required property, not an optional one
       expect([fn, /key_use\?:/.test(body)]).toEqual([fn, false]);

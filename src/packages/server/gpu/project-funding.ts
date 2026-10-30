@@ -1117,3 +1117,62 @@ export function initProjectFunding(): void {
     PROJECT_FUNDING_RECONCILE_INTERVAL_MS,
   );
 }
+
+// ---- a funded launch, at this (the funder's home) bay's boundary ----
+
+// Validate a launch forwarded by a project's owning bay: the sender owns the
+// project now, and the ids are well formed. The layer itself is checked by
+// admission (exactly this approval, project, key owner; active; in window;
+// agents allowed) and again by decrypt admission.
+export async function verifyProjectFundedLaunch(
+  req: import("@cocalc/util/gpu/project-funding").ProjectFundingLaunchRequest,
+  deps: ProjectFundingDeps = {},
+): Promise<{
+  funder_account_id: string;
+  project_id: string;
+  binding: import("@cocalc/server/gpu/key-use").ProjectKeyUseBinding;
+  funding: import("@cocalc/server/gpu/pods").ProjectFundedLaunch;
+}> {
+  const project_id = requireId(req?.project_id, "project_id");
+  const approval_id = requireId(req.approval_id, "approval_id");
+  const layer_id = requireId(req.layer_id, "layer_id");
+  const funder_account_id = requireId(
+    req.funder_account_id,
+    "funder_account_id",
+  );
+  const kind = req.actor?.kind;
+  if (kind !== "project" && kind !== "user" && kind !== "agent") {
+    throw Error("A funded launch needs its actor.");
+  }
+  const actor_account_id =
+    kind === "project" ? undefined : requireId(req.actor.account_id, "actor");
+  const clip = (v: unknown) =>
+    v == null ? undefined : `${v}`.slice(0, 128) || undefined;
+  if (kind === "agent" && !clip(req.actor.agent_id)) {
+    throw Error("An agent's funded launch needs its agent id.");
+  }
+  await (deps.assertSentByProjectBay ?? defaultAssertSentByProjectBay)(
+    req.source_bay_id,
+    project_id,
+  );
+  return {
+    funder_account_id,
+    project_id,
+    binding: {
+      project_id,
+      approval_id,
+      layer_id,
+      source_bay_id: `${req.source_bay_id}`,
+      actor_kind: kind,
+      ...(actor_account_id ? { actor_account_id } : {}),
+    },
+    funding: {
+      approval_id,
+      layer_id,
+      actor_kind: kind,
+      actor_account_id,
+      agent_id: kind === "agent" ? clip(req.actor.agent_id) : undefined,
+      run_id: kind === "agent" ? clip(req.actor.run_id) : undefined,
+    },
+  };
+}

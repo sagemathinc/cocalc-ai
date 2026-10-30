@@ -95,6 +95,26 @@ export interface DecryptFacts {
     // decrypt rows that presented it
     decrypt_rows: number;
     outcome: string | null;
+    // rule 'project' (PROJECT_FUNDING.md §5): the approval it was bound to,
+    // and that approval's layer as it is now (null when missing)
+    rule?: string;
+    project?: {
+      project_id: string;
+      approval_id: string;
+      layer_id: string;
+      actor_kind: string;
+      layer: {
+        scope_kind: string;
+        approval_id: string | null;
+        project_id: string | null;
+        key_owner_account_id: string;
+        credential_id: string;
+        starts_at: Date;
+        ends_at: Date;
+        // when it stopped admitting for good (revoke, expiry, close)
+        ended_at: Date | null;
+      } | null;
+    } | null;
   } | null;
   // the run (null when missing)
   run: {
@@ -149,10 +169,43 @@ export function judgeDecrypt(
       return unexplained("another key");
     }
     if (u.bay_id !== d.bay_id) return unexplained("another bay");
-    const principal = u.agent_id
-      ? `agent:${u.principal_account_id}:${u.agent_id}`.slice(0, 200)
-      : `${u.principal_account_id}`;
+    const pr = u.rule === "project" ? u.project : undefined;
+    if (u.rule === "project" && !pr) {
+      return unexplained("its approval binding is missing");
+    }
+    const principal = pr
+      ? (pr.actor_kind === "project"
+          ? `project:${pr.project_id}`
+          : `${u.principal_account_id}`
+        ).slice(0, 200)
+      : u.agent_id
+        ? `agent:${u.principal_account_id}:${u.agent_id}`.slice(0, 200)
+        : `${u.principal_account_id}`;
     if (principal !== d.principal) return unexplained("another principal");
+    if (pr) {
+      // Only while its exact approval was valid: from the layer's start,
+      // strictly before the earliest of its end and its recorded end
+      // (revoke, expiry, close). Grace below delays the verdict; it never
+      // widens this.
+      const l = pr.layer;
+      if (
+        !l ||
+        l.scope_kind !== "project" ||
+        l.approval_id !== pr.approval_id ||
+        l.project_id !== pr.project_id ||
+        l.key_owner_account_id !== d.key_owner_account_id ||
+        l.credential_id !== d.credential_id
+      ) {
+        return unexplained("not its approval's layer");
+      }
+      const until = Math.min(
+        t(l.ends_at)!,
+        l.ended_at == null ? Infinity : t(l.ended_at)!,
+      );
+      if (started < t(l.starts_at)! || started >= until) {
+        return unexplained("outside its approval's validity");
+      }
+    }
     if (u.decrypt_rows > u.max_decrypts) {
       return unexplained("over its record's limit");
     }
@@ -229,7 +282,15 @@ async function batch(
             u.agent_id AS u_agent, u.purpose AS u_purpose,
             u.authorized AS u_authorized, u.bay_id AS u_bay,
             ${MS("u.created")} AS u_created_ms, ${MS("u.expires")} AS u_expires_ms,
-            u.max_decrypts AS u_max,
+            u.max_decrypts AS u_max, u.rule AS u_rule,
+            u.project_id AS u_project, u.approval_id AS u_approval,
+            u.layer_id AS u_layer, u.actor_kind AS u_actor_kind,
+            pl.id AS pl_id, pl.scope_kind AS pl_kind,
+            pl.approval_id AS pl_approval, pl.project_id AS pl_project,
+            pl.key_owner_account_id AS pl_owner,
+            pl.credential_id AS pl_credential,
+            ${MS("pl.starts_at")} AS pl_starts_ms, ${MS("pl.ends_at")} AS pl_ends_ms,
+            ${MS("pl.ended_at")} AS pl_ended_ms,
             (SELECT count(*)::int FROM gpu_key_decrypts x
               WHERE x.key_use_id = u.id) AS u_rows,
             o.outcome AS u_outcome,
@@ -239,6 +300,7 @@ async function batch(
        FROM gpu_key_decrypts d
        LEFT JOIN gpu_key_uses u ON u.id = d.key_use_id
        LEFT JOIN gpu_key_use_outcomes o ON o.key_use_id = u.id
+       LEFT JOIN gpu_budget_layers pl ON pl.id = u.layer_id
        LEFT JOIN gpu_worker_runs r ON r.id = d.worker_run_id
       WHERE d.audited_at IS NULL
         AND ($1::float8 IS NULL OR (${MS("d.started")}, d.id) > ($1::float8, $2::uuid))
@@ -276,6 +338,29 @@ async function batch(
             max_decrypts: Number(r.u_max),
             decrypt_rows: Number(r.u_rows),
             outcome: r.u_outcome ?? null,
+            rule: r.u_rule,
+            project:
+              r.u_rule !== "project"
+                ? null
+                : {
+                    project_id: r.u_project,
+                    approval_id: r.u_approval,
+                    layer_id: r.u_layer,
+                    actor_kind: r.u_actor_kind,
+                    layer:
+                      r.pl_id == null
+                        ? null
+                        : {
+                            scope_kind: r.pl_kind,
+                            approval_id: r.pl_approval,
+                            project_id: r.pl_project,
+                            key_owner_account_id: r.pl_owner,
+                            credential_id: r.pl_credential,
+                            starts_at: date(r.pl_starts_ms)!,
+                            ends_at: date(r.pl_ends_ms)!,
+                            ended_at: date(r.pl_ended_ms),
+                          },
+                  },
           },
     run:
       r.r_id == null

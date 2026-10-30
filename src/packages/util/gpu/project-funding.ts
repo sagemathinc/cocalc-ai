@@ -534,3 +534,22 @@ export interface ProjectComputeApprovalPortableRow {
   created: string;
   updated: string;
 }
+
+// P -> H: a launch under an approval. P verified the actor (the project
+// itself, or a collaborator or agent its home bay vouched for) and chose the
+// active route; H verifies that P owns the project, binds the key use to
+// exactly this approval and layer, and admits against that layer.
+export interface ProjectFundingLaunchRequest {
+  source_bay_id: string;
+  project_id: string;
+  approval_id: string;
+  layer_id: string;
+  funder_account_id: string;
+  actor: {
+    kind: "project" | "user" | "agent";
+    account_id?: string;
+    agent_id?: string;
+    run_id?: string;
+  };
+  spec: unknown;
+}

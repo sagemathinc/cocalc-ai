@@ -77,6 +77,16 @@ export interface AdmissionRequest {
   // verified grant, never a request body). Human launches pass none, so no
   // agent layer applies to them.
   grant_id?: string;
+  // A launch under a project funding approval (PROJECT_FUNDING.md §3): the
+  // exact approval and its layer, from the project's owning bay's route
+  // (verified there and here), never a request body. Admission then uses
+  // exactly this project layer, plus the key layer and the acting
+  // account's beneficiary layer; no other project layer ever applies.
+  funding?: {
+    approval_id: string;
+    layer_id: string;
+    actor_kind: "project" | "user" | "agent";
+  };
   gpu_type_id: string;
   gpu_count: number;
   cloud: string;
@@ -113,6 +123,9 @@ function available(layer: LayerRow): Dec {
 function layerName(layer: LayerRow): string {
   if (layer.scope_kind === "key") return "Your GPU budget";
   if (layer.scope_kind === "agent") return "This agent's GPU approval";
+  if (layer.scope_kind === "project") {
+    return "This project's GPU funding approval";
+  }
   return `The ${layer.scope_kind} GPU budget`;
 }
 
@@ -392,23 +405,58 @@ export async function admitLaunch(
     key_owner_account_id: req.key_owner_account_id,
     now,
   });
+  // The applicable layers: the key's, the beneficiary's, and either the
+  // agent grant's (step 6b) or exactly the funding approval's layer. A
+  // project layer applies only when pinned by its id and approval.
+  if (req.funding && req.grant_id != null) {
+    refuse("A launch is funded by an approval or an agent grant, not both.");
+  }
   const { rows: layers } = await db.query(
     `SELECT * FROM gpu_budget_layers
       WHERE credential_id = $1
         AND (scope_kind = 'key'
-             OR (scope_kind = 'project' AND project_id = $2)
-             OR (scope_kind = 'beneficiary' AND beneficiary_account_id = $3)
-             OR (scope_kind = 'agent' AND grant_id = $4))
+             OR (scope_kind = 'beneficiary' AND beneficiary_account_id = $2)
+             OR (scope_kind = 'agent' AND grant_id = $3)
+             OR (scope_kind = 'project' AND id = $4 AND approval_id = $5))
       ORDER BY id FOR UPDATE`,
     [
       req.credential_id,
-      req.project_id,
       req.beneficiary_account_id,
       req.grant_id ?? null,
+      req.funding?.layer_id ?? null,
+      req.funding?.approval_id ?? null,
     ],
   );
   if (!layers.some((l: LayerRow) => l.scope_kind === "key")) {
     refuse("This RunPod key has no GPU budget yet.");
+  }
+  if (req.funding) {
+    const pinned = layers.filter((l: LayerRow) => l.scope_kind === "project");
+    const layer: any = pinned[0];
+    if (
+      pinned.length !== 1 ||
+      layer.project_id !== req.project_id ||
+      layer.key_owner_account_id !== req.key_owner_account_id
+    ) {
+      refuse("This project's GPU funding approval is no longer valid.");
+    }
+    if (req.funding.actor_kind === "agent" && !layer.agents_allowed) {
+      refuse(
+        "This project's GPU funding approval doesn't allow agents to launch GPUs.",
+      );
+    }
+    // Nothing an approval pays for runs past its end.
+    if (
+      now.getTime() + req.max_runtime_minutes * 60_000 >
+      new Date(layer.ends_at).getTime()
+    ) {
+      const left = Math.floor(
+        (new Date(layer.ends_at).getTime() - now.getTime()) / 60_000,
+      );
+      refuse(
+        `This project's GPU funding approval ends in ${Math.max(left, 0)} minutes; a pod under it must end by then (choose a shorter runtime).`,
+      );
+    }
   }
   // An agent's launch is funded by its grant's layer, or not at all.
   if (
