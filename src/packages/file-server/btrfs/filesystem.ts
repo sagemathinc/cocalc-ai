@@ -30,6 +30,7 @@ import {
   ensureBtrfsQuotaModeDetails,
   type BtrfsQuotaRuntimeDetails,
 } from "./quota-mode";
+import { applyBeesGateAction, BeesGate, beesGateEnabled } from "./bees-gate";
 import {
   collectBeesTelemetry,
   recordBeesTelemetryError,
@@ -82,6 +83,10 @@ export interface Options {
     current_used: number;
     run: () => Promise<T>;
   }) => Promise<T> | undefined;
+
+  // Whether projects are starting or stopping now: the BEES gate keeps BEES
+  // frozen meanwhile (bees-gate.ts).
+  beesLifecycleActive?: () => boolean;
 }
 
 let mountLock = false;
@@ -98,6 +103,7 @@ export class Filesystem {
   private beesTelemetryRunning = false;
   private beesDisabledByConfig = false;
   private beesStopping = false;
+  private beesGate?: BeesGate;
   private quotaRuntime?: BtrfsQuotaRuntimeDetails;
   private beesLastExit?: {
     code: number | null;
@@ -169,6 +175,7 @@ export class Filesystem {
 
   close = () => {
     this.beesStopping = true;
+    this.beesGate?.stop();
     this.beesRunningExternally = false;
     if (this.beesRestartTimer) {
       clearTimeout(this.beesRestartTimer);
@@ -204,8 +211,21 @@ export class Filesystem {
       restartPending: this.beesRestartTimer != null,
       lastExit: this.beesLastExit,
       telemetry: this.beesTelemetry,
+      gate: this.beesGate?.getStatus(),
     };
   };
+
+  // One gate for the life of this filesystem; it acts on the BEES cgroup, so
+  // it covers a restarted or adopted BEES too.
+  private startBeesGate(): void {
+    if (this.beesGate || this.beesStopping || !beesGateEnabled()) return;
+    this.beesGate = new BeesGate({
+      mount: this.opts.mount,
+      filesystemUuid: this.quotaRuntime?.filesystem_uuid,
+      lifecycleActive: () => this.opts.beesLifecycleActive?.() ?? false,
+    });
+    void this.beesGate.start();
+  }
 
   private async refreshBeesTelemetry(): Promise<void> {
     if (this.beesTelemetryRunning || this.beesStopping) return;
@@ -299,12 +319,18 @@ export class Filesystem {
           mount: this.opts.mount,
           reason,
         });
+        // A BEES started by an earlier daemon (e.g. frozen before BEES was
+        // turned off) is nobody's now: stop it.
+        await applyBeesGateAction(this.opts.mount, "stop").catch((err) =>
+          logger.debug("unable to stop a leftover BEES", { err: `${err}` }),
+        );
         return;
       }
       if (result.status === "already-running") {
         this.bees = undefined;
         this.beesRunningExternally = true;
         this.beesDisabledByConfig = false;
+        this.startBeesGate();
         const details = {
           mount: this.opts.mount,
           reason,
@@ -332,6 +358,7 @@ export class Filesystem {
         pid: child.pid,
         reason,
       });
+      this.startBeesGate();
       child.once("exit", (code, signal) => {
         if (this.bees !== child) return;
         this.bees = undefined;

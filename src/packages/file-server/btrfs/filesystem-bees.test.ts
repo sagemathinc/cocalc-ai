@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import bees from "./bees";
 import { Filesystem } from "./filesystem";
+import { applyBeesGateAction, BeesGate } from "./bees-gate";
 
 jest.mock("./bees", () => ({
   __esModule: true,
@@ -10,7 +11,20 @@ jest.mock("./bees", () => ({
   signalBeesProcessGroup: jest.fn(),
 }));
 
+jest.mock("./bees-gate", () => ({
+  __esModule: true,
+  applyBeesGateAction: jest.fn(async () => undefined),
+  beesGateEnabled: () => true,
+  BeesGate: jest.fn().mockImplementation(() => ({
+    start: jest.fn(async () => undefined),
+    stop: jest.fn(),
+    getStatus: () => ({ enabled: true, frozen: true }),
+  })),
+}));
+
 const mockedBees = jest.mocked(bees);
+const mockedGate = jest.mocked(BeesGate);
+const mockedApplyGate = jest.mocked(applyBeesGateAction);
 
 function childProcess(): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
@@ -97,6 +111,53 @@ describe("BEES process supervision", () => {
       restartPending: false,
     });
 
+    filesystem.close();
+  });
+
+  it("gives a running BEES one gate, stopped on close", async () => {
+    mockedGate.mockClear();
+    mockedBees.mockResolvedValueOnce({
+      status: "started",
+      child: childProcess(),
+    });
+    const lifecycleActive = jest.fn(() => true);
+    const filesystem = new Filesystem({
+      mount: "/mnt/cocalc",
+      rustic: "/tmp/rustic.toml",
+      beesLifecycleActive: lifecycleActive,
+    });
+    await (filesystem as any).startBees("startup");
+
+    expect(mockedGate).toHaveBeenCalledTimes(1);
+    const options = mockedGate.mock.calls[0][0];
+    expect(options.mount).toBe("/mnt/cocalc");
+    expect(options.lifecycleActive()).toBe(true);
+    const gate = mockedGate.mock.results[0].value;
+    expect(gate.start).toHaveBeenCalled();
+    expect(filesystem.getBeesStatus().gate).toEqual({
+      enabled: true,
+      frozen: true,
+    });
+
+    filesystem.close();
+    expect(gate.stop).toHaveBeenCalled();
+  });
+
+  // Prod 2026-10-30: BEES was frozen and then turned off with
+  // COCALC_DISABLE_BEES; the frozen BEES must not outlive the daemon.
+  it("stops a leftover BEES when BEES is turned off", async () => {
+    mockedGate.mockClear();
+    mockedApplyGate.mockClear();
+    mockedBees.mockResolvedValueOnce({ status: "disabled" });
+    const filesystem = new Filesystem({
+      mount: "/mnt/cocalc",
+      rustic: "/tmp/rustic.toml",
+    });
+    await (filesystem as any).startBees("startup");
+
+    expect(mockedApplyGate).toHaveBeenCalledWith("/mnt/cocalc", "stop");
+    expect(mockedGate).not.toHaveBeenCalled();
+    expect(filesystem.getBeesStatus()).toMatchObject({ enabled: false });
     filesystem.close();
   });
 });

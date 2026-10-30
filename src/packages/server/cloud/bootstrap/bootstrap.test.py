@@ -5902,6 +5902,20 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
             self.assertIn("emit_bees_status()", script)
             self.assertIn("bees-status)", script)
             self.assertIn("reconcile-bees)", script)
+            # The project-host BEES gate: freeze, thaw with one CPU, or stop
+            # (kill the cgroup's tasks, then leave it thawed).
+            gate = script[script.index("  bees-gate)") : script.index("  bees)")]
+            self.assertIn('deny "bees-gate-action-not-allowed"', gate)
+            self.assertIn("printf '1\n' > \"${pool}/cgroup.freeze\"", gate)
+            self.assertIn(
+                'printf \'%s %s\n\' "$BEES_CGROUP_CPU_PERIOD" "$BEES_CGROUP_CPU_PERIOD" > "${pool}/cpu.max"',
+                gate,
+            )
+            stop = gate[gate.index("      stop)") :]
+            self.assertLess(
+                stop.index('> "${pool}/cgroup.kill"'),
+                stop.index("printf '0\n' > \"${pool}/cgroup.freeze\""),
+            )
             self.assertNotIn("\x00", script)
             self.assertIn("tr '\\0' '\\n'", script)
             self.assertIn('/usr/bin/renice -n 19 -p "$tid"', script)

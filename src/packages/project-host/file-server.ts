@@ -6099,6 +6099,9 @@ export async function initFileServer({
     return servers;
   }
 
+  // The BEES gate keeps BEES frozen while projects start or stop.
+  const beesLifecycleActive = () =>
+    (getStorageAdmissionStatus()?.lifecycle_active ?? 0) > 0;
   if (fs == null) {
     if (fileServerMountpoint) {
       const resolvedRusticRepo = await resolveRusticRepo();
@@ -6110,6 +6113,7 @@ export async function initFileServer({
         mount: fileServerMountpoint,
         rustic: resolvedRusticRepo,
         withTemporaryQuotaOverride: withManagedTemporaryQuotaOverride,
+        beesLifecycleActive,
       });
     } else {
       const imageDir = join(data, "btrfs", "image");
@@ -6131,6 +6135,7 @@ export async function initFileServer({
         mount: mountPoint,
         rustic: resolvedRusticRepo,
         withTemporaryQuotaOverride: withManagedTemporaryQuotaOverride,
+        beesLifecycleActive,
       });
     }
   }

@@ -11406,6 +11406,59 @@ PY' bash "$tree"
     esac
     emit_bees_status "$mountpoint"
     ;;
+  bees-gate)
+    # The project-host BEES gate: freeze BEES while it would hurt (frozen
+    # tasks hold no locks and keep their state), thaw it with a 1-CPU cap
+    # when it may run, or stop it for good (kill what is in its cgroup and
+    # leave the cgroup thawed, so a later BEES does not start frozen).
+    if [ "$#" -ne 2 ]; then
+      echo "usage: cocalc-runtime-storage bees-gate <mountpoint> freeze|thaw|stop" >&2
+      exit 2
+    fi
+    mountpoint="$1"
+    action="$2"
+    check_args "$mountpoint" "$action"
+    case "$mountpoint" in
+      /mnt/cocalc|/mnt/cocalc/*)
+        ;;
+      *)
+        deny "bees-mountpoint-not-allowed" "$mountpoint"
+        ;;
+    esac
+    pool="$(bees_cgroup)"
+    case "$action" in
+      freeze)
+        if [ -w "${pool}/cgroup.freeze" ]; then
+          printf '1\n' > "${pool}/cgroup.freeze"
+        fi
+        ;;
+      thaw)
+        if [ -d "$pool" ]; then
+          configure_bees_cgroup "$pool" "$mountpoint"
+          # One CPU, not io.max: a low io.max can turn BEES into a
+          # filesystem-wide lock holder (configure_bees_cgroup).
+          printf '%s %s\n' "$BEES_CGROUP_CPU_PERIOD" "$BEES_CGROUP_CPU_PERIOD" > "${pool}/cpu.max"
+          printf '0\n' > "${pool}/cgroup.freeze"
+        fi
+        ;;
+      stop)
+        if [ -d "$pool" ]; then
+          if [ -w "${pool}/cgroup.kill" ]; then
+            printf '1\n' > "${pool}/cgroup.kill"
+          fi
+          for _ in $(seq 1 50); do
+            grep -q '^populated 0' "${pool}/cgroup.events" 2>/dev/null && break
+            sleep 0.1
+          done
+          printf '0\n' > "${pool}/cgroup.freeze"
+        fi
+        ;;
+      *)
+        deny "bees-gate-action-not-allowed" "$action"
+        ;;
+    esac
+    echo "BEES_GATE action=${action} mountpoint=${mountpoint}" >&2
+    ;;
   bees)
     check_args "$@"
     mountpoint=""
