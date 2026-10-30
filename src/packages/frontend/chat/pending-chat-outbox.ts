@@ -28,6 +28,7 @@ export type PendingChatSend = {
   sender_id?: string;
   input: string;
   acp_prompt?: string;
+  acp_context?: string;
   date: string;
   message_id: string;
   thread_id: string;

@@ -72,12 +72,15 @@ export async function processAI({
   input = regen?.input ?? input;
 
   const acpPromptOverride = `${(message as any)?.acp_prompt ?? ""}`.trim();
+  // Context from the interface (e.g. which turn the person had open).
+  const acpContext = `${(message as any)?.acp_context ?? ""}`.trim();
+  const prompt = acpPromptOverride || input;
 
   await processAcpLLM({
     actions,
     message,
     model,
-    input: acpPromptOverride || input,
+    input: acpContext && prompt.trim() ? `${prompt}\n\n${acpContext}` : prompt,
     sendMode: effectiveAcpSendMode,
     acpConfigOverride,
   });

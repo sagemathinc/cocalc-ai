@@ -976,6 +976,7 @@ export class ChatActions extends Actions<ChatState> {
     input,
     artifact_feedback,
     acp_prompt,
+    acp_context,
     sender_id = this.redux.getStore("account").get_account_id(),
     reply_thread_id,
     tag,
@@ -998,6 +999,8 @@ export class ChatActions extends Actions<ChatState> {
     input?: string;
     artifact_feedback?: ArtifactFeedback;
     acp_prompt?: string;
+    /** For the agent only, after the prompt: e.g. which turn was open. */
+    acp_context?: string;
     sender_id?: string;
     reply_thread_id?: string;
     tag?: string;
@@ -1120,6 +1123,10 @@ export class ChatActions extends Actions<ChatState> {
     }
     if (trimmedAcpPrompt) {
       (message as any).acp_prompt = trimmedAcpPrompt;
+    }
+    const trimmedAcpContext = `${acp_context ?? ""}`.trim();
+    if (trimmedAcpContext && !postOnly) {
+      (message as any).acp_context = trimmedAcpContext.slice(0, 2000);
     }
     if (artifact_feedback) {
       const feedback = validateArtifactFeedback(artifact_feedback);

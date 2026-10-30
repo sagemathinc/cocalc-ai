@@ -66,6 +66,13 @@ import { ReaderFullScreenContext } from "./reader-full-screen";
 import type { ChatMessageTyped } from "./types";
 import { getUserName } from "./user-name";
 import { newest_content } from "./utils";
+import {
+  clearSentFromReader,
+  readerTurnKey,
+  setViewedTurn,
+  turnPreview,
+  useSentFromReader,
+} from "./reader-viewed-turn";
 
 const READER_MODE_KEY = "cocalc-chat-reader-mode";
 const READER_VIEW_KEY = "cocalc-chat-reader-view";
@@ -225,6 +232,41 @@ function keepListWidth(width: number) {
   } catch {
     // This session only.
   }
+}
+
+// The open message of each thread, kept across remounts (opening an artifact
+// splits the frame and mounts the reader again). This browser tab only.
+const MAX_REMEMBERED_SELECTIONS = 200;
+const rememberedSelections = new Map<string, string>();
+
+/** Tests only. */
+export function clearRememberedReaderSelectionsForTests(): void {
+  rememberedSelections.clear();
+}
+
+function useRememberedSelection(
+  key: string,
+): [string | undefined, (id: string | undefined) => void] {
+  const [stored, setStored] = useState(() => ({
+    key,
+    id: rememberedSelections.get(key),
+  }));
+  // Another thread in the same panel: its own remembered message.
+  const id = stored.key === key ? stored.id : rememberedSelections.get(key);
+  const set = useCallback(
+    (next: string | undefined) => {
+      setStored({ key, id: next });
+      rememberedSelections.delete(key);
+      if (next == null) return;
+      rememberedSelections.set(key, next);
+      if (rememberedSelections.size > MAX_REMEMBERED_SELECTIONS) {
+        const oldest = rememberedSelections.keys().next().value;
+        if (oldest != null) rememberedSelections.delete(oldest);
+      }
+    },
+    [key],
+  );
+  return [id, set];
 }
 
 export function ChatReaderView({
@@ -397,7 +439,8 @@ export function ChatReaderView({
     () => items.filter((item) => isItemStarred(item, stars)).length,
     [items, stars],
   );
-  const [selectedId, setSelectedId] = useState<string>();
+  const turnKey = readerTurnKey(projectId, path, threadId);
+  const [selectedId, setSelectedId] = useRememberedSelection(turnKey);
   // The open message over the whole window, as the reader shows it: paging
   // with Newer and Older (or j and k) stays full screen.
   const [fullScreenWanted, setFullScreen] = useState(false);
@@ -406,6 +449,52 @@ export function ChatReaderView({
   const selectedIndex = visible.findIndex((item) => item.id === selectedId);
   const selected: ReaderItem | undefined = visible[selectedIndex];
   const fullScreen = fullScreenWanted && !!selected && !narrow;
+
+  // The open turn, for a reply sent while it is open (see reader-viewed-turn).
+  const newestItemId = useMemo(
+    () =>
+      items.reduce<ReaderItem | undefined>(
+        (newest, item) =>
+          !newest || item.firstIndex > newest.firstIndex ? item : newest,
+        undefined,
+      )?.id,
+    [items],
+  );
+  useEffect(() => {
+    if (!selected) {
+      setViewedTurn(turnKey, undefined);
+      return;
+    }
+    const first = selected.messages[0];
+    const date = first ? dateValue(first) : undefined;
+    setViewedTurn(turnKey, {
+      item_id: selected.id,
+      latest: selected.id === newestItemId,
+      ...(date ? { date: date.toISOString() } : {}),
+      preview: first
+        ? turnPreview(`${newest_content(first) ?? ""}`)
+        : undefined,
+    });
+  }, [turnKey, selected?.id, newestItemId]);
+  useEffect(() => () => setViewedTurn(turnKey, undefined), [turnKey]);
+
+  // The turn with the message just sent from here, while another is open:
+  // offered as a button, never switched to (more may follow about this one).
+  const sentMessageId = useSentFromReader(turnKey);
+  const sentItem = useMemo(
+    () =>
+      sentMessageId
+        ? items.find((item) =>
+            item.messages.some(
+              (message) => readerMessageId(message) === sentMessageId,
+            ),
+          )
+        : undefined,
+    [items, sentMessageId],
+  );
+  useEffect(() => {
+    if (sentItem && selected?.id === sentItem.id) clearSentFromReader(turnKey);
+  }, [sentItem?.id, selected?.id, turnKey]);
 
   // A change is applied to the stored state, which may differ from what is
   // shown here (another device, or not loaded yet).
@@ -1182,8 +1271,34 @@ export function ChatReaderView({
         flex: 1,
         minHeight: 0,
         outline: "none",
+        position: "relative",
       }}
     >
+      {sentItem && sentItem.id !== selected?.id ? (
+        <Button
+          shape="round"
+          icon={<Icon name="arrow-down" />}
+          onClick={() => {
+            if (isItemArchived(sentItem, state)) setShowArchived(true);
+            if (!inView(sentItem)) setView("all");
+            setSelectedId(sentItem.id);
+            clearSentFromReader(turnKey);
+            focusKeys();
+            listRef.current
+              ?.querySelector(`[data-reader-item="${sentItem.id}"]`)
+              ?.scrollIntoView?.({ block: "nearest" });
+          }}
+          style={{
+            position: "absolute",
+            left: 16,
+            bottom: 12,
+            zIndex: 12,
+            boxShadow: `0 2px 10px ${UI_COLORS.shadow}`,
+          }}
+        >
+          Go to your message
+        </Button>
+      ) : null}
       {narrow && selected ? (
         navBar
       ) : (
@@ -1234,7 +1349,14 @@ export function ChatReaderView({
           </Button>
           <Popconfirm
             title={`Archive all ${archivableCount} message${archivableCount === 1 ? "" : "s"}?`}
-            description="Everything in this thread is archived and read: a clean slate. A turn still running stays in the inbox. A new reply brings a message back."
+            description={
+              // Wrapped to about half the toolbar, not one long line.
+              <div style={{ maxWidth: 360 }}>
+                Everything in this thread is archived and read: a clean slate. A
+                turn still running stays in the inbox. A new reply brings a
+                message back.
+              </div>
+            }
             okText="Archive all"
             onConfirm={() => {
               save((current, watermark) =>

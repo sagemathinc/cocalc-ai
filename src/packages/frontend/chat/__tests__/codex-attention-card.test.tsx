@@ -228,6 +228,35 @@ describe("Codex question attention", () => {
     view.unmount();
   });
 
+  it("does not show a failed background refresh, and has no snooze", async () => {
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => {
+        if (request.action === "list")
+          throw new Error("Error: socket has been disconnected");
+        return { ok: true, state: "pending", record: questionRecord } as any;
+      });
+    const view = render(<CodexAttentionCard initialRecord={questionRecord} />);
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "list" }),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/socket has been disconnected/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Snooze/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Acknowledge" }));
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "acknowledge" }),
+      ),
+    );
+    view.unmount();
+  });
+
   it("says a lone question once, and nothing about the agent going on", () => {
     render(
       <CodexAttentionCard
