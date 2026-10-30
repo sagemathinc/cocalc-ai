@@ -375,6 +375,22 @@ describe("the BEES gate", () => {
       t.g.stop();
     });
 
+    // Codex on #1503: free space and io pressure are unknown while a
+    // decision hangs on them.
+    it("freezes when decisions stop completing", async () => {
+      const t = timed(() => false);
+      await t.g.start();
+      await jest.advanceTimersByTimeAsync(10 * MIN + 30_000);
+      expect(t.actions).toEqual(["freeze", "thaw"]);
+      t.hangInputs();
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(t.actions).toEqual(["freeze", "thaw"]);
+      await jest.advanceTimersByTimeAsync(40_000);
+      expect(t.actions).toEqual(["freeze", "thaw", "freeze"]);
+      expect(t.g.getStatus().reason).toBe("stale_inputs");
+      t.g.stop();
+    });
+
     it("freezes once its commit samples go stale, before the next decision", async () => {
       const t = timed(() => false);
       await t.g.start();

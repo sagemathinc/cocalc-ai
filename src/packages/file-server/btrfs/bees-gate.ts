@@ -198,6 +198,8 @@ export class BeesGate {
   private applied?: boolean;
   private syncing = false;
   private lastWriteAt = -Infinity;
+  // when a decision last completed (its inputs may hang: see watch)
+  private lastDecisionAt = -Infinity;
   private lastInputs?: BeesGateInputs;
   // [time, longest commit seen then (ms, a conservative bound)]
   private commitSamples: Array<[number, number]> = [];
@@ -290,8 +292,20 @@ export class BeesGate {
     if (!this.state.frozen) {
       const lifecycle = this.lifecycleActive();
       const worst = this.worstCommitMs();
-      if (lifecycle || worst == null || worst > this.config.freezeCommitMs) {
-        const reason = lifecycle ? "lifecycle_active" : "slow_commit";
+      // free space and io pressure are known only as of the last decision
+      const staleInputs =
+        this.now() - this.lastDecisionAt > 3 * this.intervalMs;
+      if (
+        lifecycle ||
+        worst == null ||
+        worst > this.config.freezeCommitMs ||
+        staleInputs
+      ) {
+        const reason = lifecycle
+          ? "lifecycle_active"
+          : staleInputs
+            ? "stale_inputs"
+            : "slow_commit";
         this.state = { frozen: true, since_ms: this.now(), reason };
         logger.info("BEES gate: freeze", {
           mount: this.opts.mount,
@@ -320,6 +334,7 @@ export class BeesGate {
         };
         if (this.stopped) return;
         this.lastInputs = inputs;
+        this.lastDecisionAt = this.now();
         const next = decideBeesGate(
           this.state,
           inputs,
