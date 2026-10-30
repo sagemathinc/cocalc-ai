@@ -978,4 +978,47 @@ describeDb("project funding approvals across two bays", () => {
     expect(r.approvals.filter((a) => a.state !== "active")).toHaveLength(2);
     expect(r.history_truncated).toBe(true);
   });
+
+  it("refuses any raise in narrow-only mode, even with a fresh sign-in", async () => {
+    const w = await world();
+    const view = await approve(w);
+    for (const change of [
+      { authorized_usd: "500" },
+      { agents_allowed: true },
+    ]) {
+      if ("agents_allowed" in change) {
+        await changeProjectFundingLocal(
+          {
+            account_id: w.funder,
+            approval_id: view.approval_id,
+            change: { agents_allowed: false },
+          },
+          w.deps,
+        );
+      }
+      await expect(
+        changeProjectFundingLocal(
+          {
+            account_id: w.funder,
+            approval_id: view.approval_id,
+            change,
+            fresh_auth_verified: true,
+            narrow_only: true,
+          },
+          w.deps,
+        ),
+      ).rejects.toThrow(/only lowers/);
+    }
+    const lowered = await changeProjectFundingLocal(
+      {
+        account_id: w.funder,
+        approval_id: view.approval_id,
+        change: { authorized_usd: "100" },
+        fresh_auth_verified: true,
+        narrow_only: true,
+      },
+      w.deps,
+    );
+    expect(Number(lowered.authorized_usd)).toBe(100);
+  });
 });

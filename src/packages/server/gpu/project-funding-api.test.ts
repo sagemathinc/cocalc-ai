@@ -109,6 +109,20 @@ describe("project funding hub entry points", () => {
       false,
       true,
     ]);
+    await changeProjectFunding(
+      {
+        account_id: ACCOUNT,
+        approval_id: "a",
+        change: { authorized_usd: "1" },
+        narrow_only: true,
+      },
+      { homeClient: async () => h.client } as any,
+    );
+    expect(h.calls.change.map((c) => c.narrow_only)).toEqual([
+      false,
+      false,
+      true,
+    ]);
   });
 
   it("forwards revoke and the list to the funder's home, as themselves", async () => {

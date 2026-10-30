@@ -290,6 +290,8 @@ export interface GpuApi {
     session_hash?: string | null;
     approval_id: string;
     change: Record<string, unknown>;
+    // refuse any raise, even with a fresh sign-in
+    narrow_only?: boolean;
   }) => Promise<ProjectFundingView>;
   // End an approval now (its pods are terminated).
   revokeProjectFunding: (opts: {

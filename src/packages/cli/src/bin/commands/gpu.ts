@@ -142,6 +142,10 @@ export function podRecordRow(
     cloud: r.cloud,
     deadline: r.deadline,
     pod_id: r.provider_pod_id ?? null,
+    // whose money: a project's funding approval, or the key owner's own key
+    paid_by: r.approval_id
+      ? `the project's GPU funding (approval ${r.approval_id})`
+      : `the RunPod key of account ${r.key_owner_account_id}`,
     reason: r.reason ?? null,
   };
 }
@@ -200,7 +204,7 @@ function fundingRows(state: any) {
       available_usd: a.spend?.available_usd ?? null,
       until: d.ends_at ?? null,
       agents_allowed: d.agents_allowed ?? null,
-      live_gpus: a.live_pods,
+      live_pods: a.live_pods,
       approval_id: a.approval_id,
     };
   }
@@ -896,9 +900,11 @@ export function registerGpuCommand(
         if (Object.keys(change).length === 0) {
           throw new Error("give --amount and/or --no-agents");
         }
+        // the server refuses any raise in this mode, fresh sign-in or not
         return await api.changeProjectFunding({
           approval_id: approvalId,
           change,
+          narrow_only: true,
         });
       }),
     );

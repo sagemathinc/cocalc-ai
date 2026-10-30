@@ -282,6 +282,7 @@ export function podSummary(row: PodRow): GpuPodSummary {
   };
   if (row.provider_pod_id) s.provider_pod_id = row.provider_pod_id;
   if (row.project_id) s.project_id = row.project_id;
+  if (row.approval_id) s.approval_id = row.approval_id;
   if (row.agent_id) s.agent_id = visibleAgentId(row.agent_id);
   if (row.data_center_id) s.data_center_id = row.data_center_id;
   if (row.cost_per_hr != null) s.cost_per_hr = `${row.cost_per_hr}`;

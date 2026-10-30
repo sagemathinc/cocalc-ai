@@ -541,6 +541,9 @@ export async function changeProjectFundingLocal(
     approval_id?: unknown;
     change?: Record<string, unknown>;
     fresh_auth_verified?: boolean;
+    // only narrowing: any raise is refused, fresh auth or not (the CLI's
+    // `lower`), decided here under the layer's lock
+    narrow_only?: boolean;
   },
   deps: ProjectFundingDeps = {},
 ): Promise<ProjectFundingView> {
@@ -602,6 +605,11 @@ export async function changeProjectFundingLocal(
     }
     if (fields.authorized_usd == null && keys.includes("authorized_usd")) {
       throw Error("The amount is required.");
+    }
+    if (raises.length > 0 && opts.narrow_only === true) {
+      throw Error(
+        `That would raise ${raises.join(", ")}; this only lowers an approval (raise it in the browser).`,
+      );
     }
     if (raises.length > 0 && opts.fresh_auth_verified !== true) {
       throw Object.assign(

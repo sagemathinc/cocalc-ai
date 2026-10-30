@@ -100,7 +100,8 @@ A collaborator can approve GPU use in a project, paid by **their own** RunPod
 account, up to an amount and until a date (Settings → GPUs in the project,
 or the banner at the top of the project). Then anyone who can run code in
 the project can launch under it — including you, if the approval allows
-agents — and each launch says whose money paid.
+agents. A launch's `paid_by` says whose money pays: the project's funding
+approval (and its id) or a key owner's own RunPod key.
 
 ```bash
 cocalc gpu funding                 # this project's approval: who pays, what's left, until when

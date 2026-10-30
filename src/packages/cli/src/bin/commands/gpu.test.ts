@@ -83,6 +83,7 @@ const RECORD_ROW = {
   cloud: "SECURE",
   deadline: "2026-10-27T22:00:00.000Z",
   pod_id: "pod_abc123",
+  paid_by: "the RunPod key of account 00000000-1000-4000-8000-000000000001",
   reason: null,
 };
 
@@ -1261,6 +1262,9 @@ it("shows a project's GPU funding: who pays, or the request, or that nobody does
   ]);
   assert.equal((funded.outputs[0] as any).funded_by, "Prof Ada");
   assert.equal((funded.outputs[0] as any).available_usd, "312.4");
+  // pods, not GPUs (a pod may have several)
+  assert.equal((funded.outputs[0] as any).live_pods, 1);
+  assert.equal("live_gpus" in (funded.outputs[0] as any), false);
   const none = harness();
   await none.run("funding", "--project", PROJECT);
   assert.match((none.outputs[0] as any).next, /Nobody pays/);
@@ -1303,6 +1307,7 @@ it("lowers and ends an approval", async () => {
         {
           approval_id: "a1",
           change: { authorized_usd: "100.00", agents_allowed: false },
+          narrow_only: true,
         },
       ],
       ["revokeProjectFunding", { approval_id: "a1" }],
@@ -1350,4 +1355,37 @@ it("launches with --own-key, and exits 3 when the project needs an approval", as
       return true;
     },
   );
+});
+
+it("says whose money pays in a launch's row", async () => {
+  const funded = harness();
+  (RECORD as any).approval_id = "00000000-1000-4000-8000-0000000000ee";
+  try {
+    await funded.run(
+      "launch",
+      "--project",
+      PROJECT,
+      "--gpu",
+      "NVIDIA RTX A5000",
+      "--max-runtime",
+      "60",
+    );
+    assert.match(
+      (funded.outputs[0] as any).paid_by,
+      /project's GPU funding \(approval 00000000-1000-4000-8000-0000000000ee\)/,
+    );
+  } finally {
+    delete (RECORD as any).approval_id;
+  }
+  const own = harness();
+  await own.run(
+    "launch",
+    "--project",
+    PROJECT,
+    "--gpu",
+    "NVIDIA RTX A5000",
+    "--max-runtime",
+    "60",
+  );
+  assert.match((own.outputs[0] as any).paid_by, /RunPod key of account/);
 });
