@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { Button } from "antd";
 import { useIntl } from "react-intl";
 
 import {
@@ -20,11 +21,21 @@ import {
   TOP_BAR_ELEMENT_CLASS,
 } from "./top-nav-consts";
 
-const TIP_STYLE_FULLSCREEN: CSS = {
-  position: "fixed",
-  zIndex: 100,
-  right: 0,
-  top: 0,
+// In fullscreen the exit control is anchored in the page flow right after the
+// banners (impersonation, session, ...), at the top right of the content. A
+// zero-height anchor takes no space, and the control can never sit under a
+// banner, as the old fixed top-right icon did.
+const EXIT_ANCHOR_STYLE: CSS = {
+  position: "relative",
+  height: 0,
+  zIndex: 1000,
+} as const;
+
+const EXIT_BUTTON_STYLE: CSS = {
+  position: "absolute",
+  right: "8px",
+  top: "6px",
+  boxShadow: `0 1px 4px ${UI_COLORS.shadow}`,
 } as const;
 
 interface Props {
@@ -44,23 +55,35 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
     return <></>;
   }
 
-  const icon = fullscreen ? "compress" : "expand";
+  if (fullscreen === "default") {
+    const label = intl.formatMessage({
+      id: "app.fullscreen-button.exit",
+      defaultMessage: "Exit fullscreen",
+    });
+    return (
+      <div style={EXIT_ANCHOR_STYLE}>
+        <Button
+          size="small"
+          style={EXIT_BUTTON_STYLE}
+          icon={<Icon name="compress" />}
+          onClick={() => page_actions.toggle_fullscreen()}
+        >
+          {label}
+        </Button>
+      </div>
+    );
+  }
+
+  // Not in fullscreen: the nav icon that enters it.
   const icon_style: CSS = {
     fontSize: fontSizeIcons,
     color: UI_COLORS.text,
     cursor: "pointer",
-    ...(fullscreen
-      ? {
-          background: UI_COLORS.surface,
-          border: `1px solid ${UI_COLORS.border}`,
-        }
-      : {
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: `${NAV_HEIGHT_PX}px`,
-          width: `${NAV_HEIGHT_PX}px`,
-        }),
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    height: `${NAV_HEIGHT_PX}px`,
+    width: `${NAV_HEIGHT_PX}px`,
   };
 
   const tooltip = intl.formatMessage({
@@ -69,16 +92,12 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
   });
 
   return (
-    <Tip
-      style={fullscreen === "default" ? TIP_STYLE_FULLSCREEN : undefined}
-      title={tooltip}
-      placement={"bottomRight"}
-      delayShow={2000}
-    >
+    <Tip title={tooltip} placement={"bottomRight"} delayShow={2000}>
       <Icon
         className={TOP_BAR_ELEMENT_CLASS}
         style={icon_style}
-        name={icon}
+        name="expand"
+        aria-label={tooltip}
         onClick={(_) => {
           page_actions.toggle_fullscreen();
         }}

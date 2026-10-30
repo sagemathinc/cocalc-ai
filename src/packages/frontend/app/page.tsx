@@ -300,7 +300,9 @@ export const Page: React.FC = () => {
   }
 
   function render_fullscreen(): React.JSX.Element | undefined {
-    if (isNarrow) return;
+    // On narrow screens only the exit control: in fullscreen nothing else
+    // leads out (e.g. an iPhone, which refuses browser fullscreen).
+    if (isNarrow && fullscreen !== "default") return;
 
     return <FullscreenButton pageStyle={pageStyle} />;
   }

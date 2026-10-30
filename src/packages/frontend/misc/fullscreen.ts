@@ -30,3 +30,14 @@ export function exitFullscreen() {
     (document as any).webkitExitFullscreen();
   }
 }
+
+// Call handler whenever the browser enters or leaves fullscreen (including
+// when the user presses Esc). Returns a function that stops listening.
+export function onFullscreenChange(handler: () => void): () => void {
+  document.addEventListener("fullscreenchange", handler);
+  document.addEventListener("webkitfullscreenchange", handler);
+  return () => {
+    document.removeEventListener("fullscreenchange", handler);
+    document.removeEventListener("webkitfullscreenchange", handler);
+  };
+}

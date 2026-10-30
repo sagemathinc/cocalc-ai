@@ -22,6 +22,7 @@ import { getIntl } from "@cocalc/frontend/i18n/get-intl";
 import {
   exitFullscreen,
   isFullscreen,
+  onFullscreenChange,
   requestFullscreen,
 } from "@cocalc/frontend/misc/fullscreen";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
@@ -488,6 +489,18 @@ export class PageActions extends Actions<PageState> {
     update_params();
   }
 
+  // The browser left fullscreen (Esc, its own exit, another tab): CoCalc's
+  // "default" fullscreen hides most of the project UI, so leave it too.
+  // "kiosk" and "project" are embedding modes and stay as they are. While
+  // the browser is still fullscreen (e.g. a whiteboard slideshow switched
+  // which element is fullscreen), nothing changes.
+  browser_fullscreen_changed() {
+    if (isFullscreen()) return;
+    if (redux.getStore("page").get("fullscreen") === "default") {
+      this.setState({ fullscreen: undefined });
+    }
+  }
+
   toggle_fullscreen() {
     this.set_fullscreen(
       redux.getStore("page").get("fullscreen") != null ? undefined : "default",
@@ -633,5 +646,8 @@ export class PageActions extends Actions<PageState> {
 }
 
 export function init_actions() {
-  redux.createActions("page", PageActions);
+  const actions = redux.createActions("page", PageActions);
+  // Follow the browser out of fullscreen (Esc), so the project UI never
+  // stays hidden behind CoCalc's fullscreen mode.
+  onFullscreenChange(() => actions.browser_fullscreen_changed());
 }
