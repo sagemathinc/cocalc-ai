@@ -567,7 +567,7 @@ function hashFingerprint(namespace: string, value: string): string {
     .slice(0, 16)}`;
 }
 
-function sanitizeUrl(raw: string, configuredSiteUrl?: string): string {
+function sanitizeUrl(raw: string, listedImageUrls?: Set<string>): string {
   const trailing = raw.match(/[.,;:!?)]*$/)?.[0] ?? "";
   const value = trailing ? raw.slice(0, -trailing.length) : raw;
   try {
@@ -576,9 +576,9 @@ function sanitizeUrl(raw: string, configuredSiteUrl?: string): string {
     url.password = "";
     url.hash = "";
     // Keep the uuid of a CoCalc blob *image* (e.g. a pasted screenshot) only
-    // when the ticket's images list returns this same URL. Other query
+    // when the ticket's images list returns exactly this URL. Other query
     // strings, including document blobs, stay redacted.
-    if (url.search && !isListedSupportImageUrl(value, url, configuredSiteUrl)) {
+    if (url.search && !isListedSupportImageUrl(url, listedImageUrls)) {
       url.search = "?REDACTED";
     }
     const projectMatch = url.pathname.match(
@@ -656,21 +656,29 @@ function supportImageExtension(filename: string): string {
 }
 
 function isListedSupportImageUrl(
-  value: string,
   url: URL,
-  configuredSiteUrl?: string,
+  listedImageUrls?: Set<string>,
 ): boolean {
-  if (!configuredSiteUrl) return false;
+  if (!listedImageUrls?.size) return false;
   const params = [...url.searchParams.keys()];
   if (params.length !== 1 || params[0] !== "uuid") return false;
-  const images = extractSupportImages(value, configuredSiteUrl);
-  if (images.length !== 1 || images[0].url == null) return false;
-  const listed = new URL(images[0].url);
-  return (
-    listed.origin === url.origin &&
-    listed.pathname === url.pathname &&
-    listed.searchParams.get("uuid") === url.searchParams.get("uuid")
-  );
+  return listedImageUrls.has(url.toString());
+}
+
+/** The URLs of the CoCalc blob images in an images list, for redaction. */
+export function listedImageUrlSet(
+  images: AdminSupportImageReference[],
+): Set<string> {
+  const urls = new Set<string>();
+  for (const image of images) {
+    if (image.source !== "cocalc_blob" || !image.url) continue;
+    try {
+      urls.add(new URL(image.url).toString());
+    } catch {
+      // not a valid URL: never preserved
+    }
+  }
+  return urls;
 }
 
 function stripTrailingUrlPunctuation(value: string): string {
@@ -856,12 +864,18 @@ function isCompactJoseToken(candidate: string): boolean {
 export function redactSupportText(
   value: unknown,
   maxChars: number,
-  { configuredSiteUrl }: { configuredSiteUrl?: string } = {},
+  { listedImageUrls }: { listedImageUrls?: Set<string> } = {},
 ): string {
   let text = `${value ?? ""}`;
-  text = text.replace(/https?:\/\/[^\s<>"']+/gi, (match) =>
-    sanitizeUrl(match, configuredSiteUrl),
-  );
+  // Listed image links are kept as-is: shield them from the rules below (a
+  // uuid can contain digit runs that look like card numbers).
+  const kept: string[] = [];
+  text = text.replace(/https?:\/\/[^\s<>"']+/gi, (match) => {
+    const sanitized = sanitizeUrl(match, listedImageUrls);
+    if (!sanitized.includes("?uuid=")) return sanitized;
+    kept.push(sanitized);
+    return `\u0000KEPT${kept.length - 1}\u0000`;
+  });
   text = text.replace(
     /\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi,
     "$1 [REDACTED_SECRET]",
@@ -897,6 +911,10 @@ export function redactSupportText(
   );
   text = text.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[REDACTED_IP]");
   text = text.replace(/\b(?:\d[ -]*?){13,19}\b/g, "[REDACTED_NUMBER]");
+  text = text.replace(
+    /\u0000KEPT(\d+)\u0000/g,
+    (_, index) => kept[Number(index)] ?? "",
+  );
   if (text.length > maxChars) {
     return `${text.slice(0, Math.max(0, maxChars - 20))}\n[TRUNCATED]`;
   }
@@ -1046,7 +1064,9 @@ function normalizeTicketComment(
         : "staff_or_system",
     public: !!comment.public,
     created_at: safeDate(comment.created_at),
-    body: redactSupportText(body, MAX_COMMENT_CHARS, { configuredSiteUrl }),
+    body: redactSupportText(body, MAX_COMMENT_CHARS, {
+      listedImageUrls: listedImageUrlSet(images),
+    }),
     images,
     attachments: attachments
       .map(attachmentReference)
@@ -1583,14 +1603,18 @@ export async function show(
         err,
       });
     }
+    const descriptionImages = extractSupportImages(
+      ticket.description,
+      configuredSiteUrl,
+    );
     const ticketDetail = {
       ...summary,
       description: redactSupportText(
         ticket.description,
         Math.min(MAX_DESCRIPTION_CHARS, Math.floor(maxBytes / 2)),
-        { configuredSiteUrl },
+        { listedImageUrls: listedImageUrlSet(descriptionImages) },
       ),
-      images: extractSupportImages(ticket.description, configuredSiteUrl),
+      images: descriptionImages,
       documents: extractSupportBlobDocuments(
         ticket.description,
         configuredSiteUrl,
