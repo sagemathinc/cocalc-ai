@@ -5907,6 +5907,21 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
             gate = script[script.index("  bees-gate)") : script.index("  bees)")]
             self.assertIn('deny "bees-gate-action-not-allowed"', gate)
             self.assertIn("printf '1\n' > \"${pool}/cgroup.freeze\"", gate)
+            # Freeze works before BEES ever ran: it creates the empty cgroup
+            # first, and fails rather than succeeding without freezing.
+            freeze = gate[gate.index("      freeze)") : gate.index("      thaw)")]
+            self.assertLess(
+                freeze.index('mkdir -p "$pool"'),
+                freeze.index("printf '1\n' > \"${pool}/cgroup.freeze\""),
+            )
+            self.assertIn("BEES_GATE_FREEZE_FAILED reason=no-cgroup-freeze", freeze)
+            # BEES starts in a cgroup the gate may hold frozen: the startup
+            # handshake comes before the wrapper joins it.
+            start = script[script.index("  bees)") :]
+            self.assertLess(
+                start.index('echo "BEES_STARTING'),
+                start.index('attach_pid_to_project_pool_storage "$$" "$pool"'),
+            )
             self.assertIn(
                 'printf \'%s %s\n\' "$BEES_CGROUP_CPU_PERIOD" "$BEES_CGROUP_CPU_PERIOD" > "${pool}/cpu.max"',
                 gate,

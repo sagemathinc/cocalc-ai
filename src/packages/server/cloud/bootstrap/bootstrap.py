@@ -11428,9 +11428,15 @@ PY' bash "$tree"
     pool="$(bees_cgroup)"
     case "$action" in
       freeze)
-        if [ -w "${pool}/cgroup.freeze" ]; then
-          printf '1\n' > "${pool}/cgroup.freeze"
+        # Also before BEES ever started (a fresh boot): an empty cgroup,
+        # frozen, so the BEES started next attaches to it frozen.
+        # configure_bees_cgroup sets its limits when BEES starts.
+        mkdir -p "$pool"
+        if [ ! -w "${pool}/cgroup.freeze" ]; then
+          echo "BEES_GATE_FREEZE_FAILED reason=no-cgroup-freeze mountpoint=${mountpoint}" >&2
+          exit 1
         fi
+        printf '1\n' > "${pool}/cgroup.freeze"
         ;;
       thaw)
         if [ -d "$pool" ]; then
@@ -11505,8 +11511,10 @@ PY' bash "$tree"
     fi
     pool="$(bees_cgroup)"
     configure_bees_cgroup "$pool" "$mountpoint"
-    attach_pid_to_project_pool_storage "$$" "$pool" || true
+    # Before joining the cgroup: the BEES gate may hold it frozen, which
+    # freezes this wrapper too (the project host waits for this line).
     echo "BEES_STARTING mountpoint=${mountpoint} pid=$$" >&2
+    attach_pid_to_project_pool_storage "$$" "$pool" || true
     if [ -x /usr/local/libexec/cocalc-bees ]; then
       exec /usr/bin/ionice -c3 /usr/bin/nice -n 19 /usr/local/libexec/cocalc-bees "$@"
     fi
