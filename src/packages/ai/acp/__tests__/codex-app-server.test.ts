@@ -34,7 +34,7 @@ import {
   getCodexAppServerAccountStatus,
   setCodexProjectSpawner,
 } from "..";
-import { AppServerClient } from "../codex-app-server";
+import { AppServerClient, readLinesBackward } from "../codex-app-server";
 
 class FakeCodexAppServerProc extends EventEmitter {
   public readonly stdout = new PassThrough();
@@ -702,12 +702,10 @@ describe("CodexAppServerAgent", () => {
           // Completed descendants may no longer be included in this listing.
           fake.sendResponse(message.id, { data: [], nextCursor: null });
           break;
-        case "thread/read":
+        case "thread/turns/list":
           fake.sendResponse(message.id, {
-            thread: {
-              id: "thr-child",
-              turns: [{ id: "turn-child", status: "completed" }],
-            },
+            data: [{ id: "turn-child", status: "completed", items: [] }],
+            nextCursor: null,
           });
           break;
         case "thread/backgroundTerminals/list":
@@ -1598,6 +1596,162 @@ describe("CodexAppServerAgent", () => {
         code: "codex_turn_lost",
         retryable: true,
       }),
+    );
+  }, 15_000);
+
+  it("confirms a completed turn from recent turns without hydrating the full history", async () => {
+    process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS = "50";
+    process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT = "1";
+    const requests: any[] = [];
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      requests.push({ method: message.method, params: message.params });
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "thr-large" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-large" } });
+          break;
+        case "thread/read":
+          // A full-history read of a huge rollout never answers in time.
+          if (message.params?.includeTurns) break;
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-large", status: { type: "idle" }, turns: [] },
+          });
+          break;
+        case "thread/turns/list":
+          fake.sendResponse(
+            message.id,
+            message.params?.cursor === "page-2"
+              ? {
+                  data: [{ id: "turn-large", status: "completed", items: [] }],
+                  nextCursor: null,
+                }
+              : {
+                  data: [{ id: "turn-later", status: "completed", items: [] }],
+                  nextCursor: "page-2",
+                },
+          );
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const streamPayloads: any[] = [];
+    await new CodexAppServerAgent().evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: { workingDirectory: "/tmp/project" } as any,
+    });
+
+    expect(streamPayloads.some((payload) => payload.type === "error")).toBe(
+      false,
+    );
+    expect(streamPayloads).toContainEqual(
+      expect.objectContaining({ type: "summary" }),
+    );
+    expect(
+      requests.some(
+        (request) =>
+          request.method === "thread/read" && request.params?.includeTurns,
+      ),
+    ).toBe(false);
+    expect(
+      requests.filter((request) => request.method === "thread/turns/list"),
+    ).toEqual([
+      {
+        method: "thread/turns/list",
+        params: expect.objectContaining({
+          threadId: "thr-large",
+          sortDirection: "desc",
+        }),
+      },
+      {
+        method: "thread/turns/list",
+        params: expect.objectContaining({ cursor: "page-2" }),
+      },
+    ]);
+  }, 15_000);
+
+  it("falls back to the full-history read when thread/turns/list is unsupported", async () => {
+    process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS = "50";
+    process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT = "1";
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "thr-old" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-old" } });
+          break;
+        case "thread/read":
+          fake.sendResponse(message.id, {
+            thread: {
+              id: "thr-old",
+              status: { type: "idle" },
+              turns: message.params?.includeTurns
+                ? [{ id: "turn-old", status: "completed", items: [] }]
+                : [],
+            },
+          });
+          break;
+        case "thread/turns/list":
+          fake.sendError(message.id, "unknown variant `thread/turns/list`");
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const streamPayloads: any[] = [];
+    await new CodexAppServerAgent().evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: { workingDirectory: "/tmp/project" } as any,
+    });
+
+    expect(streamPayloads.some((payload) => payload.type === "error")).toBe(
+      false,
+    );
+    expect(streamPayloads).toContainEqual(
+      expect.objectContaining({ type: "summary" }),
     );
   }, 15_000);
 
@@ -3489,12 +3643,10 @@ describe("CodexAppServerAgent", () => {
               nextCursor: null,
             });
             break;
-          case "thread/read":
+          case "thread/turns/list":
             fake.sendResponse(message.id, {
-              thread: {
-                id: "thr-child-background",
-                turns: [{ id: "turn-child", status: "inProgress" }],
-              },
+              data: [{ id: "turn-child", status: "inProgress", items: [] }],
+              nextCursor: null,
             });
             break;
           default:
@@ -7866,5 +8018,43 @@ describe("AppServerClient with a closed stdin", () => {
       /stdin is closed: write EPIPE/,
     );
     proc.kill();
+  });
+});
+
+describe("readLinesBackward", () => {
+  const collect = async (file: string, opts?: any) => {
+    const lines: string[] = [];
+    for await (const line of readLinesBackward(file, opts)) lines.push(line);
+    return lines;
+  };
+
+  it("yields lines last to first across chunk boundaries and multibyte text", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "codex-rollout-tail-"));
+    try {
+      const file = path.join(dir, "rollout.jsonl");
+      const lines = ["first", "ünïcødé ✓ 🚀", "", "a".repeat(40), "last"];
+      writeFileSync(file, `${lines.join("\n")}\n`);
+      expect(await collect(file, { chunkBytes: 7 })).toEqual([
+        "",
+        ...[...lines].reverse(),
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads only the tail and skips the line cut by the limit", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "codex-rollout-tail-"));
+    try {
+      const file = path.join(dir, "rollout.jsonl");
+      writeFileSync(file, "old-line\nmiddle\nend\n");
+      // The last 10 bytes are "iddle\nend\n": the cut line is not yielded.
+      expect(await collect(file, { maxBytes: 10, chunkBytes: 4 })).toEqual([
+        "",
+        "end",
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
