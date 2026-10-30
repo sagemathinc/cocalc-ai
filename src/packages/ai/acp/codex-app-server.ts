@@ -11,7 +11,8 @@ import {
 } from "./publication-guidance";
 import { cocalcAccessGuidance } from "./cocalc-access-guidance";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { open } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { createJsonLineReader } from "@cocalc/util/json-lines";
@@ -1336,6 +1337,71 @@ function threadStatusIsActive(status: unknown): boolean {
   );
 }
 
+const RECENT_TURNS_PAGE_SIZE = 10;
+const RECENT_TURNS_MAX_PAGES = 2;
+
+type ThreadReader = Pick<AppServerClient, "request">;
+
+// The thread's metadata, without its turns. A full-history read
+// (includeTurns: true) hydrates the whole rollout, which for long threads
+// (hundreds of MB) outlasts the request timeout and inflates the heap.
+async function readThreadMetadata(
+  client: ThreadReader,
+  threadId: string,
+): Promise<any> {
+  const result = await client.request("thread/read", {
+    threadId,
+    includeTurns: false,
+  });
+  return result?.thread;
+}
+
+// The app-server rejects a method it doesn't know with
+// "Invalid request: unknown variant `<method>`".
+function isUnsupportedMethodError(err: unknown): boolean {
+  return /unknown variant|method not found/i.test(`${err}`);
+}
+
+// The thread's most recent turns, newest first: one page, or with `done`,
+// pages until it holds or RECENT_TURNS_MAX_PAGES pages were read. Only
+// app-servers without thread/turns/list fall back to the full-history read:
+// after any other error (a timeout above all) the full read of a long thread
+// would fail the same way, only slower.
+async function listRecentTurns(
+  client: ThreadReader,
+  threadId: string,
+  opts: { limit?: number; done?: (turns: any[]) => boolean } = {},
+): Promise<any[]> {
+  const turns: any[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < RECENT_TURNS_MAX_PAGES; page += 1) {
+    let result: any;
+    try {
+      result = await client.request("thread/turns/list", {
+        threadId,
+        limit: opts.limit ?? RECENT_TURNS_PAGE_SIZE,
+        sortDirection: "desc",
+        itemsView: "notLoaded",
+        ...(cursor ? { cursor } : {}),
+      });
+    } catch (err) {
+      if (page > 0 || !isUnsupportedMethodError(err)) throw err;
+      const full = await client.request("thread/read", {
+        threadId,
+        includeTurns: true,
+      });
+      return Array.isArray(full?.thread?.turns)
+        ? [...full.thread.turns].reverse()
+        : [];
+    }
+    if (Array.isArray(result?.data)) turns.push(...result.data);
+    cursor =
+      typeof result?.nextCursor === "string" ? result.nextCursor : undefined;
+    if (!cursor || !opts.done || opts.done(turns)) break;
+  }
+  return turns;
+}
+
 function isRetryableBareTimeoutText(text: string): boolean {
   const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
   if (
@@ -1615,6 +1681,66 @@ type PersistedTurnInfo = {
   compacted?: boolean;
 };
 
+const ROLLOUT_TAIL_CHUNK_BYTES = 4 * 1024 * 1024;
+const ROLLOUT_TAIL_MAX_BYTES = 256 * 1024 * 1024;
+
+// The file's lines from the last to the first, reading at most maxBytes of its
+// tail in chunks. Rollouts can exceed the longest string V8 can create, so
+// they are never read whole; a line cut by the maxBytes boundary is skipped.
+export async function* readLinesBackward(
+  filePath: string,
+  {
+    maxBytes = ROLLOUT_TAIL_MAX_BYTES,
+    chunkBytes = ROLLOUT_TAIL_CHUNK_BYTES,
+  }: { maxBytes?: number; chunkBytes?: number } = {},
+): AsyncGenerator<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const { size } = await handle.stat();
+    const stop = Math.max(0, size - maxBytes);
+    let position = size;
+    // The pieces of the line being read, in file order. They are joined once,
+    // when the line's start is found: concatenating per chunk would recopy a
+    // long record for every chunk it spans.
+    let pieces: Buffer[] = [];
+    while (position > stop) {
+      const length = Math.min(chunkBytes, position - stop);
+      position -= length;
+      const chunk = Buffer.alloc(length);
+      let read = 0;
+      while (read < length) {
+        const { bytesRead } = await handle.read(
+          chunk,
+          read,
+          length - read,
+          position + read,
+        );
+        if (bytesRead === 0) break;
+        read += bytesRead;
+      }
+      let end = length;
+      for (let i = length - 1; i >= 0; i -= 1) {
+        if (chunk[i] !== 0x0a) continue;
+        if (pieces.length) {
+          yield Buffer.concat([chunk.subarray(i + 1, end), ...pieces]).toString(
+            "utf8",
+          );
+          pieces = [];
+        } else {
+          yield chunk.toString("utf8", i + 1, end);
+        }
+        end = i;
+      }
+      if (end > 0) pieces.unshift(chunk.subarray(0, end));
+    }
+    if (position === 0 && pieces.length) {
+      yield Buffer.concat(pieces).toString("utf8");
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
 async function readPersistedTurnInfo(opts: {
   spawned: SpawnedCodexAppServer;
   cwd: string;
@@ -1638,12 +1764,10 @@ async function readPersistedTurnInfo(opts: {
       opts.spawned.containerPathMap,
     );
     if (!existsSync(hostRolloutPath)) return undefined;
-    const lines = readFileSync(hostRolloutPath, "utf8").split(/\r?\n/);
     let foundCompletion = false;
     let compacted = false;
     let usage: AcpStreamUsage | undefined;
-    for (let i = lines.length - 1; i >= 0; i -= 1) {
-      const line = lines[i];
+    for await (const line of readLinesBackward(hostRolloutPath)) {
       if (!line.trim()) continue;
       let entry: any;
       try {
@@ -3420,14 +3544,12 @@ export class CodexAppServerAgent implements AcpAgent {
             state = "failed";
           } else {
             try {
-              const result = await runtime.client.request("thread/read", {
+              const [latestTurn] = await listRecentTurns(
+                runtime.client,
                 threadId,
-                includeTurns: true,
-              });
-              const turns = Array.isArray(result?.thread?.turns)
-                ? result.thread.turns
-                : [];
-              const status = `${turns[turns.length - 1]?.status ?? ""}`;
+                { limit: 1 },
+              );
+              const status = `${latestTurn?.status ?? ""}`;
               state =
                 status === "inProgress"
                   ? "running"
@@ -4022,13 +4144,20 @@ export class CodexAppServerAgent implements AcpAgent {
             // notification timeouts while the original stderr was hidden.
             if (client.hasExited()) throw err;
             try {
-              const result = await client.request("thread/read", {
-                threadId: actualThreadId,
-                includeTurns: true,
-              });
-              const turns = Array.isArray(result?.thread?.turns)
-                ? result.thread.turns
-                : [];
+              const thread = await readThreadMetadata(client, actualThreadId);
+              const threadStatus = thread?.status;
+              // Codex 0.151 paginated histories persist a turn only when it
+              // completes. thread/read can therefore omit a live turn even
+              // though its thread-level status is authoritatively active.
+              const threadActive = threadStatusIsActive(threadStatus);
+              const turns =
+                threadActive && !awaitingGoalContinuation
+                  ? []
+                  : await listRecentTurns(client, actualThreadId, {
+                      done: (listed) =>
+                        awaitingGoalContinuation ||
+                        listed.some((candidate) => candidate?.id === turnId),
+                    });
               if (awaitingGoalContinuation) {
                 const nextTurn = turns.find(
                   (candidate) =>
@@ -4049,14 +4178,7 @@ export class CodexAppServerAgent implements AcpAgent {
                 (candidate) => candidate?.id === turnId,
               );
               const status = `${reconciledTurn?.status ?? ""}`;
-              const threadStatus = result?.thread?.status;
-              // Codex 0.151 paginated histories persist a turn only when it
-              // completes. thread/read can therefore omit a live turn even
-              // though its thread-level status is authoritatively active.
-              if (
-                status === "inProgress" ||
-                threadStatusIsActive(threadStatus)
-              ) {
+              if (status === "inProgress" || threadActive) {
                 reconciliationFailures = 0;
                 if (Date.now() - lastReconciliationNoticeAt >= 5 * 60_000) {
                   lastReconciliationNoticeAt = Date.now();
@@ -4076,7 +4198,9 @@ export class CodexAppServerAgent implements AcpAgent {
                   params: { turn: reconciledTurn },
                 };
               } else {
-                throw new Error("active turn was absent from thread/read");
+                throw new Error(
+                  "active turn was absent from the thread's recent turns",
+                );
               }
             } catch (reconcileErr) {
               reconciliationFailures += 1;
@@ -4433,16 +4557,11 @@ export class CodexAppServerAgent implements AcpAgent {
     for (const descendant of descendants) {
       if (descendant?.status?.type !== "active" || !descendant?.id) continue;
       try {
-        const result = await runtime.client.request("thread/read", {
-          threadId: descendant.id,
-          includeTurns: true,
+        const turns = await listRecentTurns(runtime.client, descendant.id, {
+          done: (listed) =>
+            listed.some((turn) => turn?.status === "inProgress"),
         });
-        const turns = Array.isArray(result?.thread?.turns)
-          ? result.thread.turns
-          : [];
-        const activeTurn = [...turns]
-          .reverse()
-          .find((turn) => turn?.status === "inProgress");
+        const activeTurn = turns.find((turn) => turn?.status === "inProgress");
         if (activeTurn?.id) {
           await runtime.client.request("turn/interrupt", {
             threadId: descendant.id,
