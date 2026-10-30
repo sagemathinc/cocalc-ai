@@ -122,6 +122,9 @@ export interface ProjectArchiveRestoreResult {
   unsafe_paths?: string[];
   missing_archive_file_count?: number;
   missing_archive_files?: string[];
+  // The archive had no files to restore (none, or only CoCalc's own state);
+  // the project's home was left untouched.
+  empty_archive?: boolean;
   duration_ms: number;
 }
 
