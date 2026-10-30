@@ -1356,10 +1356,17 @@ async function readThreadMetadata(
   return result?.thread;
 }
 
+// The app-server rejects a method it doesn't know with
+// "Invalid request: unknown variant `<method>`".
+function isUnsupportedMethodError(err: unknown): boolean {
+  return /unknown variant|method not found/i.test(`${err}`);
+}
+
 // The thread's most recent turns, newest first: one page, or with `done`,
-// pages until it holds or RECENT_TURNS_MAX_PAGES pages were read. App-servers without
-// thread/turns/list fall back to the full-history read; a timeout is not
-// retried that way, since the full read would be slower still.
+// pages until it holds or RECENT_TURNS_MAX_PAGES pages were read. Only
+// app-servers without thread/turns/list fall back to the full-history read:
+// after any other error (a timeout above all) the full read of a long thread
+// would fail the same way, only slower.
 async function listRecentTurns(
   client: ThreadReader,
   threadId: string,
@@ -1378,7 +1385,7 @@ async function listRecentTurns(
         ...(cursor ? { cursor } : {}),
       });
     } catch (err) {
-      if (page > 0 || `${err}`.includes("timed out after")) throw err;
+      if (page > 0 || !isUnsupportedMethodError(err)) throw err;
       const full = await client.request("thread/read", {
         threadId,
         includeTurns: true,

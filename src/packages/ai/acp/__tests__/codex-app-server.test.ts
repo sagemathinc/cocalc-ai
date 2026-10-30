@@ -1692,6 +1692,69 @@ describe("CodexAppServerAgent", () => {
     ]);
   }, 15_000);
 
+  it("does not fall back to the full-history read after other turn-list errors", async () => {
+    process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS = "50";
+    process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT = "1";
+    const requests: any[] = [];
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      requests.push({ method: message.method, params: message.params });
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "thr-busy" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-busy" } });
+          break;
+        case "thread/read":
+          if (message.params?.includeTurns) break;
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-busy", status: { type: "idle" }, turns: [] },
+          });
+          break;
+        case "thread/turns/list":
+          fake.sendError(message.id, "internal error: rollout index busy");
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const streamPayloads: any[] = [];
+    await new CodexAppServerAgent().evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: { workingDirectory: "/tmp/project" } as any,
+    });
+
+    expect(streamPayloads).toContainEqual(
+      expect.objectContaining({ type: "error", code: "codex_turn_lost" }),
+    );
+    expect(
+      requests.some(
+        (request) =>
+          request.method === "thread/read" && request.params?.includeTurns,
+      ),
+    ).toBe(false);
+  }, 15_000);
+
   it("falls back to the full-history read when thread/turns/list is unsupported", async () => {
     process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS = "50";
     process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT = "1";
@@ -1718,7 +1781,10 @@ describe("CodexAppServerAgent", () => {
           });
           break;
         case "thread/turns/list":
-          fake.sendError(message.id, "unknown variant `thread/turns/list`");
+          fake.sendError(
+            message.id,
+            "Invalid request: unknown variant `thread/turns/list`, expected one of `initialize`",
+          );
           break;
         default:
           if (typeof message.id === "number") fake.sendResponse(message.id, {});
