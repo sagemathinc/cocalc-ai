@@ -13,6 +13,10 @@ import {
 } from "./claude-project-jobs";
 import { createClaudeProjectToolBridge } from "./claude-project-tool-bridge";
 
+// These tests are about the fence itself: a fenced call fails at once (the
+// bounded wait for a brief fence has its own tests).
+process.env.COCALC_PROJECT_TOOL_FENCE_WAIT_MS = "0";
+
 const tools: [string, Record<string, unknown>][] = [
   ["project_exec", { script: "true" }],
   ["project_read_file", { path: "notes.txt" }],

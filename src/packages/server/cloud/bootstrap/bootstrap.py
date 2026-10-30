@@ -5374,7 +5374,11 @@ def supervise(project, job, owner, timeout_ms):
         last_lease = last_beat = time.monotonic()
         while not stopped:
             now = time.monotonic()
-            if now >= deadline or now - last_lease >= 5 or not alive(owner, owner_start):
+            # A dead owner is caught by alive() at once; the lease only covers
+            # a live but unresponsive one. Its event loop can stall for many
+            # seconds under I/O pressure (16 s on wstein, 2026-10-30), which
+            # with a 5 s lease killed the command and left its cleanup unproven.
+            if now >= deadline or now - last_lease >= 30 or not alive(owner, owner_start):
                 stopped = True
                 break
             # The in-project supervisor is defense in depth, not the boundary.
