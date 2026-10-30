@@ -354,21 +354,72 @@ function readMaintenanceDisksIdle(): boolean {
 // Starts still preparing their volumes: the project's state says "starting"
 // only after that, but the preparation already takes the btrfs mutation lock
 // several times, and background mutations must not slip in between.
-let preparingStarts = 0;
+//
+// A preparation counts only for a bounded time: one that never ends (prod
+// 2026-10-29: a first start hung in its scratch volume step) otherwise held
+// every background mutation on its host off, all scheduled snapshots
+// included, until project-host restarted.
+const START_PREPARATION_MAX_MS = 10 * 60_000;
 
-// Returns the function that ends it; calling that again does nothing.
-export function beginStartPreparation(): () => void {
-  preparingStarts++;
-  let ended = false;
-  return () => {
-    if (ended) return;
-    ended = true;
-    preparingStarts--;
+interface PreparingStart {
+  project_id: string;
+  phase: string;
+  started_at_ms: number;
+  warned: boolean;
+}
+
+const preparingStarts = new Set<PreparingStart>();
+
+export interface StartPreparation {
+  // The step it is in, named in the warning if it outlasts the bound.
+  setPhase: (phase: string) => void;
+  // Calling it again does nothing.
+  end: () => void;
+}
+
+export function beginStartPreparation(
+  project_id: string,
+  phase: string,
+  now = Date.now(),
+): StartPreparation {
+  const start: PreparingStart = {
+    project_id,
+    phase,
+    started_at_ms: now,
+    warned: false,
+  };
+  preparingStarts.add(start);
+  return {
+    setPhase: (phase) => {
+      start.phase = phase;
+    },
+    end: () => {
+      preparingStarts.delete(start);
+    },
   };
 }
 
-export function preparingStartCount(): number {
-  return preparingStarts;
+export function preparingStartCount(now = Date.now()): number {
+  let count = 0;
+  for (const start of preparingStarts) {
+    // (a clock stepped back keeps it counted)
+    const elapsed_ms = now - start.started_at_ms;
+    if (elapsed_ms < START_PREPARATION_MAX_MS) {
+      count++;
+    } else if (!start.warned) {
+      start.warned = true;
+      logger.warn(
+        "start preparation outlasted its bound; no longer counted as lifecycle activity",
+        {
+          project_id: start.project_id,
+          phase: start.phase,
+          elapsed_ms,
+          bound_ms: START_PREPARATION_MAX_MS,
+        },
+      );
+    }
+  }
+  return count;
 }
 
 function defaultReadInputs(): StorageAdmissionInputs {
