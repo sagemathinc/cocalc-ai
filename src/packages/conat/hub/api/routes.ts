@@ -273,6 +273,16 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "projects.getAdminProjectEntitlementOverride": projectFromOpts,
   "projects.setAdminProjectEntitlementOverride": projectFromOpts,
   "projects.clearAdminProjectEntitlementOverride": projectFromOpts,
+  // A project host reports on, and reads, the projects it runs: these run
+  // on the project's bay, which checks that the project is on that host.
+  "hosts.recordProjectBackup": projectFromOpts,
+  "hosts.recordProjectBackupIndex": projectFromOpts,
+  "hosts.getProjectBackupIndexes": projectFromOpts,
+  "hosts.syncProjectBackupIndexes": projectFromOpts,
+  "hosts.deleteProjectBackupIndex": projectFromOpts,
+  "hosts.markProjectChanged": projectFromOpts,
+  "hosts.touchProject": projectFromOpts,
+  "hosts.getProjectStartMetadata": projectFromOpts,
 };
 
 export function getHubApiRoute(name: string): HubApiRoute | undefined {
