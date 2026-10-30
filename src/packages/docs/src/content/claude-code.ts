@@ -163,30 +163,15 @@ Never work around a rejected delivery by borrowing another account's credentials
 
 ### Auto: several Claude subscriptions
 
-With more than one subscription connected, choose **Auto: choose a Claude
-subscription for each turn** as an agent's payment method, or for many agents
-at once with **Set payment method** on the Agents page (optionally as your
-default). Each turn of an Auto agent then runs on one of your subscriptions,
-picked when the turn starts from the usage Claude last reported for each:
-
-- A subscription is used only if a large turn still fits in its five-hour
-  window and its week is not used up. "Large" is learned from your own recent
-  turns (until there are enough, about 10% of a five-hour window).
-- Among those, Auto prefers the one whose weekly limit resets soonest, since
-  its unused allowance expires first. It keeps an agent on the same
-  subscription unless another has much more room, because moving makes the
-  next turn reread the conversation without Claude's prompt cache.
-- Turns running at the same time count against the subscription they use, so
-  simultaneous agents spread out.
-- When a turn reaches a subscription's limit, it continues on another one
-  right away, and the conversation says so. If every subscription is at its
-  limit, the turn waits until the first one has room, then resumes.
-
-The Auto settings list which subscriptions Auto may use (all, unless you
-uncheck one: for example, to keep one for a few important agents pinned to
-it) and how long your weekly limits last at the recent rate. Each turn's
-activity shows the subscription it used. An agent pinned to one subscription
-never moves: only Auto agents do.
+Choose **Auto: choose a Claude subscription for each turn** for an agent, or
+for many agents with **Set payment method** on the Agents page. Each turn then
+runs on one of your subscriptions: one where a large turn (learned from your
+recent turns) still fits in its five-hour window, preferring the week that
+resets soonest, and staying on the same one unless another has much more room.
+When a turn reaches a limit it continues on another subscription; if all are
+at their limits, it waits for the first to have room. Auto's settings choose
+which subscriptions it may use and show how long your weekly limits last.
+Pinned agents never move.
 
 CoCalc checks credential authority when admitting and running work and before
 mediated project commands. Disconnect prevents future authorized use; it
