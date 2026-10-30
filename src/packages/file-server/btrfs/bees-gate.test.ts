@@ -130,11 +130,13 @@ describe("the BEES gate", () => {
     inputs = () => calmHost,
     commits = () => quiet,
     lifecycle = () => false,
+    sampleMs = 3_600_000,
     apply,
   }: {
     inputs?: () => Omit<BeesGateInputs, "lifecycle_active" | "worst_commit_ms">;
-    commits?: () => string;
+    commits?: () => string | Promise<string>;
     lifecycle?: () => boolean;
+    sampleMs?: number;
     apply: (action: string) => Promise<void>;
   }) {
     let now = 0;
@@ -146,7 +148,7 @@ describe("the BEES gate", () => {
       readCommitStats: async () => commits(),
       apply: apply as any,
       intervalMs: 3_600_000,
-      sampleMs: 3_600_000,
+      sampleMs,
     });
     return { g, advance: (ms: number) => (now += ms) };
   }
@@ -263,5 +265,66 @@ describe("the BEES gate", () => {
       applied: false,
     });
     other.g.stop();
+  });
+
+  // Codex and @review on #1503: monitoring that stops must not count as calm.
+  it("treats a failed commit read as a slow commit for the whole window", async () => {
+    const { actions, apply } = recorder();
+    let fail = false;
+    const { g, advance } = gate({
+      apply,
+      commits: () => {
+        if (fail) throw Error("EIO");
+        return quiet;
+      },
+    });
+    await g.start();
+    advance(10 * MIN);
+    await g.sample();
+    await g.tick();
+    expect(actions).toEqual(["freeze", "thaw"]);
+    fail = true;
+    await g.sample();
+    expect(actions).toEqual(["freeze", "thaw", "freeze"]);
+    fail = false;
+    advance(10 * MIN - 30_000);
+    await g.sample();
+    await g.tick();
+    // the failed read is still within the last minute
+    expect(actions).toEqual(["freeze", "thaw", "freeze"]);
+    g.stop();
+  });
+
+  it("treats commit samples as unknown once sampling falls behind, and samples one at a time", async () => {
+    const { actions, apply } = recorder();
+    let release: (s: string) => void = () => {};
+    let hang = false;
+    let reads = 0;
+    const { g, advance } = gate({
+      apply,
+      sampleMs: 1_000,
+      commits: () => {
+        reads += 1;
+        return hang
+          ? new Promise<string>((resolve) => (release = resolve))
+          : quiet;
+      },
+    });
+    await g.start();
+    advance(10 * MIN);
+    await g.sample();
+    await g.tick();
+    expect(actions).toEqual(["freeze", "thaw"]);
+    hang = true;
+    const first = g.sample();
+    void g.sample();
+    void g.sample();
+    expect(reads).toBe(2);
+    advance(6_000);
+    await g.tick();
+    expect(actions).toEqual(["freeze", "thaw", "freeze"]);
+    release(quiet);
+    await first;
+    g.stop();
   });
 });

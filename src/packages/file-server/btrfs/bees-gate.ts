@@ -187,6 +187,7 @@ export class BeesGate {
   private timer?: NodeJS.Timeout;
   private sampleTimer?: NodeJS.Timeout;
   private ticking = false;
+  private sampling = false;
   private unsupported = false;
   // Whether the cgroup is known to match this.state: false until a freeze
   // succeeds (a restart or handoff may have left it either way).
@@ -242,13 +243,21 @@ export class BeesGate {
   /** Between decisions: freeze a running BEES at once when a project starts
    * or stops or a commit runs long, rather than at the next decision. */
   async sample(): Promise<void> {
-    await this.sampleCommit();
-    if (!this.synced || this.state.frozen) return;
-    if (
-      this.opts.lifecycleActive() ||
-      (this.worstCommitMs() ?? Infinity) > this.config.freezeCommitMs
-    ) {
-      await this.tick();
+    // One at a time: under the I/O stalls this gate is for, a read can take
+    // longer than the period (and then the samples go stale: unsafe).
+    if (this.sampling) return;
+    this.sampling = true;
+    try {
+      await this.sampleCommit();
+      if (!this.synced || this.state.frozen) return;
+      if (
+        this.opts.lifecycleActive() ||
+        (this.worstCommitMs() ?? Infinity) > this.config.freezeCommitMs
+      ) {
+        await this.tick();
+      }
+    } finally {
+      this.sampling = false;
     }
   }
 
@@ -338,10 +347,10 @@ export class BeesGate {
             )
         : undefined);
     if (!read) return;
-    const now = this.now();
+    let worst: number;
     try {
       const stats = parseCommitStats(await read());
-      let worst = stats.cur_commit_ms ? stats.cur_commit_ms + this.sampleMs : 0;
+      worst = stats.cur_commit_ms ? stats.cur_commit_ms + this.sampleMs : 0;
       if (
         this.lastCommits != null &&
         stats.commits != null &&
@@ -350,21 +359,27 @@ export class BeesGate {
         worst = Math.max(worst, stats.last_commit_ms ?? 0);
       }
       this.lastCommits = stats.commits;
-      this.commitSamples = this.commitSamples.filter(
-        ([at]) => now - at < COMMIT_WINDOW_MS,
-      );
-      this.commitSamples.push([now, worst]);
-    } catch {}
+    } catch {
+      // A missed sample may hide a slow commit: unsafe for the whole window.
+      worst = Infinity;
+    }
+    const now = this.now();
+    this.commitSamples = this.commitSamples.filter(
+      ([at]) => now - at < COMMIT_WINDOW_MS,
+    );
+    this.commitSamples.push([now, worst]);
   }
 
   // The longest commit in about the last minute; undefined (unsafe) without
-  // samples covering it.
+  // samples covering it or once sampling falls behind (e.g. a hung read).
   private worstCommitMs(): number | undefined {
     const now = this.now();
     const recent = this.commitSamples.filter(
       ([at]) => now - at < COMMIT_WINDOW_MS,
     );
-    return recent.length ? Math.max(...recent.map(([, ms]) => ms)) : undefined;
+    const newest = recent[recent.length - 1]?.[0];
+    if (newest == null || now - newest > 5 * this.sampleMs) return undefined;
+    return Math.max(...recent.map(([, ms]) => ms));
   }
 
   private async readInputs(): Promise<

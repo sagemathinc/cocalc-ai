@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import bees from "./bees";
 import { Filesystem } from "./filesystem";
-import { applyBeesGateAction, BeesGate } from "./bees-gate";
+import { applyBeesGateAction, BeesGate, beesGateEnabled } from "./bees-gate";
 
 jest.mock("./bees", () => ({
   __esModule: true,
@@ -14,7 +14,7 @@ jest.mock("./bees", () => ({
 jest.mock("./bees-gate", () => ({
   __esModule: true,
   applyBeesGateAction: jest.fn(async () => undefined),
-  beesGateEnabled: () => true,
+  beesGateEnabled: jest.fn(() => true),
   BeesGate: jest.fn().mockImplementation(() => ({
     start: jest.fn(async () => undefined),
     stop: jest.fn(),
@@ -25,6 +25,7 @@ jest.mock("./bees-gate", () => ({
 const mockedBees = jest.mocked(bees);
 const mockedGate = jest.mocked(BeesGate);
 const mockedApplyGate = jest.mocked(applyBeesGateAction);
+const mockedGateEnabled = jest.mocked(beesGateEnabled);
 
 function childProcess(): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
@@ -178,7 +179,35 @@ describe("BEES process supervision", () => {
 
     await jest.advanceTimersByTimeAsync(60_000);
     expect(mockedApplyGate).toHaveBeenCalledTimes(2);
-    expect(filesystem.getBeesStatus().restartPending).toBe(false);
+    expect(filesystem.getBeesStatus().cgroupRetryPending).toBe(false);
     filesystem.close();
+  });
+
+  // Codex and @review on #1503: an earlier gate may have left BEES frozen.
+  it("thaws the BEES cgroup, retrying, when the gate is turned off", async () => {
+    mockedGate.mockClear();
+    mockedApplyGate.mockReset();
+    mockedApplyGate
+      .mockRejectedValueOnce(Error("timeout"))
+      .mockResolvedValueOnce(undefined);
+    mockedGateEnabled.mockReturnValue(false);
+    try {
+      const filesystem = new Filesystem({
+        mount: "/mnt/cocalc",
+        rustic: "/tmp/rustic.toml",
+      });
+      (filesystem as any).startBeesGate();
+      (filesystem as any).startBeesGate();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(mockedApplyGate).toHaveBeenCalledTimes(1);
+      expect(mockedApplyGate).toHaveBeenCalledWith("/mnt/cocalc", "thaw");
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(mockedApplyGate).toHaveBeenCalledTimes(2);
+      expect(filesystem.getBeesStatus().cgroupRetryPending).toBe(false);
+      expect(mockedGate).not.toHaveBeenCalled();
+      filesystem.close();
+    } finally {
+      mockedGateEnabled.mockReturnValue(true);
+    }
   });
 });
