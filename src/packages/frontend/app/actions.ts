@@ -25,6 +25,7 @@ import {
   onFullscreenChange,
   requestFullscreen,
 } from "@cocalc/frontend/misc/fullscreen";
+import { handOffFullscreenFocusIfFocused } from "./fullscreen-focus";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import { session_manager } from "@cocalc/frontend/session";
@@ -497,6 +498,8 @@ export class PageActions extends Actions<PageState> {
   browser_fullscreen_changed() {
     if (isFullscreen()) return;
     if (redux.getStore("page").get("fullscreen") === "default") {
+      // e.g. Esc while the exit button has focus: it unmounts, keep focus
+      handOffFullscreenFocusIfFocused();
       this.setState({ fullscreen: undefined });
     }
   }

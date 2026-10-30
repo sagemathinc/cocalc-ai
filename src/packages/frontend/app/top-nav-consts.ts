@@ -34,7 +34,3 @@ export interface PageStyle {
   isNarrow: boolean;
   height: number;
 }
-
-// Marks the app-shell control that takes focus when the exit-fullscreen
-// button unmounts and no enter-fullscreen button replaces it (narrow layouts).
-export const FULLSCREEN_EXIT_FOCUS = "data-fullscreen-exit-focus";

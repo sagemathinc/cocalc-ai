@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IntlProvider } from "react-intl";
 import { FullscreenButton } from "./fullscreen-button";
+import { handOffFullscreenFocusIfFocused } from "./fullscreen-focus";
 
 let fullscreen: string | undefined;
 const toggle_fullscreen = jest.fn();
@@ -48,17 +49,64 @@ it("exits by keyboard and moves focus to the enter button", async () => {
   ).toHaveFocus();
 });
 
-it("enters by keyboard from a focusable button", async () => {
+it("enters by keyboard and moves focus to the exit button", async () => {
   const user = userEvent.setup();
   fullscreen = undefined;
-  renderButton();
+  const { rerender } = renderButton();
   const enter = screen.getByRole("button", { name: /enter fullscreen/i });
-  // a plain mount (no exit just before) does not take focus
+  // a plain mount (no transition just before) does not take focus
   expect(enter).not.toHaveFocus();
   await user.tab();
   expect(enter).toHaveFocus();
   await user.keyboard(" ");
   expect(toggle_fullscreen).toHaveBeenCalledTimes(1);
+  fullscreen = "default";
+  rerender(
+    <IntlProvider locale="en">
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>,
+  );
+  expect(
+    screen.getByRole("button", { name: /exit fullscreen/i }),
+  ).toHaveFocus();
+});
+
+it("keeps focus when the browser leaves fullscreen while exit has focus", () => {
+  fullscreen = "default";
+  const { rerender } = renderButton();
+  screen.getByRole("button", { name: /exit fullscreen/i }).focus();
+  // what PageActions.browser_fullscreen_changed does before clearing the mode
+  handOffFullscreenFocusIfFocused();
+  fullscreen = undefined;
+  rerender(
+    <IntlProvider locale="en">
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>,
+  );
+  expect(
+    screen.getByRole("button", { name: /enter fullscreen/i }),
+  ).toHaveFocus();
+});
+
+it("leaves focus alone when the browser leaves fullscreen elsewhere", () => {
+  fullscreen = "default";
+  const { rerender } = render(
+    <IntlProvider locale="en">
+      <button>Editor</button>
+      <FullscreenButton pageStyle={pageStyle} />
+    </IntlProvider>,
+  );
+  const editor = screen.getByRole("button", { name: "Editor" });
+  editor.focus();
+  handOffFullscreenFocusIfFocused();
+  fullscreen = undefined;
+  rerender(
+    <IntlProvider locale="en">
+      <button>Editor</button>
+      <FullscreenButton pageStyle={{ ...pageStyle }} />
+    </IntlProvider>,
+  );
+  expect(editor).toHaveFocus();
 });
 
 it("on narrow layouts, focuses the marked app-shell control after exit", async () => {

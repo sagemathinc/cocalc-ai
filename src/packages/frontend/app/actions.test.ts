@@ -8,6 +8,7 @@ import {
   onFullscreenChange,
 } from "@cocalc/frontend/misc/fullscreen";
 import { init_actions, PageActions } from "./actions";
+import { handOffFullscreenFocusIfFocused } from "./fullscreen-focus";
 import { init_store } from "./store";
 import { setNotificationsOpen } from "../notifications/drawer-state";
 import { openLibrary } from "../agents/library-navigation";
@@ -63,6 +64,9 @@ jest.mock("@cocalc/frontend/misc/fullscreen", () => ({
   isFullscreen: jest.fn(),
   onFullscreenChange: jest.fn(),
   requestFullscreen: jest.fn(),
+}));
+jest.mock("./fullscreen-focus", () => ({
+  handOffFullscreenFocusIfFocused: jest.fn(),
 }));
 jest.mock("@cocalc/frontend/project/websocket/connect", () => ({
   disconnect_from_project: jest.fn(),
@@ -442,6 +446,8 @@ describe("following the browser out of fullscreen", () => {
     actions.setState({ fullscreen: "default" });
     actions.browser_fullscreen_changed();
     expect(page().get("fullscreen")).toBeUndefined();
+    // the focused exit button unmounts: hand its focus off
+    expect(handOffFullscreenFocusIfFocused).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the default mode while the browser is still fullscreen", () => {
@@ -456,6 +462,7 @@ describe("following the browser out of fullscreen", () => {
     actions.setState({ fullscreen: mode });
     actions.browser_fullscreen_changed();
     expect(page().get("fullscreen")).toBe(mode);
+    expect(handOffFullscreenFocusIfFocused).not.toHaveBeenCalled();
   });
 
   it("registers the listener when the page actions are created", () => {

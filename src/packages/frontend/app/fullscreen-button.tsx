@@ -17,7 +17,11 @@ import { Icon, Tip } from "@cocalc/frontend/components";
 
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
-  FULLSCREEN_EXIT_FOCUS,
+  FULLSCREEN_CONTROL,
+  handOffFullscreenFocus,
+  takeFullscreenFocus,
+} from "./fullscreen-focus";
+import {
   NAV_HEIGHT_PX,
   PageStyle,
   TOP_BAR_ELEMENT_CLASS,
@@ -40,48 +44,6 @@ const EXIT_BUTTON_STYLE: CSS = {
   boxShadow: `0 1px 4px ${UI_COLORS.shadow}`,
 } as const;
 
-// Set when the exit button is activated: the exit button unmounts, so the
-// enter button that mounts next (top nav or agents sidebar) takes the focus
-// instead of leaving it on the body. Narrow layouts render no enter button;
-// there the marked app-shell control (FULLSCREEN_EXIT_FOCUS, the compact
-// nav's "More navigation") or else the first top-bar control takes it. The
-// intent is short-lived, so a later mount (e.g. a resize) never steals focus.
-const FALLBACK_DELAY_MS = 150;
-let focusEnterOnMount = false;
-let focusEnterTimer: ReturnType<typeof setTimeout> | undefined;
-
-// Hidden panes (e.g. the agents workspace's inactive content) are inert and
-// can hold duplicate navigation; skip those and keep the first candidate that
-// actually takes focus.
-const UNFOCUSABLE_ANCESTOR = '[inert], [hidden], [aria-hidden="true"]';
-
-function focusFallback(): void {
-  const active = document.activeElement;
-  if (active != null && active !== document.body) return;
-  const candidates = [
-    ...document.querySelectorAll<HTMLElement>(`[${FULLSCREEN_EXIT_FOCUS}]`),
-    ...document.querySelectorAll<HTMLElement>(
-      ".smc-top-bar button, .smc-top-bar a[href]",
-    ),
-  ];
-  for (const el of candidates) {
-    if (el.closest(UNFOCUSABLE_ANCESTOR) != null) continue;
-    el.focus();
-    if (document.activeElement === el) return;
-  }
-}
-
-function exitAndKeepFocus(toggle: () => void): void {
-  focusEnterOnMount = true;
-  clearTimeout(focusEnterTimer);
-  focusEnterTimer = setTimeout(() => {
-    if (!focusEnterOnMount) return;
-    focusEnterOnMount = false;
-    focusFallback();
-  }, FALLBACK_DELAY_MS);
-  toggle();
-}
-
 interface Props {
   pageStyle: PageStyle;
   // Only the enter control: the page renders the one exit control after the
@@ -96,14 +58,18 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
   const intl = useIntl();
   const fullscreen = useTypedRedux("page", "fullscreen");
   const page_actions = useActions("page");
-  const enterRef = useRef<HTMLButtonElement>(null);
+  // the enter or the exit button, whichever is rendered
+  const controlRef = useRef<HTMLButtonElement>(null);
 
+  // Take the focus handed off by the control that a transition unmounted.
   useEffect(() => {
-    if (focusEnterOnMount && enterRef.current != null) {
-      focusEnterOnMount = false;
-      enterRef.current.focus();
-    }
+    takeFullscreenFocus(controlRef.current);
   }, [fullscreen]);
+
+  function toggle(): void {
+    handOffFullscreenFocus();
+    page_actions.toggle_fullscreen();
+  }
 
   if (fullscreen == "kiosk" || fullscreen == "project") {
     // no button, since can't get out.
@@ -119,12 +85,12 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
     return (
       <div style={EXIT_ANCHOR_STYLE}>
         <Button
+          ref={controlRef}
+          {...{ [FULLSCREEN_CONTROL]: "" }}
           size="small"
           style={EXIT_BUTTON_STYLE}
           icon={<Icon name="compress" />}
-          onClick={() =>
-            exitAndKeepFocus(() => page_actions.toggle_fullscreen())
-          }
+          onClick={toggle}
         >
           {label}
         </Button>
@@ -155,13 +121,14 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
   return (
     <Tip title={tooltip} placement={"bottomRight"} delayShow={2000}>
       <Button
-        ref={enterRef}
+        ref={controlRef}
+        {...{ [FULLSCREEN_CONTROL]: "" }}
         type="text"
         className={TOP_BAR_ELEMENT_CLASS}
         style={button_style}
         icon={<Icon name="expand" />}
         aria-label={label}
-        onClick={() => page_actions.toggle_fullscreen()}
+        onClick={toggle}
       />
     </Tip>
   );
