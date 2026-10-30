@@ -24,7 +24,9 @@ export interface CollectionSelection {
 /**
  * `order`: the ids shown, in the order shown (see displayOrder), so ranges
  * and "select all" cover exactly what is visible. Selecting starts over when
- * `resetKey` changes (another tab); ids no longer shown drop out.
+ * `resetKey` changes (another tab). Ids no longer shown (a search, a scope)
+ * leave the selection for good: clearing the search doesn't bring them back
+ * into a later bulk action.
  */
 export function useCollectionSelection({
   order,
@@ -40,6 +42,15 @@ export function useCollectionSelection({
     anchor.current = undefined;
   }, [resetKey]);
   const shown = new Set(order);
+  const orderKey = order.join("\n");
+  useEffect(() => {
+    const visible = new Set(orderKey ? orderKey.split("\n") : []);
+    setIds((current) =>
+      current.every((id) => visible.has(id))
+        ? current
+        : current.filter((id) => visible.has(id)),
+    );
+  }, [orderKey]);
   const selectedIds = ids.filter((id) => shown.has(id));
   const selected = new Set(selectedIds);
   return {
