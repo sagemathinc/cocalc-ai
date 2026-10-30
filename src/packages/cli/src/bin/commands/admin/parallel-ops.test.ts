@@ -60,7 +60,8 @@ const WORKERS = [
 function setup({
   failOn,
   freshAuthMissing,
-}: { failOn?: string; freshAuthMissing?: boolean } = {}) {
+  remote = [],
+}: { failOn?: string; freshAuthMissing?: boolean; remote?: string[] } = {}) {
   const calls: Array<{ name: string; args: any }> = [];
   const overrides = new Map<string, number>([[HOST_B, 2]]);
   let globalOverride: number | null = null;
@@ -71,6 +72,12 @@ function setup({
   ];
   const hub = {
     system: {
+      // this command's bay is bay-0; hosts listed in `remote` are on bay-1
+      getBayLoad: async () => ({ bay_id: "bay-0" }),
+      getHostBay: async ({ host_id }: any) => ({
+        host_id,
+        bay_id: remote.includes(host_id) ? "bay-1" : "bay-0",
+      }),
       getParallelOpsStatus: async () =>
         WORKERS.map((w) =>
           w.worker_kind === "project-move" && globalOverride != null
@@ -429,6 +436,43 @@ test("a host id that isn't in the admin host list is an error, not a stand-in", 
     [[UNKNOWN, `error: host '${UNKNOWN}' not found`]],
   );
   assert.equal(process.exitCode, 1);
+});
+
+test("a host on another bay is reported, never changed: these calls run where received", async () => {
+  const h = setup({ remote: [HOST_A] });
+  await h.run(
+    "set",
+    "--worker",
+    "project-host-backup-execution",
+    "--limit",
+    "1",
+    "--all-hosts",
+  );
+  assert.deepEqual(
+    h.calls.map((c) => c.args.scope_id),
+    [HOST_B],
+  );
+  assert.deepEqual(
+    h.output().map((r: any) => [r.host, r.result]),
+    [
+      [
+        "host-a",
+        "error: host is on bay bay-1, not bay-0; run this against that bay",
+      ],
+      ["host-b", "set"],
+    ],
+  );
+  assert.equal(process.exitCode, 1);
+  process.exitCode = 0;
+  const g = setup({ remote: [HOST_A] });
+  await g.run(
+    "get",
+    "--worker",
+    "project-host-backup-execution",
+    "--host",
+    "host-a",
+  );
+  assert.match(g.output()[0].error, /on bay bay-1/);
 });
 
 test("a missing fresh sign-in says to run cocalc auth elevate", async () => {

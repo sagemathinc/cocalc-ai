@@ -8,7 +8,10 @@
 // limit can be set on many hosts at once from a script.
 //
 // Per-project-host workers (e.g. project-host-backup-execution) resolve only
-// per-host overrides, with no global fallback, hence --all-hosts. Other
+// per-host overrides, with no global fallback, hence --all-hosts. These
+// calls aren't routed to a host's owning bay yet, so the command only acts
+// on hosts owned by the bay it is connected to; another bay's host is
+// reported as an error, never as changed. Other
 // workers have one global limit (per-provider overrides aren't offered: the
 // hub has no per-provider read to report them truthfully). Changing a limit
 // needs a fresh sign-in with two-factor: run `cocalc auth elevate`.
@@ -128,6 +131,27 @@ export async function targetHosts(
   return out;
 }
 
+// The bay this command talks to, and a check that a host is owned by it:
+// the per-host limit calls run where they are received, so a host on
+// another bay would get an override its own bay never reads.
+function localBayCheck(ctx: any) {
+  let local: Promise<string> | undefined;
+  return async (host: HostRef): Promise<void> => {
+    local ??= ctx.hub.system
+      .getBayLoad({})
+      .then((info: { bay_id: string }) => info.bay_id);
+    const [here, owner] = await Promise.all([
+      local,
+      ctx.hub.system.getHostBay({ host_id: host.id }),
+    ]);
+    if (owner.bay_id !== here) {
+      throw new Error(
+        `host is on bay ${owner.bay_id}, not ${here}; run this against that bay`,
+      );
+    }
+  };
+}
+
 async function hostLimit(
   ctx: any,
   worker_kind: string,
@@ -191,6 +215,7 @@ async function change(
 
   if (worker.scope_model === "per-project-host") {
     const hosts = await targetHosts(ctx, opts);
+    const ownedHere = localBayCheck(ctx);
     const rows: Record<string, unknown>[] = [];
     for (const host of hosts) {
       const row: Record<string, unknown> = {
@@ -203,6 +228,7 @@ async function change(
       };
       try {
         if (host.error) throw new Error(host.error);
+        await ownedHere(host);
         const before = await hostLimit(ctx, worker.worker_kind, host.id);
         row.before = before.effective_limit;
         if (opts.dryRun) {
@@ -318,10 +344,12 @@ set them per host, or on every running host at once:
           ];
         }
         const hosts = await targetHosts(ctx, opts);
+        const ownedHere = localBayCheck(ctx);
         const rows: Record<string, unknown>[] = [];
         for (const host of hosts) {
           try {
             if (host.error) throw new Error(host.error);
+            await ownedHere(host);
             const r = await hostLimit(ctx, worker.worker_kind, host.id);
             rows.push({
               host: host.name,
