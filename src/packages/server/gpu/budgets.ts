@@ -70,7 +70,9 @@ export interface LayerRow {
 export interface AdmissionRequest {
   credential_id: string;
   key_owner_account_id: string;
-  beneficiary_account_id: string;
+  // whose beneficiary layer applies (null: none, a project's own launch
+  // under an approval)
+  beneficiary_account_id: string | null;
   project_id: string;
   agent_id?: string;
   // An agent's launch: the approved grant whose layer funds it (from the

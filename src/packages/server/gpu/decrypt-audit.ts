@@ -39,6 +39,7 @@ import { raiseAdminAlert } from "@cocalc/server/gpu/admin-alerts";
 import { raiseAlert } from "@cocalc/server/gpu/alerts";
 import {
   isWriteKeyPurpose,
+  projectUsePrincipal,
   workerForPurpose,
 } from "@cocalc/server/gpu/key-use";
 import {
@@ -174,10 +175,12 @@ export function judgeDecrypt(
       return unexplained("its approval binding is missing");
     }
     const principal = pr
-      ? (pr.actor_kind === "project"
-          ? `project:${pr.project_id}`
-          : `${u.principal_account_id}`
-        ).slice(0, 200)
+      ? projectUsePrincipal({
+          actor_kind: pr.actor_kind,
+          project_id: pr.project_id,
+          principal_account_id: u.principal_account_id,
+          agent_id: u.agent_id,
+        }).slice(0, 200)
       : u.agent_id
         ? `agent:${u.principal_account_id}:${u.agent_id}`.slice(0, 200)
         : `${u.principal_account_id}`;

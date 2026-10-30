@@ -1165,6 +1165,14 @@ export async function verifyProjectFundedLaunch(
       source_bay_id: `${req.source_bay_id}`,
       actor_kind: kind,
       ...(actor_account_id ? { actor_account_id } : {}),
+      ...(kind === "agent"
+        ? {
+            agent_id: clip(req.actor.agent_id),
+            ...(clip(req.actor.run_id)
+              ? { run_id: clip(req.actor.run_id) }
+              : {}),
+          }
+        : {}),
     },
     funding: {
       approval_id,

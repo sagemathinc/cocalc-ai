@@ -112,7 +112,14 @@ export interface ProjectKeyUseBinding {
   readonly source_bay_id: string;
   readonly actor_kind: "project" | "user" | "agent";
   readonly actor_account_id?: string;
+  // an agent actor's canonical ids
+  readonly agent_id?: string;
+  readonly run_id?: string;
 }
+
+// The binding a method compares a project record with: the approval it acts
+// on and exactly who acts.
+export type ProjectKeyUseCheck = Omit<ProjectKeyUseBinding, "source_bay_id">;
 
 export interface GpuWorkerKeyUse {
   readonly kind: "run";
@@ -228,9 +235,14 @@ async function insertUse(opts: {
       id,
       opts.account_id,
       credential_id,
-      opts.agent?.project_id ?? null,
-      opts.agent?.agent_id ?? null,
-      opts.agent?.run_id ?? null,
+      opts.agent?.project_id ??
+        (opts.project?.actor_kind === "agent" ? opts.project.project_id : null),
+      opts.agent?.agent_id ??
+        (opts.project?.actor_kind === "agent" ? opts.project.agent_id : null) ??
+        null,
+      opts.agent?.run_id ??
+        (opts.project?.actor_kind === "agent" ? opts.project.run_id : null) ??
+        null,
       opts.purpose,
       opts.rule,
       opts.request_id ?? null,
@@ -323,6 +335,17 @@ export async function admitProjectKeyUse(opts: {
   if (!["project", "user", "agent"].includes(b.actor_kind)) {
     throw new KeyUseRefused("not a verified project funding binding");
   }
+  // exactly the fields of its kind: the project has no account; a person
+  // has one; an agent has one and its agent id
+  const fits =
+    b.actor_kind === "project"
+      ? b.actor_account_id == null && b.agent_id == null && b.run_id == null
+      : b.actor_kind === "user"
+        ? b.actor_account_id != null && b.agent_id == null && b.run_id == null
+        : b.actor_account_id != null && !!`${b.agent_id ?? ""}`.trim();
+  if (!fits) {
+    throw new KeyUseRefused("not a verified project funding binding");
+  }
   return await insertUse({
     account_id: opts.key_owner_account_id,
     purpose: opts.purpose,
@@ -354,6 +377,21 @@ export function workerKeyUseFor(
     throw new KeyUseRefused("not a worker's key capability");
   }
   return workerKeyUse(cap.worker, cap.token, purpose);
+}
+
+// The decrypt principal of a project record: the project itself, an agent
+// (as for its own records), or the acting person.
+export function projectUsePrincipal(r: {
+  actor_kind: string | null;
+  project_id: string | null;
+  principal_account_id: string;
+  agent_id: string | null;
+}): string {
+  if (r.actor_kind === "project") return `project:${r.project_id}`;
+  if (r.actor_kind === "agent") {
+    return `agent:${r.principal_account_id}:${r.agent_id}`;
+  }
+  return `${r.principal_account_id}`;
 }
 
 // ---- admission of one decrypt ----
@@ -476,10 +514,7 @@ async function admitUse(
       key_use_id: cap.id,
       worker_run_id: null,
       worker_name: null,
-      principal: (r.actor_kind === "project"
-        ? `project:${r.project_id}`
-        : `${r.principal_account_id}`
-      ).slice(0, 200),
+      principal: projectUsePrincipal(r).slice(0, 200),
     };
   }
   return {
@@ -604,9 +639,10 @@ export function requireKeyUse(
   cap: unknown,
   purposes: readonly GpuKeyUsePurpose[],
   account_id: string,
-  // under a project funding approval: the approval the method acts on. A
-  // record made for one approval never serves another, nor an own-key call.
-  project?: { project_id: string; approval_id: string; layer_id: string },
+  // under a project funding approval: the approval the method acts on and
+  // exactly who acts. A record made for one approval or actor never serves
+  // another, nor an own-key call.
+  project?: ProjectKeyUseCheck,
 ): GpuKeyUse {
   const bound =
     isGpuKeyCapability(cap) && cap.kind === "use" ? cap.project : undefined;
@@ -617,7 +653,12 @@ export function requireKeyUse(
       : bound != null &&
         bound.project_id === project.project_id &&
         bound.approval_id === project.approval_id &&
-        bound.layer_id === project.layer_id;
+        bound.layer_id === project.layer_id &&
+        bound.actor_kind === project.actor_kind &&
+        (bound.actor_account_id ?? null) ===
+          (project.actor_account_id ?? null) &&
+        (bound.agent_id ?? null) === (project.agent_id ?? null) &&
+        (bound.run_id ?? null) === (project.run_id ?? null);
   if (
     !isGpuKeyCapability(cap) ||
     cap.kind !== "use" ||

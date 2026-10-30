@@ -727,6 +727,10 @@ export async function launchGpuPodLocal(
           project_id: `${opts.project_id ?? ""}`,
           approval_id: opts.funding.approval_id,
           layer_id: opts.funding.layer_id,
+          actor_kind: opts.funding.actor_kind,
+          actor_account_id: opts.funding.actor_account_id,
+          agent_id: opts.funding.agent_id,
+          run_id: opts.funding.run_id,
         }
       : undefined,
   );
@@ -1112,12 +1116,16 @@ async function insertIntent({
           now: new Date(now),
         });
         // Under an approval, the acting account (if known) is the
-        // beneficiary: its own beneficiary layer applies too.
+        // beneficiary, and only its beneficiary layer applies: when the
+        // project itself acted there is none (the payer stored below is a
+        // responsibility field, never a layer selector).
         const beneficiary = funding?.actor_account_id ?? account_id;
         const admission = await admitLaunch(db, {
           credential_id,
           key_owner_account_id: account_id,
-          beneficiary_account_id: beneficiary,
+          beneficiary_account_id: funding
+            ? (funding.actor_account_id ?? null)
+            : account_id,
           project_id,
           grant_id: grant?.grant_id,
           funding: funding

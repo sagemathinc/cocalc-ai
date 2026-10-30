@@ -357,6 +357,7 @@ describeDb("launches under a project funding approval", () => {
       project_id: s.project_id,
       approval_id: a.approval_id,
       layer_id: a.layer_id,
+      actor_kind: "project" as const,
     };
     expect(requireKeyUse(cap, ["launch"], s.funder, same)).toBe(cap);
     // another approval, an own-key call, another purpose: refused
@@ -372,6 +373,113 @@ describeDb("launches under a project funding approval", () => {
     expect(() => requireKeyUse(cap, ["terminate"], s.funder, same)).toThrow(
       KeyUseRefused,
     );
+  });
+
+  it("binds the key use to exactly who acts: kind, account, agent and run", async () => {
+    const s = await setup();
+    const a = await approve(s);
+    const base = {
+      project_id: s.project_id,
+      approval_id: a.approval_id,
+      layer_id: a.layer_id,
+    };
+    const agent = {
+      ...base,
+      actor_kind: "agent" as const,
+      actor_account_id: s.student,
+      agent_id: "agent:a1",
+      run_id: "run-1",
+    };
+    const cap = await admitProjectKeyUse({
+      key_owner_account_id: s.funder,
+      purpose: "launch",
+      binding: { ...agent, source_bay_id: getConfiguredBayId() },
+    });
+    expect(requireKeyUse(cap, ["launch"], s.funder, agent)).toBe(cap);
+    for (const other of [
+      {
+        ...agent,
+        actor_kind: "user" as const,
+        agent_id: undefined,
+        run_id: undefined,
+      },
+      { ...agent, actor_account_id: s.funder },
+      { ...agent, agent_id: "agent:a2" },
+      { ...agent, run_id: "run-2" },
+      { ...agent, run_id: undefined },
+      { ...base, actor_kind: "project" as const },
+    ]) {
+      expect(() => requireKeyUse(cap, ["launch"], s.funder, other)).toThrow(
+        KeyUseRefused,
+      );
+    }
+    // a binding whose fields don't fit its kind is never made
+    for (const bad of [
+      { actor_kind: "project" as const, actor_account_id: s.student },
+      { actor_kind: "user" as const },
+      {
+        actor_kind: "user" as const,
+        actor_account_id: s.student,
+        agent_id: "x",
+      },
+      { actor_kind: "agent" as const, actor_account_id: s.student },
+    ]) {
+      await expect(
+        admitProjectKeyUse({
+          key_owner_account_id: s.funder,
+          purpose: "launch",
+          binding: { ...base, source_bay_id: "bay-p", ...bad },
+        }),
+      ).rejects.toThrow(KeyUseRefused);
+    }
+    // the agent is recorded on the use, and is the decrypt's principal
+    const { rows } = await getPool().query(
+      "SELECT agent_id, agent_run_id, agent_project_id, principal_account_id FROM gpu_key_uses WHERE id = $1",
+      [cap.id],
+    );
+    expect(rows[0]).toEqual({
+      agent_id: "agent:a1",
+      agent_run_id: "run-1",
+      agent_project_id: s.project_id,
+      principal_account_id: s.student,
+    });
+    const read = await admitProjectKeyUse({
+      key_owner_account_id: s.funder,
+      purpose: "pod_read",
+      binding: { ...agent, source_bay_id: getConfiguredBayId() },
+    });
+    const id = await admitDecrypt(read, {
+      account_id: s.funder,
+      credential_id: s.credential_id,
+    });
+    const { rows: d } = await getPool().query(
+      "SELECT principal FROM gpu_key_decrypts WHERE id = $1",
+      [id],
+    );
+    expect(d[0].principal).toBe(`agent:${s.student}:agent:a1`);
+  });
+
+  it("applies a beneficiary layer only for a verified acting account, never the payer's for the project itself", async () => {
+    const s = await setup();
+    const a = await approve(s);
+    // a beneficiary layer with nothing left, for the payer and for the student
+    for (const who of [s.funder, s.student]) {
+      await getPool().query(
+        `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind,
+           parent_id, parent_scope_kind, beneficiary_account_id, authorized_usd, state,
+           starts_at, ends_at, created, updated)
+         SELECT $1, credential_id, key_owner_account_id, 'beneficiary', id, 'key', $2, 0,
+                'active', starts_at, ends_at, now(), now()
+           FROM gpu_budget_layers WHERE credential_id = $3 AND scope_kind = 'key'`,
+        [randomUUID(), who, s.credential_id],
+      );
+    }
+    const theirs = await funded(s, a, { kind: "project" });
+    expect(await reservedOn(theirs.id)).toEqual(["key", "project"]);
+    expect((await pod(theirs.id)).beneficiary_account_id).toBe(s.funder);
+    await expect(
+      funded(s, a, { kind: "user", account_id: s.student }),
+    ).rejects.toThrow(/beneficiary GPU budget has/);
   });
 
   it("admits a decrypt only while the exact layer is valid: a revoke in between refuses it", async () => {
@@ -559,6 +667,16 @@ describe("the decrypt audit's rule for project uses", () => {
     expect(judgeDecrypt(missing, later)).toMatchObject({
       verdict: "unexplained",
     });
+  });
+
+  it("explains an agent's project use under the agent's principal only", () => {
+    const f = facts(60_000);
+    f.use!.project!.actor_kind = "agent";
+    f.use!.agent_id = "agent:a1";
+    f.principal = `agent:${OWNER}:agent:a1`;
+    expect(judgeDecrypt(f, later)).toMatchObject({ verdict: "explained" });
+    f.principal = `project:${PROJECT}`;
+    expect(judgeDecrypt(f, later)).toMatchObject({ verdict: "unexplained" });
   });
 
   it("doesn't explain a project use claiming another principal", () => {
