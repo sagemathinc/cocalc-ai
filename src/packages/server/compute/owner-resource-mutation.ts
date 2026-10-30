@@ -20,7 +20,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { isMultiBayCluster } from "@cocalc/server/cluster-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
+import { resolveFreshAuthSessionHash } from "@cocalc/server/conat/socketio/fresh-auth-session";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import {
   routeComputeOwnerRead,
@@ -103,12 +103,11 @@ export async function requireComputeOwnerFreshAuth(opts: {
     return;
   }
   const session_hash =
-    opts.session_hash ||
-    getBrowserAuthSessionHash({
+    resolveFreshAuthSessionHash({
       account_id,
-      browser_id: opts.browser_id ?? "",
-    }) ||
-    "";
+      browser_id: opts.browser_id,
+      session_hash: opts.session_hash,
+    }) ?? "";
   await client(bay).computeOwnerCheckFreshAuth({ account_id, session_hash });
 }
 
@@ -229,13 +228,11 @@ export async function routeComputeOwnerMutation<
       ...opts,
       account_id,
       id_or_name: resource.id,
-      session_hash:
-        actor.session_hash ||
-        getBrowserAuthSessionHash({
-          account_id,
-          browser_id: actor.browser_id ?? "",
-        }) ||
-        undefined,
+      session_hash: resolveFreshAuthSessionHash({
+        account_id,
+        browser_id: actor.browser_id,
+        session_hash: actor.session_hash,
+      }),
     },
   } as ComputeOwnerMutationRequest;
   const result = await client(resource.owning_bay_id).computeOwnerMutate(

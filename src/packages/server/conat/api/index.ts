@@ -74,6 +74,7 @@ import {
   transformArgs,
 } from "@cocalc/conat/hub/api";
 import { hubApiErrorAttrs } from "@cocalc/conat/hub/api/error-attrs";
+import { boundHubApiSessionHash } from "./bound-session";
 import { conat } from "@cocalc/backend/conat";
 import { delay } from "awaiting";
 import { hubAdmissionDenials } from "./service-admission-denials";
@@ -387,7 +388,12 @@ export async function handleApiRequest({ request, mesg }) {
       auth_iat_s,
       auth_exp_s,
     } = getUserId(mesg.subject);
-    const { name, args, auth_session_hash } = request as any;
+    const { name, args } = request as any;
+    const auth_session_hash = boundHubApiSessionHash({
+      account_id,
+      caller: mesg.caller,
+      requested: (request as any)?.auth_session_hash,
+    });
     const principalPolicy = getHubApiPrincipalPolicy(name);
     if (principalPolicy == null) {
       throw Error(`unknown function '${name}'`);

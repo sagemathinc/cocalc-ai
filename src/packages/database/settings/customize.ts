@@ -121,9 +121,6 @@ export default async function getCustomize(
       anthropicEnabled: settings.anthropic_enabled,
       ollamaEnabled: settings.ollama_enabled,
 
-      // GitHub proxy project
-      githubProjectId: settings.github_project_id,
-
       // public info about SSO strategies
       strategies,
 

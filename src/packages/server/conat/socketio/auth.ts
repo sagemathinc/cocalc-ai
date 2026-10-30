@@ -647,7 +647,9 @@ export async function isAllowed({
       try {
         return await isBayCredentialUserActive({
           hub_id: `bay:${forwardedCaller.bay_id}`,
-          ...forwardedCaller,
+          cluster_id: forwardedCaller.cluster_id,
+          bay_id: forwardedCaller.bay_id,
+          bay_credential_id: forwardedCaller.bay_credential_id,
         });
       } catch (err) {
         logger.error(
