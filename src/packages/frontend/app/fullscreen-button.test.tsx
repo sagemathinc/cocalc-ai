@@ -68,6 +68,10 @@ it("on narrow layouts, focuses the marked app-shell control after exit", async (
   // button replaces it; the compact nav's marked control is there instead
   const Narrow = () => (
     <IntlProvider locale="en">
+      {/* an inactive workspace pane keeps an inert copy of the navigation */}
+      <div inert>
+        <button data-fullscreen-exit-focus="">More navigation</button>
+      </div>
       <nav className="smc-top-bar">
         <button>Projects</button>
         <button data-fullscreen-exit-focus="">More navigation</button>
@@ -80,11 +84,13 @@ it("on narrow layouts, focuses the marked app-shell control after exit", async (
   await user.keyboard("{Enter}");
   fullscreen = undefined;
   rerender(<Narrow />);
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "More navigation" }),
-    ).toHaveFocus(),
-  );
+  // the visible control, not the inert copy that comes first in the DOM
+  const [inert, visible] = screen.getAllByRole("button", {
+    name: "More navigation",
+  });
+  expect(inert.closest("[inert]")).not.toBeNull();
+  expect(visible.closest("[inert]")).toBeNull();
+  await waitFor(() => expect(visible).toHaveFocus());
 });
 
 it("renders no second exit control where it is enter-only", () => {

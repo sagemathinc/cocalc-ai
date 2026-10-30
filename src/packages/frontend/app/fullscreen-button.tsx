@@ -50,15 +50,25 @@ const FALLBACK_DELAY_MS = 150;
 let focusEnterOnMount = false;
 let focusEnterTimer: ReturnType<typeof setTimeout> | undefined;
 
+// Hidden panes (e.g. the agents workspace's inactive content) are inert and
+// can hold duplicate navigation; skip those and keep the first candidate that
+// actually takes focus.
+const UNFOCUSABLE_ANCESTOR = '[inert], [hidden], [aria-hidden="true"]';
+
 function focusFallback(): void {
   const active = document.activeElement;
   if (active != null && active !== document.body) return;
-  const target =
-    document.querySelector<HTMLElement>(`[${FULLSCREEN_EXIT_FOCUS}]`) ??
-    document.querySelector<HTMLElement>(
+  const candidates = [
+    ...document.querySelectorAll<HTMLElement>(`[${FULLSCREEN_EXIT_FOCUS}]`),
+    ...document.querySelectorAll<HTMLElement>(
       ".smc-top-bar button, .smc-top-bar a[href]",
-    );
-  target?.focus();
+    ),
+  ];
+  for (const el of candidates) {
+    if (el.closest(UNFOCUSABLE_ANCESTOR) != null) continue;
+    el.focus();
+    if (document.activeElement === el) return;
+  }
 }
 
 function exitAndKeepFocus(toggle: () => void): void {
