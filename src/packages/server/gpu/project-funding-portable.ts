@@ -24,7 +24,6 @@ import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { lockProjectRehomeFence } from "@cocalc/database/postgres/project-rehome-fence";
 import {
   mergeProjectFundingRoute,
-  PROJECT_FUNDING_LEASE_MS,
   type ProjectComputeApprovalPortableRow,
   type ProjectFundingRoute,
 } from "@cocalc/util/gpu/project-funding";
@@ -189,21 +188,28 @@ export async function mergeProjectComputeApprovals({
     );
     const byId = new Map(existing.map((r) => [r.id, r]));
     let changed = 0;
-    // A pending slot gets a fresh lease here: the rehome may have taken
-    // longer than what was left of it, and the funder's bay is still to
-    // activate it (it now resolves this bay).
-    const lease = new Date(Date.now() + PROJECT_FUNDING_LEASE_MS).toISOString();
+    // A pending slot keeps its original deadline: a rehome never extends
+    // it (nor do retried merges), so the funder's bay has exactly the time
+    // it was given; a slot that runs out ends and the approval is retried.
     // approvals first, so a superseded request never blocks one
     for (const row of incoming.filter((r) => r.kind === "approval")) {
       const mine = byApproval.get(row.approval_id);
       let merged = mine
         ? fromRoute(mine, mergeProjectFundingRoute(toRoute(mine), toRoute(row)))
         : row;
+      // never later than either copy's deadline
       if (
         merged.state === "pending" &&
-        (merged.lease_expires_at == null || merged.lease_expires_at < lease)
+        mine?.lease_expires_at != null &&
+        row.lease_expires_at != null
       ) {
-        merged = { ...merged, lease_expires_at: lease };
+        merged = {
+          ...merged,
+          lease_expires_at:
+            new Date(mine.lease_expires_at) < new Date(row.lease_expires_at)
+              ? mine.lease_expires_at
+              : row.lease_expires_at,
+        };
       }
       if (mine && JSON.stringify(merged) === JSON.stringify(mine)) continue;
       await upsert(client, merged);

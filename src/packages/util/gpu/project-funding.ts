@@ -465,6 +465,8 @@ export type ProjectFundingDeliverResult =
       state: ProjectFundingRoute["state"];
       version: number;
       pods_version: number;
+      // why the route ended, when it has
+      ended_reason?: ProjectFundingEndedReason | null;
     }
   // never treated as 'ended': retry after re-resolving the project's owner
   | { status: "rehoming" }

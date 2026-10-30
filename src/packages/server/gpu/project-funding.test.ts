@@ -757,10 +757,24 @@ describeDb("project funding approvals across two bays", () => {
         db.release();
       }
       await expectAllRehoming(w, approval_id);
-      // the merge (portable state) ends the import and refreshes the lease
+      // the merge (portable state) ends the import, keeping the deadline;
+      // a retried merge never moves it later
+      const deadline = new Date(copied[0].lease_expires_at!).getTime();
+      // (expectAllRehoming aged the live lease; put the original back)
+      await getPool().query(
+        `UPDATE project_compute_approvals SET lease_expires_at = $2 WHERE approval_id = $1`,
+        [approval_id, new Date(deadline)],
+      );
       await mergeProjectComputeApprovals({
         project_id: w.project_id,
         rows: copied,
+      });
+      await mergeProjectComputeApprovals({
+        project_id: w.project_id,
+        rows: copied.map((r) => ({
+          ...r,
+          lease_expires_at: new Date(deadline + 3600_000).toISOString(),
+        })),
       });
       const { rows: marker } = await getPool().query(
         "SELECT 1 FROM project_rehome_imports WHERE project_id = $1",
@@ -769,9 +783,7 @@ describeDb("project funding approvals across two bays", () => {
       expect(marker).toEqual([]);
       const [slot] = await route(w.project_id);
       expect(slot.state).toBe("pending");
-      expect(new Date(slot.lease_expires_at).getTime()).toBeGreaterThan(
-        Date.now() + 60_000,
-      );
+      expect(new Date(slot.lease_expires_at).getTime()).toBe(deadline);
       const activated = await calls(w, approval_id, randomUUID()).activate();
       expect(activated).toMatchObject({
         status: "committed",
@@ -779,5 +791,163 @@ describeDb("project funding approvals across two bays", () => {
         state: "active",
       });
     });
+  });
+
+  it("delivers in order: an update queued while the activate is in flight waits for it", async () => {
+    // P holds the first delivery (the activate) until released
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let first = true;
+    const slow = localProjectBay({
+      deliver: async (req) => {
+        if (first) {
+          first = false;
+          await held;
+        }
+        return await deliverProjectFundingMessageLocal(req, routeDeps);
+      },
+    });
+    const w = await world(slow);
+    const approving = approve(w);
+    // wait until the activate is claimed (in flight)
+    for (let i = 0; i < 100; i++) {
+      const { rows } = await getPool().query(
+        `SELECT o.claimed_until FROM project_funding_outbox o
+           JOIN gpu_budget_layers l ON l.approval_id = o.approval_id
+          WHERE l.project_id = $1 AND o.kind = 'activate'`,
+        [w.project_id],
+      );
+      if (rows[0]?.claimed_until) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const { rows: layers } = await getPool().query(
+      `SELECT approval_id FROM gpu_budget_layers WHERE project_id = $1`,
+      [w.project_id],
+    );
+    const approval_id = layers[0].approval_id;
+    // a change commits and tries to deliver its update now: it must wait
+    await changeProjectFundingLocal(
+      {
+        account_id: w.funder,
+        approval_id,
+        change: { authorized_usd: "150", agents_allowed: false },
+      },
+      w.deps,
+    );
+    expect((await undelivered(approval_id)).map((r) => r.kind)).toEqual([
+      "activate",
+      "update",
+    ]);
+    release();
+    await approving;
+    await makeDue(approval_id);
+    await deliverProjectFundingOutbox({ approval_id }, w.deps);
+    expect(await undelivered(approval_id)).toEqual([]);
+    const [r] = await route(w.project_id);
+    expect(r).toMatchObject({ state: "active", version: 3 });
+    expect(r.display).toMatchObject({ agents_allowed: false });
+    expect(Number(r.display.authorized_usd)).toBe(150);
+  });
+
+  it("retries an update that reaches a slot still pending instead of taking it as an ack", async () => {
+    const unreachable = localProjectBay({
+      deliver: async () => {
+        throw Error("P unreachable");
+      },
+    });
+    const w = await world(unreachable);
+    const view = await approve(w);
+    // the update is queued and (out of order, by hand) delivered first
+    await changeProjectFundingLocal(
+      {
+        account_id: w.funder,
+        approval_id: view.approval_id,
+        change: { authorized_usd: "100" },
+      },
+      w.deps,
+    );
+    await getPool().query(
+      `UPDATE project_funding_outbox SET delivered_at = now()
+        WHERE approval_id = $1 AND kind = 'activate'`,
+      [view.approval_id],
+    );
+    await makeDue(view.approval_id);
+    await deliverProjectFundingOutbox(
+      { approval_id: view.approval_id },
+      { ...w.deps, projectBay: async () => localProjectBay() },
+    );
+    const [u] = await undelivered(view.approval_id);
+    expect(u).toMatchObject({
+      kind: "update",
+      last_error: "approval not active yet",
+    });
+  });
+
+  for (const lost of ["project_deleted", "funder_left_project"] as const) {
+    it(`ends instead of activating when the binding is lost before the activate (${lost})`, async () => {
+      let lose!: () => Promise<void>;
+      const gate = localProjectBay({
+        deliver: async (req) => {
+          await lose();
+          return await deliverProjectFundingMessageLocal(req, routeDeps);
+        },
+      });
+      const w = await world(gate);
+      lose = async () => {
+        await getPool().query(
+          lost === "project_deleted"
+            ? `UPDATE projects SET deleted = true WHERE project_id = $1`
+            : `UPDATE projects SET users = users - $2 WHERE project_id = $1`,
+          lost === "project_deleted"
+            ? [w.project_id]
+            : [w.project_id, w.funder],
+        );
+      };
+      const view = await approve(w, { raise_key_budget_to: "400" });
+      expect(view.activated).toBe(false);
+      expect(await projectLayer(view.approval_id)).toMatchObject({
+        state: "revoked",
+        revoked_reason: lost,
+      });
+      expect((await route(w.project_id))[0]).toMatchObject({
+        state: "ended",
+        ended_reason: lost,
+      });
+      // never activated: the raise made for it is undone
+      expect(Number((await keyLayer(w.credential_id)).authorized_usd)).toBe(20);
+    });
+  }
+
+  it("reconciles a route P reports active with a lost binding by ending it, never acking", async () => {
+    let first = true;
+    const lossy = localProjectBay({
+      deliver: async (req) => {
+        const result = await deliverProjectFundingMessageLocal(req, routeDeps);
+        if (first) {
+          first = false;
+          throw Error("response lost");
+        }
+        return result;
+      },
+    });
+    const w = await world(lossy);
+    const view = await approve(w);
+    expect((await route(w.project_id))[0].state).toBe("active");
+    await getPool().query(
+      `UPDATE projects SET users = users - $2 WHERE project_id = $1`,
+      [w.project_id, w.funder],
+    );
+    await getPool().query(
+      `UPDATE gpu_budget_layers SET created = now() - interval '1 hour' WHERE approval_id = $1`,
+      [view.approval_id],
+    );
+    const r = await reconcileProjectFunding(w.deps);
+    expect(r.acked).toBe(0);
+    const layer = await projectLayer(view.approval_id);
+    expect(layer).toMatchObject({
+      state: "revoked",
+      revoked_reason: "funder_left_project",
+    });
+    expect(layer.activation_acked_at).toBeNull();
   });
 });

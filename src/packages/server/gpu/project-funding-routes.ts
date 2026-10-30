@@ -300,7 +300,7 @@ export async function deliverProjectFundingMessageLocal(
   const approval_id = requireId(req.message?.approval_id, "approval_id");
   await assertSentByAccountHome(req.source_bay_id, funder, deps);
   const now = (deps.now ?? (() => new Date()))();
-  return await withRouteWrite(project_id, async (db) => {
+  return await withRouteWrite(project_id, async (db, project) => {
     const { rows } = await db.query(
       `SELECT * FROM project_compute_approvals
         WHERE approval_id = $1 AND project_id = $2 AND funder_account_id = $3
@@ -309,6 +309,36 @@ export async function deliverProjectFundingMessageLocal(
     );
     const row = rows[0];
     if (!row) return { status: "unknown_approval" as const };
+    // An activation needs the binding the slot was reserved with, now: the
+    // project still here and the funder still a collaborator. Otherwise the
+    // slot ends instead (and H revokes its layer).
+    if (req.message.kind === "activate" && row.state === "pending") {
+      const lost =
+        project == null || project.deleted
+          ? ("project_deleted" as const)
+          : !isCollaborator(project, funder)
+            ? ("funder_left_project" as const)
+            : undefined;
+      if (lost) {
+        const ended = {
+          ...toRoute(row),
+          state: "ended" as const,
+          version: row.version + 1,
+          ended_reason: lost,
+          ended_at: now,
+          lease_expires_at: null,
+        };
+        await storeRoute(db, row.id, ended);
+        return {
+          status: "committed" as const,
+          outcome: "applied" as const,
+          state: ended.state,
+          version: ended.version,
+          pods_version: ended.pods_version,
+          ended_reason: lost,
+        };
+      }
+    }
     const t = applyProjectFundingMessage(toRoute(row), req.message, now);
     if (t.outcome !== "stale") {
       await storeRoute(db, row.id, t.route);
@@ -327,6 +357,7 @@ export async function deliverProjectFundingMessageLocal(
       state: t.route.state,
       version: t.route.version,
       pods_version: t.route.pods_version,
+      ended_reason: t.route.ended_reason,
     };
   });
 }

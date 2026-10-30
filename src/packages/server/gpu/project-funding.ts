@@ -683,7 +683,8 @@ async function endLayer(
     { state: l.state },
     { state, revoked_reason },
   );
-  if (revoked_reason === "activation_failed") {
+  // an approval that never activated: undo the raise made for it
+  if (l.activation_acked_at == null) {
     await undoKeyBudgetRaise(db, l);
   }
   await enqueueProjectFundingMessage(db, {
@@ -859,11 +860,19 @@ async function claim(opts: { approval_id?: string; limit?: number }) {
     `UPDATE project_funding_outbox SET claimed_until = now() + interval '60 seconds',
             attempts = attempts + 1
       WHERE id IN (
-        SELECT id FROM project_funding_outbox
-         WHERE delivered_at IS NULL AND next_attempt_at <= now()
-           AND (claimed_until IS NULL OR claimed_until < now())
-           ${opts.approval_id ? "AND approval_id = $2" : ""}
-         ORDER BY approval_id, version, created
+        SELECT o.id FROM project_funding_outbox o
+         WHERE o.delivered_at IS NULL AND o.next_attempt_at <= now()
+           AND (o.claimed_until IS NULL OR o.claimed_until < now())
+           ${opts.approval_id ? "AND o.approval_id = $2" : ""}
+           -- in order: only the earliest undelivered message of its
+           -- sequence (approval-state messages per approval and direction;
+           -- pod counts their own), whoever holds an earlier one
+           AND NOT EXISTS (
+             SELECT 1 FROM project_funding_outbox e
+              WHERE e.approval_id = o.approval_id AND e.target = o.target
+                AND e.delivered_at IS NULL AND e.version < o.version
+                AND (e.kind = 'pods') = (o.kind = 'pods'))
+         ORDER BY o.approval_id, o.version, o.created
          LIMIT $1 FOR UPDATE SKIP LOCKED)
       RETURNING *`,
     opts.approval_id
@@ -914,6 +923,16 @@ export async function deliverProjectFundingOutbox(
           await settle(row.id, "project rehoming", row.attempts);
           continue;
         }
+        // An update reaching a slot not yet active is early, not an ack
+        // (ordering makes this rare; it is retried, never dropped).
+        if (
+          row.kind === "update" &&
+          result.status === "committed" &&
+          result.state === "pending"
+        ) {
+          await settle(row.id, "approval not active yet", row.attempts);
+          continue;
+        }
         await afterProjectAnswer(row, result, deps);
       } else {
         const h = await (deps.funderBay ?? defaultFunderBay)(
@@ -947,6 +966,9 @@ async function afterProjectAnswer(
   const ended =
     result.status === "unknown_approval" ||
     (result.status === "committed" && result.state === "ended");
+  const reason = activationEndReason(
+    result.status === "committed" ? result.ended_reason : null,
+  );
   const now = (deps.now ?? (() => new Date()))();
   await inTransaction(async (db) => {
     await (deps.accountWriteFence ?? lockGpuAccountFence)(
@@ -961,7 +983,7 @@ async function afterProjectAnswer(
     );
     if (!layer) return;
     if (ended) {
-      await endLayer(db, layer, "lease_expired", null, now);
+      await endLayer(db, layer, reason, null, now);
     } else if (result.status === "committed" && result.state === "active") {
       await db.query(
         `UPDATE gpu_budget_layers SET activation_acked_at = COALESCE(activation_acked_at, now()), updated = now()
@@ -970,6 +992,17 @@ async function afterProjectAnswer(
       );
     }
   });
+}
+
+// Why an activation that P ended ends the layer: the binding P found lost,
+// else the activation failed.
+function activationEndReason(
+  ended_reason: ProjectFundingEndedReason | null | undefined,
+): ProjectFundingEndedReason {
+  return ended_reason === "project_deleted" ||
+    ended_reason === "funder_left_project"
+    ? ended_reason
+    : "lease_expired";
 }
 
 // ---- reconciliation (H) ----
@@ -999,21 +1032,42 @@ export async function reconcileProjectFunding(
         funder_account_id: layer.key_owner_account_id,
       });
       if (s.status === "rehoming") continue;
-      if (s.status === "found" && s.state === "active") {
+      // A route P reports active is acknowledged only while its binding
+      // holds; otherwise the approval ends, never activates.
+      const lost =
+        s.status === "found" && s.state === "active"
+          ? s.project_deleted
+            ? ("project_deleted" as const)
+            : !s.funder_is_collaborator
+              ? ("funder_left_project" as const)
+              : undefined
+          : undefined;
+      if (s.status === "found" && s.state === "active" && !lost) {
         await getPool().query(
           `UPDATE gpu_budget_layers SET activation_acked_at = COALESCE(activation_acked_at, now())
             WHERE id = $1`,
           [layer.id],
         );
         acked += 1;
-      } else if (s.status === "unknown_approval" || s.state === "ended") {
+      } else if (
+        lost ||
+        s.status === "unknown_approval" ||
+        s.state === "ended"
+      ) {
+        const reason =
+          lost ??
+          (s.status === "unknown_approval"
+            ? s.project_deleted
+              ? "project_deleted"
+              : "lease_expired"
+            : activationEndReason(s.ended_reason));
         const did = await inTransaction(async (db) => {
           await (deps.accountWriteFence ?? lockGpuAccountFence)(
             db,
             layer.key_owner_account_id,
             "end a project's GPU funding",
           );
-          return await endLayer(db, layer, "lease_expired", null, now);
+          return await endLayer(db, layer, reason, null, now);
         });
         if (did) ended += 1;
       }
