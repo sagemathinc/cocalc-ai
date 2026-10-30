@@ -151,14 +151,16 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       request.runtime.profile.id === "claude-code";
     let harness_credential = request.harness_credential;
     let harness_pool: AcpRequest["harness_pool"];
-    let lookupFailed = false;
     if (claudeCode && !harness_credential) {
       const answer = await storedPaymentSelection<ClaudePaymentSelection>(
         request,
         "claude-code",
       );
-      lookupFailed = answer === "unavailable";
-      const stored = answer === "unavailable" ? undefined : answer;
+      // The account's choice is unknown: never the project secret, and
+      // never a stale earlier choice (the last human turn's credential).
+      if (answer === "unavailable")
+        throw new PaymentSelectionUnavailableError();
+      const stored = answer;
       const pool =
         stored && claudePoolSelection(stored.selection, stored.default);
       if (pool) {
@@ -217,9 +219,6 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
       // An Auto agent that has no stored choice here keeps picking.
       if (admitted.harness_pool) harness_pool = admitted.harness_pool;
     }
-    // Never the project secret because the account's choice is unknown.
-    if (claudeCode && !harness_credential && !harness_pool && lookupFailed)
-      throw new PaymentSelectionUnavailableError();
     if (harness_pool) {
       return prepareHarnessRequest(
         await admitClaudePoolTurn(

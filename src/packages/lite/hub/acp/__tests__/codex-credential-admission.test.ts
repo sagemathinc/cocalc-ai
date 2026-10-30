@@ -149,6 +149,8 @@ test("an agent message after a Claude version bump still uses the last human cho
   };
   const thread = `thread-${randomUUID()}`;
   const base = request();
+  // Nothing stored for this agent (an answer, not a failed lookup).
+  setPaymentSelectionResolver(async () => ({}));
   // A human turn admitted under the previous pin.
   enqueueAcpJob({
     ...base,
@@ -172,6 +174,7 @@ test("an agent message after a Claude version bump still uses the last human cho
     },
   } as any);
   expect(admitted.harness_credential).toEqual(credential);
+  setPaymentSelectionResolver();
 });
 
 test("an agent-message turn without a recorded subscription says how to fix it", async () => {
@@ -455,6 +458,50 @@ describe("the stored selection cannot be looked up", () => {
         runtime,
       } as any),
     ).rejects.toThrow(/could not look up how this agent is paid/);
+  });
+
+  test("an agent message never reuses the last human turn's credential instead", async () => {
+    // The person's last turn ran on the project secret; since then they may
+    // have chosen Auto (saved at once, without another turn).
+    const human = {
+      ...request(),
+      config: undefined,
+      runtime,
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "project-secret",
+      },
+    } as any;
+    enqueueAcpJob(human);
+    setPaymentSelectionResolver(async () => {
+      throw new Error("home bay timeout");
+    });
+    await expect(
+      pinCodexCredentialAtAdmission({
+        ...request(),
+        config: undefined,
+        runtime,
+        chat: { ...request().chat, agent_rpc_execution: { version: 3 } },
+      } as any),
+    ).rejects.toThrow(/could not look up how this agent is paid/);
+    await expect(
+      pinCodexCredentialAtAdmission({
+        ...request(),
+        config: undefined,
+        runtime,
+        chat: { ...request().chat, sensor_wake: { version: 1 } },
+      } as any),
+    ).rejects.toThrow(/could not look up how this agent is paid/);
+    // With the lookup answering "nothing stored", the fallback still applies.
+    setPaymentSelectionResolver(async () => ({}));
+    const admitted = await pinCodexCredentialAtAdmission({
+      ...request(),
+      config: undefined,
+      runtime,
+      chat: { ...request().chat, agent_rpc_execution: { version: 3 } },
+    } as any);
+    expect(admitted.harness_credential).toEqual(human.harness_credential);
   });
 
   test("a turn that names its credential does not need the lookup", async () => {
