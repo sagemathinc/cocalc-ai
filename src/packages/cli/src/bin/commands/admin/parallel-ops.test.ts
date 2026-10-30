@@ -33,6 +33,17 @@ const WORKERS = [
     queued_count: 0,
   },
   {
+    worker_kind: "cloud-work",
+    scope_model: "per-provider",
+    dynamic_limit_supported: true,
+    default_limit: 5,
+    configured_limit: null,
+    effective_limit: 5,
+    config_source: "constant",
+    running_count: 0,
+    queued_count: 0,
+  },
+  {
     worker_kind: "fixed-worker",
     scope_model: "global",
     dynamic_limit_supported: false,
@@ -140,7 +151,7 @@ test("status lists every worker with its limit and source", async () => {
     source: "constant",
     settable: true,
   });
-  assert.equal(h.output().length, 3);
+  assert.equal(h.output().length, 4);
 });
 
 test("get shows each host's effective, default and configured limit", async () => {
@@ -175,8 +186,8 @@ test("set --all-hosts --dry-run shows before and after on running hosts only, wr
   assert.deepEqual(
     h.output().map((r: any) => [r.host, r.before, r.after, r.result]),
     [
-      ["host-a", 4, 1, "would set"],
-      ["host-b", 2, 1, "would set"],
+      ["host-a", 4, null, "would set to 1"],
+      ["host-b", 2, null, "would set to 1"],
     ],
   );
 });
@@ -292,7 +303,7 @@ test("a global worker is set globally, and rejects host flags", async () => {
 test("refuses unknown and fixed workers, a missing host choice, and a bad limit", async () => {
   await assert.rejects(
     setup().run("set", "--worker", "nope", "--limit", "1"),
-    /unknown worker 'nope'; known workers: fixed-worker, project-host-backup-execution, project-move/,
+    /unknown worker 'nope'; known workers: cloud-work, fixed-worker, project-host-backup-execution, project-move/,
   );
   await assert.rejects(
     setup().run("set", "--worker", "fixed-worker", "--limit", "1"),
@@ -331,6 +342,72 @@ test("refuses unknown and fixed workers, a missing host choice, and a bad limit"
       "--all-hosts",
     ),
     /--limit must be a positive integer/,
+  );
+});
+
+test("a host name that doesn't resolve is reported, and the other hosts still run", async () => {
+  const h = setup();
+  await h.run(
+    "set",
+    "--worker",
+    "project-host-backup-execution",
+    "--limit",
+    "1",
+    "--host",
+    "no-such-host",
+    "--host",
+    "host-b",
+  );
+  assert.deepEqual(
+    h.output().map((r: any) => [r.host, r.result]),
+    [
+      ["no-such-host", "error: host 'no-such-host' not found"],
+      ["host-b", "set"],
+    ],
+  );
+  assert.deepEqual(
+    h.calls.map((c) => c.args.scope_id),
+    [HOST_B],
+  );
+  assert.equal(process.exitCode, 1);
+});
+
+test("dry-run clear predicts nothing it can't know", async () => {
+  const h = setup();
+  await h.run(
+    "clear",
+    "--worker",
+    "project-host-backup-execution",
+    "--host",
+    "host-b",
+    "--dry-run",
+  );
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(
+    h.output().map((r: any) => [r.before, r.after, r.result]),
+    [[2, null, "would clear (back to the default)"]],
+  );
+});
+
+test("a per-provider worker is set globally; there is no --provider", async () => {
+  const h = setup();
+  await h.run("set", "--worker", "cloud-work", "--limit", "2");
+  assert.deepEqual(h.calls[0].args, {
+    worker_kind: "cloud-work",
+    scope_type: "global",
+    limit_value: 2,
+  });
+  await assert.rejects(
+    setup().run(
+      "set",
+      "--worker",
+      "cloud-work",
+      "--limit",
+      "2",
+      "--provider",
+      "gcp",
+    ),
+    /unknown option '--provider'/,
   );
 });
 

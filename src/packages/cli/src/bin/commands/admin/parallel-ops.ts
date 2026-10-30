@@ -8,8 +8,10 @@
 // limit can be set on many hosts at once from a script.
 //
 // Per-project-host workers (e.g. project-host-backup-execution) resolve only
-// per-host overrides, with no global fallback, hence --all-hosts. Changing a
-// limit needs a fresh sign-in with two-factor: run `cocalc auth elevate`.
+// per-host overrides, with no global fallback, hence --all-hosts. Other
+// workers have one global limit (per-provider overrides aren't offered: the
+// hub has no per-provider read to report them truthfully). Changing a limit
+// needs a fresh sign-in with two-factor: run `cocalc auth elevate`.
 
 import { Command } from "commander";
 import type {
@@ -26,6 +28,8 @@ interface HostRef {
   id: string;
   name: string;
   status?: string;
+  // a name that couldn't be resolved: reported, the rest still run
+  error?: string;
 }
 
 function collect(value: string, values: string[] = []): string[] {
@@ -103,7 +107,15 @@ export async function targetHosts(
   }
   const out: HostRef[] = [];
   for (const id of opts.host) {
-    out.push((await resolveHost(ctx, id, { admin_view: true })) as HostRef);
+    try {
+      out.push((await resolveHost(ctx, id, { admin_view: true })) as HostRef);
+    } catch (err) {
+      out.push({
+        id: "",
+        name: id,
+        error: `${(err as Error)?.message ?? err}`,
+      });
+    }
   }
   return out;
 }
@@ -119,24 +131,15 @@ async function hostLimit(
   });
 }
 
-function scopeFor(
+function requireGlobal(
   worker: ParallelOpsWorkerStatus,
-  opts: { host?: string[]; allHosts?: boolean; provider?: string },
-): { scope_type: "global" | "provider" } {
+  opts: { host?: string[]; allHosts?: boolean },
+): void {
   if (opts.host?.length || opts.allHosts) {
     throw new Error(
       `'${worker.worker_kind}' has a ${worker.scope_model} limit, not a per-host one: drop --host/--all-hosts`,
     );
   }
-  if (opts.provider) {
-    if (worker.scope_model !== "per-provider") {
-      throw new Error(
-        `'${worker.worker_kind}' has a ${worker.scope_model} limit, not a per-provider one: drop --provider`,
-      );
-    }
-    return { scope_type: "provider" };
-  }
-  return { scope_type: "global" };
 }
 
 // Set (limit given) or clear (limit undefined) on every target; one row per
@@ -149,7 +152,6 @@ async function change(
     limit?: number;
     host?: string[];
     allHosts?: boolean;
-    provider?: string;
     note?: string;
     dryRun?: boolean;
   },
@@ -160,7 +162,7 @@ async function change(
   }
   const verb = opts.limit == null ? "clear" : "set";
   const write = async (scope: {
-    scope_type: "global" | "provider" | "project_host";
+    scope_type: "global" | "project_host";
     scope_id?: string;
   }) => {
     if (opts.limit == null) {
@@ -180,9 +182,6 @@ async function change(
   let failed = 0;
 
   if (worker.scope_model === "per-project-host") {
-    if (opts.provider) {
-      throw new Error(`'${worker.worker_kind}' is per host: drop --provider`);
-    }
     const hosts = await targetHosts(ctx, opts);
     const rows: Record<string, unknown>[] = [];
     for (const host of hosts) {
@@ -195,16 +194,15 @@ async function change(
         result: "",
       };
       try {
+        if (host.error) throw new Error(host.error);
         const before = await hostLimit(ctx, worker.worker_kind, host.id);
         row.before = before.effective_limit;
         if (opts.dryRun) {
-          row.after =
-            opts.limit ??
-            (before.configured_limit == null
-              ? before.effective_limit
-              : before.default_limit);
-          row.source = opts.limit == null ? "default" : "db-override";
-          row.result = `would ${verb}`;
+          // nothing written; what it becomes is shown by the real run
+          row.result =
+            opts.limit == null
+              ? "would clear (back to the default)"
+              : `would set to ${opts.limit}`;
         } else {
           await write({ scope_type: "project_host", scope_id: host.id });
           const after = await hostLimit(ctx, worker.worker_kind, host.id);
@@ -222,26 +220,23 @@ async function change(
     return rows;
   }
 
-  const scope = scopeFor(worker, opts);
-  const target = {
-    ...scope,
-    ...(scope.scope_type === "provider" ? { scope_id: opts.provider } : {}),
-  };
+  requireGlobal(worker, opts);
   const row: Record<string, unknown> = {
     worker: worker.worker_kind,
-    scope: target.scope_type,
-    scope_id: target.scope_id ?? null,
+    scope: "global",
     before: worker.effective_limit,
     after: null,
     result: "",
   };
   if (opts.dryRun) {
-    row.after = opts.limit ?? worker.default_limit;
-    row.result = `would ${verb}`;
+    row.result =
+      opts.limit == null
+        ? "would clear (back to the default)"
+        : `would set to ${opts.limit}`;
     return [row];
   }
   try {
-    await write(target);
+    await write({ scope_type: "global" });
     row.after = (await findWorker(ctx, worker.worker_kind)).effective_limit;
     row.result = verb === "set" ? "set" : "cleared";
   } catch (err) {
@@ -302,7 +297,7 @@ set them per host, or on every running host at once:
       await deps.withContext(command, "admin parallel-ops get", async (ctx) => {
         const worker = await findWorker(ctx, opts.worker);
         if (worker.scope_model !== "per-project-host") {
-          scopeFor(worker, opts);
+          requireGlobal(worker, opts);
           return [
             {
               worker: worker.worker_kind,
@@ -318,6 +313,7 @@ set them per host, or on every running host at once:
         const rows: Record<string, unknown>[] = [];
         for (const host of hosts) {
           try {
+            if (host.error) throw new Error(host.error);
             const r = await hostLimit(ctx, worker.worker_kind, host.id);
             rows.push({
               host: host.name,
@@ -343,13 +339,12 @@ set them per host, or on every running host at once:
   ops
     .command("set")
     .description(
-      "set a worker's limit: per host (--host/--all-hosts), per provider (--provider) or global",
+      "set a worker's limit: per host (--host/--all-hosts) for per-host workers, otherwise global",
     )
     .requiredOption("--worker <kind>", "worker kind (see `status`)")
     .requiredOption("--limit <n>", "the new limit", positiveInteger("--limit"))
     .option("--host <id|name>", "a host (repeatable)", collect)
     .option("--all-hosts", "every running host")
-    .option("--provider <name>", "one cloud provider (per-provider workers)")
     .option("--note <text>", "why, kept with the override")
     .option("--dry-run", "show what would change, without changing it")
     .action(async (opts: any, command: Command) => {
@@ -364,7 +359,6 @@ set them per host, or on every running host at once:
     .requiredOption("--worker <kind>", "worker kind (see `status`)")
     .option("--host <id|name>", "a host (repeatable)", collect)
     .option("--all-hosts", "every running host")
-    .option("--provider <name>", "one cloud provider (per-provider workers)")
     .option("--dry-run", "show what would change, without changing it")
     .action(async (opts: any, command: Command) => {
       await deps.withContext(command, "admin parallel-ops clear", async (ctx) =>
