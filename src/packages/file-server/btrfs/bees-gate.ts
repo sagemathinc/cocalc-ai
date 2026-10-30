@@ -171,6 +171,9 @@ export class BeesGate {
   private timer?: NodeJS.Timeout;
   private ticking = false;
   private unsupported = false;
+  // Whether the cgroup is known to match this.state (false until the first
+  // action succeeds: a restart or handoff may have left it either way).
+  private synced = false;
   private lastInputs?: BeesGateInputs;
   // commit samples within the window: [time, worst ms seen at that sample]
   private commitSamples: Array<[number, number]> = [];
@@ -181,9 +184,9 @@ export class BeesGate {
   constructor(private readonly opts: BeesGateOptions) {
     this.now = opts.now ?? Date.now;
     this.config = opts.config ?? DEFAULT_BEES_GATE_CONFIG;
-    // Unknown until the first decision, which freezes unless BEES may run
-    // (also bringing a cgroup left frozen or thawed by a restart in line).
-    this.state = { frozen: false, since_ms: this.now(), reason: "startup" };
+    // Frozen from the start (applied on the first tick, whatever an earlier
+    // daemon left), so BEES runs only after a full frozen period.
+    this.state = { frozen: true, since_ms: this.now(), reason: "startup" };
   }
 
   async start(): Promise<void> {
@@ -208,6 +211,7 @@ export class BeesGate {
   getStatus() {
     return {
       enabled: !this.unsupported,
+      applied: this.synced,
       frozen: this.state.frozen,
       since: new Date(this.state.since_ms).toISOString(),
       reason: this.state.reason,
@@ -225,8 +229,9 @@ export class BeesGate {
       };
       this.lastInputs = inputs;
       const next = decideBeesGate(this.state, inputs, this.now(), this.config);
-      if (next.frozen === this.state.frozen) return;
+      if (this.synced && next.frozen === this.state.frozen) return;
       if (await this.apply(next.frozen ? "freeze" : "thaw")) {
+        this.synced = true;
         logger.info(next.frozen ? "BEES frozen" : "BEES thawed", {
           mount: this.opts.mount,
           reason: next.reason,

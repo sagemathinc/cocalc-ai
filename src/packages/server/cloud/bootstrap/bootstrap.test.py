@@ -5911,9 +5911,16 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
                 'printf \'%s %s\n\' "$BEES_CGROUP_CPU_PERIOD" "$BEES_CGROUP_CPU_PERIOD" > "${pool}/cpu.max"',
                 gate,
             )
+            # Stop thaws only a cgroup proven empty, and needs cgroup.kill.
             stop = gate[gate.index("      stop)") :]
+            self.assertIn("BEES_GATE_STOP_FAILED reason=no-cgroup-kill", stop)
+            self.assertIn("BEES_GATE_STOP_FAILED reason=still-populated", stop)
             self.assertLess(
                 stop.index('> "${pool}/cgroup.kill"'),
+                stop.index("^populated 0"),
+            )
+            self.assertLess(
+                stop.index("reason=still-populated"),
                 stop.index("printf '0\n' > \"${pool}/cgroup.freeze\""),
             )
             self.assertNotIn("\x00", script)

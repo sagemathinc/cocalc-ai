@@ -139,7 +139,7 @@ describe("the BEES gate", () => {
     return { g, advance: (ms: number) => (now += ms) };
   }
 
-  it("freezes at start unless BEES may run, then thaws and freezes as conditions change", async () => {
+  it("freezes at start, then thaws and freezes as conditions change", async () => {
     const actions: string[] = [];
     let current: Omit<BeesGateInputs, "lifecycle_active"> = {
       ...calm,
@@ -170,6 +170,25 @@ describe("the BEES gate", () => {
     g.stop();
   });
 
+  // Review of #1503: a cgroup left frozen by an earlier daemon must not stay
+  // frozen when BEES may run; the gate applies its state on the first tick.
+  it("brings a cgroup left frozen or thawed by an earlier daemon in line, then thaws after the frozen period", async () => {
+    const actions: string[] = [];
+    const { g, advance } = gate(
+      () => calm,
+      async (action) => {
+        actions.push(action);
+      },
+    );
+    await g.start();
+    expect(actions).toEqual(["freeze"]);
+    expect(g.getStatus()).toMatchObject({ applied: true, frozen: true });
+    advance(10 * MIN);
+    await g.tick();
+    expect(actions).toEqual(["freeze", "thaw"]);
+    g.stop();
+  });
+
   it("runs BEES ungated when the root helper does not know the gate", async () => {
     const { g } = gate(
       () => ({ ...calm, free_fraction: 0.5 }),
@@ -192,11 +211,11 @@ describe("the BEES gate", () => {
       },
     );
     await g.start();
-    expect(g.getStatus()).toMatchObject({ enabled: true, frozen: false });
+    expect(g.getStatus()).toMatchObject({ enabled: true, applied: false });
     fail = false;
     await g.tick();
     expect(actions).toEqual(["freeze"]);
-    expect(g.getStatus().frozen).toBe(true);
+    expect(g.getStatus()).toMatchObject({ applied: true, frozen: true });
     g.stop();
   });
 });

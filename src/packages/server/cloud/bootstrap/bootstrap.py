@@ -11442,14 +11442,26 @@ PY' bash "$tree"
         fi
         ;;
       stop)
+        # Thaw only once the cgroup is proven empty: thawing a BEES that is
+        # still there would revive it.
         if [ -d "$pool" ]; then
-          if [ -w "${pool}/cgroup.kill" ]; then
-            printf '1\n' > "${pool}/cgroup.kill"
+          if [ ! -w "${pool}/cgroup.kill" ]; then
+            echo "BEES_GATE_STOP_FAILED reason=no-cgroup-kill mountpoint=${mountpoint}" >&2
+            exit 1
           fi
+          printf '1\n' > "${pool}/cgroup.kill"
+          stopped=""
           for _ in $(seq 1 50); do
-            grep -q '^populated 0' "${pool}/cgroup.events" 2>/dev/null && break
+            if grep -q '^populated 0' "${pool}/cgroup.events" 2>/dev/null; then
+              stopped=1
+              break
+            fi
             sleep 0.1
           done
+          if [ -z "$stopped" ]; then
+            echo "BEES_GATE_STOP_FAILED reason=still-populated mountpoint=${mountpoint}" >&2
+            exit 1
+          fi
           printf '0\n' > "${pool}/cgroup.freeze"
         fi
         ;;

@@ -215,6 +215,25 @@ export class Filesystem {
     };
   };
 
+  // Retried until the root helper proves the BEES cgroup empty (it leaves a
+  // BEES it could not kill frozen, never thawed).
+  private async stopLeftoverBees(): Promise<void> {
+    if (this.beesStopping) return;
+    try {
+      await applyBeesGateAction(this.opts.mount, "stop");
+    } catch (err) {
+      logger.warn("unable to stop a leftover BEES; retrying", {
+        mount: this.opts.mount,
+        err: `${err}`,
+      });
+      this.beesRestartTimer = setTimeout(() => {
+        this.beesRestartTimer = undefined;
+        void this.stopLeftoverBees();
+      }, 60_000);
+      this.beesRestartTimer.unref?.();
+    }
+  }
+
   // One gate for the life of this filesystem; it acts on the BEES cgroup, so
   // it covers a restarted or adopted BEES too.
   private startBeesGate(): void {
@@ -321,9 +340,7 @@ export class Filesystem {
         });
         // A BEES started by an earlier daemon (e.g. frozen before BEES was
         // turned off) is nobody's now: stop it.
-        await applyBeesGateAction(this.opts.mount, "stop").catch((err) =>
-          logger.debug("unable to stop a leftover BEES", { err: `${err}` }),
-        );
+        await this.stopLeftoverBees();
         return;
       }
       if (result.status === "already-running") {

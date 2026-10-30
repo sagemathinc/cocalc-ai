@@ -160,4 +160,25 @@ describe("BEES process supervision", () => {
     expect(filesystem.getBeesStatus()).toMatchObject({ enabled: false });
     filesystem.close();
   });
+
+  it("keeps trying to stop a leftover BEES until the root helper proves it gone", async () => {
+    mockedApplyGate.mockReset();
+    mockedApplyGate
+      .mockRejectedValueOnce(
+        Error("BEES_GATE_STOP_FAILED reason=still-populated"),
+      )
+      .mockResolvedValueOnce(undefined);
+    mockedBees.mockResolvedValueOnce({ status: "disabled" });
+    const filesystem = new Filesystem({
+      mount: "/mnt/cocalc",
+      rustic: "/tmp/rustic.toml",
+    });
+    await (filesystem as any).startBees("startup");
+    expect(mockedApplyGate).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(mockedApplyGate).toHaveBeenCalledTimes(2);
+    expect(filesystem.getBeesStatus().restartPending).toBe(false);
+    filesystem.close();
+  });
 });
