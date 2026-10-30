@@ -4167,6 +4167,8 @@ export interface InterBayGpuApi {
     account_id: string;
     project_id: unknown;
     spec: unknown;
+    // skip the project's funding approval, use the caller's own key
+    own_key?: boolean;
     agent?: {
       principal: {
         account_id: string;
@@ -4341,6 +4343,17 @@ export interface InterBayGpuApi {
   gpuProjectFundingLaunch: (
     opts: import("@cocalc/util/gpu/project-funding").ProjectFundingLaunchRequest,
   ) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary>;
+  // on the project's owning bay, from the actor's home bay: a launch the
+  // project's approval may pay, and a request when it can't
+  gpuProjectLaunchRoute: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectLaunchRouteRequest,
+  ) => Promise<
+    import("@cocalc/util/gpu/project-funding").ProjectLaunchRouteResult
+  >;
+  gpuProjectFundingRequest: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectFundingRequestRequest,
+  ) => Promise<{ request_id?: string }>;
+  // (gpuLaunch's own_key: skip the project's approval)
 }
 
 export interface InterBayAccountLocalApi
@@ -8426,6 +8439,10 @@ export function createInterBayAccountLocalClient({
       await gpuClient.gpuProjectFundingEndedOnProject(opts),
     gpuProjectFundingLaunch: async (opts) =>
       await gpuClient.gpuProjectFundingLaunch(opts),
+    gpuProjectLaunchRoute: async (opts) =>
+      await gpuClient.gpuProjectLaunchRoute(opts),
+    gpuProjectFundingRequest: async (opts) =>
+      await gpuClient.gpuProjectFundingRequest(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -9043,6 +9060,10 @@ export function createInterBayAccountLocalHandler({
           await impl.gpuProjectFundingEndedOnProject(opts),
         gpuProjectFundingLaunch: async (opts) =>
           await impl.gpuProjectFundingLaunch(opts),
+        gpuProjectLaunchRoute: async (opts) =>
+          await impl.gpuProjectLaunchRoute(opts),
+        gpuProjectFundingRequest: async (opts) =>
+          await impl.gpuProjectFundingRequest(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({

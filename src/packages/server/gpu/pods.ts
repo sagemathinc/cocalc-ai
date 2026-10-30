@@ -17,7 +17,7 @@ Everything here runs on the key owner's home bay (the *Local functions); the
 routed entry points at the bottom forward the whole operation there.
 */
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
   RunpodApiError,
@@ -628,7 +628,7 @@ async function isProjectCollaborator(account_id: string, project_id: string) {
 const MINE = `(key_owner_account_id = $1 OR beneficiary_account_id = $1)`;
 
 // A principal as it may arrive from another bay (its expiry as text).
-type GpuAgentPrincipalWire = Omit<GpuAgentPrincipal, "expires_at"> & {
+export type GpuAgentPrincipalWire = Omit<GpuAgentPrincipal, "expires_at"> & {
   expires_at: Date | string;
 };
 
@@ -710,6 +710,57 @@ export interface ProjectFundedLaunch {
   // an agent's canonical ids (attribution only)
   agent_id?: string;
   run_id?: string;
+  // the launch's idempotency key: the same actor and operation under this
+  // approval is one pod (a retry gets it back, never a second one)
+  operation_id?: string;
+}
+
+// The stable key of a funded launch's operation (stored per approval).
+// The whole actor (kind, account, agent, run) and the operation, as an
+// unambiguous tuple's digest: another run of the same agent, or ids that
+// only differ in where a ':' falls, are other operations.
+export function launchOperationKey(f: ProjectFundedLaunch): string | null {
+  if (f.operation_id == null) return null;
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        "funded-launch-operation/v1",
+        f.actor_kind,
+        f.actor_account_id ?? null,
+        f.agent_id ?? null,
+        f.run_id ?? null,
+        f.operation_id,
+      ]),
+    )
+    .digest("hex");
+}
+
+// A salted digest of the whole normalized request (SSH key and env values
+// included, which the stored spec omits): a retry must be exactly the same
+// launch. Stored as "<salt>:<digest>"; the values themselves never are.
+export function launchRequestDigest(spec: GpuLaunchSpec, salt: string): string {
+  return `${salt}:${createHash("sha256")
+    .update(`${salt}\n${canonical(spec)}`)
+    .digest("hex")}`;
+}
+
+function sameLaunchRequest(stored: string | null, spec: GpuLaunchSpec) {
+  if (!stored) return false;
+  const salt = stored.slice(0, stored.indexOf(":"));
+  return launchRequestDigest(spec, salt) === stored;
+}
+
+// Canonical JSON (sorted keys), to compare a stored spec with a retry's.
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v != null && typeof v === "object") {
+    return `{${Object.keys(v as object)
+      .sort()
+      .filter((k) => (v as any)[k] !== undefined)
+      .map((k) => `${JSON.stringify(k)}:${canonical((v as any)[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v);
 }
 
 export async function launchGpuPodLocal(
@@ -876,6 +927,8 @@ async function launchPod(
               ? { ...agent, payload_hash: approval.payload_hash }
               : undefined,
         });
+        // a retried funded operation: its pod, as it is
+        if (intent.replay) return podSummary(await loadPod(intent.row.id));
       } catch (err) {
         if (!(err instanceof NoUsableAgentGrant) || !agent || !approval)
           throw err;
@@ -985,13 +1038,22 @@ function launchKeyError(err: unknown): Error {
     return Error("Your RunPod API key changed during the launch. Try again.");
   }
   if (`${err}`.includes("membership")) {
-    return Error("Your membership doesn't include GPUs on your own key.");
+    return Error(NOT_ENTITLED);
   }
   return Error("Your RunPod API key could not be loaded. Try again shortly.");
 }
 
 const NO_KEY =
   "No RunPod API key is connected. Connect one in Settings → Connectors.";
+const NOT_ENTITLED = "Your membership doesn't include GPUs on your own key.";
+
+// The caller has no own key to launch with (none connected, or their
+// membership doesn't include GPUs on one): in a project, a request for its
+// funding approval is the way forward instead.
+export function isNoOwnKeyError(err: unknown): boolean {
+  const m = `${(err as any)?.message ?? err}`;
+  return m === NO_KEY || m === NOT_ENTITLED;
+}
 
 async function withLaunchAccess<T>(
   account_id: string,
@@ -1067,7 +1129,7 @@ async function insertIntent({
     payload_hash: string;
   };
   funding?: ProjectFundedLaunch;
-}): Promise<{ row: PodRow }> {
+}): Promise<{ row: PodRow; replay?: boolean }> {
   const now = (deps.now ?? Date.now)();
   const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
   for (let attempt = 1; ; attempt++) {
@@ -1096,6 +1158,24 @@ async function insertIntent({
             )
           : undefined;
         if (agent && !grant) throw new NoUsableAgentGrant();
+        // A funded launch's operation already made its pod (a retry after a
+        // lost answer): that pod, never a second one. The unique index on
+        // (approval_id, launch_operation_key) settles a race.
+        const opKey = funding ? launchOperationKey(funding) : null;
+        if (funding && opKey) {
+          const { rows: done } = await db.query(
+            `SELECT * FROM gpu_pods WHERE approval_id = $1 AND launch_operation_key = $2`,
+            [funding.approval_id, opKey],
+          );
+          if (done[0]) {
+            if (!sameLaunchRequest(done[0].launch_request_digest, spec)) {
+              throw Error(
+                "This operation id was already used for a different launch; use a new one.",
+              );
+            }
+            return { row: done[0], replay: true };
+          }
+        }
         const { credential_id, revision } = await launchMeta(account_id, deps);
         if (grant && grant.credential_id !== credential_id) {
           throw Error(
@@ -1149,10 +1229,11 @@ async function insertIntent({
              data_center_id, state, desired_state, max_runtime_minutes, deadline,
              ssh_key_fingerprint, hostkey_token_id, hostkey_verifier,
              hostkey_expires, agent_id, turn_id, approval_id, actor_kind,
-             actor_account_id, actor_project_id, created, updated)
+             actor_account_id, actor_project_id, launch_operation_key,
+             launch_request_digest, created, updated)
            VALUES ($1, $2, $3, $4, 'runpod', $19, $5, $6, $7, $8, $9, $10, 'intent',
              'running', $11, $12, $13, $14, $15, $16, $17, $18, $20, $21, $22, $5,
-             now(), now())
+             $23, $24, now(), now())
            RETURNING *`,
           [
             id,
@@ -1177,6 +1258,10 @@ async function insertIntent({
             funding?.approval_id ?? null,
             actor.kind,
             actor.account_id ?? null,
+            opKey,
+            opKey
+              ? launchRequestDigest(spec, randomBytes(8).toString("hex"))
+              : null,
           ],
         );
         await openFirstStateInterval(db, rows[0]);
@@ -2316,12 +2401,16 @@ export async function gpuPodHomeClient(
 
 // `key_use` (5d-2c) is made by the hub API handler when this is the home
 // bay; a forwarded call gets the home bay's own.
+// On the caller's home bay (forwarded there if needed): the project's
+// funding approval first, unless own_key, then the caller's own key
+// (project-launch.ts).
 export async function launchGpuPod(
   opts: {
     account_id?: string;
     project_id?: unknown;
     spec?: unknown;
     agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
+    own_key?: boolean;
     key_use?: GpuKeyUse;
   },
   deps: GpuPodDeps = {},
@@ -2334,12 +2423,18 @@ export async function launchGpuPod(
       project_id: opts.project_id,
       spec: opts.spec,
       ...(opts.agent ? { agent: opts.agent } : {}),
+      ...(opts.own_key === true ? { own_key: true } : {}),
     });
   }
-  return await launchGpuPodLocal(
-    { ...opts, account_id, key_use: opts.key_use },
-    deps,
-  );
+  const { launchOnHome } = await import("@cocalc/server/gpu/project-launch");
+  return await launchOnHome({
+    account_id,
+    project_id: opts.project_id,
+    spec: opts.spec,
+    ...(opts.agent ? { agent: opts.agent } : {}),
+    own_key: opts.own_key === true,
+    key_use: opts.key_use,
+  });
 }
 
 export async function terminateGpuPod(

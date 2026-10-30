@@ -551,5 +551,43 @@ export interface ProjectFundingLaunchRequest {
     agent_id?: string;
     run_id?: string;
   };
+  // the launch's idempotency key, chosen by the caller (required for an
+  // agent): the same actor and operation under one approval is one pod
+  operation_id?: string;
+  spec: unknown;
+}
+
+export const LAUNCH_OPERATION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
+// A person's or agent's launch, from their home bay to the project's owning
+// bay (which must find source_bay_id is the actor's home): the project's
+// active approval pays, if any and if it allows the actor.
+export interface ProjectLaunchRouteRequest {
+  source_bay_id: string;
+  project_id: string;
+  actor:
+    | { kind: "user"; account_id: string }
+    | {
+        kind: "agent";
+        account_id: string;
+        project_id: string;
+        agent_id: string;
+        run_id?: string;
+      };
+  // required for an agent (its 6b operation id), optional for a person
+  operation_id?: string;
+  spec: unknown;
+}
+
+export type ProjectLaunchRouteResult =
+  | { status: "launched"; pod: import("@cocalc/util/gpu/types").GpuPodSummary }
+  | { status: "no_approval" }
+  | { status: "agents_not_allowed" };
+
+// The same caller asks the project for an approval (no key of their own).
+export interface ProjectFundingRequestRequest {
+  source_bay_id: string;
+  project_id: string;
+  actor: { kind: "user"; account_id: string };
   spec: unknown;
 }

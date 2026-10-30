@@ -49,6 +49,10 @@ Table({
         columns: ["provider", "provider_pod_id"],
       },
     ],
+    // a funded launch's operation, once per approval: a retry finds its pod
+    pg_unique_indexes: [
+      "(approval_id, launch_operation_key) WHERE launch_operation_key IS NOT NULL",
+    ],
   },
   fields: {
     id: { type: "uuid", not_null: true },
@@ -103,6 +107,16 @@ Table({
     actor_project_id: {
       type: "uuid",
       desc: "The project whose credential or agent launched it.",
+    },
+    launch_operation_key: {
+      type: "string",
+      pg_type: "varchar(400)",
+      desc: "A funded launch's idempotency key: the sha256 of its whole actor (kind, account, agent, run) and operation id. Unique per approval, so a retried launch (lost answer) finds this pod instead of making another.",
+    },
+    launch_request_digest: {
+      type: "string",
+      pg_type: "varchar(120)",
+      desc: "'<salt>:<sha256>' of a funded launch's whole normalized request (SSH key and env values included, never stored themselves): a retry of the operation must be exactly the same launch.",
     },
     project_id: { type: "uuid", desc: "Project the pod was launched for." },
     grant_id: { type: "uuid", desc: "Budget grant layer that funds it." },
