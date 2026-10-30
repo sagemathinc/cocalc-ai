@@ -694,7 +694,23 @@ type LaunchOpts = {
   agent?: { principal: GpuAgentPrincipalWire; operation_id: string };
   // made by the authenticated boundary (5d-2c); records how the attempt ended
   key_use: GpuKeyUse | undefined;
+  // A launch under a project funding approval (PROJECT_FUNDING.md §5):
+  // account_id is the funder (the key owner); the approval, its layer and
+  // who acted come from the project's owning bay, verified at this bay's
+  // inter-bay boundary, which also bound key_use to exactly this approval.
+  funding?: ProjectFundedLaunch;
 };
+
+export interface ProjectFundedLaunch {
+  approval_id: string;
+  layer_id: string;
+  actor_kind: "project" | "user" | "agent";
+  // the verified acting account (none when the project itself acted)
+  actor_account_id?: string;
+  // an agent's canonical ids (attribution only)
+  agent_id?: string;
+  run_id?: string;
+}
 
 export async function launchGpuPodLocal(
   opts: LaunchOpts,
@@ -702,7 +718,22 @@ export async function launchGpuPodLocal(
 ): Promise<GpuPodSummary> {
   const account_id = requireAccount(opts.account_id);
   await requireHomeBay(account_id, deps);
-  const key_use = requireKeyUse(opts.key_use, ["launch"], account_id);
+  const key_use = requireKeyUse(
+    opts.key_use,
+    ["launch"],
+    account_id,
+    opts.funding
+      ? {
+          project_id: `${opts.project_id ?? ""}`,
+          approval_id: opts.funding.approval_id,
+          layer_id: opts.funding.layer_id,
+          actor_kind: opts.funding.actor_kind,
+          actor_account_id: opts.funding.actor_account_id,
+          agent_id: opts.funding.agent_id,
+          run_id: opts.funding.run_id,
+        }
+      : undefined,
+  );
   return await withKeyUseOutcome(key_use, () => launchPod(opts, deps));
 }
 
@@ -736,6 +767,10 @@ async function launchPod(
       "An agent's GPU launch needs an operation id (cocalc gpu launch --operation <id>).",
     );
   }
+  const funding = opts.funding;
+  if (funding && agent) {
+    throw Error("A funded launch never uses an agent grant.");
+  }
   const spec = normalizeGpuLaunchSpec(opts.spec);
   if (
     !(await (deps.isProjectCollaborator ?? isProjectCollaborator)(
@@ -745,14 +780,21 @@ async function launchPod(
   ) {
     throw Error("project not found or access denied");
   }
-  const actor: Actor = agent
+  const actor: Actor = funding
     ? {
-        kind: "agent",
-        account_id,
-        agent_id: agent.principal.agent_id,
-        run_id: agent.principal.run_id,
+        kind: funding.actor_kind,
+        account_id: funding.actor_account_id,
+        agent_id: funding.agent_id,
+        run_id: funding.run_id,
       }
-    : { kind: "user", account_id };
+    : agent
+      ? {
+          kind: "agent",
+          account_id,
+          agent_id: agent.principal.agent_id,
+          run_id: agent.principal.run_id,
+        }
+      : { kind: "user", account_id };
   const cloud = spec.cloud ?? "SECURE";
 
   // A pod that takes SSH reports its host key once, with this token; only
@@ -828,6 +870,7 @@ async function launchPod(
           actor,
           deps,
           token,
+          funding,
           agent:
             agent && approval
               ? { ...agent, payload_hash: approval.payload_hash }
@@ -1005,6 +1048,7 @@ async function insertIntent({
   deps,
   token,
   agent,
+  funding,
 }: {
   account_id: string;
   project_id: string;
@@ -1022,6 +1066,7 @@ async function insertIntent({
     operation_id: string;
     payload_hash: string;
   };
+  funding?: ProjectFundedLaunch;
 }): Promise<{ row: PodRow }> {
   const now = (deps.now ?? Date.now)();
   const deadline = new Date(now + spec.max_runtime_minutes * 60_000);
@@ -1070,12 +1115,26 @@ async function insertIntent({
           key_owner_account_id: account_id,
           now: new Date(now),
         });
+        // Under an approval, the acting account (if known) is the
+        // beneficiary, and only its beneficiary layer applies: when the
+        // project itself acted there is none (the payer stored below is a
+        // responsibility field, never a layer selector).
+        const beneficiary = funding?.actor_account_id ?? account_id;
         const admission = await admitLaunch(db, {
           credential_id,
           key_owner_account_id: account_id,
-          beneficiary_account_id: account_id,
+          beneficiary_account_id: funding
+            ? (funding.actor_account_id ?? null)
+            : account_id,
           project_id,
           grant_id: grant?.grant_id,
+          funding: funding
+            ? {
+                approval_id: funding.approval_id,
+                layer_id: funding.layer_id,
+                actor_kind: funding.actor_kind,
+              }
+            : undefined,
           gpu_type_id: spec.gpu_type_id,
           gpu_count: spec.gpu_count,
           cloud: spec.cloud ?? "SECURE",
@@ -1089,9 +1148,11 @@ async function insertIntent({
              beneficiary_account_id, project_id, spec, gpu_type_id, gpu_count, cloud,
              data_center_id, state, desired_state, max_runtime_minutes, deadline,
              ssh_key_fingerprint, hostkey_token_id, hostkey_verifier,
-             hostkey_expires, agent_id, turn_id, created, updated)
-           VALUES ($1, $2, $3, $4, 'runpod', $3, $5, $6, $7, $8, $9, $10, 'intent',
-             'running', $11, $12, $13, $14, $15, $16, $17, $18, now(), now())
+             hostkey_expires, agent_id, turn_id, approval_id, actor_kind,
+             actor_account_id, actor_project_id, created, updated)
+           VALUES ($1, $2, $3, $4, 'runpod', $19, $5, $6, $7, $8, $9, $10, 'intent',
+             'running', $11, $12, $13, $14, $15, $16, $17, $18, $20, $21, $22, $5,
+             now(), now())
            RETURNING *`,
           [
             id,
@@ -1110,8 +1171,12 @@ async function insertIntent({
             token?.token_id ?? null,
             token?.verifier ?? null,
             token ? new Date(now + HOSTKEY_TOKEN_TTL_MS) : null,
-            agent?.principal.agent_id ?? null,
-            agent?.principal.run_id ?? null,
+            agent?.principal.agent_id ?? funding?.agent_id ?? null,
+            agent?.principal.run_id ?? funding?.run_id ?? null,
+            beneficiary,
+            funding?.approval_id ?? null,
+            actor.kind,
+            actor.account_id ?? null,
           ],
         );
         await openFirstStateInterval(db, rows[0]);

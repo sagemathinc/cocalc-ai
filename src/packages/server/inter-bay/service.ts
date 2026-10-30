@@ -4,6 +4,7 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { admitProjectKeyUse } from "@cocalc/server/gpu/key-use";
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { createInterBayHubApiHandler } from "@cocalc/conat/inter-bay/hub-api";
 import { createInterBaySessionAuthHandler } from "@cocalc/conat/inter-bay/session-auth";
@@ -1414,6 +1415,28 @@ async function startAccountLocalService(): Promise<void> {
       await (
         await import("@cocalc/server/gpu/project-funding")
       ).projectFundingEndedOnProjectLocal(opts),
+    // A funded launch (PROJECT_FUNDING.md §5): only from the project's
+    // current owning bay; the key use is made here, at this boundary, bound
+    // to exactly the approval and layer the launch names.
+    gpuProjectFundingLaunch: async (opts) => {
+      const { verifyProjectFundedLaunch } =
+        await import("@cocalc/server/gpu/project-funding");
+      const v = await verifyProjectFundedLaunch(opts);
+      const key_use = await admitProjectKeyUse({
+        key_owner_account_id: v.funder_account_id,
+        purpose: "launch",
+        binding: v.binding,
+      });
+      return await (
+        await import("@cocalc/server/gpu/pods")
+      ).launchGpuPodLocal({
+        account_id: v.funder_account_id,
+        project_id: v.project_id,
+        spec: opts.spec,
+        key_use,
+        funding: v.funding,
+      });
+    },
     computeOwnerResources: async (opts) =>
       (
         await import("@cocalc/server/compute/owner-resource-routing")

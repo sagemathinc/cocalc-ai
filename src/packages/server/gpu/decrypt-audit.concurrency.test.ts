@@ -54,6 +54,9 @@ describeRealPostgres("the GPU decrypt audit", () => {
       gpu_admin_alerts: SCHEMA.gpu_admin_alerts,
       gpu_alerts: SCHEMA.gpu_alerts,
       gpu_provider_account_watch: SCHEMA.gpu_provider_account_watch,
+      // the audit reads a project use's approval layer
+      gpu_key_fences: SCHEMA.gpu_key_fences,
+      gpu_budget_layers: SCHEMA.gpu_budget_layers,
     });
     ku = await import("./key-use");
     store = await import("@cocalc/server/external-credentials/store");

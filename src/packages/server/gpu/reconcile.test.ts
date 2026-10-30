@@ -577,10 +577,12 @@ describeDb("GPU inventory reconciler", () => {
       )
     ).rows[0].id;
     await getPool().query(
-      `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind, parent_id, parent_scope_kind, project_id, approval_id, authorized_usd, state, starts_at, ends_at, created, updated)
-       SELECT $1, credential_id, key_owner_account_id, 'project', id, 'key', $2, $4, 50, state, starts_at, ends_at, now(), now()
-         FROM gpu_budget_layers WHERE id = $3`,
-      [randomUUID(), PROJECT, keyLayer, randomUUID()],
+      // a second layer every launch of this account reserves on (a project
+      // layer applies only when a funding approval pins it)
+      `INSERT INTO gpu_budget_layers (id, credential_id, key_owner_account_id, scope_kind, parent_id, parent_scope_kind, beneficiary_account_id, authorized_usd, state, starts_at, ends_at, created, updated)
+       SELECT $1, credential_id, key_owner_account_id, 'beneficiary', id, 'key', key_owner_account_id, 50, state, starts_at, ends_at, now(), now()
+         FROM gpu_budget_layers WHERE id = $2`,
+      [randomUUID(), keyLayer],
     );
     s.client.createPod.mockImplementationOnce(async (body: any) => {
       handle = body.name;
@@ -599,12 +601,12 @@ describeDb("GPU inventory reconciler", () => {
           [pod.id],
         )
       ).rows.map((r: any) => `${r.scope_kind}:${r.state}`);
-    expect(await held()).toEqual(["key:quarantined", "project:quarantined"]);
+    expect(await held()).toEqual(["beneficiary:quarantined", "key:quarantined"]);
     await releaseQuarantinedLocal(
       { account_id: s.account_id, pod_id: pod.id, fresh_auth_verified: true },
       s.deps,
     );
-    expect(await held()).toEqual(["key:settled", "project:settled"]);
+    expect(await held()).toEqual(["beneficiary:settled", "key:settled"]);
     const { rows: ev } = await getPool().query(
       "SELECT 1 FROM gpu_pod_events WHERE pod_id = $1 AND action = 'quarantine_released'",
       [pod.id],
@@ -614,7 +616,7 @@ describeDb("GPU inventory reconciler", () => {
     s.pods.set("pod_late88", { id: "pod_late88", name: handle, cost: 0.5 });
     s.advance(11 * MINUTE);
     await s.pass();
-    expect(await held()).toEqual(["key:active", "project:active"]);
+    expect(await held()).toEqual(["beneficiary:active", "key:active"]);
   });
 
   it("403 is a rejected key too; only a complete pass resolves it, not a passing getPod", async () => {

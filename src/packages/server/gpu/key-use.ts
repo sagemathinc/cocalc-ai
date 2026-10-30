@@ -99,7 +99,27 @@ export interface GpuKeyUse {
   readonly id: string;
   readonly purpose: GpuKeyUsePurpose;
   readonly key_owner_account_id: string;
+  // rule 'project': the exact approval it was made for (PROJECT_FUNDING.md
+  // §5); the method checks it matches what it does
+  readonly project?: ProjectKeyUseBinding;
 }
+
+export interface ProjectKeyUseBinding {
+  readonly project_id: string;
+  readonly approval_id: string;
+  readonly layer_id: string;
+  // the project's owning bay that forwarded the call (authenticated)
+  readonly source_bay_id: string;
+  readonly actor_kind: "project" | "user" | "agent";
+  readonly actor_account_id?: string;
+  // an agent actor's canonical ids
+  readonly agent_id?: string;
+  readonly run_id?: string;
+}
+
+// The binding a method compares a project record with: the approval it acts
+// on and exactly who acts.
+export type ProjectKeyUseCheck = Omit<ProjectKeyUseBinding, "source_bay_id">;
 
 export interface GpuWorkerKeyUse {
   readonly kind: "run";
@@ -186,8 +206,9 @@ export async function isGpuKeyHomeBay(account_id: string): Promise<boolean> {
 async function insertUse(opts: {
   account_id: string;
   purpose: GpuKeyUsePurpose;
-  rule: "owner" | "agent";
+  rule: "owner" | "agent" | "project";
   agent?: { project_id: string; agent_id: string; run_id?: string };
+  project?: ProjectKeyUseBinding;
   request_id?: string;
 }): Promise<GpuKeyUse> {
   const policy = USE_POLICY[opts.purpose];
@@ -200,25 +221,40 @@ async function insertUse(opts: {
       ? null
       : ((await currentGpuKeyMeta(opts.account_id))?.credential_id ?? null);
   const id = newUseId();
+  // Under an approval the principal is who acted: the acting account, or
+  // (the project itself acted) the key owner as payer; actor_kind says which.
+  const principal = opts.project?.actor_account_id ?? opts.account_id;
   await getPool().query(
     `INSERT INTO gpu_key_uses (id, key_owner_account_id, credential_id,
        principal_account_id, agent_project_id, agent_id, agent_run_id, purpose,
-       authorized, rule, request_id, bay_id, created, expires, max_decrypts, decrypts)
-     VALUES ($1, $2, $3, $2, $4, $5, $6, $7, true, $8, $9, $10, now(),
-       now() + make_interval(secs => $11), $12, 0)`,
+       authorized, rule, request_id, bay_id, created, expires, max_decrypts, decrypts,
+       project_id, approval_id, layer_id, source_bay_id, actor_kind)
+     VALUES ($1, $2, $3, $13, $4, $5, $6, $7, true, $8, $9, $10, now(),
+       now() + make_interval(secs => $11), $12, 0, $14, $15, $16, $17, $18)`,
     [
       id,
       opts.account_id,
       credential_id,
-      opts.agent?.project_id ?? null,
-      opts.agent?.agent_id ?? null,
-      opts.agent?.run_id ?? null,
+      opts.agent?.project_id ??
+        (opts.project?.actor_kind === "agent" ? opts.project.project_id : null),
+      opts.agent?.agent_id ??
+        (opts.project?.actor_kind === "agent" ? opts.project.agent_id : null) ??
+        null,
+      opts.agent?.run_id ??
+        (opts.project?.actor_kind === "agent" ? opts.project.run_id : null) ??
+        null,
       opts.purpose,
       opts.rule,
       opts.request_id ?? null,
       getConfiguredBayId(),
       policy.ttl_ms / 1000,
       policy.max_decrypts,
+      principal,
+      opts.project?.project_id ?? null,
+      opts.project?.approval_id ?? null,
+      opts.project?.layer_id ?? null,
+      opts.project?.source_bay_id ?? null,
+      opts.project?.actor_kind ?? null,
     ],
   );
   return issue({
@@ -226,6 +262,7 @@ async function insertUse(opts: {
     id,
     purpose: opts.purpose,
     key_owner_account_id: opts.account_id,
+    ...(opts.project ? { project: Object.freeze({ ...opts.project }) } : {}),
   });
 }
 
@@ -276,6 +313,48 @@ export async function admitAgentKeyUse(opts: {
   });
 }
 
+// A launch or project read under a project funding approval, made only at
+// the funder's home bay's inter-bay boundary, after it verified that the
+// project's current owning bay sent it (PROJECT_FUNDING.md §5). Bound to the
+// exact approval and layer: decrypt admission rechecks that layer.
+export async function admitProjectKeyUse(opts: {
+  key_owner_account_id: string;
+  purpose: GpuKeyUsePurpose;
+  binding: ProjectKeyUseBinding;
+  request_id?: string;
+}): Promise<GpuKeyUse> {
+  const b = opts.binding;
+  for (const id of [b.project_id, b.approval_id, b.layer_id]) {
+    if (!/^[0-9a-f-]{36}$/i.test(`${id ?? ""}`)) {
+      throw new KeyUseRefused("not a verified project funding binding");
+    }
+  }
+  if (!`${b.source_bay_id ?? ""}`.trim()) {
+    throw new KeyUseRefused("not a verified project funding binding");
+  }
+  if (!["project", "user", "agent"].includes(b.actor_kind)) {
+    throw new KeyUseRefused("not a verified project funding binding");
+  }
+  // exactly the fields of its kind: the project has no account; a person
+  // has one; an agent has one and its agent id
+  const fits =
+    b.actor_kind === "project"
+      ? b.actor_account_id == null && b.agent_id == null && b.run_id == null
+      : b.actor_kind === "user"
+        ? b.actor_account_id != null && b.agent_id == null && b.run_id == null
+        : b.actor_account_id != null && !!`${b.agent_id ?? ""}`.trim();
+  if (!fits) {
+    throw new KeyUseRefused("not a verified project funding binding");
+  }
+  return await insertUse({
+    account_id: opts.key_owner_account_id,
+    purpose: opts.purpose,
+    rule: "project",
+    project: b,
+    request_id: opts.request_id,
+  });
+}
+
 // A worker's sweep: its run, while it holds the lease taken with `token`.
 export function workerKeyUse(
   worker: WorkerName,
@@ -298,6 +377,21 @@ export function workerKeyUseFor(
     throw new KeyUseRefused("not a worker's key capability");
   }
   return workerKeyUse(cap.worker, cap.token, purpose);
+}
+
+// The decrypt principal of a project record: the project itself, an agent
+// (as for its own records), or the acting person.
+export function projectUsePrincipal(r: {
+  actor_kind: string | null;
+  project_id: string | null;
+  principal_account_id: string;
+  agent_id: string | null;
+}): string {
+  if (r.actor_kind === "project") return `project:${r.project_id}`;
+  if (r.actor_kind === "agent") {
+    return `agent:${r.principal_account_id}:${r.agent_id}`;
+  }
+  return `${r.principal_account_id}`;
 }
 
 // ---- admission of one decrypt ----
@@ -384,7 +478,8 @@ async function admitUse(
         AND u.expires > now() AND u.purpose = $2
         AND u.key_owner_account_id = $3 AND u.bay_id = $5
         AND u.credential_id = $4
-      RETURNING u.principal_account_id, u.agent_id`,
+      RETURNING u.principal_account_id, u.agent_id, u.rule, u.layer_id,
+        u.approval_id, u.project_id, u.actor_kind`,
     [
       cap.id,
       cap.purpose,
@@ -395,6 +490,33 @@ async function admitUse(
   );
   const r = rows[0];
   if (!r) return undefined;
+  if (r.rule === "project") {
+    // The exact approval layer, locked and rechecked now: a revoke between
+    // the record and this decrypt refuses it (PROJECT_FUNDING.md §5).
+    const { rows: layer } = await db.query(
+      `SELECT 1 FROM gpu_budget_layers
+        WHERE id = $1 AND approval_id = $2 AND project_id = $3
+          AND scope_kind = 'project' AND key_owner_account_id = $4
+          AND credential_id = $5 AND state = 'active'
+          AND admission_closed_at IS NULL AND ended_at IS NULL
+          AND starts_at <= now() AND ends_at > now()
+        FOR UPDATE`,
+      [
+        r.layer_id,
+        r.approval_id,
+        r.project_id,
+        key.account_id,
+        key.credential_id,
+      ],
+    );
+    if (!layer[0]) return undefined;
+    return {
+      key_use_id: cap.id,
+      worker_run_id: null,
+      worker_name: null,
+      principal: projectUsePrincipal(r).slice(0, 200),
+    };
+  }
   return {
     key_use_id: cap.id,
     worker_run_id: null,
@@ -517,12 +639,32 @@ export function requireKeyUse(
   cap: unknown,
   purposes: readonly GpuKeyUsePurpose[],
   account_id: string,
+  // under a project funding approval: the approval the method acts on and
+  // exactly who acts. A record made for one approval or actor never serves
+  // another, nor an own-key call.
+  project?: ProjectKeyUseCheck,
 ): GpuKeyUse {
+  const bound =
+    isGpuKeyCapability(cap) && cap.kind === "use" ? cap.project : undefined;
+  const bindingOk = testIssued.has(cap as object)
+    ? true
+    : project == null
+      ? bound == null
+      : bound != null &&
+        bound.project_id === project.project_id &&
+        bound.approval_id === project.approval_id &&
+        bound.layer_id === project.layer_id &&
+        bound.actor_kind === project.actor_kind &&
+        (bound.actor_account_id ?? null) ===
+          (project.actor_account_id ?? null) &&
+        (bound.agent_id ?? null) === (project.agent_id ?? null) &&
+        (bound.run_id ?? null) === (project.run_id ?? null);
   if (
     !isGpuKeyCapability(cap) ||
     cap.kind !== "use" ||
     !purposes.includes(cap.purpose) ||
-    (cap.key_owner_account_id !== account_id && !testIssued.has(cap))
+    (cap.key_owner_account_id !== account_id && !testIssued.has(cap)) ||
+    !bindingOk
   ) {
     throw new KeyUseRefused(
       "This GPU request wasn't authorized on the key owner's home bay. Try again.",

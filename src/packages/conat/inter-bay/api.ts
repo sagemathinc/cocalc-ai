@@ -4336,6 +4336,11 @@ export interface InterBayGpuApi {
   gpuProjectFundingEndedOnProject: (
     opts: import("@cocalc/util/gpu/project-funding").ProjectFundingEndedOnProjectRequest,
   ) => Promise<{ revoked: boolean }>;
+  // on the funder's home: a launch under an approval, from the project's
+  // owning bay
+  gpuProjectFundingLaunch: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectFundingLaunchRequest,
+  ) => Promise<import("@cocalc/util/gpu/types").GpuPodSummary>;
 }
 
 export interface InterBayAccountLocalApi
@@ -8419,6 +8424,8 @@ export function createInterBayAccountLocalClient({
       await gpuClient.gpuProjectFundingStatus(opts),
     gpuProjectFundingEndedOnProject: async (opts) =>
       await gpuClient.gpuProjectFundingEndedOnProject(opts),
+    gpuProjectFundingLaunch: async (opts) =>
+      await gpuClient.gpuProjectFundingLaunch(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -9034,6 +9041,8 @@ export function createInterBayAccountLocalHandler({
           await impl.gpuProjectFundingStatus(opts),
         gpuProjectFundingEndedOnProject: async (opts) =>
           await impl.gpuProjectFundingEndedOnProject(opts),
+        gpuProjectFundingLaunch: async (opts) =>
+          await impl.gpuProjectFundingLaunch(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({
