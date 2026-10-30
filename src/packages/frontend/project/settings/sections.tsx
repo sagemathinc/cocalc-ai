@@ -22,6 +22,7 @@ import { AboutBox } from "./about-box";
 import { EnvironmentOverview } from "./environment-overview";
 import { ProjectLocationBox } from "./hide-delete-box";
 import { ManagedEgress } from "./managed-egress";
+import { ProjectFundingBanner } from "../project-funding-banner";
 import { ProjectControl } from "./project-control";
 import { PublishPanel } from "./publish";
 import { RecoveryPanel } from "./recovery-panel";
@@ -237,6 +238,16 @@ export function useProjectSettingsSections({
         children: (
           <ManagedEgress project_id={project_id} embedded={embeddedInSection} />
         ),
+      },
+      {
+        id: "gpus",
+        icon: "bolt",
+        label: "GPUs",
+        title: "GPU funding",
+        description:
+          "Who pays for GPUs in this project: a collaborator's approval of GPU use, paid by their own RunPod account.",
+        className: "cc-project-flyout-settings-panel",
+        children: <ProjectFundingBanner projectId={project_id} always />,
       },
       {
         id: "recovery",

@@ -56,6 +56,12 @@ export const gpu = {
   // agents (PROJECT_FUNDING.md §7)
   projectPods: authFirstRequireAccountOrGpuAgentOrProject,
   projectTerminate: authFirstRequireAccountOrGpuAgentOrProject,
+  projectFunding: authFirstRequireAccountOrGpuAgentOrProject,
+  // a funder's approvals: fresh auth with the caller's own session
+  approveProjectFunding: authFirstRequireAccountWithBoundSession,
+  changeProjectFunding: authFirstRequireAccountWithBoundSession,
+  revokeProjectFunding: authFirstRequireAccount,
+  fundedProjects: authFirstRequireAccount,
   terminate: authFirstRequireAccountOrGpuAgent,
   who: authFirstRequireAccountOrGpuAgent,
   // the human's side of agent launches (step 6b)
@@ -260,6 +266,42 @@ export interface GpuApi {
     incomplete: { approval_id: string; error: string }[];
     next_cursor?: string;
   }>;
+  // The project's funding: its active approval (who pays, the terms, the
+  // spend) or its pending request.
+  projectFunding: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<import("@cocalc/util/gpu/project-funding").ProjectFundingState>;
+  // Approve GPU use in a project, paid by the caller's own key (fresh
+  // authentication); raise_key_budget_to also raises their key budget.
+  approveProjectFunding: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    project_id: string;
+    terms: import("@cocalc/util/gpu/project-funding").ProjectFundingTerms;
+    operation_id: string;
+    raise_key_budget_to?: string;
+  }) => Promise<ProjectFundingView>;
+  // Change an approval (raises need fresh authentication).
+  changeProjectFunding: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    approval_id: string;
+    change: Record<string, unknown>;
+  }) => Promise<ProjectFundingView>;
+  // End an approval now (its pods are terminated).
+  revokeProjectFunding: (opts: {
+    account_id?: string;
+    approval_id: string;
+  }) => Promise<ProjectFundingView>;
+  // The approvals the caller funds.
+  fundedProjects: (opts?: {
+    account_id?: string;
+  }) => Promise<
+    import("@cocalc/util/gpu/project-funding").FundedProjectsResult
+  >;
   // Terminate one of them (the reaper ends it shortly).
   projectTerminate: (opts: {
     account_id?: string;
@@ -420,4 +462,21 @@ export interface GpuApi {
     session_hash?: string | null;
     pod_id: string;
   }) => Promise<{ pod_id: string; released_usd: string; warning: string }>;
+}
+
+// An approval as its funder sees it.
+export interface ProjectFundingView {
+  approval_id: string;
+  layer_id: string;
+  project_id: string;
+  state: string;
+  activated: boolean;
+  authorized_usd: string;
+  spent_usd: string;
+  reserved_usd: string;
+  available_usd: string;
+  starts_at: string;
+  ends_at: string;
+  agents_allowed: boolean;
+  version: number;
 }

@@ -17,6 +17,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   ProjectApprovalRequired,
   ProjectFundingRetry,
+  projectFundingStateLocal,
   recordProjectFundingRequestLocal,
   routeProjectLaunchLocal,
   type ProjectLaunchDeps,
@@ -358,6 +359,73 @@ describeDb("routing a launch on the project's bay", () => {
         },
       ),
     ).rejects.toThrow(/just approved/);
+  });
+
+  it("shows the project's funding to the project and its collaborators; an agent only its own project's", async () => {
+    const w = await world();
+    const d = {
+      ...deps(),
+      funderSpend: async () => ({
+        authorized_usd: "400",
+        spent_usd: "80",
+        reserved_usd: "7.6",
+        available_usd: "312.4",
+      }),
+    };
+    const asProject = await projectFundingStateLocal(
+      { project_id: w.project_id, actor: { kind: "project" } },
+      d,
+    );
+    expect(asProject.approval).toMatchObject({
+      approval_id: w.approval_id,
+      state: "active",
+      funder_account_id: w.funder,
+      spend: { available_usd: "312.4" },
+    });
+    const asStudent = await projectFundingStateLocal(
+      {
+        project_id: w.project_id,
+        actor: { kind: "user", account_id: w.student },
+      },
+      d,
+    );
+    expect(asStudent.approval?.approval_id).toBe(w.approval_id);
+    await expect(
+      projectFundingStateLocal(
+        {
+          project_id: w.project_id,
+          actor: { kind: "user", account_id: w.outsider },
+        },
+        d,
+      ),
+    ).rejects.toThrow(/access denied/);
+    // the student's agent, authenticated for another project
+    await expect(
+      projectFundingStateLocal(
+        {
+          project_id: w.project_id,
+          actor: {
+            kind: "agent",
+            account_id: w.student,
+            project_id: randomUUID(),
+            agent_id: "agent:a1",
+          },
+        },
+        d,
+      ),
+    ).rejects.toThrow(/its own project/);
+    // without an approval: the pending request
+    const none = await world({ route: "none" });
+    await recordProjectFundingRequestLocal(
+      { project_id: none.project_id, actor: { kind: "project" }, spec: SPEC },
+      d,
+    );
+    const asked = await projectFundingStateLocal(
+      { project_id: none.project_id, actor: { kind: "project" } },
+      d,
+    );
+    expect(asked.approval).toBeUndefined();
+    expect(asked.request).toMatchObject({ actor_kind: "project" });
   });
 
   it("requires an operation id for an agent, and passes it on with the route", async () => {

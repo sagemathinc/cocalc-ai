@@ -1,0 +1,350 @@
+import React from "react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+const projectFunding = jest.fn();
+const approveProjectFunding = jest.fn();
+const revokeProjectFunding = jest.fn();
+const budget = jest.fn();
+const keyStatus = jest.fn();
+const freshAuth = jest.fn(async (action: () => Promise<void>) => {
+  await action();
+  return true;
+});
+let me = "00000000-1000-4000-8000-0000000000aa";
+
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => null,
+  useFreshAuthAction: () => ({
+    runFreshAuthAction: (action: () => Promise<void>) => freshAuth(action),
+    freshAuthModalProps: {},
+  }),
+}));
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  useTypedRedux: () => me,
+}));
+jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
+  appBasePath: "/",
+}));
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    browser_id: "browser-1",
+    conat_client: {
+      hub: {
+        gpu: {
+          projectFunding: (...a: any[]) => projectFunding(...a),
+          approveProjectFunding: (...a: any[]) => approveProjectFunding(...a),
+          revokeProjectFunding: (...a: any[]) => revokeProjectFunding(...a),
+          budget: (...a: any[]) => budget(...a),
+        },
+        system: {
+          getGpuProviderKeyStatus: (...a: any[]) => keyStatus(...a),
+        },
+      },
+    },
+  },
+}));
+
+import { ProjectFundingBanner } from "./project-funding-banner";
+
+const PROJECT = "00000000-1000-4000-8000-000000000001";
+const FUNDER = "00000000-1000-4000-8000-0000000000ff";
+const REQUEST = {
+  project_id: PROJECT,
+  request: {
+    id: "r1",
+    actor_kind: "project",
+    actor_account_id: null,
+    summary: {
+      gpu_type_id: "NVIDIA A100 80GB PCIe",
+      gpu_count: 1,
+      max_runtime_minutes: 120,
+    },
+    created: "2026-11-01T00:00:00Z",
+    expires_at: "2026-11-08T00:00:00Z",
+  },
+};
+const FUNDED = {
+  project_id: PROJECT,
+  approval: {
+    approval_id: "a1",
+    state: "active",
+    funder_account_id: FUNDER,
+    live_pods: 1,
+    display: {
+      authorized_usd: "400.0000000000",
+      ends_at: "2026-11-08T00:00:00Z",
+      agents_allowed: true,
+      funder_name: "Prof Ada",
+    },
+    spend: {
+      authorized_usd: "400",
+      spent_usd: "80",
+      reserved_usd: "7.6",
+      available_usd: "312.40",
+    },
+  },
+};
+
+beforeEach(() => {
+  for (const f of [
+    projectFunding,
+    approveProjectFunding,
+    revokeProjectFunding,
+    budget,
+    keyStatus,
+  ]) {
+    f.mockReset();
+  }
+  me = "00000000-1000-4000-8000-0000000000aa";
+  localStorage.clear();
+  budget.mockResolvedValue({ available_usd: "20", authorized_usd: "20" });
+});
+
+describe("ProjectFundingBanner", () => {
+  it("shows a request; a viewer with a key approves it after a fresh sign-in, raising the key budget", async () => {
+    projectFunding.mockResolvedValue(REQUEST);
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    approveProjectFunding.mockResolvedValue({});
+    render(<ProjectFundingBanner projectId={PROJECT} />);
+    expect(
+      await screen.findByText(/GPUs were requested in this project/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/from a terminal or code in this project/),
+    ).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Approve with my RunPod account…" }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "$400" }));
+    await userEvent.click(screen.getByRole("button", { name: "7 days" }));
+    // the key budget has $20 left: the dialog offers the raise (on)
+    expect(
+      await screen.findByText(
+        /budget has \$20.00 left: also raise it from \$20.00 to \$400.00/,
+      ),
+    ).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Approve (you'll sign in again)" }),
+    );
+    await waitFor(() => expect(approveProjectFunding).toHaveBeenCalled());
+    expect(freshAuth).toHaveBeenCalled();
+    const arg = approveProjectFunding.mock.calls[0][0];
+    expect(arg).toMatchObject({
+      project_id: PROJECT,
+      terms: {
+        provider: "runpod",
+        authorized_usd: "400.00",
+        days: 7,
+        agents_allowed: true,
+      },
+      raise_key_budget_to: "400.00",
+      browser_id: "browser-1",
+    });
+    expect(arg.operation_id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("tells a viewer without a key how to approve, with no approve button", async () => {
+    projectFunding.mockResolvedValue(REQUEST);
+    keyStatus.mockResolvedValue({ entitled: true, connected: false });
+    render(<ProjectFundingBanner projectId={PROJECT} />);
+    expect(await screen.findByText(/connect your own RunPod key/)).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Approve with my RunPod account…" }),
+    ).toBeNull();
+  });
+
+  it("shows who pays and what's left; only the funder can end it", async () => {
+    projectFunding.mockResolvedValue(FUNDED);
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    const { unmount } = render(<ProjectFundingBanner projectId={PROJECT} />);
+    expect(
+      await screen.findByText(
+        /paid by Prof Ada's RunPod account: \$312.40 of \$400.00 left/,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "End this approval…" }),
+    ).toBeNull();
+    unmount();
+    me = FUNDER;
+    revokeProjectFunding.mockResolvedValue({});
+    render(<ProjectFundingBanner projectId={PROJECT} />);
+    expect(await screen.findByText(/paid by your RunPod account/)).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "End this approval…" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "End it and terminate its GPUs",
+      }),
+    );
+    await waitFor(() =>
+      expect(revokeProjectFunding).toHaveBeenCalledWith({ approval_id: "a1" }),
+    );
+  });
+
+  it("in project settings, offers to approve even without a request", async () => {
+    projectFunding.mockResolvedValue({ project_id: PROJECT });
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    render(<ProjectFundingBanner projectId={PROJECT} always />);
+    expect(
+      await screen.findByRole("button", {
+        name: "Approve GPU use in this project…",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("shows nothing in the project when nobody asked and nobody pays", async () => {
+    projectFunding.mockResolvedValue({ project_id: PROJECT });
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    const { container } = render(<ProjectFundingBanner projectId={PROJECT} />);
+    await waitFor(() => expect(projectFunding).toHaveBeenCalled());
+    expect(container.textContent).toBe("");
+  });
+
+  it("raises the key budget to its total plus the shortfall, not to the approval's amount", async () => {
+    projectFunding.mockResolvedValue(REQUEST);
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    // $400 authorized, $350 used: $50 left
+    budget.mockResolvedValue({ available_usd: "50", authorized_usd: "400" });
+    approveProjectFunding.mockResolvedValue({});
+    render(<ProjectFundingBanner projectId={PROJECT} />);
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Approve with my RunPod account…",
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "$100" }));
+    expect(
+      await screen.findByText(/raise it from \$400.00 to \$450.00/),
+    ).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Approve (you'll sign in again)" }),
+    );
+    await waitFor(() => expect(approveProjectFunding).toHaveBeenCalled());
+    expect(approveProjectFunding.mock.calls[0][0].raise_key_budget_to).toBe(
+      "450.00",
+    );
+  });
+
+  it("keeps the dialog open when the sign-in is canceled, approving nothing", async () => {
+    projectFunding.mockResolvedValue(REQUEST);
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    freshAuth.mockImplementationOnce(async () => false);
+    render(<ProjectFundingBanner projectId={PROJECT} />);
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Approve with my RunPod account…",
+      }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Approve (you'll sign in again)",
+      }),
+    );
+    await waitFor(() => expect(freshAuth).toHaveBeenCalled());
+    expect(approveProjectFunding).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("retries an approval whose answer was lost with the same operation id", async () => {
+    projectFunding.mockResolvedValue(REQUEST);
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    approveProjectFunding
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce({});
+    render(<ProjectFundingBanner projectId={PROJECT} />);
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Approve with my RunPod account…",
+      }),
+    );
+    const ok = await screen.findByRole("button", {
+      name: "Approve (you'll sign in again)",
+    });
+    await userEvent.click(ok);
+    expect(await screen.findByText("timeout")).toBeTruthy();
+    await userEvent.click(ok);
+    await waitFor(() => expect(approveProjectFunding).toHaveBeenCalledTimes(2));
+    const [first, second] = approveProjectFunding.mock.calls.map(
+      (c) => c[0].operation_id,
+    );
+    expect(second).toBe(first);
+  });
+
+  it("in project settings, says the funding couldn't be read rather than that nobody pays", async () => {
+    projectFunding.mockRejectedValue(new Error("hub unavailable"));
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    render(<ProjectFundingBanner projectId={PROJECT} always />);
+    expect(
+      await screen.findByText(/GPU funding couldn't be read/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Nobody pays/)).toBeNull();
+  });
+
+  it("labels every field of the approve dialog, reachable by keyboard", async () => {
+    projectFunding.mockResolvedValue(REQUEST);
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    render(<ProjectFundingBanner projectId={PROJECT} />);
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Approve with my RunPod account…",
+      }),
+    );
+    const amount = await screen.findByLabelText("Amount (USD)");
+    const days = screen.getByLabelText("Days");
+    expect(amount.getAttribute("role")).toBe("spinbutton");
+    amount.focus();
+    expect(document.activeElement).toBe(amount);
+    // the next stops: the three amount presets, then the days field
+    for (let i = 0; i < 4; i++) await userEvent.tab();
+    expect(document.activeElement).toBe(days);
+    await userEvent.click(screen.getByText("Limits (optional)"));
+    for (const name of [
+      "At most $/hour in all",
+      "GPUs (pods) at once",
+      "Hours per pod",
+    ]) {
+      expect(await screen.findByLabelText(name)).toBeTruthy();
+    }
+  });
+
+  it("gives an overspent key exactly the room asked for, and a changed raise a new attempt", async () => {
+    projectFunding.mockResolvedValue(REQUEST);
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    // $20 authorized, overspent by $5
+    budget.mockResolvedValue({
+      available_usd: "0",
+      over_budget_usd: "5",
+      authorized_usd: "20",
+    });
+    approveProjectFunding
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce({});
+    render(<ProjectFundingBanner projectId={PROJECT} />);
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Approve with my RunPod account…",
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "$50" }));
+    // $50 of room on a key $5 over its $20: a total of $75
+    expect(await screen.findByText(/to \$75.00/)).toBeTruthy();
+    const ok = screen.getByRole("button", {
+      name: "Approve (you'll sign in again)",
+    });
+    await userEvent.click(ok);
+    expect(await screen.findByText("timeout")).toBeTruthy();
+    expect(approveProjectFunding.mock.calls[0][0].raise_key_budget_to).toBe(
+      "75.00",
+    );
+    // the retry without the raise is another approval
+    await userEvent.click(screen.getByRole("checkbox", { name: /also raise/ }));
+    await userEvent.click(ok);
+    await waitFor(() => expect(approveProjectFunding).toHaveBeenCalledTimes(2));
+    const [a, b] = approveProjectFunding.mock.calls.map((c) => c[0]);
+    expect(b.raise_key_budget_to).toBeUndefined();
+    expect(b.operation_id).not.toBe(a.operation_id);
+  });
+});

@@ -28,6 +28,7 @@ import {
   RunpodAlertsSection,
   RunpodDashboardSection,
 } from "@cocalc/frontend/gpu/runpod-dashboard-section";
+import { FundedProjectsSection } from "@cocalc/frontend/gpu/funded-projects-section";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -400,6 +401,7 @@ export function GpuProviderKeySection() {
           onKeyChanged={() => void refresh()}
         />
       )}
+      {status?.connected && account_id && <FundedProjectsSection />}
       <FreshAuthModal {...freshAuthModalProps} />
     </Panel>
   );

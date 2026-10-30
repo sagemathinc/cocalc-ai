@@ -92,6 +92,21 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "raising a GPU budget loosens what the key may spend; checked in setGpuBudget, which lets a reduction through without it (narrowing)",
   },
+  "gpu.approveProjectFunding": {
+    decision: "fresh-auth-required",
+    reason:
+      "lets work in a project spend the caller's own RunPod key, up to an amount, until a time (and may raise their key budget); always checked in approveProjectFunding",
+  },
+  "gpu.changeProjectFunding": {
+    decision: "fresh-auth-required",
+    reason:
+      "raising an approval's amount or caps, or allowing agents, loosens what the project may spend; checked in changeProjectFundingLocal, which lets a reduction through without it (narrowing)",
+  },
+  "gpu.revokeProjectFunding": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "only narrows: ends the caller's own approval, and the reaper terminates the pods it pays for",
+  },
   "gpu.projectTerminate": {
     decision: "fresh-auth-not-required",
     reason:

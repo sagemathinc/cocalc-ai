@@ -642,3 +642,67 @@ export interface ProjectTerminateRouteRequest {
   actor: Exclude<ProjectPodsActor, { kind: "project" }>;
   pod_id: string;
 }
+
+// ---- what a project shows about its funding (the banner, settings, CLI) ----
+
+export interface ProjectFundingSpend {
+  authorized_usd: string;
+  spent_usd: string;
+  reserved_usd: string;
+  available_usd: string;
+}
+
+export interface ProjectFundingState {
+  project_id: string;
+  // the project's active (or being approved) approval, if any
+  approval?: {
+    approval_id: string;
+    state: "pending" | "active";
+    funder_account_id: string;
+    display: ProjectFundingDisplay | null;
+    live_pods: number;
+    // from the funder's bay (absent if it couldn't be asked)
+    spend?: ProjectFundingSpend;
+  };
+  // the pending request, if any (no approval)
+  request?: {
+    id: string;
+    actor_kind: "project" | "user" | "agent" | null;
+    actor_account_id: string | null;
+    summary: Record<string, unknown> | null;
+    created: string;
+    expires_at: string | null;
+  };
+}
+
+export interface ProjectFundingSpendAtFunderRequest {
+  source_bay_id: string;
+  project_id: string;
+  approval_id: string;
+}
+
+export interface ProjectFundingStateRouteRequest {
+  source_bay_id: string;
+  project_id: string;
+  actor: Exclude<ProjectPodsActor, { kind: "project" }>;
+}
+
+// One approval the caller funds, for "Projects you fund".
+export interface FundedProject extends ProjectFundingSpend {
+  approval_id: string;
+  project_id: string;
+  state: string;
+  activated: boolean;
+  starts_at: string;
+  ends_at: string;
+  agents_allowed: boolean;
+  live_pods: number;
+  version: number;
+}
+
+// What "Projects you fund" lists: every approval still able to spend, and
+// the newest ended ones (history_truncated says older ones aren't shown).
+export interface FundedProjectsResult {
+  approvals: FundedProject[];
+  history_truncated: boolean;
+}

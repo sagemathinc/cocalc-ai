@@ -4382,6 +4382,42 @@ export interface InterBayGpuApi {
   }) => Promise<
     import("@cocalc/util/gpu/project-funding").ProjectPodsPageResult
   >;
+  // Approvals by their funder, on the funder's home (fresh auth checked on
+  // the signed-in bay, as for gpuSetBudget).
+  gpuApproveProjectFunding: (opts: {
+    account_id: string;
+    project_id: unknown;
+    terms: unknown;
+    operation_id: unknown;
+    raise_key_budget_to?: unknown;
+    fresh_auth_verified: boolean;
+  }) => Promise<import("@cocalc/conat/hub/api/gpu").ProjectFundingView>;
+  gpuChangeProjectFunding: (opts: {
+    account_id: string;
+    approval_id: unknown;
+    change?: Record<string, unknown>;
+    fresh_auth_verified: boolean;
+  }) => Promise<import("@cocalc/conat/hub/api/gpu").ProjectFundingView>;
+  gpuRevokeProjectFunding: (opts: {
+    account_id: string;
+    approval_id: unknown;
+  }) => Promise<import("@cocalc/conat/hub/api/gpu").ProjectFundingView>;
+  gpuFundedProjects: (opts: {
+    account_id: string;
+  }) => Promise<
+    import("@cocalc/util/gpu/project-funding").FundedProjectsResult
+  >;
+  gpuProjectFundingSpendAtFunder: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectFundingSpendAtFunderRequest,
+  ) => Promise<import("@cocalc/util/gpu/project-funding").ProjectFundingSpend>;
+  gpuProjectFundingStateRoute: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectFundingStateRouteRequest,
+  ) => Promise<import("@cocalc/util/gpu/project-funding").ProjectFundingState>;
+  gpuProjectFundingStateHome: (opts: {
+    account_id: string;
+    project_id: string;
+    agent?: { project_id: string; agent_id: string };
+  }) => Promise<import("@cocalc/util/gpu/project-funding").ProjectFundingState>;
   gpuProjectTerminateHome: (opts: {
     account_id: string;
     project_id: string;
@@ -8489,6 +8525,19 @@ export function createInterBayAccountLocalClient({
       await gpuClient.gpuProjectPodsHome(opts),
     gpuProjectTerminateHome: async (opts) =>
       await gpuClient.gpuProjectTerminateHome(opts),
+    gpuApproveProjectFunding: async (opts) =>
+      await gpuClient.gpuApproveProjectFunding(opts),
+    gpuChangeProjectFunding: async (opts) =>
+      await gpuClient.gpuChangeProjectFunding(opts),
+    gpuRevokeProjectFunding: async (opts) =>
+      await gpuClient.gpuRevokeProjectFunding(opts),
+    gpuFundedProjects: async (opts) => await gpuClient.gpuFundedProjects(opts),
+    gpuProjectFundingSpendAtFunder: async (opts) =>
+      await gpuClient.gpuProjectFundingSpendAtFunder(opts),
+    gpuProjectFundingStateRoute: async (opts) =>
+      await gpuClient.gpuProjectFundingStateRoute(opts),
+    gpuProjectFundingStateHome: async (opts) =>
+      await gpuClient.gpuProjectFundingStateHome(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -9121,6 +9170,19 @@ export function createInterBayAccountLocalHandler({
         gpuProjectPodsHome: async (opts) => await impl.gpuProjectPodsHome(opts),
         gpuProjectTerminateHome: async (opts) =>
           await impl.gpuProjectTerminateHome(opts),
+        gpuApproveProjectFunding: async (opts) =>
+          await impl.gpuApproveProjectFunding(opts),
+        gpuChangeProjectFunding: async (opts) =>
+          await impl.gpuChangeProjectFunding(opts),
+        gpuRevokeProjectFunding: async (opts) =>
+          await impl.gpuRevokeProjectFunding(opts),
+        gpuFundedProjects: async (opts) => await impl.gpuFundedProjects(opts),
+        gpuProjectFundingSpendAtFunder: async (opts) =>
+          await impl.gpuProjectFundingSpendAtFunder(opts),
+        gpuProjectFundingStateRoute: async (opts) =>
+          await impl.gpuProjectFundingStateRoute(opts),
+        gpuProjectFundingStateHome: async (opts) =>
+          await impl.gpuProjectFundingStateHome(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({

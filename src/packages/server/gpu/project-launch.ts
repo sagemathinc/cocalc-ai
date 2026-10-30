@@ -215,3 +215,29 @@ export async function projectTerminateOnHome(
     pod_id: opts.pod_id,
   });
 }
+
+// The project's funding state, asked from the actor's home (§6).
+export async function projectFundingStateOnHome(opts: HomeActorOpts) {
+  const { resolveProjectBay } =
+    await import("@cocalc/server/inter-bay/directory");
+  const owner = (await resolveProjectBay(opts.project_id))?.bay_id;
+  const bay = `${owner ?? ""}`.trim() || getConfiguredBayId();
+  const req = {
+    source_bay_id: getConfiguredBayId(),
+    project_id: opts.project_id,
+    actor: actorOf(opts),
+  };
+  if (bay === getConfiguredBayId()) {
+    const r = await import("@cocalc/server/gpu/project-funding-routes");
+    return await r.projectFundingStateLocal(req);
+  }
+  const { createInterBayAccountLocalClient } =
+    await import("@cocalc/conat/inter-bay/api");
+  const { getInterBayFabricClient } =
+    await import("@cocalc/server/inter-bay/fabric");
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: bay,
+    timeout: 30_000,
+  }).gpuProjectFundingStateRoute(req);
+}

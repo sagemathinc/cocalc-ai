@@ -17,6 +17,7 @@ import {
   approveProjectFundingLocal,
   changeProjectFundingLocal,
   deliverProjectFundingOutbox,
+  fundedProjectsLocal,
   projectFundingApprovalId,
   projectFundingEndedOnProjectLocal,
   reconcileProjectFunding,
@@ -949,5 +950,32 @@ describeDb("project funding approvals across two bays", () => {
       revoked_reason: "funder_left_project",
     });
     expect(layer.activation_acked_at).toBeNull();
+  });
+
+  it("lists every active approval a funder gives, past any number of newer ended ones", async () => {
+    const w = await world();
+    const old = await approve(w); // stays active, the oldest
+    // a second project of the same funder, approved and ended three times
+    const other = randomUUID();
+    await getPool().query(
+      `INSERT INTO projects (project_id, owning_bay_id, deleted, users) VALUES ($1, $2, false, $3)`,
+      [
+        other,
+        getConfiguredBayId(),
+        JSON.stringify({ [w.funder]: { group: "owner" } }),
+      ],
+    );
+    for (let i = 0; i < 3; i++) {
+      const a = await approve(w, { project_id: other });
+      await revokeProjectFundingLocal(
+        { account_id: w.funder, approval_id: a.approval_id },
+        w.deps,
+      );
+    }
+    const r = await fundedProjectsLocal({ account_id: w.funder, history: 2 });
+    expect(r.approvals.map((a) => a.approval_id)).toContain(old.approval_id);
+    expect(r.approvals.filter((a) => a.state === "active")).toHaveLength(1);
+    expect(r.approvals.filter((a) => a.state !== "active")).toHaveLength(2);
+    expect(r.history_truncated).toBe(true);
   });
 });

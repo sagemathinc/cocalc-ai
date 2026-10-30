@@ -271,6 +271,68 @@ export async function projectTerminate(
   );
 }
 
+export async function projectFunding(
+  opts: Parameters<GpuApi["projectFunding"]>[0],
+): ReturnType<GpuApi["projectFunding"]> {
+  const routes = await import("@cocalc/server/gpu/project-funding-routes");
+  const launch = await import("@cocalc/server/gpu/project-launch");
+  return await projectPodsCall(
+    opts,
+    (project_id) =>
+      routes.projectFundingStateLocal({
+        project_id,
+        actor: { kind: "project" },
+      }),
+    (a) => launch.projectFundingStateOnHome(a),
+    (home, a) => home.gpuProjectFundingStateHome(a),
+  );
+}
+
+export async function approveProjectFunding(
+  opts: Parameters<GpuApi["approveProjectFunding"]>[0],
+): ReturnType<GpuApi["approveProjectFunding"]> {
+  const api = await import("@cocalc/server/gpu/project-funding-api");
+  return await api.approveProjectFunding({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+    project_id: opts?.project_id,
+    terms: opts?.terms,
+    operation_id: opts?.operation_id,
+    raise_key_budget_to: opts?.raise_key_budget_to,
+  });
+}
+
+export async function changeProjectFunding(
+  opts: Parameters<GpuApi["changeProjectFunding"]>[0],
+): ReturnType<GpuApi["changeProjectFunding"]> {
+  const api = await import("@cocalc/server/gpu/project-funding-api");
+  return await api.changeProjectFunding({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+    approval_id: opts?.approval_id,
+    change: opts?.change,
+  });
+}
+
+export async function revokeProjectFunding(
+  opts: Parameters<GpuApi["revokeProjectFunding"]>[0],
+): ReturnType<GpuApi["revokeProjectFunding"]> {
+  const api = await import("@cocalc/server/gpu/project-funding-api");
+  return await api.revokeProjectFunding({
+    account_id: opts?.account_id,
+    approval_id: opts?.approval_id,
+  });
+}
+
+export async function fundedProjects(
+  opts: Parameters<GpuApi["fundedProjects"]>[0],
+): ReturnType<GpuApi["fundedProjects"]> {
+  const api = await import("@cocalc/server/gpu/project-funding-api");
+  return await api.fundedProjects({ account_id: opts?.account_id });
+}
+
 export async function terminate(
   opts: Parameters<GpuApi["terminate"]>[0],
 ): ReturnType<GpuApi["terminate"]> {
