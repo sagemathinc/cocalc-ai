@@ -354,7 +354,8 @@ function ApproveDialog({
       .budget({})
       .then((b) =>
         setKey({
-          available: Number(b.available_usd),
+          // the view floors what's left at 0 and reports an overrun apart
+          available: Number(b.available_usd) - Number(b.over_budget_usd ?? 0),
           authorized: Number(b.authorized_usd),
         }),
       )
@@ -510,10 +511,13 @@ function ApproveDialog({
         {raiseTo != null && key ? (
           <Checkbox
             checked={raise}
-            onChange={(e) => setRaise(e.target.checked)}
+            onChange={(e) => {
+              // the raise is part of the approval's terms: another attempt
+              setRaise(e.target.checked);
+              setOperationId(crypto.randomUUID());
+            }}
           >
-            Your RunPod key's CoCalc budget has ${key.available.toFixed(2)}{" "}
-            left: also raise it from ${key.authorized.toFixed(2)} to ${raiseTo}
+            {`Your RunPod key's CoCalc budget has $${Math.max(key.available, 0).toFixed(2)} left: also raise it from $${key.authorized.toFixed(2)} to $${raiseTo}`}
           </Checkbox>
         ) : null}
         {error ? <Alert type="error" showIcon title={error} /> : null}

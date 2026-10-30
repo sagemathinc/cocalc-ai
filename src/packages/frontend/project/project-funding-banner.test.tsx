@@ -309,4 +309,42 @@ describe("ProjectFundingBanner", () => {
       expect(await screen.findByLabelText(name)).toBeTruthy();
     }
   });
+
+  it("gives an overspent key exactly the room asked for, and a changed raise a new attempt", async () => {
+    projectFunding.mockResolvedValue(REQUEST);
+    keyStatus.mockResolvedValue({ entitled: true, connected: true });
+    // $20 authorized, overspent by $5
+    budget.mockResolvedValue({
+      available_usd: "0",
+      over_budget_usd: "5",
+      authorized_usd: "20",
+    });
+    approveProjectFunding
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce({});
+    render(<ProjectFundingBanner projectId={PROJECT} />);
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Approve with my RunPod account…",
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "$50" }));
+    // $50 of room on a key $5 over its $20: a total of $75
+    expect(await screen.findByText(/to \$75.00/)).toBeTruthy();
+    const ok = screen.getByRole("button", {
+      name: "Approve (you'll sign in again)",
+    });
+    await userEvent.click(ok);
+    expect(await screen.findByText("timeout")).toBeTruthy();
+    expect(approveProjectFunding.mock.calls[0][0].raise_key_budget_to).toBe(
+      "75.00",
+    );
+    // the retry without the raise is another approval
+    await userEvent.click(screen.getByRole("checkbox", { name: /also raise/ }));
+    await userEvent.click(ok);
+    await waitFor(() => expect(approveProjectFunding).toHaveBeenCalledTimes(2));
+    const [a, b] = approveProjectFunding.mock.calls.map((c) => c[0]);
+    expect(b.raise_key_budget_to).toBeUndefined();
+    expect(b.operation_id).not.toBe(a.operation_id);
+  });
 });

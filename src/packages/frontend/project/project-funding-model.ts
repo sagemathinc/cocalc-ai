@@ -94,12 +94,14 @@ export function approvalLine(
 }
 
 // The key budget's new total when an approval needs more than what's left
-// (a raise sets the total): what's authorized now plus the shortfall.
+// (a raise sets the total). `available` is the true remainder (authorized
+// minus spent, reserved and retired), negative when overspent: the new
+// total gives exactly `amount` of room.
 export function keyRaiseTarget(
   key: { available: number; authorized: number } | undefined,
   amount: number,
 ): string | undefined {
   if (key == null || !(amount > key.available)) return undefined;
-  const shortfall = amount - Math.max(key.available, 0);
+  const shortfall = amount - key.available;
   return (Math.ceil((key.authorized + shortfall) * 100) / 100).toFixed(2);
 }

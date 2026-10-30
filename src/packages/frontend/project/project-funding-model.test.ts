@@ -64,7 +64,7 @@ describe("project funding model", () => {
       keyRaiseTarget({ available: 50, authorized: 400 }, 40),
     ).toBeUndefined();
     // overspent (negative available): the whole amount is missing
-    expect(keyRaiseTarget({ available: -5, authorized: 20 }, 10)).toBe("30.00");
+    expect(keyRaiseTarget({ available: -5, authorized: 20 }, 10)).toBe("35.00");
     expect(keyRaiseTarget(undefined, 10)).toBeUndefined();
   });
 });
