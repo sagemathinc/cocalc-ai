@@ -696,6 +696,14 @@ export const TABLE_OWNERSHIP = {
       "Project funding approvals for bring-your-own-key compute, on the project's owning bay: requests and each approval's routing record and pod locator. A projection of the funder's budget layer (on funder_account_id's home bay), never the money authority; actor_account_id is attribution only. Project rehome copies it (version-aware merge), behind the project rehome write fence.",
   }),
 
+  ...entries(["project_rehome_imports"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    notes:
+      "Destination-side marker of a project rehome whose portable state hasn't been merged yet; removed when it is. Operation state of this bay only, never copied.",
+  }),
+
   ...entries(["project_funding_outbox"], {
     ownership: "audit-local",
     authority: "local",

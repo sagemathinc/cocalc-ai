@@ -4,6 +4,7 @@
  */
 
 import {
+  markProjectRehomeImport,
   mergeProjectComputeApprovals,
   readProjectComputeApprovals,
 } from "@cocalc/server/gpu/project-funding-portable";
@@ -627,10 +628,15 @@ async function mergePortableProjectState({
       copied,
     });
   }
-  const approvals = await mergeProjectComputeApprovals({
-    project_id,
-    rows: portable_state?.project_compute_approvals,
-  });
+  // Only an accept that carries portable state merges it (and ends the
+  // import the first accept marked).
+  const approvals =
+    portable_state == null
+      ? 0
+      : await mergeProjectComputeApprovals({
+          project_id,
+          rows: portable_state.project_compute_approvals,
+        });
   if (approvals) {
     log.info("project rehome merged project funding rows", {
       project_id,
@@ -763,6 +769,14 @@ export async function acceptProjectRehome({
       project,
       dest_bay_id: destBayId,
     });
+    // The first accept (no portable state yet): writes that need the
+    // project's portable rows wait until the merge below a later accept.
+    if (portable_state == null) {
+      await markProjectRehomeImport(client, {
+        project_id: normalizedProjectId,
+        source_bay_id: sourceBayId,
+      });
+    }
     await appendProjectOutboxEventForProject({
       db: client,
       event_type: "project.summary_changed",

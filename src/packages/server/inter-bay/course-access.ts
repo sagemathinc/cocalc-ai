@@ -26,18 +26,39 @@ export async function assertSentByCourseBay({
   source_bay_id?: string;
   course_project_id: string;
 }): Promise<void> {
+  await assertSentByProjectOwner({
+    source_bay_id,
+    project_id: course_project_id,
+    what: "course access",
+  });
+}
+
+/**
+ * The same check for any project: the calling bay (authenticated
+ * source_bay_id) must name itself as the project's current owner. Project
+ * funding uses it for calls from a project's owning bay to a funder's home.
+ */
+export async function assertSentByProjectOwner({
+  source_bay_id,
+  project_id,
+  what,
+}: {
+  source_bay_id?: string;
+  project_id: string;
+  what: string;
+}): Promise<void> {
   let owner: string | undefined;
   if (source_bay_id) {
     owner = (
       await getInterBayBridge()
         .directory(source_bay_id, { timeout_ms: OWNER_CHECK_TIMEOUT_MS })
-        .resolveProjectBay({ project_id: course_project_id })
+        .resolveProjectBay({ project_id })
     )?.bay_id;
   }
   if (!source_bay_id || owner !== source_bay_id) {
     throw Object.assign(
       new Error(
-        `course access for ${course_project_id} must come from its owning bay; ${source_bay_id ?? "an unnamed bay"} does not own it (it names ${owner ?? "no owner"})`,
+        `${what} for ${project_id} must come from its owning bay; ${source_bay_id || "an unnamed bay"} does not own it (it names ${owner ?? "no owner"})`,
       ),
       { code: 403 },
     );

@@ -14,6 +14,7 @@ export const PROJECT_HARD_DELETE_PROJECT_ID_TABLES = [
   "artifact_catalog_project_budget",
   "artifact_catalog_sources",
   "project_compute_approvals",
+  "project_rehome_imports",
   "project_collab_invites",
   "project_collab_invite_inbox",
   "project_conversations",

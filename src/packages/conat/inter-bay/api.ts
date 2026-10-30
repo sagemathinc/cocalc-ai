@@ -4314,6 +4314,28 @@ export interface InterBayGpuApi {
     pod_id: string;
     host_public_key: string;
   }) => Promise<import("@cocalc/util/gpu/types").GpuHostKeyResult>;
+  // Project funding approvals (PROJECT_FUNDING.md). Every request carries
+  // source_bay_id, bound to the authenticated calling bay. Served on the
+  // project's owning bay: reserve, deliver, status (from the funder's home);
+  // on the funder's home: endedOnProject (from the project's owning bay).
+  gpuProjectFundingReserve: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectFundingReserveRequest,
+  ) => Promise<
+    import("@cocalc/util/gpu/project-funding").ProjectFundingReserveResult
+  >;
+  gpuProjectFundingDeliver: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectFundingDeliverRequest,
+  ) => Promise<
+    import("@cocalc/util/gpu/project-funding").ProjectFundingDeliverResult
+  >;
+  gpuProjectFundingStatus: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectFundingStatusRequest,
+  ) => Promise<
+    import("@cocalc/util/gpu/project-funding").ProjectFundingStatusResult
+  >;
+  gpuProjectFundingEndedOnProject: (
+    opts: import("@cocalc/util/gpu/project-funding").ProjectFundingEndedOnProjectRequest,
+  ) => Promise<{ revoked: boolean }>;
 }
 
 export interface InterBayAccountLocalApi
@@ -8389,6 +8411,14 @@ export function createInterBayAccountLocalClient({
       await gpuClient.gpuReleaseQuarantined(opts),
     gpuRegisterHostKey: async (opts) =>
       await gpuClient.gpuRegisterHostKey(opts),
+    gpuProjectFundingReserve: async (opts) =>
+      await gpuClient.gpuProjectFundingReserve(opts),
+    gpuProjectFundingDeliver: async (opts) =>
+      await gpuClient.gpuProjectFundingDeliver(opts),
+    gpuProjectFundingStatus: async (opts) =>
+      await gpuClient.gpuProjectFundingStatus(opts),
+    gpuProjectFundingEndedOnProject: async (opts) =>
+      await gpuClient.gpuProjectFundingEndedOnProject(opts),
     computeFundingGetCourseSummary: async (opts) =>
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
@@ -8996,6 +9026,14 @@ export function createInterBayAccountLocalHandler({
         gpuReleaseQuarantined: async (opts) =>
           await impl.gpuReleaseQuarantined(opts),
         gpuRegisterHostKey: async (opts) => await impl.gpuRegisterHostKey(opts),
+        gpuProjectFundingReserve: async (opts) =>
+          await impl.gpuProjectFundingReserve(opts),
+        gpuProjectFundingDeliver: async (opts) =>
+          await impl.gpuProjectFundingDeliver(opts),
+        gpuProjectFundingStatus: async (opts) =>
+          await impl.gpuProjectFundingStatus(opts),
+        gpuProjectFundingEndedOnProject: async (opts) =>
+          await impl.gpuProjectFundingEndedOnProject(opts),
       },
     }),
     createServiceHandler<InterBayComputeFundingApi>({
