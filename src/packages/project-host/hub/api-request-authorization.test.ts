@@ -34,11 +34,7 @@ function projectRequest(name: string, target = project_id) {
   return {
     subject: `hub.project.${project_id}.api`,
     name,
-    args: [
-      name === "system.recordManagedProjectEgress"
-        ? { project_id: target, category: "file-download", bytes: 1 }
-        : { project_id: target },
-    ],
+    args: [{ project_id: target }],
     project_id,
   };
 }
@@ -317,30 +313,15 @@ describe("project-host hub API request authorization", () => {
       project_id,
     });
 
-    it("keeps only a file-download report and its safe metadata", () => {
-      const request = report({
-        account_id: "00000000-1000-4000-8000-000000000009",
-        category: "file-download",
-        bytes: 1234,
-        metadata: {
-          request_path: "/files/a.txt",
-          partial: false,
-          bandwidth_relay_evidence: { score: 99 },
-          anything: "else",
-        },
-      });
-      authorizeProjectHostHubApiRequest(request);
-      expect(request.args).toEqual([
-        {
-          project_id,
-          category: "file-download",
-          bytes: 1234,
-          metadata: { request_path: "/files/a.txt", partial: false },
-        },
-      ]);
+    // The host measures what it serves; a project's own count is never
+    // trusted, so a project may not report egress at all.
+    it("is not a project method", () => {
+      expect(PROJECT_PROJECT_HOST_HUB_METHODS).not.toContain(name);
+      expect(EXAM_PROJECT_HOST_HUB_METHODS).not.toContain(name);
     });
 
     it.each([
+      "file-download",
       "http-proxy",
       "ws-proxy",
       "ssh",
@@ -349,20 +330,10 @@ describe("project-host hub API request authorization", () => {
       "raw-network",
       "backup-upload",
       undefined,
-    ])("refuses category %s from a project", (category) => {
-      expectForbidden(() =>
-        authorizeProjectHostHubApiRequest(report({ category, bytes: 1 })),
-      );
-    });
-
-    it("refuses relay-abuse evidence from a project", () => {
+    ])("refuses a %s report from a project", (category) => {
       expectForbidden(() =>
         authorizeProjectHostHubApiRequest(
-          report({
-            category: "file-download",
-            bytes: 1,
-            bandwidth_relay_evidence: { kind: "relay" },
-          }),
+          report({ category, bytes: 1234, metadata: { partial: false } }),
         ),
       );
     });
