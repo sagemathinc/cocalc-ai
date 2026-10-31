@@ -7228,6 +7228,48 @@ WantedBy=multi-user.target
                     self.assertTrue(bootstrap.node_tree_ok(root / "v20.11.1"))
             self.assertEqual(outside.read_text(), "evil")
 
+    def test_install_node_keeps_a_replaced_tree_projects_still_mount(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            self._install_node(cfg, root, releases)
+            # the tree became untrusted while a container mounts it
+            (root / "v20.11.1" / "bin" / "node").chmod(0o777)
+            old_inode = (root / "v20.11.1").stat().st_ino
+            in_use = {"v20.11.1"}
+            with mock.patch.object(bootstrap, "download_file") as download:
+                download.side_effect = OSError("offline")
+                with self.assertRaises(OSError), self._as_root(), mock.patch.object(
+                    bootstrap, "fetch_json", lambda _c, _u: [{"version": "v20.11.1"}]
+                ):
+                    bootstrap.install_node(cfg, root=root)
+            # a failed download leaves it in place (not deleted)
+            self.assertEqual((root / "v20.11.1").stat().st_ino, old_inode)
+            # the replacement is staged first, then the old tree moved aside
+            def fake_download(_cfg, url, dest, **_kw):
+                name = url.rsplit("/", 1)[1]
+                archive = releases["v20.11.1"]
+                if name == "SHASUMS256.txt":
+                    Path(dest).write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
+                else:
+                    shutil.copy(archive, dest)
+            with mock.patch.object(bootstrap, "download_file", fake_download), mock.patch.object(
+                bootstrap, "fetch_json", lambda _c, _u: [{"version": "v20.11.1"}]
+            ), self._as_root(), mock.patch.object(
+                bootstrap, "node_versions_in_use", lambda _r: {n.name for n in root.iterdir() if n.name.startswith(".replaced-")} | in_use
+            ):
+                bootstrap.install_node(cfg, root=root)
+            replaced = [n for n in root.iterdir() if n.name.startswith(".replaced-")]
+            self.assertEqual(len(replaced), 1)
+            self.assertEqual(replaced[0].stat().st_ino, old_inode)
+            with self._as_root():
+                self.assertTrue(bootstrap.node_tree_ok(root / "v20.11.1"))
+            # once nothing mounts it, the next install removes it
+            self._install_node(cfg, root, releases)
+            self.assertEqual([n for n in root.iterdir() if n.name.startswith(".replaced-")], [])
+
     def test_install_node_fails_closed_on_an_untrusted_root_or_current(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -7325,6 +7367,14 @@ WantedBy=multi-user.target
             (proc / "21" / "ns").mkdir()
             os.symlink("mnt:[4026532900]", proc / "21" / "ns" / "mnt")
             self.assertEqual(bootstrap.node_versions_in_use(root, str(proc)), {"v20.2.0"})
+            # a replaced tree a container still mounts counts too
+            (proc / "22").mkdir()
+            (proc / "22" / "ns").mkdir()
+            os.symlink("mnt:[4026532999]", proc / "22" / "ns" / "mnt")
+            (proc / "22" / "mountinfo").write_text(
+                f"603 500 {device} /x/node/.replaced-v20.2.0-1/bin /opt/cocalc/bin ro - ext4 /dev/sda1 rw\n"
+            )
+            self.assertIn(".replaced-v20.2.0-1", bootstrap.node_versions_in_use(root, str(proc)))
             # A namespace whose first process is gone (no mountinfo) is still
             # read through another of its processes.
             (proc / "15").mkdir()

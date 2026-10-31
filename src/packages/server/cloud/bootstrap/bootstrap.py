@@ -13724,7 +13724,7 @@ def node_versions_in_use(root: Path, proc_root: str = "/proc") -> set[str]:
     except OSError:
         device = None
     # the mount's source path within its filesystem: .../<root name>/<version>
-    mounted = re.compile(rf"/{re.escape(root.name)}/(v\d+\.\d+\.\d+)(?:/|$)")
+    mounted = re.compile(rf"/{re.escape(root.name)}/([^/\s]+)(?:/|$)")
     try:
         pids = [name for name in os.listdir(proc_root) if name.isdigit()]
     except OSError:
@@ -13781,11 +13781,6 @@ def install_node(cfg: BootstrapConfig, *, root: Path = NODE_ROOT) -> Path:
         raise
     target = root / version
     if not node_tree_ok(target):
-        if target.is_symlink() or target.is_file():
-            target.unlink()
-        elif target.exists():
-            log_line(cfg, f"bootstrap: replacing {target}: not entirely root-owned")
-            shutil.rmtree(target)
         name = f"node-{version}-linux-{node_dist_arch()}.tar.xz"
         with tempfile.TemporaryDirectory(dir=root, prefix=".install-") as tmp:
             archive = Path(tmp) / name
@@ -13814,6 +13809,14 @@ def install_node(cfg: BootstrapConfig, *, root: Path = NODE_ROOT) -> Path:
             os.chmod(staging, 0o755)
             if not root_owned_tree(staging):
                 raise RuntimeError(f"{name} did not unpack as a root-owned tree")
+            # Only now that the replacement is ready: move a tree we can't
+            # trust out of the way rather than deleting it, since project
+            # containers may have it mounted (removed once nothing uses it).
+            if target.is_symlink() or target.is_file():
+                target.unlink()
+            elif target.exists():
+                log_line(cfg, f"bootstrap: replacing {target}: not entirely root-owned")
+                os.rename(target, root / f".replaced-{version}-{time.time_ns()}")
             os.rename(staging, target)
     link = root / f".current-{os.getpid()}"
     if link.is_symlink() or link.exists():
@@ -13836,6 +13839,10 @@ def install_node(cfg: BootstrapConfig, *, root: Path = NODE_ROOT) -> Path:
         if old not in in_use:
             log_line(cfg, f"bootstrap: removing node {old}")
             shutil.rmtree(root / old, ignore_errors=True)
+    for entry in root.iterdir():
+        if entry.name.startswith(".replaced-") and entry.name not in in_use:
+            log_line(cfg, f"bootstrap: removing replaced node tree {entry.name}")
+            shutil.rmtree(entry, ignore_errors=True)
     return current / "bin" / "node"
 
 
