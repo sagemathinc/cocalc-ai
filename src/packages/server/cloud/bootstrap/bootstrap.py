@@ -5341,8 +5341,12 @@ def run(args, host, store):
         return 0
 
     if current is not None and st["status"] == "finished":
-        # finished after the last run stopped watching it
-        return complete(st, current.get("started_at"))
+        if current.get("launched", True):
+            # finished after the last run stopped watching it
+            return complete(st, current.get("started_at"))
+        # saved just before a start or resume that never ran: the stats are
+        # the previous scrub's, so this one is still to do
+        status["current"] = current = None
     if not enabled:
         if not stop_orphan():
             return finish("error", "the scrub could not be cancelled; throttle kept")
@@ -5388,6 +5392,7 @@ def run(args, host, store):
             return finish("error", "the scrub speed could not be capped")
         if orphan:
             # watch it again, throttled
+            current["launched"] = True
             supervising = True
         else:
             before = dict(current) if current is not None else None
@@ -5395,6 +5400,9 @@ def run(args, host, store):
             # leaves it adoptable
             current = dict(current or {"started_at": iso(started)})
             current["phase"] = "running"
+            # until start or resume works, a "finished" status is the last
+            # scrub's, not this one's
+            current["launched"] = False
             status["current"] = current
             store.save(status)
             supervising = True
@@ -5409,6 +5417,7 @@ def run(args, host, store):
                     supervising = False
                     status["current"] = before
                     return finish("error", "btrfs scrub start failed: %s" % err.strip()[:300])
+            current["launched"] = True
         status["current"] = current
         status["state"] = "running"
         store.save(status)

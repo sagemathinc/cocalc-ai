@@ -11637,6 +11637,33 @@ class BtrfsScrubScriptTest(unittest.TestCase):
         self.assertIn("overdue_since", status)
         self.assertEqual(host.scrub, "interrupted")
 
+    def test_a_run_killed_before_its_start_doesnt_count_the_last_scrub(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)  # the first scrub completes
+        self.assertEqual(host.scrub, "finished")
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        orig_run = host.run
+        start = [SCRUB_NS["BTRFS"], "scrub", "start", "/mnt/cocalc"]
+
+        def killed_at_start(args):
+            if args == start:
+                raise SystemExit(137)  # after current was saved, before the start
+            return orig_run(args)
+
+        host.run = killed_at_start
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        host.run = orig_run
+        # the kernel still says "finished" (the last scrub): a new one runs
+        host.t += 600
+        resumed_at = host.t
+        status = self.run_once(host)
+        self.assertEqual(sum(1 for c in host.calls if c == start), 2)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(status["last_completed"]["started_at"], SCRUB_NS["iso"](resumed_at))
+
     def test_not_btrfs_is_reported_and_nothing_runs(self):
         host = ScrubFakeHost()
         host.run = lambda args: (0, "ext4 abc\n", "")
