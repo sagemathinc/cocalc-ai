@@ -7339,6 +7339,21 @@ WantedBy=multi-user.target
             (proc / "21" / "ns").mkdir()
             os.symlink("mnt:[4026532900]", proc / "21" / "ns" / "mnt")
             self.assertEqual(bootstrap.node_versions_in_use(root, str(proc)), {"v20.2.0"})
+            # A namespace whose first process is gone (no mountinfo) is still
+            # read through another of its processes.
+            (proc / "15").mkdir()
+            (proc / "15" / "ns").mkdir()
+            os.symlink("mnt:[4026532901]", proc / "15" / "ns" / "mnt")
+            (proc / "16").mkdir()
+            (proc / "16" / "ns").mkdir()
+            os.symlink("mnt:[4026532901]", proc / "16" / "ns" / "mnt")
+            (proc / "16" / "mountinfo").write_text(
+                f"700 500 {device} /some/where/node/v20.1.0/bin /opt/cocalc/bin ro - ext4 /dev/sda1 rw\n"
+            )
+            with mock.patch.object(bootstrap.os, "listdir", lambda _p: ["15", "16", "20", "21"]):
+                self.assertEqual(
+                    bootstrap.node_versions_in_use(root, str(proc)), {"v20.1.0", "v20.2.0"}
+                )
 
     def test_install_node_runtime_libs_publishes_a_root_owned_copy(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

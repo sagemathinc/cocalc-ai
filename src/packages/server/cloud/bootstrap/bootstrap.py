@@ -14661,12 +14661,12 @@ def node_versions_in_use(root: Path, proc_root: str = "/proc") -> set[str]:
             continue
         if namespace in namespaces:
             continue
-        namespaces.add(namespace)
         try:
             with open(os.path.join(proc_root, pid, "mountinfo")) as f:
                 lines = f.read().splitlines()
         except OSError:
-            continue
+            continue  # (e.g. it exited) another process may show the namespace
+        namespaces.add(namespace)
         for line in lines:
             fields = line.split()
             if len(fields) > 4 and fields[2] == device:
