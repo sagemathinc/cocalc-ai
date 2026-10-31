@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261031-v60"
+HELPER_SCHEMA_VERSION = "20261031-v61"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -3733,9 +3733,11 @@ DEFAULT_HOST_EXES = _PODMAN_EXES + (
 DEFAULT_RUNTIME_EXES = _PODMAN_EXES
 # A trusted program must also be owned by root all the way up (file and every
 # directory above it, none writable by group or others); otherwise it's
-# reported as trusted-program-writable. Programs under these directories are
-# still installed by the runtime user, so they aren't checked yet.
-RUNTIME_OWNED_PROGRAM_DIRS = ("/opt/cocalc/container-runtime/", "/opt/cocalc/tools/")
+# reported as trusted-program-writable.
+# Root's installs of program directories (cocalc-runtime-artifacts), in the
+# status directory; the latest are reported.
+ARTIFACT_EVENTS = "artifact-events.jsonl"
+MAX_ARTIFACT_EVENTS = 20
 # Placement rules: processes with these uids must run in one of these cgroups
 # (prefixes; "{runtime_uid}" is replaced), or, with container_mount_ns_ok, in a
 # mount namespace other than the host's (inside a container). "uids" is
@@ -4010,8 +4012,6 @@ def program_status(exe, patterns, cache, exe_root=None):
         return "unknown"
     deleted = exe.endswith(" (deleted)")
     path = exe[: -len(" (deleted)")] if deleted else exe
-    if path.startswith(RUNTIME_OWNED_PROGRAM_DIRS):
-        return "trusted"
     # A binary replaced by an upgrade while it runs is gone from its path:
     # then the running inode must be root's, and the directory it ran from
     # root's all the way up.
@@ -4599,7 +4599,28 @@ class Watcher:
             "inventory": dict(
                 sorted(self.inventory.items(), key=lambda kv: kv[1], reverse=True)
             ),
+            "artifact_events": self.artifact_events(),
         }
+
+    def artifact_events(self):
+        """The latest root installs, switches, prunes and securing runs (the
+        helper keeps its log under 256 KB)."""
+        try:
+            with open(os.path.join(self.args.status_dir, ARTIFACT_EVENTS), "rb") as f:
+                lines = f.read(1 << 20).decode("utf-8", "replace").splitlines()
+        except OSError:
+            return []
+        events = []
+        for line in lines[-MAX_ARTIFACT_EVENTS:]:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict):
+                events.append(
+                    {k: event.get(k) for k in ("at", "action", "kind", "version", "name", "result")}
+                )
+        return events
 
     def write_status(self, now):
         directory = self.args.status_dir
@@ -6799,13 +6820,12 @@ import tomllib
 import urllib.parse
 
 
+# Program directories (/opt/cocalc/{project-host,project-bundles,tools,
+# container-runtime}) are not here: only root installs them
+# (cocalc-runtime-artifacts).
 ALLOWED_ROOTS = {
     "/mnt/cocalc",
     "/mnt/cocalc-scratch",
-    "/opt/cocalc/container-runtime",
-    "/opt/cocalc/project-bundles",
-    "/opt/cocalc/project-host",
-    "/opt/cocalc/tools",
     "/var/lib/cocalc",
     "/var/lib/cocalc/star/project-host/0/cache",
     "/var/lib/cocalc/star/project-host/0/secrets/rustic",
@@ -8697,6 +8717,654 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+'''
+
+
+# Root installs of runtime artifacts (cocalc-runtime-storage install-artifact,
+# set-current-artifact, prune-artifact, secure-artifacts).
+RUNTIME_ARTIFACTS_HELPER = r'''#!/usr/bin/python3
+"""Installs CoCalc runtime artifacts as root.
+
+The project host's runtime user (through cocalc-runtime-storage) asks for an
+artifact kind and an exact version. Where it comes from, how it is checked,
+where it goes and who owns it are decided here, from a root-owned
+configuration that host bootstrap writes:
+
+  install-artifact <kind> <version> --base <url>
+      download (HTTPS) from an allowed software base, check the published
+      sha256, unpack as root in a root-only directory, make it root-owned (no
+      group/other write, no setuid) and put it in place. Does not switch.
+  set-current-artifact <kind> <version> [--link previous]
+      point the kind's "current" (or tools' "previous") link at an installed
+      version.
+  clear-current-artifact <kind>
+      remove the kind's current link (a failed first activation).
+  prune-artifact <kind> <version>
+      remove a version, unless it is current or previous, or a process runs
+      or maps something in it, or a mount namespace (a project) mounts it.
+  secure-artifacts --base <url>
+      the artifact roots become root's, and the versions in use (current,
+      previous, or run or mounted) that weren't installed by root are
+      installed again (verified, as install-artifact does). Nothing installed
+      by the runtime user is made root's in place.
+
+A tree root installed is all root's and carries a marker only install
+creates. A displaced tree is kept, renamed .replaced-*, until nothing uses
+it. Every action is appended to an event log the host integrity watcher
+reports.
+"""
+
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import ssl
+import stat
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.request
+
+CONFIG = "/etc/cocalc/software-source.json"
+EVENTS = "/var/lib/cocalc-host-integrity/artifact-events.jsonl"
+EVENTS_MAX_BYTES = 256 * 1024
+PROC = "/proc"
+VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+RESERVED = {"current", "previous"}
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+INSTALL_ROOT = "/opt/cocalc/"
+MARKER = ".root-installed"
+REPLACED_PREFIX = ".replaced-"
+LOCK_NAME = ".artifact.lock"
+MAX_ARCHIVE_BYTES = 4 << 30
+FETCH_TIMEOUT_S = 60
+ROOT_UID = 0
+
+# Archive paths under a software base (as the hub serves them).
+ARCHIVES = {
+    "project-host": "project-host/{version}/bundle-{os}.tar.xz",
+    "project": "project/{version}/bundle-{os}.tar.xz",
+    "tools": "tools/{version}/tools-{os}-{arch}.tar.xz",
+    "container-runtime": "container-runtime/{version}/container-runtime-{os}-{arch}.tar.xz",
+}
+
+
+class Refused(Exception):
+    pass
+
+
+def now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def load_config(path=CONFIG):
+    try:
+        st = os.lstat(path)
+    except OSError:
+        raise Refused("no software source configuration")
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != ROOT_UID or st.st_mode & 0o022:
+        raise Refused("the software source configuration is not root's")
+    with open(path) as f:
+        cfg = json.load(f)
+    bases = cfg.get("bases")
+    artifacts = cfg.get("artifacts")
+    if not isinstance(bases, list) or not isinstance(artifacts, dict):
+        raise Refused("malformed software source configuration")
+    for base in bases:
+        if not isinstance(base, str) or not base.startswith("https://") or base.endswith("/"):
+            raise Refused("malformed software base in the configuration")
+    for kind, spec in artifacts.items():
+        if kind not in ARCHIVES or not isinstance(spec, dict):
+            raise Refused("malformed artifact in the configuration")
+        for key in ("root", "current"):
+            value = spec.get(key)
+            if (
+                not isinstance(value, str)
+                or not value.startswith(INSTALL_ROOT)
+                or "/../" in value + "/"
+                or value != os.path.normpath(value)
+            ):
+                raise Refused("malformed artifact path in the configuration")
+    return cfg
+
+
+def artifact_paths(cfg, kind):
+    spec = cfg["artifacts"].get(kind) if kind in ARCHIVES else None
+    if spec is None:
+        raise Refused("unknown artifact kind %r" % (kind,))
+    return spec["root"], spec["current"]
+
+
+def version_dir(cfg, kind, version):
+    """The directory of a version, refusing anything that isn't a plain
+    version name (and the link names, the lock, temp and displaced trees)."""
+    root, current = artifact_paths(cfg, kind)
+    if not VERSION_RE.match(version) or ".." in version or version in RESERVED:
+        raise Refused("invalid version %r" % (version,))
+    target = os.path.join(root, version)
+    if target in (current, os.path.join(root, "previous")):
+        raise Refused("invalid version %r" % (version,))
+    return target
+
+
+def platform():
+    machine = os.uname().machine
+    arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(machine)
+    if arch is None:
+        raise Refused("unsupported architecture %s" % machine)
+    return "linux", arch
+
+
+def record(event):
+    """Appends one event line (best effort), keeping the log bounded."""
+    event = dict(event, at=now_iso())
+    try:
+        os.makedirs(os.path.dirname(EVENTS), mode=0o755, exist_ok=True)
+        try:
+            if os.path.getsize(EVENTS) > EVENTS_MAX_BYTES:
+                with open(EVENTS, "rb") as f:
+                    f.seek(-EVENTS_MAX_BYTES // 2, os.SEEK_END)
+                    tail = f.read().split(b"\n", 1)[-1]
+                with open(EVENTS + ".tmp", "wb") as f:
+                    f.write(tail)
+                os.replace(EVENTS + ".tmp", EVENTS)
+        except OSError:
+            pass
+        fd = os.open(EVENTS, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "a") as f:
+            f.write(json.dumps(event, sort_keys=True) + "\n")
+    except OSError:
+        pass
+    print(json.dumps(event, sort_keys=True), file=sys.stderr)
+
+
+def secure_dir(path):
+    """path becomes a root-owned 0755 directory, through a descriptor (a
+    symlink is refused, never followed)."""
+    try:
+        os.mkdir(path, 0o755)
+    except FileExistsError:
+        pass
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as err:
+        raise Refused("%s is not a directory root can secure (%s)" % (path, err))
+    try:
+        os.fchown(fd, ROOT_UID, ROOT_UID)
+        os.fchmod(fd, 0o755)
+    finally:
+        os.close(fd)
+
+
+def root_owned_dir(path):
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == ROOT_UID and not st.st_mode & 0o022
+
+
+class root_lock:
+    """Serializes changes under one artifact root, with host bootstrap and
+    project-host (the .artifact.lock they share; readable, so they can lock it
+    without write access). A lock file that isn't root's is replaced."""
+
+    def __init__(self, root):
+        self.path = os.path.join(root, LOCK_NAME)
+
+    def open_lock(self):
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+        st = os.fstat(fd)
+        if (
+            stat.S_ISREG(st.st_mode)
+            and st.st_nlink == 1
+            and st.st_uid == ROOT_UID
+            and not st.st_mode & 0o022
+        ):
+            return fd
+        os.close(fd)
+        return None
+
+    def __enter__(self):
+        try:
+            fd = self.open_lock()
+        except OSError:
+            fd = None
+        if fd is None:
+            fresh = "%s.%d" % (self.path, os.getpid())
+            if os.path.lexists(fresh):
+                os.unlink(fresh)
+            new = os.open(fresh, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+            os.fchown(new, ROOT_UID, ROOT_UID)
+            os.fchmod(new, 0o644)
+            os.close(new)
+            os.replace(fresh, self.path)
+            fd = self.open_lock()
+            if fd is None:
+                raise Refused("unable to set up %s" % self.path)
+        self.fd = fd
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        os.close(self.fd)
+
+
+def own_fresh_tree(path):
+    """Ownership and modes for a tree root just unpacked in a directory only
+    root can reach: root's, without group/other write or setuid/setgid
+    (symlinks only re-owned, never followed)."""
+    for dirpath, dirnames, filenames in os.walk(path):
+        for entry in [dirpath, *(os.path.join(dirpath, n) for n in dirnames + filenames)]:
+            os.lchown(entry, ROOT_UID, ROOT_UID)
+            st = os.lstat(entry)
+            if not stat.S_ISLNK(st.st_mode):
+                os.chmod(entry, stat.S_IMODE(st.st_mode) & ~0o022 & ~(stat.S_ISUID | stat.S_ISGID))
+
+
+def root_owned_tree(path):
+    """True if path (not a symlink) and everything in it is root's, without
+    group/other write or setuid/setgid, with symlinks resolving inside it."""
+    if os.path.islink(path) or not os.path.isdir(path):
+        return False
+    base = os.path.realpath(path)
+    for dirpath, dirnames, filenames in os.walk(path):
+        for entry in [dirpath, *(os.path.join(dirpath, n) for n in dirnames + filenames)]:
+            st = os.lstat(entry)
+            if stat.S_ISLNK(st.st_mode):
+                target = os.path.realpath(entry)
+                if target != base and not target.startswith(base + os.sep):
+                    return False
+                continue
+            if st.st_uid != ROOT_UID or st.st_mode & 0o022 or st.st_mode & (stat.S_ISUID | stat.S_ISGID):
+                return False
+    return True
+
+
+def root_installed(path):
+    """A tree root installed: all root's, with install's marker (a single
+    root-owned regular file)."""
+    try:
+        st = os.lstat(os.path.join(path, MARKER))
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(st.st_mode)
+        and st.st_uid == ROOT_UID
+        and st.st_nlink == 1
+        and root_owned_tree(path)
+    )
+
+
+class HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise Refused("redirected away from https")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def fetch(url, dest, cafile, limit):
+    if not url.startswith("https://"):
+        raise Refused("only https downloads")
+    context = ssl.create_default_context(cafile=cafile) if cafile else ssl.create_default_context()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=context), HttpsOnlyRedirects
+    )
+    request = urllib.request.Request(url, headers={"User-Agent": "cocalc-runtime-artifacts/1"})
+    with opener.open(request, timeout=FETCH_TIMEOUT_S) as response:
+        if not response.geturl().startswith("https://"):
+            raise Refused("redirected away from https")
+        total = 0
+        with open(dest, "wb") as out:
+            while True:
+                chunk = response.read(1 << 20)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit:
+                    raise Refused("download too large")
+                out.write(chunk)
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def extract(archive, dest):
+    """Unpacks without the archive's top directory. The data filter refuses
+    absolute names, names or links leaving dest and device files, and drops
+    setuid/setgid and group/other write bits and the archive's owners."""
+    with tarfile.open(archive, "r:xz") as tar:
+        members = []
+        for member in tar.getmembers():
+            parts = [p for p in member.name.split("/") if p not in ("", ".")]
+            if len(parts) < 2:
+                continue
+            member.name = "/".join(parts[1:])
+            members.append(member)
+        tar.extractall(dest, members=members, filter="data")
+
+
+def write_marker(tree, content):
+    """install's marker, in the root-only tree it just unpacked."""
+    fd = os.open(
+        os.path.join(tree, MARKER),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o644,
+    )
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(content) + "\n")
+
+
+def displace(root, target):
+    """Moves an existing entry out of the way, kept until nothing uses it."""
+    if os.path.lexists(target):
+        aside = os.path.join(root, "%s%s-%d" % (REPLACED_PREFIX, os.path.basename(target), time.time_ns()))
+        os.rename(target, aside)
+        return aside
+    return None
+
+
+def install(cfg, kind, version, base, fetcher=fetch, proc=PROC):
+    root, _current = artifact_paths(cfg, kind)
+    target = version_dir(cfg, kind, version)
+    if base not in cfg["bases"]:
+        raise Refused("software base not allowed")
+    secure_dir(root)
+    with root_lock(root):
+        if root_installed(target):
+            record({"action": "install", "kind": kind, "version": version, "result": "present"})
+            return {"status": "present"}
+        os_name, arch = platform()
+        url = base + "/" + ARCHIVES[kind].format(version=version, os=os_name, arch=arch)
+        with tempfile.TemporaryDirectory(dir=root, prefix=".install-") as tmp:
+            os.chmod(tmp, 0o700)
+            archive = os.path.join(tmp, "artifact.tar.xz")
+            sums = os.path.join(tmp, "artifact.sha256")
+            fetcher(url, archive, cfg.get("ca_cert_path"), MAX_ARCHIVE_BYTES)
+            fetcher(url + ".sha256", sums, cfg.get("ca_cert_path"), 4096)
+            with open(sums) as f:
+                fields = f.read().split()
+            expected = fields[0].lower() if fields else ""
+            if not SHA256_RE.match(expected):
+                raise Refused("no valid sha256 for %s" % url)
+            actual = sha256_file(archive)
+            if actual != expected:
+                raise Refused("sha256 mismatch for %s" % url)
+            tree = os.path.join(tmp, "tree")
+            os.mkdir(tree, 0o700)
+            extract(archive, tree)
+            own_fresh_tree(tree)
+            write_marker(tree, {"sha256": actual, "url": url, "at": now_iso()})
+            os.chmod(tree, 0o755)
+            if not root_installed(tree):
+                raise Refused("%s did not unpack as a root-owned tree" % url)
+            displaced = displace(root, target)
+            os.rename(tree, target)
+        remove_unused_displaced(root, proc)
+    record({"action": "install", "kind": kind, "version": version, "result": "installed",
+            "sha256": actual, "replaced": bool(displaced)})
+    return {"status": "installed", "sha256": actual}
+
+
+def set_current(cfg, kind, version, link="current"):
+    """Points the kind's current link (or, for tools, the "previous" link
+    next to the versions) at a version root installed."""
+    root, current = artifact_paths(cfg, kind)
+    target = version_dir(cfg, kind, version)
+    if link == "previous":
+        current = os.path.join(root, "previous")
+    elif link != "current":
+        raise Refused("unknown link %r" % (link,))
+    # The root first: while the runtime user could still rename entries in
+    # it, the version checked below could be swapped before the link points
+    # at it (by path).
+    secure_dir(root)
+    parent = os.path.dirname(current)
+    if not root_owned_dir(parent):
+        raise Refused("%s is not root's" % parent)
+    with root_lock(root):
+        if not root_installed(target):
+            raise Refused("%s is not a version root installed" % target)
+        if os.path.isdir(current) and not os.path.islink(current):
+            raise Refused("%s is a directory" % current)
+        staged = os.path.join(parent, ".%s.%d" % (os.path.basename(current), os.getpid()))
+        if os.path.lexists(staged):
+            os.unlink(staged)
+        os.symlink(target, staged)
+        os.lchown(staged, ROOT_UID, ROOT_UID)
+        os.replace(staged, current)
+    record({"action": "set-" + link, "kind": kind, "version": version, "result": "ok"})
+    return {"status": "ok"}
+
+
+def clear_current(cfg, kind):
+    """Removes the kind's current link (a failed first activation goes back
+    to none). Only a symlink; never a directory or file."""
+    root, current = artifact_paths(cfg, kind)
+    secure_dir(root)
+    parent = os.path.dirname(current)
+    if not root_owned_dir(parent):
+        raise Refused("%s is not root's" % parent)
+    with root_lock(root):
+        if not os.path.lexists(current):
+            return {"status": "absent"}
+        if not os.path.islink(current):
+            raise Refused("%s is not a link" % current)
+        os.unlink(current)
+    record({"action": "clear-current", "kind": kind, "result": "removed"})
+    return {"status": "removed"}
+
+
+def entries_in_use(root, proc=PROC):
+    """Names under root that a process executes or maps something in, or that
+    a mount namespace mounts (each namespace read once, from a process whose
+    mountinfo could be read)."""
+    used = set()
+    prefix = root.rstrip("/") + "/"
+
+    def name_of(path):
+        if path.startswith(prefix):
+            return path[len(prefix):].split("/", 1)[0]
+        return None
+
+    try:
+        st = os.stat(root)
+        device = "%d:%d" % (os.major(st.st_dev), os.minor(st.st_dev))
+    except OSError:
+        device = None
+    namespaces = set()
+    try:
+        pids = [p for p in os.listdir(proc) if p.isdigit()]
+    except OSError:
+        raise Refused("can't tell what is in use")
+    for pid in pids:
+        base = os.path.join(proc, pid)
+        try:
+            name = name_of(os.readlink(os.path.join(base, "exe")))
+            if name:
+                used.add(name)
+        except OSError:
+            pass
+        try:
+            with open(os.path.join(base, "maps")) as f:
+                for line in f:
+                    fields = line.split(None, 5)
+                    if len(fields) == 6:
+                        name = name_of(fields[5].strip())
+                        if name:
+                            used.add(name)
+        except OSError:
+            pass
+        if device is None:
+            continue
+        try:
+            namespace = os.readlink(os.path.join(base, "ns", "mnt"))
+        except OSError:
+            continue
+        if namespace in namespaces:
+            continue
+        try:
+            with open(os.path.join(base, "mountinfo")) as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue
+        namespaces.add(namespace)
+        for line in lines:
+            fields = line.split()
+            if len(fields) > 4 and fields[2] == device:
+                name = name_of(fields[3])
+                if name:
+                    used.add(name)
+    return used
+
+
+def remove_unused_displaced(root, proc=PROC):
+    """Displaced trees nothing uses anymore (removed without following
+    symlinks)."""
+    try:
+        names = [n for n in os.listdir(root) if n.startswith(REPLACED_PREFIX)]
+    except OSError:
+        return
+    if not names:
+        return
+    used = entries_in_use(root, proc)
+    for name in names:
+        if name in used:
+            continue
+        path = os.path.join(root, name)
+        st = os.lstat(path)
+        if stat.S_ISDIR(st.st_mode):
+            shutil.rmtree(path)  # descriptor-based: doesn't follow symlinks
+        else:
+            os.unlink(path)  # a displaced symlink or file
+        record({"action": "remove-replaced", "name": name, "result": "removed"})
+
+
+def link_version(root, link):
+    """The version name a link under root points at, if it is one."""
+    try:
+        real = os.path.realpath(link) if os.path.islink(link) else None
+    except OSError:
+        return None
+    if real and os.path.dirname(real) == os.path.realpath(root):
+        return os.path.basename(real)
+    return None
+
+
+def prune(cfg, kind, version, proc=PROC):
+    root, current = artifact_paths(cfg, kind)
+    target = version_dir(cfg, kind, version)
+    secure_dir(root)
+    with root_lock(root):
+        if not os.path.lexists(target):
+            return {"status": "absent"}
+        if os.path.islink(target) or not os.path.isdir(target):
+            raise Refused("%s is not a version directory" % target)
+        if version in (link_version(root, current), link_version(root, os.path.join(root, "previous"))):
+            raise Refused("%s is current or previous" % target)
+        if version in entries_in_use(root, proc):
+            record({"action": "prune", "kind": kind, "version": version, "result": "in-use"})
+            raise Refused("%s is in use" % target)
+        shutil.rmtree(target)
+    record({"action": "prune", "kind": kind, "version": version, "result": "removed"})
+    return {"status": "removed"}
+
+
+def secure(cfg, base, fetcher=fetch, proc=PROC):
+    """The artifact roots become root's, and versions in use that root didn't
+    install are installed again from base."""
+    if base not in cfg["bases"]:
+        raise Refused("software base not allowed")
+    reinstalled, errors = {}, {}
+    for kind in sorted(cfg["artifacts"]):
+        root, current = artifact_paths(cfg, kind)
+        if not os.path.lexists(root):
+            continue
+        secure_dir(root)
+        parent = os.path.dirname(current)
+        if parent != root and parent.startswith(INSTALL_ROOT):
+            secure_dir(parent)  # e.g. /opt/cocalc/project-host
+        if os.path.islink(current):
+            os.lchown(current, ROOT_UID, ROOT_UID)
+        elif os.path.lexists(current):
+            # a directory or file where the link belongs (an older layout):
+            # programs may run from it, and root won't take it over in place
+            errors[kind] = "%s is not a link to an installed version" % current
+        wanted = set(entries_in_use(root, proc))
+        if "current" in wanted and not os.path.islink(os.path.join(root, "current")):
+            errors[kind] = "programs run from %s/current, which isn't a link" % root
+        for link in (current, os.path.join(root, "previous")):
+            name = link_version(root, link)
+            if name:
+                wanted.add(name)
+        if os.path.islink(current) and link_version(root, current) is None:
+            errors[kind] = "current points outside %s" % root
+        for name in sorted(wanted):
+            if name.startswith(".") or name in RESERVED:
+                continue
+            path = os.path.join(root, name)
+            if not os.path.isdir(path) or root_installed(path):
+                continue
+            try:
+                install(cfg, kind, name, base, fetcher=fetcher, proc=proc)
+                reinstalled.setdefault(kind, []).append(name)
+            except Exception as err:  # keep securing the others
+                errors["%s/%s" % (kind, name)] = str(err)
+        with root_lock(root):
+            remove_unused_displaced(root, proc)
+    result = {"status": "ok" if not errors else "incomplete", "reinstalled": reinstalled, "errors": errors}
+    record({"action": "secure", "result": result["status"], "reinstalled": reinstalled, "errors": errors})
+    if errors:
+        raise Refused("not all artifacts in use could be installed by root: %s" % json.dumps(errors, sort_keys=True))
+    return result
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    usage = (
+        "usage: install-artifact <kind> <version> --base <url> | "
+        "set-current-artifact <kind> <version> [--link previous] | "
+        "clear-current-artifact <kind> | "
+        "prune-artifact <kind> <version> | secure-artifacts --base <url>"
+    )
+    if not argv:
+        print(usage, file=sys.stderr)
+        return 2
+    command, args = argv[0], argv[1:]
+    try:
+        cfg = load_config()
+        if command == "install-artifact" and len(args) == 4 and args[2] == "--base":
+            result = install(cfg, args[0], args[1], args[3])
+        elif command == "set-current-artifact" and len(args) == 2:
+            result = set_current(cfg, args[0], args[1])
+        elif command == "set-current-artifact" and len(args) == 4 and args[2] == "--link":
+            result = set_current(cfg, args[0], args[1], link=args[3])
+        elif command == "clear-current-artifact" and len(args) == 1:
+            result = clear_current(cfg, args[0])
+        elif command == "prune-artifact" and len(args) == 2:
+            result = prune(cfg, args[0], args[1])
+        elif command == "secure-artifacts" and len(args) == 2 and args[0] == "--base":
+            result = secure(cfg, args[1])
+        else:
+            print(usage, file=sys.stderr)
+            return 2
+    except Refused as err:
+        print(json.dumps({"status": "refused", "error": str(err)}))
+        return 3
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 '''
 
 
@@ -11145,22 +11813,8 @@ set_allowed_path_parts() {
       ALLOWED_PATH_ROOT="/var/lib/cocalc/star/project-host/0/secrets/rustic"; ALLOWED_PATH_REL="${path#/var/lib/cocalc/star/project-host/0/secrets/rustic/}" ;;
     /var/lib/cocalc/star/project-host/0/secrets/rustic/project-site-migrations/*/repo.toml)
       ALLOWED_PATH_ROOT="/var/lib/cocalc/star/project-host/0/secrets/rustic"; ALLOWED_PATH_REL="${path#/var/lib/cocalc/star/project-host/0/secrets/rustic/}" ;;
-    /opt/cocalc/project-host)
-      ALLOWED_PATH_ROOT="/opt/cocalc/project-host"; ALLOWED_PATH_REL="." ;;
-    /opt/cocalc/project-host/*)
-      ALLOWED_PATH_ROOT="/opt/cocalc/project-host"; ALLOWED_PATH_REL="${path#/opt/cocalc/project-host/}" ;;
-    /opt/cocalc/container-runtime)
-      ALLOWED_PATH_ROOT="/opt/cocalc/container-runtime"; ALLOWED_PATH_REL="." ;;
-    /opt/cocalc/container-runtime/*)
-      ALLOWED_PATH_ROOT="/opt/cocalc/container-runtime"; ALLOWED_PATH_REL="${path#/opt/cocalc/container-runtime/}" ;;
-    /opt/cocalc/project-bundles)
-      ALLOWED_PATH_ROOT="/opt/cocalc/project-bundles"; ALLOWED_PATH_REL="." ;;
-    /opt/cocalc/project-bundles/*)
-      ALLOWED_PATH_ROOT="/opt/cocalc/project-bundles"; ALLOWED_PATH_REL="${path#/opt/cocalc/project-bundles/}" ;;
-    /opt/cocalc/tools)
-      ALLOWED_PATH_ROOT="/opt/cocalc/tools"; ALLOWED_PATH_REL="." ;;
-    /opt/cocalc/tools/*)
-      ALLOWED_PATH_ROOT="/opt/cocalc/tools"; ALLOWED_PATH_REL="${path#/opt/cocalc/tools/}" ;;
+    # (program directories under /opt/cocalc: root installs only, see
+    # install-artifact)
     /dev/loop[0-9]*)
       ALLOWED_PATH_ROOT="/dev"; ALLOWED_PATH_REL="${path#/dev/}" ;;
     *) return 1 ;;
@@ -13292,6 +13946,11 @@ PY' bash "$tree"
     esac
     emit_bees_status "$mountpoint"
     ;;
+  install-artifact|set-current-artifact|clear-current-artifact|prune-artifact|secure-artifacts)
+    # Program directories are installed by root from the software source
+    # bootstrap configured; the helper validates every argument.
+    exec /usr/bin/python3 -I /usr/local/libexec/cocalc-runtime-artifacts "$cmd" "$@"
+    ;;
   bees-gate)
     # The project-host BEES gate: freeze BEES while it would hurt (frozen
     # tasks hold no locks and keep their state), thaw it with a 1-CPU cap
@@ -13607,6 +14266,7 @@ esac
             "__PROJECT_POOL_CGROUP__", DEFAULT_PROJECT_POOL_CGROUP
         ).replace("__RUNTIME_USER__", cfg.ssh_user),
         "/usr/local/libexec/cocalc-runtime-storage-path-helper": storage_path_helper,
+        "/usr/local/libexec/cocalc-runtime-artifacts": RUNTIME_ARTIFACTS_HELPER,
         "/usr/local/libexec/cocalc-project-io-policy": PROJECT_IO_POLICY_HELPER,
         "/usr/local/sbin/cocalc-runtime-storage": storage_wrapper,
         "/usr/local/sbin/cocalc-mount-data": mount_wrapper,
@@ -13620,6 +14280,62 @@ esac
         p.chmod(0o755)
 
     write_project_io_configuration(cfg)
+
+
+SOFTWARE_SOURCE_PATH = Path("/etc/cocalc/software-source.json")
+_ARTIFACT_URL = re.compile(
+    r"^(https://[^?#]+?)/(project-host|project|tools|container-runtime)/[^/?#]+/[^/?#]+$"
+)
+
+
+def software_base(url: str | None) -> str | None:
+    """The software base an artifact URL was served from, if it has the
+    layout the hub serves (<base>/<kind>/<version>/<file>)."""
+    match = _ARTIFACT_URL.match(url or "")
+    return match.group(1) if match else None
+
+
+def write_software_source(
+    cfg: BootstrapConfig, *, path: Path = SOFTWARE_SOURCE_PATH
+) -> None:
+    """Where root may install runtime artifacts from, and where they go
+    (cocalc-runtime-artifacts reads it). The bases come from the bundle URLs
+    the bay gave bootstrap, plus the configured software base."""
+    bundles = {
+        "project-host": cfg.project_host_bundle,
+        "project": cfg.project_bundle,
+        "tools": cfg.tools_bundle,
+        "container-runtime": cfg.container_runtime_bundle,
+    }
+    bases = {software_base(b.url) for b in bundles.values() if b is not None}
+    # the bay's own /software endpoint, which served bootstrap.py
+    served = re.match(r"^(https://[^?#]+?)/bootstrap/[^/?#]+/bootstrap\.py$", cfg.bootstrap_py_url or "")
+    if served:
+        bases.add(served.group(1))
+    for line in cfg.env_lines:
+        if line.startswith("COCALC_PROJECT_HOST_SOFTWARE_BASE_URL="):
+            configured = line.split("=", 1)[1].strip().rstrip("/")
+            if configured.startswith("https://"):
+                bases.add(configured)
+    artifacts = {
+        kind: {"root": bundle.root.rstrip("/"), "current": bundle.current.rstrip("/")}
+        for kind, bundle in bundles.items()
+        if bundle is not None
+        and bundle.root.startswith("/opt/cocalc/")
+        and bundle.current.startswith("/opt/cocalc/")
+    }
+    content = json.dumps(
+        {
+            "bases": sorted(b for b in bases if b),
+            "ca_cert_path": cfg.ca_cert_path,
+            "artifacts": artifacts,
+        },
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+    text_write_atomic(path, content, default_mode=0o644)
+    os.chown(path, 0, 0)
+    path.chmod(0o644)
 
 
 def reconcile_bees_runtime_policy(cfg: BootstrapConfig) -> None:
@@ -14327,6 +15043,63 @@ def ensure_cocalc_install_root() -> None:
     )
 
 
+ARTIFACT_MARKER = ".root-installed"
+
+
+REPLACED_PREFIX = ".replaced-"
+
+
+def secure_artifact_root(root: Path) -> None:
+    """An artifact root becomes a root-owned 0755 directory, through a
+    descriptor (a symlink is refused, never followed)."""
+    if root.is_symlink():
+        raise RuntimeError(f"{root} is a symlink")
+    root.mkdir(parents=True, exist_ok=True)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fchown(fd, ROOT_UID, ROOT_UID)
+        os.fchmod(fd, 0o755)
+    finally:
+        os.close(fd)
+
+
+def root_installed_tree(path: Path) -> bool:
+    """A version root installed (here or by cocalc-runtime-artifacts): all
+    root's, with the marker only those installs create."""
+    try:
+        info = os.lstat(path / ARTIFACT_MARKER)
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == ROOT_UID
+        and info.st_nlink == 1
+        and root_owned_tree(path)
+    )
+
+
+def own_fresh_tree(path: Path) -> None:
+    """Ownership and modes for a tree root just unpacked where only root can
+    reach it: root's, without group/other write or setuid/setgid (symlinks
+    only re-owned), and the installed marker (never through a symlink)."""
+    for dirpath, dirnames, filenames in os.walk(path):
+        for entry in [dirpath, *(os.path.join(dirpath, n) for n in dirnames + filenames)]:
+            chown_root(entry)
+            info = os.lstat(entry)
+            if not stat.S_ISLNK(info.st_mode):
+                os.chmod(
+                    entry,
+                    stat.S_IMODE(info.st_mode) & ~0o022 & ~(stat.S_ISUID | stat.S_ISGID),
+                )
+    fd = os.open(
+        path / ARTIFACT_MARKER,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o644,
+    )
+    with os.fdopen(fd, "w") as handle:
+        handle.write(json.dumps({"installed_by": "bootstrap"}) + "\n")
+
+
 def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
     if Path(bundle.root).resolve() == Path(cfg.tools_bundle.root).resolve():
         with tools_artifact_lock(bundle.root):
@@ -14366,10 +15139,13 @@ def extract_bundle_unlocked(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleS
             ["chown", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", cfg.bootstrap_tmp],
             "chown bootstrap tmp",
         )
-    Path(bundle.root).mkdir(parents=True, exist_ok=True)
+    root = Path(bundle.root)
+    secure_artifact_root(root)
     desired_dir = Path(bundle.dir)
     current_path = Path(bundle.current)
-    if desired_dir.exists():
+    # Only a version root installed is used as is; one the runtime user
+    # installed (older hosts) is installed again and the old tree kept aside.
+    if root_installed_tree(desired_dir):
         if current_path.is_symlink():
             try:
                 if current_path.resolve() == desired_dir.resolve():
@@ -14408,23 +15184,36 @@ def extract_bundle_unlocked(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleS
                     fallback_manifest_url=None,
                 ),
             )
-        if desired_dir.exists():
-            shutil.rmtree(desired_dir)
-        desired_dir.mkdir(parents=True, exist_ok=True)
-        run_cmd(
-            cfg,
-            ["tar", "-xJf", bundle.remote, "--strip-components=1", "-C", bundle.dir],
-            f"extract {bundle.url}",
-        )
-    if cfg.ssh_user and cfg.ssh_user != "root":
-        run_best_effort(
-            cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", bundle.dir],
-            f"chown {bundle.dir}",
-        )
+        # Unpacked where only root can reach it, then put in place: the
+        # runtime user runs these programs but can't change them.
+        staging_root = Path(tempfile.mkdtemp(dir=root, prefix=".install-"))
+        try:
+            staging = staging_root / "tree"
+            staging.mkdir(mode=0o700)
+            run_cmd(
+                cfg,
+                ["tar", "-xJf", bundle.remote, "--strip-components=1", "-C", str(staging)],
+                f"extract {bundle.url}",
+            )
+            own_fresh_tree(staging)
+            staging.chmod(0o755)
+            if desired_dir.is_symlink() or desired_dir.exists():
+                # kept until nothing uses it (a project may have it mounted)
+                os.rename(
+                    desired_dir,
+                    root / f"{REPLACED_PREFIX}{desired_dir.name}-{time.time_ns()}",
+                )
+            os.rename(staging, desired_dir)
+        finally:
+            shutil.rmtree(staging_root, ignore_errors=True)
     if current_path.is_symlink() or current_path.exists():
         if current_path.is_dir() and not current_path.is_symlink():
-            shutil.rmtree(current_path)
+            # an older layout's directory (programs may run from it): moved
+            # aside, never deleted or taken over in place
+            os.rename(
+                current_path,
+                current_path.parent / f"{REPLACED_PREFIX}current-{time.time_ns()}",
+            )
         else:
             current_path.unlink()
     current_path.symlink_to(desired_dir, target_is_directory=True)
@@ -14904,12 +15693,10 @@ exec "$NODE_BIN" "{bundle_entry}" "$@"
     wrapper_path = bin_dir / "project-host"
     wrapper_path.write_text(wrapper, encoding="utf-8")
     wrapper_path.chmod(0o755)
-    if cfg.ssh_user and cfg.ssh_user != "root":
-        run_best_effort(
-            cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir), str(wrapper_path)],
-            "chown project-host wrapper",
-        )
+    # The services run these, so the runtime user must not be able to change
+    # them (they are root's, like the bundles).
+    for path in (bin_dir.parent, bin_dir, wrapper_path):
+        chown_root(path)
 
 
 def write_helpers(cfg: BootstrapConfig) -> None:
@@ -16399,22 +17186,6 @@ esac
         (bin_dir / name).chmod(0o755)
     rootctl_path.chmod(0o755)
     core_handler_path.chmod(0o755)
-    if cfg.ssh_user and cfg.ssh_user != "root":
-        helper_paths = [
-            bin_dir / "ctl",
-            bin_dir / "start-project-host",
-            bin_dir / "logs",
-            bin_dir / "acp-status",
-            bin_dir / "acp-logs",
-            bin_dir / "logs-cf",
-            bin_dir / "ctl-cf",
-        ]
-        chown_paths_best_effort(
-            cfg,
-            cfg.ssh_user,
-            [bin_dir, *helper_paths],
-            "chown runtime helper scripts",
-        )
 
     bootstrap_dir = Path(cfg.bootstrap_dir)
     bootstrap_py = bootstrap_dir / "bootstrap.py"
@@ -16435,18 +17206,10 @@ exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bun
     (bin_dir / "fetch-tools.sh").write_text(fetch_tools, encoding="utf-8")
     for name in ["fetch-project-bundle.sh", "fetch-project-host.sh", "fetch-tools.sh"]:
         (bin_dir / name).chmod(0o755)
-    if cfg.ssh_user and cfg.ssh_user != "root":
-        fetch_paths = [
-            bin_dir / "fetch-project-bundle.sh",
-            bin_dir / "fetch-project-host.sh",
-            bin_dir / "fetch-tools.sh",
-        ]
-        chown_paths_best_effort(
-            cfg,
-            cfg.ssh_user,
-            fetch_paths,
-            "chown runtime fetch helpers",
-        )
+    # Root's, as the program directories they install into.
+    for path in [bin_dir, *bin_dir.iterdir()]:
+        if not path.is_symlink():
+            chown_root(path)
 
     admin_root = Path(cfg.bootstrap_root)
     if admin_root != runtime_root:
@@ -16464,17 +17227,26 @@ exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bun
             "fetch-project-host.sh",
             "fetch-tools.sh",
         ]:
-            script = (
-                "#!/usr/bin/env bash\n"
-                "set -euo pipefail\n"
-                f'RUNTIME_USER="{cfg.ssh_user}"\n'
-                f'RUNTIME_SCRIPT="{runtime_root / "bin" / name}"\n'
-                'if [ "$(id -un)" = "$RUNTIME_USER" ]; then\n'
-                '  exec "$RUNTIME_SCRIPT" "$@"\n'
-                "fi\n"
-                "cd /\n"
-                'exec sudo -n -u "$RUNTIME_USER" -H "$RUNTIME_SCRIPT" "$@"\n'
-            )
+            if name.startswith("fetch-"):
+                # installs into the root-owned program directories
+                script = (
+                    "#!/usr/bin/env bash\n"
+                    "set -euo pipefail\n"
+                    "cd /\n"
+                    f'exec sudo -n "{runtime_root / "bin" / name}" "$@"\n'
+                )
+            else:
+                script = (
+                    "#!/usr/bin/env bash\n"
+                    "set -euo pipefail\n"
+                    f'RUNTIME_USER="{cfg.ssh_user}"\n'
+                    f'RUNTIME_SCRIPT="{runtime_root / "bin" / name}"\n'
+                    'if [ "$(id -un)" = "$RUNTIME_USER" ]; then\n'
+                    '  exec "$RUNTIME_SCRIPT" "$@"\n'
+                    "fi\n"
+                    "cd /\n"
+                    'exec sudo -n -u "$RUNTIME_USER" -H "$RUNTIME_SCRIPT" "$@"\n'
+                )
             target = admin_bin / name
             target.write_text(script, encoding="utf-8")
             target.chmod(0o755)
@@ -17351,6 +18123,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         image_size_gb = compute_image_size(cfg)
         install_btrfs_helper(cfg)
         install_privileged_wrappers(cfg)
+        write_software_source(cfg)
         reconcile_storage_and_containment(cfg)
         ensure_subuids(cfg)
         ensure_runtime_user_manager(cfg)
@@ -17433,6 +18206,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         configure_host_integrity_watch(cfg)
         configure_kernel_sysctl_hardening(cfg)
         install_privileged_wrappers(cfg)
+        write_software_source(cfg)
         install_privileged_tool_binaries(cfg)
         write_helpers(cfg)
         configure_runtime_sudoers(cfg)

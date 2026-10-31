@@ -29,6 +29,14 @@ import {
 } from "./runtime-maintenance";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 import { assertBundleKeepsPersistVolumes } from "./persist-layout-guard";
+import {
+  rootArtifactLayout,
+  rootClearCurrentArtifact,
+  rootInstallArtifact,
+  rootPruneArtifact,
+  rootSetCurrentArtifact,
+  type RootArtifactKind,
+} from "./artifact-install";
 
 const logger = getLogger("project-host:upgrade");
 
@@ -63,6 +71,10 @@ type ResolvedArtifact = {
   activate?: boolean;
   retentionPolicy?: HostRuntimeRetentionPolicy;
   containerRuntimeContract?: ContainerRuntimeContract;
+  // Installed by root (cocalc-runtime-artifacts) from this software base;
+  // root, versionDir and currentLink are then root's layout.
+  rootInstall?: boolean;
+  baseUrl?: string;
 };
 
 type VersionDirEntry = {
@@ -72,6 +84,11 @@ type VersionDirEntry = {
   name: string;
   bytes: number | undefined;
 };
+
+// The software base project-host uses when a request doesn't name one.
+export function defaultSoftwareBaseUrl(): string {
+  return normalizeBaseUrl();
+}
 
 function normalizeBaseUrl(baseUrl?: string): string {
   const raw =
@@ -427,6 +444,38 @@ async function safeRemove(dir: string): Promise<void> {
     logger.warn("upgrade: removing with sudo", { dir });
     await runCommand("sudo", ["-n", STORAGE_WRAPPER, "rm", "-rf", dir]);
   }
+}
+
+// Points linkPath (an artifact's current link, or tools' "previous") at the
+// version directory target: as root when root installs the artifact.
+async function setArtifactLink(
+  resolved: ResolvedArtifact,
+  linkPath: string,
+  target: string,
+): Promise<void> {
+  if (!resolved.rootInstall) {
+    await replaceSymlink(linkPath, target);
+    return;
+  }
+  await rootSetCurrentArtifact(
+    resolved.canonicalArtifact as RootArtifactKind,
+    path.basename(target),
+    { link: linkPath === resolved.currentLink ? "current" : "previous" },
+  );
+}
+
+async function clearArtifactLink(
+  resolved: ResolvedArtifact,
+  linkPath: string,
+): Promise<void> {
+  if (resolved.rootInstall && linkPath === resolved.currentLink) {
+    // back to no current version, as before the first activation
+    await rootClearCurrentArtifact(
+      resolved.canonicalArtifact as RootArtifactKind,
+    );
+    return;
+  }
+  await fs.promises.rm(linkPath, { force: true });
 }
 
 async function replaceSymlink(linkPath: string, target: string) {
@@ -1040,6 +1089,8 @@ async function pruneVersionDirs(opts: {
   keep?: number;
   maxBytes?: number;
   keepRecent?: boolean;
+  // as root, for root-installed artifacts (root may refuse: in use)
+  remove?: (dir: string) => Promise<void>;
 }) {
   if (opts.protectedVersions === null) return;
   const keep = opts.keep ?? 3;
@@ -1138,8 +1189,20 @@ async function pruneVersionDirs(opts: {
       keep,
       max_bytes: maxBytes,
     });
-    await safeRemove(entry.dir);
+    await (opts.remove ?? safeRemove)(entry.dir);
   }
+}
+
+function artifactRemover(
+  resolved: Pick<ResolvedArtifact, "rootInstall" | "canonicalArtifact">,
+): ((dir: string) => Promise<void>) | undefined {
+  if (!resolved.rootInstall) return undefined;
+  return async (dir: string) => {
+    await rootPruneArtifact(
+      resolved.canonicalArtifact as RootArtifactKind,
+      path.basename(dir),
+    );
+  };
 }
 
 async function protectedArtifactVersions(
@@ -1358,6 +1421,22 @@ async function resolveArtifact(
     canonicalArtifact === "project-host"
       ? (projectHostPaths?.currentLink ?? path.join(root, "current"))
       : path.join(root, "current");
+  const rootLayout = await rootArtifactLayout(canonicalArtifact);
+  if (rootLayout) {
+    return {
+      artifact,
+      canonicalArtifact,
+      version,
+      url,
+      sha256,
+      stripComponents,
+      root: rootLayout.root,
+      versionDir: path.join(rootLayout.root, version),
+      currentLink: rootLayout.current,
+      rootInstall: true,
+      baseUrl,
+    };
+  }
   return {
     artifact,
     canonicalArtifact,
@@ -1386,8 +1465,21 @@ async function downloadAndInstallUnlocked(
   resolved: ResolvedArtifact,
 ): Promise<UpgradeSoftwareResult> {
   const existing = currentVersion(resolved.currentLink);
+  // Root validates or (re)installs the version: an existing directory may be
+  // one the runtime user installed, which root doesn't take over.
+  const rootStatus = resolved.rootInstall
+    ? await rootInstallArtifact(
+        resolved.canonicalArtifact as RootArtifactKind,
+        resolved.version,
+        resolved.baseUrl ?? normalizeBaseUrl(),
+      )
+    : undefined;
   const versionDirExists = await installedVersionDirExists(resolved.versionDir);
-  if (existing && existing === resolved.version) {
+  if (
+    existing &&
+    existing === resolved.version &&
+    (!resolved.rootInstall || rootStatus === "present")
+  ) {
     if (!versionDirExists) {
       throw new Error(
         `current artifact version is missing at ${resolved.versionDir}`,
@@ -1399,9 +1491,18 @@ async function downloadAndInstallUnlocked(
       status: "noop",
     };
   }
-  await ensureWritableDir(resolved.root);
-  await ensureWritableDir(path.dirname(resolved.currentLink));
-  if (versionDirExists) {
+  if (!resolved.rootInstall) {
+    await ensureWritableDir(resolved.root);
+    await ensureWritableDir(path.dirname(resolved.currentLink));
+  }
+  if (resolved.rootInstall) {
+    logger.info("upgrade: artifact installed by root", {
+      artifact: resolved.artifact,
+      version: resolved.version,
+      base_url: resolved.baseUrl,
+      status: rootStatus,
+    });
+  } else if (versionDirExists) {
     logger.info("upgrade: reusing immutable artifact version", {
       artifact: resolved.artifact,
       version: resolved.version,
@@ -1496,6 +1597,7 @@ async function downloadAndInstallUnlocked(
       keep: retentionPolicy.keep_count,
       maxBytes: retentionPolicy.max_bytes,
       keepRecent: resolved.canonicalArtifact === "tools",
+      remove: artifactRemover(resolved),
     });
     logger.info("upgrade: staged artifact without changing current symlink", {
       artifact: resolved.artifact,
@@ -1522,18 +1624,20 @@ async function downloadAndInstallUnlocked(
   }
   try {
     if (resolved.canonicalArtifact === "tools" && previousTarget) {
-      await replaceSymlink(
+      await setArtifactLink(
+        resolved,
         path.join(resolved.root, "previous"),
         previousTarget,
       );
     }
     if (resolved.canonicalArtifact === "project-host") {
-      await activateProjectHostBundle(
+      await activateProjectHostBundle(resolved);
+    } else {
+      await setArtifactLink(
+        resolved,
         resolved.currentLink,
         resolved.versionDir,
       );
-    } else {
-      await replaceSymlink(resolved.currentLink, resolved.versionDir);
     }
     if (resolved.canonicalArtifact === "container-runtime") {
       try {
@@ -1542,9 +1646,9 @@ async function downloadAndInstallUnlocked(
         );
       } catch (err) {
         if (previousTarget) {
-          await replaceSymlink(resolved.currentLink, previousTarget);
+          await setArtifactLink(resolved, resolved.currentLink, previousTarget);
         } else {
-          await fs.promises.rm(resolved.currentLink, { force: true });
+          await clearArtifactLink(resolved, resolved.currentLink);
         }
         throw new Error(
           `activated container runtime failed Podman state verification and was rolled back: ${describeError(err)}`,
@@ -1567,6 +1671,7 @@ async function downloadAndInstallUnlocked(
       keep: retentionPolicy.keep_count,
       maxBytes: retentionPolicy.max_bytes,
       keepRecent: resolved.canonicalArtifact === "tools",
+      remove: artifactRemover(resolved),
     });
     logger.info("upgrade: updated current symlink", {
       artifact: resolved.artifact,
@@ -1608,7 +1713,8 @@ async function downloadAndInstall(
   resolved: ResolvedArtifact,
 ): Promise<UpgradeSoftwareResult> {
   return await withArtifactInstallLock(resolved.currentLink, () =>
-    resolved.canonicalArtifact === "tools"
+    // (root's installs take the same filesystem lock themselves)
+    resolved.canonicalArtifact === "tools" && !resolved.rootInstall
       ? withToolsFilesystemLock(resolved.root, () =>
           downloadAndInstallUnlocked(resolved),
         )
@@ -1655,9 +1761,13 @@ export async function pruneInstalledTools(
     ? path.dirname(process.env.COCALC_PROJECT_TOOLS)
     : DEFAULT_TOOLS_ROOT,
 ): Promise<void> {
-  const currentLink = path.join(root, "current");
+  const rootLayout = await rootArtifactLayout("tools");
+  if (rootLayout) root = rootLayout.root;
+  const currentLink = rootLayout?.current ?? path.join(root, "current");
+  const withLock = <T>(work: () => Promise<T>) =>
+    rootLayout ? work() : withToolsFilesystemLock(root, work);
   await withArtifactInstallLock(currentLink, () =>
-    withToolsFilesystemLock(root, async () => {
+    withLock(async () => {
       let desiredDir: string;
       try {
         desiredDir = await fs.promises.realpath(currentLink);
@@ -1679,6 +1789,10 @@ export async function pruneInstalledTools(
         keep: policy.keep_count,
         maxBytes: policy.max_bytes,
         keepRecent: true,
+        remove: artifactRemover({
+          rootInstall: rootLayout != null,
+          canonicalArtifact: "tools",
+        }),
       });
     }),
   );
@@ -1746,21 +1860,21 @@ function scheduledProjectHostReconcileCommand(bin: string): string {
 // switching, which is undone if a persist server committed to them
 // meanwhile.
 async function activateProjectHostBundle(
-  currentLink: string,
-  versionDir: string,
+  resolved: ResolvedArtifact,
 ): Promise<void> {
+  const { currentLink, versionDir } = resolved;
   assertBundleKeepsPersistVolumes(versionDir);
   const previous = await fs.promises
     .realpath(currentLink)
     .catch(() => undefined);
-  await replaceSymlink(currentLink, versionDir);
+  await setArtifactLink(resolved, currentLink, versionDir);
   try {
     assertBundleKeepsPersistVolumes(versionDir);
   } catch (err) {
     if (previous) {
-      await replaceSymlink(currentLink, previous);
+      await setArtifactLink(resolved, currentLink, previous);
     } else {
-      await fs.promises.rm(currentLink, { force: true });
+      await clearArtifactLink(resolved, currentLink);
     }
     throw err;
   }
@@ -1781,8 +1895,10 @@ export async function activateInstalledProjectHostVersion(
     normalizeBaseUrl(),
   );
   await assertInstalledVersionDir(resolved.versionDir);
-  await ensureWritableDir(path.dirname(resolved.currentLink));
-  await activateProjectHostBundle(resolved.currentLink, resolved.versionDir);
+  if (!resolved.rootInstall) {
+    await ensureWritableDir(path.dirname(resolved.currentLink));
+  }
+  await activateProjectHostBundle(resolved);
   logger.info("upgrade: activated installed project-host version", {
     version: normalizedVersion,
     current: resolved.currentLink,
@@ -1862,6 +1978,7 @@ export async function upgradeSoftware(
 }
 
 export const __test__ = {
+  clearArtifactLink,
   curlTimeoutArgs,
   downloadAndInstall,
   extractMountedArtifactVersionsFromMountinfo,

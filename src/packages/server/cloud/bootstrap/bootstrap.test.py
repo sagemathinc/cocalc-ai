@@ -13,6 +13,7 @@ import tempfile
 import tarfile
 import time
 import unittest
+import urllib.request
 from collections import namedtuple
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
@@ -3079,6 +3080,13 @@ class BootstrapBundleFallbackManifestTest(unittest.TestCase):
     """A kept installed version whose directory is gone and that can't be
     downloaded falls back to the latest manifest instead of failing."""
 
+    def setUp(self) -> None:
+        # installs are root's; the test user stands in for root
+        as_root = mock.patch.object(bootstrap, "ROOT_UID", os.getuid())
+        as_root.start()
+        self.addCleanup(as_root.stop)
+
+
     def make_fixture(self, tmpdir: str, *, fallback: bool):
         cfg = replace(make_cfg(tmpdir), bootstrap_user="", ssh_user="")
         root = Path(tmpdir) / "bundles"
@@ -3141,6 +3149,8 @@ class BootstrapBundleFallbackManifestTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg, bundle, root, tarball = self.make_fixture(tmpdir, fallback=True)
             (root / "kept").mkdir()
+            # installed by root before (the marker only root's installs write)
+            (root / "kept" / bootstrap.ARTIFACT_MARKER).write_text("{}\n")
             with mock.patch.object(
                 bootstrap, "download_file", side_effect=self.download(tarball)
             ) as download, mock.patch.object(bootstrap, "prune_bundle_versions"):
@@ -3198,6 +3208,9 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
         repair = mock.patch.object(bootstrap, "run_best_effort")
         repair.start()
         self.addCleanup(repair.stop)
+        as_root = mock.patch.object(bootstrap, "ROOT_UID", os.getuid())
+        as_root.start()
+        self.addCleanup(as_root.stop)
 
     def make_fixture(self, tmpdir: str):
         cfg = make_cfg(tmpdir)
@@ -3241,6 +3254,7 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg, bundle, root, proc_root, _ = self.make_fixture(tmpdir)
             cfg = replace(cfg, tools_bundle=bundle, bootstrap_user="", ssh_user="")
+            (root / "v9" / bootstrap.ARTIFACT_MARKER).write_text("{}\n")
             lock_path = root / ".artifact.lock"
             original_resolve = bootstrap.resolve_bundle_spec
 
@@ -3255,6 +3269,60 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
                 bootstrap.extract_bundle(cfg, bundle)
             self.assertEqual((root / "current").resolve(), root / "v9")
             self.assertEqual(subprocess.run(["flock", "-n", str(lock_path), "true"]).returncode, 0)
+
+    def test_a_version_the_runtime_user_installed_is_installed_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, _ = self.make_fixture(tmpdir)
+            tarball = Path(tmpdir) / "v9.tar.xz"
+            with tarfile.open(tarball, mode="w:xz") as archive:
+                for name, mode in (("bundle/bin/tool", 0o4777), ("bundle/README", 0o666)):
+                    info = tarfile.TarInfo(name)
+                    info.size, info.mode = 3, mode
+                    archive.addfile(info, io.BytesIO(b"ok\n"))
+            bundle = replace(
+                bundle,
+                url="https://example.invalid/software/tools/v9/tools-linux-amd64.tar.xz",
+                remote=str(Path(tmpdir) / "download.tar.xz"),
+            )
+            cfg = replace(cfg, tools_bundle=bundle, bootstrap_user="", ssh_user="")
+            legacy = Path(bundle.dir)
+            legacy_inode = legacy.stat().st_ino
+            outside = Path(tmpdir) / "outside"
+            outside.write_text("precious")
+            # what an older install left: writable by others, and a planted
+            # marker pointing elsewhere
+            os.symlink(outside, legacy / bootstrap.ARTIFACT_MARKER)
+            legacy.chmod(0o777)
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root), mock.patch.object(
+                bootstrap,
+                "download_file",
+                lambda _cfg, _url, dest, **_k: shutil.copy(tarball, dest),
+            ):
+                bootstrap.extract_bundle(cfg, bundle)
+            self.assertTrue(bootstrap.root_installed_tree(legacy))
+            self.assertNotEqual(legacy.stat().st_ino, legacy_inode)
+            self.assertEqual(outside.read_text(), "precious")
+            self.assertFalse((legacy / bootstrap.ARTIFACT_MARKER).is_symlink())
+            self.assertEqual(oct((legacy / "bin" / "tool").stat().st_mode & 0o7777), "0o755")
+            self.assertEqual(
+                len([p for p in root.iterdir() if p.name.startswith(".replaced-v9-")]), 1
+            )
+            self.assertEqual((root / "current").resolve(), legacy)
+
+    def test_a_current_directory_from_an_older_layout_is_moved_aside(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, _ = self.make_fixture(tmpdir)
+            cfg = replace(cfg, tools_bundle=bundle, bootstrap_user="", ssh_user="")
+            (root / "v9" / bootstrap.ARTIFACT_MARKER).write_text("{}\n")
+            (root / "current").unlink()
+            (root / "current").mkdir()
+            (root / "current" / "kept").write_text("x")
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                bootstrap.extract_bundle(cfg, bundle)
+            self.assertEqual((root / "current").resolve(), root / "v9")
+            aside = [p for p in root.iterdir() if p.name.startswith(".replaced-current-")]
+            self.assertEqual(len(aside), 1)
+            self.assertTrue((aside[0] / "kept").is_file())
 
     def test_prunes_old_bundle_versions_but_keeps_current_and_desired(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4014,6 +4082,12 @@ class ProjectIoPolicyHelperTest(unittest.TestCase):
 
 
 class BootstrapWrapperScriptTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # installs are root's; the test user stands in for root
+        as_root = mock.patch.object(bootstrap, "ROOT_UID", os.getuid())
+        as_root.start()
+        self.addCleanup(as_root.stop)
+
     def test_managed_job_helper_forces_no_user_bus(self) -> None:
         import types
 
@@ -6191,37 +6265,16 @@ attach_storage_worker_to_project /mnt/cocalc/project-test
             runtime_bin = Path(tmpdir) / "runtime-root" / "bin"
             rootctl = Path(tmpdir) / "usr-local-sbin" / "cocalc-project-host-rootctl"
             core_handler = rootctl.with_name("cocalc-project-host-core-handler")
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        str(runtime_bin),
-                        str(runtime_bin / "ctl"),
-                        str(runtime_bin / "start-project-host"),
-                        str(runtime_bin / "logs"),
-                        str(runtime_bin / "acp-status"),
-                        str(runtime_bin / "acp-logs"),
-                        str(runtime_bin / "logs-cf"),
-                        str(runtime_bin / "ctl-cf"),
-                    ],
-                    "chown runtime helper scripts",
-                ),
-                recorded,
-            )
-            self.assertIn(
-                (
-                    [
-                        "chown",
-                        "missing-runtime-user:missing-runtime-user",
-                        str(runtime_bin / "fetch-project-bundle.sh"),
-                        str(runtime_bin / "fetch-project-host.sh"),
-                        str(runtime_bin / "fetch-tools.sh"),
-                    ],
-                    "chown runtime fetch helpers",
-                ),
-                recorded,
-            )
+            # The scripts the services run are root's: none goes to the
+            # runtime user (only the admin wrappers to the bootstrap user).
+            for args, _desc in recorded:
+                self.assertNotIn("missing-runtime-user:missing-runtime-user", args)
+            for path in [runtime_bin, *runtime_bin.iterdir()]:
+                self.assertEqual(path.lstat().st_uid, bootstrap.ROOT_UID, path)
+            # the admin fetch wrappers run their scripts as root
+            admin_fetch = (Path(cfg.bootstrap_root) / "bin" / "fetch-tools.sh").read_text()
+            self.assertIn(f'exec sudo -n "{runtime_bin / "fetch-tools.sh"}"', admin_fetch)
+            self.assertNotIn("-u", admin_fetch.split("exec sudo", 1)[1].split("\n", 1)[0])
             self.assertTrue(rootctl.exists())
             self.assertTrue(core_handler.exists())
             ctl_text = (runtime_bin / "ctl").read_text(encoding="utf-8")
@@ -7025,7 +7078,8 @@ WantedBy=multi-user.target
                 )
                 bootstrap.Path.chmod = lambda *_args, **_kwargs: None
                 bootstrap.run_best_effort = lambda *_args, **_kwargs: None
-                bootstrap.write_wrapper(cfg)
+                with mock.patch.object(bootstrap, "chown_root", lambda _p: None):
+                    bootstrap.write_wrapper(cfg)
             finally:
                 bootstrap.project_host_runtime_root = original_runtime_root
                 bootstrap.Path.write_text = original_write_text
@@ -8355,6 +8409,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "configure_host_integrity_watch",
                 "configure_kernel_sysctl_hardening",
                 "install_privileged_wrappers",
+                "write_software_source",
                 "install_privileged_tool_binaries",
                 "write_helpers",
                 "configure_runtime_sudoers",
@@ -8410,6 +8465,7 @@ class BootstrapModesTest(unittest.TestCase):
                     "configure_host_integrity_watch",
                     "configure_kernel_sysctl_hardening",
                     "install_privileged_wrappers",
+                    "write_software_source",
                     "install_privileged_tool_binaries",
                     "write_helpers",
                     "configure_runtime_sudoers",
@@ -8437,7 +8493,7 @@ class BootstrapModesTest(unittest.TestCase):
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
             "configure_rsyslog_limits install_btrfs_helper "
-            "install_privileged_wrappers reconcile_storage_and_containment "
+            "install_privileged_wrappers write_software_source reconcile_storage_and_containment "
             "ensure_subuids ensure_runtime_user_manager configure_podman "
             "verify_runtime_user_contract write_env configure_runtime_shell_env "
             "setup_master_conat_token install_privileged_tool_binaries "
@@ -8510,7 +8566,7 @@ class BootstrapModesTest(unittest.TestCase):
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
             "configure_rsyslog_limits install_btrfs_helper "
-            "install_privileged_wrappers ensure_cocalc_mount setup_shared_scratch "
+            "install_privileged_wrappers write_software_source ensure_cocalc_mount setup_shared_scratch "
             "ensure_btrfs_data reconcile_bees_runtime_policy "
             "reconcile_project_io_policy reconcile_host_service_cgroup "
             "ensure_subuids ensure_runtime_user_manager configure_podman "
@@ -8837,6 +8893,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("configure_rsyslog_limits", lambda _cfg: None)
             patch("install_btrfs_helper", lambda _cfg: None)
             patch("install_privileged_wrappers", lambda _cfg: None)
+            patch("write_software_source", lambda _cfg: None)
             patch("reconcile_storage_and_containment", lambda _cfg: None)
             patch("reconcile_project_network_limits", lambda _cfg: None)
             patch("reconcile_project_io_policy", lambda _cfg: None)
@@ -10340,7 +10397,7 @@ class HostIntegrityWatchTest(unittest.TestCase):
     def test_trusted_programs_must_be_root_owned_all_the_way_up(self) -> None:
         self.add_proc(10, 1, "node", self.uid, self.node, self.HOST_NS)
         self.add_proc(11, 1, "sudo", self.uid, "/usr/bin/sudo", self.HOST_NS)
-        # still installed by the runtime user: not checked yet
+        # tools and the container runtime are root's installs too now
         self.add_proc(12, 1, "sshpiperd", self.uid, "/opt/cocalc/tools/20261030T071949Z-dcbf6646/sshpiperd", self.HOST_NS)
         self.add_proc(20, 1, "conmon", self.uid, f"{self.rt}/conmon", self.RUNTIME_NS, f"0 {self.uid} 1\n")
         self.add_proc(21, 1, "catatonit", self.uid, "/usr/bin/catatonit", self.RUNTIME_NS, f"0 {self.uid} 1\n")
@@ -10359,10 +10416,28 @@ class HostIntegrityWatchTest(unittest.TestCase):
             sorted((f["pid"], f["rule"], f["severity"]) for f in new),
             [
                 (10, "trusted-program-writable", "high"),
+                (12, "trusted-program-writable", "high"),
+                (20, "trusted-program-writable", "high"),
                 (21, "trusted-program-writable", "high"),
                 (30, "unexpected-runtime-user-process", "high"),
             ],
         )
+
+    def test_reports_the_latest_root_artifact_installs(self) -> None:
+        status_dir = self.root / "status"
+        status_dir.mkdir()
+        lines = [
+            json.dumps({"at": f"2026-10-31T00:00:{i:02d}Z", "action": "install", "kind": "tools", "version": f"v{i}", "result": "installed", "sha256": "x" * 64})
+            for i in range(25)
+        ]
+        (status_dir / "artifact-events.jsonl").write_text("\n".join(lines + ["not json"]) + "\n")
+        ns = self.watch()
+        w = self.watcher(ns)
+        w.step(1000.0)
+        events = json.loads((status_dir / "status.json").read_text())["artifact_events"]
+        self.assertEqual(len(events), 19)  # the last 20 lines, one not JSON
+        self.assertEqual(events[-1]["version"], "v24")
+        self.assertNotIn("sha256", events[-1])
 
     def test_a_trusted_program_replaced_while_it_runs_is_checked_by_its_directory(self) -> None:
         # /proc/<pid>/exe of a binary an upgrade replaced: "<path> (deleted)",
@@ -10790,6 +10865,449 @@ class HostIntegrityWatchTest(unittest.TestCase):
                 )
         # The status lives outside /var/lib/cocalc, which the runtime user owns.
         self.assertNotIn("/var/lib/cocalc/", bootstrap.HOST_INTEGRITY_WATCH_SCRIPT)
+
+
+class RuntimeArtifactsHelperTest(unittest.TestCase):
+    """cocalc-runtime-artifacts, with the test user standing in for root."""
+
+    BASE = "https://software.example.invalid/software"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.ns = {"__name__": "runtime_artifacts_test"}
+        exec(bootstrap.RUNTIME_ARTIFACTS_HELPER, self.ns)
+        self.ns["ROOT_UID"] = os.getuid()
+        self.ns["INSTALL_ROOT"] = str(self.root) + "/"
+        self.ns["EVENTS"] = str(self.root / "events.jsonl")
+        self.proc = self.root / "proc"
+        self.proc.mkdir()
+        self.ns["PROC"] = str(self.proc)
+        self.tools = self.root / "tools"
+        self.cfg_path = self.root / "software-source.json"
+        self.cfg_path.write_text(
+            json.dumps(
+                {
+                    "bases": [self.BASE],
+                    "ca_cert_path": None,
+                    "artifacts": {
+                        "tools": {"root": str(self.tools), "current": str(self.tools / "current")},
+                    },
+                }
+            )
+        )
+        self.cfg_path.chmod(0o644)
+        self.served = {}
+        self.fetched = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def cfg(self):
+        return self.ns["load_config"](str(self.cfg_path))
+
+    def release(self, version, add=None, sha=None):
+        """Serves tools-<version> as the software base would."""
+        archive = self.root / f"src-{version}.tar.xz"
+        with tarfile.open(archive, "w:xz") as tar:
+            def file(name, data, mode=0o755):
+                info = tarfile.TarInfo(f"tools-{version}/{name}")
+                info.size, info.mode = len(data), mode
+                tar.addfile(info, io.BytesIO(data))
+            file("rustic", b"#!/bin/sh\n", 0o775)
+            file("README", b"tools\n", 0o664)
+            if add:
+                add(tar)
+        os_name, arch = self.ns["platform"]()
+        url = f"{self.BASE}/tools/{version}/tools-{os_name}-{arch}.tar.xz"
+        self.served[url] = archive.read_bytes()
+        digest = sha or hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.served[url + ".sha256"] = f"{digest}  tools-{os_name}-{arch}.tar.xz\n".encode()
+
+    def fetch(self, url, dest, _cafile, limit):
+        self.fetched.append(url)
+        if url not in self.served:
+            raise self.ns["Refused"]("not found " + url)
+        data = self.served[url]
+        if len(data) > limit:
+            raise self.ns["Refused"]("download too large")
+        Path(dest).write_bytes(data)
+
+    def install(self, version, base=None):
+        return self.ns["install"](
+            self.cfg(), "tools", version, base or self.BASE, fetcher=self.fetch, proc=str(self.proc)
+        )
+
+    def mount_in_project(self, name):
+        """A project container mounts <tools>/<name>. The kernel names a
+        mount's source by its current path (it follows renames), so this
+        tracks the mounted directory by inode."""
+        inode = (self.tools / name).stat().st_ino
+        self.ns["entries_in_use"] = lambda root, proc=None: {
+            n for n in os.listdir(root) if os.lstat(os.path.join(root, n)).st_ino == inode
+        }
+
+    def unmount(self):
+        self.ns["entries_in_use"] = lambda root, proc=None: set()
+
+    def test_installs_a_verified_release_as_a_root_owned_tree(self) -> None:
+        self.release("v1")
+        self.assertEqual(self.install("v1")["status"], "installed")
+        target = self.tools / "v1"
+        self.assertTrue(self.ns["root_owned_tree"](str(target)))
+        self.assertEqual(oct((target / "rustic").stat().st_mode & 0o7777), "0o755")
+        self.assertEqual(oct((target / "README").stat().st_mode & 0o7777), "0o644")
+        self.assertTrue((target / ".root-installed").is_file())
+        # installed: no second download
+        self.fetched.clear()
+        self.assertEqual(self.install("v1")["status"], "present")
+        self.assertEqual(self.fetched, [])
+        events = [json.loads(line) for line in (self.root / "events.jsonl").read_text().splitlines()]
+        self.assertEqual([(e["action"], e["result"]) for e in events], [("install", "installed"), ("install", "present")])
+
+    def test_refuses_what_it_should_not_install(self) -> None:
+        Refused = self.ns["Refused"]
+        self.release("v1")
+        for kind, version, base in (
+            ("project-host", "v1", self.BASE),  # not configured
+            ("bogus", "v1", self.BASE),
+            ("tools", "../v1", self.BASE),
+            ("tools", ".hidden", self.BASE),
+            ("tools", "a/b", self.BASE),
+            ("tools", "x" * 200, self.BASE),
+            ("tools", "current", self.BASE),
+            ("tools", "previous", self.BASE),
+            ("tools", ".artifact.lock", self.BASE),
+            ("tools", "v1", "https://elsewhere.example.invalid/software"),
+            ("tools", "v1", self.BASE + "/"),
+        ):
+            with self.assertRaises(Refused, msg=(kind, version, base)):
+                self.ns["install"](self.cfg(), kind, version, base, fetcher=self.fetch)
+        # a checksum that doesn't match, or none
+        self.release("v2", sha="0" * 64)
+        with self.assertRaises(Refused):
+            self.install("v2")
+        self.release("v3", sha="not-a-sha")
+        with self.assertRaises(Refused):
+            self.install("v3")
+        self.assertEqual(sorted(p.name for p in self.tools.iterdir() if not p.name.startswith(".")), [])
+
+    def test_refuses_hostile_archives(self) -> None:
+        def member(name, **kw):
+            info = tarfile.TarInfo(name)
+            for k, v in kw.items():
+                setattr(info, k, v)
+            return info
+
+        for i, add in enumerate(
+            (
+                lambda t: t.addfile(member("tools-vX/../../escape", size=0), io.BytesIO(b"")),
+                lambda t: t.addfile(member("tools-vX/abs", type=tarfile.SYMTYPE, linkname="/etc/passwd")),
+                lambda t: t.addfile(member("tools-vX/up", type=tarfile.SYMTYPE, linkname="../../../etc")),
+                lambda t: t.addfile(member("tools-vX/dev", type=tarfile.CHRTYPE, devmajor=1, devminor=3)),
+            )
+        ):
+            version = f"h{i}"
+            self.release(version, add=lambda t, add=add, v=version: add_renamed(t, add, v))
+            with self.assertRaises((tarfile.TarError, self.ns["Refused"])):
+                self.install(version)
+            self.assertFalse((self.tools / version).exists())
+        self.assertFalse((self.root / "escape").exists())
+        # setuid and group/other write bits are dropped
+        self.release("s1", add=lambda t: t.addfile(member("tools-s1/suid", size=2, mode=0o6777), io.BytesIO(b"x\n")))
+        self.install("s1")
+        self.assertEqual(oct((self.tools / "s1" / "suid").stat().st_mode & 0o7777), "0o755")
+
+    def test_the_configuration_must_be_roots(self) -> None:
+        Refused = self.ns["Refused"]
+        self.cfg_path.chmod(0o664)
+        with self.assertRaises(Refused):
+            self.cfg()
+        self.cfg_path.chmod(0o644)
+        self.ns["ROOT_UID"] = os.getuid() + 1
+        with self.assertRaises(Refused):
+            self.cfg()
+        self.ns["ROOT_UID"] = os.getuid()
+        # paths outside the install root are refused
+        data = json.loads(self.cfg_path.read_text())
+        data["artifacts"]["tools"]["root"] = "/etc"
+        self.cfg_path.write_text(json.dumps(data))
+        with self.assertRaises(Refused):
+            self.cfg()
+
+    def test_switches_current_only_to_an_installed_root_owned_version(self) -> None:
+        self.release("v1")
+        self.install("v1")
+        self.ns["set_current"](self.cfg(), "tools", "v1")
+        self.assertEqual(os.readlink(self.tools / "current"), str(self.tools / "v1"))
+        with self.assertRaises(self.ns["Refused"]):
+            self.ns["set_current"](self.cfg(), "tools", "v9")
+        # the tools "previous" link
+        self.release("v0")
+        self.install("v0")
+        self.ns["set_current"](self.cfg(), "tools", "v0", link="previous")
+        self.assertEqual(os.readlink(self.tools / "previous"), str(self.tools / "v0"))
+        actions = [json.loads(line)["action"] for line in (self.root / "events.jsonl").read_text().splitlines()]
+        self.assertIn("set-current", actions)
+        self.assertIn("set-previous", actions)
+        with self.assertRaises(self.ns["Refused"]):
+            self.ns["set_current"](self.cfg(), "tools", "v0", link="../../etc/x")
+        # a version others could have changed
+        (self.tools / "v1" / "README").chmod(0o666)
+        with self.assertRaises(self.ns["Refused"]):
+            self.ns["set_current"](self.cfg(), "tools", "v1")
+
+    def test_prunes_only_versions_nothing_uses(self) -> None:
+        Refused = self.ns["Refused"]
+        for v in ("v1", "v2", "v3", "v4"):
+            self.release(v)
+            self.install(v)
+        self.ns["set_current"](self.cfg(), "tools", "v4")
+        proc = self.proc
+        (proc / "10" / "ns").mkdir(parents=True)
+        os.symlink("/usr/bin/bash", proc / "10" / "exe")
+        os.symlink("mnt:[1]", proc / "10" / "ns" / "mnt")
+        (proc / "10" / "maps").write_text(
+            f"7f0000000000-7f0000001000 r-xp 00000000 08:01 42 {self.tools / 'v2' / 'rustic'}\n"
+        )
+        dev = os.stat(self.tools).st_dev
+        (proc / "10" / "mountinfo").write_text(
+            f"600 500 {os.major(dev)}:{os.minor(dev)} {self.tools / 'v3'} /opt/cocalc/bin2 ro - ext4 /dev/sda1 rw\n"
+        )
+        prune = lambda v: self.ns["prune"](self.cfg(), "tools", v, proc=str(proc))
+        with self.assertRaises(Refused):
+            prune("v4")  # current
+        with self.assertRaises(Refused):
+            prune("v2")  # mapped by a process
+        with self.assertRaises(Refused):
+            prune("v3")  # mounted by a namespace
+        self.assertEqual(prune("v1")["status"], "removed")
+        self.assertEqual(prune("v1")["status"], "absent")
+        self.assertEqual(sorted(p.name for p in self.tools.iterdir() if p.name.startswith("v")), ["v2", "v3", "v4"])
+
+    def legacy_tree(self, name):
+        """A version the runtime user installed (no install marker)."""
+        tree = self.tools / name
+        (tree / "bin").mkdir(parents=True)
+        (tree / "bin" / "rustic").write_text("legacy")
+        (tree / "bin" / "rustic").chmod(0o775)
+        return tree
+
+    def test_secure_installs_versions_in_use_again_instead_of_blessing_them(self) -> None:
+        self.tools.mkdir()
+        legacy = self.legacy_tree("v1")
+        legacy_inode = legacy.stat().st_ino
+        os.symlink(self.tools / "v1", self.tools / "current")
+        self.legacy_tree("v0")  # not in use: left alone (pruned by retention)
+        self.release("v1")
+        result = self.ns["secure"](self.cfg(), self.BASE, fetcher=self.fetch, proc=str(self.proc))
+        self.assertEqual(result["reinstalled"], {"tools": ["v1"]})
+        self.assertTrue(self.ns["root_installed"](str(self.tools / "v1")))
+        self.assertNotEqual((self.tools / "v1").stat().st_ino, legacy_inode)
+        # the old tree wasn't used by anything: gone
+        self.assertEqual([p.name for p in self.tools.iterdir() if p.name.startswith(".replaced-")], [])
+        self.assertFalse(self.ns["root_installed"](str(self.tools / "v0")))
+        # again: nothing to do, no download
+        self.fetched.clear()
+        self.assertEqual(self.ns["secure"](self.cfg(), self.BASE, fetcher=self.fetch, proc=str(self.proc))["reinstalled"], {})
+        self.assertEqual(self.fetched, [])
+
+    def test_secure_never_writes_through_a_planted_marker(self) -> None:
+        self.tools.mkdir()
+        legacy = self.legacy_tree("v1")
+        outside = self.root / "outside"
+        outside.write_text("precious")
+        os.symlink(outside, legacy / ".root-installed")
+        os.symlink(self.tools / "v1", self.tools / "current")
+        self.release("v1")
+        self.ns["secure"](self.cfg(), self.BASE, fetcher=self.fetch, proc=str(self.proc))
+        self.assertEqual(outside.read_text(), "precious")
+        marker = self.tools / "v1" / ".root-installed"
+        self.assertFalse(marker.is_symlink())
+        self.assertTrue(self.ns["root_installed"](str(self.tools / "v1")))
+
+    def test_secure_keeps_a_replaced_tree_a_project_still_mounts(self) -> None:
+        self.tools.mkdir()
+        legacy = self.legacy_tree("v1")
+        legacy_inode = legacy.stat().st_ino
+        os.symlink(self.tools / "v1", self.tools / "current")
+        self.mount_in_project("v1")
+        self.release("v1")
+        self.ns["secure"](self.cfg(), self.BASE, fetcher=self.fetch, proc=str(self.proc))
+        replaced = [p for p in self.tools.iterdir() if p.name.startswith(".replaced-v1-")]
+        self.assertEqual(len(replaced), 1)
+        self.assertEqual(replaced[0].stat().st_ino, legacy_inode)
+        # once the project no longer mounts it, the tree goes
+        self.unmount()
+        self.ns["secure"](self.cfg(), self.BASE, fetcher=self.fetch, proc=str(self.proc))
+        self.assertEqual([p for p in self.tools.iterdir() if p.name.startswith(".replaced-")], [])
+
+    def test_secure_reports_what_it_could_not_install(self) -> None:
+        self.tools.mkdir()
+        self.legacy_tree("gone")  # no longer served
+        os.symlink(self.tools / "gone", self.tools / "current")
+        with self.assertRaises(self.ns["Refused"]):
+            self.ns["secure"](self.cfg(), self.BASE, fetcher=self.fetch, proc=str(self.proc))
+        # current pointing outside the artifact root
+        (self.tools / "current").unlink()
+        os.symlink(self.root, self.tools / "current")
+        with self.assertRaises(self.ns["Refused"]):
+            self.ns["secure"](self.cfg(), self.BASE, fetcher=self.fetch, proc=str(self.proc))
+        with self.assertRaises(self.ns["Refused"]):
+            self.ns["secure"](self.cfg(), "https://elsewhere.example.invalid/software", fetcher=self.fetch)
+
+    def test_install_keeps_a_displaced_tree_in_use(self) -> None:
+        self.tools.mkdir()
+        self.legacy_tree("v1")
+        self.mount_in_project("v1")
+        self.release("v1")
+        self.install("v1")
+        self.assertEqual(len([p for p in self.tools.iterdir() if p.name.startswith(".replaced-v1-")]), 1)
+
+    def test_a_lock_file_that_isnt_roots_is_replaced(self) -> None:
+        self.tools.mkdir()
+        lock = self.tools / ".artifact.lock"
+        lock.write_text("")
+        lock.chmod(0o666)
+        inode = lock.stat().st_ino
+        self.release("v1")
+        self.install("v1")
+        self.assertNotEqual(lock.stat().st_ino, inode)
+        self.assertEqual(oct(lock.stat().st_mode & 0o777), "0o644")
+
+    def test_set_current_and_prune_secure_the_root_first(self) -> None:
+        self.release("v1")
+        self.install("v1")
+        # a root others could still write (before the first secure run)
+        os.chmod(self.tools, 0o777)
+        self.ns["set_current"](self.cfg(), "tools", "v1")
+        self.assertEqual(oct(self.tools.stat().st_mode & 0o777), "0o755")
+        os.chmod(self.tools, 0o777)
+        self.assertEqual(self.ns["prune"](self.cfg(), "tools", "v9", proc=str(self.proc))["status"], "absent")
+        self.assertEqual(oct(self.tools.stat().st_mode & 0o777), "0o755")
+
+    def test_set_current_needs_a_root_owned_parent(self) -> None:
+        # the parent of a current link outside the root (project-host's)
+        self.release("v1")
+        self.install("v1")
+        outer = self.root / "project-host"
+        outer.mkdir()
+        os.chmod(outer, 0o775)
+        data = json.loads(self.cfg_path.read_text())
+        data["artifacts"]["tools"]["current"] = str(outer / "current")
+        self.cfg_path.write_text(json.dumps(data))
+        with self.assertRaises(self.ns["Refused"]):
+            self.ns["set_current"](self.cfg(), "tools", "v1")
+        os.chmod(outer, 0o755)
+        self.ns["set_current"](self.cfg(), "tools", "v1")
+        for reserved in ("current", "previous"):
+            with self.assertRaises(self.ns["Refused"]):
+                self.ns["set_current"](self.cfg(), "tools", reserved)
+
+    def test_clear_current_removes_only_the_link(self) -> None:
+        self.release("v1")
+        self.install("v1")
+        self.ns["set_current"](self.cfg(), "tools", "v1")
+        self.assertEqual(self.ns["clear_current"](self.cfg(), "tools")["status"], "removed")
+        self.assertFalse(os.path.lexists(self.tools / "current"))
+        self.assertTrue((self.tools / "v1").is_dir())
+        self.assertEqual(self.ns["clear_current"](self.cfg(), "tools")["status"], "absent")
+        (self.tools / "current").mkdir()
+        with self.assertRaises(self.ns["Refused"]):
+            self.ns["clear_current"](self.cfg(), "tools")
+
+    def test_secure_refuses_a_current_that_isnt_a_link(self) -> None:
+        self.tools.mkdir()
+        (self.tools / "current" / "bin").mkdir(parents=True)  # an older layout
+        (self.tools / "current" / "bin" / "rustic").write_text("legacy")
+        with self.assertRaises(self.ns["Refused"]):
+            self.ns["secure"](self.cfg(), self.BASE, fetcher=self.fetch, proc=str(self.proc))
+        self.assertTrue((self.tools / "current" / "bin" / "rustic").is_file())  # untouched
+
+    def test_displaced_links_and_files_are_removed_too(self) -> None:
+        self.tools.mkdir()
+        os.symlink("/etc", self.tools / "v1")  # a symlink where v1 belongs
+        self.release("v1")
+        self.install("v1")
+        self.assertEqual([p for p in self.tools.iterdir() if p.name.startswith(".replaced-")], [])
+        self.assertTrue(self.ns["root_installed"](str(self.tools / "v1")))
+        (self.tools / "v2").write_text("a file")
+        self.release("v2")
+        self.install("v2")
+        self.assertEqual([p for p in self.tools.iterdir() if p.name.startswith(".replaced-")], [])
+        self.assertTrue(os.path.isdir("/etc"))
+
+    def test_redirects_must_stay_on_https(self) -> None:
+        handler = self.ns["HttpsOnlyRedirects"]()
+        request = urllib.request.Request("https://software.example.invalid/x")
+        with self.assertRaises(self.ns["Refused"]):
+            handler.redirect_request(request, None, 302, "Found", {}, "http://software.example.invalid/x")
+        self.assertIsNotNone(
+            handler.redirect_request(request, None, 302, "Found", {}, "https://mirror.example.invalid/x")
+        )
+
+
+def add_renamed(tar, add, version):
+    """Adds the members add() creates (named tools-vX/...) under this version."""
+    class Renaming:
+        def addfile(self, info, fileobj=None):
+            info.name = info.name.replace("tools-vX/", f"tools-{version}/", 1)
+            tar.addfile(info, fileobj)
+
+    add(Renaming())
+
+
+class SoftwareSourceTest(unittest.TestCase):
+    def test_lists_the_bases_bootstrap_was_given_and_the_artifact_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                project_host_bundle=bootstrap.BundleSpec(
+                    "https://software.example.invalid/software/project-host/v1/bundle-linux.tar.xz",
+                    None, "", "/opt/cocalc/project-host/bundles", "", "/opt/cocalc/project-host/current",
+                ),
+                tools_bundle=bootstrap.BundleSpec(
+                    "https://other.example.invalid/sw/tools/v2/tools-linux-amd64.tar.xz",
+                    None, "", "/opt/cocalc/tools", "", "/opt/cocalc/tools/current",
+                ),
+                env_lines=["COCALC_PROJECT_HOST_SOFTWARE_BASE_URL=https://configured.example.invalid/software/"],
+            )
+            path = Path(tmpdir) / "software-source.json"
+            with mock.patch.object(bootstrap.os, "chown", lambda *_a: None):
+                bootstrap.write_software_source(cfg, path=path)
+            data = json.loads(path.read_text())
+            self.assertEqual(
+                data["bases"],
+                [
+                    "https://configured.example.invalid/software",
+                    "https://example.invalid/software",  # served bootstrap.py
+                    "https://other.example.invalid/sw",
+                    "https://software.example.invalid/software",
+                ],
+            )
+            self.assertEqual(
+                data["artifacts"],
+                {
+                    "project-host": {"root": "/opt/cocalc/project-host/bundles", "current": "/opt/cocalc/project-host/current"},
+                    "tools": {"root": "/opt/cocalc/tools", "current": "/opt/cocalc/tools/current"},
+                },
+            )
+            self.assertEqual(oct(path.stat().st_mode & 0o777), "0o644")
+
+    def test_program_directories_are_no_longer_generic_storage_roots(self) -> None:
+        ns = {"__name__": "path_helper_test"}
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER.replace("__ALLOW_LOOPBACK_RUSTIC_REST__", "0"), ns)
+        for root in ("/opt/cocalc/tools", "/opt/cocalc/project-bundles", "/opt/cocalc/project-host", "/opt/cocalc/container-runtime"):
+            self.assertNotIn(root, ns["ALLOWED_ROOTS"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        self.assertNotIn('ALLOWED_PATH_ROOT="/opt/cocalc/tools"', script)
+        self.assertNotIn('ALLOWED_PATH_ROOT="/opt/cocalc/project-host"', script)
+        self.assertIn(
+            'install-artifact|set-current-artifact|clear-current-artifact|prune-artifact|secure-artifacts)', script
+        )
+        self.assertIn("/usr/local/libexec/cocalc-runtime-artifacts", script)
+
 
 if __name__ == "__main__":
     unittest.main()

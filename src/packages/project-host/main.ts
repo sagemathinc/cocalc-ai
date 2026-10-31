@@ -151,7 +151,11 @@ import { startRuntimePostureMonitor } from "./runtime-posture";
 import { startProjectSnapshotBackupMaintenance } from "./snapshot-backup-maintenance";
 import { rusticBackupBrowser } from "./rustic-backup-browser";
 import { startRusticCacheMaintenance } from "./rustic-cache-maintenance";
-import { startRuntimeArtifactMaintenance } from "./upgrade";
+import {
+  defaultSoftwareBaseUrl,
+  startRuntimeArtifactMaintenance,
+} from "./upgrade";
+import { startRootArtifactSecuring } from "./artifact-install";
 import { startStorageAdmissionController } from "./storage-admission";
 import {
   startBrowserIdleStopMaintenance,
@@ -342,7 +346,8 @@ async function startHttpListener(
   tls: TlsConfig,
 ) {
   let httpServer:
-    ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>;
+    | ReturnType<typeof createHttpServer>
+    | ReturnType<typeof createHttpsServer>;
   if (tls.enabled) {
     const { key, cert, keyPath, certPath } = getOrCreateSelfSigned(
       tls.hostname,
@@ -1655,6 +1660,7 @@ export async function main(
   let stopSnapshotBackupMaintenance: () => void = () => {};
   let stopRusticCacheMaintenance: () => void = () => {};
   let stopRuntimeArtifactMaintenance: () => void = () => {};
+  let stopRootArtifactSecuring: () => void = () => {};
   let stopStorageAdmissionController: () => void = () => {};
   try {
     await initFileServer({ client: conatClient });
@@ -1669,6 +1675,12 @@ export async function main(
       hostId,
     });
     stopRusticCacheMaintenance = startRusticCacheMaintenance();
+    // The program directories become root's and the versions in use are
+    // installed again by root where the runtime user installed them (a
+    // no-op on hosts without root installs; retried until it succeeds).
+    stopRootArtifactSecuring = await startRootArtifactSecuring({
+      baseUrl: defaultSoftwareBaseUrl(),
+    });
     stopRuntimeArtifactMaintenance = startRuntimeArtifactMaintenance();
   } catch (err) {
     reportFatalStartupError("FATAL: Failed to init file server", err);
@@ -1739,6 +1751,7 @@ export async function main(
     stopSnapshotBackupMaintenance?.();
     stopRusticCacheMaintenance?.();
     stopRuntimeArtifactMaintenance?.();
+    stopRootArtifactSecuring?.();
     rusticBackupBrowser.close();
     stopStorageAdmissionController?.();
     stopRawNetworkEgressLoop?.();

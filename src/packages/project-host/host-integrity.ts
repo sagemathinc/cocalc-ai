@@ -24,6 +24,7 @@ const STALE_MS = 2 * 60_000;
 const MAX_FINDINGS = 20;
 const MAX_CONFIG_CHANGES = 20;
 const MAX_INVENTORY = 50;
+const MAX_ARTIFACT_EVENTS = 20;
 
 let latest: HostIntegrityStatus | undefined;
 
@@ -105,6 +106,18 @@ export async function readHostIntegrity({
       last_seen: iso(c?.last_seen),
     })),
     config_change_count: changes.length,
+    artifact_events: (Array.isArray(raw?.artifact_events)
+      ? raw.artifact_events
+      : []
+    )
+      .slice(-MAX_ARTIFACT_EVENTS)
+      .map((e: any) => ({
+        at: iso(e?.at),
+        action: `${e?.action ?? ""}`,
+        kind: e?.kind != null ? `${e.kind}` : undefined,
+        version: e?.version != null ? `${e.version}` : undefined,
+        result: e?.result != null ? `${e.result}` : undefined,
+      })),
     config_baseline_at: iso(raw?.config?.baseline_at),
     inventory: Object.fromEntries(
       Object.entries(inventory)
