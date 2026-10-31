@@ -17,10 +17,16 @@ only when all of them are done; otherwise it starts as keep-id, as today, and
 the reason is reported:
 
 - mode-off / mode-invalid: COCALC_PROJECT_RUNTIME_UID_MODE isn't "separate";
-- helper-old: the installed root helper predates project views;
+- helper-old: the installed root helper doesn't report the project-view and
+  overlay-idmap capabilities (`cocalc-runtime-storage project-view probe`).
+  This is a capability probe, never a HELPER_SCHEMA_VERSION comparison: schema
+  numbers are assigned in merge order and say nothing about features;
 - map-missing-block: the live rootless map doesn't have the block yet (the
   subuid allocation reaches Podman only at the host's next reboot);
-- map-unparsable / map-collision: the live map is not what we expect.
+- map-unparsable / map-collision: the live map is not what we expect;
+- host-unsafe: a safety precondition of the host failed (data root not
+  hardened, /mnt/cocalc without nosuid,nodev, shared scratch exposed, ...).
+  A capable helper alone is not enough.
 */
 
 import {
@@ -29,7 +35,6 @@ import {
   PROJECT_RUNTIME_SEPARATE_UID,
   PROJECT_RUNTIME_UID_BLOCK,
   PROJECT_RUNTIME_UID_MODES,
-  PROJECT_VIEW_HELPER_SCHEMA,
   type ProjectRuntimeUidMode,
 } from "@cocalc/util/project-runtime";
 
@@ -39,7 +44,8 @@ export type RuntimeUidFallbackReason =
   | "helper-old"
   | "map-missing-block"
   | "map-unparsable"
-  | "map-collision";
+  | "map-collision"
+  | "host-unsafe";
 
 export interface RuntimeUidModeStatus {
   configured: string;
@@ -82,10 +88,17 @@ export function configuredRuntimeUidMode(env: NodeJS.ProcessEnv = process.env): 
     : { configured };
 }
 
-// "20261031-v59" -> 59
-export function helperSchemaNumber(version: unknown): number | undefined {
-  const match = /^\d{8}-v(\d+)$/.exec(`${version ?? ""}`.trim());
-  return match ? Number(match[1]) : undefined;
+// What separate mode needs from the root helper.
+export const REQUIRED_HELPER_CAPABILITIES = ["project-view", "overlay-idmap"];
+
+// "project-view:1 overlay-idmap:1" -> {"project-view": 1, "overlay-idmap": 1}
+export function parseHelperCapabilities(text: unknown): Map<string, number> {
+  const caps = new Map<string, number>();
+  for (const token of `${text ?? ""}`.trim().split(/\s+/)) {
+    const match = /^([a-z][a-z0-9-]*):(\d+)$/.exec(token);
+    if (match) caps.set(match[1], Number(match[2]));
+  }
+  return caps;
 }
 
 export function parseIdMap(text: string): MapExtent[] | undefined {
@@ -163,16 +176,21 @@ export function separateUsernsArgs(innerUid: number, innerGid: number): string[]
 
 export interface RuntimeIdentityInputs {
   env?: NodeJS.ProcessEnv;
-  // the installed root helper's schema, e.g. "20261031-v59"
-  helperSchemaVersion: () => Promise<string | undefined>;
+  // stdout of `cocalc-runtime-storage project-view probe`; undefined when the
+  // probe fails (an older helper exits 2)
+  helperProbe: () => Promise<string | undefined>;
   // `podman unshare cat /proc/self/{uid,gid}_map`
   liveMaps: () => Promise<{ uidMap: string; gidMap: string }>;
+  // the host's safety preconditions for separate mode; resolves to a list of
+  // failures (empty when safe)
+  hostPreconditions: () => Promise<string[]>;
 }
 
 export async function resolveRuntimeIdentity({
   env = process.env,
-  helperSchemaVersion,
+  helperProbe,
   liveMaps,
+  hostPreconditions,
 }: RuntimeIdentityInputs): Promise<RuntimeIdentity> {
   const keepId = (
     configured: string,
@@ -191,9 +209,16 @@ export async function resolveRuntimeIdentity({
   const { configured, mode } = configuredRuntimeUidMode(env);
   if (mode == null) return keepId(configured, "mode-invalid");
   if (mode !== "separate") return keepId(configured, "mode-off");
-  const helper = helperSchemaNumber(await helperSchemaVersion());
-  if (helper == null || helper < PROJECT_VIEW_HELPER_SCHEMA) {
-    return keepId(configured, "helper-old", `helper schema ${helper ?? "unknown"}`);
+  let probe: string | undefined;
+  try {
+    probe = await helperProbe();
+  } catch {
+    probe = undefined;
+  }
+  const caps = parseHelperCapabilities(probe);
+  const missing = REQUIRED_HELPER_CAPABILITIES.filter((c) => !(caps.get(c)! >= 1));
+  if (missing.length > 0) {
+    return keepId(configured, "helper-old", `helper lacks ${missing.join(", ")}`);
   }
   let maps: { uidMap: string; gidMap: string };
   try {
@@ -208,6 +233,15 @@ export async function resolveRuntimeIdentity({
   const gid = separateInnerId(gidExtents);
   for (const r of [uid, gid]) {
     if (r.reason) return keepId(configured, r.reason, r.detail);
+  }
+  let failures: string[];
+  try {
+    failures = await hostPreconditions();
+  } catch (err) {
+    failures = [`precondition check failed: ${err}`.slice(0, 200)];
+  }
+  if (failures.length > 0) {
+    return keepId(configured, "host-unsafe", failures.join("; ").slice(0, 500));
   }
   return {
     mode: "separate",

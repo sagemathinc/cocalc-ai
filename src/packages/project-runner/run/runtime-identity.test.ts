@@ -1,6 +1,6 @@
 import {
   configuredRuntimeUidMode,
-  helperSchemaNumber,
+  parseHelperCapabilities,
   keepIdUsernsArgs,
   parseIdMap,
   resolveRuntimeIdentity,
@@ -25,18 +25,23 @@ function inputs(
     uidMap: string;
     gidMap: string;
     fail: boolean;
+    unsafe: string[] | "throw";
   }> = {},
 ) {
-  const helper = "helper" in over ? over.helper : "20261031-v59";
+  const helper = "helper" in over ? over.helper : "project-view:1 overlay-idmap:1\n";
   return {
     env: { COCALC_PROJECT_RUNTIME_UID_MODE: over.mode ?? "separate" },
-    helperSchemaVersion: async () => helper,
+    helperProbe: async () => helper,
     liveMaps: async () => {
       if (over.fail) throw new Error("podman unshare failed");
       return {
         uidMap: over.uidMap ?? LIVE_WITH_BLOCK,
         gidMap: over.gidMap ?? LIVE_WITH_BLOCK,
       };
+    },
+    hostPreconditions: async () => {
+      if (over.unsafe === "throw") throw new Error("stat failed");
+      return over.unsafe ?? [];
     },
   };
 }
@@ -55,11 +60,15 @@ describe("runtime identity", () => {
     ).toEqual({ configured: "sideways" });
   });
 
-  it("parses the helper schema", () => {
-    expect(helperSchemaNumber("20261031-v59")).toBe(59);
-    expect(helperSchemaNumber("20261030-v57")).toBe(57);
-    for (const bad of [undefined, "", "v59", "20261031-59", "x20261031-v59"]) {
-      expect(helperSchemaNumber(bad)).toBeUndefined();
+  it("parses the helper's capabilities", () => {
+    expect(parseHelperCapabilities("project-view:1 overlay-idmap:2\n")).toEqual(
+      new Map([
+        ["project-view", 1],
+        ["overlay-idmap", 2],
+      ]),
+    );
+    for (const bad of [undefined, "", "usage: ...", "project-view"]) {
+      expect(parseHelperCapabilities(bad).size).toBe(0);
     }
   });
 
@@ -110,12 +119,17 @@ describe("runtime identity", () => {
     const cases: [Parameters<typeof inputs>[0], string][] = [
       [{ mode: "keep-id" }, "mode-off"],
       [{ mode: "sideways" }, "mode-invalid"],
-      [{ helper: "20261030-v57" }, "helper-old"],
       [{ helper: undefined }, "helper-old"],
+      [{ helper: "project-view:1" }, "helper-old"],
+      [{ helper: "project-view:0 overlay-idmap:1" }, "helper-old"],
+      // a newer schema number without the verb is still refused
+      [{ helper: "20261031-v63" }, "helper-old"],
       [{ uidMap: LIVE_WITHOUT_BLOCK }, "map-missing-block"],
       [{ gidMap: LIVE_WITHOUT_BLOCK }, "map-missing-block"],
       [{ uidMap: "garbage" }, "map-unparsable"],
       [{ fail: true }, "map-unparsable"],
+      [{ unsafe: ["/mnt/cocalc is 0755, not 0750"] }, "host-unsafe"],
+      [{ unsafe: "throw" }, "host-unsafe"],
     ];
     for (const [over, reason] of cases) {
       const identity = await resolveRuntimeIdentity(inputs(over));
@@ -126,10 +140,12 @@ describe("runtime identity", () => {
   });
 
   it("doesn't look at the helper or the map when the mode is off", async () => {
-    const helperSchemaVersion = jest.fn();
+    const helperProbe = jest.fn();
     const liveMaps = jest.fn();
-    await resolveRuntimeIdentity({ env: {}, helperSchemaVersion, liveMaps });
-    expect(helperSchemaVersion).not.toHaveBeenCalled();
+    const hostPreconditions = jest.fn();
+    await resolveRuntimeIdentity({ env: {}, helperProbe, liveMaps, hostPreconditions });
+    expect(helperProbe).not.toHaveBeenCalled();
+    expect(hostPreconditions).not.toHaveBeenCalled();
     expect(liveMaps).not.toHaveBeenCalled();
   });
 });
