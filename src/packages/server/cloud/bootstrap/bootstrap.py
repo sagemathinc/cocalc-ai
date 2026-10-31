@@ -7993,19 +7993,37 @@ def record(event):
 
 
 def secure_dir(path):
-    """path becomes a root-owned 0755 directory, through a descriptor (a
-    symlink is refused, never followed)."""
+    """path becomes a root-owned 0755 directory. It is reached one directory
+    at a time through descriptors (a symlink is refused, never followed); a
+    directory on the way that others could change is secured the same way
+    under INSTALL_ROOT (e.g. a runtime-owned /opt/cocalc/project-host) and
+    refused elsewhere."""
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        os.mkdir(path, 0o755)
-    except FileExistsError:
-        pass
-    try:
-        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    except OSError as err:
-        raise Refused("%s is not a directory root can secure (%s)" % (path, err))
-    try:
-        os.fchown(fd, ROOT_UID, ROOT_UID)
-        os.fchmod(fd, 0o755)
+        walked = ""
+        for name in [p for p in path.split("/") if p]:
+            walked += "/" + name
+            try:
+                os.mkdir(name, 0o755, dir_fd=fd)
+            except FileExistsError:
+                pass
+            try:
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except OSError as err:
+                raise Refused("%s is not a directory root can secure (%s)" % (walked, err))
+            os.close(fd)
+            fd = child
+            st = os.fstat(fd)
+            trusted = st.st_uid in (0, ROOT_UID) and (
+                not st.st_mode & 0o022 or st.st_mode & stat.S_ISVTX
+            )
+            if walked == path.rstrip("/") or (
+                not trusted and (walked + "/").startswith(INSTALL_ROOT)
+            ):
+                os.fchown(fd, ROOT_UID, ROOT_UID)
+                os.fchmod(fd, 0o755)
+            elif not trusted:
+                raise Refused("%s could be changed by others" % walked)
     finally:
         os.close(fd)
 
@@ -14088,15 +14106,40 @@ REPLACED_PREFIX = ".replaced-"
 
 
 def secure_artifact_root(root: Path) -> None:
-    """An artifact root becomes a root-owned 0755 directory, through a
-    descriptor (a symlink is refused, never followed)."""
-    if root.is_symlink():
-        raise RuntimeError(f"{root} is a symlink")
-    root.mkdir(parents=True, exist_ok=True)
-    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    """An artifact root becomes a root-owned 0755 directory. It is reached one
+    directory at a time through descriptors (a symlink is refused, never
+    followed); a directory on the way that others could change is secured the
+    same way under COCALC_INSTALL_ROOT (e.g. a runtime-owned
+    /opt/cocalc/project-host) and refused elsewhere."""
+    install_root = str(COCALC_INSTALL_ROOT).rstrip("/") + "/"
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        os.fchown(fd, ROOT_UID, ROOT_UID)
-        os.fchmod(fd, 0o755)
+        walked = ""
+        for name in root.parts[1:]:
+            walked += "/" + name
+            try:
+                os.mkdir(name, 0o755, dir_fd=fd)
+            except FileExistsError:
+                pass
+            try:
+                child = os.open(
+                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
+                )
+            except OSError as err:
+                raise RuntimeError(f"{walked} is not a directory root can secure: {err}")
+            os.close(fd)
+            fd = child
+            info = os.fstat(fd)
+            trusted = info.st_uid in (0, ROOT_UID) and (
+                not info.st_mode & 0o022 or info.st_mode & stat.S_ISVTX
+            )
+            if walked == str(root) or (
+                not trusted and (walked + "/").startswith(install_root)
+            ):
+                os.fchown(fd, ROOT_UID, ROOT_UID)
+                os.fchmod(fd, 0o755)
+            elif not trusted:
+                raise RuntimeError(f"{walked} could be changed by others")
     finally:
         os.close(fd)
 

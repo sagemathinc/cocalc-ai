@@ -159,6 +159,13 @@ describe("project host upgrades through root installs", () => {
           "v05",
           "https://software.example.invalid/software",
         ],
+        // the version to go back to is root's too before the switch
+        [
+          "install",
+          "project-host",
+          "v04",
+          "https://software.example.invalid/software",
+        ],
         ["set", "project-host", "v05", "current"],
         ["prune", "project-host", "v02"],
         ["prune", "project-host", "v01"],
@@ -197,6 +204,41 @@ describe("project host upgrades through root installs", () => {
         ["set", "project-host", "v03", "current"],
       ]);
       expect(fs.realpathSync(currentLink)).toBe(path.join(bundlesRoot, "v03"));
+    } finally {
+      fs.chmodSync(mockRoot.dir, 0o755);
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("doesn't switch when current isn't a version it could go back to", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-root-"));
+    try {
+      process.env.COCALC_DATA = path.join(base, "data");
+      const bundlesRoot = path.join(base, "bundles");
+      mockRoot.dir = bundlesRoot;
+      fs.mkdirSync(path.join(base, "elsewhere", "v04"), { recursive: true });
+      fs.mkdirSync(bundlesRoot, { recursive: true });
+      const currentLink = path.join(bundlesRoot, "current");
+      fs.symlinkSync(path.join(base, "elsewhere", "v04"), currentLink);
+      fs.chmodSync(bundlesRoot, 0o555);
+      await expect(
+        __test__.downloadAndInstall({
+          artifact: "project-host",
+          canonicalArtifact: "project-host",
+          version: "v05",
+          url: "https://unused.example.invalid/never-fetched",
+          stripComponents: 1,
+          root: bundlesRoot,
+          versionDir: path.join(bundlesRoot, "v05"),
+          currentLink,
+          rootInstall: true,
+          baseUrl: "https://software.example.invalid/software",
+        } as any),
+      ).rejects.toThrow("not switching without a version to go back to");
+      expect(mockCalls.map((call) => call[0])).toEqual(["install"]);
+      expect(fs.realpathSync(currentLink)).toBe(
+        path.join(base, "elsewhere", "v04"),
+      );
     } finally {
       fs.chmodSync(mockRoot.dir, 0o755);
       fs.rmSync(base, { recursive: true, force: true });

@@ -10131,6 +10131,37 @@ class HostIntegrityWatchTest(unittest.TestCase):
 
 
 
+class SecureArtifactRootTest(unittest.TestCase):
+    def test_never_follows_or_trusts_an_ancestor_others_control(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            install = base / "opt-cocalc"
+            install.mkdir()
+            parent = install / "project-host"
+            elsewhere = base / "elsewhere"
+            elsewhere.mkdir()
+            parent.symlink_to(elsewhere)
+            with mock.patch.object(bootstrap, "ROOT_UID", os.getuid()), mock.patch.object(
+                bootstrap, "COCALC_INSTALL_ROOT", install
+            ):
+                with self.assertRaises(RuntimeError):
+                    bootstrap.secure_artifact_root(parent / "bundles")
+                self.assertEqual(list(elsewhere.iterdir()), [])
+                parent.unlink()
+                parent.mkdir()
+                parent.chmod(0o777)
+                bootstrap.secure_artifact_root(parent / "bundles")
+                self.assertEqual(oct(parent.stat().st_mode & 0o777), "0o755")
+                self.assertEqual(oct((parent / "bundles").stat().st_mode & 0o777), "0o755")
+                base.chmod(0o777)
+                try:
+                    with self.assertRaises(RuntimeError):
+                        bootstrap.secure_artifact_root(install / "tools")
+                    self.assertFalse((install / "tools").exists())
+                finally:
+                    base.chmod(0o700)
+
+
 class RuntimeArtifactsHelperTest(unittest.TestCase):
     """cocalc-runtime-artifacts, with the test user standing in for root."""
 
@@ -10469,6 +10500,34 @@ class RuntimeArtifactsHelperTest(unittest.TestCase):
         os.chmod(self.tools, 0o777)
         self.assertEqual(self.ns["prune"](self.cfg(), "tools", "v9", proc=str(self.proc))["status"], "absent")
         self.assertEqual(oct(self.tools.stat().st_mode & 0o777), "0o755")
+
+    def test_secure_dir_never_follows_or_trusts_an_ancestor_others_control(self) -> None:
+        secure_dir, Refused = self.ns["secure_dir"], self.ns["Refused"]
+        parent = self.root / "project-host"
+        # an ancestor replaced by a symlink: refused, nothing made through it
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        parent.symlink_to(elsewhere)
+        with self.assertRaises(Refused):
+            secure_dir(str(parent / "bundles"))
+        self.assertEqual(list(elsewhere.iterdir()), [])
+        # one others could change, under the install root: secured on the way
+        parent.unlink()
+        parent.mkdir()
+        parent.chmod(0o777)
+        secure_dir(str(parent / "bundles"))
+        self.assertEqual(oct(parent.stat().st_mode & 0o777), "0o755")
+        self.assertTrue((parent / "bundles").is_dir())
+        # outside it: refused and left alone
+        self.ns["INSTALL_ROOT"] = str(self.root / "install") + "/"
+        self.root.chmod(0o777)
+        try:
+            with self.assertRaises(Refused):
+                secure_dir(str(self.root / "install" / "tools"))
+            self.assertEqual(oct(self.root.stat().st_mode & 0o777), "0o777")
+            self.assertFalse((self.root / "install").exists())
+        finally:
+            self.root.chmod(0o700)
 
     def test_set_current_needs_a_root_owned_parent(self) -> None:
         # the parent of a current link outside the root (project-host's)
