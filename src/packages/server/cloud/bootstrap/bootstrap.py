@@ -17096,6 +17096,11 @@ def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
                 os.path.realpath(bundle.current) if bundle.current else ""
             )
     parts["node"] = f"{cfg.node_version}"
+    # the release current points at (a selector like "26" moves with patches)
+    current_node = NODE_ROOT / "current"
+    parts["node_current"] = (
+        os.path.realpath(current_node) if os.path.lexists(current_node) else "missing"
+    )
     bin_dir = project_host_runtime_root(cfg) / "bin"
     try:
         for entry in sorted(bin_dir.iterdir()):
