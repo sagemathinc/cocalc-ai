@@ -7,7 +7,9 @@ import { executeCode } from "@cocalc/backend/execute-code";
 import { withBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-cache";
 
 import {
+  BACKUP_CEILING_MS,
   ProjectRusticUnsupportedError,
+  __test__,
   projectChangedSince,
   projectRusticBackup,
   projectRusticRestore,
@@ -29,6 +31,49 @@ jest.mock("node:fs", () => {
 });
 
 const mockedExecuteCode = jest.mocked(executeCode);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// executeCode's async interface for one backup run: started, streamed,
+// cancelled, awaited.
+function fakeAsyncBackup() {
+  let streamCB: ((event: any) => void) | undefined;
+  let cancelled = false;
+  let onStarted!: () => void;
+  const started = new Promise<void>((resolve) => (onStarted = resolve));
+  let finish!: (output: any) => void;
+  const finished = new Promise<any>((resolve) => (finish = resolve));
+  const done = (output: any) =>
+    finish({
+      type: "async",
+      job_id: "job-1",
+      stdout: "",
+      stderr: "",
+      ...output,
+    });
+  mockedExecuteCode.mockImplementation(async (req: any) => {
+    if (req.async_call) {
+      streamCB = req.streamCB;
+      onStarted();
+      return { type: "async", job_id: "job-1", status: "running" } as any;
+    }
+    if (req.async_cancel) {
+      cancelled = true;
+      done({ status: "killed", exit_code: 1 });
+      return { type: "async", job_id: "job-1", status: "killed" } as any;
+    }
+    if (req.async_get) return await finished;
+    throw new Error("unexpected executeCode call");
+  });
+  return {
+    started,
+    emit: (line: string) => streamCB?.({ type: "stderr", data: `${line}\n` }),
+    complete: (stdout: string) =>
+      done({ status: "completed", exit_code: 0, stdout }),
+    finish: (output: any) => done(output),
+    cancelled: () => cancelled,
+  };
+}
 
 describe("project rustic wrapper", () => {
   beforeEach(() => {
@@ -258,28 +303,115 @@ describe("project rustic wrapper", () => {
   });
 
   it("moves scheduled backups through the maintenance wrapper command", async () => {
-    mockedExecuteCode.mockResolvedValue({
-      type: "blocking",
-      stdout:
-        '{"time":"2026-03-31T12:34:56.000Z","id":"backup-id","summary":{}}',
-      stderr: "",
-      exit_code: 0,
-    } as any);
-
-    await withBtrfsMutationContext({ priority: "scheduled" }, async () => {
-      await projectRusticBackup({
+    const job = fakeAsyncBackup();
+    const backup = withBtrfsMutationContext({ priority: "scheduled" }, () =>
+      projectRusticBackup({
         src: "/mnt/cocalc/project-1/.snapshots/temp",
         repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
         host: "project-1",
         timeoutMs: 30_000,
-      });
-    });
-
-    expect(mockedExecuteCode).toHaveBeenCalledWith(
-      expect.objectContaining({
-        args: expect.arrayContaining(["project-rustic-backup-maintenance"]),
       }),
     );
+    await job.started;
+    job.complete(
+      '{"time":"2026-03-31T12:34:56.000Z","id":"backup-id","summary":{}}',
+    );
+    expect((await backup).id).toBe("backup-id");
+    expect(mockedExecuteCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        async_call: true,
+        args: expect.arrayContaining(["project-rustic-backup-maintenance"]),
+        // the budget no longer kills it: only the ceiling does
+        timeout: BACKUP_CEILING_MS / 1000,
+      }),
+    );
+  });
+
+  describe("a background backup past its budget", () => {
+    afterEach(() => __test__.resetWatchdogLimits());
+
+    const scheduledBackup = () =>
+      withBtrfsMutationContext({ priority: "scheduled" }, () =>
+        projectRusticBackup({
+          src: "/mnt/cocalc/project-1/.snapshots/temp",
+          repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+          host: "project-1",
+          timeoutMs: 40,
+        }),
+      );
+
+    it("runs on while rustic reports progress", async () => {
+      __test__.setWatchdogLimits({ stallMs: 60, intervalMs: 5 });
+      const job = fakeAsyncBackup();
+      const backup = scheduledBackup();
+      await job.started;
+      // 300 ms: several budgets and stall windows, always advancing
+      for (let mib = 1; mib <= 30; mib++) {
+        job.emit(`[INFO] backing up: ${mib} MiB`);
+        await sleep(10);
+      }
+      job.complete('{"time":"2026-03-31T12:34:56.000Z","id":"backup-id"}');
+      expect((await backup).id).toBe("backup-id");
+      expect(job.cancelled()).toBe(false);
+    });
+
+    it("is stopped once progress stalls, saying where it was", async () => {
+      __test__.setWatchdogLimits({ stallMs: 60, intervalMs: 5 });
+      const job = fakeAsyncBackup();
+      const backup = scheduledBackup();
+      await job.started;
+      job.emit("[INFO] backing up: 7 MiB");
+      // the same value again is not progress
+      const repeat = setInterval(() => job.emit("[INFO] backing up: 7 MiB"), 5);
+      try {
+        await expect(backup).rejects.toThrow(
+          /no progress for .* last progress: backing up: 7 MiB/,
+        );
+      } finally {
+        clearInterval(repeat);
+      }
+      expect(job.cancelled()).toBe(true);
+    });
+
+    it("is not stopped for a quiet start within its budget", async () => {
+      __test__.setWatchdogLimits({ stallMs: 10, intervalMs: 5 });
+      const job = fakeAsyncBackup();
+      const backup = withBtrfsMutationContext({ priority: "scheduled" }, () =>
+        projectRusticBackup({
+          src: "/mnt/cocalc/project-1/.snapshots/temp",
+          repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+          host: "project-1",
+          timeoutMs: 200,
+        }),
+      );
+      await job.started;
+      await sleep(100); // no progress lines yet: reading the index
+      job.complete('{"time":"2026-03-31T12:34:56.000Z","id":"backup-id"}');
+      expect((await backup).id).toBe("backup-id");
+      expect(job.cancelled()).toBe(false);
+    });
+
+    it("gives a run quiet at its budget's end the whole stall window", async () => {
+      __test__.setWatchdogLimits({ stallMs: 80, intervalMs: 5 });
+      const job = fakeAsyncBackup();
+      const startedAt = Date.now();
+      const backup = scheduledBackup(); // budget 40 ms
+      await job.started;
+      // no progress at all, as during a long index load
+      await expect(backup).rejects.toThrow(/no progress for/);
+      expect(job.cancelled()).toBe(true);
+      // not at the budget: after the budget and then the stall window
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(40 + 80);
+    });
+
+    it("reports the ceiling when the run is killed there", async () => {
+      const job = fakeAsyncBackup();
+      const backup = scheduledBackup();
+      await job.started;
+      job.finish({ status: "killed", exit_code: 1, stderr: "" });
+      await expect(backup).rejects.toThrow(/stopped at the 12 h ceiling/);
+      expect(job.cancelled()).toBe(false);
+    });
   });
 
   it("surfaces old-wrapper incompatibility distinctly", async () => {
