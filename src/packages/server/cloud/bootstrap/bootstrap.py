@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261030-v57"
+HELPER_SCHEMA_VERSION = "20261031-v58"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -3555,6 +3555,632 @@ WantedBy=timers.target
             f"verify root cleanup timer {check}",
             timeout=30,
         )
+
+
+HOST_INTEGRITY_WATCH_SCRIPT = r'''#!/usr/bin/env python3
+"""CoCalc project-host integrity watcher. Runs as root (systemd).
+
+Every few seconds it checks where the processes of the runtime (service) user
+and of the runtime user's subordinate uid ranges are running: inside a
+container, or as one of the host's known services. A process that is neither
+is reported. Every minute it also hashes a short list of host configuration
+files and reports changes made outside a bootstrap run.
+
+Results go to a root-owned status file that the project host includes in its
+heartbeat, and new findings are also written to the serial console when there
+is one. Findings never include command lines, environment or file contents.
+"""
+
+import argparse
+import glob
+import hashlib
+import json
+import os
+import pwd
+import signal
+import sys
+import time
+
+SCHEMA = "cocalc-host-integrity-v1"
+VERSION = 1
+
+# Programs the runtime user runs as host services (host user namespace).
+DEFAULT_HOST_EXES = (
+    "node",
+    "sshpiperd",
+    "systemd",
+    "sudo",
+    "systemd-executor",
+    "dbus-daemon",
+    "cloudflared",
+    "rustic",
+    "cocalc-rustic",
+    "podman",
+    "conmon",
+    "catatonit",
+    "pasta",
+    "pasta.avx2",
+    "crun",
+    "runc",
+    "slirp4netns",
+    "fuse-overlayfs",
+    "newuidmap",
+    "newgidmap",
+    "btrfs",
+)
+# Programs that belong in the container runtime's user namespace.
+DEFAULT_RUNTIME_EXES = (
+    "conmon",
+    "catatonit",
+    "pasta",
+    "pasta.avx2",
+    "podman",
+    "crun",
+    "runc",
+    "slirp4netns",
+    "fuse-overlayfs",
+    "rootlessport",
+    "aardvark-dns",
+    "netavark",
+    "newuidmap",
+    "newgidmap",
+)
+# Host configuration whose changes are reported (globs; files up to 1 MB).
+DEFAULT_CONFIG_PATHS = (
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/group",
+    "/etc/gshadow",
+    "/etc/subuid",
+    "/etc/subgid",
+    "/etc/sudoers",
+    "/etc/sudoers.d/*",
+    "/etc/ssh/sshd_config",
+    "/etc/ssh/sshd_config.d/*",
+    "/root/.ssh/authorized_keys",
+    "/home/*/.ssh/authorized_keys",
+    "/etc/crontab",
+    "/etc/cron.d/*",
+    "/var/spool/cron/crontabs/*",
+    "/etc/systemd/system/*.service",
+    "/etc/systemd/system/*.timer",
+    "/etc/ld.so.preload",
+    "/usr/local/sbin/*",
+    "/usr/local/libexec/*",
+)
+
+MAX_FINDINGS = 100
+MAX_INVENTORY = 300
+MAX_CHAIN = 5
+CONFIG_MAX_BYTES = 1 << 20
+SERIAL_REPEAT_S = 3600
+HEARTBEAT_WRITE_S = 15
+
+
+def now_iso(t=None):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t if t else time.time()))
+
+
+def read_text(path, limit=65536):
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit).decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def read_link(path):
+    try:
+        return os.readlink(path)
+    except OSError:
+        return None
+
+
+def subordinate_ranges(user, path="/etc/subuid"):
+    ranges = []
+    text = read_text(path) or ""
+    for line in text.splitlines():
+        parts = line.strip().split(":")
+        if len(parts) != 3 or parts[0] != user:
+            continue
+        try:
+            start, count = int(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+        if count > 0:
+            ranges.append((start, count))
+    return ranges
+
+
+def in_ranges(uid, ranges):
+    return any(start <= uid < start + count for start, count in ranges)
+
+
+class Proc:
+    """What the rules need from one /proc/<pid>, and nothing else."""
+
+    __slots__ = ("pid", "ppid", "comm", "uids", "exe", "userns", "cgroup")
+
+    def __init__(self, pid, ppid, comm, uids, exe, userns, cgroup):
+        self.pid = pid
+        self.ppid = ppid
+        self.comm = comm
+        self.uids = uids
+        self.exe = exe
+        self.userns = userns
+        self.cgroup = cgroup
+
+
+def read_proc(proc_root, pid):
+    base = os.path.join(proc_root, str(pid))
+    status = read_text(os.path.join(base, "status"))
+    if status is None:
+        return None
+    comm, ppid, uids = "", 0, ()
+    for line in status.splitlines():
+        if line.startswith("Name:"):
+            comm = line.split(":", 1)[1].strip()[:64]
+        elif line.startswith("PPid:"):
+            try:
+                ppid = int(line.split()[1])
+            except (IndexError, ValueError):
+                ppid = 0
+        elif line.startswith("Uid:"):
+            try:
+                uids = tuple(int(v) for v in line.split()[1:5])
+            except ValueError:
+                uids = ()
+    if not uids:
+        return None
+    exe = read_link(os.path.join(base, "exe"))
+    userns = read_link(os.path.join(base, "ns", "user"))
+    cgroup = ""
+    text = read_text(os.path.join(base, "cgroup"), 4096) or ""
+    for line in text.splitlines():
+        if line.startswith("0::"):
+            cgroup = line[3:][:200]
+            break
+    return Proc(pid, ppid, comm, uids, exe, userns, cgroup)
+
+
+def list_procs(proc_root):
+    procs = {}
+    try:
+        names = os.listdir(proc_root)
+    except OSError:
+        return procs
+    for name in names:
+        if not name.isdigit():
+            continue
+        p = read_proc(proc_root, int(name))
+        if p is not None:
+            procs[p.pid] = p
+    return procs
+
+
+def userns_kind(proc_root, ns, member_pid, host_ns, runtime_uid, cache):
+    """'host', 'runtime' (the container runtime's namespace: its root is the
+    runtime user) or 'other' (a container, or anything else)."""
+    if ns is None:
+        return "unknown"
+    if ns == host_ns:
+        return "host"
+    if ns in cache:
+        return cache[ns]
+    kind = "other"
+    text = read_text(os.path.join(proc_root, str(member_pid), "uid_map")) or ""
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == "0" and parts[1] == str(runtime_uid):
+            kind = "runtime"
+            break
+    cache[ns] = kind
+    return kind
+
+
+def exe_name(exe):
+    if not exe:
+        return ""
+    if exe.endswith(" (deleted)"):
+        exe = exe[: -len(" (deleted)")]
+    return os.path.basename(exe)
+
+
+def parent_chain(procs, proc):
+    chain, seen, cur = [], set(), procs.get(proc.ppid)
+    while cur is not None and len(chain) < MAX_CHAIN and cur.pid not in seen:
+        seen.add(cur.pid)
+        chain.append(cur.comm)
+        cur = procs.get(cur.ppid)
+    return chain
+
+
+def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
+             runtime_exes, self_pid):
+    """Returns (findings, inventory keys) for one scan. A finding is a dict
+    without any command line, environment or file content."""
+    findings, inventory, cache = [], [], {}
+    for p in procs.values():
+        if p.pid == self_pid:
+            continue
+        runtime = runtime_uid in p.uids
+        project = any(in_ranges(u, project_ranges) for u in p.uids)
+        if not runtime and not project:
+            continue
+        kind = userns_kind(proc_root, p.userns, p.pid, host_ns, runtime_uid, cache)
+        if kind not in ("host", "runtime"):
+            continue
+        name = exe_name(p.exe)
+        inventory.append(
+            "%s|%s|%s" % (kind, "project" if project else "runtime", p.exe or "?")
+        )
+        rule = None
+        if project:
+            rule, severity = "project-uid-outside-container", "critical"
+        elif kind == "runtime" and name not in runtime_exes:
+            rule, severity = "unexpected-process-in-container-runtime", "critical"
+        elif kind == "host" and name not in host_exes:
+            rule, severity = "unexpected-runtime-user-process", "high"
+        if rule is None:
+            continue
+        findings.append(
+            {
+                "rule": rule,
+                "severity": severity,
+                "pid": p.pid,
+                "comm": p.comm,
+                "exe": p.exe or "",
+                "uids": list(p.uids),
+                "userns": kind,
+                "parents": parent_chain(procs, p),
+                "cgroup": p.cgroup,
+            }
+        )
+    return findings, inventory
+
+
+def hash_config(patterns):
+    digests = {}
+    for pattern in patterns:
+        matches = sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[") else [pattern]
+        for path in matches:
+            try:
+                st = os.lstat(path)
+            except OSError:
+                if path == pattern:
+                    digests[path] = "missing"
+                continue
+            if not os.path.isfile(path) or os.path.islink(path):
+                digests[path] = "link:%s" % (read_link(path) or "") if os.path.islink(path) else "special"
+                continue
+            if st.st_size > CONFIG_MAX_BYTES:
+                digests[path] = "size:%d" % st.st_size
+                continue
+            try:
+                with open(path, "rb") as f:
+                    digests[path] = hashlib.sha256(f.read()).hexdigest()
+            except OSError:
+                digests[path] = "unreadable"
+    return digests
+
+
+def bootstrap_busy(state_path, now, quiet_s=300):
+    """True while a bootstrap operation runs, or finished in the last quiet_s
+    seconds (its writes to host configuration are expected)."""
+    if not state_path:
+        return False
+    try:
+        st = os.stat(state_path)
+        with open(state_path) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return False
+    if state.get("current_operation"):
+        return True
+    return now - st.st_mtime < quiet_s
+
+
+class Watcher:
+    def __init__(self, args):
+        self.args = args
+        self.proc_root = args.proc
+        pw = pwd.getpwnam(args.runtime_user)
+        self.runtime_uid = pw.pw_uid
+        self.project_ranges = subordinate_ranges(args.runtime_user, args.subuid)
+        allow = self.load_allowlist(args.allowlist)
+        self.host_exes = set(DEFAULT_HOST_EXES) | set(allow.get("host_exes", []))
+        self.runtime_exes = set(DEFAULT_RUNTIME_EXES) | set(allow.get("runtime_exes", []))
+        self.config_paths = list(DEFAULT_CONFIG_PATHS) + list(allow.get("config_paths", []))
+        self.findings = {}
+        self.inventory = {}
+        self.config_changes = {}
+        self.config_baseline = None
+        self.config_baseline_at = None
+        self.started_at = time.time()
+        self.scans = 0
+        self.errors = 0
+        self.last_scan_ms = 0
+        self.last_write = 0.0
+        self.last_config = 0.0
+        self.rebaseline = False
+        self.serial_sent = {}
+
+    @staticmethod
+    def load_allowlist(path):
+        if not path:
+            return {}
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def host_ns(self):
+        return read_link(os.path.join(self.proc_root, "1", "ns", "user"))
+
+    def scan(self, now):
+        started = time.monotonic()
+        procs = list_procs(self.proc_root)
+        found, inventory = evaluate(
+            procs,
+            self.proc_root,
+            self.host_ns(),
+            self.runtime_uid,
+            self.project_ranges,
+            self.host_exes,
+            self.runtime_exes,
+            os.getpid(),
+        )
+        self.scans += 1
+        self.last_scan_ms = int((time.monotonic() - started) * 1000)
+        for key in inventory:
+            if key in self.inventory or len(self.inventory) < MAX_INVENTORY:
+                self.inventory[key] = self.inventory.get(key, 0) + 1
+        new = []
+        for f in found:
+            key = "%s|%s|%s|%s" % (f["rule"], f["userns"], f["exe"], f["uids"][0])
+            entry = self.findings.get(key)
+            if entry is None:
+                entry = dict(f, first_seen=now_iso(now), count=0)
+                self.findings[key] = entry
+                new.append(entry)
+            entry.update(f, last_seen=now_iso(now))
+            entry["count"] += 1
+        if len(self.findings) > MAX_FINDINGS:
+            for key in sorted(self.findings, key=lambda k: self.findings[k]["last_seen"])[
+                : len(self.findings) - MAX_FINDINGS
+            ]:
+                del self.findings[key]
+        return new
+
+    def check_config(self, now):
+        digests = hash_config(self.config_paths)
+        if (
+            self.config_baseline is None
+            or self.rebaseline
+            or bootstrap_busy(self.args.bootstrap_state, now)
+        ):
+            self.config_baseline = digests
+            self.config_baseline_at = now_iso(now)
+            self.rebaseline = False
+            return []
+        new = []
+        for path in sorted(set(digests) | set(self.config_baseline)):
+            if digests.get(path) == self.config_baseline.get(path):
+                continue
+            if path not in self.config_changes:
+                entry = {
+                    "rule": "host-config-changed",
+                    "severity": "high",
+                    "path": path,
+                    "first_seen": now_iso(now),
+                }
+                self.config_changes[path] = entry
+                new.append(entry)
+            self.config_changes[path]["last_seen"] = now_iso(now)
+        return new
+
+    def serial(self, entries, now):
+        """Best effort: one line per new finding (at most hourly per key) on
+        the serial console, which the cloud keeps off the host."""
+        path = self.args.serial
+        if not path or not entries or not os.path.exists(path):
+            return
+        lines = []
+        for e in entries:
+            key = "%s|%s|%s" % (e.get("rule"), e.get("exe", ""), e.get("path", ""))
+            if key in self.serial_sent and now - self.serial_sent[key] < SERIAL_REPEAT_S:
+                continue
+            self.serial_sent[key] = now
+            short = {k: e.get(k) for k in ("rule", "severity", "exe", "uids", "userns", "path") if k in e}
+            lines.append("COCALC-HOST-INTEGRITY %s %s\n" % (now_iso(now), json.dumps(short, sort_keys=True)))
+        if not lines:
+            return
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+            try:
+                os.write(fd, "".join(lines).encode()[:4096])
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+
+    def status(self, now):
+        return {
+            "schema": SCHEMA,
+            "version": VERSION,
+            "started_at": now_iso(self.started_at),
+            "heartbeat_at": now_iso(now),
+            "scans": self.scans,
+            "last_scan_ms": self.last_scan_ms,
+            "errors": self.errors,
+            "runtime_uid": self.runtime_uid,
+            "project_uid_ranges": [list(r) for r in self.project_ranges],
+            "findings": sorted(self.findings.values(), key=lambda e: e["last_seen"], reverse=True),
+            "config": {
+                "baseline_at": self.config_baseline_at,
+                "files": len(self.config_baseline or {}),
+                "changes": list(self.config_changes.values()),
+            },
+            "inventory": dict(
+                sorted(self.inventory.items(), key=lambda kv: kv[1], reverse=True)
+            ),
+        }
+
+    def write_status(self, now):
+        directory = self.args.status_dir
+        os.makedirs(directory, mode=0o755, exist_ok=True)
+        os.chmod(directory, 0o755)
+        tmp = os.path.join(directory, ".status.%d.tmp" % os.getpid())
+        with open(tmp, "w") as f:
+            json.dump(self.status(now), f, sort_keys=True)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, os.path.join(directory, "status.json"))
+        self.last_write = now
+
+    def step(self, now):
+        new = []
+        try:
+            new += self.scan(now)
+            if now - self.last_config >= self.args.config_interval or self.rebaseline:
+                self.last_config = now
+                new += self.check_config(now)
+        except Exception:  # keep watching; the error count is reported
+            self.errors += 1
+        if new or now - self.last_write >= HEARTBEAT_WRITE_S:
+            try:
+                self.write_status(now)
+            except OSError:
+                self.errors += 1
+        self.serial(new, now)
+        return new
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--runtime-user", required=True)
+    parser.add_argument("--status-dir", default="/var/lib/cocalc-host-integrity")
+    parser.add_argument("--proc", default="/proc")
+    parser.add_argument("--subuid", default="/etc/subuid")
+    parser.add_argument("--allowlist", default="/etc/cocalc/host-integrity-allowlist.json")
+    parser.add_argument("--bootstrap-state", default="")
+    parser.add_argument("--serial", default="/dev/ttyS0")
+    parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--config-interval", type=float, default=60.0)
+    parser.add_argument("--once", action="store_true")
+    args = parser.parse_args(argv)
+    watcher = Watcher(args)
+
+    def on_hup(_sig, _frame):
+        watcher.rebaseline = True
+
+    signal.signal(signal.SIGHUP, on_hup)
+    while True:
+        now = time.time()
+        watcher.step(now)
+        if args.once:
+            watcher.write_status(now)
+            return 0
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+def configure_host_integrity_watch(
+    cfg: BootstrapConfig,
+    *,
+    script_path: Path = Path("/usr/local/libexec/cocalc-host-integrity"),
+    service_path: Path = Path(
+        "/etc/systemd/system/cocalc-host-integrity.service"
+    ),
+) -> None:
+    """A root service that reports where the runtime user's processes and its
+    container uid ranges run, and changes to host configuration. The status
+    lives in a root-owned directory (StateDirectory) that the project host
+    reads into its heartbeat."""
+    log_line(cfg, "bootstrap: configuring host integrity watcher")
+
+    def current(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    changed = current(script_path) != HOST_INTEGRITY_WATCH_SCRIPT
+    if changed:
+        text_write_atomic(
+            script_path, HOST_INTEGRITY_WATCH_SCRIPT, default_mode=0o755
+        )
+    os.chmod(script_path, 0o755)
+    args = " ".join(
+        shlex.quote(part)
+        for part in [
+            "/usr/bin/python3",
+            "-I",
+            str(script_path),
+            "--runtime-user",
+            cfg.ssh_user,
+            "--status-dir",
+            "/var/lib/cocalc-host-integrity",
+            "--bootstrap-state",
+            str(bootstrap_state_path(cfg)),
+        ]
+    )
+    service = f"""[Unit]
+Description=CoCalc project-host integrity watcher
+ConditionPathIsExecutable={script_path}
+
+[Service]
+Type=simple
+ExecStart={args}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StateDirectory=cocalc-host-integrity
+StateDirectoryMode=0755
+UMask=0022
+Nice=10
+CPUQuota=10%
+MemoryMax=128M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+"""
+    if current(service_path) != service:
+        text_write_atomic(service_path, service)
+        changed = True
+    run_cmd(
+        cfg,
+        ["systemctl", "daemon-reload"],
+        "reload systemd host integrity unit",
+        timeout=30,
+    )
+    # A changed script or unit takes effect now; an unchanged running watcher
+    # keeps its findings and inventory.
+    run_cmd(
+        cfg,
+        [
+            "systemctl",
+            "restart" if changed else "start",
+            "cocalc-host-integrity.service",
+        ],
+        "start host integrity watcher",
+        timeout=30,
+    )
+    run_cmd(
+        cfg,
+        ["systemctl", "enable", "cocalc-host-integrity.service"],
+        "enable host integrity watcher",
+        timeout=30,
+    )
 
 
 RSYSLOG_LOGROTATE_CONTENT = """/var/log/syslog
@@ -15155,6 +15781,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         ensure_bootstrap_paths(cfg)
         ensure_automatic_security_updates(cfg)
         configure_daily_root_cleanup(cfg)
+        configure_host_integrity_watch(cfg)
         configure_kernel_module_hardening(cfg)
         configure_kernel_sysctl_hardening(cfg)
         configure_kernel_key_limits(cfg)
@@ -15242,6 +15869,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         ensure_bootstrap_paths(cfg)
         configure_rsyslog_limits(cfg)
         configure_daily_root_cleanup(cfg)
+        configure_host_integrity_watch(cfg)
         configure_kernel_sysctl_hardening(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)

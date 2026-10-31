@@ -7964,6 +7964,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "ensure_bootstrap_paths",
                 "configure_rsyslog_limits",
                 "configure_daily_root_cleanup",
+                "configure_host_integrity_watch",
                 "configure_kernel_sysctl_hardening",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
@@ -8018,6 +8019,7 @@ class BootstrapModesTest(unittest.TestCase):
                     "ensure_bootstrap_paths",
                     "configure_rsyslog_limits",
                     "configure_daily_root_cleanup",
+                    "configure_host_integrity_watch",
                     "configure_kernel_sysctl_hardening",
                     "install_privileged_wrappers",
                     "install_privileged_tool_binaries",
@@ -8042,6 +8044,7 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_host_integrity_watch "
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
@@ -8114,6 +8117,7 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_host_integrity_watch "
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
@@ -8401,6 +8405,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("ensure_bootstrap_paths", lambda _cfg: None)
             patch("ensure_automatic_security_updates", lambda _cfg: None)
             patch("configure_daily_root_cleanup", lambda _cfg: None)
+            patch("configure_host_integrity_watch", lambda _cfg: None)
             patch("compute_image_size", lambda _cfg: 10)
             patch("configure_kernel_module_hardening", lambda _cfg: None)
             patch("configure_kernel_sysctl_hardening", lambda _cfg: None)
@@ -9037,6 +9042,218 @@ class ManagedProjectJobOutputRelayTest(unittest.TestCase):
         self.assertNotIn("sel.select", paused)
         self.assertNotIn("emit_output", paused)
         self.assertNotIn("256 * 1024", source)
+
+
+class HostIntegrityWatchTest(unittest.TestCase):
+    """The root watcher, against a fake /proc."""
+
+    HOST_NS = "user:[4026531837]"
+    RUNTIME_NS = "user:[4026532301]"
+    CONTAINER_NS = "user:[4026532400]"
+    SECRET = "s3cret-token-in-cmdline-and-env"
+
+    def watch(self):
+        namespace = {"__name__": "host_integrity_watch_test"}
+        exec(bootstrap.HOST_INTEGRITY_WATCH_SCRIPT, namespace)
+        return namespace
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.proc = self.root / "proc"
+        self.user = pwd.getpwuid(os.getuid()).pw_name
+        self.uid = os.getuid()
+        # project ranges as podman sets them up: 231072 + 65536, 327680 + ...
+        self.subuid = self.root / "subuid"
+        self.subuid.write_text(f"{self.user}:231072:65536\n{self.user}:327680:4128768\n")
+        self.add_proc(1, 0, "systemd", 0, "/usr/lib/systemd/systemd", self.HOST_NS)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def add_proc(self, pid, ppid, comm, uid, exe, ns, uid_map=None):
+        base = self.proc / str(pid)
+        (base / "ns").mkdir(parents=True)
+        (base / "status").write_text(
+            f"Name:\t{comm}\nPPid:\t{ppid}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n"
+        )
+        os.symlink(exe, base / "exe")
+        os.symlink(ns, base / "ns" / "user")
+        (base / "cgroup").write_text(f"0::/cocalc-test/{pid}\n")
+        (base / "cmdline").write_text(f"{comm}\0--token\0{self.SECRET}\0")
+        (base / "environ").write_text(f"API_KEY={self.SECRET}\0")
+        if uid_map is not None:
+            (base / "uid_map").write_text(uid_map)
+
+    def watcher(self, ns, **overrides):
+        args = ns["argparse"].Namespace(
+            runtime_user=self.user,
+            status_dir=str(self.root / "status"),
+            proc=str(self.proc),
+            subuid=str(self.subuid),
+            allowlist="",
+            bootstrap_state="",
+            serial="",
+            interval=2.0,
+            config_interval=60.0,
+            once=True,
+        )
+        for key, value in overrides.items():
+            setattr(args, key, value)
+        return ns["Watcher"](args)
+
+    def test_reports_processes_that_run_outside_their_place(self) -> None:
+        runtime_map = f"0 {self.uid} 1\n1 231072 65536\n"
+        container_map = f"0 231072 2001\n2001 {self.uid} 1\n"
+        # expected: the daemon's node and podman's runtime helpers
+        self.add_proc(10, 1, "project-host:ap", self.uid, "/home/x/.nvm/bin/node", self.HOST_NS)
+        self.add_proc(20, 1, "conmon", self.uid, "/opt/rt/bin/conmon", self.RUNTIME_NS, runtime_map)
+        self.add_proc(21, 1, "pasta.avx2", self.uid, "/opt/rt/bin/pasta.avx2", self.RUNTIME_NS, runtime_map)
+        # inside a container: fine, whatever it runs
+        self.add_proc(30, 20, "python3", 231072, "/usr/bin/python3", self.CONTAINER_NS, container_map)
+        self.add_proc(31, 30, "bash", self.uid, "/usr/bin/bash", self.CONTAINER_NS, container_map)
+        # root processes are out of scope
+        self.add_proc(40, 1, "sshd", 0, "/usr/sbin/sshd", self.HOST_NS)
+        # not where they belong
+        self.add_proc(50, 20, "sh", 231072, "/usr/bin/dash", self.HOST_NS)
+        self.add_proc(51, 20, "bash", self.uid, "/usr/bin/bash", self.RUNTIME_NS, runtime_map)
+        self.add_proc(52, 10, "curl", self.uid, "/usr/bin/curl", self.HOST_NS)
+
+        ns = self.watch()
+        w = self.watcher(ns)
+        new = w.step(1000.0)
+        rules = sorted((f["rule"], f["exe"], f["severity"]) for f in new)
+        self.assertEqual(
+            rules,
+            [
+                ("project-uid-outside-container", "/usr/bin/dash", "critical"),
+                ("unexpected-process-in-container-runtime", "/usr/bin/bash", "critical"),
+                ("unexpected-runtime-user-process", "/usr/bin/curl", "high"),
+            ],
+        )
+        by_exe = {f["exe"]: f for f in new}
+        self.assertEqual(by_exe["/usr/bin/dash"]["userns"], "host")
+        self.assertEqual(by_exe["/usr/bin/dash"]["parents"], ["conmon", "systemd"])
+        self.assertEqual(by_exe["/usr/bin/curl"]["parents"], ["project-host:ap", "systemd"])
+
+        # A repeat sighting counts, without a new finding (the status is
+        # rewritten at least every 15 s).
+        self.assertEqual(w.step(1020.0), [])
+        status = json.loads((self.root / "status" / "status.json").read_text())
+        self.assertEqual(status["schema"], "cocalc-host-integrity-v1")
+        self.assertEqual({f["count"] for f in status["findings"]}, {2})
+        self.assertEqual(status["project_uid_ranges"], [[231072, 65536], [327680, 4128768]])
+        self.assertIn(f"runtime|runtime|/opt/rt/bin/conmon", status["inventory"])
+        self.assertIn(f"host|project|/usr/bin/dash", status["inventory"])
+        self.assertNotIn("container", "".join(status["inventory"]))
+
+        # Findings never carry command lines, environment or file contents.
+        text = (self.root / "status" / "status.json").read_text()
+        self.assertNotIn(self.SECRET, text)
+        for finding in status["findings"]:
+            self.assertEqual(
+                set(finding),
+                {"rule", "severity", "pid", "comm", "exe", "uids", "userns",
+                 "parents", "cgroup", "first_seen", "last_seen", "count"},
+            )
+        self.assertEqual(oct(os.stat(self.root / "status" / "status.json").st_mode & 0o777), "0o644")
+
+    def test_allowlist_file_extends_the_defaults(self) -> None:
+        self.add_proc(52, 1, "curl", self.uid, "/usr/bin/curl", self.HOST_NS)
+        allow = self.root / "allow.json"
+        allow.write_text(json.dumps({"host_exes": ["curl"]}))
+        ns = self.watch()
+        self.assertEqual(self.watcher(ns, allowlist=str(allow)).step(1000.0), [])
+
+    def test_reports_host_config_changes_outside_bootstrap(self) -> None:
+        conf = self.root / "etc"
+        conf.mkdir()
+        (conf / "sudoers").write_text("root ALL=(ALL) ALL\n")
+        (conf / "authorized_keys").write_text("ssh-ed25519 AAAA one\n")
+        state = self.root / "bootstrap-state.json"
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (str(conf / "sudoers"), str(conf / "*_keys"))
+        w = self.watcher(ns, bootstrap_state=str(state))
+        self.assertEqual(w.step(1000.0), [])  # baseline
+        (conf / "authorized_keys").write_text("ssh-ed25519 AAAA one\nssh-ed25519 BBBB evil\n")
+        new = w.step(1100.0)
+        self.assertEqual([(f["rule"], f["path"]) for f in new],
+                         [("host-config-changed", str(conf / "authorized_keys"))])
+        self.assertNotIn("evil", (self.root / "status" / "status.json").read_text())
+        # Changes while bootstrap runs are expected: they become the baseline.
+        state.write_text(json.dumps({"current_operation": "reconcile"}))
+        (conf / "sudoers").write_text("root ALL=(ALL) ALL\n# bootstrap\n")
+        self.assertEqual(w.step(1200.0), [])
+        state.write_text(json.dumps({"current_operation": None}))
+        os.utime(state, (0, 0))
+        self.assertEqual(w.step(1300.0), [])
+
+    def test_mirrors_new_findings_to_the_serial_console_at_most_hourly(self) -> None:
+        self.add_proc(50, 1, "sh", 231072, "/usr/bin/dash", self.HOST_NS)
+        serial = self.root / "ttyS0"
+        serial.write_text("")
+        ns = self.watch()
+        w = self.watcher(ns, serial=str(serial))
+        w.step(1000.0)
+        lines = serial.read_text().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("COCALC-HOST-INTEGRITY "))
+        self.assertIn("project-uid-outside-container", lines[0])
+        self.assertNotIn(self.SECRET, serial.read_text())
+        # the same finding again: no new line within the hour
+        w.findings.clear()
+        w.step(1100.0)
+        self.assertEqual(len(serial.read_text().splitlines()), 1)
+        # a missing console is skipped
+        self.watcher(ns, serial=str(self.root / "absent")).step(1000.0)
+
+    def test_installs_a_root_service_with_a_root_owned_status_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            script_path = Path(tmpdir) / "cocalc-host-integrity"
+            service_path = Path(tmpdir) / "cocalc-host-integrity.service"
+            recorded = []
+            with mock.patch.object(
+                bootstrap,
+                "run_cmd",
+                lambda _cfg, args, desc, **kwargs: recorded.append(args)
+                or subprocess.CompletedProcess(args, 0, stdout=""),
+            ), mock.patch.object(bootstrap, "log_line", lambda *_a, **_k: None):
+                bootstrap.configure_host_integrity_watch(
+                    cfg, script_path=script_path, service_path=service_path
+                )
+                self.assertEqual(
+                    script_path.read_text(), bootstrap.HOST_INTEGRITY_WATCH_SCRIPT
+                )
+                self.assertEqual(oct(script_path.stat().st_mode & 0o777), "0o755")
+                unit = service_path.read_text()
+                self.assertIn("StateDirectory=cocalc-host-integrity", unit)
+                self.assertIn("StateDirectoryMode=0755", unit)
+                self.assertIn("--runtime-user " + cfg.ssh_user, unit)
+                self.assertIn("--status-dir /var/lib/cocalc-host-integrity", unit)
+                self.assertIn(
+                    "--bootstrap-state " + str(bootstrap.bootstrap_state_path(cfg)),
+                    unit,
+                )
+                self.assertIn("ProtectSystem=strict", unit)
+                self.assertIn("NoNewPrivileges=yes", unit)
+                self.assertNotIn("User=", unit)
+                self.assertIn(
+                    ["systemctl", "restart", "cocalc-host-integrity.service"], recorded
+                )
+                # Unchanged: start (a no-op when running), keeping its state.
+                recorded.clear()
+                bootstrap.configure_host_integrity_watch(
+                    cfg, script_path=script_path, service_path=service_path
+                )
+                self.assertIn(
+                    ["systemctl", "start", "cocalc-host-integrity.service"], recorded
+                )
+                self.assertNotIn(
+                    ["systemctl", "restart", "cocalc-host-integrity.service"], recorded
+                )
+        # The status lives outside /var/lib/cocalc, which the runtime user owns.
+        self.assertNotIn("/var/lib/cocalc/", bootstrap.HOST_INTEGRITY_WATCH_SCRIPT)
 
 
 if __name__ == "__main__":
