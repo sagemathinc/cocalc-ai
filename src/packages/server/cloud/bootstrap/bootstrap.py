@@ -5086,12 +5086,16 @@ def read_speeds(host, knobs):
 
 
 def set_speed(host, knobs, speed):
-    """Sets scrub_speed_max on each knob (whose old values are saved first)."""
+    """Sets scrub_speed_max on each knob (whose old values are saved first);
+    True only if every one of them reads back the cap."""
+    capped = True
     for path in sorted(knobs):
         try:
             host.write(path, "%d" % speed)
+            capped = capped and host.read(path).strip() == "%d" % speed
         except OSError:
-            pass
+            capped = False
+    return capped
 
 
 def restore_speed(host, previous):
@@ -5370,7 +5374,11 @@ def run(args, host, store):
     # without this service watching its pressure and time budget.
     supervising = False
     try:
-        set_speed(host, knobs, speed)
+        if not (knobs and set(previous) == knobs and set_speed(host, knobs, speed)):
+            # The cap is the scrub's only throttle: no scrub runs unless every
+            # device has it (and its old value saved to restore).
+            supervising = orphan  # one of ours that runs on is cancelled
+            return finish("error", "the scrub speed could not be capped")
         if orphan:
             # watch it again, throttled
             supervising = True

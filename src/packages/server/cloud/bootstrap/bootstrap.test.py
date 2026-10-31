@@ -11514,6 +11514,44 @@ class BtrfsScrubScriptTest(unittest.TestCase):
         self.assertEqual(host.files[knob], "123456789")
         self.assertNotIn("throttle_restore", status)
 
+    def test_no_scrub_runs_unless_every_device_is_capped(self):
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        start = [SCRUB_NS["BTRFS"], "scrub", "start", "/mnt/cocalc"]
+        # a knob that can't be written
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        orig_write = host.write
+
+        def write(path, text):
+            if path == knob:
+                raise OSError(path)
+            orig_write(path, text)
+
+        host.write = write
+        status = self.run_once(host)
+        self.assertEqual((status["state"], status["reason"]), ("error", "the scrub speed could not be capped"))
+        self.assertNotIn(start, host.calls)
+        self.assertEqual(host.files[knob], "0")
+        # a second device without a knob: the first one isn't touched either
+        host = ScrubFakeHost()
+        host.dirs["/sys/fs/btrfs/%s/devinfo" % SCRUB_FSID] = ["1", "2"]
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertNotIn(start, host.calls)
+        self.assertEqual(host.files[knob], "0")
+        # our own scrub, left running, that can't be capped is cancelled
+        status["current"] = {"started_at": SCRUB_NS["iso"](host.t), "phase": "running"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub, host.done = "running", 10**9
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual(status["current"]["phase"], "interrupted")
+
     def test_not_btrfs_is_reported_and_nothing_runs(self):
         host = ScrubFakeHost()
         host.run = lambda args: (0, "ext4 abc\n", "")
