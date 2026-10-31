@@ -452,6 +452,42 @@ describe("per-agent dialog", () => {
     );
   });
 
+  it("removes a connected account from here, even with the connector off", async () => {
+    mockApi.disconnectCliConnection.mockResolvedValue(undefined);
+    render(
+      <CliConnectorAgentModal
+        agent={agent("writer", "writer-id") as any}
+        connector="github"
+        open
+        onClose={() => {}}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "GitHub for @writer",
+    });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("switch")).not.toBeChecked(),
+    );
+    // Off: the account is listed (not selectable) and can be removed.
+    expect(within(dialog).getByRole("radio", { name: "@octo" })).toBeDisabled();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Disconnect @octo" }),
+    );
+    const confirm = (await screen.findAllByRole("dialog")).find((d) =>
+      d.textContent?.includes("Disconnect @octo?"),
+    )!;
+    // It names how many agents lose it (builder uses it).
+    expect(confirm).toHaveTextContent("1 agent uses it");
+    await userEvent.click(
+      within(confirm).getByRole("button", { name: "Disconnect" }),
+    );
+    await waitFor(() =>
+      expect(mockApi.disconnectCliConnection).toHaveBeenCalledWith({
+        connection_id: "conn-1",
+      }),
+    );
+  });
+
   it("cannot turn on without a connected account", async () => {
     mockApi.listCliConnections.mockResolvedValue([]);
     mockApi.listCliConnectorGrants.mockResolvedValue([]);
