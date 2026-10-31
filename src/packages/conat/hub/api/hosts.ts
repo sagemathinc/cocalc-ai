@@ -1245,6 +1245,42 @@ export interface HostPublicRouteProbe {
 
 export type HostPublicRouteMode = "cloudflare-tunnel" | "cloudflare-proxy";
 
+// The host integrity watcher (a root service on the host) and pending reboot
+// for updates, as the project host reports them in its heartbeat.
+export interface HostIntegrityFinding {
+  rule: string;
+  severity: string;
+  comm: string;
+  exe: string;
+  uids: number[];
+  userns: string;
+  parents: string[];
+  first_seen?: string;
+  last_seen?: string;
+  count: number;
+}
+
+export interface HostIntegrityStatus {
+  // running: a recent status; stale: the status stopped updating; missing:
+  // no watcher installed (or not yet); unreadable: a broken status file.
+  watcher: "running" | "stale" | "missing" | "unreadable";
+  observed_at: string;
+  schema?: string;
+  heartbeat_at?: string;
+  started_at?: string;
+  scans?: number;
+  errors?: number;
+  findings?: HostIntegrityFinding[];
+  finding_count?: number;
+  // newest first (last_seen), capped; config_change_count counts them all
+  config_changes?: { path: string; first_seen?: string; last_seen?: string }[];
+  config_change_count?: number;
+  config_baseline_at?: string;
+  inventory?: Record<string, number>;
+  // When the host started needing a reboot to apply updates (null: none).
+  reboot_required_since: string | null;
+}
+
 export interface HostBeesStatus {
   enabled: boolean;
   running: boolean;
@@ -1308,6 +1344,7 @@ export interface Host {
   host_session_started_at?: string;
   public_route_probe?: HostPublicRouteProbe;
   bees?: HostBeesStatus;
+  host_integrity?: HostIntegrityStatus;
   metrics?: HostMetrics;
   pressure?: HostPressureState;
   placement?: HostPlacementSnapshot;
