@@ -137,6 +137,7 @@ describe("host integrity for the heartbeat", () => {
       },
     ]);
     expect(result.inventory).toEqual({ "host|runtime|/usr/bin/sudo": 3 });
+    expect(result.artifact_events).toEqual([]);
     expect(result.reboot_required_since).toBe("2026-10-28T12:00:00.000Z");
   });
 
@@ -165,6 +166,34 @@ describe("host integrity for the heartbeat", () => {
     expect(result.finding_count).toBe(26);
     expect(result.findings).toHaveLength(20);
     expect(result.findings![0].severity).toBe("critical");
+  });
+
+  it("passes on root's latest artifact installs", async () => {
+    const events = Array.from({ length: 25 }, (_, i) => ({
+      at: "2026-10-31T00:00:00Z",
+      action: "install",
+      kind: "tools",
+      version: `v${i}`,
+      result: "installed",
+      sha256: "x".repeat(64),
+    }));
+    await writeFile(
+      join(dir, "status.json"),
+      JSON.stringify(status({ artifact_events: events })),
+    );
+    const result = await readHostIntegrity({
+      statusPath: join(dir, "status.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    expect(result.artifact_events).toHaveLength(20);
+    expect(result.artifact_events![19]).toEqual({
+      at: "2026-10-31T00:00:00.000Z",
+      action: "install",
+      kind: "tools",
+      version: "v24",
+      result: "installed",
+    });
   });
 
   it("keeps the newest config changes when there are more than it passes on", async () => {
