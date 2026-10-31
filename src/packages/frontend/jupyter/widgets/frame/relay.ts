@@ -52,6 +52,9 @@ const ENTRY_TYPES = new Set(["state", "value", "buffers", "message"]);
 
 // How long an identical comm message from another frame counts as a repeat.
 const DUPLICATE_MESSAGE_MS = 2000;
+// Comm methods every frame sends for a model it runs (deduplicated across
+// frames); anything else is a separate action.
+const INIT_COMM_METHODS = new Set<unknown>(["request_state"]);
 
 // The comm messages widget views send, by method, with the keys allowed.
 const COMM_SHAPES: { [method: string]: Set<string> } = {
@@ -485,9 +488,13 @@ export class WidgetRelay {
             return;
           }
         }
-        if (buffers == null || buffers.length === 0) {
-          // Every frame runs every model, so creation-time messages arrive
-          // once per frame.
+        // Every frame runs every model, so initialization messages arrive
+        // once per frame. Only those are deduplicated: identical user
+        // actions (e.g. clicks on two views of one button) are distinct.
+        if (
+          INIT_COMM_METHODS.has(data.method) &&
+          (buffers == null || buffers.length === 0)
+        ) {
           if (this.isRepeat(conn, JSON.stringify([comm_id, data]))) return;
         }
         if (!this.allowWrite(conn)) return;
