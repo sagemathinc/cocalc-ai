@@ -1894,6 +1894,15 @@ export async function activateInstalledProjectHostVersion(
     },
     normalizeBaseUrl(),
   );
+  if (resolved.rootInstall) {
+    // A rollback target may be a version kept from before root installs:
+    // root installs it again (verified) so it can become current.
+    await rootInstallArtifact(
+      resolved.canonicalArtifact as RootArtifactKind,
+      normalizedVersion,
+      resolved.baseUrl ?? normalizeBaseUrl(),
+    );
+  }
   await assertInstalledVersionDir(resolved.versionDir);
   if (!resolved.rootInstall) {
     await ensureWritableDir(path.dirname(resolved.currentLink));

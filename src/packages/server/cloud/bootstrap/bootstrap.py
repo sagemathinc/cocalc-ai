@@ -8159,6 +8159,12 @@ def extract(archive, dest):
             if len(parts) < 2:
                 continue
             member.name = "/".join(parts[1:])
+            if member.islnk():
+                # a hard link names its target from the archive's top too
+                target = [p for p in member.linkname.split("/") if p not in ("", ".")]
+                if member.linkname.startswith("/") or len(target) < 2:
+                    raise Refused("hard link %s has no target below the top directory" % member.name)
+                member.linkname = "/".join(target[1:])
             members.append(member)
         tar.extractall(dest, members=members, filter="data")
 

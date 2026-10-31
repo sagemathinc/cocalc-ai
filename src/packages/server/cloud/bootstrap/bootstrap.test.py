@@ -10282,6 +10282,26 @@ class RuntimeArtifactsHelperTest(unittest.TestCase):
         self.install("s1")
         self.assertEqual(oct((self.tools / "s1" / "suid").stat().st_mode & 0o7777), "0o755")
 
+    def test_hard_links_follow_the_stripped_top_directory(self) -> None:
+        def hardlink(name, target):
+            info = tarfile.TarInfo(name)
+            info.type, info.linkname = tarfile.LNKTYPE, target
+            return info
+
+        self.release("l1", add=lambda t: t.addfile(hardlink("tools-l1/rustic2", "tools-l1/rustic")))
+        self.install("l1")
+        installed = self.tools / "l1"
+        self.assertEqual(
+            (installed / "rustic2").stat().st_ino, (installed / "rustic").stat().st_ino
+        )
+        # a link to the top directory itself, or out of the tree, is refused
+        for i, target in enumerate(("tools-l2", "tools-l2/../../etc/passwd", "/etc/passwd")):
+            version = f"l2{i}"
+            self.release(version, add=lambda t, target=target: t.addfile(hardlink(f"tools-{version}/x", target)))
+            with self.assertRaises((tarfile.TarError, self.ns["Refused"])):
+                self.install(version)
+            self.assertFalse((self.tools / version).exists())
+
     def test_the_configuration_must_be_roots(self) -> None:
         Refused = self.ns["Refused"]
         self.cfg_path.chmod(0o664)
