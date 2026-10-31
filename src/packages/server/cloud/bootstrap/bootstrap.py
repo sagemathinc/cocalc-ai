@@ -6717,6 +6717,11 @@ def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
     view_uid = validate_view_uid(values["idmap"]) if "idmap" in values else None
     if view_uid is not None:
         validate_project_id(project_id)
+        for name in ("upper", "work"):
+            if values[f"{name}-root"] != PROJECT_UPPER_ROOT or not values[
+                f"{name}-path"
+            ].startswith(f"project-{project_id}/"):
+                fail(f"an idmapped overlay {name} must be in project {project_id}'s home")
     descriptors = []
     staged = False
     try:
@@ -6734,7 +6739,8 @@ def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
             for original, name in ((upperfd, upper_name), (workfd, work_name)):
                 fd = openat2(stagingfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
                 descriptors.append(fd)
-                if os.fstat(fd).st_ino != os.fstat(original).st_ino:
+                a, b = os.fstat(fd), os.fstat(original)
+                if (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino):
                     fail("idmapped overlay upper does not match the requested upper")
             paths = [f"/proc/self/fd/{fd}" for fd in (lowerfd, descriptors[-2], descriptors[-1], mergedfd)]
         else:
@@ -6976,6 +6982,8 @@ PROJECT_VIEW_ROOTFS_UPPER = "rootfs-upper"
 # helper makes is exactly one of these, so it never unmounts anything else.
 PROJECT_VIEW_TARGETS = (*PROJECT_VIEW_KINDS, PROJECT_VIEW_ROOTFS_UPPER)
 PROJECT_VIEW_MOUNT_OPTIONS = "nosuid,nodev"
+# An idmapped overlay upper must live in the project's own home.
+PROJECT_UPPER_ROOT = "/mnt/cocalc"
 PROJECT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 PROJECT_VIEW_COMMANDS = {
     "project-view-mount",

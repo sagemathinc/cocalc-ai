@@ -9417,32 +9417,46 @@ class ProjectViewHelperTest(unittest.TestCase):
 
     def test_overlay_idmap_uses_the_staged_upper(self) -> None:
         rootfs = self.tmp / "rootfs"
-        for name in ("lower", "t/upperdir", "t/workdir", f"roots/{self.PROJECT}"):
+        home = f"project-{self.PROJECT}/.local/share/cocalc/rootfs/img"
+        for name in ("lower", f"{home}/upperdir", f"{home}/workdir", f"roots/{self.PROJECT}"):
             (rootfs / name).mkdir(parents=True)
+        self.ns["PROJECT_UPPER_ROOT"] = str(rootfs)
         O_PATH = self.ns["O_PATH"]
         staged = []
 
         def fake_stage(project_id, upperfd, workfd, view_uid):
             staged.append((project_id, view_uid))
-            return os.open(rootfs / "t", O_PATH | os.O_DIRECTORY), "upperdir", "workdir"
+            return os.open(rootfs / home, O_PATH | os.O_DIRECTORY), "upperdir", "workdir"
 
         self.ns["mount_idmapped_upper"] = fake_stage
-        argv = [
-            "mount-overlay-project",
-            "--lower-root", str(rootfs), "--lower-path", "lower",
-            "--upper-root", str(rootfs), "--upper-path", "t/upperdir",
-            "--work-root", str(rootfs), "--work-path", "t/workdir",
-            "--merged-root", str(rootfs), "--merged-path", f"roots/{self.PROJECT}",
-            "--idmap", "1073741824",
-        ]
+
+        def argv(upper=f"{home}/upperdir", work=f"{home}/workdir", uid="1073741824"):
+            return [
+                "mount-overlay-project",
+                "--lower-root", str(rootfs), "--lower-path", "lower",
+                "--upper-root", str(rootfs), "--upper-path", upper,
+                "--work-root", str(rootfs), "--work-path", work,
+                "--merged-root", str(rootfs), "--merged-path", f"roots/{self.PROJECT}",
+                "--idmap", uid,
+            ]
+
         with mock.patch.object(self.ns["subprocess"], "run") as run:
-            self.ns["run_overlay"](argv, allowed_roots={str(rootfs)})
+            self.ns["run_overlay"](argv(), allowed_roots={str(rootfs)})
         self.assertEqual(staged, [(self.PROJECT, 1073741824)])
         args = run.call_args.args[0]
         self.assertIn("xino=off,metacopy=on,redirect_dir=on,index=off", args[5])
-        with mock.patch.object(self.ns["subprocess"], "run"):
-            with self.assertRaises(ValueError):
-                self.ns["run_overlay"](argv[:-1] + ["2000"], allowed_roots={str(rootfs)})
+        other = "99999999-2222-4333-8444-555555555555"
+        (rootfs / f"project-{other}/u").mkdir(parents=True)
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            for bad in (
+                argv(uid="2000"),
+                argv(upper=f"project-{other}/u"),
+                argv(upper="lower"),
+                argv(work="lower"),
+            ):
+                with self.assertRaises(ValueError):
+                    self.ns["run_overlay"](bad, allowed_roots={str(rootfs)})
+        run.assert_not_called()
 
     def test_idmapped_upper_needs_upper_and_work_in_one_dir(self) -> None:
         O_PATH = self.ns["O_PATH"]
