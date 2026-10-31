@@ -34,7 +34,6 @@ import {
   getAccountNotificationIndexProjectionBacklogStatus,
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getHostIntrusionObservationSummary } from "@cocalc/server/hosts/intrusion-monitor";
 import {
   getHostIntegritySummary,
   hostIntegrityHealth,
@@ -2307,7 +2306,6 @@ export async function getLaunchHealth({
     smokeResult,
     hostSyntheticProbesResult,
     adminAlertsResult,
-    intrusionObservationsResult,
     backupPurgeResult,
     billingExposureResult,
     kernelHardeningResult,
@@ -2338,7 +2336,6 @@ export async function getLaunchHealth({
     getLatestLaunchSmokeResult(),
     listHostSyntheticProbes(),
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
-    getHostIntrusionObservationSummary(),
     getBackupPurgeHealth(),
     getBillingExposureHealth({ bay_id: currentBay.bay_id }),
     getHostKernelHardeningSummary(),
@@ -2458,10 +2455,6 @@ export async function getLaunchHealth({
     adminAlertsResult.status === "fulfilled"
       ? adminAlertsResult.value
       : undefined;
-  const intrusionObservations =
-    intrusionObservationsResult.status === "fulfilled"
-      ? intrusionObservationsResult.value
-      : undefined;
   const sla = getUxLatencySlaThresholdsFromSettings(settings);
   const killSwitches = launchHealthKillSwitches(settings);
   const projectionTotal = projectionBacklogTotal(load);
@@ -2570,28 +2563,6 @@ export async function getLaunchHealth({
           : (adminAlerts?.alerts.map(
               (alert) => `${alert.sent_at} ${alert.subject}`,
             ) ?? []),
-    }),
-    launchHealthCheck({
-      id: "project-host-intrusion-observations",
-      label: "Project host intrusion observations",
-      level:
-        intrusionObservationsResult.status === "rejected" ||
-        !intrusionObservations ||
-        intrusionObservations.missing_hosts > 0 ||
-        intrusionObservations.stale_hosts > 0 ||
-        intrusionObservations.incomplete_hosts > 0
-          ? "unknown"
-          : "healthy",
-      summary:
-        intrusionObservationsResult.status === "rejected"
-          ? "Unable to review retained project-host intrusion observations."
-          : !intrusionObservations
-            ? "No project-host intrusion observation summary is available."
-            : `${intrusionObservations.observed_hosts}/${intrusionObservations.active_hosts} active hosts observed; ${intrusionObservations.recently_changed_hosts} had retained security-state changes in the last 24 hours.`,
-      details:
-        intrusionObservationsResult.status === "rejected"
-          ? [`${intrusionObservationsResult.reason}`]
-          : (intrusionObservations?.details ?? []),
     }),
     launchHealthCheck({
       id: "project-host-kernel-hardening",

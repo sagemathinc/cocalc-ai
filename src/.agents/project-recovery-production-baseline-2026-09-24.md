@@ -15,7 +15,8 @@ must not be used as evidence that the proposed recovery objectives are met.
 
 The production `admin health --wide` read-only check reported 37 registered
 project hosts on bay-0 and 16 active hosts in the separate intrusion monitor
-check. Bay backup restore and PITR checks were healthy. Browser-observed
+check (that legacy monitor was removed on 2026-10-31, superseded by the host
+integrity watcher). Bay backup restore and PITR checks were healthy. Browser-observed
 project-start lifecycle p95 was 81 seconds from 239 starts in the preceding
 60 minutes, above the existing seven-second production target. Its backend
 component was 76 seconds p95, admission 1.1 seconds, and convergence 4.5
