@@ -46,7 +46,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261031-v63"
+HELPER_SCHEMA_VERSION = "20261031-v64"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -6532,7 +6532,10 @@ def run_rustic(
                 raise subprocess.CalledProcessError(status, base)
             return
 
-        restore = ["restore"]
+        # Restores into a tree that may already hold files: Rustic must read
+        # each one, not trust a matching size and modification time (both are
+        # easy to keep while changing the bytes).
+        restore = ["restore", "--verify-existing"]
         if values["no-cache"]:
             restore.append("--no-cache")
         if values["delete"]:
