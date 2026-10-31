@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261031-v62"
+HELPER_SCHEMA_VERSION = "20261031-v63"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -1625,6 +1625,8 @@ class BundleSpec:
 
 COCALC_INSTALL_ROOT = Path("/opt/cocalc")
 COCALC_INSTALL_OWNER = (0, 0)
+# Root keeps its state here and mounts the loop image from here by name.
+COCALC_STATE_ROOT = Path("/var/lib/cocalc")
 
 
 @dataclass(frozen=True)
@@ -4025,9 +4027,30 @@ def ensure_runtime_user_manager(cfg: BootstrapConfig) -> None:
 def prepare_dirs(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: preparing cocalc directories")
     ensure_cocalc_install_root()
-    for path in ["/var/lib/cocalc", "/etc/cocalc", "/mnt/cocalc"]:
+    for path in ["/etc/cocalc", "/mnt/cocalc"]:
         Path(path).mkdir(parents=True, exist_ok=True)
-    run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", "/var/lib/cocalc"], "chown cocalc dirs")
+    ensure_cocalc_state_root(cfg)
+
+
+def ensure_cocalc_state_root(cfg: BootstrapConfig) -> None:
+    """Root-owned and not writable by others: root scripts keep state in
+    /var/lib/cocalc and mount the loop image from it by name, so the runtime
+    user must not be able to rename or replace anything there.  The runtime
+    user only reads the published bootstrap-lifecycle view."""
+    path = COCALC_STATE_ROOT
+    _require(path.resolve() == path, f"CoCalc state root contains a symlink: {path}")
+    path.mkdir(mode=0o755, parents=True, exist_ok=True)
+    # Older bootstrap made /var/lib/cocalc runtime-owned. Migrate only that
+    # inode; its children keep their ownership.
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        if (info.st_uid, info.st_gid) != (0, 0) or info.st_mode & 0o022:
+            log_line(cfg, f"bootstrap: making {path} root-owned (was {info.st_uid}:{info.st_gid} {stat.S_IMODE(info.st_mode):o})")
+        os.fchown(fd, 0, 0)
+        os.fchmod(fd, 0o755)
+    finally:
+        os.close(fd)
 
 
 def tree_has_unexpected_ownership(path: Path, uid: int, gid: int) -> bool:
@@ -5507,6 +5530,7 @@ installed below /usr/local with root ownership.
 
 import ctypes
 import errno
+import fcntl
 import json
 import os
 import pwd
@@ -5514,6 +5538,7 @@ import re
 import select
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -6852,6 +6877,256 @@ def open_single_link(rootfd, path):
     return fd
 
 
+def btrfs_ioc(direction, nr, size):
+    return (direction << 30) | (size << 16) | (0x94 << 8) | nr
+
+
+# btrfs takes only the command shapes callers use.  Every path operand is
+# pinned beneath BTRFS_ROOTS without following symlinks and must be on btrfs.
+# Subvolume create, snapshot and delete and the ro property are ioctls on the
+# pinned descriptors (btrfs-progs re-resolves some of these paths by name);
+# the remaining shapes run btrfs-progs on /proc/self/fd/N.
+BTRFS_ROOTS = ("/mnt/cocalc", "/mnt/cocalc-scratch")
+BTRFS_SUPER_MAGIC = 0x9123683E
+BTRFS_FIRST_FREE_OBJECTID = 256
+BTRFS_SUBVOL_RDONLY = 1 << 1
+BTRFS_NAME_MAX = 255
+BTRFS_IOC_SUBVOL_CREATE = btrfs_ioc(1, 14, 4096)
+BTRFS_IOC_SNAP_DESTROY = btrfs_ioc(1, 15, 4096)
+BTRFS_IOC_SNAP_CREATE_V2 = btrfs_ioc(1, 23, 4096)
+BTRFS_IOC_SUBVOL_GETFLAGS = btrfs_ioc(2, 25, 8)
+BTRFS_IOC_SUBVOL_SETFLAGS = btrfs_ioc(1, 26, 8)
+BTRFS_EXECUTABLE = "/usr/bin/btrfs"
+MKFS_IMAGE_ROOT = "/var/lib/cocalc"
+MKFS_IMAGES = {"btrfs.img", "cocalc.img"}
+
+
+def is_qgroup_id(value):
+    # Only a project's quota group, never a subvolume's own (level 0).
+    return re.fullmatch(r"1/[0-9]{1,15}", value) is not None
+
+
+def parse_btrfs(argv):
+    """Return (action, operands) for an allowed btrfs command line.  Operands
+    are literal strings or (kind, path): "dir" an existing directory, "new" a
+    name to create, "dest" a snapshot destination, "old" a name to delete."""
+
+    def dirs(*paths):
+        return [("dir", path) for path in paths]
+
+    match argv:
+        case ["subvolume", "create", path]:
+            return "create", [("new", path)]
+        case ["subvolume", "snapshot", "-r", source, dest]:
+            return "snapshot-ro", [("dir", source), ("dest", dest)]
+        case ["subvolume", "snapshot", source, dest]:
+            return "snapshot", [("dir", source), ("dest", dest)]
+        case ["subvolume", "delete", path]:
+            return "delete", [("old", path)]
+        case ["property", "get", "-ts", path, "ro"]:
+            return "get-ro", dirs(path)
+        case ["property", "set", "-ts", path, "ro", ("true" | "false") as value]:
+            return "set-ro", [*dirs(path), value]
+        case ["subvolume", "show", path] | ["subvolume", "list", path]:
+            return "exec", [*argv[:2], *dirs(path)]
+        case ["subvolume", "list", ("-o" | "-u") as flag, path]:
+            return "exec", ["subvolume", "list", flag, *dirs(path)]
+        case ["filesystem", ("show" | "sync") as sub, path]:
+            return "exec", ["filesystem", sub, *dirs(path)]
+        case ["filesystem", "usage", "-b", path] | ["filesystem", "du", "-s", path]:
+            return "exec", [*argv[:3], *dirs(path)]
+        case ["qgroup", "show", *flags, path] if len(flags) <= 3 and all(
+            re.fullmatch(r"-[pcreFf]{1,6}|--raw|--sync", flag) for flag in flags
+        ):
+            return "exec", ["qgroup", "show", *flags, *dirs(path)]
+        case ["qgroup", ("create" | "destroy") as sub, group, path] if is_qgroup_id(group):
+            return "exec", ["qgroup", sub, group, *dirs(path)]
+        case ["qgroup", "assign", "--no-rescan", source, group, path] if is_qgroup_id(group):
+            return "exec", ["qgroup", "assign", "--no-rescan", *dirs(source), group, *dirs(path)]
+        case ["qgroup", "limit", size, target, path] if re.fullmatch(
+            r"[0-9]{1,20}[KMGTPEkmgtpe]?|none", size
+        ):
+            target_operand = target if is_qgroup_id(target) else ("dir", target)
+            return "exec", ["qgroup", "limit", size, target_operand, *dirs(path)]
+        case ["quota", "enable", "--simple", path] | ["quota", "disable", path]:
+            return "exec", [*argv[:-1], *dirs(path)]
+    fail(f"btrfs command is not allowed: {' '.join(argv[:3])!r}")
+
+
+def btrfs_root_and_rel(path, roots):
+    if not path.startswith("/"):
+        fail(f"btrfs path must be absolute: {path!r}")
+    for root in roots:
+        if path == root:
+            return root, "."
+        if path.startswith(root + "/"):
+            rel = path[len(root) + 1 :]
+            validate_relative(rel)
+            return root, rel
+    fail(f"btrfs path is not allowed: {path!r}")
+
+
+def require_btrfs(fd, path):
+    buf = ctypes.create_string_buffer(512)
+    if LIBC.fstatfs(fd, buf) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), path)
+    if ctypes.c_long.from_buffer(buf).value & 0xFFFFFFFF != BTRFS_SUPER_MAGIC:
+        fail(f"Not a Btrfs filesystem: {path!r}")
+
+
+def open_btrfs_directory(path, roots):
+    root, rel = btrfs_root_and_rel(path, roots)
+    rootfd = open_root(root, set(roots))
+    try:
+        fd = openat2(rootfd, rel, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        require_btrfs(fd, path)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def open_btrfs_parent(path, roots):
+    root, rel = btrfs_root_and_rel(path, roots)
+    if rel == ".":
+        fail(f"btrfs path needs a parent beneath {root}: {path!r}")
+    parent, _, name = rel.rpartition("/")
+    if len(os.fsencode(name)) > BTRFS_NAME_MAX:
+        fail(f"btrfs name is too long: {path!r}")
+    return open_btrfs_directory(root if not parent else f"{root}/{parent}", roots), name
+
+
+def btrfs_vol_args(name, fd=0, flags=None):
+    # struct btrfs_ioctl_vol_args (fd, name[4088]) or, with flags,
+    # btrfs_ioctl_vol_args_v2 (fd, transid, flags, unused[4], name[4040]).
+    args = bytearray(4096)
+    encoded = os.fsencode(name)
+    if flags is None:
+        struct.pack_into("q", args, 0, fd)
+        args[8 : 8 + len(encoded)] = encoded
+    else:
+        struct.pack_into("qQQ", args, 0, fd, 0, flags)
+        args[56 : 56 + len(encoded)] = encoded
+    return args
+
+
+def require_subvolume(info, path):
+    if not stat.S_ISDIR(info.st_mode) or info.st_ino != BTRFS_FIRST_FREE_OBJECTID:
+        fail(f"Not a Btrfs subvolume: {path!r}")
+
+
+def run_btrfs(argv, roots=BTRFS_ROOTS, executable=BTRFS_EXECUTABLE):
+    action, operands = parse_btrfs(argv)
+    fds = []
+
+    def pin(path):
+        fd = open_btrfs_directory(path, roots)
+        fds.append(fd)
+        return fd
+
+    def pin_parent(path):
+        fd, name = open_btrfs_parent(path, roots)
+        fds.append(fd)
+        return fd, name
+
+    try:
+        if action == "create":
+            path = operands[0][1]
+            parentfd, name = pin_parent(path)
+            fcntl.ioctl(parentfd, BTRFS_IOC_SUBVOL_CREATE, btrfs_vol_args(name))
+            print(f"Create subvolume '{path}'")
+        elif action in ("snapshot", "snapshot-ro"):
+            source, dest = operands[0][1], operands[1][1]
+            sourcefd = pin(source)
+            require_subvolume(os.fstat(sourcefd), source)
+            parentfd, name = pin_parent(dest)
+            try:
+                info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+            except FileNotFoundError:
+                info = None
+            if info is not None:
+                if not stat.S_ISDIR(info.st_mode):
+                    fail(f"snapshot destination exists: {dest!r}")
+                # As btrfs-progs: an existing directory receives the snapshot
+                # under the source's name.
+                parentfd = openat2(parentfd, name, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK | os.O_CLOEXEC)
+                fds.append(parentfd)
+                name = source.rstrip("/").rpartition("/")[2]
+            flags = BTRFS_SUBVOL_RDONLY if action == "snapshot-ro" else 0
+            fcntl.ioctl(parentfd, BTRFS_IOC_SNAP_CREATE_V2, btrfs_vol_args(name, sourcefd, flags))
+            kind = "a readonly snapshot" if flags else "a snapshot"
+            print(f"Create {kind} of '{source}' in '{dest}'")
+        elif action == "delete":
+            path = operands[0][1]
+            parentfd, name = pin_parent(path)
+            require_subvolume(os.stat(name, dir_fd=parentfd, follow_symlinks=False), path)
+            # The kernel looks the name up in the pinned parent; a symlink
+            # there is not a subvolume.
+            fcntl.ioctl(parentfd, BTRFS_IOC_SNAP_DESTROY, btrfs_vol_args(name))
+            print(f"Delete subvolume (no-commit): '{path}'")
+        elif action in ("get-ro", "set-ro"):
+            path = operands[0][1]
+            fd = pin(path)
+            require_subvolume(os.fstat(fd), path)
+            buf = bytearray(8)
+            fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_GETFLAGS, buf)
+            flags = struct.unpack("Q", buf)[0]
+            if action == "get-ro":
+                print(f"ro={'true' if flags & BTRFS_SUBVOL_RDONLY else 'false'}")
+            else:
+                if operands[1] == "true":
+                    flags |= BTRFS_SUBVOL_RDONLY
+                else:
+                    flags &= ~BTRFS_SUBVOL_RDONLY
+                fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_SETFLAGS, bytearray(struct.pack("Q", flags)))
+        else:
+            args = [executable]
+            for operand in operands:
+                args.append(operand if isinstance(operand, str) else f"/proc/self/fd/{pin(operand[1])}")
+            sys.stdout.flush()
+            return subprocess.run(args, pass_fds=tuple(fds), stdin=subprocess.DEVNULL).returncode
+        sys.stdout.flush()
+        return 0
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def run_mkfs_btrfs(argv, image_root=MKFS_IMAGE_ROOT, owner_uid=0, executable=None):
+    """mkfs.btrfs only on a new image: a root-owned regular file with one link
+    and no allocated blocks (as truncate creates it), opened without
+    following symlinks.  mkfs.btrfs itself refuses an existing filesystem
+    without -f, which is never passed."""
+    values, _flags = parse_named_options(argv, "mkfs-btrfs", {"--root", "--path"}, {"--root", "--path"})
+    if values["root"] != image_root or values["path"] not in MKFS_IMAGES:
+        fail(f"mkfs.btrfs is only allowed on {image_root}/{{{','.join(sorted(MKFS_IMAGES))}}}")
+    rootfd = open_root(image_root, {image_root})
+    try:
+        fd = openat2(rootfd, values["path"], os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != owner_uid
+            or info.st_nlink != 1
+            or info.st_blocks != 0
+            or info.st_size == 0
+        ):
+            fail("mkfs.btrfs needs a new, empty image file")
+        if executable is None:
+            executable = "/usr/sbin/mkfs.btrfs" if os.path.exists("/usr/sbin/mkfs.btrfs") else "/sbin/mkfs.btrfs"
+        sys.stdout.flush()
+        return subprocess.run([executable, f"/proc/self/fd/{fd}"], pass_fds=(fd,), stdin=subprocess.DEVNULL).returncode
+    finally:
+        os.close(fd)
+
+
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
     if argv and argv[0] == "scan-oversized-files":
         return run_scan_oversized_files(argv, allowed_roots)
@@ -6988,8 +7263,14 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
     # children be stopped instead of orphaned.
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, raise_on_signal)
+    argv = sys.argv[1:] if argv is None else argv
     try:
-        run(sys.argv[1:] if argv is None else argv, allowed_roots)
+        # These two pass the tool's own exit status through.
+        if argv and argv[0] == "btrfs":
+            return run_btrfs(argv[1:])
+        if argv and argv[0] == "mkfs-btrfs":
+            return run_mkfs_btrfs(argv)
+        run(argv, allowed_roots)
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as err:
         print(f"SECURITY_DENY code=path-helper-failed detail={err}", file=sys.stderr)
@@ -10310,22 +10591,19 @@ PY
     reconcile_project_network_limits
     ;;
   btrfs|btrfs-maintenance)
-    if [ "${1:-}" = "qgroup" ]; then
-      check_qgroup_args "$@"
-    else
-      check_args "$@"
-    fi
+    # The path helper allows only the command shapes callers use and pins
+    # every path operand without following symlinks.
     if [ "$cmd" = "btrfs-maintenance" ]; then
       attach_maintenance_worker
     fi
-    exec /usr/bin/btrfs "$@"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper btrfs "$@"
     ;;
   mkfs.btrfs)
-    check_args "$@"
-    if command -v /usr/sbin/mkfs.btrfs >/dev/null 2>&1; then
-      exec /usr/sbin/mkfs.btrfs "$@"
+    if [ "$#" -ne 1 ]; then
+      deny "mkfs-btrfs-args-invalid" "$*"
     fi
-    exec /sbin/mkfs.btrfs "$@"
+    require_allowed_path_parts "$1"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper mkfs-btrfs --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL"
     ;;
   mount-overlay-project)
     if [ "$#" -ne 4 ]; then
@@ -15257,6 +15535,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         configure_journald_limits(cfg)
         configure_rsyslog_limits(cfg)
         image_size_gb = compute_image_size(cfg)
+        ensure_cocalc_state_root(cfg)
         install_btrfs_helper(cfg)
         install_privileged_wrappers(cfg)
         reconcile_storage_and_containment(cfg)
@@ -15338,6 +15617,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         configure_rsyslog_limits(cfg)
         configure_daily_root_cleanup(cfg)
         configure_kernel_sysctl_hardening(cfg)
+        ensure_cocalc_state_root(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)
         write_helpers(cfg)
