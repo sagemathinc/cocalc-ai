@@ -7,6 +7,7 @@ import json
 import os
 import pwd
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
