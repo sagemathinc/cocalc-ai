@@ -6767,12 +6767,12 @@ def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
         for fd in descriptors:
             os.close(fd)
         if staged:
-            umount_view_targets(f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}")
+            umount_view_target(f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}")
     if command == "umount-overlay-project" and PROJECT_ID_RE.fullmatch(project_id):
         # An idmapped upper (--idmap) stays mounted until the overlay is gone.
         upper = f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}"
         if upper in view_mountpoints():
-            umount_view_targets(upper)
+            umount_view_target(upper)
             os.rmdir(upper)
 
 def ensure_private_root_directory(path, required_uid=0, mode=0o700):
@@ -6972,6 +6972,10 @@ PROJECT_VIEW_KINDS = {
     "secrets": (("/mnt/cocalc", "data/tmp/cocalc-project-secrets/{id}"), True),
 }
 PROJECT_VIEW_ROOTFS_UPPER = "rootfs-upper"
+# The only names beneath PROJECT_VIEW_ROOT/<project-id>: every mount the
+# helper makes is exactly one of these, so it never unmounts anything else.
+PROJECT_VIEW_TARGETS = (*PROJECT_VIEW_KINDS, PROJECT_VIEW_ROOTFS_UPPER)
+PROJECT_VIEW_MOUNT_OPTIONS = "nosuid,nodev"
 PROJECT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 PROJECT_VIEW_COMMANDS = {
     "project-view-mount",
@@ -7040,10 +7044,9 @@ def open_view_root(gid, create=True):
     parent, name = os.path.split(PROJECT_VIEW_ROOT)
     if create:
         os.makedirs(parent, mode=0o711, exist_ok=True)
+    check_view_parent(parent)
     parentfd = os.open(parent, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
-        if os.fstat(parentfd).st_uid != 0:
-            fail(f"unsafe project view parent: {parent}")
         if not create:
             return openat2(parentfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
         return ensure_view_dir(parentfd, name, gid)
@@ -7051,11 +7054,23 @@ def open_view_root(gid, create=True):
         os.close(parentfd)
 
 
+def check_view_parent(path):
+    """/run/cocalc must be a root-owned dir that only root can write."""
+    info = os.lstat(path)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or stat.S_IMODE(info.st_mode) & 0o022
+    ):
+        fail(f"unsafe project view parent: {path}")
+
+
 @contextlib.contextmanager
 def view_lock():
     import fcntl
 
     os.makedirs(os.path.dirname(PROJECT_VIEW_LOCK), mode=0o711, exist_ok=True)
+    check_view_parent(os.path.dirname(PROJECT_VIEW_LOCK))
     fd = os.open(PROJECT_VIEW_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
         if os.fstat(fd).st_uid != os.geteuid():
@@ -7078,19 +7093,35 @@ def view_mountpoints():
     return sorted(targets, key=len, reverse=True)
 
 
-def umount_view_targets(prefix):
-    """Unmount everything at or beneath prefix, until nothing is left."""
+def umount_view_target(target):
+    """Unmount one exact view target (a root-owned mountpoint the helper
+    created) until nothing is mounted there; MNT_DETACH takes any mounts
+    beneath it along."""
     for _round in range(PROJECT_VIEW_UMOUNT_ROUNDS):
-        targets = [
-            target
-            for target in view_mountpoints()
-            if target == prefix or target.startswith(prefix + "/")
-        ]
-        if not targets:
+        if target not in view_mountpoints():
             return
-        for target in targets:
-            subprocess.run(["/bin/umount", "-l", target], check=True, stdin=subprocess.DEVNULL)
-    fail(f"project view mounts remain at {prefix}")
+        subprocess.run(["/bin/umount", "-l", target], check=True, stdin=subprocess.DEVNULL)
+    fail(f"project view mounts remain at {target}")
+
+
+def make_view_private(projectfd, name):
+    """Stop propagation into a fresh view: the sources live on shared mounts,
+    so mounts made later beneath a source would otherwise appear in it."""
+    fd = openat2(projectfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        subprocess.run(
+            ["/bin/mount", "--make-private", f"/proc/self/fd/{fd}"],
+            pass_fds=(fd,),
+            check=True,
+            stdin=subprocess.DEVNULL,
+        )
+    finally:
+        os.close(fd)
+
+
+def umount_project_views(project_id, names=PROJECT_VIEW_TARGETS):
+    for name in names:
+        umount_view_target(f"{PROJECT_VIEW_ROOT}/{project_id}/{name}")
 
 
 def remove_view_tree(rootfd, project_id):
@@ -7100,6 +7131,8 @@ def remove_view_tree(rootfd, project_id):
         return
     try:
         for name in os.listdir(f"/proc/self/fd/{projectfd}"):
+            if name not in PROJECT_VIEW_TARGETS:
+                fail(f"unexpected entry in project views: {name!r}")
             os.rmdir(name, dir_fd=projectfd)
     finally:
         os.close(projectfd)
@@ -7135,7 +7168,10 @@ def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
             rootfd = open_view_root(gid)
             projectfd = ensure_view_dir(rootfd, project_id, gid)
             targetfd = ensure_view_dir(projectfd, kind, gid, mode=0o700)
-            options = f"X-mount.idmap={project_view_idmap(uid, gid, view_uid)}"
+            options = (
+                f"X-mount.idmap={project_view_idmap(uid, gid, view_uid)},"
+                + PROJECT_VIEW_MOUNT_OPTIONS
+            )
             if read_only:
                 options += ",ro"
             subprocess.run(
@@ -7151,6 +7187,7 @@ def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
                 check=True,
                 stdin=subprocess.DEVNULL,
             )
+            make_view_private(projectfd, kind)
         finally:
             for fd in (targetfd, projectfd, rootfd, sourcefd):
                 if fd is not None:
@@ -7164,7 +7201,7 @@ def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
         except FileNotFoundError:
             return
         try:
-            umount_view_targets(f"{PROJECT_VIEW_ROOT}/{project_id}")
+            umount_project_views(project_id)
             remove_view_tree(rootfd, project_id)
         finally:
             os.close(rootfd)
@@ -7182,7 +7219,7 @@ def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
                     continue
                 if not PROJECT_ID_RE.fullmatch(name):
                     fail(f"unexpected entry in {PROJECT_VIEW_ROOT}: {name!r}")
-                umount_view_targets(f"{PROJECT_VIEW_ROOT}/{name}")
+                umount_project_views(name)
                 remove_view_tree(rootfd, name)
         finally:
             os.close(rootfd)
@@ -7228,7 +7265,8 @@ def mount_idmapped_upper(project_id, upperfd, workfd, view_uid):
             check=True,
             stdin=subprocess.DEVNULL,
         )
-        mounted = os.open(target, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        make_view_private(projectfd, PROJECT_VIEW_ROOTFS_UPPER)
+        mounted = openat2(projectfd, PROJECT_VIEW_ROOTFS_UPPER, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
         return mounted, upper_name, work_name
     finally:
         for fd in (stagingfd, projectfd, rootfd, parentfd):

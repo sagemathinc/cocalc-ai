@@ -9236,11 +9236,14 @@ class ProjectViewHelperTest(unittest.TestCase):
         with mock.patch.object(self.ns["subprocess"], "run") as run:
             mount("home", f"project-{self.PROJECT}")
             mount("secrets", f"data/tmp/cocalc-project-secrets/{self.PROJECT}")
-        home, secrets = (call.args[0] for call in run.call_args_list)
+        calls = [call.args[0] for call in run.call_args_list]
+        home, secrets = (args for args in calls if "--bind" in args)
         self.assertEqual(home[:3], ["/bin/mount", "--bind", "-o"])
         self.assertTrue(home[3].startswith("X-mount.idmap=u:0:0:2000 u:2000:1073741824:1 "))
-        self.assertFalse(home[3].endswith(",ro"))
-        self.assertTrue(secrets[3].endswith(",ro"))
+        self.assertTrue(home[3].endswith(",nosuid,nodev"))
+        self.assertTrue(secrets[3].endswith(",nosuid,nodev,ro"))
+        # every view is made private right after its bind
+        self.assertEqual([args[1] for args in calls], ["--bind", "--make-private"] * 2)
         for args in (home, secrets):
             self.assertRegex(args[4], r"^/proc/self/fd/[0-9]+$")
             self.assertRegex(args[5], r"^/proc/self/fd/[0-9]+$")
@@ -9291,8 +9294,9 @@ class ProjectViewHelperTest(unittest.TestCase):
         target = f"{self.views}/{self.PROJECT}/home"
 
         def slow_mount(args, **_kwargs):
-            time.sleep(0.2)  # wide window between the check and the mount
-            mounted.append(target)
+            if "--bind" in args:
+                time.sleep(0.2)  # wide window between the check and the mount
+                mounted.append(target)
 
         results: list[str] = []
 
@@ -9337,6 +9341,45 @@ class ProjectViewHelperTest(unittest.TestCase):
         (self.views / self.PROJECT / "home").mkdir(parents=True)
         with mock.patch.object(self.ns["subprocess"], "run"):
             with self.assertRaisesRegex(ValueError, "mounts remain"):
+                self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+
+    def test_view_parent_must_not_be_writable_by_others(self) -> None:
+        parent = self.tmp / "run-cocalc"
+        parent.mkdir(mode=0o711)
+        os.chmod(parent, 0o711)
+        self.ns["check_view_parent"](str(parent))
+        for mode in (0o771, 0o717, 0o1777):
+            os.chmod(parent, mode)
+            with self.assertRaisesRegex(ValueError, "unsafe project view parent"):
+                self.ns["check_view_parent"](str(parent))
+        os.chmod(parent, 0o711)
+        link = self.tmp / "link"
+        link.symlink_to(parent)
+        with self.assertRaisesRegex(ValueError, "unsafe project view parent"):
+            self.ns["check_view_parent"](str(link))
+
+    def test_umount_touches_only_the_exact_view_targets(self) -> None:
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        live = [
+            f"{self.views}/{self.PROJECT}/home/nested",  # propagated beneath a view
+            f"{self.views}/{self.PROJECT}/home",
+        ]
+        self.ns["view_mountpoints"] = lambda: list(live)
+
+        def umount(args, **_kwargs):
+            # MNT_DETACH takes the subtree along
+            live[:] = [t for t in live if not (t == args[-1] or t.startswith(args[-1] + "/"))]
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=umount) as run:
+            self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["/bin/umount", "-l", f"{self.views}/{self.PROJECT}/home"]],
+        )
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        (self.views / self.PROJECT / "surprise").mkdir()
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "unexpected entry in project views"):
                 self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
 
     def test_ensure_view_dir_refuses_a_dir_not_owned_by_root(self) -> None:
