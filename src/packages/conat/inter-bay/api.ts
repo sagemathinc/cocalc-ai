@@ -2693,7 +2693,6 @@ export type HostControlMethod =
   | "get-abuse-filesystem-snapshot"
   | "get-network-snapshot"
   | "get-filesystem-snapshot"
-  | "get-intrusion-snapshot"
   | "get-podman-snapshot"
   | "get-project-runtime-log"
   | "start-rootfs-build"
@@ -3652,9 +3651,6 @@ export interface InterBayHostControlApi {
   getFilesystemSnapshot: (opts: {
     host_id: string;
   }) => Promise<Awaited<ReturnType<HostControlApi["getFilesystemSnapshot"]>>>;
-  getIntrusionSnapshot: (opts: {
-    host_id: string;
-  }) => Promise<Awaited<ReturnType<HostControlApi["getIntrusionSnapshot"]>>>;
   getPodmanSnapshot: (opts: {
     host_id: string;
     get?: HostControlArg<"getPodmanSnapshot">;
@@ -4879,7 +4875,6 @@ const HOST_CONTROL_METHOD_SPECS = [
   },
   { name: "getNetworkSnapshot", method: "get-network-snapshot" },
   { name: "getFilesystemSnapshot", method: "get-filesystem-snapshot" },
-  { name: "getIntrusionSnapshot", method: "get-intrusion-snapshot" },
   { name: "getPodmanSnapshot", method: "get-podman-snapshot" },
   { name: "getProjectRuntimeLog", method: "get-project-runtime-log" },
   { name: "startRootfsBuild", method: "start-rootfs-build" },

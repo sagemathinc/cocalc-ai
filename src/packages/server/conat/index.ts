@@ -58,7 +58,6 @@ import { startSiteLicenseAffiliationReleaseMaintenance } from "@cocalc/server/me
 import { configureHubServiceAdmissionDenialRecorder } from "./api/service-admission-denials";
 import { startConatAdmissionSettingsRefresh } from "./admission-settings";
 import { startHostAvailabilityMaintenance } from "@cocalc/server/hosts/availability";
-import { startHostIntrusionMonitor } from "@cocalc/server/hosts/intrusion-monitor";
 import { startHostIntegrityAlerts } from "@cocalc/server/hosts/host-integrity-health";
 import { startGlobalConfigMirrorRepairMaintenance } from "@cocalc/server/global-config-mirror-maintenance";
 import { startAiSessionReconciliationMaintenance } from "@cocalc/server/ai/acp-sessions";
@@ -145,7 +144,6 @@ export function startConatApiBackgroundWorkers(): void {
   startDedicatedHostSpendMaintenance();
   startHostAvailabilityMaintenance();
   if (isPrimaryBayWorker()) {
-    startHostIntrusionMonitor();
     startHostIntegrityAlerts();
   }
   startRootfsPublishLroWorker();
