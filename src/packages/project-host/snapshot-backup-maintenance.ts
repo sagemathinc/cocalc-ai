@@ -743,14 +743,13 @@ function scheduleRevision(schedule: SnapshotSchedule | null): string {
 
 export function scheduledBackupTimeoutMs({
   failures,
-  starvationOverride,
 }: {
   failures: number;
-  starvationOverride: boolean;
 }): number {
-  // While a starvation-override run is in flight, the host admits no other
-  // snapshot or backup, so such a run keeps the base limit.
-  if (starvationOverride || !(failures > 0)) {
+  // Also for a starvation-override run: scheduled snapshots still run beside
+  // it (storage admission), and a backup that needs longer than the base
+  // limit would otherwise fail every time the host is contended.
+  if (!(failures > 0)) {
     return SCHEDULED_BACKUP_TIMEOUT_MS;
   }
   return Math.min(
@@ -1995,7 +1994,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             validate: () => validateAssignment(row, "backup"),
             allowStarvationOverride: starvationOverrideEligible,
             starvationIntervalMs,
-            run: async ({ starvationOverride }) => {
+            run: async () => {
               const updated = await runScheduledBackupMaintenance({
                 project_id,
                 counts: scheduleToCounts(schedule, { allowFrequent: false }),
@@ -2004,7 +2003,6 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 stage_durations_ms: stageDurations,
                 timeout_ms: scheduledBackupTimeoutMs({
                   failures: row.backup_failures ?? 0,
-                  starvationOverride,
                 }),
               });
               created = updated?.created ?? false;
