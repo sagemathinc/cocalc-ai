@@ -106,6 +106,7 @@ export const DOCS_ENTRY_IDS = [
   "hosts.reliability",
   "hosts.software-lifecycle",
   "hosts.storage",
+  "hosts.backups",
   "hosts.shared-scratch",
   "hosts.logs",
   "hosts.exam-scratchpads",

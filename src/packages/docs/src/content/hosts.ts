@@ -1098,7 +1098,9 @@ the disk again.
 ## Backups and snapshots
 
 Use project backups for portable project recovery, cross-host moves, and
-protection before lifecycle actions.
+protection before lifecycle actions. For how snapshots and backups are made,
+their default schedule and what they guarantee, see
+[How snapshots and backups work](/docs/hosts/backups).
 
 Snapshots in \`~/.snapshots\` are host-local copies of the project's files. They
 do not include the edit history (TimeTravel), which CoCalc stores separately.
@@ -1413,4 +1415,119 @@ When helping with host debugging:
 4. Use \`cocalc host logs HOST_ID --tail 200\` for a focused first pass.
 5. Route host inspection to the host-owning bay; do not assume the browser's
    current project bay owns the host.
+`;
+
+export const PROJECT_BACKUPS_BODY = String.raw`
+## Three layers of history
+
+CoCalc keeps three different kinds of history for a project. They answer
+different questions, so it helps to know which one you need.
+
+| Layer | Where it lives | What it is for |
+| --- | --- | --- |
+| Edit history (TimeTravel) | Stored separately on the project host | Every saved change to a document, file by file |
+| Snapshots | \`~/.snapshots\` on the project host | Fast, read-only, point-in-time copies of HOME |
+| Backups | Encrypted, off-host object storage | Recovery when the host or its disk is gone, moves, archives |
+
+Snapshots are cheap and frequent, but they live on the same disk as the
+project. Backups are the copy that survives losing the host.
+
+## Default schedule
+
+By default CoCalc keeps snapshots taken every 15 minutes (the newest 4), plus
+7 daily, 4 weekly and 2 monthly snapshots. Backups default to 1 daily, 3
+weekly and 4 monthly. A new snapshot or backup is only made when something
+changed. Project owners can change these schedules, and can allow
+collaborators to manage them.
+
+Scheduled snapshots and backups are background work. They run at low I/O
+priority so they do not slow down your project, which also means they can be
+delayed when the host is busy. CoCalc tracks overdue snapshots and backups
+and works through them as the host frees up.
+
+## How a backup is made
+
+1. CoCalc takes a temporary read-only btrfs snapshot of the project's HOME, so
+   the backup sees one consistent moment in time even while you keep working.
+   The project's separately stored edit history is copied into that snapshot
+   too.
+2. The backup tool ([rustic](https://rustic.cli.rs)) walks the snapshot and
+   compares every file with the previous backup.
+3. A file whose path, size, modification time and change time (ctime) all
+   match the previous backup is unchanged and is **not read again**.
+4. Every other file is read in full, split into content-defined chunks, and
+   each chunk is identified by its hash. Chunks already in the backup
+   repository are not stored again (deduplication), so only genuinely new data
+   is uploaded.
+5. Everything is encrypted before it leaves the host. The temporary snapshot
+   is deleted afterwards.
+
+## What you can rely on
+
+- **A changed file is always backed up again.** The unchanged-file check uses
+  the ctime, which the Linux kernel updates on every change to a file's
+  contents or metadata and which programs cannot set back. Even a tool that
+  restores a file's old modification time after editing it changes the ctime.
+- **A backup is a consistent point in time** for the whole project, because
+  it is read from a btrfs snapshot rather than from files that are still
+  changing. It is crash-consistent: like the state after a sudden power loss,
+  so data a program had not yet written to disk is not included.
+- **Stored data is content-addressed and encrypted.** Each chunk is identified
+  by the hash of its contents, and btrfs verifies its own data checksums when
+  files are read for a backup.
+- **Backups are tested.** CoCalc regularly test-restores from each active
+  backup repository and samples stored data for integrity.
+
+## What is not in a backup
+
+- \`~/.snapshots\` itself, which would only duplicate what the backup already
+  holds.
+- Files larger than the backup file-size limit, which normally follows the
+  project's disk quota. A skipped-file report lists them; see
+  [Project host storage, backups, and snapshots](/docs/hosts/storage).
+- Shared scratch (\`/scratch\`), \`/tmp\`, and anything outside the project's
+  HOME.
+
+## What makes a backup slow
+
+The work a backup does depends on how much data is **new or changed by
+path**, not on how much disk the project uses. These patterns are cheap on
+disk but expensive to back up, because every file at a new path is read in
+full before deduplication can discard it:
+
+- Many full copies of a large directory, such as one copy of a website per
+  release. btrfs copies files with reflinks, so ten copies of a 10 GB folder
+  use almost no extra disk but are 100 GB to read.
+- Many git worktrees or checkouts of the same repository, each with its own
+  \`node_modules\`, build output and caches.
+- Renaming or moving a large directory: its files are new paths to the
+  backup.
+- **Moving a project to another host.** The move rewrites every file, so all
+  change times are new and the first backup on the new host re-reads the
+  whole project.
+
+Deleting obsolete copies, and keeping only the releases or worktrees you
+actually need, makes backups much faster. A project's disk usage can be far
+smaller than what a backup has to read, because copies that share disk
+blocks are counted once.
+
+## Restoring
+
+Use a snapshot to recover recent files quickly, and a backup when the
+snapshot is gone or you need an older version.
+[Recover research files and environments](/docs/research/recover-work)
+explains how to choose the smallest recovery operation, and
+[Project host storage, backups, and snapshots](/docs/hosts/storage) covers
+restore behaviour and the file-size limit.
+
+## Agent notes
+
+- Do not judge a backup's cost from disk usage or quota. Logical size is what
+  matters: the backup reads every byte of every new or changed file, and
+  shared (reflinked) copies count in full.
+- When a backup of a large project seems stuck, check for recent bulk
+  copies, new worktrees, renamed directories or a recent host move before
+  anything else.
+- To speed up a project's backups, remove obsolete copies of large
+  directories rather than growing the disk.
 `;
