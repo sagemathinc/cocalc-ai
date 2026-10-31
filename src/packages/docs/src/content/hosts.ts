@@ -1447,14 +1447,16 @@ and works through them as the host frees up.
 
 ## How a backup is made
 
-1. CoCalc takes a temporary read-only btrfs snapshot of the project's HOME, so
-   the backup sees one consistent moment in time even while you keep working.
-   The project's separately stored edit history is copied into that snapshot
-   too.
+1. CoCalc first captures the project's separately stored edit history, then
+   takes a temporary read-only btrfs snapshot of the project's HOME and adds
+   that captured history to it. HOME is one consistent moment in time even
+   while you keep working; the edit history can be slightly older than the
+   files, and a restore reconciles the two.
 2. The backup tool ([rustic](https://rustic.cli.rs)) walks the snapshot and
    compares every file with the previous backup.
 3. A file whose path, size, modification time and change time (ctime) all
-   match the previous backup is unchanged and is **not read again**.
+   match the previous backup is unchanged and is **not read again**. Newer
+   rustic versions also require the same inode number.
 4. Every other file is read in full, split into content-defined chunks, and
    each chunk is identified by its hash. Chunks already in the backup
    repository are not stored again (deduplication), so only genuinely new data
@@ -1466,14 +1468,14 @@ and works through them as the host frees up.
 
 - **An included file whose contents or metadata change is re-read.** Files
   over the backup file-size limit are the exception (see below). The
-  unchanged-file check uses
-  the ctime, which the Linux kernel updates on every change to a file's
+  unchanged-file check uses the ctime, which the Linux kernel updates on every change to a file's
   contents or metadata and which programs cannot set back. Even a tool that
   restores a file's old modification time after editing it changes the ctime.
-- **A backup is a consistent point in time** for the whole project, because
-  it is read from a btrfs snapshot rather than from files that are still
-  changing. It is crash-consistent: like the state after a sudden power loss,
-  so data a program had not yet written to disk is not included.
+- **HOME in a backup is a consistent point in time**, because it is read
+  from a btrfs snapshot rather than from files that are still changing. It is
+  crash-consistent: like the state after a sudden power loss, so data a
+  program had not yet written to disk is not included. The edit history is
+  captured just before that snapshot.
 - **Stored data is content-addressed and encrypted.** Each chunk is identified
   by the hash of its contents, and btrfs verifies its own data checksums when
   files are read for a backup.
