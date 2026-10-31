@@ -11552,6 +11552,36 @@ class BtrfsScrubScriptTest(unittest.TestCase):
         self.assertEqual(host.scrub, "interrupted")
         self.assertEqual(status["current"]["phase"], "interrupted")
 
+    def test_a_scrub_stopped_by_the_last_cancel_is_reported_paused(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def busy(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+
+        host.on_sleep = busy
+        host.cancel_fails = True
+        cancels = []
+        orig_run = host.run
+
+        def run(args):
+            if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+                # the loop's cancels fail until it gives up; the last one works
+                cancels.append(args)
+                host.cancel_fails = len(cancels) <= 10
+            return orig_run(args)
+
+        host.run = run
+        status = self.run_once(host)
+        self.assertEqual(len(cancels), 11)
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual((status["state"], status["reason"]), ("paused", "the scrub was stopped as this run ended"))
+        self.assertEqual(status["current"]["phase"], "interrupted")
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+
     def test_not_btrfs_is_reported_and_nothing_runs(self):
         host = ScrubFakeHost()
         host.run = lambda args: (0, "ext4 abc\n", "")

@@ -5457,6 +5457,11 @@ def run(args, host, store):
                 supervising = False
                 if status.get("current"):
                     status["current"]["phase"] = "interrupted"
+                if status.get("state") == "running":
+                    # stopped here: not left reported as running until the
+                    # next run (an error set before stays one)
+                    status["state"] = "paused"
+                    status["reason"] = "the scrub was stopped as this run ended"
             else:
                 # it runs on: leave its throttle (throttle_restore stays), and
                 # the next run adopts it
