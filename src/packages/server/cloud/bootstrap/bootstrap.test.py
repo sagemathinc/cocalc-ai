@@ -270,14 +270,18 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                 check("/mnt/cocalc", path, command, generic_roots)
         for path in ("star/project-host/0/secrets/rustic/x.toml", "star", ".", "other.img"):
             with self.subTest(path=path), self.assertRaises(ValueError):
-                check("/var/lib/cocalc", path, "chown", generic_roots)
+                check("/var/lib/cocalc", path, "truncate", generic_roots)
+        # Owning or opening up the image behind /mnt/cocalc is raw access.
+        for command in ("chown", "chmod", "chattr-cow", "rename", "rm", "mkdir", "copy-tree-reflink"):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                check("/var/lib/cocalc", "cocalc.img", command, generic_roots)
         # Callers that stay allowed: the mount root and the loop images.
         check("/mnt/cocalc", ".", "chown", generic_roots)
         check("/mnt/cocalc", "data", "chmod", generic_roots)
         check("/mnt/cocalc", "data/secrets-other", "rm", generic_roots)
         check("/mnt/cocalc", "project-1", "rm", generic_roots)
         check("/var/lib/cocalc", "cocalc.img", "truncate", generic_roots)
-        check("/var/lib/cocalc", "btrfs.img", "chown", generic_roots)
+        check("/var/lib/cocalc", "btrfs.img", "truncate", generic_roots)
         # Rustic verbs keep reading profiles from the secrets root.
         self.assertIn(secrets, allowed)
 
@@ -313,6 +317,65 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                     run([args[0], "--root", str(root), "--path", "hardlink", *args[1:]],
                         allowed_roots=roots, owners=owners)
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+
+    def test_storage_wrapper_has_no_loop_device_verbs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        self.assertNotIn("losetup", script)
+        self.assertNotIn("\n  losetup)", script)
+        # An unknown verb, such as losetup now, is denied.
+        self.assertIn('deny "unsupported-command" "$cmd"', script)
+        chown = script.split("\n  chown)\n", 1)[1].split("\n    ;;\n", 1)[0]
+        self.assertNotIn("/dev/loop", chown)
+        self.assertNotIn("/bin/chown", chown)
+        self.assertIn('path_helper chown --root "$ALLOWED_PATH_ROOT"', chown)
+
+        def function(name):
+            return name + "() {" + script.split(name + "() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+
+        harness = (
+            function("lexical_absolute_path_is_safe")
+            + function("set_allowed_path_parts")
+            + 'for p in "$@"; do if set_allowed_path_parts "$p"; then echo "allow $p $ALLOWED_PATH_ROOT"; '
+            + 'else echo "deny $p"; fi; done\n'
+        )
+        paths = ["/dev/loop0", "/dev/loop12", "/dev/sda", "/dev/loop-control", "/mnt/cocalc/x", "/var/lib/cocalc/cocalc.img"]
+        out = subprocess.run(
+            ["bash", "-c", harness, "_", *paths], check=True, capture_output=True, text=True
+        ).stdout.splitlines()
+        self.assertEqual(
+            out,
+            [
+                "deny /dev/loop0",
+                "deny /dev/loop12",
+                "deny /dev/sda",
+                "deny /dev/loop-control",
+                "allow /mnt/cocalc/x /mnt/cocalc",
+                "allow /var/lib/cocalc/cocalc.img /var/lib/cocalc",
+            ],
+        )
+        # mknod keeps its own loop-device check.
+        mknod = script.split("\n  mknod)\n", 1)[1].split("\n    ;;\n", 1)[0]
+        self.assertIn("^/dev/loop[0-9]+$", mknod)
+
+    def test_image_truncate_only_creates(self) -> None:
+        namespace = self.helper_namespace()
+        run = namespace["run"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            namespace["CREATE_ONLY_ROOTS"] = {str(root)}
+            namespace["GENERIC_ONLY_PATHS"] = {str(root): ({"cocalc.img"}, {"truncate"})}
+            args = ["truncate", "--root", str(root), "--path", "cocalc.img", "--length"]
+            run([*args, "4096"], allowed_roots={str(root)})
+            self.assertEqual((root / "cocalc.img").stat().st_size, 4096)
+            # An existing (possibly mounted) image can't be shrunk or regrown.
+            with self.assertRaises(FileExistsError):
+                run([*args, "0"], allowed_roots={str(root)})
+            self.assertEqual((root / "cocalc.img").stat().st_size, 4096)
+            for command in (["chmod", "--mode", "666"], ["chown", "--uid", str(os.getuid()), "--gid", str(os.getgid())]):
+                with self.subTest(command=command[0]), self.assertRaises(ValueError):
+                    run([command[0], "--root", str(root), "--path", "cocalc.img", *command[1:]],
+                        allowed_roots={str(root)}, owners=self.own_owners())
 
     def test_path_helper_install_names_the_runtime_user(self) -> None:
         self.assertIn('RUNTIME_USER = "__RUNTIME_USER__"', bootstrap.RUNTIME_STORAGE_PATH_HELPER)

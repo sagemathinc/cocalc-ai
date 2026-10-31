@@ -5535,9 +5535,12 @@ ALLOWED_ROOTS = {
 }
 # Backup credentials are read only by the rustic verbs.
 SECRET_ROOTS = {"/var/lib/cocalc/star/project-host/0/secrets/rustic"}
-# Beneath these roots generic verbs reach only the listed paths, or nothing
-# within the listed protected subtrees.
-GENERIC_ONLY_PATHS = {"/var/lib/cocalc": {"btrfs.img", "cocalc.img"}}
+# Beneath these roots generic verbs reach only the listed paths with the
+# listed verbs, or nothing within the listed protected subtrees.  Owning the
+# image behind /mnt/cocalc would be raw access to that filesystem, so the
+# images only take truncate, and only to create a new one.
+GENERIC_ONLY_PATHS = {"/var/lib/cocalc": ({"btrfs.img", "cocalc.img"}, {"truncate"})}
+CREATE_ONLY_ROOTS = {"/var/lib/cocalc"}
 GENERIC_PROTECTED_PATHS = {"/mnt/cocalc": ("data/secrets",)}
 # Verbs that act on a whole tree must not take a protected subtree with them.
 TREE_COMMANDS = {"copy-tree-preserve", "copy-tree-reflink", "rename", "rm", "rmdir"}
@@ -6829,8 +6832,8 @@ def check_generic_path(root, path, command, generic_roots):
     if root not in generic_roots:
         fail(f"root is not allowed: {root!r}")
     only = GENERIC_ONLY_PATHS.get(root)
-    if only is not None and path not in only:
-        fail(f"path is not allowed beneath {root}: {path!r}")
+    if only is not None and (path not in only[0] or command not in only[1]):
+        fail(f"{command} of this path is not allowed beneath {root}: {path!r}")
     for protected in GENERIC_PROTECTED_PATHS.get(root, ()):
         if path == protected or path.startswith(protected + "/"):
             fail(f"path is protected: {path!r}")
@@ -6954,12 +6957,10 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
             finally:
                 os.close(dest_rootfd)
         elif command == "truncate":
-            fd = openat2(
-                rootfd,
-                path,
-                os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK | os.O_CLOEXEC,
-                0o600,
-            )
+            flags = os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK | os.O_CLOEXEC
+            if root in CREATE_ONLY_ROOTS:
+                flags |= os.O_EXCL
+            fd = openat2(rootfd, path, flags, 0o600)
             try:
                 os.ftruncate(fd, parse_uint(values["length"], "length"))
             finally:
@@ -9461,8 +9462,6 @@ set_allowed_path_parts() {
       ALLOWED_PATH_ROOT="/opt/cocalc/tools"; ALLOWED_PATH_REL="." ;;
     /opt/cocalc/tools/*)
       ALLOWED_PATH_ROOT="/opt/cocalc/tools"; ALLOWED_PATH_REL="${path#/opt/cocalc/tools/}" ;;
-    /dev/loop[0-9]*)
-      ALLOWED_PATH_ROOT="/dev"; ALLOWED_PATH_REL="${path#/dev/}" ;;
     *) return 1 ;;
   esac
   return 0
@@ -10386,13 +10385,6 @@ PY
       umount-overlay-project \
       --merged-root "$ALLOWED_PATH_ROOT" --merged-path "$ALLOWED_PATH_REL"
     ;;
-  losetup)
-    check_args "$@"
-    if command -v /usr/sbin/losetup >/dev/null 2>&1; then
-      exec /usr/sbin/losetup "$@"
-    fi
-    exec /sbin/losetup "$@"
-    ;;
   mknod)
     if [ "$#" -ne 5 ] || [ "$1" != "-m660" ] || [ "$3" != "b" ] || [ "$4" != "7" ]; then
       deny "mknod-args-invalid" "$*"
@@ -10431,10 +10423,6 @@ PY
       deny "chown-owner-not-runtime-user" "$owner"
     fi
     for path in "$@"; do
-      if echo "$path" | grep -Eq '^/dev/loop[0-9]+$'; then
-        /bin/chown "$owner_uid:$owner_gid" -- "$path"
-        continue
-      fi
       require_allowed_path_parts "$path"
       path_helper chown --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL" --uid "$owner_uid" --gid "$owner_gid"
     done
