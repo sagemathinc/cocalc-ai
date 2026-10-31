@@ -1455,8 +1455,7 @@ and works through them as the host frees up.
 2. The backup tool ([rustic](https://rustic.cli.rs)) walks the snapshot and
    compares every file with the previous backup.
 3. A file whose path, size, modification time and change time (ctime) all
-   match the previous backup is unchanged and is **not read again**. Newer
-   rustic versions also require the same inode number.
+   match the previous backup is unchanged and is **not read again**.
 4. Every other file is read in full, split into content-defined chunks, and
    each chunk is identified by its hash. Chunks already in the backup
    repository are not stored again (deduplication), so only genuinely new data
