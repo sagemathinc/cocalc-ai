@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { appServedAtRoot, appsAtRoot } from "./apps-at-root";
+import { appServedAtRoot, appsAtRoot, staticAppBasePath } from "./apps-at-root";
 
 describe("appsAtRoot (phase 7c)", () => {
   it("is on only when the host says apps run at the root of their origin", () => {
@@ -38,5 +38,25 @@ describe("appServedAtRoot", () => {
 
   it("is off on hosts without app origins", () => {
     expect(appServedAtRoot({ base_path: "/apps/foo" }, {})).toBe(false);
+  });
+});
+
+describe("staticAppBasePath", () => {
+  const atRoot = { COCALC_PROJECT_APPS_AT_ROOT: "1" };
+
+  it("builds a root-served static app for the root of its origin", () => {
+    expect(staticAppBasePath({ base_path: "/apps/site" }, atRoot)).toBe("/");
+  });
+
+  it("keeps the project-local base path otherwise", () => {
+    expect(
+      staticAppBasePath(
+        { base_path: "/apps/site", strip_prefix: false },
+        atRoot,
+      ),
+    ).toBe("/apps/site");
+    expect(staticAppBasePath({ base_path: "/apps/site" }, {})).toBe(
+      "/apps/site",
+    );
   });
 });

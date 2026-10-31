@@ -26,3 +26,13 @@ export function appServedAtRoot(
 ): boolean {
   return appsAtRoot(env) && appRootMountBase(proxy) != null;
 }
+
+// The base path a static app's refresh job builds for: "/" when the app is
+// served at the root of its origin (so generated absolute URLs match where
+// it is opened), else its project-local base path.
+export function staticAppBasePath(
+  proxy: ProjectAppProxySpec & { base_path: string },
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return appServedAtRoot(proxy, env) ? "/" : proxy.base_path;
+}

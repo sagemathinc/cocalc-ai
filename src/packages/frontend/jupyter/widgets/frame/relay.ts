@@ -18,9 +18,11 @@ several browsers: each frame runs its own widget manager over all models, and
 per-model sequence numbers (last_changed) make updates converge.  A frame's
 own writes don't fire local change events, so the relay forwards them to the
 notebook's other frames itself.  Because every frame runs every model, derived
-updates (jslink, models that recompute) and creation-time messages repeat in
-each frame: writes that change nothing are dropped, and a comm message that
-another frame sent identically a moment ago is not sent again.
+updates (jslink, models that recompute) and initialization messages repeat in
+each frame: writes that change nothing are dropped, and an initialization
+message (request_state) that another frame sent identically a moment ago is
+not sent again.  Other comm messages, such as clicks, are user actions and are
+always sent.
 
 What a frame may write is narrow (see setModelValue and sendComm): values of
 keys a model already has, never its identity (the "_" keys, which choose the

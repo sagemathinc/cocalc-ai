@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { appServedAtRoot } from "./apps-at-root";
+import { appServedAtRoot, staticAppBasePath } from "./apps-at-root";
 import getPort from "get-port";
 import { spawn } from "node:child_process";
 import net from "node:net";
@@ -693,7 +693,10 @@ async function runStaticRefresh(
     ...(refreshSpec.command.env ?? {}),
     APP_ID: spec.id,
     APP_STATIC_ROOT: spec.static.root,
-    APP_BASE_PATH: spec.proxy.base_path,
+    // "/" when the app is served at the root of its origin, like a managed
+    // service's APP_BASE_URL; the project-local path stays available.
+    APP_BASE_PATH: staticAppBasePath(spec.proxy),
+    APP_LOCAL_BASE_PATH: spec.proxy.base_path,
   };
   const run = (async () => {
     state.last_reason = reason;
