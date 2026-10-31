@@ -464,6 +464,26 @@ async function setArtifactLink(
   );
 }
 
+// What a switch back (a failed activation, tools' "previous") points at must
+// be a version root installed, and the current one may predate root
+// installs: root installs it again (verified) unless it is already there.
+async function rootInstallRollbackTarget(
+  resolved: ResolvedArtifact,
+  target: string,
+): Promise<void> {
+  const root = await fs.promises.realpath(resolved.root);
+  if (path.dirname(target) !== root) {
+    throw new Error(
+      `current ${target} is not a version in ${resolved.root}; not switching without a version to go back to`,
+    );
+  }
+  await rootInstallArtifact(
+    resolved.canonicalArtifact as RootArtifactKind,
+    path.basename(target),
+    resolved.baseUrl ?? normalizeBaseUrl(),
+  );
+}
+
 async function clearArtifactLink(
   resolved: ResolvedArtifact,
   linkPath: string,
@@ -1614,6 +1634,13 @@ async function downloadAndInstallUnlocked(
   const previousTarget = await fs.promises
     .realpath(resolved.currentLink)
     .catch(() => undefined);
+  if (
+    resolved.rootInstall &&
+    previousTarget &&
+    previousTarget !== resolved.versionDir
+  ) {
+    await rootInstallRollbackTarget(resolved, previousTarget);
+  }
   let releaseRuntimeMaintenance: (() => void) | undefined;
   if (resolved.canonicalArtifact === "container-runtime") {
     const contract = await validateContainerRuntimeVersion(resolved.versionDir);
