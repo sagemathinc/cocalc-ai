@@ -2080,14 +2080,18 @@ def effective_project_runtime_uid_mode(desired_value: Any, env_file: Any) -> str
 
 
 def parse_project_runtime_uid_mode(value: Any) -> str:
+    """A valid mode, or keep-id: a typo must not stop a host's bootstrap.
+    project-host reports an invalid configured mode in its health."""
     if value is None or value == "":
         return "keep-id"
-    _require(
-        isinstance(value, str) and value in PROJECT_RUNTIME_UID_MODES,
-        "bootstrap-desired-state.project_runtime_uid_mode must be one of "
-        + ", ".join(PROJECT_RUNTIME_UID_MODES),
+    if isinstance(value, str) and value in PROJECT_RUNTIME_UID_MODES:
+        return value
+    print(
+        f"bootstrap: ignoring invalid project runtime uid mode {value!r} "
+        f"(expected one of {', '.join(PROJECT_RUNTIME_UID_MODES)}); using keep-id",
+        file=sys.stderr,
     )
-    return value
+    return "keep-id"
 
 
 def parse_only(arg: str | None) -> set[str] | None:
@@ -2134,7 +2138,9 @@ def json_write_atomic(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def text_write_atomic(path: Path, content: str, *, default_mode: int = 0o644) -> None:
+def text_write_atomic(
+    path: Path, content: str, *, default_mode: int = 0o644, fsync: bool = False
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         dir=str(path.parent),
@@ -2145,6 +2151,9 @@ def text_write_atomic(path: Path, content: str, *, default_mode: int = 0o644) ->
     tmp = Path(tmp_name)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(content)
+        if fsync:
+            handle.flush()
+            os.fsync(handle.fileno())
     try:
         mode = path.stat().st_mode & 0o777
     except FileNotFoundError:
@@ -4042,7 +4051,7 @@ def ensure_login_defs_subid_max(path: Path = LOGIN_DEFS_PATH) -> bool:
             out.append(f"{key} {600100000}")
             changed = True
     if changed:
-        path.write_text("\n".join(out) + "\n", encoding="utf-8")
+        text_write_atomic(path, "\n".join(out) + "\n", fsync=True)
     return changed
 
 

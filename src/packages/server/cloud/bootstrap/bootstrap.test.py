@@ -9076,8 +9076,11 @@ class ProjectRuntimeUidBlockTest(unittest.TestCase):
     def test_parse_mode(self) -> None:
         self.assertEqual(bootstrap.parse_project_runtime_uid_mode(None), "keep-id")
         self.assertEqual(bootstrap.parse_project_runtime_uid_mode("separate"), "separate")
-        with self.assertRaises(Exception):
-            bootstrap.parse_project_runtime_uid_mode("separate-per-project")
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(
+                bootstrap.parse_project_runtime_uid_mode("separate-per-project"), "keep-id"
+            )
+        self.assertIn("ignoring invalid project runtime uid mode", err.getvalue())
 
     def test_local_env_file_sets_the_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -9091,8 +9094,8 @@ class ProjectRuntimeUidBlockTest(unittest.TestCase):
             local.write_text("COCALC_PROJECT_RUNTIME_UID_MODE=keep-id\n", encoding="utf-8")
             self.assertEqual(mode("separate", str(env_file)), "keep-id")
             local.write_text("COCALC_PROJECT_RUNTIME_UID_MODE=sideways\n", encoding="utf-8")
-            with self.assertRaises(Exception):
-                mode(None, str(env_file))
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(mode("separate", str(env_file)), "keep-id")
 
     def check_contract(self, cfg, live_ranges) -> None:
         desired = bootstrap.expected_runtime_user_contract(cfg)
