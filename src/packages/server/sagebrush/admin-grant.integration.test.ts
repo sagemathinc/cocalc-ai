@@ -185,6 +185,16 @@ describeDb("Sagebrush's admin scope and admin check", () => {
     const proof = await issueAuthorizeApprovalProof({ account_id: a, request: plain, req: {} });
     await expect(approveAuthorizeRequest({ request: scoped, approval_token: proof.token, approval_home_bay_id: proof.home_bay_id })).rejects.toThrow();
   });
+  it("binds the scope: an admin-scope proof can't approve the plain request", async () => {
+    const a = await admin(), h = await session(a, { F: now() - 10, fresh: now() + 600, expire: now() + 86400 });
+    mockCurrentSession.mockResolvedValue(await sessionRow(h));
+    const { challenge } = pkce();
+    const base = { response_type: "code", client_id: "sagebrush", redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: "S256" };
+    const plain = await validateAuthorizeRequest(base);
+    const scoped = await validateAuthorizeRequest({ ...base, scope: "sagebrush-admin" });
+    const proof = await issueAuthorizeApprovalProof({ account_id: a, request: scoped, req: {} });
+    await expect(approveAuthorizeRequest({ request: plain, approval_token: proof.token, approval_home_bay_id: proof.home_bay_id })).rejects.toThrow();
+  });
 
   // ---- minting at token time
   it("EP5: the token's grant expires at min(F + 600, expire, fresh_auth_until)", async () => {
