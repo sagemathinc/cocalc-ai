@@ -9459,6 +9459,8 @@ class HostIntegrityWatchTest(unittest.TestCase):
         os.unlink(units / "multi-user.target.wants" / "app.service")
         os.symlink("/tmp/other.service", units / "multi-user.target.wants" / "app.service")
         os.symlink("../app.service", units / "multi-user.target.wants" / "new.service")
+        # a directory others may now write
+        (units / "multi-user.target.wants").chmod(0o777)
         # a tree that didn't exist
         later.mkdir()
         (later / "gen").write_text("#!/bin/sh\n")
@@ -9469,7 +9471,9 @@ class HostIntegrityWatchTest(unittest.TestCase):
             sorted(
                 [
                     str(later),
+                    str(later) + "/",
                     str(later / "gen"),
+                    str(units / "multi-user.target.wants") + "/",
                     str(units / "app.service.d" / "evil.conf"),
                     str(units / "multi-user.target.wants" / "app.service"),
                     str(units / "multi-user.target.wants" / "new.service"),
@@ -9608,7 +9612,7 @@ class HostIntegrityWatchTest(unittest.TestCase):
         ns = self.watch()
         ns["MAX_TREE_ENTRIES"] = 3
         digests = ns["hash_config"]([f"{tree}/**"])
-        self.assertEqual(len([p for p in digests if not p.endswith("/**")]), 3)
+        self.assertEqual(len([p for p in digests if not p.endswith(("/**", "/"))]), 3)
         first = digests[f"{tree}/**"]
         self.assertTrue(first.startswith("truncated:5:"))
         # an edit past the cap, with the same number of entries, shows

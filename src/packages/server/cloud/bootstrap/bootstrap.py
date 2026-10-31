@@ -4043,6 +4043,19 @@ def hash_config(patterns):
         if pattern.endswith("/**"):
             tops = sorted(glob.glob(pattern[:-3])) if any(c in pattern[:-3] for c in "*?[") else [pattern[:-3]]
             for top in tops:
+                # the directories themselves: who owns them and who may
+                # write them (not mtime: entries added or removed show anyway)
+                if os.path.isdir(top) and not os.path.islink(top):
+                    for dirpath, _dirnames, _filenames in os.walk(top):
+                        try:
+                            st = os.lstat(dirpath)
+                        except OSError:
+                            continue
+                        digests[dirpath.rstrip("/") + "/"] = "dir:%o:%d:%d" % (
+                            st.st_mode,
+                            st.st_uid,
+                            st.st_gid,
+                        )
                 entries, total, rest = tree_entries(top)
                 for path in entries:
                     if path == top and not os.path.exists(top):
