@@ -544,6 +544,8 @@ secret_access_key = "secret"
             self.assertIn("restore", restore_args)
             self.assertIn("--no-cache", restore_args)
             self.assertIn("backup-id:data", restore_args)
+            # Existing files are read, never trusted by size and mtime.
+            self.assertEqual(restore_args[restore_args.index("restore") + 1], "--verify-existing")
             self.assertEqual(list(profile_run_dir.iterdir()), [])
 
             outside = root / "outside-profile.toml"

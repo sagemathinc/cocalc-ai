@@ -4,8 +4,16 @@ Test the rustic backup api.
 https://github.com/rustic-rs/rustic
 */
 
-import rustic, { getHost, getSnapshot } from "./rustic";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import rustic, { getHost, getSnapshot, withVerifyExisting } from "./rustic";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseOutput } from "./exec";
@@ -126,6 +134,29 @@ password = ""
     ).resolves.toBe("my-host");
   });
 
+  it("a restore rewrites a file changed with the same size and mtime", async () => {
+    await writeFile(join(home, "tampered.txt"), "GOOD");
+    // a whole second, so that setting it again gives an identical mtime
+    const mtime = 1_700_000_000;
+    await utimes(join(home, "tampered.txt"), mtime, mtime);
+    const { stdout } = await rustic(
+      ["backup", "--json", "tampered.txt"],
+      options,
+    );
+    const backup = JSON.parse(Buffer.from(stdout).toString());
+    for (const extra of [[], ["--verify-existing"]]) {
+      await writeFile(join(home, "tampered.txt"), "EVIL");
+      await utimes(join(home, "tampered.txt"), mtime, mtime);
+      expect((await stat(join(home, "tampered.txt"))).mtimeMs).toBe(
+        mtime * 1000,
+      );
+      await rustic(["restore", ...extra, backup.id, ""], options);
+      await expect(
+        readFile(join(home, "tampered.txt"), "utf8"),
+      ).resolves.toBe("GOOD");
+    }
+  });
+
   it("can restore legacy project-migration snapshots without the local cache", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     await writeFile(join(home, "legacy-migration.txt"), "legacy");
@@ -150,5 +181,18 @@ password = ""
         "utf8",
       ),
     ).resolves.toBe("legacy");
+  });
+});
+
+describe("withVerifyExisting", () => {
+  it("adds exactly one --verify-existing and keeps option values", () => {
+    expect(withVerifyExisting([])).toEqual(["--verify-existing"]);
+    expect(withVerifyExisting(["--no-cache", "--verify-existing"])).toEqual([
+      "--verify-existing",
+      "--no-cache",
+    ]);
+    expect(
+      withVerifyExisting(["--glob", "--verify-existing", "--delete"]),
+    ).toEqual(["--verify-existing", "--glob", "--verify-existing", "--delete"]);
   });
 });

@@ -191,9 +191,8 @@ export default async function rustic(
       const snapshot = args.slice(-2)[0]; // <SNAPSHOT[:PATH]>
       await assertValidSnapshot({ snapshot, host, repo });
       const destination = await safeAbsPath(args.slice(-1)[0]); // <destination>
-      const options = parseAndValidateOptions(
-        args.slice(1, -2),
-        whitelist.restore,
+      const options = withVerifyExisting(
+        parseAndValidateOptions(args.slice(1, -2), whitelist.restore),
       );
       return await runWithTomlInitFallback([...options, snapshot, destination]);
     }
@@ -216,6 +215,24 @@ export default async function rustic(
     default:
       throw Error(`subcommand not allowed: ${args[0]}`);
   }
+}
+
+// Every restore reads the files already at its destination and checks them
+// against the snapshot: Rustic otherwise keeps a file whose size and
+// modification time match, and both are easy to keep while changing the
+// bytes.  Exactly one --verify-existing, whatever the caller passed.
+export function withVerifyExisting(validated: string[]): string[] {
+  const result = ["--verify-existing"];
+  for (let i = 0; i < validated.length; i++) {
+    const option = validated[i];
+    if (whitelist.restore[option] !== true) {
+      // an option with a value (validated): keep both as they are
+      result.push(option, validated[++i]);
+    } else if (option !== "--verify-existing") {
+      result.push(option);
+    }
+  }
+  return result;
 }
 
 function rusticCommand(nice?: number): { cmd: string; prefixArgs: string[] } {
