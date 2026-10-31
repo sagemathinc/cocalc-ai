@@ -9587,7 +9587,11 @@ def parse_confined_spec(text, rustic_candidates=None):
     if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) for arg in argv):
         fail("invalid confined argv")
     allowed_programs = {CONFINED_RSYNC[0], CONFINED_CP[0], *(rustic_candidates or RUSTIC_CANDIDATES)}
-    if argv[0] not in allowed_programs:
+    if argv[0] == CONFINED_EXEC_PATH:
+        # Only the capability walker, with its fixed arguments.
+        if len(argv) != 4 or argv[1:3] != [IMAGE_CAPS_WALK, "--rootid"] or not re.fullmatch(r"[1-9][0-9]{0,9}", argv[3]):
+            fail("only the image capability walker may run the helper confined")
+    elif argv[0] not in allowed_programs:
         fail(f"program is not allowed in confinement: {argv[0]!r}")
     targets = set()
     parsed = []
@@ -9814,6 +9818,305 @@ def own_root_links(treefd, owner):
         finally:
             os.close(parentfd)
     return changed
+
+
+# File capabilities in image trees (finding 014).  Image extraction ran as
+# root and kept host-global (v2) capabilities, which are effective when the
+# host runs the file.  Each image is walked once, confined with SETFCAP over
+# a writable bind (see run_confined): v1/v2 become v3 rooted at the container
+# root, keeping the permitted, inheritable and effective bits; v3 rooted at
+# the container root is kept; any other rootid is removed, never re-rooted.
+VFS_CAP_REVISION_MASK = 0xFF000000
+VFS_CAP_FLAGS_EFFECTIVE = 0x000001
+VFS_CAP_SIZES = {0x01000000: 12, 0x02000000: 20, 0x03000000: 24}
+VFS_CAP_REVISION_3 = 0x03000000
+IMAGE_CAPS_VERSION = 1
+IMAGE_CAPS_WALK = "_image-caps-walk"
+IMAGE_CAPS_TARGET = "/dest"
+IMAGE_CAPS_STATE = "/var/lib/cocalc/image-caps.json"
+IMAGE_CAPS_STATE_MAX_BYTES = 4 * 1024 * 1024
+IMAGE_CAPS_STATE_MAX_IMAGES = 20000
+BTRFS_IOC_GET_SUBVOL_INFO = (2 << 30) | (504 << 16) | (0x94 << 8) | 60
+
+
+def parse_file_capability(value):
+    """(revision, flags, (p0, i0, p1, i1), rootid or None); strict."""
+    if len(value) < 4:
+        fail("malformed file capability")
+    magic = struct.unpack_from("<I", value)[0]
+    revision = magic & VFS_CAP_REVISION_MASK
+    flags = magic & ~VFS_CAP_REVISION_MASK
+    if revision not in VFS_CAP_SIZES or len(value) != VFS_CAP_SIZES[revision]:
+        fail("malformed file capability")
+    if flags & ~VFS_CAP_FLAGS_EFFECTIVE:
+        fail("file capability has unknown flags")
+    if revision == 0x01000000:
+        p0, i0 = struct.unpack_from("<II", value, 4)
+        return revision, flags, (p0, i0, 0, 0), None
+    words = struct.unpack_from("<IIII", value, 4)
+    rootid = struct.unpack_from("<I", value, 20)[0] if revision == VFS_CAP_REVISION_3 else None
+    return revision, flags, words, rootid
+
+
+def v3_file_capability(flags, words, rootid):
+    return struct.pack("<IIIIII", VFS_CAP_REVISION_3 | flags, *words, rootid)
+
+
+def image_caps_walk(top, rootid):
+    """Inside the confinement: convert or remove the capabilities beneath
+    top (see above).  Regular files only; any traversal error, malformed
+    value or unexpected errno fails the walk."""
+    counts = {"converted": 0, "kept": 0, "stripped": 0}
+
+    def raise_error(err):
+        raise err
+
+    for _dirpath, _dirnames, filenames, dirfd in os.fwalk(top, follow_symlinks=False, onerror=raise_error):
+        for name in filenames:
+            info = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dirfd)
+            try:
+                opened = os.fstat(fd)
+                if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                    fail(f"file changed during the capability walk: {name!r}")
+                try:
+                    value = os.getxattr(fd, "security.capability")
+                except OSError as err:
+                    if err.errno == errno.ENODATA:
+                        continue
+                    if err.errno == errno.EOVERFLOW:
+                        # Rooted outside this namespace: not ours to keep.
+                        os.removexattr(fd, "security.capability")
+                        counts["stripped"] += 1
+                        continue
+                    raise
+                revision, flags, words, current = parse_file_capability(value)
+                if revision == VFS_CAP_REVISION_3 and current == rootid:
+                    counts["kept"] += 1
+                elif revision == VFS_CAP_REVISION_3:
+                    os.removexattr(fd, "security.capability")
+                    counts["stripped"] += 1
+                else:
+                    os.setxattr(fd, "security.capability", v3_file_capability(flags, words, rootid))
+                    counts["converted"] += 1
+            finally:
+                os.close(fd)
+    return counts
+
+
+def run_image_caps_walk_entry(argv):
+    """The confined walker's entry point: exactly
+    _image-caps-walk --rootid N, always on /dest."""
+    if len(argv) != 3 or argv[:2] != [IMAGE_CAPS_WALK, "--rootid"] or not re.fullmatch(r"[1-9][0-9]{0,9}", argv[2]):
+        fail("usage: _image-caps-walk --rootid N")
+    counts = image_caps_walk(IMAGE_CAPS_TARGET, int(argv[2]))
+    print(json.dumps(counts, sort_keys=True), flush=True)
+    return 0
+
+
+def image_identity(fd):
+    """A key for an image root that survives remounts: a btrfs subvolume
+    root is named by its UUID (subvolume roots all have inode 256 and their
+    device numbers are reassigned); anything else by device, inode and
+    ctime.  After a walk only root extraction could add a host-global
+    capability again, and normalize-rootfs then forces a walk."""
+    info = os.fstat(fd)
+    if info.st_ino == BTRFS_FIRST_FREE_OBJECTID:
+        # ioctl needs a real fd; the pinned one may be O_PATH.
+        realfd = os.open(f"/proc/self/fd/{fd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            args = bytearray(504)
+            try:
+                fcntl.ioctl(realfd, BTRFS_IOC_GET_SUBVOL_INFO, args)
+            except OSError as err:
+                # Only "not btrfs" may fall back to the inode key.
+                if err.errno != errno.ENOTTY:
+                    raise
+            else:
+                uuid = bytes(args[296:312]).hex()
+                if uuid == "0" * 32:
+                    fail("btrfs subvolume without a UUID")
+                return f"subvol:{uuid}"
+        finally:
+            os.close(realfd)
+    return f"inode:{info.st_dev}:{info.st_ino}:{info.st_ctime_ns}"
+
+
+def read_image_caps_state(path=IMAGE_CAPS_STATE):
+    """{identity: version}; anything unreadable or malformed counts as
+    empty (images are walked again, never skipped)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:  # missing, or a symlink (O_NOFOLLOW)
+        return {}
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077 \
+                or info.st_size > IMAGE_CAPS_STATE_MAX_BYTES:
+            return {}
+        data = os.read(fd, IMAGE_CAPS_STATE_MAX_BYTES + 1)
+    finally:
+        os.close(fd)
+    try:
+        state = json.loads(data)
+    except ValueError:
+        return {}
+    images = state.get("images") if isinstance(state, dict) else None
+    if not isinstance(images, dict) or len(images) > IMAGE_CAPS_STATE_MAX_IMAGES:
+        return {}
+    return {
+        key: value
+        for key, value in images.items()
+        if isinstance(key, str) and len(key) <= 128 and isinstance(value, int)
+    }
+
+
+def write_image_caps_state(images, path=IMAGE_CAPS_STATE):
+    directory, name = os.path.split(path)
+    data = json.dumps({"images": images}, sort_keys=True).encode()
+    for _attempt in range(16):
+        temp = f".{name}.{os.urandom(8).hex()}"
+        try:
+            fd = os.open(os.path.join(directory, temp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        except FileExistsError:
+            continue
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(os.path.join(directory, temp), path)
+        dirfd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(dirfd)
+        finally:
+            os.close(dirfd)
+        return
+    fail("could not write the image capability state")
+
+
+def subvolume_readonly(treefd):
+    if os.fstat(treefd).st_ino != BTRFS_FIRST_FREE_OBJECTID:
+        return False
+    fd = os.open(f"/proc/self/fd/{treefd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        flags = bytearray(8)
+        try:
+            fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_GETFLAGS, flags)
+        except OSError:
+            return False
+        return bool(struct.unpack("<Q", flags)[0] & BTRFS_SUBVOL_RDONLY)
+    finally:
+        os.close(fd)
+
+
+def set_subvolume_readonly(treefd, readonly):
+    fd = os.open(f"/proc/self/fd/{treefd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        flags = bytearray(8)
+        fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_GETFLAGS, flags)
+        value = struct.unpack("<Q", flags)[0]
+        value = value | BTRFS_SUBVOL_RDONLY if readonly else value & ~BTRFS_SUBVOL_RDONLY
+        fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_SETFLAGS, bytearray(struct.pack("<Q", value)))
+    finally:
+        os.close(fd)
+
+
+def image_caps_preflight(treefd, *, deadline, state_path=IMAGE_CAPS_STATE, confined=None, rootid=None, force=False):
+    """Walk an image root once (see image_caps_walk) unless its identity is
+    stamped for this version; stamp the identity read again from the same
+    pinned fd after a successful walk.  Returns the walk's outcome, or
+    "stamped"."""
+    confined = confined or run_confined
+    lockfd = os.open(state_path + ".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(lockfd, fcntl.LOCK_EX)
+        if not force and read_image_caps_state(state_path).get(image_identity(treefd)) == IMAGE_CAPS_VERSION:
+            return "stamped"
+        rootid = rootid or container_root_ids()[0]
+        # A read-only subvolume is made writable for the walk only.
+        readonly = subvolume_readonly(treefd)
+        if readonly:
+            set_subvolume_readonly(treefd, False)
+        try:
+            status = confined(
+                [CONFINED_EXEC_PATH, IMAGE_CAPS_WALK, "--rootid", str(rootid)],
+                [(treefd, IMAGE_CAPS_TARGET, True)],
+                deadline=deadline,
+                setfcap=True,
+            )
+        finally:
+            if readonly:
+                set_subvolume_readonly(treefd, True)
+        if status != 0:
+            raise subprocess.CalledProcessError(status, [IMAGE_CAPS_WALK])
+        images = read_image_caps_state(state_path)
+        images[image_identity(treefd)] = IMAGE_CAPS_VERSION
+        if len(images) > IMAGE_CAPS_STATE_MAX_IMAGES:
+            images = dict(list(images.items())[-IMAGE_CAPS_STATE_MAX_IMAGES:])
+        write_image_caps_state(images, state_path)
+        return "walked"
+    finally:
+        os.close(lockfd)
+
+
+IMAGE_CACHE_RELATIVE = "data/cache/images"
+
+
+def run_image_caps_preflight(argv, allowed_roots=ALLOWED_ROOTS):
+    """image-caps-preflight --root R --path P: an image workflow's explicit
+    preflight of one image root (generic copies never walk their source)."""
+    values, _flags = parse_named_options(argv, "image-caps-preflight", {"--root", "--path"}, {"--root", "--path"})
+    validate_relative(values["path"], allow_root=True)
+    rootfd = open_root(values["root"], set(allowed_roots) - SECRET_ROOTS)
+    try:
+        treefd = openat2(rootfd, values["path"], O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        outcome = image_caps_preflight(treefd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS)
+    finally:
+        os.close(treefd)
+    print(json.dumps({"image_caps": outcome}), flush=True)
+    return 0
+
+
+def run_migrate_image_caps(argv, cache_root="/mnt/cocalc", cache_relative=IMAGE_CACHE_RELATIVE, preflight=None):
+    """migrate-image-caps: preflight every image under the pinned image
+    cache (a one-off after rollout; stamped images are skipped).  Reports
+    each image; exits nonzero if any failed (those stay unstamped)."""
+    if argv != ["migrate-image-caps"]:
+        fail("usage: migrate-image-caps")
+    preflight = preflight or image_caps_preflight
+    rootfd = open_root(cache_root, {cache_root})
+    try:
+        cachefd = openat2(rootfd, cache_relative, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    failed = 0
+    try:
+        for name in sorted(os.listdir(cachefd)):
+            if name.startswith("."):
+                continue
+            try:
+                if not stat.S_ISDIR(os.stat(name, dir_fd=cachefd, follow_symlinks=False).st_mode):
+                    continue
+                treefd = openat2(cachefd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+            except OSError:
+                continue
+            try:
+                outcome = preflight(treefd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS)
+            except (OSError, ValueError, subprocess.CalledProcessError) as err:
+                failed += 1
+                outcome = f"failed: {err}"
+            finally:
+                os.close(treefd)
+            print(json.dumps({"image": name, "image_caps": outcome}), flush=True)
+    finally:
+        os.close(cachefd)
+    return 1 if failed else 0
 
 
 def make_staging_directory(parentfd, prefix, uid, gid):
@@ -10296,6 +10599,8 @@ def run_normalize_rootfs(
         args.extend(["--podman-user", podman_user, mountpoint])
         subprocess.run(args, check=True, stdin=subprocess.DEVNULL)
         own_root_links(datafd, container_root_ids())
+        # A newly normalized image never keeps host-global capabilities.
+        image_caps_preflight(datafd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS, force=True)
     finally:
         if mounted:
             subprocess.run(
@@ -11368,6 +11673,15 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None, 
 
 def main(argv=None, allowed_roots=ALLOWED_ROOTS):
     if os.geteuid() != 0:
+        # The capability walker runs confined as the runtime user; nothing
+        # else runs without root.
+        walker = sys.argv[1:] if argv is None else argv
+        if walker and walker[0] == IMAGE_CAPS_WALK:
+            try:
+                return run_image_caps_walk_entry(walker)
+            except (OSError, ValueError) as err:
+                print(f"SECURITY_DENY code=image-caps-walk-failed detail={err}", file=sys.stderr)
+                return 2
         print("cocalc runtime storage path helper must run as root", file=sys.stderr)
         return 1
     # sudo relays these; turning them into exceptions lets supervised
@@ -11383,6 +11697,10 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
             return run_mkfs_btrfs(argv)
         if argv and argv[0] == "pin-exec":
             return run_pin_exec(argv, allowed_roots)
+        if argv and argv[0] == "image-caps-preflight":
+            return run_image_caps_preflight(argv, allowed_roots)
+        if argv and argv[0] == "migrate-image-caps":
+            return run_migrate_image_caps(argv)
         if argv and argv[0] == "_confined-exec":
             return run_confined_exec(argv)
         run(argv, allowed_roots)
@@ -16001,6 +16319,21 @@ PY' bash "$tree"
     enter_pinned_tree "$1"
     tree="."
     exec /bin/bash -lc 'set -euo pipefail; tar --sort=name --mtime='"'"'UTC 1970-01-01'"'"' --numeric-owner --owner=0 --group=0 --format=posix --acls --xattrs --xattrs-include='"'"'*'"'"' -cf - -C "$1" . | sha256sum | awk '"'"'{print $1}'"'"'' bash "$tree"
+    ;;
+  image-caps-preflight)
+    # One image root: convert or remove its file capabilities (finding 014).
+    if [ "$#" -ne 1 ]; then
+      deny "image-caps-preflight-args-invalid" "$*"
+    fi
+    require_allowed_path_parts "$1"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper image-caps-preflight --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL"
+    ;;
+  migrate-image-caps)
+    # The one-off pass over the whole image cache, at idle priority.
+    if [ "$#" -ne 0 ]; then
+      deny "migrate-image-caps-args-invalid" "$*"
+    fi
+    exec /usr/bin/nice -n 19 /usr/bin/ionice -c3 /usr/local/libexec/cocalc-runtime-storage-path-helper migrate-image-caps
     ;;
   du-bytes|_du-bytes-pinned)
     if [ "$#" -ne 1 ]; then

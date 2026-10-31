@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import contextlib
+import errno
 import fcntl
 import io
 import functools
@@ -13,6 +14,7 @@ import re
 import shutil
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -1242,6 +1244,244 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         self.assertEqual(sorted(trees), tree_entries)
         self.assertEqual(len(set(trees.values())), 2)
 
+    def test_file_capabilities_parse_strictly_and_convert_exactly(self) -> None:
+        namespace = self.helper_namespace()
+        parse = namespace["parse_file_capability"]
+        v3 = namespace["v3_file_capability"]
+        v2 = struct.pack("<IIIII", 0x02000001, 0x1000, 0x2, 0x1, 0x4)
+        self.assertEqual(parse(v2), (0x02000000, 1, (0x1000, 0x2, 0x1, 0x4), None))
+        converted = v3(1, (0x1000, 0x2, 0x1, 0x4), 231072)
+        self.assertEqual(converted, struct.pack("<IIIIII", 0x03000001, 0x1000, 0x2, 0x1, 0x4, 231072))
+        self.assertEqual(parse(converted), (0x03000000, 1, (0x1000, 0x2, 0x1, 0x4), 231072))
+        v1 = struct.pack("<III", 0x01000000, 0x80, 0)
+        self.assertEqual(parse(v1), (0x01000000, 0, (0x80, 0, 0, 0), None))
+        for bad in (b"", b"\x01\x02", v2[:-1], v2 + b"\0", struct.pack("<IIIII", 0x02000003, 1, 0, 0, 0),
+                    struct.pack("<IIIII", 0x04000000, 1, 0, 0, 0), converted[:-4]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse(bad)
+
+    def test_image_caps_walk_converts_keeps_and_strips(self) -> None:
+        namespace = self.helper_namespace()
+        walk = namespace["image_caps_walk"]
+        v2 = struct.pack("<IIIII", 0x02000001, 1 << 12, 0, 0, 0)
+        mine = struct.pack("<IIIIII", 0x03000001, 1 << 13, 0, 0, 0, 231072)
+        other = struct.pack("<IIIIII", 0x03000001, 1 << 13, 0, 0, 0, 2000)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            top = Path(tmpdir) / "image"
+            (top / "usr" / "bin").mkdir(parents=True)
+            names = {"v2": v2, "mine": mine, "other": other, "plain": None, "foreign": "EOVERFLOW"}
+            for name in names:
+                (top / "usr" / "bin" / name).write_text(name)
+            os.symlink("v2", top / "usr" / "bin" / "link")
+            os.mkfifo(top / "usr" / "bin" / "fifo")
+            xattrs = {}
+            for name, value in names.items():
+                xattrs[(top / "usr" / "bin" / name).stat().st_ino] = value
+            writes = []
+
+            def ino(fd):
+                return os.fstat(fd).st_ino
+
+            def getxattr(fd, attr, *args, **kwargs):
+                self.assertEqual(attr, "security.capability")
+                value = xattrs.get(ino(fd))
+                if value is None:
+                    raise OSError(errno.ENODATA, "no data")
+                if value == "EOVERFLOW":
+                    raise OSError(errno.EOVERFLOW, "overflow")
+                return value
+
+            def setxattr(fd, attr, value, *args, **kwargs):
+                writes.append(("set", Path(os.readlink(f"/proc/self/fd/{fd}")).name, value))
+
+            def removexattr(fd, attr, *args, **kwargs):
+                writes.append(("remove", Path(os.readlink(f"/proc/self/fd/{fd}")).name, None))
+
+            with mock.patch.object(namespace["os"], "getxattr", side_effect=getxattr), \
+                    mock.patch.object(namespace["os"], "setxattr", side_effect=setxattr), \
+                    mock.patch.object(namespace["os"], "removexattr", side_effect=removexattr):
+                counts = walk(str(top), 231072)
+            self.assertEqual(counts, {"converted": 1, "kept": 1, "stripped": 2})
+            self.assertEqual(
+                sorted(writes),
+                [("remove", "foreign", None), ("remove", "other", None),
+                 ("set", "v2", struct.pack("<IIIIII", 0x03000001, 1 << 12, 0, 0, 0, 231072))],
+            )
+            # A malformed value or any other error fails the walk.
+            xattrs[(top / "usr" / "bin" / "plain").stat().st_ino] = b"\x02\x00"
+            with mock.patch.object(namespace["os"], "getxattr", side_effect=getxattr), \
+                    mock.patch.object(namespace["os"], "setxattr"), mock.patch.object(namespace["os"], "removexattr"):
+                with self.assertRaises(ValueError):
+                    walk(str(top), 231072)
+            # Traversal errors are raised, not skipped.
+            (top / "locked").mkdir()
+            (top / "locked").chmod(0)
+            try:
+                if os.geteuid() != 0:
+                    with mock.patch.object(namespace["os"], "getxattr", side_effect=OSError(errno.ENODATA, "x")):
+                        with self.assertRaises(PermissionError):
+                            walk(str(top), 231072)
+            finally:
+                (top / "locked").chmod(0o755)
+
+    @unittest.skipUnless(os.environ.get("COCALC_TEST_BTRFS_DIR"), "needs a btrfs directory")
+    def test_image_identity_names_subvolumes_by_uuid(self) -> None:
+        namespace = self.helper_namespace()
+        identity = namespace["image_identity"]
+        with tempfile.TemporaryDirectory(dir=os.environ["COCALC_TEST_BTRFS_DIR"]) as tmpdir:
+            root = str(Path(tmpdir).resolve())
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                for name in ("a", "b"):
+                    namespace["run_btrfs"](["subvolume", "create", f"{root}/{name}"], roots=(root,))
+            os.mkdir(f"{root}/plain")
+            fds = {name: os.open(f"{root}/{name}", os.O_PATH | os.O_DIRECTORY) for name in ("a", "b", "plain")}
+            try:
+                a, b, plain = (identity(fds[name]) for name in ("a", "b", "plain"))
+                # Subvolume roots all have inode 256 and reusable st_dev
+                # values: they are told apart by UUID.
+                self.assertTrue(a.startswith("subvol:") and b.startswith("subvol:"))
+                self.assertNotEqual(a.split(":")[1], b.split(":")[1])
+                self.assertTrue(plain.startswith("inode:"))
+                self.assertEqual(identity(fds["a"]), a)  # stable
+            finally:
+                for fd in fds.values():
+                    os.close(fd)
+
+    @unittest.skipUnless(
+        os.geteuid() == 0 and os.environ.get("COCALC_TEST_CONFINED") == "1",
+        "needs real root and COCALC_TEST_CONFINED=1 (runs the walker confined)",
+    )
+    def test_image_caps_walker_in_a_real_jail(self) -> None:
+        namespace = self.helper_namespace()
+        uid = int(os.environ.get("COCALC_TEST_CONFINED_UID", "2000"))
+        container = int(os.environ.get("COCALC_TEST_CONTAINER_ROOT", "231072"))
+        id_maps = (uid, uid, f"{uid} {uid} 1\n{container} {container} 65536\n", f"{uid} {uid} 1\n{container} {container} 65536\n")
+        with tempfile.TemporaryDirectory(dir=os.environ.get("COCALC_TEST_CONFINED_DIR")) as tmpdir:
+            image = Path(tmpdir) / "image"
+            (image / "usr" / "bin").mkdir(parents=True)
+            for path in (image, image / "usr", image / "usr" / "bin"):
+                os.chown(path, container, container)
+            v2 = struct.pack("<IIIII", 0x02000001, 1 << 12, 0, 0, 0)  # cap_net_admin=ep, host-global
+            foreign = struct.pack("<IIIIII", 0x03000001, 1 << 13, 0, 0, 0, container + 1000)
+            for name, value in (("helper", v2), ("foreign", foreign), ("plain", None)):
+                path = image / "usr" / "bin" / name
+                shutil.copy("/bin/true", path)
+                os.chown(path, container, container)
+                if value is not None:
+                    os.setxattr(path, "security.capability", value)
+            fd = os.open(image, os.O_PATH | os.O_DIRECTORY)
+            spec = json.dumps({
+                "argv": ["/usr/local/libexec/cocalc-runtime-storage-path-helper", "_image-caps-walk", "--rootid", str(container)],
+                "binds": [[fd, "/dest", True]], "setfcap": True, "tolerate_skips": False,
+            })
+            child = os.fork()  # unshare(NEWPID) changes later forks of the caller
+            if child == 0:
+                code = 70
+                try:
+                    code = namespace["run_confined_exec"](["_confined-exec", spec], run_dir=f"{tmpdir}/run", id_maps=id_maps)
+                finally:
+                    os._exit(code if 0 <= code < 256 else 71)
+            os.close(fd)
+            _pid, status = os.waitpid(child, 0)
+            code = os.waitstatus_to_exitcode(status)
+            self.assertEqual(code, 0)
+            converted = os.getxattr(image / "usr" / "bin" / "helper", "security.capability")
+            self.assertEqual(converted, struct.pack("<IIIIII", 0x03000001, 1 << 12, 0, 0, 0, container))
+            with self.assertRaises(OSError):
+                os.getxattr(image / "usr" / "bin" / "foreign", "security.capability")
+
+    def test_image_caps_state_is_validated_and_written_atomically(self) -> None:
+        namespace = self.helper_namespace()
+        read, write = namespace["read_image_caps_state"], namespace["write_image_caps_state"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = str(Path(tmpdir) / "image-caps.json")
+            self.assertEqual(read(path), {})
+            write({"subvol:ab:7": 1}, path)
+            self.assertEqual(read(path), {"subvol:ab:7": 1})
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+            self.assertEqual(sorted(os.listdir(tmpdir)), ["image-caps.json"])
+            os.chmod(path, 0o644)
+            self.assertEqual(read(path), {})  # not private: ignored, images re-walked
+            os.chmod(path, 0o600)
+            for bad in (b"not json", b'{"images": []}', b'{"images": {"k": "1"}}', b"{}"):
+                Path(path).write_bytes(bad)
+                os.chmod(path, 0o600)
+                with self.subTest(bad=bad):
+                    self.assertEqual(read(path), {})
+            os.unlink(path)
+            os.symlink("/etc/passwd", path)
+            self.assertEqual(read(path), {})  # never followed
+
+    def test_image_caps_preflight_stamps_only_after_a_good_walk(self) -> None:
+        namespace = self.helper_namespace()
+        preflight = namespace["image_caps_preflight"]
+        # pre-walk, post-walk, then the second call, then a new unstamped image.
+        identities = iter(["inode:1:2:3", "inode:1:2:4", "inode:1:2:4", "inode:9:9:9"])
+        namespace["image_identity"] = lambda _fd: next(identities)
+        namespace["subvolume_readonly"] = lambda _fd: False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = str(Path(tmpdir) / "image-caps.json")
+            calls = []
+
+            def confined(argv, binds, **kwargs):
+                calls.append((argv, [(t, w) for _fd, t, w in binds], kwargs))
+                return 0
+
+            self.assertEqual(preflight(3, deadline=0, state_path=state, confined=confined, rootid=231072), "walked")
+            self.assertEqual(calls, [(["/usr/local/libexec/cocalc-runtime-storage-path-helper", "_image-caps-walk",
+                                       "--rootid", "231072"], [("/dest", True)], {"deadline": 0, "setfcap": True})])
+            # Stamped with the identity read after the walk.
+            self.assertEqual(namespace["read_image_caps_state"](state), {"inode:1:2:4": 1})
+            self.assertEqual(preflight(3, deadline=0, state_path=state, confined=confined, rootid=231072), "stamped")
+            self.assertEqual(len(calls), 1)
+            # A failed walk stamps nothing.
+            with self.assertRaises(subprocess.CalledProcessError):
+                preflight(3, deadline=0, state_path=state, confined=lambda *_a, **_k: 2, rootid=231072)
+            self.assertEqual(namespace["read_image_caps_state"](state), {"inode:1:2:4": 1})
+
+    def test_image_caps_walker_is_the_only_confined_helper_entry(self) -> None:
+        namespace = self.helper_namespace()
+        parse = namespace["parse_confined_spec"]
+        helper = "/usr/local/libexec/cocalc-runtime-storage-path-helper"
+
+        def spec(argv):
+            return json.dumps({"argv": argv, "binds": [[5, "/dest", True]], "setfcap": True, "tolerate_skips": False})
+
+        self.assertEqual(parse(spec([helper, "_image-caps-walk", "--rootid", "231072"]))[0][1], "_image-caps-walk")
+        for argv in ([helper], [helper, "rm", "--root", "/mnt/cocalc"], [helper, "_image-caps-walk", "--rootid", "0"],
+                     [helper, "_image-caps-walk", "--rootid", "1", "/etc"], [helper, "_image-caps-walk", "/etc", "1"]):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                parse(spec(argv))
+        entry = namespace["run_image_caps_walk_entry"]
+        for argv in (["_image-caps-walk"], ["_image-caps-walk", "--rootid", "x"], ["_image-caps-walk", "--root", "/etc"]):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                entry(argv)
+        if os.geteuid() != 0:
+            self.assertEqual(namespace["main"](["rm", "--root", "/mnt/cocalc", "--path", "x"]), 1)
+
+    def test_migrate_image_caps_covers_each_image_and_reports_failures(self) -> None:
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cache = root / "data" / "cache" / "images"
+            for name in ("a", "b", ".a.json"):
+                (cache / name).mkdir(parents=True) if not name.endswith(".json") else (cache / name).write_text("{}")
+            os.symlink(root, cache / "link")
+            seen = []
+
+            def preflight(fd, **_kwargs):
+                name = Path(os.readlink(f"/proc/self/fd/{fd}")).name
+                seen.append(name)
+                if name == "b":
+                    raise subprocess.CalledProcessError(2, ["walk"])
+                return "walked"
+
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                code = namespace["run_migrate_image_caps"](["migrate-image-caps"], cache_root=str(root), preflight=preflight)
+            self.assertEqual(code, 1)
+            self.assertEqual(seen, ["a", "b"])
+            self.assertIn('"image": "b"', out.getvalue())
+
     def test_confined_spec_is_strict(self) -> None:
         namespace = self.helper_namespace()
         parse = namespace["parse_confined_spec"]
@@ -1549,6 +1789,8 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
     def test_normalize_rootfs_uses_private_bind_mount(self) -> None:
         namespace = self.helper_namespace()
         namespace["container_root_ids"] = lambda *_args: (os.getuid(), os.getgid())
+        preflights = []
+        namespace["image_caps_preflight"] = lambda fd, **_kwargs: preflights.append(fd) or "walked"
         run_normalize_rootfs = namespace["run_normalize_rootfs"]
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
