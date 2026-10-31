@@ -5034,6 +5034,20 @@ reconcile_host_service_pid 123
                 text=True,
                 check=True,
             )
+            # project-view probe reports capabilities and takes no arguments.
+            project_view = "case \"$cmd\" in\n  project-view)" + script.split(
+                "\n  project-view)", 1
+            )[1].split("\n  umount-overlay-project)", 1)[0] + "\nesac\n"
+            for args, code, out in [
+                (["probe"], 0, "project-view:1 overlay-idmap:1\n"),
+                (["probe", "x"], 2, ""),
+            ]:
+                result = subprocess.run(
+                    ["bash", "-c", 'cmd=project-view\n' + project_view, "_", *args],
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(result.stdout, out)
             policy_helper = captured[
                 "/usr/local/libexec/cocalc-project-io-policy"
             ]
@@ -9044,6 +9058,567 @@ class ManagedProjectJobOutputRelayTest(unittest.TestCase):
         self.assertNotIn("256 * 1024", source)
 
 
+class ProjectRuntimeUidBlockTest(unittest.TestCase):
+    def setUp(self) -> None:
+        original = bootstrap.resolve_runtime_user_identity
+        bootstrap.resolve_runtime_user_identity = lambda _cfg: (2000, 2000)
+        self.addCleanup(setattr, bootstrap, "resolve_runtime_user_identity", original)
+        self.cfg = make_cfg(tempfile.mkdtemp())
+
+    def test_block_is_far_from_useradd_and_container_ranges(self) -> None:
+        start, length = bootstrap.PROJECT_RUNTIME_UID_BLOCK
+        self.assertEqual((start, length), (1 << 30, 65536))
+        self.assertEqual(bootstrap.PROJECT_RUNTIME_SEPARATE_UID, start)
+        for range_start, range_length in bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES:
+            self.assertLessEqual(range_start + range_length, start)
+
+    def test_separate_mode_appends_exactly_one_trailing_extent(self) -> None:
+        keep = bootstrap.expected_runtime_userns_map(self.cfg)
+        separate_cfg = replace(self.cfg, project_runtime_uid_mode="separate")
+        self.assertEqual(
+            bootstrap.runtime_subid_ranges(separate_cfg),
+            (*bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES, bootstrap.PROJECT_RUNTIME_UID_BLOCK),
+        )
+        separate = bootstrap.expected_runtime_userns_map(separate_cfg)
+        for before, after in zip(keep, separate):
+            self.assertEqual(after[:-1], before)
+            self.assertEqual(len(after), len(before) + 1)
+        # every existing inner id stays put; the block comes after them
+        self.assertEqual(separate[0][-1], "4194305 1073741824 65536")
+        self.assertEqual(
+            bootstrap.expected_runtime_user_contract(separate_cfg)["subuid_ranges"][-1],
+            "1073741824:65536",
+        )
+        self.assertTrue(bootstrap.runtime_userns_map_has_project_uid_block(separate[0]))
+        self.assertFalse(bootstrap.runtime_userns_map_has_project_uid_block(keep[0]))
+
+    def test_parse_mode(self) -> None:
+        self.assertEqual(bootstrap.parse_project_runtime_uid_mode(None), "keep-id")
+        self.assertEqual(bootstrap.parse_project_runtime_uid_mode("separate"), "separate")
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(
+                bootstrap.parse_project_runtime_uid_mode("separate-per-project"), "keep-id"
+            )
+        self.assertIn("ignoring invalid project runtime uid mode", err.getvalue())
+
+    def test_local_env_file_sets_the_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = Path(tmpdir) / "project-host.env"
+            local = Path(tmpdir) / "project-host.local.env"
+            mode = bootstrap.effective_project_runtime_uid_mode
+            self.assertEqual(mode(None, str(env_file)), "keep-id")
+            self.assertEqual(mode("separate", str(env_file)), "separate")
+            local.write_text("COCALC_PROJECT_RUNTIME_UID_MODE=separate\n", encoding="utf-8")
+            self.assertEqual(mode(None, str(env_file)), "separate")
+            local.write_text("COCALC_PROJECT_RUNTIME_UID_MODE=keep-id\n", encoding="utf-8")
+            self.assertEqual(mode("separate", str(env_file)), "keep-id")
+            local.write_text("COCALC_PROJECT_RUNTIME_UID_MODE=sideways\n", encoding="utf-8")
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(mode("separate", str(env_file)), "keep-id")
+
+    def check_contract(self, cfg, live_ranges) -> None:
+        desired = bootstrap.expected_runtime_user_contract(cfg)
+        uid_map, gid_map = bootstrap.expected_runtime_userns_map(cfg, live_ranges)
+        installed = {
+            **desired,
+            "uid_map": uid_map,
+            "gid_map": gid_map,
+            "fingerprint": bootstrap.runtime_userns_map_fingerprint(uid_map, gid_map),
+        }
+        original = bootstrap.read_current_runtime_user_contract
+        bootstrap.read_current_runtime_user_contract = lambda _cfg: installed
+        try:
+            bootstrap.verify_runtime_user_contract(cfg)
+        finally:
+            bootstrap.read_current_runtime_user_contract = original
+
+    def test_contract_accepts_live_map_with_or_without_the_block(self) -> None:
+        base = bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES
+        block = bootstrap.PROJECT_RUNTIME_UID_BLOCK
+        for mode in ("keep-id", "separate"):
+            cfg = replace(self.cfg, project_runtime_uid_mode=mode)
+            # the namespace predates a changed allocation until the next reboot
+            self.check_contract(cfg, base)
+            self.check_contract(cfg, (*base, block))
+            with self.assertRaisesRegex(RuntimeError, "contract mismatch"):
+                self.check_contract(cfg, (*base, (block[0], 4096)))
+            with self.assertRaisesRegex(RuntimeError, "contract mismatch"):
+                self.check_contract(cfg, (block, *base))
+
+    def test_overlapping_entries_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "subuid"
+            path.write_text(
+                "ubuntu:100000:65536\n"
+                "cocalc-host:231072:65536\n"
+                "cocalc-host:1073741824:65536\n"
+                "later:1073770000:65536\n"
+                "below:1073676288:65536\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                bootstrap.project_uid_block_overlaps(path, "cocalc-host"),
+                ["later:1073770000:65536"],
+            )
+
+    def test_login_defs_pins_subid_max_below_the_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "login.defs"
+            path.write_text("UMASK 022\nSUB_UID_MAX 2000000000\n", encoding="utf-8")
+            self.assertTrue(bootstrap.ensure_login_defs_subid_max(path))
+            self.assertEqual(
+                path.read_text(encoding="utf-8"),
+                "UMASK 022\nSUB_UID_MAX 600100000\nSUB_GID_MAX 600100000\n",
+            )
+            self.assertFalse(bootstrap.ensure_login_defs_subid_max(path))
+            path.write_text("SUB_UID_MAX 500000\nSUB_GID_MAX 700000\n", encoding="utf-8")
+            self.assertFalse(bootstrap.ensure_login_defs_subid_max(path))
+
+
+def stat_mode(path) -> int:
+    return os.stat(path).st_mode & 0o7777
+
+
+class ProjectViewHelperTest(unittest.TestCase):
+    PROJECT = "11111111-2222-4333-8444-555555555555"
+
+    def setUp(self) -> None:
+        self.ns = {"__name__": "runtime_storage_path_helper_test"}
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, self.ns)
+        self.ns["runtime_ids"] = lambda: (2000, 2000)
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.views = self.tmp / "views"
+        self.views.mkdir()
+        self.ns["PROJECT_VIEW_ROOT"] = str(self.views)
+        O_PATH = self.ns["O_PATH"]
+
+        def open_view_root(_gid, create=True):
+            return os.open(self.views, O_PATH | os.O_DIRECTORY)
+
+        def ensure_view_dir(parentfd, name, _gid, mode=0o710):
+            os.makedirs(f"/proc/self/fd/{parentfd}/{name}", exist_ok=True)
+            return os.open(f"/proc/self/fd/{parentfd}/{name}", O_PATH | os.O_DIRECTORY)
+
+        # creating root-owned dirs needs root; the real ones are tested below
+        self.ns["open_view_root"] = open_view_root
+        self.ns["ensure_view_dir"] = ensure_view_dir
+        self.ns["view_mountpoints"] = lambda: []
+        self.ns["PROJECT_VIEW_LOCK"] = str(self.tmp / "views.lock")
+        # no real mounts here; the direction check has its own test
+        self.ns["verify_view"] = lambda *_args: None
+        self.data = self.tmp / "mnt"
+        (self.data / f"project-{self.PROJECT}").mkdir(parents=True)
+        (self.data / "data/tmp/cocalc-project-secrets" / self.PROJECT).mkdir(parents=True)
+        self.allowed = {str(self.data)}
+
+    def mount(self, kind, source, uid="1073741824"):
+        return self.ns["run_project_view"](
+            [
+                "project-view-mount",
+                "--project", self.PROJECT,
+                "--kind", kind,
+                "--uid", uid,
+                "--source-root", "/mnt/cocalc",
+                "--source-path", source,
+            ],
+            allowed_roots=self.allowed,
+        )
+
+    def test_idmap_maps_only_the_runtime_ids(self) -> None:
+        self.assertEqual(
+            self.ns["project_view_idmap"](2000, 2001, 1073741824),
+            "u:0:0:2000 u:2000:1073741824:1 u:2001:2001:1073739823 "
+            "u:1073741825:1073741825:3221225470 "
+            "g:0:0:2001 g:2001:1073741824:1 g:2002:2002:1073739822 "
+            "g:1073741825:1073741825:3221225470",
+        )
+
+    def test_view_uid_must_be_in_the_block(self) -> None:
+        validate = self.ns["validate_view_uid"]
+        self.assertEqual(validate("1073741824"), 1073741824)
+        self.assertEqual(validate("1073807359"), 1073807359)
+        for bad in ("1073807360", "2000", "0", "01073741824", "-1", "1e9", "", "1073741824 "):
+            with self.assertRaises(ValueError):
+                validate(bad)
+
+    def test_mount_binds_the_kind_source_idmapped(self) -> None:
+        self.ns["PROJECT_VIEW_KINDS"] = {
+            kind: ((str(self.data), template), ro)
+            for kind, ((_root, template), ro) in self.ns["PROJECT_VIEW_KINDS"].items()
+        }
+
+        def mount(kind, source):
+            self.ns["run_project_view"](
+                [
+                    "project-view-mount",
+                    "--project", self.PROJECT,
+                    "--kind", kind,
+                    "--uid", "1073741824",
+                    "--source-root", str(self.data),
+                    "--source-path", source,
+                ],
+                allowed_roots=self.allowed,
+            )
+
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            mount("home", f"project-{self.PROJECT}")
+            mount("secrets", f"data/tmp/cocalc-project-secrets/{self.PROJECT}")
+        calls = [call.args[0] for call in run.call_args_list]
+        home, secrets = (args for args in calls if "--bind" in args)
+        self.assertEqual(home[:3], ["/bin/mount", "--bind", "-o"])
+        self.assertTrue(home[3].startswith("X-mount.idmap=u:0:0:2000 u:2000:1073741824:1 "))
+        self.assertTrue(home[3].endswith(",nosuid,nodev"))
+        self.assertTrue(secrets[3].endswith(",nosuid,nodev,ro"))
+        # every view is made private right after its bind
+        self.assertEqual([args[1] for args in calls], ["--bind", "--make-private"] * 2)
+        for args in (home, secrets):
+            self.assertRegex(args[4], r"^/proc/self/fd/[0-9]+$")
+            self.assertRegex(args[5], r"^/proc/self/fd/[0-9]+$")
+        self.assertTrue((self.views / self.PROJECT / "home").is_dir())
+
+    def test_mount_refuses_other_sources_kinds_and_ids(self) -> None:
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            for kind, source in (
+                ("home", "data"),
+                ("home", "project-99999999-2222-4333-8444-555555555555"),
+                ("secrets", f"project-{self.PROJECT}"),
+                ("rootfs", f"project-{self.PROJECT}"),
+            ):
+                with self.assertRaises(ValueError):
+                    self.mount(kind, source)
+            with self.assertRaises(ValueError):
+                self.mount("home", f"project-{self.PROJECT}", uid="2000")
+            with self.assertRaises(ValueError):
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", "../x", "--kind", "home",
+                     "--uid", "1073741824", "--source-root", "/mnt/cocalc",
+                     "--source-path", "project-../x"],
+                    allowed_roots=self.allowed,
+                )
+        run.assert_not_called()
+
+    def test_mount_refuses_an_already_mounted_view(self) -> None:
+        self.ns["view_mountpoints"] = lambda: [f"{self.views}/{self.PROJECT}/home"]
+        self.ns["PROJECT_VIEW_KINDS"] = {
+            "home": ((str(self.data), "project-{id}"), False),
+        }
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            with self.assertRaisesRegex(ValueError, "already mounted"):
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", self.PROJECT, "--kind", "home",
+                     "--uid", "1073741824", "--source-root", str(self.data),
+                     "--source-path", f"project-{self.PROJECT}"],
+                    allowed_roots=self.allowed,
+                )
+        run.assert_not_called()
+
+    def test_concurrent_mounts_of_one_view_mount_it_once(self) -> None:
+        import threading
+
+        self.ns["PROJECT_VIEW_KINDS"] = {"home": ((str(self.data), "project-{id}"), False)}
+        mounted: list[str] = []
+        self.ns["view_mountpoints"] = lambda: list(mounted)
+        target = f"{self.views}/{self.PROJECT}/home"
+
+        def slow_mount(args, **_kwargs):
+            if "--bind" in args:
+                time.sleep(0.2)  # wide window between the check and the mount
+                mounted.append(target)
+
+        results: list[str] = []
+
+        def mount() -> None:
+            try:
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", self.PROJECT, "--kind", "home",
+                     "--uid", "1073741824", "--source-root", str(self.data),
+                     "--source-path", f"project-{self.PROJECT}"],
+                    allowed_roots=self.allowed,
+                )
+                results.append("mounted")
+            except ValueError as err:
+                results.append(str(err))
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=slow_mount):
+            threads = [threading.Thread(target=mount) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(mounted, [target])
+        self.assertEqual(results.count("mounted"), 1)
+        self.assertTrue(any("already mounted" in result for result in results))
+
+    def test_umount_drains_stacked_mounts(self) -> None:
+        target = f"{self.views}/{self.PROJECT}/home"
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        stacked = [target, target]
+        self.ns["view_mountpoints"] = lambda: list(stacked)
+
+        def umount(args, **_kwargs):
+            stacked.remove(args[-1])
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=umount) as run:
+            self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(stacked, [])
+        self.assertFalse((self.views / self.PROJECT).exists())
+        stuck = [target]
+        self.ns["view_mountpoints"] = lambda: list(stuck)
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "mounts remain"):
+                self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+
+    def test_a_view_is_unmounted_when_making_it_private_fails(self) -> None:
+        self.ns["PROJECT_VIEW_KINDS"] = {"home": ((str(self.data), "project-{id}"), False)}
+        target = f"{self.views}/{self.PROJECT}/home"
+        live: list[str] = []
+        self.ns["view_mountpoints"] = lambda: list(live)
+
+        def run(args, **_kwargs):
+            if "--bind" in args:
+                live.append(target)
+            elif "--make-private" in args:
+                raise subprocess.CalledProcessError(32, args)
+            elif args[:2] == ["/bin/umount", "-l"]:
+                live.remove(args[-1])
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=run):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", self.PROJECT, "--kind", "home",
+                     "--uid", "1073741824", "--source-root", str(self.data),
+                     "--source-path", f"project-{self.PROJECT}"],
+                    allowed_roots=self.allowed,
+                )
+        self.assertEqual(live, [])
+
+    def test_a_staged_upper_is_unmounted_when_making_it_private_fails(self) -> None:
+        O_PATH = self.ns["O_PATH"]
+        (self.tmp / "img/upperdir").mkdir(parents=True)
+        (self.tmp / "img/workdir").mkdir(parents=True)
+        upper = os.open(self.tmp / "img/upperdir", O_PATH | os.O_DIRECTORY)
+        work = os.open(self.tmp / "img/workdir", O_PATH | os.O_DIRECTORY)
+        target = f"{self.views}/{self.PROJECT}/rootfs-upper"
+        live: list[str] = []
+        self.ns["view_mountpoints"] = lambda: list(live)
+
+        def run(args, **_kwargs):
+            if "--bind" in args:
+                live.append(target)
+            elif "--make-private" in args:
+                raise subprocess.CalledProcessError(32, args)
+            elif args[:2] == ["/bin/umount", "-l"]:
+                live.remove(args[-1])
+
+        try:
+            with mock.patch.object(self.ns["subprocess"], "run", side_effect=run):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.ns["mount_idmapped_upper"](self.PROJECT, upper, work, 1073741824)
+        finally:
+            os.close(upper)
+            os.close(work)
+        self.assertEqual(live, [])
+
+    def test_view_direction_check(self) -> None:
+        check = self.ns["assert_view_direction"]
+        st = namedtuple("st", "st_uid st_gid")
+        P = 1073741824
+        check(st(2000, 2000), st(P, P), 2000, 2000, P)
+        check(st(231072, 231072), st(231072, 231072), 2000, 2000, P)
+        for source, view in (
+            (st(2000, 2000), st(2000, 2000)),  # not mapped
+            (st(2000, 2000), st(65534, 65534)),  # mapped the wrong way round
+            (st(2000, 231072), st(P, P)),
+            (st(231072, 231072), st(P, 231072)),
+        ):
+            with self.assertRaisesRegex(ValueError, "project view shows"):
+                check(source, view, 2000, 2000, P)
+
+    def test_harden_closes_the_data_root_and_raw_homes(self) -> None:
+        data = self.tmp / "data-root"
+        data.mkdir()
+        os.chmod(data, 0o755)
+        home = data / f"project-{self.PROJECT}"
+        scratch = data / f"project-{self.PROJECT}-scratch"
+        other = data / "data"
+        for path, mode in ((home, 0o755), (scratch, 0o1777), (other, 0o700)):
+            path.mkdir()
+            os.chmod(path, mode)
+        self.ns["PROJECT_DATA_ROOT"] = str(data)
+        self.ns["runtime_ids"] = lambda: (os.getuid(), os.getgid())
+        chowns = []
+        with mock.patch.object(self.ns["os"], "chown", side_effect=lambda p, u, g: chowns.append((u, g))):
+            self.ns["run_project_view"](["project-view-harden"])
+        self.assertEqual(chowns, [(os.geteuid(), os.getgid())])
+        self.assertEqual(stat_mode(data), 0o750)
+        self.assertEqual(stat_mode(home), 0o700)
+        self.assertEqual(stat_mode(scratch), 0o1777)  # /tmp stays usable
+        self.assertEqual(stat_mode(other), 0o700)
+        with self.assertRaises(ValueError):
+            self.ns["run_project_view"](["project-view-harden", "--extra", "x"])
+
+    def test_view_parent_must_not_be_writable_by_others(self) -> None:
+        parent = self.tmp / "run-cocalc"
+        parent.mkdir(mode=0o711)
+        os.chmod(parent, 0o711)
+        self.ns["check_view_parent"](str(parent))
+        for mode in (0o771, 0o717, 0o1777):
+            os.chmod(parent, mode)
+            with self.assertRaisesRegex(ValueError, "unsafe project view parent"):
+                self.ns["check_view_parent"](str(parent))
+        os.chmod(parent, 0o711)
+        link = self.tmp / "link"
+        link.symlink_to(parent)
+        with self.assertRaisesRegex(ValueError, "unsafe project view parent"):
+            self.ns["check_view_parent"](str(link))
+
+    def test_umount_touches_only_the_exact_view_targets(self) -> None:
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        live = [
+            f"{self.views}/{self.PROJECT}/home/nested",  # propagated beneath a view
+            f"{self.views}/{self.PROJECT}/home",
+        ]
+        self.ns["view_mountpoints"] = lambda: list(live)
+
+        def umount(args, **_kwargs):
+            # MNT_DETACH takes the subtree along
+            live[:] = [t for t in live if not (t == args[-1] or t.startswith(args[-1] + "/"))]
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=umount) as run:
+            self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["/bin/umount", "-l", f"{self.views}/{self.PROJECT}/home"]],
+        )
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        (self.views / self.PROJECT / "surprise").mkdir()
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "unexpected entry in project views"):
+                self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+
+    def test_ensure_view_dir_refuses_a_dir_not_owned_by_root(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("needs a non-root user")
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, fresh := {"__name__": "x"})
+        parent = os.open(self.tmp, fresh["O_PATH"] | os.O_DIRECTORY)
+        try:
+            with self.assertRaisesRegex(ValueError, "unsafe project view directory"):
+                fresh["ensure_view_dir"](parent, "mine", os.getgid())
+        finally:
+            os.close(parent)
+
+    def test_gc_keeps_listed_projects_and_removes_the_rest(self) -> None:
+        other = "99999999-2222-4333-8444-555555555555"
+        for project in (self.PROJECT, other):
+            (self.views / project / "home").mkdir(parents=True)
+        live = [f"{self.views}/{other}/home", f"{self.views}/{self.PROJECT}/home"]
+        self.ns["view_mountpoints"] = lambda: list(live)
+        with mock.patch.object(
+            self.ns["subprocess"], "run", side_effect=lambda args, **_: live.remove(args[-1])
+        ) as run:
+            self.ns["run_project_view"](["project-view-gc", "--keep", self.PROJECT])
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["/bin/umount", "-l", f"{self.views}/{other}/home"]],
+        )
+        self.assertFalse((self.views / other).exists())
+        self.assertTrue((self.views / self.PROJECT / "home").is_dir())
+        (self.views / "not-a-project").mkdir()
+        live.clear()
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "unexpected entry"):
+                self.ns["run_project_view"](["project-view-gc", "--keep", ""])
+
+    def test_overlay_idmap_uses_the_staged_upper(self) -> None:
+        rootfs = self.tmp / "rootfs"
+        home = f"project-{self.PROJECT}/.local/share/cocalc/rootfs/img"
+        for name in ("lower", f"{home}/upperdir", f"{home}/workdir"):
+            (rootfs / name).mkdir(parents=True)
+        self.ns["PROJECT_UPPER_ROOT"] = str(rootfs)
+        self.ns["PROJECT_ROOTFS_ROOT"] = str(rootfs / "roots")
+        self.ns["container_root_ids"] = lambda: (os.getuid(), os.getgid())
+        O_PATH = self.ns["O_PATH"]
+        staged = []
+
+        def fake_stage(project_id, upperfd, workfd, view_uid):
+            staged.append((project_id, view_uid))
+            return os.open(rootfs / home, O_PATH | os.O_DIRECTORY), "upperdir", "workdir"
+
+        self.ns["mount_idmapped_upper"] = fake_stage
+
+        def argv(upper=f"{home}/upperdir", work=f"{home}/workdir", uid="1073741824",
+                 merged_root=str(rootfs / "roots"), merged=f"{self.PROJECT}/root"):
+            return [
+                "mount-overlay-project",
+                "--lower-root", str(rootfs), "--lower-path", "lower",
+                "--upper-root", str(rootfs), "--upper-path", upper,
+                "--work-root", str(rootfs), "--work-path", work,
+                "--merged-root", merged_root, "--merged-path", merged,
+                "--idmap", uid,
+            ]
+
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            self.ns["run_overlay"](argv(), allowed_roots={str(rootfs)})
+        self.assertEqual(staged, [(self.PROJECT, 1073741824)])
+        # the helper made <root>/<id>/root: <root> 0711, <id> 0700 owned by
+        # the container root (here: the test user)
+        self.assertEqual(stat_mode(rootfs / "roots"), 0o711)
+        self.assertEqual(stat_mode(rootfs / "roots" / self.PROJECT), 0o700)
+        self.assertEqual(os.stat(rootfs / "roots" / self.PROJECT).st_uid, os.getuid())
+        self.assertTrue((rootfs / "roots" / self.PROJECT / "root").is_dir())
+        args = run.call_args.args[0]
+        self.assertIn("xino=off,metacopy=on,redirect_dir=on,index=off", args[5])
+        other = "99999999-2222-4333-8444-555555555555"
+        (rootfs / f"project-{other}/u").mkdir(parents=True)
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            for bad in (
+                argv(uid="2000"),
+                argv(upper=f"project-{other}/u"),
+                argv(upper="lower"),
+                argv(work="lower"),
+                # an idmapped overlay is only mounted beneath PROJECT_ROOTFS_ROOT
+                argv(merged_root=str(rootfs), merged=f"x/{self.PROJECT}"),
+                argv(merged=f"{self.PROJECT}/x"),
+                argv(merged=self.PROJECT),
+            ):
+                with self.assertRaises(ValueError):
+                    self.ns["run_overlay"](bad, allowed_roots={str(rootfs)})
+        run.assert_not_called()
+        # an existing <id> dir that isn't 0700 is refused
+        os.chmod(rootfs / "roots" / self.PROJECT, 0o755)
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "unsafe project rootfs dir"):
+                self.ns["run_overlay"](argv(), allowed_roots={str(rootfs)})
+
+    def test_idmapped_upper_needs_upper_and_work_in_one_dir(self) -> None:
+        O_PATH = self.ns["O_PATH"]
+        (self.tmp / "a/upperdir").mkdir(parents=True)
+        (self.tmp / "b/workdir").mkdir(parents=True)
+        upper = os.open(self.tmp / "a/upperdir", O_PATH | os.O_DIRECTORY)
+        work = os.open(self.tmp / "b/workdir", O_PATH | os.O_DIRECTORY)
+        try:
+            with self.assertRaisesRegex(ValueError, "share a parent"):
+                self.ns["mount_idmapped_upper"](self.PROJECT, upper, work, 1073741824)
+        finally:
+            os.close(upper)
+            os.close(work)
+
+    def test_wrapper_routes_project_view_and_overlay_idmap(self) -> None:
+        cfg = make_cfg(tempfile.mkdtemp())
+        wrapper = bootstrap_storage_wrapper_for(cfg)
+        self.assertIn("  project-view)\n", wrapper)
+        self.assertIn('project-view-mount --project "$1" --kind "$2" --uid "$3"', wrapper)
+        self.assertIn('project-view-gc --keep "${1:-}"', wrapper)
+        self.assertIn('"${idmap_args[@]}"', wrapper)
+        self.assertIn('merged_root="/run/cocalc/project-rootfs"', wrapper)
+        self.assertIn("project-view-harden", wrapper)
+        result = subprocess.run(["bash", "-n"], input=wrapper, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
 class HostIntegrityWatchTest(unittest.TestCase):
     """The root watcher, against a fake /proc."""
 
@@ -9500,7 +10075,6 @@ class HostIntegrityWatchTest(unittest.TestCase):
                 )
         # The status lives outside /var/lib/cocalc, which the runtime user owns.
         self.assertNotIn("/var/lib/cocalc/", bootstrap.HOST_INTEGRITY_WATCH_SCRIPT)
-
 
 if __name__ == "__main__":
     unittest.main()

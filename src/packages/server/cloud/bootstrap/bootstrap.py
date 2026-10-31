@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261031-v58"
+HELPER_SCHEMA_VERSION = "20261031-v59"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -866,6 +866,15 @@ PROJECT_HOST_RUNTIME_SUBID_RANGES = (
     (231072, ROOTLESS_SUBID_ALIGNMENT),
     (327680, ROOTLESS_SUBID_MIN_TOTAL - ROOTLESS_SUBID_ALIGNMENT),
 )
+# Host uids for project containers that run with a separate runtime uid
+# (project_runtime_uid_mode "separate"). The block is appended after the
+# container ranges, so their rootless inner ids don't move, and it sits far
+# above the ranges useradd allocates (SUB_UID_MAX/SUB_GID_MAX are pinned below
+# it). The first uid is the shared project runtime uid.
+PROJECT_RUNTIME_UID_BLOCK = (1 << 30, 65536)
+PROJECT_RUNTIME_SEPARATE_UID = PROJECT_RUNTIME_UID_BLOCK[0]
+PROJECT_RUNTIME_UID_MODES = ("keep-id", "separate")
+LOGIN_DEFS_PATH = Path("/etc/login.defs")
 APT_RETRIES = 5
 APT_ACQUIRE_TIMEOUT_S = 60
 APT_LOCK_TIMEOUT_S = 120
@@ -1682,6 +1691,9 @@ class BootstrapConfig:
     bootstrap_done_paths: list[str]
     container_runtime_bundle: BundleSpec | None = None
     allow_loopback_rustic_rest: bool = False
+    # "keep-id" (today) or "separate": whether the host's subuid allocation
+    # includes PROJECT_RUNTIME_UID_BLOCK. Nothing runs projects with it yet.
+    project_runtime_uid_mode: str = "keep-id"
     # Standalone (CoCalc Star) hosts only: run without the per-project network
     # policy when the kernel cannot express it, instead of refusing projects.
     allow_unenforceable_project_network: bool = False
@@ -2045,7 +2057,41 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             if bundle_container_runtime
             else None
         ),
+        project_runtime_uid_mode=effective_project_runtime_uid_mode(
+            desired.get("project_runtime_uid_mode"),
+            facts.get("env_file"),
+        ),
     )
+
+
+def effective_project_runtime_uid_mode(desired_value: Any, env_file: Any) -> str:
+    """The host's project runtime uid mode.
+
+    COCALC_PROJECT_RUNTIME_UID_MODE in the operator's local env file (the
+    same file project-host reads) wins over the desired state, so one setting
+    per host drives both the subuid allocation and project-host.
+    """
+    if isinstance(env_file, str) and env_file:
+        local = read_env_assignments(project_host_local_env_path(Path(env_file)))
+        value = local.get("COCALC_PROJECT_RUNTIME_UID_MODE", "").strip()
+        if value:
+            return parse_project_runtime_uid_mode(value)
+    return parse_project_runtime_uid_mode(desired_value)
+
+
+def parse_project_runtime_uid_mode(value: Any) -> str:
+    """A valid mode, or keep-id: a typo must not stop a host's bootstrap.
+    project-host reports an invalid configured mode in its health."""
+    if value is None or value == "":
+        return "keep-id"
+    if isinstance(value, str) and value in PROJECT_RUNTIME_UID_MODES:
+        return value
+    print(
+        f"bootstrap: ignoring invalid project runtime uid mode {value!r} "
+        f"(expected one of {', '.join(PROJECT_RUNTIME_UID_MODES)}); using keep-id",
+        file=sys.stderr,
+    )
+    return "keep-id"
 
 
 def parse_only(arg: str | None) -> set[str] | None:
@@ -2092,7 +2138,9 @@ def json_write_atomic(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def text_write_atomic(path: Path, content: str, *, default_mode: int = 0o644) -> None:
+def text_write_atomic(
+    path: Path, content: str, *, default_mode: int = 0o644, fsync: bool = False
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         dir=str(path.parent),
@@ -2103,6 +2151,9 @@ def text_write_atomic(path: Path, content: str, *, default_mode: int = 0o644) ->
     tmp = Path(tmp_name)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(content)
+        if fsync:
+            handle.flush()
+            os.fsync(handle.fileno())
     try:
         mode = path.stat().st_mode & 0o777
     except FileNotFoundError:
@@ -2389,22 +2440,57 @@ def resolve_runtime_user_identity(cfg: BootstrapConfig) -> tuple[int, int]:
     return first_free_numeric_id(used_uids, PROJECT_HOST_RUNTIME_UID), desired_gid
 
 
-def expected_runtime_userns_map(cfg: BootstrapConfig) -> tuple[list[str], list[str]]:
+def runtime_subid_ranges(cfg: BootstrapConfig) -> tuple[tuple[int, int], ...]:
+    """The runtime user's subuid/subgid allocation, in /etc/subuid order."""
+    if getattr(cfg, "project_runtime_uid_mode", "keep-id") == "separate":
+        return (*PROJECT_HOST_RUNTIME_SUBID_RANGES, PROJECT_RUNTIME_UID_BLOCK)
+    return PROJECT_HOST_RUNTIME_SUBID_RANGES
+
+
+def expected_runtime_userns_map(
+    cfg: BootstrapConfig,
+    ranges: tuple[tuple[int, int], ...] | None = None,
+) -> tuple[list[str], list[str]]:
     desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
     uid_map = [f"0 {desired_uid} 1"]
     gid_map = [f"0 {desired_gid} 1"]
     inside = 1
-    for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES:
+    for start, length in runtime_subid_ranges(cfg) if ranges is None else ranges:
         uid_map.append(f"{inside} {start} {length}")
         gid_map.append(f"{inside} {start} {length}")
         inside += length
     return uid_map, gid_map
 
 
+def accepted_runtime_userns_maps(
+    cfg: BootstrapConfig,
+) -> list[tuple[list[str], list[str]]]:
+    """The live rootless maps the contract accepts.
+
+    Rootless Podman reads /etc/subuid only when it creates its user namespace,
+    and recreating it stops every container on the host. So a host whose
+    allocation gained or lost PROJECT_RUNTIME_UID_BLOCK keeps its previous map
+    until its next reboot. Accept exactly the map with and the map without
+    that one trailing extent; anything else is still a mismatch.
+    """
+    with_block = (*PROJECT_HOST_RUNTIME_SUBID_RANGES, PROJECT_RUNTIME_UID_BLOCK)
+    return [
+        expected_runtime_userns_map(cfg, PROJECT_HOST_RUNTIME_SUBID_RANGES),
+        expected_runtime_userns_map(cfg, with_block),
+    ]
+
+
+def runtime_userns_map_has_project_uid_block(uid_map: Any) -> bool:
+    start, length = PROJECT_RUNTIME_UID_BLOCK
+    return isinstance(uid_map, list) and any(
+        line.split()[1:] == [str(start), str(length)] for line in uid_map
+    )
+
+
 def expected_runtime_user_contract(cfg: BootstrapConfig) -> dict[str, Any]:
     desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
     uid_map, gid_map = expected_runtime_userns_map(cfg)
-    subid_ranges = [f"{start}:{length}" for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES]
+    subid_ranges = [f"{start}:{length}" for start, length in runtime_subid_ranges(cfg)]
     return {
         "user": cfg.ssh_user,
         "identity": f"{cfg.ssh_user}:{desired_uid}:{desired_gid}",
@@ -4781,26 +4867,103 @@ def ensure_exact_subid_file(
     return True
 
 
+def project_uid_block_overlaps(path: Path, user: str) -> list[str]:
+    """Entries of other users that overlap PROJECT_RUNTIME_UID_BLOCK."""
+    start, length = PROJECT_RUNTIME_UID_BLOCK
+    _raw_lines, entries = parse_subid_entries(path)
+    return [
+        f"{name}:{entry_start}:{entry_length}"
+        for name, entry_start, entry_length in entries
+        if name != user
+        and entry_start < start + length
+        and start < entry_start + entry_length
+    ]
+
+
+def ensure_login_defs_subid_max(path: Path = LOGIN_DEFS_PATH) -> bool:
+    """Keep useradd's automatic subuid/subgid ranges below the project block.
+
+    Ubuntu's default SUB_UID_MAX (600100000) is already below it; this pins
+    the bound so a changed default or a local edit can't reach the block.
+    """
+    limit = PROJECT_RUNTIME_UID_BLOCK[0] - 1
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []
+    seen: set[str] = set()
+    changed = False
+    out: list[str] = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] in ("SUB_UID_MAX", "SUB_GID_MAX"):
+            seen.add(parts[0])
+            try:
+                ok = int(parts[1]) <= limit
+            except ValueError:
+                ok = False
+            if not ok:
+                line = f"{parts[0]} {600100000}"
+                changed = True
+        out.append(line)
+    for key in ("SUB_UID_MAX", "SUB_GID_MAX"):
+        if key not in seen:
+            out.append(f"{key} {600100000}")
+            changed = True
+    if changed:
+        text_write_atomic(path, "\n".join(out) + "\n", fsync=True)
+    return changed
+
+
 def ensure_subuids(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: ensuring subuid/subgid ranges for {cfg.ssh_user}")
-    changed_subuid = ensure_exact_subid_file(
-        Path("/etc/subuid"), cfg.ssh_user, PROJECT_HOST_RUNTIME_SUBID_RANGES
-    )
-    changed_subgid = ensure_exact_subid_file(
-        Path("/etc/subgid"), cfg.ssh_user, PROJECT_HOST_RUNTIME_SUBID_RANGES
-    )
+    ranges = runtime_subid_ranges(cfg)
+    if ranges != PROJECT_HOST_RUNTIME_SUBID_RANGES:
+        overlaps = [
+            *project_uid_block_overlaps(Path("/etc/subuid"), cfg.ssh_user),
+            *project_uid_block_overlaps(Path("/etc/subgid"), cfg.ssh_user),
+        ]
+        if overlaps:
+            raise RuntimeError(
+                "subuid/subgid entries overlap the project runtime uid block "
+                f"{PROJECT_RUNTIME_UID_BLOCK[0]}:{PROJECT_RUNTIME_UID_BLOCK[1]}: "
+                + ", ".join(overlaps)
+            )
+        if ensure_login_defs_subid_max():
+            log_line(cfg, "bootstrap: pinned SUB_UID_MAX/SUB_GID_MAX below the project runtime uid block")
+    changed_subuid = ensure_exact_subid_file(Path("/etc/subuid"), cfg.ssh_user, ranges)
+    changed_subgid = ensure_exact_subid_file(Path("/etc/subgid"), cfg.ssh_user, ranges)
     if changed_subuid or changed_subgid:
         log_line(
             cfg,
             "bootstrap: set exact subuid/subgid allocation "
             f"for {cfg.ssh_user} to "
-            + ", ".join(f"{start}:{length}" for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES),
+            + ", ".join(f"{start}:{length}" for start, length in ranges)
+            + " (Podman picks up a changed allocation at the next reboot)",
         )
 
 
 def verify_runtime_user_contract(cfg: BootstrapConfig) -> None:
     desired = expected_runtime_user_contract(cfg)
     installed = read_current_runtime_user_contract(cfg)
+    # A changed allocation reaches the live map only at the next reboot (see
+    # accepted_runtime_userns_maps): compare the live map with the accepted
+    # variant it matches.
+    for uid_map, gid_map in accepted_runtime_userns_maps(cfg):
+        if installed.get("uid_map") == uid_map and installed.get("gid_map") == gid_map:
+            if uid_map != desired.get("uid_map"):
+                log_line(
+                    cfg,
+                    "bootstrap: the live rootless map predates the current "
+                    "subuid allocation; it takes effect at the next reboot",
+                )
+            desired = {
+                **desired,
+                "uid_map": uid_map,
+                "gid_map": gid_map,
+                "fingerprint": runtime_userns_map_fingerprint(uid_map, gid_map),
+            }
+            break
     mismatches: list[str] = []
     for key in (
         "identity",
@@ -6365,6 +6528,7 @@ code, Node, or native addons from that tree.  Keep this file self-contained and
 installed below /usr/local with root ownership.
 """
 
+import contextlib
 import ctypes
 import errno
 import json
@@ -7400,6 +7564,14 @@ def open_named_directory(values, name, allowed_roots):
 
 
 def run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
+    # An idmapped upper (--idmap) and its cleanup at unmount change the views.
+    if argv and (argv[0] == "umount-overlay-project" or "--idmap" in argv):
+        with view_lock():
+            return _run_overlay(argv, allowed_roots)
+    return _run_overlay(argv, allowed_roots)
+
+
+def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
     command = argv[0]
     names = (
         ("lower", "upper", "work", "merged")
@@ -7407,12 +7579,56 @@ def run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
         else ("merged",)
     )
     options = {f"--{name}-{kind}" for name in names for kind in ("root", "path")}
-    values, _flags = parse_named_options(argv, command, options, options)
+    allowed = options | ({"--idmap"} if command == "mount-overlay-project" else set())
+    values, _flags = parse_named_options(argv, command, allowed, options)
+    view_uid = validate_view_uid(values["idmap"]) if "idmap" in values else None
+    run_root = values["merged-root"] == PROJECT_ROOTFS_ROOT
+    if run_root:
+        project_id = values["merged-path"].split("/")[0]
+        if values["merged-path"] != f"{validate_project_id(project_id)}/root":
+            fail("invalid project rootfs mountpoint")
+        if command == "mount-overlay-project":
+            ensure_rootfs_mountpoint(project_id)
+    else:
+        # The merged dir is named after the project (allow_overlay_mountpoint).
+        project_id = os.path.basename(values["merged-path"])
+    if view_uid is not None and not run_root:
+        fail(f"an idmapped overlay must be mounted beneath {PROJECT_ROOTFS_ROOT}")
+    if view_uid is not None:
+        validate_project_id(project_id)
+        for name in ("upper", "work"):
+            if values[f"{name}-root"] != PROJECT_UPPER_ROOT or not values[
+                f"{name}-path"
+            ].startswith(f"project-{project_id}/"):
+                fail(f"an idmapped overlay {name} must be in project {project_id}'s home")
     descriptors = []
+    staged = False
     try:
         for name in names:
-            descriptors.append(open_named_directory(values, name, allowed_roots))
-        paths = [f"/proc/self/fd/{fd}" for fd in descriptors]
+            roots = (
+                {*allowed_roots, PROJECT_ROOTFS_ROOT}
+                if name == "merged" and run_root
+                else allowed_roots
+            )
+            descriptors.append(open_named_directory(values, name, roots))
+        if command == "mount-overlay-project" and view_uid is not None:
+            # --idmap: the upper (and workdir) through an idmapped view, so
+            # files the project creates keep the runtime user as owner on disk.
+            lowerfd, upperfd, workfd, mergedfd = descriptors
+            stagingfd, upper_name, work_name = mount_idmapped_upper(
+                project_id, upperfd, workfd, view_uid
+            )
+            staged = True
+            descriptors.append(stagingfd)
+            for original, name in ((upperfd, upper_name), (workfd, work_name)):
+                fd = openat2(stagingfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+                descriptors.append(fd)
+                a, b = os.fstat(fd), os.fstat(original)
+                if (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino):
+                    fail("idmapped overlay upper does not match the requested upper")
+            paths = [f"/proc/self/fd/{fd}" for fd in (lowerfd, descriptors[-2], descriptors[-1], mergedfd)]
+        else:
+            paths = [f"/proc/self/fd/{fd}" for fd in descriptors]
         if command == "mount-overlay-project":
             lower, upper, work, merged = paths
             mount_options = (
@@ -7436,10 +7652,24 @@ def run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
             check=True,
             stdin=subprocess.DEVNULL,
         )
+        staged = False
     finally:
         for fd in descriptors:
             os.close(fd)
-
+        if staged:
+            umount_view_target(f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}")
+    if command == "umount-overlay-project" and run_root:
+        for path in (f"{PROJECT_ROOTFS_ROOT}/{project_id}/root", f"{PROJECT_ROOTFS_ROOT}/{project_id}"):
+            try:
+                os.rmdir(path)
+            except OSError:
+                break
+    if command == "umount-overlay-project" and PROJECT_ID_RE.fullmatch(project_id):
+        # An idmapped upper (--idmap) stays mounted until the overlay is gone.
+        upper = f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}"
+        if upper in view_mountpoints():
+            umount_view_target(upper)
+            os.rmdir(upper)
 
 def ensure_private_root_directory(path, required_uid=0, mode=0o700):
     try:
@@ -7613,6 +7843,467 @@ def parse_uint(value, name, maximum=(2**53 - 1)):
     return result
 
 
+# Project views: idmapped bind mounts that show the runtime user's files
+# (owner RUNTIME_USER on disk) as owned by a separate host uid, so a project
+# container can run its user as that uid while everything on disk keeps its
+# owner. Views live under PROJECT_VIEW_ROOT/<project-id>/<kind>; the root and
+# the per-project dirs are root-owned 0710 with the runtime group, so the
+# runtime user can reach the views to hand them to Podman but can't rename or
+# replace what this helper mounts on, and the view uid can't enter at all.
+RUNTIME_USER = "__RUNTIME_USER__"
+PROJECT_VIEW_ROOT = "/run/cocalc/project-views"
+# Serializes every change beneath PROJECT_VIEW_ROOT (mounts, unmounts, gc and
+# idmapped overlay uppers), so a check for an existing mount and the mount
+# itself can't interleave with another helper.
+PROJECT_VIEW_LOCK = "/run/cocalc/project-views.lock"
+PROJECT_VIEW_UMOUNT_ROUNDS = 16
+PROJECT_VIEW_UID_START = 1073741824
+PROJECT_VIEW_UID_COUNT = 65536
+PROJECT_VIEW_MAX_ID = 4294967294
+# kind -> (allowed source (root, relative path template), read-only)
+PROJECT_VIEW_KINDS = {
+    "home": (("/mnt/cocalc", "project-{id}"), False),
+    "scratch": (("/mnt/cocalc", "project-{id}-scratch"), False),
+    "browser-run": (("/mnt/cocalc", "data/tmp/cocalc-browser-run/{id}"), False),
+    "secrets": (("/mnt/cocalc", "data/tmp/cocalc-project-secrets/{id}"), True),
+}
+PROJECT_VIEW_ROOTFS_UPPER = "rootfs-upper"
+# The only names beneath PROJECT_VIEW_ROOT/<project-id>: every mount the
+# helper makes is exactly one of these, so it never unmounts anything else.
+PROJECT_VIEW_TARGETS = (*PROJECT_VIEW_KINDS, PROJECT_VIEW_ROOTFS_UPPER)
+PROJECT_VIEW_MOUNT_OPTIONS = "nosuid,nodev"
+# An idmapped overlay upper must live in the project's own home.
+PROJECT_UPPER_ROOT = "/mnt/cocalc"
+# Merged rootfs mountpoints for --idmap: <root>/<project-id>/root.
+# Podman adds o+x to every parent of a --rootfs path that the container's root
+# doesn't own, and fails if it can't. So <root> is root-owned 0711 (already
+# traversable), and <root>/<project-id> belongs to the container root's host
+# ids with mode 0700: podman leaves it alone and crun reaches it as root of the
+# rootless namespace, but no project uid (or any other host uid) can enter it.
+# The overlay itself is mounted on <root>/<project-id>/root.
+PROJECT_ROOTFS_ROOT = "/run/cocalc/project-rootfs"
+PROJECT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+PROJECT_VIEW_COMMANDS = {
+    "project-view-mount",
+    "project-view-umount",
+    "project-view-gc",
+    "project-view-harden",
+}
+# project-view-harden: the project data root becomes root:<runtime group>
+# 0750, so only root and the runtime user can reach anything beneath it (raw
+# homes, scratch, data); a separate runtime uid reaches its files only
+# through its views. Raw homes owned by the runtime user also go to 0700.
+PROJECT_DATA_ROOT = "/mnt/cocalc"
+PROJECT_HOME_RE = re.compile(r"project-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def runtime_ids():
+    import pwd
+
+    entry = pwd.getpwnam(RUNTIME_USER)
+    return entry.pw_uid, entry.pw_gid
+
+
+def validate_project_id(value):
+    if not isinstance(value, str) or not PROJECT_ID_RE.fullmatch(value):
+        fail(f"invalid project id: {value!r}")
+    return value
+
+
+def validate_view_uid(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]{0,9}", value):
+        fail(f"invalid view uid: {value!r}")
+    uid = int(value)
+    if not PROJECT_VIEW_UID_START <= uid < PROJECT_VIEW_UID_START + PROJECT_VIEW_UID_COUNT:
+        fail(f"view uid is outside the project runtime uid block: {uid}")
+    return uid
+
+
+def project_view_idmap(disk_uid, disk_gid, view_uid):
+    """X-mount.idmap value: disk ids map to themselves, except the runtime
+    user's uid/gid, which show as view_uid; view_uid on disk stays unmapped.
+    util-linux reads each extent as <type>:<id on disk>:<id in mount>:<count>.
+    """
+    extents = []
+    for kind, disk in (("u", disk_uid), ("g", disk_gid)):
+        if not 0 < disk < view_uid:
+            fail("view uid must be above the runtime user's ids")
+        extents.append(f"{kind}:0:0:{disk}")
+        extents.append(f"{kind}:{disk}:{view_uid}:1")
+        if view_uid - disk - 1 > 0:
+            extents.append(f"{kind}:{disk + 1}:{disk + 1}:{view_uid - disk - 1}")
+        extents.append(f"{kind}:{view_uid + 1}:{view_uid + 1}:{PROJECT_VIEW_MAX_ID - view_uid}")
+    return " ".join(extents)
+
+
+def ensure_view_dir(parentfd, name, gid, mode=0o710):
+    """A root-owned dir beneath parentfd (no symlinks), with group gid."""
+    try:
+        os.mkdir(name, mode, dir_fd=parentfd)
+    except FileExistsError:
+        pass
+    fd = openat2(parentfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    info = os.fstat(fd)
+    if info.st_uid != 0:
+        os.close(fd)
+        fail(f"unsafe project view directory: {name}")
+    os.chown(f"/proc/self/fd/{fd}", 0, gid)
+    os.chmod(f"/proc/self/fd/{fd}", mode)
+    return fd
+
+
+def open_view_root(gid, create=True):
+    """PROJECT_VIEW_ROOT, root-owned 0710 with the runtime group."""
+    parent, name = os.path.split(PROJECT_VIEW_ROOT)
+    if create:
+        os.makedirs(parent, mode=0o711, exist_ok=True)
+    check_view_parent(parent)
+    parentfd = os.open(parent, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if not create:
+            return openat2(parentfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        return ensure_view_dir(parentfd, name, gid)
+    finally:
+        os.close(parentfd)
+
+
+def check_view_parent(path):
+    """/run/cocalc must be a root-owned dir that only root can write."""
+    info = os.lstat(path)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or stat.S_IMODE(info.st_mode) & 0o022
+    ):
+        fail(f"unsafe project view parent: {path}")
+
+
+@contextlib.contextmanager
+def view_lock():
+    import fcntl
+
+    os.makedirs(os.path.dirname(PROJECT_VIEW_LOCK), mode=0o711, exist_ok=True)
+    check_view_parent(os.path.dirname(PROJECT_VIEW_LOCK))
+    fd = os.open(PROJECT_VIEW_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        if os.fstat(fd).st_uid != os.geteuid():
+            fail(f"unsafe project view lock: {PROJECT_VIEW_LOCK}")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def view_mountpoints():
+    """Mount targets beneath PROJECT_VIEW_ROOT, deepest first; a target with
+    stacked mounts appears once per mount."""
+    targets = []
+    with open("/proc/self/mountinfo", encoding="utf-8") as f:
+        for line in f:
+            target = line.split()[4].encode().decode("unicode_escape")
+            if target.startswith(PROJECT_VIEW_ROOT + "/"):
+                targets.append(target)
+    return sorted(targets, key=len, reverse=True)
+
+
+def umount_view_target(target):
+    """Unmount one exact view target (a root-owned mountpoint the helper
+    created) until nothing is mounted there; MNT_DETACH takes any mounts
+    beneath it along."""
+    for _round in range(PROJECT_VIEW_UMOUNT_ROUNDS):
+        if target not in view_mountpoints():
+            return
+        subprocess.run(["/bin/umount", "-l", target], check=True, stdin=subprocess.DEVNULL)
+    fail(f"project view mounts remain at {target}")
+
+
+def assert_view_direction(source, view, uid, gid, view_uid):
+    """The view must show the runtime user's ids as view_uid and every other
+    owner unchanged (a guard against the idmap fields being read the other
+    way round)."""
+    for kind, disk, seen, runtime in (("uid", source.st_uid, view.st_uid, uid), ("gid", source.st_gid, view.st_gid, gid)):
+        expected = view_uid if disk == runtime else disk
+        if seen != expected:
+            fail(f"project view shows {kind} {disk} as {seen}, expected {expected}")
+
+
+def verify_view(projectfd, name, sourcefd, uid, gid, view_uid):
+    """Check a fresh view against its source; unmount it if it's wrong."""
+    fd = openat2(projectfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        assert_view_direction(os.fstat(sourcefd), os.fstat(fd), uid, gid, view_uid)
+    except ValueError:
+        umount_view_target(f"{PROJECT_VIEW_ROOT}/{os.path.basename(os.readlink(f'/proc/self/fd/{projectfd}'))}/{name}")
+        raise
+    finally:
+        os.close(fd)
+
+
+def container_root_ids():
+    """Host uid/gid of the containers' root: the start of the runtime user's
+    first subordinate range."""
+    ids = []
+    for path in ("/etc/subuid", "/etc/subgid"):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split(":")
+                if len(parts) == 3 and parts[0] == RUNTIME_USER and parts[1].isdigit():
+                    ids.append(int(parts[1]))
+                    break
+            else:
+                fail(f"no subordinate range for {RUNTIME_USER} in {path}")
+    return ids[0], ids[1]
+
+
+def ensure_rootfs_mountpoint(project_id):
+    """PROJECT_ROOTFS_ROOT/<project-id>/root, see PROJECT_ROOTFS_ROOT."""
+    croot_uid, croot_gid = container_root_ids()
+    parent, name = os.path.split(PROJECT_ROOTFS_ROOT)
+    os.makedirs(parent, mode=0o711, exist_ok=True)
+    check_view_parent(parent)
+    parentfd = os.open(parent, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    rootfd = projectfd = None
+    try:
+        try:
+            os.mkdir(name, 0o711, dir_fd=parentfd)
+        except FileExistsError:
+            pass
+        rootfd = openat2(parentfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        info = os.fstat(rootfd)
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o711:
+            fail(f"unsafe project rootfs root: {PROJECT_ROOTFS_ROOT}")
+        try:
+            os.mkdir(project_id, 0o700, dir_fd=rootfd)
+            created = True
+        except FileExistsError:
+            created = False
+        projectfd = openat2(rootfd, project_id, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        if created:
+            os.chown(f"/proc/self/fd/{projectfd}", croot_uid, croot_gid)
+        info = os.fstat(projectfd)
+        if (info.st_uid, info.st_gid) != (croot_uid, croot_gid) or stat.S_IMODE(info.st_mode) != 0o700:
+            fail(f"unsafe project rootfs dir: {PROJECT_ROOTFS_ROOT}/{project_id}")
+        try:
+            os.mkdir("root", 0o755, dir_fd=projectfd)
+        except FileExistsError:
+            pass
+    finally:
+        for fd in (projectfd, rootfd):
+            if fd is not None:
+                os.close(fd)
+        os.close(parentfd)
+
+
+def harden_project_data_root(uid, gid):
+    rootfd = os.open(PROJECT_DATA_ROOT, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if os.fstat(rootfd).st_uid != os.geteuid():
+            fail(f"unsafe project data root: {PROJECT_DATA_ROOT}")
+        os.chown(f"/proc/self/fd/{rootfd}", os.geteuid(), gid)
+        os.chmod(f"/proc/self/fd/{rootfd}", 0o750)
+        for name in os.listdir(f"/proc/self/fd/{rootfd}"):
+            if not PROJECT_HOME_RE.fullmatch(name):
+                continue
+            try:
+                fd = openat2(rootfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+            except OSError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if info.st_uid == uid and stat.S_IMODE(info.st_mode) != 0o700:
+                    os.chmod(f"/proc/self/fd/{fd}", 0o700)
+            finally:
+                os.close(fd)
+    finally:
+        os.close(rootfd)
+
+
+def make_view_private(projectfd, name):
+    """Stop propagation into a fresh view: the sources live on shared mounts,
+    so mounts made later beneath a source would otherwise appear in it."""
+    fd = openat2(projectfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        subprocess.run(
+            ["/bin/mount", "--make-private", f"/proc/self/fd/{fd}"],
+            pass_fds=(fd,),
+            check=True,
+            stdin=subprocess.DEVNULL,
+        )
+    finally:
+        os.close(fd)
+
+
+def umount_project_views(project_id, names=PROJECT_VIEW_TARGETS):
+    for name in names:
+        umount_view_target(f"{PROJECT_VIEW_ROOT}/{project_id}/{name}")
+
+
+def remove_view_tree(rootfd, project_id):
+    try:
+        projectfd = openat2(rootfd, project_id, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return
+    try:
+        for name in os.listdir(f"/proc/self/fd/{projectfd}"):
+            if name not in PROJECT_VIEW_TARGETS:
+                fail(f"unexpected entry in project views: {name!r}")
+            os.rmdir(name, dir_fd=projectfd)
+    finally:
+        os.close(projectfd)
+    os.rmdir(project_id, dir_fd=rootfd)
+
+
+def run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
+    with view_lock():
+        return _run_project_view(argv, allowed_roots)
+
+
+def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
+    command = argv[0]
+    uid, gid = runtime_ids()
+    if command == "project-view-mount":
+        options = {"--project", "--kind", "--uid", "--source-root", "--source-path"}
+        values, _flags = parse_named_options(argv, command, options, options)
+        project_id = validate_project_id(values["project"])
+        kind = values["kind"]
+        if kind not in PROJECT_VIEW_KINDS:
+            fail(f"invalid project view kind: {kind!r}")
+        view_uid = validate_view_uid(values["uid"])
+        (source_root, template), read_only = PROJECT_VIEW_KINDS[kind]
+        if values["source-root"] != source_root or values["source-path"] != template.format(id=project_id):
+            fail(f"source is not the {kind} of project {project_id}")
+        sourcefd = open_named_directory(values, "source", allowed_roots)
+        target = f"{PROJECT_VIEW_ROOT}/{project_id}/{kind}"
+        if target in view_mountpoints():
+            os.close(sourcefd)
+            fail(f"project view is already mounted: {target}")
+        rootfd = projectfd = targetfd = None
+        try:
+            rootfd = open_view_root(gid)
+            projectfd = ensure_view_dir(rootfd, project_id, gid)
+            targetfd = ensure_view_dir(projectfd, kind, gid, mode=0o700)
+            options = (
+                f"X-mount.idmap={project_view_idmap(uid, gid, view_uid)},"
+                + PROJECT_VIEW_MOUNT_OPTIONS
+            )
+            if read_only:
+                options += ",ro"
+            subprocess.run(
+                [
+                    "/bin/mount",
+                    "--bind",
+                    "-o",
+                    options,
+                    f"/proc/self/fd/{sourcefd}",
+                    f"/proc/self/fd/{targetfd}",
+                ],
+                pass_fds=(sourcefd, targetfd),
+                check=True,
+                stdin=subprocess.DEVNULL,
+            )
+            # Mounted: from here on, any failure takes the view down again.
+            try:
+                make_view_private(projectfd, kind)
+                verify_view(projectfd, kind, sourcefd, uid, gid, view_uid)
+            except BaseException:
+                umount_view_target(target)
+                raise
+        finally:
+            for fd in (targetfd, projectfd, rootfd, sourcefd):
+                if fd is not None:
+                    os.close(fd)
+        return
+    if command == "project-view-umount":
+        values, _flags = parse_named_options(argv, command, {"--project"}, {"--project"})
+        project_id = validate_project_id(values["project"])
+        try:
+            rootfd = open_view_root(gid, create=False)
+        except FileNotFoundError:
+            return
+        try:
+            umount_project_views(project_id)
+            remove_view_tree(rootfd, project_id)
+        finally:
+            os.close(rootfd)
+        return
+    if command == "project-view-harden":
+        parse_named_options(argv, command, set(), set())
+        harden_project_data_root(uid, gid)
+        return
+    if command == "project-view-gc":
+        values, _flags = parse_named_options(argv, command, {"--keep"}, {"--keep"})
+        keep = {validate_project_id(value) for value in values["keep"].split(",") if value}
+        try:
+            rootfd = open_view_root(gid, create=False)
+        except FileNotFoundError:
+            return
+        try:
+            for name in os.listdir(f"/proc/self/fd/{rootfd}"):
+                if name in keep:
+                    continue
+                if not PROJECT_ID_RE.fullmatch(name):
+                    fail(f"unexpected entry in {PROJECT_VIEW_ROOT}: {name!r}")
+                umount_project_views(name)
+                remove_view_tree(rootfd, name)
+        finally:
+            os.close(rootfd)
+        return
+    fail(f"invalid project view command: {command}")
+
+
+def mount_idmapped_upper(project_id, upperfd, workfd, view_uid):
+    """Bind the dir holding upperdir and workdir, idmapped, beneath the
+    project's views; return (staging fd, upper name, work name).
+
+    Overlay needs upperdir and workdir on one mount, so both must be direct
+    children of the same directory.
+    """
+    upper_parent = os.stat("..", dir_fd=upperfd)
+    work_parent = os.stat("..", dir_fd=workfd)
+    if (upper_parent.st_dev, upper_parent.st_ino) != (work_parent.st_dev, work_parent.st_ino):
+        fail("overlay upperdir and workdir must share a parent directory")
+    upper_name = os.path.basename(os.readlink(f"/proc/self/fd/{upperfd}"))
+    work_name = os.path.basename(os.readlink(f"/proc/self/fd/{workfd}"))
+    uid, gid = runtime_ids()
+    target = f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}"
+    if target in view_mountpoints():
+        fail(f"idmapped overlay upper is already mounted: {target}")
+    parentfd = os.open(f"/proc/self/fd/{upperfd}/..", O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    rootfd = projectfd = stagingfd = None
+    try:
+        if (os.fstat(parentfd).st_dev, os.fstat(parentfd).st_ino) != (upper_parent.st_dev, upper_parent.st_ino):
+            fail("overlay upper parent changed while mounting")
+        rootfd = open_view_root(gid)
+        projectfd = ensure_view_dir(rootfd, project_id, gid)
+        stagingfd = ensure_view_dir(projectfd, PROJECT_VIEW_ROOTFS_UPPER, gid, mode=0o700)
+        subprocess.run(
+            [
+                "/bin/mount",
+                "--bind",
+                "-o",
+                f"X-mount.idmap={project_view_idmap(uid, gid, view_uid)}",
+                f"/proc/self/fd/{parentfd}",
+                f"/proc/self/fd/{stagingfd}",
+            ],
+            pass_fds=(parentfd, stagingfd),
+            check=True,
+            stdin=subprocess.DEVNULL,
+        )
+        # Mounted: from here on, any failure takes the staged upper down again.
+        try:
+            make_view_private(projectfd, PROJECT_VIEW_ROOTFS_UPPER)
+            verify_view(projectfd, PROJECT_VIEW_ROOTFS_UPPER, parentfd, uid, gid, view_uid)
+            mounted = openat2(projectfd, PROJECT_VIEW_ROOTFS_UPPER, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        except BaseException:
+            umount_view_target(target)
+            raise
+        return mounted, upper_name, work_name
+    finally:
+        for fd in (stagingfd, projectfd, rootfd, parentfd):
+            if fd is not None:
+                os.close(fd)
+
+
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
     if argv and argv[0] == "scan-oversized-files":
         return run_scan_oversized_files(argv, allowed_roots)
@@ -7620,6 +8311,8 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
         return run_scan_changed_since(argv, allowed_roots)
     if argv and argv[0] in RUSTIC_COMMANDS:
         return run_rustic(argv, allowed_roots, rustic_candidates)
+    if argv and argv[0] in PROJECT_VIEW_COMMANDS:
+        return run_project_view(argv, allowed_roots)
     if argv and argv[0] in ANCHORED_COMMANDS:
         if argv[0] == "normalize-rootfs":
             return run_normalize_rootfs(argv, allowed_roots)
@@ -10241,6 +10934,11 @@ allow_overlay_mountpoint() {
   case "$path" in
     /mnt/cocalc/data/cache/project-roots/*|/var/lib/cocalc/star/project-host/0/cache/project-roots/*)
       ;;
+    /run/cocalc/project-rootfs/*/root)
+      # the path helper creates and removes /run/cocalc/project-rootfs/<id>/root
+      path="$(dirname "$path")"
+      [ "$path" = "/run/cocalc/project-rootfs/$(basename "$path")" ] || return 1
+      ;;
     *)
       return 1
       ;;
@@ -11082,8 +11780,14 @@ PY
     exec /sbin/mkfs.btrfs "$@"
     ;;
   mount-overlay-project)
+    # Optional: --idmap <uid> mounts the upper through an idmapped view.
+    idmap_args=()
+    if [ "${1:-}" = "--idmap" ] && [ "$#" -ge 2 ]; then
+      idmap_args=(--idmap "$2")
+      shift 2
+    fi
     if [ "$#" -ne 4 ]; then
-      echo "usage: cocalc-runtime-storage mount-overlay-project <lowerdir> <upperdir> <workdir> <merged>" >&2
+      echo "usage: cocalc-runtime-storage mount-overlay-project [--idmap <uid>] <lowerdir> <upperdir> <workdir> <merged>" >&2
       exit 2
     fi
     lowerdir="$1"
@@ -11102,9 +11806,14 @@ PY
     require_allowed_path_parts "$workdir"
     work_root="$ALLOWED_PATH_ROOT"
     work_rel="$ALLOWED_PATH_REL"
-    require_allowed_path_parts "$merged"
-    merged_root="$ALLOWED_PATH_ROOT"
-    merged_rel="$ALLOWED_PATH_REL"
+    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$(dirname "$merged")")/root" ]; then
+      merged_root="/run/cocalc/project-rootfs"
+      merged_rel="$(basename "$(dirname "$merged")")/root"
+    else
+      require_allowed_path_parts "$merged"
+      merged_root="$ALLOWED_PATH_ROOT"
+      merged_rel="$ALLOWED_PATH_REL"
+    fi
     # Use the xattr-capable OverlayFS mode:
     # - metacopy=on avoids copying full file contents into upperdir for
     #   metadata-only changes, which keeps environment overlays smaller.
@@ -11123,7 +11832,63 @@ PY
       --lower-root "$lower_root" --lower-path "$lower_rel" \
       --upper-root "$upper_root" --upper-path "$upper_rel" \
       --work-root "$work_root" --work-path "$work_rel" \
-      --merged-root "$merged_root" --merged-path "$merged_rel"
+      --merged-root "$merged_root" --merged-path "$merged_rel" \
+      "${idmap_args[@]}"
+    ;;
+  project-view)
+    # Idmapped views of a project's dirs for a separate runtime uid; the path
+    # helper validates the project id, kind, uid and source.
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      probe)
+        # Capability probe: callers gate separate mode on this output, never
+        # on HELPER_SCHEMA_VERSION. No side effects.
+        if [ "$#" -ne 0 ]; then
+          echo "usage: cocalc-runtime-storage project-view probe" >&2
+          exit 2
+        fi
+        echo "project-view:1 overlay-idmap:1"
+        exit 0
+        ;;
+      mount)
+        if [ "$#" -ne 4 ]; then
+          echo "usage: cocalc-runtime-storage project-view mount <project-id> <kind> <uid> <source>" >&2
+          exit 2
+        fi
+        require_allowed_path_parts "$4"
+        exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+          project-view-mount --project "$1" --kind "$2" --uid "$3" \
+          --source-root "$ALLOWED_PATH_ROOT" --source-path "$ALLOWED_PATH_REL"
+        ;;
+      umount)
+        if [ "$#" -ne 1 ]; then
+          echo "usage: cocalc-runtime-storage project-view umount <project-id>" >&2
+          exit 2
+        fi
+        exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+          project-view-umount --project "$1"
+        ;;
+      harden)
+        if [ "$#" -ne 0 ]; then
+          echo "usage: cocalc-runtime-storage project-view harden" >&2
+          exit 2
+        fi
+        exec /usr/local/libexec/cocalc-runtime-storage-path-helper project-view-harden
+        ;;
+      gc)
+        if [ "$#" -gt 1 ]; then
+          echo "usage: cocalc-runtime-storage project-view gc [<project-id>,...]" >&2
+          exit 2
+        fi
+        exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+          project-view-gc --keep "${1:-}"
+        ;;
+      *)
+        echo "usage: cocalc-runtime-storage project-view probe|mount|umount|gc|harden ..." >&2
+        exit 2
+        ;;
+    esac
     ;;
   umount-overlay-project)
     if [ "$#" -ne 1 ]; then
@@ -11134,10 +11899,17 @@ PY
     if ! allow_overlay_mountpoint "$merged"; then
       deny "overlay-mountpoint-not-allowed" "$merged"
     fi
-    require_allowed_path_parts "$merged"
+    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$(dirname "$merged")")/root" ]; then
+      merged_root="/run/cocalc/project-rootfs"
+      merged_rel="$(basename "$(dirname "$merged")")/root"
+    else
+      require_allowed_path_parts "$merged"
+      merged_root="$ALLOWED_PATH_ROOT"
+      merged_rel="$ALLOWED_PATH_REL"
+    fi
     exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
       umount-overlay-project \
-      --merged-root "$ALLOWED_PATH_ROOT" --merged-path "$ALLOWED_PATH_REL"
+      --merged-root "$merged_root" --merged-path "$merged_rel"
     ;;
   losetup)
     check_args "$@"
@@ -12575,7 +13347,7 @@ esac
     storage_path_helper = RUNTIME_STORAGE_PATH_HELPER.replace(
         "__ALLOW_LOOPBACK_RUSTIC_REST__",
         "1" if cfg.allow_loopback_rustic_rest else "0",
-    )
+    ).replace("__RUNTIME_USER__", cfg.ssh_user)
     wrappers = {
         "/usr/local/libexec/cocalc-managed-project-job": MANAGED_PROJECT_JOB_HELPER.replace(
             "__PROJECT_POOL_CGROUP__", DEFAULT_PROJECT_POOL_CGROUP
