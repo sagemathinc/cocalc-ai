@@ -9995,6 +9995,11 @@ class HostIntegrityWatchTest(unittest.TestCase):
         # root-owned except the ones a test marks writable.
         self.writable_paths = set()
         namespace["root_owned_chain"] = lambda path: path not in self.writable_paths
+        # the running inode of a deleted executable: root's unless marked
+        self.writable_inodes = set()
+        namespace["exe_inode_root_owned"] = (
+            lambda proc_dir: int(os.path.basename(proc_dir)) not in self.writable_inodes
+        )
         return namespace
 
     def setUp(self):
@@ -10324,6 +10329,31 @@ class HostIntegrityWatchTest(unittest.TestCase):
             [(f["pid"], f["rule"]) for f in self.watcher(ns).step(1000.0)],
             [(11, "trusted-program-writable")],
         )
+        # a root-owned directory, but the running inode isn't root's (it was
+        # writable before it was replaced): reported
+        existing.add("/opt/cocalc/node/v26.1.0/bin")
+        self.writable_inodes.add(10)
+        self.assertEqual(
+            [(f["pid"], f["rule"]) for f in self.watcher(ns).step(1000.0)],
+            [(10, "trusted-program-writable")],
+        )
+        # a process that exited between listing and reading is skipped
+        ns["exe_inode_root_owned"] = lambda _d: None
+        self.assertEqual(self.watcher(ns).step(1000.0), [])
+
+    def test_exe_inode_root_owned_reads_the_running_inode(self) -> None:
+        check = {"__name__": "x"}
+        exec(bootstrap.HOST_INTEGRITY_WATCH_SCRIPT, check)
+        proc_dir = self.root / "p"
+        proc_dir.mkdir()
+        binary = self.root / "bin-file"
+        binary.write_text("x")
+        os.symlink(binary, proc_dir / "exe")
+        binary.chmod(0o755)
+        # owned by the test user, not root: not root's
+        self.assertFalse(check["exe_inode_root_owned"](str(proc_dir)))
+        binary.unlink()
+        self.assertIsNone(check["exe_inode_root_owned"](str(proc_dir)))
 
     def test_root_owned_chain_checks_every_directory(self) -> None:
         ns = {"__name__": "host_integrity_watch_test"}
