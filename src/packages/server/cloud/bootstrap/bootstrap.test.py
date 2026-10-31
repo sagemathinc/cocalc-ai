@@ -9066,6 +9066,7 @@ class HostIntegrityWatchTest(unittest.TestCase):
         self.user = pwd.getpwuid(os.getuid()).pw_name
         self.uid = os.getuid()
         # project ranges as podman sets them up: 231072 + 65536, 327680 + ...
+        self.host_root = self.root / "host-root"
         self.subuid = self.root / "subuid"
         self.subuid.write_text(f"{self.user}:231072:65536\n{self.user}:327680:4128768\n")
         self.add_proc(1, 0, "systemd", 0, "/usr/lib/systemd/systemd", self.HOST_NS)
@@ -9090,9 +9091,16 @@ class HostIntegrityWatchTest(unittest.TestCase):
         uid_map=None,
         cgroup="/cocalc-host-services",
         mnt=None,
+        root=None,
     ):
         base = self.proc / str(pid)
         (base / "ns").mkdir(parents=True)
+        # the process's root: the host's, or (in another user namespace) a
+        # container rootfs of its own
+        if root is None:
+            root = self.host_root if ns == self.HOST_NS else self.root / f"rootfs-{pid}"
+        Path(root).mkdir(parents=True, exist_ok=True)
+        os.symlink(root, base / "root")
         os.symlink(
             mnt or (self.HOST_MNT if ns == self.HOST_NS else self.CONTAINER_MNT),
             base / "ns" / "mnt",
@@ -9270,6 +9278,9 @@ class HostIntegrityWatchTest(unittest.TestCase):
         # outside the project cgroups
         self.add_proc(40, 1, "evil", self.uid, "/tmp/evil", self.CONTAINER_NS, container_map, cgroup=pool, mnt=self.HOST_MNT)
         self.add_proc(41, 1, "sh", 231072, "/usr/bin/dash", self.CONTAINER_NS, container_map, cgroup="/cocalc-host-services")
+        # its own namespaces in a project cgroup, but the host's root (as
+        # after unshare): not a container either
+        self.add_proc(42, 1, "evil2", self.uid, "/tmp/evil2", self.CONTAINER_NS, container_map, cgroup=pool, root=self.host_root)
         ns = self.watch()
         new = self.watcher(ns).step(1000.0)
         self.assertEqual(
@@ -9277,6 +9288,7 @@ class HostIntegrityWatchTest(unittest.TestCase):
             [
                 (40, "unexpected-runtime-user-process", "other"),
                 (41, "project-uid-outside-container", "other"),
+                (42, "unexpected-runtime-user-process", "other"),
             ],
         )
 

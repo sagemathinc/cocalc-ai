@@ -3880,6 +3880,15 @@ def compile_placement_rules(rules, runtime_uid, project_ranges):
     return compiled
 
 
+def root_id(proc_root, pid):
+    """(device, inode) of the process's root directory, or None."""
+    try:
+        st = os.stat(os.path.join(proc_root, str(pid), "root"))
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
 def cgroup_allowed(cgroup, prefixes):
     return any(cgroup == p or cgroup.startswith(p + "/") for p in prefixes)
 
@@ -3900,6 +3909,7 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
     """Returns (findings, inventory keys) for one scan. A finding is a dict
     without any command line, environment or file content."""
     findings, inventory, cache = [], [], {}
+    host_root = root_id(proc_root, 1)
 
     def finding(p, rule, severity, kind):
         return {
@@ -3933,8 +3943,9 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
             and p.mntns
             and p.mntns != host_mntns
             and cgroup_allowed(p.cgroup, container_cgroups)
+            and root_id(proc_root, p.pid) not in (None, host_root)
         ):
-            continue  # inside a container
+            continue  # inside a container (its own root, not the host's)
         # Anything else is checked as a host process: a user namespace
         # alone (e.g. one made by the runtime user) doesn't contain it.
         inventory.append(
