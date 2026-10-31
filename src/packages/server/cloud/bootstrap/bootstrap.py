@@ -14630,20 +14630,49 @@ def extract_node_archive(archive: Path, dest: Path) -> None:
 
 
 def node_versions_in_use(root: Path, proc_root: str = "/proc") -> set[str]:
-    """Versions under root whose node is running (kept when pruning)."""
+    """Versions under root that a process runs, or that a mount namespace
+    (a project container's) has mounted (kept when pruning)."""
     used: set[str] = set()
     prefix = str(root) + "/"
+    try:
+        dev = os.stat(root).st_dev
+        device = f"{os.major(dev)}:{os.minor(dev)}"
+    except OSError:
+        device = None
+    # the mount's source path within its filesystem: .../<root name>/<version>
+    mounted = re.compile(rf"/{re.escape(root.name)}/(v\d+\.\d+\.\d+)(?:/|$)")
     try:
         pids = [name for name in os.listdir(proc_root) if name.isdigit()]
     except OSError:
         return used
+    namespaces: set[str] = set()
     for pid in pids:
         try:
             exe = os.readlink(os.path.join(proc_root, pid, "exe"))
+            if exe.startswith(prefix):
+                used.add(exe[len(prefix) :].split("/", 1)[0])
+        except OSError:
+            pass
+        if device is None:
+            continue
+        try:
+            namespace = os.readlink(os.path.join(proc_root, pid, "ns", "mnt"))
         except OSError:
             continue
-        if exe.startswith(prefix):
-            used.add(exe[len(prefix) :].split("/", 1)[0])
+        if namespace in namespaces:
+            continue
+        namespaces.add(namespace)
+        try:
+            with open(os.path.join(proc_root, pid, "mountinfo")) as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) > 4 and fields[2] == device:
+                match = mounted.search(fields[3])
+                if match:
+                    used.add(match.group(1))
     return used
 
 
@@ -14741,10 +14770,21 @@ def install_node_runtime_libs(
     prepare_root_dir(root)
     target = root / "libatomic.so.1"
     data = Path(source).read_bytes()
-    if target.is_file() and not target.is_symlink() and target.read_bytes() == data:
-        # current: only make sure of its owner and mode
-        chown_root(target)
-        os.chmod(target, 0o644)
+    try:
+        st = os.lstat(target)
+    except OSError:
+        st = None
+    if (
+        st is not None
+        and stat.S_ISREG(st.st_mode)
+        and st.st_uid == ROOT_UID
+        and st.st_mode & 0o7777 == 0o644
+        and st.st_nlink == 1
+        and target.read_bytes() == data
+    ):
+        # Current and only ever writable by root: keep this inode. Anything
+        # else gets a new inode even with equal bytes, since a process that
+        # opened the old one for writing would keep that descriptor.
         return
     if target.is_dir() and not target.is_symlink():
         shutil.rmtree(target)

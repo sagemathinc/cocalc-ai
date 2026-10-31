@@ -7318,6 +7318,27 @@ WantedBy=multi-user.target
                 bootstrap.node_versions_in_use(Path("/opt/cocalc/node"), str(proc)),
                 {"v20.4.0"},
             )
+            # A project container that bind-mounts an older version's bin/lib
+            # (its processes' exe is a container path): that version is kept.
+            root = Path(tmpdir) / "node"
+            root.mkdir()
+            dev = os.stat(root).st_dev
+            device = f"{os.major(dev)}:{os.minor(dev)}"
+            (proc / "20").mkdir()
+            os.symlink("/opt/cocalc/bin/node", proc / "20" / "exe")
+            (proc / "20" / "ns").mkdir()
+            os.symlink("mnt:[4026532900]", proc / "20" / "ns" / "mnt")
+            (proc / "20" / "mountinfo").write_text(
+                f"600 500 {device} /some/where/node/v20.2.0/bin /opt/cocalc/bin ro,relatime - ext4 /dev/sda1 rw\n"
+                f"601 500 {device} /some/where/node/v20.2.0/lib /opt/cocalc/lib ro,relatime - ext4 /dev/sda1 rw\n"
+                # another filesystem with the same layout doesn't count
+                f"602 500 999:999 /x/node/v20.3.0/bin /opt/other ro - ext4 /dev/sdb1 rw\n"
+            )
+            # a second process in the same namespace isn't read again
+            (proc / "21").mkdir()
+            (proc / "21" / "ns").mkdir()
+            os.symlink("mnt:[4026532900]", proc / "21" / "ns" / "mnt")
+            self.assertEqual(bootstrap.node_versions_in_use(root, str(proc)), {"v20.2.0"})
 
     def test_install_node_runtime_libs_publishes_a_root_owned_copy(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -7340,10 +7361,21 @@ WantedBy=multi-user.target
                 bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
                 self.assertEqual(published.read_bytes(), b"lib-v2")
                 self.assertNotEqual(published.stat().st_ino, inode)
-                # equal bytes but a loose mode: repaired, not left as is
+                # equal bytes but once writable by others: a new inode (an
+                # earlier writable descriptor must not reach the published one)
                 published.chmod(0o666)
+                inode = published.stat().st_ino
                 bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
                 self.assertEqual(oct(published.stat().st_mode & 0o777), "0o644")
+                self.assertNotEqual(published.stat().st_ino, inode)
+                # trusted as is (root-owned 0644, one link, equal bytes): reused
+                inode = published.stat().st_ino
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertEqual(published.stat().st_ino, inode)
+                # a second hard link to it: a new inode
+                os.link(published, tmp / "extra-link")
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertNotEqual(published.stat().st_ino, inode)
                 # a symlink in its place is replaced, its target untouched
                 outside = tmp / "outside"
                 outside.write_bytes(b"lib-v2")
