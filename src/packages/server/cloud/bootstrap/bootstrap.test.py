@@ -9179,6 +9179,8 @@ class ProjectViewHelperTest(unittest.TestCase):
         self.ns["ensure_view_dir"] = ensure_view_dir
         self.ns["view_mountpoints"] = lambda: []
         self.ns["PROJECT_VIEW_LOCK"] = str(self.tmp / "views.lock")
+        # no real mounts here; the direction check has its own test
+        self.ns["verify_view"] = lambda *_args: None
         self.data = self.tmp / "mnt"
         (self.data / f"project-{self.PROJECT}").mkdir(parents=True)
         (self.data / "data/tmp/cocalc-project-secrets" / self.PROJECT).mkdir(parents=True)
@@ -9342,6 +9344,21 @@ class ProjectViewHelperTest(unittest.TestCase):
         with mock.patch.object(self.ns["subprocess"], "run"):
             with self.assertRaisesRegex(ValueError, "mounts remain"):
                 self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+
+    def test_view_direction_check(self) -> None:
+        check = self.ns["assert_view_direction"]
+        st = namedtuple("st", "st_uid st_gid")
+        P = 1073741824
+        check(st(2000, 2000), st(P, P), 2000, 2000, P)
+        check(st(231072, 231072), st(231072, 231072), 2000, 2000, P)
+        for source, view in (
+            (st(2000, 2000), st(2000, 2000)),  # not mapped
+            (st(2000, 2000), st(65534, 65534)),  # mapped the wrong way round
+            (st(2000, 231072), st(P, P)),
+            (st(231072, 231072), st(P, 231072)),
+        ):
+            with self.assertRaisesRegex(ValueError, "project view shows"):
+                check(source, view, 2000, 2000, P)
 
     def test_view_parent_must_not_be_writable_by_others(self) -> None:
         parent = self.tmp / "run-cocalc"

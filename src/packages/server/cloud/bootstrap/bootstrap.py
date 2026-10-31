@@ -7112,6 +7112,28 @@ def umount_view_target(target):
     fail(f"project view mounts remain at {target}")
 
 
+def assert_view_direction(source, view, uid, gid, view_uid):
+    """The view must show the runtime user's ids as view_uid and every other
+    owner unchanged (a guard against the idmap fields being read the other
+    way round)."""
+    for kind, disk, seen, runtime in (("uid", source.st_uid, view.st_uid, uid), ("gid", source.st_gid, view.st_gid, gid)):
+        expected = view_uid if disk == runtime else disk
+        if seen != expected:
+            fail(f"project view shows {kind} {disk} as {seen}, expected {expected}")
+
+
+def verify_view(projectfd, name, sourcefd, uid, gid, view_uid):
+    """Check a fresh view against its source; unmount it if it's wrong."""
+    fd = openat2(projectfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        assert_view_direction(os.fstat(sourcefd), os.fstat(fd), uid, gid, view_uid)
+    except ValueError:
+        umount_view_target(f"{PROJECT_VIEW_ROOT}/{os.path.basename(os.readlink(f'/proc/self/fd/{projectfd}'))}/{name}")
+        raise
+    finally:
+        os.close(fd)
+
+
 def make_view_private(projectfd, name):
     """Stop propagation into a fresh view: the sources live on shared mounts,
     so mounts made later beneath a source would otherwise appear in it."""
@@ -7196,6 +7218,7 @@ def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
                 stdin=subprocess.DEVNULL,
             )
             make_view_private(projectfd, kind)
+            verify_view(projectfd, kind, sourcefd, uid, gid, view_uid)
         finally:
             for fd in (targetfd, projectfd, rootfd, sourcefd):
                 if fd is not None:
@@ -7274,6 +7297,7 @@ def mount_idmapped_upper(project_id, upperfd, workfd, view_uid):
             stdin=subprocess.DEVNULL,
         )
         make_view_private(projectfd, PROJECT_VIEW_ROOTFS_UPPER)
+        verify_view(projectfd, PROJECT_VIEW_ROOTFS_UPPER, parentfd, uid, gid, view_uid)
         mounted = openat2(projectfd, PROJECT_VIEW_ROOTFS_UPPER, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
         return mounted, upper_name, work_name
     finally:
