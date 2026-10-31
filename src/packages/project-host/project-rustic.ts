@@ -5,6 +5,7 @@
 
 import { existsSync } from "node:fs";
 import { executeCode } from "@cocalc/backend/execute-code";
+import getLogger from "@cocalc/backend/logger";
 import {
   createRusticProgressHandler,
   type RusticProgressUpdate,
@@ -13,7 +14,28 @@ import { getBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-cac
 import type { OversizedFilesReport } from "@cocalc/util/consts/backups";
 import type { ExecuteCodeStreamEvent } from "@cocalc/util/types/execute-code";
 
+const logger = getLogger("project-host:project-rustic");
+
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+
+// A background backup can need far longer than its time budget: rustic reads
+// every file it can't match with its parent, at the maintenance cgroup's I/O
+// cap, and a killed attempt starts reading from the beginning again. Past its
+// budget it keeps running while rustic reports progress, and is stopped once
+// progress stalls this long, or at the ceiling (the privileged helper's own
+// limit).
+export const BACKUP_STALL_MS = 10 * 60_000;
+export const BACKUP_CEILING_MS = 12 * 60 * 60_000;
+const BACKUP_WATCHDOG_INTERVAL_MS = 30_000;
+// rustic prints progress every second: hours of it fit with room to spare.
+// Past this, output (and with it progress) would no longer be seen.
+const WATCHED_MAX_OUTPUT = 64 * 1024 * 1024;
+
+const watchdogLimits = {
+  stallMs: BACKUP_STALL_MS,
+  ceilingMs: BACKUP_CEILING_MS,
+  intervalMs: BACKUP_WATCHDOG_INTERVAL_MS,
+};
 
 function isBackgroundBtrfsMutation(): boolean {
   const priority = getBtrfsMutationContext().priority;
@@ -39,16 +61,24 @@ export class ProjectRusticUnsupportedError extends Error {
 
 function createRusticStreamHooks({
   onProgress,
+  onLine,
 }: {
   onProgress?: (update: RusticProgressUpdate) => void;
+  onLine?: (line: string) => void;
 }): {
   env?: Record<string, string>;
   streamCB?: (event: ExecuteCodeStreamEvent) => void;
 } {
-  if (!onProgress) {
+  if (!onProgress && !onLine) {
     return {};
   }
-  const progressHandler = createRusticProgressHandler({ onProgress });
+  const progress = onProgress
+    ? createRusticProgressHandler({ onProgress })
+    : undefined;
+  const progressHandler = (line: string) => {
+    progress?.(line);
+    onLine?.(line);
+  };
   let stderrBuffer = "";
   return {
     env: { RUSTIC_PROGRESS_INTERVAL: "1s" },
@@ -110,6 +140,9 @@ async function runProjectRustic({
   timeoutMs: number;
   onProgress?: (update: RusticProgressUpdate) => void;
 }): Promise<{ stdout: string; stderr: string }> {
+  if (command === "project-rustic-backup-maintenance") {
+    return await runWatchedBackup({ command, args, timeoutMs, onProgress });
+  }
   const hooks = createRusticStreamHooks({ onProgress });
   const result = await executeCode({
     verbose: false,
@@ -134,6 +167,102 @@ async function runProjectRustic({
     );
   }
   return { stdout, stderr };
+}
+
+// A background backup, past its budget, runs on while rustic's progress
+// advances (see BACKUP_STALL_MS).
+async function runWatchedBackup({
+  command,
+  args,
+  timeoutMs,
+  onProgress,
+}: {
+  command: ProjectRusticCommand;
+  args: string[];
+  timeoutMs: number;
+  onProgress?: (update: RusticProgressUpdate) => void;
+}): Promise<{ stdout: string; stderr: string }> {
+  const { stallMs, ceilingMs, intervalMs } = watchdogLimits;
+  const startedAt = Date.now();
+  let lastProgressAt = startedAt;
+  let lastProgress: string | undefined;
+  // the furthest value seen for each of rustic's progress lines
+  const furthest = new Map<string, number>();
+  const watch = createRusticProgressHandler({
+    minIntervalMs: 0,
+    onProgress: ({ message, detail }) => {
+      lastProgress = message;
+      const key = detail?.prefix ?? message;
+      const value = detail?.bytes_done ?? detail?.count_done ?? 0;
+      if (!furthest.has(key) || value > furthest.get(key)!) {
+        furthest.set(key, value);
+        lastProgressAt = Date.now();
+      }
+    },
+  });
+  const hooks = createRusticStreamHooks({ onProgress, onLine: watch });
+  const started = await executeCode({
+    verbose: false,
+    err_on_exit: false,
+    async_call: true,
+    max_output: WATCHED_MAX_OUTPUT,
+    timeout: toTimeoutSeconds(Math.max(timeoutMs, ceilingMs)),
+    command: "sudo",
+    args: ["-n", STORAGE_WRAPPER, command, ...args],
+    env: hooks.env,
+    streamCB: hooks.streamCB,
+  });
+  if (started.type !== "async") {
+    throw new Error(`${command} did not start asynchronously`);
+  }
+  let stalled = false;
+  const timer = setInterval(() => {
+    const now = Date.now();
+    if (now - startedAt < timeoutMs || now - lastProgressAt < stallMs) return;
+    stalled = true;
+    clearInterval(timer);
+    executeCode({ async_cancel: started.job_id }).catch((err) =>
+      logger.warn("unable to stop a stalled backup", {
+        command,
+        err: `${err}`,
+      }),
+    );
+  }, intervalMs);
+  let result;
+  try {
+    result = await executeCode({
+      async_get: started.job_id,
+      async_await: true,
+    });
+  } finally {
+    clearInterval(timer);
+  }
+  if (result.type !== "async") {
+    throw new Error(`${command} returned an invalid result`);
+  }
+  const elapsedMs = Date.now() - startedAt;
+  const stdout = `${result.stdout ?? ""}`;
+  const stderr = `${result.stderr ?? ""}`;
+  if (result.status === "completed" && result.exit_code === 0) {
+    return { stdout, stderr };
+  }
+  if (isUnsupportedCommandError(command, stderr)) {
+    throw new ProjectRusticUnsupportedError(command, stderr);
+  }
+  const why = stalled
+    ? `no progress for ${Math.round(stallMs / 60_000)} min after its ${Math.round(timeoutMs / 60_000)} min budget`
+    : result.status === "killed" || elapsedMs >= ceilingMs
+      ? `stopped at the ${Math.round(ceilingMs / 3_600_000)} h ceiling`
+      : `exited with code ${result.exit_code}`;
+  logger.warn("background backup did not finish", {
+    command,
+    why,
+    elapsed_ms: elapsedMs,
+    last_progress: lastProgress,
+  });
+  throw new Error(
+    `${command} ${why} (after ${Math.round(elapsedMs / 60_000)} min; last progress: ${lastProgress ?? "none"})${stderr ? `: ${stderr.slice(-4000)}` : ""}`,
+  );
 }
 
 // The privileged helper prints this line when the backup skipped files larger
@@ -249,6 +378,11 @@ export async function projectRusticBackup({
     output = await run([]);
   }
   const parsed = JSON.parse(output.stdout);
+  logger.info("rustic backup finished", {
+    host,
+    id: parsed.id,
+    summary: parsed.summary,
+  });
   return {
     time: new Date(parsed.time),
     id: parsed.id,
@@ -365,3 +499,14 @@ export async function projectChangedSince({
     throw err;
   }
 }
+
+export const __test__ = {
+  setWatchdogLimits(limits: Partial<typeof watchdogLimits>) {
+    Object.assign(watchdogLimits, limits);
+  },
+  resetWatchdogLimits() {
+    watchdogLimits.stallMs = BACKUP_STALL_MS;
+    watchdogLimits.ceilingMs = BACKUP_CEILING_MS;
+    watchdogLimits.intervalMs = BACKUP_WATCHDOG_INTERVAL_MS;
+  },
+};
