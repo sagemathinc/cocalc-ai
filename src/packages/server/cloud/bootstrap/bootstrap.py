@@ -4671,7 +4671,8 @@ Run hourly by a systemd timer, as root. Each run decides from the saved
 status whether a scrub is due (once a period after the last completed one; the
 first one at a point in the period derived from the machine id, so hosts don't
 all scrub at once), and if so starts or resumes it while the host is quiet,
-for at most a daily budget of time, at a throttled speed. btrfs keeps a
+for at most a daily budget of time, at a throttled speed, and only at night
+where the host is (00:00-06:00 by default, in the timezone of its cloud zone). btrfs keeps a
 cancelled scrub's progress, so a scrub spans as many runs as it needs. The
 status, with btrfs's error counters and the files with uncorrectable errors,
 is written for the project host to report.
@@ -4682,16 +4683,86 @@ speed (bytes/s). Elsewhere the status still says when one would be due."""
 
 import argparse
 import calendar
+import datetime
+import grp
 import hashlib
 import json
 import os
 import re
+import signal
+import stat
 import subprocess
 import sys
 import time
+import urllib.request
+import zoneinfo
 
 GIB = 1 << 30
 MIB = 1 << 20
+# Commands by absolute path (the unit's PATH is minimal too): a root job must
+# not pick up a planted binary from an earlier PATH entry.
+BTRFS = "/usr/bin/btrfs"
+FINDMNT = "/usr/bin/findmnt"
+JOURNALCTL = "/usr/bin/journalctl"
+# Night where the host physically is: the timezone of its GCP region.
+GCP_REGION_TIMEZONES = {
+    "us-west1": "America/Los_Angeles",
+    "us-west2": "America/Los_Angeles",
+    "us-west3": "America/Denver",
+    "us-west4": "America/Los_Angeles",
+    "us-central1": "America/Chicago",
+    "us-south1": "America/Chicago",
+    "us-east1": "America/New_York",
+    "us-east4": "America/New_York",
+    "us-east5": "America/New_York",
+    "northamerica-northeast1": "America/Toronto",
+    "northamerica-northeast2": "America/Toronto",
+    "northamerica-south1": "America/Mexico_City",
+    "southamerica-east1": "America/Sao_Paulo",
+    "southamerica-west1": "America/Santiago",
+    "europe-west1": "Europe/Brussels",
+    "europe-west2": "Europe/London",
+    "europe-west3": "Europe/Berlin",
+    "europe-west4": "Europe/Amsterdam",
+    "europe-west6": "Europe/Zurich",
+    "europe-west8": "Europe/Rome",
+    "europe-west9": "Europe/Paris",
+    "europe-west10": "Europe/Berlin",
+    "europe-west12": "Europe/Rome",
+    "europe-north1": "Europe/Helsinki",
+    "europe-north2": "Europe/Stockholm",
+    "europe-central2": "Europe/Warsaw",
+    "europe-southwest1": "Europe/Madrid",
+    "asia-east1": "Asia/Taipei",
+    "asia-east2": "Asia/Hong_Kong",
+    "asia-northeast1": "Asia/Tokyo",
+    "asia-northeast2": "Asia/Tokyo",
+    "asia-northeast3": "Asia/Seoul",
+    "asia-south1": "Asia/Kolkata",
+    "asia-south2": "Asia/Kolkata",
+    "asia-southeast1": "Asia/Singapore",
+    "asia-southeast2": "Asia/Jakarta",
+    "australia-southeast1": "Australia/Sydney",
+    "australia-southeast2": "Australia/Melbourne",
+    "me-west1": "Asia/Jerusalem",
+    "me-central1": "Asia/Qatar",
+    "me-central2": "Asia/Riyadh",
+    "africa-south1": "Africa/Johannesburg",
+}
+# A region not listed above: its continent at least.
+GCP_PREFIX_TIMEZONES = (
+    ("us-", "America/Chicago"),
+    ("northamerica-", "America/Toronto"),
+    ("southamerica-", "America/Sao_Paulo"),
+    ("europe-", "Europe/Berlin"),
+    ("asia-", "Asia/Singapore"),
+    ("australia-", "Australia/Sydney"),
+    ("me-", "Asia/Dubai"),
+    ("africa-", "Africa/Johannesburg"),
+)
+GCP_ZONE_URL = "http://metadata.google.internal/computeMetadata/v1/instance/zone"
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+MAX_PATH_CHARS = 512
 DAY = 86400
 STATUS_VERSION = 1
 MAX_PATHS = 100
@@ -4751,11 +4822,42 @@ class Host:
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
 
+    def read_trusted(self, path):
+        """A config file's text, if it is a regular file root owns and only
+        root can write; otherwise None."""
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except OSError:
+            return None
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+                return None
+            with os.fdopen(os.dup(fd), encoding="utf-8") as f:
+                return f.read(1 << 20)
+        finally:
+            os.close(fd)
+
     def listdir(self, path):
         try:
             return sorted(os.listdir(path))
         except OSError:
             return []
+
+    def cloud_zone(self):
+        """The GCP zone this VM runs in (e.g. us-west2-a), or None."""
+        req = urllib.request.Request(GCP_ZONE_URL, headers={"Metadata-Flavor": "Google"})
+        try:
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                return resp.read(256).decode().rsplit("/", 1)[-1].strip() or None
+        except (OSError, ValueError):
+            return None
+
+    def system_timezone(self):
+        try:
+            return self.read("/etc/timezone").strip() or None
+        except OSError:
+            return None
 
     def machine_id(self):
         try:
@@ -4766,9 +4868,9 @@ class Host:
 
 def filesystem(host, mount):
     """(fsid, devices) of the btrfs filesystem at mount, or None."""
-    code, out, _ = host.run(["findmnt", "-n", "-o", "FSTYPE,UUID", "--target", mount])
+    code, out, _ = host.run([FINDMNT, "-n", "-o", "FSTYPE,UUID", "--target", mount])
     parts = out.split()
-    if code != 0 or len(parts) != 2 or parts[0] != "btrfs":
+    if code != 0 or len(parts) != 2 or parts[0] != "btrfs" or not UUID_RE.match(parts[1]):
         return None
     fsid = parts[1]
     base = os.path.join(host.sysfs, "fs", "btrfs", fsid)
@@ -4795,8 +4897,8 @@ def default_speed(host, capacity_path, devices):
     """Bytes/s for scrub_speed_max: a share of the disk's read bandwidth on
     GCP pd-balanced disks, otherwise a fixed speed."""
     try:
-        capacity = json.loads(host.read(capacity_path))
-    except (OSError, ValueError):
+        capacity = json.loads(host.read_trusted(capacity_path) or "{}")
+    except ValueError:
         capacity = {}
     targets = capacity.get("targets") if isinstance(capacity, dict) else None
     balanced = (
@@ -4810,6 +4912,51 @@ def default_speed(host, capacity_path, devices):
     if balanced and sizes and all(sizes):
         return max(MIB, int(min(balanced_read_bps(s) for s in sizes) * SHARE))
     return DEFAULT_SPEED
+
+
+def valid_timezone(name):
+    try:
+        return zoneinfo.ZoneInfo(name) if isinstance(name, str) and name else None
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def zone_timezone(zone):
+    region = zone.rsplit("-", 1)[0] if zone and zone.count("-") >= 2 else zone
+    if region in GCP_REGION_TIMEZONES:
+        return GCP_REGION_TIMEZONES[region]
+    for prefix, tz in GCP_PREFIX_TIMEZONES:
+        if region and region.startswith(prefix):
+            return tz
+    return None
+
+
+def host_timezone(host, override):
+    """(tzinfo, name, source, warning) for when night is, where the host is."""
+    tz = valid_timezone(override)
+    if tz:
+        return tz, override, "config", None
+    zone = host.cloud_zone()
+    name = zone_timezone(zone) if zone else None
+    if valid_timezone(name):
+        return valid_timezone(name), name, "zone %s" % zone, None
+    name = host.system_timezone()
+    if name not in (None, "Etc/UTC", "UTC") and valid_timezone(name):
+        return valid_timezone(name), name, "system", None
+    return datetime.timezone.utc, "UTC", "fallback", "host location unknown: night is UTC"
+
+
+def night_window(now, tz, start_hour, hours):
+    """(start, end) timestamps of the night window containing now, or of the
+    next one if now is outside any."""
+    local = datetime.datetime.fromtimestamp(now, tz)
+    for days in (-1, 0, 1):
+        day = (local + datetime.timedelta(days=days)).date()
+        start = datetime.datetime(day.year, day.month, day.day, start_hour, tzinfo=tz).timestamp()
+        end = start + hours * 3600
+        if now < end:
+            return start, end
+    return start, end
 
 
 def pressure(host):
@@ -4828,7 +4975,7 @@ def pressure(host):
 def scrub_status(host, mount):
     """btrfs scrub status -R as a dict: 'status' (finished, running,
     interrupted, aborted, or none) and the raw counters."""
-    code, out, _ = host.run(["btrfs", "scrub", "status", "-R", mount])
+    code, out, _ = host.run([BTRFS, "scrub", "status", "-R", mount])
     result = {"status": "none"}
     seen = set()
     if code != 0:
@@ -4851,7 +4998,7 @@ def scrub_status(host, mount):
         result["status"] = "none"
     elif "status" not in seen:
         # older btrfs-progs: the state is only in the plain output
-        _, plain, _ = host.run(["btrfs", "scrub", "status", mount])
+        _, plain, _ = host.run([BTRFS, "scrub", "status", mount])
         for line in plain.splitlines():
             key, sep, value = line.strip().partition(":")
             if sep and key.strip().lower() == "status" and value.strip():
@@ -4862,7 +5009,7 @@ def scrub_status(host, mount):
 def error_paths(host, since):
     """Files the kernel named while scrubbing, for errors it couldn't fix."""
     code, out, _ = host.run(
-        ["journalctl", "-k", "--no-pager", "-o", "cat", "--since", "@%d" % int(since)]
+        [JOURNALCTL, "-k", "--no-pager", "-o", "cat", "--since", "@%d" % int(since)]
     )
     if code != 0:
         return [], False
@@ -4871,8 +5018,10 @@ def error_paths(host, since):
         if "BTRFS" not in line or "error" not in line:
             continue
         m = PATH_RE.search(line)
-        if m and m.group(1) not in paths:
-            paths.append(m.group(1))
+        # user-controlled names: bounded, and shown only as text
+        path = m.group(1)[:MAX_PATH_CHARS] if m else None
+        if path and path not in paths:
+            paths.append(path)
     return paths[:MAX_PATHS], len(paths) > MAX_PATHS
 
 
@@ -4897,22 +5046,53 @@ def restore_speed(host, previous):
             pass
 
 
-def load(path):
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+class StatusDir:
+    """The status directory and file: owned by root, readable by the project
+    host's group only (the status names customer files), never through a
+    symlink."""
+
+    NAME = "status.json"
+
+    def __init__(self, path, gid):
+        self.gid = gid
+        try:
+            os.mkdir(path, 0o750)
+        except FileExistsError:
+            pass
+        self.fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        os.fchown(self.fd, os.geteuid(), gid)
+        os.fchmod(self.fd, 0o750)
+
+    def load(self):
+        try:
+            fd = os.open(self.NAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=self.fd)
+        except OSError:
+            return {}
+        try:
+            with os.fdopen(fd, encoding="utf-8") as f:
+                data = json.load(f)
+        except ValueError:
+            return {}
         return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
 
-
-def save(path, status):
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(status, f, indent=2, sort_keys=True)
-        f.write("\n")
-    os.chmod(tmp, 0o644)
-    os.replace(tmp, path)
+    def save(self, status):
+        tmp = "%s.%d.tmp" % (self.NAME, os.getpid())
+        try:
+            os.unlink(tmp, dir_fd=self.fd)
+        except FileNotFoundError:
+            pass
+        fd = os.open(
+            tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o640,
+            dir_fd=self.fd,
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            os.fchown(f.fileno(), os.geteuid(), self.gid)
+            os.fchmod(f.fileno(), 0o640)
+            json.dump(status, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.replace(tmp, self.NAME, src_dir_fd=self.fd, dst_dir_fd=self.fd)
 
 
 def due_at(status, host, period_s, now):
@@ -4928,28 +5108,39 @@ def due_at(status, host, period_s, now):
     return first_seen + offset
 
 
-CONFIG_KEYS = {"period_days": float, "grace_days": float, "daily_hours": float, "speed": int}
+# Settings the config may set, within bounds, so even a wrong config can't
+# make the scrub hog the disk.
+CONFIG_KEYS = {
+    "period_days": (float, 1, 365),
+    "grace_days": (float, 0, 60),
+    "daily_hours": (float, 0.25, 24),
+    "speed": (int, MIB, 512 * MIB),
+    "night_start_hour": (int, 0, 23),
+    "night_hours": (float, 1, 24),
+}
 
 
 def apply_config(args, host):
-    """True if scrubbing is enabled; settings in the config override args."""
+    """True if scrubbing is enabled; settings in the config override args. A
+    config that isn't root's alone counts as absent."""
     try:
-        config = json.loads(host.read(args.config))
-    except (OSError, ValueError):
+        config = json.loads(host.read_trusted(args.config) or "null")
+    except ValueError:
         return False
     if not isinstance(config, dict):
         return False
-    for key, kind in CONFIG_KEYS.items():
+    for key, (kind, low, high) in CONFIG_KEYS.items():
         value = config.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and low <= value <= high:
             setattr(args, key, kind(value))
+    if isinstance(config.get("timezone"), str):
+        args.timezone = config["timezone"]
     return config.get("enabled") is True
 
 
-def run(args, host):
+def run(args, host, store):
     enabled = apply_config(args, host)
-    status_path = os.path.join(args.status_dir, "status.json")
-    status = load(status_path)
+    status = store.load()
     now = host.now()
     status.setdefault("version", STATUS_VERSION)
     status.setdefault("first_seen_at", iso(now))
@@ -4958,9 +5149,14 @@ def run(args, host):
     fs = filesystem(host, args.mount)
     if fs is None:
         status.update(state="unsupported", reason="not a btrfs filesystem", updated_at=iso(now))
-        save(status_path, status)
+        store.save(status)
         return 0
     fsid, devices = fs
+    if status.get("fsid") not in (None, fsid):
+        # a new filesystem at the mount: what was scrubbed is gone
+        for key in ("last_completed", "current", "overdue_since", "runtime_day", "runtime_today_s"):
+            status.pop(key, None)
+        status["first_seen_at"] = iso(now)
     status["fsid"] = fsid
     due = due_at(status, host, period_s, now)
     status["due_at"] = iso(due)
@@ -4969,6 +5165,25 @@ def run(args, host):
     if status.get("runtime_day") != day:
         status["runtime_day"], status["runtime_today_s"] = day, 0
     budget_s = args.daily_hours * 3600 - status.get("runtime_today_s", 0)
+    tz, tz_name, tz_source, tz_warning = host_timezone(host, args.timezone)
+    window_start, window_end = night_window(now, tz, args.night_start_hour, args.night_hours)
+    status["night"] = {
+        "timezone": tz_name,
+        "source": tz_source,
+        "start": iso(window_start),
+        "end": iso(window_end),
+    }
+    if tz_warning:
+        status["night"]["warning"] = tz_warning
+    in_night = window_start <= now < window_end
+    st = scrub_status(host, args.mount)
+    # ours, left running by a run that was killed (SIGKILL, a crash)
+    orphan = current is not None and st["status"] == "running"
+
+    def stop_orphan():
+        # a scrub this service won't watch now must not run on unwatched
+        if orphan:
+            host.run([BTRFS, "scrub", "cancel", args.mount])
 
     def finish(state, reason=None):
         status["state"] = state
@@ -4976,24 +5191,12 @@ def run(args, host):
             status["reason"] = reason
         else:
             status.pop("reason", None)
-        if now > due + args.grace_days * DAY and state != "idle":
+        if host.now() > due + args.grace_days * DAY and state != "idle":
             status["state"] = "overdue"
             status.setdefault("overdue_since", iso(due + args.grace_days * DAY))
         status["updated_at"] = iso(host.now())
-        save(status_path, status)
+        store.save(status)
         return 0
-
-    if not enabled:
-        status["state"], status["reason"] = "disabled", "not enabled on this host"
-        status["updated_at"] = iso(now)
-        save(status_path, status)
-        return 0
-    if current is None and now < due:
-        return finish("idle", "not due")
-    if budget_s <= 0:
-        return finish("paused", "daily time budget used")
-    if pressure(host) > args.resume_below:
-        return finish("paused", "host I/O pressure")
 
     def complete(st, started_at):
         errors = {k: st.get(k, 0) for k in COUNTERS}
@@ -5014,32 +5217,60 @@ def run(args, host):
         status["state"] = "idle"
         status.pop("reason", None)
         status["updated_at"] = iso(finished)
-        save(status_path, status)
+        store.save(status)
         return 0
 
-    if current is not None:
-        st = scrub_status(host, args.mount)
-        if st["status"] == "finished":
-            # finished after the last run stopped watching it
-            return complete(st, current.get("started_at"))
+    if current is not None and st["status"] == "finished":
+        # finished after the last run stopped watching it
+        return complete(st, current.get("started_at"))
+    if not enabled:
+        stop_orphan()
+        status["state"], status["reason"] = "disabled", "not enabled on this host"
+        status["updated_at"] = iso(now)
+        store.save(status)
+        return 0
+    if current is None and now < due:
+        return finish("idle", "not due")
+    if not in_night:
+        stop_orphan()
+        return finish("paused", "outside the night window")
+    if budget_s <= 0:
+        stop_orphan()
+        return finish("paused", "daily time budget used")
+    if pressure(host) > args.resume_below:
+        stop_orphan()
+        return finish("paused", "host I/O pressure")
+
+    if current is None and st["status"] == "running":
+        # someone else's scrub (an admin's, say): leave it alone
+        return finish("paused", "a scrub not started by this service is running")
 
     speed = args.speed or default_speed(host, args.capacity, devices)
     status["speed_max_bytes"] = speed
     previous = set_speed(host, fsid, devices, speed)
     started = host.now()
+    # Until the loop below sees the scrub end or cancels it, leaving any other
+    # way (an exception, SIGTERM from systemd) cancels it: a scrub never runs
+    # without this service watching its pressure and time budget.
+    supervising = False
     try:
-        resumed = False
-        if current is not None:
-            code, _, _ = host.run(["btrfs", "scrub", "resume", args.mount])
-            resumed = code == 0
-        if not resumed:
-            code, _, err = host.run(["btrfs", "scrub", "start", args.mount])
-            if code != 0:
-                return finish("error", "btrfs scrub start failed: %s" % err.strip()[:300])
-            current = {"started_at": iso(started)}
+        if orphan:
+            # watch it again, throttled
+            supervising = True
+        else:
+            resumed = False
+            if current is not None:
+                code, _, _ = host.run([BTRFS, "scrub", "resume", args.mount])
+                resumed = code == 0
+            if not resumed:
+                code, _, err = host.run([BTRFS, "scrub", "start", args.mount])
+                if code != 0:
+                    return finish("error", "btrfs scrub start failed: %s" % err.strip()[:300])
+                current = {"started_at": iso(started)}
+            supervising = True
         status["current"] = current
         status["state"] = "running"
-        save(status_path, status)
+        store.save(status)
         reason = None
         while True:
             host.sleep(args.poll_seconds)
@@ -5047,23 +5278,34 @@ def run(args, host):
             elapsed = host.now() - started
             current["data_bytes_scrubbed"] = st.get("data_bytes_scrubbed", 0)
             if st["status"] == "finished":
+                supervising = False
                 break
             if st["status"] != "running":
+                supervising = False
                 reason = "scrub stopped (%s)" % st["status"]
                 break
             if pressure(host) > args.pause_above:
-                host.run(["btrfs", "scrub", "cancel", args.mount])
+                host.run([BTRFS, "scrub", "cancel", args.mount])
+                supervising = False
                 reason = "host I/O pressure"
                 break
             if elapsed >= budget_s:
-                host.run(["btrfs", "scrub", "cancel", args.mount])
+                host.run([BTRFS, "scrub", "cancel", args.mount])
+                supervising = False
                 reason = "daily time budget used"
+                break
+            if host.now() >= window_end:
+                host.run([BTRFS, "scrub", "cancel", args.mount])
+                supervising = False
+                reason = "outside the night window"
                 break
         status["runtime_today_s"] = status.get("runtime_today_s", 0) + int(host.now() - started)
         if reason is not None:
             return finish("paused", reason)
         return complete(st, current.get("started_at"))
     finally:
+        if supervising:
+            host.run([BTRFS, "scrub", "cancel", args.mount])
         restore_speed(host, previous)
 
 
@@ -5071,6 +5313,7 @@ def main(argv=None, host=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--mount", default="/mnt/cocalc")
     p.add_argument("--status-dir", default="/var/lib/cocalc-btrfs-scrub")
+    p.add_argument("--status-group", default="", help="group that may read the status")
     p.add_argument("--capacity", default="/etc/cocalc/project-io-capacity.json")
     p.add_argument("--config", default="/etc/cocalc/btrfs-scrub.json")
     p.add_argument("--period-days", type=float, default=30)
@@ -5080,9 +5323,18 @@ def main(argv=None, host=None):
     p.add_argument("--resume-below", type=float, default=2.0, help="io full avg60 %%")
     p.add_argument("--pause-above", type=float, default=5.0, help="io full avg60 %%")
     p.add_argument("--poll-seconds", type=float, default=60)
+    p.add_argument("--timezone", default="", help="IANA name (default: from the cloud zone)")
+    p.add_argument("--night-start-hour", type=int, default=0)
+    p.add_argument("--night-hours", type=float, default=6)
     args = p.parse_args(argv)
-    os.makedirs(args.status_dir, exist_ok=True)
-    return run(args, host or Host())
+    try:
+        gid = grp.getgrnam(args.status_group).gr_gid if args.status_group else os.getegid()
+    except KeyError:
+        gid = os.getegid()
+    # systemd stops a run with SIGTERM (stop, or the start timeout): exit
+    # through finally, which cancels a scrub this run supervises.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    return run(args, host or Host(), StatusDir(args.status_dir, gid))
 
 
 if __name__ == "__main__":
@@ -5099,8 +5351,8 @@ def configure_btrfs_scrub(
 ) -> None:
     """An hourly root check that scrubs the project data filesystem once a
     period, throttled, while the host is quiet (BTRFS_SCRUB_SCRIPT). It only
-    scrubs where /etc/cocalc/btrfs-scrub.json enables it; its status lives in
-    a root-owned directory the project host can read."""
+    scrubs where /etc/cocalc/btrfs-scrub.json enables it; its status (which
+    names files with errors) is readable by the runtime user's group only."""
     log_line(cfg, "bootstrap: configuring btrfs scrub")
 
     def current(path: Path) -> str | None:
@@ -5112,6 +5364,7 @@ def configure_btrfs_scrub(
     if current(script_path) != BTRFS_SCRUB_SCRIPT:
         text_write_atomic(script_path, BTRFS_SCRUB_SCRIPT, default_mode=0o755)
     os.chmod(script_path, 0o755)
+    status_group = shlex.quote(cfg.ssh_user or "root")
     service = f"""[Unit]
 Description=CoCalc btrfs scrub of the project data filesystem
 ConditionPathIsExecutable={script_path}
@@ -5119,15 +5372,20 @@ ConditionPathIsMountPoint=/mnt/cocalc
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 -I {script_path} --mount /mnt/cocalc --status-dir /var/lib/cocalc-btrfs-scrub
-StateDirectory=cocalc-btrfs-scrub
-StateDirectoryMode=0755
-UMask=0022
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/python3 -I {script_path} --mount /mnt/cocalc --status-dir /var/lib/cocalc-btrfs-scrub --status-group {status_group}
+UMask=0027
 Nice=10
-# the script's daily time budget (6 h) bounds a run
+# the script's daily time budget (6 h) bounds a run; a stop or timeout sends
+# SIGTERM, on which the script cancels the scrub it is watching
 TimeoutStartSec=7h
 NoNewPrivileges=yes
 PrivateTmp=yes
+# not strict: btrfs scrub writes /var/lib/btrfs
+ProtectSystem=full
+ProtectHome=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
 """
     timer = """[Unit]
 Description=Hourly check for a due btrfs scrub
