@@ -4664,6 +4664,499 @@ if __name__ == "__main__":
 '''
 
 
+BTRFS_SCRUB_SCRIPT = r'''#!/usr/bin/env python3
+"""Scrubs the project-data btrfs filesystem once a period, a little at a time.
+
+Run hourly by a systemd timer, as root. Each run decides from the saved
+status whether a scrub is due (once a period after the last completed one; the
+first one at a point in the period derived from the machine id, so hosts don't
+all scrub at once), and if so starts or resumes it while the host is quiet,
+for at most a daily budget of time, at a throttled speed. btrfs keeps a
+cancelled scrub's progress, so a scrub spans as many runs as it needs. The
+status, with btrfs's error counters and the files with uncorrectable errors,
+is written for the project host to report.
+
+Scrubbing happens only where the root-owned config enables it
+({"enabled": true}); it can also set period_days, grace_days, daily_hours and
+speed (bytes/s). Elsewhere the status still says when one would be due."""
+
+import argparse
+import calendar
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+GIB = 1 << 30
+MIB = 1 << 20
+DAY = 86400
+STATUS_VERSION = 1
+MAX_PATHS = 100
+# The default throttle: this share of a disk's read bandwidth (the GCP
+# pd-balanced formula bootstrap also uses for I/O limits), or a fixed speed.
+SHARE = 0.2
+DEFAULT_SPEED = 50 * MIB
+COUNTERS = (
+    "read_errors",
+    "csum_errors",
+    "verify_errors",
+    "super_errors",
+    "malloc_errors",
+    "uncorrectable_errors",
+    "unverified_errors",
+    "corrected_errors",
+    "data_bytes_scrubbed",
+    "tree_bytes_scrubbed",
+)
+PATH_RE = re.compile(r"\(path: (.*)\)\s*$")
+
+
+def iso(ts):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def parse_iso(text):
+    try:
+        return float(calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ")))
+    except (TypeError, ValueError):
+        return None
+
+
+class Host:
+    """Everything that touches the system, replaceable in tests."""
+
+    def __init__(self, sysfs="/sys", proc="/proc", machine_id="/etc/machine-id"):
+        self.sysfs = sysfs
+        self.proc = proc
+        self.machine_id_path = machine_id
+
+    def now(self):
+        return time.time()
+
+    def sleep(self, seconds):
+        time.sleep(seconds)
+
+    def run(self, args):
+        p = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        return p.returncode, p.stdout, p.stderr
+
+    def read(self, path):
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def write(self, path, text):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def listdir(self, path):
+        try:
+            return sorted(os.listdir(path))
+        except OSError:
+            return []
+
+    def machine_id(self):
+        try:
+            return self.read(self.machine_id_path).strip()
+        except OSError:
+            return ""
+
+
+def filesystem(host, mount):
+    """(fsid, devices) of the btrfs filesystem at mount, or None."""
+    code, out, _ = host.run(["findmnt", "-n", "-o", "FSTYPE,UUID", "--target", mount])
+    parts = out.split()
+    if code != 0 or len(parts) != 2 or parts[0] != "btrfs":
+        return None
+    fsid = parts[1]
+    base = os.path.join(host.sysfs, "fs", "btrfs", fsid)
+    devids = host.listdir(os.path.join(base, "devinfo"))
+    names = host.listdir(os.path.join(base, "devices"))
+    if not devids:
+        return None
+    return fsid, {"devids": devids, "names": names}
+
+
+def device_bytes(host, name):
+    try:
+        return int(host.read(os.path.join(host.sysfs, "class", "block", name, "size"))) * 512
+    except (OSError, ValueError):
+        return 0
+
+
+def balanced_read_bps(size_bytes):
+    # bootstrap.py balanced_device_capacity(): physical_read_bps
+    return min(240 * MIB, 140 * MIB + (28 * size_bytes * MIB) // (100 * GIB))
+
+
+def default_speed(host, capacity_path, devices):
+    """Bytes/s for scrub_speed_max: a share of the disk's read bandwidth on
+    GCP pd-balanced disks, otherwise a fixed speed."""
+    try:
+        capacity = json.loads(host.read(capacity_path))
+    except (OSError, ValueError):
+        capacity = {}
+    targets = capacity.get("targets") if isinstance(capacity, dict) else None
+    balanced = (
+        isinstance(capacity, dict)
+        and capacity.get("provider") == "gcp"
+        and isinstance(targets, list)
+        and bool(targets)
+        and all(isinstance(t, dict) and t.get("disk_type") == "balanced" for t in targets)
+    )
+    sizes = [device_bytes(host, name) for name in devices["names"]]
+    if balanced and sizes and all(sizes):
+        return max(MIB, int(min(balanced_read_bps(s) for s in sizes) * SHARE))
+    return DEFAULT_SPEED
+
+
+def pressure(host):
+    """The io 'full' share over the last minute, in percent (100 if unknown)."""
+    try:
+        for line in host.read(os.path.join(host.proc, "pressure", "io")).splitlines():
+            if line.startswith("full "):
+                for field in line.split():
+                    if field.startswith("avg60="):
+                        return float(field[len("avg60="):])
+    except (OSError, ValueError):
+        pass
+    return 100.0
+
+
+def scrub_status(host, mount):
+    """btrfs scrub status -R as a dict: 'status' (finished, running,
+    interrupted, aborted, or none) and the raw counters."""
+    code, out, _ = host.run(["btrfs", "scrub", "status", "-R", mount])
+    result = {"status": "none"}
+    seen = set()
+    if code != 0:
+        return result
+    for line in out.splitlines():
+        key, sep, value = line.strip().partition(":")
+        if not sep:
+            continue
+        key = key.strip().lower().replace(" ", "_")
+        value = value.strip()
+        seen.add(key)
+        if key == "status":
+            result["status"] = value.split()[0].lower() if value else "none"
+        elif key in COUNTERS:
+            try:
+                result[key] = int(value.split()[0])
+            except (IndexError, ValueError):
+                pass
+    if "no stats available" in out:
+        result["status"] = "none"
+    elif "status" not in seen:
+        # older btrfs-progs: the state is only in the plain output
+        _, plain, _ = host.run(["btrfs", "scrub", "status", mount])
+        for line in plain.splitlines():
+            key, sep, value = line.strip().partition(":")
+            if sep and key.strip().lower() == "status" and value.strip():
+                result["status"] = value.split()[0].lower()
+    return result
+
+
+def error_paths(host, since):
+    """Files the kernel named while scrubbing, for errors it couldn't fix."""
+    code, out, _ = host.run(
+        ["journalctl", "-k", "--no-pager", "-o", "cat", "--since", "@%d" % int(since)]
+    )
+    if code != 0:
+        return [], False
+    paths = []
+    for line in out.splitlines():
+        if "BTRFS" not in line or "error" not in line:
+            continue
+        m = PATH_RE.search(line)
+        if m and m.group(1) not in paths:
+            paths.append(m.group(1))
+    return paths[:MAX_PATHS], len(paths) > MAX_PATHS
+
+
+def set_speed(host, fsid, devices, speed):
+    """Sets scrub_speed_max on each device; returns the previous values."""
+    previous = {}
+    for devid in devices["devids"]:
+        path = os.path.join(host.sysfs, "fs", "btrfs", fsid, "devinfo", devid, "scrub_speed_max")
+        try:
+            previous[path] = host.read(path).strip()
+            host.write(path, "%d" % speed)
+        except OSError:
+            pass
+    return previous
+
+
+def restore_speed(host, previous):
+    for path, value in previous.items():
+        try:
+            host.write(path, value or "0")
+        except OSError:
+            pass
+
+
+def load(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save(path, status):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(status, f, indent=2, sort_keys=True)
+        f.write("\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def due_at(status, host, period_s, now):
+    """When the next scrub is due: a period after the last completed one; the
+    first one, at a point in the first period from the machine's id."""
+    last = (status.get("last_completed") or {}).get("finished_at")
+    last_ts = parse_iso(last) if last else None
+    if last_ts is not None:
+        return last_ts + period_s
+    first_seen = parse_iso(status.get("first_seen_at")) or now
+    digest = hashlib.sha256(host.machine_id().encode()).digest()
+    offset = int.from_bytes(digest[:8], "big") % max(1, int(period_s))
+    return first_seen + offset
+
+
+CONFIG_KEYS = {"period_days": float, "grace_days": float, "daily_hours": float, "speed": int}
+
+
+def apply_config(args, host):
+    """True if scrubbing is enabled; settings in the config override args."""
+    try:
+        config = json.loads(host.read(args.config))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(config, dict):
+        return False
+    for key, kind in CONFIG_KEYS.items():
+        value = config.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            setattr(args, key, kind(value))
+    return config.get("enabled") is True
+
+
+def run(args, host):
+    enabled = apply_config(args, host)
+    status_path = os.path.join(args.status_dir, "status.json")
+    status = load(status_path)
+    now = host.now()
+    status.setdefault("version", STATUS_VERSION)
+    status.setdefault("first_seen_at", iso(now))
+    status["mount"] = args.mount
+    period_s = args.period_days * DAY
+    fs = filesystem(host, args.mount)
+    if fs is None:
+        status.update(state="unsupported", reason="not a btrfs filesystem", updated_at=iso(now))
+        save(status_path, status)
+        return 0
+    fsid, devices = fs
+    status["fsid"] = fsid
+    due = due_at(status, host, period_s, now)
+    status["due_at"] = iso(due)
+    current = status.get("current")
+    day = time.strftime("%Y-%m-%d", time.gmtime(now))
+    if status.get("runtime_day") != day:
+        status["runtime_day"], status["runtime_today_s"] = day, 0
+    budget_s = args.daily_hours * 3600 - status.get("runtime_today_s", 0)
+
+    def finish(state, reason=None):
+        status["state"] = state
+        if reason:
+            status["reason"] = reason
+        else:
+            status.pop("reason", None)
+        if now > due + args.grace_days * DAY and state != "idle":
+            status["state"] = "overdue"
+            status.setdefault("overdue_since", iso(due + args.grace_days * DAY))
+        status["updated_at"] = iso(host.now())
+        save(status_path, status)
+        return 0
+
+    if not enabled:
+        status["state"], status["reason"] = "disabled", "not enabled on this host"
+        status["updated_at"] = iso(now)
+        save(status_path, status)
+        return 0
+    if current is None and now < due:
+        return finish("idle", "not due")
+    if budget_s <= 0:
+        return finish("paused", "daily time budget used")
+    if pressure(host) > args.resume_below:
+        return finish("paused", "host I/O pressure")
+
+    def complete(st, started_at):
+        errors = {k: st.get(k, 0) for k in COUNTERS}
+        paths, truncated = [], False
+        if errors["uncorrectable_errors"] or errors["csum_errors"] or errors["read_errors"]:
+            paths, truncated = error_paths(host, parse_iso(started_at) or now)
+        finished = host.now()
+        status["last_completed"] = {
+            "started_at": started_at,
+            "finished_at": iso(finished),
+            "errors": errors,
+            "error_paths": paths,
+            "error_paths_truncated": truncated,
+        }
+        status["current"] = None
+        status["due_at"] = iso(finished + period_s)
+        status.pop("overdue_since", None)
+        status["state"] = "idle"
+        status.pop("reason", None)
+        status["updated_at"] = iso(finished)
+        save(status_path, status)
+        return 0
+
+    if current is not None:
+        st = scrub_status(host, args.mount)
+        if st["status"] == "finished":
+            # finished after the last run stopped watching it
+            return complete(st, current.get("started_at"))
+
+    speed = args.speed or default_speed(host, args.capacity, devices)
+    status["speed_max_bytes"] = speed
+    previous = set_speed(host, fsid, devices, speed)
+    started = host.now()
+    try:
+        resumed = False
+        if current is not None:
+            code, _, _ = host.run(["btrfs", "scrub", "resume", args.mount])
+            resumed = code == 0
+        if not resumed:
+            code, _, err = host.run(["btrfs", "scrub", "start", args.mount])
+            if code != 0:
+                return finish("error", "btrfs scrub start failed: %s" % err.strip()[:300])
+            current = {"started_at": iso(started)}
+        status["current"] = current
+        status["state"] = "running"
+        save(status_path, status)
+        reason = None
+        while True:
+            host.sleep(args.poll_seconds)
+            st = scrub_status(host, args.mount)
+            elapsed = host.now() - started
+            current["data_bytes_scrubbed"] = st.get("data_bytes_scrubbed", 0)
+            if st["status"] == "finished":
+                break
+            if st["status"] != "running":
+                reason = "scrub stopped (%s)" % st["status"]
+                break
+            if pressure(host) > args.pause_above:
+                host.run(["btrfs", "scrub", "cancel", args.mount])
+                reason = "host I/O pressure"
+                break
+            if elapsed >= budget_s:
+                host.run(["btrfs", "scrub", "cancel", args.mount])
+                reason = "daily time budget used"
+                break
+        status["runtime_today_s"] = status.get("runtime_today_s", 0) + int(host.now() - started)
+        if reason is not None:
+            return finish("paused", reason)
+        return complete(st, current.get("started_at"))
+    finally:
+        restore_speed(host, previous)
+
+
+def main(argv=None, host=None):
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--mount", default="/mnt/cocalc")
+    p.add_argument("--status-dir", default="/var/lib/cocalc-btrfs-scrub")
+    p.add_argument("--capacity", default="/etc/cocalc/project-io-capacity.json")
+    p.add_argument("--config", default="/etc/cocalc/btrfs-scrub.json")
+    p.add_argument("--period-days", type=float, default=30)
+    p.add_argument("--grace-days", type=float, default=7)
+    p.add_argument("--daily-hours", type=float, default=6)
+    p.add_argument("--speed", type=int, default=0, help="bytes/s (default: derived)")
+    p.add_argument("--resume-below", type=float, default=2.0, help="io full avg60 %%")
+    p.add_argument("--pause-above", type=float, default=5.0, help="io full avg60 %%")
+    p.add_argument("--poll-seconds", type=float, default=60)
+    args = p.parse_args(argv)
+    os.makedirs(args.status_dir, exist_ok=True)
+    return run(args, host or Host())
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+def configure_btrfs_scrub(
+    cfg: BootstrapConfig,
+    *,
+    script_path: Path = Path("/usr/local/libexec/cocalc-btrfs-scrub"),
+    service_path: Path = Path("/etc/systemd/system/cocalc-btrfs-scrub.service"),
+    timer_path: Path = Path("/etc/systemd/system/cocalc-btrfs-scrub.timer"),
+) -> None:
+    """An hourly root check that scrubs the project data filesystem once a
+    period, throttled, while the host is quiet (BTRFS_SCRUB_SCRIPT). It only
+    scrubs where /etc/cocalc/btrfs-scrub.json enables it; its status lives in
+    a root-owned directory the project host can read."""
+    log_line(cfg, "bootstrap: configuring btrfs scrub")
+
+    def current(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    if current(script_path) != BTRFS_SCRUB_SCRIPT:
+        text_write_atomic(script_path, BTRFS_SCRUB_SCRIPT, default_mode=0o755)
+    os.chmod(script_path, 0o755)
+    service = f"""[Unit]
+Description=CoCalc btrfs scrub of the project data filesystem
+ConditionPathIsExecutable={script_path}
+ConditionPathIsMountPoint=/mnt/cocalc
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I {script_path} --mount /mnt/cocalc --status-dir /var/lib/cocalc-btrfs-scrub
+StateDirectory=cocalc-btrfs-scrub
+StateDirectoryMode=0755
+UMask=0022
+Nice=10
+# the script's daily time budget (6 h) bounds a run
+TimeoutStartSec=7h
+NoNewPrivileges=yes
+PrivateTmp=yes
+"""
+    timer = """[Unit]
+Description=Hourly check for a due btrfs scrub
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    for path, text in ((service_path, service), (timer_path, timer)):
+        if current(path) != text:
+            text_write_atomic(path, text)
+    run_cmd(
+        cfg,
+        ["systemctl", "daemon-reload"],
+        "reload systemd btrfs scrub units",
+        timeout=30,
+    )
+    run_cmd(
+        cfg,
+        ["systemctl", "enable", "--now", "cocalc-btrfs-scrub.timer"],
+        "enable btrfs scrub timer",
+        timeout=30,
+    )
+
+
 def configure_host_integrity_watch(
     cfg: BootstrapConfig,
     *,
@@ -17342,6 +17835,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         ensure_automatic_security_updates(cfg)
         configure_daily_root_cleanup(cfg)
         configure_host_integrity_watch(cfg)
+        configure_btrfs_scrub(cfg)
         configure_kernel_module_hardening(cfg)
         configure_kernel_sysctl_hardening(cfg)
         configure_kernel_key_limits(cfg)
@@ -17431,6 +17925,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         configure_rsyslog_limits(cfg)
         configure_daily_root_cleanup(cfg)
         configure_host_integrity_watch(cfg)
+        configure_btrfs_scrub(cfg)
         configure_kernel_sysctl_hardening(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)

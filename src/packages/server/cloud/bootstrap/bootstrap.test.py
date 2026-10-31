@@ -8353,6 +8353,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "configure_rsyslog_limits",
                 "configure_daily_root_cleanup",
                 "configure_host_integrity_watch",
+                "configure_btrfs_scrub",
                 "configure_kernel_sysctl_hardening",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
@@ -8408,6 +8409,7 @@ class BootstrapModesTest(unittest.TestCase):
                     "configure_rsyslog_limits",
                     "configure_daily_root_cleanup",
                     "configure_host_integrity_watch",
+                    "configure_btrfs_scrub",
                     "configure_kernel_sysctl_hardening",
                     "install_privileged_wrappers",
                     "install_privileged_tool_binaries",
@@ -8432,7 +8434,7 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
-            "configure_host_integrity_watch "
+            "configure_host_integrity_watch configure_btrfs_scrub "
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
@@ -8505,7 +8507,7 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
-            "configure_host_integrity_watch "
+            "configure_host_integrity_watch configure_btrfs_scrub "
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
@@ -8828,6 +8830,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("ensure_automatic_security_updates", lambda _cfg: None)
             patch("configure_daily_root_cleanup", lambda _cfg: None)
             patch("configure_host_integrity_watch", lambda _cfg: None)
+            patch("configure_btrfs_scrub", lambda _cfg: None)
             patch("compute_image_size", lambda _cfg: 10)
             patch("configure_kernel_module_hardening", lambda _cfg: None)
             patch("configure_kernel_sysctl_hardening", lambda _cfg: None)
@@ -10790,6 +10793,317 @@ class HostIntegrityWatchTest(unittest.TestCase):
                 )
         # The status lives outside /var/lib/cocalc, which the runtime user owns.
         self.assertNotIn("/var/lib/cocalc/", bootstrap.HOST_INTEGRITY_WATCH_SCRIPT)
+
+
+# cocalc-btrfs-scrub (BTRFS_SCRUB_SCRIPT), run against a fake host.
+SCRUB_NS = {"__name__": "btrfs_scrub_test"}
+exec(bootstrap.BTRFS_SCRUB_SCRIPT, SCRUB_NS)
+
+SCRUB_DAY = 86400
+SCRUB_FSID = "11111111-2222-3333-4444-555555555555"
+SCRUB_T0 = 1_790_000_000.0
+
+
+class ScrubFakeHost(SCRUB_NS["Host"]):
+    """A host with one 1000 GB pd-balanced btrfs device and a fake scrub that
+    advances `rate` bytes per second of fake time."""
+
+    def __init__(self, total=600 * 10**9, rate=50 * 2**20, psi=0.5):
+        self.t = SCRUB_T0
+        self.files = {
+            "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID: "0",
+            "/sys/class/block/sdb/size": str(1000 * 10**9 // 512),
+            "/etc/machine-id": "abc123",
+            "/etc/cocalc/btrfs-scrub.json": '{"enabled": true}',
+        }
+        self.dirs = {
+            "/sys/fs/btrfs/%s/devinfo" % SCRUB_FSID: ["1"],
+            "/sys/fs/btrfs/%s/devices" % SCRUB_FSID: ["sdb"],
+        }
+        self.psi = psi
+        self.total, self.rate = total, rate
+        self.done = 0
+        self.scrub = "none"  # none, running, interrupted, finished
+        self.errors = {}
+        self.kernel = ""
+        self.calls = []
+        self.speed_seen = []
+        self.on_sleep = None
+        super().__init__(sysfs="/sys", proc="/proc", machine_id="/etc/machine-id")
+
+    def now(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.t += seconds
+        if self.scrub == "running":
+            self.speed_seen.append(self.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID])
+            self.done = min(self.total, self.done + self.rate * seconds)
+            if self.done >= self.total:
+                self.scrub = "finished"
+        if self.on_sleep:
+            self.on_sleep(self)
+
+    def read(self, path):
+        if path == "/proc/pressure/io":
+            return "some avg10=1.00 avg60=1.00 avg300=1.00 total=1\nfull avg10=%.2f avg60=%.2f avg300=0.10 total=1\n" % (self.psi, self.psi)
+        if path in self.files:
+            return self.files[path]
+        if path.startswith("/etc/cocalc/"):
+            return json.dumps({"provider": "gcp", "targets": [{"disk_type": "balanced"}]})
+        raise OSError(path)
+
+    def write(self, path, text):
+        if path not in self.files:
+            raise OSError(path)
+        self.files[path] = text
+
+    def listdir(self, path):
+        return list(self.dirs.get(path, []))
+
+    def run(self, args):
+        self.calls.append(args)
+        if args[0] == "findmnt":
+            return 0, "btrfs %s\n" % SCRUB_FSID, ""
+        if args[:3] == ["btrfs", "scrub", "status"]:
+            if self.scrub == "none":
+                return 0, "UUID: %s\n\tno stats available\n" % SCRUB_FSID, ""
+            lines = ["UUID: %s" % SCRUB_FSID, "Status: %s" % self.scrub,
+                     "\tdata_bytes_scrubbed: %d" % self.done]
+            for k in SCRUB_NS["COUNTERS"]:
+                if k != "data_bytes_scrubbed":
+                    lines.append("\t%s: %d" % (k, self.errors.get(k, 0)))
+            return 0, "\n".join(lines) + "\n", ""
+        if args[:3] == ["btrfs", "scrub", "start"]:
+            self.done, self.scrub = 0, "running"
+            return 0, "", ""
+        if args[:3] == ["btrfs", "scrub", "resume"]:
+            if self.scrub != "interrupted":
+                return 1, "", "no scrub to resume"
+            self.scrub = "running"
+            return 0, "", ""
+        if args[:3] == ["btrfs", "scrub", "cancel"]:
+            if self.scrub == "running":
+                self.scrub = "interrupted"
+            return 0, "", ""
+        if args[0] == "journalctl":
+            return 0, self.kernel, ""
+        return 1, "", "unexpected"
+
+
+class BtrfsScrubScriptTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_once(self, host, *extra):
+        argv = ["--status-dir", self.dir, "--poll-seconds", "60", *extra]
+        self.assertEqual(SCRUB_NS["main"](argv, host=host), 0)
+        with open(os.path.join(self.dir, "status.json")) as f:
+            return json.load(f)
+
+    def test_first_scrub_waits_for_its_staggered_point_in_the_period(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertTrue(SCRUB_T0 <= due < SCRUB_T0 + 30 * SCRUB_DAY)
+        self.assertNotIn(["btrfs", "scrub", "start", "/mnt/cocalc"], host.calls)
+        other = ScrubFakeHost()
+        other.files["/etc/machine-id"] = "different"
+        self.assertNotEqual(due, SCRUB_NS["parse_iso"](self.run_once_in(other)["due_at"]))
+
+    def run_once_in(self, host):
+        with tempfile.TemporaryDirectory() as d:
+            SCRUB_NS["main"](["--status-dir", d], host=host)
+            with open(os.path.join(d, "status.json")) as f:
+                return json.load(f)
+
+    def test_a_due_scrub_runs_throttled_in_daily_slices_and_completes(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = SCRUB_NS["parse_iso"](status["due_at"]) + 1
+        # 600 GB at 50 MiB/s is ~3.2 h: one 6 h day is enough
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(status["last_completed"]["errors"]["uncorrectable_errors"], 0)
+        # 20% of the disk's 240 MiB/s, and put back afterwards
+        self.assertEqual(set(host.speed_seen), {str(48 * 2**20)})
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertAlmostEqual(due, SCRUB_NS["parse_iso"](status["last_completed"]["finished_at"]) + 30 * SCRUB_DAY)
+
+    def test_the_daily_budget_stops_and_the_next_day_resumes(self):
+        host = ScrubFakeHost(total=2 * 10**12)  # ~11 h at 48 MiB/s
+        status = self.run_once(host)
+        host.t = SCRUB_NS["parse_iso"](status["due_at"]) + 1
+        status = self.run_once(host)
+        self.assertEqual((status["state"], status["reason"]), ("paused", "daily time budget used"))
+        self.assertEqual(host.scrub, "interrupted")
+        # same day: nothing more
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "daily time budget used")
+        host.t += SCRUB_DAY
+        status = self.run_once(host)
+        self.assertIn(["btrfs", "scrub", "resume", "/mnt/cocalc"], host.calls)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(sum(1 for c in host.calls if c[:3] == ["btrfs", "scrub", "start"]), 1)
+
+    def test_pressure_pauses_and_quiet_resumes(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = SCRUB_NS["parse_iso"](status["due_at"]) + 1
+
+        def busy_after_10_min(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+
+        start = host.t
+        host.on_sleep = busy_after_10_min
+        status = self.run_once(host)
+        self.assertEqual((status["state"], status["reason"]), ("paused", "host I/O pressure"))
+        host.on_sleep = None
+        # still busy: doesn't resume
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "host I/O pressure")
+        host.psi = 0.5
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertIsNotNone(status["last_completed"])
+
+    def test_under_constant_pressure_it_becomes_overdue_not_skipped(self):
+        host = ScrubFakeHost(psi=20.0)
+        status = self.run_once(host)
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        host.t = due + 3 * SCRUB_DAY
+        self.assertEqual(self.run_once(host)["state"], "paused")
+        host.t = due + 8 * SCRUB_DAY
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "overdue")
+        self.assertEqual(status["reason"], "host I/O pressure")
+
+    def test_uncorrectable_errors_name_the_files(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = SCRUB_NS["parse_iso"](status["due_at"]) + 1
+        host.errors = {"csum_errors": 2, "uncorrectable_errors": 2}
+        host.kernel = (
+            "BTRFS warning (device sdb): checksum error at logical 123 on dev /dev/sdb, physical 456, root 5, inode 257, offset 0, length 4096, links 1 (path: project-x/data/a.csv)\n"
+            "BTRFS error (device sdb): unable to fixup (regular) error at logical 123 on dev /dev/sdb\n"
+            "BTRFS warning (device sdb): checksum error at logical 789 on dev /dev/sdb, physical 999, root 5, inode 258, offset 0, length 4096, links 1 (path: project-x/data/b.csv)\n"
+        )
+        status = self.run_once(host)
+        last = status["last_completed"]
+        self.assertEqual(last["errors"]["uncorrectable_errors"], 2)
+        self.assertEqual(last["error_paths"], ["project-x/data/a.csv", "project-x/data/b.csv"])
+
+    def test_a_scrub_that_finished_unwatched_is_recorded_not_restarted(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = SCRUB_NS["parse_iso"](status["due_at"]) + 1
+        self.run_once(host)  # paused by the budget, progress kept
+        host.scrub = "finished"
+        host.done = host.total
+        host.t += SCRUB_DAY
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(sum(1 for c in host.calls if c[:3] == ["btrfs", "scrub", "start"]), 1)
+
+    def test_it_scrubs_only_where_enabled(self):
+        host = ScrubFakeHost()
+        del host.files["/etc/cocalc/btrfs-scrub.json"]
+        status = self.run_once(host)
+        host.t = SCRUB_NS["parse_iso"](status["due_at"]) + 1
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "disabled")
+        self.assertIn("due_at", status)
+        self.assertFalse([c for c in host.calls if c[:3] in (["btrfs", "scrub", "start"], ["btrfs", "scrub", "resume"])])
+        host.files["/etc/cocalc/btrfs-scrub.json"] = '{"enabled": false}'
+        self.assertEqual(self.run_once(host)["state"], "disabled")
+
+    def test_the_config_overrides_the_defaults(self):
+        host = ScrubFakeHost()
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "speed": 10 * 2**20, "period_days": 7, "daily_hours": "x"}
+        )
+        status = self.run_once(host)
+        self.assertLess(SCRUB_NS["parse_iso"](status["due_at"]), SCRUB_T0 + 7 * SCRUB_DAY)
+        host.t = SCRUB_NS["parse_iso"](status["due_at"]) + 1
+        self.run_once(host)
+        self.assertEqual(set(host.speed_seen), {str(10 * 2**20)})
+
+    def test_not_btrfs_is_reported_and_nothing_runs(self):
+        host = ScrubFakeHost()
+        host.run = lambda args: (0, "ext4 abc\n", "")
+        self.assertEqual(self.run_once(host)["state"], "unsupported")
+
+    def test_default_speed_without_balanced_capacity(self):
+        host = ScrubFakeHost()
+        host.read = lambda path, orig=host.read: (_ for _ in ()).throw(OSError(path)) if path.endswith("project-io-capacity.json") else orig(path)
+        status = self.run_once(host)
+        host.t = SCRUB_NS["parse_iso"](status["due_at"]) + 1
+        self.run_once(host)
+        self.assertEqual(set(host.speed_seen), {str(50 * 2**20)})
+
+
+class BtrfsScrubInstallTest(unittest.TestCase):
+    def test_installs_an_hourly_timer_for_a_root_oneshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            paths = {
+                "script_path": Path(tmpdir) / "cocalc-btrfs-scrub",
+                "service_path": Path(tmpdir) / "cocalc-btrfs-scrub.service",
+                "timer_path": Path(tmpdir) / "cocalc-btrfs-scrub.timer",
+            }
+            recorded = []
+            with mock.patch.object(
+                bootstrap,
+                "run_cmd",
+                lambda _cfg, args, desc, **kwargs: recorded.append(args)
+                or subprocess.CompletedProcess(args, 0, stdout=""),
+            ), mock.patch.object(bootstrap, "log_line", lambda *_a, **_k: None):
+                bootstrap.configure_btrfs_scrub(cfg, **paths)
+            self.assertEqual(
+                paths["script_path"].read_text(), bootstrap.BTRFS_SCRUB_SCRIPT
+            )
+            self.assertEqual(oct(paths["script_path"].stat().st_mode & 0o777), "0o755")
+            unit = paths["service_path"].read_text()
+            self.assertIn("Type=oneshot", unit)
+            self.assertIn("StateDirectory=cocalc-btrfs-scrub", unit)
+            self.assertIn("--status-dir /var/lib/cocalc-btrfs-scrub", unit)
+            self.assertIn("ConditionPathIsMountPoint=/mnt/cocalc", unit)
+            self.assertNotIn("User=", unit)
+            timer = paths["timer_path"].read_text()
+            self.assertIn("OnCalendar=hourly", timer)
+            self.assertIn("Persistent=true", timer)
+            # the timer, not the scrub itself
+            self.assertIn(
+                ["systemctl", "enable", "--now", "cocalc-btrfs-scrub.timer"], recorded
+            )
+            self.assertFalse(
+                [a for a in recorded if "cocalc-btrfs-scrub.service" in a]
+            )
+
+    def test_reconcile_installs_it(self) -> None:
+        source = inspect.getsource(bootstrap)
+        self.assertEqual(source.count("configure_btrfs_scrub(cfg)"), 2)
+
+    def test_matches_bootstraps_disk_capacity_formula(self) -> None:
+        policy = {"__name__": "project_io_policy_test"}
+        exec(bootstrap.PROJECT_IO_POLICY_HELPER, policy)
+        for size in (100 * 2**30, 500 * 2**30, 1000 * 10**9, 4000 * 2**30):
+            self.assertEqual(
+                SCRUB_NS["balanced_read_bps"](size),
+                policy["balanced_device_capacity"](
+                    {"provider": "gcp", "disk_type": "balanced", "size_bytes": size}
+                )["physical_read_bps"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
