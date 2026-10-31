@@ -11042,6 +11042,10 @@ class BtrfsScrubScriptTest(unittest.TestCase):
         last = status["last_completed"]
         self.assertEqual(last["errors"]["uncorrectable_errors"], 2)
         self.assertEqual(last["error_paths"], ["project-x/data/a.csv", "project-x/data/b.csv"])
+        # every boot's kernel messages, not only this boot's (journalctl -k)
+        journal = [c for c in host.calls if c[0] == SCRUB_NS["JOURNALCTL"]]
+        self.assertIn("_TRANSPORT=kernel", journal[0])
+        self.assertNotIn("-k", journal[0])
 
     def test_a_scrub_that_finished_unwatched_is_recorded_not_restarted(self):
         host = ScrubFakeHost(total=2 * 10**12)

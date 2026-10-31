@@ -5019,8 +5019,10 @@ def scrub_status(host, mount):
 
 def error_paths(host, since):
     """Files the kernel named while scrubbing, for errors it couldn't fix."""
+    # kernel messages from every boot (-k means this boot only): a scrub
+    # resumed after a reboot counts errors found before it
     code, out, _ = host.run(
-        [JOURNALCTL, "-k", "--no-pager", "-o", "cat", "--since", "@%d" % int(since)]
+        [JOURNALCTL, "_TRANSPORT=kernel", "--no-pager", "-o", "cat", "--since", "@%d" % int(since)]
     )
     if code != 0:
         return [], False
