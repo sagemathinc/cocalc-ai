@@ -11582,6 +11582,57 @@ class BtrfsScrubScriptTest(unittest.TestCase):
         self.assertEqual(status["current"]["phase"], "interrupted")
         self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
 
+    def test_a_night_that_crosses_utc_midnight_is_one_budget(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "daily_hours": 2, "night_start_hour": 22}
+        )
+        status = self.run_once(host)
+        # 23:30 UTC, in the 22:00-04:00 night: 2 h of scrubbing, to 01:30
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]), start_hour=22) + 5400
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "daily time budget used")
+        starts = sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"]))
+        # an hour later, a new UTC day but the same night: nothing more
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "daily time budget used")
+        self.assertEqual(
+            sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"])),
+            starts,
+        )
+        # the next night has its own budget
+        host.t += SCRUB_DAY
+        self.run_once(host)
+        self.assertIn([SCRUB_NS["BTRFS"], "scrub", "resume", "/mnt/cocalc"], host.calls)
+
+    def test_an_overdue_scrub_stopped_by_the_last_cancel_stays_overdue(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]) + 10 * SCRUB_DAY)
+        start = host.t
+
+        def busy(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+
+        host.on_sleep = busy
+        host.cancel_fails = True
+        cancels = []
+        orig_run = host.run
+
+        def run(args):
+            if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+                cancels.append(args)
+                host.cancel_fails = len(cancels) <= 10
+            return orig_run(args)
+
+        host.run = run
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "overdue")
+        self.assertIn("overdue_since", status)
+        self.assertEqual(host.scrub, "interrupted")
+
     def test_not_btrfs_is_reported_and_nothing_runs(self):
         host = ScrubFakeHost()
         host.run = lambda args: (0, "ext4 abc\n", "")

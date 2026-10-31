@@ -5234,12 +5234,14 @@ def run(args, host, store):
     due = due_at(status, host, period_s, now, args.next_due)
     status["due_at"] = iso(due)
     current = status.get("current")
-    day = time.strftime("%Y-%m-%d", time.gmtime(now))
+    tz, tz_name, tz_source, tz_warning = host_timezone(host, args.timezone)
+    window_start, window_end = night_window(now, tz, args.night_start_hour, args.night_hours)
+    # The daily budget is per night (one per local day), not per UTC day: a
+    # night that crosses 00:00 UTC is still one budget.
+    day = iso(window_start)
     if status.get("runtime_day") != day:
         status["runtime_day"], status["runtime_today_s"] = day, 0
     budget_s = args.daily_hours * 3600 - status.get("runtime_today_s", 0)
-    tz, tz_name, tz_source, tz_warning = host_timezone(host, args.timezone)
-    window_start, window_end = night_window(now, tz, args.night_start_hour, args.night_hours)
     status["night"] = {
         "timezone": tz_name,
         "source": tz_source,
@@ -5296,7 +5298,7 @@ def run(args, host, store):
         # no scrub of ours runs any more: put the kept throttle back now
         restore_kept_throttle()
 
-    def finish(state, reason=None):
+    def settle(state, reason=None):
         status["state"] = state
         if reason:
             status["reason"] = reason
@@ -5308,6 +5310,9 @@ def run(args, host, store):
             if state == "paused":
                 status["state"] = "overdue"
         status["updated_at"] = iso(host.now())
+
+    def finish(state, reason=None):
+        settle(state, reason)
         store.save(status)
         return 0
 
@@ -5460,8 +5465,7 @@ def run(args, host, store):
                 if status.get("state") == "running":
                     # stopped here: not left reported as running until the
                     # next run (an error set before stays one)
-                    status["state"] = "paused"
-                    status["reason"] = "the scrub was stopped as this run ended"
+                    settle("paused", "the scrub was stopped as this run ended")
             else:
                 # it runs on: leave its throttle (throttle_restore stays), and
                 # the next run adopts it
