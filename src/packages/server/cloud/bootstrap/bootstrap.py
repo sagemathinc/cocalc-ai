@@ -3580,6 +3580,7 @@ import json
 import os
 import pwd
 import signal
+import stat
 import struct
 import sys
 import time
@@ -4006,19 +4007,31 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
 
 
 def tree_entries(top):
-    """(entries, total): files and symlinks under top (not following links),
-    the first MAX_TREE_ENTRIES of them, and how many there are; ([top], 1) if
-    top doesn't exist (so its creation shows)."""
+    """(entries, total, rest): files and symlinks under top (not following
+    links), the first MAX_TREE_ENTRIES of them, how many there are, and a
+    digest of the others' metadata (path, size, mtime, mode, owner, link
+    target), so a change past the cap still shows. ([top], 1, "") if top
+    doesn't exist (so its creation shows)."""
     if not os.path.isdir(top) or os.path.islink(top):
-        return [top], 1
-    entries, total = [], 0
+        return [top], 1, ""
+    entries, total, rest = [], 0, hashlib.sha256()
     for dirpath, dirnames, filenames in os.walk(top):
         dirnames.sort()
         for name in sorted(filenames) + [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]:
             total += 1
+            path = os.path.join(dirpath, name)
             if len(entries) < MAX_TREE_ENTRIES:
-                entries.append(os.path.join(dirpath, name))
-    return entries, total
+                entries.append(path)
+                continue
+            try:
+                st = os.lstat(path)
+                link = read_link(path) if stat.S_ISLNK(st.st_mode) else ""
+                rest.update(
+                    ("%s\0%d\0%d\0%o\0%d\0%s\n" % (path, st.st_size, st.st_mtime_ns, st.st_mode, st.st_uid, link)).encode()
+                )
+            except OSError:
+                rest.update(("%s\0gone\n" % path).encode())
+    return entries, total, rest.hexdigest()
 
 
 def hash_config(patterns):
@@ -4027,7 +4040,7 @@ def hash_config(patterns):
         if pattern.endswith("/**"):
             tops = sorted(glob.glob(pattern[:-3])) if any(c in pattern[:-3] for c in "*?[") else [pattern[:-3]]
             for top in tops:
-                entries, total = tree_entries(top)
+                entries, total, rest = tree_entries(top)
                 for path in entries:
                     if path == top and not os.path.exists(top):
                         digests[path] = "missing"
@@ -4035,7 +4048,7 @@ def hash_config(patterns):
                         digests.update(hash_config([path]))
                 if total > len(entries):
                     # entries past the cap still count
-                    digests[top + "/**"] = "truncated:%d" % total
+                    digests[top + "/**"] = "truncated:%d:%s" % (total, rest)
             continue
         matches = sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[") else [pattern]
         for path in matches:

@@ -9593,6 +9593,7 @@ class HostIntegrityWatchTest(unittest.TestCase):
         finally:
             holder.kill()
             holder.wait()
+            holder.stdout.close()
         self.assertFalse(ns["lock_held"](str(lock)))
         # released without touching dpkg's state: the run's change was the
         # baseline at the last check while it held the lock
@@ -9608,9 +9609,15 @@ class HostIntegrityWatchTest(unittest.TestCase):
         ns["MAX_TREE_ENTRIES"] = 3
         digests = ns["hash_config"]([f"{tree}/**"])
         self.assertEqual(len([p for p in digests if not p.endswith("/**")]), 3)
-        self.assertEqual(digests[f"{tree}/**"], "truncated:5")
+        first = digests[f"{tree}/**"]
+        self.assertTrue(first.startswith("truncated:5:"))
+        # an edit past the cap, with the same number of entries, shows
+        (tree / "f4").write_text("changed, longer")
+        second = ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"]
+        self.assertTrue(second.startswith("truncated:5:"))
+        self.assertNotEqual(first, second)
         (tree / "f9").write_text("x")
-        self.assertEqual(ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"], "truncated:6")
+        self.assertTrue(ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"].startswith("truncated:6:"))
 
     def test_mirrors_new_findings_to_the_serial_console_at_most_hourly(self) -> None:
         self.add_proc(50, 1, "sh", 231072, "/usr/bin/dash", self.HOST_NS)
