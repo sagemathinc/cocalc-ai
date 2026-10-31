@@ -6370,6 +6370,83 @@ def prepare_dirs(cfg: BootstrapConfig) -> None:
     ensure_cocalc_state_root(cfg)
 
 
+IMAGE_CACHE_ROOT = Path("/mnt/cocalc/data/cache/images")
+IMAGE_ROOT_LINKS = (("etc", "mtab"), ("var", "run"))
+
+
+def open_pinned_directory(path: Path) -> int:
+    """Open an absolute directory one component at a time, never following
+    a symlink (a symlinked component raises)."""
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for part in path.parts[1:]:
+            nextfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            os.close(fd)
+            fd = nextfd
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def migrate_image_root_links(cfg: BootstrapConfig, cache_root: Path = IMAGE_CACHE_ROOT,
+                             subuid: Path = Path("/etc/subuid"), subgid: Path = Path("/etc/subgid")) -> int:
+    """Images normalized before the fix hold root-owned etc/mtab and
+    var/run links, which a confined copy cannot reproduce (it fails
+    closed).  Hand exactly those to the container root: per image, only
+    where each is a symlink owned by uid or gid 0, resolved without
+    following symlinks.  Nothing else is touched.  A few stat calls per
+    image, so it runs on every reconcile."""
+    try:
+        rootfd = open_pinned_directory(cache_root)
+    except FileNotFoundError:
+        return 0
+    except OSError as err:
+        log_line(cfg, f"bootstrap: not migrating image links: {cache_root}: {err}")
+        return 0
+    owner = []
+    for path in (subuid, subgid):
+        _raw, entries = parse_subid_entries(path)
+        starts = sorted(start for name, start, _length in entries if name == cfg.ssh_user)
+        if not starts:
+            os.close(rootfd)
+            log_line(cfg, f"bootstrap: not migrating image links: no {path} entry for {cfg.ssh_user}")
+            return 0
+        owner.append(starts[0])
+    changed = 0
+    try:
+        for image in os.listdir(rootfd):
+            if image.startswith("."):
+                continue
+            try:
+                imagefd = os.open(image, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=rootfd)
+            except OSError:
+                continue
+            try:
+                for parent, name in IMAGE_ROOT_LINKS:
+                    try:
+                        parentfd = os.open(parent, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=imagefd)
+                    except OSError:
+                        continue
+                    try:
+                        info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+                        if stat.S_ISLNK(info.st_mode) and (info.st_uid == 0 or info.st_gid == 0):
+                            os.chown(name, owner[0], owner[1], dir_fd=parentfd, follow_symlinks=False)
+                            changed += 1
+                    except OSError as err:
+                        if err.errno != errno.ENOENT:
+                            log_line(cfg, f"bootstrap: image link {image}/{parent}/{name}: {err}")
+                    finally:
+                        os.close(parentfd)
+            finally:
+                os.close(imagefd)
+    finally:
+        os.close(rootfd)
+    if changed:
+        log_line(cfg, f"bootstrap: handed {changed} root-owned image links to the container root")
+    return changed
+
+
 def ensure_cocalc_state_root(cfg: BootstrapConfig) -> None:
     """Root-owned and not writable by others: root scripts keep state in
     /var/lib/cocalc and mount the loop image from it by name, so the runtime
@@ -9273,6 +9350,9 @@ CLONE_NEWNS = 0x00020000
 # directories were opened in the host mount namespace, and a classic bind
 # from another namespace fails with EINVAL; a detached clone (open_tree)
 # taken before unshare can be attached inside the new one (move_mount).
+# pivot_root has no glibc wrapper and an arch-specific number.
+SYS_PIVOT_ROOT = {"x86_64": 155, "aarch64": 41}
+MNT_DETACH = 2
 SYS_OPEN_TREE = 428
 SYS_MOVE_MOUNT = 429
 SYS_MOUNT_SETATTR = 442
@@ -9285,7 +9365,7 @@ MOUNT_ATTR_NOSUID = 0x2
 MOUNT_ATTR_NODEV = 0x4
 MOUNT_ATTR_NOEXEC = 0x8
 # No symlink is followed in any path walk on the work directories (copies
-# still read and create links as links): a second layer under the chroot.
+# still read and create links as links): a second layer under the jail.
 MOUNT_ATTR_NOSYMFOLLOW = 0x00200000
 CLONE_NEWUSER = 0x10000000
 PR_SET_KEEPCAPS = 8
@@ -9397,9 +9477,10 @@ class MountAttr(ctypes.Structure):
 
 def clone_pinned_trees(plan):
     """Before unshare: a detached, non-recursive clone of each pinned work
-    directory, with its mount flags already set.  Returns {fd: tree_fd}."""
+    directory, with its mount flags already set.  Returns {plan index:
+    tree fd}, so one pinned fd may be bound at several targets."""
     trees = {}
-    for kind, source, _target, flags, _data in plan:
+    for index, (kind, source, _target, flags, _data) in enumerate(plan):
         if kind != "tree":
             continue
         tree = LIBC.syscall(
@@ -9422,13 +9503,13 @@ def clone_pinned_trees(plan):
                          ctypes.byref(attr), ctypes.c_size_t(ctypes.sizeof(attr))),
             "mount_setattr",
         )
-        trees[source] = tree
+        trees[index] = tree
     return trees
 
 
 def build_jail(plan, trees=None):
     confined_mount(None, "/", None, MS_REC | MS_PRIVATE)
-    for kind, source, target, flags, data in plan:
+    for index, (kind, source, target, flags, data) in enumerate(plan):
         if kind == "tmpfs":
             confined_mount(source, target, "tmpfs", flags, data)
         elif kind == "mkdir":
@@ -9443,7 +9524,7 @@ def build_jail(plan, trees=None):
             confined_mount(source, target, None, MS_BIND)
             confined_mount(None, target, None, MS_REMOUNT | MS_BIND | flags)
         elif kind == "tree":
-            tree = trees.pop(source)
+            tree = trees.pop(index)
             try:
                 libc_check(
                     LIBC.syscall(SYS_MOVE_MOUNT, ctypes.c_int(tree), b"", ctypes.c_int(AT_FDCWD),
@@ -9456,11 +9537,26 @@ def build_jail(plan, trees=None):
             confined_mount(None, target, None, MS_PRIVATE)
 
 
-def confined_drop(uid, gid, caps):
+def enter_jail(jail):
+    """Make the jail the mount namespace's root (pivot_root, not chroot:
+    the kernel refuses CLONE_NEWUSER from a chroot), then detach the old
+    root, so no host mount is left in the namespace."""
+    number = SYS_PIVOT_ROOT.get(os.uname().machine)
+    if number is None:
+        fail(f"pivot_root: unsupported machine {os.uname().machine}")
+    os.mkdir(os.path.join(jail, ".old"), 0o700)
+    os.chdir(jail)
+    libc_check(LIBC.syscall(number, b".", b".old"), "pivot_root")
+    os.chdir("/")
+    libc_check(LIBC.umount2(b"/.old", MNT_DETACH), "detach old root")
+    os.rmdir("/.old")
+
+
+def confined_drop(uid, gid, caps, last_cap):
     libc_check(LIBC.prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0), "keepcaps")
     os.setresgid(gid, gid, gid)
     os.setresuid(uid, uid, uid)
-    last = int(open("/proc/sys/kernel/cap_last_cap").read())
+    last = last_cap
     for cap in range(last + 1):
         if cap not in caps:
             libc_check(LIBC.prctl(PR_CAPBSET_DROP, cap, 0, 0, 0), f"bounding drop {cap}")
@@ -9575,8 +9671,10 @@ def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candi
             step = "jail"
             build_jail(plan, trees)
             # The pinned fds point into the host mount namespace; once bound
-            # they are not needed, and kept open they would lead out of the
-            # chroot.
+            # they are not needed, and kept open they would lead back to the
+            # host tree after pivot_root.
+            # Read while the host /proc is still visible; the jail has none.
+            last_cap = int(open("/proc/sys/kernel/cap_last_cap").read())
             keep = {0, 1, 2, ready_w, go_r}
             for name in os.listdir("/proc/self/fd"):
                 if int(name) not in keep:
@@ -9584,15 +9682,15 @@ def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candi
                         os.close(int(name))
                     except OSError:
                         pass
-            os.chroot(jail)
-            os.chdir("/")
+            step = "pivot root"
+            enter_jail(jail)
             step = "user namespace"
             os.unshare(CLONE_NEWUSER)
             os.write(ready_w, b"1")
             if os.read(go_r, 1) != b"1":
                 os._exit(125)
             step = "drop"
-            confined_drop(uid, gid, caps)
+            confined_drop(uid, gid, caps, last_cap)
             step = "exec"
             os.execve(program_argv[0], program_argv, CONFINED_ENV)
         except BaseException as err:
@@ -9647,6 +9745,44 @@ def run_confined(program_argv, binds, *, deadline, setfcap=False, tolerate_skips
         pass_fds=tuple(fd for fd, _target, _writable in binds),
         env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
     )
+
+
+# normalize-rootfs (re)creates these links as root; in a container tree they
+# belong to the container root.  A confined copy cannot recreate a uid-0
+# owner and fails closed, so they are handed to the container root first.
+ROOT_OWNED_IMAGE_LINKS = (("etc", "mtab"), ("var", "run"))
+
+
+def container_root_ids(user=RUNTIME_USER, subid_files=SUBID_FILES):
+    uid, _gid = runtime_user_ids(user)
+    uids = sorted(subordinate_ranges(subid_files[0], user, uid))
+    gids = sorted(subordinate_ranges(subid_files[1], user, uid))
+    if not uids or not gids:
+        fail("the runtime user has no subordinate ids")
+    return uids[0][0], gids[0][0]
+
+
+def own_root_links(treefd, owner):
+    """lchown etc/mtab and var/run beneath the pinned tree to owner, only
+    where each is a symlink owned by uid or gid 0.  Their parents are
+    resolved without following symlinks; nothing else is touched.  Returns
+    how many links changed."""
+    changed = 0
+    for parent, name in ROOT_OWNED_IMAGE_LINKS:
+        try:
+            parentfd = openat2(treefd, parent, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        except OSError:
+            continue
+        try:
+            info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode) and (info.st_uid == 0 or info.st_gid == 0):
+                os.chown(name, *owner, dir_fd=parentfd, follow_symlinks=False)
+                changed += 1
+        except FileNotFoundError:
+            pass
+        finally:
+            os.close(parentfd)
+    return changed
 
 
 def make_staging_directory(parentfd, prefix, uid, gid):
@@ -10128,6 +10264,7 @@ def run_normalize_rootfs(
             args.append("--skip-ownership-bridge")
         args.extend(["--podman-user", podman_user, mountpoint])
         subprocess.run(args, check=True, stdin=subprocess.DEVNULL)
+        own_root_links(datafd, container_root_ids())
     finally:
         if mounted:
             subprocess.run(
@@ -11140,6 +11277,9 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None, 
                 try:
                     source = f"/proc/self/fd/{sourcefd}"
                     dest = f"/proc/self/fd/{destfd}"
+                    # Image trees normalized before the fix still hold the
+                    # root-owned links; driven by the pinned source itself.
+                    own_root_links(sourcefd, container_root_ids())
                     if command == "copy-tree-preserve":
                         # Owners, modes and namespaced file capabilities are
                         # kept, confined (see run_confined); a tree of the
@@ -20667,6 +20807,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         image_size_gb = compute_image_size(cfg)
         install_btrfs_helper(cfg)
         install_privileged_wrappers(cfg)
+        migrate_image_root_links(cfg)
         reconcile_storage_and_containment(cfg)
         ensure_subuids(cfg)
         ensure_runtime_user_manager(cfg)
@@ -20755,6 +20896,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         configure_kernel_sysctl_hardening(cfg)
         disable_root_podman_units(cfg)
         install_privileged_wrappers(cfg)
+        migrate_image_root_links(cfg)
         install_privileged_tool_binaries(cfg)
         write_helpers(cfg)
         configure_runtime_sudoers(cfg)

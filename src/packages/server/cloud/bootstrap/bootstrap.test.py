@@ -1046,6 +1046,16 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                 os.close(destfd)
                 self.assertNotEqual(code, 0)
                 self.assertFalse((src / "sub").exists())
+                # 3b. The host tree is detached (pivot_root): no /proc, no /mnt,
+                # no old root left in the namespace.
+                for host_path in ("/proc/self/", "/mnt/", "/run/", "/.old/", "/etc/cocalc/"):
+                    destfd = os.open(dest2, os.O_PATH | os.O_DIRECTORY)
+                    code = run(["/usr/bin/rsync", "-a", "--", host_path, "/dest/host/"],
+                               [[srcfd, "/src", False], [destfd, "/dest", True]])
+                    os.close(destfd)
+                    with self.subTest(host_path=host_path):
+                        self.assertNotEqual(code, 0)
+                        self.assertFalse((dest2 / "host").exists())
                 # 4. While the confined program runs: no host fds, the runtime
                 # uid, only the 5 capabilities, no_new_privs.
                 os.mkfifo(src / "fifo")
@@ -1077,6 +1087,14 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                 self.assertEqual(int(fields["CapBnd"].strip(), 16), 0x1F)
                 self.assertEqual(fields["NoNewPrivs"].strip(), "1")
                 self.assertEqual(sorted(int(fd) for fd in os.listdir(f"/proc/{pid}/fd")), [0, 1, 2])
+                # The old root is detached: a host-only sentinel is not
+                # reachable through the child's root, nor is /.old.
+                sentinel = base / "host-sentinel"
+                sentinel.write_text("host\n", encoding="utf-8")
+                self.assertFalse(os.path.lexists(f"/proc/{pid}/root{sentinel}"))
+                self.assertFalse(os.path.lexists(f"/proc/{pid}/root/.old"))
+                self.assertFalse(os.path.lexists(f"/proc/{pid}/root/mnt"))
+                self.assertTrue(os.path.isdir(f"/proc/{pid}/root/src"))
                 with open(src / "fifo", "w") as writer:
                     writer.write("through the fifo\n")
                 runner.join(30)
@@ -1087,6 +1105,70 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             finally:
                 os.close(srcfd)
                 os.close(proffd)
+
+    def test_root_owned_image_links_go_to_the_container_root(self) -> None:
+        namespace = self.helper_namespace()
+        own_root_links = namespace["own_root_links"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tree = Path(tmpdir) / "tree"
+            (tree / "etc").mkdir(parents=True)
+            (tree / "var").mkdir()
+            os.symlink("/proc/mounts", tree / "etc" / "mtab")
+            os.symlink("/run", tree / "var" / "run")
+            outside = Path(tmpdir) / "outside"
+            outside.mkdir()
+            os.symlink("x", outside / "run")
+            chowns = []
+            real_stat = os.stat
+
+            def fake_stat(path, *args, **kwargs):
+                # Pretend the links are root's (a test user cannot make that).
+                info = real_stat(path, *args, **kwargs)
+                if not kwargs.get("follow_symlinks", True) and stat.S_ISLNK(info.st_mode):
+                    values = list(info)
+                    values[4] = values[5] = 0
+                    return os.stat_result(values)
+                return info
+
+            def fake_chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
+                chowns.append((os.readlink(f"/proc/self/fd/{dir_fd}"), path, uid, gid, follow_symlinks))
+
+            fd = os.open(tree, os.O_PATH | os.O_DIRECTORY)
+            try:
+                with mock.patch.object(namespace["os"], "stat", side_effect=fake_stat), \
+                        mock.patch.object(namespace["os"], "chown", side_effect=fake_chown):
+                    self.assertEqual(own_root_links(fd, (231072, 231072)), 2)
+                    self.assertEqual(
+                        sorted(chowns),
+                        [(f"{tree}/etc", "mtab", 231072, 231072, False), (f"{tree}/var", "run", 231072, 231072, False)],
+                    )
+                    # A symlinked parent is never followed; a non-link is left alone.
+                    chowns.clear()
+                    os.unlink(tree / "etc" / "mtab")
+                    (tree / "etc" / "mtab").write_text("x")
+                    (tree / "var" / "run").unlink()
+                    (tree / "var").rmdir()
+                    os.symlink(outside, tree / "var")
+                    self.assertEqual(own_root_links(fd, (231072, 231072)), 0)
+                    self.assertEqual(chowns, [])
+            finally:
+                os.close(fd)
+
+    def test_one_pinned_fd_may_be_bound_twice(self) -> None:
+        namespace = self.helper_namespace()
+        plan = namespace["confined_mount_plan"]("/jail", [(5, "/src", False), (5, "/dest", True)], [])
+        calls = []
+
+        class FakeLibc:
+            def syscall(self, number, *args):
+                calls.append(number)
+                return 100 + len(calls) if number == namespace["SYS_OPEN_TREE"] else 0
+
+        namespace["LIBC"] = FakeLibc()
+        trees = namespace["clone_pinned_trees"](plan)
+        tree_entries = [i for i, entry in enumerate(plan) if entry[0] == "tree"]
+        self.assertEqual(sorted(trees), tree_entries)
+        self.assertEqual(len(set(trees.values())), 2)
 
     def test_confined_spec_is_strict(self) -> None:
         namespace = self.helper_namespace()
@@ -1233,6 +1315,7 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
     def test_tree_copy_uses_anchored_directories(self) -> None:
         namespace = self.helper_namespace()
         namespace["runtime_user_ids"] = lambda *_args: (os.getuid(), os.getgid())
+        namespace["container_root_ids"] = lambda *_args: (os.getuid(), os.getgid())
         calls = []
         run = functools.partial(namespace["run"], confined=self.fake_confined(calls))
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1391,6 +1474,7 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
 
     def test_normalize_rootfs_uses_private_bind_mount(self) -> None:
         namespace = self.helper_namespace()
+        namespace["container_root_ids"] = lambda *_args: (os.getuid(), os.getgid())
         run_normalize_rootfs = namespace["run_normalize_rootfs"]
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -4892,6 +4976,47 @@ class CocalcInstallRootTest(unittest.TestCase):
 
     def test_existing_host_install_migrates_only_parent(self) -> None:
         self.assert_install_root_migration(prepare=False)
+
+    def test_image_link_migration_touches_only_root_owned_links(self) -> None:
+        cfg = replace(make_cfg(str(self.base)), ssh_user="cocalc-host")
+        cache = self.base / "cache" / "images"
+        image = cache / "ubuntu"
+        (image / "etc").mkdir(parents=True)
+        (image / "var").mkdir()
+        os.symlink("/proc/mounts", image / "etc" / "mtab")
+        os.symlink("/run", image / "var" / "run")
+        (cache / ".ubuntu.json").write_text("{}")
+        other = cache / "planted"
+        other.mkdir()
+        os.symlink(self.base, other / "etc")  # a symlinked parent: never followed
+        subuid = self.base / "subuid"
+        subuid.write_text("cocalc-host:231072:65536\nother:100000:65536\n")
+        chowns = []
+        real_stat = os.stat
+
+        def fake_stat(path, *args, **kwargs):
+            info = real_stat(path, *args, **kwargs)
+            if not kwargs.get("follow_symlinks", True) and stat.S_ISLNK(info.st_mode):
+                values = list(info)
+                values[4] = values[5] = 0
+                return os.stat_result(values)
+            return info
+
+        def fake_chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
+            chowns.append((os.readlink(f"/proc/self/fd/{dir_fd}"), path, uid, gid, follow_symlinks))
+
+        with mock.patch.object(bootstrap.os, "stat", side_effect=fake_stat), \
+                mock.patch.object(bootstrap.os, "chown", side_effect=fake_chown):
+            self.assertEqual(bootstrap.migrate_image_root_links(cfg, cache, subuid, subuid), 2)
+        self.assertEqual(
+            sorted(chowns),
+            [(f"{image}/etc", "mtab", 231072, 231072, False), (f"{image}/var", "run", 231072, 231072, False)],
+        )
+        # A symlinked cache root is refused outright.
+        link = self.base / "cache-link"
+        os.symlink(cache, link)
+        self.assertEqual(bootstrap.migrate_image_root_links(cfg, link, subuid, subuid), 0)
+        self.assertEqual(bootstrap.migrate_image_root_links(cfg, self.base / "missing", subuid, subuid), 0)
 
     def test_install_root_migration_rejects_symlink(self) -> None:
         elsewhere = self.base / "elsewhere"
@@ -11317,6 +11442,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "configure_kernel_sysctl_hardening",
                 "ensure_cocalc_state_root",
                 "install_privileged_wrappers",
+                "migrate_image_root_links",
                 "install_privileged_tool_binaries",
                 "write_helpers",
                 "configure_runtime_sudoers",
@@ -11375,6 +11501,7 @@ class BootstrapModesTest(unittest.TestCase):
                     "configure_btrfs_scrub",
                     "configure_kernel_sysctl_hardening",
                     "install_privileged_wrappers",
+                    "migrate_image_root_links",
                     "install_privileged_tool_binaries",
                     "write_helpers",
                     "configure_runtime_sudoers",
@@ -11402,7 +11529,7 @@ class BootstrapModesTest(unittest.TestCase):
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
             "configure_rsyslog_limits install_btrfs_helper "
-            "install_privileged_wrappers reconcile_storage_and_containment "
+            "install_privileged_wrappers migrate_image_root_links reconcile_storage_and_containment "
             "ensure_subuids ensure_runtime_user_manager configure_podman "
             "verify_runtime_user_contract write_env configure_runtime_shell_env "
             "setup_master_conat_token install_privileged_tool_binaries "
@@ -11475,7 +11602,7 @@ class BootstrapModesTest(unittest.TestCase):
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
             "configure_rsyslog_limits install_btrfs_helper "
-            "install_privileged_wrappers ensure_cocalc_mount setup_shared_scratch "
+            "install_privileged_wrappers migrate_image_root_links ensure_cocalc_mount setup_shared_scratch "
             "ensure_btrfs_data reconcile_bees_runtime_policy "
             "reconcile_project_io_policy reconcile_host_service_cgroup "
             "ensure_subuids ensure_runtime_user_manager configure_podman "
@@ -12022,6 +12149,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("ensure_cocalc_state_root", lambda _cfg: None)
             patch("install_btrfs_helper", lambda _cfg: None)
             patch("install_privileged_wrappers", lambda _cfg: None)
+            patch("migrate_image_root_links", lambda _cfg: 0)
             patch("reconcile_storage_and_containment", lambda _cfg: None)
             patch("reconcile_project_network_limits", lambda _cfg: None)
             patch("reconcile_project_io_policy", lambda _cfg: None)
