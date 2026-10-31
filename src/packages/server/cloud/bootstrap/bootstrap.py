@@ -9754,9 +9754,9 @@ ROOT_OWNED_IMAGE_LINKS = (("etc", "mtab"), ("var", "run"))
 
 
 def container_root_ids(user=RUNTIME_USER, subid_files=SUBID_FILES):
-    uid, _gid = runtime_user_ids(user)
+    uid, gid = runtime_user_ids(user)
     uids = sorted(subordinate_ranges(subid_files[0], user, uid))
-    gids = sorted(subordinate_ranges(subid_files[1], user, uid))
+    gids = sorted(subordinate_ranges(subid_files[1], user, gid))
     if not uids or not gids:
         fail("the runtime user has no subordinate ids")
     return uids[0][0], gids[0][0]
@@ -11277,9 +11277,6 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None, 
                 try:
                     source = f"/proc/self/fd/{sourcefd}"
                     dest = f"/proc/self/fd/{destfd}"
-                    # Image trees normalized before the fix still hold the
-                    # root-owned links; driven by the pinned source itself.
-                    own_root_links(sourcefd, container_root_ids())
                     if command == "copy-tree-preserve":
                         # Owners, modes and namespaced file capabilities are
                         # kept, confined (see run_confined); a tree of the

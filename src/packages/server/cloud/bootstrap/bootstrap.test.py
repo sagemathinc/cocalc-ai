@@ -1055,7 +1055,12 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                     os.close(destfd)
                     with self.subTest(host_path=host_path):
                         self.assertNotEqual(code, 0)
-                        self.assertFalse((dest2 / "host").exists())
+                        # rsync may create the destination before it finds
+                        # the source missing; nothing may arrive in it.
+                        host = dest2 / "host"
+                        self.assertTrue(not host.exists() or list(host.iterdir()) == [])
+                        if host.exists():
+                            host.rmdir()
                 # 4. While the confined program runs: no host fds, the runtime
                 # uid, only the 5 capabilities, no_new_privs.
                 os.mkfifo(src / "fifo")
@@ -1315,7 +1320,9 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
     def test_tree_copy_uses_anchored_directories(self) -> None:
         namespace = self.helper_namespace()
         namespace["runtime_user_ids"] = lambda *_args: (os.getuid(), os.getgid())
-        namespace["container_root_ids"] = lambda *_args: (os.getuid(), os.getgid())
+        # A copy never changes its source (the image link migration runs at
+        # reconcile and after normalize-rootfs, never on copy sources).
+        namespace["own_root_links"] = lambda *_args: self.fail("copy-tree changed its source")
         calls = []
         run = functools.partial(namespace["run"], confined=self.fake_confined(calls))
         with tempfile.TemporaryDirectory() as tmpdir:
