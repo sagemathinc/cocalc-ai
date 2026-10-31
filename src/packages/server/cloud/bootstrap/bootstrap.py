@@ -3572,6 +3572,7 @@ is one. Findings never include command lines, environment or file contents.
 """
 
 import argparse
+import fnmatch
 import glob
 import hashlib
 import json
@@ -3584,32 +3585,10 @@ import time
 SCHEMA = "cocalc-host-integrity-v1"
 VERSION = 1
 
-# Programs the runtime user runs as host services (host user namespace).
-DEFAULT_HOST_EXES = (
-    "node",
-    "sshpiperd",
-    "systemd",
-    "sudo",
-    "systemd-executor",
-    "dbus-daemon",
-    "cloudflared",
-    "rustic",
-    "cocalc-rustic",
-    "podman",
-    "conmon",
-    "catatonit",
-    "pasta",
-    "pasta.avx2",
-    "crun",
-    "runc",
-    "slirp4netns",
-    "fuse-overlayfs",
-    "newuidmap",
-    "newgidmap",
-    "btrfs",
-)
-# Programs that belong in the container runtime's user namespace.
-DEFAULT_RUNTIME_EXES = (
+# Programs are matched by their full path. A "*" matches within one path
+# component and "{home}" is the runtime user's home directory; entries that are
+# not absolute paths are ignored.
+_PODMAN_HELPERS = (
     "conmon",
     "catatonit",
     "pasta",
@@ -3625,6 +3604,27 @@ DEFAULT_RUNTIME_EXES = (
     "newuidmap",
     "newgidmap",
 )
+_PODMAN_EXES = (
+    tuple("/usr/bin/" + name for name in _PODMAN_HELPERS)
+    + tuple("/opt/cocalc/container-runtime/*/bin/" + name for name in _PODMAN_HELPERS)
+    + ("/usr/sbin/runc", "/usr/libexec/podman/*")
+)
+# Programs the runtime user runs as host services (host user namespace).
+DEFAULT_HOST_EXES = _PODMAN_EXES + (
+    "{home}/.nvm/versions/node/*/bin/node",
+    "/opt/cocalc/tools/*/sshpiperd",
+    "/opt/cocalc/tools/*/rustic",
+    "/usr/local/libexec/cocalc-rustic",
+    "/usr/lib/systemd/systemd",
+    "/usr/lib/systemd/systemd-executor",
+    "/usr/bin/sudo",
+    "/usr/bin/dbus-daemon",
+    "/usr/bin/cloudflared",
+    "/usr/local/bin/cloudflared",
+    "/usr/bin/btrfs",
+)
+# Programs that belong in the container runtime's user namespace.
+DEFAULT_RUNTIME_EXES = _PODMAN_EXES
 # Placement rules: processes with these uids must run in one of these cgroups
 # (prefixes; "{runtime_uid}" is replaced), or, with container_mount_ns_ok, in a
 # mount namespace other than the host's (inside a container). "uids" is
@@ -3674,6 +3674,10 @@ DEFAULT_CONFIG_PATHS = (
 )
 
 MAX_FINDINGS = 100
+MAX_CONFIG_CHANGES = 200
+# A config change is reported while its file differs from the baseline, and
+# kept (no longer refreshed) for a day after that.
+CONFIG_CHANGE_KEEP_S = 24 * 3600
 MAX_INVENTORY = 300
 MAX_CHAIN = 5
 CONFIG_MAX_BYTES = 1 << 20
@@ -3797,19 +3801,36 @@ def userns_kind(proc_root, ns, member_pid, host_ns, runtime_uid, cache):
     text = read_text(os.path.join(proc_root, str(member_pid), "uid_map")) or ""
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) == 3 and parts[0] == "0" and parts[1] == str(runtime_uid):
+        # exactly root -> the runtime user, as rootless podman maps it
+        if parts == ["0", str(runtime_uid), "1"]:
             kind = "runtime"
             break
     cache[ns] = kind
     return kind
 
 
-def exe_name(exe):
+def compile_exe_patterns(patterns, home):
+    compiled = []
+    for pattern in patterns:
+        pattern = str(pattern).replace("{home}", home.rstrip("/"))
+        if pattern.startswith("/"):
+            compiled.append(pattern.split("/"))
+    return compiled
+
+
+def exe_allowed(exe, patterns):
+    """True if exe (as /proc/<pid>/exe shows it; a binary replaced while it
+    runs reads " (deleted)") matches a pattern, component by component."""
     if not exe:
-        return ""
+        return False
     if exe.endswith(" (deleted)"):
         exe = exe[: -len(" (deleted)")]
-    return os.path.basename(exe)
+    parts = exe.split("/")
+    return any(
+        len(parts) == len(pattern)
+        and all(fnmatch.fnmatchcase(a, b) for a, b in zip(parts, pattern))
+        for pattern in patterns
+    )
 
 
 def parent_chain(procs, proc):
@@ -3906,18 +3927,17 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
         kind = userns_kind(proc_root, p.userns, p.pid, host_ns, runtime_uid, cache)
         if kind not in ("host", "runtime"):
             continue
-        name = exe_name(p.exe)
         inventory.append(
             "%s|%s|%s" % (kind, "project" if project else "runtime", p.exe or "?")
         )
         rule = None
         if project:
             rule, severity = "project-uid-outside-container", "critical"
-        elif kind == "runtime" and name not in runtime_exes:
+        elif kind == "runtime" and not exe_allowed(p.exe, runtime_exes):
             rule, severity = "unexpected-process-in-container-runtime", "critical"
         elif (
             kind == "host"
-            and name not in host_exes
+            and not exe_allowed(p.exe, host_exes)
             and not cgroup_allowed(p.cgroup, script_cgroups)
         ):
             rule, severity = "unexpected-runtime-user-process", "high"
@@ -3952,9 +3972,11 @@ def hash_config(patterns):
     return digests
 
 
-def bootstrap_busy(state_path, now, quiet_s=300):
+def bootstrap_busy(state_path, now, quiet_s=300, max_operation_s=3 * 3600):
     """True while a bootstrap operation runs, or finished in the last quiet_s
-    seconds (its writes to host configuration are expected)."""
+    seconds (its writes to host configuration are expected). An operation
+    recorded as running for longer than max_operation_s (e.g. a bootstrap
+    killed before it recorded the result) no longer counts."""
     if not state_path:
         return False
     try:
@@ -3963,9 +3985,10 @@ def bootstrap_busy(state_path, now, quiet_s=300):
             state = json.load(f)
     except (OSError, ValueError):
         return False
+    age = now - st.st_mtime
     if state.get("current_operation"):
-        return True
-    return now - st.st_mtime < quiet_s
+        return age < max_operation_s
+    return age < quiet_s
 
 
 class Watcher:
@@ -3976,8 +3999,12 @@ class Watcher:
         self.runtime_uid = pw.pw_uid
         self.project_ranges = subordinate_ranges(args.runtime_user, args.subuid)
         allow = self.load_allowlist(args.allowlist)
-        self.host_exes = set(DEFAULT_HOST_EXES) | set(allow.get("host_exes", []))
-        self.runtime_exes = set(DEFAULT_RUNTIME_EXES) | set(allow.get("runtime_exes", []))
+        self.host_exes = compile_exe_patterns(
+            list(DEFAULT_HOST_EXES) + list(allow.get("host_exes", [])), pw.pw_dir
+        )
+        self.runtime_exes = compile_exe_patterns(
+            list(DEFAULT_RUNTIME_EXES) + list(allow.get("runtime_exes", [])), pw.pw_dir
+        )
         self.config_paths = list(DEFAULT_CONFIG_PATHS) + list(allow.get("config_paths", []))
         self.script_cgroups = [
             str(c).rstrip("/")
@@ -3990,9 +4017,15 @@ class Watcher:
         )
         self.findings = {}
         self.inventory = {}
+        # The configuration baseline and its changes survive restarts (a change
+        # made while the watcher was stopped is still a change); only bootstrap
+        # and SIGHUP set a new baseline.
+        self.config_state_path = os.path.join(args.status_dir, "config-state.json")
         self.config_changes = {}
         self.config_baseline = None
         self.config_baseline_at = None
+        self.config_state_written = None
+        self.load_config_state()
         self.started_at = time.time()
         self.scans = 0
         self.errors = 0
@@ -4012,6 +4045,43 @@ class Watcher:
             return data if isinstance(data, dict) else {}
         except (OSError, ValueError):
             return {}
+
+    def load_config_state(self):
+        try:
+            with open(self.config_state_path) as f:
+                state = json.load(f)
+            baseline = state["baseline"]
+            changes = state.get("changes", {})
+            if not isinstance(baseline, dict) or not isinstance(changes, dict):
+                return
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        self.config_baseline = {str(k): str(v) for k, v in baseline.items()}
+        self.config_baseline_at = state.get("baseline_at")
+        self.config_changes = {
+            str(path): entry
+            for path, entry in changes.items()
+            if isinstance(entry, dict) and isinstance(entry.get("last_seen"), str)
+        }
+
+    def save_config_state(self):
+        text = json.dumps(
+            {
+                "baseline": self.config_baseline,
+                "baseline_at": self.config_baseline_at,
+                "changes": self.config_changes,
+            },
+            sort_keys=True,
+        )
+        if text == self.config_state_written:
+            return
+        os.makedirs(self.args.status_dir, mode=0o755, exist_ok=True)
+        tmp = self.config_state_path + ".%d.tmp" % os.getpid()
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, self.config_state_path)
+        self.config_state_written = text
 
     def host_ns(self):
         return read_link(os.path.join(self.proc_root, "1", "ns", "user"))
@@ -4055,7 +4125,11 @@ class Watcher:
         return new
 
     def check_config(self, now):
+        """Reports files that differ from the baseline. A change stays current
+        (last_seen refreshed) while its file differs; once repaired or
+        accepted by a new baseline it is kept a day as history."""
         digests = hash_config(self.config_paths)
+        new, differ = [], set()
         if (
             self.config_baseline is None
             or self.rebaseline
@@ -4064,12 +4138,16 @@ class Watcher:
             self.config_baseline = digests
             self.config_baseline_at = now_iso(now)
             self.rebaseline = False
-            return []
-        new = []
-        for path in sorted(set(digests) | set(self.config_baseline)):
-            if digests.get(path) == self.config_baseline.get(path):
-                continue
-            if path not in self.config_changes:
+        else:
+            differ = {
+                path
+                for path in set(digests) | set(self.config_baseline)
+                if digests.get(path) != self.config_baseline.get(path)
+            }
+        for path in sorted(differ):
+            entry = self.config_changes.get(path)
+            if entry is None or not entry.get("current"):
+                # new, or changed again after it was repaired
                 entry = {
                     "rule": "host-config-changed",
                     "severity": "high",
@@ -4078,7 +4156,21 @@ class Watcher:
                 }
                 self.config_changes[path] = entry
                 new.append(entry)
-            self.config_changes[path]["last_seen"] = now_iso(now)
+            entry["current"] = True
+            entry["last_seen"] = now_iso(now)
+        for path, entry in self.config_changes.items():
+            if path not in differ:
+                entry["current"] = False
+        expired = now_iso(now - CONFIG_CHANGE_KEEP_S)
+        ordered = sorted(
+            self.config_changes, key=lambda p: self.config_changes[p]["last_seen"]
+        )
+        for path in ordered[: max(0, len(ordered) - MAX_CONFIG_CHANGES)]:
+            del self.config_changes[path]
+        for path in list(self.config_changes):
+            if self.config_changes[path]["last_seen"] < expired:
+                del self.config_changes[path]
+        self.save_config_state()
         return new
 
     def serial(self, entries, now):
@@ -4122,7 +4214,12 @@ class Watcher:
             "config": {
                 "baseline_at": self.config_baseline_at,
                 "files": len(self.config_baseline or {}),
-                "changes": list(self.config_changes.values()),
+                "changes": sorted(
+                    self.config_changes.values(),
+                    key=lambda e: (e["last_seen"], e["first_seen"]),
+                    reverse=True,
+                ),
+                "change_count": len(self.config_changes),
             },
             "inventory": dict(
                 sorted(self.inventory.items(), key=lambda kv: kv[1], reverse=True)

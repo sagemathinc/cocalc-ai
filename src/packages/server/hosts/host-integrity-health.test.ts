@@ -70,7 +70,7 @@ describe("project host integrity health", () => {
       [host("a", {}), host("b", null)],
       NOW,
     );
-    expect(summary).toEqual({
+    expect(summary).toMatchObject({
       active_hosts: 2,
       unreported_hosts: 1,
       conditions: [],
@@ -86,7 +86,11 @@ describe("project host integrity health", () => {
         host("a", { findings: [finding()] }),
         host("b", {
           config_changes: [
-            { path: "/etc/sudoers", first_seen: ago(3_600_000) },
+            {
+              path: "/etc/sudoers",
+              first_seen: ago(3_600_000),
+              last_seen: ago(60_000),
+            },
           ],
         }),
         host("c", { watcher: "stale", heartbeat_at: ago(600_000) }),
@@ -143,6 +147,60 @@ describe("project host integrity health", () => {
     );
     expect(current.conditions[0].facts).toEqual(later.conditions[0].facts);
   });
+
+  it("takes the alert level from current findings", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        host("a", {
+          findings: [
+            finding({ last_seen: ago(3 * 3_600_000) }), // critical, earlier
+            finding({
+              rule: "unexpected-runtime-user-process",
+              severity: "high",
+              exe: "/usr/bin/curl",
+              uids: [2000, 2000, 2000, 2000],
+            }),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    expect(summary.conditions[0]).toMatchObject({ level: "warning" });
+    expect(summary.conditions[0].facts).toHaveLength(1);
+    // with nothing current, health shows the day's level
+    const history = summarizeHostIntegrity(
+      [host("a", { findings: [finding({ last_seen: ago(3_600_000) })] })],
+      NOW,
+    );
+    expect(history.conditions[0]).toMatchObject({ level: "critical" });
+  });
+
+  it("alerts on a config change while the file still differs, then keeps it as history", () => {
+    const change = (last_seen: string) => ({
+      path: "/etc/sudoers",
+      first_seen: ago(3 * 3_600_000),
+      last_seen,
+    });
+    const current = summarizeHostIntegrity(
+      [host("a", { config_changes: [change(ago(60_000))] })],
+      NOW,
+    );
+    expect(current.conditions[0].facts).toEqual([
+      "host-a (a): /etc/sudoers changed",
+    ]);
+    // repaired, or accepted by a bootstrap rebaseline: no longer refreshed
+    const repaired = summarizeHostIntegrity(
+      [host("a", { config_changes: [change(ago(3_600_000))] })],
+      NOW,
+    );
+    expect(repaired.conditions).toHaveLength(1);
+    expect(repaired.conditions[0].facts).toEqual([]);
+    const old = summarizeHostIntegrity(
+      [host("a", { config_changes: [change(ago(2 * 24 * 3_600_000))] })],
+      NOW,
+    );
+    expect(old.conditions).toEqual([]);
+  });
 });
 
 describe("host integrity alert pass", () => {
@@ -167,16 +225,21 @@ describe("host integrity alert pass", () => {
         : { rows },
     );
 
-  it("is report-only by default: no admin alert", async () => {
+  it("is report-only by default: no admin alert, and nothing cleared", async () => {
     delete process.env.COCALC_HOST_INTEGRITY_ALERTS;
-    respond([]);
+    respond(["Host integrity: host-a: watcher not reporting"]);
     expect(await runHostIntegrityAlertPass()).toBe(1);
     expect(conditionAlertMock).not.toHaveBeenCalled();
+    expect(conditionClearedMock).not.toHaveBeenCalled();
   });
 
-  it("alerts when enabled, and clears conditions that ended", async () => {
+  it("alerts when enabled, and clears conditions a reporting host no longer shows", async () => {
     process.env.COCALC_HOST_INTEGRITY_ALERTS = "alert";
-    respond(["Host integrity: host-z: watcher not reporting"]);
+    respond([
+      "Host integrity: host-a: watcher not reporting",
+      // host-z went offline after its alert: the alert stays
+      "Host integrity: host-z: unexpected process placement",
+    ]);
     await runHostIntegrityAlertPass();
     expect(conditionAlertMock).toHaveBeenCalledTimes(1);
     const [{ subject, body }] = conditionAlertMock.mock.calls[0] as any;
@@ -186,8 +249,8 @@ describe("host integrity alert pass", () => {
     expect(body).toContain(
       "project-uid-outside-container: /usr/bin/dash uid 231072",
     );
-    expect(conditionClearedMock).toHaveBeenCalledWith(
-      "Host integrity: host-z: watcher not reporting",
-    );
+    expect(conditionClearedMock.mock.calls).toEqual([
+      ["Host integrity: host-a: watcher not reporting"],
+    ]);
   });
 });

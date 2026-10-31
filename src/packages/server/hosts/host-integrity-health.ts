@@ -59,6 +59,22 @@ export interface HostIntegritySummary {
   // hosts whose software predates the report
   unreported_hosts: number;
   conditions: HostIntegrityCondition[];
+  // every alert subject of the hosts that report (whether raised or not)
+  reporting_subjects: string[];
+}
+
+const SUBJECTS: Record<HostIntegrityCondition["kind"], string> = {
+  watcher: "watcher not reporting",
+  processes: "unexpected process placement",
+  config: "host configuration changed",
+  reboot: "reboot pending for updates",
+};
+
+function subject(
+  row: HostIntegrityRow,
+  kind: HostIntegrityCondition["kind"],
+): string {
+  return `${ALERT_SUBJECT_PREFIX}${row.name ?? row.id}: ${SUBJECTS[kind]}`;
 }
 
 function hostLabel(row: HostIntegrityRow): string {
@@ -70,11 +86,17 @@ function ms(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function seenWithin(value: unknown, window: number, now: number): boolean {
+  const seen = ms(value);
+  return seen != null && now - seen <= window;
+}
+
 export function summarizeHostIntegrity(
   rows: HostIntegrityRow[],
   now = Date.now(),
 ): HostIntegritySummary {
   const conditions: HostIntegrityCondition[] = [];
+  const reporting_subjects: string[] = [];
   let unreported = 0;
   for (const row of byHostId(rows)) {
     const integrity = row.integrity;
@@ -84,34 +106,40 @@ export function summarizeHostIntegrity(
     }
     const label = hostLabel(row);
     const base = { host_id: row.id, host_name: row.name };
+    for (const kind of Object.keys(SUBJECTS)) {
+      reporting_subjects.push(subject(row, kind as keyof typeof SUBJECTS));
+    }
     if (integrity.watcher !== "running") {
       conditions.push({
         ...base,
         kind: "watcher",
         level: "warning",
-        subject: `${ALERT_SUBJECT_PREFIX}${row.name ?? row.id}: watcher not reporting`,
+        subject: subject(row, "watcher"),
         facts: [`${label}: integrity watcher ${integrity.watcher}`],
         details: [
           `${label}: integrity watcher ${integrity.watcher}${integrity.heartbeat_at ? ` (last status ${integrity.heartbeat_at})` : ""}`,
         ],
       });
     }
-    const recent = (integrity.findings ?? []).filter((f) => {
-      const seen = ms(f.last_seen);
-      return seen != null && now - seen <= RECENT_FINDING_MS;
-    });
+    const recent = (integrity.findings ?? []).filter((f) =>
+      seenWithin(f.last_seen, RECENT_FINDING_MS, now),
+    );
     if (recent.length > 0) {
-      const current = recent.filter(
-        (f) => now - (ms(f.last_seen) ?? 0) <= CURRENT_FINDING_MS,
+      const current = recent.filter((f) =>
+        seenWithin(f.last_seen, CURRENT_FINDING_MS, now),
       );
-      const critical = recent.some((f) => f.severity === "critical");
+      // The alert carries the current findings, so its level comes from
+      // them; health shows the day's level once nothing is current.
+      const critical = (current.length > 0 ? current : recent).some(
+        (f) => f.severity === "critical",
+      );
       const describe = (f: (typeof recent)[number]) =>
         `${f.rule}: ${f.exe || f.comm} uid ${f.uids?.[0]} in the ${f.userns} user namespace (parents ${(f.parents ?? []).join(" < ") || "none"})`;
       conditions.push({
         ...base,
         kind: "processes",
         level: critical ? "critical" : "warning",
-        subject: `${ALERT_SUBJECT_PREFIX}${row.name ?? row.id}: unexpected process placement`,
+        subject: subject(row, "processes"),
         // Alerted only while a finding is current.
         facts: current.map(describe).sort(),
         details: recent
@@ -122,19 +150,35 @@ export function summarizeHostIntegrity(
           ),
       });
     }
-    const changes = integrity.config_changes ?? [];
+    // The watcher refreshes last_seen (every minute) while a file differs
+    // from its baseline: a repaired file, or one bootstrap rebaselined, stops
+    // alerting and stays in health for a day.
+    const changes = (integrity.config_changes ?? []).filter((c) =>
+      seenWithin(c.last_seen, RECENT_FINDING_MS, now),
+    );
     if (changes.length > 0) {
+      const more =
+        (integrity.config_change_count ?? 0) > changes.length
+          ? [`${label}: ${integrity.config_change_count} changed files in all`]
+          : [];
       conditions.push({
         ...base,
         kind: "config",
         level: "warning",
-        subject: `${ALERT_SUBJECT_PREFIX}${row.name ?? row.id}: host configuration changed`,
-        facts: changes.map((c) => `${label}: ${c.path} changed`).sort(),
-        details: changes
-          .slice(0, MAX_DETAILS_PER_HOST)
-          .map(
-            (c) => `${label}: ${c.path} changed (first seen ${c.first_seen})`,
-          ),
+        subject: subject(row, "config"),
+        facts: changes
+          .filter((c) => seenWithin(c.last_seen, CURRENT_FINDING_MS, now))
+          .map((c) => `${label}: ${c.path} changed`)
+          .sort(),
+        details: [
+          ...changes
+            .slice(0, MAX_DETAILS_PER_HOST)
+            .map(
+              (c) =>
+                `${label}: ${c.path} changed (first seen ${c.first_seen}, last ${c.last_seen})`,
+            ),
+          ...more,
+        ],
       });
     }
     const since = ms(integrity.reboot_required_since);
@@ -144,7 +188,7 @@ export function summarizeHostIntegrity(
         ...base,
         kind: "reboot",
         level: "warning",
-        subject: `${ALERT_SUBJECT_PREFIX}${row.name ?? row.id}: reboot pending for updates`,
+        subject: subject(row, "reboot"),
         facts: [
           `${label}: a reboot has been pending since ${integrity.reboot_required_since} to apply updates (e.g. a kernel fix)`,
         ],
@@ -158,6 +202,7 @@ export function summarizeHostIntegrity(
     active_hosts: rows.length,
     unreported_hosts: unreported,
     conditions,
+    reporting_subjects,
   };
 }
 
@@ -250,9 +295,15 @@ export async function runHostIntegrityAlertPass(): Promise<number> {
       reminderMinutes: ALERT_REMINDER_MINUTES,
     });
   }
+  if (mode !== "alert") return alerting.length;
+  // Clear only what a reporting host no longer shows: a host that went
+  // offline, or stopped reporting, keeps its alert until it reports again.
   const current = new Set(alerting.map((c) => c.subject));
+  const clearable = new Set(summary.reporting_subjects);
   for (const subject of await activeAlertSubjects()) {
-    if (!current.has(subject)) await conditionCleared(subject);
+    if (!current.has(subject) && clearable.has(subject)) {
+      await conditionCleared(subject);
+    }
   }
   return alerting.length;
 }

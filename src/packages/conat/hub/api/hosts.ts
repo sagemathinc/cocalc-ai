@@ -1272,7 +1272,9 @@ export interface HostIntegrityStatus {
   errors?: number;
   findings?: HostIntegrityFinding[];
   finding_count?: number;
+  // newest first (last_seen), capped; config_change_count counts them all
   config_changes?: { path: string; first_seen?: string; last_seen?: string }[];
+  config_change_count?: number;
   config_baseline_at?: string;
   inventory?: Record<string, number>;
   // When the host started needing a reboot to apply updates (null: none).

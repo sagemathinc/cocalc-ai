@@ -79,7 +79,7 @@ describe("host integrity for the heartbeat", () => {
       last_seen: "2026-10-31T00:59:00Z",
       count: 5,
       // anything else the file might hold is not passed on
-      cmdline: "curl --token secret",
+      cmdline: "curl --label canary-in-cmdline",
     }));
     await writeFile(
       join(dir, "status.json"),
@@ -128,7 +128,7 @@ describe("host integrity for the heartbeat", () => {
         "userns",
       ].sort(),
     );
-    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(JSON.stringify(result)).not.toContain("canary-in-cmdline");
     expect(result.config_changes).toEqual([
       {
         path: "/etc/sudoers",
@@ -138,5 +138,34 @@ describe("host integrity for the heartbeat", () => {
     ]);
     expect(result.inventory).toEqual({ "host|runtime|/usr/bin/sudo": 3 });
     expect(result.reboot_required_since).toBe("2026-10-28T12:00:00.000Z");
+  });
+
+  it("keeps the newest config changes when there are more than it passes on", async () => {
+    // in the order the watcher first saw them; the last ones are the newest
+    const changes = Array.from({ length: 25 }, (_, i) => ({
+      rule: "host-config-changed",
+      path: `/etc/cron.d/job-${i}`,
+      first_seen: "2026-10-30T00:00:00Z",
+      last_seen: new Date(
+        Date.parse("2026-10-31T00:00:00Z") + i * 60_000,
+      ).toISOString(),
+    }));
+    await writeFile(
+      join(dir, "status.json"),
+      JSON.stringify(
+        status({ config: { baseline_at: "2026-10-30T00:00:00Z", changes } }),
+      ),
+    );
+    const result = await readHostIntegrity({
+      statusPath: join(dir, "status.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    expect(result.config_change_count).toBe(25);
+    expect(result.config_changes).toHaveLength(20);
+    expect(result.config_changes![0].path).toBe("/etc/cron.d/job-24");
+    expect(result.config_changes!.map((c) => c.path)).not.toContain(
+      "/etc/cron.d/job-4",
+    );
   });
 });
