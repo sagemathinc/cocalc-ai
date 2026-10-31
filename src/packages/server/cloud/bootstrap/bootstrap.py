@@ -13546,8 +13546,77 @@ def install_privileged_tool_binaries(
     )
 
 
+ROOT_UID = 0
+
+
 def chown_root(path: Path | str) -> None:
-    os.lchown(path, 0, 0)
+    os.lchown(path, ROOT_UID, ROOT_UID)
+
+
+def root_owned_parents(path: Path, lstat=os.lstat) -> bool:
+    """True if every directory above path is owned by root, isn't writable
+    by group or others and isn't a symlink."""
+    for parent in Path(path).parents:
+        try:
+            st = lstat(parent)
+        except OSError:
+            return False
+        if stat.S_ISLNK(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+            return False
+    return True
+
+
+def prepare_root_dir(root: Path) -> None:
+    """Creates root (0755, root-owned). Fails closed if root is a symlink or
+    a directory above it could be changed by another user."""
+    if root.is_symlink():
+        raise RuntimeError(f"{root} is a symlink")
+    if not root_owned_parents(root):
+        raise RuntimeError(f"a directory above {root} isn't root-owned")
+    root.mkdir(parents=True, exist_ok=True)
+    chown_root(root)
+    os.chmod(root, 0o755)
+
+
+def root_owned_tree(path: Path) -> bool:
+    """True if path is a directory (not a symlink) and everything in it is
+    owned by root, not writable by group or others and not setuid/setgid,
+    with every symlink resolving inside it."""
+    if path.is_symlink() or not path.is_dir():
+        return False
+    base = os.path.realpath(path)
+    for dirpath, dirnames, filenames in os.walk(path):
+        for entry in [dirpath, *(os.path.join(dirpath, n) for n in dirnames + filenames)]:
+            st = os.lstat(entry)
+            if stat.S_ISLNK(st.st_mode):
+                target = os.path.realpath(entry)
+                if target != base and not target.startswith(base + os.sep):
+                    return False
+                continue
+            if (
+                st.st_uid != ROOT_UID
+                or st.st_mode & 0o022
+                or st.st_mode & (stat.S_ISUID | stat.S_ISGID)
+            ):
+                return False
+    return True
+
+
+def node_tree_ok(path: Path) -> bool:
+    node = path / "bin" / "node"
+    return root_owned_tree(path) and node.is_file() and not node.is_symlink()
+
+
+def current_node_version(root: Path) -> str | None:
+    """The version root/current points at, if it is a plain version name
+    whose tree checks out."""
+    current = root / "current"
+    if not current.is_symlink():
+        return None
+    name = os.readlink(current)
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", name) or not node_tree_ok(root / name):
+        return None
+    return name
 
 
 def node_dist_arch() -> str:
@@ -13564,20 +13633,38 @@ def node_version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.lstrip("v").split("."))
 
 
+def node_version_selector(cfg: BootstrapConfig) -> str:
+    """cfg.node_version as "26", "26.12" or "26.12.1" (an optional leading
+    "v" is dropped). nvm aliases such as "lts/*" or "node" aren't supported:
+    they are refused rather than reinterpreted."""
+    wanted = cfg.node_version.strip()
+    wanted = wanted[1:] if wanted.startswith("v") else wanted
+    if not re.fullmatch(r"\d+(\.\d+){0,2}", wanted):
+        raise RuntimeError(
+            f"unsupported node version {cfg.node_version!r}: use a major, "
+            "major.minor or exact version (e.g. 26, 26.12 or 26.12.1)"
+        )
+    return wanted
+
+
+def node_version_matches(version: str, selector: str) -> bool:
+    """True if version (e.g. "v26.12.1") is selector or within it."""
+    return version == f"v{selector}" or version.startswith(f"v{selector}.")
+
+
 def resolve_node_version(cfg: BootstrapConfig) -> str:
-    """The exact node release for cfg.node_version: as given if exact
-    ("26.12.1"), else the newest release of that major line (as `nvm install
-    26` picks)."""
-    wanted = cfg.node_version.strip().lstrip("v")
-    if re.fullmatch(r"\d+\.\d+\.\d+", wanted):
-        return f"v{wanted}"
-    major = node_major_version(wanted)
+    """The node release for cfg.node_version: as given if exact ("26.12.1"),
+    else the newest release that matches it ("26" or "26.12"), as nvm picks."""
+    selector = node_version_selector(cfg)
+    if re.fullmatch(r"\d+\.\d+\.\d+", selector):
+        return f"v{selector}"
     releases = fetch_json(cfg, f"{NODE_DIST_URL}/index.json")
     versions = [
         str(entry.get("version", ""))
         for entry in releases
         if isinstance(entry, dict)
-        and re.fullmatch(rf"v{major}\.\d+\.\d+", str(entry.get("version", "")))
+        and re.fullmatch(r"v\d+\.\d+\.\d+", str(entry.get("version", "")))
+        and node_version_matches(str(entry.get("version", "")), selector)
     ]
     if not versions:
         raise RuntimeError(f"no node release found for {cfg.node_version}")
@@ -13622,17 +13709,14 @@ def install_node(cfg: BootstrapConfig, *, root: Path = NODE_ROOT) -> Path:
     release's SHASUMS256.txt), points root/current at it and prunes old
     versions that no process runs. Returns the node binary."""
     log_line(cfg, f"bootstrap: installing node {cfg.node_version} under {root}")
-    root.mkdir(parents=True, exist_ok=True)
-    chown_root(root)
-    os.chmod(root, 0o755)
+    prepare_root_dir(root)
     current = root / "current"
+    selector = node_version_selector(cfg)
     try:
         version = resolve_node_version(cfg)
     except Exception as exc:
-        installed = os.path.realpath(current)
-        if (current / "bin" / "node").is_file() and node_major_version(
-            os.path.basename(installed)
-        ) == node_major_version(cfg.node_version):
+        installed = current_node_version(root)
+        if installed and node_version_matches(installed, selector):
             log_line(
                 cfg,
                 f"bootstrap: unable to look up node releases ({exc}); keeping {installed}",
@@ -13640,7 +13724,12 @@ def install_node(cfg: BootstrapConfig, *, root: Path = NODE_ROOT) -> Path:
             return current / "bin" / "node"
         raise
     target = root / version
-    if not (target / "bin" / "node").is_file():
+    if not node_tree_ok(target):
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.exists():
+            log_line(cfg, f"bootstrap: replacing {target}: not entirely root-owned")
+            shutil.rmtree(target)
         name = f"node-{version}-linux-{node_dist_arch()}.tar.xz"
         with tempfile.TemporaryDirectory(dir=root, prefix=".install-") as tmp:
             archive = Path(tmp) / name
@@ -13667,8 +13756,8 @@ def install_node(cfg: BootstrapConfig, *, root: Path = NODE_ROOT) -> Path:
                 for entry in [dirpath, *(os.path.join(dirpath, f) for f in filenames)]:
                     chown_root(entry)
             os.chmod(staging, 0o755)
-            if target.exists():
-                shutil.rmtree(target)
+            if not root_owned_tree(staging):
+                raise RuntimeError(f"{name} did not unpack as a root-owned tree")
             os.rename(staging, target)
     link = root / f".current-{os.getpid()}"
     if link.is_symlink() or link.exists():
@@ -13706,19 +13795,21 @@ def install_node_runtime_libs(
     if source is None:
         log_line(cfg, "bootstrap: libatomic.so.1 not found; skipping node runtime libs")
         return
-    root.mkdir(parents=True, exist_ok=True)
-    chown_root(root)
-    os.chmod(root, 0o755)
+    prepare_root_dir(root)
     target = root / "libatomic.so.1"
     data = Path(source).read_bytes()
-    try:
-        if target.read_bytes() == data:
-            return
-    except OSError:
-        pass
-    # Never rewrite the published file in place: running processes may map it.
+    if target.is_file() and not target.is_symlink() and target.read_bytes() == data:
+        # current: only make sure of its owner and mode
+        chown_root(target)
+        os.chmod(target, 0o644)
+        return
+    if target.is_dir() and not target.is_symlink():
+        shutil.rmtree(target)
+    # Never rewrite the published file in place: running processes may map
+    # it. os.replace also replaces a symlink rather than following it.
     staged = root / f".libatomic.so.1.{os.getpid()}"
     staged.write_bytes(data)
+    chown_root(staged)
     os.chmod(staged, 0o644)
     os.replace(staged, target)
     log_line(cfg, f"bootstrap: published {source} as {target}")

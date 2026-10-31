@@ -14,7 +14,7 @@ import tarfile
 import time
 import unittest
 from collections import namedtuple
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -7080,13 +7080,20 @@ WantedBy=multi-user.target
 
         with mock.patch.object(bootstrap, "download_file", fake_download), mock.patch.object(
             bootstrap, "fetch_json", fake_index
-        ), mock.patch.object(bootstrap, "chown_root", lambda _p: None), mock.patch.object(
-            bootstrap, "log_line", lambda *_a, **_k: None
-        ), mock.patch.object(
+        ), self._as_root(), mock.patch.object(
             bootstrap, "node_versions_in_use", lambda _root: set()
         ):
             result = bootstrap.install_node(cfg, root=root)
         return result, downloads
+
+    @contextmanager
+    def _as_root(self):
+        """The test user stands in for root, and the temp dir's parents
+        count as root-owned."""
+        with mock.patch.object(bootstrap, "ROOT_UID", os.getuid()), mock.patch.object(
+            bootstrap, "root_owned_parents", lambda _p: True
+        ), mock.patch.object(bootstrap, "log_line", lambda *_a, **_k: None):
+            yield
 
     def test_install_node_installs_the_newest_release_of_the_major_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -7108,6 +7115,30 @@ WantedBy=multi-user.target
             # Already installed: no download.
             _node, downloads = self._install_node(cfg, root, releases, index=index)
             self.assertEqual(downloads, [])
+
+    def test_node_version_selectors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            index = [{"version": v} for v in ("v20.9.0", "v20.11.0", "v20.11.1", "v20.12.0", "v21.0.0")]
+            with mock.patch.object(bootstrap, "fetch_json", lambda _c, _u: index):
+                for selector, expected in (
+                    ("20", "v20.12.0"),
+                    ("v20", "v20.12.0"),
+                    ("20.11", "v20.11.1"),
+                    ("20.11.0", "v20.11.0"),
+                    ("v20.9.0", "v20.9.0"),
+                ):
+                    cfg = bootstrap.replace(cfg, node_version=selector)
+                    self.assertEqual(bootstrap.resolve_node_version(cfg), expected, selector)
+                # nvm aliases are refused, not reinterpreted
+                for selector in ("lts/*", "node", "stable", "lts/iron", "20.x", ""):
+                    cfg = bootstrap.replace(cfg, node_version=selector)
+                    with self.assertRaises(RuntimeError):
+                        bootstrap.resolve_node_version(cfg)
+            # "2" doesn't match 20.x
+            self.assertFalse(bootstrap.node_version_matches("v20.1.0", "2"))
+            self.assertTrue(bootstrap.node_version_matches("v20.11.1", "20.11"))
+            self.assertFalse(bootstrap.node_version_matches("v20.110.1", "20.11"))
 
     def test_install_node_refuses_a_checksum_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -7159,9 +7190,7 @@ WantedBy=multi-user.target
                 ),
             ), mock.patch.object(
                 bootstrap, "fetch_json", lambda _c, _u: [{"version": "v20.5.0"}]
-            ), mock.patch.object(bootstrap, "chown_root", lambda _p: None), mock.patch.object(
-                bootstrap, "log_line", lambda *_a, **_k: None
-            ), mock.patch.object(
+            ), self._as_root(), mock.patch.object(
                 bootstrap, "node_versions_in_use", lambda _root: {"v20.1.0"}
             ):
                 bootstrap.install_node(cfg, root=root)
@@ -7169,6 +7198,100 @@ WantedBy=multi-user.target
                 sorted(p.name for p in root.iterdir() if not p.name.startswith(".")),
                 ["current", "v20.1.0", "v20.3.0", "v20.4.0", "v20.5.0"],
             )
+
+    def test_install_node_replaces_a_version_dir_it_cannot_trust(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            outside = tmp / "evil-node"
+            outside.write_text("evil")
+            for setup in (
+                # a node anyone could rewrite
+                lambda d: ((d / "bin").mkdir(parents=True), (d / "bin" / "node").write_text("evil"), (d / "bin" / "node").chmod(0o777)),
+                # a group-writable directory
+                lambda d: ((d / "bin").mkdir(parents=True), (d / "bin" / "node").write_text("evil"), (d / "bin").chmod(0o775)),
+                # bin/node a symlink out of the tree
+                lambda d: ((d / "bin").mkdir(parents=True), os.symlink(outside, d / "bin" / "node")),
+                # the version dir itself a symlink
+                lambda d: (d.parent.mkdir(parents=True, exist_ok=True), os.symlink(tmp, d)),
+            ):
+                if root.exists():
+                    shutil.rmtree(root)
+                root.mkdir()
+                setup(root / "v20.11.1")
+                _node, downloads = self._install_node(cfg, root, releases)
+                self.assertTrue(downloads)
+                self.assertIn("v20.11.1", (root / "current" / "bin" / "node").read_text())
+                with self._as_root():
+                    self.assertTrue(bootstrap.node_tree_ok(root / "v20.11.1"))
+            self.assertEqual(outside.read_text(), "evil")
+
+    def test_install_node_fails_closed_on_an_untrusted_root_or_current(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            # the root itself a symlink
+            (tmp / "elsewhere").mkdir()
+            os.symlink(tmp / "elsewhere", tmp / "linked")
+            with self.assertRaises(RuntimeError):
+                self._install_node(cfg, tmp / "linked", releases)
+            # a directory above the root that others could change
+            with mock.patch.object(bootstrap, "log_line", lambda *_a, **_k: None), mock.patch.object(
+                bootstrap, "root_owned_parents", lambda _p: False
+            ), self.assertRaises(RuntimeError):
+                bootstrap.install_node(cfg, root=tmp / "node2")
+            # offline, with current pointing out of the root or at a tree
+            # others could change: no fallback
+            root = tmp / "node"
+            self._install_node(cfg, root, releases)
+            (root / "current").unlink()
+            os.symlink("../elsewhere", root / "current")
+            with self.assertRaises(OSError):
+                self._install_node(cfg, root, releases, index=OSError("offline"))
+            (root / "current").unlink()
+            os.symlink("v20.11.1", root / "current")
+            (root / "v20.11.1" / "bin" / "node").chmod(0o777)
+            with self.assertRaises(OSError):
+                self._install_node(cfg, root, releases, index=OSError("offline"))
+
+    def test_extract_node_archive_refuses_hostile_members(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+
+            def archive_with(add):
+                path = tmp / f"a{len(list(tmp.iterdir()))}.tar.xz"
+                with tarfile.open(path, "w:xz") as tar:
+                    add(tar)
+                return path
+
+            def member(name, **kw):
+                info = tarfile.TarInfo(name)
+                for k, v in kw.items():
+                    setattr(info, k, v)
+                return info
+
+            for hostile in (
+                lambda t: t.addfile(member("node-v/../../escape", size=0), io.BytesIO(b"")),
+                lambda t: t.addfile(member("node-v/bin/abs", type=tarfile.SYMTYPE, linkname="/etc/passwd")),
+                lambda t: t.addfile(member("node-v/bin/up", type=tarfile.SYMTYPE, linkname="../../../etc")),
+                lambda t: t.addfile(member("node-v/dev/null0", type=tarfile.CHRTYPE, devmajor=1, devminor=3)),
+            ):
+                dest = tmp / f"dest{len(list(tmp.iterdir()))}"
+                dest.mkdir()
+                with self.assertRaises(tarfile.TarError):
+                    bootstrap.extract_node_archive(archive_with(hostile), dest)
+            # setuid/setgid and group/other write bits are dropped
+            dest = tmp / "ok"
+            dest.mkdir()
+            data = b"#!/bin/sh\n"
+            bootstrap.extract_node_archive(
+                archive_with(lambda t: t.addfile(member("node-v/bin/node", size=len(data), mode=0o6777), io.BytesIO(data))),
+                dest,
+            )
+            self.assertEqual(oct((dest / "bin" / "node").stat().st_mode & 0o7777), "0o755")
 
     def test_node_versions_in_use_reads_running_executables(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -7189,9 +7312,7 @@ WantedBy=multi-user.target
             lib = tmp / "libatomic.so.1"
             lib.write_bytes(b"lib-v1")
             root = tmp / "runtime-libs"
-            with mock.patch.object(bootstrap, "chown_root", lambda _p: None), mock.patch.object(
-                bootstrap, "log_line", lambda *_a, **_k: None
-            ):
+            with self._as_root():
                 bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(tmp / "absent"), str(lib)))
                 published = root / "libatomic.so.1"
                 self.assertEqual(published.read_bytes(), b"lib-v1")
@@ -7205,6 +7326,19 @@ WantedBy=multi-user.target
                 bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
                 self.assertEqual(published.read_bytes(), b"lib-v2")
                 self.assertNotEqual(published.stat().st_ino, inode)
+                # equal bytes but a loose mode: repaired, not left as is
+                published.chmod(0o666)
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertEqual(oct(published.stat().st_mode & 0o777), "0o644")
+                # a symlink in its place is replaced, its target untouched
+                outside = tmp / "outside"
+                outside.write_bytes(b"lib-v2")
+                published.unlink()
+                os.symlink(outside, published)
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertFalse(published.is_symlink())
+                self.assertEqual(published.read_bytes(), b"lib-v2")
+                self.assertEqual(outside.read_bytes(), b"lib-v2")
                 # none on the host: nothing published, no failure
                 bootstrap.install_node_runtime_libs(cfg, root=tmp / "none", candidates=(str(tmp / "absent"),))
                 self.assertFalse((tmp / "none").exists())
