@@ -11737,5 +11737,94 @@ class BtrfsScrubInstallTest(unittest.TestCase):
             )
 
 
+class ToolsArtifactLockTest(unittest.TestCase):
+    """The tools lock is taken without following or changing anything in the
+    tools directory by path."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self.root = self.base / "tools"
+        self.root.mkdir()
+        self.lock = self.root / ".artifact.lock"
+        timeout = mock.patch.object(bootstrap, "bootstrap_lock_timeout_seconds", return_value=1)
+        timeout.start()
+        self.addCleanup(timeout.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hold(self):
+        with bootstrap.tools_artifact_lock(str(self.root)):
+            probe = subprocess.run(["flock", "-n", str(self.lock), "true"])
+            self.assertEqual(probe.returncode, 1)  # held
+
+    def test_a_valid_lock_is_kept_and_held(self) -> None:
+        self.lock.write_text("")
+        self.lock.chmod(0o644)
+        inode = self.lock.stat().st_ino
+        self.hold()
+        self.assertEqual(self.lock.stat().st_ino, inode)
+
+    def test_a_planted_symlink_is_replaced_never_followed(self) -> None:
+        outside = self.base / "outside-file"
+        outside.write_text("original")
+        outside.chmod(0o640)
+        os.symlink(outside, self.lock)
+        self.hold()
+        self.assertEqual(oct(outside.stat().st_mode & 0o777), "0o640")
+        self.assertEqual(outside.read_text(), "original")
+        info = self.lock.lstat()
+        self.assertTrue(stat.S_ISREG(info.st_mode))
+        self.assertEqual(info.st_uid, os.geteuid())
+        self.assertEqual(oct(info.st_mode & 0o777), "0o644")
+        # a dangling symlink, too (O_CREAT never follows it)
+        self.lock.unlink()
+        os.symlink(self.base / "dangling-target", self.lock)
+        self.hold()
+        self.assertFalse((self.base / "dangling-target").exists())
+
+    def test_a_lock_others_may_write_is_replaced(self) -> None:
+        self.lock.write_text("")
+        self.lock.chmod(0o666)
+        inode = self.lock.stat().st_ino
+        self.hold()
+        self.assertNotEqual(self.lock.stat().st_ino, inode)
+        self.assertEqual(oct(self.lock.stat().st_mode & 0o777), "0o644")
+        # a hard link to it elsewhere counts as not ours either
+        os.link(self.lock, self.base / "elsewhere")
+        inode = self.lock.stat().st_ino
+        self.hold()
+        self.assertNotEqual(self.lock.stat().st_ino, inode)
+
+    def test_a_symlinked_tools_root_is_refused(self) -> None:
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        os.symlink(elsewhere, self.base / "linked")
+        with self.assertRaises(RuntimeError):
+            with bootstrap.tools_artifact_lock(str(self.base / "linked")):
+                pass
+        self.assertFalse((elsewhere / ".artifact.lock").exists())
+
+    def test_a_replant_during_replacement_fails_closed(self) -> None:
+        outside = self.base / "outside-file"
+        outside.write_text("original")
+        outside.chmod(0o640)
+        os.symlink(outside, self.lock)
+        original = bootstrap._replace_tools_lock
+
+        def replace_then_replant(dirfd):
+            original(dirfd)
+            self.lock.unlink()
+            os.symlink(outside, self.lock)
+
+        with mock.patch.object(bootstrap, "_replace_tools_lock", replace_then_replant):
+            with self.assertRaises(RuntimeError):
+                with bootstrap.tools_artifact_lock(str(self.root)):
+                    self.fail("extracted without a valid lock")
+        self.assertEqual(oct(outside.stat().st_mode & 0o777), "0o640")
+        self.assertEqual(outside.read_text(), "original")
+
+
 if __name__ == "__main__":
     unittest.main()
