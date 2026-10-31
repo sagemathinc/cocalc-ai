@@ -1,0 +1,45 @@
+{
+  "v": 1,
+  "about": "admin-visibility-plan r1h §1.8 and §7 T8: every request and response of the 2FA handoff and the admin check, between the Sagebrush site Worker and cocalc.ai. The cocalc.ai PR carries a byte-identical copy; each side's tests pin this file's sha256.",
+  "authorize": {
+    "method": "GET",
+    "path": "/auth/oauth/authorize",
+    "params": ["response_type", "client_id", "scope", "redirect_uri", "state", "code_challenge", "code_challenge_method"],
+    "fixed": { "response_type": "code", "client_id": "sagebrush", "scope": "sagebrush-admin", "code_challenge_method": "S256" },
+    "redirect_uri": "<site origin>/admin/auth/callback",
+    "approves_only_when": ["a signed-in cocalc.ai browser session, not an impersonation", "the account exists, is not deleted and is an admin (both routing paths)", "2FA is enabled on it", "that session's factor_verified_at is within the last 600 s (else cocalc.ai's recent-2FA step first)"],
+    "records_with_the_code": ["the approving session's hash", "its factor_verified_at"]
+  },
+  "token": {
+    "method": "POST",
+    "path": "/api/v2/auth/oauth/token",
+    "auth": "Basic sagebrush:<client secret>",
+    "form": ["grant_type", "code", "redirect_uri", "code_verifier"],
+    "fixed": { "grant_type": "authorization_code" },
+    "single_use": "the code is consumed atomically (UPDATE ... SET used_at = NOW() WHERE code_hash = $1 AND used_at IS NULL RETURNING ...); a second redemption is refused",
+    "response": {
+      "account_id": "string",
+      "admin_grant": {
+        "grant_id": "string, random and opaque, [A-Za-z0-9_-]{8,200}, never a session hash or cookie",
+        "factor_verified_at": "integer seconds: the approving session's",
+        "expires_at": "integer seconds: floor(min(factor_verified_at + 600, the session's expire, the session's fresh_auth_until))"
+      },
+      "no_grant_when": ["any approval condition no longer holds", "fresh_auth_until is NULL or <= now"]
+    }
+  },
+  "endpoint": {
+    "method": "GET",
+    "path": "/api/v2/sagebrush/admin",
+    "auth": "Basic sagebrush:<client secret>",
+    "query": ["account_id", "grant (optional)"],
+    "headers": { "cache-control": "no-store" },
+    "answers": {
+      "not_admin": { "admin": false },
+      "no_2fa": { "admin": true, "two_factor": false },
+      "no_grant_asked": { "admin": true, "two_factor": true },
+      "grant": { "admin": true, "two_factor": true, "factor_verified_at": "integer seconds", "expires_at": "integer seconds: step 4's formula from the session's values now, capped at the grant's issued expires_at" },
+      "refused_grant": { "admin": true, "two_factor": true }
+    },
+    "grant_answer_only_when": ["the account is a non-deleted admin with 2FA on", "the grant exists, for that account", "its cocalc.ai session is not revoked or expired", "that session's factor_verified_at is still the granted one", "that session's fresh_auth_until is not NULL and now < fresh_auth_until", "factor_verified_at <= now < factor_verified_at + 600"]
+  }
+}

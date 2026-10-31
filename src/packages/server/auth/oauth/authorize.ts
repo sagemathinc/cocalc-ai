@@ -29,6 +29,12 @@ import {
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { getOAuthAccountState, isCurrentEmailVerified } from "./account-state";
+import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
+import {
+  FACTOR_SECONDS,
+  mintSagebrushAdminGrant,
+  type SagebrushAdminGrant,
+} from "@cocalc/server/sagebrush/admin-grant";
 import {
   authenticateOAuthClient,
   getOAuthClient,
@@ -38,6 +44,9 @@ import {
 } from "./clients";
 
 export const AUTHORIZATION_CODE_TTL_MS = 60_000;
+/** The one scope there is: Sagebrush's admin page, after a fresh 2FA
+ * (Sagebrush's admin-visibility plan r1h §1.8). */
+export const SAGEBRUSH_ADMIN_SCOPE = "sagebrush-admin";
 const APPROVAL_PROOF_TTL_SECONDS = 5 * 60;
 const MAX_STATE_LENGTH = 512;
 // BASE64URL(SHA256(verifier)) is always 43 characters.
@@ -78,6 +87,7 @@ export interface AuthorizeRequest {
   redirect_uri: string;
   state?: string;
   code_challenge: string;
+  scope?: typeof SAGEBRUSH_ADMIN_SCOPE;
 }
 
 export interface AuthorizeRequestInfo {
@@ -107,6 +117,7 @@ export function authorizeParams(body: {
     state: request.state,
     code_challenge: request.code_challenge,
     code_challenge_method: request.code_challenge_method,
+    scope: request.scope,
   };
 }
 
@@ -140,7 +151,15 @@ export async function validateAuthorizeRequest(
   ) {
     throw new OAuthAuthorizeError("invalid state");
   }
-  return { client, redirect_uri, state, code_challenge };
+  // (absent, or exactly Sagebrush's admin scope, and only for Sagebrush)
+  if (
+    params.scope != null &&
+    !(params.scope === SAGEBRUSH_ADMIN_SCOPE && client.client_id === "sagebrush")
+  ) {
+    throw new OAuthAuthorizeError("invalid scope");
+  }
+  const scope = params.scope == null ? undefined : SAGEBRUSH_ADMIN_SCOPE;
+  return { client, redirect_uri, state, code_challenge, ...(scope ? { scope } : {}) };
 }
 
 export function authorizeRequestInfo(
@@ -168,6 +187,8 @@ export function authorizeRequestBinding(request: AuthorizeRequest): string {
         request.client.client_id,
         request.redirect_uri,
         request.code_challenge,
+        // (a scope is part of what was approved: a proof for one can't approve another)
+        ...(request.scope ? [`scope:${request.scope}`] : []),
       ].join("\n"),
       "utf8",
     )
@@ -245,9 +266,12 @@ export async function listOAuthClientApprovals(
 export async function issueAuthorizeApprovalProof({
   account_id,
   request,
+  req,
 }: {
   account_id: string;
   request: AuthorizeRequest;
+  /** the approving browser request: for the admin scope, its session */
+  req?: any;
 }): Promise<{ token: string; home_bay_id: string; expires_at: number }> {
   // No approval, and so no data stored with the client, before the client's
   // purge obligation is recorded; the seed records it within about a minute
@@ -265,6 +289,7 @@ export async function issueAuthorizeApprovalProof({
   }
   // The account check and the approval record share one transaction under
   // the rehome fence, which also asserts this is the account's home bay.
+  let admin: { session_hash: string; factor_verified_at: number } | undefined;
   const row = await withAccountRehomeWriteFence({
     account_id,
     action: `approve a sign-in to ${request.client.name}`,
@@ -277,6 +302,9 @@ export async function issueAuthorizeApprovalProof({
         )
       ).rows[0];
       checkApprovingAccount(row);
+      if (request.scope === SAGEBRUSH_ADMIN_SCOPE) {
+        admin = await checkAdminApproval({ db, account_id, req });
+      }
       await recordOAuthClientApproval({
         db,
         account_id,
@@ -292,12 +320,61 @@ export async function issueAuthorizeApprovalProof({
     home_bay_id: getConfiguredBayId(),
     purpose: "oauth-authorize",
     ttl_seconds: APPROVAL_PROOF_TTL_SECONDS,
+    ...(admin ?? {}),
   });
   return {
     token: issued.token,
     home_bay_id: getConfiguredBayId(),
     expires_at: issued.expires_at,
   };
+}
+
+/** The admin scope's approval rule, on the home bay inside the approval's
+ * fence: a non-banned, non-deleted admin with 2FA on, approving from a live
+ * browser session whose second factor was verified within FACTOR_SECONDS.
+ * A stale factor throws code fresh_auth_required: the authorize page then runs
+ * the fresh-auth step (with the second factor) for this session and asks again. */
+async function checkAdminApproval({
+  db,
+  account_id,
+  req,
+}: {
+  db: Queryable;
+  account_id: string;
+  req: any;
+}): Promise<{ session_hash: string; factor_verified_at: number }> {
+  const facts = (
+    await db.query<{ admin: boolean; two_factor: boolean }>(
+      `SELECT 'admin' = ANY(COALESCE(a.groups, '{}'::TEXT[])) AS admin,
+              EXISTS (
+                SELECT 1 FROM account_second_factors AS f
+                 WHERE f.account_id = a.account_id
+                   AND f.status = 'active'
+                   AND f.activated_at IS NOT NULL
+                   AND f.disabled_at IS NULL
+              ) AS two_factor
+         FROM accounts AS a
+        WHERE a.account_id = $1::UUID AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE`,
+      [account_id],
+    )
+  ).rows[0];
+  if (facts?.admin !== true) throw new Error("only an admin can approve this");
+  if (facts.two_factor !== true) {
+    throw Object.assign(new Error("turn on two-factor authentication first"), { code: "two_factor_required" });
+  }
+  if (req == null) throw new Error("browser sign-in is required");
+  const session = await getCurrentAuthSession({ req, account_id });
+  const factor =
+    session.factor_verified_at == null
+      ? null
+      : Math.floor(new Date(session.factor_verified_at).valueOf() / 1000);
+  const now = Date.now() / 1000;
+  if (factor == null || !(factor <= now && now < factor + FACTOR_SECONDS)) {
+    // (the existing fresh-auth code: the authorize page's FreshAuthModal, which
+    // requires the second factor on an account with 2FA, then retries)
+    throw Object.assign(new Error("fresh auth with your second factor is required"), { code: "fresh_auth_required" });
+  }
+  return { session_hash: `${session.session_hash}`.trim(), factor_verified_at: factor };
 }
 
 function checkApprovingAccount(
@@ -356,11 +433,21 @@ export async function approveAuthorizeRequest({
   await pool.query(`DELETE FROM oauth_authorization_codes WHERE expire < $1`, [
     new Date(Date.now() - CODE_RETENTION_MS),
   ]);
+  const admin =
+    request.scope === SAGEBRUSH_ADMIN_SCOPE
+      ? {
+          session_hash: `${(claims as any).session_hash ?? ""}`.trim(),
+          factor_verified_at: (claims as any).factor_verified_at,
+        }
+      : null;
+  if (admin && (!admin.session_hash || !Number.isInteger(admin.factor_verified_at))) {
+    throw new Error("invalid approval proof");
+  }
   await pool.query(
     `INSERT INTO oauth_authorization_codes(
        code_hash, client_id, account_id, email_address, redirect_uri,
-       code_challenge, created, expire, used_at)
-     VALUES($1, $2, $3::UUID, $4, $5, $6, NOW(), $7, NULL)`,
+       code_challenge, created, expire, used_at, scope, session_hash, factor_verified_at)
+     VALUES($1, $2, $3::UUID, $4, $5, $6, NOW(), $7, NULL, $8, $9, $10)`,
     [
       hashCode(code),
       request.client.client_id,
@@ -369,6 +456,9 @@ export async function approveAuthorizeRequest({
       request.redirect_uri,
       request.code_challenge,
       new Date(Date.now() + AUTHORIZATION_CODE_TTL_MS),
+      request.scope ?? null,
+      admin?.session_hash ?? null,
+      admin ? new Date(admin.factor_verified_at * 1000) : null,
     ],
   );
   return {
@@ -396,9 +486,15 @@ export interface TokenResponse {
   email: string;
   email_verified: true;
   name: string;
+  /** the admin scope only: a grant minted now from the approving session's
+   * live state, or absent when the session no longer allows one */
+  admin_grant?: SagebrushAdminGrant;
 }
 
 type CodeRow = {
+  scope: string | null;
+  session_hash: string | null;
+  factor_verified_at: Date | null;
   client_id: string;
   account_id: string;
   email_address: string;
@@ -439,7 +535,7 @@ export async function exchangeAuthorizationCode({
     `UPDATE oauth_authorization_codes SET used_at = NOW()
       WHERE code_hash = $1 AND used_at IS NULL
       RETURNING client_id, account_id, email_address, redirect_uri,
-                code_challenge, expire`,
+                code_challenge, expire, scope, session_hash, factor_verified_at`,
     [hashCode(code)],
   );
   const row = rows[0];
@@ -474,10 +570,25 @@ export async function exchangeAuthorizationCode({
   ) {
     throw new OAuthTokenError("invalid_grant", 400, "account changed");
   }
+  let admin_grant: SagebrushAdminGrant | null = null;
+  if (row.scope === SAGEBRUSH_ADMIN_SCOPE) {
+    // (the code is already used up above; a failure here mints nothing and
+    // gives no grant, and the code stays used)
+    try {
+      admin_grant = await mintSagebrushAdminGrant({
+        account_id: row.account_id,
+        session_hash: `${row.session_hash ?? ""}`.trim(),
+        factor_verified_at: Math.floor(new Date(row.factor_verified_at ?? 0).valueOf() / 1000),
+      });
+    } catch {
+      admin_grant = null;
+    }
+  }
   return {
     account_id: row.account_id,
     email: account.email_address,
     email_verified: true,
     name: account.display_name,
+    ...(admin_grant ? { admin_grant } : {}),
   };
 }
