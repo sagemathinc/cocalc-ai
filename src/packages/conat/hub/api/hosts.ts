@@ -1275,6 +1275,15 @@ export interface HostIntegrityStatus {
   // newest first (last_seen), capped; config_change_count counts them all
   config_changes?: { path: string; first_seen?: string; last_seen?: string }[];
   config_change_count?: number;
+  // root's latest installs, switches, prunes and adoptions of program
+  // directories (cocalc-runtime-artifacts)
+  artifact_events?: {
+    at?: string;
+    action: string;
+    kind?: string;
+    version?: string;
+    result?: string;
+  }[];
   config_baseline_at?: string;
   inventory?: Record<string, number>;
   // When the host started needing a reboot to apply updates (null: none).
