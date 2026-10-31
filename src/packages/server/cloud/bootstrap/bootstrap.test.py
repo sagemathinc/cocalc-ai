@@ -7,6 +7,8 @@ import json
 import os
 import pwd
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -8353,6 +8355,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "configure_rsyslog_limits",
                 "configure_daily_root_cleanup",
                 "configure_host_integrity_watch",
+                "configure_btrfs_scrub",
                 "configure_kernel_sysctl_hardening",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
@@ -8408,6 +8411,7 @@ class BootstrapModesTest(unittest.TestCase):
                     "configure_rsyslog_limits",
                     "configure_daily_root_cleanup",
                     "configure_host_integrity_watch",
+                    "configure_btrfs_scrub",
                     "configure_kernel_sysctl_hardening",
                     "install_privileged_wrappers",
                     "install_privileged_tool_binaries",
@@ -8432,7 +8436,7 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
-            "configure_host_integrity_watch "
+            "configure_host_integrity_watch configure_btrfs_scrub "
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
@@ -8505,7 +8509,7 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
-            "configure_host_integrity_watch "
+            "configure_host_integrity_watch configure_btrfs_scrub "
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
@@ -8828,6 +8832,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("ensure_automatic_security_updates", lambda _cfg: None)
             patch("configure_daily_root_cleanup", lambda _cfg: None)
             patch("configure_host_integrity_watch", lambda _cfg: None)
+            patch("configure_btrfs_scrub", lambda _cfg: None)
             patch("compute_image_size", lambda _cfg: 10)
             patch("configure_kernel_module_hardening", lambda _cfg: None)
             patch("configure_kernel_sysctl_hardening", lambda _cfg: None)
@@ -10790,6 +10795,947 @@ class HostIntegrityWatchTest(unittest.TestCase):
                 )
         # The status lives outside /var/lib/cocalc, which the runtime user owns.
         self.assertNotIn("/var/lib/cocalc/", bootstrap.HOST_INTEGRITY_WATCH_SCRIPT)
+
+
+# cocalc-btrfs-scrub (BTRFS_SCRUB_SCRIPT), run against a fake host.
+SCRUB_NS = {"__name__": "btrfs_scrub_test"}
+exec(bootstrap.BTRFS_SCRUB_SCRIPT, SCRUB_NS)
+
+SCRUB_DAY = 86400
+SCRUB_FSID = "11111111-2222-3333-4444-555555555555"
+SCRUB_T0 = 1_790_000_000.0
+
+
+class ScrubFakeHost(SCRUB_NS["Host"]):
+    """A host with one 1000 GB pd-balanced btrfs device and a fake scrub that
+    advances `rate` bytes per second of fake time."""
+
+    def __init__(self, total=600 * 10**9, rate=50 * 2**20, psi=0.5):
+        self.t = SCRUB_T0
+        self.files = {
+            "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID: "0",
+            "/sys/class/block/sdb/size": str(1000 * 10**9 // 512),
+            "/etc/machine-id": "abc123",
+            "/etc/cocalc/btrfs-scrub.json": '{"enabled": true}',
+        }
+        self.dirs = {
+            "/sys/fs/btrfs/%s/devinfo" % SCRUB_FSID: ["1"],
+            "/sys/fs/btrfs/%s/devices" % SCRUB_FSID: ["sdb"],
+        }
+        self.psi = psi
+        self.total, self.rate = total, rate
+        self.done = 0
+        self.scrub = "none"  # none, running, interrupted, finished
+        self.errors = {}
+        self.kernel = ""
+        self.calls = []
+        self.speed_seen = []
+        self.on_sleep = None
+        super().__init__(sysfs="/sys", proc="/proc", machine_id="/etc/machine-id")
+
+    def now(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.t += seconds
+        if self.scrub == "running":
+            self.speed_seen.append(self.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID])
+            self.done = min(self.total, self.done + self.rate * seconds)
+            if self.done >= self.total:
+                self.scrub = "finished"
+        if self.on_sleep:
+            self.on_sleep(self)
+
+    def read(self, path):
+        if path == "/proc/pressure/io":
+            return "some avg10=1.00 avg60=1.00 avg300=1.00 total=1\nfull avg10=%.2f avg60=%.2f avg300=0.10 total=1\n" % (self.psi, self.psi)
+        if path in self.files:
+            return self.files[path]
+        if path.startswith("/etc/cocalc/"):
+            return json.dumps({"provider": "gcp", "targets": [{"disk_type": "balanced"}]})
+        raise OSError(path)
+
+    untrusted = ()
+    cancel_fails = False
+    status_fails = False
+    zone = None  # no cloud zone, UTC system time: night is UTC
+    systz = "Etc/UTC"
+
+    def cloud_zone(self):
+        return self.zone
+
+    def system_timezone(self):
+        return self.systz
+
+    def read_trusted(self, path):
+        if path in self.untrusted:
+            return None
+        try:
+            return self.read(path)
+        except OSError:
+            return None
+
+    def write(self, path, text):
+        if path not in self.files:
+            raise OSError(path)
+        self.files[path] = text
+
+    def listdir(self, path):
+        return list(self.dirs.get(path, []))
+
+    def run(self, args):
+        self.calls.append(args)
+        if args[0] == SCRUB_NS["FINDMNT"]:
+            return 0, "btrfs %s\n" % SCRUB_FSID, ""
+        if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "status"]:
+            if self.status_fails:
+                return 1, "", "status failed"
+            if self.scrub == "none":
+                return 0, "UUID: %s\n\tno stats available\n" % SCRUB_FSID, ""
+            lines = ["UUID: %s" % SCRUB_FSID, "Status: %s" % self.scrub,
+                     "\tdata_bytes_scrubbed: %d" % self.done]
+            for k in SCRUB_NS["COUNTERS"]:
+                if k != "data_bytes_scrubbed":
+                    lines.append("\t%s: %d" % (k, self.errors.get(k, 0)))
+            return 0, "\n".join(lines) + "\n", ""
+        if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "start"]:
+            self.done, self.scrub = 0, "running"
+            return 0, "", ""
+        if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "resume"]:
+            if self.scrub != "interrupted":
+                return 1, "", "no scrub to resume"
+            self.scrub = "running"
+            return 0, "", ""
+        if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+            if self.cancel_fails:
+                return 1, "", "cancel failed"
+            if self.scrub == "running":
+                self.scrub = "interrupted"
+            return 0, "", ""
+        if args[0] == SCRUB_NS["JOURNALCTL"]:
+            return 0, self.kernel, ""
+        return 1, "", "unexpected"
+
+
+def scrub_night_after(ts, tz="UTC", start_hour=0):
+    """The first night-window start (00:00 local) at or after ts."""
+    import datetime, zoneinfo
+    zi = zoneinfo.ZoneInfo(tz)
+    local = datetime.datetime.fromtimestamp(ts, zi)
+    for days in range(0, 3):
+        d = (local + datetime.timedelta(days=days)).date()
+        start = datetime.datetime(d.year, d.month, d.day, start_hour, tzinfo=zi).timestamp()
+        if start >= ts:
+            return start + 1
+    raise AssertionError
+
+
+class BtrfsScrubScriptTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_once(self, host, *extra):
+        argv = ["--status-dir", self.dir, "--poll-seconds", "60", *extra]
+        self.assertEqual(SCRUB_NS["main"](argv, host=host), 0)
+        with open(os.path.join(self.dir, "status.json")) as f:
+            return json.load(f)
+
+    def test_first_scrub_waits_for_its_staggered_point_in_the_period(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertTrue(SCRUB_T0 <= due < SCRUB_T0 + 30 * SCRUB_DAY)
+        self.assertNotIn([SCRUB_NS["BTRFS"], "scrub", "start", "/mnt/cocalc"], host.calls)
+        other = ScrubFakeHost()
+        other.files["/etc/machine-id"] = "different"
+        self.assertNotEqual(due, SCRUB_NS["parse_iso"](self.run_once_in(other)["due_at"]))
+
+    def run_once_in(self, host):
+        with tempfile.TemporaryDirectory() as d:
+            SCRUB_NS["main"](["--status-dir", d], host=host)
+            with open(os.path.join(d, "status.json")) as f:
+                return json.load(f)
+
+    def test_a_due_scrub_runs_throttled_in_daily_slices_and_completes(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        # 600 GB at 50 MiB/s is ~3.2 h: one 6 h day is enough
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(status["last_completed"]["errors"]["uncorrectable_errors"], 0)
+        # 20% of the disk's 240 MiB/s, and put back afterwards
+        self.assertEqual(set(host.speed_seen), {str(48 * 2**20)})
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertAlmostEqual(due, SCRUB_NS["parse_iso"](status["last_completed"]["finished_at"]) + 30 * SCRUB_DAY)
+
+    def test_the_daily_budget_stops_and_the_next_day_resumes(self):
+        host = ScrubFakeHost(total=10**12)  # ~5.5 h at 48 MiB/s
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps({"enabled": True, "daily_hours": 2})
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)
+        self.assertEqual((status["state"], status["reason"]), ("paused", "daily time budget used"))
+        self.assertEqual(host.scrub, "interrupted")
+        # same day: nothing more
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "daily time budget used")
+        for _ in range(2):
+            host.t += SCRUB_DAY
+            status = self.run_once(host)
+        self.assertIn([SCRUB_NS["BTRFS"], "scrub", "resume", "/mnt/cocalc"], host.calls)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(sum(1 for c in host.calls if c[:3] == [SCRUB_NS["BTRFS"], "scrub", "start"]), 1)
+
+    def test_pressure_pauses_and_quiet_resumes(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+
+        def busy_after_10_min(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+
+        start = host.t
+        host.on_sleep = busy_after_10_min
+        status = self.run_once(host)
+        self.assertEqual((status["state"], status["reason"]), ("paused", "host I/O pressure"))
+        host.on_sleep = None
+        # still busy: doesn't resume
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "host I/O pressure")
+        host.psi = 0.5
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertIsNotNone(status["last_completed"])
+
+    def test_under_constant_pressure_it_becomes_overdue_not_skipped(self):
+        host = ScrubFakeHost(psi=20.0)
+        status = self.run_once(host)
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        host.t = scrub_night_after(due + 3 * SCRUB_DAY)
+        self.assertEqual(self.run_once(host)["state"], "paused")
+        host.t = scrub_night_after(due + 8 * SCRUB_DAY)
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "overdue")
+        self.assertEqual(status["reason"], "host I/O pressure")
+
+    def test_uncorrectable_errors_name_the_files(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        host.errors = {"csum_errors": 2, "uncorrectable_errors": 2}
+        host.kernel = (
+            "BTRFS warning (device sdb): checksum error at logical 123 on dev /dev/sdb, physical 456, root 5, inode 257, offset 0, length 4096, links 1 (path: project-x/data/a.csv)\n"
+            "BTRFS error (device sdb): unable to fixup (regular) error at logical 123 on dev /dev/sdb\n"
+            "BTRFS warning (device sdb): checksum error at logical 789 on dev /dev/sdb, physical 999, root 5, inode 258, offset 0, length 4096, links 1 (path: project-x/data/b.csv)\n"
+        )
+        status = self.run_once(host)
+        last = status["last_completed"]
+        self.assertEqual(last["errors"]["uncorrectable_errors"], 2)
+        self.assertEqual(last["error_paths"], ["project-x/data/a.csv", "project-x/data/b.csv"])
+        # every boot's kernel messages, not only this boot's (journalctl -k)
+        journal = [c for c in host.calls if c[0] == SCRUB_NS["JOURNALCTL"]]
+        self.assertIn("_TRANSPORT=kernel", journal[0])
+        self.assertNotIn("-k", journal[0])
+
+    def test_a_scrub_that_finished_unwatched_is_recorded_not_restarted(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.run_once(host)  # paused by the budget, progress kept
+        host.scrub = "finished"
+        host.done = host.total
+        host.t += SCRUB_DAY
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(sum(1 for c in host.calls if c[:3] == [SCRUB_NS["BTRFS"], "scrub", "start"]), 1)
+
+    def test_it_scrubs_only_where_enabled(self):
+        host = ScrubFakeHost()
+        del host.files["/etc/cocalc/btrfs-scrub.json"]
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "disabled")
+        self.assertIn("due_at", status)
+        self.assertFalse([c for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"])])
+        host.files["/etc/cocalc/btrfs-scrub.json"] = '{"enabled": false}'
+        self.assertEqual(self.run_once(host)["state"], "disabled")
+
+    def test_the_config_overrides_the_defaults(self):
+        host = ScrubFakeHost()
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "speed": 10 * 2**20, "period_days": 7, "daily_hours": "x"}
+        )
+        status = self.run_once(host)
+        self.assertLess(SCRUB_NS["parse_iso"](status["due_at"]), SCRUB_T0 + 7 * SCRUB_DAY)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.run_once(host)
+        self.assertEqual(set(host.speed_seen), {str(10 * 2**20)})
+
+    def test_runs_commands_only_by_absolute_path(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.run_once(host)
+        self.assertTrue(host.calls)
+        self.assertTrue(all(os.path.isabs(c[0]) for c in host.calls), host.calls)
+
+    def test_the_status_is_readable_by_its_group_only(self):
+        host = ScrubFakeHost()
+        self.run_once(host)
+        self.assertEqual(stat.S_IMODE(os.stat(self.dir).st_mode), 0o750)
+        path = os.path.join(self.dir, "status.json")
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o640)
+        self.assertEqual(os.stat(path).st_gid, os.getegid())
+        # a planted symlink is replaced, never followed
+        os.unlink(path)
+        target = os.path.join(self.dir, "elsewhere")
+        open(target, "w").close()
+        os.symlink(target, path)
+        self.run_once(host)
+        self.assertFalse(os.path.islink(path))
+        self.assertEqual(os.path.getsize(target), 0)
+
+    def test_a_config_root_doesnt_own_alone_counts_as_absent(self):
+        host = ScrubFakeHost()
+        host.untrusted = ("/etc/cocalc/btrfs-scrub.json",)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.assertEqual(self.run_once(host)["state"], "disabled")
+
+    def test_config_values_out_of_bounds_are_ignored(self):
+        host = ScrubFakeHost()
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "speed": 10 * 2**30, "daily_hours": 100, "period_days": 0.01}
+        )
+        status = self.run_once(host)
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertTrue(SCRUB_T0 <= due < SCRUB_T0 + 30 * SCRUB_DAY)
+        host.t = due + 1
+        self.run_once(host)
+        self.assertEqual(set(host.speed_seen), {str(48 * 2**20)})
+
+    def test_a_malformed_fsid_is_not_used_in_sysfs_paths(self):
+        host = ScrubFakeHost()
+        orig = host.run
+        host.run = lambda args: (0, "btrfs ../../x\n", "") if args[0] == SCRUB_NS["FINDMNT"] else orig(args)
+        self.assertEqual(self.run_once(host)["state"], "unsupported")
+
+    def test_its_own_scrub_left_running_is_watched_again(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+
+        def killed(h):
+            raise SystemExit(-9)  # as if SIGKILLed: nothing runs after this
+
+        host.on_sleep = killed
+        orig_cancel = host.run
+
+        def no_cancel(args):  # SIGKILL: finally never ran
+            if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+                return 0, "", ""
+            return orig_cancel(args)
+
+        host.run = no_cancel
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        self.assertEqual(host.scrub, "running")
+        host.run = orig_cancel
+        host.on_sleep = None
+        host.t += 3600
+        starts = sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"]))
+        status = self.run_once(host)
+        # adopted: throttled again, not started or resumed again
+        self.assertEqual(starts, sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"])))
+        self.assertEqual(set(host.speed_seen[-3:]), {str(48 * 2**20)})
+        self.assertIn(status["state"], ("idle", "paused"))
+
+    def test_its_own_scrub_left_running_is_cancelled_when_it_wont_be_watched(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(host.t)
+        status["current"] = {"started_at": status["first_seen_at"], "phase": "running"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub = "running"
+        host.psi = 20.0
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "host I/O pressure")
+        self.assertEqual(host.scrub, "interrupted")
+
+    def test_someone_elses_scrub_is_left_alone(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        host.scrub = "running"
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "a scrub not started by this service is running")
+        self.assertEqual(host.scrub, "running")
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+
+    def test_leaving_abnormally_cancels_the_scrub_and_restores_the_speed(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+
+        def terminated(h):
+            raise SystemExit(143)
+
+        host.on_sleep = terminated
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        self.assertIn([SCRUB_NS["BTRFS"], "scrub", "cancel", "/mnt/cocalc"], host.calls)
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+
+    def test_sigterm_exits_through_cleanup(self):
+        previous = signal.getsignal(signal.SIGTERM)
+        try:
+            self.run_once(ScrubFakeHost())
+            handler = signal.getsignal(signal.SIGTERM)
+            with self.assertRaises(SystemExit):
+                handler(signal.SIGTERM, None)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+
+    def test_night_is_where_the_host_is(self):
+        host = ScrubFakeHost()
+        host.zone = "us-west2-a"
+        status = self.run_once(host)
+        self.assertEqual(status["night"]["timezone"], "America/Los_Angeles")
+        self.assertEqual(status["night"]["source"], "zone us-west2-a")
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        # midnight UTC is afternoon in Los Angeles: not night there
+        import datetime, zoneinfo
+        host.t = scrub_night_after(due)
+        la = zoneinfo.ZoneInfo("America/Los_Angeles")
+        while datetime.datetime.fromtimestamp(host.t, la).hour < 6:
+            host.t += 3600  # make it daytime there
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "outside the night window")
+        self.assertFalse([c for c in host.calls if c[:3] == [SCRUB_NS["BTRFS"], "scrub", "start"]])
+        host.t = scrub_night_after(host.t, "America/Los_Angeles")
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertIsNotNone(status["last_completed"])
+
+    def test_timezone_sources(self):
+        host = ScrubFakeHost()
+        self.assertEqual(SCRUB_NS["zone_timezone"]("asia-southeast1-b"), "Asia/Singapore")
+        self.assertEqual(SCRUB_NS["zone_timezone"]("europe-west3-c"), "Europe/Berlin")
+        self.assertEqual(SCRUB_NS["zone_timezone"]("asia-newplace9-a"), "Asia/Singapore")
+        self.assertIsNone(SCRUB_NS["zone_timezone"]("mars-1-a"))
+        # config override first, then the zone, then a non-UTC system zone
+        host.zone = "asia-northeast1-a"
+        self.assertEqual(SCRUB_NS["host_timezone"](host, "Europe/Paris")[1:3], ("Europe/Paris", "config"))
+        self.assertEqual(SCRUB_NS["host_timezone"](host, "")[1], "Asia/Tokyo")
+        host.zone = None
+        host.systz = "America/New_York"
+        self.assertEqual(SCRUB_NS["host_timezone"](host, "Not/AZone")[1:3], ("America/New_York", "system"))
+        host.systz = "Etc/UTC"
+        name, source, warning = SCRUB_NS["host_timezone"](host, "")[1:]
+        self.assertEqual((name, source), ("UTC", "fallback"))
+        self.assertTrue(warning)
+
+    def test_the_night_window_ends_a_scrub(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps({"enabled": True, "night_hours": 2})
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "outside the night window")
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertLessEqual(host.t - start, 2 * 3600 + 120)
+
+    def test_a_new_filesystem_starts_its_schedule_over(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)
+        self.assertIsNotNone(status["last_completed"])
+        # the data disk is replaced: a new fsid at the same mount
+        other = "99999999-8888-7777-6666-555555555555"
+        orig = host.run
+        host.run = lambda args: (0, "btrfs %s\n" % other, "") if args[0] == SCRUB_NS["FINDMNT"] else orig(args)
+        host.dirs = {k.replace(SCRUB_FSID, other): v for k, v in host.dirs.items()}
+        host.files = {k.replace(SCRUB_FSID, other): v for k, v in host.files.items()}
+        status = self.run_once(host)
+        self.assertEqual(status["fsid"], other)
+        self.assertNotIn("last_completed", status)
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertTrue(host.t <= due < host.t + 30 * SCRUB_DAY)
+
+    def test_a_failed_cancel_keeps_watching_and_keeps_the_throttle(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def busy(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+                h.cancel_fails = True
+
+        host.on_sleep = busy
+        self.run_once(host, "--daily-hours", "1")
+        # it couldn't stop the scrub: it watched on to the budget, and kept
+        # the throttle when it had to give up
+        self.assertEqual(host.scrub, "running")
+        knob = host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID]
+        self.assertEqual(knob, str(48 * 2**20))
+        with open(os.path.join(self.dir, "status.json")) as f:
+            status = json.load(f)
+        self.assertEqual(status["state"], "error")
+        self.assertEqual(status["current"]["phase"], "running")
+        # once cancel works again, the next run adopts and stops it
+        host.on_sleep = None
+        host.cancel_fails = False
+        host.t += 3600
+        self.run_once(host)
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+
+    def test_a_manual_scrub_after_a_paused_slice_is_not_taken_over(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(status["current"]["phase"], "interrupted")
+        # an admin starts a scrub by hand before the next run
+        host.scrub = "running"
+        host.t += SCRUB_DAY
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "a scrub not started by this service is running")
+        self.assertEqual(host.scrub, "running")
+        self.assertNotIn([SCRUB_NS["BTRFS"], "scrub", "resume", "/mnt/cocalc"], host.calls[-5:])
+
+    def test_next_due_brings_one_scrub_forward(self):
+        host = ScrubFakeHost()
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "next_due": SCRUB_NS["iso"](SCRUB_T0 + 3600)}
+        )
+        status = self.run_once(host)
+        self.assertEqual(SCRUB_NS["parse_iso"](status["due_at"]), SCRUB_T0 + 3600)
+        host.t = scrub_night_after(SCRUB_T0 + 3600)
+        status = self.run_once(host)
+        self.assertIsNotNone(status["last_completed"])
+        # the key is still there, but done with: back to the normal period
+        status = self.run_once(host)
+        finished = SCRUB_NS["parse_iso"](status["last_completed"]["finished_at"])
+        self.assertEqual(SCRUB_NS["parse_iso"](status["due_at"]), finished + 30 * SCRUB_DAY)
+
+    def test_the_night_window_keeps_wall_clock_times_across_dst(self):
+        import datetime, zoneinfo
+        la = zoneinfo.ZoneInfo("America/Los_Angeles")
+        # 2026-03-08: clocks jump from 02:00 to 03:00 in Los Angeles
+        now = datetime.datetime(2026, 3, 8, 0, 30, tzinfo=la).timestamp()
+        start, end = SCRUB_NS["night_window"](now, la, 0, 6)
+        self.assertEqual(datetime.datetime.fromtimestamp(end, la).hour, 6)
+        self.assertEqual(end - start, 5 * 3600)
+
+    def test_a_kept_throttle_restores_only_this_filesystems_knobs(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.files[knob] = str(48 * 2**20)  # left on by a run that gave up
+        host.files["/etc/cron.d/x"] = "original"
+        status["throttle_restore"] = {knob: "0", "/etc/cron.d/x": "* * * * * root evil"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        status = self.run_once(host)
+        self.assertEqual(host.files[knob], "0")
+        self.assertEqual(host.files["/etc/cron.d/x"], "original")
+        self.assertNotIn("throttle_restore", status)
+        # a non-numeric value for the real knob isn't written either
+        host.files[knob] = str(48 * 2**20)
+        status["throttle_restore"] = {knob: "0; reboot"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        self.run_once(host)
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+
+    def test_after_a_sigkill_the_original_throttle_is_restored(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        # the state a SIGKILLed run leaves: phase running, the scrub running,
+        # the knob at our throttle, the original saved
+        status["current"] = {"started_at": SCRUB_NS["iso"](host.t), "phase": "running"}
+        status["throttle_restore"] = {knob: "0"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub, host.done = "running", 10**12
+        host.files[knob] = str(48 * 2**20)
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(host.files[knob], "0")
+        self.assertNotIn("throttle_restore", status)
+
+    def test_an_unreadable_status_never_confirms_a_cancel(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def broken(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+                h.cancel_fails = True
+                h.status_fails = True
+
+        host.on_sleep = broken
+        self.run_once(host, "--daily-hours", "1")
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        self.assertEqual(host.scrub, "running")
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+        # and a run that can't read the status starts nothing
+        host.on_sleep = None
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "btrfs scrub status unavailable")
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+
+    def test_an_orphan_that_cant_be_cancelled_is_an_error_not_silence(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        status["current"] = {"started_at": status["first_seen_at"], "phase": "running"}
+        status["throttle_restore"] = {knob: "0"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub = "running"
+        host.files[knob] = str(48 * 2**20)
+        host.cancel_fails = True
+        host.t = scrub_night_after(host.t) + 7 * 3600  # outside the night window
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+        self.assertIn("throttle_restore", status)
+
+    def test_runtime_is_counted_even_if_the_run_is_stopped(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def stopped_after_an_hour(h):
+            if h.t - start >= 3600:
+                raise SystemExit(143)
+
+        host.on_sleep = stopped_after_an_hour
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        with open(os.path.join(self.dir, "status.json")) as f:
+            status = json.load(f)
+        self.assertGreaterEqual(status["runtime_today_s"], 3540)
+
+    def test_the_original_throttle_is_saved_before_the_knob_changes(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.files[knob] = "123456789"  # an admin's setting
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        saved_at_write = []
+        orig_write = host.write
+
+        def write(path, text):
+            if path == knob and text != "123456789":
+                # the moment of the cap: what a SIGKILL right after it leaves
+                with open(os.path.join(self.dir, "status.json")) as f:
+                    saved_at_write.append(f.read())
+            orig_write(path, text)
+
+        host.write = write
+        self.run_once(host)
+        self.assertTrue(saved_at_write)
+        crashed = json.loads(saved_at_write[0])
+        self.assertEqual(crashed["throttle_restore"], {knob: "123456789"})
+        # a new run, from that state (capped knob, nothing scrubbing)
+        host.write = orig_write
+        host.files[knob] = str(48 * 2**20)
+        host.scrub = "interrupted"
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(crashed, f)
+        host.t += 7 * 3600  # outside the night: it only cleans up
+        status = self.run_once(host)
+        self.assertEqual(host.files[knob], "123456789")
+        self.assertNotIn("throttle_restore", status)
+
+    def test_an_error_stays_an_error_when_overdue(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        status["current"] = {"started_at": status["first_seen_at"], "phase": "running"}
+        status["throttle_restore"] = {knob: "0"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub = "running"
+        host.cancel_fails = True
+        host.t = scrub_night_after(due + 10 * SCRUB_DAY) + 7 * 3600  # overdue, and daytime
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertIn("overdue_since", status)
+
+    def test_a_throttle_it_couldnt_restore_is_kept_and_retried(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.files[knob] = "123456789"  # an admin's setting
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        orig_write = host.write
+
+        def write(path, text):
+            if path == knob and text == "123456789":
+                raise OSError(path)  # the restore fails, for now
+            orig_write(path, text)
+
+        host.write = write
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(status["throttle_restore"], {knob: "123456789"})
+        # the next day's slice starts with the knob still capped: the original
+        # value is what it keeps, not the cap
+        host.t += SCRUB_DAY
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(status["throttle_restore"], {knob: "123456789"})
+        # once the write works, the next run puts it back
+        host.write = orig_write
+        host.t += 3600
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(host.files[knob], "123456789")
+        self.assertNotIn("throttle_restore", status)
+
+    def test_no_scrub_runs_unless_every_device_is_capped(self):
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        start = [SCRUB_NS["BTRFS"], "scrub", "start", "/mnt/cocalc"]
+        # a knob that can't be written
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        orig_write = host.write
+
+        def write(path, text):
+            if path == knob:
+                raise OSError(path)
+            orig_write(path, text)
+
+        host.write = write
+        status = self.run_once(host)
+        self.assertEqual((status["state"], status["reason"]), ("error", "the scrub speed could not be capped"))
+        self.assertNotIn(start, host.calls)
+        self.assertEqual(host.files[knob], "0")
+        # a second device without a knob: the first one isn't touched either
+        host = ScrubFakeHost()
+        host.dirs["/sys/fs/btrfs/%s/devinfo" % SCRUB_FSID] = ["1", "2"]
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertNotIn(start, host.calls)
+        self.assertEqual(host.files[knob], "0")
+        # our own scrub, left running, that can't be capped is cancelled
+        status["current"] = {"started_at": SCRUB_NS["iso"](host.t), "phase": "running"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub, host.done = "running", 10**9
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual(status["current"]["phase"], "interrupted")
+
+    def test_a_scrub_stopped_by_the_last_cancel_is_reported_paused(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def busy(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+
+        host.on_sleep = busy
+        host.cancel_fails = True
+        cancels = []
+        orig_run = host.run
+
+        def run(args):
+            if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+                # the loop's cancels fail until it gives up; the last one works
+                cancels.append(args)
+                host.cancel_fails = len(cancels) <= 10
+            return orig_run(args)
+
+        host.run = run
+        status = self.run_once(host)
+        self.assertEqual(len(cancels), 11)
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual((status["state"], status["reason"]), ("paused", "the scrub was stopped as this run ended"))
+        self.assertEqual(status["current"]["phase"], "interrupted")
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+
+    def test_a_night_that_crosses_utc_midnight_is_one_budget(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "daily_hours": 2, "night_start_hour": 22}
+        )
+        status = self.run_once(host)
+        # 23:30 UTC, in the 22:00-04:00 night: 2 h of scrubbing, to 01:30
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]), start_hour=22) + 5400
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "daily time budget used")
+        starts = sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"]))
+        # an hour later, a new UTC day but the same night: nothing more
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "daily time budget used")
+        self.assertEqual(
+            sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"])),
+            starts,
+        )
+        # the next night has its own budget
+        host.t += SCRUB_DAY
+        self.run_once(host)
+        self.assertIn([SCRUB_NS["BTRFS"], "scrub", "resume", "/mnt/cocalc"], host.calls)
+
+    def test_an_overdue_scrub_stopped_by_the_last_cancel_stays_overdue(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]) + 10 * SCRUB_DAY)
+        start = host.t
+
+        def busy(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+
+        host.on_sleep = busy
+        host.cancel_fails = True
+        cancels = []
+        orig_run = host.run
+
+        def run(args):
+            if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+                cancels.append(args)
+                host.cancel_fails = len(cancels) <= 10
+            return orig_run(args)
+
+        host.run = run
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "overdue")
+        self.assertIn("overdue_since", status)
+        self.assertEqual(host.scrub, "interrupted")
+
+    def test_a_run_killed_before_its_start_doesnt_count_the_last_scrub(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)  # the first scrub completes
+        self.assertEqual(host.scrub, "finished")
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        orig_run = host.run
+        start = [SCRUB_NS["BTRFS"], "scrub", "start", "/mnt/cocalc"]
+
+        def killed_at_start(args):
+            if args == start:
+                raise SystemExit(137)  # after current was saved, before the start
+            return orig_run(args)
+
+        host.run = killed_at_start
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        host.run = orig_run
+        # the kernel still says "finished" (the last scrub): a new one runs
+        host.t += 600
+        resumed_at = host.t
+        status = self.run_once(host)
+        self.assertEqual(sum(1 for c in host.calls if c == start), 2)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(status["last_completed"]["started_at"], SCRUB_NS["iso"](resumed_at))
+
+    def test_not_btrfs_is_reported_and_nothing_runs(self):
+        host = ScrubFakeHost()
+        host.run = lambda args: (0, "ext4 abc\n", "")
+        self.assertEqual(self.run_once(host)["state"], "unsupported")
+
+    def test_default_speed_without_balanced_capacity(self):
+        host = ScrubFakeHost()
+        host.read = lambda path, orig=host.read: (_ for _ in ()).throw(OSError(path)) if path.endswith("project-io-capacity.json") else orig(path)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.run_once(host)
+        self.assertEqual(set(host.speed_seen), {str(50 * 2**20)})
+
+
+class BtrfsScrubInstallTest(unittest.TestCase):
+    def test_installs_an_hourly_timer_for_a_root_oneshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            paths = {
+                "script_path": Path(tmpdir) / "cocalc-btrfs-scrub",
+                "service_path": Path(tmpdir) / "cocalc-btrfs-scrub.service",
+                "timer_path": Path(tmpdir) / "cocalc-btrfs-scrub.timer",
+            }
+            recorded = []
+            with mock.patch.object(
+                bootstrap,
+                "run_cmd",
+                lambda _cfg, args, desc, **kwargs: recorded.append(args)
+                or subprocess.CompletedProcess(args, 0, stdout=""),
+            ), mock.patch.object(bootstrap, "log_line", lambda *_a, **_k: None):
+                bootstrap.configure_btrfs_scrub(cfg, **paths)
+            self.assertEqual(
+                paths["script_path"].read_text(), bootstrap.BTRFS_SCRUB_SCRIPT
+            )
+            self.assertEqual(oct(paths["script_path"].stat().st_mode & 0o777), "0o755")
+            unit = paths["service_path"].read_text()
+            self.assertIn("Type=oneshot", unit)
+            self.assertIn("TimeoutStartSec=25h", unit)
+            self.assertIn("--status-dir /var/lib/cocalc-btrfs-scrub", unit)
+            self.assertIn("--status-group " + cfg.ssh_user, unit)
+            self.assertIn("Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin", unit)
+            self.assertIn("ProtectSystem=full", unit)
+            self.assertIn("ProtectHome=yes", unit)
+            self.assertIn("RestrictSUIDSGID=yes", unit)
+            self.assertIn("ConditionPathIsMountPoint=/mnt/cocalc", unit)
+            self.assertNotIn("User=", unit)
+            timer = paths["timer_path"].read_text()
+            self.assertIn("OnCalendar=hourly", timer)
+            self.assertIn("Persistent=true", timer)
+            # the timer, not the scrub itself
+            self.assertIn(
+                ["systemctl", "enable", "--now", "cocalc-btrfs-scrub.timer"], recorded
+            )
+            self.assertFalse(
+                [a for a in recorded if "cocalc-btrfs-scrub.service" in a]
+            )
+
+    def test_reconcile_installs_it(self) -> None:
+        source = inspect.getsource(bootstrap)
+        self.assertEqual(source.count("configure_btrfs_scrub(cfg)"), 2)
+
+    def test_matches_bootstraps_disk_capacity_formula(self) -> None:
+        policy = {"__name__": "project_io_policy_test"}
+        exec(bootstrap.PROJECT_IO_POLICY_HELPER, policy)
+        for size in (100 * 2**30, 500 * 2**30, 1000 * 10**9, 4000 * 2**30):
+            self.assertEqual(
+                SCRUB_NS["balanced_read_bps"](size),
+                policy["balanced_device_capacity"](
+                    {"provider": "gcp", "disk_type": "balanced", "size_bytes": size}
+                )["physical_read_bps"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
