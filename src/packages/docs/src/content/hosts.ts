@@ -1440,9 +1440,9 @@ weekly and 4 monthly. A new snapshot or backup is only made when something
 changed. Project owners can change these schedules, and can allow
 collaborators to manage them.
 
-Scheduled snapshots and backups are background work. They run at low I/O
-priority so they do not slow down your project, which also means they can be
-delayed when the host is busy. CoCalc tracks overdue snapshots and backups
+Scheduled snapshots and backups are background work. They run with
+constrained CPU and I/O to reduce interference with running projects, which
+also means they can be delayed when the host is busy. CoCalc tracks overdue snapshots and backups
 and works through them as the host frees up.
 
 ## How a backup is made
@@ -1464,7 +1464,9 @@ and works through them as the host frees up.
 
 ## What you can rely on
 
-- **A changed file is always backed up again.** The unchanged-file check uses
+- **An included file whose contents or metadata change is re-read.** Files
+  over the backup file-size limit are the exception (see below). The
+  unchanged-file check uses
   the ctime, which the Linux kernel updates on every change to a file's
   contents or metadata and which programs cannot set back. Even a tool that
   restores a file's old modification time after editing it changes the ctime.
