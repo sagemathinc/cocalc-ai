@@ -1013,9 +1013,9 @@ export function createStorageAdmissionController(
     const admitted =
       mode !== "enforce" || !wouldDefer || starvationOverride || recoveryPaced;
     if (admitted) {
-      if (starvationOverride && !besideBackupOverride) {
-        starvationOverrideKind = operation_kind;
+      if (starvationOverride) {
         starvationOverrideTotal += 1;
+        if (!besideBackupOverride) starvationOverrideKind = operation_kind;
       }
       if (recoveryPaced) {
         recoveryPacedActive = true;

@@ -1309,6 +1309,8 @@ describe("storage admission controller", () => {
       admitted: true,
       starvation_override: true,
     });
+    // Both are override admissions.
+    expect(controller.getStatus().starvation_override_total).toBe(2);
     expect(
       controller.backgroundDeferralReason({ allow_starvation_override: true }),
     ).toBeUndefined();
