@@ -718,7 +718,7 @@ describe("hub API argument transforms", () => {
     expect(projectArgs[0]).not.toHaveProperty("account_id");
 
     const hostArgs = await transformArgs({
-      name: "system.getProjectAppPrivateHostnamePolicy",
+      name: "db.saveBlob",
       args: [
         {
           account_id: "victim-account",
@@ -879,7 +879,6 @@ describe("hub API argument transforms", () => {
 
   it("restricts managed metering RPCs to project or host principals", async () => {
     const rpcNames = [
-      "system.recordManagedProjectEgress",
       "system.getManagedProjectEgressPolicy",
       "system.recordManagedProjectCpuUsage",
     ];
@@ -939,6 +938,38 @@ describe("hub API argument transforms", () => {
     }
   });
 
+  it("accepts managed egress reports only from hosts", async () => {
+    // The host measures the egress it serves; a project's own byte count is
+    // never trusted.
+    const name = "system.recordManagedProjectEgress";
+    const report = {
+      project_id: "spoofed-project",
+      host_id: "spoofed-host",
+      account_id: "account-for-download-attribution",
+      category: "file-download",
+      bytes: 1,
+    };
+    const hostArgs = await transformArgs({
+      name,
+      args: [{ ...report }],
+      host_id: "host-1",
+    });
+    expect(hostArgs[0].host_id).toBe("host-1");
+    expect(hostArgs[0].project_id).toBe("spoofed-project");
+    expect(hostArgs[0].account_id).toBeUndefined();
+
+    await expect(
+      transformArgs({
+        name,
+        args: [{ ...report }],
+        project_id: "project-1",
+      }),
+    ).rejects.toThrow("must be a host");
+    await expect(
+      transformArgs({ name, args: [{ ...report }], account_id: "acct-1" }),
+    ).rejects.toThrow("must be a host");
+  });
+
   it("requires account auth for name and local UI helpers without reshaping args", async () => {
     const cases = [
       {
@@ -981,48 +1012,13 @@ describe("hub API argument transforms", () => {
     }
   });
 
-  it("registers private app hostname RPCs and injects caller identities", async () => {
-    const rpcNames = [
-      "system.getProjectAppPrivateHostnamePolicy",
-      "system.inspectProjectAppPrivateHostname",
-      "system.listProjectAppPrivateHostnames",
-      "system.tracePrivateAppHostname",
-      "system.reserveProjectAppPrivateHostname",
-      "system.releaseProjectAppPrivateHostname",
-      "system.reconcileProjectAppPrivateHostnames",
-    ];
-
-    for (const name of rpcNames) {
-      const args = await transformArgs({
-        name,
-        args: [{ project_id: "project-1", app_id: "app-1" }],
-        account_id: "account-1",
-      });
-      expect(args[0].account_id).toBe("account-1");
-    }
-
-    for (const name of [
-      "system.getProjectAppPrivateHostnamePolicy",
-      "system.inspectProjectAppPrivateHostname",
-      "system.listProjectAppPrivateHostnames",
-      "system.reserveProjectAppPrivateHostname",
-      "system.releaseProjectAppPrivateHostname",
-    ]) {
-      await expect(
-        transformArgs({
-          name,
-          args: [{ project_id: "spoofed-project", app_id: "app-1" }],
-          project_id: "project-1",
-        }),
-      ).resolves.toEqual([{ project_id: "project-1", app_id: "app-1" }]);
-    }
-
+  it("keeps the retired private-hostname release callable by old projects, with the caller's project", async () => {
     await expect(
       transformArgs({
-        name: "system.tracePrivateAppHostname",
-        args: [{ host_id: "spoofed-host", hostname: "dev-1.example.com" }],
-        host_id: "host-1",
+        name: "system.releaseProjectAppPrivateHostname",
+        args: [{ project_id: "spoofed-project", app_id: "app-1" }],
+        project_id: "project-1",
       }),
-    ).resolves.toEqual([{ host_id: "host-1", hostname: "dev-1.example.com" }]);
+    ).resolves.toEqual([{ project_id: "project-1", app_id: "app-1" }]);
   });
 });

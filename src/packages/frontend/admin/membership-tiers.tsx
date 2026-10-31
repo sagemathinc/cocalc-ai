@@ -532,9 +532,6 @@ export function tierToFormValues(tier: Partial<Tier>) {
         : tier.features?.project_network === false
           ? "block"
           : "default",
-    feature_private_app_hostnames_per_project: normalizedOptionalNumber(
-      tier.features?.private_app_hostnames_per_project,
-    ),
     ai_limit_units_5h: normalizedOptionalNumber(tier.ai_limits?.units_5h),
     ai_limit_units_7d: normalizedOptionalNumber(tier.ai_limits?.units_7d),
     usage_limit_shared_compute_priority: normalizedOptionalNumber(
@@ -659,11 +656,6 @@ export function buildMembershipTierPayload(values): AdminMembershipTierPayload {
     features,
     "project_host_tier",
     values.feature_project_host_tier,
-  );
-  setOrDeleteNumber(
-    features,
-    "private_app_hostnames_per_project",
-    values.feature_private_app_hostnames_per_project,
   );
   setOrDeleteNumber(ai_limits, "units_5h", values.ai_limit_units_5h);
   setOrDeleteNumber(ai_limits, "units_7d", values.ai_limit_units_7d);
@@ -1932,10 +1924,6 @@ export function MembershipTiers() {
                   get("usage_limit_max_sponsored_running_projects"),
                   " running projects",
                 ),
-                valueText(
-                  get("feature_private_app_hostnames_per_project"),
-                  " private app URLs",
-                ),
                 get("feature_project_network") === "allow"
                   ? "internet access"
                   : get("feature_project_network") === "block"
@@ -2006,23 +1994,6 @@ export function MembershipTiers() {
                     >
                       <InputNumber
                         min={0}
-                        step={1}
-                        precision={0}
-                        style={compactInputStyle}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="feature_private_app_hostnames_per_project"
-                      label="Private app URLs per project"
-                      extra={fieldHelp(
-                        "Maximum platform-managed private app hostnames attributed to this membership tier. Zero disables creation.",
-                      )}
-                    >
-                      <InputNumber
-                        min={0}
-                        max={30}
                         step={1}
                         precision={0}
                         style={compactInputStyle}

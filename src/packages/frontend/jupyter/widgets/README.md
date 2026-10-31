@@ -22,5 +22,5 @@ The communication between the node.js process above and any number of browser cl
 The most important files in CoCalc, relevant to implementation of ipywidgets:
 
 - `packages/sync/editor/generic/ipywidgets-state.ts` \- runs in the node.js process and browser clients and manages RTC between them \(see also `jupyter/browser-actions.ts` and `jupyter/project-actions.ts`, which refers to `ipywidgets_state).`
-- `packages/frontend/jupyter/widgets/manager.ts` \- keeps track of incoming widget information.
-- `packages/frontend/jupyter/output-messages/ipywidget.tsx` \- renders widgets using React \+ Lumino
+- `packages/frontend/jupyter/widgets/frame/` \- widgets never run in the app page. Each displayed widget renders in its own sandboxed frame with an opaque origin (`/static/widget-host.html`, see `host.ts`), which runs its own widget manager (`widget-manager.ts`) over a copy of the notebook's widget state. The app page's relay (`relay.ts`) is the only thing a frame can talk to: it forwards state, and checks every write and kernel message a frame asks for (`protocol.ts`).
+- `packages/frontend/jupyter/output-messages/ipywidget.tsx` \- shows a widget output as a widget frame (`frame/widget-frame.tsx`)

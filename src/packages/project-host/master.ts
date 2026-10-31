@@ -50,6 +50,7 @@ import {
   invalidateBackupConfig,
   releaseProjectArchiveFreeze,
 } from "./file-server";
+import { getHostIntegrity, refreshHostIntegrity } from "./host-integrity";
 import { getInstalledRuntimeArtifacts, getSoftwareVersions } from "./software";
 import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
 import { upgradeSoftware } from "./upgrade";
@@ -2228,6 +2229,7 @@ export async function startMasterRegistration({
         runtime_health: runtimeHealth.getSnapshot(),
         acp_worker_health: acpWorkerHealth,
         bees: fileServerStatus?.bees,
+        host_integrity: getHostIntegrity(),
         observed_components: observedComponents,
         rootfs_scanner: rootfsScanner,
         software: versions,
@@ -2253,6 +2255,7 @@ export async function startMasterRegistration({
     } catch (err) {
       logger.debug("unable to refresh placement cache inventory", { err });
     }
+    await refreshHostIntegrity();
     void refreshCloudflaredDiagnostic().catch((err) => {
       logger.debug("cloudflared diagnostic refresh failed", { err });
     });

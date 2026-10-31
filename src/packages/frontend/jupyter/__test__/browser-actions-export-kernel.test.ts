@@ -1,6 +1,8 @@
 /** @jest-environment jsdom */
 jest.mock("@cocalc/frontend/webapp-client", () => ({ webapp_client: {} }));
-jest.mock("../widgets/manager", () => ({ WidgetManager: class {} }));
+jest.mock("../widgets/frame/relay", () => ({
+  WidgetRelay: class WidgetRelay {},
+}));
 jest.mock("../download-html", () => ({ downloadHTML: jest.fn() }));
 
 import { fromJS } from "immutable";

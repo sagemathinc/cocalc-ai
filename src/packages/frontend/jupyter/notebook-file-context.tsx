@@ -17,10 +17,8 @@ text/html output has its own path (output-messages/html-output.tsx, trust-free
 step 2a): faithful HTML renders inline under this context, and anything that
 sanitizing would change renders in an opaque frame, whatever the trust.
 
-Exception:
-- ipywidgets render in their own React root with their own context
-  (widgets/manager.ts, sanitized only when untrusted), until widgets get their own path
-  (step 4).
+ipywidgets don't render under this context at all: each widget renders in its
+own opaque frame (widgets/frame/).
 */
 
 import type { ReactNode } from "react";

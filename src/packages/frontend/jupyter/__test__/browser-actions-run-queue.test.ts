@@ -18,8 +18,8 @@ jest.mock("@cocalc/frontend/monitoring/ux-latency-trace", () => ({
   },
 }));
 
-jest.mock("../widgets/manager", () => ({
-  WidgetManager: class WidgetManager {},
+jest.mock("../widgets/frame/relay", () => ({
+  WidgetRelay: class WidgetRelay {},
 }));
 
 import { JupyterActions } from "../browser-actions";
@@ -59,8 +59,11 @@ describe("JupyterActions run queue cleanup", () => {
     actions._set = jest.fn();
     actions.syncdb = { save: jest.fn() };
 
+    actions.set_trust_notebook = jest.fn();
     actions.runningNow = true;
     await actions.runCells(["empty"]);
+    // Running a cell never marks the notebook trusted.
+    expect(actions.set_trust_notebook).not.toHaveBeenCalled();
 
     expect(state.get("pendingCells").has("empty")).toBe(true);
     expect(state.getIn(["cells", "empty", "state"])).toBe("run");
