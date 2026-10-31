@@ -139,13 +139,12 @@ export async function mintSagebrushAdminGrantLocal({
   if (s == null) return null;
   const factor = seconds(s.factor_verified_at);
   if (factor !== factor_verified_at) return null;
-  const expires_at = liveExpiry({
-    factor,
-    expire: seconds(s.expire),
-    fresh_until: seconds(s.fresh_auth_until),
-    now: clock() / 1000,
-  });
-  if (expires_at == null) return null;
+  // (the issue-time checks and formula, kept apart from the live ones below so that each has its own control)
+  const now = clock() / 1000, expire = seconds(s.expire), fresh_until = seconds(s.fresh_auth_until);
+  if (expire == null || !(now < expire)) return null;
+  if (fresh_until == null || !(now < fresh_until)) return null;
+  if (!(factor <= now && now < factor + FACTOR_SECONDS)) return null;
+  const expires_at = Math.floor(Math.min(factor + FACTOR_SECONDS, expire, fresh_until));
   const grant_id = randomBytes(24).toString("base64url");
   // (expired grants go a day after their expiry, here, as codes go when new ones are stored)
   await getPool().query(`DELETE FROM sagebrush_admin_grants WHERE expires_at < NOW() - INTERVAL '1 day'`);
