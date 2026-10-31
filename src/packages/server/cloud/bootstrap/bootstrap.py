@@ -3625,6 +3625,30 @@ DEFAULT_RUNTIME_EXES = (
     "newuidmap",
     "newgidmap",
 )
+# Placement rules: processes with these uids must run in one of these cgroups
+# (prefixes; "{runtime_uid}" is replaced), or, with container_mount_ns_ok, in a
+# mount namespace other than the host's (inside a container). "uids" is
+# "runtime", "subordinate" or a list of [start, count] ranges. More rules come
+# from the allowlist file's "placement_rules", e.g. for a dedicated project uid.
+DEFAULT_PLACEMENT_RULES = (
+    {
+        "name": "runtime-user-outside-expected-cgroups",
+        "severity": "high",
+        "uids": "runtime",
+        "allowed_cgroups": [
+            "/cocalc-host-services",
+            "/cocalc-project-pool",
+            "/cocalc-project-startup",
+            "/cocalc-maintenance",
+            "/user.slice/user-{runtime_uid}.slice",
+            "/system.slice/cocalc-project-host-watchdog.service",
+        ],
+        "container_mount_ns_ok": False,
+    },
+)
+# Root-owned service cgroups whose scripts run as the runtime user: any program
+# there is expected (the runtime user cannot move a process into them).
+DEFAULT_SCRIPT_CGROUPS = ("/system.slice/cocalc-project-host-watchdog.service",)
 # Host configuration whose changes are reported (globs; files up to 1 MB).
 DEFAULT_CONFIG_PATHS = (
     "/etc/passwd",
@@ -3699,15 +3723,16 @@ def in_ranges(uid, ranges):
 class Proc:
     """What the rules need from one /proc/<pid>, and nothing else."""
 
-    __slots__ = ("pid", "ppid", "comm", "uids", "exe", "userns", "cgroup")
+    __slots__ = ("pid", "ppid", "comm", "uids", "exe", "userns", "mntns", "cgroup")
 
-    def __init__(self, pid, ppid, comm, uids, exe, userns, cgroup):
+    def __init__(self, pid, ppid, comm, uids, exe, userns, cgroup, mntns=None):
         self.pid = pid
         self.ppid = ppid
         self.comm = comm
         self.uids = uids
         self.exe = exe
         self.userns = userns
+        self.mntns = mntns
         self.cgroup = cgroup
 
 
@@ -3740,7 +3765,8 @@ def read_proc(proc_root, pid):
         if line.startswith("0::"):
             cgroup = line[3:][:200]
             break
-    return Proc(pid, ppid, comm, uids, exe, userns, cgroup)
+    mntns = read_link(os.path.join(base, "ns", "mnt"))
+    return Proc(pid, ppid, comm, uids, exe, userns, cgroup, mntns)
 
 
 def list_procs(proc_root):
@@ -3795,14 +3821,84 @@ def parent_chain(procs, proc):
     return chain
 
 
+def compile_placement_rules(rules, runtime_uid, project_ranges):
+    """Rules with their uid ranges and cgroup prefixes resolved; invalid
+    rules are skipped."""
+    compiled = []
+    for rule in rules:
+        if not isinstance(rule, dict) or not rule.get("name"):
+            continue
+        spec = rule.get("uids")
+        if spec == "runtime":
+            ranges = [(runtime_uid, 1)]
+        elif spec == "subordinate":
+            ranges = list(project_ranges)
+        elif isinstance(spec, list):
+            try:
+                ranges = [(int(a), int(b)) for a, b in spec]
+            except (TypeError, ValueError):
+                continue
+        else:
+            continue
+        prefixes = [
+            str(p).replace("{runtime_uid}", str(runtime_uid)).rstrip("/")
+            for p in rule.get("allowed_cgroups", [])
+        ]
+        compiled.append(
+            {
+                "name": str(rule["name"]),
+                "severity": str(rule.get("severity", "high")),
+                "ranges": ranges,
+                "prefixes": prefixes,
+                "container_mount_ns_ok": bool(rule.get("container_mount_ns_ok")),
+            }
+        )
+    return compiled
+
+
+def cgroup_allowed(cgroup, prefixes):
+    return any(cgroup == p or cgroup.startswith(p + "/") for p in prefixes)
+
+
+def placement_violation(p, rule, host_mntns):
+    if not any(in_ranges(u, rule["ranges"]) for u in p.uids):
+        return False
+    if cgroup_allowed(p.cgroup, rule["prefixes"]):
+        return False
+    if rule["container_mount_ns_ok"] and p.mntns and p.mntns != host_mntns:
+        return False
+    return True
+
+
 def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
-             runtime_exes, self_pid):
+             runtime_exes, self_pid, placement_rules=(), host_mntns=None,
+             script_cgroups=()):
     """Returns (findings, inventory keys) for one scan. A finding is a dict
     without any command line, environment or file content."""
     findings, inventory, cache = [], [], {}
+
+    def finding(p, rule, severity, kind):
+        return {
+            "rule": rule,
+            "severity": severity,
+            "pid": p.pid,
+            "comm": p.comm,
+            "exe": p.exe or "",
+            "uids": list(p.uids),
+            "userns": kind,
+            "parents": parent_chain(procs, p),
+            "cgroup": p.cgroup,
+        }
+
     for p in procs.values():
         if p.pid == self_pid:
             continue
+        for rule in placement_rules:
+            if placement_violation(p, rule, host_mntns):
+                kind = userns_kind(
+                    proc_root, p.userns, p.pid, host_ns, runtime_uid, cache
+                )
+                findings.append(finding(p, rule["name"], rule["severity"], kind))
         runtime = runtime_uid in p.uids
         project = any(in_ranges(u, project_ranges) for u in p.uids)
         if not runtime and not project:
@@ -3819,23 +3915,15 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
             rule, severity = "project-uid-outside-container", "critical"
         elif kind == "runtime" and name not in runtime_exes:
             rule, severity = "unexpected-process-in-container-runtime", "critical"
-        elif kind == "host" and name not in host_exes:
+        elif (
+            kind == "host"
+            and name not in host_exes
+            and not cgroup_allowed(p.cgroup, script_cgroups)
+        ):
             rule, severity = "unexpected-runtime-user-process", "high"
         if rule is None:
             continue
-        findings.append(
-            {
-                "rule": rule,
-                "severity": severity,
-                "pid": p.pid,
-                "comm": p.comm,
-                "exe": p.exe or "",
-                "uids": list(p.uids),
-                "userns": kind,
-                "parents": parent_chain(procs, p),
-                "cgroup": p.cgroup,
-            }
-        )
+        findings.append(finding(p, rule, severity, kind))
     return findings, inventory
 
 
@@ -3891,6 +3979,15 @@ class Watcher:
         self.host_exes = set(DEFAULT_HOST_EXES) | set(allow.get("host_exes", []))
         self.runtime_exes = set(DEFAULT_RUNTIME_EXES) | set(allow.get("runtime_exes", []))
         self.config_paths = list(DEFAULT_CONFIG_PATHS) + list(allow.get("config_paths", []))
+        self.script_cgroups = [
+            str(c).rstrip("/")
+            for c in list(DEFAULT_SCRIPT_CGROUPS) + list(allow.get("script_cgroups", []))
+        ]
+        self.placement_rules = compile_placement_rules(
+            list(DEFAULT_PLACEMENT_RULES) + list(allow.get("placement_rules", [])),
+            self.runtime_uid,
+            self.project_ranges,
+        )
         self.findings = {}
         self.inventory = {}
         self.config_changes = {}
@@ -3931,6 +4028,9 @@ class Watcher:
             self.host_exes,
             self.runtime_exes,
             os.getpid(),
+            self.placement_rules,
+            read_link(os.path.join(self.proc_root, "1", "ns", "mnt")),
+            self.script_cgroups,
         )
         self.scans += 1
         self.last_scan_ms = int((time.monotonic() - started) * 1000)
@@ -4017,6 +4117,7 @@ class Watcher:
             "errors": self.errors,
             "runtime_uid": self.runtime_uid,
             "project_uid_ranges": [list(r) for r in self.project_ranges],
+            "placement_rules": [r["name"] for r in self.placement_rules],
             "findings": sorted(self.findings.values(), key=lambda e: e["last_seen"], reverse=True),
             "config": {
                 "baseline_at": self.config_baseline_at,

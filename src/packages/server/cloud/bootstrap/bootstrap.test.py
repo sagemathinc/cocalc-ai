@@ -9071,15 +9071,33 @@ class HostIntegrityWatchTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def add_proc(self, pid, ppid, comm, uid, exe, ns, uid_map=None):
+    HOST_MNT = "mnt:[4026531841]"
+    CONTAINER_MNT = "mnt:[4026532500]"
+
+    def add_proc(
+        self,
+        pid,
+        ppid,
+        comm,
+        uid,
+        exe,
+        ns,
+        uid_map=None,
+        cgroup="/cocalc-host-services",
+        mnt=None,
+    ):
         base = self.proc / str(pid)
         (base / "ns").mkdir(parents=True)
+        os.symlink(
+            mnt or (self.HOST_MNT if ns == self.HOST_NS else self.CONTAINER_MNT),
+            base / "ns" / "mnt",
+        )
         (base / "status").write_text(
             f"Name:\t{comm}\nPPid:\t{ppid}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n"
         )
         os.symlink(exe, base / "exe")
         os.symlink(ns, base / "ns" / "user")
-        (base / "cgroup").write_text(f"0::/cocalc-test/{pid}\n")
+        (base / "cgroup").write_text(f"0::{cgroup}\n")
         (base / "cmdline").write_text(f"{comm}\0--token\0{self.SECRET}\0")
         (base / "environ").write_text(f"API_KEY={self.SECRET}\0")
         if uid_map is not None:
@@ -9110,8 +9128,9 @@ class HostIntegrityWatchTest(unittest.TestCase):
         self.add_proc(20, 1, "conmon", self.uid, "/opt/rt/bin/conmon", self.RUNTIME_NS, runtime_map)
         self.add_proc(21, 1, "pasta.avx2", self.uid, "/opt/rt/bin/pasta.avx2", self.RUNTIME_NS, runtime_map)
         # inside a container: fine, whatever it runs
-        self.add_proc(30, 20, "python3", 231072, "/usr/bin/python3", self.CONTAINER_NS, container_map)
-        self.add_proc(31, 30, "bash", self.uid, "/usr/bin/bash", self.CONTAINER_NS, container_map)
+        pool = "/cocalc-project-pool/project-1"
+        self.add_proc(30, 20, "python3", 231072, "/usr/bin/python3", self.CONTAINER_NS, container_map, cgroup=pool)
+        self.add_proc(31, 30, "bash", self.uid, "/usr/bin/bash", self.CONTAINER_NS, container_map, cgroup=pool)
         # root processes are out of scope
         self.add_proc(40, 1, "sshd", 0, "/usr/sbin/sshd", self.HOST_NS)
         # not where they belong
@@ -9157,6 +9176,67 @@ class HostIntegrityWatchTest(unittest.TestCase):
                  "parents", "cgroup", "first_seen", "last_seen", "count"},
             )
         self.assertEqual(oct(os.stat(self.root / "status" / "status.json").st_mode & 0o777), "0o644")
+
+    def test_placement_rules_key_on_cgroup_and_mount_namespace(self) -> None:
+        # The default rule: the runtime user only runs in its known cgroups.
+        self.add_proc(60, 1, "node", self.uid, "/usr/bin/node", self.HOST_NS, cgroup="/system.slice/other.service")
+        self.add_proc(61, 1, "node", self.uid, "/usr/bin/node", self.HOST_NS, cgroup=f"/user.slice/user-{self.uid}.slice/user@{self.uid}.service")
+        # A configured rule, e.g. for a dedicated project uid: only inside a
+        # project cgroup, or inside a container's mount namespace.
+        p = 5_000_000  # outside the subordinate ranges
+        self.add_proc(70, 1, "sh", p, "/usr/bin/dash", self.HOST_NS, cgroup="/user.slice")
+        self.add_proc(71, 1, "sh", p, "/usr/bin/dash", self.CONTAINER_NS, cgroup="/user.slice")
+        self.add_proc(72, 1, "sh", p, "/usr/bin/dash", self.HOST_NS, cgroup="/cocalc-project-pool/project-1")
+        # (a separate executable: findings of the same rule, executable and
+        # uid are one finding)
+        self.add_proc(73, 1, "bash", p, "/usr/bin/bash", self.HOST_NS, cgroup="/cocalc-project-poolX/project-1")
+        allow = self.root / "allow.json"
+        allow.write_text(
+            json.dumps(
+                {
+                    "placement_rules": [
+                        {
+                            "name": "project-user-outside-project-cgroup",
+                            "severity": "critical",
+                            "uids": [[p, 1]],
+                            "allowed_cgroups": ["/cocalc-project-pool"],
+                            "container_mount_ns_ok": True,
+                        },
+                        {"name": "broken", "uids": "nonsense"},
+                    ]
+                }
+            )
+        )
+        ns = self.watch()
+        w = self.watcher(ns, allowlist=str(allow))
+        new = w.step(1000.0)
+        self.assertEqual(
+            sorted((f["rule"], f["pid"], f["severity"]) for f in new),
+            [
+                ("project-user-outside-project-cgroup", 70, "critical"),
+                ("project-user-outside-project-cgroup", 73, "critical"),
+                ("runtime-user-outside-expected-cgroups", 60, "high"),
+            ],
+        )
+        status = json.loads((self.root / "status" / "status.json").read_text())
+        self.assertEqual(
+            status["placement_rules"],
+            ["runtime-user-outside-expected-cgroups", "project-user-outside-project-cgroup"],
+        )
+
+    def test_scripts_of_known_root_owned_services_are_expected(self) -> None:
+        # The project-host watchdog runs shell tools as the runtime user.
+        watchdog = "/system.slice/cocalc-project-host-watchdog.service"
+        self.add_proc(80, 1, "bash", self.uid, "/usr/bin/bash", self.HOST_NS, cgroup=watchdog)
+        self.add_proc(81, 80, "flock", self.uid, "/usr/bin/flock", self.HOST_NS, cgroup=watchdog)
+        # the same programs elsewhere are reported
+        self.add_proc(82, 1, "flock", self.uid, "/usr/bin/flock", self.HOST_NS, cgroup="/cocalc-host-services")
+        ns = self.watch()
+        new = self.watcher(ns).step(1000.0)
+        self.assertEqual(
+            [(f["rule"], f["pid"]) for f in new],
+            [("unexpected-runtime-user-process", 82)],
+        )
 
     def test_allowlist_file_extends_the_defaults(self) -> None:
         self.add_proc(52, 1, "curl", self.uid, "/usr/bin/curl", self.HOST_NS)
