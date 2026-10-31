@@ -391,6 +391,19 @@ describe("project rustic wrapper", () => {
       expect(job.cancelled()).toBe(false);
     });
 
+    it("gives a run quiet at its budget's end the whole stall window", async () => {
+      __test__.setWatchdogLimits({ stallMs: 80, intervalMs: 5 });
+      const job = fakeAsyncBackup();
+      const startedAt = Date.now();
+      const backup = scheduledBackup(); // budget 40 ms
+      await job.started;
+      // no progress at all, as during a long index load
+      await expect(backup).rejects.toThrow(/no progress for/);
+      expect(job.cancelled()).toBe(true);
+      // not at the budget: after the budget and then the stall window
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(40 + 80);
+    });
+
     it("reports the ceiling when the run is killed there", async () => {
       const job = fakeAsyncBackup();
       const backup = scheduledBackup();

@@ -217,8 +217,10 @@ async function runWatchedBackup({
   }
   let stalled = false;
   const timer = setInterval(() => {
-    const now = Date.now();
-    if (now - startedAt < timeoutMs || now - lastProgressAt < stallMs) return;
+    // the stall window starts at the budget's end at the earliest, so a run
+    // quiet then (an index load, say) still gets all of it
+    const quietSince = Math.max(lastProgressAt, startedAt + timeoutMs);
+    if (Date.now() - quietSince < stallMs) return;
     stalled = true;
     clearInterval(timer);
     executeCode({ async_cancel: started.job_id }).catch((err) =>
