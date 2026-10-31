@@ -371,7 +371,7 @@ describe("auth/impersonate", () => {
       protocol: "https",
       headers: { host: "bay-2-lite4b.cocalc.ai" },
     };
-    const res = { send: jest.fn() };
+    const res = { send: jest.fn(), setHeader: jest.fn() };
 
     await signInUsingImpersonateToken({ req, res });
 
@@ -422,5 +422,37 @@ describe("auth/impersonate", () => {
       res,
       target: "https://lite4b.cocalc.ai/app?lang_temp=en",
     });
+  });
+
+  it("sends errors as plain text, never HTML", async () => {
+    getClusterAccountByIdMock = jest.fn(async () => {
+      throw Error("<img src=x onerror=alert(1)>");
+    });
+    const { signInUsingImpersonateToken } = await import("./impersonate");
+    const req = {
+      query: {
+        grant_id: "22222222-2222-4222-8222-222222222222",
+        account_id: "11111111-1111-1111-1111-111111111111",
+        confirm: "1",
+      },
+      protocol: "https",
+      headers: { host: "lite4b.cocalc.ai" },
+    };
+    const res = { send: jest.fn(), setHeader: jest.fn() };
+
+    await signInUsingImpersonateToken({ req, res });
+
+    expect(res.setHeader).toHaveBeenCalledWith(
+      "Content-Type",
+      "text/plain; charset=utf-8",
+    );
+    expect(res.setHeader).toHaveBeenCalledWith(
+      "X-Content-Type-Options",
+      "nosniff",
+    );
+    expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
+    expect(res.send).toHaveBeenCalledWith(
+      expect.stringContaining("ERROR: impersonate error"),
+    );
   });
 });

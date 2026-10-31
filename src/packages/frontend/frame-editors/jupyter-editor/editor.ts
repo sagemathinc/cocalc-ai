@@ -234,21 +234,6 @@ const JUPYTER_MENUS = {
         },
       ],
       slideshow: ["slideshow", "nbconvert slides"],
-      trusted: [
-        {
-          name: "trust notebook",
-          disabled: ({ props }) => {
-            return !!props.actions.jupyter_actions?.store?.get("trust");
-          },
-          label: ({ props }) => {
-            if (props.actions.jupyter_actions?.store?.get("trust")) {
-              return "Trusted Notebook";
-            } else {
-              return "Trust Notebook...";
-            }
-          },
-        },
-      ],
     },
   },
   edit: {

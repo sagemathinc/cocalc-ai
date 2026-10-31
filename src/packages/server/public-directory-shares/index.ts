@@ -611,10 +611,10 @@ function isHostPlacementFailure(err: unknown): boolean {
 // every path that starts with a dot, which is where tools keep credentials
 // (.config/cocalc, .config/gh, .netrc, .codex, ...). It only affects shares of
 // the whole home, which copy already walks because of the excludes below.
-// Credential names deeper in a shared folder (.env, .ssh, ...) are not
-// excluded yet: copying a share refuses a folder with any excluded entry and
-// walks every folder a glob rule may reach, so that waits until copy can skip
-// excluded entries.
+// Hidden names deeper in a shared folder (.env, .github, ...) are shared by
+// design (William, 2026-10-28): excluding them in explicitly shared folders
+// would break more than it protects. The docs tell users to keep secrets out
+// of shared folders instead.
 const PUBLIC_SHARE_HIDDEN_EXCLUDES: ProjectViewerReadPolicy["rules"] = [
   { action: "exclude", path: ".**" },
 ];

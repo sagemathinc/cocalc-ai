@@ -371,15 +371,6 @@ import {
 } from "@cocalc/util/impersonation-audit";
 import { upsertAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
 import {
-  getPrivateAppRouteByHostname as getPrivateAppRouteByHostnameRaw,
-  getProjectAppPrivateHostnamePolicy as getProjectAppPrivateHostnamePolicyRaw,
-  inspectProjectAppPrivateHostname as inspectProjectAppPrivateHostnameRaw,
-  listProjectAppPrivateHostnames as listProjectAppPrivateHostnamesRaw,
-  reconcileProjectAppPrivateHostnamesForProject as reconcileProjectAppPrivateHostnamesForProjectRaw,
-  releaseProjectAppPrivateHostname as releaseProjectAppPrivateHostnameRaw,
-  reserveProjectAppPrivateHostname as reserveProjectAppPrivateHostnameRaw,
-} from "@cocalc/server/app-private-hostnames";
-import {
   getBayPublicOrigin,
   getClusterBayPublicOrigins,
   getSiteBrowserOrigins,
@@ -486,7 +477,6 @@ import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getClusterConfig } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import {
   getProjectArchiveBlockedSummary,
@@ -7111,10 +7101,7 @@ function parseMap(raw?: string): Record<string, string> {
 }
 
 function resolveSharedHomeMode():
-  | "disabled"
-  | "fallback"
-  | "prefer"
-  | "always" {
+  "disabled" | "fallback" | "prefer" | "always" {
   const defaultMode =
     `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad"
       ? "disabled"
@@ -7133,8 +7120,7 @@ const OPENAI_API_KEY_KIND = "openai-api-key";
 
 function toExternalCredentialInfo(
   credential:
-    | Awaited<ReturnType<typeof getExternalCredentialRouted>>
-    | undefined,
+    Awaited<ReturnType<typeof getExternalCredentialRouted>> | undefined,
 ) {
   if (!credential) return undefined;
   return {
@@ -8268,222 +8254,16 @@ async function resolveProjectContext(opts: {
   return project_id;
 }
 
-async function getProjectOwnerAccountIds(
-  project_id: string,
-): Promise<string[]> {
-  const pool = getPool();
-  const { rows } = await pool.query<{ account_id: string }>(
-    `
-      SELECT owner.key AS account_id
-      FROM projects,
-           jsonb_each(projects.users) AS owner(key, value)
-      WHERE projects.project_id=$1
-        AND owner.value ->> 'group' = 'owner'
-      ORDER BY owner.key
-    `,
-    [project_id],
-  );
-  return rows.map((row) => `${row.account_id ?? ""}`.trim()).filter(Boolean);
-}
-
-async function assertProjectOwnerOrAdmin(
-  account_id: string,
-  project_id: string,
-): Promise<void> {
-  if (await isAdmin(account_id)) return;
-  const owners = await getProjectOwnerAccountIds(project_id);
-  if (!owners.includes(account_id)) {
-    throw new Error(
-      "permission denied: only a project owner or site administrator can manage private app hostnames",
-    );
-  }
-}
-
-export async function getProjectAppPrivateHostnamePolicy({
-  account_id,
-  host_id,
-  project_id,
-}: {
-  account_id?: string;
-  host_id?: string;
-  project_id: string;
-}) {
-  const resolvedProjectId = await resolveProjectContext({
-    account_id,
-    host_id,
-    project_id,
-  });
-  if (!account_id && !host_id) throw new Error("must be signed in");
-  return await getProjectAppPrivateHostnamePolicyRaw(resolvedProjectId);
-}
-
-export async function inspectProjectAppPrivateHostname({
-  account_id,
-  host_id,
-  project_id,
-  app_id,
-}: {
+// Retired with private app hostnames (D9): nothing is ever released.  Kept
+// for one release so project code started before the upgrade, which calls
+// it before deleting an app, can still delete apps.
+export async function releaseProjectAppPrivateHostname(_opts: {
   account_id?: string;
   host_id?: string;
   project_id: string;
   app_id: string;
-}) {
-  const resolvedProjectId = await resolveProjectContext({
-    account_id,
-    host_id,
-    project_id,
-  });
-  if (!account_id && !host_id) throw new Error("must be signed in");
-  return await inspectProjectAppPrivateHostnameRaw({
-    project_id: resolvedProjectId,
-    app_id,
-  });
-}
-
-export async function listProjectAppPrivateHostnames({
-  account_id,
-  host_id,
-  project_id,
-}: {
-  account_id?: string;
-  host_id?: string;
-  project_id: string;
-}) {
-  const resolvedProjectId = await resolveProjectContext({
-    account_id,
-    host_id,
-    project_id,
-  });
-  if (!account_id && !host_id) throw new Error("must be signed in");
-  return await listProjectAppPrivateHostnamesRaw({
-    project_id: resolvedProjectId,
-  });
-}
-
-export async function tracePrivateAppHostname({
-  account_id,
-  host_id,
-  hostname,
-}: {
-  account_id?: string;
-  host_id?: string;
-  hostname: string;
-}) {
-  const normalized = `${hostname ?? ""}`.trim().toLowerCase();
-  if (!normalized) throw new Error("hostname is required");
-  const target = await getPrivateAppRouteByHostnameRaw(normalized);
-  if (!target) {
-    return { matched: false, hostname: normalized };
-  }
-  if (!account_id && !host_id) {
-    throw new Error("must be signed in");
-  }
-  if (account_id) {
-    await assertProjectCollaborator(account_id, target.project_id);
-  }
-  if (host_id) {
-    await resolveProjectContext({
-      host_id,
-      project_id: target.project_id,
-    });
-  }
-  return {
-    matched: true,
-    hostname: normalized,
-    project_id: target.project_id,
-    app_id: target.app_id,
-    base_path: target.base_path,
-  };
-}
-
-export async function reserveProjectAppPrivateHostname({
-  account_id,
-  host_id,
-  project_id,
-  app_id,
-}: {
-  account_id?: string;
-  host_id?: string;
-  project_id: string;
-  app_id: string;
-}) {
-  const resolvedProjectId = await resolveProjectContext({
-    account_id,
-    host_id,
-    project_id,
-  });
-  let createdBy = account_id;
-  if (account_id) {
-    await assertProjectOwnerOrAdmin(account_id, resolvedProjectId);
-    await assertAccountTrustedForProductAccess(
-      account_id,
-      "create private project app hostnames",
-    );
-  } else if (host_id) {
-    const owners = await getProjectOwnerAccountIds(resolvedProjectId);
-    if (owners.length === 0) {
-      throw new Error("project has no owner account");
-    }
-    for (const owner of owners) {
-      await assertAccountTrustedForProductAccess(
-        owner,
-        "create private project app hostnames",
-      );
-    }
-    createdBy = owners[0];
-  } else {
-    throw new Error("must be signed in");
-  }
-  return await reserveProjectAppPrivateHostnameRaw({
-    project_id: resolvedProjectId,
-    app_id,
-    created_by: createdBy!,
-  });
-}
-
-export async function releaseProjectAppPrivateHostname({
-  account_id,
-  host_id,
-  project_id,
-  app_id,
-}: {
-  account_id?: string;
-  host_id?: string;
-  project_id: string;
-  app_id: string;
-}) {
-  const resolvedProjectId = await resolveProjectContext({
-    account_id,
-    host_id,
-    project_id,
-  });
-  if (account_id) {
-    await assertProjectOwnerOrAdmin(account_id, resolvedProjectId);
-  } else if (!host_id) {
-    throw new Error("must be signed in");
-  }
-  return await releaseProjectAppPrivateHostnameRaw({
-    project_id: resolvedProjectId,
-    app_id,
-  });
-}
-
-export async function reconcileProjectAppPrivateHostnames({
-  account_id,
-  project_id,
-}: {
-  account_id?: string;
-  project_id: string;
-}) {
-  if (!account_id) throw new Error("must be signed in");
-  const resolvedProjectId = await resolveProjectContext({
-    account_id,
-    project_id,
-  });
-  await assertProjectOwnerOrAdmin(account_id, resolvedProjectId);
-  return await reconcileProjectAppPrivateHostnamesForProjectRaw({
-    project_id: resolvedProjectId,
-  });
+}): Promise<{ released: boolean }> {
+  return { released: false };
 }
 
 export async function recordManagedProjectEgress({
@@ -8533,9 +8313,11 @@ export async function recordManagedProjectEgress({
       err: `${err}`,
     });
   }
-  // Runtime detector evidence is authoritative only from the host currently
-  // assigned to the project. Project-authenticated callers may report usage,
-  // but cannot manufacture evidence that stops a project or bans its owner.
+  // Only hosts may call this (see the hub API policy), and runtime detector
+  // evidence is authoritative only from the host currently assigned to the
+  // project. This check stays as a second line of defense, so that a caller
+  // without host_id can never manufacture evidence that stops a project or
+  // bans its owner.
   const effectiveBandwidthRelayEvidence =
     host_id && abuseSettings?.enforcement_enabled
       ? bandwidth_relay_evidence
@@ -8547,7 +8329,7 @@ export async function recordManagedProjectEgress({
   });
   const result = await recordManagedProjectEgressRaw({
     // Project attribution is authoritative in project state. Never let a
-    // project- or host-scoped telemetry caller nominate another account.
+    // host-scoped telemetry caller nominate another account.
     account_id: resolvedProjectId ? undefined : account_id,
     project_id: resolvedProjectId,
     category,

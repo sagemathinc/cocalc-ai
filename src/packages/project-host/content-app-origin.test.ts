@@ -258,9 +258,12 @@ describe("app origin handler", () => {
   const used = new Set<string>();
   const proxy = jest.fn();
   const matchApp = jest.fn();
+  const appRootMount = jest.fn();
   const NOW = Date.UTC(2026, 9, 21, 12);
 
   beforeEach(async () => {
+    appRootMount.mockReset();
+    appRootMount.mockResolvedValue(undefined);
     epoch = 0;
     collaborator = true;
     cutoff = undefined;
@@ -299,6 +302,7 @@ describe("app origin handler", () => {
         return true;
       },
       matchApp,
+      appRootMount,
       proxy,
       now: () => NOW,
     });
@@ -368,7 +372,10 @@ describe("app origin handler", () => {
   const next = encodeURIComponent(`/${PROJECT}/port/8000/a/?x=1`);
 
   async function signIn(): Promise<string> {
-    const res = await send(`/_a/${capability()}?next=${next}`, navigation);
+    const res = await send(
+      `/.cocalc/a/${capability()}?next=${next}`,
+      navigation,
+    );
     expect(res.status).toBe(302);
     const cookie = `${res.headers["set-cookie"]?.[0] ?? ""}`;
     return cookie.split(";")[0];
@@ -376,7 +383,7 @@ describe("app origin handler", () => {
 
   it("redeems a capability once for a session on this origin", async () => {
     const token = capability();
-    const res = await send(`/_a/${token}?next=${next}`, navigation);
+    const res = await send(`/.cocalc/a/${token}?next=${next}`, navigation);
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe(
       `https://${APP_HOST}/${PROJECT}/port/8000/a/?x=1`,
@@ -390,7 +397,7 @@ describe("app origin handler", () => {
       ),
     );
     // Single use.
-    const again = await send(`/_a/${token}?next=${next}`, navigation);
+    const again = await send(`/.cocalc/a/${token}?next=${next}`, navigation);
     expect(again.status).toBe(403);
   });
 
@@ -402,7 +409,10 @@ describe("app origin handler", () => {
       { ...navigation, "sec-fetch-mode": "cors" },
       { ...navigation, "sec-fetch-site": "same-site" },
     ]) {
-      const res = await send(`/_a/${capability()}?next=${next}`, headers);
+      const res = await send(
+        `/.cocalc/a/${capability()}?next=${next}`,
+        headers,
+      );
       expect(res.status).toBe(403);
       expect(res.headers["set-cookie"]).toBeUndefined();
     }
@@ -411,20 +421,20 @@ describe("app origin handler", () => {
 
   it("refuses capabilities of another app, older epochs, revoked accounts and ex-members", async () => {
     let res = await send(
-      `/_a/${capability({ key: "p8001" })}?next=${next}`,
+      `/.cocalc/a/${capability({ key: "p8001" })}?next=${next}`,
       navigation,
     );
     expect(res.status).toBe(403);
     epoch = 1;
-    res = await send(`/_a/${capability()}?next=${next}`, navigation);
+    res = await send(`/.cocalc/a/${capability()}?next=${next}`, navigation);
     expect(res.status).toBe(403);
     epoch = 0;
     cutoff = NOW;
-    res = await send(`/_a/${capability()}?next=${next}`, navigation);
+    res = await send(`/.cocalc/a/${capability()}?next=${next}`, navigation);
     expect(res.status).toBe(403);
     cutoff = undefined;
     collaborator = false;
-    res = await send(`/_a/${capability()}?next=${next}`, navigation);
+    res = await send(`/.cocalc/a/${capability()}?next=${next}`, navigation);
     expect(res.status).toBe(403);
   });
 
@@ -438,7 +448,7 @@ describe("app origin handler", () => {
       `https://evil.example/`,
     ]) {
       const res = await send(
-        `/_a/${capability()}?next=${encodeURIComponent(path)}`,
+        `/.cocalc/a/${capability()}?next=${encodeURIComponent(path)}`,
         navigation,
       );
       expect([400, 404]).toContain(res.status);
@@ -448,7 +458,7 @@ describe("app origin handler", () => {
 
   it("bounds the session by a restricted hub session", async () => {
     const token = capability({ browser_session_exp_s: NOW / 1000 + 600 });
-    const res = await send(`/_a/${token}?next=${next}`, navigation);
+    const res = await send(`/.cocalc/a/${token}?next=${next}`, navigation);
     expect(`${res.headers["set-cookie"]?.[0]}`).toContain("Max-Age=600");
   });
 
@@ -494,15 +504,126 @@ describe("app origin handler", () => {
       `/${PROJECT}/port/8001/`,
       `/${PROJECT}/files/a.html`,
       `/${PROJECT}/upload`,
-      `/${OTHER_PROJECT}/port/8000/`,
-      `/conat/`,
-      `/`,
       `/${PROJECT}/server/x/`,
+      `/.cocalc/anything`,
+      `/.cocalc`,
     ]) {
       const res = await send(path, { cookie, "sec-fetch-site": "same-origin" });
       expect(res.status).toBe(404);
     }
     expect(proxy).not.toHaveBeenCalled();
+  });
+
+  describe("root mode (phase 7c): the app at the root of its origin", () => {
+    it("forwards root-form paths to the port app's strip-mode route", async () => {
+      const cookie = await signIn();
+      for (const [path, internal] of [
+        ["/", `/${PROJECT}/proxy/8000/`],
+        ["/lab?x=1", `/${PROJECT}/proxy/8000/lab?x=1`],
+        ["/conat/", `/${PROJECT}/proxy/8000/conat/`],
+
+        // Another project's id is just a path of this app here.
+        [
+          `/${OTHER_PROJECT}/port/8000/`,
+          `/${PROJECT}/proxy/8000/${OTHER_PROJECT}/port/8000/`,
+        ],
+      ]) {
+        const res = await send(path, {
+          cookie,
+          "sec-fetch-site": "same-origin",
+        });
+        expect(res.status).toBe(200);
+        expect(JSON.parse(res.body).url).toBe(internal);
+      }
+    });
+
+    it("never hands the old bootstrap paths to the app", async () => {
+      const cookie = await signIn();
+      for (const path of ["/_a/x", "/_af/x"]) {
+        const res = await send(path, {
+          cookie,
+          "sec-fetch-site": "same-origin",
+        });
+        expect(res.status).toBe(410);
+      }
+      expect(proxy).not.toHaveBeenCalled();
+    });
+
+    it("takes the project proxy's mount back off redirects", async () => {
+      const cookie = await signIn();
+      proxy.mockImplementation(async (_req, res) => {
+        res.setHeader("Location", `/${PROJECT}/proxy/8000/lab?a=1`);
+        res.statusCode = 302;
+        res.end();
+      });
+      let res = await send("/", { cookie, "sec-fetch-site": "same-origin" });
+      expect(res.headers.location).toBe("/lab?a=1");
+      // The legacy form keeps its paths.
+      res = await send(`/${PROJECT}/proxy/8000/`, {
+        cookie,
+        "sec-fetch-site": "same-origin",
+      });
+      expect(res.headers.location).toBe(`/${PROJECT}/proxy/8000/lab?a=1`);
+    });
+
+    it("bootstraps to the root form when asked", async () => {
+      const res = await send(
+        `/.cocalc/a/${capability()}?next=${encodeURIComponent(`/${PROJECT}/port/8000/lab/tree?x=1`)}&root=1`,
+        navigation,
+      );
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe(`https://${APP_HOST}/lab/tree?x=1`);
+    });
+
+    it("re-opens a root-form page through the site, in root form", async () => {
+      const res = await send("/lab?x=1", navigation);
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe(
+        `${SITE}/app-open/${PROJECT}/proxy/8000/lab?x=1&cocalc_root=1`,
+      );
+    });
+
+    it("an app at its own base path is served at the root only if it strips its prefix", async () => {
+      const key = projectAppKey({ kind: "app", id: "myapp" });
+      const host = `a${key}-${P32}.h-${H32}.${DOMAIN}`;
+      const cookie = `${APP_SESSION_COOKIE}=${createAppSessionToken(
+        {
+          account_id: ACCOUNT,
+          project_id: PROJECT,
+          key,
+          host_id: HOST,
+          epoch: 0,
+          auth_iat_s: NOW / 1000,
+          exp_s: NOW / 1000 + 60,
+        },
+        { secret: SECRET },
+      )}`;
+      let res = await send("/x", {
+        host,
+        cookie,
+        "sec-fetch-site": "same-origin",
+      });
+      expect(res.status).toBe(404);
+      appRootMount.mockResolvedValue({
+        mount: `/${PROJECT}/myapp`,
+        app_id: "myapp",
+      });
+      // Only while the mapped path is still this app's (W4).
+      matchApp.mockResolvedValue({
+        spec: { id: "other", proxy: { base_path: "/myapp" } },
+      });
+      res = await send("/x", { host, cookie, "sec-fetch-site": "same-origin" });
+      expect(res.status).toBe(404);
+      matchApp.mockResolvedValue({
+        spec: { id: "myapp", proxy: { base_path: "/myapp" } },
+      });
+      res = await send("/x", { host, cookie, "sec-fetch-site": "same-origin" });
+      expect(JSON.parse(res.body).url).toBe(`/${PROJECT}/myapp/x`);
+      res = await send("/x?y=1", { host, ...navigation });
+      expect(res.headers.location).toBe(
+        `${SITE}/app-open/${PROJECT}/myapp/x?y=1&cocalc_root=1&cocalc_app=myapp`,
+      );
+    });
   });
 
   it("an app at its own base path serves only that prefix", async () => {
@@ -525,7 +646,7 @@ describe("app origin handler", () => {
       now_ms: NOW,
     }).token;
     let res = await send(
-      `/_a/${token}?next=${encodeURIComponent(`/${PROJECT}/myapp/`)}`,
+      `/.cocalc/a/${token}?next=${encodeURIComponent(`/${PROJECT}/myapp/`)}`,
       { ...navigation, host },
     );
     expect(res.status).toBe(302);
@@ -602,10 +723,13 @@ describe("app origin handler", () => {
     epoch = 1;
     expect((await send(`/${PROJECT}/port/8000/`, ok)).status).toBe(401);
     // A new bootstrap clears what the revoked session left.
-    const res = await send(`/_a/${capability({ epoch: 1 })}?next=${next}`, {
-      ...navigation,
-      cookie,
-    });
+    const res = await send(
+      `/.cocalc/a/${capability({ epoch: 1 })}?next=${next}`,
+      {
+        ...navigation,
+        cookie,
+      },
+    );
     expect(res.status).toBe(302);
     expect(res.headers["clear-site-data"]).toBe('"storage", "cache"');
   });
@@ -618,13 +742,19 @@ describe("app origin handler", () => {
   };
   const frameCapability = () => capability({ scope: "app-frame" } as any);
   async function frameSignIn(): Promise<string> {
-    const res = await send(`/_af/${frameCapability()}?next=${next}`, frameNav);
+    const res = await send(
+      `/.cocalc/af/${frameCapability()}?next=${next}`,
+      frameNav,
+    );
     expect(res.status).toBe(302);
     return `${res.headers["set-cookie"]?.[0] ?? ""}`.split(";")[0];
   }
 
   it("frame bootstrap: only the site's own frame, cross-site, sets a partitioned frame session", async () => {
-    const res = await send(`/_af/${frameCapability()}?next=${next}`, frameNav);
+    const res = await send(
+      `/.cocalc/af/${frameCapability()}?next=${next}`,
+      frameNav,
+    );
     expect(res.status).toBe(302);
     const cookie = `${res.headers["set-cookie"]?.[0]}`;
     // The redirected frame navigation keeps the site's origin as Referer.
@@ -635,17 +765,21 @@ describe("app origin handler", () => {
     for (const headers of [
       { ...frameNav, "sec-fetch-site": "same-site" }, // F1: a content page as parent
       { ...frameNav, referer: "https://evil.example/" },
-      { ...frameNav, "sec-fetch-dest": "document" }, // top-level: use /_a/
+      { ...frameNav, "sec-fetch-dest": "document" }, // top-level: use /.cocalc/a/
     ]) {
-      const r = await send(`/_af/${frameCapability()}?next=${next}`, headers);
+      const r = await send(
+        `/.cocalc/af/${frameCapability()}?next=${next}`,
+        headers,
+      );
       expect(r.status).toBe(403);
     }
     // A top-level capability is no frame capability, and vice versa.
     expect(
-      (await send(`/_af/${capability()}?next=${next}`, frameNav)).status,
+      (await send(`/.cocalc/af/${capability()}?next=${next}`, frameNav)).status,
     ).toBe(403);
     expect(
-      (await send(`/_a/${frameCapability()}?next=${next}`, navigation)).status,
+      (await send(`/.cocalc/a/${frameCapability()}?next=${next}`, navigation))
+        .status,
     ).toBe(403);
   });
 
@@ -804,8 +938,12 @@ describe("app origin websockets", () => {
     expect(
       await origin.authorizeUpgrade(upgrade({}, `/${PROJECT}/port/8001/ws`)),
     ).toBeUndefined();
+    // A root-form path is the app's own (phase 7c).
+    const root = upgrade({}, `/ws?x=1`);
+    expect(await origin.authorizeUpgrade(root)).toBeDefined();
+    expect(root.url).toBe(`/${PROJECT}/proxy/8000/ws?x=1`);
     expect(
-      await origin.authorizeUpgrade(upgrade({}, `/conat/`)),
+      await origin.authorizeUpgrade(upgrade({}, `/.cocalc/a/x`)),
     ).toBeUndefined();
     expect(
       await origin.authorizeUpgrade(upgrade({ cookie: "x=1" })),

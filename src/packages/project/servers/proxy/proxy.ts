@@ -336,34 +336,6 @@ function applyProjectFileCorsHeaders(
   headers["Vary"] = "Origin";
 }
 
-async function recordManagedFileDownloadBestEffort(opts: {
-  account_id?: string;
-  bytes: number;
-  request_path: string;
-  partial: boolean;
-}) {
-  if (!(opts.bytes > 0)) return;
-  try {
-    await getProjectHubApi().system.recordManagedProjectEgress({
-      account_id: opts.account_id,
-      project_id,
-      category: "file-download",
-      bytes: opts.bytes,
-      metadata: {
-        request_path: opts.request_path,
-        partial: opts.partial,
-      },
-    });
-  } catch (err) {
-    logger.warn("unable to record managed file download egress", {
-      err: `${err}`,
-      request_path: opts.request_path,
-      bytes: opts.bytes,
-      partial: opts.partial,
-    });
-  }
-}
-
 interface StartOptions {
   base_url?: string;
   port?: number; // default to COCALC_PROXY_PORT or 80 for root, or 8080 for non-root
@@ -1144,14 +1116,8 @@ ${entries}
         return;
       }
     }
-    if (req.method === "GET" && explicitDownload) {
-      await recordManagedFileDownloadBestEffort({
-        account_id: getManagedDownloadAccountId(req),
-        bytes: contentLength,
-        request_path: req.url ?? "",
-        partial,
-      });
-    }
+    // The serving host measures and records download egress; a project's
+    // own byte count is not trusted, so it does not report one.
     res.writeHead(partial ? 206 : 200, headers);
     if (req.method === "HEAD") {
       res.end();

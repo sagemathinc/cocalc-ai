@@ -4,7 +4,7 @@
  */
 
 import { EventEmitter } from "events";
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { Map } from "immutable";
 import { IpyWidget } from "../ipywidget";
 
@@ -12,155 +12,95 @@ jest.mock("@cocalc/frontend/frame-editors/frame-tree/frame-context", () => ({
   useFrameContext: () => ({ isVisible: true }),
 }));
 
-describe("IpyWidget initialization", () => {
-  it("renders and cleans up widgets without a global jQuery", async () => {
-    jest.useFakeTimers();
-    const previous = globalThis.$;
-    delete (globalThis as any).$;
-    const renderWidget = jest.fn(async () => {});
-    const actions = {
-      widget_manager: {
-        ipywidgets_state: {
-          get_state: () => "ready",
-          getSerializedModelState: () => ({ _model_name: "IntSliderModel" }),
-        },
-        manager: { render: renderWidget },
-      },
-    };
-    try {
-      const { unmount } = render(
-        <IpyWidget
-          value={Map({ model_id: "model-1" })}
-          actions={actions as any}
-          trust
-        />,
-      );
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(1100);
-      });
-      expect(renderWidget).toHaveBeenCalledTimes(1);
-      // Includes the delayed KaTeX callback, which formerly used global $.
-      await act(async () => {
-        await jest.runOnlyPendingTimersAsync();
-      });
-      expect(() => unmount()).not.toThrow();
-    } finally {
-      globalThis.$ = previous;
-      jest.useRealTimers();
-    }
-  });
+// The frame itself is tested in widgets/frame/.
+jest.mock("../../widgets/frame/widget-frame", () => ({
+  WidgetFrame: ({ model_id, relay }) => (
+    <div
+      data-testid="widget-frame"
+      data-model={model_id}
+      data-relay={relay.id}
+    />
+  ),
+}));
 
-  it("waits for widget state readiness before serializing a model", async () => {
-    const state = new EventEmitter() as EventEmitter & {
-      get_state: () => "init" | "ready";
-      getSerializedModelState: jest.Mock;
-    };
-    let currentState: "init" | "ready" = "init";
-    state.get_state = () => currentState;
-    state.getSerializedModelState = jest.fn(() => ({
-      _model_name: "IntSliderModel",
-    }));
-    const actions = {
-      widget_manager: {
-        ipywidgets_state: state,
-      },
-    };
+function makeState(known: boolean, ready = true) {
+  const state = new EventEmitter() as any;
+  state.current = ready ? "ready" : "init";
+  state.known = known;
+  state.get_state = () => state.current;
+  state.getSerializedModelState = jest.fn(() =>
+    state.current === "ready" && state.known
+      ? { _model_name: "IntSliderModel" }
+      : undefined,
+  );
+  return state;
+}
 
+function makeActions(state) {
+  const relay = { id: "relay-1" };
+  return {
+    syncdb: { ipywidgets_state: state },
+    widgetRelay: jest.fn(() => relay),
+    runCells: jest.fn(),
+  };
+}
+
+describe("IpyWidget", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("renders the widget in a frame, never in the page, trusted or not", async () => {
+    const actions = makeActions(makeState(true));
     render(
       <IpyWidget
         value={Map({ model_id: "model-1" })}
         actions={actions as any}
-        trust
+        trust={false}
       />,
     );
-
-    expect(state.getSerializedModelState).not.toHaveBeenCalled();
-
     await act(async () => {
-      currentState = "ready";
-      state.emit("ready");
+      await jest.advanceTimersByTimeAsync(10);
     });
-
-    await waitFor(() => {
-      expect(state.getSerializedModelState).toHaveBeenCalledWith("model-1");
-    });
+    const frame = screen.getByTestId("widget-frame");
+    expect(frame.getAttribute("data-model")).toBe("model-1");
+    expect(frame.getAttribute("data-relay")).toBe("relay-1");
+    expect(document.querySelector(".widget-slider")).toBeNull();
   });
 
-  it.each([false, undefined])(
-    "shows a passive placeholder and touches no widget state when trust is %s",
-    async (trust) => {
-      const renderWidget = jest.fn(async () => {});
-      const getSerializedModelState = jest.fn(() => ({
-        _model_name: "HTMLModel",
-      }));
-      const trustNotebook = jest.fn(async () => {});
-      const actions = {
-        store: { get: (key: string) => (key == "trust" ? false : undefined) },
-        trust_notebook: trustNotebook,
-        widget_manager: {
-          ipywidgets_state: {
-            get_state: () => "ready",
-            getSerializedModelState,
-          },
-          manager: { render: renderWidget },
-        },
-      };
-      const { getByText } = render(
-        <IpyWidget
-          value={Map({ model_id: "model-1" })}
-          actions={actions as any}
-          trust={trust}
-        />,
-      );
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      });
-      expect(
-        getByText("Widget not shown because this notebook is not trusted."),
-      ).toBeTruthy();
-      expect(getSerializedModelState).not.toHaveBeenCalled();
-      expect(renderWidget).not.toHaveBeenCalled();
-      getByText("Trust notebook...").click();
-      expect(trustNotebook).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it("removes a view that finishes rendering after trust is lost", async () => {
-    let finish: () => void = () => {};
-    const renderWidget = jest.fn(
-      (_id: string, div: HTMLElement) =>
-        new Promise<void>((resolve) => {
-          finish = () => {
-            const view = document.createElement("div");
-            view.className = "late-widget-view";
-            div.appendChild(view);
-            resolve();
-          };
-        }),
-    );
-    const actions = {
-      store: { get: () => false },
-      trust_notebook: jest.fn(),
-      widget_manager: {
-        ipywidgets_state: {
-          get_state: () => "ready",
-          getSerializedModelState: () => ({ _model_name: "IntSliderModel" }),
-        },
-        manager: { render: renderWidget },
-      },
-    };
-    const value = Map({ model_id: "model-1" });
-    const { container, rerender } = render(
-      <IpyWidget value={value} actions={actions as any} trust />,
-    );
-    await waitFor(() => expect(renderWidget).toHaveBeenCalledTimes(1));
-    rerender(
-      <IpyWidget value={value} actions={actions as any} trust={false} />,
+  it("waits for the widget state before rendering", async () => {
+    const state = makeState(true, false);
+    const actions = makeActions(state);
+    render(
+      <IpyWidget
+        value={Map({ model_id: "model-1" })}
+        actions={actions as any}
+      />,
     );
     await act(async () => {
-      finish();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await jest.advanceTimersByTimeAsync(10);
     });
-    expect(container.querySelector(".late-widget-view")).toBeNull();
+    expect(screen.queryByTestId("widget-frame")).toBeNull();
+    state.current = "ready";
+    await act(async () => {
+      state.emit("ready");
+      await jest.advanceTimersByTimeAsync(10);
+    });
+    expect(screen.getByTestId("widget-frame")).toBeTruthy();
+  });
+
+  it("offers to run the cell when the model never arrives", async () => {
+    const actions = makeActions(makeState(false));
+    render(
+      <IpyWidget
+        id="cell-1"
+        value={Map({ model_id: "model-1" })}
+        actions={actions as any}
+      />,
+    );
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(6000);
+    });
+    expect(screen.queryByTestId("widget-frame")).toBeNull();
+    expect(screen.getByText("Run cell to load widget")).toBeTruthy();
   });
 });

@@ -163,10 +163,7 @@ import {
   newestProjectLogCursor,
   oldestProjectLogCursor,
 } from "@cocalc/frontend/project/log-state";
-import {
-  appOpenURL,
-  getPrivateProjectAppOpenUrl,
-} from "@cocalc/frontend/project/app-server-open";
+import { appOpenURL } from "@cocalc/frontend/project/app-server-open";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import { createSharedLroListClient } from "@cocalc/frontend/lro/shared-list";
 import {
@@ -570,8 +567,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return canUseCollaboratorProjectRealtime({
       account_id: webapp_client.account_id,
       is_admin: redux.getStore("account")?.get("is_admin") as
-        | boolean
-        | undefined,
+        boolean | undefined,
       project_id: this.project_id,
       projectsStore: redux.getStore("projects") as
         | {
@@ -1958,8 +1954,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     // the optional call -- but the *name* is now checked against the real
     // method, so a rename or typo fails to compile instead of doing nothing.
     const actions:
-      | { programmatically_goto_line?: ProgrammaticallyGotoLine }
-      | undefined = redux.getEditorActions(this.project_id, sync_path);
+      { programmatically_goto_line?: ProgrammaticallyGotoLine } | undefined =
+      redux.getEditorActions(this.project_id, sync_path);
     actions?.programmatically_goto_line?.(line, cursor, focus);
   }
 
@@ -3513,25 +3509,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           } catch (err) {
             console.warn("project/load_target: failed app handoff", err);
           }
-        }
-        this.set_active_tab("servers", { change_history: change_history });
-        break;
-
-      case "private-app":
-        try {
-          const authedUrl = await getPrivateProjectAppOpenUrl({
-            project_id: this.project_id,
-            app_id: route.appId,
-          });
-          if (typeof window !== "undefined") {
-            window.location.assign(authedUrl);
-            return;
-          }
-        } catch (err) {
-          alert_message({
-            type: "error",
-            message: `Unable to open private project app: ${err}`,
-          });
         }
         this.set_active_tab("servers", { change_history: change_history });
         break;

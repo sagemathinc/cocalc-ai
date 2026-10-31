@@ -56,7 +56,6 @@ import type {
   HostEffectiveAccessRole,
 } from "@cocalc/conat/hub/api/hosts";
 import { applyHostRuntimePolicyToRunQuota } from "./run-quota";
-import { reconcileProjectAppPrivateHostnamesForProject } from "@cocalc/server/app-private-hostnames";
 import { getProjectSecretsRuntimeCache } from "@cocalc/server/projects/project-secrets";
 import type { ProjectEnv } from "@cocalc/conat/hub/api/projects";
 import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
@@ -1073,20 +1072,6 @@ export async function savePlacement(
     project_id,
     host_id: placement.host_id,
   });
-  try {
-    const result = await reconcileProjectAppPrivateHostnamesForProject({
-      project_id,
-    });
-    if (result.errors.length > 0) {
-      log.warn("private app hostname placement reconcile incomplete", result);
-    }
-  } catch (err) {
-    log.warn("private app hostname placement reconcile failed", {
-      project_id,
-      host_id: placement.host_id,
-      err: `${err}`,
-    });
-  }
 }
 
 // A host being relocated is stopped, deprovisioned and restored elsewhere;

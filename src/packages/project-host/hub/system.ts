@@ -121,54 +121,7 @@ export function wireSystemApi(): void {
     return await forwardSystem("system.getPublicSiteUrl", [opts]);
   };
 
-  hubApi.system.tracePrivateAppHostname = async (opts: {
-    account_id?: string;
-    host_id?: string;
-    hostname: string;
-  }) => {
-    return await forwardSystem("system.tracePrivateAppHostname", [opts]);
-  };
-
-  hubApi.system.getProjectAppPrivateHostnamePolicy = async (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-  }) => {
-    return await forwardSystem("system.getProjectAppPrivateHostnamePolicy", [
-      opts,
-    ]);
-  };
-
-  hubApi.system.inspectProjectAppPrivateHostname = async (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-    app_id: string;
-  }) => {
-    return await forwardSystem("system.inspectProjectAppPrivateHostname", [
-      opts,
-    ]);
-  };
-
-  hubApi.system.listProjectAppPrivateHostnames = async (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-  }) => {
-    return await forwardSystem("system.listProjectAppPrivateHostnames", [opts]);
-  };
-
-  hubApi.system.reserveProjectAppPrivateHostname = async (opts: {
-    account_id?: string;
-    host_id?: string;
-    project_id: string;
-    app_id: string;
-  }) => {
-    return await forwardSystem("system.reserveProjectAppPrivateHostname", [
-      opts,
-    ]);
-  };
-
+  // Retired (D9); see the stub in @cocalc/server/conat/api/system.
   hubApi.system.releaseProjectAppPrivateHostname = async (opts: {
     account_id?: string;
     host_id?: string;
