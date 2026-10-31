@@ -9520,6 +9520,7 @@ class ProjectViewHelperTest(unittest.TestCase):
             (rootfs / name).mkdir(parents=True)
         self.ns["PROJECT_UPPER_ROOT"] = str(rootfs)
         self.ns["PROJECT_ROOTFS_ROOT"] = str(rootfs / "roots")
+        self.ns["container_root_ids"] = lambda: (os.getuid(), os.getgid())
         O_PATH = self.ns["O_PATH"]
         staged = []
 
@@ -9530,7 +9531,7 @@ class ProjectViewHelperTest(unittest.TestCase):
         self.ns["mount_idmapped_upper"] = fake_stage
 
         def argv(upper=f"{home}/upperdir", work=f"{home}/workdir", uid="1073741824",
-                 merged_root=str(rootfs / "roots"), merged=self.PROJECT):
+                 merged_root=str(rootfs / "roots"), merged=f"{self.PROJECT}/root"):
             return [
                 "mount-overlay-project",
                 "--lower-root", str(rootfs), "--lower-path", "lower",
@@ -9543,9 +9544,12 @@ class ProjectViewHelperTest(unittest.TestCase):
         with mock.patch.object(self.ns["subprocess"], "run") as run:
             self.ns["run_overlay"](argv(), allowed_roots={str(rootfs)})
         self.assertEqual(staged, [(self.PROJECT, 1073741824)])
-        # the helper made the mountpoint, under a 0711 parent
+        # the helper made <root>/<id>/root: <root> 0711, <id> 0700 owned by
+        # the container root (here: the test user)
         self.assertEqual(stat_mode(rootfs / "roots"), 0o711)
-        self.assertTrue((rootfs / "roots" / self.PROJECT).is_dir())
+        self.assertEqual(stat_mode(rootfs / "roots" / self.PROJECT), 0o700)
+        self.assertEqual(os.stat(rootfs / "roots" / self.PROJECT).st_uid, os.getuid())
+        self.assertTrue((rootfs / "roots" / self.PROJECT / "root").is_dir())
         args = run.call_args.args[0]
         self.assertIn("xino=off,metacopy=on,redirect_dir=on,index=off", args[5])
         other = "99999999-2222-4333-8444-555555555555"
@@ -9559,10 +9563,16 @@ class ProjectViewHelperTest(unittest.TestCase):
                 # an idmapped overlay is only mounted beneath PROJECT_ROOTFS_ROOT
                 argv(merged_root=str(rootfs), merged=f"x/{self.PROJECT}"),
                 argv(merged=f"{self.PROJECT}/x"),
+                argv(merged=self.PROJECT),
             ):
                 with self.assertRaises(ValueError):
                     self.ns["run_overlay"](bad, allowed_roots={str(rootfs)})
         run.assert_not_called()
+        # an existing <id> dir that isn't 0700 is refused
+        os.chmod(rootfs / "roots" / self.PROJECT, 0o755)
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "unsafe project rootfs dir"):
+                self.ns["run_overlay"](argv(), allowed_roots={str(rootfs)})
 
     def test_idmapped_upper_needs_upper_and_work_in_one_dir(self) -> None:
         O_PATH = self.ns["O_PATH"]

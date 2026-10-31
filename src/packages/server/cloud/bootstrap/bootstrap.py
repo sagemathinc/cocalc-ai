@@ -6721,16 +6721,17 @@ def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
     options = {f"--{name}-{kind}" for name in names for kind in ("root", "path")}
     allowed = options | ({"--idmap"} if command == "mount-overlay-project" else set())
     values, _flags = parse_named_options(argv, command, allowed, options)
-    # The merged dir is named after the project (allow_overlay_mountpoint).
-    project_id = os.path.basename(values["merged-path"])
     view_uid = validate_view_uid(values["idmap"]) if "idmap" in values else None
     run_root = values["merged-root"] == PROJECT_ROOTFS_ROOT
     if run_root:
-        if values["merged-path"] != validate_project_id(project_id):
+        project_id = values["merged-path"].split("/")[0]
+        if values["merged-path"] != f"{validate_project_id(project_id)}/root":
             fail("invalid project rootfs mountpoint")
-        allowed_roots = {*allowed_roots, PROJECT_ROOTFS_ROOT}
         if command == "mount-overlay-project":
             ensure_rootfs_mountpoint(project_id)
+    else:
+        # The merged dir is named after the project (allow_overlay_mountpoint).
+        project_id = os.path.basename(values["merged-path"])
     if view_uid is not None and not run_root:
         fail(f"an idmapped overlay must be mounted beneath {PROJECT_ROOTFS_ROOT}")
     if view_uid is not None:
@@ -6744,7 +6745,12 @@ def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
     staged = False
     try:
         for name in names:
-            descriptors.append(open_named_directory(values, name, allowed_roots))
+            roots = (
+                {*allowed_roots, PROJECT_ROOTFS_ROOT}
+                if name == "merged" and run_root
+                else allowed_roots
+            )
+            descriptors.append(open_named_directory(values, name, roots))
         if command == "mount-overlay-project" and view_uid is not None:
             # --idmap: the upper (and workdir) through an idmapped view, so
             # files the project creates keep the runtime user as owner on disk.
@@ -6793,10 +6799,11 @@ def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
         if staged:
             umount_view_target(f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}")
     if command == "umount-overlay-project" and run_root:
-        try:
-            os.rmdir(f"{PROJECT_ROOTFS_ROOT}/{project_id}")
-        except (FileNotFoundError, OSError):
-            pass
+        for path in (f"{PROJECT_ROOTFS_ROOT}/{project_id}/root", f"{PROJECT_ROOTFS_ROOT}/{project_id}"):
+            try:
+                os.rmdir(path)
+            except OSError:
+                break
     if command == "umount-overlay-project" and PROJECT_ID_RE.fullmatch(project_id):
         # An idmapped upper (--idmap) stays mounted until the overlay is gone.
         upper = f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}"
@@ -7007,9 +7014,13 @@ PROJECT_VIEW_TARGETS = (*PROJECT_VIEW_KINDS, PROJECT_VIEW_ROOTFS_UPPER)
 PROJECT_VIEW_MOUNT_OPTIONS = "nosuid,nodev"
 # An idmapped overlay upper must live in the project's own home.
 PROJECT_UPPER_ROOT = "/mnt/cocalc"
-# Merged rootfs mountpoints for --idmap: a root-owned 0711 parent outside the
-# runtime user's data dir. Podman makes the parents of a --rootfs path
-# traversable; a root-owned, already traversable parent is left as it is.
+# Merged rootfs mountpoints for --idmap: <root>/<project-id>/root.
+# Podman adds o+x to every parent of a --rootfs path that the container's root
+# doesn't own, and fails if it can't. So <root> is root-owned 0711 (already
+# traversable), and <root>/<project-id> belongs to the container root's host
+# ids with mode 0700: podman leaves it alone and crun reaches it as root of the
+# rootless namespace, but no project uid (or any other host uid) can enter it.
+# The overlay itself is mounted on <root>/<project-id>/root.
 PROJECT_ROOTFS_ROOT = "/run/cocalc/project-rootfs"
 PROJECT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 PROJECT_VIEW_COMMANDS = {
@@ -7168,13 +7179,30 @@ def verify_view(projectfd, name, sourcefd, uid, gid, view_uid):
         os.close(fd)
 
 
+def container_root_ids():
+    """Host uid/gid of the containers' root: the start of the runtime user's
+    first subordinate range."""
+    ids = []
+    for path in ("/etc/subuid", "/etc/subgid"):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split(":")
+                if len(parts) == 3 and parts[0] == RUNTIME_USER and parts[1].isdigit():
+                    ids.append(int(parts[1]))
+                    break
+            else:
+                fail(f"no subordinate range for {RUNTIME_USER} in {path}")
+    return ids[0], ids[1]
+
+
 def ensure_rootfs_mountpoint(project_id):
-    """PROJECT_ROOTFS_ROOT/<project-id>: root-owned, under a root 0711 parent."""
+    """PROJECT_ROOTFS_ROOT/<project-id>/root, see PROJECT_ROOTFS_ROOT."""
+    croot_uid, croot_gid = container_root_ids()
     parent, name = os.path.split(PROJECT_ROOTFS_ROOT)
     os.makedirs(parent, mode=0o711, exist_ok=True)
     check_view_parent(parent)
     parentfd = os.open(parent, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    rootfd = None
+    rootfd = projectfd = None
     try:
         try:
             os.mkdir(name, 0o711, dir_fd=parentfd)
@@ -7185,12 +7213,24 @@ def ensure_rootfs_mountpoint(project_id):
         if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o711:
             fail(f"unsafe project rootfs root: {PROJECT_ROOTFS_ROOT}")
         try:
-            os.mkdir(project_id, 0o755, dir_fd=rootfd)
+            os.mkdir(project_id, 0o700, dir_fd=rootfd)
+            created = True
+        except FileExistsError:
+            created = False
+        projectfd = openat2(rootfd, project_id, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        if created:
+            os.chown(f"/proc/self/fd/{projectfd}", croot_uid, croot_gid)
+        info = os.fstat(projectfd)
+        if (info.st_uid, info.st_gid) != (croot_uid, croot_gid) or stat.S_IMODE(info.st_mode) != 0o700:
+            fail(f"unsafe project rootfs dir: {PROJECT_ROOTFS_ROOT}/{project_id}")
+        try:
+            os.mkdir("root", 0o755, dir_fd=projectfd)
         except FileExistsError:
             pass
     finally:
-        if rootfd is not None:
-            os.close(rootfd)
+        for fd in (projectfd, rootfd):
+            if fd is not None:
+                os.close(fd)
         os.close(parentfd)
 
 
@@ -10034,8 +10074,9 @@ allow_overlay_mountpoint() {
   case "$path" in
     /mnt/cocalc/data/cache/project-roots/*|/var/lib/cocalc/star/project-host/0/cache/project-roots/*)
       ;;
-    /run/cocalc/project-rootfs/*)
-      # root-owned; the path helper creates and removes the mountpoint
+    /run/cocalc/project-rootfs/*/root)
+      # the path helper creates and removes /run/cocalc/project-rootfs/<id>/root
+      path="$(dirname "$path")"
       [ "$path" = "/run/cocalc/project-rootfs/$(basename "$path")" ] || return 1
       ;;
     *)
@@ -10905,9 +10946,9 @@ PY
     require_allowed_path_parts "$workdir"
     work_root="$ALLOWED_PATH_ROOT"
     work_rel="$ALLOWED_PATH_REL"
-    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$merged")" ]; then
+    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$(dirname "$merged")")/root" ]; then
       merged_root="/run/cocalc/project-rootfs"
-      merged_rel="$(basename "$merged")"
+      merged_rel="$(basename "$(dirname "$merged")")/root"
     else
       require_allowed_path_parts "$merged"
       merged_root="$ALLOWED_PATH_ROOT"
@@ -10988,9 +11029,9 @@ PY
     if ! allow_overlay_mountpoint "$merged"; then
       deny "overlay-mountpoint-not-allowed" "$merged"
     fi
-    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$merged")" ]; then
+    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$(dirname "$merged")")/root" ]; then
       merged_root="/run/cocalc/project-rootfs"
-      merged_rel="$(basename "$merged")"
+      merged_rel="$(basename "$(dirname "$merged")")/root"
     else
       require_allowed_path_parts "$merged"
       merged_root="$ALLOWED_PATH_ROOT"
