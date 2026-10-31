@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it } from "@jest/globals";
 import { closeDatabase } from "@cocalc/lite/hub/sqlite/database";
 
 // Root installs (cocalc-runtime-artifacts), simulated on the filesystem.
-const mockRoot = { dir: "" };
+const mockRoot: { dir: string; layout?: { root: string; current: string } } = {
+  dir: "",
+};
 const mockCalls: any[] = [];
 // what root may do in the directory the daemon can't write
 function mockAsRoot<T>(work: () => T): T {
@@ -19,7 +21,7 @@ function mockAsRoot<T>(work: () => T): T {
   }
 }
 jest.mock("./artifact-install", () => ({
-  rootArtifactLayout: async () => undefined,
+  rootArtifactLayout: async () => mockRoot.layout,
   rootInstallArtifact: async (kind: string, version: string, base: string) => {
     mockCalls.push(["install", kind, version, base]);
     return mockAsRoot(() => {
@@ -68,12 +70,14 @@ jest.mock("./artifact-install", () => ({
   },
 }));
 
-import { __test__ } from "./upgrade";
+import { __test__, activateInstalledProjectHostVersion } from "./upgrade";
 
 describe("project host upgrades through root installs", () => {
   afterEach(() => {
     closeDatabase();
     delete process.env.COCALC_DATA;
+    delete process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL;
+    mockRoot.layout = undefined;
     mockCalls.length = 0;
   });
 
@@ -160,6 +164,39 @@ describe("project host upgrades through root installs", () => {
         ["prune", "project-host", "v01"],
       ]);
       expect(fs.realpathSync(currentLink)).toBe(path.join(bundlesRoot, "v05"));
+    } finally {
+      fs.chmodSync(mockRoot.dir, 0o755);
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("has root install a rollback target before switching to it (it may be legacy)", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-root-"));
+    try {
+      process.env.COCALC_DATA = path.join(base, "data");
+      process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL =
+        "https://software.example.invalid/software";
+      const bundlesRoot = path.join(base, "bundles");
+      mockRoot.dir = bundlesRoot;
+      for (const version of ["v03", "v04"]) {
+        fs.mkdirSync(path.join(bundlesRoot, version), { recursive: true });
+        fs.writeFileSync(path.join(bundlesRoot, version, "README.txt"), "x");
+      }
+      const currentLink = path.join(bundlesRoot, "current");
+      fs.symlinkSync(path.join(bundlesRoot, "v04"), currentLink);
+      fs.chmodSync(bundlesRoot, 0o555);
+      mockRoot.layout = { root: bundlesRoot, current: currentLink };
+      await activateInstalledProjectHostVersion("v03");
+      expect(mockCalls).toEqual([
+        [
+          "install",
+          "project-host",
+          "v03",
+          "https://software.example.invalid/software",
+        ],
+        ["set", "project-host", "v03", "current"],
+      ]);
+      expect(fs.realpathSync(currentLink)).toBe(path.join(bundlesRoot, "v03"));
     } finally {
       fs.chmodSync(mockRoot.dir, 0o755);
       fs.rmSync(base, { recursive: true, force: true });
