@@ -10857,6 +10857,7 @@ class ScrubFakeHost(SCRUB_NS["Host"]):
 
     untrusted = ()
     cancel_fails = False
+    status_fails = False
     zone = None  # no cloud zone, UTC system time: night is UTC
     systz = "Etc/UTC"
 
@@ -10887,6 +10888,8 @@ class ScrubFakeHost(SCRUB_NS["Host"]):
         if args[0] == SCRUB_NS["FINDMNT"]:
             return 0, "btrfs %s\n" % SCRUB_FSID, ""
         if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "status"]:
+            if self.status_fails:
+                return 1, "", "status failed"
             if self.scrub == "none":
                 return 0, "UUID: %s\n\tno stats available\n" % SCRUB_FSID, ""
             lines = ["UUID: %s" % SCRUB_FSID, "Status: %s" % self.scrub,
@@ -11146,7 +11149,6 @@ class BtrfsScrubScriptTest(unittest.TestCase):
         self.assertEqual(host.scrub, "running")
         host.run = orig_cancel
         host.on_sleep = None
-        host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID] = "0"
         host.t += 3600
         starts = sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"]))
         status = self.run_once(host)
@@ -11339,6 +11341,103 @@ class BtrfsScrubScriptTest(unittest.TestCase):
         self.assertEqual(datetime.datetime.fromtimestamp(end, la).hour, 6)
         self.assertEqual(end - start, 5 * 3600)
 
+    def test_a_kept_throttle_restores_only_this_filesystems_knobs(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.files[knob] = str(48 * 2**20)  # left on by a run that gave up
+        host.files["/etc/cron.d/x"] = "original"
+        status["throttle_restore"] = {knob: "0", "/etc/cron.d/x": "* * * * * root evil"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        status = self.run_once(host)
+        self.assertEqual(host.files[knob], "0")
+        self.assertEqual(host.files["/etc/cron.d/x"], "original")
+        self.assertNotIn("throttle_restore", status)
+        # a non-numeric value for the real knob isn't written either
+        host.files[knob] = str(48 * 2**20)
+        status["throttle_restore"] = {knob: "0; reboot"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        self.run_once(host)
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+
+    def test_after_a_sigkill_the_original_throttle_is_restored(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        # the state a SIGKILLed run leaves: phase running, the scrub running,
+        # the knob at our throttle, the original saved
+        status["current"] = {"started_at": SCRUB_NS["iso"](host.t), "phase": "running"}
+        status["throttle_restore"] = {knob: "0"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub, host.done = "running", 10**12
+        host.files[knob] = str(48 * 2**20)
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(host.files[knob], "0")
+        self.assertNotIn("throttle_restore", status)
+
+    def test_an_unreadable_status_never_confirms_a_cancel(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def broken(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+                h.cancel_fails = True
+                h.status_fails = True
+
+        host.on_sleep = broken
+        self.run_once(host, "--daily-hours", "1")
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        self.assertEqual(host.scrub, "running")
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+        # and a run that can't read the status starts nothing
+        host.on_sleep = None
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "btrfs scrub status unavailable")
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+
+    def test_an_orphan_that_cant_be_cancelled_is_an_error_not_silence(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        status["current"] = {"started_at": status["first_seen_at"], "phase": "running"}
+        status["throttle_restore"] = {knob: "0"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub = "running"
+        host.files[knob] = str(48 * 2**20)
+        host.cancel_fails = True
+        host.t = scrub_night_after(host.t) + 7 * 3600  # outside the night window
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+        self.assertIn("throttle_restore", status)
+
+    def test_runtime_is_counted_even_if_the_run_is_stopped(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def stopped_after_an_hour(h):
+            if h.t - start >= 3600:
+                raise SystemExit(143)
+
+        host.on_sleep = stopped_after_an_hour
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        with open(os.path.join(self.dir, "status.json")) as f:
+            status = json.load(f)
+        self.assertGreaterEqual(status["runtime_today_s"], 3540)
+
     def test_not_btrfs_is_reported_and_nothing_runs(self):
         host = ScrubFakeHost()
         host.run = lambda args: (0, "ext4 abc\n", "")
@@ -11376,6 +11475,7 @@ class BtrfsScrubInstallTest(unittest.TestCase):
             self.assertEqual(oct(paths["script_path"].stat().st_mode & 0o777), "0o755")
             unit = paths["service_path"].read_text()
             self.assertIn("Type=oneshot", unit)
+            self.assertIn("TimeoutStartSec=25h", unit)
             self.assertIn("--status-dir /var/lib/cocalc-btrfs-scrub", unit)
             self.assertIn("--status-group " + cfg.ssh_user, unit)
             self.assertIn("Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin", unit)
