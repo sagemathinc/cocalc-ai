@@ -9314,6 +9314,20 @@ class HostIntegrityWatchTest(unittest.TestCase):
             ],
         )
 
+    def test_the_findings_cap_keeps_critical_findings(self) -> None:
+        # many high findings in one scan (one per program), and one critical
+        for i in range(120):
+            self.add_proc(1000 + i, 1, "tool", self.uid, f"/usr/bin/tool-{i}", self.HOST_NS)
+        self.add_proc(2000, 1, "sh", 231072, "/usr/bin/dash", self.HOST_NS)
+        ns = self.watch()
+        w = self.watcher(ns)
+        w.step(1000.0)
+        self.assertEqual(len(w.findings), 100)
+        self.assertIn(
+            "project-uid-outside-container",
+            {f["rule"] for f in w.findings.values()},
+        )
+
     def test_allowlist_file_extends_the_defaults(self) -> None:
         self.add_proc(52, 1, "curl", self.uid, "/usr/bin/curl", self.HOST_NS)
         self.add_proc(53, 1, "wget", self.uid, "/usr/bin/wget", self.HOST_NS)
