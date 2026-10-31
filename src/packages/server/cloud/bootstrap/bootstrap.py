@@ -7301,8 +7301,13 @@ def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
                 check=True,
                 stdin=subprocess.DEVNULL,
             )
-            make_view_private(projectfd, kind)
-            verify_view(projectfd, kind, sourcefd, uid, gid, view_uid)
+            # Mounted: from here on, any failure takes the view down again.
+            try:
+                make_view_private(projectfd, kind)
+                verify_view(projectfd, kind, sourcefd, uid, gid, view_uid)
+            except BaseException:
+                umount_view_target(target)
+                raise
         finally:
             for fd in (targetfd, projectfd, rootfd, sourcefd):
                 if fd is not None:
@@ -7384,9 +7389,14 @@ def mount_idmapped_upper(project_id, upperfd, workfd, view_uid):
             check=True,
             stdin=subprocess.DEVNULL,
         )
-        make_view_private(projectfd, PROJECT_VIEW_ROOTFS_UPPER)
-        verify_view(projectfd, PROJECT_VIEW_ROOTFS_UPPER, parentfd, uid, gid, view_uid)
-        mounted = openat2(projectfd, PROJECT_VIEW_ROOTFS_UPPER, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        # Mounted: from here on, any failure takes the staged upper down again.
+        try:
+            make_view_private(projectfd, PROJECT_VIEW_ROOTFS_UPPER)
+            verify_view(projectfd, PROJECT_VIEW_ROOTFS_UPPER, parentfd, uid, gid, view_uid)
+            mounted = openat2(projectfd, PROJECT_VIEW_ROOTFS_UPPER, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        except BaseException:
+            umount_view_target(target)
+            raise
         return mounted, upper_name, work_name
     finally:
         for fd in (stagingfd, projectfd, rootfd, parentfd):

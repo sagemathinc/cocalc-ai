@@ -9352,6 +9352,57 @@ class ProjectViewHelperTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "mounts remain"):
                 self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
 
+    def test_a_view_is_unmounted_when_making_it_private_fails(self) -> None:
+        self.ns["PROJECT_VIEW_KINDS"] = {"home": ((str(self.data), "project-{id}"), False)}
+        target = f"{self.views}/{self.PROJECT}/home"
+        live: list[str] = []
+        self.ns["view_mountpoints"] = lambda: list(live)
+
+        def run(args, **_kwargs):
+            if "--bind" in args:
+                live.append(target)
+            elif "--make-private" in args:
+                raise subprocess.CalledProcessError(32, args)
+            elif args[:2] == ["/bin/umount", "-l"]:
+                live.remove(args[-1])
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=run):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", self.PROJECT, "--kind", "home",
+                     "--uid", "1073741824", "--source-root", str(self.data),
+                     "--source-path", f"project-{self.PROJECT}"],
+                    allowed_roots=self.allowed,
+                )
+        self.assertEqual(live, [])
+
+    def test_a_staged_upper_is_unmounted_when_making_it_private_fails(self) -> None:
+        O_PATH = self.ns["O_PATH"]
+        (self.tmp / "img/upperdir").mkdir(parents=True)
+        (self.tmp / "img/workdir").mkdir(parents=True)
+        upper = os.open(self.tmp / "img/upperdir", O_PATH | os.O_DIRECTORY)
+        work = os.open(self.tmp / "img/workdir", O_PATH | os.O_DIRECTORY)
+        target = f"{self.views}/{self.PROJECT}/rootfs-upper"
+        live: list[str] = []
+        self.ns["view_mountpoints"] = lambda: list(live)
+
+        def run(args, **_kwargs):
+            if "--bind" in args:
+                live.append(target)
+            elif "--make-private" in args:
+                raise subprocess.CalledProcessError(32, args)
+            elif args[:2] == ["/bin/umount", "-l"]:
+                live.remove(args[-1])
+
+        try:
+            with mock.patch.object(self.ns["subprocess"], "run", side_effect=run):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.ns["mount_idmapped_upper"](self.PROJECT, upper, work, 1073741824)
+        finally:
+            os.close(upper)
+            os.close(work)
+        self.assertEqual(live, [])
+
     def test_view_direction_check(self) -> None:
         check = self.ns["assert_view_direction"]
         st = namedtuple("st", "st_uid st_gid")
