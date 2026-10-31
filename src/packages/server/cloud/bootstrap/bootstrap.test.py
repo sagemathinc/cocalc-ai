@@ -9153,6 +9153,10 @@ class ProjectRuntimeUidBlockTest(unittest.TestCase):
             self.assertFalse(bootstrap.ensure_login_defs_subid_max(path))
 
 
+def stat_mode(path) -> int:
+    return os.stat(path).st_mode & 0o7777
+
+
 class ProjectViewHelperTest(unittest.TestCase):
     PROJECT = "11111111-2222-4333-8444-555555555555"
 
@@ -9435,9 +9439,10 @@ class ProjectViewHelperTest(unittest.TestCase):
     def test_overlay_idmap_uses_the_staged_upper(self) -> None:
         rootfs = self.tmp / "rootfs"
         home = f"project-{self.PROJECT}/.local/share/cocalc/rootfs/img"
-        for name in ("lower", f"{home}/upperdir", f"{home}/workdir", f"roots/{self.PROJECT}"):
+        for name in ("lower", f"{home}/upperdir", f"{home}/workdir"):
             (rootfs / name).mkdir(parents=True)
         self.ns["PROJECT_UPPER_ROOT"] = str(rootfs)
+        self.ns["PROJECT_ROOTFS_ROOT"] = str(rootfs / "roots")
         O_PATH = self.ns["O_PATH"]
         staged = []
 
@@ -9447,19 +9452,23 @@ class ProjectViewHelperTest(unittest.TestCase):
 
         self.ns["mount_idmapped_upper"] = fake_stage
 
-        def argv(upper=f"{home}/upperdir", work=f"{home}/workdir", uid="1073741824"):
+        def argv(upper=f"{home}/upperdir", work=f"{home}/workdir", uid="1073741824",
+                 merged_root=str(rootfs / "roots"), merged=self.PROJECT):
             return [
                 "mount-overlay-project",
                 "--lower-root", str(rootfs), "--lower-path", "lower",
                 "--upper-root", str(rootfs), "--upper-path", upper,
                 "--work-root", str(rootfs), "--work-path", work,
-                "--merged-root", str(rootfs), "--merged-path", f"roots/{self.PROJECT}",
+                "--merged-root", merged_root, "--merged-path", merged,
                 "--idmap", uid,
             ]
 
         with mock.patch.object(self.ns["subprocess"], "run") as run:
             self.ns["run_overlay"](argv(), allowed_roots={str(rootfs)})
         self.assertEqual(staged, [(self.PROJECT, 1073741824)])
+        # the helper made the mountpoint, under a 0711 parent
+        self.assertEqual(stat_mode(rootfs / "roots"), 0o711)
+        self.assertTrue((rootfs / "roots" / self.PROJECT).is_dir())
         args = run.call_args.args[0]
         self.assertIn("xino=off,metacopy=on,redirect_dir=on,index=off", args[5])
         other = "99999999-2222-4333-8444-555555555555"
@@ -9470,6 +9479,9 @@ class ProjectViewHelperTest(unittest.TestCase):
                 argv(upper=f"project-{other}/u"),
                 argv(upper="lower"),
                 argv(work="lower"),
+                # an idmapped overlay is only mounted beneath PROJECT_ROOTFS_ROOT
+                argv(merged_root=str(rootfs), merged=f"x/{self.PROJECT}"),
+                argv(merged=f"{self.PROJECT}/x"),
             ):
                 with self.assertRaises(ValueError):
                     self.ns["run_overlay"](bad, allowed_roots={str(rootfs)})
@@ -9495,6 +9507,7 @@ class ProjectViewHelperTest(unittest.TestCase):
         self.assertIn('project-view-mount --project "$1" --kind "$2" --uid "$3"', wrapper)
         self.assertIn('project-view-gc --keep "${1:-}"', wrapper)
         self.assertIn('"${idmap_args[@]}"', wrapper)
+        self.assertIn('merged_root="/run/cocalc/project-rootfs"', wrapper)
         result = subprocess.run(["bash", "-n"], input=wrapper, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 

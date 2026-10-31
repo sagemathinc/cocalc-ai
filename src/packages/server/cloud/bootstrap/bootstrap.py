@@ -6715,6 +6715,15 @@ def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
     # The merged dir is named after the project (allow_overlay_mountpoint).
     project_id = os.path.basename(values["merged-path"])
     view_uid = validate_view_uid(values["idmap"]) if "idmap" in values else None
+    run_root = values["merged-root"] == PROJECT_ROOTFS_ROOT
+    if run_root:
+        if values["merged-path"] != validate_project_id(project_id):
+            fail("invalid project rootfs mountpoint")
+        allowed_roots = {*allowed_roots, PROJECT_ROOTFS_ROOT}
+        if command == "mount-overlay-project":
+            ensure_rootfs_mountpoint(project_id)
+    if view_uid is not None and not run_root:
+        fail(f"an idmapped overlay must be mounted beneath {PROJECT_ROOTFS_ROOT}")
     if view_uid is not None:
         validate_project_id(project_id)
         for name in ("upper", "work"):
@@ -6774,6 +6783,11 @@ def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
             os.close(fd)
         if staged:
             umount_view_target(f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}")
+    if command == "umount-overlay-project" and run_root:
+        try:
+            os.rmdir(f"{PROJECT_ROOTFS_ROOT}/{project_id}")
+        except (FileNotFoundError, OSError):
+            pass
     if command == "umount-overlay-project" and PROJECT_ID_RE.fullmatch(project_id):
         # An idmapped upper (--idmap) stays mounted until the overlay is gone.
         upper = f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}"
@@ -6984,6 +6998,10 @@ PROJECT_VIEW_TARGETS = (*PROJECT_VIEW_KINDS, PROJECT_VIEW_ROOTFS_UPPER)
 PROJECT_VIEW_MOUNT_OPTIONS = "nosuid,nodev"
 # An idmapped overlay upper must live in the project's own home.
 PROJECT_UPPER_ROOT = "/mnt/cocalc"
+# Merged rootfs mountpoints for --idmap: a root-owned 0711 parent outside the
+# runtime user's data dir. Podman makes the parents of a --rootfs path
+# traversable; a root-owned, already traversable parent is left as it is.
+PROJECT_ROOTFS_ROOT = "/run/cocalc/project-rootfs"
 PROJECT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 PROJECT_VIEW_COMMANDS = {
     "project-view-mount",
@@ -7132,6 +7150,32 @@ def verify_view(projectfd, name, sourcefd, uid, gid, view_uid):
         raise
     finally:
         os.close(fd)
+
+
+def ensure_rootfs_mountpoint(project_id):
+    """PROJECT_ROOTFS_ROOT/<project-id>: root-owned, under a root 0711 parent."""
+    parent, name = os.path.split(PROJECT_ROOTFS_ROOT)
+    os.makedirs(parent, mode=0o711, exist_ok=True)
+    check_view_parent(parent)
+    parentfd = os.open(parent, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    rootfd = None
+    try:
+        try:
+            os.mkdir(name, 0o711, dir_fd=parentfd)
+        except FileExistsError:
+            pass
+        rootfd = openat2(parentfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        info = os.fstat(rootfd)
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o711:
+            fail(f"unsafe project rootfs root: {PROJECT_ROOTFS_ROOT}")
+        try:
+            os.mkdir(project_id, 0o755, dir_fd=rootfd)
+        except FileExistsError:
+            pass
+    finally:
+        if rootfd is not None:
+            os.close(rootfd)
+        os.close(parentfd)
 
 
 def make_view_private(projectfd, name):
@@ -9936,6 +9980,10 @@ allow_overlay_mountpoint() {
   case "$path" in
     /mnt/cocalc/data/cache/project-roots/*|/var/lib/cocalc/star/project-host/0/cache/project-roots/*)
       ;;
+    /run/cocalc/project-rootfs/*)
+      # root-owned; the path helper creates and removes the mountpoint
+      [ "$path" = "/run/cocalc/project-rootfs/$(basename "$path")" ] || return 1
+      ;;
     *)
       return 1
       ;;
@@ -10803,9 +10851,14 @@ PY
     require_allowed_path_parts "$workdir"
     work_root="$ALLOWED_PATH_ROOT"
     work_rel="$ALLOWED_PATH_REL"
-    require_allowed_path_parts "$merged"
-    merged_root="$ALLOWED_PATH_ROOT"
-    merged_rel="$ALLOWED_PATH_REL"
+    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$merged")" ]; then
+      merged_root="/run/cocalc/project-rootfs"
+      merged_rel="$(basename "$merged")"
+    else
+      require_allowed_path_parts "$merged"
+      merged_root="$ALLOWED_PATH_ROOT"
+      merged_rel="$ALLOWED_PATH_REL"
+    fi
     # Use the xattr-capable OverlayFS mode:
     # - metacopy=on avoids copying full file contents into upperdir for
     #   metadata-only changes, which keeps environment overlays smaller.
@@ -10874,10 +10927,17 @@ PY
     if ! allow_overlay_mountpoint "$merged"; then
       deny "overlay-mountpoint-not-allowed" "$merged"
     fi
-    require_allowed_path_parts "$merged"
+    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$merged")" ]; then
+      merged_root="/run/cocalc/project-rootfs"
+      merged_rel="$(basename "$merged")"
+    else
+      require_allowed_path_parts "$merged"
+      merged_root="$ALLOWED_PATH_ROOT"
+      merged_rel="$ALLOWED_PATH_REL"
+    fi
     exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
       umount-overlay-project \
-      --merged-root "$ALLOWED_PATH_ROOT" --merged-path "$ALLOWED_PATH_REL"
+      --merged-root "$merged_root" --merged-path "$merged_rel"
     ;;
   losetup)
     check_args "$@"
