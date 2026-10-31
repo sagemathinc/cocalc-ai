@@ -9251,9 +9251,33 @@ class HostIntegrityWatchTest(unittest.TestCase):
         self.add_proc(91, 1, "bash", self.uid, "/usr/bin/bash", "user:[4026532778]", f"0 {self.uid} 5\n")
         ns = self.watch()
         new = self.watcher(ns).step(1000.0)
+        # (the wider one is still checked: it isn't in a container)
         self.assertEqual(
-            [(f["rule"], f["pid"], f["userns"]) for f in new],
-            [("unexpected-process-in-container-runtime", 90, "runtime")],
+            sorted((f["rule"], f["pid"], f["userns"]) for f in new),
+            [
+                ("unexpected-process-in-container-runtime", 90, "runtime"),
+                ("unexpected-runtime-user-process", 91, "other"),
+            ],
+        )
+
+    def test_a_user_namespace_alone_is_not_a_container(self) -> None:
+        container_map = f"0 231072 2001\n2001 {self.uid} 1\n"
+        pool = "/cocalc-project-pool/project-1"
+        # in a container: its own mount namespace, in a project cgroup
+        self.add_proc(30, 1, "bash", self.uid, "/usr/bin/bash", self.CONTAINER_NS, container_map, cgroup=pool)
+        self.add_proc(31, 1, "sh", 231072, "/usr/bin/dash", self.CONTAINER_NS, container_map, cgroup=pool)
+        # a container-like user namespace, but in the host mount namespace or
+        # outside the project cgroups
+        self.add_proc(40, 1, "evil", self.uid, "/tmp/evil", self.CONTAINER_NS, container_map, cgroup=pool, mnt=self.HOST_MNT)
+        self.add_proc(41, 1, "sh", 231072, "/usr/bin/dash", self.CONTAINER_NS, container_map, cgroup="/cocalc-host-services")
+        ns = self.watch()
+        new = self.watcher(ns).step(1000.0)
+        self.assertEqual(
+            sorted((f["pid"], f["rule"], f["userns"]) for f in new),
+            [
+                (40, "unexpected-runtime-user-process", "other"),
+                (41, "project-uid-outside-container", "other"),
+            ],
         )
 
     def test_trusts_programs_by_path_not_by_name(self) -> None:

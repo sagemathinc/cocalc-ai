@@ -33,11 +33,14 @@ function iso(value: unknown): string | undefined {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
-// Newest first, so the caps keep the latest.
-function newestFirst(items: unknown): any[] {
+const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1 };
+
+// Most severe, then newest first, so the caps keep what matters.
+function worstNewestFirst(items: unknown): any[] {
   if (!Array.isArray(items)) return [];
+  const rank = (item: any) => SEVERITY_RANK[`${item?.severity}`] ?? 2;
   const seen = (item: any) => Date.parse(item?.last_seen) || 0;
-  return [...items].sort((a, b) => seen(b) - seen(a));
+  return [...items].sort((a, b) => rank(a) - rank(b) || seen(b) - seen(a));
 }
 
 async function rebootRequiredSince(path: string): Promise<string | null> {
@@ -71,8 +74,8 @@ export async function readHostIntegrity({
   const heartbeat_at = iso(raw?.heartbeat_at);
   const stale =
     heartbeat_at == null || now - Date.parse(heartbeat_at) > STALE_MS;
-  const findings = newestFirst(raw?.findings);
-  const changes = newestFirst(raw?.config?.changes);
+  const findings = worstNewestFirst(raw?.findings);
+  const changes = worstNewestFirst(raw?.config?.changes);
   const inventory =
     raw?.inventory && typeof raw.inventory === "object" ? raw.inventory : {};
   return {

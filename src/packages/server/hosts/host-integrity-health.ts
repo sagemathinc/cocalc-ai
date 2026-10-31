@@ -102,7 +102,13 @@ export function summarizeHostIntegrity(
   let unreported = 0;
   for (const row of byHostId(rows)) {
     const integrity = row.integrity;
-    if (integrity == null || typeof integrity !== "object") {
+    // Heartbeat metadata is merged, so a host that went back to a build
+    // without this report keeps the last one: only a fresh report counts.
+    if (
+      integrity == null ||
+      typeof integrity !== "object" ||
+      !seenWithin(integrity.observed_at, HOST_ONLINE_WINDOW_MS, now)
+    ) {
       unreported += 1;
       continue;
     }

@@ -140,6 +140,33 @@ describe("host integrity for the heartbeat", () => {
     expect(result.reboot_required_since).toBe("2026-10-28T12:00:00.000Z");
   });
 
+  it("keeps critical findings when there are more than it passes on", async () => {
+    const high = Array.from({ length: 25 }, (_, i) => ({
+      rule: "unexpected-runtime-user-process",
+      severity: "high",
+      exe: `/usr/bin/tool-${i}`,
+      last_seen: "2026-10-31T00:59:00Z",
+    }));
+    const critical = {
+      rule: "project-uid-outside-container",
+      severity: "critical",
+      exe: "/usr/bin/dash",
+      last_seen: "2026-10-31T00:59:00Z",
+    };
+    await writeFile(
+      join(dir, "status.json"),
+      JSON.stringify(status({ findings: [...high, critical] })),
+    );
+    const result = await readHostIntegrity({
+      statusPath: join(dir, "status.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    expect(result.finding_count).toBe(26);
+    expect(result.findings).toHaveLength(20);
+    expect(result.findings![0].severity).toBe("critical");
+  });
+
   it("keeps the newest config changes when there are more than it passes on", async () => {
     // in the order the watcher first saw them; the last ones are the newest
     const changes = Array.from({ length: 25 }, (_, i) => ({

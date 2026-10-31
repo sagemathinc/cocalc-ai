@@ -80,6 +80,18 @@ describe("project host integrity health", () => {
     ).toMatchObject({ level: "healthy" });
   });
 
+  it("ignores a report the host no longer sends (merged heartbeat metadata)", () => {
+    const summary = summarizeHostIntegrity(
+      [host("a", { findings: [finding()], observed_at: ago(30 * 60_000) })],
+      NOW,
+    );
+    expect(summary).toMatchObject({
+      unreported_hosts: 1,
+      conditions: [],
+      reporting_subjects: [],
+    });
+  });
+
   it("raises each condition: findings, config changes, a silent watcher, a long pending reboot", () => {
     const summary = summarizeHostIntegrity(
       [

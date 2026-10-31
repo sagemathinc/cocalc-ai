@@ -3649,6 +3649,9 @@ DEFAULT_PLACEMENT_RULES = (
 # Root-owned service cgroups whose scripts run as the runtime user: any program
 # there is expected (the runtime user cannot move a process into them).
 DEFAULT_SCRIPT_CGROUPS = ("/system.slice/cocalc-project-host-watchdog.service",)
+# Container cgroups: a process in another user namespace counts as inside a
+# container only in one of these and in a mount namespace of its own.
+DEFAULT_CONTAINER_CGROUPS = ("/cocalc-project-pool",)
 # Host configuration whose changes are reported (globs; files up to 1 MB).
 DEFAULT_CONFIG_PATHS = (
     "/etc/passwd",
@@ -3893,7 +3896,7 @@ def placement_violation(p, rule, host_mntns):
 
 def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
              runtime_exes, self_pid, placement_rules=(), host_mntns=None,
-             script_cgroups=()):
+             script_cgroups=(), container_cgroups=()):
     """Returns (findings, inventory keys) for one scan. A finding is a dict
     without any command line, environment or file content."""
     findings, inventory, cache = [], [], {}
@@ -3925,8 +3928,15 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
         if not runtime and not project:
             continue
         kind = userns_kind(proc_root, p.userns, p.pid, host_ns, runtime_uid, cache)
-        if kind not in ("host", "runtime"):
-            continue
+        if (
+            kind == "other"
+            and p.mntns
+            and p.mntns != host_mntns
+            and cgroup_allowed(p.cgroup, container_cgroups)
+        ):
+            continue  # inside a container
+        # Anything else is checked as a host process: a user namespace
+        # alone (e.g. one made by the runtime user) doesn't contain it.
         inventory.append(
             "%s|%s|%s" % (kind, "project" if project else "runtime", p.exe or "?")
         )
@@ -3936,7 +3946,7 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
         elif kind == "runtime" and not exe_allowed(p.exe, runtime_exes):
             rule, severity = "unexpected-process-in-container-runtime", "critical"
         elif (
-            kind == "host"
+            kind != "runtime"
             and not exe_allowed(p.exe, host_exes)
             and not cgroup_allowed(p.cgroup, script_cgroups)
         ):
@@ -4009,6 +4019,10 @@ class Watcher:
         self.script_cgroups = [
             str(c).rstrip("/")
             for c in list(DEFAULT_SCRIPT_CGROUPS) + list(allow.get("script_cgroups", []))
+        ]
+        self.container_cgroups = [
+            str(c).rstrip("/")
+            for c in list(DEFAULT_CONTAINER_CGROUPS) + list(allow.get("container_cgroups", []))
         ]
         self.placement_rules = compile_placement_rules(
             list(DEFAULT_PLACEMENT_RULES) + list(allow.get("placement_rules", [])),
@@ -4101,6 +4115,7 @@ class Watcher:
             self.placement_rules,
             read_link(os.path.join(self.proc_root, "1", "ns", "mnt")),
             self.script_cgroups,
+            self.container_cgroups,
         )
         self.scans += 1
         self.last_scan_ms = int((time.monotonic() - started) * 1000)
