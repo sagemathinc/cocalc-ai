@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 
+import contextlib
+import fcntl
 import io
 import hashlib
 import inspect
 import json
 import os
 import pwd
+import re
 import shutil
 import stat
 import subprocess
@@ -275,8 +278,12 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         for command in ("chown", "chmod", "chattr-cow", "rename", "rm", "mkdir", "copy-tree-reflink"):
             with self.subTest(command=command), self.assertRaises(ValueError):
                 check("/var/lib/cocalc", "cocalc.img", command, generic_roots)
-        # Callers that stay allowed: the mount root and the loop images.
-        check("/mnt/cocalc", ".", "chown", generic_roots)
+        # The data filesystem's root itself stays root's (BEES, R1).
+        for command in ("chown", "chmod", "chattr-cow", "truncate"):
+            with self.subTest(command=command), self.assertRaisesRegex(ValueError, "itself"):
+                check("/mnt/cocalc", ".", command, generic_roots)
+        # Callers that stay allowed.
+        check("/mnt/cocalc", "project-1", "chown", generic_roots)
         check("/mnt/cocalc", "data", "chmod", generic_roots)
         check("/mnt/cocalc", "data/secrets-other", "rm", generic_roots)
         check("/mnt/cocalc", "project-1", "rm", generic_roots)
@@ -357,6 +364,474 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         # mknod keeps its own loop-device check.
         mknod = script.split("\n  mknod)\n", 1)[1].split("\n    ;;\n", 1)[0]
         self.assertIn("^/dev/loop[0-9]+$", mknod)
+
+    # Every btrfs command line a caller sends (file-server/btrfs, project-host).
+    BTRFS_CALLER_SHAPES = [
+        ["subvolume", "create", "/mnt/cocalc/project-1"],
+        ["subvolume", "snapshot", "-r", "/mnt/cocalc/project-1", "/mnt/cocalc/project-1/.snapshots/s"],
+        ["subvolume", "snapshot", "/mnt/cocalc/a", "/mnt/cocalc/b"],
+        ["subvolume", "delete", "/mnt/cocalc/project-1/.snapshots/s"],
+        ["subvolume", "show", "/mnt/cocalc/project-1"],
+        ["subvolume", "list", "/mnt/cocalc"],
+        ["subvolume", "list", "-o", "/mnt/cocalc/project-1"],
+        ["subvolume", "list", "-u", "/mnt/cocalc"],
+        ["property", "get", "-ts", "/mnt/cocalc/s", "ro"],
+        ["property", "set", "-ts", "/mnt/cocalc/s", "ro", "true"],
+        ["property", "set", "-ts", "/mnt/cocalc/s", "ro", "false"],
+        ["filesystem", "show", "/mnt/cocalc"],
+        ["filesystem", "sync", "/mnt/cocalc"],
+        ["filesystem", "usage", "-b", "/mnt/cocalc"],
+        ["filesystem", "du", "-s", "/mnt/cocalc/project-1"],
+        ["qgroup", "show", "-prc", "--raw", "/mnt/cocalc"],
+        ["qgroup", "show", "-pcre", "/mnt/cocalc"],
+        ["qgroup", "show", "--sync", "-reF", "/mnt/cocalc"],
+        ["qgroup", "create", "1/7", "/mnt/cocalc"],
+        ["qgroup", "destroy", "1/7", "/mnt/cocalc"],
+        ["qgroup", "assign", "--no-rescan", "/mnt/cocalc/project-1", "1/7", "/mnt/cocalc"],
+        ["qgroup", "limit", "10G", "1/7", "/mnt/cocalc"],
+        ["qgroup", "limit", "1073741824", "/mnt/cocalc/v", "/mnt/cocalc"],
+        ["qgroup", "limit", "none", "1/7", "/mnt/cocalc"],
+        ["quota", "enable", "--simple", "/mnt/cocalc"],
+        ["quota", "disable", "/mnt/cocalc"],
+    ]
+
+    def test_btrfs_allows_only_caller_shapes(self) -> None:
+        parse_btrfs = self.helper_namespace()["parse_btrfs"]
+        for args in self.BTRFS_CALLER_SHAPES:
+            with self.subTest(args=args):
+                parse_btrfs(args)
+        for args in [
+            ["device", "add", "/mnt/cocalc/x", "/mnt/cocalc"],
+            ["device", "add", "-f", "/dev/sda", "/mnt/cocalc"],
+            ["device", "remove", "1", "/mnt/cocalc"],
+            ["replace", "start", "1", "/mnt/cocalc/x", "/mnt/cocalc"],
+            ["rescue", "zero-log", "/mnt/cocalc/x"],
+            ["check", "--repair", "/mnt/cocalc/x"],
+            ["restore", "/mnt/cocalc/img", "/mnt/cocalc/out"],
+            ["send", "-f", "/mnt/cocalc/out", "/mnt/cocalc/s"],
+            ["receive", "-f", "/mnt/cocalc/in", "/mnt/cocalc"],
+            ["balance", "start", "/mnt/cocalc"],
+            ["scrub", "start", "/mnt/cocalc"],
+            ["inspect-internal", "dump-tree", "/mnt/cocalc/x"],
+            ["filesystem", "resize", "1G", "/mnt/cocalc"],
+            ["filesystem", "defragment", "-r", "/mnt/cocalc"],
+            ["filesystem", "label", "/mnt/cocalc", "x"],
+            ["filesystem", "du", "/mnt/cocalc"],
+            ["subvolume", "set-default", "5", "/mnt/cocalc"],
+            ["subvolume", "delete", "-R", "/mnt/cocalc/x"],
+            ["subvolume", "delete", "--commit-after", "/mnt/cocalc/x"],
+            ["subvolume", "delete", "/mnt/cocalc/a", "/mnt/cocalc/b"],
+            ["subvolume", "create", "-i", "1/7", "/mnt/cocalc/x"],
+            ["subvolume", "snapshot", "-i", "1/7", "/mnt/cocalc/a", "/mnt/cocalc/b"],
+            ["property", "set", "-ts", "/mnt/cocalc/s", "compression", "zstd"],
+            ["property", "set", "/mnt/cocalc/s", "ro", "true"],
+            ["property", "set", "-ts", "/mnt/cocalc/s", "ro", "true", "-f"],
+            ["qgroup", "show", "-prc", "--raw", "--sync", "-x", "/mnt/cocalc"],
+            ["qgroup", "limit", "-e", "1/7", "/mnt/cocalc"],
+            ["qgroup", "limit", "10G;x", "1/7", "/mnt/cocalc"],
+            ["quota", "enable", "/mnt/cocalc"],
+            ["quota", "rescan", "/mnt/cocalc"],
+            ["--version"],
+            [],
+        ]:
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                parse_btrfs(args)
+
+    def btrfs_tree(self, root: Path) -> Path:
+        """A fake btrfs-progs that records its arguments, resolving pinned
+        /proc/self/fd paths to what they point at."""
+        fake = root / "fake-btrfs"
+        fake.write_text(
+            "#!/bin/sh\n"
+            'out="$FAKE_BTRFS_OUT"\n'
+            ': > "$out"\n'
+            'for a in "$@"; do case "$a" in /proc/self/fd/*) echo "fd:$(readlink "$a")" >> "$out" ;; '
+            '*) echo "$a" >> "$out" ;; esac; done\n',
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        return fake
+
+    def test_btrfs_pins_paths_without_symlinks(self) -> None:
+        namespace = self.helper_namespace()
+        namespace["require_btrfs"] = lambda _fd, _path: None
+        run_btrfs = namespace["run_btrfs"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "mnt"
+            outside = base / "outside"
+            (root / "project-1").mkdir(parents=True)
+            outside.mkdir()
+            (root / "link").symlink_to(outside, target_is_directory=True)
+            (root / "project-1" / "sub").symlink_to(outside, target_is_directory=True)
+            fake = self.btrfs_tree(base)
+            out = base / "out"
+            roots = (str(root),)
+            with mock.patch.dict(os.environ, {"FAKE_BTRFS_OUT": str(out)}):
+                code = run_btrfs(["qgroup", "assign", "--no-rescan", f"{root}/project-1", "1/7", str(root)],
+                                 roots=roots, executable=str(fake))
+                self.assertEqual(code, 0)
+                self.assertEqual(
+                    out.read_text().splitlines(),
+                    ["qgroup", "assign", "--no-rescan", f"fd:{root}/project-1", "1/7", f"fd:{root}"],
+                )
+                code = run_btrfs(["filesystem", "usage", "-b", str(root)], roots=roots, executable=str(fake))
+                self.assertEqual(out.read_text().splitlines(), ["filesystem", "usage", "-b", f"fd:{root}"])
+                out.unlink()
+                for path in (f"{root}/link", f"{root}/project-1/sub", f"{root}/project-1/sub/x", f"{root}/link/x"):
+                    for args in (["subvolume", "show", path], ["filesystem", "du", "-s", path]):
+                        with self.subTest(args=args), self.assertRaises(OSError):
+                            run_btrfs(args, roots=roots, executable=str(fake))
+                for path in (str(outside), "/etc", f"{root}/../outside", f"{root}/./project-1", "relative", f"{root}x"):
+                    with self.subTest(path=path), self.assertRaises(ValueError):
+                        run_btrfs(["subvolume", "show", path], roots=roots, executable=str(fake))
+                self.assertFalse(out.exists())
+
+    def test_btrfs_ioctls_use_the_pinned_parent(self) -> None:
+        namespace = self.helper_namespace()
+        namespace["require_btrfs"] = lambda _fd, _path: None
+        namespace["require_subvolume"] = lambda info, path: (
+            None if stat.S_ISDIR(info.st_mode) else namespace["fail"](f"Not a Btrfs subvolume: {path!r}")
+        )
+        run_btrfs = namespace["run_btrfs"]
+        calls = []
+
+        def ioctl(fd, request, arg):
+            name = bytes(arg[56:] if request == namespace["BTRFS_IOC_SNAP_CREATE_V2"] else arg[8:]).split(b"\0")[0]
+            calls.append((os.readlink(f"/proc/self/fd/{fd}"), request, name.decode()))
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "mnt"
+            outside = base / "outside"
+            (root / "p" / ".snapshots").mkdir(parents=True)
+            (outside / "victim").mkdir(parents=True)
+            (root / "plink").symlink_to(outside, target_is_directory=True)
+            (root / "p" / ".snapshots" / "slink").symlink_to(outside / "victim", target_is_directory=True)
+            roots = (str(root),)
+            with mock.patch.object(namespace["fcntl"], "ioctl", side_effect=ioctl), \
+                    mock.patch("sys.stdout", new_callable=io.StringIO):
+                run_btrfs(["subvolume", "create", f"{root}/p/new"], roots=roots)
+                run_btrfs(["subvolume", "snapshot", "-r", f"{root}/p", f"{root}/p/.snapshots/s1"], roots=roots)
+                # An existing directory receives the snapshot under the source's name.
+                run_btrfs(["subvolume", "snapshot", f"{root}/p", f"{root}/p/.snapshots"], roots=roots)
+                (root / "p" / ".snapshots" / "old").mkdir()
+                run_btrfs(["subvolume", "delete", f"{root}/p/.snapshots/old"], roots=roots)
+                self.assertEqual(
+                    calls,
+                    [
+                        (f"{root}/p", namespace["BTRFS_IOC_SUBVOL_CREATE"], "new"),
+                        (f"{root}/p/.snapshots", namespace["BTRFS_IOC_SNAP_CREATE_V2"], "s1"),
+                        (f"{root}/p/.snapshots", namespace["BTRFS_IOC_SNAP_CREATE_V2"], "p"),
+                        (f"{root}/p/.snapshots", namespace["BTRFS_IOC_SNAP_DESTROY"], "old"),
+                    ],
+                )
+                calls.clear()
+                for args, error in [
+                    (["subvolume", "create", f"{root}/plink/x"], OSError),
+                    (["subvolume", "snapshot", f"{root}/plink", f"{root}/p/.snapshots/s2"], OSError),
+                    (["subvolume", "snapshot", f"{root}/p", f"{root}/plink/s2"], OSError),
+                    (["subvolume", "delete", f"{root}/plink/victim"], OSError),
+                    # A symlink as the name itself is not a subvolume.
+                    (["subvolume", "delete", f"{root}/p/.snapshots/slink"], ValueError),
+                    (["subvolume", "snapshot", f"{root}/p", f"{root}/p/.snapshots/slink"], ValueError),
+                    (["subvolume", "delete", str(root)], ValueError),
+                    (["property", "set", "-ts", f"{root}/plink", "ro", "true"], OSError),
+                ]:
+                    with self.subTest(args=args), self.assertRaises(error):
+                        run_btrfs(args, roots=roots)
+                self.assertEqual(calls, [])
+            self.assertTrue((outside / "victim").is_dir())
+
+    def test_btrfs_requires_a_btrfs_subvolume(self) -> None:
+        namespace = self.helper_namespace()
+        require_subvolume = namespace["require_subvolume"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plain = Path(tmpdir) / "plain"
+            plain.mkdir()
+            (Path(tmpdir) / "link").symlink_to(plain, target_is_directory=True)
+            for path in (plain, Path(tmpdir) / "link"):
+                with self.subTest(path=path), self.assertRaisesRegex(ValueError, "Not a Btrfs subvolume"):
+                    require_subvolume(os.lstat(path), str(path))
+        fake_subvolume = os.stat_result((stat.S_IFDIR | 0o755, 256, 0, 1, 0, 0, 0, 0, 0, 0))
+        require_subvolume(fake_subvolume, "/mnt/cocalc/x")
+        # procfs is never btrfs (overlayfs, which passes btrfs ioctls through
+        # to its upper layer, is refused the same way).
+        fd = os.open("/proc", os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with self.assertRaisesRegex(ValueError, "Not a Btrfs filesystem"):
+                namespace["require_btrfs"](fd, "/proc")
+        finally:
+            os.close(fd)
+
+    @unittest.skipUnless(os.environ.get("COCALC_TEST_BTRFS_DIR"), "needs a btrfs directory")
+    def test_btrfs_ioctls_on_real_btrfs(self) -> None:
+        namespace = self.helper_namespace()
+        run_btrfs = namespace["run_btrfs"]
+        with tempfile.TemporaryDirectory(dir=os.environ["COCALC_TEST_BTRFS_DIR"]) as tmpdir:
+            root = str(Path(tmpdir).resolve())
+            roots = (root,)
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                run_btrfs(["subvolume", "create", f"{root}/sv"], roots=roots)
+                run_btrfs(["subvolume", "snapshot", "-r", f"{root}/sv", f"{root}/ro"], roots=roots)
+                run_btrfs(["subvolume", "snapshot", f"{root}/sv", f"{root}/rw"], roots=roots)
+                run_btrfs(["property", "get", "-ts", f"{root}/ro", "ro"], roots=roots)
+                run_btrfs(["property", "get", "-ts", f"{root}/rw", "ro"], roots=roots)
+                run_btrfs(["property", "set", "-ts", f"{root}/rw", "ro", "true"], roots=roots)
+                run_btrfs(["property", "get", "-ts", f"{root}/rw", "ro"], roots=roots)
+                run_btrfs(["property", "set", "-ts", f"{root}/rw", "ro", "false"], roots=roots)
+                with self.assertRaises(FileExistsError):
+                    run_btrfs(["subvolume", "create", f"{root}/sv"], roots=roots)
+            self.assertEqual(
+                [line for line in out.getvalue().splitlines() if line.startswith("ro=")],
+                ["ro=true", "ro=false", "ro=true"],
+            )
+            self.assertEqual(Path(f"{root}/sv").stat().st_ino, 256)
+            os.mkdir(f"{root}/plain")
+            with self.assertRaisesRegex(ValueError, "Not a Btrfs subvolume"):
+                run_btrfs(["subvolume", "delete", f"{root}/plain"], roots=roots)
+            for name in ("ro", "rw", "sv"):
+                subprocess.run(["btrfs", "property", "set", "-ts", f"{root}/{name}", "ro", "false"],
+                               capture_output=True)
+                subprocess.run(["btrfs", "subvolume", "delete", f"{root}/{name}"], capture_output=True)
+
+    def test_mkfs_btrfs_refuses_a_concurrent_run(self) -> None:
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with open(root / "cocalc.img", "wb") as f:
+                f.truncate(1 << 20)
+            held = os.open(root / "cocalc.img", os.O_RDWR)
+            try:
+                fcntl.flock(held, fcntl.LOCK_EX)
+                with self.assertRaisesRegex(ValueError, "already running"):
+                    namespace["run_mkfs_btrfs"](
+                        ["mkfs-btrfs", "--root", str(root), "--path", "cocalc.img"],
+                        image_root=str(root), owner_uid=os.getuid(), executable="/bin/false",
+                    )
+            finally:
+                os.close(held)
+
+    def test_mkfs_btrfs_only_on_a_new_image(self) -> None:
+        namespace = self.helper_namespace()
+        run_mkfs = namespace["run_mkfs_btrfs"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "lib"
+            root.mkdir()
+            fake = self.btrfs_tree(base)
+            out = base / "out"
+            image = root / "cocalc.img"
+            kwargs = {"image_root": str(root), "owner_uid": os.getuid(), "executable": str(fake)}
+            args = ["mkfs-btrfs", "--root", str(root), "--path", "cocalc.img"]
+            with open(image, "wb") as f:
+                f.truncate(1 << 20)
+            with mock.patch.dict(os.environ, {"FAKE_BTRFS_OUT": str(out)}):
+                self.assertEqual(run_mkfs(args, **kwargs), 0)
+                self.assertEqual(out.read_text().splitlines(), [f"fd:{image}"])
+                out.unlink()
+                refused = []
+                # An image with data (an existing filesystem) is never formatted.
+                image.write_bytes(b"x" * 8192)
+                refused.append(("data", args))
+                for label, argv in refused:
+                    with self.subTest(label), self.assertRaises(ValueError):
+                        run_mkfs(argv, **kwargs)
+                image.unlink()
+                outside = base / "victim"
+                with open(outside, "wb") as f:
+                    f.truncate(1 << 20)
+                image.symlink_to(outside)
+                with self.assertRaises(OSError):
+                    run_mkfs(args, **kwargs)
+                image.unlink()
+                os.link(outside, image)
+                with self.assertRaisesRegex(ValueError, "new, empty image"):
+                    run_mkfs(args, **kwargs)
+                image.unlink()
+                image.mkdir()
+                with self.assertRaises(OSError):
+                    run_mkfs(args, **kwargs)
+                image.rmdir()
+                with open(image, "wb") as f:
+                    f.truncate(1 << 20)
+                with self.assertRaisesRegex(ValueError, "new, empty image"):
+                    run_mkfs(args, **{**kwargs, "owner_uid": os.getuid() + 1})
+                for argv in (
+                    ["mkfs-btrfs", "--root", str(root), "--path", "other.img"],
+                    ["mkfs-btrfs", "--root", str(base), "--path", "lib/cocalc.img"],
+                    ["mkfs-btrfs", "--root", str(root), "--path", "cocalc.img", "--force", "x"],
+                    ["mkfs-btrfs", "--root", str(root)],
+                ):
+                    with self.subTest(argv=argv), self.assertRaises(ValueError):
+                        run_mkfs(argv, **kwargs)
+                self.assertFalse(out.exists())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        branch = script.split("\n  mkfs.btrfs)\n", 1)[1].split("\n    ;;\n", 1)[0]
+        self.assertIn('[ "$#" -ne 1 ]', branch)
+        self.assertIn("cocalc-runtime-storage-path-helper mkfs-btrfs", branch)
+        self.assertNotIn("exec /usr/sbin/mkfs.btrfs", branch)
+
+    def wrapper_function(self, script: str, name: str) -> str:
+        return name + "() {" + script.split("\n" + name + "() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+
+    def test_pin_exec_reenters_with_a_pinned_tree(self) -> None:
+        namespace = self.helper_namespace()
+        run_pin_exec = namespace["run_pin_exec"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "mnt"
+            (root / "tree").mkdir(parents=True)
+            (base / "outside").mkdir()
+            (root / "link").symlink_to(base / "outside", target_is_directory=True)
+            out = base / "out"
+            fake = base / "fake-wrapper"
+            fake.write_text(
+                "#!/bin/sh\n"
+                f'echo "$1 $(readlink "$2") sudo=${{SUDO_UID:-none}}" > {out}\n',
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {"SUDO_UID": "2000", "SUDO_USER": "cocalc-host"}):
+                for verb in ("du-bytes", "rootfs-manifest", "tar-sha256-tree"):
+                    args = ["pin-exec", "--root", str(root), "--path", "tree", "--verb", verb]
+                    self.assertEqual(run_pin_exec(args, allowed_roots={str(root)}, wrapper=str(fake)), 0)
+                    self.assertEqual(out.read_text().split(), [f"_{verb}-pinned", f"{root}/tree", "sudo=none"])
+                out.unlink()
+                for path, verb, error in [
+                    ("link", "du-bytes", OSError),
+                    ("link/x", "rootfs-manifest", OSError),
+                    ("../outside", "du-bytes", ValueError),
+                    ("tree", "chown", ValueError),
+                    ("tree", "_du-bytes-pinned", ValueError),
+                ]:
+                    with self.subTest(path=path, verb=verb), self.assertRaises(error):
+                        run_pin_exec(["pin-exec", "--root", str(root), "--path", path, "--verb", verb],
+                                     allowed_roots={str(root)}, wrapper=str(fake))
+                with self.assertRaises(ValueError):
+                    run_pin_exec(["pin-exec", "--root", str(base), "--path", "outside", "--verb", "du-bytes"],
+                                 allowed_roots={str(root)}, wrapper=str(fake))
+                self.assertFalse(out.exists())
+
+    def test_pinned_verbs_refuse_sudo_and_unpinned_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        harness = (
+            'deny() { echo "DENY $1"; exit 2; }\ncmd=_du-bytes-pinned\n'
+            + self.wrapper_function(script, "enter_pinned_tree")
+            + 'enter_pinned_tree "$1"; echo "OK $(pwd -P)"\n'
+        )
+
+        def enter(path, env=None, fd_dir=None):
+            fds = ()
+            if fd_dir is not None:
+                fd = os.open(fd_dir, os.O_PATH | os.O_DIRECTORY)
+                fds = (fd,)
+                path = path.format(fd=fd)
+            try:
+                clean = {k: v for k, v in os.environ.items() if not k.startswith("SUDO_")}
+                return subprocess.run(
+                    ["bash", "-c", harness, "_", path], capture_output=True, text=True,
+                    env={**clean, **(env or {})}, pass_fds=fds,
+                ).stdout.strip()
+            finally:
+                for fd in fds:
+                    os.close(fd)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real = str(Path(tmpdir).resolve())
+            self.assertEqual(enter("/proc/self/fd/{fd}", fd_dir=tmpdir), f"OK {real}")
+            self.assertEqual(enter("/proc/self/fd/{fd}", {"SUDO_UID": "2000"}, fd_dir=tmpdir), "DENY pinned-verb-not-allowed")
+            self.assertEqual(enter("/proc/self/fd/{fd}", {"SUDO_COMMAND": "x"}, fd_dir=tmpdir), "DENY pinned-verb-not-allowed")
+            for path in ("/proc/self/fd/0", "/proc/self/fd/2", tmpdir, "/proc/self/fd/3/..", "/proc/1/fd/3", "/proc/self/fd/99"):
+                with self.subTest(path=path):
+                    self.assertTrue(enter(path).startswith("DENY pinned-path-invalid"), enter(path))
+        for verb in ("du-bytes", "rootfs-manifest", "tar-sha256-tree"):
+            branch = script.split(f"\n  {verb}|_{verb}-pinned)\n", 1)[1].split("\n    ;;\n", 1)[0]
+            with self.subTest(verb=verb):
+                self.assertIn(f'if [ "$cmd" = "{verb}" ]; then\n      pin_tree_and_reenter "$1"', branch)
+                self.assertLess(branch.index("pin_tree_and_reenter"), branch.index('enter_pinned_tree "$1"'))
+                self.assertNotIn("check_args", branch)
+        self.assertIn("exec /usr/bin/du -sb .", script)
+
+    def test_bees_verbs_take_only_the_data_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        bees = script.split("\n  bees)\n", 1)[1].split('    require_bees_mountpoint "$mountpoint"', 1)[0]
+        harness = 'deny() { echo "DENY $1"; exit 2; }\n' + bees + 'echo "OK $mountpoint"\n'
+
+        def check(*args):
+            return subprocess.run(["bash", "-c", harness, "_", *args], capture_output=True, text=True).stdout.strip()
+
+        self.assertEqual(check("-v", "6", "/mnt/cocalc"), "OK /mnt/cocalc")
+        self.assertEqual(check("-v", "6", "-c", "4", "/mnt/cocalc"), "OK /mnt/cocalc")
+        for args in (
+            ["/mnt/cocalc"],
+            ["-v", "6"],
+            ["-v", "x", "/mnt/cocalc"],
+            ["-v", "6", "-c", "0", "/mnt/cocalc"],
+            ["-v", "6", "--strip-paths", "/mnt/cocalc"],
+            ["-v", "6", "-c", "4", "-x", "1", "/mnt/cocalc"],
+            ["-v", "6", "-c", "4", "/mnt/cocalc", "/etc"],
+        ):
+            with self.subTest(args=args):
+                self.assertEqual(check(*args), "DENY bees-args-invalid")
+        functions = (
+            self.wrapper_function(script, "root_only_directory")
+            + self.wrapper_function(script, "require_bees_mountpoint")
+            + self.wrapper_function(script, "require_bees_home")
+        )
+        # As root would see it: owner 0 and a given mode.
+        fake_stat = 'stat() { case "$2" in %u) echo 0 ;; %a) echo "$FAKE_MODE" ;; esac; }\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / ".beeshome").mkdir()
+            for mode, expected in (("755", "OK"), ("700", "OK"), ("775", "DENY"), ("757", "DENY"), ("1777", "DENY")):
+                with self.subTest(mode=mode):
+                    out = subprocess.run(
+                        ["bash", "-c", 'deny() { echo "DENY $1"; exit 2; }\n' + fake_stat + functions
+                         + 'require_bees_home "$1"; echo OK', "_", tmpdir],
+                        capture_output=True, text=True, env={**os.environ, "FAKE_MODE": mode},
+                    ).stdout.strip()
+                    self.assertTrue(out.startswith(expected), out)
+        harness = 'deny() { echo "DENY $1"; exit 2; }\n' + functions + '"$1" "$2"; echo OK\n'
+
+        def require(name, path):
+            return subprocess.run(["bash", "-c", harness, "_", name, path], capture_output=True, text=True).stdout.strip()
+
+        for path in ("/mnt/cocalc/x", "/mnt/cocalc/", "/tmp", "/mnt/cocalc-scratch"):
+            with self.subTest(path=path):
+                self.assertEqual(require("require_bees_mountpoint", path), "DENY bees-mountpoint-not-allowed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Not root-owned (the tests do not run as root), or a symlink.
+            (Path(tmpdir) / ".beeshome").mkdir()
+            self.assertEqual(require("require_bees_home", tmpdir), "DENY bees-home-invalid")
+            other = Path(tmpdir) / "other"
+            (other).mkdir()
+            (other / ".beeshome").symlink_to("/", target_is_directory=True)
+            self.assertEqual(require("require_bees_home", str(other)), "DENY bees-home-invalid")
+        self.assertEqual(require("require_bees_home", "/"), "DENY bees-home-invalid")
+        for verb in ("reconcile-bees", "bees-status", "bees-gate", "bees"):
+            branch = script.split(f"\n  {verb})\n", 1)[1].split("\n    ;;\n", 1)[0]
+            with self.subTest(verb=verb):
+                self.assertIn('require_bees_mountpoint "$mountpoint"', branch)
+                self.assertNotIn("check_args", branch)
+                self.assertNotIn("/mnt/cocalc/*", branch)
+
+    def test_wrapper_check_args_only_for_lexical_uses(self) -> None:
+        # After 010, check_args no longer guards a root tool that opens the
+        # path: what is left are lexical uses (sandbox roots, df's statfs).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        users = []
+        branch = None
+        for line in script.splitlines():
+            if re.match(r"^  [a-z_|.-]+\)$", line):
+                branch = line.strip()
+            if branch and re.search(r"\bcheck_(qgroup_)?args \"", line):
+                users.append(branch)
+        self.assertEqual(sorted(set(users)), ["df)", "sandbox-rm)", "sandbox-rmdir)"])
 
     def test_image_truncate_only_creates(self) -> None:
         namespace = self.helper_namespace()
@@ -2703,12 +3178,22 @@ class CocalcInstallRootTest(unittest.TestCase):
             mock.patch.object(bootstrap.os, "chown", chown), \
             mock.patch.object(bootstrap, "run_best_effort") as commands:
             if prepare:
-                bootstrap.prepare_dirs(cfg)
+                state = self.base / "state"
+                state.mkdir()
+                state.chmod(0o775)
+                owners[state] = runtime_owner
+                (state / "keep").write_text("state")
+                owners[state / "keep"] = runtime_owner
+                with mock.patch.object(bootstrap, "COCALC_STATE_ROOT", state), \
+                        mock.patch.object(bootstrap.os, "geteuid", return_value=0):
+                    bootstrap.prepare_dirs(cfg)
                 self.assertEqual(owners[self.base], (0, 0))
-                commands.assert_called_once_with(
-                    cfg, ["chown", "cocalc-host:cocalc-host", "/var/lib/cocalc"],
-                    "chown cocalc dirs",
-                )
+                # /var/lib/cocalc is root's now; only that inode migrates.
+                self.assertEqual(owners[state], (0, 0))
+                self.assertEqual(state.stat().st_mode & 0o777, 0o755)
+                self.assertEqual(owners[state / "keep"], runtime_owner)
+                commands.assert_not_called()
+                migrations.remove((state, 0, 0))
             bootstrap.ensure_cocalc_install_root()
             self.assertEqual(owners[self.base], (0, 0))
             self.assertEqual(self.base.stat().st_mode & 0o777, 0o755)
@@ -5109,59 +5594,32 @@ normalize_project_io_class_state
                 )
 
     def test_btrfs_qgroup_commands_take_only_project_quota_groups(self) -> None:
+        namespace = {"__name__": "runtime_storage_path_helper_test"}
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, namespace)
+        parse_btrfs = namespace["parse_btrfs"]
         with tempfile.TemporaryDirectory() as tmpdir:
             script = self._storage_wrapper_for(make_cfg(tmpdir))
-        functions = "".join(
-            name + "() {" + script.split("\n" + name + "() {", 1)[1].split(
-                "\n}\n", 1
-            )[0] + "\n}\n"
-            for name in ("check_args", "check_qgroup_args")
-        )
-        stubs = (
-            'deny() { echo "DENY $1 $2"; exit 2; }\n'
-            'allow_path() { [[ "$1" == /mnt/cocalc || "$1" == /mnt/cocalc/* ]]; }\n'
-        )
-        branch = script.split("  btrfs|btrfs-maintenance)", 1)[1].split(
-            "\n    ;;", 1
-        )[0]
-        self.assertIn('check_qgroup_args "$@"', branch)
-
-        def check(*args: str) -> str:
-            return subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    "set -euo pipefail\n" + stubs + functions
-                    + 'check_qgroup_args "$@"; echo OK',
-                    "_",
-                    *args,
-                ],
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-
+        branch = script.split("  btrfs|btrfs-maintenance)", 1)[1].split("\n    ;;", 1)[0]
+        self.assertIn('cocalc-runtime-storage-path-helper btrfs "$@"', branch)
+        self.assertNotIn("/usr/bin/btrfs", branch)
         for args in [
             ["qgroup", "create", "1/162710717947708", "/mnt/cocalc"],
             ["qgroup", "destroy", "1/7", "/mnt/cocalc"],
-            [
-                "qgroup", "assign", "--no-rescan",
-                "/mnt/cocalc/project-x", "1/7", "/mnt/cocalc",
-            ],
+            ["qgroup", "assign", "--no-rescan", "/mnt/cocalc/project-x", "1/7", "/mnt/cocalc"],
             ["qgroup", "limit", "1073741824", "1/7", "/mnt/cocalc"],
             ["qgroup", "show", "-prcF", "--raw", "/mnt/cocalc/project-x"],
         ]:
             with self.subTest(args=args):
-                self.assertEqual(check(*args), "OK")
-        for args, denied in [
+                parse_btrfs(args)
+        for args in [
             # a subvolume's own quota group
-            (["qgroup", "remove", "0/256", "1/7", "/mnt/cocalc"], "0/256"),
-            (["qgroup", "create", "1/7", "/etc"], "/etc"),
-            (["qgroup", "create", "1/7/../x", "/mnt/cocalc"], "1/7/../x"),
-            (["qgroup", "create", "2/7", "/mnt/cocalc"], "2/7"),
+            ["qgroup", "remove", "0/256", "1/7", "/mnt/cocalc"],
+            ["qgroup", "create", "1/7/../x", "/mnt/cocalc"],
+            ["qgroup", "create", "2/7", "/mnt/cocalc"],
+            ["qgroup", "create", "0/256", "/mnt/cocalc"],
         ]:
-            with self.subTest(args=args):
-                self.assertIn(denied, check(*args))
-                self.assertTrue(check(*args).startswith("DENY"))
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                parse_btrfs(args)
 
     def test_project_egress_conat_port_accepts_what_project_host_accepts(self) -> None:
         # Values project-host runs with even though they are not plain digits.
@@ -8123,6 +8581,56 @@ class BootstrapModesTest(unittest.TestCase):
                     self.assertEqual(result, 1)
                     report.assert_called_once_with(cfg, "error", error)
 
+    def test_every_mode_makes_the_state_root_root_owned_first(self) -> None:
+        # Each mode writes beneath /var/lib/cocalc by name (lifecycle export,
+        # status); the ownership migration must come before any of that.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            for mode in (["provision"], ["reconcile"], ["helpers"], ["environment"], ["status"], ["bootstrap"],
+                         ["reconcile", "--only", "cloudflared"]):
+                events: list[str] = []
+
+                def record(name):
+                    return lambda *_args, **_kwargs: events.append(name) or 0
+
+                with self.subTest(mode=mode), \
+                        mock.patch.object(bootstrap, "load_config", return_value=cfg), \
+                        mock.patch.object(bootstrap, "bootstrap_operation_lock", return_value=contextlib.nullcontext()), \
+                        mock.patch.object(bootstrap, "log_line"), \
+                        mock.patch.object(bootstrap, "ensure_cocalc_state_root", side_effect=record("state-root")), \
+                        mock.patch.object(bootstrap, "write_bootstrap_state_files", side_effect=record("state-files")), \
+                        mock.patch.object(bootstrap, "json_load", return_value={}), \
+                        mock.patch.object(bootstrap, "bootstrap_state_path", return_value=Path(tmpdir) / "s.json"), \
+                        mock.patch.object(bootstrap, "ensure_runtime_user", side_effect=record("runtime-user")), \
+                        mock.patch.object(bootstrap, "ensure_bootstrap_paths"), \
+                        mock.patch.object(bootstrap, "configure_cloudflared_with_options"), \
+                        mock.patch.object(bootstrap, "run_provision", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_reconcile", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_reconcile_helpers", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_reconcile_environment", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_bootstrap", side_effect=record("run")), \
+                        mock.patch("sys.stdout", new_callable=io.StringIO):
+                    bootstrap.main([*mode, "--bootstrap-dir", cfg.bootstrap_dir])
+                    self.assertGreater(len(events), 1)
+                    self.assertEqual(events[0], "state-root")
+        # And each run_* entry point starts with it, before record_operation_start.
+        for runner in ("run_provision", "run_reconcile", "run_reconcile_helpers", "run_reconcile_environment"):
+            source = inspect.getsource(getattr(bootstrap, runner))
+            with self.subTest(runner=runner):
+                self.assertLess(source.index("ensure_cocalc_state_root(cfg)"), source.index("report_bootstrap_status("))
+                self.assertLess(source.index("ensure_cocalc_state_root(cfg)"), source.index("record_operation_start("))
+
+    def test_state_root_migration_is_a_noop_without_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = Path(tmpdir) / "state"
+            state.mkdir(mode=0o775)
+            with mock.patch.object(bootstrap, "COCALC_STATE_ROOT", state), \
+                    mock.patch.object(bootstrap, "log_line"), \
+                    mock.patch.object(bootstrap.os, "geteuid", return_value=1000), \
+                    mock.patch.object(bootstrap.os, "fchown") as fchown:
+                bootstrap.ensure_cocalc_state_root(make_cfg(tmpdir))
+            fchown.assert_not_called()
+
     def test_reconcile_mode_runs_under_lifecycle_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
@@ -8201,6 +8709,7 @@ class BootstrapModesTest(unittest.TestCase):
                 "configure_rsyslog_limits",
                 "configure_daily_root_cleanup",
                 "configure_kernel_sysctl_hardening",
+                "ensure_cocalc_state_root",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
                 "write_helpers",
@@ -8249,6 +8758,8 @@ class BootstrapModesTest(unittest.TestCase):
             self.assertEqual(
                 events,
                 [
+                    # Before anything is written beneath /var/lib/cocalc.
+                    "ensure_cocalc_state_root",
                     "start:reconcile",
                     "ensure_runtime_user",
                     "ensure_bootstrap_paths",
@@ -8644,6 +9155,7 @@ class BootstrapModesTest(unittest.TestCase):
             patch("configure_inotify_limits", lambda _cfg: None)
             patch("configure_journald_limits", lambda _cfg: None)
             patch("configure_rsyslog_limits", lambda _cfg: None)
+            patch("ensure_cocalc_state_root", lambda _cfg: None)
             patch("install_btrfs_helper", lambda _cfg: None)
             patch("install_privileged_wrappers", lambda _cfg: None)
             patch("reconcile_storage_and_containment", lambda _cfg: None)

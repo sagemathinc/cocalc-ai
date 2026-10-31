@@ -1626,6 +1626,8 @@ class BundleSpec:
 
 COCALC_INSTALL_ROOT = Path("/opt/cocalc")
 COCALC_INSTALL_OWNER = (0, 0)
+# Root keeps its state here and mounts the loop image from here by name.
+COCALC_STATE_ROOT = Path("/var/lib/cocalc")
 
 
 @dataclass(frozen=True)
@@ -4026,9 +4028,33 @@ def ensure_runtime_user_manager(cfg: BootstrapConfig) -> None:
 def prepare_dirs(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: preparing cocalc directories")
     ensure_cocalc_install_root()
-    for path in ["/var/lib/cocalc", "/etc/cocalc", "/mnt/cocalc"]:
+    for path in ["/etc/cocalc", "/mnt/cocalc"]:
         Path(path).mkdir(parents=True, exist_ok=True)
-    run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", "/var/lib/cocalc"], "chown cocalc dirs")
+    ensure_cocalc_state_root(cfg)
+
+
+def ensure_cocalc_state_root(cfg: BootstrapConfig) -> None:
+    """Root-owned and not writable by others: root scripts keep state in
+    /var/lib/cocalc and mount the loop image from it by name, so the runtime
+    user must not be able to rename or replace anything there.  The runtime
+    user only reads the published bootstrap-lifecycle view."""
+    if os.geteuid() != 0:
+        log_line(cfg, f"bootstrap: not root; leaving {COCALC_STATE_ROOT} ownership unchanged")
+        return
+    path = COCALC_STATE_ROOT
+    _require(path.resolve() == path, f"CoCalc state root contains a symlink: {path}")
+    path.mkdir(mode=0o755, parents=True, exist_ok=True)
+    # Older bootstrap made /var/lib/cocalc runtime-owned. Migrate only that
+    # inode; its children keep their ownership.
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        if (info.st_uid, info.st_gid) != (0, 0) or info.st_mode & 0o022:
+            log_line(cfg, f"bootstrap: making {path} root-owned (was {info.st_uid}:{info.st_gid} {stat.S_IMODE(info.st_mode):o})")
+        os.fchown(fd, 0, 0)
+        os.fchmod(fd, 0o755)
+    finally:
+        os.close(fd)
 
 
 def tree_has_unexpected_ownership(path: Path, uid: int, gid: int) -> bool:
@@ -5508,6 +5534,7 @@ installed below /usr/local with root ownership.
 
 import ctypes
 import errno
+import fcntl
 import json
 import os
 import pwd
@@ -5515,6 +5542,7 @@ import re
 import select
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -5543,6 +5571,9 @@ SECRET_ROOTS = {"/var/lib/cocalc/star/project-host/0/secrets/rustic"}
 GENERIC_ONLY_PATHS = {"/var/lib/cocalc": ({"btrfs.img", "cocalc.img"}, {"truncate"})}
 CREATE_ONLY_ROOTS = {"/var/lib/cocalc"}
 GENERIC_PROTECTED_PATHS = {"/mnt/cocalc": ("data/secrets",)}
+# The data filesystem's root stays root-owned: BEES and the R1 project-root
+# hardening rely on it, so no generic verb may change it.
+GENERIC_FIXED_ROOTS = {"/mnt/cocalc"}
 # Verbs that act on a whole tree must not take a protected subtree with them.
 TREE_COMMANDS = {"copy-tree-preserve", "copy-tree-reflink", "rename", "rm", "rmdir"}
 STICKY_ROOTS = {"/mnt/cocalc-scratch"}
@@ -6838,6 +6869,8 @@ def check_generic_path(root, path, command, generic_roots):
     only = GENERIC_ONLY_PATHS.get(root)
     if only is not None and (path not in only[0] or command not in only[1]):
         fail(f"{command} of this path is not allowed beneath {root}: {path!r}")
+    if path == "." and root in GENERIC_FIXED_ROOTS:
+        fail(f"{command} of {root} itself is not allowed")
     for protected in GENERIC_PROTECTED_PATHS.get(root, ()):
         if path == protected or path.startswith(protected + "/"):
             fail(f"path is protected: {path!r}")
@@ -6854,6 +6887,293 @@ def open_single_link(rootfd, path):
         os.close(fd)
         fail(f"path has more than one hard link: {path!r}")
     return fd
+
+
+def btrfs_ioc(direction, nr, size):
+    return (direction << 30) | (size << 16) | (0x94 << 8) | nr
+
+
+# btrfs takes only the command shapes callers use.  Every path operand is
+# pinned beneath BTRFS_ROOTS without following symlinks and must be on btrfs.
+# Subvolume create, snapshot and delete and the ro property are ioctls on the
+# pinned descriptors (btrfs-progs re-resolves some of these paths by name);
+# the remaining shapes run btrfs-progs on /proc/self/fd/N.
+BTRFS_ROOTS = ("/mnt/cocalc", "/mnt/cocalc-scratch")
+BTRFS_SUPER_MAGIC = 0x9123683E
+BTRFS_FIRST_FREE_OBJECTID = 256
+BTRFS_SUBVOL_RDONLY = 1 << 1
+BTRFS_NAME_MAX = 255
+BTRFS_IOC_SUBVOL_CREATE = btrfs_ioc(1, 14, 4096)
+BTRFS_IOC_SNAP_DESTROY = btrfs_ioc(1, 15, 4096)
+BTRFS_IOC_SNAP_CREATE_V2 = btrfs_ioc(1, 23, 4096)
+BTRFS_IOC_SUBVOL_GETFLAGS = btrfs_ioc(2, 25, 8)
+BTRFS_IOC_SUBVOL_SETFLAGS = btrfs_ioc(1, 26, 8)
+BTRFS_EXECUTABLE = "/usr/bin/btrfs"
+MKFS_IMAGE_ROOT = "/var/lib/cocalc"
+MKFS_IMAGES = {"btrfs.img", "cocalc.img"}
+
+
+def is_qgroup_id(value):
+    # Only a project's quota group, never a subvolume's own (level 0).
+    return re.fullmatch(r"1/[0-9]{1,15}", value) is not None
+
+
+def parse_btrfs(argv):
+    """Return (action, operands) for an allowed btrfs command line.  Operands
+    are literal strings or (kind, path): "dir" an existing directory, "new" a
+    name to create, "dest" a snapshot destination, "old" a name to delete."""
+
+    def dirs(*paths):
+        return [("dir", path) for path in paths]
+
+    match argv:
+        case ["subvolume", "create", path]:
+            return "create", [("new", path)]
+        case ["subvolume", "snapshot", "-r", source, dest]:
+            return "snapshot-ro", [("dir", source), ("dest", dest)]
+        case ["subvolume", "snapshot", source, dest]:
+            return "snapshot", [("dir", source), ("dest", dest)]
+        case ["subvolume", "delete", path]:
+            return "delete", [("old", path)]
+        case ["property", "get", "-ts", path, "ro"]:
+            return "get-ro", dirs(path)
+        case ["property", "set", "-ts", path, "ro", ("true" | "false") as value]:
+            return "set-ro", [*dirs(path), value]
+        case ["subvolume", "show", path] | ["subvolume", "list", path]:
+            return "exec", [*argv[:2], *dirs(path)]
+        case ["subvolume", "list", ("-o" | "-u") as flag, path]:
+            return "exec", ["subvolume", "list", flag, *dirs(path)]
+        case ["filesystem", ("show" | "sync") as sub, path]:
+            return "exec", ["filesystem", sub, *dirs(path)]
+        case ["filesystem", "usage", "-b", path] | ["filesystem", "du", "-s", path]:
+            return "exec", [*argv[:3], *dirs(path)]
+        case ["qgroup", "show", *flags, path] if len(flags) <= 3 and all(
+            re.fullmatch(r"-[pcreFf]{1,6}|--raw|--sync", flag) for flag in flags
+        ):
+            return "exec", ["qgroup", "show", *flags, *dirs(path)]
+        case ["qgroup", ("create" | "destroy") as sub, group, path] if is_qgroup_id(group):
+            return "exec", ["qgroup", sub, group, *dirs(path)]
+        case ["qgroup", "assign", "--no-rescan", source, group, path] if is_qgroup_id(group):
+            return "exec", ["qgroup", "assign", "--no-rescan", *dirs(source), group, *dirs(path)]
+        case ["qgroup", "limit", size, target, path] if re.fullmatch(
+            r"[0-9]{1,20}[KMGTPEkmgtpe]?|none", size
+        ):
+            target_operand = target if is_qgroup_id(target) else ("dir", target)
+            return "exec", ["qgroup", "limit", size, target_operand, *dirs(path)]
+        case ["quota", "enable", "--simple", path] | ["quota", "disable", path]:
+            return "exec", [*argv[:-1], *dirs(path)]
+    fail(f"btrfs command is not allowed: {' '.join(argv[:3])!r}")
+
+
+def btrfs_root_and_rel(path, roots):
+    if not path.startswith("/"):
+        fail(f"btrfs path must be absolute: {path!r}")
+    for root in roots:
+        if path == root:
+            return root, "."
+        if path.startswith(root + "/"):
+            rel = path[len(root) + 1 :]
+            validate_relative(rel)
+            return root, rel
+    fail(f"btrfs path is not allowed: {path!r}")
+
+
+def require_btrfs(fd, path):
+    buf = ctypes.create_string_buffer(512)
+    if LIBC.fstatfs(fd, buf) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), path)
+    if ctypes.c_long.from_buffer(buf).value & 0xFFFFFFFF != BTRFS_SUPER_MAGIC:
+        fail(f"Not a Btrfs filesystem: {path!r}")
+
+
+def open_btrfs_directory(path, roots):
+    root, rel = btrfs_root_and_rel(path, roots)
+    rootfd = open_root(root, set(roots))
+    try:
+        fd = openat2(rootfd, rel, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        require_btrfs(fd, path)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def open_btrfs_parent(path, roots):
+    root, rel = btrfs_root_and_rel(path, roots)
+    if rel == ".":
+        fail(f"btrfs path needs a parent beneath {root}: {path!r}")
+    parent, _, name = rel.rpartition("/")
+    if len(os.fsencode(name)) > BTRFS_NAME_MAX:
+        fail(f"btrfs name is too long: {path!r}")
+    return open_btrfs_directory(root if not parent else f"{root}/{parent}", roots), name
+
+
+def btrfs_vol_args(name, fd=0, flags=None):
+    # struct btrfs_ioctl_vol_args (fd, name[4088]) or, with flags,
+    # btrfs_ioctl_vol_args_v2 (fd, transid, flags, unused[4], name[4040]).
+    args = bytearray(4096)
+    encoded = os.fsencode(name)
+    if flags is None:
+        struct.pack_into("q", args, 0, fd)
+        args[8 : 8 + len(encoded)] = encoded
+    else:
+        struct.pack_into("qQQ", args, 0, fd, 0, flags)
+        args[56 : 56 + len(encoded)] = encoded
+    return args
+
+
+def require_subvolume(info, path):
+    if not stat.S_ISDIR(info.st_mode) or info.st_ino != BTRFS_FIRST_FREE_OBJECTID:
+        fail(f"Not a Btrfs subvolume: {path!r}")
+
+
+def run_btrfs(argv, roots=BTRFS_ROOTS, executable=BTRFS_EXECUTABLE):
+    action, operands = parse_btrfs(argv)
+    fds = []
+
+    def pin(path):
+        fd = open_btrfs_directory(path, roots)
+        fds.append(fd)
+        return fd
+
+    def pin_parent(path):
+        fd, name = open_btrfs_parent(path, roots)
+        fds.append(fd)
+        return fd, name
+
+    try:
+        if action == "create":
+            path = operands[0][1]
+            parentfd, name = pin_parent(path)
+            fcntl.ioctl(parentfd, BTRFS_IOC_SUBVOL_CREATE, btrfs_vol_args(name))
+            print(f"Create subvolume '{path}'")
+        elif action in ("snapshot", "snapshot-ro"):
+            source, dest = operands[0][1], operands[1][1]
+            sourcefd = pin(source)
+            require_subvolume(os.fstat(sourcefd), source)
+            parentfd, name = pin_parent(dest)
+            try:
+                info = os.stat(name, dir_fd=parentfd, follow_symlinks=False)
+            except FileNotFoundError:
+                info = None
+            if info is not None:
+                if not stat.S_ISDIR(info.st_mode):
+                    fail(f"snapshot destination exists: {dest!r}")
+                # As btrfs-progs: an existing directory receives the snapshot
+                # under the source's name.
+                parentfd = openat2(parentfd, name, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK | os.O_CLOEXEC)
+                fds.append(parentfd)
+                name = source.rstrip("/").rpartition("/")[2]
+            flags = BTRFS_SUBVOL_RDONLY if action == "snapshot-ro" else 0
+            fcntl.ioctl(parentfd, BTRFS_IOC_SNAP_CREATE_V2, btrfs_vol_args(name, sourcefd, flags))
+            kind = "a readonly snapshot" if flags else "a snapshot"
+            print(f"Create {kind} of '{source}' in '{dest}'")
+        elif action == "delete":
+            path = operands[0][1]
+            parentfd, name = pin_parent(path)
+            require_subvolume(os.stat(name, dir_fd=parentfd, follow_symlinks=False), path)
+            # The kernel looks the name up in the pinned parent; a symlink
+            # there is not a subvolume.
+            fcntl.ioctl(parentfd, BTRFS_IOC_SNAP_DESTROY, btrfs_vol_args(name))
+            print(f"Delete subvolume (no-commit): '{path}'")
+        elif action in ("get-ro", "set-ro"):
+            path = operands[0][1]
+            fd = pin(path)
+            require_subvolume(os.fstat(fd), path)
+            buf = bytearray(8)
+            fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_GETFLAGS, buf)
+            flags = struct.unpack("Q", buf)[0]
+            if action == "get-ro":
+                print(f"ro={'true' if flags & BTRFS_SUBVOL_RDONLY else 'false'}")
+            else:
+                if operands[1] == "true":
+                    flags |= BTRFS_SUBVOL_RDONLY
+                else:
+                    flags &= ~BTRFS_SUBVOL_RDONLY
+                fcntl.ioctl(fd, BTRFS_IOC_SUBVOL_SETFLAGS, bytearray(struct.pack("Q", flags)))
+        else:
+            args = [executable]
+            for operand in operands:
+                args.append(operand if isinstance(operand, str) else f"/proc/self/fd/{pin(operand[1])}")
+            sys.stdout.flush()
+            return subprocess.run(args, pass_fds=tuple(fds), stdin=subprocess.DEVNULL).returncode
+        sys.stdout.flush()
+        return 0
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def run_mkfs_btrfs(argv, image_root=MKFS_IMAGE_ROOT, owner_uid=0, executable=None):
+    """mkfs.btrfs only on a new image: a root-owned regular file with one link
+    and no allocated blocks (as truncate creates it), opened without
+    following symlinks.  mkfs.btrfs itself refuses an existing filesystem
+    without -f, which is never passed."""
+    values, _flags = parse_named_options(argv, "mkfs-btrfs", {"--root", "--path"}, {"--root", "--path"})
+    if values["root"] != image_root or values["path"] not in MKFS_IMAGES:
+        fail(f"mkfs.btrfs is only allowed on {image_root}/{{{','.join(sorted(MKFS_IMAGES))}}}")
+    rootfd = open_root(image_root, {image_root})
+    try:
+        fd = openat2(rootfd, values["path"], os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        # Two concurrent calls must not both see a fresh image.
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fail("mkfs.btrfs is already running on this image")
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != owner_uid
+            or info.st_nlink != 1
+            or info.st_blocks != 0
+            or info.st_size == 0
+        ):
+            fail("mkfs.btrfs needs a new, empty image file")
+        if executable is None:
+            executable = "/usr/sbin/mkfs.btrfs" if os.path.exists("/usr/sbin/mkfs.btrfs") else "/sbin/mkfs.btrfs"
+        sys.stdout.flush()
+        return subprocess.run([executable, f"/proc/self/fd/{fd}"], pass_fds=(fd,), stdin=subprocess.DEVNULL).returncode
+    finally:
+        os.close(fd)
+
+
+# Read-only tree tools the wrapper runs as root.  The helper pins the tree
+# without following symlinks and re-enters the wrapper's internal verb with
+# /proc/self/fd/N; that verb refuses to run under sudo.
+PIN_EXEC_VERBS = {"du-bytes", "rootfs-manifest", "tar-sha256-tree"}
+STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage"
+
+
+def run_pin_exec(argv, allowed_roots=ALLOWED_ROOTS, wrapper=STORAGE_WRAPPER):
+    values, _flags = parse_named_options(
+        argv, "pin-exec", {"--root", "--path", "--verb"}, {"--root", "--path", "--verb"}
+    )
+    if values["verb"] not in PIN_EXEC_VERBS:
+        fail(f"pin-exec verb is not allowed: {values['verb']!r}")
+    validate_relative(values["path"], allow_root=True)
+    rootfd = open_root(values["root"], set(allowed_roots) - SECRET_ROOTS)
+    try:
+        fd = openat2(rootfd, values["path"], O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("SUDO_")}
+        sys.stdout.flush()
+        return subprocess.run(
+            [wrapper, f"_{values['verb']}-pinned", f"/proc/self/fd/{fd}"],
+            pass_fds=(fd,),
+            env=env,
+            stdin=subprocess.DEVNULL,
+        ).returncode
+    finally:
+        os.close(fd)
 
 
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
@@ -6992,8 +7312,16 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
     # children be stopped instead of orphaned.
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, raise_on_signal)
+    argv = sys.argv[1:] if argv is None else argv
     try:
-        run(sys.argv[1:] if argv is None else argv, allowed_roots)
+        # These two pass the tool's own exit status through.
+        if argv and argv[0] == "btrfs":
+            return run_btrfs(argv[1:])
+        if argv and argv[0] == "mkfs-btrfs":
+            return run_mkfs_btrfs(argv)
+        if argv and argv[0] == "pin-exec":
+            return run_pin_exec(argv, allowed_roots)
+        run(argv, allowed_roots)
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as err:
         print(f"SECURITY_DENY code=path-helper-failed detail={err}", file=sys.stderr)
@@ -9223,6 +9551,52 @@ reconcile_project_network_limits() {
   return 1
 }
 
+# du-bytes, rootfs-manifest and tar-sha256-tree: the path helper pins the
+# tree (pin-exec) and re-enters as _<verb>-pinned /proc/self/fd/N, which only
+# root can do: sudo always sets SUDO_UID and closes descriptors above 2.
+pin_tree_and_reenter() {
+  require_allowed_path_parts "$1"
+  exec /usr/local/libexec/cocalc-runtime-storage-path-helper pin-exec --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL" --verb "$cmd"
+}
+
+enter_pinned_tree() {
+  if [ -n "${SUDO_UID:-}${SUDO_USER:-}${SUDO_COMMAND:-}" ]; then
+    deny "pinned-verb-not-allowed" "$cmd"
+  fi
+  if ! [[ "$1" =~ ^/proc/self/fd/([0-9]{1,4})$ ]] || [ "${BASH_REMATCH[1]}" -lt 3 ]; then
+    deny "pinned-path-invalid" "$1"
+  fi
+  cd -- "$1" || deny "pinned-path-invalid" "$1"
+}
+
+# BEES runs only on the data filesystem's root.  It and its .beeshome must be
+# root-owned real directories that nobody else can write: root opens files
+# beneath them by name.
+root_only_directory() {
+  local path="$1" mode
+  [ ! -L "$path" ] && [ -d "$path" ] || return 1
+  [ "$(stat -c '%u' "$path" 2>/dev/null)" = "0" ] || return 1
+  mode="$(stat -c '%a' "$path" 2>/dev/null)"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] && [ "$((8#$mode & 022))" -eq 0 ]
+}
+
+require_bees_mountpoint() {
+  local mountpoint="$1"
+  if [ "$mountpoint" != "/mnt/cocalc" ]; then
+    deny "bees-mountpoint-not-allowed" "$mountpoint"
+  fi
+  if ! root_only_directory "$mountpoint"; then
+    deny "bees-mountpoint-not-root-owned" "$mountpoint"
+  fi
+}
+
+require_bees_home() {
+  local beeshome="$1/.beeshome"
+  if ! root_only_directory "$beeshome"; then
+    deny "bees-home-invalid" "$beeshome"
+  fi
+}
+
 find_bees_pid() {
   local mountpoint="$1" proc pid
   for proc in /proc/[0-9]*; do
@@ -10314,22 +10688,19 @@ PY
     reconcile_project_network_limits
     ;;
   btrfs|btrfs-maintenance)
-    if [ "${1:-}" = "qgroup" ]; then
-      check_qgroup_args "$@"
-    else
-      check_args "$@"
-    fi
+    # The path helper allows only the command shapes callers use and pins
+    # every path operand without following symlinks.
     if [ "$cmd" = "btrfs-maintenance" ]; then
       attach_maintenance_worker
     fi
-    exec /usr/bin/btrfs "$@"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper btrfs "$@"
     ;;
   mkfs.btrfs)
-    check_args "$@"
-    if command -v /usr/sbin/mkfs.btrfs >/dev/null 2>&1; then
-      exec /usr/sbin/mkfs.btrfs "$@"
+    if [ "$#" -ne 1 ]; then
+      deny "mkfs-btrfs-args-invalid" "$*"
     fi
-    exec /sbin/mkfs.btrfs "$@"
+    require_allowed_path_parts "$1"
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper mkfs-btrfs --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL"
     ;;
   mount-overlay-project)
     if [ "$#" -ne 4 ]; then
@@ -11269,13 +11640,16 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --snapshot "$snapshot" \
       "${no_cache_args[@]}"
     ;;
-  rootfs-manifest)
+  rootfs-manifest|_rootfs-manifest-pinned)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage rootfs-manifest <path>" >&2
       exit 2
     fi
-    tree="$1"
-    check_args "$tree"
+    if [ "$cmd" = "rootfs-manifest" ]; then
+      pin_tree_and_reenter "$1"
+    fi
+    enter_pinned_tree "$1"
+    tree="."
     exec /bin/bash -lc 'set -euo pipefail; python3 - "$1" <<'"'"'PY'"'"'
 import hashlib
 import json
@@ -11318,7 +11692,8 @@ def detect_type(st):
 
 def sha256_file(path):
     h = hashlib.sha256()
-    with open(path, "rb") as handle:
+    # The entry was lstat-ed as a regular file; never follow a swapped-in link.
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -11445,23 +11820,28 @@ json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
 sys.stdout.write("\\n")
 PY' bash "$tree"
     ;;
-  tar-sha256-tree)
+  tar-sha256-tree|_tar-sha256-tree-pinned)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage tar-sha256-tree <path>" >&2
       exit 2
     fi
-    tree="$1"
-    check_args "$tree"
+    if [ "$cmd" = "tar-sha256-tree" ]; then
+      pin_tree_and_reenter "$1"
+    fi
+    enter_pinned_tree "$1"
+    tree="."
     exec /bin/bash -lc 'set -euo pipefail; tar --sort=name --mtime='"'"'UTC 1970-01-01'"'"' --numeric-owner --owner=0 --group=0 --format=posix --acls --xattrs --xattrs-include='"'"'*'"'"' -cf - -C "$1" . | sha256sum | awk '"'"'{print $1}'"'"'' bash "$tree"
     ;;
-  du-bytes)
+  du-bytes|_du-bytes-pinned)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage du-bytes <path>" >&2
       exit 2
     fi
-    path="$1"
-    check_args "$path"
-    exec /usr/bin/du -sb "$path"
+    if [ "$cmd" = "du-bytes" ]; then
+      pin_tree_and_reenter "$1"
+    fi
+    enter_pinned_tree "$1"
+    exec /usr/bin/du -sb .
     ;;
   df)
     check_args "$@"
@@ -11473,14 +11853,7 @@ PY' bash "$tree"
       exit 2
     fi
     mountpoint="$1"
-    check_args "$mountpoint"
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
+    require_bees_mountpoint "$mountpoint"
     existing_pid="$(find_bees_pid "$mountpoint")"
     if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
       apply_bees_runtime_policy "$existing_pid" "$mountpoint"
@@ -11495,14 +11868,8 @@ PY' bash "$tree"
       exit 2
     fi
     mountpoint="$1"
-    check_args "$mountpoint"
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
+    require_bees_mountpoint "$mountpoint"
+    require_bees_home "$mountpoint"
     emit_bees_status "$mountpoint"
     ;;
   bees-gate)
@@ -11516,14 +11883,7 @@ PY' bash "$tree"
     fi
     mountpoint="$1"
     action="$2"
-    check_args "$mountpoint" "$action"
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
+    require_bees_mountpoint "$mountpoint"
     pool="$(bees_cgroup)"
     case "$action" in
       freeze)
@@ -11577,22 +11937,21 @@ PY' bash "$tree"
     echo "BEES_GATE action=${action} mountpoint=${mountpoint}" >&2
     ;;
   bees)
-    check_args "$@"
-    mountpoint=""
-    for arg in "$@"; do
-      mountpoint="$arg"
-    done
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
-    beeshome="$mountpoint/.beeshome"
-    if [ ! -d "$beeshome" ]; then
-      deny "bees-home-missing" "$beeshome"
+    # Only the shape project-host sends: -v N [-c N] /mnt/cocalc.
+    if ! [[ "$#" -ge 3 && "$1" == "-v" && "$2" =~ ^[0-9]{1,2}$ ]]; then
+      deny "bees-args-invalid" "$*"
     fi
+    if [ "$#" -eq 5 ]; then
+      if ! [[ "$3" == "-c" && "$4" =~ ^[1-9][0-9]{0,3}$ ]]; then
+        deny "bees-args-invalid" "$*"
+      fi
+    elif [ "$#" -ne 3 ]; then
+      deny "bees-args-invalid" "$*"
+    fi
+    mountpoint="${!#}"
+    require_bees_mountpoint "$mountpoint"
+    require_bees_home "$mountpoint"
+    beeshome="$mountpoint/.beeshome"
     if ! command -v flock >/dev/null 2>&1; then
       deny "flock-missing" "flock"
     fi
@@ -15279,6 +15638,8 @@ def touch_paths(paths: list[str]) -> None:
 
 def run_provision(cfg: BootstrapConfig) -> int:
     log_line(cfg, "bootstrap: starting provision")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(cfg, "running", "Preparing bootstrap environment")
     record_operation_start(cfg, "provision")
     try:
@@ -15315,6 +15676,8 @@ def run_provision(cfg: BootstrapConfig) -> int:
 
 def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int:
     log_line(cfg, "bootstrap: starting reconcile")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(cfg, "running", "Reconciling host software")
     record_operation_start(cfg, "reconcile")
     # At boot, systemd has already started the stack; restarting it again
@@ -15407,6 +15770,8 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
 
 def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
     log_line(cfg, "bootstrap: starting helper-only reconcile")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(cfg, "running", "Reconciling privileged host helpers")
     record_operation_start(cfg, "reconcile")
     try:
@@ -15437,6 +15802,8 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
 
 def run_reconcile_environment(cfg: BootstrapConfig) -> int:
     log_line(cfg, "bootstrap: starting environment-only reconcile")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(
         cfg, "running", "Reconciling managed project-host environment"
     )
@@ -15506,6 +15873,9 @@ def main(argv: list[str]) -> int:
     if not bootstrap_dir:
         parser.error("one of --bootstrap-dir or --config is required")
     cfg = load_config(bootstrap_dir)
+    # Every mode writes beneath /var/lib/cocalc by name (lifecycle export,
+    # status): make it root's first.
+    ensure_cocalc_state_root(cfg)
     only = parse_only(args.only)
     log_line(cfg, "bootstrap: starting python bootstrap")
     log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")
