@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261030-v57"
+HELPER_SCHEMA_VERSION = "20261031-v62"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -5509,6 +5509,7 @@ import ctypes
 import errno
 import json
 import os
+import pwd
 import re
 import select
 import signal
@@ -5532,6 +5533,20 @@ ALLOWED_ROOTS = {
     "/var/lib/cocalc/star/project-host/0/cache",
     "/var/lib/cocalc/star/project-host/0/secrets/rustic",
 }
+# Backup credentials are read only by the rustic verbs.
+SECRET_ROOTS = {"/var/lib/cocalc/star/project-host/0/secrets/rustic"}
+# Beneath these roots generic verbs reach only the listed paths, or nothing
+# within the listed protected subtrees.
+GENERIC_ONLY_PATHS = {"/var/lib/cocalc": {"btrfs.img", "cocalc.img"}}
+GENERIC_PROTECTED_PATHS = {"/mnt/cocalc": ("data/secrets",)}
+# Verbs that act on a whole tree must not take a protected subtree with them.
+TREE_COMMANDS = {"copy-tree-preserve", "copy-tree-reflink", "rename", "rm", "rmdir"}
+STICKY_ROOTS = {"/mnt/cocalc-scratch"}
+RUNTIME_USER = "__RUNTIME_USER__"
+# R1 project runtime ids (P), outside every subordinate range.
+PROJECT_RUNTIME_ID_START = 1073741824
+PROJECT_RUNTIME_ID_COUNT = 65536
+SUBID_FILES = ("/etc/subuid", "/etc/subgid")
 COMMANDS = {
     "chmod",
     "chattr-cow",
@@ -6753,7 +6768,88 @@ def parse_uint(value, name, maximum=(2**53 - 1)):
     return result
 
 
-def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
+def runtime_user_ids(user=RUNTIME_USER):
+    try:
+        entry = pwd.getpwnam(user)
+    except KeyError:
+        fail(f"runtime user is unknown: {user!r}")
+    if entry.pw_uid == 0 or entry.pw_gid == 0:
+        fail("runtime user must not be root")
+    return entry.pw_uid, entry.pw_gid
+
+
+def subordinate_ranges(path, user, uid):
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        return []
+    ranges = []
+    for line in lines:
+        parts = line.strip().split(":")
+        if len(parts) != 3 or parts[0] not in (user, str(uid)):
+            continue
+        if all(re.fullmatch(r"[0-9]{1,10}", part) for part in parts[1:]):
+            ranges.append((int(parts[1]), int(parts[2])))
+    return ranges
+
+
+def owner_policy(user=RUNTIME_USER, subid_files=SUBID_FILES):
+    """Ids that generic chown may assign: the runtime user, its subordinate
+    ranges (container root and project ranges) and the R1 project ids."""
+    uid, gid = runtime_user_ids(user)
+    project = (PROJECT_RUNTIME_ID_START, PROJECT_RUNTIME_ID_COUNT)
+    return {
+        "uid": [(uid, 1), project, *subordinate_ranges(subid_files[0], user, uid)],
+        "gid": [(gid, 1), project, *subordinate_ranges(subid_files[1], user, uid)],
+    }
+
+
+def parse_owner_id(value, name, ranges):
+    if not re.fullmatch(r"[0-9]{1,10}", value):
+        fail(f"{name} must be a non-negative integer")
+    result = int(value)
+    if result == 0 or not any(start <= result < start + count for start, count in ranges):
+        fail(f"{name} {result} is not an allowed owner")
+    return result
+
+
+def parse_mode(value, root, sticky_roots=STICKY_ROOTS):
+    if not re.fullmatch(r"[0-7]{3,4}", value):
+        fail(f"mode must be 3 or 4 octal digits: {value!r}")
+    mode = int(value, 8)
+    if mode & 0o6000:
+        fail(f"setuid and setgid modes are not allowed: {value!r}")
+    if mode & 0o1000 and root not in sticky_roots:
+        fail(f"the sticky bit is only allowed beneath scratch: {value!r}")
+    return mode
+
+
+def check_generic_path(root, path, command, generic_roots):
+    if root not in generic_roots:
+        fail(f"root is not allowed: {root!r}")
+    only = GENERIC_ONLY_PATHS.get(root)
+    if only is not None and path not in only:
+        fail(f"path is not allowed beneath {root}: {path!r}")
+    for protected in GENERIC_PROTECTED_PATHS.get(root, ()):
+        if path == protected or path.startswith(protected + "/"):
+            fail(f"path is protected: {path!r}")
+        if command in TREE_COMMANDS and (path == "." or protected.startswith(path + "/")):
+            fail(f"path contains a protected path: {path!r}")
+
+
+def open_single_link(rootfd, path):
+    # A second hard link would let a path outside a protected subtree reach
+    # an inode inside it.
+    fd = open_existing(rootfd, path)
+    info = os.fstat(fd)
+    if not stat.S_ISDIR(info.st_mode) and info.st_nlink != 1:
+        os.close(fd)
+        fail(f"path has more than one hard link: {path!r}")
+    return fd
+
+
+def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
     if argv and argv[0] == "scan-oversized-files":
         return run_scan_oversized_files(argv, allowed_roots)
     if argv and argv[0] == "scan-changed-since":
@@ -6765,10 +6861,21 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
             return run_normalize_rootfs(argv, allowed_roots)
         return run_overlay(argv, allowed_roots)
     command, root, path, values = parse(argv)
-    rootfd = open_root(root, allowed_roots)
+    generic_roots = set(allowed_roots) - SECRET_ROOTS
+    check_generic_path(root, path, command, generic_roots)
+    if command == "rename":
+        check_generic_path(root, values["dest"], command, generic_roots)
+    elif command in ("copy-tree-preserve", "copy-tree-reflink"):
+        check_generic_path(values["dest-root"], values["dest"], command, generic_roots)
+    if command in ("chmod", "mkdir"):
+        mode = parse_mode(values["mode"], root)
+    elif command == "chown":
+        owners = owners or owner_policy()
+        uid = parse_owner_id(values["uid"], "uid", owners["uid"])
+        gid = parse_owner_id(values["gid"], "gid", owners["gid"])
+    rootfd = open_root(root, generic_roots)
     try:
         if command == "mkdir":
-            mode = int(values["mode"], 8)
             mkdir_beneath(rootfd, path, values["recursive"], mode)
         elif command == "rename":
             sourcefd, source = open_parent(rootfd, path)
@@ -6788,19 +6895,19 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
             finally:
                 os.close(parentfd)
         elif command == "chmod":
-            fd = open_existing(rootfd, path)
+            fd = open_single_link(rootfd, path)
             try:
-                os.fchmod(fd, int(values["mode"], 8))
+                os.fchmod(fd, mode)
             finally:
                 os.close(fd)
         elif command == "chown":
-            fd = open_existing(rootfd, path)
+            fd = open_single_link(rootfd, path)
             try:
-                os.fchown(fd, parse_uint(values["uid"], "uid", 2**32 - 1), parse_uint(values["gid"], "gid", 2**32 - 1))
+                os.fchown(fd, uid, gid)
             finally:
                 os.close(fd)
         elif command in ("copy-tree-preserve", "copy-tree-reflink"):
-            dest_rootfd = open_root(values["dest-root"], allowed_roots)
+            dest_rootfd = open_root(values["dest-root"], generic_roots)
             try:
                 if values["dest"] != ".":
                     mkdir_beneath(dest_rootfd, values["dest"], True, 0o755)
@@ -11715,7 +11822,7 @@ esac
     storage_path_helper = RUNTIME_STORAGE_PATH_HELPER.replace(
         "__ALLOW_LOOPBACK_RUSTIC_REST__",
         "1" if cfg.allow_loopback_rustic_rest else "0",
-    )
+    ).replace("__RUNTIME_USER__", cfg.ssh_user)
     wrappers = {
         "/usr/local/libexec/cocalc-managed-project-job": MANAGED_PROJECT_JOB_HELPER.replace(
             "__PROJECT_POOL_CGROUP__", DEFAULT_PROJECT_POOL_CGROUP

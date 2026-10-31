@@ -7,6 +7,7 @@ import json
 import os
 import pwd
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -150,6 +151,176 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
 
     def helper_run(self):
         return self.helper_namespace()["run"]
+
+    def own_owners(self):
+        return {"uid": [(os.getuid(), 1)], "gid": [(os.getgid(), 1)]}
+
+    def test_generic_verbs_keep_every_caller_working(self) -> None:
+        # The wrapper's callers: mkdir -p (always 0755), chmod 700 (bees),
+        # chown to the runtime user (staging, subvolumes, the mount root).
+        run = self.helper_run()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            roots = {str(root)}
+            run(["mkdir", "--root", str(root), "--path", "a/b", "--mode", "0755", "--recursive"], allowed_roots=roots)
+            self.assertEqual(stat.S_IMODE((root / "a" / "b").stat().st_mode) & 0o755, 0o755)
+            (root / "dat").write_bytes(b"")
+            run(["chmod", "--root", str(root), "--path", "dat", "--mode", "700"], allowed_roots=roots)
+            self.assertEqual(stat.S_IMODE((root / "dat").stat().st_mode), 0o700)
+            for path in ("a/b", ".", "dat"):
+                run(
+                    ["chown", "--root", str(root), "--path", path, "--uid", str(os.getuid()), "--gid", str(os.getgid())],
+                    allowed_roots=roots,
+                    owners=self.own_owners(),
+                )
+
+    def test_generic_modes_refuse_special_bits(self) -> None:
+        namespace = self.helper_namespace()
+        parse_mode = namespace["parse_mode"]
+        self.assertEqual(parse_mode("0755", "/mnt/cocalc"), 0o755)
+        self.assertEqual(parse_mode("700", "/mnt/cocalc"), 0o700)
+        self.assertEqual(parse_mode("1777", "/mnt/cocalc-scratch"), 0o1777)
+        for bad in ("4755", "2755", "6755", "7777", "04755", "1777", "17777", "0o755", "+x", "u+s",
+                    "755\n", " 755", "7_55", "-755", "", "75", "0x1ed", "٧٥٥"):
+            with self.subTest(mode=bad), self.assertRaises(ValueError):
+                parse_mode(bad, "/mnt/cocalc")
+        run = namespace["run"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "f").write_bytes(b"")
+            os.chmod(root / "f", 0o644)
+            for command, path in (("chmod", "f"), ("mkdir", "d")):
+                with self.subTest(command=command), self.assertRaises(ValueError):
+                    run([command, "--root", str(root), "--path", path, "--mode", "4755"], allowed_roots={str(root)})
+            self.assertEqual(stat.S_IMODE((root / "f").stat().st_mode), 0o644)
+            self.assertFalse((root / "d").exists())
+
+    def test_generic_chown_allows_only_listed_ids(self) -> None:
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subuid = Path(tmpdir) / "subuid"
+            subgid = Path(tmpdir) / "subgid"
+            subuid.write_text("other:100000:65536\ncocalc-host:231072:65536\n2000:300000:10\nbad\n", encoding="utf-8")
+            subgid.write_text("cocalc-host:231072:65536\n", encoding="utf-8")
+            entry = mock.Mock(pw_uid=2000, pw_gid=2000)
+            with mock.patch.object(namespace["pwd"], "getpwnam", return_value=entry):
+                owners = namespace["owner_policy"]("cocalc-host", (str(subuid), str(subgid)))
+        parse_owner_id = namespace["parse_owner_id"]
+        for uid in ("2000", "231072", "296607", "300009", "1073741824", "1073807359"):
+            self.assertEqual(parse_owner_id(uid, "uid", owners["uid"]), int(uid))
+        for uid in ("0", "1", "1999", "2001", "100000", "231071", "296608", "300010", "1073741823",
+                    "1073807360", "4294967295", "-1", "2000 ", " 2000", "2000\n", "٢٠٠٠", ""):
+            with self.subTest(uid=uid), self.assertRaises(ValueError):
+                parse_owner_id(uid, "uid", owners["uid"])
+        with self.assertRaises(ValueError):
+            parse_owner_id("300000", "gid", owners["gid"])
+        root_entry = mock.Mock(pw_uid=0, pw_gid=0)
+        with mock.patch.object(namespace["pwd"], "getpwnam", return_value=root_entry):
+            with self.assertRaises(ValueError):
+                namespace["owner_policy"]("root")
+        run = namespace["run"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "d").mkdir()
+            for uid, gid in (("0", "0"), (str(os.getuid()), "0"), ("0", str(os.getgid()))):
+                with self.subTest(uid=uid, gid=gid), self.assertRaises(ValueError):
+                    run(
+                        ["chown", "--root", str(root), "--path", "d", "--uid", uid, "--gid", gid],
+                        allowed_roots={str(root)},
+                        owners=self.own_owners(),
+                    )
+
+    def test_generic_verbs_never_reach_rustic_secrets(self) -> None:
+        namespace = self.helper_namespace()
+        run = namespace["run"]
+        allowed = namespace["ALLOWED_ROOTS"]
+        secrets = "/var/lib/cocalc/star/project-host/0/secrets/rustic"
+        self.assertIn(secrets, allowed)
+        generic = [
+            ["chmod", "--path", "x.toml", "--mode", "600"],
+            ["chown", "--path", "x.toml", "--uid", "1", "--gid", "1"],
+            ["chattr-cow", "--path", "x"],
+            ["mkdir", "--path", "x", "--mode", "0755"],
+            ["rename", "--path", "x", "--dest", "y"],
+            ["rm", "--path", "x"],
+            ["rmdir", "--path", "x"],
+            ["truncate", "--path", "x", "--length", "0"],
+        ]
+        for args in generic:
+            with self.subTest(args=args), self.assertRaisesRegex(ValueError, "root is not allowed"):
+                run([args[0], "--root", secrets, *args[1:]], owners=self.own_owners())
+        with self.assertRaisesRegex(ValueError, "root is not allowed"):
+            run(["copy-tree-reflink", "--root", "/mnt/cocalc", "--path", "project-1",
+                 "--dest-root", secrets, "--dest", "x"])
+        check = namespace["check_generic_path"]
+        generic_roots = allowed - namespace["SECRET_ROOTS"]
+        # The same secrets as seen from /mnt/cocalc, and from /var/lib/cocalc.
+        for command, path in (
+            ("chmod", "data/secrets"),
+            ("chown", "data/secrets/rustic/project-1.toml"),
+            ("truncate", "data/secrets/rustic/x"),
+            ("mkdir", "data/secrets/rustic/x"),
+            ("rm", "data"),
+            ("rm", "."),
+            ("rename", "data"),
+            ("copy-tree-preserve", "."),
+            ("copy-tree-reflink", "data"),
+        ):
+            with self.subTest(command=command, path=path), self.assertRaises(ValueError):
+                check("/mnt/cocalc", path, command, generic_roots)
+        for path in ("star/project-host/0/secrets/rustic/x.toml", "star", ".", "other.img"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                check("/var/lib/cocalc", path, "chown", generic_roots)
+        # Callers that stay allowed: the mount root and the loop images.
+        check("/mnt/cocalc", ".", "chown", generic_roots)
+        check("/mnt/cocalc", "data", "chmod", generic_roots)
+        check("/mnt/cocalc", "data/secrets-other", "rm", generic_roots)
+        check("/mnt/cocalc", "project-1", "rm", generic_roots)
+        check("/var/lib/cocalc", "cocalc.img", "truncate", generic_roots)
+        check("/var/lib/cocalc", "btrfs.img", "chown", generic_roots)
+        # Rustic verbs keep reading profiles from the secrets root.
+        self.assertIn(secrets, allowed)
+
+    def test_generic_chown_chmod_refuse_path_tricks(self) -> None:
+        run = self.helper_run()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "root"
+            outside = base / "outside"
+            root.mkdir()
+            outside.mkdir()
+            target = outside / "target"
+            target.write_bytes(b"")
+            os.chmod(target, 0o600)
+            (root / "link").symlink_to(target)
+            (root / "dirlink").symlink_to(outside, target_is_directory=True)
+            roots = {str(root)}
+            owners = self.own_owners()
+            ids = ["--uid", str(os.getuid()), "--gid", str(os.getgid())]
+            for path in ("link", "dirlink/target", "../outside/target", "./link", "a//b", "/etc/passwd", ""):
+                for args in (["chmod", "--mode", "644"], ["chown", *ids]):
+                    with self.subTest(path=path, command=args[0]), self.assertRaises((OSError, ValueError)):
+                        run([args[0], "--root", str(root), "--path", path, *args[1:]],
+                            allowed_roots=roots, owners=owners)
+            for bad_root in (str(outside), str(root) + "/", str(root) + "/.", str(base / "root" / ".." / "outside")):
+                with self.subTest(root=bad_root), self.assertRaises(ValueError):
+                    run(["chmod", "--root", bad_root, "--path", "target", "--mode", "644"],
+                        allowed_roots=roots)
+            # A second hard link would reach an inode from outside its subtree.
+            os.link(target, root / "hardlink")
+            for args in (["chmod", "--mode", "644"], ["chown", *ids]):
+                with self.subTest(command=args[0]), self.assertRaisesRegex(ValueError, "hard link"):
+                    run([args[0], "--root", str(root), "--path", "hardlink", *args[1:]],
+                        allowed_roots=roots, owners=owners)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+
+    def test_path_helper_install_names_the_runtime_user(self) -> None:
+        self.assertIn('RUNTIME_USER = "__RUNTIME_USER__"', bootstrap.RUNTIME_STORAGE_PATH_HELPER)
+        source = inspect.getsource(bootstrap)
+        self.assertRegex(
+            source,
+            r'storage_path_helper = RUNTIME_STORAGE_PATH_HELPER\.replace\([^)]*\)\.replace\("__RUNTIME_USER__", cfg\.ssh_user\)',
+        )
 
     def test_rustic_no_cache_is_restricted_to_project_restore(self) -> None:
         parse_rustic = self.helper_namespace()["parse_rustic"]
