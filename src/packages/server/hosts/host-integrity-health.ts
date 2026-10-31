@@ -70,11 +70,13 @@ const SUBJECTS: Record<HostIntegrityCondition["kind"], string> = {
   reboot: "reboot pending for updates",
 };
 
+// Keyed on the host id, which never changes (a name can be renamed or
+// shared): alerts dedupe and clear by subject. The name is in the facts.
 function subject(
   row: HostIntegrityRow,
   kind: HostIntegrityCondition["kind"],
 ): string {
-  return `${ALERT_SUBJECT_PREFIX}${row.name ?? row.id}: ${SUBJECTS[kind]}`;
+  return `${ALERT_SUBJECT_PREFIX}${row.id}: ${SUBJECTS[kind]}`;
 }
 
 function hostLabel(row: HostIntegrityRow): string {
@@ -141,7 +143,7 @@ export function summarizeHostIntegrity(
         level: critical ? "critical" : "warning",
         subject: subject(row, "processes"),
         // Alerted only while a finding is current.
-        facts: current.map(describe).sort(),
+        facts: current.map((f) => `${label}: ${describe(f)}`).sort(),
         details: recent
           .slice(0, MAX_DETAILS_PER_HOST)
           .map(

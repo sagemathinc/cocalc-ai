@@ -227,30 +227,40 @@ describe("host integrity alert pass", () => {
 
   it("is report-only by default: no admin alert, and nothing cleared", async () => {
     delete process.env.COCALC_HOST_INTEGRITY_ALERTS;
-    respond(["Host integrity: host-a: watcher not reporting"]);
+    respond(["Host integrity: a: watcher not reporting"]);
     expect(await runHostIntegrityAlertPass()).toBe(1);
     expect(conditionAlertMock).not.toHaveBeenCalled();
     expect(conditionClearedMock).not.toHaveBeenCalled();
   });
 
+  it("keys alert subjects on the host id, not its name", () => {
+    const renamed = {
+      ...host("a", { findings: [finding()] }),
+      name: "renamed",
+    };
+    const summary = summarizeHostIntegrity([renamed], NOW);
+    expect(summary.conditions[0].subject).toBe(
+      "Host integrity: a: unexpected process placement",
+    );
+    expect(summary.conditions[0].facts[0]).toContain("renamed (a)");
+  });
+
   it("alerts when enabled, and clears conditions a reporting host no longer shows", async () => {
     process.env.COCALC_HOST_INTEGRITY_ALERTS = "alert";
     respond([
-      "Host integrity: host-a: watcher not reporting",
+      "Host integrity: a: watcher not reporting",
       // host-z went offline after its alert: the alert stays
-      "Host integrity: host-z: unexpected process placement",
+      "Host integrity: z: unexpected process placement",
     ]);
     await runHostIntegrityAlertPass();
     expect(conditionAlertMock).toHaveBeenCalledTimes(1);
     const [{ subject, body }] = conditionAlertMock.mock.calls[0] as any;
-    expect(subject).toBe(
-      "Host integrity: host-a: unexpected process placement",
-    );
+    expect(subject).toBe("Host integrity: a: unexpected process placement");
     expect(body).toContain(
       "project-uid-outside-container: /usr/bin/dash uid 231072",
     );
     expect(conditionClearedMock.mock.calls).toEqual([
-      ["Host integrity: host-a: watcher not reporting"],
+      ["Host integrity: a: watcher not reporting"],
     ]);
   });
 });
