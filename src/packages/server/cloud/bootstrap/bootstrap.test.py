@@ -8548,6 +8548,28 @@ class BootstrapModesTest(unittest.TestCase):
                     ["env:A"],
                 )
 
+    def test_restart_fingerprint_follows_the_installed_node_release(self) -> None:
+        # A selector like "20" resolving to a newer patch restarts the stack
+        # onto it.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            root = Path(tmpdir) / "node"
+            (root / "v20.1.0").mkdir(parents=True)
+            (root / "v20.2.0").mkdir()
+            os.symlink("v20.1.0", root / "current")
+            with mock.patch.object(bootstrap, "NODE_ROOT", root), mock.patch.object(
+                bootstrap, "runtime_home", return_value=tmpdir
+            ):
+                before = bootstrap.project_host_restart_fingerprint(cfg)
+                (root / "current").unlink()
+                os.symlink("v20.2.0", root / "current")
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(
+                        before, bootstrap.project_host_restart_fingerprint(cfg)
+                    ),
+                    ["node_current"],
+                )
+
     def test_podman_boot_preparation_restores_project_io_policy(self) -> None:
         # io.max does not survive a reboot; without restoring it first, the
         # first project-host start failed its conformance check every boot.
