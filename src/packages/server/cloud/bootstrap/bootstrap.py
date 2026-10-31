@@ -2057,10 +2057,26 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             if bundle_container_runtime
             else None
         ),
-        project_runtime_uid_mode=parse_project_runtime_uid_mode(
-            desired.get("project_runtime_uid_mode")
+        project_runtime_uid_mode=effective_project_runtime_uid_mode(
+            desired.get("project_runtime_uid_mode"),
+            facts.get("env_file"),
         ),
     )
+
+
+def effective_project_runtime_uid_mode(desired_value: Any, env_file: Any) -> str:
+    """The host's project runtime uid mode.
+
+    COCALC_PROJECT_RUNTIME_UID_MODE in the operator's local env file (the
+    same file project-host reads) wins over the desired state, so one setting
+    per host drives both the subuid allocation and project-host.
+    """
+    if isinstance(env_file, str) and env_file:
+        local = read_env_assignments(project_host_local_env_path(Path(env_file)))
+        value = local.get("COCALC_PROJECT_RUNTIME_UID_MODE", "").strip()
+        if value:
+            return parse_project_runtime_uid_mode(value)
+    return parse_project_runtime_uid_mode(desired_value)
 
 
 def parse_project_runtime_uid_mode(value: Any) -> str:
