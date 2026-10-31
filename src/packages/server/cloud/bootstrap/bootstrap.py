@@ -3572,6 +3572,7 @@ is one. Findings never include command lines, environment or file contents.
 """
 
 import argparse
+import fcntl
 import fnmatch
 import glob
 import hashlib
@@ -3579,6 +3580,7 @@ import json
 import os
 import pwd
 import signal
+import struct
 import sys
 import time
 
@@ -3699,10 +3701,15 @@ DEFAULT_CONFIG_PATHS = (
     "/usr/local/libexec/*",
 )
 # Package installs and upgrades (unattended-upgrades) legitimately change many
-# of these: while dpkg's state changed in the last PACKAGE_QUIET_S seconds the
-# configuration is rebaselined, as during a bootstrap run.
+# of these: while dpkg holds its lock, or changed its state in the last
+# PACKAGE_QUIET_S seconds, the configuration is rebaselined, as during a
+# bootstrap run. And a difference is reported only once two consecutive checks
+# saw it with no package activity, so a file dpkg replaced just before it
+# updated its state isn't reported either.
 PACKAGE_QUIET_S = 600
+DPKG_LOCKS = ("/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock")
 MAX_TREE_ENTRIES = 5000
+MAX_ABSORBED = 50
 
 MAX_FINDINGS = 100
 SEVERITY_RANK = {"critical": 0, "high": 1}
@@ -3999,18 +4006,19 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
 
 
 def tree_entries(top):
-    """Files and symlinks under top (not following links), at most
-    MAX_TREE_ENTRIES, or [top] if top doesn't exist (so its creation shows)."""
+    """(entries, total): files and symlinks under top (not following links),
+    the first MAX_TREE_ENTRIES of them, and how many there are; ([top], 1) if
+    top doesn't exist (so its creation shows)."""
     if not os.path.isdir(top) or os.path.islink(top):
-        return [top]
-    entries = []
+        return [top], 1
+    entries, total = [], 0
     for dirpath, dirnames, filenames in os.walk(top):
         dirnames.sort()
         for name in sorted(filenames) + [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]:
-            entries.append(os.path.join(dirpath, name))
-            if len(entries) >= MAX_TREE_ENTRIES:
-                return entries
-    return entries
+            total += 1
+            if len(entries) < MAX_TREE_ENTRIES:
+                entries.append(os.path.join(dirpath, name))
+    return entries, total
 
 
 def hash_config(patterns):
@@ -4019,11 +4027,15 @@ def hash_config(patterns):
         if pattern.endswith("/**"):
             tops = sorted(glob.glob(pattern[:-3])) if any(c in pattern[:-3] for c in "*?[") else [pattern[:-3]]
             for top in tops:
-                for path in tree_entries(top):
+                entries, total = tree_entries(top)
+                for path in entries:
                     if path == top and not os.path.exists(top):
                         digests[path] = "missing"
                     else:
                         digests.update(hash_config([path]))
+                if total > len(entries):
+                    # entries past the cap still count
+                    digests[top + "/**"] = "truncated:%d" % total
             continue
         matches = sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[") else [pattern]
         for path in matches:
@@ -4066,11 +4078,31 @@ def bootstrap_busy(state_path, now, quiet_s=300, max_operation_s=3 * 3600):
     return age < quiet_s
 
 
+def lock_held(path):
+    """True if another process holds an fcntl lock on path (as dpkg and apt
+    do on their locks). Only queries (F_GETLK): never takes the lock."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOCTTY)
+    except OSError:
+        return False
+    try:
+        query = struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, 0, 0, 0)
+        answer = fcntl.fcntl(fd, fcntl.F_GETLK, query)
+        return struct.unpack("hhqqi4x", answer)[0] != fcntl.F_UNLCK
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
 def packages_busy(state_path, now, quiet_s=PACKAGE_QUIET_S):
-    """True if dpkg changed its state in the last quiet_s seconds (a package
-    install or upgrade, which writes host configuration)."""
+    """True while dpkg holds its lock, or if it changed its state in the last
+    quiet_s seconds (a package install or upgrade, which writes host
+    configuration)."""
     if not state_path:
         return False
+    if any(lock_held(path) for path in DPKG_LOCKS):
+        return True
     try:
         return now - os.stat(state_path).st_mtime < quiet_s
     except OSError:
@@ -4115,6 +4147,10 @@ class Watcher:
         self.config_baseline = None
         self.config_baseline_at = None
         self.config_state_written = None
+        # differences seen at the last check, not yet reported
+        self.config_pending = set()
+        # files a package run changed, accepted into the baseline: path -> when
+        self.config_absorbed = {}
         self.load_config_state()
         self.started_at = time.time()
         self.scans = 0
@@ -4153,6 +4189,11 @@ class Watcher:
             for path, entry in changes.items()
             if isinstance(entry, dict) and isinstance(entry.get("last_seen"), str)
         }
+        absorbed = state.get("absorbed", {})
+        if isinstance(absorbed, dict):
+            self.config_absorbed = {
+                str(path): at for path, at in absorbed.items() if isinstance(at, str)
+            }
 
     def save_config_state(self):
         text = json.dumps(
@@ -4160,6 +4201,7 @@ class Watcher:
                 "baseline": self.config_baseline,
                 "baseline_at": self.config_baseline_at,
                 "changes": self.config_changes,
+                "absorbed": self.config_absorbed,
             },
             sort_keys=True,
         )
@@ -4233,17 +4275,46 @@ class Watcher:
             self.config_baseline is None
             or self.rebaseline
             or bootstrap_busy(self.args.bootstrap_state, now)
-            or packages_busy(getattr(self.args, "package_state", ""), now)
         ):
             self.config_baseline = digests
             self.config_baseline_at = now_iso(now)
             self.rebaseline = False
-        else:
-            differ = {
+            self.config_pending = set()
+        elif packages_busy(getattr(self.args, "package_state", ""), now):
+            # A package run: what changed becomes the baseline (recorded as
+            # absorbed), except files already reported, which stay reported.
+            active = {p for p, e in self.config_changes.items() if e.get("current")}
+            changed = {
                 path
                 for path in set(digests) | set(self.config_baseline)
                 if digests.get(path) != self.config_baseline.get(path)
             }
+            for path in changed - active:
+                if path in digests:
+                    self.config_baseline[path] = digests[path]
+                else:
+                    self.config_baseline.pop(path, None)
+                self.config_absorbed[path] = now_iso(now)
+            for path in sorted(self.config_absorbed, key=self.config_absorbed.get)[
+                : max(0, len(self.config_absorbed) - MAX_ABSORBED)
+            ]:
+                del self.config_absorbed[path]
+            differ = changed & active
+            self.config_pending = set()
+        else:
+            seen = {
+                path
+                for path in set(digests) | set(self.config_baseline)
+                if digests.get(path) != self.config_baseline.get(path)
+            }
+            # A new difference counts once the previous check saw it too.
+            differ = {
+                path
+                for path in seen
+                if path in self.config_pending
+                or self.config_changes.get(path, {}).get("current")
+            }
+            self.config_pending = seen
         for path in sorted(differ):
             entry = self.config_changes.get(path)
             if entry is None or not entry.get("current"):
@@ -4320,6 +4391,13 @@ class Watcher:
                     reverse=True,
                 ),
                 "change_count": len(self.config_changes),
+                # accepted during package runs (not reported as changes)
+                "absorbed": [
+                    {"path": path, "at": at}
+                    for path, at in sorted(
+                        self.config_absorbed.items(), key=lambda kv: kv[1], reverse=True
+                    )
+                ],
             },
             "inventory": dict(
                 sorted(self.inventory.items(), key=lambda kv: kv[1], reverse=True)
