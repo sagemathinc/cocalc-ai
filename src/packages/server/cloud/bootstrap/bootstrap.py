@@ -8369,7 +8369,7 @@ SECRET_ROOTS = {"/var/lib/cocalc/star/project-host/0/secrets/rustic"}
 # images only take truncate, and only to create a new one.
 GENERIC_ONLY_PATHS = {"/var/lib/cocalc": ({"btrfs.img", "cocalc.img"}, {"truncate"})}
 CREATE_ONLY_ROOTS = {"/var/lib/cocalc"}
-GENERIC_PROTECTED_PATHS = {"/mnt/cocalc": ("data/secrets",)}
+GENERIC_PROTECTED_PATHS = {"/mnt/cocalc": ("data/secrets", ".cocalc-confined-restore")}
 # The data filesystem's root stays root-owned: BEES and the R1 project-root
 # hardening rely on it, so no generic verb may change it.
 GENERIC_FIXED_ROOTS = {"/mnt/cocalc"}
@@ -8768,9 +8768,12 @@ def write_private_rustic_profile(
     return path
 
 
+RUSTIC_CANDIDATES = ("/usr/local/libexec/cocalc-rustic",)
+
+
 def select_privileged_rustic_binary(candidates=None):
     require_root_ownership = candidates is None
-    candidates = candidates or ("/usr/local/libexec/cocalc-rustic",)
+    candidates = candidates or RUSTIC_CANDIDATES
     for candidate in candidates:
         try:
             info = os.stat(candidate)
@@ -9215,6 +9218,435 @@ def run_scan_oversized_files(argv, allowed_roots=ALLOWED_ROOTS):
     print(json.dumps(report, ensure_ascii=True, separators=(",", ":")))
 
 
+# Restores and tree copies write content that cocalc-host controls (its own
+# backup repositories and trees), so they never run as real root.  A
+# confined child sees only a private mount namespace (a tmpfs root with the
+# read-only system binds below and the pinned work directories, but no host
+# /proc), and runs as the runtime user in a user namespace that maps the
+# runtime ids and their subordinate extents to themselves and leaves uid 0
+# unmapped.  It keeps only the capabilities below.  Root writes the id maps
+# itself (newuidmap would check them against root's own subordinate ids).
+CONFINED_RUN_DIR = "/run/cocalc-confined"
+CONFINED_CAPS = (0, 1, 2, 3, 4)  # CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER FSETID
+CAP_SETFCAP = 31
+CONFINED_SYSTEM_DIRS = ("/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32")
+CONFINED_ETC_FILES = ("passwd", "group", "nsswitch.conf", "hosts", "host.conf", "gai.conf", "resolv.conf", "ld.so.cache")
+CONFINED_ETC_DIRS = ("ssl",)
+CONFINED_DEVICES = ("null", "zero", "urandom")
+CONFINED_WORK_TARGETS = {"/staging", "/home", "/src", "/dest"}
+CONFINED_PROFILE_TARGET = "/profile.toml"
+CONFINED_RSYNC = ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids"]
+CONFINED_ENV = {
+    "HOME": "/tmp",
+    "LANG": "C.UTF-8",
+    "PATH": "/usr/bin:/bin",
+    "RUSTIC_PROGRESS_INTERVAL": "1s",
+    "SSL_CERT_DIR": "/etc/ssl/certs",
+    "TMPDIR": "/tmp",
+}
+# rsync exit 23 ("partial transfer") is tolerated for project restores only
+# when every error is one the confinement causes on purpose: an entry owned
+# by an unmapped id (uid 0), a device node, or a host-global file capability.
+# Such entries are suspicious in project trees, so the caller logs them.
+CONFINED_SKIP_PATTERNS = (
+    re.compile(r'^rsync: \[[a-z]+\] chown ".*" failed: Invalid argument \(22\)$'),
+    re.compile(r'^rsync: \[[a-z]+\] send_files failed to open ".*": Permission denied \(13\)$'),
+    re.compile(r'^rsync: \[[a-z]+\] mknod ".*" failed: Operation not permitted \(1\)$'),
+    re.compile(r'^rsync: \[[a-z]+\] rsync_xal_set: lsetxattr\(".*","security\.capability"\) failed: (Operation not permitted \(1\)|Invalid argument \(22\))$'),
+    re.compile(r"^rsync error: some files/attrs were not transferred .*\(code 23\).*$"),
+)
+CONFINED_SKIPPED_MARKER = "COCALC_CONFINED_SKIPPED_ENTRIES"
+MS_RDONLY = 1
+MS_NOSUID = 2
+MS_NODEV = 4
+MS_NOEXEC = 8
+MS_REMOUNT = 32
+MS_BIND = 4096
+MS_REC = 16384
+MS_PRIVATE = 1 << 18
+CLONE_NEWNS = 0x00020000
+CLONE_NEWUSER = 0x10000000
+PR_SET_KEEPCAPS = 8
+PR_CAPBSET_DROP = 24
+PR_SET_NO_NEW_PRIVS = 38
+PR_CAP_AMBIENT = 47
+PR_CAP_AMBIENT_RAISE = 2
+PR_CAP_AMBIENT_CLEAR_ALL = 4
+LINUX_CAPABILITY_VERSION_3 = 0x20080522
+
+
+class CapHeader(ctypes.Structure):
+    _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
+
+
+class CapData(ctypes.Structure):
+    _fields_ = [
+        ("effective", ctypes.c_uint32),
+        ("permitted", ctypes.c_uint32),
+        ("inheritable", ctypes.c_uint32),
+    ]
+
+
+def libc_check(result, what):
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"{what}: {os.strerror(error)}")
+
+
+def confined_id_maps(user=RUNTIME_USER, subid_files=SUBID_FILES):
+    """Identity uid and gid maps: the runtime ids and their subordinate
+    extents, each mapped to itself.  Never 0, never overlapping."""
+    uid, gid = runtime_user_ids(user)
+    maps = []
+    for own, path in ((uid, subid_files[0]), (gid, subid_files[1])):
+        extents = sorted({(own, 1), *subordinate_ranges(path, user, uid)})
+        for start, count in extents:
+            if start <= 0 or count <= 0 or start + count > 2**32 - 1:
+                fail(f"invalid id extent {start}:{count}")
+        for (a, n), (b, _m) in zip(extents, extents[1:]):
+            if a + n > b:
+                fail("overlapping id extents")
+        maps.append("".join(f"{start} {start} {count}\n" for start, count in extents))
+    return uid, gid, maps[0], maps[1]
+
+
+def confined_mount_plan(jail, binds, executable_dirs, path_exists=os.path.lexists,
+                        is_link=os.path.islink, read_link=os.readlink, real_path=os.path.realpath):
+    """The mounts that make up the jail, in order: (kind, source, target,
+    flags).  kind is tmpfs, bind (then remounted with flags), mkdir, file
+    (an empty mountpoint), or symlink (source is the link text)."""
+    plan = [("tmpfs", "tmpfs", jail, MS_NOSUID | MS_NODEV, "mode=0755,size=16m")]
+    system = MS_RDONLY | MS_NOSUID | MS_NODEV
+    for path in CONFINED_SYSTEM_DIRS:
+        if not path_exists(path):
+            continue
+        if is_link(path):
+            plan.append(("symlink", read_link(path), jail + path, 0, None))
+        else:
+            plan.append(("mkdir", None, jail + path, 0, None))
+            plan.append(("bind", path, jail + path, system, None))
+    plan.append(("mkdir", None, jail + "/etc", 0, None))
+    for name in CONFINED_ETC_FILES:
+        source = "/etc/" + name
+        if path_exists(source):
+            plan.append(("file", None, f"{jail}/etc/{name}", 0, None))
+            # resolv.conf is often a link into /run: bind its target only.
+            plan.append(("bind", real_path(source), f"{jail}/etc/{name}", system, None))
+    for name in CONFINED_ETC_DIRS:
+        if path_exists("/etc/" + name):
+            plan.append(("mkdir", None, f"{jail}/etc/{name}", 0, None))
+            plan.append(("bind", "/etc/" + name, f"{jail}/etc/{name}", system, None))
+    plan.append(("mkdir", None, jail + "/dev", 0, None))
+    for name in CONFINED_DEVICES:
+        plan.append(("file", None, f"{jail}/dev/{name}", 0, None))
+        plan.append(("bind", "/dev/" + name, f"{jail}/dev/{name}", MS_NOSUID | MS_NOEXEC, None))
+    plan.append(("mkdir", None, jail + "/tmp", 0, None))
+    plan.append(("tmpfs", "tmpfs", jail + "/tmp", MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=1777,size=256m"))
+    for path in executable_dirs:
+        plan.append(("mkdirs", None, jail + path, 0, None))
+        plan.append(("bind", path, jail + path, MS_RDONLY | MS_NOSUID | MS_NODEV, None))
+    for fd, target, writable in binds:
+        if target == CONFINED_PROFILE_TARGET:
+            plan.append(("file", None, jail + target, 0, None))
+        else:
+            plan.append(("mkdir", None, jail + target, 0, None))
+        flags = MS_NOSUID | MS_NODEV | MS_NOEXEC | (0 if writable else MS_RDONLY)
+        plan.append(("bind", f"/proc/self/fd/{fd}", jail + target, flags, None))
+    return plan
+
+
+def confined_mount(source, target, fstype, flags, data=None):
+    encode = lambda value: None if value is None else os.fsencode(value)
+    libc_check(
+        LIBC.mount(encode(source), encode(target), encode(fstype), ctypes.c_ulong(flags), encode(data)),
+        f"mount {target}",
+    )
+
+
+def build_jail(plan):
+    confined_mount(None, "/", None, MS_REC | MS_PRIVATE)
+    for kind, source, target, flags, data in plan:
+        if kind == "tmpfs":
+            confined_mount(source, target, "tmpfs", flags, data)
+        elif kind == "mkdir":
+            os.mkdir(target, 0o755)
+        elif kind == "mkdirs":
+            os.makedirs(target, 0o755, exist_ok=True)
+        elif kind == "file":
+            os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o644))
+        elif kind == "symlink":
+            os.symlink(source, target)
+        elif kind == "bind":
+            confined_mount(source, target, None, MS_BIND)
+            confined_mount(None, target, None, MS_REMOUNT | MS_BIND | flags)
+
+
+def confined_drop(uid, gid, caps):
+    libc_check(LIBC.prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0), "keepcaps")
+    os.setresgid(gid, gid, gid)
+    os.setresuid(uid, uid, uid)
+    last = int(open("/proc/sys/kernel/cap_last_cap").read())
+    for cap in range(last + 1):
+        if cap not in caps:
+            libc_check(LIBC.prctl(PR_CAPBSET_DROP, cap, 0, 0, 0), f"bounding drop {cap}")
+    mask = sum(1 << cap for cap in caps)
+    header = CapHeader(LINUX_CAPABILITY_VERSION_3, 0)
+    data = (CapData * 2)(CapData(mask, mask, mask), CapData(0, 0, 0))
+    libc_check(LIBC.capset(ctypes.byref(header), data), "capset")
+    libc_check(LIBC.prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0), "ambient clear")
+    for cap in caps:
+        libc_check(LIBC.prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, cap, 0, 0), f"ambient {cap}")
+    libc_check(LIBC.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), "no_new_privs")
+
+
+def parse_confined_spec(text, rustic_candidates=None):
+    spec = json.loads(text)
+    if set(spec) != {"argv", "binds", "setfcap", "tolerate_skips"}:
+        fail("invalid confined spec")
+    argv, binds = spec["argv"], spec["binds"]
+    if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) for arg in argv):
+        fail("invalid confined argv")
+    allowed_programs = {CONFINED_RSYNC[0], *(rustic_candidates or RUSTIC_CANDIDATES)}
+    if argv[0] not in allowed_programs:
+        fail(f"program is not allowed in confinement: {argv[0]!r}")
+    targets = set()
+    parsed = []
+    for bind in binds:
+        fd, target, writable = bind
+        if (
+            not isinstance(fd, int)
+            or fd < 3
+            or target not in CONFINED_WORK_TARGETS | {CONFINED_PROFILE_TARGET}
+            or target in targets
+            or not isinstance(writable, bool)
+            or (target == CONFINED_PROFILE_TARGET and writable)
+        ):
+            fail("invalid confined bind")
+        targets.add(target)
+        parsed.append((fd, target, writable))
+    if not isinstance(spec["setfcap"], bool) or not isinstance(spec["tolerate_skips"], bool):
+        fail("invalid confined spec")
+    return argv, parsed, spec["setfcap"], spec["tolerate_skips"]
+
+
+def classify_confined_errors(lines):
+    """Return (tolerable, skipped): whether every rsync error line is a
+    deliberate confinement skip, and how many entries were skipped."""
+    skipped = 0
+    for line in lines:
+        line = line.rstrip("\n")
+        if not line.startswith("rsync"):
+            continue
+        if not any(pattern.match(line) for pattern in CONFINED_SKIP_PATTERNS):
+            return False, skipped
+        if not line.startswith("rsync error:"):
+            skipped += 1
+    return True, skipped
+
+
+def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candidates=None):
+    """_confined-exec SPEC: run SPEC's program confined (see above).  Started
+    by run_confined through run_supervised, which owns the deadline."""
+    if len(argv) != 2:
+        fail("usage: _confined-exec SPEC")
+    program_argv, binds, setfcap, tolerate_skips = parse_confined_spec(argv[1], rustic_candidates)
+    uid, gid, uid_map, gid_map = id_maps or confined_id_maps()
+    caps = CONFINED_CAPS + ((CAP_SETFCAP,) if setfcap else ())
+    program_dir = os.path.dirname(program_argv[0])
+    executable_dirs = (
+        []
+        if any(program_dir == top or program_dir.startswith(top + "/") for top in CONFINED_SYSTEM_DIRS)
+        else [program_dir]
+    )
+    ensure_private_root_directory(run_dir, 0, 0o700)
+    jail = tempfile.mkdtemp(prefix="jail-", dir=run_dir)
+    plan = confined_mount_plan(jail, binds, executable_dirs)
+    ready_r, ready_w = os.pipe()
+    go_r, go_w = os.pipe()
+    err_r, err_w = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        step = "setup"
+        try:
+            os.close(ready_r)
+            os.close(go_w)
+            os.close(err_r)
+            os.dup2(err_w, 2)
+            step = "setgroups"
+            os.setgroups([])
+            step = "mount namespace"
+            os.unshare(CLONE_NEWNS)
+            step = "jail"
+            build_jail(plan)
+            os.chroot(jail)
+            os.chdir("/")
+            step = "user namespace"
+            os.unshare(CLONE_NEWUSER)
+            os.write(ready_w, b"1")
+            if os.read(go_r, 1) != b"1":
+                os._exit(125)
+            step = "drop"
+            confined_drop(uid, gid, caps)
+            step = "exec"
+            os.execve(program_argv[0], program_argv, CONFINED_ENV)
+        except BaseException as err:
+            os.write(2, f"SECURITY_DENY code=confined-{step.replace(' ', '-')} detail={err}\n".encode())
+            os._exit(126)
+    os.close(ready_w)
+    os.close(go_r)
+    os.close(err_w)
+    try:
+        if os.read(ready_r, 1) == b"1":
+            with open(f"/proc/{pid}/setgroups", "w") as f:
+                f.write("deny")
+            with open(f"/proc/{pid}/uid_map", "w") as f:
+                f.write(uid_map)
+            with open(f"/proc/{pid}/gid_map", "w") as f:
+                f.write(gid_map)
+            os.write(go_w, b"1")
+    finally:
+        os.close(go_w)
+        os.close(ready_r)
+    lines = []
+    with os.fdopen(err_r, "r", errors="replace") as errors:
+        for line in errors:
+            sys.stderr.write(line)
+            if len(lines) < 10000:
+                lines.append(line)
+    sys.stderr.flush()
+    _pid, status = os.waitpid(pid, 0)
+    code = os.waitstatus_to_exitcode(status)
+    os.rmdir(jail)
+    if code == 23 and tolerate_skips:
+        tolerable, skipped = classify_confined_errors(lines)
+        if tolerable:
+            print(f"{CONFINED_SKIPPED_MARKER} count={skipped}", file=sys.stderr, flush=True)
+            return 0
+    return code
+
+
+CONFINED_EXEC_PATH = "/usr/local/libexec/cocalc-runtime-storage-path-helper"
+
+
+def run_confined(program_argv, binds, *, deadline, setfcap=False, tolerate_skips=False, exec_path=CONFINED_EXEC_PATH):
+    """Run program_argv confined, binding each (fd, target, writable)."""
+    spec = json.dumps(
+        {
+            "argv": program_argv,
+            "binds": [[fd, target, writable] for fd, target, writable in binds],
+            "setfcap": setfcap,
+            "tolerate_skips": tolerate_skips,
+        }
+    )
+    return run_supervised(
+        [exec_path, "_confined-exec", spec],
+        deadline=deadline,
+        pass_fds=tuple(fd for fd, _target, _writable in binds),
+        env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+    )
+
+
+def make_staging_directory(parentfd, prefix, uid, gid):
+    """A fresh, empty directory for the confined runtime user: created by
+    root beneath a pinned parent, then handed to the runtime user."""
+    for _attempt in range(16):
+        name = f"{prefix}{os.urandom(8).hex()}"
+        try:
+            os.mkdir(name, 0o700, dir_fd=parentfd)
+        except FileExistsError:
+            continue
+        fd = openat2(parentfd, name, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        os.fchown(fd, uid, gid)
+        return name, fd
+    fail("could not create a staging directory")
+
+
+# Project restores stage here, beneath the data root and on the same
+# filesystem; generic verbs never reach it (GENERIC_PROTECTED_PATHS).
+RESTORE_STAGING_DIR = ".cocalc-confined-restore"
+
+
+def open_restore_staging_parent(rootfd):
+    try:
+        os.mkdir(RESTORE_STAGING_DIR, 0o711, dir_fd=rootfd)
+    except FileExistsError:
+        pass
+    fd = openat2(rootfd, RESTORE_STAGING_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    info = os.fstat(fd)
+    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o022:
+        os.close(fd)
+        fail("unsafe restore staging directory")
+    return fd
+
+
+def restore_project_confined(rootfd, destfd, profile_fd, program, delete, uid, gid, deadline,
+                             confined=None):
+    """Restore into a fresh staging directory, then merge it into the
+    destination with rsync, both confined.  The destination is the pinned
+    directory itself, so no symlink in it or above it leaves the jail."""
+    confined = confined or run_confined
+    parentfd = open_restore_staging_parent(rootfd)
+    name, stagefd = make_staging_directory(parentfd, "restore-", uid, gid)
+    try:
+        status = confined(
+            program,
+            [(stagefd, "/staging", True), (profile_fd, CONFINED_PROFILE_TARGET, False)],
+            deadline=deadline,
+        )
+        if status != 0:
+            raise subprocess.CalledProcessError(status, program[:1])
+        merge = [*CONFINED_RSYNC, *(["--delete"] if delete else []), "--", "/staging/", "/home/"]
+        status = confined(
+            merge,
+            [(stagefd, "/staging", False), (destfd, "/home", True)],
+            deadline=deadline,
+            tolerate_skips=True,
+        )
+        if status != 0:
+            raise subprocess.CalledProcessError(status, merge[:1])
+    finally:
+        os.close(stagefd)
+        try:
+            remove_entry(parentfd, name, True, True)
+        finally:
+            os.close(parentfd)
+
+
+def restore_tree_confined(rootfd, path, profile_fd, program, uid, gid, deadline, confined=None):
+    """Whole-tree (RootFS) restore: confined into a fresh directory beside
+    the destination, which then replaces it.  File capabilities namespaced
+    to a mapped root (container images) are kept; host-global ones cannot be
+    written from the confinement."""
+    confined = confined or run_confined
+    parentfd, name = open_parent(rootfd, path)
+    stage_name, stagefd = make_staging_directory(parentfd, f".{name}.confined-", uid, gid)
+    try:
+        status = confined(
+            program,
+            [(stagefd, "/staging", True), (profile_fd, CONFINED_PROFILE_TARGET, False)],
+            deadline=deadline,
+            setfcap=True,
+        )
+        if status != 0:
+            raise subprocess.CalledProcessError(status, program[:1])
+        old = f".{name}.replaced-{os.urandom(8).hex()}"
+        try:
+            os.rename(name, old, src_dir_fd=parentfd, dst_dir_fd=parentfd)
+        except FileNotFoundError:
+            old = None
+        os.rename(stage_name, name, src_dir_fd=parentfd, dst_dir_fd=parentfd)
+        stage_name = None
+        if old is not None:
+            remove_entry(parentfd, old, True, True)
+    finally:
+        os.close(stagefd)
+        try:
+            if stage_name is not None:
+                remove_entry(parentfd, stage_name, True, True)
+        finally:
+            os.close(parentfd)
+
+
 def run_rustic(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -9222,6 +9654,7 @@ def run_rustic(
     profile_run_dir="/run/cocalc-rustic-profiles",
     profile_run_dir_uid=0,
     allow_loopback_rest=ALLOW_LOOPBACK_RUSTIC_REST,
+    confined=None,
 ):
     command, values = parse_rustic(argv)
     rootfd = open_root(values["root"], allowed_roots)
@@ -9336,18 +9769,36 @@ def run_rustic(
                 raise subprocess.CalledProcessError(status, base)
             return
 
-        # Restores into a tree that may already hold files: Rustic must read
-        # each one, not trust a matching size and modification time (both are
-        # easy to keep while changing the bytes).
-        restore = ["restore", "--verify-existing"]
-        if values["no-cache"]:
-            restore.append("--no-cache")
-        if values["delete"]:
-            restore.append("--delete")
-        restore.extend([values["snapshot"], f"/proc/self/fd/{datafd}"])
-        status = invoke(restore)
-        if status != 0:
-            raise subprocess.CalledProcessError(status, base)
+        # Restores never run as root and never write into an existing tree:
+        # Rustic restores confined into a fresh staging directory (it fails,
+        # and would follow symlinks, in a tree it did not create).
+        uid, gid = runtime_user_ids()
+        profile_fd = os.open(profile_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            # Readable by the confined runtime user only through the jail.
+            os.fchown(profile_fd, 0, gid)
+            os.fchmod(profile_fd, 0o640)
+            program = [
+                rustic,
+                "-P",
+                CONFINED_PROFILE_TARGET[: -len(".toml")],
+                "restore",
+                "--no-cache",
+                "--numeric-id",
+                values["snapshot"],
+                "/staging",
+            ]
+            if command == "rustic-project-restore":
+                restore_project_confined(
+                    rootfd, datafd, profile_fd, program, values["delete"], uid, gid, deadline,
+                    confined=confined,
+                )
+            else:
+                restore_tree_confined(
+                    rootfd, values["path"], profile_fd, program, uid, gid, deadline, confined=confined
+                )
+        finally:
+            os.close(profile_fd)
     finally:
         if profile_path is not None:
             os.unlink(profile_path)
@@ -10504,7 +10955,7 @@ def run_pin_exec(argv, allowed_roots=ALLOWED_ROOTS, wrapper=STORAGE_WRAPPER):
         os.close(fd)
 
 
-def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
+def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None, confined=None):
     if argv and argv[0] == "scan-oversized-files":
         return run_scan_oversized_files(argv, allowed_roots)
     if argv and argv[0] == "scan-changed-since":
@@ -10566,7 +11017,12 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
         elif command in ("copy-tree-preserve", "copy-tree-reflink"):
             dest_rootfd = open_root(values["dest-root"], generic_roots)
             try:
+                created = False
                 if values["dest"] != ".":
+                    try:
+                        os.stat(values["dest"], dir_fd=dest_rootfd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        created = True
                     mkdir_beneath(dest_rootfd, values["dest"], True, 0o755)
                 sourcefd = openat2(
                     rootfd,
@@ -10582,14 +11038,21 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
                     source = f"/proc/self/fd/{sourcefd}"
                     dest = f"/proc/self/fd/{destfd}"
                     if command == "copy-tree-preserve":
-                        args = [
-                            "/usr/bin/rsync",
-                            "-aAX",
-                            "--numeric-ids",
-                            "--",
-                            f"{source}/",
-                            f"{dest}/",
-                        ]
+                        # Owners, modes and namespaced file capabilities are
+                        # kept, confined (see run_confined); a tree of the
+                        # runtime user's cannot become root's.
+                        uid, gid = runtime_user_ids()
+                        if created:
+                            os.fchown(destfd, uid, gid)
+                        status = (confined or run_confined)(
+                            [*CONFINED_RSYNC, "--", "/src/", "/dest/"],
+                            [(sourcefd, "/src", False), (destfd, "/dest", True)],
+                            deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS,
+                            setfcap=True,
+                        )
+                        if status != 0:
+                            raise subprocess.CalledProcessError(status, CONFINED_RSYNC[:1])
+                        return
                     else:
                         args = [
                             "/bin/cp",
@@ -10651,6 +11114,8 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
             return run_mkfs_btrfs(argv)
         if argv and argv[0] == "pin-exec":
             return run_pin_exec(argv, allowed_roots)
+        if argv and argv[0] == "_confined-exec":
+            return run_confined_exec(argv)
         run(argv, allowed_roots)
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as err:

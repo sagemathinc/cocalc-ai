@@ -3,6 +3,7 @@
 import contextlib
 import fcntl
 import io
+import functools
 import hashlib
 import inspect
 import json
@@ -912,8 +913,198 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_rustic(["rustic-project-backup", *common, "--host", "project-1", "--no-cache"])
 
+    def fake_confined(self, calls):
+        """Stand-in for run_confined: records each call and does its work on
+        the bound directories (/src -> /dest, /staging -> /home)."""
+
+        def confined(argv, binds, **kwargs):
+            calls.append((argv, [(target, writable) for _fd, target, writable in binds], kwargs))
+            paths = {target: os.readlink(f"/proc/self/fd/{fd}") for fd, target, _w in binds}
+            if argv[0].endswith("rsync"):
+                source = paths.get("/src") or paths["/staging"]
+                dest = paths.get("/dest") or paths["/home"]
+                shutil.copytree(source, dest, symlinks=True, dirs_exist_ok=True)
+            else:
+                Path(paths["/staging"], "restored").write_text("restored\n", encoding="utf-8")
+            return 0
+
+        return confined
+
+    def test_confined_jail_has_no_host_proc_and_minimal_etc(self) -> None:
+        namespace = self.helper_namespace()
+        plan = namespace["confined_mount_plan"](
+            "/run/cocalc-confined/jail-x",
+            [(5, "/staging", True), (6, "/home", True), (7, "/profile.toml", False)],
+            [],
+            path_exists=lambda path: path != "/libx32",
+            is_link=lambda path: path in ("/bin", "/sbin", "/lib", "/lib64"),
+            read_link=lambda path: "usr" + path,
+            real_path=lambda path: "/run/systemd/resolve/stub-resolv.conf" if path.endswith("resolv.conf") else path,
+        )
+        jail = "/run/cocalc-confined/jail-x"
+        sources = [source for kind, source, _t, _f, _d in plan if kind == "bind"]
+        targets = [target[len(jail):] for _k, _s, target, _f, _d in plan]
+        # Nothing from the host's /proc but the pinned fds themselves, and
+        # no /etc/cocalc, /run, /var or /mnt.
+        self.assertFalse([s for s in sources if s.startswith("/proc/") and not s.startswith("/proc/self/fd/")])
+        self.assertNotIn("/proc", targets)
+        for source in sources:
+            self.assertFalse(source.startswith(("/etc/cocalc", "/var", "/mnt", "/home")), source)
+        self.assertEqual(
+            [s for s in sources if s.startswith("/run")], ["/run/systemd/resolve/stub-resolv.conf"]
+        )
+        etc = sorted({t for t in targets if t.startswith("/etc/")})
+        self.assertEqual(
+            etc,
+            sorted(["/etc/" + name for name in namespace["CONFINED_ETC_FILES"]] + ["/etc/ssl"]),
+        )
+        self.assertEqual(sorted({t for t in targets if t.startswith("/dev/")}), ["/dev/null", "/dev/urandom", "/dev/zero"])
+        flags = {target[len(jail):]: f for kind, _s, target, f, _d in plan if kind == "bind"}
+        MS_RDONLY, MS_NOSUID, MS_NODEV, MS_NOEXEC = 1, 2, 4, 8
+        for target in ("/staging", "/home"):
+            self.assertEqual(flags[target], MS_NOSUID | MS_NODEV | MS_NOEXEC)
+        self.assertEqual(flags["/profile.toml"], MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RDONLY)
+        self.assertEqual(flags["/usr"], MS_RDONLY | MS_NOSUID | MS_NODEV)
+        # usr-merged links are recreated, not bound.
+        self.assertIn(("symlink", "usr/bin", jail + "/bin", 0, None), plan)
+        self.assertEqual(plan[0][0], "tmpfs")
+
+    def test_confined_spec_is_strict(self) -> None:
+        namespace = self.helper_namespace()
+        parse = namespace["parse_confined_spec"]
+        ok = {"argv": ["/usr/bin/rsync", "-a"], "binds": [[5, "/src", False], [6, "/dest", True]],
+              "setfcap": True, "tolerate_skips": False}
+        argv, binds, setfcap, tolerate = parse(json.dumps(ok))
+        self.assertEqual((argv[0], binds, setfcap, tolerate), ("/usr/bin/rsync", [(5, "/src", False), (6, "/dest", True)], True, False))
+        self.assertEqual(parse(json.dumps({**ok, "argv": ["/usr/local/libexec/cocalc-rustic", "restore"]}))[0][0],
+                         "/usr/local/libexec/cocalc-rustic")
+        for bad in (
+            {**ok, "argv": ["/bin/sh", "-c", "id"]},
+            {**ok, "argv": []},
+            {**ok, "binds": [[2, "/src", False]]},
+            {**ok, "binds": [[5, "/etc", False]]},
+            {**ok, "binds": [[5, "/src", False], [6, "/src", True]]},
+            {**ok, "binds": [[5, "/profile.toml", True]]},
+            {**ok, "binds": [[5, "/src", "yes"]]},
+            {**ok, "setfcap": 1},
+            {**ok, "extra": 1},
+        ):
+            with self.subTest(bad=bad), self.assertRaises((ValueError, TypeError)):
+                parse(json.dumps(bad))
+
+    def test_confined_id_maps_are_identity_without_root(self) -> None:
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subuid = Path(tmpdir) / "subuid"
+            subgid = Path(tmpdir) / "subgid"
+            subuid.write_text("cocalc-host:231072:65536\ncocalc-host:327680:4128768\nother:100000:65536\n", encoding="utf-8")
+            subgid.write_text("cocalc-host:231072:65536\n", encoding="utf-8")
+            entry = mock.Mock(pw_uid=2000, pw_gid=2000)
+            with mock.patch.object(namespace["pwd"], "getpwnam", return_value=entry):
+                uid, gid, uid_map, gid_map = namespace["confined_id_maps"]("cocalc-host", (str(subuid), str(subgid)))
+                self.assertEqual((uid, gid), (2000, 2000))
+                self.assertEqual(uid_map, "2000 2000 1\n231072 231072 65536\n327680 327680 4128768\n")
+                self.assertEqual(gid_map, "2000 2000 1\n231072 231072 65536\n")
+                subuid.write_text("cocalc-host:231072:65536\ncocalc-host:231100:10\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "overlapping"):
+                    namespace["confined_id_maps"]("cocalc-host", (str(subuid), str(subgid)))
+                subuid.write_text("cocalc-host:0:65536\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "invalid id extent"):
+                    namespace["confined_id_maps"]("cocalc-host", (str(subuid), str(subgid)))
+
+    def test_confined_skips_are_tolerated_only_when_deliberate(self) -> None:
+        classify = self.helper_namespace()["classify_confined_errors"]
+        # Verbatim rsync 3.2.7 lines from the staging2 probe (finding 011).
+        skips = [
+            'rsync: [generator] chown "/home/fifo" failed: Invalid argument (22)\n',
+            'rsync: [generator] mknod "/home/nulldev" failed: Operation not permitted (1)\n',
+            'rsync: [sender] send_files failed to open "/staging/root-0600": Permission denied (13)\n',
+            'rsync: [receiver] rsync_xal_set: lsetxattr("/home/.cap-container.t3EnCO","security.capability") failed: Operation not permitted (1)\n',
+            'rsync: [receiver] rsync_xal_set: lsetxattr("/home/.cap-container.8E0Vqb","security.capability") failed: Invalid argument (22)\n',
+            'rsync: [receiver] chown "/home/.suid-root.7z6Zfz" failed: Invalid argument (22)\n',
+            "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1356) [sender=3.2.7]\n",
+        ]
+        self.assertEqual(classify(skips), (True, 6))
+        self.assertEqual(classify(["sending incremental file list\n", *skips]), (True, 6))
+        for other in (
+            'rsync: [receiver] write failed on "/home/big": No space left on device (28)\n',
+            'rsync: [receiver] rename "/home/.x.abc" -> "x": Permission denied (13)\n',
+            'rsync: [receiver] chown "/home/x" failed: Operation not permitted (1)\n',
+            'rsync: [receiver] rsync_xal_set: lsetxattr("/home/x","user.foo") failed: Operation not permitted (1)\n',
+            'rsync: [receiver] rsync_xal_set: lsetxattr("/home/x","trusted.overlay.opaque") failed: Operation not permitted (1)\n',
+        ):
+            with self.subTest(other=other):
+                self.assertFalse(classify([*skips[:2], other, skips[-1]])[0])
+
+    def test_project_restore_cleans_staging_on_failure(self) -> None:
+        namespace = self.helper_namespace()
+        restore = namespace["restore_project_confined"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "home").mkdir()
+            rootfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            destfd = os.open(root / "home", os.O_PATH | os.O_DIRECTORY)
+            try:
+                for failing_step in (0, 1):
+                    calls = []
+
+                    def confined(argv, binds, **kwargs):
+                        calls.append(argv)
+                        return 23 if len(calls) - 1 == failing_step else 0
+
+                    with self.subTest(step=failing_step), self.assertRaises(subprocess.CalledProcessError):
+                        restore(rootfd, destfd, destfd, ["/usr/local/libexec/cocalc-rustic", "restore"], False,
+                                os.getuid(), os.getgid(), time.monotonic() + 60, confined=confined)
+                    self.assertEqual(len(calls), failing_step + 1)
+                    self.assertEqual(list((root / ".cocalc-confined-restore").iterdir()), [])
+                # A staging parent someone else could write is refused.
+                os.chmod(root / ".cocalc-confined-restore", 0o777)
+                with self.assertRaisesRegex(ValueError, "unsafe restore staging"):
+                    restore(rootfd, destfd, destfd, ["x"], False, os.getuid(), os.getgid(),
+                            time.monotonic() + 60, confined=lambda *_a, **_k: 0)
+            finally:
+                os.close(rootfd)
+                os.close(destfd)
+
+    def test_tree_restore_replaces_the_destination_only_on_success(self) -> None:
+        namespace = self.helper_namespace()
+        restore = namespace["restore_tree_confined"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "images" / "rootfs").mkdir(parents=True)
+            (root / "images" / "rootfs" / "old").write_text("old\n", encoding="utf-8")
+            rootfd = os.open(root, os.O_PATH | os.O_DIRECTORY)
+            calls = []
+            try:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    restore(rootfd, "images/rootfs", 3, ["rustic"], os.getuid(), os.getgid(),
+                            time.monotonic() + 60, confined=lambda *_a, **_k: 1)
+                self.assertEqual(sorted(p.name for p in (root / "images").iterdir()), ["rootfs"])
+                self.assertTrue((root / "images" / "rootfs" / "old").exists())
+                restore(rootfd, "images/rootfs", 3, ["rustic"], os.getuid(), os.getgid(),
+                        time.monotonic() + 60, confined=self.fake_confined(calls))
+            finally:
+                os.close(rootfd)
+            self.assertEqual(sorted(p.name for p in (root / "images").iterdir()), ["rootfs"])
+            self.assertEqual(sorted(p.name for p in (root / "images" / "rootfs").iterdir()), ["restored"])
+            [(_argv, binds, kwargs)] = calls
+            self.assertEqual(binds, [("/staging", True), ("/profile.toml", False)])
+            self.assertTrue(kwargs["setfcap"])
+
+    def test_generic_verbs_never_reach_restore_staging(self) -> None:
+        namespace = self.helper_namespace()
+        check = namespace["check_generic_path"]
+        generic_roots = namespace["ALLOWED_ROOTS"] - namespace["SECRET_ROOTS"]
+        for command, path in (("rm", ".cocalc-confined-restore"), ("chown", ".cocalc-confined-restore/restore-1"),
+                              ("rename", ".cocalc-confined-restore/restore-1")):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                check("/mnt/cocalc", path, command, generic_roots)
+
     def test_tree_copy_uses_anchored_directories(self) -> None:
-        run = self.helper_run()
+        namespace = self.helper_namespace()
+        namespace["runtime_user_ids"] = lambda *_args: (os.getuid(), os.getgid())
+        calls = []
+        run = functools.partial(namespace["run"], confined=self.fake_confined(calls))
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "source"
@@ -958,6 +1149,11 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                 (preserve_dest / "marker").read_text(encoding="utf-8"),
                 "marker\n",
             )
+            # copy-tree-preserve runs confined, keeping namespaced file caps.
+            [(argv, binds, kwargs)] = calls
+            self.assertEqual(argv, ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids", "--", "/src/", "/dest/"])
+            self.assertEqual(binds, [("/src", False), ("/dest", True)])
+            self.assertTrue(kwargs["setfcap"])
             self.assertEqual(
                 (reflink_dest / "marker").read_text(encoding="utf-8"),
                 "marker\n",
@@ -1214,7 +1410,9 @@ password = "audit-password"
                 )
 
     def test_rustic_uses_anchored_validated_profile_snapshot(self) -> None:
-        run_rustic = self.helper_namespace()["run_rustic"]
+        namespace = self.helper_namespace()
+        namespace["runtime_user_ids"] = lambda *_args: (os.getuid(), os.getgid())
+        run_rustic = namespace["run_rustic"]
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = root / "source"
@@ -1274,29 +1472,40 @@ secret_access_key = "secret"
             )
             self.assertEqual(list(profile_run_dir.iterdir()), [])
 
-            run_rustic(
-                [
-                    "rustic-project-restore",
-                    "--root", str(root),
-                    "--path", "source",
-                    "--profile-root", str(root),
-                    "--profile-path", "profile.toml",
-                    "--snapshot", "backup-id:data",
-                    "--no-cache",
-                ],
-                allowed_roots={str(root)},
-                rustic_candidates=[str(fake_rustic)],
-                profile_run_dir=str(profile_run_dir),
-                profile_run_dir_uid=os.getuid(),
+            calls = []
+            # Root hands the profile to the runtime group; not as a test user.
+            with mock.patch.object(namespace["os"], "fchown"):
+                run_rustic(
+                    [
+                        "rustic-project-restore",
+                        "--root", str(root),
+                        "--path", "source",
+                        "--profile-root", str(root),
+                        "--profile-path", "profile.toml",
+                        "--snapshot", "backup-id:data",
+                        "--no-cache",
+                    ],
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(profile_run_dir),
+                    profile_run_dir_uid=os.getuid(),
+                    confined=self.fake_confined(calls),
+                )
+            # Restored confined into fresh staging, then merged into the
+            # pinned destination; the staging directory is gone.
+            (restore, restore_binds, restore_kwargs), (merge, merge_binds, merge_kwargs) = calls
+            self.assertEqual(
+                restore,
+                [str(fake_rustic), "-P", "/profile", "restore", "--no-cache", "--numeric-id",
+                 "backup-id:data", "/staging"],
             )
-            restore_args = invocation.read_text(encoding="utf-8").splitlines()
-            self.assertIn("restore", restore_args)
-            self.assertIn("--no-cache", restore_args)
-            # rustic rejects --cache-dir together with --no-cache
-            self.assertNotIn("--cache-dir", restore_args)
-            self.assertIn("backup-id:data", restore_args)
-            # Existing files are read, never trusted by size and mtime.
-            self.assertEqual(restore_args[restore_args.index("restore") + 1], "--verify-existing")
+            self.assertEqual(restore_binds, [("/staging", True), ("/profile.toml", False)])
+            self.assertFalse(restore_kwargs.get("setfcap", False))
+            self.assertEqual(merge, ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids", "--", "/staging/", "/home/"])
+            self.assertEqual(merge_binds, [("/staging", False), ("/home", True)])
+            self.assertTrue(merge_kwargs["tolerate_skips"])
+            self.assertEqual((source / "restored").read_text(encoding="utf-8"), "restored\n")
+            self.assertEqual(list((root / ".cocalc-confined-restore").iterdir()), [])
             self.assertEqual(list(profile_run_dir.iterdir()), [])
 
             outside = root / "outside-profile.toml"
