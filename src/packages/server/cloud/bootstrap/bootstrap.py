@@ -5181,7 +5181,7 @@ def prune_bundle_versions(
         live_versions.update(live_process_bundle_versions(root))
     except OSError as err:
         # Retention is optional; incomplete /proc visibility is not evidence
-        # that an old runtime is unused. Still repair runtime-root ownership.
+        # that an old runtime is unused.
         log_line(cfg, f"bootstrap: skipping bundle pruning for {root}: {err}")
         live_versions = None
     if root.resolve() == Path(cfg.tools_bundle.root).resolve():
@@ -5239,31 +5239,6 @@ def prune_bundle_versions(
             continue
         log_line(cfg, f"bootstrap: pruning old bundle dir {child}")
         shutil.rmtree(child, ignore_errors=True)
-    runtime_paths = [
-        cfg.project_host_bundle.root,
-        cfg.project_bundle.root,
-        cfg.tools_bundle.root,
-        *(
-            [cfg.container_runtime_bundle.root]
-            if cfg.container_runtime_bundle is not None
-            else []
-        ),
-    ]
-    runtime_paths = [path for path in runtime_paths if Path(path).exists()]
-    if not runtime_paths:
-        return
-    if os.geteuid() == 0:
-        run_best_effort(
-            cfg,
-            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
-            "chown runtime dir roots",
-        )
-    else:
-        run_best_effort(
-            cfg,
-            ["sudo", "chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
-            "sudo chown runtime dir roots",
-        )
 
 
 def decode_mountinfo_path(value: str) -> str:

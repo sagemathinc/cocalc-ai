@@ -3360,6 +3360,38 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
             )
             self.assertEqual(remaining, ["v5", "v6", "v7"])
 
+    def test_prune_leaves_artifact_root_ownership_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            root = Path(tmpdir) / "bundles"
+            (root / "v1").mkdir(parents=True)
+            for path in [
+                cfg.project_host_bundle.root,
+                cfg.project_bundle.root,
+                cfg.tools_bundle.root,
+            ]:
+                Path(path).mkdir(parents=True, exist_ok=True)
+            bundle = bootstrap.BundleSpec(
+                url="",
+                sha256=None,
+                remote="",
+                root=str(root),
+                dir=str(root / "v1"),
+                current=str(root / "current"),
+                version="v1",
+            )
+            proc_root = Path(tmpdir) / "proc"
+            proc_root.mkdir()
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root), mock.patch.object(
+                bootstrap, "run_best_effort"
+            ) as run:
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+            # The roots stay root's (secured before extraction); handing them
+            # to the runtime user would let it rename versions or retarget current.
+            self.assertFalse(
+                [call for call in run.call_args_list if "chown" in " ".join(call.args[1])]
+            )
+
     def test_prune_preserves_live_mountinfo_bundle_versions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
@@ -3503,7 +3535,7 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
                 bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
             self.assertEqual(self.remaining(root), ["v7", "v8", "v9"])
 
-    def test_unreadable_references_skip_pruning_but_keep_ownership_repair(self) -> None:
+    def test_unreadable_references_skip_pruning(self) -> None:
         for reference in ("cmdline", "cwd", "exe", "root", "fd", "fd/3", "maps", "mountinfo", "proc"):
             with self.subTest(reference=reference), tempfile.TemporaryDirectory() as tmpdir:
                 cfg, bundle, root, proc_root, proc = self.make_fixture(tmpdir)
@@ -3537,7 +3569,7 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
                     bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
                 self.assertEqual(self.remaining(root), [f"v{i}" for i in range(1, 10)])
                 self.assertIn("skipping bundle pruning", Path(cfg.log_file).read_text())
-                self.assertTrue(any(str(root) in call.args[1] for call in repair.call_args_list))
+                repair.assert_not_called()
 
     def test_missing_proc_root_skips_pruning(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
