@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import tarfile
+import threading
 import time
 import unittest
 from collections import namedtuple
@@ -959,7 +960,11 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             sorted(["/etc/" + name for name in namespace["CONFINED_ETC_FILES"]] + ["/etc/ssl"]),
         )
         self.assertEqual(sorted({t for t in targets if t.startswith("/dev/")}), ["/dev/null", "/dev/urandom", "/dev/zero"])
-        flags = {target[len(jail):]: f for kind, _s, target, f, _d in plan if kind == "bind"}
+        flags = {target[len(jail):]: f for kind, _s, target, f, _d in plan if kind in ("bind", "tree")}
+        # The pinned work dirs are attached from their fds (detached clones
+        # taken before unshare), never bound by path.
+        trees = {target[len(jail):]: source for kind, source, target, _f, _d in plan if kind == "tree"}
+        self.assertEqual(trees, {"/staging": 5, "/home": 6, "/profile.toml": 7})
         MS_RDONLY, MS_NOSUID, MS_NODEV, MS_NOEXEC = 1, 2, 4, 8
         for target in ("/staging", "/home"):
             self.assertEqual(flags[target], MS_NOSUID | MS_NODEV | MS_NOEXEC)
@@ -968,6 +973,120 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         # usr-merged links are recreated, not bound.
         self.assertIn(("symlink", "usr/bin", jail + "/bin", 0, None), plan)
         self.assertEqual(plan[0][0], "tmpfs")
+
+    @unittest.skipUnless(
+        os.geteuid() == 0 and os.environ.get("COCALC_TEST_CONFINED") == "1",
+        "needs real root and COCALC_TEST_CONFINED=1 (builds a real jail)",
+    )
+    def test_confined_exec_builds_a_real_jail(self) -> None:
+        # Real unshare, open_tree/move_mount, chroot and user namespace: the
+        # mocked tests above cannot catch kernel-level failures.
+        namespace = self.helper_namespace()
+        run_exec = namespace["run_confined_exec"]
+        uid = gid = int(os.environ.get("COCALC_TEST_CONFINED_UID", "2000"))
+        id_maps = (uid, gid, f"{uid} {uid} 1\n", f"{gid} {gid} 1\n")
+        with tempfile.TemporaryDirectory(dir=os.environ.get("COCALC_TEST_CONFINED_DIR")) as tmpdir:
+            base = Path(tmpdir)
+            os.chmod(base, 0o711)
+            run_dir = base / "run"
+            src = base / "src"
+            src.mkdir()
+            (src / "a").write_text("a\n", encoding="utf-8")
+            os.symlink("/etc/passwd", src / "link")
+            victim = base / "victim"
+            victim.write_text("original\n", encoding="utf-8")
+            victim.chmod(0o600)
+            profile = base / "profile.toml"
+            profile.write_text("[repository]\n", encoding="utf-8")
+            os.chown(profile, 0, gid)
+            profile.chmod(0o640)
+            for path in (src, src / "a"):
+                os.chown(path, uid, gid)
+            os.lchown(src / "link", uid, gid)
+
+            def fresh(name):
+                path = base / name
+                path.mkdir()
+                os.chown(path, uid, gid)
+                return path
+
+            def spec(argv, binds):
+                return json.dumps({"argv": argv, "binds": binds, "setfcap": False, "tolerate_skips": False})
+
+            def run(argv, binds):
+                return run_exec(["_confined-exec", spec(argv, binds)], run_dir=str(run_dir), id_maps=id_maps)
+
+            srcfd = os.open(src, os.O_PATH | os.O_DIRECTORY)
+            proffd = os.open(profile, os.O_RDONLY)
+            try:
+                # 1. rsync: a rw dir, a ro dir and the ro profile file.
+                dest = fresh("dest")
+                os.symlink(str(victim), dest / "a")  # a host path: must not be followed
+                os.lchown(dest / "a", uid, gid)
+                destfd = os.open(dest, os.O_PATH | os.O_DIRECTORY)
+                code = run(["/usr/bin/rsync", "-a", "--", "/src/", "/dest/"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True], [proffd, "/profile.toml", False]])
+                os.close(destfd)
+                self.assertEqual(code, 0)
+                self.assertEqual((dest / "a").read_text(encoding="utf-8"), "a\n")
+                self.assertEqual(os.readlink(dest / "link"), "/etc/passwd")
+                self.assertEqual(victim.read_text(encoding="utf-8"), "original\n")
+                # 2. cp -a --reflink=auto --remove-destination.
+                dest2 = fresh("dest2")
+                destfd = os.open(dest2, os.O_PATH | os.O_DIRECTORY)
+                code = run(["/usr/bin/cp", "-a", "--reflink=auto", "--remove-destination", "--", "/src/.", "/dest/"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True]])
+                os.close(destfd)
+                self.assertEqual(code, 0)
+                self.assertEqual((dest2 / "a").read_text(encoding="utf-8"), "a\n")
+                # 3. A read-only bind refuses writes.
+                destfd = os.open(dest2, os.O_PATH | os.O_DIRECTORY)
+                code = run(["/usr/bin/rsync", "-a", "--", "/dest/", "/src/sub/"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True]])
+                os.close(destfd)
+                self.assertNotEqual(code, 0)
+                self.assertFalse((src / "sub").exists())
+                # 4. While the confined program runs: no host fds, the runtime
+                # uid, only the 5 capabilities, no_new_privs.
+                os.mkfifo(src / "fifo")
+                os.chown(src / "fifo", uid, gid)
+                dest3 = fresh("dest3")
+                destfd = os.open(dest3, os.O_PATH | os.O_DIRECTORY)
+                result = {}
+                runner = threading.Thread(target=lambda: result.setdefault("code", run(
+                    ["/usr/bin/cp", "--copy-contents", "--", "/src/fifo", "/dest/out"],
+                    [[srcfd, "/src", False], [destfd, "/dest", True]])))
+                runner.start()
+                pid = None
+                for _ in range(100):
+                    for entry in os.listdir("/proc"):
+                        if entry.isdigit():
+                            try:
+                                if b"/src/fifo" in Path(f"/proc/{entry}/cmdline").read_bytes():
+                                    pid = int(entry)
+                            except OSError:
+                                pass
+                    if pid:
+                        break
+                    time.sleep(0.05)
+                self.assertIsNotNone(pid)
+                status = Path(f"/proc/{pid}/status").read_text()
+                fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+                self.assertEqual(fields["Uid"].split()[0], str(uid))
+                self.assertEqual(int(fields["CapEff"].strip(), 16), 0x1F)
+                self.assertEqual(int(fields["CapBnd"].strip(), 16), 0x1F)
+                self.assertEqual(fields["NoNewPrivs"].strip(), "1")
+                self.assertEqual(sorted(int(fd) for fd in os.listdir(f"/proc/{pid}/fd")), [0, 1, 2])
+                with open(src / "fifo", "w") as writer:
+                    writer.write("through the fifo\n")
+                runner.join(30)
+                os.close(destfd)
+                self.assertEqual(result.get("code"), 0)
+                self.assertEqual((dest3 / "out").read_text(encoding="utf-8"), "through the fifo\n")
+                self.assertEqual(os.listdir(run_dir), [])
+            finally:
+                os.close(srcfd)
+                os.close(proffd)
 
     def test_confined_spec_is_strict(self) -> None:
         namespace = self.helper_namespace()

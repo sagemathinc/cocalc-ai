@@ -9269,6 +9269,24 @@ MS_BIND = 4096
 MS_REC = 16384
 MS_PRIVATE = 1 << 18
 CLONE_NEWNS = 0x00020000
+# The new mount API (same numbers on x86_64 and arm64).  The pinned work
+# directories were opened in the host mount namespace, and a classic bind
+# from another namespace fails with EINVAL; a detached clone (open_tree)
+# taken before unshare can be attached inside the new one (move_mount).
+SYS_OPEN_TREE = 428
+SYS_MOVE_MOUNT = 429
+SYS_MOUNT_SETATTR = 442
+OPEN_TREE_CLONE = 1
+AT_EMPTY_PATH = 0x1000
+AT_FDCWD = -100
+MOVE_MOUNT_F_EMPTY_PATH = 0x4
+MOUNT_ATTR_RDONLY = 0x1
+MOUNT_ATTR_NOSUID = 0x2
+MOUNT_ATTR_NODEV = 0x4
+MOUNT_ATTR_NOEXEC = 0x8
+# No symlink is followed in any path walk on the work directories (copies
+# still read and create links as links): a second layer under the chroot.
+MOUNT_ATTR_NOSYMFOLLOW = 0x00200000
 CLONE_NEWUSER = 0x10000000
 PR_SET_KEEPCAPS = 8
 PR_CAPBSET_DROP = 24
@@ -9355,7 +9373,8 @@ def confined_mount_plan(jail, binds, executable_dirs, path_exists=os.path.lexist
         else:
             plan.append(("mkdir", None, jail + target, 0, None))
         flags = MS_NOSUID | MS_NODEV | MS_NOEXEC | (0 if writable else MS_RDONLY)
-        plan.append(("bind", f"/proc/self/fd/{fd}", jail + target, flags, None))
+        # source is the pinned fd itself: never re-resolved by path.
+        plan.append(("tree", fd, jail + target, flags, None))
     return plan
 
 
@@ -9367,7 +9386,47 @@ def confined_mount(source, target, fstype, flags, data=None):
     )
 
 
-def build_jail(plan):
+class MountAttr(ctypes.Structure):
+    _fields_ = [
+        ("attr_set", ctypes.c_uint64),
+        ("attr_clr", ctypes.c_uint64),
+        ("propagation", ctypes.c_uint64),
+        ("userns_fd", ctypes.c_uint64),
+    ]
+
+
+def clone_pinned_trees(plan):
+    """Before unshare: a detached, non-recursive clone of each pinned work
+    directory, with its mount flags already set.  Returns {fd: tree_fd}."""
+    trees = {}
+    for kind, source, _target, flags, _data in plan:
+        if kind != "tree":
+            continue
+        tree = LIBC.syscall(
+            SYS_OPEN_TREE, ctypes.c_int(source), b"",
+            ctypes.c_uint(OPEN_TREE_CLONE | os.O_CLOEXEC | AT_EMPTY_PATH),
+        )
+        if tree < 0:
+            error = ctypes.get_errno()
+            raise OSError(error, f"open_tree: {os.strerror(error)}")
+        attr = MountAttr(
+            (MOUNT_ATTR_NOSUID if flags & MS_NOSUID else 0)
+            | (MOUNT_ATTR_NODEV if flags & MS_NODEV else 0)
+            | (MOUNT_ATTR_NOEXEC if flags & MS_NOEXEC else 0)
+            | (MOUNT_ATTR_RDONLY if flags & MS_RDONLY else 0)
+            | MOUNT_ATTR_NOSYMFOLLOW,
+            0, 0, 0,
+        )
+        libc_check(
+            LIBC.syscall(SYS_MOUNT_SETATTR, ctypes.c_int(tree), b"", ctypes.c_uint(AT_EMPTY_PATH),
+                         ctypes.byref(attr), ctypes.c_size_t(ctypes.sizeof(attr))),
+            "mount_setattr",
+        )
+        trees[source] = tree
+    return trees
+
+
+def build_jail(plan, trees=None):
     confined_mount(None, "/", None, MS_REC | MS_PRIVATE)
     for kind, source, target, flags, data in plan:
         if kind == "tmpfs":
@@ -9383,6 +9442,18 @@ def build_jail(plan):
         elif kind == "bind":
             confined_mount(source, target, None, MS_BIND)
             confined_mount(None, target, None, MS_REMOUNT | MS_BIND | flags)
+        elif kind == "tree":
+            tree = trees.pop(source)
+            try:
+                libc_check(
+                    LIBC.syscall(SYS_MOVE_MOUNT, ctypes.c_int(tree), b"", ctypes.c_int(AT_FDCWD),
+                                 os.fsencode(target), ctypes.c_uint(MOVE_MOUNT_F_EMPTY_PATH)),
+                    f"move_mount {target}",
+                )
+            finally:
+                os.close(tree)
+            # A clone may share the source's peer group: never propagate.
+            confined_mount(None, target, None, MS_PRIVATE)
 
 
 def confined_drop(uid, gid, caps):
@@ -9497,10 +9568,12 @@ def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candi
             os.dup2(err_w, 2)
             step = "setgroups"
             os.setgroups([])
+            step = "pinned trees"
+            trees = clone_pinned_trees(plan)
             step = "mount namespace"
             os.unshare(CLONE_NEWNS)
             step = "jail"
-            build_jail(plan)
+            build_jail(plan, trees)
             # The pinned fds point into the host mount namespace; once bound
             # they are not needed, and kept open they would lead out of the
             # chroot.
