@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Modal } from "antd";
 import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
 import {
   RETRY,
@@ -91,6 +92,8 @@ const grant = (agent_id: string, connection_id: string, enabled = true) => ({
   created_at: new Date(),
   updated_at: new Date(),
 });
+
+afterEach(() => Modal.destroyAll());
 
 beforeEach(() => {
   mockSiteConnectors.cli_connector_github_enabled = true;
@@ -366,6 +369,37 @@ describe("Settings > Connectors section", () => {
   });
 });
 
+describe("Settings > Connectors by keyboard", () => {
+  it("Escape closes the disconnect confirmation and the focus returns", async () => {
+    const user = userEvent.setup();
+    render(<CliConnectorSection connector="github" />);
+    const remove = await screen.findByRole("button", {
+      name: "Disconnect @octo",
+    });
+    remove.focus();
+    await user.keyboard("{Enter}");
+    const confirm = await screen.findByRole("dialog");
+    expect(confirm).toHaveTextContent("Disconnect @octo?");
+    await waitFor(() =>
+      expect(confirm.contains(document.activeElement)).toBe(true),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen
+          .queryAllByRole("dialog")
+          .some(
+            (d) =>
+              d.textContent?.includes("Disconnect @octo?") &&
+              !d.closest('[style*="display: none"]'),
+          ),
+      ).toBe(false),
+    );
+    expect(mockApi.disconnectCliConnection).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.activeElement).toBe(remove));
+  });
+});
+
 describe("per-agent dialog", () => {
   it("explains a project without internet access and will not turn on", async () => {
     mockRunQuota = { network: false };
@@ -450,6 +484,117 @@ describe("per-agent dialog", () => {
         expect.objectContaining({ enabled: false, agent_id: "builder-id" }),
       ),
     );
+  });
+
+  it("removes a connected account from here, even with the connector off", async () => {
+    mockApi.disconnectCliConnection.mockResolvedValue(undefined);
+    render(
+      <CliConnectorAgentModal
+        agent={agent("writer", "writer-id") as any}
+        connector="github"
+        open
+        onClose={() => {}}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "GitHub for @writer",
+    });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("switch")).not.toBeChecked(),
+    );
+    // Off: the account is listed (not selectable) and can be removed.
+    expect(within(dialog).getByRole("radio", { name: "@octo" })).toBeDisabled();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Disconnect @octo" }),
+    );
+    const confirm = (await screen.findAllByRole("dialog")).find((d) =>
+      d.textContent?.includes("Disconnect @octo?"),
+    )!;
+    // It names how many agents lose it (builder uses it).
+    expect(confirm).toHaveTextContent("1 agent uses it");
+    await userEvent.click(
+      within(confirm).getByRole("button", { name: "Disconnect" }),
+    );
+    await waitFor(() =>
+      expect(mockApi.disconnectCliConnection).toHaveBeenCalledWith({
+        connection_id: "conn-1",
+      }),
+    );
+  });
+
+  it("disconnects by keyboard: cancel changes nothing and gives the focus back, then the switch", async () => {
+    const user = userEvent.setup();
+    const onClose = jest.fn();
+    mockApi.disconnectCliConnection.mockImplementation(async () => {
+      // Gone from the list once disconnected.
+      mockApi.listCliConnections.mockResolvedValue([]);
+      mockApi.listCliConnectorGrants.mockResolvedValue([]);
+    });
+    render(
+      <CliConnectorAgentModal
+        agent={agent("writer", "writer-id") as any}
+        connector="github"
+        open
+        onClose={onClose}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "GitHub for @writer",
+    });
+    const remove = await within(dialog).findByRole("button", {
+      name: "Disconnect @octo",
+    });
+    const openConfirm = () =>
+      screen
+        .queryAllByRole("dialog")
+        .find(
+          (d) =>
+            d.textContent?.includes("Disconnect @octo?") &&
+            getComputedStyle(d).display !== "none" &&
+            !d.closest('[style*="display: none"]'),
+        );
+    const findConfirm = () =>
+      waitFor(() => {
+        const found = openConfirm();
+        expect(found).toBeTruthy();
+        return found!;
+      });
+    remove.focus();
+    await user.keyboard("{Enter}");
+    let confirm = await findConfirm();
+    // The confirmation takes the focus; its Cancel, by keyboard, changes
+    // nothing and gives the focus back to the button. (Escape is tested on
+    // the settings page: in jsdom antd gives every dialog the same id, so
+    // its Escape stack cannot tell this dialog from the one under it.)
+    await waitFor(() =>
+      expect(confirm.contains(document.activeElement)).toBe(true),
+    );
+    within(confirm).getByRole("button", { name: "Cancel" }).focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(openConfirm()).toBeUndefined());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockApi.disconnectCliConnection).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.activeElement).toBe(remove));
+    // Again, confirming by keyboard: the account and its button go; the
+    // focus moves to the switch.
+    await user.keyboard("{Enter}");
+    confirm = await findConfirm();
+    within(confirm).getByRole("button", { name: "Disconnect" }).focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(mockApi.disconnectCliConnection).toHaveBeenCalledWith({
+        connection_id: "conn-1",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        within(dialog).queryByRole("button", { name: "Disconnect @octo" }),
+      ).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(dialog).getByRole("switch")),
+    );
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("cannot turn on without a connected account", async () => {
