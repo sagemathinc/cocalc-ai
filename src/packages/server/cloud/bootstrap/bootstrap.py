@@ -7066,14 +7066,15 @@ def run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
         if values["source-root"] != source_root or values["source-path"] != template.format(id=project_id):
             fail(f"source is not the {kind} of project {project_id}")
         sourcefd = open_named_directory(values, "source", allowed_roots)
+        target = f"{PROJECT_VIEW_ROOT}/{project_id}/{kind}"
+        if target in view_mountpoints():
+            os.close(sourcefd)
+            fail(f"project view is already mounted: {target}")
         rootfd = projectfd = targetfd = None
         try:
             rootfd = open_view_root(gid)
             projectfd = ensure_view_dir(rootfd, project_id, gid)
             targetfd = ensure_view_dir(projectfd, kind, gid, mode=0o700)
-            target = f"{PROJECT_VIEW_ROOT}/{project_id}/{kind}"
-            if target in view_mountpoints():
-                fail(f"project view is already mounted: {target}")
             options = f"X-mount.idmap={project_view_idmap(uid, gid, view_uid)}"
             if read_only:
                 options += ",ro"
@@ -7143,6 +7144,9 @@ def mount_idmapped_upper(project_id, upperfd, workfd, view_uid):
     upper_name = os.path.basename(os.readlink(f"/proc/self/fd/{upperfd}"))
     work_name = os.path.basename(os.readlink(f"/proc/self/fd/{workfd}"))
     uid, gid = runtime_ids()
+    target = f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}"
+    if target in view_mountpoints():
+        fail(f"idmapped overlay upper is already mounted: {target}")
     parentfd = os.open(f"/proc/self/fd/{upperfd}/..", O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
     rootfd = projectfd = stagingfd = None
     try:
@@ -7151,9 +7155,6 @@ def mount_idmapped_upper(project_id, upperfd, workfd, view_uid):
         rootfd = open_view_root(gid)
         projectfd = ensure_view_dir(rootfd, project_id, gid)
         stagingfd = ensure_view_dir(projectfd, PROJECT_VIEW_ROOTFS_UPPER, gid, mode=0o700)
-        target = f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}"
-        if target in view_mountpoints():
-            fail(f"idmapped overlay upper is already mounted: {target}")
         subprocess.run(
             [
                 "/bin/mount",

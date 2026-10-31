@@ -9251,6 +9251,21 @@ class ProjectViewHelperTest(unittest.TestCase):
                 )
         run.assert_not_called()
 
+    def test_mount_refuses_an_already_mounted_view(self) -> None:
+        self.ns["view_mountpoints"] = lambda: [f"{self.views}/{self.PROJECT}/home"]
+        self.ns["PROJECT_VIEW_KINDS"] = {
+            "home": ((str(self.data), "project-{id}"), False),
+        }
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            with self.assertRaisesRegex(ValueError, "already mounted"):
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", self.PROJECT, "--kind", "home",
+                     "--uid", "1073741824", "--source-root", str(self.data),
+                     "--source-path", f"project-{self.PROJECT}"],
+                    allowed_roots=self.allowed,
+                )
+        run.assert_not_called()
+
     def test_ensure_view_dir_refuses_a_dir_not_owned_by_root(self) -> None:
         if os.geteuid() == 0:
             self.skipTest("needs a non-root user")
