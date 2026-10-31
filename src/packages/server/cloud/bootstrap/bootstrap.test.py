@@ -9124,6 +9124,7 @@ class HostIntegrityWatchTest(unittest.TestCase):
             subuid=str(self.subuid),
             allowlist="",
             bootstrap_state="",
+            package_state="",
             serial="",
             interval=2.0,
             config_interval=60.0,
@@ -9367,14 +9368,16 @@ class HostIntegrityWatchTest(unittest.TestCase):
         w = self.watcher(ns, bootstrap_state=str(state))
         self.assertEqual(w.step(1000.0), [])  # baseline
         (conf / "authorized_keys").write_text("ssh-ed25519 AAAA one\nssh-ed25519 BBBB evil\n")
-        new = w.step(1100.0)
+        # reported once the next check sees it too (no package activity)
+        self.assertEqual(w.step(1100.0), [])
+        new = w.step(1160.0)
         self.assertEqual([(f["rule"], f["path"]) for f in new],
                          [("host-config-changed", str(conf / "authorized_keys"))])
         self.assertNotIn("evil", (self.root / "status" / "status.json").read_text())
         # Changes while bootstrap runs are expected: they become the baseline.
         state.write_text(json.dumps({"current_operation": "reconcile"}))
         (conf / "sudoers").write_text("root ALL=(ALL) ALL\n# bootstrap\n")
-        self.assertEqual(w.step(1200.0), [])
+        self.assertEqual(w.step(1230.0), [])
         state.write_text(json.dumps({"current_operation": None}))
         os.utime(state, (0, 0))
         self.assertEqual(w.step(1300.0), [])
@@ -9384,8 +9387,9 @@ class HostIntegrityWatchTest(unittest.TestCase):
         os.utime(state, (1300.0, 1300.0))
         later = 1300.0 + 3 * 3600 + 60
         (conf / "sudoers").write_text("root ALL=(ALL) ALL\n# changed later\n")
+        self.assertEqual(w.step(later), [])
         self.assertEqual(
-            [(f["rule"], f["path"]) for f in w.step(later)],
+            [(f["rule"], f["path"]) for f in w.step(later + 60)],
             [("host-config-changed", str(conf / "sudoers"))],
         )
 
@@ -9400,7 +9404,8 @@ class HostIntegrityWatchTest(unittest.TestCase):
         # changed while the watcher is stopped: a new watcher still reports it
         (conf / "sudoers").write_text("root ALL=(ALL) ALL\nevil ALL=(ALL) ALL\n")
         w = self.watcher(ns)
-        self.assertEqual([f["path"] for f in w.step(2000.0)], [str(conf / "sudoers")])
+        self.assertEqual(w.step(2000.0), [])
+        self.assertEqual([f["path"] for f in w.step(2060.0)], [str(conf / "sudoers")])
         state = self.root / "status" / "config-state.json"
         self.assertEqual(oct(os.stat(state).st_mode & 0o777), "0o600")
         self.assertNotIn("evil", state.read_text())
@@ -9408,7 +9413,8 @@ class HostIntegrityWatchTest(unittest.TestCase):
         w = self.watcher(ns)
         self.assertEqual(w.step(2100.0), [])
         (conf / "crontab").write_text("* * * * * root true\n")
-        self.assertEqual([f["path"] for f in w.step(2200.0)], [str(conf / "crontab")])
+        self.assertEqual(w.step(2200.0), [])
+        self.assertEqual([f["path"] for f in w.step(2260.0)], [str(conf / "crontab")])
         status = json.loads((self.root / "status" / "status.json").read_text())
         # newest first
         self.assertEqual(
@@ -9418,21 +9424,209 @@ class HostIntegrityWatchTest(unittest.TestCase):
         self.assertEqual(status["config"]["change_count"], 2)
         # Repaired: no longer refreshed, kept as history for a day.
         (conf / "sudoers").write_text("root ALL=(ALL) ALL\n")
-        self.assertEqual(w.step(2300.0), [])
-        changes = {c["path"]: c for c in w.status(2300.0)["config"]["changes"]}
+        self.assertEqual(w.step(2330.0), [])
+        changes = {c["path"]: c for c in w.status(2330.0)["config"]["changes"]}
         self.assertFalse(changes[str(conf / "sudoers")]["current"])
-        self.assertEqual(changes[str(conf / "sudoers")]["last_seen"], ns["now_iso"](2200.0))
+        self.assertEqual(changes[str(conf / "sudoers")]["last_seen"], ns["now_iso"](2260.0))
         # changed again: a new finding
         (conf / "sudoers").write_text("root ALL=(ALL) ALL\n# again\n")
-        self.assertEqual([f["path"] for f in w.step(2400.0)], [str(conf / "sudoers")])
+        self.assertEqual(w.step(2400.0), [])
+        self.assertEqual([f["path"] for f in w.step(2460.0)], [str(conf / "sudoers")])
         # A new baseline (SIGHUP) accepts the files; the changes age out.
         w.rebaseline = True
-        self.assertEqual(w.step(2500.0), [])
+        self.assertEqual(w.step(2520.0), [])
         self.assertEqual(
-            {c["current"] for c in w.status(2500.0)["config"]["changes"]}, {False}
+            {c["current"] for c in w.status(2520.0)["config"]["changes"]}, {False}
         )
-        w.step(2500.0 + 24 * 3600 + 120)
-        self.assertEqual(w.status(2500.0)["config"]["changes"], [])
+        w.step(2520.0 + 24 * 3600 + 120)
+        self.assertEqual(w.status(2520.0)["config"]["changes"], [])
+
+    def test_hashes_whole_trees_including_drop_ins_and_enablement_links(self) -> None:
+        units = self.root / "systemd"
+        (units / "app.service.d").mkdir(parents=True)
+        (units / "multi-user.target.wants").mkdir()
+        (units / "app.service").write_text("[Service]\nExecStart=/usr/bin/app\n")
+        (units / "app.service.d" / "limits.conf").write_text("[Service]\nMemoryMax=1G\n")
+        os.symlink("../app.service", units / "multi-user.target.wants" / "app.service")
+        later = self.root / "generators"  # absent at first
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{units}/**", f"{later}/**")
+        w = self.watcher(ns)
+        self.assertEqual(w.step(1000.0), [])  # baseline
+        # a drop-in that adds a command to an existing service
+        (units / "app.service.d" / "evil.conf").write_text("[Service]\nExecStartPre=/tmp/x\n")
+        # an enablement link that now points elsewhere, and a new one
+        os.unlink(units / "multi-user.target.wants" / "app.service")
+        os.symlink("/tmp/other.service", units / "multi-user.target.wants" / "app.service")
+        os.symlink("../app.service", units / "multi-user.target.wants" / "new.service")
+        # a directory others may now write
+        (units / "multi-user.target.wants").chmod(0o777)
+        # a tree that didn't exist
+        later.mkdir()
+        (later / "gen").write_text("#!/bin/sh\n")
+        self.assertEqual(w.step(1100.0), [])
+        changed = sorted(c["path"] for c in w.step(1160.0))
+        self.assertEqual(
+            changed,
+            sorted(
+                [
+                    str(later),
+                    str(later) + "/",
+                    str(later / "gen"),
+                    str(units / "multi-user.target.wants") + "/",
+                    str(units / "app.service.d" / "evil.conf"),
+                    str(units / "multi-user.target.wants" / "app.service"),
+                    str(units / "multi-user.target.wants" / "new.service"),
+                ]
+            ),
+        )
+        self.assertNotIn("ExecStartPre", (self.root / "status" / "status.json").read_text())
+
+    def test_package_upgrades_are_expected_configuration_changes(self) -> None:
+        conf = self.root / "pam.d"
+        conf.mkdir()
+        (conf / "common-auth").write_text("auth required pam_unix.so\n")
+        dpkg_status = self.root / "dpkg-status"
+        dpkg_status.write_text("")
+        os.utime(dpkg_status, (0, 0))
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{conf}/**",)
+        w = self.watcher(ns, package_state=str(dpkg_status))
+        self.assertEqual(w.step(1000.0), [])
+        # an upgrade rewrites the file and dpkg's state: the new baseline
+        (conf / "common-auth").write_text("auth required pam_unix.so nullok\n")
+        os.utime(dpkg_status, (1050.0, 1050.0))
+        self.assertEqual(w.step(1100.0), [])
+        # the same kind of change long after any package activity is reported
+        (conf / "common-auth").write_text("auth sufficient pam_permit.so\n")
+        self.assertEqual(w.step(1100.0 + 3600), [])
+        self.assertEqual(
+            [c["path"] for c in w.step(1160.0 + 3600)],
+            [str(conf / "common-auth")],
+        )
+
+    def test_a_conffile_dpkg_replaces_before_updating_its_state_is_not_reported(self) -> None:
+        conf = self.root / "logrotate.d"
+        conf.mkdir()
+        (conf / "rsyslog").write_text("/var/log/syslog {}\n")
+        dpkg_status = self.root / "dpkg-status"
+        dpkg_status.write_text("")
+        os.utime(dpkg_status, (0, 0))
+        serial = self.root / "ttyS0"
+        serial.write_text("")
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{conf}/**",)
+        w = self.watcher(ns, package_state=str(dpkg_status), serial=str(serial))
+        self.assertEqual(w.step(1000.0), [])
+        # dpkg replaces the conffile; a check runs before it updates its state
+        (conf / "rsyslog").write_text("/var/log/syslog { rotate 4 }\n")
+        self.assertEqual(w.step(1060.0), [])
+        # then dpkg's state changes: absorbed
+        os.utime(dpkg_status, (1090.0, 1090.0))
+        self.assertEqual(w.step(1120.0), [])
+        self.assertEqual(w.step(1120.0 + 3600), [])
+        status = json.loads((self.root / "status" / "status.json").read_text())
+        self.assertEqual(status["config"]["changes"], [])
+        self.assertEqual(serial.read_text(), "")
+        # but it is on record as accepted during a package run
+        self.assertEqual(
+            [a["path"] for a in status["config"]["absorbed"]], [str(conf / "rsyslog")]
+        )
+
+    def test_a_package_run_does_not_accept_a_change_already_reported(self) -> None:
+        conf = self.root / "etc"
+        conf.mkdir()
+        (conf / "authorized_keys").write_text("ssh-ed25519 AAAA one\n")
+        (conf / "pam-common").write_text("auth required pam_unix.so\n")
+        dpkg_status = self.root / "dpkg-status"
+        dpkg_status.write_text("")
+        os.utime(dpkg_status, (0, 0))
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (str(conf / "authorized_keys"), str(conf / "pam-common"))
+        w = self.watcher(ns, package_state=str(dpkg_status))
+        w.step(1000.0)
+        (conf / "authorized_keys").write_text("ssh-ed25519 AAAA one\nssh-ed25519 BBBB evil\n")
+        w.step(1060.0)
+        self.assertEqual([c["path"] for c in w.step(1120.0)], [str(conf / "authorized_keys")])
+        # hours later an upgrade runs and changes another file
+        os.utime(dpkg_status, (9000.0, 9000.0))
+        (conf / "pam-common").write_text("auth required pam_unix.so nullok\n")
+        self.assertEqual(w.step(9030.0), [])
+        changes = {c["path"]: c for c in w.status(9030.0)["config"]["changes"]}
+        # the reported change is still current, refreshed
+        self.assertTrue(changes[str(conf / "authorized_keys")]["current"])
+        self.assertEqual(changes[str(conf / "authorized_keys")]["last_seen"], ns["now_iso"](9030.0))
+        self.assertNotIn(str(conf / "pam-common"), changes)
+        # and once the package window is over it stays reported
+        w.step(9030.0 + 3600)
+        changes = {c["path"]: c for c in w.status(0)["config"]["changes"]}
+        self.assertTrue(changes[str(conf / "authorized_keys")]["current"])
+
+    def test_a_long_package_run_holding_the_dpkg_lock_is_not_reported(self) -> None:
+        conf = self.root / "pam.d"
+        conf.mkdir()
+        (conf / "common-auth").write_text("auth required pam_unix.so\n")
+        lock = self.root / "lock-frontend"
+        lock.write_text("")
+        dpkg_status = self.root / "dpkg-status"
+        dpkg_status.write_text("")
+        os.utime(dpkg_status, (0, 0))
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{conf}/**",)
+        ns["DPKG_LOCKS"] = (str(lock),)
+        w = self.watcher(ns, package_state=str(dpkg_status))
+        self.assertEqual(w.step(1000.0), [])
+        # another process (as apt/dpkg) holds the lock over several checks
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import fcntl, sys, time; f = open(sys.argv[1], 'r+'); "
+                "fcntl.lockf(f, fcntl.LOCK_EX); print('locked', flush=True); time.sleep(60)",
+                str(lock),
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            self.assertEqual(holder.stdout.readline().strip(), "locked")
+            self.assertTrue(ns["lock_held"](str(lock)))
+            (conf / "common-auth").write_text("auth required pam_unix.so nullok\n")
+            for t in (1060.0, 1120.0, 1180.0):
+                self.assertEqual(w.step(t), [])
+        finally:
+            holder.kill()
+            holder.wait()
+            holder.stdout.close()
+        self.assertFalse(ns["lock_held"](str(lock)))
+        # released without touching dpkg's state: the run's change was the
+        # baseline at the last check while it held the lock
+        self.assertEqual(w.step(1240.0), [])
+        self.assertEqual(w.step(1300.0), [])
+
+    def test_a_tree_past_the_entry_cap_still_shows_changes_in_its_size(self) -> None:
+        tree = self.root / "big"
+        tree.mkdir()
+        for i in range(5):
+            (tree / f"f{i}").write_text("x")
+        ns = self.watch()
+        ns["MAX_TREE_ENTRIES"] = 3
+        digests = ns["hash_config"]([f"{tree}/**"])
+        self.assertEqual(len([p for p in digests if not p.endswith(("/**", "/"))]), 3)
+        first = digests[f"{tree}/**"]
+        self.assertTrue(first.startswith("truncated:5:"))
+        # an edit past the cap, with the same number of entries, shows
+        (tree / "f4").write_text("changed, longer")
+        second = ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"]
+        self.assertTrue(second.startswith("truncated:5:"))
+        self.assertNotEqual(first, second)
+        # a mode or ownership change past the cap shows too (ctime moves)
+        third_before = ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"]
+        time.sleep(0.01)
+        os.chmod(tree / "f4", 0o664)
+        self.assertNotEqual(ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"], third_before)
+        (tree / "f9").write_text("x")
+        self.assertTrue(ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"].startswith("truncated:6:"))
 
     def test_mirrors_new_findings_to_the_serial_console_at_most_hourly(self) -> None:
         self.add_proc(50, 1, "sh", 231072, "/usr/bin/dash", self.HOST_NS)

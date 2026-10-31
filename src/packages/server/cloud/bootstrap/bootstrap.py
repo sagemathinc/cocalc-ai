@@ -3572,6 +3572,7 @@ is one. Findings never include command lines, environment or file contents.
 """
 
 import argparse
+import fcntl
 import fnmatch
 import glob
 import hashlib
@@ -3579,6 +3580,8 @@ import json
 import os
 import pwd
 import signal
+import stat
+import struct
 import sys
 import time
 
@@ -3652,7 +3655,9 @@ DEFAULT_SCRIPT_CGROUPS = ("/system.slice/cocalc-project-host-watchdog.service",)
 # Container cgroups: a process in another user namespace counts as inside a
 # container only in one of these and in a mount namespace of its own.
 DEFAULT_CONTAINER_CGROUPS = ("/cocalc-project-pool",)
-# Host configuration whose changes are reported (globs; files up to 1 MB).
+# Host configuration whose changes are reported: files, globs, and whole
+# trees ("dir/**", walked without following links; a symlink is recorded by
+# its target). Files up to 1 MB.
 DEFAULT_CONFIG_PATHS = (
     "/etc/passwd",
     "/etc/shadow",
@@ -3661,20 +3666,51 @@ DEFAULT_CONFIG_PATHS = (
     "/etc/subuid",
     "/etc/subgid",
     "/etc/sudoers",
-    "/etc/sudoers.d/*",
+    "/etc/sudoers.d/**",
     "/etc/ssh/sshd_config",
-    "/etc/ssh/sshd_config.d/*",
+    "/etc/ssh/sshd_config.d/**",
     "/root/.ssh/authorized_keys",
     "/home/*/.ssh/authorized_keys",
+    "/root/.bashrc",
+    "/root/.profile",
     "/etc/crontab",
-    "/etc/cron.d/*",
-    "/var/spool/cron/crontabs/*",
-    "/etc/systemd/system/*.service",
-    "/etc/systemd/system/*.timer",
+    "/etc/cron.d/**",
+    "/var/spool/cron/crontabs/**",
+    # units, drop-ins, enablement links, generators
+    "/etc/systemd/system/**",
+    "/usr/local/lib/systemd/system/**",
+    "/etc/systemd/system-generators/**",
+    "/usr/local/lib/systemd/system-generators/**",
+    "/etc/rc.local",
+    "/etc/init.d/**",
+    "/etc/profile",
+    "/etc/profile.d/**",
+    "/etc/environment",
+    "/etc/pam.d/**",
+    "/etc/update-motd.d/**",
+    "/etc/apt/apt.conf.d/**",
+    "/etc/udev/rules.d/**",
+    "/etc/logrotate.d/**",
+    "/etc/modules",
+    "/etc/modules-load.d/**",
+    "/etc/modprobe.d/**",
+    "/etc/network/if-up.d/**",
     "/etc/ld.so.preload",
+    "/etc/ld.so.conf",
+    "/etc/ld.so.conf.d/**",
     "/usr/local/sbin/*",
     "/usr/local/libexec/*",
 )
+# Package installs and upgrades (unattended-upgrades) legitimately change many
+# of these: while dpkg holds its lock, or changed its state in the last
+# PACKAGE_QUIET_S seconds, the configuration is rebaselined, as during a
+# bootstrap run. And a difference is reported only once two consecutive checks
+# saw it with no package activity, so a file dpkg replaced just before it
+# updated its state isn't reported either.
+PACKAGE_QUIET_S = 600
+DPKG_LOCKS = ("/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock")
+MAX_TREE_ENTRIES = 5000
+MAX_ABSORBED = 50
 
 MAX_FINDINGS = 100
 SEVERITY_RANK = {"critical": 0, "high": 1}
@@ -3970,9 +4006,66 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
     return findings, inventory
 
 
+def tree_entries(top):
+    """(entries, total, rest): files and symlinks under top (not following
+    links), the first MAX_TREE_ENTRIES of them, how many there are, and a
+    digest of the others' metadata (path, size, mtime, ctime, mode, owner,
+    group, link target), so a change past the cap still shows. ([top], 1, "") if top
+    doesn't exist (so its creation shows)."""
+    if not os.path.isdir(top) or os.path.islink(top):
+        return [top], 1, ""
+    entries, total, rest = [], 0, hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(top):
+        dirnames.sort()
+        for name in sorted(filenames) + [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]:
+            total += 1
+            path = os.path.join(dirpath, name)
+            if len(entries) < MAX_TREE_ENTRIES:
+                entries.append(path)
+                continue
+            try:
+                st = os.lstat(path)
+                link = read_link(path) if stat.S_ISLNK(st.st_mode) else ""
+                rest.update(
+                    (
+                        "%s\0%d\0%d\0%d\0%o\0%d\0%d\0%s\n"
+                        % (path, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_mode, st.st_uid, st.st_gid, link)
+                    ).encode()
+                )
+            except OSError:
+                rest.update(("%s\0gone\n" % path).encode())
+    return entries, total, rest.hexdigest()
+
+
 def hash_config(patterns):
     digests = {}
     for pattern in patterns:
+        if pattern.endswith("/**"):
+            tops = sorted(glob.glob(pattern[:-3])) if any(c in pattern[:-3] for c in "*?[") else [pattern[:-3]]
+            for top in tops:
+                # the directories themselves: who owns them and who may
+                # write them (not mtime: entries added or removed show anyway)
+                if os.path.isdir(top) and not os.path.islink(top):
+                    for dirpath, _dirnames, _filenames in os.walk(top):
+                        try:
+                            st = os.lstat(dirpath)
+                        except OSError:
+                            continue
+                        digests[dirpath.rstrip("/") + "/"] = "dir:%o:%d:%d" % (
+                            st.st_mode,
+                            st.st_uid,
+                            st.st_gid,
+                        )
+                entries, total, rest = tree_entries(top)
+                for path in entries:
+                    if path == top and not os.path.exists(top):
+                        digests[path] = "missing"
+                    else:
+                        digests.update(hash_config([path]))
+                if total > len(entries):
+                    # entries past the cap still count
+                    digests[top + "/**"] = "truncated:%d:%s" % (total, rest)
+            continue
         matches = sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[") else [pattern]
         for path in matches:
             try:
@@ -4014,6 +4107,37 @@ def bootstrap_busy(state_path, now, quiet_s=300, max_operation_s=3 * 3600):
     return age < quiet_s
 
 
+def lock_held(path):
+    """True if another process holds an fcntl lock on path (as dpkg and apt
+    do on their locks). Only queries (F_GETLK): never takes the lock."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOCTTY)
+    except OSError:
+        return False
+    try:
+        query = struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, 0, 0, 0)
+        answer = fcntl.fcntl(fd, fcntl.F_GETLK, query)
+        return struct.unpack("hhqqi4x", answer)[0] != fcntl.F_UNLCK
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+def packages_busy(state_path, now, quiet_s=PACKAGE_QUIET_S):
+    """True while dpkg holds its lock, or if it changed its state in the last
+    quiet_s seconds (a package install or upgrade, which writes host
+    configuration)."""
+    if not state_path:
+        return False
+    if any(lock_held(path) for path in DPKG_LOCKS):
+        return True
+    try:
+        return now - os.stat(state_path).st_mtime < quiet_s
+    except OSError:
+        return False
+
+
 class Watcher:
     def __init__(self, args):
         self.args = args
@@ -4052,6 +4176,10 @@ class Watcher:
         self.config_baseline = None
         self.config_baseline_at = None
         self.config_state_written = None
+        # differences seen at the last check, not yet reported
+        self.config_pending = set()
+        # files a package run changed, accepted into the baseline: path -> when
+        self.config_absorbed = {}
         self.load_config_state()
         self.started_at = time.time()
         self.scans = 0
@@ -4090,6 +4218,11 @@ class Watcher:
             for path, entry in changes.items()
             if isinstance(entry, dict) and isinstance(entry.get("last_seen"), str)
         }
+        absorbed = state.get("absorbed", {})
+        if isinstance(absorbed, dict):
+            self.config_absorbed = {
+                str(path): at for path, at in absorbed.items() if isinstance(at, str)
+            }
 
     def save_config_state(self):
         text = json.dumps(
@@ -4097,6 +4230,7 @@ class Watcher:
                 "baseline": self.config_baseline,
                 "baseline_at": self.config_baseline_at,
                 "changes": self.config_changes,
+                "absorbed": self.config_absorbed,
             },
             sort_keys=True,
         )
@@ -4174,12 +4308,42 @@ class Watcher:
             self.config_baseline = digests
             self.config_baseline_at = now_iso(now)
             self.rebaseline = False
-        else:
-            differ = {
+            self.config_pending = set()
+        elif packages_busy(getattr(self.args, "package_state", ""), now):
+            # A package run: what changed becomes the baseline (recorded as
+            # absorbed), except files already reported, which stay reported.
+            active = {p for p, e in self.config_changes.items() if e.get("current")}
+            changed = {
                 path
                 for path in set(digests) | set(self.config_baseline)
                 if digests.get(path) != self.config_baseline.get(path)
             }
+            for path in changed - active:
+                if path in digests:
+                    self.config_baseline[path] = digests[path]
+                else:
+                    self.config_baseline.pop(path, None)
+                self.config_absorbed[path] = now_iso(now)
+            for path in sorted(self.config_absorbed, key=self.config_absorbed.get)[
+                : max(0, len(self.config_absorbed) - MAX_ABSORBED)
+            ]:
+                del self.config_absorbed[path]
+            differ = changed & active
+            self.config_pending = set()
+        else:
+            seen = {
+                path
+                for path in set(digests) | set(self.config_baseline)
+                if digests.get(path) != self.config_baseline.get(path)
+            }
+            # A new difference counts once the previous check saw it too.
+            differ = {
+                path
+                for path in seen
+                if path in self.config_pending
+                or self.config_changes.get(path, {}).get("current")
+            }
+            self.config_pending = seen
         for path in sorted(differ):
             entry = self.config_changes.get(path)
             if entry is None or not entry.get("current"):
@@ -4256,6 +4420,13 @@ class Watcher:
                     reverse=True,
                 ),
                 "change_count": len(self.config_changes),
+                # accepted during package runs (not reported as changes)
+                "absorbed": [
+                    {"path": path, "at": at}
+                    for path, at in sorted(
+                        self.config_absorbed.items(), key=lambda kv: kv[1], reverse=True
+                    )
+                ],
             },
             "inventory": dict(
                 sorted(self.inventory.items(), key=lambda kv: kv[1], reverse=True)
@@ -4299,6 +4470,7 @@ def main(argv=None):
     parser.add_argument("--subuid", default="/etc/subuid")
     parser.add_argument("--allowlist", default="/etc/cocalc/host-integrity-allowlist.json")
     parser.add_argument("--bootstrap-state", default="")
+    parser.add_argument("--package-state", default="/var/lib/dpkg/status")
     parser.add_argument("--serial", default="/dev/ttyS0")
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--config-interval", type=float, default=60.0)
