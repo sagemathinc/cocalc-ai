@@ -9364,6 +9364,29 @@ class ProjectViewHelperTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "project view shows"):
                 check(source, view, 2000, 2000, P)
 
+    def test_harden_closes_the_data_root_and_raw_homes(self) -> None:
+        data = self.tmp / "data-root"
+        data.mkdir()
+        os.chmod(data, 0o755)
+        home = data / f"project-{self.PROJECT}"
+        scratch = data / f"project-{self.PROJECT}-scratch"
+        other = data / "data"
+        for path, mode in ((home, 0o755), (scratch, 0o1777), (other, 0o700)):
+            path.mkdir()
+            os.chmod(path, mode)
+        self.ns["PROJECT_DATA_ROOT"] = str(data)
+        self.ns["runtime_ids"] = lambda: (os.getuid(), os.getgid())
+        chowns = []
+        with mock.patch.object(self.ns["os"], "chown", side_effect=lambda p, u, g: chowns.append((u, g))):
+            self.ns["run_project_view"](["project-view-harden"])
+        self.assertEqual(chowns, [(os.geteuid(), os.getgid())])
+        self.assertEqual(stat_mode(data), 0o750)
+        self.assertEqual(stat_mode(home), 0o700)
+        self.assertEqual(stat_mode(scratch), 0o1777)  # /tmp stays usable
+        self.assertEqual(stat_mode(other), 0o700)
+        with self.assertRaises(ValueError):
+            self.ns["run_project_view"](["project-view-harden", "--extra", "x"])
+
     def test_view_parent_must_not_be_writable_by_others(self) -> None:
         parent = self.tmp / "run-cocalc"
         parent.mkdir(mode=0o711)
@@ -9508,6 +9531,7 @@ class ProjectViewHelperTest(unittest.TestCase):
         self.assertIn('project-view-gc --keep "${1:-}"', wrapper)
         self.assertIn('"${idmap_args[@]}"', wrapper)
         self.assertIn('merged_root="/run/cocalc/project-rootfs"', wrapper)
+        self.assertIn("project-view-harden", wrapper)
         result = subprocess.run(["bash", "-n"], input=wrapper, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 

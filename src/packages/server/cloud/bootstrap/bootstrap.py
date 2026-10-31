@@ -7007,7 +7007,14 @@ PROJECT_VIEW_COMMANDS = {
     "project-view-mount",
     "project-view-umount",
     "project-view-gc",
+    "project-view-harden",
 }
+# project-view-harden: the project data root becomes root:<runtime group>
+# 0750, so only root and the runtime user can reach anything beneath it (raw
+# homes, scratch, data); a separate runtime uid reaches its files only
+# through its views. Raw homes owned by the runtime user also go to 0700.
+PROJECT_DATA_ROOT = "/mnt/cocalc"
+PROJECT_HOME_RE = re.compile(r"project-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 def runtime_ids():
@@ -7178,6 +7185,30 @@ def ensure_rootfs_mountpoint(project_id):
         os.close(parentfd)
 
 
+def harden_project_data_root(uid, gid):
+    rootfd = os.open(PROJECT_DATA_ROOT, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if os.fstat(rootfd).st_uid != os.geteuid():
+            fail(f"unsafe project data root: {PROJECT_DATA_ROOT}")
+        os.chown(f"/proc/self/fd/{rootfd}", os.geteuid(), gid)
+        os.chmod(f"/proc/self/fd/{rootfd}", 0o750)
+        for name in os.listdir(f"/proc/self/fd/{rootfd}"):
+            if not PROJECT_HOME_RE.fullmatch(name):
+                continue
+            try:
+                fd = openat2(rootfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+            except OSError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if info.st_uid == uid and stat.S_IMODE(info.st_mode) != 0o700:
+                    os.chmod(f"/proc/self/fd/{fd}", 0o700)
+            finally:
+                os.close(fd)
+    finally:
+        os.close(rootfd)
+
+
 def make_view_private(projectfd, name):
     """Stop propagation into a fresh view: the sources live on shared mounts,
     so mounts made later beneath a source would otherwise appear in it."""
@@ -7280,6 +7311,10 @@ def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
             remove_view_tree(rootfd, project_id)
         finally:
             os.close(rootfd)
+        return
+    if command == "project-view-harden":
+        parse_named_options(argv, command, set(), set())
+        harden_project_data_root(uid, gid)
         return
     if command == "project-view-gc":
         values, _flags = parse_named_options(argv, command, {"--keep"}, {"--keep"})
@@ -10904,6 +10939,13 @@ PY
         exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
           project-view-umount --project "$1"
         ;;
+      harden)
+        if [ "$#" -ne 0 ]; then
+          echo "usage: cocalc-runtime-storage project-view harden" >&2
+          exit 2
+        fi
+        exec /usr/local/libexec/cocalc-runtime-storage-path-helper project-view-harden
+        ;;
       gc)
         if [ "$#" -gt 1 ]; then
           echo "usage: cocalc-runtime-storage project-view gc [<project-id>,...]" >&2
@@ -10913,7 +10955,7 @@ PY
           project-view-gc --keep "${1:-}"
         ;;
       *)
-        echo "usage: cocalc-runtime-storage project-view mount|umount|gc ..." >&2
+        echo "usage: cocalc-runtime-storage project-view mount|umount|gc|harden ..." >&2
         exit 2
         ;;
     esac
