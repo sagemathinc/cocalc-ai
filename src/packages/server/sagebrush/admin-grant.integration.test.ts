@@ -75,7 +75,9 @@ const CONTRACT_SHA = "9d939a5e431925338626755a6e3fd66bc62f30e4f897603ee3917deeaa
 const REDIRECT = "https://sagebrush.space/admin/auth/callback";
 const SECRET = "client-secret";
 const BASIC = `Basic ${Buffer.from(`sagebrush:${SECRET}`).toString("base64")}`;
-const now = () => Math.floor(Date.now() / 1000);
+// (one whole second per test, also the module's clock: expectations built from now() can't straddle a tick)
+let T = 0;
+const now = () => T;
 const at = (s: number) => new Date(s * 1000);
 
 function pkce() {
@@ -151,7 +153,8 @@ describeDb("Sagebrush's admin scope and admin check", () => {
     mockRemoteHome = undefined;
     mockInterBay.sagebrushAdminMint.mockReset();
     mockInterBay.sagebrushAdminAnswer.mockReset();
-    setSagebrushAdminClock(() => Date.now());
+    T = Math.floor(Date.now() / 1000);
+    setSagebrushAdminClock(() => T * 1000);
     await getPool().query("DELETE FROM oauth_authorization_codes");
     await getPool().query("DELETE FROM sagebrush_admin_grants");
   });
