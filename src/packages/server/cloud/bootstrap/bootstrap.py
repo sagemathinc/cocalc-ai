@@ -9346,6 +9346,11 @@ MS_BIND = 4096
 MS_REC = 16384
 MS_PRIVATE = 1 << 18
 CLONE_NEWNS = 0x00020000
+CLONE_NEWPID = 0x20000000
+# The jail's own procfs (Rustic needs /proc/self/exe): a fresh instance for
+# the child's PID namespace, showing only the jail's processes and none of
+# the system files.
+CONFINED_PROC_OPTIONS = "hidepid=invisible,subset=pid"
 # The new mount API (same numbers on x86_64 and arm64).  The pinned work
 # directories were opened in the host mount namespace, and a classic bind
 # from another namespace fails with EINVAL; a detached clone (open_tree)
@@ -9442,6 +9447,8 @@ def confined_mount_plan(jail, binds, executable_dirs, path_exists=os.path.lexist
     for name in CONFINED_DEVICES:
         plan.append(("file", None, f"{jail}/dev/{name}", 0, None))
         plan.append(("bind", "/dev/" + name, f"{jail}/dev/{name}", MS_NOSUID | MS_NOEXEC, None))
+    plan.append(("mkdir", None, jail + "/proc", 0, None))
+    plan.append(("proc", "proc", jail + "/proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, CONFINED_PROC_OPTIONS))
     plan.append(("mkdir", None, jail + "/tmp", 0, None))
     plan.append(("tmpfs", "tmpfs", jail + "/tmp", MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=1777,size=256m"))
     for path in executable_dirs:
@@ -9512,6 +9519,8 @@ def build_jail(plan, trees=None):
     for index, (kind, source, target, flags, data) in enumerate(plan):
         if kind == "tmpfs":
             confined_mount(source, target, "tmpfs", flags, data)
+        elif kind == "proc":
+            confined_mount(source, target, "proc", flags, data)
         elif kind == "mkdir":
             os.mkdir(target, 0o755)
         elif kind == "mkdirs":
@@ -9654,6 +9663,10 @@ def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candi
     ready_r, ready_w = os.pipe()
     go_r, go_w = os.pipe()
     err_r, err_w = os.pipe()
+    # The child is PID 1 of a new PID namespace (its procfs shows only the
+    # jail); this helper stays outside, keeps its real pid for the id maps,
+    # and supervises it directly.  PID 1 cannot ignore SIGKILL from here.
+    os.unshare(CLONE_NEWPID)
     pid = os.fork()
     if pid == 0:
         step = "setup"
@@ -9673,8 +9686,10 @@ def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candi
             # The pinned fds point into the host mount namespace; once bound
             # they are not needed, and kept open they would lead back to the
             # host tree after pivot_root.
-            # Read while the host /proc is still visible; the jail has none.
-            last_cap = int(open("/proc/sys/kernel/cap_last_cap").read())
+            # Read while the host /proc is still visible (the jail's procfs
+            # has no /proc/sys).
+            with open("/proc/sys/kernel/cap_last_cap") as handle:
+                last_cap = int(handle.read())
             keep = {0, 1, 2, ready_w, go_r}
             for name in os.listdir("/proc/self/fd"):
                 if int(name) not in keep:
@@ -9699,27 +9714,39 @@ def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candi
     os.close(ready_w)
     os.close(go_r)
     os.close(err_w)
+    status = None
     try:
-        if os.read(ready_r, 1) == b"1":
-            with open(f"/proc/{pid}/setgroups", "w") as f:
-                f.write("deny")
-            with open(f"/proc/{pid}/uid_map", "w") as f:
-                f.write(uid_map)
-            with open(f"/proc/{pid}/gid_map", "w") as f:
-                f.write(gid_map)
-            os.write(go_w, b"1")
+        try:
+            if os.read(ready_r, 1) == b"1":
+                with open(f"/proc/{pid}/setgroups", "w") as f:
+                    f.write("deny")
+                with open(f"/proc/{pid}/uid_map", "w") as f:
+                    f.write(uid_map)
+                with open(f"/proc/{pid}/gid_map", "w") as f:
+                    f.write(gid_map)
+                os.write(go_w, b"1")
+        finally:
+            os.close(go_w)
+            os.close(ready_r)
+        errors = ConfinedErrors()
+        with os.fdopen(err_r, "r", errors="replace") as stream:
+            for line in stream:
+                sys.stderr.write(line)
+                errors.feed(line)
+        sys.stderr.flush()
+        _pid, status = os.waitpid(pid, 0)
     finally:
-        os.close(go_w)
-        os.close(ready_r)
-    errors = ConfinedErrors()
-    with os.fdopen(err_r, "r", errors="replace") as stream:
-        for line in stream:
-            sys.stderr.write(line)
-            errors.feed(line)
-    sys.stderr.flush()
-    _pid, status = os.waitpid(pid, 0)
+        if status is None:
+            # Stopped (deadline, caller gone, signal): the child is PID 1 of
+            # its namespace and ignores SIGTERM, so kill it, which ends
+            # every process in the namespace.
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            os.waitpid(pid, 0)
+        os.rmdir(jail)
     code = os.waitstatus_to_exitcode(status)
-    os.rmdir(jail)
     if code == 23 and tolerate_skips and errors.tolerable():
         print(f"{CONFINED_SKIPPED_MARKER} count={errors.skipped}", file=sys.stderr, flush=True)
         return 0

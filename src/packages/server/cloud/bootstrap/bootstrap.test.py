@@ -948,7 +948,10 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         # Nothing from the host's /proc but the pinned fds themselves, and
         # no /etc/cocalc, /run, /var or /mnt.
         self.assertFalse([s for s in sources if s.startswith("/proc/") and not s.startswith("/proc/self/fd/")])
-        self.assertNotIn("/proc", targets)
+        # /proc is the jail's own procfs instance, never the host's.
+        proc = [entry for entry in plan if entry[2] == jail + "/proc"]
+        self.assertEqual(proc, [("mkdir", None, jail + "/proc", 0, None),
+                                ("proc", "proc", jail + "/proc", 2 | 4 | 8, "hidepid=invisible,subset=pid")])
         for source in sources:
             self.assertFalse(source.startswith(("/etc/cocalc", "/var", "/mnt", "/home")), source)
         self.assertEqual(
@@ -1013,8 +1016,21 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             def spec(argv, binds):
                 return json.dumps({"argv": argv, "binds": binds, "setfcap": False, "tolerate_skips": False})
 
-            def run(argv, binds):
-                return run_exec(["_confined-exec", spec(argv, binds)], run_dir=str(run_dir), id_maps=id_maps)
+            def run(argv, binds, on_child=None):
+                # In a forked child, as the helper runs it: unshare(NEWPID)
+                # changes where every later fork of the caller goes.
+                child = os.fork()
+                if child == 0:
+                    code = 70
+                    try:
+                        signal.signal(signal.SIGTERM, namespace["raise_on_signal"])
+                        code = run_exec(["_confined-exec", spec(argv, binds)], run_dir=str(run_dir), id_maps=id_maps)
+                    finally:
+                        os._exit(code if 0 <= code < 256 else 71)
+                if on_child is not None:
+                    on_child(child)
+                _pid, status = os.waitpid(child, 0)
+                return os.waitstatus_to_exitcode(status)
 
             srcfd = os.open(src, os.O_PATH | os.O_DIRECTORY)
             proffd = os.open(profile, os.O_RDONLY)
@@ -1061,6 +1077,56 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                         self.assertTrue(not host.exists() or list(host.iterdir()) == [])
                         if host.exists():
                             host.rmdir()
+                # 3c. The jail's own procfs: /proc/1/root is the jail, no host
+                # pid or /proc/sys; Rustic (it needs /proc/self/exe) runs.
+                destfd = os.open(dest2, os.O_PATH | os.O_DIRECTORY)
+                code = run(["/usr/bin/rsync", "-a", "--", "/proc/1/root/src/a", "/dest/via-proc"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True]])
+                self.assertEqual(code, 0)
+                self.assertEqual((dest2 / "via-proc").read_text(encoding="utf-8"), "a\n")
+                for host_path in (f"/proc/{os.getpid()}/cmdline", "/proc/sys/kernel/osrelease", "/proc/kcore"):
+                    code = run(["/usr/bin/rsync", "-a", "--", host_path, "/dest/leak"],
+                               [[srcfd, "/src", False], [destfd, "/dest", True]])
+                    with self.subTest(host_path=host_path):
+                        self.assertNotEqual(code, 0)
+                        self.assertFalse((dest2 / "leak").exists())
+                os.close(destfd)
+                rustic = namespace["RUSTIC_CANDIDATES"][0]
+                if os.path.exists(rustic):
+                    self.assertEqual(run([rustic, "--version"], [[srcfd, "/src", False]]), 0)
+                # 3d. A stopped helper kills the jail: its PID 1 ignores SIGTERM,
+                # and the helper's cleanup sends SIGKILL.
+                os.mkfifo(src / "block")
+                os.chown(src / "block", uid, gid)
+                dest4 = fresh("dest4")
+                destfd = os.open(dest4, os.O_PATH | os.O_DIRECTORY)
+                jailed = {}
+
+                def stop_helper(helper_pid):
+                    for _ in range(100):
+                        for entry in os.listdir("/proc"):
+                            if entry.isdigit():
+                                try:
+                                    if b"/src/block" in Path(f"/proc/{entry}/cmdline").read_bytes():
+                                        jailed["pid"] = int(entry)
+                                except OSError:
+                                    pass
+                        if jailed:
+                            break
+                        time.sleep(0.05)
+                    os.kill(helper_pid, signal.SIGTERM)
+
+                code = run(["/usr/bin/cp", "--copy-contents", "--", "/src/block", "/dest/out"],
+                           [[srcfd, "/src", False], [destfd, "/dest", True]], on_child=stop_helper)
+                os.close(destfd)
+                self.assertNotEqual(code, 0)
+                self.assertIn("pid", jailed)
+                for _ in range(50):
+                    if not os.path.exists(f"/proc/{jailed['pid']}"):
+                        break
+                    time.sleep(0.1)
+                self.assertFalse(os.path.exists(f"/proc/{jailed['pid']}"))
+                (src / "block").unlink()
                 # 4. While the confined program runs: no host fds, the runtime
                 # uid, only the 5 capabilities, no_new_privs.
                 os.mkfifo(src / "fifo")
