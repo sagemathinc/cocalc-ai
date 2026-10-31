@@ -7033,6 +7033,12 @@ WantedBy=multi-user.target
                 bootstrap.run_best_effort = original_run_best_effort
 
             script = captured[str(Path(tmpdir) / "runtime-root" / "bin" / "project-host")]
+            # the root-owned node first, nvm only as a fallback
+            self.assertIn('NODE_BIN="/opt/cocalc/node/current/bin/node"', script)
+            self.assertLess(
+                script.index('NODE_BIN="/opt/cocalc/node/current/bin/node"'),
+                script.index("NVM_DIR"),
+            )
             self.assertIn(f'RUNTIME_HOME="{cfg.bootstrap_home}"', script)
             self.assertIn('export NVM_DIR="$RUNTIME_HOME/.nvm"', script)
             self.assertIn('nvm use --silent default >/dev/null 2>&1 || true', script)
@@ -7041,7 +7047,7 @@ WantedBy=multi-user.target
                 script,
             )
             self.assertIn(
-                'node not found for project-host wrapper (looked in PATH and $NVM_DIR/versions/node/v20*/bin/node)',
+                'node not found for project-host wrapper (looked in /opt/cocalc/node/current/bin/node, PATH and $NVM_DIR/versions/node/v20*/bin/node)',
                 script,
             )
             self.assertIn('exec "$NODE_BIN"', script)
@@ -7049,36 +7055,173 @@ WantedBy=multi-user.target
             self.assertIn(pool, script)
             self.assertLess(script.index(pool), script.index('exec "$NODE_BIN"'))
 
-    def test_install_node_uses_current_nvm_and_requested_node_version(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = make_cfg(tmpdir)
-            recorded = []
+    def _node_release(self, tmpdir: Path, version: str, *, mode: int = 0o775) -> Path:
+        """A node-<v>-linux-<arch>.tar.xz like nodejs.org's."""
+        top = f"node-{version}-linux-{bootstrap.node_dist_arch()}"
+        src = tmpdir / f"src-{version}" / top
+        (src / "bin").mkdir(parents=True)
+        (src / "lib" / "node_modules").mkdir(parents=True)
+        node = src / "bin" / "node"
+        node.write_text(f"#!/bin/sh\necho {version}\n")
+        node.chmod(mode)
+        archive = tmpdir / f"{top}.tar.xz"
+        with tarfile.open(archive, "w:xz") as tar:
+            tar.add(src, arcname=top)
+        return archive
 
-            original_run_cmd = bootstrap.run_cmd
-            try:
-                bootstrap.run_cmd = (
-                    lambda _cfg, args, desc, **kwargs: recorded.append(
-                        (args, desc, kwargs)
-                    )
+    def _install_node(self, cfg, root: Path, releases: dict, index=None, sums=None):
+        """install_node with nodejs.org replaced by local files."""
+        downloads = []
+
+        def fake_download(_cfg, url, dest, **_kw):
+            downloads.append(url)
+            name = url.rsplit("/", 1)[1]
+            version = url.rsplit("/", 2)[1]
+            if name == "SHASUMS256.txt":
+                text = sums(version) if sums else "".join(
+                    f"{hashlib.sha256(a.read_bytes()).hexdigest()}  {a.name}\n"
+                    for v, a in releases.items()
+                    if v == version
                 )
-                bootstrap.install_node(cfg)
-            finally:
-                bootstrap.run_cmd = original_run_cmd
+                Path(dest).write_text(text)
+            else:
+                shutil.copy(releases[version], dest)
 
-            self.assertEqual(len(recorded), 1)
-            args, desc, kwargs = recorded[0]
-            self.assertEqual(desc, "install node")
-            self.assertEqual(kwargs.get("as_user"), cfg.ssh_user)
-            self.assertEqual(args[:2], ["bash", "-lc"])
-            script = args[2]
-            self.assertIn(
-                "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh",
-                script,
+        def fake_index(_cfg, _url):
+            if isinstance(index, Exception):
+                raise index
+            return index if index is not None else [{"version": v} for v in releases]
+
+        with mock.patch.object(bootstrap, "download_file", fake_download), mock.patch.object(
+            bootstrap, "fetch_json", fake_index
+        ), mock.patch.object(bootstrap, "chown_root", lambda _p: None), mock.patch.object(
+            bootstrap, "log_line", lambda *_a, **_k: None
+        ), mock.patch.object(
+            bootstrap, "node_versions_in_use", lambda _root: set()
+        ):
+            result = bootstrap.install_node(cfg, root=root)
+        return result, downloads
+
+    def test_install_node_installs_the_newest_release_of_the_major_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)  # node_version "20"
+            root = tmp / "node"
+            releases = {
+                "v20.9.0": self._node_release(tmp, "v20.9.0"),
+                "v20.11.1": self._node_release(tmp, "v20.11.1"),
+            }
+            index = [{"version": "v21.0.0"}, {"version": "v20.9.0"}, {"version": "v20.11.1"}]
+            node, downloads = self._install_node(cfg, root, releases, index=index)
+            self.assertEqual(node, root / "current" / "bin" / "node")
+            self.assertEqual(os.readlink(root / "current"), "v20.11.1")
+            self.assertIn("v20.11.1", node.read_text())
+            # group/other write bits are cleared
+            self.assertEqual(oct((root / "v20.11.1" / "bin" / "node").stat().st_mode & 0o777), "0o755")
+            self.assertTrue(all(u.startswith("https://nodejs.org/dist/v20.11.1/") for u in downloads))
+            # Already installed: no download.
+            _node, downloads = self._install_node(cfg, root, releases, index=index)
+            self.assertEqual(downloads, [])
+
+    def test_install_node_refuses_a_checksum_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            name = releases["v20.11.1"].name
+            with self.assertRaises(RuntimeError):
+                self._install_node(cfg, root, releases, sums=lambda _v: f"{'0' * 64}  {name}\n")
+            self.assertFalse((root / "v20.11.1").exists())
+            self.assertFalse((root / "current").exists())
+
+    def test_install_node_keeps_the_current_node_when_releases_are_unreachable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            self._install_node(cfg, root, releases)
+            node, _ = self._install_node(cfg, root, releases, index=OSError("offline"))
+            self.assertEqual(node, root / "current" / "bin" / "node")
+            # with no node of that major line installed, the failure stands
+            shutil.rmtree(root)
+            with self.assertRaises(OSError):
+                self._install_node(cfg, root, releases, index=OSError("offline"))
+
+    def test_install_node_prunes_old_versions_but_not_running_ones(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            for v in ("v20.1.0", "v20.2.0", "v20.3.0", "v20.4.0"):
+                (root / v / "bin").mkdir(parents=True)
+                (root / v / "bin" / "node").write_text("old")
+            releases = {"v20.5.0": self._node_release(tmp, "v20.5.0")}
+            # v20.1.0 is still running: kept although it is the oldest
+            downloads = []
+            with mock.patch.object(
+                bootstrap,
+                "download_file",
+                lambda _c, url, dest, **_k: (
+                    downloads.append(url),
+                    Path(dest).write_text(
+                        f"{hashlib.sha256(releases['v20.5.0'].read_bytes()).hexdigest()}  {releases['v20.5.0'].name}\n"
+                    )
+                    if url.endswith("SHASUMS256.txt")
+                    else shutil.copy(releases["v20.5.0"], dest),
+                ),
+            ), mock.patch.object(
+                bootstrap, "fetch_json", lambda _c, _u: [{"version": "v20.5.0"}]
+            ), mock.patch.object(bootstrap, "chown_root", lambda _p: None), mock.patch.object(
+                bootstrap, "log_line", lambda *_a, **_k: None
+            ), mock.patch.object(
+                bootstrap, "node_versions_in_use", lambda _root: {"v20.1.0"}
+            ):
+                bootstrap.install_node(cfg, root=root)
+            self.assertEqual(
+                sorted(p.name for p in root.iterdir() if not p.name.startswith(".")),
+                ["current", "v20.1.0", "v20.3.0", "v20.4.0", "v20.5.0"],
             )
-            self.assertIn('PROFILE=/dev/null bash', script)
-            self.assertIn('nvm --version)" = "0.40.4"', script)
-            self.assertIn("nvm install 20", script)
-            self.assertIn("nvm alias default 20", script)
+
+    def test_node_versions_in_use_reads_running_executables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = Path(tmpdir) / "proc"
+            (proc / "10").mkdir(parents=True)
+            os.symlink("/opt/cocalc/node/v20.4.0/bin/node", proc / "10" / "exe")
+            (proc / "11").mkdir()
+            os.symlink("/usr/bin/bash", proc / "11" / "exe")
+            self.assertEqual(
+                bootstrap.node_versions_in_use(Path("/opt/cocalc/node"), str(proc)),
+                {"v20.4.0"},
+            )
+
+    def test_install_node_runtime_libs_publishes_a_root_owned_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            lib = tmp / "libatomic.so.1"
+            lib.write_bytes(b"lib-v1")
+            root = tmp / "runtime-libs"
+            with mock.patch.object(bootstrap, "chown_root", lambda _p: None), mock.patch.object(
+                bootstrap, "log_line", lambda *_a, **_k: None
+            ):
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(tmp / "absent"), str(lib)))
+                published = root / "libatomic.so.1"
+                self.assertEqual(published.read_bytes(), b"lib-v1")
+                self.assertEqual(oct(published.stat().st_mode & 0o777), "0o644")
+                inode = published.stat().st_ino
+                # unchanged: left alone (running processes may map it)
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertEqual(published.stat().st_ino, inode)
+                # changed: replaced by a new file, never rewritten in place
+                lib.write_bytes(b"lib-v2")
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertEqual(published.read_bytes(), b"lib-v2")
+                self.assertNotEqual(published.stat().st_ino, inode)
+                # none on the host: nothing published, no failure
+                bootstrap.install_node_runtime_libs(cfg, root=tmp / "none", candidates=(str(tmp / "absent"),))
+                self.assertFalse((tmp / "none").exists())
 
     def test_configure_autostart_installs_systemd_watchdog_and_removes_cron(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -8067,7 +8210,7 @@ class BootstrapModesTest(unittest.TestCase):
             "ensure_subuids ensure_runtime_user_manager configure_podman "
             "verify_runtime_user_contract write_env configure_runtime_shell_env "
             "setup_master_conat_token install_privileged_tool_binaries "
-            "install_node configure_node_bind_service_capability write_wrapper "
+            "install_node install_node_runtime_libs configure_node_bind_service_capability write_wrapper "
             "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
             "configure_cloudflared_with_options "
             "configure_critical_service_oom_protection configure_autostart "
@@ -8142,7 +8285,7 @@ class BootstrapModesTest(unittest.TestCase):
             "ensure_subuids ensure_runtime_user_manager configure_podman "
             "verify_runtime_user_contract configure_runtime_shell_env "
             "setup_master_conat_token install_privileged_tool_binaries "
-            "install_node configure_node_bind_service_capability write_wrapper "
+            "install_node install_node_runtime_libs configure_node_bind_service_capability write_wrapper "
             "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
             "configure_cloudflared_with_options "
             "configure_critical_service_oom_protection configure_autostart "
@@ -8451,6 +8594,7 @@ class BootstrapModesTest(unittest.TestCase):
             )
             patch("install_privileged_tool_binaries", lambda _cfg, _bundle: None)
             patch("install_node", lambda _cfg: None)
+            patch("install_node_runtime_libs", lambda _cfg: None)
             patch("configure_node_bind_service_capability", lambda _cfg: None)
             patch("write_wrapper", lambda _cfg: None)
             patch("write_helpers", lambda _cfg: None)
@@ -9632,6 +9776,10 @@ class HostIntegrityWatchTest(unittest.TestCase):
     def watch(self):
         namespace = {"__name__": "host_integrity_watch_test"}
         exec(bootstrap.HOST_INTEGRITY_WATCH_SCRIPT, namespace)
+        # The fake processes' programs don't exist here: treat every path as
+        # root-owned except the ones a test marks writable.
+        self.writable_paths = set()
+        namespace["root_owned_chain"] = lambda path: path not in self.writable_paths
         return namespace
 
     def setUp(self):
@@ -9645,8 +9793,7 @@ class HostIntegrityWatchTest(unittest.TestCase):
         self.subuid = self.root / "subuid"
         self.subuid.write_text(f"{self.user}:231072:65536\n{self.user}:327680:4128768\n")
         self.add_proc(1, 0, "systemd", 0, "/usr/lib/systemd/systemd", self.HOST_NS)
-        home = pwd.getpwuid(os.getuid()).pw_dir.rstrip("/")
-        self.node = f"{home}/.nvm/versions/node/v26.12.1/bin/node"
+        self.node = "/opt/cocalc/node/v26.12.1/bin/node"
         self.rt = "/opt/cocalc/container-runtime/20261014T214914Z-e2b488dd/bin"
 
     def tearDown(self):
@@ -9919,6 +10066,69 @@ class HostIntegrityWatchTest(unittest.TestCase):
         exes = {f["exe"] for f in w.findings.values()}
         self.assertEqual(len(exes), 62)
         self.assertFalse(any(f"/usr/bin/tool-{i}" in exes for i in range(60)))
+
+    def test_trusted_programs_must_be_root_owned_all_the_way_up(self) -> None:
+        self.add_proc(10, 1, "node", self.uid, self.node, self.HOST_NS)
+        self.add_proc(11, 1, "sudo", self.uid, "/usr/bin/sudo", self.HOST_NS)
+        # still installed by the runtime user: not checked yet
+        self.add_proc(12, 1, "sshpiperd", self.uid, "/opt/cocalc/tools/20261030T071949Z-dcbf6646/sshpiperd", self.HOST_NS)
+        self.add_proc(20, 1, "conmon", self.uid, f"{self.rt}/conmon", self.RUNTIME_NS, f"0 {self.uid} 1\n")
+        self.add_proc(21, 1, "catatonit", self.uid, "/usr/bin/catatonit", self.RUNTIME_NS, f"0 {self.uid} 1\n")
+        # node in the runtime user's home is no longer a trusted program
+        home = pwd.getpwuid(os.getuid()).pw_dir.rstrip("/")
+        self.add_proc(30, 1, "node", self.uid, f"{home}/.nvm/versions/node/v26.12.1/bin/node", self.HOST_NS)
+        ns = self.watch()
+        self.writable_paths |= {
+            self.node,
+            "/usr/bin/catatonit",
+            "/opt/cocalc/tools/20261030T071949Z-dcbf6646/sshpiperd",
+            f"{self.rt}/conmon",
+        }
+        new = self.watcher(ns).step(1000.0)
+        self.assertEqual(
+            sorted((f["pid"], f["rule"], f["severity"]) for f in new),
+            [
+                (10, "trusted-program-writable", "high"),
+                (21, "trusted-program-writable", "high"),
+                (30, "unexpected-runtime-user-process", "high"),
+            ],
+        )
+
+    def test_root_owned_chain_checks_every_directory(self) -> None:
+        ns = {"__name__": "host_integrity_watch_test"}
+        exec(bootstrap.HOST_INTEGRITY_WATCH_SCRIPT, ns)
+        chain = ns["root_owned_chain"]
+        tree = {
+            "/": (0, 0o40755),
+            "/opt": (0, 0o40755),
+            "/opt/cocalc": (0, 0o40755),
+            "/opt/cocalc/node": (0, 0o40755),
+            "/opt/cocalc/node/bin": (0, 0o40755),
+            "/opt/cocalc/node/bin/node": (0, 0o100755),
+            "/opt/cocalc/tools": (2000, 0o40755),
+            "/opt/cocalc/tools/x": (0, 0o100755),
+            "/opt/cocalc/open": (0, 0o40775),
+            "/opt/cocalc/open/x": (0, 0o100755),
+            "/opt/cocalc/link": (0, 0o120777),
+            "/opt/cocalc/link/x": (0, 0o100755),
+            "/usr/bin/sudo": (0, 0o104755),
+            "/usr": (0, 0o40755),
+            "/usr/bin": (0, 0o40755),
+        }
+
+        def lstat(path):
+            if path not in tree:
+                raise FileNotFoundError(path)
+            uid, mode = tree[path]
+            return os.stat_result((mode, 0, 0, 1, uid, 0, 0, 0, 0, 0))
+
+        self.assertTrue(chain("/opt/cocalc/node/bin/node", lstat))
+        self.assertTrue(chain("/usr/bin/sudo", lstat))  # setuid is fine
+        self.assertFalse(chain("/opt/cocalc/tools/x", lstat))  # a parent isn't root's
+        self.assertFalse(chain("/opt/cocalc/open/x", lstat))  # group-writable parent
+        self.assertFalse(chain("/opt/cocalc/link/x", lstat))  # a symlink in the way
+        self.assertFalse(chain("/opt/cocalc/absent", lstat))
+        self.assertFalse(chain("relative/path", lstat))
 
     def test_allowlist_file_extends_the_defaults(self) -> None:
         self.add_proc(52, 1, "curl", self.uid, "/usr/bin/curl", self.HOST_NS)
