@@ -5072,17 +5072,26 @@ def kept_values(kept, knobs):
     }
 
 
-def set_speed(host, fsid, devices, speed):
-    """Sets scrub_speed_max on each device; returns the previous values."""
-    previous = {}
-    for devid in devices["devids"]:
-        path = os.path.join(host.sysfs, "fs", "btrfs", fsid, "devinfo", devid, "scrub_speed_max")
+def read_speeds(host, knobs):
+    """The knobs' current values (decimal strings), without changing them."""
+    values = {}
+    for path in sorted(knobs):
         try:
-            previous[path] = host.read(path).strip()
+            value = host.read(path).strip()
+        except OSError:
+            continue
+        if KNOB_VALUE_RE.match(value):
+            values[path] = value
+    return values
+
+
+def set_speed(host, knobs, speed):
+    """Sets scrub_speed_max on each knob (whose old values are saved first)."""
+    for path in sorted(knobs):
+        try:
             host.write(path, "%d" % speed)
         except OSError:
             pass
-    return previous
 
 
 def restore_speed(host, previous):
@@ -5339,12 +5348,12 @@ def run(args, host, store):
     speed = args.speed or default_speed(host, args.capacity, devices)
     status["speed_max_bytes"] = speed
     kept = kept_values(status.pop("throttle_restore", None), knobs)
-    previous = set_speed(host, fsid, devices, speed)
+    previous = read_speeds(host, knobs)
     if orphan and kept:
-        # the knob holds our own throttle: restore what it replaced
-        previous = kept
-    # saved before the scrub runs: even after a SIGKILL, a later run restores
-    # what the throttle replaced
+        # the knobs hold our own throttle: restore what it replaced
+        previous.update(kept)
+    # Saved before any knob changes: whenever a run dies from here on (even
+    # by SIGKILL), a later run puts these values back.
     status["throttle_restore"] = previous
     store.save(status)
     started = host.now()
@@ -5353,6 +5362,7 @@ def run(args, host, store):
     # without this service watching its pressure and time budget.
     supervising = False
     try:
+        set_speed(host, knobs, speed)
         if orphan:
             # watch it again, throttled
             supervising = True

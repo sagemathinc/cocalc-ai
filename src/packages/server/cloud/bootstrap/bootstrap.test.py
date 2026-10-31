@@ -11438,6 +11438,38 @@ class BtrfsScrubScriptTest(unittest.TestCase):
             status = json.load(f)
         self.assertGreaterEqual(status["runtime_today_s"], 3540)
 
+    def test_the_original_throttle_is_saved_before_the_knob_changes(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.files[knob] = "123456789"  # an admin's setting
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        saved_at_write = []
+        orig_write = host.write
+
+        def write(path, text):
+            if path == knob and text != "123456789":
+                # the moment of the cap: what a SIGKILL right after it leaves
+                with open(os.path.join(self.dir, "status.json")) as f:
+                    saved_at_write.append(f.read())
+            orig_write(path, text)
+
+        host.write = write
+        self.run_once(host)
+        self.assertTrue(saved_at_write)
+        crashed = json.loads(saved_at_write[0])
+        self.assertEqual(crashed["throttle_restore"], {knob: "123456789"})
+        # a new run, from that state (capped knob, nothing scrubbing)
+        host.write = orig_write
+        host.files[knob] = str(48 * 2**20)
+        host.scrub = "interrupted"
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(crashed, f)
+        host.t += 7 * 3600  # outside the night: it only cleans up
+        status = self.run_once(host)
+        self.assertEqual(host.files[knob], "123456789")
+        self.assertNotIn("throttle_restore", status)
+
     def test_not_btrfs_is_reported_and_nothing_runs(self):
         host = ScrubFakeHost()
         host.run = lambda args: (0, "ext4 abc\n", "")
