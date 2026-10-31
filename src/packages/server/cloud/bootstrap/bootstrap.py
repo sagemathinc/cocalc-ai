@@ -4009,8 +4009,8 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
 def tree_entries(top):
     """(entries, total, rest): files and symlinks under top (not following
     links), the first MAX_TREE_ENTRIES of them, how many there are, and a
-    digest of the others' metadata (path, size, mtime, mode, owner, link
-    target), so a change past the cap still shows. ([top], 1, "") if top
+    digest of the others' metadata (path, size, mtime, ctime, mode, owner,
+    group, link target), so a change past the cap still shows. ([top], 1, "") if top
     doesn't exist (so its creation shows)."""
     if not os.path.isdir(top) or os.path.islink(top):
         return [top], 1, ""
@@ -4027,7 +4027,10 @@ def tree_entries(top):
                 st = os.lstat(path)
                 link = read_link(path) if stat.S_ISLNK(st.st_mode) else ""
                 rest.update(
-                    ("%s\0%d\0%d\0%o\0%d\0%s\n" % (path, st.st_size, st.st_mtime_ns, st.st_mode, st.st_uid, link)).encode()
+                    (
+                        "%s\0%d\0%d\0%d\0%o\0%d\0%d\0%s\n"
+                        % (path, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_mode, st.st_uid, st.st_gid, link)
+                    ).encode()
                 )
             except OSError:
                 rest.update(("%s\0gone\n" % path).encode())

@@ -9616,6 +9616,11 @@ class HostIntegrityWatchTest(unittest.TestCase):
         second = ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"]
         self.assertTrue(second.startswith("truncated:5:"))
         self.assertNotEqual(first, second)
+        # a mode or ownership change past the cap shows too (ctime moves)
+        third_before = ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"]
+        time.sleep(0.01)
+        os.chmod(tree / "f4", 0o664)
+        self.assertNotEqual(ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"], third_before)
         (tree / "f9").write_text("x")
         self.assertTrue(ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"].startswith("truncated:6:"))
 
