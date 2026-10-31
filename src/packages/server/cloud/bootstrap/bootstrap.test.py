@@ -5034,6 +5034,20 @@ reconcile_host_service_pid 123
                 text=True,
                 check=True,
             )
+            # project-view probe reports capabilities and takes no arguments.
+            project_view = "case \"$cmd\" in\n  project-view)" + script.split(
+                "\n  project-view)", 1
+            )[1].split("\n  umount-overlay-project)", 1)[0] + "\nesac\n"
+            for args, code, out in [
+                (["probe"], 0, "project-view:1 overlay-idmap:1\n"),
+                (["probe", "x"], 2, ""),
+            ]:
+                result = subprocess.run(
+                    ["bash", "-c", 'cmd=project-view\n' + project_view, "_", *args],
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(result.stdout, out)
             policy_helper = captured[
                 "/usr/local/libexec/cocalc-project-io-policy"
             ]

@@ -10981,6 +10981,16 @@ PY
     sub="${1:-}"
     shift || true
     case "$sub" in
+      probe)
+        # Capability probe: callers gate separate mode on this output, never
+        # on HELPER_SCHEMA_VERSION. No side effects.
+        if [ "$#" -ne 0 ]; then
+          echo "usage: cocalc-runtime-storage project-view probe" >&2
+          exit 2
+        fi
+        echo "project-view:1 overlay-idmap:1"
+        exit 0
+        ;;
       mount)
         if [ "$#" -ne 4 ]; then
           echo "usage: cocalc-runtime-storage project-view mount <project-id> <kind> <uid> <source>" >&2
@@ -11015,7 +11025,7 @@ PY
           project-view-gc --keep "${1:-}"
         ;;
       *)
-        echo "usage: cocalc-runtime-storage project-view mount|umount|gc|harden ..." >&2
+        echo "usage: cocalc-runtime-storage project-view probe|mount|umount|gc|harden ..." >&2
         exit 2
         ;;
     esac
