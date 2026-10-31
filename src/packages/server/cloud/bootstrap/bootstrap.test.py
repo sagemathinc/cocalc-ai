@@ -920,7 +920,7 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         def confined(argv, binds, **kwargs):
             calls.append((argv, [(target, writable) for _fd, target, writable in binds], kwargs))
             paths = {target: os.readlink(f"/proc/self/fd/{fd}") for fd, target, _w in binds}
-            if argv[0].endswith("rsync"):
+            if argv[0].endswith(("rsync", "/cp")):
                 source = paths.get("/src") or paths["/staging"]
                 dest = paths.get("/dest") or paths["/home"]
                 shutil.copytree(source, dest, symlinks=True, dirs_exist_ok=True)
@@ -978,8 +978,10 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         self.assertEqual((argv[0], binds, setfcap, tolerate), ("/usr/bin/rsync", [(5, "/src", False), (6, "/dest", True)], True, False))
         self.assertEqual(parse(json.dumps({**ok, "argv": ["/usr/local/libexec/cocalc-rustic", "restore"]}))[0][0],
                          "/usr/local/libexec/cocalc-rustic")
+        self.assertEqual(parse(json.dumps({**ok, "argv": ["/usr/bin/cp", "-a"]}))[0][0], "/usr/bin/cp")
         for bad in (
             {**ok, "argv": ["/bin/sh", "-c", "id"]},
+            {**ok, "argv": ["/bin/cp", "-a"]},
             {**ok, "argv": []},
             {**ok, "binds": [[2, "/src", False]]},
             {**ok, "binds": [[5, "/etc", False]]},
@@ -1035,6 +1037,15 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         ):
             with self.subTest(other=other):
                 self.assertFalse(classify([*skips[:2], other, skips[-1]])[0])
+        # Nothing to tolerate, or no terminal partial-transfer line: not clean.
+        self.assertEqual(classify([]), (False, 0))
+        self.assertFalse(classify(skips[:-1])[0])
+        self.assertFalse(classify([skips[-1]])[0])
+        # Every line counts, however many come first (no prefix cap).
+        many = [skips[0]] * 20000
+        late = 'rsync: [receiver] write failed on "/home/big": No space left on device (28)\n'
+        self.assertEqual(classify([*many, skips[-1]]), (True, 20000))
+        self.assertFalse(classify([*many, late, skips[-1]])[0])
 
     def test_project_restore_cleans_staging_on_failure(self) -> None:
         namespace = self.helper_namespace()
@@ -1112,7 +1123,6 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             reflink_dest = root / "reflink-dest"
             outside = root / "outside"
             source.mkdir()
-            preserve_dest.mkdir()
             outside.mkdir()
             (source / "marker").write_text("marker\n", encoding="utf-8")
 
@@ -1149,11 +1159,16 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                 (preserve_dest / "marker").read_text(encoding="utf-8"),
                 "marker\n",
             )
-            # copy-tree-preserve runs confined, keeping namespaced file caps.
-            [(argv, binds, kwargs)] = calls
-            self.assertEqual(argv, ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids", "--", "/src/", "/dest/"])
-            self.assertEqual(binds, [("/src", False), ("/dest", True)])
-            self.assertTrue(kwargs["setfcap"])
+            # Both tree copies run confined, keeping namespaced file caps.
+            [(preserve, preserve_binds, preserve_kwargs), (reflink, reflink_binds, reflink_kwargs)] = calls
+            self.assertEqual(preserve, ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids", "--", "/src/", "/dest/"])
+            self.assertEqual(
+                reflink,
+                ["/usr/bin/cp", "-a", "--reflink=auto", "--remove-destination", "--", "/src/.", "/dest/"],
+            )
+            for binds, kwargs in ((preserve_binds, preserve_kwargs), (reflink_binds, reflink_kwargs)):
+                self.assertEqual(binds, [("/src", False), ("/dest", True)])
+                self.assertTrue(kwargs["setfcap"])
             self.assertEqual(
                 (reflink_dest / "marker").read_text(encoding="utf-8"),
                 "marker\n",

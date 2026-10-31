@@ -9236,6 +9236,10 @@ CONFINED_DEVICES = ("null", "zero", "urandom")
 CONFINED_WORK_TARGETS = {"/staging", "/home", "/src", "/dest"}
 CONFINED_PROFILE_TARGET = "/profile.toml"
 CONFINED_RSYNC = ["/usr/bin/rsync", "-aAX", "--super", "--numeric-ids"]
+# cp writes regular files through existing destination symlinks, so reflink
+# copies run confined too.  Across the jail's two bind mounts FICLONE gives
+# EXDEV and cp falls back to copy_file_range, which btrfs still clones.
+CONFINED_CP = ["/usr/bin/cp", "-a", "--reflink=auto", "--remove-destination"]
 CONFINED_ENV = {
     "HOME": "/tmp",
     "LANG": "C.UTF-8",
@@ -9253,8 +9257,8 @@ CONFINED_SKIP_PATTERNS = (
     re.compile(r'^rsync: \[[a-z]+\] send_files failed to open ".*": Permission denied \(13\)$'),
     re.compile(r'^rsync: \[[a-z]+\] mknod ".*" failed: Operation not permitted \(1\)$'),
     re.compile(r'^rsync: \[[a-z]+\] rsync_xal_set: lsetxattr\(".*","security\.capability"\) failed: (Operation not permitted \(1\)|Invalid argument \(22\))$'),
-    re.compile(r"^rsync error: some files/attrs were not transferred .*\(code 23\).*$"),
 )
+CONFINED_PARTIAL_LINE = re.compile(r"^rsync error: some files/attrs were not transferred .*\(code 23\).*$")
 CONFINED_SKIPPED_MARKER = "COCALC_CONFINED_SKIPPED_ENTRIES"
 MS_RDONLY = 1
 MS_NOSUID = 2
@@ -9406,7 +9410,7 @@ def parse_confined_spec(text, rustic_candidates=None):
     argv, binds = spec["argv"], spec["binds"]
     if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) for arg in argv):
         fail("invalid confined argv")
-    allowed_programs = {CONFINED_RSYNC[0], *(rustic_candidates or RUSTIC_CANDIDATES)}
+    allowed_programs = {CONFINED_RSYNC[0], CONFINED_CP[0], *(rustic_candidates or RUSTIC_CANDIDATES)}
     if argv[0] not in allowed_programs:
         fail(f"program is not allowed in confinement: {argv[0]!r}")
     targets = set()
@@ -9429,19 +9433,38 @@ def parse_confined_spec(text, rustic_candidates=None):
     return argv, parsed, spec["setfcap"], spec["tolerate_skips"]
 
 
-def classify_confined_errors(lines):
-    """Return (tolerable, skipped): whether every rsync error line is a
-    deliberate confinement skip, and how many entries were skipped."""
-    skipped = 0
-    for line in lines:
+class ConfinedErrors:
+    """Classifies rsync's stderr as it streams, every line, no cap.  Exit 23
+    is tolerable only if every rsync error line was a deliberate confinement
+    skip, there was at least one, and rsync ended with its partial-transfer
+    line."""
+
+    def __init__(self):
+        self.skipped = 0
+        self.unexpected = False
+        self.partial = False
+
+    def feed(self, line):
         line = line.rstrip("\n")
         if not line.startswith("rsync"):
-            continue
-        if not any(pattern.match(line) for pattern in CONFINED_SKIP_PATTERNS):
-            return False, skipped
-        if not line.startswith("rsync error:"):
-            skipped += 1
-    return True, skipped
+            return
+        if CONFINED_PARTIAL_LINE.match(line):
+            self.partial = True
+        elif any(pattern.match(line) for pattern in CONFINED_SKIP_PATTERNS):
+            self.skipped += 1
+        else:
+            self.unexpected = True
+
+    def tolerable(self):
+        return not self.unexpected and self.skipped > 0 and self.partial
+
+
+def classify_confined_errors(lines):
+    """Return (tolerable, skipped) for rsync stderr lines (see ConfinedErrors)."""
+    errors = ConfinedErrors()
+    for line in lines:
+        errors.feed(line)
+    return errors.tolerable(), errors.skipped
 
 
 def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candidates=None):
@@ -9478,6 +9501,16 @@ def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candi
             os.unshare(CLONE_NEWNS)
             step = "jail"
             build_jail(plan)
+            # The pinned fds point into the host mount namespace; once bound
+            # they are not needed, and kept open they would lead out of the
+            # chroot.
+            keep = {0, 1, 2, ready_w, go_r}
+            for name in os.listdir("/proc/self/fd"):
+                if int(name) not in keep:
+                    try:
+                        os.close(int(name))
+                    except OSError:
+                        pass
             os.chroot(jail)
             os.chdir("/")
             step = "user namespace"
@@ -9507,21 +9540,18 @@ def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candi
     finally:
         os.close(go_w)
         os.close(ready_r)
-    lines = []
-    with os.fdopen(err_r, "r", errors="replace") as errors:
-        for line in errors:
+    errors = ConfinedErrors()
+    with os.fdopen(err_r, "r", errors="replace") as stream:
+        for line in stream:
             sys.stderr.write(line)
-            if len(lines) < 10000:
-                lines.append(line)
+            errors.feed(line)
     sys.stderr.flush()
     _pid, status = os.waitpid(pid, 0)
     code = os.waitstatus_to_exitcode(status)
     os.rmdir(jail)
-    if code == 23 and tolerate_skips:
-        tolerable, skipped = classify_confined_errors(lines)
-        if tolerable:
-            print(f"{CONFINED_SKIPPED_MARKER} count={skipped}", file=sys.stderr, flush=True)
-            return 0
+    if code == 23 and tolerate_skips and errors.tolerable():
+        print(f"{CONFINED_SKIPPED_MARKER} count={errors.skipped}", file=sys.stderr, flush=True)
+        return 0
     return code
 
 
@@ -11043,7 +11073,8 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None, 
                         # runtime user's cannot become root's.
                         uid, gid = runtime_user_ids()
                         if created:
-                            os.fchown(destfd, uid, gid)
+                            # destfd is O_PATH: chown through its magic link.
+                            os.chown(dest, uid, gid)
                         status = (confined or run_confined)(
                             [*CONFINED_RSYNC, "--", "/src/", "/dest/"],
                             [(sourcefd, "/src", False), (destfd, "/dest", True)],
@@ -11053,21 +11084,18 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None, 
                         if status != 0:
                             raise subprocess.CalledProcessError(status, CONFINED_RSYNC[:1])
                         return
-                    else:
-                        args = [
-                            "/bin/cp",
-                            "-a",
-                            "--reflink=auto",
-                            "--",
-                            f"{source}/.",
-                            f"{dest}/",
-                        ]
-                    subprocess.run(
-                        args,
-                        pass_fds=(sourcefd, destfd),
-                        check=True,
-                        stdin=subprocess.DEVNULL,
+                    # copy-tree-reflink: confined as well (see CONFINED_CP).
+                    uid, gid = runtime_user_ids()
+                    if created:
+                        os.chown(dest, uid, gid)
+                    status = (confined or run_confined)(
+                        [*CONFINED_CP, "--", "/src/.", "/dest/"],
+                        [(sourcefd, "/src", False), (destfd, "/dest", True)],
+                        deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS,
+                        setfcap=True,
                     )
+                    if status != 0:
+                        raise subprocess.CalledProcessError(status, CONFINED_CP[:1])
                 finally:
                     os.close(sourcefd)
                     os.close(destfd)
