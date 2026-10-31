@@ -5095,11 +5095,14 @@ def set_speed(host, knobs, speed):
 
 
 def restore_speed(host, previous):
+    """Puts the saved values back; returns those it couldn't write."""
+    failed = {}
     for path, value in previous.items():
         try:
             host.write(path, value or "0")
         except OSError:
-            pass
+            failed[path] = value
+    return failed
 
 
 class StatusDir:
@@ -5260,7 +5263,9 @@ def run(args, host, store):
 
     def restore_kept_throttle():
         # a throttle a run had to leave on, with the values it replaced
-        restore_speed(host, kept_values(status.pop("throttle_restore", None), knobs))
+        failed = restore_speed(host, kept_values(status.pop("throttle_restore", None), knobs))
+        if failed:
+            status["throttle_restore"] = failed  # the next run tries again
 
     def stop_orphan():
         """False if our scrub runs on: it couldn't be cancelled."""
@@ -5351,8 +5356,9 @@ def run(args, host, store):
     status["speed_max_bytes"] = speed
     kept = kept_values(status.pop("throttle_restore", None), knobs)
     previous = read_speeds(host, knobs)
-    if orphan and kept:
-        # the knobs hold our own throttle: restore what it replaced
+    if kept:
+        # the knobs hold our own throttle (our scrub's, or one a restore
+        # couldn't undo): restore what it replaced
         previous.update(kept)
     # Saved before any knob changes: whenever a run dies from here on (even
     # by SIGKILL), a later run puts these values back.
@@ -5449,8 +5455,11 @@ def run(args, host, store):
                 status["state"] = "error"
                 status["reason"] = "the scrub could not be cancelled; throttle kept"
         if not supervising:
-            restore_speed(host, previous)
-            status.pop("throttle_restore", None)
+            failed = restore_speed(host, previous)
+            if failed:
+                status["throttle_restore"] = failed  # the next run tries again
+            else:
+                status.pop("throttle_restore", None)
         try:
             store.save(status)
         except OSError:

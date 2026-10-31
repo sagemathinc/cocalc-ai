@@ -11486,6 +11486,34 @@ class BtrfsScrubScriptTest(unittest.TestCase):
         self.assertEqual(status["state"], "error")
         self.assertIn("overdue_since", status)
 
+    def test_a_throttle_it_couldnt_restore_is_kept_and_retried(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.files[knob] = "123456789"  # an admin's setting
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        orig_write = host.write
+
+        def write(path, text):
+            if path == knob and text == "123456789":
+                raise OSError(path)  # the restore fails, for now
+            orig_write(path, text)
+
+        host.write = write
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(status["throttle_restore"], {knob: "123456789"})
+        # the next day's slice starts with the knob still capped: the original
+        # value is what it keeps, not the cap
+        host.t += SCRUB_DAY
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(status["throttle_restore"], {knob: "123456789"})
+        # once the write works, the next run puts it back
+        host.write = orig_write
+        host.t += 3600
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(host.files[knob], "123456789")
+        self.assertNotIn("throttle_restore", status)
+
     def test_not_btrfs_is_reported_and_nothing_runs(self):
         host = ScrubFakeHost()
         host.run = lambda args: (0, "ext4 abc\n", "")
