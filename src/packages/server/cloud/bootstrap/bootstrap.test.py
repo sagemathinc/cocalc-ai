@@ -9178,6 +9178,7 @@ class ProjectViewHelperTest(unittest.TestCase):
         self.ns["open_view_root"] = open_view_root
         self.ns["ensure_view_dir"] = ensure_view_dir
         self.ns["view_mountpoints"] = lambda: []
+        self.ns["PROJECT_VIEW_LOCK"] = str(self.tmp / "views.lock")
         self.data = self.tmp / "mnt"
         (self.data / f"project-{self.PROJECT}").mkdir(parents=True)
         (self.data / "data/tmp/cocalc-project-secrets" / self.PROJECT).mkdir(parents=True)
@@ -9281,6 +9282,63 @@ class ProjectViewHelperTest(unittest.TestCase):
                 )
         run.assert_not_called()
 
+    def test_concurrent_mounts_of_one_view_mount_it_once(self) -> None:
+        import threading
+
+        self.ns["PROJECT_VIEW_KINDS"] = {"home": ((str(self.data), "project-{id}"), False)}
+        mounted: list[str] = []
+        self.ns["view_mountpoints"] = lambda: list(mounted)
+        target = f"{self.views}/{self.PROJECT}/home"
+
+        def slow_mount(args, **_kwargs):
+            time.sleep(0.2)  # wide window between the check and the mount
+            mounted.append(target)
+
+        results: list[str] = []
+
+        def mount() -> None:
+            try:
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", self.PROJECT, "--kind", "home",
+                     "--uid", "1073741824", "--source-root", str(self.data),
+                     "--source-path", f"project-{self.PROJECT}"],
+                    allowed_roots=self.allowed,
+                )
+                results.append("mounted")
+            except ValueError as err:
+                results.append(str(err))
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=slow_mount):
+            threads = [threading.Thread(target=mount) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(mounted, [target])
+        self.assertEqual(results.count("mounted"), 1)
+        self.assertTrue(any("already mounted" in result for result in results))
+
+    def test_umount_drains_stacked_mounts(self) -> None:
+        target = f"{self.views}/{self.PROJECT}/home"
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        stacked = [target, target]
+        self.ns["view_mountpoints"] = lambda: list(stacked)
+
+        def umount(args, **_kwargs):
+            stacked.remove(args[-1])
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=umount) as run:
+            self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(stacked, [])
+        self.assertFalse((self.views / self.PROJECT).exists())
+        stuck = [target]
+        self.ns["view_mountpoints"] = lambda: list(stuck)
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "mounts remain"):
+                self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+
     def test_ensure_view_dir_refuses_a_dir_not_owned_by_root(self) -> None:
         if os.geteuid() == 0:
             self.skipTest("needs a non-root user")
@@ -9296,11 +9354,11 @@ class ProjectViewHelperTest(unittest.TestCase):
         other = "99999999-2222-4333-8444-555555555555"
         for project in (self.PROJECT, other):
             (self.views / project / "home").mkdir(parents=True)
-        self.ns["view_mountpoints"] = lambda: [
-            f"{self.views}/{other}/home",
-            f"{self.views}/{self.PROJECT}/home",
-        ]
-        with mock.patch.object(self.ns["subprocess"], "run") as run:
+        live = [f"{self.views}/{other}/home", f"{self.views}/{self.PROJECT}/home"]
+        self.ns["view_mountpoints"] = lambda: list(live)
+        with mock.patch.object(
+            self.ns["subprocess"], "run", side_effect=lambda args, **_: live.remove(args[-1])
+        ) as run:
             self.ns["run_project_view"](["project-view-gc", "--keep", self.PROJECT])
         self.assertEqual(
             [call.args[0] for call in run.call_args_list],
@@ -9309,6 +9367,7 @@ class ProjectViewHelperTest(unittest.TestCase):
         self.assertFalse((self.views / other).exists())
         self.assertTrue((self.views / self.PROJECT / "home").is_dir())
         (self.views / "not-a-project").mkdir()
+        live.clear()
         with mock.patch.object(self.ns["subprocess"], "run"):
             with self.assertRaisesRegex(ValueError, "unexpected entry"):
                 self.ns["run_project_view"](["project-view-gc", "--keep", ""])

@@ -5659,6 +5659,7 @@ code, Node, or native addons from that tree.  Keep this file self-contained and
 installed below /usr/local with root ownership.
 """
 
+import contextlib
 import ctypes
 import errno
 import json
@@ -6694,6 +6695,14 @@ def open_named_directory(values, name, allowed_roots):
 
 
 def run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
+    # An idmapped upper (--idmap) and its cleanup at unmount change the views.
+    if argv and (argv[0] == "umount-overlay-project" or "--idmap" in argv):
+        with view_lock():
+            return _run_overlay(argv, allowed_roots)
+    return _run_overlay(argv, allowed_roots)
+
+
+def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
     command = argv[0]
     names = (
         ("lower", "upper", "work", "merged")
@@ -6947,6 +6956,11 @@ def parse_uint(value, name, maximum=(2**53 - 1)):
 # replace what this helper mounts on, and the view uid can't enter at all.
 RUNTIME_USER = "__RUNTIME_USER__"
 PROJECT_VIEW_ROOT = "/run/cocalc/project-views"
+# Serializes every change beneath PROJECT_VIEW_ROOT (mounts, unmounts, gc and
+# idmapped overlay uppers), so a check for an existing mount and the mount
+# itself can't interleave with another helper.
+PROJECT_VIEW_LOCK = "/run/cocalc/project-views.lock"
+PROJECT_VIEW_UMOUNT_ROUNDS = 16
 PROJECT_VIEW_UID_START = 1073741824
 PROJECT_VIEW_UID_COUNT = 65536
 PROJECT_VIEW_MAX_ID = 4294967294
@@ -7037,21 +7051,46 @@ def open_view_root(gid, create=True):
         os.close(parentfd)
 
 
+@contextlib.contextmanager
+def view_lock():
+    import fcntl
+
+    os.makedirs(os.path.dirname(PROJECT_VIEW_LOCK), mode=0o711, exist_ok=True)
+    fd = os.open(PROJECT_VIEW_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        if os.fstat(fd).st_uid != os.geteuid():
+            fail(f"unsafe project view lock: {PROJECT_VIEW_LOCK}")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def view_mountpoints():
-    """Mount targets beneath PROJECT_VIEW_ROOT, deepest first."""
+    """Mount targets beneath PROJECT_VIEW_ROOT, deepest first; a target with
+    stacked mounts appears once per mount."""
     targets = []
     with open("/proc/self/mountinfo", encoding="utf-8") as f:
         for line in f:
             target = line.split()[4].encode().decode("unicode_escape")
             if target.startswith(PROJECT_VIEW_ROOT + "/"):
                 targets.append(target)
-    return sorted(set(targets), key=len, reverse=True)
+    return sorted(targets, key=len, reverse=True)
 
 
 def umount_view_targets(prefix):
-    for target in view_mountpoints():
-        if target == prefix or target.startswith(prefix + "/"):
+    """Unmount everything at or beneath prefix, until nothing is left."""
+    for _round in range(PROJECT_VIEW_UMOUNT_ROUNDS):
+        targets = [
+            target
+            for target in view_mountpoints()
+            if target == prefix or target.startswith(prefix + "/")
+        ]
+        if not targets:
+            return
+        for target in targets:
             subprocess.run(["/bin/umount", "-l", target], check=True, stdin=subprocess.DEVNULL)
+    fail(f"project view mounts remain at {prefix}")
 
 
 def remove_view_tree(rootfd, project_id):
@@ -7068,6 +7107,11 @@ def remove_view_tree(rootfd, project_id):
 
 
 def run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
+    with view_lock():
+        return _run_project_view(argv, allowed_roots)
+
+
+def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
     command = argv[0]
     uid, gid = runtime_ids()
     if command == "project-view-mount":
