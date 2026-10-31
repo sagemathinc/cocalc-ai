@@ -1064,7 +1064,8 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                 self.assertFalse((src / "sub").exists())
                 # 3b. The host tree is detached (pivot_root): no /proc, no /mnt,
                 # no old root left in the namespace.
-                for host_path in ("/proc/self/", "/mnt/", "/run/", "/.old/", "/etc/cocalc/"):
+                # (/proc is the jail's own procfs now; 3c checks it.)
+                for host_path in ("/mnt/", "/run/", "/.old/", "/etc/cocalc/"):
                     destfd = os.open(dest2, os.O_PATH | os.O_DIRECTORY)
                     code = run(["/usr/bin/rsync", "-a", "--", host_path, "/dest/host/"],
                                [[srcfd, "/src", False], [destfd, "/dest", True]])

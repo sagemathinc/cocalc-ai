@@ -9745,7 +9745,11 @@ def run_confined_exec(argv, run_dir=CONFINED_RUN_DIR, id_maps=None, rustic_candi
             except ProcessLookupError:
                 pass
             os.waitpid(pid, 0)
-        os.rmdir(jail)
+        try:
+            os.rmdir(jail)
+        except OSError:
+            if status is not None:
+                raise  # only after a clean run; never mask the original error
     code = os.waitstatus_to_exitcode(status)
     if code == 23 and tolerate_skips and errors.tolerable():
         print(f"{CONFINED_SKIPPED_MARKER} count={errors.skipped}", file=sys.stderr, flush=True)
