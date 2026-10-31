@@ -5294,8 +5294,10 @@ def run(args, host, store):
         else:
             status.pop("reason", None)
         if host.now() > due + args.grace_days * DAY and state != "idle":
-            status["state"] = "overdue"
             status.setdefault("overdue_since", iso(due + args.grace_days * DAY))
+            # an error (a scrub that couldn't be cancelled, say) stays one
+            if state == "paused":
+                status["state"] = "overdue"
         status["updated_at"] = iso(host.now())
         store.save(status)
         return 0

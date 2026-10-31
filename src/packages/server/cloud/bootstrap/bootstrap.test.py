@@ -11470,6 +11470,22 @@ class BtrfsScrubScriptTest(unittest.TestCase):
         self.assertEqual(host.files[knob], "123456789")
         self.assertNotIn("throttle_restore", status)
 
+    def test_an_error_stays_an_error_when_overdue(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        status["current"] = {"started_at": status["first_seen_at"], "phase": "running"}
+        status["throttle_restore"] = {knob: "0"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub = "running"
+        host.cancel_fails = True
+        host.t = scrub_night_after(due + 10 * SCRUB_DAY) + 7 * 3600  # overdue, and daytime
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertIn("overdue_since", status)
+
     def test_not_btrfs_is_reported_and_nothing_runs(self):
         host = ScrubFakeHost()
         host.run = lambda args: (0, "ext4 abc\n", "")
