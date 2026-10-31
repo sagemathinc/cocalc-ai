@@ -8583,6 +8583,18 @@ class BootstrapModesTest(unittest.TestCase):
                     ),
                     ["node_current"],
                 )
+                # the same version reinstalled (a repaired tree): a new file
+                (root / "v20.2.0" / "bin").mkdir()
+                (root / "v20.2.0" / "bin" / "node").write_text("old")
+                before = bootstrap.project_host_restart_fingerprint(cfg)
+                (root / "v20.2.0" / "bin" / "node").unlink()
+                (root / "v20.2.0" / "bin" / "node").write_text("reinstalled")
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(
+                        before, bootstrap.project_host_restart_fingerprint(cfg)
+                    ),
+                    ["node_binary"],
+                )
 
     def test_podman_boot_preparation_restores_project_io_policy(self) -> None:
         # io.max does not survive a reboot; without restoring it first, the
@@ -10295,6 +10307,22 @@ class HostIntegrityWatchTest(unittest.TestCase):
                 (21, "trusted-program-writable", "high"),
                 (30, "unexpected-runtime-user-process", "high"),
             ],
+        )
+
+    def test_a_trusted_program_replaced_while_it_runs_is_checked_by_its_directory(self) -> None:
+        # /proc/<pid>/exe of a binary an upgrade replaced: "<path> (deleted)",
+        # and the old path no longer exists
+        self.add_proc(10, 1, "sudo", self.uid, "/usr/bin/sudo (deleted)", self.HOST_NS)
+        self.add_proc(11, 1, "node", self.uid, "/opt/cocalc/node/v26.1.0/bin/node (deleted)", self.HOST_NS)
+        ns = self.watch()
+        existing = {"/usr/bin", "/opt/cocalc/node/v26.1.0/bin"}
+        ns["root_owned_chain"] = lambda path: path in existing
+        self.assertEqual(self.watcher(ns).step(1000.0), [])
+        # the directory isn't root's: reported
+        existing.discard("/opt/cocalc/node/v26.1.0/bin")
+        self.assertEqual(
+            [(f["pid"], f["rule"]) for f in self.watcher(ns).step(1000.0)],
+            [(11, "trusted-program-writable")],
         )
 
     def test_root_owned_chain_checks_every_directory(self) -> None:

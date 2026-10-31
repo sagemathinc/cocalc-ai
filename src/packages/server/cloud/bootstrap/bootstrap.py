@@ -3988,12 +3988,16 @@ def program_status(exe, patterns, cache):
     could change) or 'unknown'."""
     if not exe_allowed(exe, patterns):
         return "unknown"
-    path = exe[: -len(" (deleted)")] if exe.endswith(" (deleted)") else exe
+    deleted = exe.endswith(" (deleted)")
+    path = exe[: -len(" (deleted)")] if deleted else exe
     if path.startswith(RUNTIME_OWNED_PROGRAM_DIRS):
         return "trusted"
-    if path not in cache:
-        cache[path] = root_owned_chain(path)
-    return "trusted" if cache[path] else "writable"
+    # A binary replaced by an upgrade while it runs is gone from its path:
+    # then the directory it ran from must be root's all the way up.
+    checked = os.path.dirname(path) if deleted else path
+    if checked not in cache:
+        cache[checked] = root_owned_chain(checked)
+    return "trusted" if cache[checked] else "writable"
 
 
 def exe_allowed(exe, patterns):
@@ -17101,6 +17105,13 @@ def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
     parts["node_current"] = (
         os.path.realpath(current_node) if os.path.lexists(current_node) else "missing"
     )
+    # and which file it is: a reinstall of the same version (a repaired tree)
+    # is a new inode
+    try:
+        info = os.stat(current_node / "bin" / "node")
+        parts["node_binary"] = f"{info.st_dev}:{info.st_ino}:{info.st_mtime_ns}:{info.st_size}"
+    except OSError:
+        parts["node_binary"] = "missing"
     bin_dir = project_host_runtime_root(cfg) / "bin"
     try:
         for entry in sorted(bin_dir.iterdir()):
