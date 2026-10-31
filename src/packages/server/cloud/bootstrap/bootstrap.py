@@ -7127,6 +7127,38 @@ def run_mkfs_btrfs(argv, image_root=MKFS_IMAGE_ROOT, owner_uid=0, executable=Non
         os.close(fd)
 
 
+# Read-only tree tools the wrapper runs as root.  The helper pins the tree
+# without following symlinks and re-enters the wrapper's internal verb with
+# /proc/self/fd/N; that verb refuses to run under sudo.
+PIN_EXEC_VERBS = {"du-bytes", "rootfs-manifest", "tar-sha256-tree"}
+STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage"
+
+
+def run_pin_exec(argv, allowed_roots=ALLOWED_ROOTS, wrapper=STORAGE_WRAPPER):
+    values, _flags = parse_named_options(
+        argv, "pin-exec", {"--root", "--path", "--verb"}, {"--root", "--path", "--verb"}
+    )
+    if values["verb"] not in PIN_EXEC_VERBS:
+        fail(f"pin-exec verb is not allowed: {values['verb']!r}")
+    validate_relative(values["path"], allow_root=True)
+    rootfd = open_root(values["root"], set(allowed_roots) - SECRET_ROOTS)
+    try:
+        fd = openat2(rootfd, values["path"], O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    finally:
+        os.close(rootfd)
+    try:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("SUDO_")}
+        sys.stdout.flush()
+        return subprocess.run(
+            [wrapper, f"_{values['verb']}-pinned", f"/proc/self/fd/{fd}"],
+            pass_fds=(fd,),
+            env=env,
+            stdin=subprocess.DEVNULL,
+        ).returncode
+    finally:
+        os.close(fd)
+
+
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None, owners=None):
     if argv and argv[0] == "scan-oversized-files":
         return run_scan_oversized_files(argv, allowed_roots)
@@ -7270,6 +7302,8 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
             return run_btrfs(argv[1:])
         if argv and argv[0] == "mkfs-btrfs":
             return run_mkfs_btrfs(argv)
+        if argv and argv[0] == "pin-exec":
+            return run_pin_exec(argv, allowed_roots)
         run(argv, allowed_roots)
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as err:
@@ -9500,6 +9534,43 @@ reconcile_project_network_limits() {
   return 1
 }
 
+# du-bytes, rootfs-manifest and tar-sha256-tree: the path helper pins the
+# tree (pin-exec) and re-enters as _<verb>-pinned /proc/self/fd/N, which only
+# root can do: sudo always sets SUDO_UID and closes descriptors above 2.
+pin_tree_and_reenter() {
+  require_allowed_path_parts "$1"
+  exec /usr/local/libexec/cocalc-runtime-storage-path-helper pin-exec --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL" --verb "$cmd"
+}
+
+enter_pinned_tree() {
+  if [ -n "${SUDO_UID:-}${SUDO_USER:-}${SUDO_COMMAND:-}" ]; then
+    deny "pinned-verb-not-allowed" "$cmd"
+  fi
+  if ! [[ "$1" =~ ^/proc/self/fd/([0-9]{1,4})$ ]] || [ "${BASH_REMATCH[1]}" -lt 3 ]; then
+    deny "pinned-path-invalid" "$1"
+  fi
+  cd -- "$1" || deny "pinned-path-invalid" "$1"
+}
+
+# BEES runs only on the data filesystem's root.  It and its .beeshome must be
+# root-owned real directories: root opens files beneath them by name.
+require_bees_mountpoint() {
+  local mountpoint="$1"
+  if [ "$mountpoint" != "/mnt/cocalc" ]; then
+    deny "bees-mountpoint-not-allowed" "$mountpoint"
+  fi
+  if [ -L "$mountpoint" ] || [ ! -d "$mountpoint" ] || [ "$(stat -c '%u' "$mountpoint" 2>/dev/null)" != "0" ]; then
+    deny "bees-mountpoint-not-root-owned" "$mountpoint"
+  fi
+}
+
+require_bees_home() {
+  local beeshome="$1/.beeshome"
+  if [ -L "$beeshome" ] || [ ! -d "$beeshome" ] || [ "$(stat -c '%u' "$beeshome" 2>/dev/null)" != "0" ]; then
+    deny "bees-home-invalid" "$beeshome"
+  fi
+}
+
 find_bees_pid() {
   local mountpoint="$1" proc pid
   for proc in /proc/[0-9]*; do
@@ -11543,13 +11614,16 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --snapshot "$snapshot" \
       "${no_cache_args[@]}"
     ;;
-  rootfs-manifest)
+  rootfs-manifest|_rootfs-manifest-pinned)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage rootfs-manifest <path>" >&2
       exit 2
     fi
-    tree="$1"
-    check_args "$tree"
+    if [ "$cmd" = "rootfs-manifest" ]; then
+      pin_tree_and_reenter "$1"
+    fi
+    enter_pinned_tree "$1"
+    tree="."
     exec /bin/bash -lc 'set -euo pipefail; python3 - "$1" <<'"'"'PY'"'"'
 import hashlib
 import json
@@ -11719,23 +11793,28 @@ json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
 sys.stdout.write("\\n")
 PY' bash "$tree"
     ;;
-  tar-sha256-tree)
+  tar-sha256-tree|_tar-sha256-tree-pinned)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage tar-sha256-tree <path>" >&2
       exit 2
     fi
-    tree="$1"
-    check_args "$tree"
+    if [ "$cmd" = "tar-sha256-tree" ]; then
+      pin_tree_and_reenter "$1"
+    fi
+    enter_pinned_tree "$1"
+    tree="."
     exec /bin/bash -lc 'set -euo pipefail; tar --sort=name --mtime='"'"'UTC 1970-01-01'"'"' --numeric-owner --owner=0 --group=0 --format=posix --acls --xattrs --xattrs-include='"'"'*'"'"' -cf - -C "$1" . | sha256sum | awk '"'"'{print $1}'"'"'' bash "$tree"
     ;;
-  du-bytes)
+  du-bytes|_du-bytes-pinned)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage du-bytes <path>" >&2
       exit 2
     fi
-    path="$1"
-    check_args "$path"
-    exec /usr/bin/du -sb "$path"
+    if [ "$cmd" = "du-bytes" ]; then
+      pin_tree_and_reenter "$1"
+    fi
+    enter_pinned_tree "$1"
+    exec /usr/bin/du -sb .
     ;;
   df)
     check_args "$@"
@@ -11747,14 +11826,7 @@ PY' bash "$tree"
       exit 2
     fi
     mountpoint="$1"
-    check_args "$mountpoint"
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
+    require_bees_mountpoint "$mountpoint"
     existing_pid="$(find_bees_pid "$mountpoint")"
     if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
       apply_bees_runtime_policy "$existing_pid" "$mountpoint"
@@ -11769,14 +11841,8 @@ PY' bash "$tree"
       exit 2
     fi
     mountpoint="$1"
-    check_args "$mountpoint"
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
+    require_bees_mountpoint "$mountpoint"
+    require_bees_home "$mountpoint"
     emit_bees_status "$mountpoint"
     ;;
   bees-gate)
@@ -11790,14 +11856,7 @@ PY' bash "$tree"
     fi
     mountpoint="$1"
     action="$2"
-    check_args "$mountpoint" "$action"
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
+    require_bees_mountpoint "$mountpoint"
     pool="$(bees_cgroup)"
     case "$action" in
       freeze)
@@ -11851,22 +11910,21 @@ PY' bash "$tree"
     echo "BEES_GATE action=${action} mountpoint=${mountpoint}" >&2
     ;;
   bees)
-    check_args "$@"
-    mountpoint=""
-    for arg in "$@"; do
-      mountpoint="$arg"
-    done
-    case "$mountpoint" in
-      /mnt/cocalc|/mnt/cocalc/*)
-        ;;
-      *)
-        deny "bees-mountpoint-not-allowed" "$mountpoint"
-        ;;
-    esac
-    beeshome="$mountpoint/.beeshome"
-    if [ ! -d "$beeshome" ]; then
-      deny "bees-home-missing" "$beeshome"
+    # Only the shape project-host sends: -v N [-c N] /mnt/cocalc.
+    if ! [[ "$#" -ge 3 && "$1" == "-v" && "$2" =~ ^[0-9]{1,2}$ ]]; then
+      deny "bees-args-invalid" "$*"
     fi
+    if [ "$#" -eq 5 ]; then
+      if ! [[ "$3" == "-c" && "$4" =~ ^[1-9][0-9]{0,3}$ ]]; then
+        deny "bees-args-invalid" "$*"
+      fi
+    elif [ "$#" -ne 3 ]; then
+      deny "bees-args-invalid" "$*"
+    fi
+    mountpoint="${!#}"
+    require_bees_mountpoint "$mountpoint"
+    require_bees_home "$mountpoint"
+    beeshome="$mountpoint/.beeshome"
     if ! command -v flock >/dev/null 2>&1; then
       deny "flock-missing" "flock"
     fi

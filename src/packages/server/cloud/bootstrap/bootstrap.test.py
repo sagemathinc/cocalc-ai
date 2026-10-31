@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import pwd
+import re
 import shutil
 import stat
 import subprocess
@@ -649,6 +650,149 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         self.assertIn('[ "$#" -ne 1 ]', branch)
         self.assertIn("cocalc-runtime-storage-path-helper mkfs-btrfs", branch)
         self.assertNotIn("exec /usr/sbin/mkfs.btrfs", branch)
+
+    def wrapper_function(self, script: str, name: str) -> str:
+        return name + "() {" + script.split("\n" + name + "() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+
+    def test_pin_exec_reenters_with_a_pinned_tree(self) -> None:
+        namespace = self.helper_namespace()
+        run_pin_exec = namespace["run_pin_exec"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            root = base / "mnt"
+            (root / "tree").mkdir(parents=True)
+            (base / "outside").mkdir()
+            (root / "link").symlink_to(base / "outside", target_is_directory=True)
+            out = base / "out"
+            fake = base / "fake-wrapper"
+            fake.write_text(
+                "#!/bin/sh\n"
+                f'echo "$1 $(readlink "$2") sudo=${{SUDO_UID:-none}}" > {out}\n',
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            with mock.patch.dict(os.environ, {"SUDO_UID": "2000", "SUDO_USER": "cocalc-host"}):
+                for verb in ("du-bytes", "rootfs-manifest", "tar-sha256-tree"):
+                    args = ["pin-exec", "--root", str(root), "--path", "tree", "--verb", verb]
+                    self.assertEqual(run_pin_exec(args, allowed_roots={str(root)}, wrapper=str(fake)), 0)
+                    self.assertEqual(out.read_text().split(), [f"_{verb}-pinned", f"{root}/tree", "sudo=none"])
+                out.unlink()
+                for path, verb, error in [
+                    ("link", "du-bytes", OSError),
+                    ("link/x", "rootfs-manifest", OSError),
+                    ("../outside", "du-bytes", ValueError),
+                    ("tree", "chown", ValueError),
+                    ("tree", "_du-bytes-pinned", ValueError),
+                ]:
+                    with self.subTest(path=path, verb=verb), self.assertRaises(error):
+                        run_pin_exec(["pin-exec", "--root", str(root), "--path", path, "--verb", verb],
+                                     allowed_roots={str(root)}, wrapper=str(fake))
+                with self.assertRaises(ValueError):
+                    run_pin_exec(["pin-exec", "--root", str(base), "--path", "outside", "--verb", "du-bytes"],
+                                 allowed_roots={str(root)}, wrapper=str(fake))
+                self.assertFalse(out.exists())
+
+    def test_pinned_verbs_refuse_sudo_and_unpinned_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        harness = (
+            'deny() { echo "DENY $1"; exit 2; }\ncmd=_du-bytes-pinned\n'
+            + self.wrapper_function(script, "enter_pinned_tree")
+            + 'enter_pinned_tree "$1"; echo "OK $(pwd -P)"\n'
+        )
+
+        def enter(path, env=None, fd_dir=None):
+            fds = ()
+            if fd_dir is not None:
+                fd = os.open(fd_dir, os.O_PATH | os.O_DIRECTORY)
+                fds = (fd,)
+                path = path.format(fd=fd)
+            try:
+                clean = {k: v for k, v in os.environ.items() if not k.startswith("SUDO_")}
+                return subprocess.run(
+                    ["bash", "-c", harness, "_", path], capture_output=True, text=True,
+                    env={**clean, **(env or {})}, pass_fds=fds,
+                ).stdout.strip()
+            finally:
+                for fd in fds:
+                    os.close(fd)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real = str(Path(tmpdir).resolve())
+            self.assertEqual(enter("/proc/self/fd/{fd}", fd_dir=tmpdir), f"OK {real}")
+            self.assertEqual(enter("/proc/self/fd/{fd}", {"SUDO_UID": "2000"}, fd_dir=tmpdir), "DENY pinned-verb-not-allowed")
+            self.assertEqual(enter("/proc/self/fd/{fd}", {"SUDO_COMMAND": "x"}, fd_dir=tmpdir), "DENY pinned-verb-not-allowed")
+            for path in ("/proc/self/fd/0", "/proc/self/fd/2", tmpdir, "/proc/self/fd/3/..", "/proc/1/fd/3", "/proc/self/fd/99"):
+                with self.subTest(path=path):
+                    self.assertTrue(enter(path).startswith("DENY pinned-path-invalid"), enter(path))
+        for verb in ("du-bytes", "rootfs-manifest", "tar-sha256-tree"):
+            branch = script.split(f"\n  {verb}|_{verb}-pinned)\n", 1)[1].split("\n    ;;\n", 1)[0]
+            with self.subTest(verb=verb):
+                self.assertIn(f'if [ "$cmd" = "{verb}" ]; then\n      pin_tree_and_reenter "$1"', branch)
+                self.assertLess(branch.index("pin_tree_and_reenter"), branch.index('enter_pinned_tree "$1"'))
+                self.assertNotIn("check_args", branch)
+        self.assertIn("exec /usr/bin/du -sb .", script)
+
+    def test_bees_verbs_take_only_the_data_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        bees = script.split("\n  bees)\n", 1)[1].split('    require_bees_mountpoint "$mountpoint"', 1)[0]
+        harness = 'deny() { echo "DENY $1"; exit 2; }\n' + bees + 'echo "OK $mountpoint"\n'
+
+        def check(*args):
+            return subprocess.run(["bash", "-c", harness, "_", *args], capture_output=True, text=True).stdout.strip()
+
+        self.assertEqual(check("-v", "6", "/mnt/cocalc"), "OK /mnt/cocalc")
+        self.assertEqual(check("-v", "6", "-c", "4", "/mnt/cocalc"), "OK /mnt/cocalc")
+        for args in (
+            ["/mnt/cocalc"],
+            ["-v", "6"],
+            ["-v", "x", "/mnt/cocalc"],
+            ["-v", "6", "-c", "0", "/mnt/cocalc"],
+            ["-v", "6", "--strip-paths", "/mnt/cocalc"],
+            ["-v", "6", "-c", "4", "-x", "1", "/mnt/cocalc"],
+            ["-v", "6", "-c", "4", "/mnt/cocalc", "/etc"],
+        ):
+            with self.subTest(args=args):
+                self.assertEqual(check(*args), "DENY bees-args-invalid")
+        functions = self.wrapper_function(script, "require_bees_mountpoint") + self.wrapper_function(script, "require_bees_home")
+        harness = 'deny() { echo "DENY $1"; exit 2; }\n' + functions + '"$1" "$2"; echo OK\n'
+
+        def require(name, path):
+            return subprocess.run(["bash", "-c", harness, "_", name, path], capture_output=True, text=True).stdout.strip()
+
+        for path in ("/mnt/cocalc/x", "/mnt/cocalc/", "/tmp", "/mnt/cocalc-scratch"):
+            with self.subTest(path=path):
+                self.assertEqual(require("require_bees_mountpoint", path), "DENY bees-mountpoint-not-allowed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Not root-owned (the tests do not run as root), or a symlink.
+            (Path(tmpdir) / ".beeshome").mkdir()
+            self.assertEqual(require("require_bees_home", tmpdir), "DENY bees-home-invalid")
+            other = Path(tmpdir) / "other"
+            (other).mkdir()
+            (other / ".beeshome").symlink_to("/", target_is_directory=True)
+            self.assertEqual(require("require_bees_home", str(other)), "DENY bees-home-invalid")
+        self.assertEqual(require("require_bees_home", "/"), "DENY bees-home-invalid")
+        for verb in ("reconcile-bees", "bees-status", "bees-gate", "bees"):
+            branch = script.split(f"\n  {verb})\n", 1)[1].split("\n    ;;\n", 1)[0]
+            with self.subTest(verb=verb):
+                self.assertIn('require_bees_mountpoint "$mountpoint"', branch)
+                self.assertNotIn("check_args", branch)
+                self.assertNotIn("/mnt/cocalc/*", branch)
+
+    def test_wrapper_check_args_only_for_lexical_uses(self) -> None:
+        # After 010, check_args no longer guards a root tool that opens the
+        # path: what is left are lexical uses (sandbox roots, df's statfs).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        users = []
+        branch = None
+        for line in script.splitlines():
+            if re.match(r"^  [a-z_|.-]+\)$", line):
+                branch = line.strip()
+            if branch and re.search(r"\bcheck_(qgroup_)?args \"", line):
+                users.append(branch)
+        self.assertEqual(sorted(set(users)), ["df)", "sandbox-rm)", "sandbox-rmdir)"])
 
     def test_image_truncate_only_creates(self) -> None:
         namespace = self.helper_namespace()
