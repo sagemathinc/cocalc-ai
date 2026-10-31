@@ -9,6 +9,16 @@ export const DEFAULT_PROJECT_RUNTIME_USER = "user";
 export const DEFAULT_PROJECT_RUNTIME_UID = 2001;
 export const DEFAULT_PROJECT_RUNTIME_GID = 2001;
 export const DEFAULT_PROJECT_RUNTIME_HOME = "/home/user";
+
+// A separate host uid for the project user (project_runtime_uid_mode
+// "separate"): the first uid of a dedicated subordinate block of the host's
+// runtime user, which host bootstrap appends after the container ranges.
+export const PROJECT_RUNTIME_UID_BLOCK = { start: 1073741824, length: 65536 };
+export const PROJECT_RUNTIME_SEPARATE_UID = PROJECT_RUNTIME_UID_BLOCK.start;
+// The first root-helper schema with `project-view` and `--idmap` overlays.
+export const PROJECT_VIEW_HELPER_SCHEMA = 59;
+export const PROJECT_RUNTIME_UID_MODES = ["keep-id", "separate"] as const;
+export type ProjectRuntimeUidMode = (typeof PROJECT_RUNTIME_UID_MODES)[number];
 export const PROJECT_RUNTIME_MODEL = "launchpad-root-start-v1";
 export const PROJECT_RUNTIME_USERNS_SCHEME = "podman-keep-id-v1";
 export const PROJECT_RUNTIME_BOOTSTRAP_PACKAGES = [
