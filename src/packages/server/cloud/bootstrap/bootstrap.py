@@ -11,7 +11,7 @@ High-level responsibilities:
   4) Podman storage config (rootful + rootless) and runtime dir.
   5) Project-host env file (including public IP substitution if needed).
   6) Fetch + verify bundles/tools and unpack them into cocalc-host paths.
-  7) Install Node via nvm, write wrapper + helper scripts.
+  7) Install Node (root-owned, /opt/cocalc/node), write wrapper + helper scripts.
   8) Optional cloudflared setup, GPU setup, and autostart cron.
   9) Start project-host, enable managed security updates, mark bootstrap done.
 """
@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261031-v59"
+HELPER_SCHEMA_VERSION = "20261031-v60"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -835,6 +835,23 @@ if __name__ == "__main__":
 RUNTIME_WRAPPER_VERSION = "20260926-v19"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
+# Node for the project-host services: installed and owned by root, so the
+# runtime user (which the services run as) can't modify the program it runs
+# or the node runtime mounted into projects.
+NODE_ROOT = Path("/opt/cocalc/node")
+NODE_DIST_URL = "https://nodejs.org/dist"
+NODE_KEEP_VERSIONS = 3
+# Compatibility libraries mounted into projects next to node (root-owned;
+# project-runner uses them when current, see prepareNodeRuntimeCompatLibs).
+NODE_RUNTIME_LIBS_ROOT = Path("/opt/cocalc/runtime-libs")
+HOST_LIBATOMIC_CANDIDATES = (
+    "/lib/x86_64-linux-gnu/libatomic.so.1",
+    "/usr/lib/x86_64-linux-gnu/libatomic.so.1",
+    "/lib/aarch64-linux-gnu/libatomic.so.1",
+    "/usr/lib/aarch64-linux-gnu/libatomic.so.1",
+    "/lib64/libatomic.so.1",
+    "/usr/lib64/libatomic.so.1",
+)
 CLOUDFLARED_VERSION = "2026.10.3"
 CLOUDFLARED_DEB_SHA256 = {
     "amd64": "297d906a8fef396ec888b51571e783d594bde280f3b44d63e8fa343ef2c4cc4e",
@@ -3700,7 +3717,7 @@ _PODMAN_EXES = (
 )
 # Programs the runtime user runs as host services (host user namespace).
 DEFAULT_HOST_EXES = _PODMAN_EXES + (
-    "{home}/.nvm/versions/node/*/bin/node",
+    "/opt/cocalc/node/*/bin/node",
     "/opt/cocalc/tools/*/sshpiperd",
     "/opt/cocalc/tools/*/rustic",
     "/usr/local/libexec/cocalc-rustic",
@@ -3714,6 +3731,11 @@ DEFAULT_HOST_EXES = _PODMAN_EXES + (
 )
 # Programs that belong in the container runtime's user namespace.
 DEFAULT_RUNTIME_EXES = _PODMAN_EXES
+# A trusted program must also be owned by root all the way up (file and every
+# directory above it, none writable by group or others); otherwise it's
+# reported as trusted-program-writable. Programs under these directories are
+# still installed by the runtime user, so they aren't checked yet.
+RUNTIME_OWNED_PROGRAM_DIRS = ("/opt/cocalc/container-runtime/", "/opt/cocalc/tools/")
 # Placement rules: processes with these uids must run in one of these cgroups
 # (prefixes; "{runtime_uid}" is replaced), or, with container_mount_ns_ok, in a
 # mount namespace other than the host's (inside a container). "uids" is
@@ -3854,10 +3876,13 @@ def in_ranges(uid, ranges):
 class Proc:
     """What the rules need from one /proc/<pid>, and nothing else."""
 
-    __slots__ = ("pid", "ppid", "comm", "uids", "exe", "userns", "mntns", "cgroup")
+    __slots__ = ("pid", "ppid", "comm", "uids", "exe", "userns", "mntns", "cgroup", "exe_root")
 
-    def __init__(self, pid, ppid, comm, uids, exe, userns, cgroup, mntns=None):
+    def __init__(self, pid, ppid, comm, uids, exe, userns, cgroup, mntns=None, exe_root=None):
         self.pid = pid
+        # for an executable deleted while it runs: whether the running inode
+        # is root's (see exe_inode_root_owned)
+        self.exe_root = exe_root
         self.ppid = ppid
         self.comm = comm
         self.uids = uids
@@ -3897,7 +3922,23 @@ def read_proc(proc_root, pid):
             cgroup = line[3:][:200]
             break
     mntns = read_link(os.path.join(base, "ns", "mnt"))
-    return Proc(pid, ppid, comm, uids, exe, userns, cgroup, mntns)
+    exe_root = None
+    if exe and exe.endswith(" (deleted)"):
+        exe_root = exe_inode_root_owned(base)
+        if exe_root is None:
+            return None  # exited meanwhile
+    return Proc(pid, ppid, comm, uids, exe, userns, cgroup, mntns, exe_root)
+
+
+def exe_inode_root_owned(proc_dir):
+    """Whether the executable a process runs (the inode, also once deleted)
+    is a root-owned regular file without group/other write; None if it
+    can't be read (the process exited)."""
+    try:
+        st = os.stat(os.path.join(proc_dir, "exe"))
+    except OSError:
+        return None
+    return stat.S_ISREG(st.st_mode) and st.st_uid == 0 and not st.st_mode & 0o022
 
 
 def list_procs(proc_root):
@@ -3943,6 +3984,43 @@ def compile_exe_patterns(patterns, home):
         if pattern.startswith("/"):
             compiled.append(pattern.split("/"))
     return compiled
+
+
+def root_owned_chain(path, lstat=os.lstat):
+    """True if path and every directory above it are owned by root, are not
+    writable by group or others, and none is a symlink."""
+    parts = [part for part in path.split("/") if part]
+    if not path.startswith("/"):
+        return False
+    for i in range(len(parts) + 1):
+        try:
+            st = lstat("/" + "/".join(parts[:i]))
+        except OSError:
+            return False
+        if stat.S_ISLNK(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+            return False
+    return True
+
+
+def program_status(exe, patterns, cache, exe_root=None):
+    """'trusted', 'writable' (an expected program whose path the runtime user
+    could change) or 'unknown'. exe_root: for a deleted executable, whether
+    its running inode is root's."""
+    if not exe_allowed(exe, patterns):
+        return "unknown"
+    deleted = exe.endswith(" (deleted)")
+    path = exe[: -len(" (deleted)")] if deleted else exe
+    if path.startswith(RUNTIME_OWNED_PROGRAM_DIRS):
+        return "trusted"
+    # A binary replaced by an upgrade while it runs is gone from its path:
+    # then the running inode must be root's, and the directory it ran from
+    # root's all the way up.
+    if deleted and not exe_root:
+        return "writable"
+    checked = os.path.dirname(path) if deleted else path
+    if checked not in cache:
+        cache[checked] = root_owned_chain(checked)
+    return "trusted" if cache[checked] else "writable"
 
 
 def exe_allowed(exe, patterns):
@@ -4032,7 +4110,7 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
              script_cgroups=(), container_cgroups=()):
     """Returns (findings, inventory keys) for one scan. A finding is a dict
     without any command line, environment or file content."""
-    findings, inventory, cache = [], [], {}
+    findings, inventory, cache, chains = [], [], {}, {}
     host_root = root_id(proc_root, 1)
 
     def finding(p, rule, severity, kind):
@@ -4078,14 +4156,18 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
         rule = None
         if project:
             rule, severity = "project-uid-outside-container", "critical"
-        elif kind == "runtime" and not exe_allowed(p.exe, runtime_exes):
-            rule, severity = "unexpected-process-in-container-runtime", "critical"
-        elif (
-            kind != "runtime"
-            and not exe_allowed(p.exe, host_exes)
-            and not cgroup_allowed(p.cgroup, script_cgroups)
-        ):
-            rule, severity = "unexpected-runtime-user-process", "high"
+        elif kind == "runtime":
+            status = program_status(p.exe, runtime_exes, chains, p.exe_root)
+            if status == "unknown":
+                rule, severity = "unexpected-process-in-container-runtime", "critical"
+            elif status == "writable":
+                rule, severity = "trusted-program-writable", "high"
+        elif not cgroup_allowed(p.cgroup, script_cgroups):
+            status = program_status(p.exe, host_exes, chains, p.exe_root)
+            if status == "unknown":
+                rule, severity = "unexpected-runtime-user-process", "high"
+            elif status == "writable":
+                rule, severity = "trusted-program-writable", "high"
         if rule is None:
             continue
         findings.append(finding(p, rule, severity, kind))
@@ -14434,20 +14516,320 @@ def install_privileged_tool_binaries(
     )
 
 
-def install_node(cfg: BootstrapConfig) -> None:
-    log_line(cfg, "bootstrap: installing node via nvm")
-    nvm_dir = f"{runtime_home(cfg)}/.nvm"
-    install_cmd = (
-        f'export NVM_DIR="{nvm_dir}"; '
-        f'if [ ! -s "$NVM_DIR/nvm.sh" ] || '
-        f'! ( . "$NVM_DIR/nvm.sh"; [ "$(nvm --version)" = "{NVM_VERSION}" ] ); then '
-        f'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v{NVM_VERSION}/install.sh | PROFILE=/dev/null bash; '
-        f'fi; '
-        f'. "$NVM_DIR/nvm.sh"; '
-        f'nvm install {cfg.node_version}; '
-        f'nvm alias default {cfg.node_version}'
+ROOT_UID = 0
+
+
+def chown_root(path: Path | str) -> None:
+    os.lchown(path, ROOT_UID, ROOT_UID)
+
+
+def root_owned_parents(path: Path, lstat=os.lstat) -> bool:
+    """True if every directory above path is owned by root, isn't writable
+    by group or others and isn't a symlink."""
+    for parent in Path(path).parents:
+        try:
+            st = lstat(parent)
+        except OSError:
+            return False
+        if stat.S_ISLNK(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+            return False
+    return True
+
+
+def prepare_root_dir(root: Path) -> None:
+    """Creates root (0755, root-owned). Fails closed if root is a symlink or
+    a directory above it could be changed by another user."""
+    if root.is_symlink():
+        raise RuntimeError(f"{root} is a symlink")
+    if not root_owned_parents(root):
+        raise RuntimeError(f"a directory above {root} isn't root-owned")
+    root.mkdir(parents=True, exist_ok=True)
+    chown_root(root)
+    os.chmod(root, 0o755)
+
+
+def root_owned_tree(path: Path) -> bool:
+    """True if path is a directory (not a symlink) and everything in it is
+    owned by root, not writable by group or others and not setuid/setgid,
+    with every symlink resolving inside it."""
+    if path.is_symlink() or not path.is_dir():
+        return False
+    base = os.path.realpath(path)
+    for dirpath, dirnames, filenames in os.walk(path):
+        for entry in [dirpath, *(os.path.join(dirpath, n) for n in dirnames + filenames)]:
+            st = os.lstat(entry)
+            if stat.S_ISLNK(st.st_mode):
+                target = os.path.realpath(entry)
+                if target != base and not target.startswith(base + os.sep):
+                    return False
+                continue
+            if (
+                st.st_uid != ROOT_UID
+                or st.st_mode & 0o022
+                or st.st_mode & (stat.S_ISUID | stat.S_ISGID)
+            ):
+                return False
+    return True
+
+
+def node_tree_ok(path: Path) -> bool:
+    node = path / "bin" / "node"
+    return root_owned_tree(path) and node.is_file() and not node.is_symlink()
+
+
+def current_node_version(root: Path) -> str | None:
+    """The version root/current points at, if it is a plain version name
+    whose tree checks out."""
+    current = root / "current"
+    if not current.is_symlink():
+        return None
+    name = os.readlink(current)
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", name) or not node_tree_ok(root / name):
+        return None
+    return name
+
+
+def node_dist_arch() -> str:
+    machine = os.uname().machine
+    arch = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64", "arm64": "arm64"}.get(
+        machine
     )
-    run_cmd(cfg, ["bash", "-lc", install_cmd], "install node", as_user=cfg.ssh_user)
+    if arch is None:
+        raise RuntimeError(f"unsupported architecture for node: {machine}")
+    return arch
+
+
+def node_version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.lstrip("v").split("."))
+
+
+def node_version_selector(cfg: BootstrapConfig) -> str:
+    """cfg.node_version as "26", "26.12" or "26.12.1" (an optional leading
+    "v" is dropped). nvm aliases such as "lts/*" or "node" aren't supported:
+    they are refused rather than reinterpreted."""
+    wanted = cfg.node_version.strip()
+    wanted = wanted[1:] if wanted.startswith("v") else wanted
+    if not re.fullmatch(r"\d+(\.\d+){0,2}", wanted):
+        raise RuntimeError(
+            f"unsupported node version {cfg.node_version!r}: use a major, "
+            "major.minor or exact version (e.g. 26, 26.12 or 26.12.1)"
+        )
+    return wanted
+
+
+def node_version_matches(version: str, selector: str) -> bool:
+    """True if version (e.g. "v26.12.1") is selector or within it."""
+    return version == f"v{selector}" or version.startswith(f"v{selector}.")
+
+
+def resolve_node_version(cfg: BootstrapConfig) -> str:
+    """The node release for cfg.node_version: as given if exact ("26.12.1"),
+    else the newest release that matches it ("26" or "26.12"), as nvm picks."""
+    selector = node_version_selector(cfg)
+    if re.fullmatch(r"\d+\.\d+\.\d+", selector):
+        return f"v{selector}"
+    releases = fetch_json(cfg, f"{NODE_DIST_URL}/index.json")
+    versions = [
+        str(entry.get("version", ""))
+        for entry in releases
+        if isinstance(entry, dict)
+        and re.fullmatch(r"v\d+\.\d+\.\d+", str(entry.get("version", "")))
+        and node_version_matches(str(entry.get("version", "")), selector)
+    ]
+    if not versions:
+        raise RuntimeError(f"no node release found for {cfg.node_version}")
+    return max(versions, key=node_version_key)
+
+
+def extract_node_archive(archive: Path, dest: Path) -> None:
+    """Unpacks node-<v>-linux-<arch>.tar.xz into dest without its top
+    directory. The data filter refuses links out of the tree and device
+    files, and clears setuid/setgid and group/other write bits."""
+    with tarfile.open(archive, "r:xz") as tar:
+        members = []
+        for member in tar.getmembers():
+            parts = PurePosixPath(member.name).parts
+            if len(parts) < 2:
+                continue
+            member.name = str(PurePosixPath(*parts[1:]))
+            members.append(member)
+        tar.extractall(dest, members=members, filter="data")
+
+
+def node_versions_in_use(root: Path, proc_root: str = "/proc") -> set[str]:
+    """Versions under root that a process runs, or that a mount namespace
+    (a project container's) has mounted (kept when pruning)."""
+    used: set[str] = set()
+    prefix = str(root) + "/"
+    try:
+        dev = os.stat(root).st_dev
+        device = f"{os.major(dev)}:{os.minor(dev)}"
+    except OSError:
+        device = None
+    # the mount's source path within its filesystem: .../<root name>/<version>
+    mounted = re.compile(rf"/{re.escape(root.name)}/([^/\s]+)(?:/|$)")
+    try:
+        pids = [name for name in os.listdir(proc_root) if name.isdigit()]
+    except OSError:
+        return used
+    namespaces: set[str] = set()
+    for pid in pids:
+        try:
+            exe = os.readlink(os.path.join(proc_root, pid, "exe"))
+            if exe.startswith(prefix):
+                used.add(exe[len(prefix) :].split("/", 1)[0])
+        except OSError:
+            pass
+        if device is None:
+            continue
+        try:
+            namespace = os.readlink(os.path.join(proc_root, pid, "ns", "mnt"))
+        except OSError:
+            continue
+        if namespace in namespaces:
+            continue
+        try:
+            with open(os.path.join(proc_root, pid, "mountinfo")) as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue  # (e.g. it exited) another process may show the namespace
+        namespaces.add(namespace)
+        for line in lines:
+            fields = line.split()
+            if len(fields) > 4 and fields[2] == device:
+                match = mounted.search(fields[3])
+                if match:
+                    used.add(match.group(1))
+    return used
+
+
+def install_node(cfg: BootstrapConfig, *, root: Path = NODE_ROOT) -> Path:
+    """Installs node as root under root/<version> (checked against the
+    release's SHASUMS256.txt), points root/current at it and prunes old
+    versions that no process runs. Returns the node binary."""
+    log_line(cfg, f"bootstrap: installing node {cfg.node_version} under {root}")
+    prepare_root_dir(root)
+    current = root / "current"
+    selector = node_version_selector(cfg)
+    try:
+        version = resolve_node_version(cfg)
+    except Exception as exc:
+        installed = current_node_version(root)
+        if installed and node_version_matches(installed, selector):
+            log_line(
+                cfg,
+                f"bootstrap: unable to look up node releases ({exc}); keeping {installed}",
+            )
+            return current / "bin" / "node"
+        raise
+    target = root / version
+    if not node_tree_ok(target):
+        name = f"node-{version}-linux-{node_dist_arch()}.tar.xz"
+        with tempfile.TemporaryDirectory(dir=root, prefix=".install-") as tmp:
+            archive = Path(tmp) / name
+            sums = Path(tmp) / "SHASUMS256.txt"
+            download_file(cfg, f"{NODE_DIST_URL}/{version}/{name}", str(archive))
+            download_file(cfg, f"{NODE_DIST_URL}/{version}/SHASUMS256.txt", str(sums))
+            expected = next(
+                (
+                    line.split()[0]
+                    for line in sums.read_text(encoding="utf-8").splitlines()
+                    if line.split()[1:] == [name]
+                ),
+                None,
+            )
+            if not expected:
+                raise RuntimeError(f"no checksum for {name} in SHASUMS256.txt")
+            verify_sha256(cfg, str(archive), expected)
+            staging = Path(tmp) / "node"
+            staging.mkdir()
+            extract_node_archive(archive, staging)
+            if not (staging / "bin" / "node").is_file():
+                raise RuntimeError(f"{name} has no bin/node")
+            for dirpath, _dirnames, filenames in os.walk(staging):
+                for entry in [dirpath, *(os.path.join(dirpath, f) for f in filenames)]:
+                    chown_root(entry)
+            os.chmod(staging, 0o755)
+            if not root_owned_tree(staging):
+                raise RuntimeError(f"{name} did not unpack as a root-owned tree")
+            # Only now that the replacement is ready: move a tree we can't
+            # trust out of the way rather than deleting it, since project
+            # containers may have it mounted (removed once nothing uses it).
+            if target.is_symlink() or target.is_file():
+                target.unlink()
+            elif target.exists():
+                log_line(cfg, f"bootstrap: replacing {target}: not entirely root-owned")
+                os.rename(target, root / f".replaced-{version}-{time.time_ns()}")
+            os.rename(staging, target)
+    link = root / f".current-{os.getpid()}"
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    os.symlink(version, link)
+    os.replace(link, current)
+    in_use = node_versions_in_use(root) | {version}
+    versions = sorted(
+        (
+            entry.name
+            for entry in root.iterdir()
+            if entry.is_dir()
+            and not entry.is_symlink()
+            and re.fullmatch(r"v\d+\.\d+\.\d+", entry.name)
+        ),
+        key=node_version_key,
+        reverse=True,
+    )
+    for old in versions[NODE_KEEP_VERSIONS:]:
+        if old not in in_use:
+            log_line(cfg, f"bootstrap: removing node {old}")
+            shutil.rmtree(root / old, ignore_errors=True)
+    for entry in root.iterdir():
+        if entry.name.startswith(".replaced-") and entry.name not in in_use:
+            log_line(cfg, f"bootstrap: removing replaced node tree {entry.name}")
+            shutil.rmtree(entry, ignore_errors=True)
+    return current / "bin" / "node"
+
+
+def install_node_runtime_libs(
+    cfg: BootstrapConfig,
+    *,
+    root: Path = NODE_RUNTIME_LIBS_ROOT,
+    candidates: tuple[str, ...] = HOST_LIBATOMIC_CANDIDATES,
+) -> None:
+    """Publishes the host's libatomic.so.1 (node needs it in older project
+    images) as a root-owned file; project-host mounts the directory."""
+    source = next((c for c in candidates if os.path.isfile(c)), None)
+    if source is None:
+        log_line(cfg, "bootstrap: libatomic.so.1 not found; skipping node runtime libs")
+        return
+    prepare_root_dir(root)
+    target = root / "libatomic.so.1"
+    data = Path(source).read_bytes()
+    try:
+        st = os.lstat(target)
+    except OSError:
+        st = None
+    if (
+        st is not None
+        and stat.S_ISREG(st.st_mode)
+        and st.st_uid == ROOT_UID
+        and st.st_mode & 0o7777 == 0o644
+        and st.st_nlink == 1
+        and target.read_bytes() == data
+    ):
+        # Current and only ever writable by root: keep this inode. Anything
+        # else gets a new inode even with equal bytes, since a process that
+        # opened the old one for writing would keep that descriptor.
+        return
+    if target.is_dir() and not target.is_symlink():
+        shutil.rmtree(target)
+    # Never rewrite the published file in place: running processes may map
+    # it. os.replace also replaces a symlink rather than following it.
+    staged = root / f".libatomic.so.1.{os.getpid()}"
+    staged.write_bytes(data)
+    chown_root(staged)
+    os.chmod(staged, 0o644)
+    os.replace(staged, target)
+    log_line(cfg, f"bootstrap: published {source} as {target}")
 
 
 def configure_node_bind_service_capability(cfg: BootstrapConfig) -> None:
@@ -14465,26 +14847,9 @@ def configure_node_bind_service_capability(cfg: BootstrapConfig) -> None:
         raise RuntimeError(
             "setcap is required for the unprivileged project-host HTTPS listener"
         )
-    nvm_dir = Path(runtime_home(cfg)) / ".nvm"
-    result = run_cmd(
-        cfg,
-        [
-            "bash",
-            "-lc",
-            f'export NVM_DIR="{nvm_dir}"; . "$NVM_DIR/nvm.sh"; nvm which default',
-        ],
-        "resolve project-host node binary",
-        as_user=cfg.ssh_user,
-    )
-    output_lines = [line.strip() for line in (result.stdout or "").splitlines()]
-    node_path = Path(output_lines[-1]).resolve() if output_lines else None
-    versions_root = (nvm_dir / "versions" / "node").resolve()
-    if (
-        node_path is None
-        or not node_path.is_file()
-        or not node_path.is_relative_to(versions_root)
-    ):
-        raise RuntimeError("unable to resolve the project-host nvm node binary")
+    node_path = (NODE_ROOT / "current" / "bin" / "node").resolve()
+    if not node_path.is_file() or not node_path.is_relative_to(NODE_ROOT.resolve()):
+        raise RuntimeError("unable to resolve the project-host node binary")
     run_cmd(
         cfg,
         ["setcap", "cap_net_bind_service=+ep", str(node_path)],
@@ -14502,25 +14867,30 @@ def write_wrapper(cfg: BootstrapConfig) -> None:
     bundle_entry = f"{bundle_root}/bundle/index.js"
     runtime_home_dir = runtime_home(cfg)
     node_glob = f'$NVM_DIR/versions/node/v{cfg.node_version}*/bin/node'
+    root_node = NODE_ROOT / "current" / "bin" / "node"
     wrapper = f"""#!/usr/bin/env bash
 set -euo pipefail
-RUNTIME_HOME="{runtime_home_dir}"
-export NVM_DIR="$RUNTIME_HOME/.nvm"
-if [ -s "$NVM_DIR/nvm.sh" ]; then
-  . "$NVM_DIR/nvm.sh"
-  nvm use --silent default >/dev/null 2>&1 || true
-fi
-if command -v node >/dev/null 2>&1; then
-  NODE_BIN="$(command -v node)"
-else
-  shopt -s nullglob
-  NODE_CANDIDATES=( {node_glob} )
-  shopt -u nullglob
-  if [ "${{#NODE_CANDIDATES[@]}}" -gt 0 ] && [ -x "${{NODE_CANDIDATES[0]}}" ]; then
-    NODE_BIN="${{NODE_CANDIDATES[0]}}"
+# Node installed and owned by root (bootstrap); nvm only as a fallback.
+NODE_BIN="{root_node}"
+if [ ! -x "$NODE_BIN" ]; then
+  RUNTIME_HOME="{runtime_home_dir}"
+  export NVM_DIR="$RUNTIME_HOME/.nvm"
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    . "$NVM_DIR/nvm.sh"
+    nvm use --silent default >/dev/null 2>&1 || true
+  fi
+  if command -v node >/dev/null 2>&1; then
+    NODE_BIN="$(command -v node)"
   else
-    echo "node not found for project-host wrapper (looked in PATH and {node_glob})" >&2
-    exit 127
+    shopt -s nullglob
+    NODE_CANDIDATES=( {node_glob} )
+    shopt -u nullglob
+    if [ "${{#NODE_CANDIDATES[@]}}" -gt 0 ] && [ -x "${{NODE_CANDIDATES[0]}}" ]; then
+      NODE_BIN="${{NODE_CANDIDATES[0]}}"
+    else
+      echo "node not found for project-host wrapper (looked in {root_node}, PATH and {node_glob})" >&2
+      exit 127
+    fi
   fi
 fi
 # project-host serves every project's filesystem API from one process on the
@@ -16760,6 +17130,18 @@ def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
                 os.path.realpath(bundle.current) if bundle.current else ""
             )
     parts["node"] = f"{cfg.node_version}"
+    # the release current points at (a selector like "26" moves with patches)
+    current_node = NODE_ROOT / "current"
+    parts["node_current"] = (
+        os.path.realpath(current_node) if os.path.lexists(current_node) else "missing"
+    )
+    # and which file it is: a reinstall of the same version (a repaired tree)
+    # is a new inode
+    try:
+        info = os.stat(current_node / "bin" / "node")
+        parts["node_binary"] = f"{info.st_dev}:{info.st_ino}:{info.st_mtime_ns}:{info.st_size}"
+    except OSError:
+        parts["node_binary"] = "missing"
     bin_dir = project_host_runtime_root(cfg) / "bin"
     try:
         for entry in sorted(bin_dir.iterdir()):
@@ -16990,6 +17372,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         install_privileged_tool_binaries(cfg, tools_bundle)
         report_bootstrap_status(cfg, "running", "Installing runtime tools")
         install_node(cfg)
+        install_node_runtime_libs(cfg)
         configure_node_bind_service_capability(cfg)
         write_wrapper(cfg)
         write_helpers(cfg)
