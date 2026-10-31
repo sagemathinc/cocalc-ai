@@ -3652,7 +3652,9 @@ DEFAULT_SCRIPT_CGROUPS = ("/system.slice/cocalc-project-host-watchdog.service",)
 # Container cgroups: a process in another user namespace counts as inside a
 # container only in one of these and in a mount namespace of its own.
 DEFAULT_CONTAINER_CGROUPS = ("/cocalc-project-pool",)
-# Host configuration whose changes are reported (globs; files up to 1 MB).
+# Host configuration whose changes are reported: files, globs, and whole
+# trees ("dir/**", walked without following links; a symlink is recorded by
+# its target). Files up to 1 MB.
 DEFAULT_CONFIG_PATHS = (
     "/etc/passwd",
     "/etc/shadow",
@@ -3661,20 +3663,46 @@ DEFAULT_CONFIG_PATHS = (
     "/etc/subuid",
     "/etc/subgid",
     "/etc/sudoers",
-    "/etc/sudoers.d/*",
+    "/etc/sudoers.d/**",
     "/etc/ssh/sshd_config",
-    "/etc/ssh/sshd_config.d/*",
+    "/etc/ssh/sshd_config.d/**",
     "/root/.ssh/authorized_keys",
     "/home/*/.ssh/authorized_keys",
+    "/root/.bashrc",
+    "/root/.profile",
     "/etc/crontab",
-    "/etc/cron.d/*",
-    "/var/spool/cron/crontabs/*",
-    "/etc/systemd/system/*.service",
-    "/etc/systemd/system/*.timer",
+    "/etc/cron.d/**",
+    "/var/spool/cron/crontabs/**",
+    # units, drop-ins, enablement links, generators
+    "/etc/systemd/system/**",
+    "/usr/local/lib/systemd/system/**",
+    "/etc/systemd/system-generators/**",
+    "/usr/local/lib/systemd/system-generators/**",
+    "/etc/rc.local",
+    "/etc/init.d/**",
+    "/etc/profile",
+    "/etc/profile.d/**",
+    "/etc/environment",
+    "/etc/pam.d/**",
+    "/etc/update-motd.d/**",
+    "/etc/apt/apt.conf.d/**",
+    "/etc/udev/rules.d/**",
+    "/etc/logrotate.d/**",
+    "/etc/modules",
+    "/etc/modules-load.d/**",
+    "/etc/modprobe.d/**",
+    "/etc/network/if-up.d/**",
     "/etc/ld.so.preload",
+    "/etc/ld.so.conf",
+    "/etc/ld.so.conf.d/**",
     "/usr/local/sbin/*",
     "/usr/local/libexec/*",
 )
+# Package installs and upgrades (unattended-upgrades) legitimately change many
+# of these: while dpkg's state changed in the last PACKAGE_QUIET_S seconds the
+# configuration is rebaselined, as during a bootstrap run.
+PACKAGE_QUIET_S = 600
+MAX_TREE_ENTRIES = 5000
 
 MAX_FINDINGS = 100
 SEVERITY_RANK = {"critical": 0, "high": 1}
@@ -3970,9 +3998,33 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
     return findings, inventory
 
 
+def tree_entries(top):
+    """Files and symlinks under top (not following links), at most
+    MAX_TREE_ENTRIES, or [top] if top doesn't exist (so its creation shows)."""
+    if not os.path.isdir(top) or os.path.islink(top):
+        return [top]
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(top):
+        dirnames.sort()
+        for name in sorted(filenames) + [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]:
+            entries.append(os.path.join(dirpath, name))
+            if len(entries) >= MAX_TREE_ENTRIES:
+                return entries
+    return entries
+
+
 def hash_config(patterns):
     digests = {}
     for pattern in patterns:
+        if pattern.endswith("/**"):
+            tops = sorted(glob.glob(pattern[:-3])) if any(c in pattern[:-3] for c in "*?[") else [pattern[:-3]]
+            for top in tops:
+                for path in tree_entries(top):
+                    if path == top and not os.path.exists(top):
+                        digests[path] = "missing"
+                    else:
+                        digests.update(hash_config([path]))
+            continue
         matches = sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[") else [pattern]
         for path in matches:
             try:
@@ -4012,6 +4064,17 @@ def bootstrap_busy(state_path, now, quiet_s=300, max_operation_s=3 * 3600):
     if state.get("current_operation"):
         return age < max_operation_s
     return age < quiet_s
+
+
+def packages_busy(state_path, now, quiet_s=PACKAGE_QUIET_S):
+    """True if dpkg changed its state in the last quiet_s seconds (a package
+    install or upgrade, which writes host configuration)."""
+    if not state_path:
+        return False
+    try:
+        return now - os.stat(state_path).st_mtime < quiet_s
+    except OSError:
+        return False
 
 
 class Watcher:
@@ -4170,6 +4233,7 @@ class Watcher:
             self.config_baseline is None
             or self.rebaseline
             or bootstrap_busy(self.args.bootstrap_state, now)
+            or packages_busy(getattr(self.args, "package_state", ""), now)
         ):
             self.config_baseline = digests
             self.config_baseline_at = now_iso(now)
@@ -4299,6 +4363,7 @@ def main(argv=None):
     parser.add_argument("--subuid", default="/etc/subuid")
     parser.add_argument("--allowlist", default="/etc/cocalc/host-integrity-allowlist.json")
     parser.add_argument("--bootstrap-state", default="")
+    parser.add_argument("--package-state", default="/var/lib/dpkg/status")
     parser.add_argument("--serial", default="/dev/ttyS0")
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--config-interval", type=float, default=60.0)

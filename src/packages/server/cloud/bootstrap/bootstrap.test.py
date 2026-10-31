@@ -9124,6 +9124,7 @@ class HostIntegrityWatchTest(unittest.TestCase):
             subuid=str(self.subuid),
             allowlist="",
             bootstrap_state="",
+            package_state="",
             serial="",
             interval=2.0,
             config_interval=60.0,
@@ -9433,6 +9434,64 @@ class HostIntegrityWatchTest(unittest.TestCase):
         )
         w.step(2500.0 + 24 * 3600 + 120)
         self.assertEqual(w.status(2500.0)["config"]["changes"], [])
+
+    def test_hashes_whole_trees_including_drop_ins_and_enablement_links(self) -> None:
+        units = self.root / "systemd"
+        (units / "app.service.d").mkdir(parents=True)
+        (units / "multi-user.target.wants").mkdir()
+        (units / "app.service").write_text("[Service]\nExecStart=/usr/bin/app\n")
+        (units / "app.service.d" / "limits.conf").write_text("[Service]\nMemoryMax=1G\n")
+        os.symlink("../app.service", units / "multi-user.target.wants" / "app.service")
+        later = self.root / "generators"  # absent at first
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{units}/**", f"{later}/**")
+        w = self.watcher(ns)
+        self.assertEqual(w.step(1000.0), [])  # baseline
+        # a drop-in that adds a command to an existing service
+        (units / "app.service.d" / "evil.conf").write_text("[Service]\nExecStartPre=/tmp/x\n")
+        # an enablement link that now points elsewhere, and a new one
+        os.unlink(units / "multi-user.target.wants" / "app.service")
+        os.symlink("/tmp/other.service", units / "multi-user.target.wants" / "app.service")
+        os.symlink("../app.service", units / "multi-user.target.wants" / "new.service")
+        # a tree that didn't exist
+        later.mkdir()
+        (later / "gen").write_text("#!/bin/sh\n")
+        changed = sorted(c["path"] for c in w.step(1100.0))
+        self.assertEqual(
+            changed,
+            sorted(
+                [
+                    str(later),
+                    str(later / "gen"),
+                    str(units / "app.service.d" / "evil.conf"),
+                    str(units / "multi-user.target.wants" / "app.service"),
+                    str(units / "multi-user.target.wants" / "new.service"),
+                ]
+            ),
+        )
+        self.assertNotIn("ExecStartPre", (self.root / "status" / "status.json").read_text())
+
+    def test_package_upgrades_are_expected_configuration_changes(self) -> None:
+        conf = self.root / "pam.d"
+        conf.mkdir()
+        (conf / "common-auth").write_text("auth required pam_unix.so\n")
+        dpkg_status = self.root / "dpkg-status"
+        dpkg_status.write_text("")
+        os.utime(dpkg_status, (0, 0))
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{conf}/**",)
+        w = self.watcher(ns, package_state=str(dpkg_status))
+        self.assertEqual(w.step(1000.0), [])
+        # an upgrade rewrites the file and dpkg's state: the new baseline
+        (conf / "common-auth").write_text("auth required pam_unix.so nullok\n")
+        os.utime(dpkg_status, (1050.0, 1050.0))
+        self.assertEqual(w.step(1100.0), [])
+        # the same kind of change long after any package activity is reported
+        (conf / "common-auth").write_text("auth sufficient pam_permit.so\n")
+        self.assertEqual(
+            [c["path"] for c in w.step(1100.0 + 3600)],
+            [str(conf / "common-auth")],
+        )
 
     def test_mirrors_new_findings_to_the_serial_console_at_most_hourly(self) -> None:
         self.add_proc(50, 1, "sh", 231072, "/usr/bin/dash", self.HOST_NS)
