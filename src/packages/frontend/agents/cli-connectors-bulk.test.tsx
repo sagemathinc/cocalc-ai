@@ -1,5 +1,11 @@
-import React from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import React, { useState } from "react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   SetConnectorsModal,
@@ -224,5 +230,86 @@ describe("Set connectors dialog", () => {
     expect(alert).toHaveTextContent("Not changed for 1 agent");
     expect(alert).toHaveTextContent("@a: Error: connector settings changed");
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("Set connectors dialog by keyboard", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockApi.listCliConnections.mockResolvedValue(data.connections);
+    mockApi.listCliConnectorGrants.mockResolvedValue(data.grants);
+    mockApi.getCliConnectorSetup.mockResolvedValue(SETUP);
+    mockApi.saveCliConnectorGrant.mockResolvedValue({});
+    refreshCliConnectors();
+  });
+
+  // As the Agents page uses it: mounted only while open.
+  function Page() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button onClick={() => setOpen(true)}>Set connectors…</button>
+        {open && (
+          <SetConnectorsModal
+            open
+            agents={agents}
+            connectors={["github"]}
+            onClose={() => setOpen(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  it("opens from its button, closes with Escape, and gives the focus back", async () => {
+    const user = userEvent.setup();
+    render(<Page />);
+    const trigger = screen.getByRole("button", { name: "Set connectors…" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() =>
+      expect(dialog.contains(document.activeElement)).toBe(true),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mockApi.saveCliConnectorGrant).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("chooses an account and applies with the keys only", async () => {
+    const user = userEvent.setup();
+    render(<Page />);
+    const trigger = screen.getByRole("button", { name: "Set connectors…" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() =>
+      expect(dialog.querySelector(".ant-select-loading")).toBeNull(),
+    );
+    const select = within(dialog).getByRole("combobox", {
+      name: "GitHub for selected agents",
+    });
+    select.focus();
+    // Options: Leave unchanged, Use @williamstein, Use @wstein-agents, Off.
+    // Enter opens the list; antd's list reads keyCode, which user-event does
+    // not set in jsdom, so its arrows and Enter are sent with it.
+    await user.keyboard("{Enter}");
+    const key = (key: string, keyCode: number) =>
+      fireEvent.keyDown(select, { key, code: key, keyCode, which: keyCode });
+    key("ArrowDown", 40);
+    key("ArrowDown", 40);
+    key("Enter", 13);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("status")).toHaveTextContent(
+        "Changes 3 agents.",
+      ),
+    );
+    const apply = within(dialog).getByRole("button", { name: "Apply" });
+    apply.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mockApi.saveCliConnectorGrant).toHaveBeenCalledTimes(3);
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 });

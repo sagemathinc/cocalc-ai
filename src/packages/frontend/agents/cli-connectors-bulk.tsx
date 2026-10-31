@@ -7,7 +7,7 @@
 // Agents page: use one connected account, or turn it off.
 
 import { Alert, Button, Modal, Select, Space, Typography } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import {
   CLI_CONNECTOR_INFO,
@@ -134,12 +134,32 @@ export function SetConnectorsModal({
   const [failures, setFailures] = useState<string[]>([]);
   const [error, setError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  // What had the focus when this opened (its trigger), taken while
+  // rendering, before the dialog moves the focus: focused again when it
+  // closes, also when the parent unmounts it on close.
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
+  if (open && !wasOpen.current)
+    returnFocus.current =
+      typeof document !== "undefined" &&
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+  wasOpen.current = open;
   useEffect(() => {
     if (!open) return;
     setChoices({});
     setFailures([]);
     setError("");
   }, [open]);
+  const close = () => {
+    const target = returnFocus.current;
+    onClose();
+    if (target)
+      setTimeout(() => {
+        if (target.isConnected) target.focus();
+      }, 0);
+  };
   const choice = (connector: CliConnector) => choices[connector] ?? KEEP;
   const planned =
     data == null
@@ -171,7 +191,7 @@ export function SetConnectorsModal({
       refreshCliConnectors();
       if (!completed) return;
       if (found.length > 0) setFailures(found);
-      else onClose();
+      else close();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -190,7 +210,7 @@ export function SetConnectorsModal({
           loading: busy,
         }}
         onOk={() => void apply()}
-        onCancel={onClose}
+        onCancel={close}
         destroyOnHidden
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >

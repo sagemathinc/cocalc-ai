@@ -21,7 +21,7 @@ import {
   Table,
   Typography,
 } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type {
   CliConnection,
@@ -365,7 +365,18 @@ export function CliConnectorAgentModal({
     disconnect,
     busy: disconnecting,
     error: disconnectError,
+    contextHolder,
   } = useDisconnectCliConnection(connector, data?.grants);
+  // Where the keys go once a disconnected account (and its button) leaves
+  // the list.
+  const switchRef = useRef<HTMLButtonElement>(null);
+  const [removedId, setRemovedId] = useState<string>();
+  useEffect(() => {
+    if (!removedId) return;
+    if (connections.some((c) => c.connection_id === removedId)) return;
+    setRemovedId(undefined);
+    switchRef.current?.focus();
+  });
   useEffect(() => {
     if (!open || data == null) return;
     setEnabled(grant?.enabled ?? false);
@@ -416,6 +427,7 @@ export function CliConnectorAgentModal({
         onCancel={onClose}
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >
+        {contextHolder}
         {loadError ? (
           <Alert
             type="error"
@@ -464,6 +476,7 @@ export function CliConnectorAgentModal({
             )}
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <Switch
+                ref={switchRef}
                 checked={enabled}
                 aria-label={`Use ${label}`}
                 // Turning on is pointless without internet access; turning
@@ -509,6 +522,7 @@ export function CliConnectorAgentModal({
                         disabled={disconnecting != null || busy}
                         onClick={() =>
                           disconnect(connection, () => {
+                            setRemovedId(connection.connection_id);
                             if (connectionId === connection.connection_id)
                               setConnectionId(
                                 connections.find(
@@ -564,6 +578,9 @@ function useDisconnectCliConnection(
   const { label } = CLI_CONNECTOR_INFO[connector];
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState("");
+  // The caller renders contextHolder: the confirmation is then part of its
+  // tree (theme, focus given back to its trigger when cancelled).
+  const [modal, contextHolder] = Modal.useModal();
   const disconnect = useCallback(
     (connection: CliConnection, onDone?: () => void) => {
       const users = (grants ?? []).filter(
@@ -572,7 +589,7 @@ function useDisconnectCliConnection(
           grant.enabled &&
           grant.connection_id === connection.connection_id,
       ).length;
-      Modal.confirm({
+      modal.confirm({
         title: `Disconnect ${connection.description}?`,
         content:
           users > 0
@@ -597,9 +614,9 @@ function useDisconnectCliConnection(
         },
       });
     },
-    [grants, connector, label],
+    [grants, connector, label, modal],
   );
-  return { disconnect, busy, error, setError };
+  return { disconnect, busy, error, setError, contextHolder };
 }
 
 function notSetUp(label: string): string {
@@ -725,11 +742,13 @@ export function CliConnectorSection({
     disconnect,
     busy,
     error: actionError,
+    contextHolder,
   } = useDisconnectCliConnection(connector, data?.grants);
   // Nothing at all until the site sets this connector up.
   if (!enabled.includes(connector)) return null;
   return (
     <Panel header={label}>
+      {contextHolder}
       <Typography.Paragraph type="secondary">
         {SECTION_TEXT[connector]} Turn it on for an agent from the connectors
         list (+) in that agent&apos;s message box.
