@@ -10053,7 +10053,11 @@ def image_caps_preflight(treefd, *, deadline, state_path=IMAGE_CAPS_STATE, confi
         if status != 0:
             raise subprocess.CalledProcessError(status, [IMAGE_CAPS_WALK])
         images = read_image_caps_state(state_path)
-        images[image_identity(treefd)] = IMAGE_CAPS_VERSION
+        key = image_identity(treefd)
+        images.pop(key, None)
+        images[key] = IMAGE_CAPS_VERSION
+        # Oldest first out: entries for deleted images age out, and a new
+        # image is always stamped (an evicted one is just walked again).
         if len(images) > IMAGE_CAPS_STATE_MAX_IMAGES:
             images = dict(list(images.items())[-IMAGE_CAPS_STATE_MAX_IMAGES:])
         write_image_caps_state(images, state_path)
@@ -10067,7 +10071,10 @@ IMAGE_CACHE_RELATIVE = "data/cache/images"
 
 def run_image_caps_preflight(argv, allowed_roots=ALLOWED_ROOTS):
     """image-caps-preflight --root R --path P: an image workflow's explicit
-    preflight of one image root (generic copies never walk their source)."""
+    preflight of one image root (generic copies never walk their source).
+    For image roots only: a host-global capability in a project home is
+    evidence of a crafted restore (finding 011) to investigate, not to
+    convert silently."""
     values, _flags = parse_named_options(argv, "image-caps-preflight", {"--root", "--path"}, {"--root", "--path"})
     validate_relative(values["path"], allow_root=True)
     rootfd = open_root(values["root"], set(allowed_roots) - SECRET_ROOTS)
@@ -16322,6 +16329,8 @@ PY' bash "$tree"
     ;;
   image-caps-preflight)
     # One image root: convert or remove its file capabilities (finding 014).
+    # Image roots only, never project homes: a host-global capability there
+    # is incident evidence (finding 011), not something to convert.
     if [ "$#" -ne 1 ]; then
       deny "image-caps-preflight-args-invalid" "$*"
     fi

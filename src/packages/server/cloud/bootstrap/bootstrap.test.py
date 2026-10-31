@@ -1438,6 +1438,17 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 preflight(3, deadline=0, state_path=state, confined=lambda *_a, **_k: 2, rootid=231072)
             self.assertEqual(namespace["read_image_caps_state"](state), {"inode:1:2:4": 1})
+        # At the bound the oldest entries go; a new image is still stamped.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = str(Path(tmpdir) / "image-caps.json")
+            namespace["write_image_caps_state"]({f"inode:0:{i}:0": 1 for i in range(5)}, state)
+            namespace["IMAGE_CAPS_STATE_MAX_IMAGES"] = 5
+            namespace["image_identity"] = lambda _fd: "inode:9:9:9"
+            self.assertEqual(preflight(3, deadline=0, state_path=state, confined=lambda *_a, **_k: 0, rootid=231072), "walked")
+            images = namespace["read_image_caps_state"](state)
+            self.assertEqual(len(images), 5)
+            self.assertIn("inode:9:9:9", images)
+            self.assertNotIn("inode:0:0:0", images)
 
     def test_image_caps_walker_is_the_only_confined_helper_entry(self) -> None:
         namespace = self.helper_namespace()
