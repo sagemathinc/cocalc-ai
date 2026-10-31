@@ -4763,6 +4763,9 @@ GCP_PREFIX_TIMEZONES = (
 GCP_ZONE_URL = "http://metadata.google.internal/computeMetadata/v1/instance/zone"
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 MAX_PATH_CHARS = 512
+# How long to keep retrying a cancel that fails before leaving the scrub,
+# still throttled, to the next run.
+CANCEL_GIVE_UP_S = 600
 DAY = 86400
 STATUS_VERSION = 1
 MAX_PATHS = 100
@@ -4952,8 +4955,10 @@ def night_window(now, tz, start_hour, hours):
     local = datetime.datetime.fromtimestamp(now, tz)
     for days in (-1, 0, 1):
         day = (local + datetime.timedelta(days=days)).date()
-        start = datetime.datetime(day.year, day.month, day.day, start_hour, tzinfo=tz).timestamp()
-        end = start + hours * 3600
+        start_local = datetime.datetime(day.year, day.month, day.day, start_hour, tzinfo=tz)
+        # wall-clock hours: the window keeps its local times across DST
+        start = start_local.timestamp()
+        end = (start_local + datetime.timedelta(hours=hours)).timestamp()
         if now < end:
             return start, end
     return start, end
@@ -5023,6 +5028,19 @@ def error_paths(host, since):
         if path and path not in paths:
             paths.append(path)
     return paths[:MAX_PATHS], len(paths) > MAX_PATHS
+
+
+def cancel(host, mount):
+    """Cancels the scrub; True once its status confirms it no longer runs."""
+    try:
+        host.run([BTRFS, "scrub", "cancel", mount])
+    except Exception:
+        pass
+    for _ in range(5):
+        if scrub_status(host, mount)["status"] != "running":
+            return True
+        host.sleep(1)
+    return False
 
 
 def set_speed(host, fsid, devices, speed):
@@ -5095,17 +5113,23 @@ class StatusDir:
         os.replace(tmp, self.NAME, src_dir_fd=self.fd, dst_dir_fd=self.fd)
 
 
-def due_at(status, host, period_s, now):
+def due_at(status, host, period_s, now, next_due=None):
     """When the next scrub is due: a period after the last completed one; the
-    first one, at a point in the first period from the machine's id."""
+    first one, at a point in the first period from the machine's id. A
+    configured next_due brings it forward once: it counts only until a scrub
+    completes after it."""
     last = (status.get("last_completed") or {}).get("finished_at")
     last_ts = parse_iso(last) if last else None
     if last_ts is not None:
-        return last_ts + period_s
-    first_seen = parse_iso(status.get("first_seen_at")) or now
-    digest = hashlib.sha256(host.machine_id().encode()).digest()
-    offset = int.from_bytes(digest[:8], "big") % max(1, int(period_s))
-    return first_seen + offset
+        due = last_ts + period_s
+    else:
+        first_seen = parse_iso(status.get("first_seen_at")) or now
+        digest = hashlib.sha256(host.machine_id().encode()).digest()
+        offset = int.from_bytes(digest[:8], "big") % max(1, int(period_s))
+        due = first_seen + offset
+    if next_due is not None and (last_ts is None or last_ts < next_due):
+        due = min(due, next_due)
+    return due
 
 
 # Settings the config may set, within bounds, so even a wrong config can't
@@ -5135,6 +5159,10 @@ def apply_config(args, host):
             setattr(args, key, kind(value))
     if isinstance(config.get("timezone"), str):
         args.timezone = config["timezone"]
+    # one scrub due at this time (a pilot, say), unless one completed since
+    next_due = parse_iso(config.get("next_due")) if isinstance(config.get("next_due"), str) else None
+    if next_due is not None:
+        args.next_due = next_due
     return config.get("enabled") is True
 
 
@@ -5158,7 +5186,7 @@ def run(args, host, store):
             status.pop(key, None)
         status["first_seen_at"] = iso(now)
     status["fsid"] = fsid
-    due = due_at(status, host, period_s, now)
+    due = due_at(status, host, period_s, now, args.next_due)
     status["due_at"] = iso(due)
     current = status.get("current")
     day = time.strftime("%Y-%m-%d", time.gmtime(now))
@@ -5177,13 +5205,26 @@ def run(args, host, store):
         status["night"]["warning"] = tz_warning
     in_night = window_start <= now < window_end
     st = scrub_status(host, args.mount)
-    # ours, left running by a run that was killed (SIGKILL, a crash)
-    orphan = current is not None and st["status"] == "running"
+    # Ours only if a run was watching it (phase "running") and died without
+    # confirming a cancel (SIGKILL, a crash). After a confirmed cancel
+    # (phase "interrupted"), a running scrub was started by someone else.
+    orphan = (
+        current is not None
+        and current.get("phase") == "running"
+        and st["status"] == "running"
+    )
+
+    def restore_kept_throttle():
+        # a throttle a run had to leave on, with the values it replaced
+        kept = status.pop("throttle_restore", None)
+        if isinstance(kept, dict):
+            restore_speed(host, {k: v for k, v in kept.items() if isinstance(v, str)})
 
     def stop_orphan():
         # a scrub this service won't watch now must not run on unwatched
-        if orphan:
-            host.run([BTRFS, "scrub", "cancel", args.mount])
+        if orphan and cancel(host, args.mount):
+            current["phase"] = "interrupted"
+            restore_kept_throttle()
 
     def finish(state, reason=None):
         status["state"] = state
@@ -5241,13 +5282,19 @@ def run(args, host, store):
         stop_orphan()
         return finish("paused", "host I/O pressure")
 
-    if current is None and st["status"] == "running":
+    if not orphan and "throttle_restore" in status:
+        restore_kept_throttle()
+    if not orphan and st["status"] == "running":
         # someone else's scrub (an admin's, say): leave it alone
         return finish("paused", "a scrub not started by this service is running")
 
     speed = args.speed or default_speed(host, args.capacity, devices)
     status["speed_max_bytes"] = speed
     previous = set_speed(host, fsid, devices, speed)
+    kept = status.pop("throttle_restore", None)
+    if orphan and isinstance(kept, dict):
+        # the knob holds our own throttle: restore what it replaced
+        previous = {k: v for k, v in kept.items() if isinstance(v, str)}
     started = host.now()
     # Until the loop below sees the scrub end or cancels it, leaving any other
     # way (an exception, SIGTERM from systemd) cancels it: a scrub never runs
@@ -5258,20 +5305,30 @@ def run(args, host, store):
             # watch it again, throttled
             supervising = True
         else:
+            before = dict(current) if current is not None else None
+            # recorded before the scrub runs, so a run killed from here on
+            # leaves it adoptable
+            current = dict(current or {"started_at": iso(started)})
+            current["phase"] = "running"
+            status["current"] = current
+            store.save(status)
+            supervising = True
             resumed = False
-            if current is not None:
+            if before is not None:
                 code, _, _ = host.run([BTRFS, "scrub", "resume", args.mount])
                 resumed = code == 0
             if not resumed:
+                current["started_at"] = iso(started)
                 code, _, err = host.run([BTRFS, "scrub", "start", args.mount])
                 if code != 0:
+                    supervising = False
+                    status["current"] = before
                     return finish("error", "btrfs scrub start failed: %s" % err.strip()[:300])
-                current = {"started_at": iso(started)}
-            supervising = True
         status["current"] = current
         status["state"] = "running"
         store.save(status)
         reason = None
+        failed_cancels = 0
         while True:
             host.sleep(args.poll_seconds)
             st = scrub_status(host, args.mount)
@@ -5282,31 +5339,51 @@ def run(args, host, store):
                 break
             if st["status"] != "running":
                 supervising = False
+                current["phase"] = "interrupted"
                 reason = "scrub stopped (%s)" % st["status"]
                 break
             if pressure(host) > args.pause_above:
-                host.run([BTRFS, "scrub", "cancel", args.mount])
-                supervising = False
                 reason = "host I/O pressure"
-                break
-            if elapsed >= budget_s:
-                host.run([BTRFS, "scrub", "cancel", args.mount])
-                supervising = False
+            elif elapsed >= budget_s:
                 reason = "daily time budget used"
-                break
-            if host.now() >= window_end:
-                host.run([BTRFS, "scrub", "cancel", args.mount])
-                supervising = False
+            elif host.now() >= window_end:
                 reason = "outside the night window"
-                break
+            else:
+                continue
+            if not cancel(host, args.mount):
+                # still running: keep watching it (and its throttle) a while,
+                # then leave it to the next run, throttled
+                failed_cancels += 1
+                reason = None
+                if failed_cancels * args.poll_seconds >= CANCEL_GIVE_UP_S:
+                    break
+                continue
+            supervising = False
+            current["phase"] = "interrupted"
+            break
         status["runtime_today_s"] = status.get("runtime_today_s", 0) + int(host.now() - started)
+        if supervising:
+            return 0  # couldn't stop it: finally reports it and keeps the throttle
         if reason is not None:
             return finish("paused", reason)
         return complete(st, current.get("started_at"))
     finally:
         if supervising:
-            host.run([BTRFS, "scrub", "cancel", args.mount])
-        restore_speed(host, previous)
+            if cancel(host, args.mount):
+                supervising = False
+                if status.get("current"):
+                    status["current"]["phase"] = "interrupted"
+            else:
+                # it runs on: leave its throttle, and the next run adopts it
+                status["state"] = "error"
+                status["reason"] = "the scrub could not be cancelled; throttle kept"
+                status["throttle_restore"] = previous
+            try:
+                store.save(status)
+            except OSError:
+                pass
+        if not supervising:
+            restore_speed(host, previous)
 
 
 def main(argv=None, host=None):
@@ -5326,6 +5403,7 @@ def main(argv=None, host=None):
     p.add_argument("--timezone", default="", help="IANA name (default: from the cloud zone)")
     p.add_argument("--night-start-hour", type=int, default=0)
     p.add_argument("--night-hours", type=float, default=6)
+    p.set_defaults(next_due=None)
     args = p.parse_args(argv)
     try:
         gid = grp.getgrnam(args.status_group).gr_gid if args.status_group else os.getegid()
