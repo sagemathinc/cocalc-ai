@@ -513,6 +513,12 @@ only for the `sagebrush` client; any other scope is `invalid scope`).
   account is deleted, banned, demoted or turns 2FA off. A routing or lookup failure is
   a 500, never an answer.
 
+**Setup:** the admin flow redirects to `<site origin>/admin/auth/callback`.
+Each such URI must be registered in the site setting
+`sagebrush_redirect_uris` (separated by spaces or commas) next to the normal
+`/auth/callback` ones, which must stay; the built-in default lists only
+`/auth/callback`, so without it every admin authorize request is refused.
+
 `src/packages/server/sagebrush/cocalc-admin-contract.json` is the exact
 contract; Sagebrush pins its sha256.
 
