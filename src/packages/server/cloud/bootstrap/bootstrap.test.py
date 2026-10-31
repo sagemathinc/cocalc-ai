@@ -1521,6 +1521,32 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
             self.assertTrue(reports["a"].startswith("failed:"))
             self.assertTrue(reports["b"].startswith("failed:"))
             self.assertEqual(reports[".partial"], "vanished")
+            self.assertTrue(reports["link"].startswith("failed:"))
+        # In isolation: a pass where an image vanished, or that met a
+        # symlinked entry, must be rerun (exit 1), not reported clean.
+        for setup in ("vanish", "symlink"):
+            with tempfile.TemporaryDirectory() as tmpdir, self.subTest(setup=setup):
+                root = Path(tmpdir)
+                cache = root / "data" / "cache" / "images"
+                cache.mkdir(parents=True)
+                (cache / ".ok.json").write_text("{}")
+                if setup == "vanish":
+                    (cache / "gone").mkdir()
+                    real_stat = namespace["os"].stat
+
+                    def vanishing(name, *args, **kwargs):
+                        if name == "gone":
+                            raise FileNotFoundError(errno.ENOENT, "gone")
+                        return real_stat(name, *args, **kwargs)
+
+                    patch = mock.patch.object(namespace["os"], "stat", side_effect=vanishing)
+                else:
+                    (cache / "elsewhere").symlink_to(root, target_is_directory=True)
+                    patch = contextlib.nullcontext()
+                with patch, mock.patch("sys.stdout", new_callable=io.StringIO):
+                    code = namespace["run_migrate_image_caps"](["migrate-image-caps"], cache_root=str(root),
+                                                               preflight=lambda fd, **_k: "walked")
+                self.assertEqual(code, 1)
 
     def test_image_caps_preflight_only_takes_image_cache_roots(self) -> None:
         namespace = self.helper_namespace()

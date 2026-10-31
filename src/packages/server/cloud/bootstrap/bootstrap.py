@@ -10106,9 +10106,10 @@ def run_image_caps_preflight(argv, cache_root="/mnt/cocalc", cache_relative=IMAG
 def run_migrate_image_caps(argv, cache_root="/mnt/cocalc", cache_relative=IMAGE_CACHE_RELATIVE, preflight=None):
     """migrate-image-caps: preflight every image under the pinned image
     cache (a one-off after rollout; stamped images are skipped).  Reports
-    each entry.  Any image directory that cannot be examined, opened or
-    walked counts as failed (exit 1); only plain files are skipped, and an
-    entry that vanished during the pass is reported as such."""
+    each entry.  Only regular metadata files are skipped; an entry that
+    cannot be examined, opened or walked, one that vanished during the pass,
+    or any other type (a symlink) counts as failed (exit 1): the cache is
+    writable by the runtime user, so a pass that met any of these is rerun."""
     if argv != ["migrate-image-caps"]:
         fail("usage: migrate-image-caps")
     preflight = preflight or image_caps_preflight
@@ -10123,17 +10124,23 @@ def run_migrate_image_caps(argv, cache_root="/mnt/cocalc", cache_relative=IMAGE_
             try:
                 info = os.stat(name, dir_fd=cachefd, follow_symlinks=False)
             except FileNotFoundError:
+                failed += 1
                 report(name, "vanished")
                 continue
             except OSError as err:
                 failed += 1
                 report(name, f"failed: {err}")
                 continue
+            if stat.S_ISREG(info.st_mode):
+                continue  # metadata files (.<image>.json)
             if not stat.S_ISDIR(info.st_mode):
-                continue  # metadata files (.<image>.json) and the like
+                failed += 1
+                report(name, "failed: not a directory")
+                continue
             try:
                 treefd = openat2(cachefd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
             except FileNotFoundError:
+                failed += 1
                 report(name, "vanished")
                 continue
             except OSError as err:
