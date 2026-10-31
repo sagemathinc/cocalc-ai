@@ -3755,10 +3755,13 @@ def in_ranges(uid, ranges):
 class Proc:
     """What the rules need from one /proc/<pid>, and nothing else."""
 
-    __slots__ = ("pid", "ppid", "comm", "uids", "exe", "userns", "mntns", "cgroup")
+    __slots__ = ("pid", "ppid", "comm", "uids", "exe", "userns", "mntns", "cgroup", "exe_root")
 
-    def __init__(self, pid, ppid, comm, uids, exe, userns, cgroup, mntns=None):
+    def __init__(self, pid, ppid, comm, uids, exe, userns, cgroup, mntns=None, exe_root=None):
         self.pid = pid
+        # for an executable deleted while it runs: whether the running inode
+        # is root's (see exe_inode_root_owned)
+        self.exe_root = exe_root
         self.ppid = ppid
         self.comm = comm
         self.uids = uids
@@ -3798,7 +3801,23 @@ def read_proc(proc_root, pid):
             cgroup = line[3:][:200]
             break
     mntns = read_link(os.path.join(base, "ns", "mnt"))
-    return Proc(pid, ppid, comm, uids, exe, userns, cgroup, mntns)
+    exe_root = None
+    if exe and exe.endswith(" (deleted)"):
+        exe_root = exe_inode_root_owned(base)
+        if exe_root is None:
+            return None  # exited meanwhile
+    return Proc(pid, ppid, comm, uids, exe, userns, cgroup, mntns, exe_root)
+
+
+def exe_inode_root_owned(proc_dir):
+    """Whether the executable a process runs (the inode, also once deleted)
+    is a root-owned regular file without group/other write; None if it
+    can't be read (the process exited)."""
+    try:
+        st = os.stat(os.path.join(proc_dir, "exe"))
+    except OSError:
+        return None
+    return stat.S_ISREG(st.st_mode) and st.st_uid == 0 and not st.st_mode & 0o022
 
 
 def list_procs(proc_root):
@@ -3862,9 +3881,10 @@ def root_owned_chain(path, lstat=os.lstat):
     return True
 
 
-def program_status(exe, patterns, cache):
+def program_status(exe, patterns, cache, exe_root=None):
     """'trusted', 'writable' (an expected program whose path the runtime user
-    could change) or 'unknown'."""
+    could change) or 'unknown'. exe_root: for a deleted executable, whether
+    its running inode is root's."""
     if not exe_allowed(exe, patterns):
         return "unknown"
     deleted = exe.endswith(" (deleted)")
@@ -3872,7 +3892,10 @@ def program_status(exe, patterns, cache):
     if path.startswith(RUNTIME_OWNED_PROGRAM_DIRS):
         return "trusted"
     # A binary replaced by an upgrade while it runs is gone from its path:
-    # then the directory it ran from must be root's all the way up.
+    # then the running inode must be root's, and the directory it ran from
+    # root's all the way up.
+    if deleted and not exe_root:
+        return "writable"
     checked = os.path.dirname(path) if deleted else path
     if checked not in cache:
         cache[checked] = root_owned_chain(checked)
@@ -4013,13 +4036,13 @@ def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
         if project:
             rule, severity = "project-uid-outside-container", "critical"
         elif kind == "runtime":
-            status = program_status(p.exe, runtime_exes, chains)
+            status = program_status(p.exe, runtime_exes, chains, p.exe_root)
             if status == "unknown":
                 rule, severity = "unexpected-process-in-container-runtime", "critical"
             elif status == "writable":
                 rule, severity = "trusted-program-writable", "high"
         elif not cgroup_allowed(p.cgroup, script_cgroups):
-            status = program_status(p.exe, host_exes, chains)
+            status = program_status(p.exe, host_exes, chains, p.exe_root)
             if status == "unknown":
                 rule, severity = "unexpected-runtime-user-process", "high"
             elif status == "writable":
