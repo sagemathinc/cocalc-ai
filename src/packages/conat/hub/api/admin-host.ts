@@ -8,7 +8,6 @@ import type {
   HostAbuseFilesystemSnapshotResponse,
   HostAbuseProcessSnapshotResponse,
   HostFilesystemSnapshotResponse,
-  HostIntrusionSnapshotResponse,
   HostNetworkSnapshotResponse,
   HostPodmanSnapshotResponse,
   HostProcessSnapshotResponse,
@@ -182,19 +181,6 @@ export interface AdminHostFilesystemResponse {
   snapshot: HostFilesystemSnapshotResponse;
 }
 
-export interface AdminHostIntrusionSnapshotRequest {
-  host?: string;
-  host_id?: string;
-  reason?: string;
-}
-
-export interface AdminHostIntrusionSnapshotResponse {
-  audit_id: string;
-  host_id: string;
-  server_time: string;
-  snapshot: HostIntrusionSnapshotResponse;
-}
-
 export interface AdminHostPodmanRequest {
   host?: string;
   host_id?: string;
@@ -215,7 +201,6 @@ export const adminHost = {
   describe: authFirstRequireAccount,
   events: authFirstRequireAccount,
   filesystem: authFirstRequireAccount,
-  intrusionSnapshot: authFirstRequireAccount,
   logs: authFirstRequireAccount,
   net: authFirstRequireAccount,
   podman: authFirstRequireAccount,
@@ -237,9 +222,6 @@ export interface AdminHostApi {
   filesystem: (
     opts: AdminHostFilesystemRequest,
   ) => Promise<AdminHostFilesystemResponse>;
-  intrusionSnapshot: (
-    opts: AdminHostIntrusionSnapshotRequest,
-  ) => Promise<AdminHostIntrusionSnapshotResponse>;
   logs: (opts: AdminHostLogsRequest) => Promise<AdminHostLogsResponse>;
   net: (opts: AdminHostNetworkRequest) => Promise<AdminHostNetworkResponse>;
   podman: (opts: AdminHostPodmanRequest) => Promise<AdminHostPodmanResponse>;

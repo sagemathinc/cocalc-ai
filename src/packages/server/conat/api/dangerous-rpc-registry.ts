@@ -428,11 +428,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin-only bounded and audited project tree fingerprint inspection without file contents, paths, or symlink targets",
   },
-  "adminHost.intrusionSnapshot": {
-    decision: "fresh-auth-not-required",
-    reason:
-      "admin-only bounded and audited read-only host integrity snapshot without file contents, key material, argv, or process environments",
-  },
   "adminSupport.getAttachment": {
     decision: "fresh-auth-required",
     reason: "downloads unredacted customer support documents to an operator",

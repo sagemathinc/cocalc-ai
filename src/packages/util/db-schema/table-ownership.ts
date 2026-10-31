@@ -1457,10 +1457,10 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     secondary_reference_fields: {
       host_id: "Monitored host reference, not host placement authority.",
     },
-    source: "server host intrusion monitor schema bootstrap",
-    migrate_to_schema: true,
+    source: "retired server host intrusion monitor schema bootstrap",
+    migrate_to_schema: false,
     notes:
-      "Bay-local normalized host intrusion snapshots used for operator monitoring. They are diagnostic history, not authoritative host state.",
+      "RETIRED: rows from the removed legacy host intrusion monitor (superseded by the host integrity watcher). Nothing writes or reads it any more; kept for one release so a rolled-back bay still finds it, then dropped in a follow-up.",
   }),
 
   ...adHocEntries(

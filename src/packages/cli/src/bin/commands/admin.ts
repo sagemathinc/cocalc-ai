@@ -72,8 +72,6 @@ import { registerCrmCommand } from "./admin/crm";
 import { registerParallelOpsCommand } from "./admin/parallel-ops";
 import { registerAdminUsernameCommand } from "./personal-urls";
 
-const ADMIN_HOST_INTRUSION_SNAPSHOT_TIMEOUT_MS = 130_000;
-
 export type AdminCommandDeps = {
   withContext: any;
   resolveAccountByIdentifier: any;
@@ -2877,28 +2875,6 @@ Merge comments are private unless their corresponding --*-comment-public flag is
             reason: opts.reason,
           });
         });
-      },
-    );
-
-  adminHost
-    .command("intrusion-snapshot <host>")
-    .description(
-      "collect an audited, bounded host integrity and persistence snapshot",
-    )
-    .option("--reason <reason>", "human-readable reason for audit")
-    .action(
-      async (host: string, opts: { reason?: string }, command: Command) => {
-        await withContext(
-          command,
-          "admin host intrusion-snapshot",
-          async (ctx) => {
-            return await ctx.hub.adminHost.intrusionSnapshot({
-              host,
-              reason: opts.reason,
-              timeout: ADMIN_HOST_INTRUSION_SNAPSHOT_TIMEOUT_MS,
-            });
-          },
-        );
       },
     );
 
