@@ -9327,6 +9327,22 @@ class HostIntegrityWatchTest(unittest.TestCase):
             "project-uid-outside-container",
             {f["rule"] for f in w.findings.values()},
         )
+        # Later, half of them are gone and a new high finding appears: it is
+        # kept, and an older one of the same severity goes.
+        for i in range(60):
+            shutil.rmtree(self.proc / str(1000 + i))
+        self.add_proc(3000, 1, "tool", self.uid, "/usr/bin/tool-new", self.HOST_NS)
+        w.step(2000.0)
+        exes = {f["exe"] for f in w.findings.values()}
+        self.assertEqual(len(w.findings), 100)
+        self.assertIn("/usr/bin/tool-new", exes)
+        self.assertIn("/usr/bin/dash", exes)
+        self.assertTrue(all(f"/usr/bin/tool-{i}" in exes for i in range(60, 120)))
+        # Not seen for a day: dropped (the processes that are gone).
+        w.step(2000.0 + 24 * 3600 + 60)
+        exes = {f["exe"] for f in w.findings.values()}
+        self.assertEqual(len(exes), 62)
+        self.assertFalse(any(f"/usr/bin/tool-{i}" in exes for i in range(60)))
 
     def test_allowlist_file_extends_the_defaults(self) -> None:
         self.add_proc(52, 1, "curl", self.uid, "/usr/bin/curl", self.HOST_NS)

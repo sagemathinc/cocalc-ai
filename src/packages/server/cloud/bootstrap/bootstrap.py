@@ -3678,6 +3678,7 @@ DEFAULT_CONFIG_PATHS = (
 
 MAX_FINDINGS = 100
 SEVERITY_RANK = {"critical": 0, "high": 1}
+FINDING_KEEP_S = 24 * 3600
 MAX_CONFIG_CHANGES = 200
 # A config change is reported while its file differs from the baseline, and
 # kept (no longer refreshed) for a day after that.
@@ -4144,13 +4145,17 @@ class Watcher:
                 new.append(entry)
             entry.update(f, last_seen=now_iso(now))
             entry["count"] += 1
+        # A finding not seen for a day is dropped; past the cap, the least
+        # severe go first, and the oldest of a severity before newer ones.
+        expired = now_iso(now - FINDING_KEEP_S)
+        for key in [k for k, f in self.findings.items() if f["last_seen"] < expired]:
+            del self.findings[key]
         if len(self.findings) > MAX_FINDINGS:
-            # drop the least severe, then the oldest
-            def keep_order(key):
+            def eviction_order(key):
                 f = self.findings[key]
-                return (SEVERITY_RANK.get(f["severity"], 2), f["last_seen"])
+                return (-SEVERITY_RANK.get(f["severity"], 2), f["last_seen"])
 
-            ordered = sorted(self.findings, key=keep_order, reverse=True)
+            ordered = sorted(self.findings, key=eviction_order)
             for key in ordered[: len(self.findings) - MAX_FINDINGS]:
                 del self.findings[key]
         return new
