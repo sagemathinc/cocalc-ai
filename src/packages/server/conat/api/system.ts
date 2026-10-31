@@ -36,6 +36,10 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getHostIntrusionObservationSummary } from "@cocalc/server/hosts/intrusion-monitor";
 import {
+  getHostIntegritySummary,
+  hostIntegrityHealth,
+} from "@cocalc/server/hosts/host-integrity-health";
+import {
   getHostKernelHardeningSummary,
   kernelHardeningHealth,
 } from "@cocalc/server/hosts/kernel-hardening-health";
@@ -2317,6 +2321,7 @@ export async function getLaunchHealth({
     backupPurgeResult,
     billingExposureResult,
     kernelHardeningResult,
+    hostIntegrityResult,
     backupRepoResult,
     archiveHostCoverageResult,
     archiveBlockedResult,
@@ -2347,6 +2352,7 @@ export async function getLaunchHealth({
     getBackupPurgeHealth(),
     getBillingExposureHealth({ bay_id: currentBay.bay_id }),
     getHostKernelHardeningSummary(),
+    getHostIntegritySummary(),
     (async () =>
       await getProjectBackupRepoHealth({
         seed_managed: projectBackupReposAreSeedManaged(),
@@ -2601,6 +2607,11 @@ export async function getLaunchHealth({
       id: "project-host-kernel-hardening",
       label: "Project host kernel hardening",
       ...kernelHardeningHealth(kernelHardeningResult),
+    }),
+    launchHealthCheck({
+      id: "project-host-integrity",
+      label: "Project host integrity",
+      ...hostIntegrityHealth(hostIntegrityResult),
     }),
     launchHealthCheck({
       id: "kill-switches",
