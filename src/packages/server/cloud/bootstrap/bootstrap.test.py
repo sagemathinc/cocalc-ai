@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import contextlib
+import fcntl
 import io
 import hashlib
 import inspect
@@ -594,6 +596,23 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                                capture_output=True)
                 subprocess.run(["btrfs", "subvolume", "delete", f"{root}/{name}"], capture_output=True)
 
+    def test_mkfs_btrfs_refuses_a_concurrent_run(self) -> None:
+        namespace = self.helper_namespace()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with open(root / "cocalc.img", "wb") as f:
+                f.truncate(1 << 20)
+            held = os.open(root / "cocalc.img", os.O_RDWR)
+            try:
+                fcntl.flock(held, fcntl.LOCK_EX)
+                with self.assertRaisesRegex(ValueError, "already running"):
+                    namespace["run_mkfs_btrfs"](
+                        ["mkfs-btrfs", "--root", str(root), "--path", "cocalc.img"],
+                        image_root=str(root), owner_uid=os.getuid(), executable="/bin/false",
+                    )
+            finally:
+                os.close(held)
+
     def test_mkfs_btrfs_only_on_a_new_image(self) -> None:
         namespace = self.helper_namespace()
         run_mkfs = namespace["run_mkfs_btrfs"]
@@ -759,7 +778,23 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         ):
             with self.subTest(args=args):
                 self.assertEqual(check(*args), "DENY bees-args-invalid")
-        functions = self.wrapper_function(script, "require_bees_mountpoint") + self.wrapper_function(script, "require_bees_home")
+        functions = (
+            self.wrapper_function(script, "root_only_directory")
+            + self.wrapper_function(script, "require_bees_mountpoint")
+            + self.wrapper_function(script, "require_bees_home")
+        )
+        # As root would see it: owner 0 and a given mode.
+        fake_stat = 'stat() { case "$2" in %u) echo 0 ;; %a) echo "$FAKE_MODE" ;; esac; }\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / ".beeshome").mkdir()
+            for mode, expected in (("755", "OK"), ("700", "OK"), ("775", "DENY"), ("757", "DENY"), ("1777", "DENY")):
+                with self.subTest(mode=mode):
+                    out = subprocess.run(
+                        ["bash", "-c", 'deny() { echo "DENY $1"; exit 2; }\n' + fake_stat + functions
+                         + 'require_bees_home "$1"; echo OK', "_", tmpdir],
+                        capture_output=True, text=True, env={**os.environ, "FAKE_MODE": mode},
+                    ).stdout.strip()
+                    self.assertTrue(out.startswith(expected), out)
         harness = 'deny() { echo "DENY $1"; exit 2; }\n' + functions + '"$1" "$2"; echo OK\n'
 
         def require(name, path):
@@ -3147,7 +3182,8 @@ class CocalcInstallRootTest(unittest.TestCase):
                 owners[state] = runtime_owner
                 (state / "keep").write_text("state")
                 owners[state / "keep"] = runtime_owner
-                with mock.patch.object(bootstrap, "COCALC_STATE_ROOT", state):
+                with mock.patch.object(bootstrap, "COCALC_STATE_ROOT", state), \
+                        mock.patch.object(bootstrap.os, "geteuid", return_value=0):
                     bootstrap.prepare_dirs(cfg)
                 self.assertEqual(owners[self.base], (0, 0))
                 # /var/lib/cocalc is root's now; only that inode migrates.
@@ -8543,6 +8579,56 @@ class BootstrapModesTest(unittest.TestCase):
                     self.assertEqual(result, 1)
                     report.assert_called_once_with(cfg, "error", error)
 
+    def test_every_mode_makes_the_state_root_root_owned_first(self) -> None:
+        # Each mode writes beneath /var/lib/cocalc by name (lifecycle export,
+        # status); the ownership migration must come before any of that.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            for mode in (["provision"], ["reconcile"], ["helpers"], ["environment"], ["status"], ["bootstrap"],
+                         ["reconcile", "--only", "cloudflared"]):
+                events: list[str] = []
+
+                def record(name):
+                    return lambda *_args, **_kwargs: events.append(name) or 0
+
+                with self.subTest(mode=mode), \
+                        mock.patch.object(bootstrap, "load_config", return_value=cfg), \
+                        mock.patch.object(bootstrap, "bootstrap_operation_lock", return_value=contextlib.nullcontext()), \
+                        mock.patch.object(bootstrap, "log_line"), \
+                        mock.patch.object(bootstrap, "ensure_cocalc_state_root", side_effect=record("state-root")), \
+                        mock.patch.object(bootstrap, "write_bootstrap_state_files", side_effect=record("state-files")), \
+                        mock.patch.object(bootstrap, "json_load", return_value={}), \
+                        mock.patch.object(bootstrap, "bootstrap_state_path", return_value=Path(tmpdir) / "s.json"), \
+                        mock.patch.object(bootstrap, "ensure_runtime_user", side_effect=record("runtime-user")), \
+                        mock.patch.object(bootstrap, "ensure_bootstrap_paths"), \
+                        mock.patch.object(bootstrap, "configure_cloudflared_with_options"), \
+                        mock.patch.object(bootstrap, "run_provision", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_reconcile", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_reconcile_helpers", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_reconcile_environment", side_effect=record("run")), \
+                        mock.patch.object(bootstrap, "run_bootstrap", side_effect=record("run")), \
+                        mock.patch("sys.stdout", new_callable=io.StringIO):
+                    bootstrap.main([*mode, "--bootstrap-dir", cfg.bootstrap_dir])
+                    self.assertGreater(len(events), 1)
+                    self.assertEqual(events[0], "state-root")
+        # And each run_* entry point starts with it, before record_operation_start.
+        for runner in ("run_provision", "run_reconcile", "run_reconcile_helpers", "run_reconcile_environment"):
+            source = inspect.getsource(getattr(bootstrap, runner))
+            with self.subTest(runner=runner):
+                self.assertLess(source.index("ensure_cocalc_state_root(cfg)"), source.index("report_bootstrap_status("))
+                self.assertLess(source.index("ensure_cocalc_state_root(cfg)"), source.index("record_operation_start("))
+
+    def test_state_root_migration_is_a_noop_without_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = Path(tmpdir) / "state"
+            state.mkdir(mode=0o775)
+            with mock.patch.object(bootstrap, "COCALC_STATE_ROOT", state), \
+                    mock.patch.object(bootstrap, "log_line"), \
+                    mock.patch.object(bootstrap.os, "geteuid", return_value=1000), \
+                    mock.patch.object(bootstrap.os, "fchown") as fchown:
+                bootstrap.ensure_cocalc_state_root(make_cfg(tmpdir))
+            fchown.assert_not_called()
+
     def test_reconcile_mode_runs_under_lifecycle_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
@@ -8670,13 +8756,14 @@ class BootstrapModesTest(unittest.TestCase):
             self.assertEqual(
                 events,
                 [
+                    # Before anything is written beneath /var/lib/cocalc.
+                    "ensure_cocalc_state_root",
                     "start:reconcile",
                     "ensure_runtime_user",
                     "ensure_bootstrap_paths",
                     "configure_rsyslog_limits",
                     "configure_daily_root_cleanup",
                     "configure_kernel_sysctl_hardening",
-                    "ensure_cocalc_state_root",
                     "install_privileged_wrappers",
                     "install_privileged_tool_binaries",
                     "write_helpers",
@@ -8703,7 +8790,7 @@ class BootstrapModesTest(unittest.TestCase):
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
-            "configure_rsyslog_limits ensure_cocalc_state_root install_btrfs_helper "
+            "configure_rsyslog_limits install_btrfs_helper "
             "install_privileged_wrappers reconcile_storage_and_containment "
             "ensure_subuids ensure_runtime_user_manager configure_podman "
             "verify_runtime_user_contract write_env configure_runtime_shell_env "
@@ -8775,7 +8862,7 @@ class BootstrapModesTest(unittest.TestCase):
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
-            "configure_rsyslog_limits ensure_cocalc_state_root install_btrfs_helper "
+            "configure_rsyslog_limits install_btrfs_helper "
             "install_privileged_wrappers ensure_cocalc_mount setup_shared_scratch "
             "ensure_btrfs_data reconcile_bees_runtime_policy "
             "reconcile_project_io_policy reconcile_host_service_cgroup "

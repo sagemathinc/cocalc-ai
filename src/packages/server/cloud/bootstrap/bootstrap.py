@@ -4037,6 +4037,9 @@ def ensure_cocalc_state_root(cfg: BootstrapConfig) -> None:
     /var/lib/cocalc and mount the loop image from it by name, so the runtime
     user must not be able to rename or replace anything there.  The runtime
     user only reads the published bootstrap-lifecycle view."""
+    if os.geteuid() != 0:
+        log_line(cfg, f"bootstrap: not root; leaving {COCALC_STATE_ROOT} ownership unchanged")
+        return
     path = COCALC_STATE_ROOT
     _require(path.resolve() == path, f"CoCalc state root contains a symlink: {path}")
     path.mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -7115,6 +7118,11 @@ def run_mkfs_btrfs(argv, image_root=MKFS_IMAGE_ROOT, owner_uid=0, executable=Non
     finally:
         os.close(rootfd)
     try:
+        # Two concurrent calls must not both see a fresh image.
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fail("mkfs.btrfs is already running on this image")
         info = os.fstat(fd)
         if (
             not stat.S_ISREG(info.st_mode)
@@ -9558,20 +9566,29 @@ enter_pinned_tree() {
 }
 
 # BEES runs only on the data filesystem's root.  It and its .beeshome must be
-# root-owned real directories: root opens files beneath them by name.
+# root-owned real directories that nobody else can write: root opens files
+# beneath them by name.
+root_only_directory() {
+  local path="$1" mode
+  [ ! -L "$path" ] && [ -d "$path" ] || return 1
+  [ "$(stat -c '%u' "$path" 2>/dev/null)" = "0" ] || return 1
+  mode="$(stat -c '%a' "$path" 2>/dev/null)"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] && [ "$((8#$mode & 022))" -eq 0 ]
+}
+
 require_bees_mountpoint() {
   local mountpoint="$1"
   if [ "$mountpoint" != "/mnt/cocalc" ]; then
     deny "bees-mountpoint-not-allowed" "$mountpoint"
   fi
-  if [ -L "$mountpoint" ] || [ ! -d "$mountpoint" ] || [ "$(stat -c '%u' "$mountpoint" 2>/dev/null)" != "0" ]; then
+  if ! root_only_directory "$mountpoint"; then
     deny "bees-mountpoint-not-root-owned" "$mountpoint"
   fi
 }
 
 require_bees_home() {
   local beeshome="$1/.beeshome"
-  if [ -L "$beeshome" ] || [ ! -d "$beeshome" ] || [ "$(stat -c '%u' "$beeshome" 2>/dev/null)" != "0" ]; then
+  if ! root_only_directory "$beeshome"; then
     deny "bees-home-invalid" "$beeshome"
   fi
 }
@@ -15544,6 +15561,8 @@ def touch_paths(paths: list[str]) -> None:
 
 def run_provision(cfg: BootstrapConfig) -> int:
     log_line(cfg, "bootstrap: starting provision")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(cfg, "running", "Preparing bootstrap environment")
     record_operation_start(cfg, "provision")
     try:
@@ -15580,6 +15599,8 @@ def run_provision(cfg: BootstrapConfig) -> int:
 
 def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int:
     log_line(cfg, "bootstrap: starting reconcile")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(cfg, "running", "Reconciling host software")
     record_operation_start(cfg, "reconcile")
     # At boot, systemd has already started the stack; restarting it again
@@ -15599,7 +15620,6 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         configure_journald_limits(cfg)
         configure_rsyslog_limits(cfg)
         image_size_gb = compute_image_size(cfg)
-        ensure_cocalc_state_root(cfg)
         install_btrfs_helper(cfg)
         install_privileged_wrappers(cfg)
         reconcile_storage_and_containment(cfg)
@@ -15673,6 +15693,8 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
 
 def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
     log_line(cfg, "bootstrap: starting helper-only reconcile")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(cfg, "running", "Reconciling privileged host helpers")
     record_operation_start(cfg, "reconcile")
     try:
@@ -15681,7 +15703,6 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         configure_rsyslog_limits(cfg)
         configure_daily_root_cleanup(cfg)
         configure_kernel_sysctl_hardening(cfg)
-        ensure_cocalc_state_root(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)
         write_helpers(cfg)
@@ -15704,6 +15725,8 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
 
 def run_reconcile_environment(cfg: BootstrapConfig) -> int:
     log_line(cfg, "bootstrap: starting environment-only reconcile")
+    # Before anything is written beneath /var/lib/cocalc by name.
+    ensure_cocalc_state_root(cfg)
     report_bootstrap_status(
         cfg, "running", "Reconciling managed project-host environment"
     )
@@ -15773,6 +15796,9 @@ def main(argv: list[str]) -> int:
     if not bootstrap_dir:
         parser.error("one of --bootstrap-dir or --config is required")
     cfg = load_config(bootstrap_dir)
+    # Every mode writes beneath /var/lib/cocalc by name (lifecycle export,
+    # status): make it root's first.
+    ensure_cocalc_state_root(cfg)
     only = parse_only(args.only)
     log_line(cfg, "bootstrap: starting python bootstrap")
     log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")
