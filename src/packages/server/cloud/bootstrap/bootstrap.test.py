@@ -276,8 +276,12 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
         for command in ("chown", "chmod", "chattr-cow", "rename", "rm", "mkdir", "copy-tree-reflink"):
             with self.subTest(command=command), self.assertRaises(ValueError):
                 check("/var/lib/cocalc", "cocalc.img", command, generic_roots)
-        # Callers that stay allowed: the mount root and the loop images.
-        check("/mnt/cocalc", ".", "chown", generic_roots)
+        # The data filesystem's root itself stays root's (BEES, R1).
+        for command in ("chown", "chmod", "chattr-cow", "truncate"):
+            with self.subTest(command=command), self.assertRaisesRegex(ValueError, "itself"):
+                check("/mnt/cocalc", ".", command, generic_roots)
+        # Callers that stay allowed.
+        check("/mnt/cocalc", "project-1", "chown", generic_roots)
         check("/mnt/cocalc", "data", "chmod", generic_roots)
         check("/mnt/cocalc", "data/secrets-other", "rm", generic_roots)
         check("/mnt/cocalc", "project-1", "rm", generic_roots)

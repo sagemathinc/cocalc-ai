@@ -5567,6 +5567,9 @@ SECRET_ROOTS = {"/var/lib/cocalc/star/project-host/0/secrets/rustic"}
 GENERIC_ONLY_PATHS = {"/var/lib/cocalc": ({"btrfs.img", "cocalc.img"}, {"truncate"})}
 CREATE_ONLY_ROOTS = {"/var/lib/cocalc"}
 GENERIC_PROTECTED_PATHS = {"/mnt/cocalc": ("data/secrets",)}
+# The data filesystem's root stays root-owned: BEES and the R1 project-root
+# hardening rely on it, so no generic verb may change it.
+GENERIC_FIXED_ROOTS = {"/mnt/cocalc"}
 # Verbs that act on a whole tree must not take a protected subtree with them.
 TREE_COMMANDS = {"copy-tree-preserve", "copy-tree-reflink", "rename", "rm", "rmdir"}
 STICKY_ROOTS = {"/mnt/cocalc-scratch"}
@@ -6859,6 +6862,8 @@ def check_generic_path(root, path, command, generic_roots):
     only = GENERIC_ONLY_PATHS.get(root)
     if only is not None and (path not in only[0] or command not in only[1]):
         fail(f"{command} of this path is not allowed beneath {root}: {path!r}")
+    if path == "." and root in GENERIC_FIXED_ROOTS:
+        fail(f"{command} of {root} itself is not allowed")
     for protected in GENERIC_PROTECTED_PATHS.get(root, ()):
         if path == protected or path.startswith(protected + "/"):
             fail(f"path is protected: {path!r}")
@@ -11666,7 +11671,8 @@ def detect_type(st):
 
 def sha256_file(path):
     h = hashlib.sha256()
-    with open(path, "rb") as handle:
+    # The entry was lstat-ed as a regular file; never follow a swapped-in link.
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
