@@ -18,9 +18,11 @@ several browsers: each frame runs its own widget manager over all models, and
 per-model sequence numbers (last_changed) make updates converge.  A frame's
 own writes don't fire local change events, so the relay forwards them to the
 notebook's other frames itself.  Because every frame runs every model, derived
-updates (jslink, models that recompute) and creation-time messages repeat in
-each frame: writes that change nothing are dropped, and a comm message that
-another frame sent identically a moment ago is not sent again.
+updates (jslink, models that recompute) and initialization messages repeat in
+each frame: writes that change nothing are dropped, and an initialization
+message (request_state) that another frame sent identically a moment ago is
+not sent again.  Other comm messages, such as clicks, are user actions and are
+always sent.
 
 What a frame may write is narrow (see setModelValue and sendComm): values of
 keys a model already has, never its identity (the "_" keys, which choose the
@@ -52,6 +54,9 @@ const ENTRY_TYPES = new Set(["state", "value", "buffers", "message"]);
 
 // How long an identical comm message from another frame counts as a repeat.
 const DUPLICATE_MESSAGE_MS = 2000;
+// Comm methods every frame sends for a model it runs (deduplicated across
+// frames); anything else is a separate action.
+const INIT_COMM_METHODS = new Set<unknown>(["request_state"]);
 
 // The comm messages widget views send, by method, with the keys allowed.
 const COMM_SHAPES: { [method: string]: Set<string> } = {
@@ -485,9 +490,13 @@ export class WidgetRelay {
             return;
           }
         }
-        if (buffers == null || buffers.length === 0) {
-          // Every frame runs every model, so creation-time messages arrive
-          // once per frame.
+        // Every frame runs every model, so initialization messages arrive
+        // once per frame. Only those are deduplicated: identical user
+        // actions (e.g. clicks on two views of one button) are distinct.
+        if (
+          INIT_COMM_METHODS.has(data.method) &&
+          (buffers == null || buffers.length === 0)
+        ) {
           if (this.isRepeat(conn, JSON.stringify([comm_id, data]))) return;
         }
         if (!this.allowWrite(conn)) return;

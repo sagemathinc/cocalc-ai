@@ -279,6 +279,23 @@ describe("WidgetRelay", () => {
     expect(sendComm).toHaveBeenCalledTimes(2);
   });
 
+  it("sends identical user actions from several frames each time", async () => {
+    const { relay, sendComm } = setup();
+    // two views of the same button, each in its own frame
+    const a = connect(relay, "box");
+    const b = connect(relay, "s1");
+    await settle();
+    const click = {
+      type: "sendComm",
+      comm_id: "s1",
+      data: { method: "custom", content: { event: "click" } },
+    };
+    a.send(click);
+    b.send(click);
+    await settle();
+    expect(sendComm).toHaveBeenCalledTimes(2);
+  });
+
   it("answers buffer requests for models of the notebook only", async () => {
     const { relay } = setup();
     const frame = connect(relay);
