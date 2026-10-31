@@ -10069,21 +10069,34 @@ def image_caps_preflight(treefd, *, deadline, state_path=IMAGE_CAPS_STATE, confi
 IMAGE_CACHE_RELATIVE = "data/cache/images"
 
 
-def run_image_caps_preflight(argv, allowed_roots=ALLOWED_ROOTS):
-    """image-caps-preflight --root R --path P: an image workflow's explicit
-    preflight of one image root (generic copies never walk their source).
-    For image roots only: a host-global capability in a project home is
-    evidence of a crafted restore (finding 011) to investigate, not to
-    convert silently."""
-    values, _flags = parse_named_options(argv, "image-caps-preflight", {"--root", "--path"}, {"--root", "--path"})
-    validate_relative(values["path"], allow_root=True)
-    rootfd = open_root(values["root"], set(allowed_roots) - SECRET_ROOTS)
+def open_image_cache(cache_root, cache_relative):
+    rootfd = open_root(cache_root, {cache_root})
     try:
-        treefd = openat2(rootfd, values["path"], O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        return openat2(rootfd, cache_relative, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     finally:
         os.close(rootfd)
+
+
+def run_image_caps_preflight(argv, cache_root="/mnt/cocalc", cache_relative=IMAGE_CACHE_RELATIVE, preflight=None):
+    """image-caps-preflight --root /mnt/cocalc --path data/cache/images/NAME:
+    an image workflow's explicit preflight of one image root.  Only image
+    roots directly in the pinned image cache: a host-global capability
+    anywhere else (a project home) is evidence of a crafted restore
+    (finding 011) to investigate, and the runtime user must not be able to
+    convert it away."""
+    values, _flags = parse_named_options(argv, "image-caps-preflight", {"--root", "--path"}, {"--root", "--path"})
+    prefix = cache_relative + "/"
+    name = values["path"][len(prefix):] if values["path"].startswith(prefix) else ""
+    if values["root"] != cache_root or not name or "/" in name or name in (".", ".."):
+        fail("image-caps-preflight only takes an image root in the image cache")
+    preflight = preflight or image_caps_preflight
+    cachefd = open_image_cache(cache_root, cache_relative)
     try:
-        outcome = image_caps_preflight(treefd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS)
+        treefd = openat2(cachefd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    finally:
+        os.close(cachefd)
+    try:
+        outcome = preflight(treefd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS)
     finally:
         os.close(treefd)
     print(json.dumps({"image_caps": outcome}), flush=True)
@@ -10093,25 +10106,39 @@ def run_image_caps_preflight(argv, allowed_roots=ALLOWED_ROOTS):
 def run_migrate_image_caps(argv, cache_root="/mnt/cocalc", cache_relative=IMAGE_CACHE_RELATIVE, preflight=None):
     """migrate-image-caps: preflight every image under the pinned image
     cache (a one-off after rollout; stamped images are skipped).  Reports
-    each image; exits nonzero if any failed (those stay unstamped)."""
+    each entry.  Any image directory that cannot be examined, opened or
+    walked counts as failed (exit 1); only plain files are skipped, and an
+    entry that vanished during the pass is reported as such."""
     if argv != ["migrate-image-caps"]:
         fail("usage: migrate-image-caps")
     preflight = preflight or image_caps_preflight
-    rootfd = open_root(cache_root, {cache_root})
-    try:
-        cachefd = openat2(rootfd, cache_relative, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-    finally:
-        os.close(rootfd)
+    cachefd = open_image_cache(cache_root, cache_relative)
     failed = 0
+
+    def report(name, outcome):
+        print(json.dumps({"image": name, "image_caps": outcome}), flush=True)
+
     try:
         for name in sorted(os.listdir(cachefd)):
-            if name.startswith("."):
-                continue
             try:
-                if not stat.S_ISDIR(os.stat(name, dir_fd=cachefd, follow_symlinks=False).st_mode):
-                    continue
+                info = os.stat(name, dir_fd=cachefd, follow_symlinks=False)
+            except FileNotFoundError:
+                report(name, "vanished")
+                continue
+            except OSError as err:
+                failed += 1
+                report(name, f"failed: {err}")
+                continue
+            if not stat.S_ISDIR(info.st_mode):
+                continue  # metadata files (.<image>.json) and the like
+            try:
                 treefd = openat2(cachefd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
-            except OSError:
+            except FileNotFoundError:
+                report(name, "vanished")
+                continue
+            except OSError as err:
+                failed += 1
+                report(name, f"failed: {err}")
                 continue
             try:
                 outcome = preflight(treefd, deadline=time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS)
@@ -10120,7 +10147,7 @@ def run_migrate_image_caps(argv, cache_root="/mnt/cocalc", cache_relative=IMAGE_
                 outcome = f"failed: {err}"
             finally:
                 os.close(treefd)
-            print(json.dumps({"image": name, "image_caps": outcome}), flush=True)
+            report(name, outcome)
     finally:
         os.close(cachefd)
     return 1 if failed else 0
@@ -11705,7 +11732,7 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
         if argv and argv[0] == "pin-exec":
             return run_pin_exec(argv, allowed_roots)
         if argv and argv[0] == "image-caps-preflight":
-            return run_image_caps_preflight(argv, allowed_roots)
+            return run_image_caps_preflight(argv)
         if argv and argv[0] == "migrate-image-caps":
             return run_migrate_image_caps(argv)
         if argv and argv[0] == "_confined-exec":
@@ -16329,11 +16356,17 @@ PY' bash "$tree"
     ;;
   image-caps-preflight)
     # One image root: convert or remove its file capabilities (finding 014).
-    # Image roots only, never project homes: a host-global capability there
-    # is incident evidence (finding 011), not something to convert.
+    # Image roots in the image cache only, never project homes: a
+    # host-global capability there is incident evidence (finding 011).
     if [ "$#" -ne 1 ]; then
       deny "image-caps-preflight-args-invalid" "$*"
     fi
+    case "$1" in
+      /mnt/cocalc/data/cache/images/*/*|/mnt/cocalc/data/cache/images/.|/mnt/cocalc/data/cache/images/..)
+        deny "image-caps-preflight-not-an-image" "$1" ;;
+      /mnt/cocalc/data/cache/images/?*) ;;
+      *) deny "image-caps-preflight-not-an-image" "$1" ;;
+    esac
     require_allowed_path_parts "$1"
     exec /usr/local/libexec/cocalc-runtime-storage-path-helper image-caps-preflight --root "$ALLOWED_PATH_ROOT" --path "$ALLOWED_PATH_REL"
     ;;

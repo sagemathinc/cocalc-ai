@@ -1487,11 +1487,76 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
                     raise subprocess.CalledProcessError(2, ["walk"])
                 return "walked"
 
+            (cache / ".partial").mkdir()  # dot-directories are walked too
             with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
                 code = namespace["run_migrate_image_caps"](["migrate-image-caps"], cache_root=str(root), preflight=preflight)
             self.assertEqual(code, 1)
-            self.assertEqual(seen, ["a", "b"])
+            self.assertEqual(seen, [".partial", "a", "b"])
             self.assertIn('"image": "b"', out.getvalue())
+            # An image that cannot be examined or opened fails the run; one
+            # that vanished mid-pass is reported, not counted.
+            seen.clear()
+            real_stat, real_openat2 = namespace["os"].stat, namespace["openat2"]
+
+            def broken_stat(name, *args, **kwargs):
+                if name == "a":
+                    raise PermissionError(errno.EACCES, "denied")
+                if name == ".partial":
+                    raise FileNotFoundError(errno.ENOENT, "gone")
+                return real_stat(name, *args, **kwargs)
+
+            def broken_openat2(dirfd, name, *args, **kwargs):
+                if name == "b":
+                    raise OSError(errno.EIO, "I/O error")
+                return real_openat2(dirfd, name, *args, **kwargs)
+
+            namespace["openat2"] = broken_openat2
+            with mock.patch.object(namespace["os"], "stat", side_effect=broken_stat), \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                code = namespace["run_migrate_image_caps"](["migrate-image-caps"], cache_root=str(root),
+                                                           preflight=lambda fd, **_k: "walked")
+            namespace["openat2"] = real_openat2
+            reports = {r["image"]: r["image_caps"] for r in map(json.loads, out.getvalue().splitlines())}
+            self.assertEqual(code, 1)
+            self.assertTrue(reports["a"].startswith("failed:"))
+            self.assertTrue(reports["b"].startswith("failed:"))
+            self.assertEqual(reports[".partial"], "vanished")
+
+    def test_image_caps_preflight_only_takes_image_cache_roots(self) -> None:
+        namespace = self.helper_namespace()
+        run = namespace["run_image_caps_preflight"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "data" / "cache" / "images" / "ubuntu").mkdir(parents=True)
+            (root / "project-1").mkdir()
+            (root / "data" / "cache" / "images" / "home").symlink_to(root / "project-1", target_is_directory=True)
+            seen = []
+
+            def preflight(fd, **_kwargs):
+                seen.append(os.readlink(f"/proc/self/fd/{fd}"))
+                return "walked"
+
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                self.assertEqual(run(["image-caps-preflight", "--root", str(root), "--path", "data/cache/images/ubuntu"],
+                                     cache_root=str(root), preflight=preflight), 0)
+            self.assertEqual(seen, [str(root / "data" / "cache" / "images" / "ubuntu")])
+            for root_arg, path, error in [
+                (str(root), "project-1", ValueError),  # a project home: refused
+                (str(root), "data/cache/images", ValueError),
+                (str(root), "data/cache/images/ubuntu/usr", ValueError),
+                (str(root), "data/cache/images/..", ValueError),
+                (str(root), "data/cache/imagesX/ubuntu", ValueError),
+                ("/var/lib/cocalc", "data/cache/images/ubuntu", ValueError),
+                (str(root), "data/cache/images/home", OSError),  # symlinked entry never followed
+            ]:
+                with self.subTest(path=path), self.assertRaises(error):
+                    run(["image-caps-preflight", "--root", root_arg, "--path", path],
+                        cache_root=str(root), preflight=preflight)
+            self.assertEqual(len(seen), 1)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = bootstrap_storage_wrapper_for(make_cfg(tmpdir))
+        branch = script.split("\n  image-caps-preflight)\n", 1)[1].split("\n    ;;\n", 1)[0]
+        self.assertIn("image-caps-preflight-not-an-image", branch)
 
     def test_confined_spec_is_strict(self) -> None:
         namespace = self.helper_namespace()
