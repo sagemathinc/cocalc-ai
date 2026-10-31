@@ -10,6 +10,7 @@ import { getMountPoint } from "./file-server";
 import type { AppStaticIntegrationSpec } from "./public-viewer";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 import { projectAppKey } from "@cocalc/conat/auth/project-app-capability";
+import { appRootMountBase } from "@cocalc/util/project-app-root";
 
 const SUPPORT_FILES = new Set([
   "runtime-state.json",
@@ -143,9 +144,8 @@ export async function appRootMountForKey({
       continue;
     }
     if (specKey !== key) continue;
-    if (spec.proxy?.strip_prefix === false) return;
-    const base = normalizePrefix(spec.proxy?.base_path ?? "/");
-    if (base === "/" || /[?#\\]/.test(base) || base.includes("//")) return;
+    const base = appRootMountBase(spec.proxy);
+    if (base == null) return;
     return { mount: `/${project_id}${base}`, app_id: spec.id };
   }
 }

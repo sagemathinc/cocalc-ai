@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { appsAtRoot } from "./apps-at-root";
+import { appServedAtRoot, staticAppBasePath } from "./apps-at-root";
 import getPort from "get-port";
 import { spawn } from "node:child_process";
 import net from "node:net";
@@ -68,7 +68,6 @@ interface RunningApp {
   exit?: { code: number | null; signal: NodeJS.Signals | null };
 }
 
-
 interface StaticRefreshState {
   running?: Promise<void>;
   last_hit_ms?: number;
@@ -100,8 +99,9 @@ export interface AppStatus {
   mtime?: number;
   port?: number;
   url?: string;
-  // The base URL the app was started with: "/" when it runs at the root of
-  // its own app origin (no base URL).
+  // The base URL the app runs with: "/" when it runs at the root of its
+  // own app origin (no base URL); also set for static and unmanaged apps
+  // the host serves at the root.
   base_url?: string;
   ready?: boolean;
   pid?: number;
@@ -693,7 +693,10 @@ async function runStaticRefresh(
     ...(refreshSpec.command.env ?? {}),
     APP_ID: spec.id,
     APP_STATIC_ROOT: spec.static.root,
-    APP_BASE_PATH: spec.proxy.base_path,
+    // "/" when the app is served at the root of its origin, like a managed
+    // service's APP_BASE_URL; the project-local path stays available.
+    APP_BASE_PATH: staticAppBasePath(spec.proxy),
+    APP_LOCAL_BASE_PATH: spec.proxy.base_path,
   };
   const run = (async () => {
     state.last_reason = reason;
@@ -877,7 +880,9 @@ export async function startApp(
     appId: spec.id,
   });
   const localUrl = getProxyUrl(port);
-  const appBaseUrl = appsAtRoot() ? "/" : localUrl;
+  // Only apps the host serves at the root of their origin run without a
+  // base URL; one that keeps its prefix (strip_prefix: false) keeps it.
+  const appBaseUrl = appServedAtRoot(spec.proxy) ? "/" : localUrl;
   const { exec: cmd, args } = resolveAppCommand({
     exec: spec.command.exec,
     args: spec.command.args ?? [],
@@ -981,6 +986,7 @@ export async function statusApp(id: string): Promise<AppStatus> {
     status.state = "running";
     status.ready = true;
     status.url = normalizePrefix(staticSpec.proxy.base_path);
+    if (appServedAtRoot(staticSpec.proxy)) status.base_url = "/";
     if (refreshState?.stdout?.length) status.stdout = refreshState.stdout;
     if (refreshState?.stderr?.length) status.stderr = refreshState.stderr;
     if (warnings.length > 0) status.warnings = warnings;
@@ -1000,6 +1006,7 @@ export async function statusApp(id: string): Promise<AppStatus> {
       ready,
       port,
       url: canonicalUrl,
+      ...(appServedAtRoot(serviceSpec.proxy) ? { base_url: "/" } : {}),
       warnings: [
         ready
           ? "Process lifecycle is unmanaged. CoCalc can open this app, but it does not start or stop the server."
