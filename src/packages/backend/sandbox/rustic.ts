@@ -56,6 +56,8 @@ import { isAbsolute, join, relative } from "path";
 import { rusticRepo } from "@cocalc/backend/data";
 import LRU from "lru-cache";
 import getLogger from "@cocalc/backend/logger";
+import { execFile } from "node:child_process";
+import { stat } from "node:fs/promises";
 
 const logger = getLogger("sandbox:rustic");
 const initializedTomlRepos = new Set<string>();
@@ -194,7 +196,12 @@ export default async function rustic(
       const options = withVerifyExisting(
         parseAndValidateOptions(args.slice(1, -2), whitelist.restore),
       );
-      return await runWithTomlInitFallback([...options, snapshot, destination]);
+      return await runWithTomlInitFallback([
+        ...(await sparseRestoreArgs()),
+        ...options,
+        snapshot,
+        destination,
+      ]);
     }
     case "forget": {
       const snapshots = args.slice(1);
@@ -233,6 +240,66 @@ export function withVerifyExisting(validated: string[]): string[] {
     }
   }
   return result;
+}
+
+// The capabilities a CoCalc rustic build reports with `version --json` (since
+// v0.11.4-cocalc.1); none for builds without the command, which then keep
+// their previous behaviour. Cached per binary, so an upgrade is noticed.
+const capabilities = new Map<string, Promise<Record<string, unknown>>>();
+
+export async function rusticCapabilities(
+  binary: string = rusticPath,
+): Promise<Record<string, unknown>> {
+  let key: string;
+  try {
+    const { mtimeMs, size } = await stat(binary);
+    key = `${binary}\0${mtimeMs}\0${size}`;
+  } catch {
+    return {};
+  }
+  let result = capabilities.get(key);
+  if (result == null) {
+    result = readCapabilities(binary);
+    capabilities.set(key, result);
+  }
+  return await result;
+}
+
+function readCapabilities(binary: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    execFile(
+      binary,
+      ["version", "--json"],
+      { timeout: 30_000, maxBuffer: 1 << 20, env: { PATH: "/usr/bin:/bin" } },
+      (err, stdout) => {
+        if (err) {
+          resolve({});
+          return;
+        }
+        try {
+          const caps = JSON.parse(stdout)?.capabilities;
+          resolve(
+            caps != null && typeof caps === "object" && !Array.isArray(caps)
+              ? caps
+              : {},
+          );
+        } catch {
+          resolve({});
+        }
+      },
+    );
+  });
+}
+
+// Restore holes as holes, failing rather than writing dense zeros, where the
+// rustic build supports it: a dense restore of a sparse file can exceed the
+// project's quota or fill the host's disk.
+export async function sparseRestoreArgs(
+  binary: string = rusticPath,
+): Promise<string[]> {
+  return (await rusticCapabilities(binary)).sparse_required_restore === true
+    ? ["--sparse", "by-content-required"]
+    : [];
 }
 
 function rusticCommand(nice?: number): { cmd: string; prefixArgs: string[] } {
