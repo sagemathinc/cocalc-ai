@@ -492,6 +492,8 @@ only for the `sagebrush` client; any other scope is `invalid scope`).
   second factor was verified at most 600 seconds ago. Otherwise the authorize
   page asks for the second factor again first. The proof is bound to the scope,
   so an admin approval can't approve a plain sign-in or the other way round.
+  Its browser-readable proof carries an opaque, single-use home-bay approval
+  reference; session hashes and factor times remain server-side.
 - **The grant.** The token response then also has
   `"admin_grant": {"grant_id", "factor_verified_at", "expires_at"}` (integer
   unix seconds), minted on the account's home bay when the code is redeemed.

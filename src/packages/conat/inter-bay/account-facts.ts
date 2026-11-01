@@ -21,8 +21,7 @@ export interface InterBayAccountFactsApi {
    * from the approving session's live state, or null. */
   sagebrushAdminMint(opts: {
     account_id: string;
-    session_hash: string;
-    factor_verified_at: number;
+    approval_id: string;
   }): Promise<any>;
   /** Sagebrush's admin check, read live on the home bay. */
   sagebrushAdminAnswer(opts: {

@@ -32,10 +32,8 @@ export interface HomeBayRetryClaims {
   fresh_auth_until?: string;
   primary_auth_method?: "email_code" | "email_link";
   primary_verified_at?: string;
-  /** oauth-authorize for Sagebrush's admin scope: the approving browser
-   * session and its factor time (seconds), checked again at token time */
-  session_hash?: string;
-  factor_verified_at?: number;
+  /** Opaque home-bay reference; browser proofs never contain session hashes. */
+  oauth_admin_approval_id?: string;
   home_bay_id: string;
   purpose:
     | "sign-in"
@@ -123,8 +121,7 @@ export function issueHomeBayRetryToken({
   fresh_auth_until,
   primary_auth_method,
   primary_verified_at,
-  session_hash,
-  factor_verified_at,
+  oauth_admin_approval_id,
   home_bay_id,
   purpose,
   ttl_seconds,
@@ -138,10 +135,8 @@ export function issueHomeBayRetryToken({
   fresh_auth_until?: string;
   primary_auth_method?: "email_code" | "email_link";
   primary_verified_at?: string;
-  /** oauth-authorize for Sagebrush's admin scope: the approving browser
-   * session and its factor time (seconds), checked again at token time */
-  session_hash?: string;
-  factor_verified_at?: number;
+  /** Opaque home-bay reference; browser proofs never contain session hashes. */
+  oauth_admin_approval_id?: string;
   home_bay_id: string;
   purpose:
     | "sign-in"
@@ -204,8 +199,7 @@ export function issueHomeBayRetryToken({
     ...(fresh_auth_until ? { fresh_auth_until } : {}),
     ...(primary_auth_method ? { primary_auth_method } : {}),
     ...(primary_verified_at ? { primary_verified_at } : {}),
-    ...(session_hash ? { session_hash } : {}),
-    ...(Number.isInteger(factor_verified_at) ? { factor_verified_at } : {}),
+    ...(oauth_admin_approval_id ? { oauth_admin_approval_id } : {}),
     home_bay_id: normalizedBay,
     purpose,
   };

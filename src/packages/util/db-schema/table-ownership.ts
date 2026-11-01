@@ -537,7 +537,7 @@ export const TABLE_OWNERSHIP = {
     rebuild: "No rebuild: the client starts a new sign-in.",
   }),
 
-  ...entries(["sagebrush_admin_grants"], {
+  ...entries(["sagebrush_admin_approvals", "sagebrush_admin_grants"], {
     ownership: "account-home",
     authority: "account_id",
     portability: "rebuildable",

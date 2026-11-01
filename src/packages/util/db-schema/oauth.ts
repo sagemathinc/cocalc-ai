@@ -61,15 +61,27 @@ Table({
       pg_type: "varchar(32)",
       desc: "NULL, or sagebrush-admin: Sagebrush's admin page after a fresh 2FA (see server/sagebrush/admin-grant.ts).",
     },
-    session_hash: {
+    admin_approval_id: {
       type: "string",
-      pg_type: "char(127)",
-      desc: "Admin scope only: the approving browser session's hash, checked again when the code is redeemed.",
+      pg_type: "varchar(64)",
+      desc: "Admin scope only: opaque single-use home-bay approval reference. Contains no browser session facts.",
     },
-    factor_verified_at: {
-      type: "timestamp",
-      desc: "Admin scope only: the approving session's factor time when it approved; the grant is minted only if it is unchanged.",
-    },
+  },
+});
+
+Table({
+  name: "sagebrush_admin_approvals",
+  rules: {
+    primary_key: "approval_id",
+    durability: "soft",
+    pg_indexes: ["account_id", "expire"],
+  },
+  fields: {
+    approval_id: { type: "string", pg_type: "varchar(64)", desc: "Random opaque single-use approval reference in the signed OAuth proof." },
+    account_id: { type: "uuid", desc: "Approving account; resolved only on its home bay." },
+    session_hash: { type: "string", pg_type: "char(127)", desc: "Approving session hash, kept server-side only." },
+    factor_verified_at: { type: "timestamp", desc: "Factor time checked again when minting the grant." },
+    expire: { type: "timestamp", desc: "Approval-proof lifetime plus the one-minute code redemption window." },
   },
 });
 

@@ -134,7 +134,7 @@ async function liveSession(
 }
 
 /** On the home bay, at token time: a new grant, or null. */
-export async function mintSagebrushAdminGrantLocal({
+async function mintSagebrushAdminGrantForSession({
   account_id,
   session_hash,
   factor_verified_at,
@@ -165,6 +165,34 @@ export async function mintSagebrushAdminGrantLocal({
     [grant_id, account_id, session_hash, new Date(factor * 1000), new Date(expires_at * 1000)],
   );
   return { grant_id, factor_verified_at: factor, expires_at };
+}
+
+/** Consume the home-bay approval reference exactly once at token time.
+ * The signed browser proof carries only this opaque id, not session facts. */
+export async function mintSagebrushAdminGrantLocal({
+  account_id,
+  approval_id,
+}: {
+  account_id: string;
+  approval_id: string;
+}): Promise<SagebrushAdminGrant | null> {
+  if (!isValidUUID(account_id) || !/^[A-Za-z0-9_-]{43}$/.test(approval_id)) return null;
+  const { rows } = await getPool().query<{
+    session_hash: string;
+    factor_verified_at: Date;
+  }>(
+    `DELETE FROM sagebrush_admin_approvals
+      WHERE approval_id = $1 AND account_id = $2::UUID AND expire > NOW()
+      RETURNING session_hash, factor_verified_at`,
+    [approval_id, account_id],
+  );
+  const approval = rows[0];
+  if (approval == null) return null;
+  return await mintSagebrushAdminGrantForSession({
+    account_id,
+    session_hash: approval.session_hash.trim(),
+    factor_verified_at: seconds(approval.factor_verified_at)!,
+  });
 }
 
 /** On the home bay, every admin check: the contract's answer, read live. */
@@ -216,8 +244,7 @@ export async function sagebrushAdminAnswerLocal({
  * can't be reached, so the token exchange answers no grant. */
 export async function mintSagebrushAdminGrant(opts: {
   account_id: string;
-  session_hash: string;
-  factor_verified_at: number;
+  approval_id: string;
 }): Promise<SagebrushAdminGrant | null> {
   const { remoteHomeBay, forgetAccountHomeOn409 } = await import(
     "@cocalc/server/accounts/home-bay"

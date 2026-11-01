@@ -289,7 +289,7 @@ export async function issueAuthorizeApprovalProof({
   }
   // The account check and the approval record share one transaction under
   // the rehome fence, which also asserts this is the account's home bay.
-  let admin: { session_hash: string; factor_verified_at: number } | undefined;
+  let adminApprovalId: string | undefined;
   const row = await withAccountRehomeWriteFence({
     account_id,
     action: `approve a sign-in to ${request.client.name}`,
@@ -303,7 +303,17 @@ export async function issueAuthorizeApprovalProof({
       ).rows[0];
       checkApprovingAccount(row);
       if (request.scope === SAGEBRUSH_ADMIN_SCOPE) {
-        admin = await checkAdminApproval({ db, account_id, req });
+        const admin = await checkAdminApproval({ db, account_id, req });
+        adminApprovalId = randomBytes(32).toString("base64url");
+        await db.query(`DELETE FROM sagebrush_admin_approvals WHERE expire < NOW()`);
+        await db.query(
+          `INSERT INTO sagebrush_admin_approvals
+             (approval_id, account_id, session_hash, factor_verified_at, expire)
+           VALUES ($1, $2::UUID, $3::CHAR(127), $4, $5)`,
+          [adminApprovalId, account_id, admin.session_hash,
+           new Date(admin.factor_verified_at * 1000),
+           new Date(Date.now() + APPROVAL_PROOF_TTL_SECONDS * 1000 + AUTHORIZATION_CODE_TTL_MS)],
+        );
       }
       await recordOAuthClientApproval({
         db,
@@ -320,7 +330,7 @@ export async function issueAuthorizeApprovalProof({
     home_bay_id: getConfiguredBayId(),
     purpose: "oauth-authorize",
     ttl_seconds: APPROVAL_PROOF_TTL_SECONDS,
-    ...(admin ?? {}),
+    ...(adminApprovalId ? { oauth_admin_approval_id: adminApprovalId } : {}),
   });
   return {
     token: issued.token,
@@ -443,21 +453,18 @@ export async function approveAuthorizeRequest({
   await pool.query(`DELETE FROM oauth_authorization_codes WHERE expire < $1`, [
     new Date(Date.now() - CODE_RETENTION_MS),
   ]);
-  const admin =
-    request.scope === SAGEBRUSH_ADMIN_SCOPE
-      ? {
-          session_hash: `${(claims as any).session_hash ?? ""}`.trim(),
-          factor_verified_at: (claims as any).factor_verified_at,
-        }
-      : null;
-  if (admin && (!admin.session_hash || !Number.isInteger(admin.factor_verified_at))) {
+  const adminApprovalId = request.scope === SAGEBRUSH_ADMIN_SCOPE
+    ? claims.oauth_admin_approval_id
+    : null;
+  if (request.scope === SAGEBRUSH_ADMIN_SCOPE &&
+      (typeof adminApprovalId !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(adminApprovalId))) {
     throw new Error("invalid approval proof");
   }
   await pool.query(
     `INSERT INTO oauth_authorization_codes(
        code_hash, client_id, account_id, email_address, redirect_uri,
-       code_challenge, created, expire, used_at, scope, session_hash, factor_verified_at)
-     VALUES($1, $2, $3::UUID, $4, $5, $6, NOW(), $7, NULL, $8, $9, $10)`,
+       code_challenge, created, expire, used_at, scope, admin_approval_id)
+     VALUES($1, $2, $3::UUID, $4, $5, $6, NOW(), $7, NULL, $8, $9)`,
     [
       hashCode(code),
       request.client.client_id,
@@ -467,8 +474,7 @@ export async function approveAuthorizeRequest({
       request.code_challenge,
       new Date(Date.now() + AUTHORIZATION_CODE_TTL_MS),
       request.scope ?? null,
-      admin?.session_hash ?? null,
-      admin ? new Date(admin.factor_verified_at * 1000) : null,
+      adminApprovalId ?? null,
     ],
   );
   return {
@@ -503,8 +509,7 @@ export interface TokenResponse {
 
 type CodeRow = {
   scope: string | null;
-  session_hash: string | null;
-  factor_verified_at: Date | null;
+  admin_approval_id: string | null;
   client_id: string;
   account_id: string;
   email_address: string;
@@ -545,7 +550,7 @@ export async function exchangeAuthorizationCode({
     `UPDATE oauth_authorization_codes SET used_at = NOW()
       WHERE code_hash = $1 AND used_at IS NULL
       RETURNING client_id, account_id, email_address, redirect_uri,
-                code_challenge, expire, scope, session_hash, factor_verified_at`,
+                code_challenge, expire, scope, admin_approval_id`,
     [hashCode(code)],
   );
   const row = rows[0];
@@ -587,8 +592,7 @@ export async function exchangeAuthorizationCode({
     try {
       admin_grant = await mintSagebrushAdminGrant({
         account_id: row.account_id,
-        session_hash: `${row.session_hash ?? ""}`.trim(),
-        factor_verified_at: Math.floor(new Date(row.factor_verified_at ?? 0).valueOf() / 1000),
+        approval_id: `${row.admin_approval_id ?? ""}`.trim(),
       });
     } catch {
       admin_grant = null;

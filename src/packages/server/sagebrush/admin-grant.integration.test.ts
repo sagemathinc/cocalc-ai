@@ -128,6 +128,18 @@ async function authorize(account_id: string, h: string, challenge: string, scope
 const exchange = (code: string, verifier: string) =>
   exchangeAuthorizationCode({ authorization: BASIC, params: { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: verifier } });
 
+async function mintFromSession({ account_id, session_hash, factor_verified_at }: {
+  account_id: string; session_hash: string; factor_verified_at: number;
+}) {
+  const approval_id = randomBytes(32).toString("base64url");
+  await getPool().query(
+    `INSERT INTO sagebrush_admin_approvals(approval_id, account_id, session_hash, factor_verified_at, expire)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [approval_id, account_id, session_hash, at(factor_verified_at), at(now() + 360)],
+  );
+  return await mintSagebrushAdminGrantLocal({ account_id, approval_id });
+}
+
 const describeDb = process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
 describeDb("Sagebrush's admin scope and admin check", () => {
@@ -141,6 +153,7 @@ describeDb("Sagebrush's admin scope and admin check", () => {
       oauth_client_approvals: SCHEMA.oauth_client_approvals,
       oauth_client_purge_requests: SCHEMA.oauth_client_purge_requests,
       sagebrush_admin_grants: SCHEMA.sagebrush_admin_grants,
+      sagebrush_admin_approvals: SCHEMA.sagebrush_admin_approvals,
     });
   });
   beforeEach(async () => {
@@ -215,13 +228,30 @@ describeDb("Sagebrush's admin scope and admin check", () => {
     const h = await session(a, { F: now() - 60, fresh: now() + 600, expire: now() + 86400 });
     await impersonate(a, h);
     await expect(authorize(a, h, pkce().challenge)).rejects.toMatchObject({ code: "impersonation_blocked" });
-    expect(await mintSagebrushAdminGrantLocal({ account_id: a, session_hash: h, factor_verified_at: now() - 60 })).toBeNull();
+    expect(await mintFromSession({ account_id: a, session_hash: h, factor_verified_at: now() - 60 })).toBeNull();
   });
 
   it("refuses a grant when its session is marked as impersonation after mint", async () => {
     const { a, h, g } = await granted();
     await impersonate(a, h);
     expect(await sagebrushAdminAnswerLocal({ account_id: a, grant: g.grant_id })).toEqual(refused);
+  });
+
+  it("keeps session facts out of the browser-readable proof and consumes its opaque reference once", async () => {
+    const a = await admin();
+    const h = await session(a, { F: now() - 60, fresh: now() + 600, expire: now() + 86400 });
+    mockCurrentSession.mockResolvedValue(await sessionRow(h));
+    const request = await validateAuthorizeRequest({ response_type: "code", client_id: "sagebrush", redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: "S256", scope: "sagebrush-admin" });
+    const proof = await issueAuthorizeApprovalProof({ account_id: a, request, req: {} });
+    const claims = JSON.parse(Buffer.from(proof.token.split(".")[1], "base64url").toString());
+    expect(claims.session_hash).toBeUndefined();
+    expect(claims.factor_verified_at).toBeUndefined();
+    expect(proof.token).not.toContain(h);
+    const approval_id = claims.oauth_admin_approval_id;
+    expect(approval_id).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(await mintSagebrushAdminGrantLocal({ account_id: await admin(), approval_id })).toBeNull();
+    expect(await mintSagebrushAdminGrantLocal({ account_id: a, approval_id })).not.toBeNull();
+    expect(await mintSagebrushAdminGrantLocal({ account_id: a, approval_id })).toBeNull();
   });
 
   // ---- minting at token time
@@ -262,14 +292,14 @@ describeDb("Sagebrush's admin scope and admin check", () => {
   });
   it("mints nothing for a session of another account", async () => {
     const a = await admin(), b = await admin(), hb = await session(b, { F: now() - 60, fresh: now() + 600, expire: now() + 86400 });
-    expect(await mintSagebrushAdminGrantLocal({ account_id: a, session_hash: hb, factor_verified_at: now() - 60 })).toBeNull();
+    expect(await mintFromSession({ account_id: a, session_hash: hb, factor_verified_at: now() - 60 })).toBeNull();
   });
 
   // ---- the admin check (EP1–EP4, the window, revoke, account changes)
   async function granted(o: { F?: number; fresh?: number } = {}) {
     const a = await admin(), F = o.F ?? now() - 60;
     const h = await session(a, { F, fresh: o.fresh ?? now() + 600, expire: now() + 86400 });
-    const g = await mintSagebrushAdminGrantLocal({ account_id: a, session_hash: h, factor_verified_at: F });
+    const g = await mintFromSession({ account_id: a, session_hash: h, factor_verified_at: F });
     return { a, h, g: g!, F };
   }
   const refused = { admin: true, two_factor: true };
