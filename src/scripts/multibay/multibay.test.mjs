@@ -5692,3 +5692,132 @@ describe("backup prune plans run on the seed, which owns the repositories", () =
     assert.equal((await prunePlanLog(SEED)).length, 1);
   });
 });
+
+describe("Sagebrush admin grants across bays", () => {
+  it("redeems a home-bay opaque approval on another bay and checks the grant live", async () => {
+    const admin = await createAccount(cluster, {
+      home_bay_id: ATTACHED,
+      name: "sage-admin",
+    });
+    admin.client = await client(admin);
+    const secret = "multibay-sagebrush-secret";
+    const redirect = "https://sagebrush.example.test/admin/auth/callback";
+    for (const bay of [SEED, ATTACHED]) {
+      await runInBay(
+        cluster,
+        bay,
+        `
+        const pool = require("@cocalc/database/pool").default();
+        for (const [name, value] of ${JSON.stringify([
+          ["sagebrush_client_secret", secret],
+          ["sagebrush_redirect_uris", redirect],
+          ["sagebrush_purge_obligation", "2026-10-13T00:00:00.000Z"],
+        ])}) {
+          await pool.query("INSERT INTO server_settings(name,value) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET value=EXCLUDED.value", [name,value]);
+        }
+      `,
+      );
+    }
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `
+      const pool = require("@cocalc/database/pool").default();
+      await pool.query("UPDATE accounts SET groups=ARRAY['admin'], email_address_verified=jsonb_build_object(email_address, NOW()::TEXT) WHERE account_id=$1", [${JSON.stringify(admin.account_id)}]);
+      await pool.query("INSERT INTO account_second_factors(id,account_id,type,label,status,created,activated_at) VALUES(gen_random_uuid(),$1,'totp','test','active',NOW(),NOW())", [${JSON.stringify(admin.account_id)}]);
+    `,
+    );
+    const { createHash, randomBytes } = await import("node:crypto");
+    const verifier = randomBytes(32).toString("base64url");
+    const request = {
+      response_type: "code",
+      client_id: "sagebrush",
+      redirect_uri: redirect,
+      code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+      code_challenge_method: "S256",
+      scope: "sagebrush-admin",
+    };
+    const post = async (bay, endpoint, body, headers = {}) => {
+      const response = await fetch(`${cluster.url(bay)}/api/v2/${endpoint}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: cluster.url(bay),
+          ...headers,
+        },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 200);
+      return await response.json();
+    };
+    const proof = await eventually(
+      async () => {
+        const value = await post(
+          ATTACHED,
+          "auth/oauth/approval-token",
+          { request },
+          { cookie: `remember_me=${admin.client.cookie}` },
+        );
+        if (!value.token) throw new Error(value.error ?? "missing approval proof");
+        return value;
+      },
+      { timeoutMs: 30_000, what: "Sagebrush admin approval" },
+    );
+    const claims = JSON.parse(
+      Buffer.from(proof.token.split(".")[1], "base64url").toString(),
+    );
+    assert.equal(claims.session_hash, undefined);
+    assert.equal(claims.factor_verified_at, undefined);
+    assert.match(claims.oauth_admin_approval_id, /^[A-Za-z0-9_-]{43}$/);
+    const approved = await post(SEED, "auth/oauth/approve", {
+      request,
+      approval_token: proof.token,
+      approval_home_bay_id: proof.home_bay_id,
+    });
+    assert.ok(approved.redirect_url, JSON.stringify(approved));
+    const basic = `Basic ${Buffer.from(`sagebrush:${secret}`).toString("base64")}`;
+    const token = await post(
+      SEED,
+      "auth/oauth/token",
+      {
+        grant_type: "authorization_code",
+        code: new URL(approved.redirect_url).searchParams.get("code"),
+        redirect_uri: redirect,
+        code_verifier: verifier,
+      },
+      { authorization: basic },
+    );
+    assert.ok(token.admin_grant, JSON.stringify(token));
+    for (const bay of [ATTACHED, SEED]) {
+      const count = await runInBay(
+        cluster,
+        bay,
+        `
+        const {rows} = await require("@cocalc/database/pool").default().query(
+          "SELECT COUNT(*)::INT AS n FROM sagebrush_admin_grants WHERE account_id=$1", [${JSON.stringify(admin.account_id)}]);
+        return rows[0].n;
+      `,
+      );
+      assert.equal(count, bay === ATTACHED ? 1 : 0);
+    }
+    const answer = async () => {
+      const response = await fetch(
+        `${cluster.url(SEED)}/api/v2/sagebrush/admin?account_id=${admin.account_id}&grant=${token.admin_grant.grant_id}`,
+        { headers: { authorization: basic } },
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      return await response.json();
+    };
+    assert.equal((await answer()).expires_at, token.admin_grant.expires_at);
+    await runInBay(
+      cluster,
+      ATTACHED,
+      `
+      await require("@cocalc/database/pool").default().query(
+        "UPDATE account_auth_sessions SET revoked_at=NOW() WHERE account_id=$1", [${JSON.stringify(admin.account_id)}]);
+    `,
+    );
+    assert.deepEqual(await answer(), { admin: true, two_factor: true });
+  });
+});
