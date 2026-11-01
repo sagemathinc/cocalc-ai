@@ -563,84 +563,89 @@ export async function runRootfsTrivyScan({
   // Fails closed: an unpinned image, a database without valid provenance,
   // or an image that doesn't match its digest here is never used.
   assertPinnedScannerImage(scanner_image);
-  const trivy_db = await readTrivyDbProvenance(trivy_cache_dir);
-  if (trivy_db == null) {
-    throw new Error(
-      "RootFS scan refused: the Trivy database cache has no valid provenance (prepare the scanner first)",
-    );
-  }
-  const scanner = await verifyScannerImage({
-    scanner_image,
-    podman_binary,
-    command_runner,
-  });
-  const output_dir = await mkdtemp(join(output_parent_dir, "rootfs-scan-"));
-  const reportPath = join(output_dir, "report.json");
-  const startedAt = Date.now();
-  const podman_args = buildRootfsTrivyPodmanArgs({
-    scan_run_id,
-    rootfs_path,
-    output_dir,
-    trivy_cache_dir,
-    scanner_image: scanner.image_id,
-    memory_limit,
-    cpu_limit,
-    tmpfs_size,
-  });
-  try {
-    await command_runner(podman_binary, podman_args, {
-      timeout_ms,
-      error_context: "podman rootfs scan",
-    });
-    const reportStat = await stat(reportPath);
-    if (reportStat.size > max_report_bytes) {
+  // The whole scan holds the cache's lock, from reading the provenance until
+  // the container is done: a database refresh (which swaps db/) waits, so the
+  // recorded manifest digest is the database the scan actually read.
+  return await withTrivyCacheLock(trivy_cache_dir, async () => {
+    const trivy_db = await readTrivyDbProvenance(trivy_cache_dir);
+    if (trivy_db == null) {
       throw new Error(
-        `Trivy report is ${reportStat.size} bytes, which exceeds scan report limit ${max_report_bytes}`,
+        "RootFS scan refused: the Trivy database cache has no valid provenance (prepare the scanner first)",
       );
     }
-    const raw = await readFile(reportPath);
-    const compressed = gzipSync(raw);
-    const report_json = JSON.parse(raw.toString("utf8")) as TrivyJsonReport;
-    const duration_ms = Date.now() - startedAt;
-    const summary = parseTrivyRootfsJsonReport({
-      report: report_json,
-      target,
-      metadata: {
-        started_at: new Date(startedAt).toISOString(),
-        scanned_at: new Date().toISOString(),
-        duration_ms,
+    const scanner = await verifyScannerImage({
+      scanner_image,
+      podman_binary,
+      command_runner,
+    });
+    const output_dir = await mkdtemp(join(output_parent_dir, "rootfs-scan-"));
+    const reportPath = join(output_dir, "report.json");
+    const startedAt = Date.now();
+    const podman_args = buildRootfsTrivyPodmanArgs({
+      scan_run_id,
+      rootfs_path,
+      output_dir,
+      trivy_cache_dir,
+      scanner_image: scanner.image_id,
+      memory_limit,
+      cpu_limit,
+      tmpfs_size,
+    });
+    try {
+      await command_runner(podman_binary, podman_args, {
+        timeout_ms,
+        error_context: "podman rootfs scan",
+      });
+      const reportStat = await stat(reportPath);
+      if (reportStat.size > max_report_bytes) {
+        throw new Error(
+          `Trivy report is ${reportStat.size} bytes, which exceeds scan report limit ${max_report_bytes}`,
+        );
+      }
+      const raw = await readFile(reportPath);
+      const compressed = gzipSync(raw);
+      const report_json = JSON.parse(raw.toString("utf8")) as TrivyJsonReport;
+      const duration_ms = Date.now() - startedAt;
+      const summary = parseTrivyRootfsJsonReport({
+        report: report_json,
+        target,
+        metadata: {
+          started_at: new Date(startedAt).toISOString(),
+          scanned_at: new Date().toISOString(),
+          duration_ms,
+          report: {
+            format: "trivy-json",
+            sha256: hashHex(raw),
+            bytes: raw.length,
+            compressed_bytes: compressed.length,
+          },
+        },
+      });
+      summary.metadata = {
+        ...(summary.metadata ?? {}),
+        scanner: {
+          image: scanner.image,
+          ...(scanner.digest ? { digest: scanner.digest } : { unpinned: true }),
+          image_id: scanner.image_id,
+        },
+        trivy_db,
+      };
+      return {
+        summary,
+        report_json,
         report: {
-          format: "trivy-json",
-          sha256: hashHex(raw),
+          path: reportPath,
           bytes: raw.length,
           compressed_bytes: compressed.length,
+          sha256: hashHex(raw),
         },
-      },
-    });
-    summary.metadata = {
-      ...(summary.metadata ?? {}),
-      scanner: {
-        image: scanner.image,
-        ...(scanner.digest ? { digest: scanner.digest } : { unpinned: true }),
-        image_id: scanner.image_id,
-      },
-      trivy_db,
-    };
-    return {
-      summary,
-      report_json,
-      report: {
-        path: reportPath,
-        bytes: raw.length,
-        compressed_bytes: compressed.length,
-        sha256: hashHex(raw),
-      },
-      podman_args,
-      duration_ms,
-    };
-  } finally {
-    if (cleanup_output_dir) {
-      await rm(output_dir, { recursive: true, force: true });
+        podman_args,
+        duration_ms,
+      };
+    } finally {
+      if (cleanup_output_dir) {
+        await rm(output_dir, { recursive: true, force: true });
+      }
     }
-  }
+  });
 }

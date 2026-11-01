@@ -473,6 +473,74 @@ describe("runRootfsTrivyScan", () => {
     expect(calls).toEqual([]);
   });
 
+  it("doesn't let a database refresh swap db/ while a scan reads it", async () => {
+    const base = await mkTempDir("rootfs-scan-test-");
+    const rootfs = join(base, "rootfs");
+    const cache = join(base, "trivy-cache");
+    await mkdir(rootfs);
+    await writeFetchedDb(cache, new Date().toISOString());
+    const oldManifest = OTHER_DIGEST;
+
+    let releaseScan!: () => void;
+    const scanPaused = new Promise<void>((resolve) => (releaseScan = resolve));
+    let scanRunning!: () => void;
+    const scanStarted = new Promise<void>((resolve) => (scanRunning = resolve));
+    const events: string[] = [];
+    const { runner } = podmanStub({
+      onRun: async (args) => {
+        events.push("scan running");
+        scanRunning();
+        await scanPaused;
+        const output = mountDestination(args, "/scan/out");
+        await writeFile(join(output, "report.json"), JSON.stringify({}));
+        events.push("scan done");
+      },
+    });
+    const scan = runRootfsTrivyScan({
+      scan_run_id: "scan-1",
+      target,
+      rootfs_path: rootfs,
+      trivy_cache_dir: cache,
+      scanner_image: PINNED,
+      output_parent_dir: base,
+      command_runner: runner,
+    });
+    await scanStarted;
+
+    const newManifest = `sha256:${"d".repeat(64)}`;
+    const refresh = ensureRootfsTrivyScannerPrepared({
+      trivy_cache_dir: cache,
+      scanner_image: PINNED,
+      command_runner: podmanStub().runner,
+      refresh_db: true,
+      fetch_db: async ({ trivy_cache_dir }) => {
+        events.push("refresh");
+        await writeFetchedDb(trivy_cache_dir);
+        await writeFile(
+          join(trivy_cache_dir, "db", "cocalc-db-source.json"),
+          JSON.stringify({
+            source: "mirror.gcr.io/aquasec/trivy-db:2",
+            manifest_digest: newManifest,
+            layer_digest: DIGEST,
+            fetched_at: new Date().toISOString(),
+            integrity: "test",
+          }),
+        );
+      },
+    });
+    // give the refresh every chance to run early
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(events).toEqual(["scan running"]);
+
+    releaseScan();
+    const result = await scan;
+    await refresh;
+    expect(events).toEqual(["scan running", "scan done", "refresh"]);
+    expect(result.summary.metadata?.trivy_db?.manifest_digest).toBe(
+      oldManifest,
+    );
+  });
+
   it("refuses to scan with a database that has no valid provenance", async () => {
     const base = await mkTempDir("rootfs-scan-test-");
     const cache = join(base, "trivy-cache");
