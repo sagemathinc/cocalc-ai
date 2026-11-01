@@ -106,6 +106,7 @@ import {
 import { tmpdir } from "node:os";
 import { resolveSharedScratchMount } from "./shared-scratch";
 import { projectPoolCgroupPath } from "./project-pool-cgroup";
+import { projectSeccompProfilePath } from "./project-seccomp";
 
 export { resolveSharedScratchMount } from "./shared-scratch";
 
@@ -2341,6 +2342,15 @@ async function startUnlocked({
       `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
     );
     args.push("--user", "0:0");
+    // The hosts' default profile plus refusals for IPv4 IP options, MPTCP
+    // sockets and socketcall (see project-seccomp.ts).
+    args.push(
+      "--security-opt",
+      `seccomp=${await timings.measure(
+        "resolve_seccomp_profile",
+        async () => await projectSeccompProfilePath(),
+      )}`,
+    );
     args.push("--label", `project_id=${project_id}`, "--label", `role=project`);
     args.push("--replace");
     const originalConatServer = env.CONAT_SERVER;
