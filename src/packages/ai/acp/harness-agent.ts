@@ -29,6 +29,7 @@ import {
   joinTurnContext,
 } from "./harness-context";
 import { takeRateLimit } from "./harness-rate-limit";
+import { ClaudeSubagentTracker } from "./claude-subagents";
 import {
   turnFailureFromRateLimit,
   withTurnFailure,
@@ -136,6 +137,8 @@ export class HarnessAgent implements AcpAgent {
     // The client funding this turn (site-funded Claude), and how it ended.
     let fundedClient: AcpHarnessClient | undefined;
     let fundedEnd: HarnessFundedTurnEnd = { status: "failed" };
+    // Claude subagents seen this turn; a failed turn still ends them.
+    const subagents = new ClaudeSubagentTracker();
     try {
       await this.validateAuthority?.(this.binding);
       // The service preserves the authoritative empty reset marker. Missing
@@ -404,6 +407,9 @@ export class HarnessAgent implements AcpAgent {
                 data: data as Record<string, unknown>,
               },
             });
+            const subagent =
+              event.type === "update" ? subagents.observe(data) : undefined;
+            if (subagent) await request.stream({ type: "event", event: subagent });
           }
         },
         request.image_attachments ?? [],
@@ -433,6 +439,8 @@ export class HarnessAgent implements AcpAgent {
           data: { stopReason: result.stopReason },
         },
       });
+      for (const subagent of subagents.finish(result.stopReason))
+        await request.stream({ type: "event", event: subagent });
       if (result.stopReason !== "end_turn") {
         throw new HarnessError(
           "rejected",
@@ -455,6 +463,15 @@ export class HarnessAgent implements AcpAgent {
       });
       fundedEnd = { status: "committed" };
     } catch (error) {
+      // Subagents the turn started must not stay "working" after it failed.
+      for (const subagent of subagents.finish(
+        this.interrupted ? "cancelled" : undefined,
+      ))
+        try {
+          await request.stream({ type: "event", event: subagent });
+        } catch {
+          // best effort: the turn is failing anyway
+        }
       fundedEnd = this.interrupted
         ? { status: "interrupted" }
         : {

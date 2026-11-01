@@ -1287,7 +1287,7 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     source: "server Postgres schema bootstrap",
     migrate_to_schema: true,
     notes:
-      "Private project-app hostname routes are authoritative on the project's owning bay. Cross-bay project rehome must release and recreate them until explicit portable DNS handoff exists.",
+      "Retired (Oct 2026): private project-app hostnames were removed and nothing reads or writes this table. It may remain, empty, in older databases (production's last row and DNS record were released before removal); hard delete still purges stale rows. Drop it in a later release.",
   }),
 
   ...adHocEntries(["ai_sessions"], {

@@ -41,10 +41,6 @@ import type {
 } from "@cocalc/conat/hub/api/public-directory-shares";
 import { getMasterConatClient } from "./master-status";
 import { isProjectViewerRole } from "@cocalc/util/project-access";
-import {
-  privateAppHostnameExternalLocation,
-  PRIVATE_APP_HOST_HEADER,
-} from "./private-app-hostname";
 import { stripLegacyPublicAppRequestMetadata } from "@cocalc/backend/auth/app-proxy";
 import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
 import {
@@ -814,10 +810,7 @@ export function createProjectHostHttpProxyAuth({
     }
     if (/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
       res.statusCode = 302;
-      res.setHeader(
-        "Location",
-        privateAppHostnameExternalLocation(req, cleaned),
-      );
+      res.setHeader("Location", cleaned);
       res.end("");
       return true;
     }
@@ -978,12 +971,6 @@ export function createProjectHostHttpProxyAuth({
       if (policy.cookiesRefused()) {
         throw new HttpAuthError(403, "cross-site request refused");
       }
-      if (req.headers[PRIVATE_APP_HOST_HEADER]) {
-        throw new HttpAuthError(
-          401,
-          "This private development site must be opened from its CoCalc project.",
-        );
-      }
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
@@ -1055,7 +1042,9 @@ export function createProjectHostHttpProxyAuth({
         issued_at_s: accountFromBrowserSession.iat_s,
         restricted_exp_s: accountFromBrowserSession.restricted_exp_s,
         actor: "account" as const,
-        revalidate_collaborator: !!req.headers[PRIVATE_APP_HOST_HEADER],
+        // An open websocket is closed when the account stops being a
+        // collaborator (startUpgradeRevocationKickLoop).
+        revalidate_collaborator: true,
       };
       setAuthContext(req, context);
       stripQueryToken(req);
@@ -1078,7 +1067,9 @@ export function createProjectHostHttpProxyAuth({
         issued_at_s: accountFromSession.iat_s,
         restricted_exp_s: accountFromSession.restricted_exp_s,
         actor: "account" as const,
-        revalidate_collaborator: !!req.headers[PRIVATE_APP_HOST_HEADER],
+        // An open websocket is closed when the account stops being a
+        // collaborator (startUpgradeRevocationKickLoop).
+        revalidate_collaborator: true,
       };
       setAuthContext(req, context);
       stripQueryToken(req);
@@ -1090,12 +1081,6 @@ export function createProjectHostHttpProxyAuth({
     if (!token) {
       if (policy.cookiesRefused()) {
         throw new HttpAuthError(403, "cross-site request refused");
-      }
-      if (req.headers[PRIVATE_APP_HOST_HEADER]) {
-        throw new HttpAuthError(
-          401,
-          "This private development site must be opened from its CoCalc project.",
-        );
       }
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
@@ -1109,7 +1094,9 @@ export function createProjectHostHttpProxyAuth({
       issued_at_s: claims.iat,
       restricted_exp_s,
       actor: "account",
-      revalidate_collaborator: !!req.headers[PRIVATE_APP_HOST_HEADER],
+      // An open websocket is closed when the account stops being a
+      // collaborator (startUpgradeRevocationKickLoop).
+      revalidate_collaborator: true,
     };
     setAuthContext(req, context);
     if (source === "header") {

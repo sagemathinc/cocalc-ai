@@ -196,6 +196,54 @@ function getCodexInstallScript(version: string): string {
   ].join(" && ");
 }
 
+// CoCalc's rustic fork (https://github.com/sagemathinc/rustic), built by its
+// release workflow from the tagged commit. Pin the archive and the binary.
+const RUSTIC_VERSION = "0.11.4-cocalc.2";
+const RUSTIC_SHA256 = {
+  x64: {
+    archive: "9b4435371f583442826852db70fa992186c3b646d00240f484415501f270fefe",
+    binary: "b169eb956bc6bf7730c4bfeea6755112a6ba55670a75ef00d7e17a1c403e1081",
+  },
+  arm64: {
+    archive: "f4e754253a78ba26562c75b175e63647ae110a1a4a8e9b3056133d66b0f88b8e",
+    binary: "b96fa2bcd9f44604b2935701c38bfaf938e29dd2d105e195ed3c15efee2e3bd8",
+  },
+} as const;
+
+function rusticArch(): keyof typeof RUSTIC_SHA256 {
+  const currentArch = effectiveArch();
+  if (currentArch !== "x64" && currentArch !== "arm64") {
+    throw Error(`unsupported rustic arch ${currentArch}`);
+  }
+  return currentArch;
+}
+
+// Verify the downloaded archive and the extracted binary before replacing the
+// installed rustic; any mismatch fails the install and leaves it untouched.
+// `expected` is a parameter only so tests can exercise the checks with local
+// fixtures; production always uses the pinned RUSTIC_SHA256.
+export function getRusticInstallScript(
+  expected: { archive: string; binary: string } = RUSTIC_SHA256[rusticArch()],
+): string {
+  const currentArch = rusticArch();
+  const releaseArch = currentArch === "x64" ? "x86_64" : "arm64";
+  const archive = `rustic-v${RUSTIC_VERSION}-linux-${releaseArch}.tar.gz`;
+  const releaseBase = `https://github.com/sagemathinc/rustic/releases/download/v${RUSTIC_VERSION}`;
+  const target = join(binPath, "rustic");
+  return [
+    "set -eu",
+    'tmp="$(mktemp -d)"',
+    "trap 'rm -rf \"$tmp\"' EXIT",
+    `curl -fL "${releaseBase}/${archive}" -o "$tmp/${archive}"`,
+    `printf '%s  %s\\n' "${expected.archive}" "$tmp/${archive}" | sha256sum -c -`,
+    `tar -xzf "$tmp/${archive}" -C "$tmp" rustic`,
+    `printf '%s  %s\\n' "${expected.binary}" "$tmp/rustic" | sha256sum -c -`,
+    `mkdir -p "${binPath}"`,
+    `install -m 0755 "$tmp/rustic" "${target}.tmp"`,
+    `mv "${target}.tmp" "${target}"`,
+  ].join("; ");
+}
+
 const BLIT_VERSION = "0.55.1";
 const BLIT_LICENSE_SHA256 =
   "bd48ff0dc768d8a2425e852d1f242be474b00f4f9a0d982a007ce4f89d5691fa";
@@ -360,18 +408,12 @@ export const SPEC = {
   },
   rustic: {
     // See https://github.com/sagemathinc/rustic/releases
-    VERSION: "0.11.1",
+    VERSION: RUSTIC_VERSION,
     getVersion: "rustic --version",
-    BASE: "https://github.com/sagemathinc/rustic/releases/download/v0.11.1",
     binary: "rustic",
     path: join(binPath, "rustic"),
     platforms: ["linux"],
-    stripComponents: 0,
-    pathInArchive: () => "rustic",
-    url: () => {
-      const archName = effectiveArch() === "x64" ? "x86_64" : "arm64";
-      return `${SPEC.rustic.BASE}/rustic-v${SPEC.rustic.VERSION}-linux-${archName}.tar.gz`;
-    },
+    script: () => getRusticInstallScript(),
   },
   restServer: {
     // See https://github.com/restic/rest-server/releases
@@ -574,6 +616,14 @@ export async function alreadyInstalled(app: App) {
   const { path, VERSION } = SPEC[app] as Spec;
   if (!(await exists(path))) {
     return false;
+  }
+  if (app === "rustic") {
+    // The version string can't tell a tampered or stock build from ours.
+    if (
+      !(await matchesBinarySha256(path, RUSTIC_SHA256[rusticArch()].binary))
+    ) {
+      return false;
+    }
   }
   if (app === "codex") {
     const hashes = CODEX_BINARY_SHA256[getCodexArch()];

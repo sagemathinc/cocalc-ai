@@ -34,9 +34,9 @@ describe("useAppFrameSrc", () => {
   beforeEach(() => {
     getProjectAppFrameUrl.mockReset();
     let n = 0;
-    getProjectAppFrameUrl.mockImplementation(
-      async () => ({ url: `${FRAME_ORIGIN}/_af/CAP${++n}?next=x` }),
-    );
+    getProjectAppFrameUrl.mockImplementation(async () => ({
+      url: `${FRAME_ORIGIN}/.cocalc/af/CAP${++n}?next=x`,
+    }));
   });
 
   it("asks for its own frame link for the app's path, without the host token", async () => {
@@ -44,14 +44,15 @@ describe("useAppFrameSrc", () => {
       useAppFrameSrc({ projectId: P, appId: "a", hostUrl: HOST_URL }),
     );
     await waitFor(() =>
-      expect(result.current.src).toBe(`${FRAME_ORIGIN}/_af/CAP1?next=x`),
+      expect(result.current.src).toBe(`${FRAME_ORIGIN}/.cocalc/af/CAP1?next=x`),
     );
     expect(getProjectAppFrameUrl).toHaveBeenCalledWith({
       project_id: P,
       path: `/${P}/proxy/8000/`,
       app_id: "a",
+      root: false,
     });
-    expect(result.current.openUrl).toBe(`/app-open/${P}/proxy/8000/?app=a`);
+    expect(result.current.openUrl).toBe(`/app-open/${P}/proxy/8000/?cocalc_app=a`);
   });
 
   it("frames the project-host URL only on sites without app origins", async () => {

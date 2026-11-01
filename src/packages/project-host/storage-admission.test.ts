@@ -1287,6 +1287,107 @@ describe("storage admission controller", () => {
     escape.release();
   });
 
+  it("runs overdue snapshots beside a backup override, one at a time", () => {
+    const controller = create();
+    full = 6;
+    controller.sample();
+    controller.sample();
+    const backup = controller.admit({
+      operation_kind: "scheduled_backup",
+      allow_starvation_override: true,
+    });
+    expect(backup.starvation_override).toBe(true);
+    // A snapshot faces the gates it would with nothing else in flight.
+    expect(
+      controller.admit({ operation_kind: "scheduled_snapshot" }),
+    ).toMatchObject({ admitted: false, reason: "io_pressure_contended" });
+    const snapshot = controller.admit({
+      operation_kind: "scheduled_snapshot",
+      allow_starvation_override: true,
+    });
+    expect(snapshot).toMatchObject({
+      admitted: true,
+      starvation_override: true,
+    });
+    // Both are override admissions.
+    expect(controller.getStatus().starvation_override_total).toBe(2);
+    expect(
+      controller.backgroundDeferralReason({ allow_starvation_override: true }),
+    ).toBeUndefined();
+    expect(
+      controller.admit({
+        operation_kind: "scheduled_snapshot",
+        allow_starvation_override: true,
+      }).admitted,
+    ).toBe(false);
+    // Everything else still waits for the override.
+    for (const operation_kind of [
+      "scheduled_backup",
+      "orphan_cleanup",
+    ] as const) {
+      expect(
+        controller.admit({ operation_kind, allow_starvation_override: true }),
+      ).toMatchObject({
+        admitted: false,
+        reason: "maintenance_starvation_in_flight",
+      });
+    }
+    snapshot.release();
+    expect(
+      controller.admit({
+        operation_kind: "scheduled_snapshot",
+        allow_starvation_override: true,
+      }).admitted,
+    ).toBe(true);
+  });
+
+  it("keeps a backup override from starting beside a snapshot override", () => {
+    const controller = create();
+    full = 6;
+    controller.sample();
+    controller.sample();
+    const snapshot = controller.admit({
+      operation_kind: "scheduled_snapshot",
+      allow_starvation_override: true,
+    });
+    expect(snapshot.starvation_override).toBe(true);
+    expect(
+      controller.admit({
+        operation_kind: "scheduled_backup",
+        allow_starvation_override: true,
+      }),
+    ).toMatchObject({
+      admitted: false,
+      reason: "maintenance_starvation_in_flight",
+    });
+    snapshot.release();
+    // A backup that outlives the snapshot beside it ends its own override only.
+    const backup = controller.admit({
+      operation_kind: "scheduled_backup",
+      allow_starvation_override: true,
+    });
+    expect(backup.starvation_override).toBe(true);
+    const beside = controller.admit({
+      operation_kind: "scheduled_snapshot",
+      allow_starvation_override: true,
+    });
+    expect(beside.admitted).toBe(true);
+    beside.release();
+    expect(
+      controller.admit({
+        operation_kind: "scheduled_backup",
+        allow_starvation_override: true,
+      }).reason,
+    ).toBe("maintenance_starvation_in_flight");
+    backup.release();
+    expect(
+      controller.admit({
+        operation_kind: "scheduled_backup",
+        allow_starvation_override: true,
+      }).starvation_override,
+    ).toBe(true);
+  });
+
   it("fails background admission closed when pressure cannot be sampled", () => {
     const controller = createStorageAdmissionController({
       ...immediate,

@@ -175,7 +175,6 @@ export function Kernel({
   const name = actions.name;
 
   // redux section
-  const trust: undefined | boolean = useRedux([name, "trust"]);
   const read_only: undefined | boolean = useRedux([name, "read_only"]);
   const redux_kernel = useRedux([name, "kernel"]);
   const kernel_undecided = redux_kernel == null;
@@ -432,67 +431,6 @@ export function Kernel({
         <Icon name={name} spin={spin} style={{ color }} />
       </div>
     );
-  }
-
-  function render_trust() {
-    // Keep non-notebook compact embeds (e.g. whiteboard code elements) free
-    // of the trust indicator; the studio notebook status bar (compact with
-    // layout controls) shows it just like the regular status bar.
-    if (compact && onLayoutChange == null) return;
-    if (IS_MOBILE) return;
-    if (trust) {
-      return (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            color: UI_COLORS.secondary,
-            paddingLeft: "6px",
-            borderLeft: `1px solid ${UI_COLORS.border}`,
-            whiteSpace: "nowrap",
-          }}
-        >
-          Trusted
-        </div>
-      );
-    } else {
-      return (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            paddingLeft: "6px",
-            borderLeft: `1px solid ${UI_COLORS.border}`,
-            whiteSpace: "nowrap",
-          }}
-        >
-          <Tooltip
-            title={intl.formatMessage({
-              id: "jupyter.status.trust.no.tooltip",
-              defaultMessage: "Notebook is not trusted",
-              description: "The Jupyter Notebook content is not trusted",
-            })}
-          >
-            <Button
-              danger
-              onClick={(e) => {
-                // don't let the click bubble to the surrounding kernel-info
-                // area, which would also open the kernel drawer
-                e.stopPropagation();
-                actions.trust_notebook();
-              }}
-              size="small"
-            >
-              {intl.formatMessage({
-                id: "jupyter.status.trust.no",
-                defaultMessage: "Not Trusted",
-                description: "Jupyter Notebook content is not trusted",
-              })}
-            </Button>
-          </Tooltip>
-        </div>
-      );
-    }
   }
 
   function kernelState(): ReactNode {
@@ -804,8 +742,7 @@ export function Kernel({
     const language = capitalize(kernel_info?.get("language", "Unknown"));
     const langTxt = `${language}${description ? ` (${description})` : ""}`;
     const langURL = kernel_info?.getIn(["metadata", "cocalc", "url"]) as
-      | string
-      | undefined;
+      string | undefined;
     const lang = (
       <>
         Language: {langURL != null ? <A href={langURL}>{langTxt}</A> : langTxt}
@@ -1152,7 +1089,7 @@ export function Kernel({
             ...style,
           }}
         >
-          {/* Left: logo + kernel + trust. Shrinkable, and the first thing to
+          {/* Left: logo + kernel. Shrinkable, and the first thing to
               give way when the frame is narrow: the kernel name already
               ellipsizes, so it costs the least. Without this the group is
               rigid and the overflow lands on the controls at the far right,
@@ -1164,8 +1101,7 @@ export function Kernel({
               gap: "6px",
               flex: "0 1 auto",
               minWidth: 0,
-              // the logo and the trust indicator have a min-content width of
-              // their own, so once the kernel name has ellipsized away they
+              // the logo has a min-content width of its own, so once the kernel name has ellipsized away they
               // would spill out of the shrunken group and paint on top of the
               // meters next to it; clip instead of overlapping.
               overflow: "hidden",
@@ -1177,7 +1113,6 @@ export function Kernel({
               {renderLogo()}
             </div>
             {body}
-            {render_trust()}
           </div>
           {/* Middle: kernel state centered between the fixed side groups,
               so the left group doesn't shift when the state text changes */}
@@ -1242,7 +1177,7 @@ export function Kernel({
             ...style,
           }}
         >
-          {/* Left: logo + kernel + trust, like the studio status bar — and
+          {/* Left: logo + kernel, like the studio status bar — and
               shrinking and clipping for the same reason, so a narrow frame
               eats into the kernel name rather than the controls at the end. */}
           <div
@@ -1261,7 +1196,6 @@ export function Kernel({
               {renderLogo()}
             </div>
             {body}
-            {render_trust()}
           </div>
           {/* Middle: kernel state centered, see compact header */}
           <div

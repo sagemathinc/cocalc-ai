@@ -295,3 +295,126 @@ test("expanded tool output is named and keyboard reachable", async () => {
     screen.getByRole("button", { name: "Next control" }),
   );
 });
+
+// The updates claude-agent-acp 0.93 sent for one Agent call in a recorded
+// staging2 turn (trimmed): the launch, its title, its input, then a child.
+function recordedSubagent(withTitleUpdate: boolean) {
+  const tools = new Map<string, HarnessToolEntry>();
+  const updates = [
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "toolu_agent",
+      title: "Task",
+      kind: "think",
+      status: "pending",
+      content: [],
+      _meta: {
+        claudeCode: { toolName: "Agent" },
+        jetbrains: { air: { version: 1, subagent: true } },
+      },
+    },
+    ...(withTitleUpdate
+      ? [
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "toolu_agent",
+            title: "List 5 largest files in home",
+            _meta: {},
+          },
+        ]
+      : []),
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "toolu_agent",
+      rawInput: {
+        description: "List 5 largest files in home",
+        subagent_type: "general-purpose",
+        run_in_background: false,
+        prompt: "Read-only task. List the 5 largest files under /home/user.",
+      },
+      _meta: {},
+    },
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "toolu_child",
+      title: "find /home/user -type f | sort -rn | head -5",
+      kind: "execute",
+      status: "pending",
+      _meta: {
+        claudeCode: { toolName: "Bash", parentToolUseId: "toolu_agent" },
+      },
+    },
+  ];
+  updates.forEach((update, i) => updateHarnessTool(event(update), tools, i + 1));
+  return tools;
+}
+
+test.each([true, false])(
+  "a Claude subagent's tool calls render under its task (title update sent: %s)",
+  (withTitleUpdate) => {
+    const tools = recordedSubagent(withTitleUpdate);
+    const child = tools.get("toolu_child")!;
+    expect(child).toMatchObject({
+      parentId: "toolu_agent",
+      parentTitle: "List 5 largest files in home",
+    });
+    // A later update can't re-parent the call.
+    updateHarnessTool(
+      event({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "toolu_child",
+        status: "completed",
+        _meta: { claudeCode: { parentToolUseId: "other" } },
+      }),
+      tools,
+      99,
+    );
+    expect(tools.get("toolu_child")!.parentId).toBe("toolu_agent");
+    const { unmount } = render(<HarnessToolRow entry={child} />);
+    const group = screen.getByLabelText("Subagent tool call");
+    expect(
+      within(group).getByText("Subagent: List 5 largest files in home"),
+    ).toBeTruthy();
+    expect(within(group).getByText(/find \/home\/user/)).toBeTruthy();
+    unmount();
+    // The Agent call itself is an ordinary row.
+    render(<HarnessToolRow entry={tools.get("toolu_agent")!} />);
+    expect(screen.queryByLabelText("Subagent tool call")).toBeNull();
+  },
+);
+
+test("a subagent's streamed text is shown with its Agent call, not dropped", async () => {
+  const tools = recordedSubagent(true);
+  const stamp = { claudeCode: { parentToolUseId: "toolu_agent" } };
+  for (const [i, text] of ["Looking at ", "the home directory."].entries())
+    expect(
+      updateHarnessTool(
+        event({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
+          _meta: stamp,
+        }),
+        tools,
+        10 + i,
+      ),
+    ).toBeUndefined();
+  // Unstamped or orphaned chunks change nothing.
+  updateHarnessTool(
+    event({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "orphan" },
+      _meta: { claudeCode: { parentToolUseId: "missing" } },
+    }),
+    tools,
+    20,
+  );
+  const agent = tools.get("toolu_agent")!;
+  expect(agent.narration).toBe("Looking at the home directory.");
+  render(<HarnessToolRow entry={agent} />);
+  await userEvent.click(screen.getByText(/List 5 largest files in home/));
+  expect(
+    screen.getByRole("region", {
+      name: "List 5 largest files in home subagent narration",
+    }).textContent,
+  ).toBe("Looking at the home directory.");
+});

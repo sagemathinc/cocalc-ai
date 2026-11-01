@@ -7,6 +7,8 @@ import json
 import os
 import pwd
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -14,7 +16,7 @@ import tarfile
 import time
 import unittest
 from collections import namedtuple
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -5034,6 +5036,20 @@ reconcile_host_service_pid 123
                 text=True,
                 check=True,
             )
+            # project-view probe reports capabilities and takes no arguments.
+            project_view = "case \"$cmd\" in\n  project-view)" + script.split(
+                "\n  project-view)", 1
+            )[1].split("\n  umount-overlay-project)", 1)[0] + "\nesac\n"
+            for args, code, out in [
+                (["probe"], 0, "project-view:1 overlay-idmap:1\n"),
+                (["probe", "x"], 2, ""),
+            ]:
+                result = subprocess.run(
+                    ["bash", "-c", 'cmd=project-view\n' + project_view, "_", *args],
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(result.stdout, out)
             policy_helper = captured[
                 "/usr/local/libexec/cocalc-project-io-policy"
             ]
@@ -7019,6 +7035,12 @@ WantedBy=multi-user.target
                 bootstrap.run_best_effort = original_run_best_effort
 
             script = captured[str(Path(tmpdir) / "runtime-root" / "bin" / "project-host")]
+            # the root-owned node first, nvm only as a fallback
+            self.assertIn('NODE_BIN="/opt/cocalc/node/current/bin/node"', script)
+            self.assertLess(
+                script.index('NODE_BIN="/opt/cocalc/node/current/bin/node"'),
+                script.index("NVM_DIR"),
+            )
             self.assertIn(f'RUNTIME_HOME="{cfg.bootstrap_home}"', script)
             self.assertIn('export NVM_DIR="$RUNTIME_HOME/.nvm"', script)
             self.assertIn('nvm use --silent default >/dev/null 2>&1 || true', script)
@@ -7027,7 +7049,7 @@ WantedBy=multi-user.target
                 script,
             )
             self.assertIn(
-                'node not found for project-host wrapper (looked in PATH and $NVM_DIR/versions/node/v20*/bin/node)',
+                'node not found for project-host wrapper (looked in /opt/cocalc/node/current/bin/node, PATH and $NVM_DIR/versions/node/v20*/bin/node)',
                 script,
             )
             self.assertIn('exec "$NODE_BIN"', script)
@@ -7035,36 +7057,404 @@ WantedBy=multi-user.target
             self.assertIn(pool, script)
             self.assertLess(script.index(pool), script.index('exec "$NODE_BIN"'))
 
-    def test_install_node_uses_current_nvm_and_requested_node_version(self) -> None:
+    def _node_release(self, tmpdir: Path, version: str, *, mode: int = 0o775) -> Path:
+        """A node-<v>-linux-<arch>.tar.xz like nodejs.org's."""
+        top = f"node-{version}-linux-{bootstrap.node_dist_arch()}"
+        src = tmpdir / f"src-{version}" / top
+        (src / "bin").mkdir(parents=True)
+        (src / "lib" / "node_modules").mkdir(parents=True)
+        node = src / "bin" / "node"
+        node.write_text(f"#!/bin/sh\necho {version}\n")
+        node.chmod(mode)
+        archive = tmpdir / f"{top}.tar.xz"
+        with tarfile.open(archive, "w:xz") as tar:
+            tar.add(src, arcname=top)
+        return archive
+
+    def _install_node(self, cfg, root: Path, releases: dict, index=None, sums=None):
+        """install_node with nodejs.org replaced by local files."""
+        downloads = []
+
+        def fake_download(_cfg, url, dest, **_kw):
+            downloads.append(url)
+            name = url.rsplit("/", 1)[1]
+            version = url.rsplit("/", 2)[1]
+            if name == "SHASUMS256.txt":
+                text = sums(version) if sums else "".join(
+                    f"{hashlib.sha256(a.read_bytes()).hexdigest()}  {a.name}\n"
+                    for v, a in releases.items()
+                    if v == version
+                )
+                Path(dest).write_text(text)
+            else:
+                shutil.copy(releases[version], dest)
+
+        def fake_index(_cfg, _url):
+            if isinstance(index, Exception):
+                raise index
+            return index if index is not None else [{"version": v} for v in releases]
+
+        with mock.patch.object(bootstrap, "download_file", fake_download), mock.patch.object(
+            bootstrap, "fetch_json", fake_index
+        ), self._as_root(), mock.patch.object(
+            bootstrap, "node_versions_in_use", lambda _root: set()
+        ):
+            result = bootstrap.install_node(cfg, root=root)
+        return result, downloads
+
+    @contextmanager
+    def _as_root(self):
+        """The test user stands in for root, and the temp dir's parents
+        count as root-owned."""
+        with mock.patch.object(bootstrap, "ROOT_UID", os.getuid()), mock.patch.object(
+            bootstrap, "root_owned_parents", lambda _p: True
+        ), mock.patch.object(bootstrap, "log_line", lambda *_a, **_k: None):
+            yield
+
+    def test_install_node_installs_the_newest_release_of_the_major_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)  # node_version "20"
+            root = tmp / "node"
+            releases = {
+                "v20.9.0": self._node_release(tmp, "v20.9.0"),
+                "v20.11.1": self._node_release(tmp, "v20.11.1"),
+            }
+            index = [{"version": "v21.0.0"}, {"version": "v20.9.0"}, {"version": "v20.11.1"}]
+            node, downloads = self._install_node(cfg, root, releases, index=index)
+            self.assertEqual(node, root / "current" / "bin" / "node")
+            self.assertEqual(os.readlink(root / "current"), "v20.11.1")
+            self.assertIn("v20.11.1", node.read_text())
+            # group/other write bits are cleared
+            self.assertEqual(oct((root / "v20.11.1" / "bin" / "node").stat().st_mode & 0o777), "0o755")
+            self.assertTrue(all(u.startswith("https://nodejs.org/dist/v20.11.1/") for u in downloads))
+            # Already installed: no download.
+            _node, downloads = self._install_node(cfg, root, releases, index=index)
+            self.assertEqual(downloads, [])
+
+    def test_node_version_selectors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
-            recorded = []
+            index = [{"version": v} for v in ("v20.9.0", "v20.11.0", "v20.11.1", "v20.12.0", "v21.0.0")]
+            with mock.patch.object(bootstrap, "fetch_json", lambda _c, _u: index):
+                for selector, expected in (
+                    ("20", "v20.12.0"),
+                    ("v20", "v20.12.0"),
+                    ("20.11", "v20.11.1"),
+                    ("20.11.0", "v20.11.0"),
+                    ("v20.9.0", "v20.9.0"),
+                ):
+                    cfg = bootstrap.replace(cfg, node_version=selector)
+                    self.assertEqual(bootstrap.resolve_node_version(cfg), expected, selector)
+                # nvm aliases are refused, not reinterpreted
+                for selector in ("lts/*", "node", "stable", "lts/iron", "20.x", ""):
+                    cfg = bootstrap.replace(cfg, node_version=selector)
+                    with self.assertRaises(RuntimeError):
+                        bootstrap.resolve_node_version(cfg)
+            # "2" doesn't match 20.x
+            self.assertFalse(bootstrap.node_version_matches("v20.1.0", "2"))
+            self.assertTrue(bootstrap.node_version_matches("v20.11.1", "20.11"))
+            self.assertFalse(bootstrap.node_version_matches("v20.110.1", "20.11"))
 
-            original_run_cmd = bootstrap.run_cmd
-            try:
-                bootstrap.run_cmd = (
-                    lambda _cfg, args, desc, **kwargs: recorded.append(
-                        (args, desc, kwargs)
+    def test_install_node_refuses_a_checksum_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            name = releases["v20.11.1"].name
+            with self.assertRaises(RuntimeError):
+                self._install_node(cfg, root, releases, sums=lambda _v: f"{'0' * 64}  {name}\n")
+            self.assertFalse((root / "v20.11.1").exists())
+            self.assertFalse((root / "current").exists())
+
+    def test_install_node_keeps_the_current_node_when_releases_are_unreachable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            self._install_node(cfg, root, releases)
+            node, _ = self._install_node(cfg, root, releases, index=OSError("offline"))
+            self.assertEqual(node, root / "current" / "bin" / "node")
+            # with no node of that major line installed, the failure stands
+            shutil.rmtree(root)
+            with self.assertRaises(OSError):
+                self._install_node(cfg, root, releases, index=OSError("offline"))
+
+    def test_install_node_prunes_old_versions_but_not_running_ones(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            for v in ("v20.1.0", "v20.2.0", "v20.3.0", "v20.4.0"):
+                (root / v / "bin").mkdir(parents=True)
+                (root / v / "bin" / "node").write_text("old")
+            releases = {"v20.5.0": self._node_release(tmp, "v20.5.0")}
+            # v20.1.0 is still running: kept although it is the oldest
+            downloads = []
+            with mock.patch.object(
+                bootstrap,
+                "download_file",
+                lambda _c, url, dest, **_k: (
+                    downloads.append(url),
+                    Path(dest).write_text(
+                        f"{hashlib.sha256(releases['v20.5.0'].read_bytes()).hexdigest()}  {releases['v20.5.0'].name}\n"
                     )
-                )
-                bootstrap.install_node(cfg)
-            finally:
-                bootstrap.run_cmd = original_run_cmd
-
-            self.assertEqual(len(recorded), 1)
-            args, desc, kwargs = recorded[0]
-            self.assertEqual(desc, "install node")
-            self.assertEqual(kwargs.get("as_user"), cfg.ssh_user)
-            self.assertEqual(args[:2], ["bash", "-lc"])
-            script = args[2]
-            self.assertIn(
-                "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh",
-                script,
+                    if url.endswith("SHASUMS256.txt")
+                    else shutil.copy(releases["v20.5.0"], dest),
+                ),
+            ), mock.patch.object(
+                bootstrap, "fetch_json", lambda _c, _u: [{"version": "v20.5.0"}]
+            ), self._as_root(), mock.patch.object(
+                bootstrap, "node_versions_in_use", lambda _root: {"v20.1.0"}
+            ):
+                bootstrap.install_node(cfg, root=root)
+            self.assertEqual(
+                sorted(p.name for p in root.iterdir() if not p.name.startswith(".")),
+                ["current", "v20.1.0", "v20.3.0", "v20.4.0", "v20.5.0"],
             )
-            self.assertIn('PROFILE=/dev/null bash', script)
-            self.assertIn('nvm --version)" = "0.40.4"', script)
-            self.assertIn("nvm install 20", script)
-            self.assertIn("nvm alias default 20", script)
+
+    def test_install_node_replaces_a_version_dir_it_cannot_trust(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            outside = tmp / "evil-node"
+            outside.write_text("evil")
+            for setup in (
+                # a node anyone could rewrite
+                lambda d: ((d / "bin").mkdir(parents=True), (d / "bin" / "node").write_text("evil"), (d / "bin" / "node").chmod(0o777)),
+                # a group-writable directory
+                lambda d: ((d / "bin").mkdir(parents=True), (d / "bin" / "node").write_text("evil"), (d / "bin").chmod(0o775)),
+                # bin/node a symlink out of the tree
+                lambda d: ((d / "bin").mkdir(parents=True), os.symlink(outside, d / "bin" / "node")),
+                # the version dir itself a symlink
+                lambda d: (d.parent.mkdir(parents=True, exist_ok=True), os.symlink(tmp, d)),
+            ):
+                if root.exists():
+                    shutil.rmtree(root)
+                root.mkdir()
+                setup(root / "v20.11.1")
+                _node, downloads = self._install_node(cfg, root, releases)
+                self.assertTrue(downloads)
+                self.assertIn("v20.11.1", (root / "current" / "bin" / "node").read_text())
+                with self._as_root():
+                    self.assertTrue(bootstrap.node_tree_ok(root / "v20.11.1"))
+            self.assertEqual(outside.read_text(), "evil")
+
+    def test_install_node_keeps_a_replaced_tree_projects_still_mount(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            root = tmp / "node"
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            self._install_node(cfg, root, releases)
+            # the tree became untrusted while a container mounts it
+            (root / "v20.11.1" / "bin" / "node").chmod(0o777)
+            old_inode = (root / "v20.11.1").stat().st_ino
+            in_use = {"v20.11.1"}
+            with mock.patch.object(bootstrap, "download_file") as download:
+                download.side_effect = OSError("offline")
+                with self.assertRaises(OSError), self._as_root(), mock.patch.object(
+                    bootstrap, "fetch_json", lambda _c, _u: [{"version": "v20.11.1"}]
+                ):
+                    bootstrap.install_node(cfg, root=root)
+            # a failed download leaves it in place (not deleted)
+            self.assertEqual((root / "v20.11.1").stat().st_ino, old_inode)
+            # the replacement is staged first, then the old tree moved aside
+            def fake_download(_cfg, url, dest, **_kw):
+                name = url.rsplit("/", 1)[1]
+                archive = releases["v20.11.1"]
+                if name == "SHASUMS256.txt":
+                    Path(dest).write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
+                else:
+                    shutil.copy(archive, dest)
+            with mock.patch.object(bootstrap, "download_file", fake_download), mock.patch.object(
+                bootstrap, "fetch_json", lambda _c, _u: [{"version": "v20.11.1"}]
+            ), self._as_root(), mock.patch.object(
+                bootstrap, "node_versions_in_use", lambda _r: {n.name for n in root.iterdir() if n.name.startswith(".replaced-")} | in_use
+            ):
+                bootstrap.install_node(cfg, root=root)
+            replaced = [n for n in root.iterdir() if n.name.startswith(".replaced-")]
+            self.assertEqual(len(replaced), 1)
+            self.assertEqual(replaced[0].stat().st_ino, old_inode)
+            with self._as_root():
+                self.assertTrue(bootstrap.node_tree_ok(root / "v20.11.1"))
+            # once nothing mounts it, the next install removes it
+            self._install_node(cfg, root, releases)
+            self.assertEqual([n for n in root.iterdir() if n.name.startswith(".replaced-")], [])
+
+    def test_install_node_fails_closed_on_an_untrusted_root_or_current(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            releases = {"v20.11.1": self._node_release(tmp, "v20.11.1")}
+            # the root itself a symlink
+            (tmp / "elsewhere").mkdir()
+            os.symlink(tmp / "elsewhere", tmp / "linked")
+            with self.assertRaises(RuntimeError):
+                self._install_node(cfg, tmp / "linked", releases)
+            # a directory above the root that others could change
+            with mock.patch.object(bootstrap, "log_line", lambda *_a, **_k: None), mock.patch.object(
+                bootstrap, "root_owned_parents", lambda _p: False
+            ), self.assertRaises(RuntimeError):
+                bootstrap.install_node(cfg, root=tmp / "node2")
+            # offline, with current pointing out of the root or at a tree
+            # others could change: no fallback
+            root = tmp / "node"
+            self._install_node(cfg, root, releases)
+            (root / "current").unlink()
+            os.symlink("../elsewhere", root / "current")
+            with self.assertRaises(OSError):
+                self._install_node(cfg, root, releases, index=OSError("offline"))
+            (root / "current").unlink()
+            os.symlink("v20.11.1", root / "current")
+            (root / "v20.11.1" / "bin" / "node").chmod(0o777)
+            with self.assertRaises(OSError):
+                self._install_node(cfg, root, releases, index=OSError("offline"))
+
+    def test_extract_node_archive_refuses_hostile_members(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+
+            def archive_with(add):
+                path = tmp / f"a{len(list(tmp.iterdir()))}.tar.xz"
+                with tarfile.open(path, "w:xz") as tar:
+                    add(tar)
+                return path
+
+            def member(name, **kw):
+                info = tarfile.TarInfo(name)
+                for k, v in kw.items():
+                    setattr(info, k, v)
+                return info
+
+            for hostile in (
+                lambda t: t.addfile(member("node-v/../../escape", size=0), io.BytesIO(b"")),
+                lambda t: t.addfile(member("node-v/bin/abs", type=tarfile.SYMTYPE, linkname="/etc/passwd")),
+                lambda t: t.addfile(member("node-v/bin/up", type=tarfile.SYMTYPE, linkname="../../../etc")),
+                lambda t: t.addfile(member("node-v/dev/null0", type=tarfile.CHRTYPE, devmajor=1, devminor=3)),
+            ):
+                dest = tmp / f"dest{len(list(tmp.iterdir()))}"
+                dest.mkdir()
+                with self.assertRaises(tarfile.TarError):
+                    bootstrap.extract_node_archive(archive_with(hostile), dest)
+            # setuid/setgid and group/other write bits are dropped
+            dest = tmp / "ok"
+            dest.mkdir()
+            data = b"#!/bin/sh\n"
+            bootstrap.extract_node_archive(
+                archive_with(lambda t: t.addfile(member("node-v/bin/node", size=len(data), mode=0o6777), io.BytesIO(data))),
+                dest,
+            )
+            self.assertEqual(oct((dest / "bin" / "node").stat().st_mode & 0o7777), "0o755")
+
+    def test_node_versions_in_use_reads_running_executables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = Path(tmpdir) / "proc"
+            (proc / "10").mkdir(parents=True)
+            os.symlink("/opt/cocalc/node/v20.4.0/bin/node", proc / "10" / "exe")
+            (proc / "11").mkdir()
+            os.symlink("/usr/bin/bash", proc / "11" / "exe")
+            self.assertEqual(
+                bootstrap.node_versions_in_use(Path("/opt/cocalc/node"), str(proc)),
+                {"v20.4.0"},
+            )
+            # A project container that bind-mounts an older version's bin/lib
+            # (its processes' exe is a container path): that version is kept.
+            root = Path(tmpdir) / "node"
+            root.mkdir()
+            dev = os.stat(root).st_dev
+            device = f"{os.major(dev)}:{os.minor(dev)}"
+            (proc / "20").mkdir()
+            os.symlink("/opt/cocalc/bin/node", proc / "20" / "exe")
+            (proc / "20" / "ns").mkdir()
+            os.symlink("mnt:[4026532900]", proc / "20" / "ns" / "mnt")
+            (proc / "20" / "mountinfo").write_text(
+                f"600 500 {device} /some/where/node/v20.2.0/bin /opt/cocalc/bin ro,relatime - ext4 /dev/sda1 rw\n"
+                f"601 500 {device} /some/where/node/v20.2.0/lib /opt/cocalc/lib ro,relatime - ext4 /dev/sda1 rw\n"
+                # another filesystem with the same layout doesn't count
+                f"602 500 999:999 /x/node/v20.3.0/bin /opt/other ro - ext4 /dev/sdb1 rw\n"
+            )
+            # a second process in the same namespace isn't read again
+            (proc / "21").mkdir()
+            (proc / "21" / "ns").mkdir()
+            os.symlink("mnt:[4026532900]", proc / "21" / "ns" / "mnt")
+            self.assertEqual(bootstrap.node_versions_in_use(root, str(proc)), {"v20.2.0"})
+            # a replaced tree a container still mounts counts too
+            (proc / "22").mkdir()
+            (proc / "22" / "ns").mkdir()
+            os.symlink("mnt:[4026532999]", proc / "22" / "ns" / "mnt")
+            (proc / "22" / "mountinfo").write_text(
+                f"603 500 {device} /x/node/.replaced-v20.2.0-1/bin /opt/cocalc/bin ro - ext4 /dev/sda1 rw\n"
+            )
+            self.assertIn(".replaced-v20.2.0-1", bootstrap.node_versions_in_use(root, str(proc)))
+            # A namespace whose first process is gone (no mountinfo) is still
+            # read through another of its processes.
+            (proc / "15").mkdir()
+            (proc / "15" / "ns").mkdir()
+            os.symlink("mnt:[4026532901]", proc / "15" / "ns" / "mnt")
+            (proc / "16").mkdir()
+            (proc / "16" / "ns").mkdir()
+            os.symlink("mnt:[4026532901]", proc / "16" / "ns" / "mnt")
+            (proc / "16" / "mountinfo").write_text(
+                f"700 500 {device} /some/where/node/v20.1.0/bin /opt/cocalc/bin ro - ext4 /dev/sda1 rw\n"
+            )
+            with mock.patch.object(bootstrap.os, "listdir", lambda _p: ["15", "16", "20", "21"]):
+                self.assertEqual(
+                    bootstrap.node_versions_in_use(root, str(proc)), {"v20.1.0", "v20.2.0"}
+                )
+
+    def test_install_node_runtime_libs_publishes_a_root_owned_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cfg = make_cfg(tmpdir)
+            lib = tmp / "libatomic.so.1"
+            lib.write_bytes(b"lib-v1")
+            root = tmp / "runtime-libs"
+            with self._as_root():
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(tmp / "absent"), str(lib)))
+                published = root / "libatomic.so.1"
+                self.assertEqual(published.read_bytes(), b"lib-v1")
+                self.assertEqual(oct(published.stat().st_mode & 0o777), "0o644")
+                inode = published.stat().st_ino
+                # unchanged: left alone (running processes may map it)
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertEqual(published.stat().st_ino, inode)
+                # changed: replaced by a new file, never rewritten in place
+                lib.write_bytes(b"lib-v2")
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertEqual(published.read_bytes(), b"lib-v2")
+                self.assertNotEqual(published.stat().st_ino, inode)
+                # equal bytes but once writable by others: a new inode (an
+                # earlier writable descriptor must not reach the published one)
+                published.chmod(0o666)
+                inode = published.stat().st_ino
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertEqual(oct(published.stat().st_mode & 0o777), "0o644")
+                self.assertNotEqual(published.stat().st_ino, inode)
+                # trusted as is (root-owned 0644, one link, equal bytes): reused
+                inode = published.stat().st_ino
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertEqual(published.stat().st_ino, inode)
+                # a second hard link to it: a new inode
+                os.link(published, tmp / "extra-link")
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertNotEqual(published.stat().st_ino, inode)
+                # a symlink in its place is replaced, its target untouched
+                outside = tmp / "outside"
+                outside.write_bytes(b"lib-v2")
+                published.unlink()
+                os.symlink(outside, published)
+                bootstrap.install_node_runtime_libs(cfg, root=root, candidates=(str(lib),))
+                self.assertFalse(published.is_symlink())
+                self.assertEqual(published.read_bytes(), b"lib-v2")
+                self.assertEqual(outside.read_bytes(), b"lib-v2")
+                # none on the host: nothing published, no failure
+                bootstrap.install_node_runtime_libs(cfg, root=tmp / "none", candidates=(str(tmp / "absent"),))
+                self.assertFalse((tmp / "none").exists())
 
     def test_configure_autostart_installs_systemd_watchdog_and_removes_cron(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -7964,6 +8354,8 @@ class BootstrapModesTest(unittest.TestCase):
                 "ensure_bootstrap_paths",
                 "configure_rsyslog_limits",
                 "configure_daily_root_cleanup",
+                "configure_host_integrity_watch",
+                "configure_btrfs_scrub",
                 "configure_kernel_sysctl_hardening",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
@@ -8018,6 +8410,8 @@ class BootstrapModesTest(unittest.TestCase):
                     "ensure_bootstrap_paths",
                     "configure_rsyslog_limits",
                     "configure_daily_root_cleanup",
+                    "configure_host_integrity_watch",
+                    "configure_btrfs_scrub",
                     "configure_kernel_sysctl_hardening",
                     "install_privileged_wrappers",
                     "install_privileged_tool_binaries",
@@ -8042,6 +8436,7 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_host_integrity_watch configure_btrfs_scrub "
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
@@ -8050,7 +8445,7 @@ class BootstrapModesTest(unittest.TestCase):
             "ensure_subuids ensure_runtime_user_manager configure_podman "
             "verify_runtime_user_contract write_env configure_runtime_shell_env "
             "setup_master_conat_token install_privileged_tool_binaries "
-            "install_node configure_node_bind_service_capability write_wrapper "
+            "install_node install_node_runtime_libs configure_node_bind_service_capability write_wrapper "
             "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
             "configure_cloudflared_with_options "
             "configure_critical_service_oom_protection configure_autostart "
@@ -8114,6 +8509,7 @@ class BootstrapModesTest(unittest.TestCase):
         steps = (
             "ensure_runtime_user ensure_bootstrap_paths "
             "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_host_integrity_watch configure_btrfs_scrub "
             "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
             "configure_kernel_key_limits "
             "configure_inotify_limits configure_journald_limits "
@@ -8124,7 +8520,7 @@ class BootstrapModesTest(unittest.TestCase):
             "ensure_subuids ensure_runtime_user_manager configure_podman "
             "verify_runtime_user_contract configure_runtime_shell_env "
             "setup_master_conat_token install_privileged_tool_binaries "
-            "install_node configure_node_bind_service_capability write_wrapper "
+            "install_node install_node_runtime_libs configure_node_bind_service_capability write_wrapper "
             "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
             "configure_cloudflared_with_options "
             "configure_critical_service_oom_protection configure_autostart "
@@ -8218,6 +8614,40 @@ class BootstrapModesTest(unittest.TestCase):
                         second, bootstrap.project_host_restart_fingerprint(cfg)
                     ),
                     ["env:A"],
+                )
+
+    def test_restart_fingerprint_follows_the_installed_node_release(self) -> None:
+        # A selector like "20" resolving to a newer patch restarts the stack
+        # onto it.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            root = Path(tmpdir) / "node"
+            (root / "v20.1.0").mkdir(parents=True)
+            (root / "v20.2.0").mkdir()
+            os.symlink("v20.1.0", root / "current")
+            with mock.patch.object(bootstrap, "NODE_ROOT", root), mock.patch.object(
+                bootstrap, "runtime_home", return_value=tmpdir
+            ):
+                before = bootstrap.project_host_restart_fingerprint(cfg)
+                (root / "current").unlink()
+                os.symlink("v20.2.0", root / "current")
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(
+                        before, bootstrap.project_host_restart_fingerprint(cfg)
+                    ),
+                    ["node_current"],
+                )
+                # the same version reinstalled (a repaired tree): a new file
+                (root / "v20.2.0" / "bin").mkdir()
+                (root / "v20.2.0" / "bin" / "node").write_text("old")
+                before = bootstrap.project_host_restart_fingerprint(cfg)
+                (root / "v20.2.0" / "bin" / "node").unlink()
+                (root / "v20.2.0" / "bin" / "node").write_text("reinstalled")
+                self.assertEqual(
+                    bootstrap.changed_fingerprint_parts(
+                        before, bootstrap.project_host_restart_fingerprint(cfg)
+                    ),
+                    ["node_binary"],
                 )
 
     def test_podman_boot_preparation_restores_project_io_policy(self) -> None:
@@ -8401,6 +8831,8 @@ class BootstrapModesTest(unittest.TestCase):
             patch("ensure_bootstrap_paths", lambda _cfg: None)
             patch("ensure_automatic_security_updates", lambda _cfg: None)
             patch("configure_daily_root_cleanup", lambda _cfg: None)
+            patch("configure_host_integrity_watch", lambda _cfg: None)
+            patch("configure_btrfs_scrub", lambda _cfg: None)
             patch("compute_image_size", lambda _cfg: 10)
             patch("configure_kernel_module_hardening", lambda _cfg: None)
             patch("configure_kernel_sysctl_hardening", lambda _cfg: None)
@@ -8432,6 +8864,7 @@ class BootstrapModesTest(unittest.TestCase):
             )
             patch("install_privileged_tool_binaries", lambda _cfg, _bundle: None)
             patch("install_node", lambda _cfg: None)
+            patch("install_node_runtime_libs", lambda _cfg: None)
             patch("configure_node_bind_service_capability", lambda _cfg: None)
             patch("write_wrapper", lambda _cfg: None)
             patch("write_helpers", lambda _cfg: None)
@@ -9037,6 +9470,2360 @@ class ManagedProjectJobOutputRelayTest(unittest.TestCase):
         self.assertNotIn("sel.select", paused)
         self.assertNotIn("emit_output", paused)
         self.assertNotIn("256 * 1024", source)
+
+
+class ProjectRuntimeUidBlockTest(unittest.TestCase):
+    def setUp(self) -> None:
+        original = bootstrap.resolve_runtime_user_identity
+        bootstrap.resolve_runtime_user_identity = lambda _cfg: (2000, 2000)
+        self.addCleanup(setattr, bootstrap, "resolve_runtime_user_identity", original)
+        self.cfg = make_cfg(tempfile.mkdtemp())
+
+    def test_block_is_far_from_useradd_and_container_ranges(self) -> None:
+        start, length = bootstrap.PROJECT_RUNTIME_UID_BLOCK
+        self.assertEqual((start, length), (1 << 30, 65536))
+        self.assertEqual(bootstrap.PROJECT_RUNTIME_SEPARATE_UID, start)
+        for range_start, range_length in bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES:
+            self.assertLessEqual(range_start + range_length, start)
+
+    def test_separate_mode_appends_exactly_one_trailing_extent(self) -> None:
+        keep = bootstrap.expected_runtime_userns_map(self.cfg)
+        separate_cfg = replace(self.cfg, project_runtime_uid_mode="separate")
+        self.assertEqual(
+            bootstrap.runtime_subid_ranges(separate_cfg),
+            (*bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES, bootstrap.PROJECT_RUNTIME_UID_BLOCK),
+        )
+        separate = bootstrap.expected_runtime_userns_map(separate_cfg)
+        for before, after in zip(keep, separate):
+            self.assertEqual(after[:-1], before)
+            self.assertEqual(len(after), len(before) + 1)
+        # every existing inner id stays put; the block comes after them
+        self.assertEqual(separate[0][-1], "4194305 1073741824 65536")
+        self.assertEqual(
+            bootstrap.expected_runtime_user_contract(separate_cfg)["subuid_ranges"][-1],
+            "1073741824:65536",
+        )
+        self.assertTrue(bootstrap.runtime_userns_map_has_project_uid_block(separate[0]))
+        self.assertFalse(bootstrap.runtime_userns_map_has_project_uid_block(keep[0]))
+
+    def test_parse_mode(self) -> None:
+        self.assertEqual(bootstrap.parse_project_runtime_uid_mode(None), "keep-id")
+        self.assertEqual(bootstrap.parse_project_runtime_uid_mode("separate"), "separate")
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(
+                bootstrap.parse_project_runtime_uid_mode("separate-per-project"), "keep-id"
+            )
+        self.assertIn("ignoring invalid project runtime uid mode", err.getvalue())
+
+    def test_local_env_file_sets_the_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = Path(tmpdir) / "project-host.env"
+            local = Path(tmpdir) / "project-host.local.env"
+            mode = bootstrap.effective_project_runtime_uid_mode
+            self.assertEqual(mode(None, str(env_file)), "keep-id")
+            self.assertEqual(mode("separate", str(env_file)), "separate")
+            local.write_text("COCALC_PROJECT_RUNTIME_UID_MODE=separate\n", encoding="utf-8")
+            self.assertEqual(mode(None, str(env_file)), "separate")
+            local.write_text("COCALC_PROJECT_RUNTIME_UID_MODE=keep-id\n", encoding="utf-8")
+            self.assertEqual(mode("separate", str(env_file)), "keep-id")
+            local.write_text("COCALC_PROJECT_RUNTIME_UID_MODE=sideways\n", encoding="utf-8")
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(mode("separate", str(env_file)), "keep-id")
+
+    def check_contract(self, cfg, live_ranges) -> None:
+        desired = bootstrap.expected_runtime_user_contract(cfg)
+        uid_map, gid_map = bootstrap.expected_runtime_userns_map(cfg, live_ranges)
+        installed = {
+            **desired,
+            "uid_map": uid_map,
+            "gid_map": gid_map,
+            "fingerprint": bootstrap.runtime_userns_map_fingerprint(uid_map, gid_map),
+        }
+        original = bootstrap.read_current_runtime_user_contract
+        bootstrap.read_current_runtime_user_contract = lambda _cfg: installed
+        try:
+            bootstrap.verify_runtime_user_contract(cfg)
+        finally:
+            bootstrap.read_current_runtime_user_contract = original
+
+    def test_contract_accepts_live_map_with_or_without_the_block(self) -> None:
+        base = bootstrap.PROJECT_HOST_RUNTIME_SUBID_RANGES
+        block = bootstrap.PROJECT_RUNTIME_UID_BLOCK
+        for mode in ("keep-id", "separate"):
+            cfg = replace(self.cfg, project_runtime_uid_mode=mode)
+            # the namespace predates a changed allocation until the next reboot
+            self.check_contract(cfg, base)
+            self.check_contract(cfg, (*base, block))
+            with self.assertRaisesRegex(RuntimeError, "contract mismatch"):
+                self.check_contract(cfg, (*base, (block[0], 4096)))
+            with self.assertRaisesRegex(RuntimeError, "contract mismatch"):
+                self.check_contract(cfg, (block, *base))
+
+    def test_overlapping_entries_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "subuid"
+            path.write_text(
+                "ubuntu:100000:65536\n"
+                "cocalc-host:231072:65536\n"
+                "cocalc-host:1073741824:65536\n"
+                "later:1073770000:65536\n"
+                "below:1073676288:65536\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                bootstrap.project_uid_block_overlaps(path, "cocalc-host"),
+                ["later:1073770000:65536"],
+            )
+
+    def test_login_defs_pins_subid_max_below_the_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "login.defs"
+            path.write_text("UMASK 022\nSUB_UID_MAX 2000000000\n", encoding="utf-8")
+            self.assertTrue(bootstrap.ensure_login_defs_subid_max(path))
+            self.assertEqual(
+                path.read_text(encoding="utf-8"),
+                "UMASK 022\nSUB_UID_MAX 600100000\nSUB_GID_MAX 600100000\n",
+            )
+            self.assertFalse(bootstrap.ensure_login_defs_subid_max(path))
+            path.write_text("SUB_UID_MAX 500000\nSUB_GID_MAX 700000\n", encoding="utf-8")
+            self.assertFalse(bootstrap.ensure_login_defs_subid_max(path))
+
+
+def stat_mode(path) -> int:
+    return os.stat(path).st_mode & 0o7777
+
+
+class ProjectViewHelperTest(unittest.TestCase):
+    PROJECT = "11111111-2222-4333-8444-555555555555"
+
+    def setUp(self) -> None:
+        self.ns = {"__name__": "runtime_storage_path_helper_test"}
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, self.ns)
+        self.ns["runtime_ids"] = lambda: (2000, 2000)
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.views = self.tmp / "views"
+        self.views.mkdir()
+        self.ns["PROJECT_VIEW_ROOT"] = str(self.views)
+        O_PATH = self.ns["O_PATH"]
+
+        def open_view_root(_gid, create=True):
+            return os.open(self.views, O_PATH | os.O_DIRECTORY)
+
+        def ensure_view_dir(parentfd, name, _gid, mode=0o710):
+            os.makedirs(f"/proc/self/fd/{parentfd}/{name}", exist_ok=True)
+            return os.open(f"/proc/self/fd/{parentfd}/{name}", O_PATH | os.O_DIRECTORY)
+
+        # creating root-owned dirs needs root; the real ones are tested below
+        self.ns["open_view_root"] = open_view_root
+        self.ns["ensure_view_dir"] = ensure_view_dir
+        self.ns["view_mountpoints"] = lambda: []
+        self.ns["PROJECT_VIEW_LOCK"] = str(self.tmp / "views.lock")
+        # no real mounts here; the direction check has its own test
+        self.ns["verify_view"] = lambda *_args: None
+        self.data = self.tmp / "mnt"
+        (self.data / f"project-{self.PROJECT}").mkdir(parents=True)
+        (self.data / "data/tmp/cocalc-project-secrets" / self.PROJECT).mkdir(parents=True)
+        self.allowed = {str(self.data)}
+
+    def mount(self, kind, source, uid="1073741824"):
+        return self.ns["run_project_view"](
+            [
+                "project-view-mount",
+                "--project", self.PROJECT,
+                "--kind", kind,
+                "--uid", uid,
+                "--source-root", "/mnt/cocalc",
+                "--source-path", source,
+            ],
+            allowed_roots=self.allowed,
+        )
+
+    def test_idmap_maps_only_the_runtime_ids(self) -> None:
+        self.assertEqual(
+            self.ns["project_view_idmap"](2000, 2001, 1073741824),
+            "u:0:0:2000 u:2000:1073741824:1 u:2001:2001:1073739823 "
+            "u:1073741825:1073741825:3221225470 "
+            "g:0:0:2001 g:2001:1073741824:1 g:2002:2002:1073739822 "
+            "g:1073741825:1073741825:3221225470",
+        )
+
+    def test_view_uid_must_be_in_the_block(self) -> None:
+        validate = self.ns["validate_view_uid"]
+        self.assertEqual(validate("1073741824"), 1073741824)
+        self.assertEqual(validate("1073807359"), 1073807359)
+        for bad in ("1073807360", "2000", "0", "01073741824", "-1", "1e9", "", "1073741824 "):
+            with self.assertRaises(ValueError):
+                validate(bad)
+
+    def test_mount_binds_the_kind_source_idmapped(self) -> None:
+        self.ns["PROJECT_VIEW_KINDS"] = {
+            kind: ((str(self.data), template), ro)
+            for kind, ((_root, template), ro) in self.ns["PROJECT_VIEW_KINDS"].items()
+        }
+
+        def mount(kind, source):
+            self.ns["run_project_view"](
+                [
+                    "project-view-mount",
+                    "--project", self.PROJECT,
+                    "--kind", kind,
+                    "--uid", "1073741824",
+                    "--source-root", str(self.data),
+                    "--source-path", source,
+                ],
+                allowed_roots=self.allowed,
+            )
+
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            mount("home", f"project-{self.PROJECT}")
+            mount("secrets", f"data/tmp/cocalc-project-secrets/{self.PROJECT}")
+        calls = [call.args[0] for call in run.call_args_list]
+        home, secrets = (args for args in calls if "--bind" in args)
+        self.assertEqual(home[:3], ["/bin/mount", "--bind", "-o"])
+        self.assertTrue(home[3].startswith("X-mount.idmap=u:0:0:2000 u:2000:1073741824:1 "))
+        self.assertTrue(home[3].endswith(",nosuid,nodev"))
+        self.assertTrue(secrets[3].endswith(",nosuid,nodev,ro"))
+        # every view is made private right after its bind
+        self.assertEqual([args[1] for args in calls], ["--bind", "--make-private"] * 2)
+        for args in (home, secrets):
+            self.assertRegex(args[4], r"^/proc/self/fd/[0-9]+$")
+            self.assertRegex(args[5], r"^/proc/self/fd/[0-9]+$")
+        self.assertTrue((self.views / self.PROJECT / "home").is_dir())
+
+    def test_mount_refuses_other_sources_kinds_and_ids(self) -> None:
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            for kind, source in (
+                ("home", "data"),
+                ("home", "project-99999999-2222-4333-8444-555555555555"),
+                ("secrets", f"project-{self.PROJECT}"),
+                ("rootfs", f"project-{self.PROJECT}"),
+            ):
+                with self.assertRaises(ValueError):
+                    self.mount(kind, source)
+            with self.assertRaises(ValueError):
+                self.mount("home", f"project-{self.PROJECT}", uid="2000")
+            with self.assertRaises(ValueError):
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", "../x", "--kind", "home",
+                     "--uid", "1073741824", "--source-root", "/mnt/cocalc",
+                     "--source-path", "project-../x"],
+                    allowed_roots=self.allowed,
+                )
+        run.assert_not_called()
+
+    def test_mount_refuses_an_already_mounted_view(self) -> None:
+        self.ns["view_mountpoints"] = lambda: [f"{self.views}/{self.PROJECT}/home"]
+        self.ns["PROJECT_VIEW_KINDS"] = {
+            "home": ((str(self.data), "project-{id}"), False),
+        }
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            with self.assertRaisesRegex(ValueError, "already mounted"):
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", self.PROJECT, "--kind", "home",
+                     "--uid", "1073741824", "--source-root", str(self.data),
+                     "--source-path", f"project-{self.PROJECT}"],
+                    allowed_roots=self.allowed,
+                )
+        run.assert_not_called()
+
+    def test_concurrent_mounts_of_one_view_mount_it_once(self) -> None:
+        import threading
+
+        self.ns["PROJECT_VIEW_KINDS"] = {"home": ((str(self.data), "project-{id}"), False)}
+        mounted: list[str] = []
+        self.ns["view_mountpoints"] = lambda: list(mounted)
+        target = f"{self.views}/{self.PROJECT}/home"
+
+        def slow_mount(args, **_kwargs):
+            if "--bind" in args:
+                time.sleep(0.2)  # wide window between the check and the mount
+                mounted.append(target)
+
+        results: list[str] = []
+
+        def mount() -> None:
+            try:
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", self.PROJECT, "--kind", "home",
+                     "--uid", "1073741824", "--source-root", str(self.data),
+                     "--source-path", f"project-{self.PROJECT}"],
+                    allowed_roots=self.allowed,
+                )
+                results.append("mounted")
+            except ValueError as err:
+                results.append(str(err))
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=slow_mount):
+            threads = [threading.Thread(target=mount) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(mounted, [target])
+        self.assertEqual(results.count("mounted"), 1)
+        self.assertTrue(any("already mounted" in result for result in results))
+
+    def test_umount_drains_stacked_mounts(self) -> None:
+        target = f"{self.views}/{self.PROJECT}/home"
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        stacked = [target, target]
+        self.ns["view_mountpoints"] = lambda: list(stacked)
+
+        def umount(args, **_kwargs):
+            stacked.remove(args[-1])
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=umount) as run:
+            self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(stacked, [])
+        self.assertFalse((self.views / self.PROJECT).exists())
+        stuck = [target]
+        self.ns["view_mountpoints"] = lambda: list(stuck)
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "mounts remain"):
+                self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+
+    def test_a_view_is_unmounted_when_making_it_private_fails(self) -> None:
+        self.ns["PROJECT_VIEW_KINDS"] = {"home": ((str(self.data), "project-{id}"), False)}
+        target = f"{self.views}/{self.PROJECT}/home"
+        live: list[str] = []
+        self.ns["view_mountpoints"] = lambda: list(live)
+
+        def run(args, **_kwargs):
+            if "--bind" in args:
+                live.append(target)
+            elif "--make-private" in args:
+                raise subprocess.CalledProcessError(32, args)
+            elif args[:2] == ["/bin/umount", "-l"]:
+                live.remove(args[-1])
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=run):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.ns["run_project_view"](
+                    ["project-view-mount", "--project", self.PROJECT, "--kind", "home",
+                     "--uid", "1073741824", "--source-root", str(self.data),
+                     "--source-path", f"project-{self.PROJECT}"],
+                    allowed_roots=self.allowed,
+                )
+        self.assertEqual(live, [])
+
+    def test_a_staged_upper_is_unmounted_when_making_it_private_fails(self) -> None:
+        O_PATH = self.ns["O_PATH"]
+        (self.tmp / "img/upperdir").mkdir(parents=True)
+        (self.tmp / "img/workdir").mkdir(parents=True)
+        upper = os.open(self.tmp / "img/upperdir", O_PATH | os.O_DIRECTORY)
+        work = os.open(self.tmp / "img/workdir", O_PATH | os.O_DIRECTORY)
+        target = f"{self.views}/{self.PROJECT}/rootfs-upper"
+        live: list[str] = []
+        self.ns["view_mountpoints"] = lambda: list(live)
+
+        def run(args, **_kwargs):
+            if "--bind" in args:
+                live.append(target)
+            elif "--make-private" in args:
+                raise subprocess.CalledProcessError(32, args)
+            elif args[:2] == ["/bin/umount", "-l"]:
+                live.remove(args[-1])
+
+        try:
+            with mock.patch.object(self.ns["subprocess"], "run", side_effect=run):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.ns["mount_idmapped_upper"](self.PROJECT, upper, work, 1073741824)
+        finally:
+            os.close(upper)
+            os.close(work)
+        self.assertEqual(live, [])
+
+    def test_view_direction_check(self) -> None:
+        check = self.ns["assert_view_direction"]
+        st = namedtuple("st", "st_uid st_gid")
+        P = 1073741824
+        check(st(2000, 2000), st(P, P), 2000, 2000, P)
+        check(st(231072, 231072), st(231072, 231072), 2000, 2000, P)
+        for source, view in (
+            (st(2000, 2000), st(2000, 2000)),  # not mapped
+            (st(2000, 2000), st(65534, 65534)),  # mapped the wrong way round
+            (st(2000, 231072), st(P, P)),
+            (st(231072, 231072), st(P, 231072)),
+        ):
+            with self.assertRaisesRegex(ValueError, "project view shows"):
+                check(source, view, 2000, 2000, P)
+
+    def test_harden_closes_the_data_root_and_raw_homes(self) -> None:
+        data = self.tmp / "data-root"
+        data.mkdir()
+        os.chmod(data, 0o755)
+        home = data / f"project-{self.PROJECT}"
+        scratch = data / f"project-{self.PROJECT}-scratch"
+        other = data / "data"
+        for path, mode in ((home, 0o755), (scratch, 0o1777), (other, 0o700)):
+            path.mkdir()
+            os.chmod(path, mode)
+        self.ns["PROJECT_DATA_ROOT"] = str(data)
+        self.ns["runtime_ids"] = lambda: (os.getuid(), os.getgid())
+        chowns = []
+        with mock.patch.object(self.ns["os"], "chown", side_effect=lambda p, u, g: chowns.append((u, g))):
+            self.ns["run_project_view"](["project-view-harden"])
+        self.assertEqual(chowns, [(os.geteuid(), os.getgid())])
+        self.assertEqual(stat_mode(data), 0o750)
+        self.assertEqual(stat_mode(home), 0o700)
+        self.assertEqual(stat_mode(scratch), 0o1777)  # /tmp stays usable
+        self.assertEqual(stat_mode(other), 0o700)
+        with self.assertRaises(ValueError):
+            self.ns["run_project_view"](["project-view-harden", "--extra", "x"])
+
+    def test_view_parent_must_not_be_writable_by_others(self) -> None:
+        parent = self.tmp / "run-cocalc"
+        parent.mkdir(mode=0o711)
+        os.chmod(parent, 0o711)
+        self.ns["check_view_parent"](str(parent))
+        for mode in (0o771, 0o717, 0o1777):
+            os.chmod(parent, mode)
+            with self.assertRaisesRegex(ValueError, "unsafe project view parent"):
+                self.ns["check_view_parent"](str(parent))
+        os.chmod(parent, 0o711)
+        link = self.tmp / "link"
+        link.symlink_to(parent)
+        with self.assertRaisesRegex(ValueError, "unsafe project view parent"):
+            self.ns["check_view_parent"](str(link))
+
+    def test_umount_touches_only_the_exact_view_targets(self) -> None:
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        live = [
+            f"{self.views}/{self.PROJECT}/home/nested",  # propagated beneath a view
+            f"{self.views}/{self.PROJECT}/home",
+        ]
+        self.ns["view_mountpoints"] = lambda: list(live)
+
+        def umount(args, **_kwargs):
+            # MNT_DETACH takes the subtree along
+            live[:] = [t for t in live if not (t == args[-1] or t.startswith(args[-1] + "/"))]
+
+        with mock.patch.object(self.ns["subprocess"], "run", side_effect=umount) as run:
+            self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["/bin/umount", "-l", f"{self.views}/{self.PROJECT}/home"]],
+        )
+        (self.views / self.PROJECT / "home").mkdir(parents=True)
+        (self.views / self.PROJECT / "surprise").mkdir()
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "unexpected entry in project views"):
+                self.ns["run_project_view"](["project-view-umount", "--project", self.PROJECT])
+
+    def test_ensure_view_dir_refuses_a_dir_not_owned_by_root(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("needs a non-root user")
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, fresh := {"__name__": "x"})
+        parent = os.open(self.tmp, fresh["O_PATH"] | os.O_DIRECTORY)
+        try:
+            with self.assertRaisesRegex(ValueError, "unsafe project view directory"):
+                fresh["ensure_view_dir"](parent, "mine", os.getgid())
+        finally:
+            os.close(parent)
+
+    def test_gc_keeps_listed_projects_and_removes_the_rest(self) -> None:
+        other = "99999999-2222-4333-8444-555555555555"
+        for project in (self.PROJECT, other):
+            (self.views / project / "home").mkdir(parents=True)
+        live = [f"{self.views}/{other}/home", f"{self.views}/{self.PROJECT}/home"]
+        self.ns["view_mountpoints"] = lambda: list(live)
+        with mock.patch.object(
+            self.ns["subprocess"], "run", side_effect=lambda args, **_: live.remove(args[-1])
+        ) as run:
+            self.ns["run_project_view"](["project-view-gc", "--keep", self.PROJECT])
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["/bin/umount", "-l", f"{self.views}/{other}/home"]],
+        )
+        self.assertFalse((self.views / other).exists())
+        self.assertTrue((self.views / self.PROJECT / "home").is_dir())
+        (self.views / "not-a-project").mkdir()
+        live.clear()
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "unexpected entry"):
+                self.ns["run_project_view"](["project-view-gc", "--keep", ""])
+
+    def test_overlay_idmap_uses_the_staged_upper(self) -> None:
+        rootfs = self.tmp / "rootfs"
+        home = f"project-{self.PROJECT}/.local/share/cocalc/rootfs/img"
+        for name in ("lower", f"{home}/upperdir", f"{home}/workdir"):
+            (rootfs / name).mkdir(parents=True)
+        self.ns["PROJECT_UPPER_ROOT"] = str(rootfs)
+        self.ns["PROJECT_ROOTFS_ROOT"] = str(rootfs / "roots")
+        self.ns["container_root_ids"] = lambda: (os.getuid(), os.getgid())
+        O_PATH = self.ns["O_PATH"]
+        staged = []
+
+        def fake_stage(project_id, upperfd, workfd, view_uid):
+            staged.append((project_id, view_uid))
+            return os.open(rootfs / home, O_PATH | os.O_DIRECTORY), "upperdir", "workdir"
+
+        self.ns["mount_idmapped_upper"] = fake_stage
+
+        def argv(upper=f"{home}/upperdir", work=f"{home}/workdir", uid="1073741824",
+                 merged_root=str(rootfs / "roots"), merged=f"{self.PROJECT}/root"):
+            return [
+                "mount-overlay-project",
+                "--lower-root", str(rootfs), "--lower-path", "lower",
+                "--upper-root", str(rootfs), "--upper-path", upper,
+                "--work-root", str(rootfs), "--work-path", work,
+                "--merged-root", merged_root, "--merged-path", merged,
+                "--idmap", uid,
+            ]
+
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            self.ns["run_overlay"](argv(), allowed_roots={str(rootfs)})
+        self.assertEqual(staged, [(self.PROJECT, 1073741824)])
+        # the helper made <root>/<id>/root: <root> 0711, <id> 0700 owned by
+        # the container root (here: the test user)
+        self.assertEqual(stat_mode(rootfs / "roots"), 0o711)
+        self.assertEqual(stat_mode(rootfs / "roots" / self.PROJECT), 0o700)
+        self.assertEqual(os.stat(rootfs / "roots" / self.PROJECT).st_uid, os.getuid())
+        self.assertTrue((rootfs / "roots" / self.PROJECT / "root").is_dir())
+        args = run.call_args.args[0]
+        self.assertIn("xino=off,metacopy=on,redirect_dir=on,index=off", args[5])
+        other = "99999999-2222-4333-8444-555555555555"
+        (rootfs / f"project-{other}/u").mkdir(parents=True)
+        with mock.patch.object(self.ns["subprocess"], "run") as run:
+            for bad in (
+                argv(uid="2000"),
+                argv(upper=f"project-{other}/u"),
+                argv(upper="lower"),
+                argv(work="lower"),
+                # an idmapped overlay is only mounted beneath PROJECT_ROOTFS_ROOT
+                argv(merged_root=str(rootfs), merged=f"x/{self.PROJECT}"),
+                argv(merged=f"{self.PROJECT}/x"),
+                argv(merged=self.PROJECT),
+            ):
+                with self.assertRaises(ValueError):
+                    self.ns["run_overlay"](bad, allowed_roots={str(rootfs)})
+        run.assert_not_called()
+        # an existing <id> dir that isn't 0700 is refused
+        os.chmod(rootfs / "roots" / self.PROJECT, 0o755)
+        with mock.patch.object(self.ns["subprocess"], "run"):
+            with self.assertRaisesRegex(ValueError, "unsafe project rootfs dir"):
+                self.ns["run_overlay"](argv(), allowed_roots={str(rootfs)})
+
+    def test_idmapped_upper_needs_upper_and_work_in_one_dir(self) -> None:
+        O_PATH = self.ns["O_PATH"]
+        (self.tmp / "a/upperdir").mkdir(parents=True)
+        (self.tmp / "b/workdir").mkdir(parents=True)
+        upper = os.open(self.tmp / "a/upperdir", O_PATH | os.O_DIRECTORY)
+        work = os.open(self.tmp / "b/workdir", O_PATH | os.O_DIRECTORY)
+        try:
+            with self.assertRaisesRegex(ValueError, "share a parent"):
+                self.ns["mount_idmapped_upper"](self.PROJECT, upper, work, 1073741824)
+        finally:
+            os.close(upper)
+            os.close(work)
+
+    def test_wrapper_routes_project_view_and_overlay_idmap(self) -> None:
+        cfg = make_cfg(tempfile.mkdtemp())
+        wrapper = bootstrap_storage_wrapper_for(cfg)
+        self.assertIn("  project-view)\n", wrapper)
+        self.assertIn('project-view-mount --project "$1" --kind "$2" --uid "$3"', wrapper)
+        self.assertIn('project-view-gc --keep "${1:-}"', wrapper)
+        self.assertIn('"${idmap_args[@]}"', wrapper)
+        self.assertIn('merged_root="/run/cocalc/project-rootfs"', wrapper)
+        self.assertIn("project-view-harden", wrapper)
+        result = subprocess.run(["bash", "-n"], input=wrapper, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class HostIntegrityWatchTest(unittest.TestCase):
+    """The root watcher, against a fake /proc."""
+
+    HOST_NS = "user:[4026531837]"
+    RUNTIME_NS = "user:[4026532301]"
+    CONTAINER_NS = "user:[4026532400]"
+    # Written to each fake process's cmdline and environ: must never reach
+    # the status.
+    CANARY = "canary-in-cmdline-and-environ"
+
+    def watch(self):
+        namespace = {"__name__": "host_integrity_watch_test"}
+        exec(bootstrap.HOST_INTEGRITY_WATCH_SCRIPT, namespace)
+        # The fake processes' programs don't exist here: treat every path as
+        # root-owned except the ones a test marks writable.
+        self.writable_paths = set()
+        namespace["root_owned_chain"] = lambda path: path not in self.writable_paths
+        # the running inode of a deleted executable: root's unless marked
+        self.writable_inodes = set()
+        namespace["exe_inode_root_owned"] = (
+            lambda proc_dir: int(os.path.basename(proc_dir)) not in self.writable_inodes
+        )
+        return namespace
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.proc = self.root / "proc"
+        self.user = pwd.getpwuid(os.getuid()).pw_name
+        self.uid = os.getuid()
+        # project ranges as podman sets them up: 231072 + 65536, 327680 + ...
+        self.host_root = self.root / "host-root"
+        self.subuid = self.root / "subuid"
+        self.subuid.write_text(f"{self.user}:231072:65536\n{self.user}:327680:4128768\n")
+        self.add_proc(1, 0, "systemd", 0, "/usr/lib/systemd/systemd", self.HOST_NS)
+        self.node = "/opt/cocalc/node/v26.12.1/bin/node"
+        self.rt = "/opt/cocalc/container-runtime/20261014T214914Z-e2b488dd/bin"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    HOST_MNT = "mnt:[4026531841]"
+    CONTAINER_MNT = "mnt:[4026532500]"
+
+    def add_proc(
+        self,
+        pid,
+        ppid,
+        comm,
+        uid,
+        exe,
+        ns,
+        uid_map=None,
+        cgroup="/cocalc-host-services",
+        mnt=None,
+        root=None,
+    ):
+        base = self.proc / str(pid)
+        (base / "ns").mkdir(parents=True)
+        # the process's root: the host's, or (in another user namespace) a
+        # container rootfs of its own
+        if root is None:
+            root = self.host_root if ns == self.HOST_NS else self.root / f"rootfs-{pid}"
+        Path(root).mkdir(parents=True, exist_ok=True)
+        os.symlink(root, base / "root")
+        os.symlink(
+            mnt or (self.HOST_MNT if ns == self.HOST_NS else self.CONTAINER_MNT),
+            base / "ns" / "mnt",
+        )
+        (base / "status").write_text(
+            f"Name:\t{comm}\nPPid:\t{ppid}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n"
+        )
+        os.symlink(exe, base / "exe")
+        os.symlink(ns, base / "ns" / "user")
+        (base / "cgroup").write_text(f"0::{cgroup}\n")
+        (base / "cmdline").write_text(f"{comm}\0--label\0{self.CANARY}\0")
+        (base / "environ").write_text(f"LABEL={self.CANARY}\0")
+        if uid_map is not None:
+            (base / "uid_map").write_text(uid_map)
+
+    def watcher(self, ns, **overrides):
+        args = ns["argparse"].Namespace(
+            runtime_user=self.user,
+            status_dir=str(self.root / "status"),
+            proc=str(self.proc),
+            subuid=str(self.subuid),
+            allowlist="",
+            bootstrap_state="",
+            package_state="",
+            serial="",
+            interval=2.0,
+            config_interval=60.0,
+            once=True,
+        )
+        for key, value in overrides.items():
+            setattr(args, key, value)
+        return ns["Watcher"](args)
+
+    def test_reports_processes_that_run_outside_their_place(self) -> None:
+        runtime_map = f"0 {self.uid} 1\n1 231072 65536\n"
+        container_map = f"0 231072 2001\n2001 {self.uid} 1\n"
+        # expected: the daemon's node and podman's runtime helpers
+        self.add_proc(10, 1, "project-host:ap", self.uid, self.node, self.HOST_NS)
+        self.add_proc(20, 1, "conmon", self.uid, f"{self.rt}/conmon", self.RUNTIME_NS, runtime_map)
+        self.add_proc(21, 1, "pasta.avx2", self.uid, f"{self.rt}/pasta.avx2", self.RUNTIME_NS, runtime_map)
+        # inside a container: fine, whatever it runs
+        pool = "/cocalc-project-pool/project-1"
+        self.add_proc(30, 20, "python3", 231072, "/usr/bin/python3", self.CONTAINER_NS, container_map, cgroup=pool)
+        self.add_proc(31, 30, "bash", self.uid, "/usr/bin/bash", self.CONTAINER_NS, container_map, cgroup=pool)
+        # root processes are out of scope
+        self.add_proc(40, 1, "sshd", 0, "/usr/sbin/sshd", self.HOST_NS)
+        # not where they belong
+        self.add_proc(50, 20, "sh", 231072, "/usr/bin/dash", self.HOST_NS)
+        self.add_proc(51, 20, "bash", self.uid, "/usr/bin/bash", self.RUNTIME_NS, runtime_map)
+        self.add_proc(52, 10, "curl", self.uid, "/usr/bin/curl", self.HOST_NS)
+
+        ns = self.watch()
+        w = self.watcher(ns)
+        new = w.step(1000.0)
+        rules = sorted((f["rule"], f["exe"], f["severity"]) for f in new)
+        self.assertEqual(
+            rules,
+            [
+                ("project-uid-outside-container", "/usr/bin/dash", "critical"),
+                ("unexpected-process-in-container-runtime", "/usr/bin/bash", "critical"),
+                ("unexpected-runtime-user-process", "/usr/bin/curl", "high"),
+            ],
+        )
+        by_exe = {f["exe"]: f for f in new}
+        self.assertEqual(by_exe["/usr/bin/dash"]["userns"], "host")
+        self.assertEqual(by_exe["/usr/bin/dash"]["parents"], ["conmon", "systemd"])
+        self.assertEqual(by_exe["/usr/bin/curl"]["parents"], ["project-host:ap", "systemd"])
+
+        # A repeat sighting counts, without a new finding (the status is
+        # rewritten at least every 15 s).
+        self.assertEqual(w.step(1020.0), [])
+        status = json.loads((self.root / "status" / "status.json").read_text())
+        self.assertEqual(status["schema"], "cocalc-host-integrity-v1")
+        self.assertEqual({f["count"] for f in status["findings"]}, {2})
+        self.assertEqual(status["project_uid_ranges"], [[231072, 65536], [327680, 4128768]])
+        self.assertIn(f"runtime|runtime|{self.rt}/conmon", status["inventory"])
+        self.assertIn(f"host|project|/usr/bin/dash", status["inventory"])
+        # (processes in a container's namespace are not inventoried)
+        self.assertFalse([k for k in status["inventory"] if k.startswith("other|")])
+
+        # Findings never carry command lines, environment or file contents.
+        text = (self.root / "status" / "status.json").read_text()
+        self.assertNotIn(self.CANARY, text)
+        for finding in status["findings"]:
+            self.assertEqual(
+                set(finding),
+                {"rule", "severity", "pid", "comm", "exe", "uids", "userns",
+                 "parents", "cgroup", "first_seen", "last_seen", "count"},
+            )
+        self.assertEqual(oct(os.stat(self.root / "status" / "status.json").st_mode & 0o777), "0o644")
+
+    def test_placement_rules_key_on_cgroup_and_mount_namespace(self) -> None:
+        # The default rule: the runtime user only runs in its known cgroups.
+        self.add_proc(60, 1, "node", self.uid, self.node, self.HOST_NS, cgroup="/system.slice/other.service")
+        self.add_proc(61, 1, "node", self.uid, self.node, self.HOST_NS, cgroup=f"/user.slice/user-{self.uid}.slice/user@{self.uid}.service")
+        # A configured rule, e.g. for a dedicated project uid: only inside a
+        # project cgroup, or inside a container's mount namespace.
+        p = 5_000_000  # outside the subordinate ranges
+        self.add_proc(70, 1, "sh", p, "/usr/bin/dash", self.HOST_NS, cgroup="/user.slice")
+        self.add_proc(71, 1, "sh", p, "/usr/bin/dash", self.CONTAINER_NS, cgroup="/user.slice")
+        self.add_proc(72, 1, "sh", p, "/usr/bin/dash", self.HOST_NS, cgroup="/cocalc-project-pool/project-1")
+        # (a separate executable: findings of the same rule, executable and
+        # uid are one finding)
+        self.add_proc(73, 1, "bash", p, "/usr/bin/bash", self.HOST_NS, cgroup="/cocalc-project-poolX/project-1")
+        allow = self.root / "allow.json"
+        allow.write_text(
+            json.dumps(
+                {
+                    "placement_rules": [
+                        {
+                            "name": "project-user-outside-project-cgroup",
+                            "severity": "critical",
+                            "uids": [[p, 1]],
+                            "allowed_cgroups": ["/cocalc-project-pool"],
+                            "container_mount_ns_ok": True,
+                        },
+                        {"name": "broken", "uids": "nonsense"},
+                    ]
+                }
+            )
+        )
+        ns = self.watch()
+        w = self.watcher(ns, allowlist=str(allow))
+        new = w.step(1000.0)
+        self.assertEqual(
+            sorted((f["rule"], f["pid"], f["severity"]) for f in new),
+            [
+                ("project-user-outside-project-cgroup", 70, "critical"),
+                ("project-user-outside-project-cgroup", 73, "critical"),
+                ("runtime-user-outside-expected-cgroups", 60, "high"),
+            ],
+        )
+        status = json.loads((self.root / "status" / "status.json").read_text())
+        self.assertEqual(
+            status["placement_rules"],
+            ["runtime-user-outside-expected-cgroups", "project-user-outside-project-cgroup"],
+        )
+
+    def test_scripts_of_known_root_owned_services_are_expected(self) -> None:
+        # The project-host watchdog runs shell tools as the runtime user.
+        watchdog = "/system.slice/cocalc-project-host-watchdog.service"
+        self.add_proc(80, 1, "bash", self.uid, "/usr/bin/bash", self.HOST_NS, cgroup=watchdog)
+        self.add_proc(81, 80, "flock", self.uid, "/usr/bin/flock", self.HOST_NS, cgroup=watchdog)
+        # the same programs elsewhere are reported
+        self.add_proc(82, 1, "flock", self.uid, "/usr/bin/flock", self.HOST_NS, cgroup="/cocalc-host-services")
+        ns = self.watch()
+        new = self.watcher(ns).step(1000.0)
+        self.assertEqual(
+            [(f["rule"], f["pid"]) for f in new],
+            [("unexpected-runtime-user-process", 82)],
+        )
+
+    def test_runtime_namespace_needs_the_exact_root_mapping(self) -> None:
+        # Root -> runtime user for a single uid is podman's runtime namespace;
+        # a wider mapping from the runtime user is something else.
+        self.add_proc(90, 1, "bash", self.uid, "/usr/bin/bash", "user:[4026532777]", f"0 {self.uid} 1\n")
+        self.add_proc(91, 1, "bash", self.uid, "/usr/bin/bash", "user:[4026532778]", f"0 {self.uid} 5\n")
+        ns = self.watch()
+        new = self.watcher(ns).step(1000.0)
+        # (the wider one is still checked: it isn't in a container)
+        self.assertEqual(
+            sorted((f["rule"], f["pid"], f["userns"]) for f in new),
+            [
+                ("unexpected-process-in-container-runtime", 90, "runtime"),
+                ("unexpected-runtime-user-process", 91, "other"),
+            ],
+        )
+
+    def test_a_user_namespace_alone_is_not_a_container(self) -> None:
+        container_map = f"0 231072 2001\n2001 {self.uid} 1\n"
+        pool = "/cocalc-project-pool/project-1"
+        # in a container: its own mount namespace, in a project cgroup
+        self.add_proc(30, 1, "bash", self.uid, "/usr/bin/bash", self.CONTAINER_NS, container_map, cgroup=pool)
+        self.add_proc(31, 1, "sh", 231072, "/usr/bin/dash", self.CONTAINER_NS, container_map, cgroup=pool)
+        # a container-like user namespace, but in the host mount namespace or
+        # outside the project cgroups
+        self.add_proc(40, 1, "evil", self.uid, "/tmp/evil", self.CONTAINER_NS, container_map, cgroup=pool, mnt=self.HOST_MNT)
+        self.add_proc(41, 1, "sh", 231072, "/usr/bin/dash", self.CONTAINER_NS, container_map, cgroup="/cocalc-host-services")
+        # its own namespaces in a project cgroup, but the host's root (as
+        # after unshare): not a container either
+        self.add_proc(42, 1, "evil2", self.uid, "/tmp/evil2", self.CONTAINER_NS, container_map, cgroup=pool, root=self.host_root)
+        ns = self.watch()
+        new = self.watcher(ns).step(1000.0)
+        self.assertEqual(
+            sorted((f["pid"], f["rule"], f["userns"]) for f in new),
+            [
+                (40, "unexpected-runtime-user-process", "other"),
+                (41, "project-uid-outside-container", "other"),
+                (42, "unexpected-runtime-user-process", "other"),
+            ],
+        )
+
+    def test_trusts_programs_by_path_not_by_name(self) -> None:
+        # the expected programs, also after an upgrade replaced the binary
+        self.add_proc(10, 1, "node", self.uid, self.node, self.HOST_NS)
+        self.add_proc(11, 1, "sudo", self.uid, "/usr/bin/sudo (deleted)", self.HOST_NS)
+        self.add_proc(12, 1, "sshpiperd", self.uid, "/opt/cocalc/tools/20261030T071949Z-dcbf6646/sshpiperd", self.HOST_NS)
+        # the same names anywhere else
+        self.add_proc(20, 1, "node", self.uid, "/tmp/x/node", self.HOST_NS)
+        self.add_proc(21, 1, "sshpiperd", self.uid, "/opt/cocalc/tools/a/b/sshpiperd", self.HOST_NS)
+        self.add_proc(22, 1, "conmon", self.uid, "/var/tmp/conmon", self.RUNTIME_NS, f"0 {self.uid} 1\n")
+        self.add_proc(23, 1, "evil", self.uid, f"{self.rt}/evil", self.RUNTIME_NS, f"0 {self.uid} 1\n")
+        ns = self.watch()
+        new = self.watcher(ns).step(1000.0)
+        self.assertEqual(
+            sorted((f["pid"], f["rule"]) for f in new),
+            [
+                (20, "unexpected-runtime-user-process"),
+                (21, "unexpected-runtime-user-process"),
+                (22, "unexpected-process-in-container-runtime"),
+                (23, "unexpected-process-in-container-runtime"),
+            ],
+        )
+
+    def test_the_findings_cap_keeps_critical_findings(self) -> None:
+        # many high findings in one scan (one per program), and one critical
+        for i in range(120):
+            self.add_proc(1000 + i, 1, "tool", self.uid, f"/usr/bin/tool-{i}", self.HOST_NS)
+        self.add_proc(2000, 1, "sh", 231072, "/usr/bin/dash", self.HOST_NS)
+        ns = self.watch()
+        w = self.watcher(ns)
+        w.step(1000.0)
+        self.assertEqual(len(w.findings), 100)
+        self.assertIn(
+            "project-uid-outside-container",
+            {f["rule"] for f in w.findings.values()},
+        )
+        # Later, half of them are gone and a new high finding appears: it is
+        # kept, and an older one of the same severity goes.
+        for i in range(60):
+            shutil.rmtree(self.proc / str(1000 + i))
+        self.add_proc(3000, 1, "tool", self.uid, "/usr/bin/tool-new", self.HOST_NS)
+        w.step(2000.0)
+        exes = {f["exe"] for f in w.findings.values()}
+        self.assertEqual(len(w.findings), 100)
+        self.assertIn("/usr/bin/tool-new", exes)
+        self.assertIn("/usr/bin/dash", exes)
+        self.assertTrue(all(f"/usr/bin/tool-{i}" in exes for i in range(60, 120)))
+        # Not seen for a day: dropped (the processes that are gone).
+        w.step(2000.0 + 24 * 3600 + 60)
+        exes = {f["exe"] for f in w.findings.values()}
+        self.assertEqual(len(exes), 62)
+        self.assertFalse(any(f"/usr/bin/tool-{i}" in exes for i in range(60)))
+
+    def test_trusted_programs_must_be_root_owned_all_the_way_up(self) -> None:
+        self.add_proc(10, 1, "node", self.uid, self.node, self.HOST_NS)
+        self.add_proc(11, 1, "sudo", self.uid, "/usr/bin/sudo", self.HOST_NS)
+        # still installed by the runtime user: not checked yet
+        self.add_proc(12, 1, "sshpiperd", self.uid, "/opt/cocalc/tools/20261030T071949Z-dcbf6646/sshpiperd", self.HOST_NS)
+        self.add_proc(20, 1, "conmon", self.uid, f"{self.rt}/conmon", self.RUNTIME_NS, f"0 {self.uid} 1\n")
+        self.add_proc(21, 1, "catatonit", self.uid, "/usr/bin/catatonit", self.RUNTIME_NS, f"0 {self.uid} 1\n")
+        # node in the runtime user's home is no longer a trusted program
+        home = pwd.getpwuid(os.getuid()).pw_dir.rstrip("/")
+        self.add_proc(30, 1, "node", self.uid, f"{home}/.nvm/versions/node/v26.12.1/bin/node", self.HOST_NS)
+        ns = self.watch()
+        self.writable_paths |= {
+            self.node,
+            "/usr/bin/catatonit",
+            "/opt/cocalc/tools/20261030T071949Z-dcbf6646/sshpiperd",
+            f"{self.rt}/conmon",
+        }
+        new = self.watcher(ns).step(1000.0)
+        self.assertEqual(
+            sorted((f["pid"], f["rule"], f["severity"]) for f in new),
+            [
+                (10, "trusted-program-writable", "high"),
+                (21, "trusted-program-writable", "high"),
+                (30, "unexpected-runtime-user-process", "high"),
+            ],
+        )
+
+    def test_a_trusted_program_replaced_while_it_runs_is_checked_by_its_directory(self) -> None:
+        # /proc/<pid>/exe of a binary an upgrade replaced: "<path> (deleted)",
+        # and the old path no longer exists
+        self.add_proc(10, 1, "sudo", self.uid, "/usr/bin/sudo (deleted)", self.HOST_NS)
+        self.add_proc(11, 1, "node", self.uid, "/opt/cocalc/node/v26.1.0/bin/node (deleted)", self.HOST_NS)
+        ns = self.watch()
+        existing = {"/usr/bin", "/opt/cocalc/node/v26.1.0/bin"}
+        ns["root_owned_chain"] = lambda path: path in existing
+        self.assertEqual(self.watcher(ns).step(1000.0), [])
+        # the directory isn't root's: reported
+        existing.discard("/opt/cocalc/node/v26.1.0/bin")
+        self.assertEqual(
+            [(f["pid"], f["rule"]) for f in self.watcher(ns).step(1000.0)],
+            [(11, "trusted-program-writable")],
+        )
+        # a root-owned directory, but the running inode isn't root's (it was
+        # writable before it was replaced): reported
+        existing.add("/opt/cocalc/node/v26.1.0/bin")
+        self.writable_inodes.add(10)
+        self.assertEqual(
+            [(f["pid"], f["rule"]) for f in self.watcher(ns).step(1000.0)],
+            [(10, "trusted-program-writable")],
+        )
+        # a process that exited between listing and reading is skipped
+        ns["exe_inode_root_owned"] = lambda _d: None
+        self.assertEqual(self.watcher(ns).step(1000.0), [])
+
+    def test_exe_inode_root_owned_reads_the_running_inode(self) -> None:
+        check = {"__name__": "x"}
+        exec(bootstrap.HOST_INTEGRITY_WATCH_SCRIPT, check)
+        proc_dir = self.root / "p"
+        proc_dir.mkdir()
+        binary = self.root / "bin-file"
+        binary.write_text("x")
+        os.symlink(binary, proc_dir / "exe")
+        binary.chmod(0o755)
+        # owned by the test user, not root: not root's
+        self.assertFalse(check["exe_inode_root_owned"](str(proc_dir)))
+        binary.unlink()
+        self.assertIsNone(check["exe_inode_root_owned"](str(proc_dir)))
+
+    def test_root_owned_chain_checks_every_directory(self) -> None:
+        ns = {"__name__": "host_integrity_watch_test"}
+        exec(bootstrap.HOST_INTEGRITY_WATCH_SCRIPT, ns)
+        chain = ns["root_owned_chain"]
+        tree = {
+            "/": (0, 0o40755),
+            "/opt": (0, 0o40755),
+            "/opt/cocalc": (0, 0o40755),
+            "/opt/cocalc/node": (0, 0o40755),
+            "/opt/cocalc/node/bin": (0, 0o40755),
+            "/opt/cocalc/node/bin/node": (0, 0o100755),
+            "/opt/cocalc/tools": (2000, 0o40755),
+            "/opt/cocalc/tools/x": (0, 0o100755),
+            "/opt/cocalc/open": (0, 0o40775),
+            "/opt/cocalc/open/x": (0, 0o100755),
+            "/opt/cocalc/link": (0, 0o120777),
+            "/opt/cocalc/link/x": (0, 0o100755),
+            "/usr/bin/sudo": (0, 0o104755),
+            "/usr": (0, 0o40755),
+            "/usr/bin": (0, 0o40755),
+        }
+
+        def lstat(path):
+            if path not in tree:
+                raise FileNotFoundError(path)
+            uid, mode = tree[path]
+            return os.stat_result((mode, 0, 0, 1, uid, 0, 0, 0, 0, 0))
+
+        self.assertTrue(chain("/opt/cocalc/node/bin/node", lstat))
+        self.assertTrue(chain("/usr/bin/sudo", lstat))  # setuid is fine
+        self.assertFalse(chain("/opt/cocalc/tools/x", lstat))  # a parent isn't root's
+        self.assertFalse(chain("/opt/cocalc/open/x", lstat))  # group-writable parent
+        self.assertFalse(chain("/opt/cocalc/link/x", lstat))  # a symlink in the way
+        self.assertFalse(chain("/opt/cocalc/absent", lstat))
+        self.assertFalse(chain("relative/path", lstat))
+
+    def test_allowlist_file_extends_the_defaults(self) -> None:
+        self.add_proc(52, 1, "curl", self.uid, "/usr/bin/curl", self.HOST_NS)
+        self.add_proc(53, 1, "wget", self.uid, "/usr/bin/wget", self.HOST_NS)
+        allow = self.root / "allow.json"
+        # by path; a bare name matches nothing
+        allow.write_text(json.dumps({"host_exes": ["/usr/bin/curl", "wget"]}))
+        ns = self.watch()
+        self.assertEqual(
+            [f["pid"] for f in self.watcher(ns, allowlist=str(allow)).step(1000.0)],
+            [53],
+        )
+
+    def test_reports_host_config_changes_outside_bootstrap(self) -> None:
+        conf = self.root / "etc"
+        conf.mkdir()
+        (conf / "sudoers").write_text("root ALL=(ALL) ALL\n")
+        (conf / "authorized_keys").write_text("ssh-ed25519 AAAA one\n")
+        state = self.root / "bootstrap-state.json"
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (str(conf / "sudoers"), str(conf / "*_keys"))
+        w = self.watcher(ns, bootstrap_state=str(state))
+        self.assertEqual(w.step(1000.0), [])  # baseline
+        (conf / "authorized_keys").write_text("ssh-ed25519 AAAA one\nssh-ed25519 BBBB evil\n")
+        # reported once the next check sees it too (no package activity)
+        self.assertEqual(w.step(1100.0), [])
+        new = w.step(1160.0)
+        self.assertEqual([(f["rule"], f["path"]) for f in new],
+                         [("host-config-changed", str(conf / "authorized_keys"))])
+        self.assertNotIn("evil", (self.root / "status" / "status.json").read_text())
+        # Changes while bootstrap runs are expected: they become the baseline.
+        state.write_text(json.dumps({"current_operation": "reconcile"}))
+        (conf / "sudoers").write_text("root ALL=(ALL) ALL\n# bootstrap\n")
+        self.assertEqual(w.step(1230.0), [])
+        state.write_text(json.dumps({"current_operation": None}))
+        os.utime(state, (0, 0))
+        self.assertEqual(w.step(1300.0), [])
+        # A bootstrap that died while recorded as running stops counting
+        # after 3 hours: changes are reported again.
+        state.write_text(json.dumps({"current_operation": "reconcile"}))
+        os.utime(state, (1300.0, 1300.0))
+        later = 1300.0 + 3 * 3600 + 60
+        (conf / "sudoers").write_text("root ALL=(ALL) ALL\n# changed later\n")
+        self.assertEqual(w.step(later), [])
+        self.assertEqual(
+            [(f["rule"], f["path"]) for f in w.step(later + 60)],
+            [("host-config-changed", str(conf / "sudoers"))],
+        )
+
+    def test_config_changes_survive_restarts_and_age_out_once_repaired(self) -> None:
+        conf = self.root / "etc"
+        conf.mkdir()
+        (conf / "sudoers").write_text("root ALL=(ALL) ALL\n")
+        (conf / "crontab").write_text("# none\n")
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (str(conf / "sudoers"), str(conf / "crontab"))
+        self.assertEqual(self.watcher(ns).step(1000.0), [])  # baseline
+        # changed while the watcher is stopped: a new watcher still reports it
+        (conf / "sudoers").write_text("root ALL=(ALL) ALL\nevil ALL=(ALL) ALL\n")
+        w = self.watcher(ns)
+        self.assertEqual(w.step(2000.0), [])
+        self.assertEqual([f["path"] for f in w.step(2060.0)], [str(conf / "sudoers")])
+        state = self.root / "status" / "config-state.json"
+        self.assertEqual(oct(os.stat(state).st_mode & 0o777), "0o600")
+        self.assertNotIn("evil", state.read_text())
+        # ... and after another restart it is the same change, not a new one
+        w = self.watcher(ns)
+        self.assertEqual(w.step(2100.0), [])
+        (conf / "crontab").write_text("* * * * * root true\n")
+        self.assertEqual(w.step(2200.0), [])
+        self.assertEqual([f["path"] for f in w.step(2260.0)], [str(conf / "crontab")])
+        status = json.loads((self.root / "status" / "status.json").read_text())
+        # newest first
+        self.assertEqual(
+            [(c["path"], c["current"]) for c in status["config"]["changes"]],
+            [(str(conf / "crontab"), True), (str(conf / "sudoers"), True)],
+        )
+        self.assertEqual(status["config"]["change_count"], 2)
+        # Repaired: no longer refreshed, kept as history for a day.
+        (conf / "sudoers").write_text("root ALL=(ALL) ALL\n")
+        self.assertEqual(w.step(2330.0), [])
+        changes = {c["path"]: c for c in w.status(2330.0)["config"]["changes"]}
+        self.assertFalse(changes[str(conf / "sudoers")]["current"])
+        self.assertEqual(changes[str(conf / "sudoers")]["last_seen"], ns["now_iso"](2260.0))
+        # changed again: a new finding
+        (conf / "sudoers").write_text("root ALL=(ALL) ALL\n# again\n")
+        self.assertEqual(w.step(2400.0), [])
+        self.assertEqual([f["path"] for f in w.step(2460.0)], [str(conf / "sudoers")])
+        # A new baseline (SIGHUP) accepts the files; the changes age out.
+        w.rebaseline = True
+        self.assertEqual(w.step(2520.0), [])
+        self.assertEqual(
+            {c["current"] for c in w.status(2520.0)["config"]["changes"]}, {False}
+        )
+        w.step(2520.0 + 24 * 3600 + 120)
+        self.assertEqual(w.status(2520.0)["config"]["changes"], [])
+
+    def test_hashes_whole_trees_including_drop_ins_and_enablement_links(self) -> None:
+        units = self.root / "systemd"
+        (units / "app.service.d").mkdir(parents=True)
+        (units / "multi-user.target.wants").mkdir()
+        (units / "app.service").write_text("[Service]\nExecStart=/usr/bin/app\n")
+        (units / "app.service.d" / "limits.conf").write_text("[Service]\nMemoryMax=1G\n")
+        os.symlink("../app.service", units / "multi-user.target.wants" / "app.service")
+        later = self.root / "generators"  # absent at first
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{units}/**", f"{later}/**")
+        w = self.watcher(ns)
+        self.assertEqual(w.step(1000.0), [])  # baseline
+        # a drop-in that adds a command to an existing service
+        (units / "app.service.d" / "evil.conf").write_text("[Service]\nExecStartPre=/tmp/x\n")
+        # an enablement link that now points elsewhere, and a new one
+        os.unlink(units / "multi-user.target.wants" / "app.service")
+        os.symlink("/tmp/other.service", units / "multi-user.target.wants" / "app.service")
+        os.symlink("../app.service", units / "multi-user.target.wants" / "new.service")
+        # a directory others may now write
+        (units / "multi-user.target.wants").chmod(0o777)
+        # a tree that didn't exist
+        later.mkdir()
+        (later / "gen").write_text("#!/bin/sh\n")
+        self.assertEqual(w.step(1100.0), [])
+        changed = sorted(c["path"] for c in w.step(1160.0))
+        self.assertEqual(
+            changed,
+            sorted(
+                [
+                    str(later),
+                    str(later) + "/",
+                    str(later / "gen"),
+                    str(units / "multi-user.target.wants") + "/",
+                    str(units / "app.service.d" / "evil.conf"),
+                    str(units / "multi-user.target.wants" / "app.service"),
+                    str(units / "multi-user.target.wants" / "new.service"),
+                ]
+            ),
+        )
+        self.assertNotIn("ExecStartPre", (self.root / "status" / "status.json").read_text())
+
+    def test_package_upgrades_are_expected_configuration_changes(self) -> None:
+        conf = self.root / "pam.d"
+        conf.mkdir()
+        (conf / "common-auth").write_text("auth required pam_unix.so\n")
+        dpkg_status = self.root / "dpkg-status"
+        dpkg_status.write_text("")
+        os.utime(dpkg_status, (0, 0))
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{conf}/**",)
+        w = self.watcher(ns, package_state=str(dpkg_status))
+        self.assertEqual(w.step(1000.0), [])
+        # an upgrade rewrites the file and dpkg's state: the new baseline
+        (conf / "common-auth").write_text("auth required pam_unix.so nullok\n")
+        os.utime(dpkg_status, (1050.0, 1050.0))
+        self.assertEqual(w.step(1100.0), [])
+        # the same kind of change long after any package activity is reported
+        (conf / "common-auth").write_text("auth sufficient pam_permit.so\n")
+        self.assertEqual(w.step(1100.0 + 3600), [])
+        self.assertEqual(
+            [c["path"] for c in w.step(1160.0 + 3600)],
+            [str(conf / "common-auth")],
+        )
+
+    def test_a_conffile_dpkg_replaces_before_updating_its_state_is_not_reported(self) -> None:
+        conf = self.root / "logrotate.d"
+        conf.mkdir()
+        (conf / "rsyslog").write_text("/var/log/syslog {}\n")
+        dpkg_status = self.root / "dpkg-status"
+        dpkg_status.write_text("")
+        os.utime(dpkg_status, (0, 0))
+        serial = self.root / "ttyS0"
+        serial.write_text("")
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{conf}/**",)
+        w = self.watcher(ns, package_state=str(dpkg_status), serial=str(serial))
+        self.assertEqual(w.step(1000.0), [])
+        # dpkg replaces the conffile; a check runs before it updates its state
+        (conf / "rsyslog").write_text("/var/log/syslog { rotate 4 }\n")
+        self.assertEqual(w.step(1060.0), [])
+        # then dpkg's state changes: absorbed
+        os.utime(dpkg_status, (1090.0, 1090.0))
+        self.assertEqual(w.step(1120.0), [])
+        self.assertEqual(w.step(1120.0 + 3600), [])
+        status = json.loads((self.root / "status" / "status.json").read_text())
+        self.assertEqual(status["config"]["changes"], [])
+        self.assertEqual(serial.read_text(), "")
+        # but it is on record as accepted during a package run
+        self.assertEqual(
+            [a["path"] for a in status["config"]["absorbed"]], [str(conf / "rsyslog")]
+        )
+
+    def test_a_package_run_does_not_accept_a_change_already_reported(self) -> None:
+        conf = self.root / "etc"
+        conf.mkdir()
+        (conf / "authorized_keys").write_text("ssh-ed25519 AAAA one\n")
+        (conf / "pam-common").write_text("auth required pam_unix.so\n")
+        dpkg_status = self.root / "dpkg-status"
+        dpkg_status.write_text("")
+        os.utime(dpkg_status, (0, 0))
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (str(conf / "authorized_keys"), str(conf / "pam-common"))
+        w = self.watcher(ns, package_state=str(dpkg_status))
+        w.step(1000.0)
+        (conf / "authorized_keys").write_text("ssh-ed25519 AAAA one\nssh-ed25519 BBBB evil\n")
+        w.step(1060.0)
+        self.assertEqual([c["path"] for c in w.step(1120.0)], [str(conf / "authorized_keys")])
+        # hours later an upgrade runs and changes another file
+        os.utime(dpkg_status, (9000.0, 9000.0))
+        (conf / "pam-common").write_text("auth required pam_unix.so nullok\n")
+        self.assertEqual(w.step(9030.0), [])
+        changes = {c["path"]: c for c in w.status(9030.0)["config"]["changes"]}
+        # the reported change is still current, refreshed
+        self.assertTrue(changes[str(conf / "authorized_keys")]["current"])
+        self.assertEqual(changes[str(conf / "authorized_keys")]["last_seen"], ns["now_iso"](9030.0))
+        self.assertNotIn(str(conf / "pam-common"), changes)
+        # and once the package window is over it stays reported
+        w.step(9030.0 + 3600)
+        changes = {c["path"]: c for c in w.status(0)["config"]["changes"]}
+        self.assertTrue(changes[str(conf / "authorized_keys")]["current"])
+
+    def test_a_long_package_run_holding_the_dpkg_lock_is_not_reported(self) -> None:
+        conf = self.root / "pam.d"
+        conf.mkdir()
+        (conf / "common-auth").write_text("auth required pam_unix.so\n")
+        lock = self.root / "lock-frontend"
+        lock.write_text("")
+        dpkg_status = self.root / "dpkg-status"
+        dpkg_status.write_text("")
+        os.utime(dpkg_status, (0, 0))
+        ns = self.watch()
+        ns["DEFAULT_CONFIG_PATHS"] = (f"{conf}/**",)
+        ns["DPKG_LOCKS"] = (str(lock),)
+        w = self.watcher(ns, package_state=str(dpkg_status))
+        self.assertEqual(w.step(1000.0), [])
+        # another process (as apt/dpkg) holds the lock over several checks
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import fcntl, sys, time; f = open(sys.argv[1], 'r+'); "
+                "fcntl.lockf(f, fcntl.LOCK_EX); print('locked', flush=True); time.sleep(60)",
+                str(lock),
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            self.assertEqual(holder.stdout.readline().strip(), "locked")
+            self.assertTrue(ns["lock_held"](str(lock)))
+            (conf / "common-auth").write_text("auth required pam_unix.so nullok\n")
+            for t in (1060.0, 1120.0, 1180.0):
+                self.assertEqual(w.step(t), [])
+        finally:
+            holder.kill()
+            holder.wait()
+            holder.stdout.close()
+        self.assertFalse(ns["lock_held"](str(lock)))
+        # released without touching dpkg's state: the run's change was the
+        # baseline at the last check while it held the lock
+        self.assertEqual(w.step(1240.0), [])
+        self.assertEqual(w.step(1300.0), [])
+
+    def test_a_tree_past_the_entry_cap_still_shows_changes_in_its_size(self) -> None:
+        tree = self.root / "big"
+        tree.mkdir()
+        for i in range(5):
+            (tree / f"f{i}").write_text("x")
+        ns = self.watch()
+        ns["MAX_TREE_ENTRIES"] = 3
+        digests = ns["hash_config"]([f"{tree}/**"])
+        self.assertEqual(len([p for p in digests if not p.endswith(("/**", "/"))]), 3)
+        first = digests[f"{tree}/**"]
+        self.assertTrue(first.startswith("truncated:5:"))
+        # an edit past the cap, with the same number of entries, shows
+        (tree / "f4").write_text("changed, longer")
+        second = ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"]
+        self.assertTrue(second.startswith("truncated:5:"))
+        self.assertNotEqual(first, second)
+        # a mode or ownership change past the cap shows too (ctime moves)
+        third_before = ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"]
+        time.sleep(0.01)
+        os.chmod(tree / "f4", 0o664)
+        self.assertNotEqual(ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"], third_before)
+        (tree / "f9").write_text("x")
+        self.assertTrue(ns["hash_config"]([f"{tree}/**"])[f"{tree}/**"].startswith("truncated:6:"))
+
+    def test_mirrors_new_findings_to_the_serial_console_at_most_hourly(self) -> None:
+        self.add_proc(50, 1, "sh", 231072, "/usr/bin/dash", self.HOST_NS)
+        serial = self.root / "ttyS0"
+        serial.write_text("")
+        ns = self.watch()
+        w = self.watcher(ns, serial=str(serial))
+        w.step(1000.0)
+        lines = serial.read_text().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("COCALC-HOST-INTEGRITY "))
+        self.assertIn("project-uid-outside-container", lines[0])
+        self.assertNotIn(self.CANARY, serial.read_text())
+        # the same finding again: no new line within the hour
+        w.findings.clear()
+        w.step(1100.0)
+        self.assertEqual(len(serial.read_text().splitlines()), 1)
+        # a missing console is skipped
+        self.watcher(ns, serial=str(self.root / "absent")).step(1000.0)
+
+    def test_installs_a_root_service_with_a_root_owned_status_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            script_path = Path(tmpdir) / "cocalc-host-integrity"
+            service_path = Path(tmpdir) / "cocalc-host-integrity.service"
+            recorded = []
+            with mock.patch.object(
+                bootstrap,
+                "run_cmd",
+                lambda _cfg, args, desc, **kwargs: recorded.append(args)
+                or subprocess.CompletedProcess(args, 0, stdout=""),
+            ), mock.patch.object(bootstrap, "log_line", lambda *_a, **_k: None):
+                bootstrap.configure_host_integrity_watch(
+                    cfg, script_path=script_path, service_path=service_path
+                )
+                self.assertEqual(
+                    script_path.read_text(), bootstrap.HOST_INTEGRITY_WATCH_SCRIPT
+                )
+                self.assertEqual(oct(script_path.stat().st_mode & 0o777), "0o755")
+                unit = service_path.read_text()
+                self.assertIn("StateDirectory=cocalc-host-integrity", unit)
+                self.assertIn("StateDirectoryMode=0755", unit)
+                self.assertIn("--runtime-user " + cfg.ssh_user, unit)
+                self.assertIn("--status-dir /var/lib/cocalc-host-integrity", unit)
+                self.assertIn(
+                    "--bootstrap-state " + str(bootstrap.bootstrap_state_path(cfg)),
+                    unit,
+                )
+                self.assertIn("ProtectSystem=strict", unit)
+                self.assertIn("NoNewPrivileges=yes", unit)
+                self.assertNotIn("User=", unit)
+                self.assertIn(
+                    ["systemctl", "restart", "cocalc-host-integrity.service"], recorded
+                )
+                # Unchanged: start (a no-op when running), keeping its state.
+                recorded.clear()
+                bootstrap.configure_host_integrity_watch(
+                    cfg, script_path=script_path, service_path=service_path
+                )
+                self.assertIn(
+                    ["systemctl", "start", "cocalc-host-integrity.service"], recorded
+                )
+                self.assertNotIn(
+                    ["systemctl", "restart", "cocalc-host-integrity.service"], recorded
+                )
+        # The status lives outside /var/lib/cocalc, which the runtime user owns.
+        self.assertNotIn("/var/lib/cocalc/", bootstrap.HOST_INTEGRITY_WATCH_SCRIPT)
+
+
+# cocalc-btrfs-scrub (BTRFS_SCRUB_SCRIPT), run against a fake host.
+SCRUB_NS = {"__name__": "btrfs_scrub_test"}
+exec(bootstrap.BTRFS_SCRUB_SCRIPT, SCRUB_NS)
+
+SCRUB_DAY = 86400
+SCRUB_FSID = "11111111-2222-3333-4444-555555555555"
+SCRUB_T0 = 1_790_000_000.0
+
+
+class ScrubFakeHost(SCRUB_NS["Host"]):
+    """A host with one 1000 GB pd-balanced btrfs device and a fake scrub that
+    advances `rate` bytes per second of fake time."""
+
+    def __init__(self, total=600 * 10**9, rate=50 * 2**20, psi=0.5):
+        self.t = SCRUB_T0
+        self.files = {
+            "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID: "0",
+            "/sys/class/block/sdb/size": str(1000 * 10**9 // 512),
+            "/etc/machine-id": "abc123",
+            "/etc/cocalc/btrfs-scrub.json": '{"enabled": true}',
+        }
+        self.dirs = {
+            "/sys/fs/btrfs/%s/devinfo" % SCRUB_FSID: ["1"],
+            "/sys/fs/btrfs/%s/devices" % SCRUB_FSID: ["sdb"],
+        }
+        self.psi = psi
+        self.total, self.rate = total, rate
+        self.done = 0
+        self.scrub = "none"  # none, running, interrupted, finished
+        self.errors = {}
+        self.kernel = ""
+        self.calls = []
+        self.speed_seen = []
+        self.on_sleep = None
+        super().__init__(sysfs="/sys", proc="/proc", machine_id="/etc/machine-id")
+
+    def now(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.t += seconds
+        if self.scrub == "running":
+            self.speed_seen.append(self.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID])
+            self.done = min(self.total, self.done + self.rate * seconds)
+            if self.done >= self.total:
+                self.scrub = "finished"
+        if self.on_sleep:
+            self.on_sleep(self)
+
+    def read(self, path):
+        if path == "/proc/pressure/io":
+            return "some avg10=1.00 avg60=1.00 avg300=1.00 total=1\nfull avg10=%.2f avg60=%.2f avg300=0.10 total=1\n" % (self.psi, self.psi)
+        if path in self.files:
+            return self.files[path]
+        if path.startswith("/etc/cocalc/"):
+            return json.dumps({"provider": "gcp", "targets": [{"disk_type": "balanced"}]})
+        raise OSError(path)
+
+    untrusted = ()
+    cancel_fails = False
+    status_fails = False
+    zone = None  # no cloud zone, UTC system time: night is UTC
+    systz = "Etc/UTC"
+
+    def cloud_zone(self):
+        return self.zone
+
+    def system_timezone(self):
+        return self.systz
+
+    def read_trusted(self, path):
+        if path in self.untrusted:
+            return None
+        try:
+            return self.read(path)
+        except OSError:
+            return None
+
+    def write(self, path, text):
+        if path not in self.files:
+            raise OSError(path)
+        self.files[path] = text
+
+    def listdir(self, path):
+        return list(self.dirs.get(path, []))
+
+    def run(self, args):
+        self.calls.append(args)
+        if args[0] == SCRUB_NS["FINDMNT"]:
+            return 0, "btrfs %s\n" % SCRUB_FSID, ""
+        if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "status"]:
+            if self.status_fails:
+                return 1, "", "status failed"
+            if self.scrub == "none":
+                return 0, "UUID: %s\n\tno stats available\n" % SCRUB_FSID, ""
+            lines = ["UUID: %s" % SCRUB_FSID, "Status: %s" % self.scrub,
+                     "\tdata_bytes_scrubbed: %d" % self.done]
+            for k in SCRUB_NS["COUNTERS"]:
+                if k != "data_bytes_scrubbed":
+                    lines.append("\t%s: %d" % (k, self.errors.get(k, 0)))
+            return 0, "\n".join(lines) + "\n", ""
+        if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "start"]:
+            self.done, self.scrub = 0, "running"
+            return 0, "", ""
+        if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "resume"]:
+            if self.scrub != "interrupted":
+                return 1, "", "no scrub to resume"
+            self.scrub = "running"
+            return 0, "", ""
+        if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+            if self.cancel_fails:
+                return 1, "", "cancel failed"
+            if self.scrub == "running":
+                self.scrub = "interrupted"
+            return 0, "", ""
+        if args[0] == SCRUB_NS["JOURNALCTL"]:
+            return 0, self.kernel, ""
+        return 1, "", "unexpected"
+
+
+def scrub_night_after(ts, tz="UTC", start_hour=0):
+    """The first night-window start (00:00 local) at or after ts."""
+    import datetime, zoneinfo
+    zi = zoneinfo.ZoneInfo(tz)
+    local = datetime.datetime.fromtimestamp(ts, zi)
+    for days in range(0, 3):
+        d = (local + datetime.timedelta(days=days)).date()
+        start = datetime.datetime(d.year, d.month, d.day, start_hour, tzinfo=zi).timestamp()
+        if start >= ts:
+            return start + 1
+    raise AssertionError
+
+
+class BtrfsScrubScriptTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_once(self, host, *extra):
+        argv = ["--status-dir", self.dir, "--poll-seconds", "60", *extra]
+        self.assertEqual(SCRUB_NS["main"](argv, host=host), 0)
+        with open(os.path.join(self.dir, "status.json")) as f:
+            return json.load(f)
+
+    def test_first_scrub_waits_for_its_staggered_point_in_the_period(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertTrue(SCRUB_T0 <= due < SCRUB_T0 + 30 * SCRUB_DAY)
+        self.assertNotIn([SCRUB_NS["BTRFS"], "scrub", "start", "/mnt/cocalc"], host.calls)
+        other = ScrubFakeHost()
+        other.files["/etc/machine-id"] = "different"
+        self.assertNotEqual(due, SCRUB_NS["parse_iso"](self.run_once_in(other)["due_at"]))
+
+    def run_once_in(self, host):
+        with tempfile.TemporaryDirectory() as d:
+            SCRUB_NS["main"](["--status-dir", d], host=host)
+            with open(os.path.join(d, "status.json")) as f:
+                return json.load(f)
+
+    def test_a_due_scrub_runs_throttled_in_daily_slices_and_completes(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        # 600 GB at 50 MiB/s is ~3.2 h: one 6 h day is enough
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(status["last_completed"]["errors"]["uncorrectable_errors"], 0)
+        # 20% of the disk's 240 MiB/s, and put back afterwards
+        self.assertEqual(set(host.speed_seen), {str(48 * 2**20)})
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertAlmostEqual(due, SCRUB_NS["parse_iso"](status["last_completed"]["finished_at"]) + 30 * SCRUB_DAY)
+
+    def test_the_daily_budget_stops_and_the_next_day_resumes(self):
+        host = ScrubFakeHost(total=10**12)  # ~5.5 h at 48 MiB/s
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps({"enabled": True, "daily_hours": 2})
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)
+        self.assertEqual((status["state"], status["reason"]), ("paused", "daily time budget used"))
+        self.assertEqual(host.scrub, "interrupted")
+        # same day: nothing more
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "daily time budget used")
+        for _ in range(2):
+            host.t += SCRUB_DAY
+            status = self.run_once(host)
+        self.assertIn([SCRUB_NS["BTRFS"], "scrub", "resume", "/mnt/cocalc"], host.calls)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(sum(1 for c in host.calls if c[:3] == [SCRUB_NS["BTRFS"], "scrub", "start"]), 1)
+
+    def test_pressure_pauses_and_quiet_resumes(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+
+        def busy_after_10_min(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+
+        start = host.t
+        host.on_sleep = busy_after_10_min
+        status = self.run_once(host)
+        self.assertEqual((status["state"], status["reason"]), ("paused", "host I/O pressure"))
+        host.on_sleep = None
+        # still busy: doesn't resume
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "host I/O pressure")
+        host.psi = 0.5
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertIsNotNone(status["last_completed"])
+
+    def test_under_constant_pressure_it_becomes_overdue_not_skipped(self):
+        host = ScrubFakeHost(psi=20.0)
+        status = self.run_once(host)
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        host.t = scrub_night_after(due + 3 * SCRUB_DAY)
+        self.assertEqual(self.run_once(host)["state"], "paused")
+        host.t = scrub_night_after(due + 8 * SCRUB_DAY)
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "overdue")
+        self.assertEqual(status["reason"], "host I/O pressure")
+
+    def test_uncorrectable_errors_name_the_files(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        host.errors = {"csum_errors": 2, "uncorrectable_errors": 2}
+        host.kernel = (
+            "BTRFS warning (device sdb): checksum error at logical 123 on dev /dev/sdb, physical 456, root 5, inode 257, offset 0, length 4096, links 1 (path: project-x/data/a.csv)\n"
+            "BTRFS error (device sdb): unable to fixup (regular) error at logical 123 on dev /dev/sdb\n"
+            "BTRFS warning (device sdb): checksum error at logical 789 on dev /dev/sdb, physical 999, root 5, inode 258, offset 0, length 4096, links 1 (path: project-x/data/b.csv)\n"
+        )
+        status = self.run_once(host)
+        last = status["last_completed"]
+        self.assertEqual(last["errors"]["uncorrectable_errors"], 2)
+        self.assertEqual(last["error_paths"], ["project-x/data/a.csv", "project-x/data/b.csv"])
+        # every boot's kernel messages, not only this boot's (journalctl -k)
+        journal = [c for c in host.calls if c[0] == SCRUB_NS["JOURNALCTL"]]
+        self.assertIn("_TRANSPORT=kernel", journal[0])
+        self.assertNotIn("-k", journal[0])
+
+    def test_a_scrub_that_finished_unwatched_is_recorded_not_restarted(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.run_once(host)  # paused by the budget, progress kept
+        host.scrub = "finished"
+        host.done = host.total
+        host.t += SCRUB_DAY
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(sum(1 for c in host.calls if c[:3] == [SCRUB_NS["BTRFS"], "scrub", "start"]), 1)
+
+    def test_it_scrubs_only_where_enabled(self):
+        host = ScrubFakeHost()
+        del host.files["/etc/cocalc/btrfs-scrub.json"]
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "disabled")
+        self.assertIn("due_at", status)
+        self.assertFalse([c for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"])])
+        host.files["/etc/cocalc/btrfs-scrub.json"] = '{"enabled": false}'
+        self.assertEqual(self.run_once(host)["state"], "disabled")
+
+    def test_the_config_overrides_the_defaults(self):
+        host = ScrubFakeHost()
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "speed": 10 * 2**20, "period_days": 7, "daily_hours": "x"}
+        )
+        status = self.run_once(host)
+        self.assertLess(SCRUB_NS["parse_iso"](status["due_at"]), SCRUB_T0 + 7 * SCRUB_DAY)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.run_once(host)
+        self.assertEqual(set(host.speed_seen), {str(10 * 2**20)})
+
+    def test_runs_commands_only_by_absolute_path(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.run_once(host)
+        self.assertTrue(host.calls)
+        self.assertTrue(all(os.path.isabs(c[0]) for c in host.calls), host.calls)
+
+    def test_the_status_is_readable_by_its_group_only(self):
+        host = ScrubFakeHost()
+        self.run_once(host)
+        self.assertEqual(stat.S_IMODE(os.stat(self.dir).st_mode), 0o750)
+        path = os.path.join(self.dir, "status.json")
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o640)
+        self.assertEqual(os.stat(path).st_gid, os.getegid())
+        # a planted symlink is replaced, never followed
+        os.unlink(path)
+        target = os.path.join(self.dir, "elsewhere")
+        open(target, "w").close()
+        os.symlink(target, path)
+        self.run_once(host)
+        self.assertFalse(os.path.islink(path))
+        self.assertEqual(os.path.getsize(target), 0)
+
+    def test_a_config_root_doesnt_own_alone_counts_as_absent(self):
+        host = ScrubFakeHost()
+        host.untrusted = ("/etc/cocalc/btrfs-scrub.json",)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.assertEqual(self.run_once(host)["state"], "disabled")
+
+    def test_config_values_out_of_bounds_are_ignored(self):
+        host = ScrubFakeHost()
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "speed": 10 * 2**30, "daily_hours": 100, "period_days": 0.01}
+        )
+        status = self.run_once(host)
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertTrue(SCRUB_T0 <= due < SCRUB_T0 + 30 * SCRUB_DAY)
+        host.t = due + 1
+        self.run_once(host)
+        self.assertEqual(set(host.speed_seen), {str(48 * 2**20)})
+
+    def test_a_malformed_fsid_is_not_used_in_sysfs_paths(self):
+        host = ScrubFakeHost()
+        orig = host.run
+        host.run = lambda args: (0, "btrfs ../../x\n", "") if args[0] == SCRUB_NS["FINDMNT"] else orig(args)
+        self.assertEqual(self.run_once(host)["state"], "unsupported")
+
+    def test_its_own_scrub_left_running_is_watched_again(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+
+        def killed(h):
+            raise SystemExit(-9)  # as if SIGKILLed: nothing runs after this
+
+        host.on_sleep = killed
+        orig_cancel = host.run
+
+        def no_cancel(args):  # SIGKILL: finally never ran
+            if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+                return 0, "", ""
+            return orig_cancel(args)
+
+        host.run = no_cancel
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        self.assertEqual(host.scrub, "running")
+        host.run = orig_cancel
+        host.on_sleep = None
+        host.t += 3600
+        starts = sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"]))
+        status = self.run_once(host)
+        # adopted: throttled again, not started or resumed again
+        self.assertEqual(starts, sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"])))
+        self.assertEqual(set(host.speed_seen[-3:]), {str(48 * 2**20)})
+        self.assertIn(status["state"], ("idle", "paused"))
+
+    def test_its_own_scrub_left_running_is_cancelled_when_it_wont_be_watched(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(host.t)
+        status["current"] = {"started_at": status["first_seen_at"], "phase": "running"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub = "running"
+        host.psi = 20.0
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "host I/O pressure")
+        self.assertEqual(host.scrub, "interrupted")
+
+    def test_someone_elses_scrub_is_left_alone(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        host.scrub = "running"
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "a scrub not started by this service is running")
+        self.assertEqual(host.scrub, "running")
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+
+    def test_leaving_abnormally_cancels_the_scrub_and_restores_the_speed(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+
+        def terminated(h):
+            raise SystemExit(143)
+
+        host.on_sleep = terminated
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        self.assertIn([SCRUB_NS["BTRFS"], "scrub", "cancel", "/mnt/cocalc"], host.calls)
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+
+    def test_sigterm_exits_through_cleanup(self):
+        previous = signal.getsignal(signal.SIGTERM)
+        try:
+            self.run_once(ScrubFakeHost())
+            handler = signal.getsignal(signal.SIGTERM)
+            with self.assertRaises(SystemExit):
+                handler(signal.SIGTERM, None)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+
+    def test_night_is_where_the_host_is(self):
+        host = ScrubFakeHost()
+        host.zone = "us-west2-a"
+        status = self.run_once(host)
+        self.assertEqual(status["night"]["timezone"], "America/Los_Angeles")
+        self.assertEqual(status["night"]["source"], "zone us-west2-a")
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        # midnight UTC is afternoon in Los Angeles: not night there
+        import datetime, zoneinfo
+        host.t = scrub_night_after(due)
+        la = zoneinfo.ZoneInfo("America/Los_Angeles")
+        while datetime.datetime.fromtimestamp(host.t, la).hour < 6:
+            host.t += 3600  # make it daytime there
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "outside the night window")
+        self.assertFalse([c for c in host.calls if c[:3] == [SCRUB_NS["BTRFS"], "scrub", "start"]])
+        host.t = scrub_night_after(host.t, "America/Los_Angeles")
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertIsNotNone(status["last_completed"])
+
+    def test_timezone_sources(self):
+        host = ScrubFakeHost()
+        self.assertEqual(SCRUB_NS["zone_timezone"]("asia-southeast1-b"), "Asia/Singapore")
+        self.assertEqual(SCRUB_NS["zone_timezone"]("europe-west3-c"), "Europe/Berlin")
+        self.assertEqual(SCRUB_NS["zone_timezone"]("asia-newplace9-a"), "Asia/Singapore")
+        self.assertIsNone(SCRUB_NS["zone_timezone"]("mars-1-a"))
+        # config override first, then the zone, then a non-UTC system zone
+        host.zone = "asia-northeast1-a"
+        self.assertEqual(SCRUB_NS["host_timezone"](host, "Europe/Paris")[1:3], ("Europe/Paris", "config"))
+        self.assertEqual(SCRUB_NS["host_timezone"](host, "")[1], "Asia/Tokyo")
+        host.zone = None
+        host.systz = "America/New_York"
+        self.assertEqual(SCRUB_NS["host_timezone"](host, "Not/AZone")[1:3], ("America/New_York", "system"))
+        host.systz = "Etc/UTC"
+        name, source, warning = SCRUB_NS["host_timezone"](host, "")[1:]
+        self.assertEqual((name, source), ("UTC", "fallback"))
+        self.assertTrue(warning)
+
+    def test_the_night_window_ends_a_scrub(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps({"enabled": True, "night_hours": 2})
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "outside the night window")
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertLessEqual(host.t - start, 2 * 3600 + 120)
+
+    def test_a_new_filesystem_starts_its_schedule_over(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)
+        self.assertIsNotNone(status["last_completed"])
+        # the data disk is replaced: a new fsid at the same mount
+        other = "99999999-8888-7777-6666-555555555555"
+        orig = host.run
+        host.run = lambda args: (0, "btrfs %s\n" % other, "") if args[0] == SCRUB_NS["FINDMNT"] else orig(args)
+        host.dirs = {k.replace(SCRUB_FSID, other): v for k, v in host.dirs.items()}
+        host.files = {k.replace(SCRUB_FSID, other): v for k, v in host.files.items()}
+        status = self.run_once(host)
+        self.assertEqual(status["fsid"], other)
+        self.assertNotIn("last_completed", status)
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        self.assertTrue(host.t <= due < host.t + 30 * SCRUB_DAY)
+
+    def test_a_failed_cancel_keeps_watching_and_keeps_the_throttle(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def busy(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+                h.cancel_fails = True
+
+        host.on_sleep = busy
+        self.run_once(host, "--daily-hours", "1")
+        # it couldn't stop the scrub: it watched on to the budget, and kept
+        # the throttle when it had to give up
+        self.assertEqual(host.scrub, "running")
+        knob = host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID]
+        self.assertEqual(knob, str(48 * 2**20))
+        with open(os.path.join(self.dir, "status.json")) as f:
+            status = json.load(f)
+        self.assertEqual(status["state"], "error")
+        self.assertEqual(status["current"]["phase"], "running")
+        # once cancel works again, the next run adopts and stops it
+        host.on_sleep = None
+        host.cancel_fails = False
+        host.t += 3600
+        self.run_once(host)
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+
+    def test_a_manual_scrub_after_a_paused_slice_is_not_taken_over(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(status["current"]["phase"], "interrupted")
+        # an admin starts a scrub by hand before the next run
+        host.scrub = "running"
+        host.t += SCRUB_DAY
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "a scrub not started by this service is running")
+        self.assertEqual(host.scrub, "running")
+        self.assertNotIn([SCRUB_NS["BTRFS"], "scrub", "resume", "/mnt/cocalc"], host.calls[-5:])
+
+    def test_next_due_brings_one_scrub_forward(self):
+        host = ScrubFakeHost()
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "next_due": SCRUB_NS["iso"](SCRUB_T0 + 3600)}
+        )
+        status = self.run_once(host)
+        self.assertEqual(SCRUB_NS["parse_iso"](status["due_at"]), SCRUB_T0 + 3600)
+        host.t = scrub_night_after(SCRUB_T0 + 3600)
+        status = self.run_once(host)
+        self.assertIsNotNone(status["last_completed"])
+        # the key is still there, but done with: back to the normal period
+        status = self.run_once(host)
+        finished = SCRUB_NS["parse_iso"](status["last_completed"]["finished_at"])
+        self.assertEqual(SCRUB_NS["parse_iso"](status["due_at"]), finished + 30 * SCRUB_DAY)
+
+    def test_the_night_window_keeps_wall_clock_times_across_dst(self):
+        import datetime, zoneinfo
+        la = zoneinfo.ZoneInfo("America/Los_Angeles")
+        # 2026-03-08: clocks jump from 02:00 to 03:00 in Los Angeles
+        now = datetime.datetime(2026, 3, 8, 0, 30, tzinfo=la).timestamp()
+        start, end = SCRUB_NS["night_window"](now, la, 0, 6)
+        self.assertEqual(datetime.datetime.fromtimestamp(end, la).hour, 6)
+        self.assertEqual(end - start, 5 * 3600)
+
+    def test_a_kept_throttle_restores_only_this_filesystems_knobs(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.files[knob] = str(48 * 2**20)  # left on by a run that gave up
+        host.files["/etc/cron.d/x"] = "original"
+        status["throttle_restore"] = {knob: "0", "/etc/cron.d/x": "* * * * * root evil"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        status = self.run_once(host)
+        self.assertEqual(host.files[knob], "0")
+        self.assertEqual(host.files["/etc/cron.d/x"], "original")
+        self.assertNotIn("throttle_restore", status)
+        # a non-numeric value for the real knob isn't written either
+        host.files[knob] = str(48 * 2**20)
+        status["throttle_restore"] = {knob: "0; reboot"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        self.run_once(host)
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+
+    def test_after_a_sigkill_the_original_throttle_is_restored(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        # the state a SIGKILLed run leaves: phase running, the scrub running,
+        # the knob at our throttle, the original saved
+        status["current"] = {"started_at": SCRUB_NS["iso"](host.t), "phase": "running"}
+        status["throttle_restore"] = {knob: "0"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub, host.done = "running", 10**12
+        host.files[knob] = str(48 * 2**20)
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(host.files[knob], "0")
+        self.assertNotIn("throttle_restore", status)
+
+    def test_an_unreadable_status_never_confirms_a_cancel(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def broken(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+                h.cancel_fails = True
+                h.status_fails = True
+
+        host.on_sleep = broken
+        self.run_once(host, "--daily-hours", "1")
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        self.assertEqual(host.scrub, "running")
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+        # and a run that can't read the status starts nothing
+        host.on_sleep = None
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "btrfs scrub status unavailable")
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+
+    def test_an_orphan_that_cant_be_cancelled_is_an_error_not_silence(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        status["current"] = {"started_at": status["first_seen_at"], "phase": "running"}
+        status["throttle_restore"] = {knob: "0"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub = "running"
+        host.files[knob] = str(48 * 2**20)
+        host.cancel_fails = True
+        host.t = scrub_night_after(host.t) + 7 * 3600  # outside the night window
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertEqual(host.files[knob], str(48 * 2**20))
+        self.assertIn("throttle_restore", status)
+
+    def test_runtime_is_counted_even_if_the_run_is_stopped(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def stopped_after_an_hour(h):
+            if h.t - start >= 3600:
+                raise SystemExit(143)
+
+        host.on_sleep = stopped_after_an_hour
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        with open(os.path.join(self.dir, "status.json")) as f:
+            status = json.load(f)
+        self.assertGreaterEqual(status["runtime_today_s"], 3540)
+
+    def test_the_original_throttle_is_saved_before_the_knob_changes(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.files[knob] = "123456789"  # an admin's setting
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        saved_at_write = []
+        orig_write = host.write
+
+        def write(path, text):
+            if path == knob and text != "123456789":
+                # the moment of the cap: what a SIGKILL right after it leaves
+                with open(os.path.join(self.dir, "status.json")) as f:
+                    saved_at_write.append(f.read())
+            orig_write(path, text)
+
+        host.write = write
+        self.run_once(host)
+        self.assertTrue(saved_at_write)
+        crashed = json.loads(saved_at_write[0])
+        self.assertEqual(crashed["throttle_restore"], {knob: "123456789"})
+        # a new run, from that state (capped knob, nothing scrubbing)
+        host.write = orig_write
+        host.files[knob] = str(48 * 2**20)
+        host.scrub = "interrupted"
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(crashed, f)
+        host.t += 7 * 3600  # outside the night: it only cleans up
+        status = self.run_once(host)
+        self.assertEqual(host.files[knob], "123456789")
+        self.assertNotIn("throttle_restore", status)
+
+    def test_an_error_stays_an_error_when_overdue(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        due = SCRUB_NS["parse_iso"](status["due_at"])
+        status["current"] = {"started_at": status["first_seen_at"], "phase": "running"}
+        status["throttle_restore"] = {knob: "0"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub = "running"
+        host.cancel_fails = True
+        host.t = scrub_night_after(due + 10 * SCRUB_DAY) + 7 * 3600  # overdue, and daytime
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertIn("overdue_since", status)
+
+    def test_a_throttle_it_couldnt_restore_is_kept_and_retried(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        host.files[knob] = "123456789"  # an admin's setting
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        orig_write = host.write
+
+        def write(path, text):
+            if path == knob and text == "123456789":
+                raise OSError(path)  # the restore fails, for now
+            orig_write(path, text)
+
+        host.write = write
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(status["throttle_restore"], {knob: "123456789"})
+        # the next day's slice starts with the knob still capped: the original
+        # value is what it keeps, not the cap
+        host.t += SCRUB_DAY
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(status["throttle_restore"], {knob: "123456789"})
+        # once the write works, the next run puts it back
+        host.write = orig_write
+        host.t += 3600
+        status = self.run_once(host, "--daily-hours", "1")
+        self.assertEqual(host.files[knob], "123456789")
+        self.assertNotIn("throttle_restore", status)
+
+    def test_no_scrub_runs_unless_every_device_is_capped(self):
+        knob = "/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID
+        start = [SCRUB_NS["BTRFS"], "scrub", "start", "/mnt/cocalc"]
+        # a knob that can't be written
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        orig_write = host.write
+
+        def write(path, text):
+            if path == knob:
+                raise OSError(path)
+            orig_write(path, text)
+
+        host.write = write
+        status = self.run_once(host)
+        self.assertEqual((status["state"], status["reason"]), ("error", "the scrub speed could not be capped"))
+        self.assertNotIn(start, host.calls)
+        self.assertEqual(host.files[knob], "0")
+        # a second device without a knob: the first one isn't touched either
+        host = ScrubFakeHost()
+        host.dirs["/sys/fs/btrfs/%s/devinfo" % SCRUB_FSID] = ["1", "2"]
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertNotIn(start, host.calls)
+        self.assertEqual(host.files[knob], "0")
+        # our own scrub, left running, that can't be capped is cancelled
+        status["current"] = {"started_at": SCRUB_NS["iso"](host.t), "phase": "running"}
+        with open(os.path.join(self.dir, "status.json"), "w") as f:
+            json.dump(status, f)
+        host.scrub, host.done = "running", 10**9
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "error")
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual(status["current"]["phase"], "interrupted")
+
+    def test_a_scrub_stopped_by_the_last_cancel_is_reported_paused(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        start = host.t
+
+        def busy(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+
+        host.on_sleep = busy
+        host.cancel_fails = True
+        cancels = []
+        orig_run = host.run
+
+        def run(args):
+            if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+                # the loop's cancels fail until it gives up; the last one works
+                cancels.append(args)
+                host.cancel_fails = len(cancels) <= 10
+            return orig_run(args)
+
+        host.run = run
+        status = self.run_once(host)
+        self.assertEqual(len(cancels), 11)
+        self.assertEqual(host.scrub, "interrupted")
+        self.assertEqual((status["state"], status["reason"]), ("paused", "the scrub was stopped as this run ended"))
+        self.assertEqual(status["current"]["phase"], "interrupted")
+        self.assertEqual(host.files["/sys/fs/btrfs/%s/devinfo/1/scrub_speed_max" % SCRUB_FSID], "0")
+
+    def test_a_night_that_crosses_utc_midnight_is_one_budget(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        host.files["/etc/cocalc/btrfs-scrub.json"] = json.dumps(
+            {"enabled": True, "daily_hours": 2, "night_start_hour": 22}
+        )
+        status = self.run_once(host)
+        # 23:30 UTC, in the 22:00-04:00 night: 2 h of scrubbing, to 01:30
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]), start_hour=22) + 5400
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "daily time budget used")
+        starts = sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"]))
+        # an hour later, a new UTC day but the same night: nothing more
+        host.t += 3600
+        status = self.run_once(host)
+        self.assertEqual(status["reason"], "daily time budget used")
+        self.assertEqual(
+            sum(1 for c in host.calls if c[:3] in ([SCRUB_NS["BTRFS"], "scrub", "start"], [SCRUB_NS["BTRFS"], "scrub", "resume"])),
+            starts,
+        )
+        # the next night has its own budget
+        host.t += SCRUB_DAY
+        self.run_once(host)
+        self.assertIn([SCRUB_NS["BTRFS"], "scrub", "resume", "/mnt/cocalc"], host.calls)
+
+    def test_an_overdue_scrub_stopped_by_the_last_cancel_stays_overdue(self):
+        host = ScrubFakeHost(total=2 * 10**12)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]) + 10 * SCRUB_DAY)
+        start = host.t
+
+        def busy(h):
+            if h.t - start > 600:
+                h.psi = 9.0
+
+        host.on_sleep = busy
+        host.cancel_fails = True
+        cancels = []
+        orig_run = host.run
+
+        def run(args):
+            if args[:3] == [SCRUB_NS["BTRFS"], "scrub", "cancel"]:
+                cancels.append(args)
+                host.cancel_fails = len(cancels) <= 10
+            return orig_run(args)
+
+        host.run = run
+        status = self.run_once(host)
+        self.assertEqual(status["state"], "overdue")
+        self.assertIn("overdue_since", status)
+        self.assertEqual(host.scrub, "interrupted")
+
+    def test_a_run_killed_before_its_start_doesnt_count_the_last_scrub(self):
+        host = ScrubFakeHost()
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        status = self.run_once(host)  # the first scrub completes
+        self.assertEqual(host.scrub, "finished")
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        orig_run = host.run
+        start = [SCRUB_NS["BTRFS"], "scrub", "start", "/mnt/cocalc"]
+
+        def killed_at_start(args):
+            if args == start:
+                raise SystemExit(137)  # after current was saved, before the start
+            return orig_run(args)
+
+        host.run = killed_at_start
+        with self.assertRaises(SystemExit):
+            self.run_once(host)
+        host.run = orig_run
+        # the kernel still says "finished" (the last scrub): a new one runs
+        host.t += 600
+        resumed_at = host.t
+        status = self.run_once(host)
+        self.assertEqual(sum(1 for c in host.calls if c == start), 2)
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(status["last_completed"]["started_at"], SCRUB_NS["iso"](resumed_at))
+
+    def test_not_btrfs_is_reported_and_nothing_runs(self):
+        host = ScrubFakeHost()
+        host.run = lambda args: (0, "ext4 abc\n", "")
+        self.assertEqual(self.run_once(host)["state"], "unsupported")
+
+    def test_default_speed_without_balanced_capacity(self):
+        host = ScrubFakeHost()
+        host.read = lambda path, orig=host.read: (_ for _ in ()).throw(OSError(path)) if path.endswith("project-io-capacity.json") else orig(path)
+        status = self.run_once(host)
+        host.t = scrub_night_after(SCRUB_NS["parse_iso"](status["due_at"]))
+        self.run_once(host)
+        self.assertEqual(set(host.speed_seen), {str(50 * 2**20)})
+
+
+class BtrfsScrubInstallTest(unittest.TestCase):
+    def test_installs_an_hourly_timer_for_a_root_oneshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            paths = {
+                "script_path": Path(tmpdir) / "cocalc-btrfs-scrub",
+                "service_path": Path(tmpdir) / "cocalc-btrfs-scrub.service",
+                "timer_path": Path(tmpdir) / "cocalc-btrfs-scrub.timer",
+            }
+            recorded = []
+            with mock.patch.object(
+                bootstrap,
+                "run_cmd",
+                lambda _cfg, args, desc, **kwargs: recorded.append(args)
+                or subprocess.CompletedProcess(args, 0, stdout=""),
+            ), mock.patch.object(bootstrap, "log_line", lambda *_a, **_k: None):
+                bootstrap.configure_btrfs_scrub(cfg, **paths)
+            self.assertEqual(
+                paths["script_path"].read_text(), bootstrap.BTRFS_SCRUB_SCRIPT
+            )
+            self.assertEqual(oct(paths["script_path"].stat().st_mode & 0o777), "0o755")
+            unit = paths["service_path"].read_text()
+            self.assertIn("Type=oneshot", unit)
+            self.assertIn("TimeoutStartSec=25h", unit)
+            self.assertIn("--status-dir /var/lib/cocalc-btrfs-scrub", unit)
+            self.assertIn("--status-group " + cfg.ssh_user, unit)
+            self.assertIn("Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin", unit)
+            self.assertIn("ProtectSystem=full", unit)
+            self.assertIn("ProtectHome=yes", unit)
+            self.assertIn("RestrictSUIDSGID=yes", unit)
+            self.assertIn("ConditionPathIsMountPoint=/mnt/cocalc", unit)
+            self.assertNotIn("User=", unit)
+            timer = paths["timer_path"].read_text()
+            self.assertIn("OnCalendar=hourly", timer)
+            self.assertIn("Persistent=true", timer)
+            # the timer, not the scrub itself
+            self.assertIn(
+                ["systemctl", "enable", "--now", "cocalc-btrfs-scrub.timer"], recorded
+            )
+            self.assertFalse(
+                [a for a in recorded if "cocalc-btrfs-scrub.service" in a]
+            )
+
+    def test_reconcile_installs_it(self) -> None:
+        source = inspect.getsource(bootstrap)
+        self.assertEqual(source.count("configure_btrfs_scrub(cfg)"), 2)
+
+    def test_matches_bootstraps_disk_capacity_formula(self) -> None:
+        policy = {"__name__": "project_io_policy_test"}
+        exec(bootstrap.PROJECT_IO_POLICY_HELPER, policy)
+        for size in (100 * 2**30, 500 * 2**30, 1000 * 10**9, 4000 * 2**30):
+            self.assertEqual(
+                SCRUB_NS["balanced_read_bps"](size),
+                policy["balanced_device_capacity"](
+                    {"provider": "gcp", "disk_type": "balanced", "size_bytes": size}
+                )["physical_read_bps"],
+            )
+
+
+class ToolsArtifactLockTest(unittest.TestCase):
+    """The tools lock is taken without following or changing anything in the
+    tools directory by path."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self.root = self.base / "tools"
+        self.root.mkdir()
+        self.lock = self.root / ".artifact.lock"
+        timeout = mock.patch.object(bootstrap, "bootstrap_lock_timeout_seconds", return_value=1)
+        timeout.start()
+        self.addCleanup(timeout.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hold(self):
+        with bootstrap.tools_artifact_lock(str(self.root)):
+            probe = subprocess.run(["flock", "-n", str(self.lock), "true"])
+            self.assertEqual(probe.returncode, 1)  # held
+
+    def test_a_valid_lock_is_kept_and_held(self) -> None:
+        self.lock.write_text("")
+        self.lock.chmod(0o644)
+        inode = self.lock.stat().st_ino
+        self.hold()
+        self.assertEqual(self.lock.stat().st_ino, inode)
+
+    def test_a_planted_symlink_is_replaced_never_followed(self) -> None:
+        outside = self.base / "outside-file"
+        outside.write_text("original")
+        outside.chmod(0o640)
+        os.symlink(outside, self.lock)
+        self.hold()
+        self.assertEqual(oct(outside.stat().st_mode & 0o777), "0o640")
+        self.assertEqual(outside.read_text(), "original")
+        info = self.lock.lstat()
+        self.assertTrue(stat.S_ISREG(info.st_mode))
+        self.assertEqual(info.st_uid, os.geteuid())
+        self.assertEqual(oct(info.st_mode & 0o777), "0o644")
+        # a dangling symlink, too (O_CREAT never follows it)
+        self.lock.unlink()
+        os.symlink(self.base / "dangling-target", self.lock)
+        self.hold()
+        self.assertFalse((self.base / "dangling-target").exists())
+
+    def test_a_lock_others_may_write_is_replaced(self) -> None:
+        self.lock.write_text("")
+        self.lock.chmod(0o666)
+        inode = self.lock.stat().st_ino
+        self.hold()
+        self.assertNotEqual(self.lock.stat().st_ino, inode)
+        self.assertEqual(oct(self.lock.stat().st_mode & 0o777), "0o644")
+        # a hard link to it elsewhere counts as not ours either
+        os.link(self.lock, self.base / "elsewhere")
+        inode = self.lock.stat().st_ino
+        self.hold()
+        self.assertNotEqual(self.lock.stat().st_ino, inode)
+
+    def test_a_symlinked_tools_root_is_refused(self) -> None:
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        os.symlink(elsewhere, self.base / "linked")
+        with self.assertRaises(RuntimeError):
+            with bootstrap.tools_artifact_lock(str(self.base / "linked")):
+                pass
+        self.assertFalse((elsewhere / ".artifact.lock").exists())
+
+    def test_a_replant_during_replacement_fails_closed(self) -> None:
+        outside = self.base / "outside-file"
+        outside.write_text("original")
+        outside.chmod(0o640)
+        os.symlink(outside, self.lock)
+        original = bootstrap._replace_tools_lock
+
+        def replace_then_replant(dirfd):
+            original(dirfd)
+            self.lock.unlink()
+            os.symlink(outside, self.lock)
+
+        with mock.patch.object(bootstrap, "_replace_tools_lock", replace_then_replant):
+            with self.assertRaises(RuntimeError):
+                with bootstrap.tools_artifact_lock(str(self.root)):
+                    self.fail("extracted without a valid lock")
+        self.assertEqual(oct(outside.stat().st_mode & 0o777), "0o640")
+        self.assertEqual(outside.read_text(), "original")
 
 
 if __name__ == "__main__":

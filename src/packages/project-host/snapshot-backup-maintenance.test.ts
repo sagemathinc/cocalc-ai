@@ -262,7 +262,7 @@ describe("snapshot-backup-maintenance", () => {
     const { scheduledBackupTimeoutMs } =
       await import("./snapshot-backup-maintenance");
     const limits = [0, 1, 2, 3, 26].map((failures) =>
-      scheduledBackupTimeoutMs({ failures, starvationOverride: false }),
+      scheduledBackupTimeoutMs({ failures }),
     );
     expect(limits).toEqual([
       30 * 60_000,
@@ -271,14 +271,11 @@ describe("snapshot-backup-maintenance", () => {
       2 * 60 * 60_000,
       2 * 60 * 60_000,
     ]);
-    expect(
-      scheduledBackupTimeoutMs({ failures: 26, starvationOverride: true }),
-    ).toBe(30 * 60_000);
   });
 
   it.each([
     [false, 2 * 60 * 60_000],
-    [true, 30 * 60_000],
+    [true, 2 * 60 * 60_000],
   ])(
     "runs a failing backup admitted with starvation override %s with limit %d",
     async (starvationOverride, timeoutMs) => {

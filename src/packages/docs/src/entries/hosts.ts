@@ -19,6 +19,7 @@ import {
   PROJECT_HOST_SOFTWARE_LIFECYCLE_BODY,
   PROJECT_HOST_SPOT_RECOVERY_BODY,
   PROJECT_HOST_STORAGE_BODY,
+  PROJECT_BACKUPS_BODY,
 } from "../content/hosts";
 
 export const HOSTS_ENTRIES: DocsEntry[] = [
@@ -293,6 +294,22 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
     summary:
       "Understand host disk capacity, storage mode, backups, snapshots, and online disk growth.",
     title: "Project host storage, backups, and snapshots",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: PROJECT_BACKUPS_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.backups",
+    lastReviewed: "2026-10-31",
+    noActionReason:
+      "Explains how snapshots and backups work and what they guarantee.",
+    searchKeywords:
+      "backup backups snapshot snapshots rustic restore retention schedule deduplication slow backup reflink worktree ctime guarantees",
+    slug: "hosts/backups",
+    status: "ready",
+    summary:
+      "How snapshots and backups work, their default schedule, what they guarantee, and what makes a backup slow.",
+    title: "How snapshots and backups work",
   },
   {
     actions: [

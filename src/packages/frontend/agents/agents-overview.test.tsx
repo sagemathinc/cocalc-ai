@@ -195,7 +195,16 @@ it("marks each agent's runtime on its badge", async () => {
   ).toBeInTheDocument();
   render(
     <>
-      {[{ kind: "codex" }, { kind: "acp", name: "pi" }].map((runtime: any) => (
+      {[
+        { kind: "codex" },
+        { kind: "acp", name: "pi" },
+        {
+          kind: "claude-code",
+          model: "opus",
+          model_name: "Opus 5.5",
+          effort: "high",
+        },
+      ].map((runtime: any) => (
         <WithAgentRuntimeMark key={runtime.kind} runtime={runtime}>
           <span />
         </WithAgentRuntimeMark>
@@ -204,6 +213,11 @@ it("marks each agent's runtime on its badge", async () => {
   );
   expect(screen.getByRole("img", { name: "Codex" })).toBeInTheDocument();
   expect(screen.getByRole("img", { name: "ACP: pi" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("img", {
+      name: "Claude Code: Opus 5.5 (opus), effort high",
+    }),
+  ).toBeInTheDocument();
 });
 
 it("offers only the choices that apply to the selected agents", async () => {

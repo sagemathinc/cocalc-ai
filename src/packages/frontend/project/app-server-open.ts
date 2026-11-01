@@ -4,7 +4,6 @@
  */
 
 import type { AppSpec, ManagedAppStatus } from "@cocalc/conat/project/api/apps";
-import type { ProjectAppPrivateHostnameRecord } from "@cocalc/conat/hub/api/system";
 import { message } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -20,13 +19,24 @@ export function appOpenURL(
   project_id: string,
   path: string,
   app_id?: string,
+  { root = false }: { root?: boolean } = {},
 ): string | undefined {
   if (!path.startsWith(`/${project_id}/`)) return;
   const base = appBasePath === "/" ? "" : appBasePath.replace(/\/+$/, "");
-  const query = app_id
-    ? `${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(app_id)}`
+  const params: string[] = [];
+  if (app_id) params.push(`cocalc_app=${encodeURIComponent(app_id)}`);
+  // The app runs without a base URL: open it at the root of its origin.
+  if (root) params.push("cocalc_root=1");
+  const query = params.length
+    ? `${path.includes("?") ? "&" : "?"}${params.join("&")}`
     : "";
   return `${base}/app-open${path}${query}`;
+}
+
+// Whether an app runs at the root of its own origin (no base URL; trust-free
+// step 6, phase 7c).
+export function appRunsAtRoot(status?: { base_url?: string } | null): boolean {
+  return status?.base_url === "/";
 }
 
 function ensureTrailingSlash(value: string): string {
@@ -44,35 +54,8 @@ function translateServiceOpenUrl(
   return localUrl;
 }
 
-export function buildPrivateHostnameOpenUrl({
-  privateHostnameUrl,
-  spec,
-  status,
-}: {
-  privateHostnameUrl: string;
-  spec?: AppSpec;
-  status: ManagedAppStatus;
-}): string {
-  if (
-    spec?.kind !== "service" ||
-    spec.proxy?.open_mode !== "port" ||
-    !status.url
-  ) {
-    return privateHostnameUrl;
-  }
-  const localUrl = translateServiceOpenUrl(status.url, "port");
-  if (!localUrl) return privateHostnameUrl;
-  const privateUrl = new URL(privateHostnameUrl);
-  const local = new URL(localUrl, "https://project-host.invalid");
-  privateUrl.pathname = local.pathname;
-  privateUrl.search = local.search;
-  privateUrl.hash = local.hash;
-  return privateUrl.toString();
-}
-
 interface ProjectAppOpenOptions {
   getSpec?: (id: string) => Promise<AppSpec>;
-  privateHostname?: ProjectAppPrivateHostnameRecord;
   project_id: string;
   spec?: AppSpec;
   status: ManagedAppStatus;
@@ -82,7 +65,6 @@ interface ProjectAppOpenOptions {
 
 export async function getProjectAppOpenUrl({
   getSpec,
-  privateHostname,
   project_id,
   spec,
   status,
@@ -97,21 +79,6 @@ export async function getProjectAppOpenUrl({
       // Fall back to the app status URL below.
     }
   };
-
-  if (privateHostname?.url) {
-    await resolveSpec();
-  }
-
-  if (privateHostname?.url) {
-    return await webapp_client.conat_client.addProjectHostAuthToUrl({
-      project_id,
-      url: buildPrivateHostnameOpenUrl({
-        privateHostnameUrl: privateHostname.url,
-        spec: resolvedSpec,
-        status,
-      }),
-    });
-  }
 
   await resolveSpec();
   const declaredBasePath = `${resolvedSpec?.proxy?.base_path ?? ""}`.trim();
@@ -147,32 +114,8 @@ export async function getProjectAppOpenUrl({
   });
 }
 
-export async function getPrivateProjectAppOpenUrl({
-  app_id,
-  project_id,
-}: {
-  app_id: string;
-  project_id: string;
-}): Promise<string> {
-  const hostname =
-    await webapp_client.conat_client.hub.system.inspectProjectAppPrivateHostname(
-      {
-        project_id,
-        app_id,
-      },
-    );
-  if (!hostname?.url) {
-    throw new Error(`Private hostname for app '${app_id}' is not reserved.`);
-  }
-  return await webapp_client.conat_client.addProjectHostAuthToUrl({
-    project_id,
-    url: hostname.url,
-  });
-}
-
 export async function openProjectAppStatus(opts: {
   getSpec?: (id: string) => Promise<AppSpec>;
-  privateHostname?: ProjectAppPrivateHostnameRecord;
   project_id: string;
   spec?: AppSpec;
   status: ManagedAppStatus;
@@ -192,27 +135,26 @@ export async function openProjectAppStatus(opts: {
       );
     return;
   }
-  if (!opts.privateHostname?.url) {
-    // Reserve the tab while the click still has user activation (browsers
-    // block popups opened after an await), then send it where it goes.
-    const tab = window.open("", "_blank");
-    if (tab != null) {
-      tab.opener = null;
-      try {
-        // Not noreferrer: the app origin accepts the link only from this
-        // site (the Referer is just the site's origin).
-        const url =
-          (await getProjectAppOriginUrl(opts)) ??
-          (await getProjectAppOpenUrl(opts));
-        if (url) tab.location.href = url;
-        else tab.close();
-      } catch (err) {
-        tab.close();
-        throw err;
-      }
-      return;
+  // Reserve the tab while the click still has user activation (browsers
+  // block popups opened after an await), then send it where it goes.
+  const tab = window.open("", "_blank");
+  if (tab != null) {
+    tab.opener = null;
+    try {
+      // Not noreferrer: the app origin accepts the link only from this
+      // site (the Referer is just the site's origin).
+      const url =
+        (await getProjectAppOriginUrl(opts)) ??
+        (await getProjectAppOpenUrl(opts));
+      if (url) tab.location.href = url;
+      else tab.close();
+    } catch (err) {
+      tab.close();
+      throw err;
     }
+    return;
   }
+  // The popup was blocked: open it directly (no opener).
   const url = await getProjectAppOpenUrl(opts);
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
@@ -242,10 +184,12 @@ export async function getProjectAppFrameUrl({
   project_id,
   path,
   app_id,
+  root = false,
 }: {
   project_id: string;
   path: string;
   app_id?: string;
+  root?: boolean;
 }): Promise<{ url: string } | { unavailable: string } | { error: string }> {
   try {
     const result =
@@ -253,6 +197,7 @@ export async function getProjectAppFrameUrl({
         project_id,
         path,
         app_id,
+        root,
       });
     return "url" in result
       ? { url: result.url }
@@ -293,6 +238,7 @@ async function getProjectAppOriginUrl(
         project_id: opts.project_id,
         path,
         app_id: opts.status.id,
+        root: appRunsAtRoot(opts.status),
       });
     return "url" in result ? result.url : undefined;
   } catch (err) {

@@ -4,13 +4,15 @@
  */
 
 // A small mark on an agent's badge saying which runtime it uses: OpenAI for
-// Codex, Anthropic for Claude Code, a plug for any other ACP harness.
+// Codex, Anthropic for Claude Code, a plug for any other ACP harness. Its
+// label names the model and effort too, once the agent's host reported them.
 
 import type { ReactNode } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import AnthropicAvatar from "@cocalc/frontend/components/anthropic-avatar";
 import OpenAIAvatar from "@cocalc/frontend/components/openai-avatar";
 import {
+  agentModelLabel,
   agentRuntimeLabel,
   type AgentRuntimeSummary,
 } from "@cocalc/util/ai/agent-runtime-kind";
@@ -39,7 +41,10 @@ export function WithAgentRuntimeMark({
   children: ReactNode;
 }) {
   if (!runtime) return <>{children}</>;
-  const label = agentRuntimeLabel(runtime);
+  const model = agentModelLabel(runtime);
+  const label = model
+    ? `${agentRuntimeLabel(runtime)}: ${model}${runtime.effort ? `, effort ${runtime.effort}` : ""}`
+    : agentRuntimeLabel(runtime);
   return (
     <span
       style={{ position: "relative", display: "inline-flex", flex: "0 0 auto" }}

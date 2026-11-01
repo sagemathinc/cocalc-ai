@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { appServedAtRoot, staticAppBasePath } from "./apps-at-root";
 import getPort from "get-port";
 import { spawn } from "node:child_process";
 import net from "node:net";
@@ -11,8 +12,6 @@ import { join } from "node:path";
 import { delay } from "awaiting";
 import basePath from "@cocalc/backend/base-path";
 import { project_id } from "@cocalc/project/data";
-import { hubApi } from "@cocalc/project/conat/hub";
-import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { getLogger } from "@cocalc/project/logger";
 import { projectScopedCliEnv } from "@cocalc/project/project-cli-env";
 import type { AppTemplateCatalogEntry } from "@cocalc/conat/project/api/apps";
@@ -60,6 +59,8 @@ interface RunningApp {
   host: string;
   port: number;
   url: string;
+  // The base URL the app was started with (APP_BASE_URL).
+  base_url: string;
   stdout: Buffer;
   stderr: Buffer;
   ready?: boolean;
@@ -98,6 +99,10 @@ export interface AppStatus {
   mtime?: number;
   port?: number;
   url?: string;
+  // The base URL the app runs with: "/" when it runs at the root of its
+  // own app origin (no base URL); also set for static and unmanaged apps
+  // the host serves at the root.
+  base_url?: string;
   ready?: boolean;
   pid?: number;
   stdout?: Buffer;
@@ -688,7 +693,10 @@ async function runStaticRefresh(
     ...(refreshSpec.command.env ?? {}),
     APP_ID: spec.id,
     APP_STATIC_ROOT: spec.static.root,
-    APP_BASE_PATH: spec.proxy.base_path,
+    // "/" when the app is served at the root of its origin, like a managed
+    // service's APP_BASE_URL; the project-local path stays available.
+    APP_BASE_PATH: staticAppBasePath(spec.proxy),
+    APP_LOCAL_BASE_PATH: spec.proxy.base_path,
   };
   const run = (async () => {
     state.last_reason = reason;
@@ -872,7 +880,9 @@ export async function startApp(
     appId: spec.id,
   });
   const localUrl = getProxyUrl(port);
-  const appBaseUrl = localUrl;
+  // Only apps the host serves at the root of their origin run without a
+  // base URL; one that keeps its prefix (strip_prefix: false) keeps it.
+  const appBaseUrl = appServedAtRoot(spec.proxy) ? "/" : localUrl;
   const { exec: cmd, args } = resolveAppCommand({
     exec: spec.command.exec,
     args: spec.command.args ?? [],
@@ -910,6 +920,7 @@ export async function startApp(
     host,
     port,
     url: localUrl,
+    base_url: appBaseUrl,
     stdout: Buffer.alloc(0),
     stderr: Buffer.alloc(0),
   };
@@ -975,6 +986,7 @@ export async function statusApp(id: string): Promise<AppStatus> {
     status.state = "running";
     status.ready = true;
     status.url = normalizePrefix(staticSpec.proxy.base_path);
+    if (appServedAtRoot(staticSpec.proxy)) status.base_url = "/";
     if (refreshState?.stdout?.length) status.stdout = refreshState.stdout;
     if (refreshState?.stderr?.length) status.stderr = refreshState.stderr;
     if (warnings.length > 0) status.warnings = warnings;
@@ -994,6 +1006,7 @@ export async function statusApp(id: string): Promise<AppStatus> {
       ready,
       port,
       url: canonicalUrl,
+      ...(appServedAtRoot(serviceSpec.proxy) ? { base_url: "/" } : {}),
       warnings: [
         ready
           ? "Process lifecycle is unmanaged. CoCalc can open this app, but it does not start or stop the server."
@@ -1031,6 +1044,7 @@ export async function statusApp(id: string): Promise<AppStatus> {
     title: spec.title,
     port: running.port,
     url: running.url,
+    base_url: running.base_url,
     ready: running.ready,
     pid: running.child.pid,
     stdout: running.stdout,
@@ -1178,11 +1192,6 @@ export async function deleteApp(
   }
   clearChild(id);
   clearStaticRefreshState(id);
-  const hub = hubApi(getProjectConatClient());
-  await hub.system.releaseProjectAppPrivateHostname({
-    project_id,
-    app_id: id,
-  });
   const result = await deleteAppSpec(id);
   deleteAppMetrics(id);
   invalidateRouteCache();
@@ -1308,42 +1317,6 @@ export async function managedServiceAppForPort(
     }
   }
   return undefined;
-}
-
-export async function getPrivateHostnamePolicy() {
-  const hub = hubApi(getProjectConatClient());
-  return await hub.system.getProjectAppPrivateHostnamePolicy({ project_id });
-}
-
-export async function inspectPrivateHostname(id: string) {
-  await getAppSpec(id);
-  const hub = hubApi(getProjectConatClient());
-  return await hub.system.inspectProjectAppPrivateHostname({
-    project_id,
-    app_id: id,
-  });
-}
-
-export async function listPrivateHostnames() {
-  const hub = hubApi(getProjectConatClient());
-  return await hub.system.listProjectAppPrivateHostnames({ project_id });
-}
-
-export async function reservePrivateHostname(id: string) {
-  await getAppSpec(id);
-  const hub = hubApi(getProjectConatClient());
-  return await hub.system.reserveProjectAppPrivateHostname({
-    project_id,
-    app_id: id,
-  });
-}
-
-export async function releasePrivateHostname(id: string) {
-  const hub = hubApi(getProjectConatClient());
-  return await hub.system.releaseProjectAppPrivateHostname({
-    project_id,
-    app_id: id,
-  });
 }
 
 export async function appLogs(id: string): Promise<{

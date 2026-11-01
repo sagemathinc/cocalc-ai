@@ -1,8 +1,4 @@
 import type { AppTemplateCatalogEntryV1 } from "@cocalc/util/apps/template-catalog";
-import type {
-  ProjectAppPrivateHostnamePolicy,
-  ProjectAppPrivateHostnameRecord,
-} from "@cocalc/conat/hub/api/system";
 
 export const apps = {
   start: true,
@@ -20,11 +16,6 @@ export const apps = {
   waitForAppState: true,
   ensureRunning: true,
   listAppStatuses: true,
-  getPrivateHostnamePolicy: true,
-  inspectPrivateHostname: true,
-  listPrivateHostnames: true,
-  reservePrivateHostname: true,
-  releasePrivateHostname: true,
   appLogs: true,
   appMetrics: true,
   listAppMetrics: true,
@@ -71,6 +62,9 @@ export interface ManagedAppStatus {
   mtime?: number;
   port?: number;
   url?: string;
+  // The base URL the app was started with: "/" when it runs at the root of
+  // its own app origin (no base URL).
+  base_url?: string;
   ready?: boolean;
   pid?: number;
   stdout?: Buffer;
@@ -179,15 +173,6 @@ export interface Apps {
     opts?: { timeout?: number; interval?: number },
   ) => Promise<ManagedAppStatus>;
   listAppStatuses: () => Promise<ManagedAppStatus[]>;
-  getPrivateHostnamePolicy: () => Promise<ProjectAppPrivateHostnamePolicy>;
-  inspectPrivateHostname: (
-    id: string,
-  ) => Promise<ProjectAppPrivateHostnameRecord | undefined>;
-  listPrivateHostnames: () => Promise<ProjectAppPrivateHostnameRecord[]>;
-  reservePrivateHostname: (
-    id: string,
-  ) => Promise<ProjectAppPrivateHostnameRecord>;
-  releasePrivateHostname: (id: string) => Promise<{ released: boolean }>;
   appLogs: (id: string) => Promise<{
     id: string;
     state: "running" | "stopped";

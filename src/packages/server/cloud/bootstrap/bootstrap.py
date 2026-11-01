@@ -11,7 +11,7 @@ High-level responsibilities:
   4) Podman storage config (rootful + rootless) and runtime dir.
   5) Project-host env file (including public IP substitution if needed).
   6) Fetch + verify bundles/tools and unpack them into cocalc-host paths.
-  7) Install Node via nvm, write wrapper + helper scripts.
+  7) Install Node (root-owned, /opt/cocalc/node), write wrapper + helper scripts.
   8) Optional cloudflared setup, GPU setup, and autostart cron.
   9) Start project-host, enable managed security updates, mark bootstrap done.
 """
@@ -19,6 +19,7 @@ High-level responsibilities:
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
 import grp
 import hashlib
@@ -45,7 +46,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261030-v57"
+HELPER_SCHEMA_VERSION = "20261031-v61"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -835,6 +836,23 @@ if __name__ == "__main__":
 RUNTIME_WRAPPER_VERSION = "20260926-v19"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
+# Node for the project-host services: installed and owned by root, so the
+# runtime user (which the services run as) can't modify the program it runs
+# or the node runtime mounted into projects.
+NODE_ROOT = Path("/opt/cocalc/node")
+NODE_DIST_URL = "https://nodejs.org/dist"
+NODE_KEEP_VERSIONS = 3
+# Compatibility libraries mounted into projects next to node (root-owned;
+# project-runner uses them when current, see prepareNodeRuntimeCompatLibs).
+NODE_RUNTIME_LIBS_ROOT = Path("/opt/cocalc/runtime-libs")
+HOST_LIBATOMIC_CANDIDATES = (
+    "/lib/x86_64-linux-gnu/libatomic.so.1",
+    "/usr/lib/x86_64-linux-gnu/libatomic.so.1",
+    "/lib/aarch64-linux-gnu/libatomic.so.1",
+    "/usr/lib/aarch64-linux-gnu/libatomic.so.1",
+    "/lib64/libatomic.so.1",
+    "/usr/lib64/libatomic.so.1",
+)
 CLOUDFLARED_VERSION = "2026.10.3"
 CLOUDFLARED_DEB_SHA256 = {
     "amd64": "297d906a8fef396ec888b51571e783d594bde280f3b44d63e8fa343ef2c4cc4e",
@@ -866,6 +884,15 @@ PROJECT_HOST_RUNTIME_SUBID_RANGES = (
     (231072, ROOTLESS_SUBID_ALIGNMENT),
     (327680, ROOTLESS_SUBID_MIN_TOTAL - ROOTLESS_SUBID_ALIGNMENT),
 )
+# Host uids for project containers that run with a separate runtime uid
+# (project_runtime_uid_mode "separate"). The block is appended after the
+# container ranges, so their rootless inner ids don't move, and it sits far
+# above the ranges useradd allocates (SUB_UID_MAX/SUB_GID_MAX are pinned below
+# it). The first uid is the shared project runtime uid.
+PROJECT_RUNTIME_UID_BLOCK = (1 << 30, 65536)
+PROJECT_RUNTIME_SEPARATE_UID = PROJECT_RUNTIME_UID_BLOCK[0]
+PROJECT_RUNTIME_UID_MODES = ("keep-id", "separate")
+LOGIN_DEFS_PATH = Path("/etc/login.defs")
 APT_RETRIES = 5
 APT_ACQUIRE_TIMEOUT_S = 60
 APT_LOCK_TIMEOUT_S = 120
@@ -1682,6 +1709,9 @@ class BootstrapConfig:
     bootstrap_done_paths: list[str]
     container_runtime_bundle: BundleSpec | None = None
     allow_loopback_rustic_rest: bool = False
+    # "keep-id" (today) or "separate": whether the host's subuid allocation
+    # includes PROJECT_RUNTIME_UID_BLOCK. Nothing runs projects with it yet.
+    project_runtime_uid_mode: str = "keep-id"
     # Standalone (CoCalc Star) hosts only: run without the per-project network
     # policy when the kernel cannot express it, instead of refusing projects.
     allow_unenforceable_project_network: bool = False
@@ -2045,7 +2075,41 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             if bundle_container_runtime
             else None
         ),
+        project_runtime_uid_mode=effective_project_runtime_uid_mode(
+            desired.get("project_runtime_uid_mode"),
+            facts.get("env_file"),
+        ),
     )
+
+
+def effective_project_runtime_uid_mode(desired_value: Any, env_file: Any) -> str:
+    """The host's project runtime uid mode.
+
+    COCALC_PROJECT_RUNTIME_UID_MODE in the operator's local env file (the
+    same file project-host reads) wins over the desired state, so one setting
+    per host drives both the subuid allocation and project-host.
+    """
+    if isinstance(env_file, str) and env_file:
+        local = read_env_assignments(project_host_local_env_path(Path(env_file)))
+        value = local.get("COCALC_PROJECT_RUNTIME_UID_MODE", "").strip()
+        if value:
+            return parse_project_runtime_uid_mode(value)
+    return parse_project_runtime_uid_mode(desired_value)
+
+
+def parse_project_runtime_uid_mode(value: Any) -> str:
+    """A valid mode, or keep-id: a typo must not stop a host's bootstrap.
+    project-host reports an invalid configured mode in its health."""
+    if value is None or value == "":
+        return "keep-id"
+    if isinstance(value, str) and value in PROJECT_RUNTIME_UID_MODES:
+        return value
+    print(
+        f"bootstrap: ignoring invalid project runtime uid mode {value!r} "
+        f"(expected one of {', '.join(PROJECT_RUNTIME_UID_MODES)}); using keep-id",
+        file=sys.stderr,
+    )
+    return "keep-id"
 
 
 def parse_only(arg: str | None) -> set[str] | None:
@@ -2092,7 +2156,9 @@ def json_write_atomic(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def text_write_atomic(path: Path, content: str, *, default_mode: int = 0o644) -> None:
+def text_write_atomic(
+    path: Path, content: str, *, default_mode: int = 0o644, fsync: bool = False
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         dir=str(path.parent),
@@ -2103,6 +2169,9 @@ def text_write_atomic(path: Path, content: str, *, default_mode: int = 0o644) ->
     tmp = Path(tmp_name)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(content)
+        if fsync:
+            handle.flush()
+            os.fsync(handle.fileno())
     try:
         mode = path.stat().st_mode & 0o777
     except FileNotFoundError:
@@ -2389,22 +2458,57 @@ def resolve_runtime_user_identity(cfg: BootstrapConfig) -> tuple[int, int]:
     return first_free_numeric_id(used_uids, PROJECT_HOST_RUNTIME_UID), desired_gid
 
 
-def expected_runtime_userns_map(cfg: BootstrapConfig) -> tuple[list[str], list[str]]:
+def runtime_subid_ranges(cfg: BootstrapConfig) -> tuple[tuple[int, int], ...]:
+    """The runtime user's subuid/subgid allocation, in /etc/subuid order."""
+    if getattr(cfg, "project_runtime_uid_mode", "keep-id") == "separate":
+        return (*PROJECT_HOST_RUNTIME_SUBID_RANGES, PROJECT_RUNTIME_UID_BLOCK)
+    return PROJECT_HOST_RUNTIME_SUBID_RANGES
+
+
+def expected_runtime_userns_map(
+    cfg: BootstrapConfig,
+    ranges: tuple[tuple[int, int], ...] | None = None,
+) -> tuple[list[str], list[str]]:
     desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
     uid_map = [f"0 {desired_uid} 1"]
     gid_map = [f"0 {desired_gid} 1"]
     inside = 1
-    for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES:
+    for start, length in runtime_subid_ranges(cfg) if ranges is None else ranges:
         uid_map.append(f"{inside} {start} {length}")
         gid_map.append(f"{inside} {start} {length}")
         inside += length
     return uid_map, gid_map
 
 
+def accepted_runtime_userns_maps(
+    cfg: BootstrapConfig,
+) -> list[tuple[list[str], list[str]]]:
+    """The live rootless maps the contract accepts.
+
+    Rootless Podman reads /etc/subuid only when it creates its user namespace,
+    and recreating it stops every container on the host. So a host whose
+    allocation gained or lost PROJECT_RUNTIME_UID_BLOCK keeps its previous map
+    until its next reboot. Accept exactly the map with and the map without
+    that one trailing extent; anything else is still a mismatch.
+    """
+    with_block = (*PROJECT_HOST_RUNTIME_SUBID_RANGES, PROJECT_RUNTIME_UID_BLOCK)
+    return [
+        expected_runtime_userns_map(cfg, PROJECT_HOST_RUNTIME_SUBID_RANGES),
+        expected_runtime_userns_map(cfg, with_block),
+    ]
+
+
+def runtime_userns_map_has_project_uid_block(uid_map: Any) -> bool:
+    start, length = PROJECT_RUNTIME_UID_BLOCK
+    return isinstance(uid_map, list) and any(
+        line.split()[1:] == [str(start), str(length)] for line in uid_map
+    )
+
+
 def expected_runtime_user_contract(cfg: BootstrapConfig) -> dict[str, Any]:
     desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
     uid_map, gid_map = expected_runtime_userns_map(cfg)
-    subid_ranges = [f"{start}:{length}" for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES]
+    subid_ranges = [f"{start}:{length}" for start, length in runtime_subid_ranges(cfg)]
     return {
         "user": cfg.ssh_user,
         "identity": f"{cfg.ssh_user}:{desired_uid}:{desired_gid}",
@@ -3557,6 +3661,2041 @@ WantedBy=timers.target
         )
 
 
+HOST_INTEGRITY_WATCH_SCRIPT = r'''#!/usr/bin/env python3
+"""CoCalc project-host integrity watcher. Runs as root (systemd).
+
+Every few seconds it checks where the processes of the runtime (service) user
+and of the runtime user's subordinate uid ranges are running: inside a
+container, or as one of the host's known services. A process that is neither
+is reported. Every minute it also hashes a short list of host configuration
+files and reports changes made outside a bootstrap run.
+
+Results go to a root-owned status file that the project host includes in its
+heartbeat, and new findings are also written to the serial console when there
+is one. Findings never include command lines, environment or file contents.
+"""
+
+import argparse
+import fcntl
+import fnmatch
+import glob
+import hashlib
+import json
+import os
+import pwd
+import signal
+import stat
+import struct
+import sys
+import time
+
+SCHEMA = "cocalc-host-integrity-v1"
+VERSION = 1
+
+# Programs are matched by their full path. A "*" matches within one path
+# component and "{home}" is the runtime user's home directory; entries that are
+# not absolute paths are ignored.
+_PODMAN_HELPERS = (
+    "conmon",
+    "catatonit",
+    "pasta",
+    "pasta.avx2",
+    "podman",
+    "crun",
+    "runc",
+    "slirp4netns",
+    "fuse-overlayfs",
+    "rootlessport",
+    "aardvark-dns",
+    "netavark",
+    "newuidmap",
+    "newgidmap",
+)
+_PODMAN_EXES = (
+    tuple("/usr/bin/" + name for name in _PODMAN_HELPERS)
+    + tuple("/opt/cocalc/container-runtime/*/bin/" + name for name in _PODMAN_HELPERS)
+    + ("/usr/sbin/runc", "/usr/libexec/podman/*")
+)
+# Programs the runtime user runs as host services (host user namespace).
+DEFAULT_HOST_EXES = _PODMAN_EXES + (
+    "/opt/cocalc/node/*/bin/node",
+    "/opt/cocalc/tools/*/sshpiperd",
+    "/opt/cocalc/tools/*/rustic",
+    "/usr/local/libexec/cocalc-rustic",
+    "/usr/lib/systemd/systemd",
+    "/usr/lib/systemd/systemd-executor",
+    "/usr/bin/sudo",
+    "/usr/bin/dbus-daemon",
+    "/usr/bin/cloudflared",
+    "/usr/local/bin/cloudflared",
+    "/usr/bin/btrfs",
+)
+# Programs that belong in the container runtime's user namespace.
+DEFAULT_RUNTIME_EXES = _PODMAN_EXES
+# A trusted program must also be owned by root all the way up (file and every
+# directory above it, none writable by group or others); otherwise it's
+# reported as trusted-program-writable. Programs under these directories are
+# still installed by the runtime user, so they aren't checked yet.
+RUNTIME_OWNED_PROGRAM_DIRS = ("/opt/cocalc/container-runtime/", "/opt/cocalc/tools/")
+# Placement rules: processes with these uids must run in one of these cgroups
+# (prefixes; "{runtime_uid}" is replaced), or, with container_mount_ns_ok, in a
+# mount namespace other than the host's (inside a container). "uids" is
+# "runtime", "subordinate" or a list of [start, count] ranges. More rules come
+# from the allowlist file's "placement_rules", e.g. for a dedicated project uid.
+DEFAULT_PLACEMENT_RULES = (
+    {
+        "name": "runtime-user-outside-expected-cgroups",
+        "severity": "high",
+        "uids": "runtime",
+        "allowed_cgroups": [
+            "/cocalc-host-services",
+            "/cocalc-project-pool",
+            "/cocalc-project-startup",
+            "/cocalc-maintenance",
+            "/user.slice/user-{runtime_uid}.slice",
+            "/system.slice/cocalc-project-host-watchdog.service",
+        ],
+        "container_mount_ns_ok": False,
+    },
+)
+# Root-owned service cgroups whose scripts run as the runtime user: any program
+# there is expected (the runtime user cannot move a process into them).
+DEFAULT_SCRIPT_CGROUPS = ("/system.slice/cocalc-project-host-watchdog.service",)
+# Container cgroups: a process in another user namespace counts as inside a
+# container only in one of these and in a mount namespace of its own.
+DEFAULT_CONTAINER_CGROUPS = ("/cocalc-project-pool",)
+# Host configuration whose changes are reported: files, globs, and whole
+# trees ("dir/**", walked without following links; a symlink is recorded by
+# its target). Files up to 1 MB.
+DEFAULT_CONFIG_PATHS = (
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/group",
+    "/etc/gshadow",
+    "/etc/subuid",
+    "/etc/subgid",
+    "/etc/sudoers",
+    "/etc/sudoers.d/**",
+    "/etc/ssh/sshd_config",
+    "/etc/ssh/sshd_config.d/**",
+    "/root/.ssh/authorized_keys",
+    "/home/*/.ssh/authorized_keys",
+    "/root/.bashrc",
+    "/root/.profile",
+    "/etc/crontab",
+    "/etc/cron.d/**",
+    "/var/spool/cron/crontabs/**",
+    # units, drop-ins, enablement links, generators
+    "/etc/systemd/system/**",
+    "/usr/local/lib/systemd/system/**",
+    "/etc/systemd/system-generators/**",
+    "/usr/local/lib/systemd/system-generators/**",
+    "/etc/rc.local",
+    "/etc/init.d/**",
+    "/etc/profile",
+    "/etc/profile.d/**",
+    "/etc/environment",
+    "/etc/pam.d/**",
+    "/etc/update-motd.d/**",
+    "/etc/apt/apt.conf.d/**",
+    "/etc/udev/rules.d/**",
+    "/etc/logrotate.d/**",
+    "/etc/modules",
+    "/etc/modules-load.d/**",
+    "/etc/modprobe.d/**",
+    "/etc/network/if-up.d/**",
+    "/etc/ld.so.preload",
+    "/etc/ld.so.conf",
+    "/etc/ld.so.conf.d/**",
+    "/usr/local/sbin/*",
+    "/usr/local/libexec/*",
+)
+# Package installs and upgrades (unattended-upgrades) legitimately change many
+# of these: while dpkg holds its lock, or changed its state in the last
+# PACKAGE_QUIET_S seconds, the configuration is rebaselined, as during a
+# bootstrap run. And a difference is reported only once two consecutive checks
+# saw it with no package activity, so a file dpkg replaced just before it
+# updated its state isn't reported either.
+PACKAGE_QUIET_S = 600
+DPKG_LOCKS = ("/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock")
+MAX_TREE_ENTRIES = 5000
+MAX_ABSORBED = 50
+
+MAX_FINDINGS = 100
+SEVERITY_RANK = {"critical": 0, "high": 1}
+FINDING_KEEP_S = 24 * 3600
+MAX_CONFIG_CHANGES = 200
+# A config change is reported while its file differs from the baseline, and
+# kept (no longer refreshed) for a day after that.
+CONFIG_CHANGE_KEEP_S = 24 * 3600
+MAX_INVENTORY = 300
+MAX_CHAIN = 5
+CONFIG_MAX_BYTES = 1 << 20
+SERIAL_REPEAT_S = 3600
+HEARTBEAT_WRITE_S = 15
+
+
+def now_iso(t=None):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t if t else time.time()))
+
+
+def read_text(path, limit=65536):
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit).decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def read_link(path):
+    try:
+        return os.readlink(path)
+    except OSError:
+        return None
+
+
+def subordinate_ranges(user, path="/etc/subuid"):
+    ranges = []
+    text = read_text(path) or ""
+    for line in text.splitlines():
+        parts = line.strip().split(":")
+        if len(parts) != 3 or parts[0] != user:
+            continue
+        try:
+            start, count = int(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+        if count > 0:
+            ranges.append((start, count))
+    return ranges
+
+
+def in_ranges(uid, ranges):
+    return any(start <= uid < start + count for start, count in ranges)
+
+
+class Proc:
+    """What the rules need from one /proc/<pid>, and nothing else."""
+
+    __slots__ = ("pid", "ppid", "comm", "uids", "exe", "userns", "mntns", "cgroup", "exe_root")
+
+    def __init__(self, pid, ppid, comm, uids, exe, userns, cgroup, mntns=None, exe_root=None):
+        self.pid = pid
+        # for an executable deleted while it runs: whether the running inode
+        # is root's (see exe_inode_root_owned)
+        self.exe_root = exe_root
+        self.ppid = ppid
+        self.comm = comm
+        self.uids = uids
+        self.exe = exe
+        self.userns = userns
+        self.mntns = mntns
+        self.cgroup = cgroup
+
+
+def read_proc(proc_root, pid):
+    base = os.path.join(proc_root, str(pid))
+    status = read_text(os.path.join(base, "status"))
+    if status is None:
+        return None
+    comm, ppid, uids = "", 0, ()
+    for line in status.splitlines():
+        if line.startswith("Name:"):
+            comm = line.split(":", 1)[1].strip()[:64]
+        elif line.startswith("PPid:"):
+            try:
+                ppid = int(line.split()[1])
+            except (IndexError, ValueError):
+                ppid = 0
+        elif line.startswith("Uid:"):
+            try:
+                uids = tuple(int(v) for v in line.split()[1:5])
+            except ValueError:
+                uids = ()
+    if not uids:
+        return None
+    exe = read_link(os.path.join(base, "exe"))
+    userns = read_link(os.path.join(base, "ns", "user"))
+    cgroup = ""
+    text = read_text(os.path.join(base, "cgroup"), 4096) or ""
+    for line in text.splitlines():
+        if line.startswith("0::"):
+            cgroup = line[3:][:200]
+            break
+    mntns = read_link(os.path.join(base, "ns", "mnt"))
+    exe_root = None
+    if exe and exe.endswith(" (deleted)"):
+        exe_root = exe_inode_root_owned(base)
+        if exe_root is None:
+            return None  # exited meanwhile
+    return Proc(pid, ppid, comm, uids, exe, userns, cgroup, mntns, exe_root)
+
+
+def exe_inode_root_owned(proc_dir):
+    """Whether the executable a process runs (the inode, also once deleted)
+    is a root-owned regular file without group/other write; None if it
+    can't be read (the process exited)."""
+    try:
+        st = os.stat(os.path.join(proc_dir, "exe"))
+    except OSError:
+        return None
+    return stat.S_ISREG(st.st_mode) and st.st_uid == 0 and not st.st_mode & 0o022
+
+
+def list_procs(proc_root):
+    procs = {}
+    try:
+        names = os.listdir(proc_root)
+    except OSError:
+        return procs
+    for name in names:
+        if not name.isdigit():
+            continue
+        p = read_proc(proc_root, int(name))
+        if p is not None:
+            procs[p.pid] = p
+    return procs
+
+
+def userns_kind(proc_root, ns, member_pid, host_ns, runtime_uid, cache):
+    """'host', 'runtime' (the container runtime's namespace: its root is the
+    runtime user) or 'other' (a container, or anything else)."""
+    if ns is None:
+        return "unknown"
+    if ns == host_ns:
+        return "host"
+    if ns in cache:
+        return cache[ns]
+    kind = "other"
+    text = read_text(os.path.join(proc_root, str(member_pid), "uid_map")) or ""
+    for line in text.splitlines():
+        parts = line.split()
+        # exactly root -> the runtime user, as rootless podman maps it
+        if parts == ["0", str(runtime_uid), "1"]:
+            kind = "runtime"
+            break
+    cache[ns] = kind
+    return kind
+
+
+def compile_exe_patterns(patterns, home):
+    compiled = []
+    for pattern in patterns:
+        pattern = str(pattern).replace("{home}", home.rstrip("/"))
+        if pattern.startswith("/"):
+            compiled.append(pattern.split("/"))
+    return compiled
+
+
+def root_owned_chain(path, lstat=os.lstat):
+    """True if path and every directory above it are owned by root, are not
+    writable by group or others, and none is a symlink."""
+    parts = [part for part in path.split("/") if part]
+    if not path.startswith("/"):
+        return False
+    for i in range(len(parts) + 1):
+        try:
+            st = lstat("/" + "/".join(parts[:i]))
+        except OSError:
+            return False
+        if stat.S_ISLNK(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+            return False
+    return True
+
+
+def program_status(exe, patterns, cache, exe_root=None):
+    """'trusted', 'writable' (an expected program whose path the runtime user
+    could change) or 'unknown'. exe_root: for a deleted executable, whether
+    its running inode is root's."""
+    if not exe_allowed(exe, patterns):
+        return "unknown"
+    deleted = exe.endswith(" (deleted)")
+    path = exe[: -len(" (deleted)")] if deleted else exe
+    if path.startswith(RUNTIME_OWNED_PROGRAM_DIRS):
+        return "trusted"
+    # A binary replaced by an upgrade while it runs is gone from its path:
+    # then the running inode must be root's, and the directory it ran from
+    # root's all the way up.
+    if deleted and not exe_root:
+        return "writable"
+    checked = os.path.dirname(path) if deleted else path
+    if checked not in cache:
+        cache[checked] = root_owned_chain(checked)
+    return "trusted" if cache[checked] else "writable"
+
+
+def exe_allowed(exe, patterns):
+    """True if exe (as /proc/<pid>/exe shows it; a binary replaced while it
+    runs reads " (deleted)") matches a pattern, component by component."""
+    if not exe:
+        return False
+    if exe.endswith(" (deleted)"):
+        exe = exe[: -len(" (deleted)")]
+    parts = exe.split("/")
+    return any(
+        len(parts) == len(pattern)
+        and all(fnmatch.fnmatchcase(a, b) for a, b in zip(parts, pattern))
+        for pattern in patterns
+    )
+
+
+def parent_chain(procs, proc):
+    chain, seen, cur = [], set(), procs.get(proc.ppid)
+    while cur is not None and len(chain) < MAX_CHAIN and cur.pid not in seen:
+        seen.add(cur.pid)
+        chain.append(cur.comm)
+        cur = procs.get(cur.ppid)
+    return chain
+
+
+def compile_placement_rules(rules, runtime_uid, project_ranges):
+    """Rules with their uid ranges and cgroup prefixes resolved; invalid
+    rules are skipped."""
+    compiled = []
+    for rule in rules:
+        if not isinstance(rule, dict) or not rule.get("name"):
+            continue
+        spec = rule.get("uids")
+        if spec == "runtime":
+            ranges = [(runtime_uid, 1)]
+        elif spec == "subordinate":
+            ranges = list(project_ranges)
+        elif isinstance(spec, list):
+            try:
+                ranges = [(int(a), int(b)) for a, b in spec]
+            except (TypeError, ValueError):
+                continue
+        else:
+            continue
+        prefixes = [
+            str(p).replace("{runtime_uid}", str(runtime_uid)).rstrip("/")
+            for p in rule.get("allowed_cgroups", [])
+        ]
+        compiled.append(
+            {
+                "name": str(rule["name"]),
+                "severity": str(rule.get("severity", "high")),
+                "ranges": ranges,
+                "prefixes": prefixes,
+                "container_mount_ns_ok": bool(rule.get("container_mount_ns_ok")),
+            }
+        )
+    return compiled
+
+
+def root_id(proc_root, pid):
+    """(device, inode) of the process's root directory, or None."""
+    try:
+        st = os.stat(os.path.join(proc_root, str(pid), "root"))
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def cgroup_allowed(cgroup, prefixes):
+    return any(cgroup == p or cgroup.startswith(p + "/") for p in prefixes)
+
+
+def placement_violation(p, rule, host_mntns):
+    if not any(in_ranges(u, rule["ranges"]) for u in p.uids):
+        return False
+    if cgroup_allowed(p.cgroup, rule["prefixes"]):
+        return False
+    if rule["container_mount_ns_ok"] and p.mntns and p.mntns != host_mntns:
+        return False
+    return True
+
+
+def evaluate(procs, proc_root, host_ns, runtime_uid, project_ranges, host_exes,
+             runtime_exes, self_pid, placement_rules=(), host_mntns=None,
+             script_cgroups=(), container_cgroups=()):
+    """Returns (findings, inventory keys) for one scan. A finding is a dict
+    without any command line, environment or file content."""
+    findings, inventory, cache, chains = [], [], {}, {}
+    host_root = root_id(proc_root, 1)
+
+    def finding(p, rule, severity, kind):
+        return {
+            "rule": rule,
+            "severity": severity,
+            "pid": p.pid,
+            "comm": p.comm,
+            "exe": p.exe or "",
+            "uids": list(p.uids),
+            "userns": kind,
+            "parents": parent_chain(procs, p),
+            "cgroup": p.cgroup,
+        }
+
+    for p in procs.values():
+        if p.pid == self_pid:
+            continue
+        for rule in placement_rules:
+            if placement_violation(p, rule, host_mntns):
+                kind = userns_kind(
+                    proc_root, p.userns, p.pid, host_ns, runtime_uid, cache
+                )
+                findings.append(finding(p, rule["name"], rule["severity"], kind))
+        runtime = runtime_uid in p.uids
+        project = any(in_ranges(u, project_ranges) for u in p.uids)
+        if not runtime and not project:
+            continue
+        kind = userns_kind(proc_root, p.userns, p.pid, host_ns, runtime_uid, cache)
+        if (
+            kind == "other"
+            and p.mntns
+            and p.mntns != host_mntns
+            and cgroup_allowed(p.cgroup, container_cgroups)
+            and root_id(proc_root, p.pid) not in (None, host_root)
+        ):
+            continue  # inside a container (its own root, not the host's)
+        # Anything else is checked as a host process: a user namespace
+        # alone (e.g. one made by the runtime user) doesn't contain it.
+        inventory.append(
+            "%s|%s|%s" % (kind, "project" if project else "runtime", p.exe or "?")
+        )
+        rule = None
+        if project:
+            rule, severity = "project-uid-outside-container", "critical"
+        elif kind == "runtime":
+            status = program_status(p.exe, runtime_exes, chains, p.exe_root)
+            if status == "unknown":
+                rule, severity = "unexpected-process-in-container-runtime", "critical"
+            elif status == "writable":
+                rule, severity = "trusted-program-writable", "high"
+        elif not cgroup_allowed(p.cgroup, script_cgroups):
+            status = program_status(p.exe, host_exes, chains, p.exe_root)
+            if status == "unknown":
+                rule, severity = "unexpected-runtime-user-process", "high"
+            elif status == "writable":
+                rule, severity = "trusted-program-writable", "high"
+        if rule is None:
+            continue
+        findings.append(finding(p, rule, severity, kind))
+    return findings, inventory
+
+
+def tree_entries(top):
+    """(entries, total, rest): files and symlinks under top (not following
+    links), the first MAX_TREE_ENTRIES of them, how many there are, and a
+    digest of the others' metadata (path, size, mtime, ctime, mode, owner,
+    group, link target), so a change past the cap still shows. ([top], 1, "") if top
+    doesn't exist (so its creation shows)."""
+    if not os.path.isdir(top) or os.path.islink(top):
+        return [top], 1, ""
+    entries, total, rest = [], 0, hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(top):
+        dirnames.sort()
+        for name in sorted(filenames) + [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]:
+            total += 1
+            path = os.path.join(dirpath, name)
+            if len(entries) < MAX_TREE_ENTRIES:
+                entries.append(path)
+                continue
+            try:
+                st = os.lstat(path)
+                link = read_link(path) if stat.S_ISLNK(st.st_mode) else ""
+                rest.update(
+                    (
+                        "%s\0%d\0%d\0%d\0%o\0%d\0%d\0%s\n"
+                        % (path, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_mode, st.st_uid, st.st_gid, link)
+                    ).encode()
+                )
+            except OSError:
+                rest.update(("%s\0gone\n" % path).encode())
+    return entries, total, rest.hexdigest()
+
+
+def hash_config(patterns):
+    digests = {}
+    for pattern in patterns:
+        if pattern.endswith("/**"):
+            tops = sorted(glob.glob(pattern[:-3])) if any(c in pattern[:-3] for c in "*?[") else [pattern[:-3]]
+            for top in tops:
+                # the directories themselves: who owns them and who may
+                # write them (not mtime: entries added or removed show anyway)
+                if os.path.isdir(top) and not os.path.islink(top):
+                    for dirpath, _dirnames, _filenames in os.walk(top):
+                        try:
+                            st = os.lstat(dirpath)
+                        except OSError:
+                            continue
+                        digests[dirpath.rstrip("/") + "/"] = "dir:%o:%d:%d" % (
+                            st.st_mode,
+                            st.st_uid,
+                            st.st_gid,
+                        )
+                entries, total, rest = tree_entries(top)
+                for path in entries:
+                    if path == top and not os.path.exists(top):
+                        digests[path] = "missing"
+                    else:
+                        digests.update(hash_config([path]))
+                if total > len(entries):
+                    # entries past the cap still count
+                    digests[top + "/**"] = "truncated:%d:%s" % (total, rest)
+            continue
+        matches = sorted(glob.glob(pattern)) if any(c in pattern for c in "*?[") else [pattern]
+        for path in matches:
+            try:
+                st = os.lstat(path)
+            except OSError:
+                if path == pattern:
+                    digests[path] = "missing"
+                continue
+            if not os.path.isfile(path) or os.path.islink(path):
+                digests[path] = "link:%s" % (read_link(path) or "") if os.path.islink(path) else "special"
+                continue
+            if st.st_size > CONFIG_MAX_BYTES:
+                digests[path] = "size:%d" % st.st_size
+                continue
+            try:
+                with open(path, "rb") as f:
+                    digests[path] = hashlib.sha256(f.read()).hexdigest()
+            except OSError:
+                digests[path] = "unreadable"
+    return digests
+
+
+def bootstrap_busy(state_path, now, quiet_s=300, max_operation_s=3 * 3600):
+    """True while a bootstrap operation runs, or finished in the last quiet_s
+    seconds (its writes to host configuration are expected). An operation
+    recorded as running for longer than max_operation_s (e.g. a bootstrap
+    killed before it recorded the result) no longer counts."""
+    if not state_path:
+        return False
+    try:
+        st = os.stat(state_path)
+        with open(state_path) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return False
+    age = now - st.st_mtime
+    if state.get("current_operation"):
+        return age < max_operation_s
+    return age < quiet_s
+
+
+def lock_held(path):
+    """True if another process holds an fcntl lock on path (as dpkg and apt
+    do on their locks). Only queries (F_GETLK): never takes the lock."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOCTTY)
+    except OSError:
+        return False
+    try:
+        query = struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, 0, 0, 0)
+        answer = fcntl.fcntl(fd, fcntl.F_GETLK, query)
+        return struct.unpack("hhqqi4x", answer)[0] != fcntl.F_UNLCK
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+def packages_busy(state_path, now, quiet_s=PACKAGE_QUIET_S):
+    """True while dpkg holds its lock, or if it changed its state in the last
+    quiet_s seconds (a package install or upgrade, which writes host
+    configuration)."""
+    if not state_path:
+        return False
+    if any(lock_held(path) for path in DPKG_LOCKS):
+        return True
+    try:
+        return now - os.stat(state_path).st_mtime < quiet_s
+    except OSError:
+        return False
+
+
+class Watcher:
+    def __init__(self, args):
+        self.args = args
+        self.proc_root = args.proc
+        pw = pwd.getpwnam(args.runtime_user)
+        self.runtime_uid = pw.pw_uid
+        self.project_ranges = subordinate_ranges(args.runtime_user, args.subuid)
+        allow = self.load_allowlist(args.allowlist)
+        self.host_exes = compile_exe_patterns(
+            list(DEFAULT_HOST_EXES) + list(allow.get("host_exes", [])), pw.pw_dir
+        )
+        self.runtime_exes = compile_exe_patterns(
+            list(DEFAULT_RUNTIME_EXES) + list(allow.get("runtime_exes", [])), pw.pw_dir
+        )
+        self.config_paths = list(DEFAULT_CONFIG_PATHS) + list(allow.get("config_paths", []))
+        self.script_cgroups = [
+            str(c).rstrip("/")
+            for c in list(DEFAULT_SCRIPT_CGROUPS) + list(allow.get("script_cgroups", []))
+        ]
+        self.container_cgroups = [
+            str(c).rstrip("/")
+            for c in list(DEFAULT_CONTAINER_CGROUPS) + list(allow.get("container_cgroups", []))
+        ]
+        self.placement_rules = compile_placement_rules(
+            list(DEFAULT_PLACEMENT_RULES) + list(allow.get("placement_rules", [])),
+            self.runtime_uid,
+            self.project_ranges,
+        )
+        self.findings = {}
+        self.inventory = {}
+        # The configuration baseline and its changes survive restarts (a change
+        # made while the watcher was stopped is still a change); only bootstrap
+        # and SIGHUP set a new baseline.
+        self.config_state_path = os.path.join(args.status_dir, "config-state.json")
+        self.config_changes = {}
+        self.config_baseline = None
+        self.config_baseline_at = None
+        self.config_state_written = None
+        # differences seen at the last check, not yet reported
+        self.config_pending = set()
+        # files a package run changed, accepted into the baseline: path -> when
+        self.config_absorbed = {}
+        self.load_config_state()
+        self.started_at = time.time()
+        self.scans = 0
+        self.errors = 0
+        self.last_scan_ms = 0
+        self.last_write = 0.0
+        self.last_config = 0.0
+        self.rebaseline = False
+        self.serial_sent = {}
+
+    @staticmethod
+    def load_allowlist(path):
+        if not path:
+            return {}
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def load_config_state(self):
+        try:
+            with open(self.config_state_path) as f:
+                state = json.load(f)
+            baseline = state["baseline"]
+            changes = state.get("changes", {})
+            if not isinstance(baseline, dict) or not isinstance(changes, dict):
+                return
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        self.config_baseline = {str(k): str(v) for k, v in baseline.items()}
+        self.config_baseline_at = state.get("baseline_at")
+        self.config_changes = {
+            str(path): entry
+            for path, entry in changes.items()
+            if isinstance(entry, dict) and isinstance(entry.get("last_seen"), str)
+        }
+        absorbed = state.get("absorbed", {})
+        if isinstance(absorbed, dict):
+            self.config_absorbed = {
+                str(path): at for path, at in absorbed.items() if isinstance(at, str)
+            }
+
+    def save_config_state(self):
+        text = json.dumps(
+            {
+                "baseline": self.config_baseline,
+                "baseline_at": self.config_baseline_at,
+                "changes": self.config_changes,
+                "absorbed": self.config_absorbed,
+            },
+            sort_keys=True,
+        )
+        if text == self.config_state_written:
+            return
+        os.makedirs(self.args.status_dir, mode=0o755, exist_ok=True)
+        tmp = self.config_state_path + ".%d.tmp" % os.getpid()
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, self.config_state_path)
+        self.config_state_written = text
+
+    def host_ns(self):
+        return read_link(os.path.join(self.proc_root, "1", "ns", "user"))
+
+    def scan(self, now):
+        started = time.monotonic()
+        procs = list_procs(self.proc_root)
+        found, inventory = evaluate(
+            procs,
+            self.proc_root,
+            self.host_ns(),
+            self.runtime_uid,
+            self.project_ranges,
+            self.host_exes,
+            self.runtime_exes,
+            os.getpid(),
+            self.placement_rules,
+            read_link(os.path.join(self.proc_root, "1", "ns", "mnt")),
+            self.script_cgroups,
+            self.container_cgroups,
+        )
+        self.scans += 1
+        self.last_scan_ms = int((time.monotonic() - started) * 1000)
+        for key in inventory:
+            if key in self.inventory or len(self.inventory) < MAX_INVENTORY:
+                self.inventory[key] = self.inventory.get(key, 0) + 1
+        new = []
+        for f in found:
+            key = "%s|%s|%s|%s" % (f["rule"], f["userns"], f["exe"], f["uids"][0])
+            entry = self.findings.get(key)
+            if entry is None:
+                entry = dict(f, first_seen=now_iso(now), count=0)
+                self.findings[key] = entry
+                new.append(entry)
+            entry.update(f, last_seen=now_iso(now))
+            entry["count"] += 1
+        # A finding not seen for a day is dropped; past the cap, the least
+        # severe go first, and the oldest of a severity before newer ones.
+        expired = now_iso(now - FINDING_KEEP_S)
+        for key in [k for k, f in self.findings.items() if f["last_seen"] < expired]:
+            del self.findings[key]
+        if len(self.findings) > MAX_FINDINGS:
+            def eviction_order(key):
+                f = self.findings[key]
+                return (-SEVERITY_RANK.get(f["severity"], 2), f["last_seen"])
+
+            ordered = sorted(self.findings, key=eviction_order)
+            for key in ordered[: len(self.findings) - MAX_FINDINGS]:
+                del self.findings[key]
+        return new
+
+    def check_config(self, now):
+        """Reports files that differ from the baseline. A change stays current
+        (last_seen refreshed) while its file differs; once repaired or
+        accepted by a new baseline it is kept a day as history."""
+        digests = hash_config(self.config_paths)
+        new, differ = [], set()
+        if (
+            self.config_baseline is None
+            or self.rebaseline
+            or bootstrap_busy(self.args.bootstrap_state, now)
+        ):
+            self.config_baseline = digests
+            self.config_baseline_at = now_iso(now)
+            self.rebaseline = False
+            self.config_pending = set()
+        elif packages_busy(getattr(self.args, "package_state", ""), now):
+            # A package run: what changed becomes the baseline (recorded as
+            # absorbed), except files already reported, which stay reported.
+            active = {p for p, e in self.config_changes.items() if e.get("current")}
+            changed = {
+                path
+                for path in set(digests) | set(self.config_baseline)
+                if digests.get(path) != self.config_baseline.get(path)
+            }
+            for path in changed - active:
+                if path in digests:
+                    self.config_baseline[path] = digests[path]
+                else:
+                    self.config_baseline.pop(path, None)
+                self.config_absorbed[path] = now_iso(now)
+            for path in sorted(self.config_absorbed, key=self.config_absorbed.get)[
+                : max(0, len(self.config_absorbed) - MAX_ABSORBED)
+            ]:
+                del self.config_absorbed[path]
+            differ = changed & active
+            self.config_pending = set()
+        else:
+            seen = {
+                path
+                for path in set(digests) | set(self.config_baseline)
+                if digests.get(path) != self.config_baseline.get(path)
+            }
+            # A new difference counts once the previous check saw it too.
+            differ = {
+                path
+                for path in seen
+                if path in self.config_pending
+                or self.config_changes.get(path, {}).get("current")
+            }
+            self.config_pending = seen
+        for path in sorted(differ):
+            entry = self.config_changes.get(path)
+            if entry is None or not entry.get("current"):
+                # new, or changed again after it was repaired
+                entry = {
+                    "rule": "host-config-changed",
+                    "severity": "high",
+                    "path": path,
+                    "first_seen": now_iso(now),
+                }
+                self.config_changes[path] = entry
+                new.append(entry)
+            entry["current"] = True
+            entry["last_seen"] = now_iso(now)
+        for path, entry in self.config_changes.items():
+            if path not in differ:
+                entry["current"] = False
+        expired = now_iso(now - CONFIG_CHANGE_KEEP_S)
+        ordered = sorted(
+            self.config_changes, key=lambda p: self.config_changes[p]["last_seen"]
+        )
+        for path in ordered[: max(0, len(ordered) - MAX_CONFIG_CHANGES)]:
+            del self.config_changes[path]
+        for path in list(self.config_changes):
+            if self.config_changes[path]["last_seen"] < expired:
+                del self.config_changes[path]
+        self.save_config_state()
+        return new
+
+    def serial(self, entries, now):
+        """Best effort: one line per new finding (at most hourly per key) on
+        the serial console, which the cloud keeps off the host."""
+        path = self.args.serial
+        if not path or not entries or not os.path.exists(path):
+            return
+        lines = []
+        for e in entries:
+            key = "%s|%s|%s" % (e.get("rule"), e.get("exe", ""), e.get("path", ""))
+            if key in self.serial_sent and now - self.serial_sent[key] < SERIAL_REPEAT_S:
+                continue
+            self.serial_sent[key] = now
+            short = {k: e.get(k) for k in ("rule", "severity", "exe", "uids", "userns", "path") if k in e}
+            lines.append("COCALC-HOST-INTEGRITY %s %s\n" % (now_iso(now), json.dumps(short, sort_keys=True)))
+        if not lines:
+            return
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+            try:
+                os.write(fd, "".join(lines).encode()[:4096])
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+
+    def status(self, now):
+        return {
+            "schema": SCHEMA,
+            "version": VERSION,
+            "started_at": now_iso(self.started_at),
+            "heartbeat_at": now_iso(now),
+            "scans": self.scans,
+            "last_scan_ms": self.last_scan_ms,
+            "errors": self.errors,
+            "runtime_uid": self.runtime_uid,
+            "project_uid_ranges": [list(r) for r in self.project_ranges],
+            "placement_rules": [r["name"] for r in self.placement_rules],
+            "findings": sorted(self.findings.values(), key=lambda e: e["last_seen"], reverse=True),
+            "config": {
+                "baseline_at": self.config_baseline_at,
+                "files": len(self.config_baseline or {}),
+                "changes": sorted(
+                    self.config_changes.values(),
+                    key=lambda e: (e["last_seen"], e["first_seen"]),
+                    reverse=True,
+                ),
+                "change_count": len(self.config_changes),
+                # accepted during package runs (not reported as changes)
+                "absorbed": [
+                    {"path": path, "at": at}
+                    for path, at in sorted(
+                        self.config_absorbed.items(), key=lambda kv: kv[1], reverse=True
+                    )
+                ],
+            },
+            "inventory": dict(
+                sorted(self.inventory.items(), key=lambda kv: kv[1], reverse=True)
+            ),
+        }
+
+    def write_status(self, now):
+        directory = self.args.status_dir
+        os.makedirs(directory, mode=0o755, exist_ok=True)
+        os.chmod(directory, 0o755)
+        tmp = os.path.join(directory, ".status.%d.tmp" % os.getpid())
+        with open(tmp, "w") as f:
+            json.dump(self.status(now), f, sort_keys=True)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, os.path.join(directory, "status.json"))
+        self.last_write = now
+
+    def step(self, now):
+        new = []
+        try:
+            new += self.scan(now)
+            if now - self.last_config >= self.args.config_interval or self.rebaseline:
+                self.last_config = now
+                new += self.check_config(now)
+        except Exception:  # keep watching; the error count is reported
+            self.errors += 1
+        if new or now - self.last_write >= HEARTBEAT_WRITE_S:
+            try:
+                self.write_status(now)
+            except OSError:
+                self.errors += 1
+        self.serial(new, now)
+        return new
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--runtime-user", required=True)
+    parser.add_argument("--status-dir", default="/var/lib/cocalc-host-integrity")
+    parser.add_argument("--proc", default="/proc")
+    parser.add_argument("--subuid", default="/etc/subuid")
+    parser.add_argument("--allowlist", default="/etc/cocalc/host-integrity-allowlist.json")
+    parser.add_argument("--bootstrap-state", default="")
+    parser.add_argument("--package-state", default="/var/lib/dpkg/status")
+    parser.add_argument("--serial", default="/dev/ttyS0")
+    parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--config-interval", type=float, default=60.0)
+    parser.add_argument("--once", action="store_true")
+    args = parser.parse_args(argv)
+    watcher = Watcher(args)
+
+    def on_hup(_sig, _frame):
+        watcher.rebaseline = True
+
+    signal.signal(signal.SIGHUP, on_hup)
+    while True:
+        now = time.time()
+        watcher.step(now)
+        if args.once:
+            watcher.write_status(now)
+            return 0
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+BTRFS_SCRUB_SCRIPT = r'''#!/usr/bin/env python3
+"""Scrubs the project-data btrfs filesystem once a period, a little at a time.
+
+Run hourly by a systemd timer, as root. Each run decides from the saved
+status whether a scrub is due (once a period after the last completed one; the
+first one at a point in the period derived from the machine id, so hosts don't
+all scrub at once), and if so starts or resumes it while the host is quiet,
+for at most a daily budget of time, at a throttled speed, and only at night
+where the host is (00:00-06:00 by default, in the timezone of its cloud zone). btrfs keeps a
+cancelled scrub's progress, so a scrub spans as many runs as it needs. The
+status, with btrfs's error counters and the files with uncorrectable errors,
+is written for the project host to report (its heartbeat reader is a
+follow-up).
+
+Scrubbing happens only where the root-owned config enables it
+({"enabled": true}); it can also set period_days, grace_days, daily_hours and
+speed (bytes/s). Elsewhere the status still says when one would be due."""
+
+import argparse
+import calendar
+import datetime
+import grp
+import hashlib
+import json
+import os
+import re
+import signal
+import stat
+import subprocess
+import sys
+import time
+import urllib.request
+import zoneinfo
+
+GIB = 1 << 30
+MIB = 1 << 20
+# Commands by absolute path (the unit's PATH is minimal too): a root job must
+# not pick up a planted binary from an earlier PATH entry.
+BTRFS = "/usr/bin/btrfs"
+FINDMNT = "/usr/bin/findmnt"
+JOURNALCTL = "/usr/bin/journalctl"
+# Night where the host physically is: the timezone of its GCP region.
+GCP_REGION_TIMEZONES = {
+    "us-west1": "America/Los_Angeles",
+    "us-west2": "America/Los_Angeles",
+    "us-west3": "America/Denver",
+    "us-west4": "America/Los_Angeles",
+    "us-central1": "America/Chicago",
+    "us-south1": "America/Chicago",
+    "us-east1": "America/New_York",
+    "us-east4": "America/New_York",
+    "us-east5": "America/New_York",
+    "northamerica-northeast1": "America/Toronto",
+    "northamerica-northeast2": "America/Toronto",
+    "northamerica-south1": "America/Mexico_City",
+    "southamerica-east1": "America/Sao_Paulo",
+    "southamerica-west1": "America/Santiago",
+    "europe-west1": "Europe/Brussels",
+    "europe-west2": "Europe/London",
+    "europe-west3": "Europe/Berlin",
+    "europe-west4": "Europe/Amsterdam",
+    "europe-west6": "Europe/Zurich",
+    "europe-west8": "Europe/Rome",
+    "europe-west9": "Europe/Paris",
+    "europe-west10": "Europe/Berlin",
+    "europe-west12": "Europe/Rome",
+    "europe-north1": "Europe/Helsinki",
+    "europe-north2": "Europe/Stockholm",
+    "europe-central2": "Europe/Warsaw",
+    "europe-southwest1": "Europe/Madrid",
+    "asia-east1": "Asia/Taipei",
+    "asia-east2": "Asia/Hong_Kong",
+    "asia-northeast1": "Asia/Tokyo",
+    "asia-northeast2": "Asia/Tokyo",
+    "asia-northeast3": "Asia/Seoul",
+    "asia-south1": "Asia/Kolkata",
+    "asia-south2": "Asia/Kolkata",
+    "asia-southeast1": "Asia/Singapore",
+    "asia-southeast2": "Asia/Jakarta",
+    "australia-southeast1": "Australia/Sydney",
+    "australia-southeast2": "Australia/Melbourne",
+    "me-west1": "Asia/Jerusalem",
+    "me-central1": "Asia/Qatar",
+    "me-central2": "Asia/Riyadh",
+    "africa-south1": "Africa/Johannesburg",
+}
+# A region not listed above: its continent at least.
+GCP_PREFIX_TIMEZONES = (
+    ("us-", "America/Chicago"),
+    ("northamerica-", "America/Toronto"),
+    ("southamerica-", "America/Sao_Paulo"),
+    ("europe-", "Europe/Berlin"),
+    ("asia-", "Asia/Singapore"),
+    ("australia-", "Australia/Sydney"),
+    ("me-", "Asia/Dubai"),
+    ("africa-", "Africa/Johannesburg"),
+)
+GCP_ZONE_URL = "http://metadata.google.internal/computeMetadata/v1/instance/zone"
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+MAX_PATH_CHARS = 512
+# How long to keep retrying a cancel that fails before leaving the scrub,
+# still throttled, to the next run.
+CANCEL_GIVE_UP_S = 600
+DAY = 86400
+STATUS_VERSION = 1
+MAX_PATHS = 100
+# The default throttle: this share of a disk's read bandwidth (the GCP
+# pd-balanced formula bootstrap also uses for I/O limits), or a fixed speed.
+SHARE = 0.2
+DEFAULT_SPEED = 50 * MIB
+COUNTERS = (
+    "read_errors",
+    "csum_errors",
+    "verify_errors",
+    "super_errors",
+    "malloc_errors",
+    "uncorrectable_errors",
+    "unverified_errors",
+    "corrected_errors",
+    "data_bytes_scrubbed",
+    "tree_bytes_scrubbed",
+)
+PATH_RE = re.compile(r"\(path: (.*)\)\s*$")
+
+
+def iso(ts):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def parse_iso(text):
+    try:
+        return float(calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ")))
+    except (TypeError, ValueError):
+        return None
+
+
+class Host:
+    """Everything that touches the system, replaceable in tests."""
+
+    def __init__(self, sysfs="/sys", proc="/proc", machine_id="/etc/machine-id"):
+        self.sysfs = sysfs
+        self.proc = proc
+        self.machine_id_path = machine_id
+
+    def now(self):
+        return time.time()
+
+    def sleep(self, seconds):
+        time.sleep(seconds)
+
+    def run(self, args):
+        p = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        return p.returncode, p.stdout, p.stderr
+
+    def read(self, path):
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def write(self, path, text):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def read_trusted(self, path):
+        """A config file's text, if it is a regular file root owns and only
+        root can write; otherwise None."""
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except OSError:
+            return None
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+                return None
+            with os.fdopen(os.dup(fd), encoding="utf-8") as f:
+                return f.read(1 << 20)
+        finally:
+            os.close(fd)
+
+    def listdir(self, path):
+        try:
+            return sorted(os.listdir(path))
+        except OSError:
+            return []
+
+    def cloud_zone(self):
+        """The GCP zone this VM runs in (e.g. us-west2-a), or None."""
+        req = urllib.request.Request(GCP_ZONE_URL, headers={"Metadata-Flavor": "Google"})
+        try:
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                return resp.read(256).decode().rsplit("/", 1)[-1].strip() or None
+        except (OSError, ValueError):
+            return None
+
+    def system_timezone(self):
+        try:
+            return self.read("/etc/timezone").strip() or None
+        except OSError:
+            return None
+
+    def machine_id(self):
+        try:
+            return self.read(self.machine_id_path).strip()
+        except OSError:
+            return ""
+
+
+def filesystem(host, mount):
+    """(fsid, devices) of the btrfs filesystem at mount, or None."""
+    code, out, _ = host.run([FINDMNT, "-n", "-o", "FSTYPE,UUID", "--target", mount])
+    parts = out.split()
+    if code != 0 or len(parts) != 2 or parts[0] != "btrfs" or not UUID_RE.match(parts[1]):
+        return None
+    fsid = parts[1]
+    base = os.path.join(host.sysfs, "fs", "btrfs", fsid)
+    devids = host.listdir(os.path.join(base, "devinfo"))
+    names = host.listdir(os.path.join(base, "devices"))
+    if not devids:
+        return None
+    return fsid, {"devids": devids, "names": names}
+
+
+def device_bytes(host, name):
+    try:
+        return int(host.read(os.path.join(host.sysfs, "class", "block", name, "size"))) * 512
+    except (OSError, ValueError):
+        return 0
+
+
+def balanced_read_bps(size_bytes):
+    # bootstrap.py balanced_device_capacity(): physical_read_bps
+    return min(240 * MIB, 140 * MIB + (28 * size_bytes * MIB) // (100 * GIB))
+
+
+def default_speed(host, capacity_path, devices):
+    """Bytes/s for scrub_speed_max: a share of the disk's read bandwidth on
+    GCP pd-balanced disks, otherwise a fixed speed."""
+    try:
+        capacity = json.loads(host.read_trusted(capacity_path) or "{}")
+    except ValueError:
+        capacity = {}
+    targets = capacity.get("targets") if isinstance(capacity, dict) else None
+    balanced = (
+        isinstance(capacity, dict)
+        and capacity.get("provider") == "gcp"
+        and isinstance(targets, list)
+        and bool(targets)
+        and all(isinstance(t, dict) and t.get("disk_type") == "balanced" for t in targets)
+    )
+    sizes = [device_bytes(host, name) for name in devices["names"]]
+    if balanced and sizes and all(sizes):
+        return max(MIB, int(min(balanced_read_bps(s) for s in sizes) * SHARE))
+    return DEFAULT_SPEED
+
+
+def valid_timezone(name):
+    try:
+        return zoneinfo.ZoneInfo(name) if isinstance(name, str) and name else None
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def zone_timezone(zone):
+    region = zone.rsplit("-", 1)[0] if zone and zone.count("-") >= 2 else zone
+    if region in GCP_REGION_TIMEZONES:
+        return GCP_REGION_TIMEZONES[region]
+    for prefix, tz in GCP_PREFIX_TIMEZONES:
+        if region and region.startswith(prefix):
+            return tz
+    return None
+
+
+def host_timezone(host, override):
+    """(tzinfo, name, source, warning) for when night is, where the host is."""
+    tz = valid_timezone(override)
+    if tz:
+        return tz, override, "config", None
+    zone = host.cloud_zone()
+    name = zone_timezone(zone) if zone else None
+    if valid_timezone(name):
+        return valid_timezone(name), name, "zone %s" % zone, None
+    name = host.system_timezone()
+    if name not in (None, "Etc/UTC", "UTC") and valid_timezone(name):
+        return valid_timezone(name), name, "system", None
+    return datetime.timezone.utc, "UTC", "fallback", "host location unknown: night is UTC"
+
+
+def night_window(now, tz, start_hour, hours):
+    """(start, end) timestamps of the night window containing now, or of the
+    next one if now is outside any."""
+    local = datetime.datetime.fromtimestamp(now, tz)
+    for days in (-1, 0, 1):
+        day = (local + datetime.timedelta(days=days)).date()
+        start_local = datetime.datetime(day.year, day.month, day.day, start_hour, tzinfo=tz)
+        # wall-clock hours: the window keeps its local times across DST
+        start = start_local.timestamp()
+        end = (start_local + datetime.timedelta(hours=hours)).timestamp()
+        if now < end:
+            return start, end
+    return start, end
+
+
+def pressure(host):
+    """The io 'full' share over the last minute, in percent (100 if unknown)."""
+    try:
+        for line in host.read(os.path.join(host.proc, "pressure", "io")).splitlines():
+            if line.startswith("full "):
+                for field in line.split():
+                    if field.startswith("avg60="):
+                        return float(field[len("avg60="):])
+    except (OSError, ValueError):
+        pass
+    return 100.0
+
+
+def scrub_status(host, mount):
+    """btrfs scrub status -R as a dict: 'status' (finished, running,
+    interrupted, aborted, none, or unknown when it can't be read) and the raw
+    counters."""
+    try:
+        code, out, _ = host.run([BTRFS, "scrub", "status", "-R", mount])
+    except Exception:
+        code, out = 1, ""
+    result = {"status": "unknown"}
+    seen = set()
+    if code != 0:
+        return result
+    result["status"] = "none"
+    for line in out.splitlines():
+        key, sep, value = line.strip().partition(":")
+        if not sep:
+            continue
+        key = key.strip().lower().replace(" ", "_")
+        value = value.strip()
+        seen.add(key)
+        if key == "status":
+            result["status"] = value.split()[0].lower() if value else "none"
+        elif key in COUNTERS:
+            try:
+                result[key] = int(value.split()[0])
+            except (IndexError, ValueError):
+                pass
+    if "no stats available" in out:
+        result["status"] = "none"
+    elif "status" not in seen:
+        # older btrfs-progs: the state is only in the plain output
+        _, plain, _ = host.run([BTRFS, "scrub", "status", mount])
+        for line in plain.splitlines():
+            key, sep, value = line.strip().partition(":")
+            if sep and key.strip().lower() == "status" and value.strip():
+                result["status"] = value.split()[0].lower()
+    return result
+
+
+def error_paths(host, since):
+    """Files the kernel named while scrubbing, for errors it couldn't fix."""
+    # kernel messages from every boot (-k means this boot only): a scrub
+    # resumed after a reboot counts errors found before it
+    code, out, _ = host.run(
+        [JOURNALCTL, "_TRANSPORT=kernel", "--no-pager", "-o", "cat", "--since", "@%d" % int(since)]
+    )
+    if code != 0:
+        return [], False
+    paths = []
+    for line in out.splitlines():
+        if "BTRFS" not in line or "error" not in line:
+            continue
+        m = PATH_RE.search(line)
+        # user-controlled names: bounded, and shown only as text
+        path = m.group(1)[:MAX_PATH_CHARS] if m else None
+        if path and path not in paths:
+            paths.append(path)
+    return paths[:MAX_PATHS], len(paths) > MAX_PATHS
+
+
+def cancel(host, mount):
+    """Cancels the scrub; True once its status confirms it no longer runs."""
+    try:
+        host.run([BTRFS, "scrub", "cancel", mount])
+    except Exception:
+        pass
+    for _ in range(5):
+        # confirmed only by a status read that worked
+        if scrub_status(host, mount)["status"] not in ("running", "unknown"):
+            return True
+        host.sleep(1)
+    return False
+
+
+def knob_paths(host, fsid, devices):
+    return {
+        os.path.join(host.sysfs, "fs", "btrfs", fsid, "devinfo", devid, "scrub_speed_max")
+        for devid in devices["devids"]
+    }
+
+
+KNOB_VALUE_RE = re.compile(r"^[0-9]{1,20}$")
+
+
+def kept_values(kept, knobs):
+    """The saved throttle values to restore: only this filesystem's knobs, and
+    only numbers (the status file must not be a way to write elsewhere)."""
+    if not isinstance(kept, dict):
+        return {}
+    return {
+        k: v
+        for k, v in kept.items()
+        if k in knobs and isinstance(v, str) and KNOB_VALUE_RE.match(v)
+    }
+
+
+def read_speeds(host, knobs):
+    """The knobs' current values (decimal strings), without changing them."""
+    values = {}
+    for path in sorted(knobs):
+        try:
+            value = host.read(path).strip()
+        except OSError:
+            continue
+        if KNOB_VALUE_RE.match(value):
+            values[path] = value
+    return values
+
+
+def set_speed(host, knobs, speed):
+    """Sets scrub_speed_max on each knob (whose old values are saved first);
+    True only if every one of them reads back the cap."""
+    capped = True
+    for path in sorted(knobs):
+        try:
+            host.write(path, "%d" % speed)
+            capped = capped and host.read(path).strip() == "%d" % speed
+        except OSError:
+            capped = False
+    return capped
+
+
+def restore_speed(host, previous):
+    """Puts the saved values back; returns those it couldn't write."""
+    failed = {}
+    for path, value in previous.items():
+        try:
+            host.write(path, value or "0")
+        except OSError:
+            failed[path] = value
+    return failed
+
+
+class StatusDir:
+    """The status directory and file: owned by root, readable by the project
+    host's group only (the status names customer files), never through a
+    symlink."""
+
+    NAME = "status.json"
+
+    def __init__(self, path, gid):
+        self.gid = gid
+        try:
+            os.mkdir(path, 0o750)
+        except FileExistsError:
+            pass
+        self.fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        os.fchown(self.fd, os.geteuid(), gid)
+        os.fchmod(self.fd, 0o750)
+
+    def load(self):
+        try:
+            fd = os.open(self.NAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=self.fd)
+        except OSError:
+            return {}
+        try:
+            with os.fdopen(fd, encoding="utf-8") as f:
+                data = json.load(f)
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def save(self, status):
+        tmp = "%s.%d.tmp" % (self.NAME, os.getpid())
+        try:
+            os.unlink(tmp, dir_fd=self.fd)
+        except FileNotFoundError:
+            pass
+        fd = os.open(
+            tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o640,
+            dir_fd=self.fd,
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            os.fchown(f.fileno(), os.geteuid(), self.gid)
+            os.fchmod(f.fileno(), 0o640)
+            json.dump(status, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.replace(tmp, self.NAME, src_dir_fd=self.fd, dst_dir_fd=self.fd)
+
+
+def due_at(status, host, period_s, now, next_due=None):
+    """When the next scrub is due: a period after the last completed one; the
+    first one, at a point in the first period from the machine's id. A
+    configured next_due brings it forward once: it counts only until a scrub
+    completes after it."""
+    last = (status.get("last_completed") or {}).get("finished_at")
+    last_ts = parse_iso(last) if last else None
+    if last_ts is not None:
+        due = last_ts + period_s
+    else:
+        first_seen = parse_iso(status.get("first_seen_at")) or now
+        digest = hashlib.sha256(host.machine_id().encode()).digest()
+        offset = int.from_bytes(digest[:8], "big") % max(1, int(period_s))
+        due = first_seen + offset
+    if next_due is not None and (last_ts is None or last_ts < next_due):
+        due = min(due, next_due)
+    return due
+
+
+# Settings the config may set, within bounds, so even a wrong config can't
+# make the scrub hog the disk.
+CONFIG_KEYS = {
+    "period_days": (float, 1, 365),
+    "grace_days": (float, 0, 60),
+    "daily_hours": (float, 0.25, 24),
+    "speed": (int, MIB, 512 * MIB),
+    "night_start_hour": (int, 0, 23),
+    "night_hours": (float, 1, 24),
+}
+
+
+def apply_config(args, host):
+    """True if scrubbing is enabled; settings in the config override args. A
+    config that isn't root's alone counts as absent."""
+    try:
+        config = json.loads(host.read_trusted(args.config) or "null")
+    except ValueError:
+        return False
+    if not isinstance(config, dict):
+        return False
+    for key, (kind, low, high) in CONFIG_KEYS.items():
+        value = config.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and low <= value <= high:
+            setattr(args, key, kind(value))
+    if isinstance(config.get("timezone"), str):
+        args.timezone = config["timezone"]
+    # one scrub due at this time (a pilot, say), unless one completed since
+    next_due = parse_iso(config.get("next_due")) if isinstance(config.get("next_due"), str) else None
+    if next_due is not None:
+        args.next_due = next_due
+    return config.get("enabled") is True
+
+
+def run(args, host, store):
+    enabled = apply_config(args, host)
+    status = store.load()
+    now = host.now()
+    status.setdefault("version", STATUS_VERSION)
+    status.setdefault("first_seen_at", iso(now))
+    status["mount"] = args.mount
+    period_s = args.period_days * DAY
+    fs = filesystem(host, args.mount)
+    if fs is None:
+        status.update(state="unsupported", reason="not a btrfs filesystem", updated_at=iso(now))
+        store.save(status)
+        return 0
+    fsid, devices = fs
+    if status.get("fsid") not in (None, fsid):
+        # a new filesystem at the mount: what was scrubbed is gone
+        for key in ("last_completed", "current", "overdue_since", "runtime_day", "runtime_today_s"):
+            status.pop(key, None)
+        status["first_seen_at"] = iso(now)
+    status["fsid"] = fsid
+    due = due_at(status, host, period_s, now, args.next_due)
+    status["due_at"] = iso(due)
+    current = status.get("current")
+    tz, tz_name, tz_source, tz_warning = host_timezone(host, args.timezone)
+    window_start, window_end = night_window(now, tz, args.night_start_hour, args.night_hours)
+    # The daily budget is per night (one per local day), not per UTC day: a
+    # night that crosses 00:00 UTC is still one budget.
+    day = iso(window_start)
+    if status.get("runtime_day") != day:
+        status["runtime_day"], status["runtime_today_s"] = day, 0
+    budget_s = args.daily_hours * 3600 - status.get("runtime_today_s", 0)
+    status["night"] = {
+        "timezone": tz_name,
+        "source": tz_source,
+        "start": iso(window_start),
+        "end": iso(window_end),
+    }
+    if tz_warning:
+        status["night"]["warning"] = tz_warning
+    in_night = window_start <= now < window_end
+    st = scrub_status(host, args.mount)
+    if st["status"] == "unknown":
+        return_unknown = True
+    else:
+        return_unknown = False
+    # Ours only if a run was watching it (phase "running") and died without
+    # confirming a cancel (SIGKILL, a crash). After a confirmed cancel
+    # (phase "interrupted"), a running scrub was started by someone else.
+    orphan = (
+        current is not None
+        and current.get("phase") == "running"
+        and st["status"] == "running"
+    )
+
+    knobs = knob_paths(host, fsid, devices)
+
+    def restore_kept_throttle():
+        # a throttle a run had to leave on, with the values it replaced
+        failed = restore_speed(host, kept_values(status.pop("throttle_restore", None), knobs))
+        if failed:
+            status["throttle_restore"] = failed  # the next run tries again
+
+    def stop_orphan():
+        """False if our scrub runs on: it couldn't be cancelled."""
+        if not orphan:
+            return True
+        if not cancel(host, args.mount):
+            return False
+        current["phase"] = "interrupted"
+        restore_kept_throttle()
+        return True
+
+    def leave(state, reason):
+        # a scrub this service won't watch now must not run on unwatched
+        if not stop_orphan():
+            return finish("error", "the scrub could not be cancelled; throttle kept")
+        return finish(state, reason)
+
+    if return_unknown:
+        status["state"], status["reason"] = "error", "btrfs scrub status unavailable"
+        status["updated_at"] = iso(now)
+        store.save(status)
+        return 0
+    if not orphan and "throttle_restore" in status:
+        # no scrub of ours runs any more: put the kept throttle back now
+        restore_kept_throttle()
+
+    def settle(state, reason=None):
+        status["state"] = state
+        if reason:
+            status["reason"] = reason
+        else:
+            status.pop("reason", None)
+        if host.now() > due + args.grace_days * DAY and state != "idle":
+            status.setdefault("overdue_since", iso(due + args.grace_days * DAY))
+            # an error (a scrub that couldn't be cancelled, say) stays one
+            if state == "paused":
+                status["state"] = "overdue"
+        status["updated_at"] = iso(host.now())
+
+    def finish(state, reason=None):
+        settle(state, reason)
+        store.save(status)
+        return 0
+
+    def complete(st, started_at):
+        errors = {k: st.get(k, 0) for k in COUNTERS}
+        paths, truncated = [], False
+        if errors["uncorrectable_errors"] or errors["csum_errors"] or errors["read_errors"]:
+            paths, truncated = error_paths(host, parse_iso(started_at) or now)
+        finished = host.now()
+        status["last_completed"] = {
+            "started_at": started_at,
+            "finished_at": iso(finished),
+            "errors": errors,
+            "error_paths": paths,
+            "error_paths_truncated": truncated,
+        }
+        status["current"] = None
+        status["due_at"] = iso(finished + period_s)
+        status.pop("overdue_since", None)
+        status["state"] = "idle"
+        status.pop("reason", None)
+        status["updated_at"] = iso(finished)
+        store.save(status)
+        return 0
+
+    if current is not None and st["status"] == "finished":
+        if current.get("launched", True):
+            # finished after the last run stopped watching it
+            return complete(st, current.get("started_at"))
+        # saved just before a start or resume that never ran: the stats are
+        # the previous scrub's, so this one is still to do
+        status["current"] = current = None
+    if not enabled:
+        if not stop_orphan():
+            return finish("error", "the scrub could not be cancelled; throttle kept")
+        status["state"], status["reason"] = "disabled", "not enabled on this host"
+        status["updated_at"] = iso(now)
+        store.save(status)
+        return 0
+    if current is None and now < due:
+        return finish("idle", "not due")
+    if not in_night:
+        return leave("paused", "outside the night window")
+    if budget_s <= 0:
+        return leave("paused", "daily time budget used")
+    if pressure(host) > args.resume_below:
+        return leave("paused", "host I/O pressure")
+
+    if not orphan and st["status"] == "running":
+        # someone else's scrub (an admin's, say): leave it alone
+        return finish("paused", "a scrub not started by this service is running")
+
+    speed = args.speed or default_speed(host, args.capacity, devices)
+    status["speed_max_bytes"] = speed
+    kept = kept_values(status.pop("throttle_restore", None), knobs)
+    previous = read_speeds(host, knobs)
+    if kept:
+        # the knobs hold our own throttle (our scrub's, or one a restore
+        # couldn't undo): restore what it replaced
+        previous.update(kept)
+    # Saved before any knob changes: whenever a run dies from here on (even
+    # by SIGKILL), a later run puts these values back.
+    status["throttle_restore"] = previous
+    store.save(status)
+    started = host.now()
+    # Until the loop below sees the scrub end or cancels it, leaving any other
+    # way (an exception, SIGTERM from systemd) cancels it: a scrub never runs
+    # without this service watching its pressure and time budget.
+    supervising = False
+    try:
+        if not (knobs and set(previous) == knobs and set_speed(host, knobs, speed)):
+            # The cap is the scrub's only throttle: no scrub runs unless every
+            # device has it (and its old value saved to restore).
+            supervising = orphan  # one of ours that runs on is cancelled
+            return finish("error", "the scrub speed could not be capped")
+        if orphan:
+            # watch it again, throttled
+            current["launched"] = True
+            supervising = True
+        else:
+            before = dict(current) if current is not None else None
+            # recorded before the scrub runs, so a run killed from here on
+            # leaves it adoptable
+            current = dict(current or {"started_at": iso(started)})
+            current["phase"] = "running"
+            # until start or resume works, a "finished" status is the last
+            # scrub's, not this one's
+            current["launched"] = False
+            status["current"] = current
+            store.save(status)
+            supervising = True
+            resumed = False
+            if before is not None:
+                code, _, _ = host.run([BTRFS, "scrub", "resume", args.mount])
+                resumed = code == 0
+            if not resumed:
+                current["started_at"] = iso(started)
+                code, _, err = host.run([BTRFS, "scrub", "start", args.mount])
+                if code != 0:
+                    supervising = False
+                    status["current"] = before
+                    return finish("error", "btrfs scrub start failed: %s" % err.strip()[:300])
+            current["launched"] = True
+        status["current"] = current
+        status["state"] = "running"
+        store.save(status)
+        reason = None
+        failed_cancels = 0
+        accounted = started
+        while True:
+            host.sleep(args.poll_seconds)
+            st = scrub_status(host, args.mount)
+            elapsed = host.now() - started
+            # counted as it goes: a SIGTERM (or worse) doesn't reset the day
+            status["runtime_today_s"] = status.get("runtime_today_s", 0) + int(host.now() - accounted)
+            accounted = host.now()
+            if st["status"] != "unknown":
+                current["data_bytes_scrubbed"] = st.get("data_bytes_scrubbed", 0)
+            store.save(status)
+            if st["status"] == "finished":
+                supervising = False
+                break
+            # "unknown": it may still run, so it is watched as running
+            if st["status"] not in ("running", "unknown"):
+                supervising = False
+                current["phase"] = "interrupted"
+                reason = "scrub stopped (%s)" % st["status"]
+                break
+            if pressure(host) > args.pause_above:
+                reason = "host I/O pressure"
+            elif elapsed >= budget_s:
+                reason = "daily time budget used"
+            elif host.now() >= window_end:
+                reason = "outside the night window"
+            else:
+                continue
+            if not cancel(host, args.mount):
+                # still running: keep watching it (and its throttle) a while,
+                # then leave it to the next run, throttled
+                failed_cancels += 1
+                reason = None
+                if failed_cancels * args.poll_seconds >= CANCEL_GIVE_UP_S:
+                    break
+                continue
+            supervising = False
+            current["phase"] = "interrupted"
+            break
+        if supervising:
+            return 0  # couldn't stop it: finally reports it and keeps the throttle
+        if reason is not None:
+            return finish("paused", reason)
+        return complete(st, current.get("started_at"))
+    finally:
+        if supervising:
+            if cancel(host, args.mount):
+                supervising = False
+                if status.get("current"):
+                    status["current"]["phase"] = "interrupted"
+                if status.get("state") == "running":
+                    # stopped here: not left reported as running until the
+                    # next run (an error set before stays one)
+                    settle("paused", "the scrub was stopped as this run ended")
+            else:
+                # it runs on: leave its throttle (throttle_restore stays), and
+                # the next run adopts it
+                status["state"] = "error"
+                status["reason"] = "the scrub could not be cancelled; throttle kept"
+        if not supervising:
+            failed = restore_speed(host, previous)
+            if failed:
+                status["throttle_restore"] = failed  # the next run tries again
+            else:
+                status.pop("throttle_restore", None)
+        try:
+            store.save(status)
+        except OSError:
+            pass
+
+
+def main(argv=None, host=None):
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--mount", default="/mnt/cocalc")
+    p.add_argument("--status-dir", default="/var/lib/cocalc-btrfs-scrub")
+    p.add_argument("--status-group", default="", help="group that may read the status")
+    p.add_argument("--capacity", default="/etc/cocalc/project-io-capacity.json")
+    p.add_argument("--config", default="/etc/cocalc/btrfs-scrub.json")
+    p.add_argument("--period-days", type=float, default=30)
+    p.add_argument("--grace-days", type=float, default=7)
+    p.add_argument("--daily-hours", type=float, default=6)
+    p.add_argument("--speed", type=int, default=0, help="bytes/s (default: derived)")
+    p.add_argument("--resume-below", type=float, default=2.0, help="io full avg60 %%")
+    p.add_argument("--pause-above", type=float, default=5.0, help="io full avg60 %%")
+    p.add_argument("--poll-seconds", type=float, default=60)
+    p.add_argument("--timezone", default="", help="IANA name (default: from the cloud zone)")
+    p.add_argument("--night-start-hour", type=int, default=0)
+    p.add_argument("--night-hours", type=float, default=6)
+    p.set_defaults(next_due=None)
+    args = p.parse_args(argv)
+    try:
+        gid = grp.getgrnam(args.status_group).gr_gid if args.status_group else os.getegid()
+    except KeyError:
+        gid = os.getegid()
+    # systemd stops a run with SIGTERM (stop, or the start timeout): exit
+    # through finally, which cancels a scrub this run supervises.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    return run(args, host or Host(), StatusDir(args.status_dir, gid))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+def configure_btrfs_scrub(
+    cfg: BootstrapConfig,
+    *,
+    script_path: Path = Path("/usr/local/libexec/cocalc-btrfs-scrub"),
+    service_path: Path = Path("/etc/systemd/system/cocalc-btrfs-scrub.service"),
+    timer_path: Path = Path("/etc/systemd/system/cocalc-btrfs-scrub.timer"),
+) -> None:
+    """An hourly root check that scrubs the project data filesystem once a
+    period, throttled, while the host is quiet (BTRFS_SCRUB_SCRIPT). It only
+    scrubs where /etc/cocalc/btrfs-scrub.json enables it; its status (which
+    names files with errors) is readable by the runtime user's group only."""
+    log_line(cfg, "bootstrap: configuring btrfs scrub")
+
+    def current(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    if current(script_path) != BTRFS_SCRUB_SCRIPT:
+        text_write_atomic(script_path, BTRFS_SCRUB_SCRIPT, default_mode=0o755)
+    os.chmod(script_path, 0o755)
+    status_group = shlex.quote(cfg.ssh_user or "root")
+    service = f"""[Unit]
+Description=CoCalc btrfs scrub of the project data filesystem
+ConditionPathIsExecutable={script_path}
+ConditionPathIsMountPoint=/mnt/cocalc
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/python3 -I {script_path} --mount /mnt/cocalc --status-dir /var/lib/cocalc-btrfs-scrub --status-group {status_group}
+UMask=0027
+Nice=10
+# the script bounds a run (its daily budget and night window, 24 h at most,
+# counted as it goes); a stop or timeout sends SIGTERM, on which it cancels
+# the scrub it is watching
+TimeoutStartSec=25h
+NoNewPrivileges=yes
+PrivateTmp=yes
+# not strict: btrfs scrub writes /var/lib/btrfs
+ProtectSystem=full
+ProtectHome=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+"""
+    timer = """[Unit]
+Description=Hourly check for a due btrfs scrub
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    for path, text in ((service_path, service), (timer_path, timer)):
+        if current(path) != text:
+            text_write_atomic(path, text)
+    run_cmd(
+        cfg,
+        ["systemctl", "daemon-reload"],
+        "reload systemd btrfs scrub units",
+        timeout=30,
+    )
+    run_cmd(
+        cfg,
+        ["systemctl", "enable", "--now", "cocalc-btrfs-scrub.timer"],
+        "enable btrfs scrub timer",
+        timeout=30,
+    )
+
+
+def configure_host_integrity_watch(
+    cfg: BootstrapConfig,
+    *,
+    script_path: Path = Path("/usr/local/libexec/cocalc-host-integrity"),
+    service_path: Path = Path(
+        "/etc/systemd/system/cocalc-host-integrity.service"
+    ),
+) -> None:
+    """A root service that reports where the runtime user's processes and its
+    container uid ranges run, and changes to host configuration. The status
+    lives in a root-owned directory (StateDirectory) that the project host
+    reads into its heartbeat."""
+    log_line(cfg, "bootstrap: configuring host integrity watcher")
+
+    def current(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    changed = current(script_path) != HOST_INTEGRITY_WATCH_SCRIPT
+    if changed:
+        text_write_atomic(
+            script_path, HOST_INTEGRITY_WATCH_SCRIPT, default_mode=0o755
+        )
+    os.chmod(script_path, 0o755)
+    args = " ".join(
+        shlex.quote(part)
+        for part in [
+            "/usr/bin/python3",
+            "-I",
+            str(script_path),
+            "--runtime-user",
+            cfg.ssh_user,
+            "--status-dir",
+            "/var/lib/cocalc-host-integrity",
+            "--bootstrap-state",
+            str(bootstrap_state_path(cfg)),
+        ]
+    )
+    service = f"""[Unit]
+Description=CoCalc project-host integrity watcher
+ConditionPathIsExecutable={script_path}
+
+[Service]
+Type=simple
+ExecStart={args}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StateDirectory=cocalc-host-integrity
+StateDirectoryMode=0755
+UMask=0022
+Nice=10
+CPUQuota=10%
+MemoryMax=128M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+"""
+    if current(service_path) != service:
+        text_write_atomic(service_path, service)
+        changed = True
+    run_cmd(
+        cfg,
+        ["systemctl", "daemon-reload"],
+        "reload systemd host integrity unit",
+        timeout=30,
+    )
+    # A changed script or unit takes effect now; an unchanged running watcher
+    # keeps its findings and inventory.
+    run_cmd(
+        cfg,
+        [
+            "systemctl",
+            "restart" if changed else "start",
+            "cocalc-host-integrity.service",
+        ],
+        "start host integrity watcher",
+        timeout=30,
+    )
+    run_cmd(
+        cfg,
+        ["systemctl", "enable", "cocalc-host-integrity.service"],
+        "enable host integrity watcher",
+        timeout=30,
+    )
+
+
 RSYSLOG_LOGROTATE_CONTENT = """/var/log/syslog
 /var/log/mail.log
 /var/log/kern.log
@@ -3921,26 +6060,103 @@ def ensure_exact_subid_file(
     return True
 
 
+def project_uid_block_overlaps(path: Path, user: str) -> list[str]:
+    """Entries of other users that overlap PROJECT_RUNTIME_UID_BLOCK."""
+    start, length = PROJECT_RUNTIME_UID_BLOCK
+    _raw_lines, entries = parse_subid_entries(path)
+    return [
+        f"{name}:{entry_start}:{entry_length}"
+        for name, entry_start, entry_length in entries
+        if name != user
+        and entry_start < start + length
+        and start < entry_start + entry_length
+    ]
+
+
+def ensure_login_defs_subid_max(path: Path = LOGIN_DEFS_PATH) -> bool:
+    """Keep useradd's automatic subuid/subgid ranges below the project block.
+
+    Ubuntu's default SUB_UID_MAX (600100000) is already below it; this pins
+    the bound so a changed default or a local edit can't reach the block.
+    """
+    limit = PROJECT_RUNTIME_UID_BLOCK[0] - 1
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []
+    seen: set[str] = set()
+    changed = False
+    out: list[str] = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] in ("SUB_UID_MAX", "SUB_GID_MAX"):
+            seen.add(parts[0])
+            try:
+                ok = int(parts[1]) <= limit
+            except ValueError:
+                ok = False
+            if not ok:
+                line = f"{parts[0]} {600100000}"
+                changed = True
+        out.append(line)
+    for key in ("SUB_UID_MAX", "SUB_GID_MAX"):
+        if key not in seen:
+            out.append(f"{key} {600100000}")
+            changed = True
+    if changed:
+        text_write_atomic(path, "\n".join(out) + "\n", fsync=True)
+    return changed
+
+
 def ensure_subuids(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: ensuring subuid/subgid ranges for {cfg.ssh_user}")
-    changed_subuid = ensure_exact_subid_file(
-        Path("/etc/subuid"), cfg.ssh_user, PROJECT_HOST_RUNTIME_SUBID_RANGES
-    )
-    changed_subgid = ensure_exact_subid_file(
-        Path("/etc/subgid"), cfg.ssh_user, PROJECT_HOST_RUNTIME_SUBID_RANGES
-    )
+    ranges = runtime_subid_ranges(cfg)
+    if ranges != PROJECT_HOST_RUNTIME_SUBID_RANGES:
+        overlaps = [
+            *project_uid_block_overlaps(Path("/etc/subuid"), cfg.ssh_user),
+            *project_uid_block_overlaps(Path("/etc/subgid"), cfg.ssh_user),
+        ]
+        if overlaps:
+            raise RuntimeError(
+                "subuid/subgid entries overlap the project runtime uid block "
+                f"{PROJECT_RUNTIME_UID_BLOCK[0]}:{PROJECT_RUNTIME_UID_BLOCK[1]}: "
+                + ", ".join(overlaps)
+            )
+        if ensure_login_defs_subid_max():
+            log_line(cfg, "bootstrap: pinned SUB_UID_MAX/SUB_GID_MAX below the project runtime uid block")
+    changed_subuid = ensure_exact_subid_file(Path("/etc/subuid"), cfg.ssh_user, ranges)
+    changed_subgid = ensure_exact_subid_file(Path("/etc/subgid"), cfg.ssh_user, ranges)
     if changed_subuid or changed_subgid:
         log_line(
             cfg,
             "bootstrap: set exact subuid/subgid allocation "
             f"for {cfg.ssh_user} to "
-            + ", ".join(f"{start}:{length}" for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES),
+            + ", ".join(f"{start}:{length}" for start, length in ranges)
+            + " (Podman picks up a changed allocation at the next reboot)",
         )
 
 
 def verify_runtime_user_contract(cfg: BootstrapConfig) -> None:
     desired = expected_runtime_user_contract(cfg)
     installed = read_current_runtime_user_contract(cfg)
+    # A changed allocation reaches the live map only at the next reboot (see
+    # accepted_runtime_userns_maps): compare the live map with the accepted
+    # variant it matches.
+    for uid_map, gid_map in accepted_runtime_userns_maps(cfg):
+        if installed.get("uid_map") == uid_map and installed.get("gid_map") == gid_map:
+            if uid_map != desired.get("uid_map"):
+                log_line(
+                    cfg,
+                    "bootstrap: the live rootless map predates the current "
+                    "subuid allocation; it takes effect at the next reboot",
+                )
+            desired = {
+                **desired,
+                "uid_map": uid_map,
+                "gid_map": gid_map,
+                "fingerprint": runtime_userns_map_fingerprint(uid_map, gid_map),
+            }
+            break
     mismatches: list[str] = []
     for key in (
         "identity",
@@ -5505,6 +7721,7 @@ code, Node, or native addons from that tree.  Keep this file self-contained and
 installed below /usr/local with root ownership.
 """
 
+import contextlib
 import ctypes
 import errno
 import json
@@ -6540,6 +8757,14 @@ def open_named_directory(values, name, allowed_roots):
 
 
 def run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
+    # An idmapped upper (--idmap) and its cleanup at unmount change the views.
+    if argv and (argv[0] == "umount-overlay-project" or "--idmap" in argv):
+        with view_lock():
+            return _run_overlay(argv, allowed_roots)
+    return _run_overlay(argv, allowed_roots)
+
+
+def _run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
     command = argv[0]
     names = (
         ("lower", "upper", "work", "merged")
@@ -6547,12 +8772,56 @@ def run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
         else ("merged",)
     )
     options = {f"--{name}-{kind}" for name in names for kind in ("root", "path")}
-    values, _flags = parse_named_options(argv, command, options, options)
+    allowed = options | ({"--idmap"} if command == "mount-overlay-project" else set())
+    values, _flags = parse_named_options(argv, command, allowed, options)
+    view_uid = validate_view_uid(values["idmap"]) if "idmap" in values else None
+    run_root = values["merged-root"] == PROJECT_ROOTFS_ROOT
+    if run_root:
+        project_id = values["merged-path"].split("/")[0]
+        if values["merged-path"] != f"{validate_project_id(project_id)}/root":
+            fail("invalid project rootfs mountpoint")
+        if command == "mount-overlay-project":
+            ensure_rootfs_mountpoint(project_id)
+    else:
+        # The merged dir is named after the project (allow_overlay_mountpoint).
+        project_id = os.path.basename(values["merged-path"])
+    if view_uid is not None and not run_root:
+        fail(f"an idmapped overlay must be mounted beneath {PROJECT_ROOTFS_ROOT}")
+    if view_uid is not None:
+        validate_project_id(project_id)
+        for name in ("upper", "work"):
+            if values[f"{name}-root"] != PROJECT_UPPER_ROOT or not values[
+                f"{name}-path"
+            ].startswith(f"project-{project_id}/"):
+                fail(f"an idmapped overlay {name} must be in project {project_id}'s home")
     descriptors = []
+    staged = False
     try:
         for name in names:
-            descriptors.append(open_named_directory(values, name, allowed_roots))
-        paths = [f"/proc/self/fd/{fd}" for fd in descriptors]
+            roots = (
+                {*allowed_roots, PROJECT_ROOTFS_ROOT}
+                if name == "merged" and run_root
+                else allowed_roots
+            )
+            descriptors.append(open_named_directory(values, name, roots))
+        if command == "mount-overlay-project" and view_uid is not None:
+            # --idmap: the upper (and workdir) through an idmapped view, so
+            # files the project creates keep the runtime user as owner on disk.
+            lowerfd, upperfd, workfd, mergedfd = descriptors
+            stagingfd, upper_name, work_name = mount_idmapped_upper(
+                project_id, upperfd, workfd, view_uid
+            )
+            staged = True
+            descriptors.append(stagingfd)
+            for original, name in ((upperfd, upper_name), (workfd, work_name)):
+                fd = openat2(stagingfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+                descriptors.append(fd)
+                a, b = os.fstat(fd), os.fstat(original)
+                if (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino):
+                    fail("idmapped overlay upper does not match the requested upper")
+            paths = [f"/proc/self/fd/{fd}" for fd in (lowerfd, descriptors[-2], descriptors[-1], mergedfd)]
+        else:
+            paths = [f"/proc/self/fd/{fd}" for fd in descriptors]
         if command == "mount-overlay-project":
             lower, upper, work, merged = paths
             mount_options = (
@@ -6576,10 +8845,24 @@ def run_overlay(argv, allowed_roots=ALLOWED_ROOTS):
             check=True,
             stdin=subprocess.DEVNULL,
         )
+        staged = False
     finally:
         for fd in descriptors:
             os.close(fd)
-
+        if staged:
+            umount_view_target(f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}")
+    if command == "umount-overlay-project" and run_root:
+        for path in (f"{PROJECT_ROOTFS_ROOT}/{project_id}/root", f"{PROJECT_ROOTFS_ROOT}/{project_id}"):
+            try:
+                os.rmdir(path)
+            except OSError:
+                break
+    if command == "umount-overlay-project" and PROJECT_ID_RE.fullmatch(project_id):
+        # An idmapped upper (--idmap) stays mounted until the overlay is gone.
+        upper = f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}"
+        if upper in view_mountpoints():
+            umount_view_target(upper)
+            os.rmdir(upper)
 
 def ensure_private_root_directory(path, required_uid=0, mode=0o700):
     try:
@@ -6753,6 +9036,467 @@ def parse_uint(value, name, maximum=(2**53 - 1)):
     return result
 
 
+# Project views: idmapped bind mounts that show the runtime user's files
+# (owner RUNTIME_USER on disk) as owned by a separate host uid, so a project
+# container can run its user as that uid while everything on disk keeps its
+# owner. Views live under PROJECT_VIEW_ROOT/<project-id>/<kind>; the root and
+# the per-project dirs are root-owned 0710 with the runtime group, so the
+# runtime user can reach the views to hand them to Podman but can't rename or
+# replace what this helper mounts on, and the view uid can't enter at all.
+RUNTIME_USER = "__RUNTIME_USER__"
+PROJECT_VIEW_ROOT = "/run/cocalc/project-views"
+# Serializes every change beneath PROJECT_VIEW_ROOT (mounts, unmounts, gc and
+# idmapped overlay uppers), so a check for an existing mount and the mount
+# itself can't interleave with another helper.
+PROJECT_VIEW_LOCK = "/run/cocalc/project-views.lock"
+PROJECT_VIEW_UMOUNT_ROUNDS = 16
+PROJECT_VIEW_UID_START = 1073741824
+PROJECT_VIEW_UID_COUNT = 65536
+PROJECT_VIEW_MAX_ID = 4294967294
+# kind -> (allowed source (root, relative path template), read-only)
+PROJECT_VIEW_KINDS = {
+    "home": (("/mnt/cocalc", "project-{id}"), False),
+    "scratch": (("/mnt/cocalc", "project-{id}-scratch"), False),
+    "browser-run": (("/mnt/cocalc", "data/tmp/cocalc-browser-run/{id}"), False),
+    "secrets": (("/mnt/cocalc", "data/tmp/cocalc-project-secrets/{id}"), True),
+}
+PROJECT_VIEW_ROOTFS_UPPER = "rootfs-upper"
+# The only names beneath PROJECT_VIEW_ROOT/<project-id>: every mount the
+# helper makes is exactly one of these, so it never unmounts anything else.
+PROJECT_VIEW_TARGETS = (*PROJECT_VIEW_KINDS, PROJECT_VIEW_ROOTFS_UPPER)
+PROJECT_VIEW_MOUNT_OPTIONS = "nosuid,nodev"
+# An idmapped overlay upper must live in the project's own home.
+PROJECT_UPPER_ROOT = "/mnt/cocalc"
+# Merged rootfs mountpoints for --idmap: <root>/<project-id>/root.
+# Podman adds o+x to every parent of a --rootfs path that the container's root
+# doesn't own, and fails if it can't. So <root> is root-owned 0711 (already
+# traversable), and <root>/<project-id> belongs to the container root's host
+# ids with mode 0700: podman leaves it alone and crun reaches it as root of the
+# rootless namespace, but no project uid (or any other host uid) can enter it.
+# The overlay itself is mounted on <root>/<project-id>/root.
+PROJECT_ROOTFS_ROOT = "/run/cocalc/project-rootfs"
+PROJECT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+PROJECT_VIEW_COMMANDS = {
+    "project-view-mount",
+    "project-view-umount",
+    "project-view-gc",
+    "project-view-harden",
+}
+# project-view-harden: the project data root becomes root:<runtime group>
+# 0750, so only root and the runtime user can reach anything beneath it (raw
+# homes, scratch, data); a separate runtime uid reaches its files only
+# through its views. Raw homes owned by the runtime user also go to 0700.
+PROJECT_DATA_ROOT = "/mnt/cocalc"
+PROJECT_HOME_RE = re.compile(r"project-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def runtime_ids():
+    import pwd
+
+    entry = pwd.getpwnam(RUNTIME_USER)
+    return entry.pw_uid, entry.pw_gid
+
+
+def validate_project_id(value):
+    if not isinstance(value, str) or not PROJECT_ID_RE.fullmatch(value):
+        fail(f"invalid project id: {value!r}")
+    return value
+
+
+def validate_view_uid(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]{0,9}", value):
+        fail(f"invalid view uid: {value!r}")
+    uid = int(value)
+    if not PROJECT_VIEW_UID_START <= uid < PROJECT_VIEW_UID_START + PROJECT_VIEW_UID_COUNT:
+        fail(f"view uid is outside the project runtime uid block: {uid}")
+    return uid
+
+
+def project_view_idmap(disk_uid, disk_gid, view_uid):
+    """X-mount.idmap value: disk ids map to themselves, except the runtime
+    user's uid/gid, which show as view_uid; view_uid on disk stays unmapped.
+    util-linux reads each extent as <type>:<id on disk>:<id in mount>:<count>.
+    """
+    extents = []
+    for kind, disk in (("u", disk_uid), ("g", disk_gid)):
+        if not 0 < disk < view_uid:
+            fail("view uid must be above the runtime user's ids")
+        extents.append(f"{kind}:0:0:{disk}")
+        extents.append(f"{kind}:{disk}:{view_uid}:1")
+        if view_uid - disk - 1 > 0:
+            extents.append(f"{kind}:{disk + 1}:{disk + 1}:{view_uid - disk - 1}")
+        extents.append(f"{kind}:{view_uid + 1}:{view_uid + 1}:{PROJECT_VIEW_MAX_ID - view_uid}")
+    return " ".join(extents)
+
+
+def ensure_view_dir(parentfd, name, gid, mode=0o710):
+    """A root-owned dir beneath parentfd (no symlinks), with group gid."""
+    try:
+        os.mkdir(name, mode, dir_fd=parentfd)
+    except FileExistsError:
+        pass
+    fd = openat2(parentfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    info = os.fstat(fd)
+    if info.st_uid != 0:
+        os.close(fd)
+        fail(f"unsafe project view directory: {name}")
+    os.chown(f"/proc/self/fd/{fd}", 0, gid)
+    os.chmod(f"/proc/self/fd/{fd}", mode)
+    return fd
+
+
+def open_view_root(gid, create=True):
+    """PROJECT_VIEW_ROOT, root-owned 0710 with the runtime group."""
+    parent, name = os.path.split(PROJECT_VIEW_ROOT)
+    if create:
+        os.makedirs(parent, mode=0o711, exist_ok=True)
+    check_view_parent(parent)
+    parentfd = os.open(parent, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if not create:
+            return openat2(parentfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        return ensure_view_dir(parentfd, name, gid)
+    finally:
+        os.close(parentfd)
+
+
+def check_view_parent(path):
+    """/run/cocalc must be a root-owned dir that only root can write."""
+    info = os.lstat(path)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or stat.S_IMODE(info.st_mode) & 0o022
+    ):
+        fail(f"unsafe project view parent: {path}")
+
+
+@contextlib.contextmanager
+def view_lock():
+    import fcntl
+
+    os.makedirs(os.path.dirname(PROJECT_VIEW_LOCK), mode=0o711, exist_ok=True)
+    check_view_parent(os.path.dirname(PROJECT_VIEW_LOCK))
+    fd = os.open(PROJECT_VIEW_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        if os.fstat(fd).st_uid != os.geteuid():
+            fail(f"unsafe project view lock: {PROJECT_VIEW_LOCK}")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def view_mountpoints():
+    """Mount targets beneath PROJECT_VIEW_ROOT, deepest first; a target with
+    stacked mounts appears once per mount."""
+    targets = []
+    with open("/proc/self/mountinfo", encoding="utf-8") as f:
+        for line in f:
+            target = line.split()[4].encode().decode("unicode_escape")
+            if target.startswith(PROJECT_VIEW_ROOT + "/"):
+                targets.append(target)
+    return sorted(targets, key=len, reverse=True)
+
+
+def umount_view_target(target):
+    """Unmount one exact view target (a root-owned mountpoint the helper
+    created) until nothing is mounted there; MNT_DETACH takes any mounts
+    beneath it along."""
+    for _round in range(PROJECT_VIEW_UMOUNT_ROUNDS):
+        if target not in view_mountpoints():
+            return
+        subprocess.run(["/bin/umount", "-l", target], check=True, stdin=subprocess.DEVNULL)
+    fail(f"project view mounts remain at {target}")
+
+
+def assert_view_direction(source, view, uid, gid, view_uid):
+    """The view must show the runtime user's ids as view_uid and every other
+    owner unchanged (a guard against the idmap fields being read the other
+    way round)."""
+    for kind, disk, seen, runtime in (("uid", source.st_uid, view.st_uid, uid), ("gid", source.st_gid, view.st_gid, gid)):
+        expected = view_uid if disk == runtime else disk
+        if seen != expected:
+            fail(f"project view shows {kind} {disk} as {seen}, expected {expected}")
+
+
+def verify_view(projectfd, name, sourcefd, uid, gid, view_uid):
+    """Check a fresh view against its source; unmount it if it's wrong."""
+    fd = openat2(projectfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        assert_view_direction(os.fstat(sourcefd), os.fstat(fd), uid, gid, view_uid)
+    except ValueError:
+        umount_view_target(f"{PROJECT_VIEW_ROOT}/{os.path.basename(os.readlink(f'/proc/self/fd/{projectfd}'))}/{name}")
+        raise
+    finally:
+        os.close(fd)
+
+
+def container_root_ids():
+    """Host uid/gid of the containers' root: the start of the runtime user's
+    first subordinate range."""
+    ids = []
+    for path in ("/etc/subuid", "/etc/subgid"):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split(":")
+                if len(parts) == 3 and parts[0] == RUNTIME_USER and parts[1].isdigit():
+                    ids.append(int(parts[1]))
+                    break
+            else:
+                fail(f"no subordinate range for {RUNTIME_USER} in {path}")
+    return ids[0], ids[1]
+
+
+def ensure_rootfs_mountpoint(project_id):
+    """PROJECT_ROOTFS_ROOT/<project-id>/root, see PROJECT_ROOTFS_ROOT."""
+    croot_uid, croot_gid = container_root_ids()
+    parent, name = os.path.split(PROJECT_ROOTFS_ROOT)
+    os.makedirs(parent, mode=0o711, exist_ok=True)
+    check_view_parent(parent)
+    parentfd = os.open(parent, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    rootfd = projectfd = None
+    try:
+        try:
+            os.mkdir(name, 0o711, dir_fd=parentfd)
+        except FileExistsError:
+            pass
+        rootfd = openat2(parentfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        info = os.fstat(rootfd)
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o711:
+            fail(f"unsafe project rootfs root: {PROJECT_ROOTFS_ROOT}")
+        try:
+            os.mkdir(project_id, 0o700, dir_fd=rootfd)
+            created = True
+        except FileExistsError:
+            created = False
+        projectfd = openat2(rootfd, project_id, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        if created:
+            os.chown(f"/proc/self/fd/{projectfd}", croot_uid, croot_gid)
+        info = os.fstat(projectfd)
+        if (info.st_uid, info.st_gid) != (croot_uid, croot_gid) or stat.S_IMODE(info.st_mode) != 0o700:
+            fail(f"unsafe project rootfs dir: {PROJECT_ROOTFS_ROOT}/{project_id}")
+        try:
+            os.mkdir("root", 0o755, dir_fd=projectfd)
+        except FileExistsError:
+            pass
+    finally:
+        for fd in (projectfd, rootfd):
+            if fd is not None:
+                os.close(fd)
+        os.close(parentfd)
+
+
+def harden_project_data_root(uid, gid):
+    rootfd = os.open(PROJECT_DATA_ROOT, O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if os.fstat(rootfd).st_uid != os.geteuid():
+            fail(f"unsafe project data root: {PROJECT_DATA_ROOT}")
+        os.chown(f"/proc/self/fd/{rootfd}", os.geteuid(), gid)
+        os.chmod(f"/proc/self/fd/{rootfd}", 0o750)
+        for name in os.listdir(f"/proc/self/fd/{rootfd}"):
+            if not PROJECT_HOME_RE.fullmatch(name):
+                continue
+            try:
+                fd = openat2(rootfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+            except OSError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if info.st_uid == uid and stat.S_IMODE(info.st_mode) != 0o700:
+                    os.chmod(f"/proc/self/fd/{fd}", 0o700)
+            finally:
+                os.close(fd)
+    finally:
+        os.close(rootfd)
+
+
+def make_view_private(projectfd, name):
+    """Stop propagation into a fresh view: the sources live on shared mounts,
+    so mounts made later beneath a source would otherwise appear in it."""
+    fd = openat2(projectfd, name, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        subprocess.run(
+            ["/bin/mount", "--make-private", f"/proc/self/fd/{fd}"],
+            pass_fds=(fd,),
+            check=True,
+            stdin=subprocess.DEVNULL,
+        )
+    finally:
+        os.close(fd)
+
+
+def umount_project_views(project_id, names=PROJECT_VIEW_TARGETS):
+    for name in names:
+        umount_view_target(f"{PROJECT_VIEW_ROOT}/{project_id}/{name}")
+
+
+def remove_view_tree(rootfd, project_id):
+    try:
+        projectfd = openat2(rootfd, project_id, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return
+    try:
+        for name in os.listdir(f"/proc/self/fd/{projectfd}"):
+            if name not in PROJECT_VIEW_TARGETS:
+                fail(f"unexpected entry in project views: {name!r}")
+            os.rmdir(name, dir_fd=projectfd)
+    finally:
+        os.close(projectfd)
+    os.rmdir(project_id, dir_fd=rootfd)
+
+
+def run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
+    with view_lock():
+        return _run_project_view(argv, allowed_roots)
+
+
+def _run_project_view(argv, allowed_roots=ALLOWED_ROOTS):
+    command = argv[0]
+    uid, gid = runtime_ids()
+    if command == "project-view-mount":
+        options = {"--project", "--kind", "--uid", "--source-root", "--source-path"}
+        values, _flags = parse_named_options(argv, command, options, options)
+        project_id = validate_project_id(values["project"])
+        kind = values["kind"]
+        if kind not in PROJECT_VIEW_KINDS:
+            fail(f"invalid project view kind: {kind!r}")
+        view_uid = validate_view_uid(values["uid"])
+        (source_root, template), read_only = PROJECT_VIEW_KINDS[kind]
+        if values["source-root"] != source_root or values["source-path"] != template.format(id=project_id):
+            fail(f"source is not the {kind} of project {project_id}")
+        sourcefd = open_named_directory(values, "source", allowed_roots)
+        target = f"{PROJECT_VIEW_ROOT}/{project_id}/{kind}"
+        if target in view_mountpoints():
+            os.close(sourcefd)
+            fail(f"project view is already mounted: {target}")
+        rootfd = projectfd = targetfd = None
+        try:
+            rootfd = open_view_root(gid)
+            projectfd = ensure_view_dir(rootfd, project_id, gid)
+            targetfd = ensure_view_dir(projectfd, kind, gid, mode=0o700)
+            options = (
+                f"X-mount.idmap={project_view_idmap(uid, gid, view_uid)},"
+                + PROJECT_VIEW_MOUNT_OPTIONS
+            )
+            if read_only:
+                options += ",ro"
+            subprocess.run(
+                [
+                    "/bin/mount",
+                    "--bind",
+                    "-o",
+                    options,
+                    f"/proc/self/fd/{sourcefd}",
+                    f"/proc/self/fd/{targetfd}",
+                ],
+                pass_fds=(sourcefd, targetfd),
+                check=True,
+                stdin=subprocess.DEVNULL,
+            )
+            # Mounted: from here on, any failure takes the view down again.
+            try:
+                make_view_private(projectfd, kind)
+                verify_view(projectfd, kind, sourcefd, uid, gid, view_uid)
+            except BaseException:
+                umount_view_target(target)
+                raise
+        finally:
+            for fd in (targetfd, projectfd, rootfd, sourcefd):
+                if fd is not None:
+                    os.close(fd)
+        return
+    if command == "project-view-umount":
+        values, _flags = parse_named_options(argv, command, {"--project"}, {"--project"})
+        project_id = validate_project_id(values["project"])
+        try:
+            rootfd = open_view_root(gid, create=False)
+        except FileNotFoundError:
+            return
+        try:
+            umount_project_views(project_id)
+            remove_view_tree(rootfd, project_id)
+        finally:
+            os.close(rootfd)
+        return
+    if command == "project-view-harden":
+        parse_named_options(argv, command, set(), set())
+        harden_project_data_root(uid, gid)
+        return
+    if command == "project-view-gc":
+        values, _flags = parse_named_options(argv, command, {"--keep"}, {"--keep"})
+        keep = {validate_project_id(value) for value in values["keep"].split(",") if value}
+        try:
+            rootfd = open_view_root(gid, create=False)
+        except FileNotFoundError:
+            return
+        try:
+            for name in os.listdir(f"/proc/self/fd/{rootfd}"):
+                if name in keep:
+                    continue
+                if not PROJECT_ID_RE.fullmatch(name):
+                    fail(f"unexpected entry in {PROJECT_VIEW_ROOT}: {name!r}")
+                umount_project_views(name)
+                remove_view_tree(rootfd, name)
+        finally:
+            os.close(rootfd)
+        return
+    fail(f"invalid project view command: {command}")
+
+
+def mount_idmapped_upper(project_id, upperfd, workfd, view_uid):
+    """Bind the dir holding upperdir and workdir, idmapped, beneath the
+    project's views; return (staging fd, upper name, work name).
+
+    Overlay needs upperdir and workdir on one mount, so both must be direct
+    children of the same directory.
+    """
+    upper_parent = os.stat("..", dir_fd=upperfd)
+    work_parent = os.stat("..", dir_fd=workfd)
+    if (upper_parent.st_dev, upper_parent.st_ino) != (work_parent.st_dev, work_parent.st_ino):
+        fail("overlay upperdir and workdir must share a parent directory")
+    upper_name = os.path.basename(os.readlink(f"/proc/self/fd/{upperfd}"))
+    work_name = os.path.basename(os.readlink(f"/proc/self/fd/{workfd}"))
+    uid, gid = runtime_ids()
+    target = f"{PROJECT_VIEW_ROOT}/{project_id}/{PROJECT_VIEW_ROOTFS_UPPER}"
+    if target in view_mountpoints():
+        fail(f"idmapped overlay upper is already mounted: {target}")
+    parentfd = os.open(f"/proc/self/fd/{upperfd}/..", O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+    rootfd = projectfd = stagingfd = None
+    try:
+        if (os.fstat(parentfd).st_dev, os.fstat(parentfd).st_ino) != (upper_parent.st_dev, upper_parent.st_ino):
+            fail("overlay upper parent changed while mounting")
+        rootfd = open_view_root(gid)
+        projectfd = ensure_view_dir(rootfd, project_id, gid)
+        stagingfd = ensure_view_dir(projectfd, PROJECT_VIEW_ROOTFS_UPPER, gid, mode=0o700)
+        subprocess.run(
+            [
+                "/bin/mount",
+                "--bind",
+                "-o",
+                f"X-mount.idmap={project_view_idmap(uid, gid, view_uid)}",
+                f"/proc/self/fd/{parentfd}",
+                f"/proc/self/fd/{stagingfd}",
+            ],
+            pass_fds=(parentfd, stagingfd),
+            check=True,
+            stdin=subprocess.DEVNULL,
+        )
+        # Mounted: from here on, any failure takes the staged upper down again.
+        try:
+            make_view_private(projectfd, PROJECT_VIEW_ROOTFS_UPPER)
+            verify_view(projectfd, PROJECT_VIEW_ROOTFS_UPPER, parentfd, uid, gid, view_uid)
+            mounted = openat2(projectfd, PROJECT_VIEW_ROOTFS_UPPER, O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        except BaseException:
+            umount_view_target(target)
+            raise
+        return mounted, upper_name, work_name
+    finally:
+        for fd in (stagingfd, projectfd, rootfd, parentfd):
+            if fd is not None:
+                os.close(fd)
+
+
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
     if argv and argv[0] == "scan-oversized-files":
         return run_scan_oversized_files(argv, allowed_roots)
@@ -6760,6 +9504,8 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
         return run_scan_changed_since(argv, allowed_roots)
     if argv and argv[0] in RUSTIC_COMMANDS:
         return run_rustic(argv, allowed_roots, rustic_candidates)
+    if argv and argv[0] in PROJECT_VIEW_COMMANDS:
+        return run_project_view(argv, allowed_roots)
     if argv and argv[0] in ANCHORED_COMMANDS:
         if argv[0] == "normalize-rootfs":
             return run_normalize_rootfs(argv, allowed_roots)
@@ -9381,6 +12127,11 @@ allow_overlay_mountpoint() {
   case "$path" in
     /mnt/cocalc/data/cache/project-roots/*|/var/lib/cocalc/star/project-host/0/cache/project-roots/*)
       ;;
+    /run/cocalc/project-rootfs/*/root)
+      # the path helper creates and removes /run/cocalc/project-rootfs/<id>/root
+      path="$(dirname "$path")"
+      [ "$path" = "/run/cocalc/project-rootfs/$(basename "$path")" ] || return 1
+      ;;
     *)
       return 1
       ;;
@@ -10222,8 +12973,14 @@ PY
     exec /sbin/mkfs.btrfs "$@"
     ;;
   mount-overlay-project)
+    # Optional: --idmap <uid> mounts the upper through an idmapped view.
+    idmap_args=()
+    if [ "${1:-}" = "--idmap" ] && [ "$#" -ge 2 ]; then
+      idmap_args=(--idmap "$2")
+      shift 2
+    fi
     if [ "$#" -ne 4 ]; then
-      echo "usage: cocalc-runtime-storage mount-overlay-project <lowerdir> <upperdir> <workdir> <merged>" >&2
+      echo "usage: cocalc-runtime-storage mount-overlay-project [--idmap <uid>] <lowerdir> <upperdir> <workdir> <merged>" >&2
       exit 2
     fi
     lowerdir="$1"
@@ -10242,9 +12999,14 @@ PY
     require_allowed_path_parts "$workdir"
     work_root="$ALLOWED_PATH_ROOT"
     work_rel="$ALLOWED_PATH_REL"
-    require_allowed_path_parts "$merged"
-    merged_root="$ALLOWED_PATH_ROOT"
-    merged_rel="$ALLOWED_PATH_REL"
+    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$(dirname "$merged")")/root" ]; then
+      merged_root="/run/cocalc/project-rootfs"
+      merged_rel="$(basename "$(dirname "$merged")")/root"
+    else
+      require_allowed_path_parts "$merged"
+      merged_root="$ALLOWED_PATH_ROOT"
+      merged_rel="$ALLOWED_PATH_REL"
+    fi
     # Use the xattr-capable OverlayFS mode:
     # - metacopy=on avoids copying full file contents into upperdir for
     #   metadata-only changes, which keeps environment overlays smaller.
@@ -10263,7 +13025,63 @@ PY
       --lower-root "$lower_root" --lower-path "$lower_rel" \
       --upper-root "$upper_root" --upper-path "$upper_rel" \
       --work-root "$work_root" --work-path "$work_rel" \
-      --merged-root "$merged_root" --merged-path "$merged_rel"
+      --merged-root "$merged_root" --merged-path "$merged_rel" \
+      "${idmap_args[@]}"
+    ;;
+  project-view)
+    # Idmapped views of a project's dirs for a separate runtime uid; the path
+    # helper validates the project id, kind, uid and source.
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      probe)
+        # Capability probe: callers gate separate mode on this output, never
+        # on HELPER_SCHEMA_VERSION. No side effects.
+        if [ "$#" -ne 0 ]; then
+          echo "usage: cocalc-runtime-storage project-view probe" >&2
+          exit 2
+        fi
+        echo "project-view:1 overlay-idmap:1"
+        exit 0
+        ;;
+      mount)
+        if [ "$#" -ne 4 ]; then
+          echo "usage: cocalc-runtime-storage project-view mount <project-id> <kind> <uid> <source>" >&2
+          exit 2
+        fi
+        require_allowed_path_parts "$4"
+        exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+          project-view-mount --project "$1" --kind "$2" --uid "$3" \
+          --source-root "$ALLOWED_PATH_ROOT" --source-path "$ALLOWED_PATH_REL"
+        ;;
+      umount)
+        if [ "$#" -ne 1 ]; then
+          echo "usage: cocalc-runtime-storage project-view umount <project-id>" >&2
+          exit 2
+        fi
+        exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+          project-view-umount --project "$1"
+        ;;
+      harden)
+        if [ "$#" -ne 0 ]; then
+          echo "usage: cocalc-runtime-storage project-view harden" >&2
+          exit 2
+        fi
+        exec /usr/local/libexec/cocalc-runtime-storage-path-helper project-view-harden
+        ;;
+      gc)
+        if [ "$#" -gt 1 ]; then
+          echo "usage: cocalc-runtime-storage project-view gc [<project-id>,...]" >&2
+          exit 2
+        fi
+        exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+          project-view-gc --keep "${1:-}"
+        ;;
+      *)
+        echo "usage: cocalc-runtime-storage project-view probe|mount|umount|gc|harden ..." >&2
+        exit 2
+        ;;
+    esac
     ;;
   umount-overlay-project)
     if [ "$#" -ne 1 ]; then
@@ -10274,10 +13092,17 @@ PY
     if ! allow_overlay_mountpoint "$merged"; then
       deny "overlay-mountpoint-not-allowed" "$merged"
     fi
-    require_allowed_path_parts "$merged"
+    if [ "$merged" = "/run/cocalc/project-rootfs/$(basename "$(dirname "$merged")")/root" ]; then
+      merged_root="/run/cocalc/project-rootfs"
+      merged_rel="$(basename "$(dirname "$merged")")/root"
+    else
+      require_allowed_path_parts "$merged"
+      merged_root="$ALLOWED_PATH_ROOT"
+      merged_rel="$ALLOWED_PATH_REL"
+    fi
     exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
       umount-overlay-project \
-      --merged-root "$ALLOWED_PATH_ROOT" --merged-path "$ALLOWED_PATH_REL"
+      --merged-root "$merged_root" --merged-path "$merged_rel"
     ;;
   losetup)
     check_args "$@"
@@ -11715,7 +14540,7 @@ esac
     storage_path_helper = RUNTIME_STORAGE_PATH_HELPER.replace(
         "__ALLOW_LOOPBACK_RUSTIC_REST__",
         "1" if cfg.allow_loopback_rustic_rest else "0",
-    )
+    ).replace("__RUNTIME_USER__", cfg.ssh_user)
     wrappers = {
         "/usr/local/libexec/cocalc-managed-project-job": MANAGED_PROJECT_JOB_HELPER.replace(
             "__PROJECT_POOL_CGROUP__", DEFAULT_PROJECT_POOL_CGROUP
@@ -12450,25 +15275,98 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
 
 @contextmanager
 def tools_artifact_lock(root: str):
-    """Coordinate tools extraction/activation with the project-host collector."""
+    """Coordinate tools extraction/activation with the project-host collector.
+
+    The tools directory isn't trusted, so nothing in it is opened, created
+    or changed by path: the lock is opened relative to a
+    descriptor of the root without following a symlink, and a lock file that
+    isn't bootstrap's own (root's) regular file is replaced, never followed.
+    """
     Path(root).mkdir(parents=True, exist_ok=True)
-    lock_path = Path(root) / ".artifact.lock"
-    # Keep the inode permanently: unlinking it would split the lock domain.
-    with lock_path.open("a+") as handle:
-        os.chmod(lock_path, 0o644)
-        deadline = time.monotonic() + bootstrap_lock_timeout_seconds()
-        while True:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("timed out waiting for tools artifact lock")
-                time.sleep(0.1)
+    try:
+        dirfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as err:
+        raise RuntimeError(f"tools artifact root {root} is not a directory: {err}")
+    try:
+        fd = _open_tools_lock(dirfd)
+        if fd is None:
+            _replace_tools_lock(dirfd)
+            fd = _open_tools_lock(dirfd)
+            if fd is None:
+                raise RuntimeError(
+                    f"{root}/{TOOLS_LOCK_NAME} was changed while it was being replaced; not extracting tools"
+                )
         try:
-            yield
+            # Keep the inode permanently: unlinking it would split the lock domain.
+            os.fchmod(fd, 0o644)
+            deadline = time.monotonic() + bootstrap_lock_timeout_seconds()
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("timed out waiting for tools artifact lock")
+                    time.sleep(0.1)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            os.close(fd)
+    finally:
+        os.close(dirfd)
+
+
+TOOLS_LOCK_NAME = ".artifact.lock"
+
+
+def _open_tools_lock(dirfd: int) -> int | None:
+    """The lock file in the tools root, if it is a regular file owned by
+    bootstrap's user (root), with one link and no group/other write. Opened
+    relative to the root's descriptor; a symlink is never followed."""
+    try:
+        fd = os.open(
+            TOOLS_LOCK_NAME,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o644,
+            dir_fd=dirfd,
+        )
+    except OSError as err:
+        if err.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
+            return None
+        raise
+    info = os.fstat(fd)
+    if (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.geteuid()
+        and info.st_nlink == 1
+        and not info.st_mode & 0o022
+    ):
+        return fd
+    os.close(fd)
+    return None
+
+
+def _replace_tools_lock(dirfd: int) -> None:
+    """A fresh lock file renamed over whatever has the lock's name (rename
+    replaces the entry itself, never what a symlink points at)."""
+    fresh = f"{TOOLS_LOCK_NAME}.{os.getpid()}.{os.urandom(4).hex()}"
+    fd = os.open(
+        fresh,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o644,
+        dir_fd=dirfd,
+    )
+    try:
+        os.fchmod(fd, 0o644)
+    finally:
+        os.close(fd)
+    try:
+        os.rename(fresh, TOOLS_LOCK_NAME, src_dir_fd=dirfd, dst_dir_fd=dirfd)
+    except OSError:
+        os.unlink(fresh, dir_fd=dirfd)
+        raise
 
 
 def extract_bundle_unlocked(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
@@ -12630,20 +15528,320 @@ def install_privileged_tool_binaries(
     )
 
 
-def install_node(cfg: BootstrapConfig) -> None:
-    log_line(cfg, "bootstrap: installing node via nvm")
-    nvm_dir = f"{runtime_home(cfg)}/.nvm"
-    install_cmd = (
-        f'export NVM_DIR="{nvm_dir}"; '
-        f'if [ ! -s "$NVM_DIR/nvm.sh" ] || '
-        f'! ( . "$NVM_DIR/nvm.sh"; [ "$(nvm --version)" = "{NVM_VERSION}" ] ); then '
-        f'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v{NVM_VERSION}/install.sh | PROFILE=/dev/null bash; '
-        f'fi; '
-        f'. "$NVM_DIR/nvm.sh"; '
-        f'nvm install {cfg.node_version}; '
-        f'nvm alias default {cfg.node_version}'
+ROOT_UID = 0
+
+
+def chown_root(path: Path | str) -> None:
+    os.lchown(path, ROOT_UID, ROOT_UID)
+
+
+def root_owned_parents(path: Path, lstat=os.lstat) -> bool:
+    """True if every directory above path is owned by root, isn't writable
+    by group or others and isn't a symlink."""
+    for parent in Path(path).parents:
+        try:
+            st = lstat(parent)
+        except OSError:
+            return False
+        if stat.S_ISLNK(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+            return False
+    return True
+
+
+def prepare_root_dir(root: Path) -> None:
+    """Creates root (0755, root-owned). Fails closed if root is a symlink or
+    a directory above it could be changed by another user."""
+    if root.is_symlink():
+        raise RuntimeError(f"{root} is a symlink")
+    if not root_owned_parents(root):
+        raise RuntimeError(f"a directory above {root} isn't root-owned")
+    root.mkdir(parents=True, exist_ok=True)
+    chown_root(root)
+    os.chmod(root, 0o755)
+
+
+def root_owned_tree(path: Path) -> bool:
+    """True if path is a directory (not a symlink) and everything in it is
+    owned by root, not writable by group or others and not setuid/setgid,
+    with every symlink resolving inside it."""
+    if path.is_symlink() or not path.is_dir():
+        return False
+    base = os.path.realpath(path)
+    for dirpath, dirnames, filenames in os.walk(path):
+        for entry in [dirpath, *(os.path.join(dirpath, n) for n in dirnames + filenames)]:
+            st = os.lstat(entry)
+            if stat.S_ISLNK(st.st_mode):
+                target = os.path.realpath(entry)
+                if target != base and not target.startswith(base + os.sep):
+                    return False
+                continue
+            if (
+                st.st_uid != ROOT_UID
+                or st.st_mode & 0o022
+                or st.st_mode & (stat.S_ISUID | stat.S_ISGID)
+            ):
+                return False
+    return True
+
+
+def node_tree_ok(path: Path) -> bool:
+    node = path / "bin" / "node"
+    return root_owned_tree(path) and node.is_file() and not node.is_symlink()
+
+
+def current_node_version(root: Path) -> str | None:
+    """The version root/current points at, if it is a plain version name
+    whose tree checks out."""
+    current = root / "current"
+    if not current.is_symlink():
+        return None
+    name = os.readlink(current)
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", name) or not node_tree_ok(root / name):
+        return None
+    return name
+
+
+def node_dist_arch() -> str:
+    machine = os.uname().machine
+    arch = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64", "arm64": "arm64"}.get(
+        machine
     )
-    run_cmd(cfg, ["bash", "-lc", install_cmd], "install node", as_user=cfg.ssh_user)
+    if arch is None:
+        raise RuntimeError(f"unsupported architecture for node: {machine}")
+    return arch
+
+
+def node_version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.lstrip("v").split("."))
+
+
+def node_version_selector(cfg: BootstrapConfig) -> str:
+    """cfg.node_version as "26", "26.12" or "26.12.1" (an optional leading
+    "v" is dropped). nvm aliases such as "lts/*" or "node" aren't supported:
+    they are refused rather than reinterpreted."""
+    wanted = cfg.node_version.strip()
+    wanted = wanted[1:] if wanted.startswith("v") else wanted
+    if not re.fullmatch(r"\d+(\.\d+){0,2}", wanted):
+        raise RuntimeError(
+            f"unsupported node version {cfg.node_version!r}: use a major, "
+            "major.minor or exact version (e.g. 26, 26.12 or 26.12.1)"
+        )
+    return wanted
+
+
+def node_version_matches(version: str, selector: str) -> bool:
+    """True if version (e.g. "v26.12.1") is selector or within it."""
+    return version == f"v{selector}" or version.startswith(f"v{selector}.")
+
+
+def resolve_node_version(cfg: BootstrapConfig) -> str:
+    """The node release for cfg.node_version: as given if exact ("26.12.1"),
+    else the newest release that matches it ("26" or "26.12"), as nvm picks."""
+    selector = node_version_selector(cfg)
+    if re.fullmatch(r"\d+\.\d+\.\d+", selector):
+        return f"v{selector}"
+    releases = fetch_json(cfg, f"{NODE_DIST_URL}/index.json")
+    versions = [
+        str(entry.get("version", ""))
+        for entry in releases
+        if isinstance(entry, dict)
+        and re.fullmatch(r"v\d+\.\d+\.\d+", str(entry.get("version", "")))
+        and node_version_matches(str(entry.get("version", "")), selector)
+    ]
+    if not versions:
+        raise RuntimeError(f"no node release found for {cfg.node_version}")
+    return max(versions, key=node_version_key)
+
+
+def extract_node_archive(archive: Path, dest: Path) -> None:
+    """Unpacks node-<v>-linux-<arch>.tar.xz into dest without its top
+    directory. The data filter refuses links out of the tree and device
+    files, and clears setuid/setgid and group/other write bits."""
+    with tarfile.open(archive, "r:xz") as tar:
+        members = []
+        for member in tar.getmembers():
+            parts = PurePosixPath(member.name).parts
+            if len(parts) < 2:
+                continue
+            member.name = str(PurePosixPath(*parts[1:]))
+            members.append(member)
+        tar.extractall(dest, members=members, filter="data")
+
+
+def node_versions_in_use(root: Path, proc_root: str = "/proc") -> set[str]:
+    """Versions under root that a process runs, or that a mount namespace
+    (a project container's) has mounted (kept when pruning)."""
+    used: set[str] = set()
+    prefix = str(root) + "/"
+    try:
+        dev = os.stat(root).st_dev
+        device = f"{os.major(dev)}:{os.minor(dev)}"
+    except OSError:
+        device = None
+    # the mount's source path within its filesystem: .../<root name>/<version>
+    mounted = re.compile(rf"/{re.escape(root.name)}/([^/\s]+)(?:/|$)")
+    try:
+        pids = [name for name in os.listdir(proc_root) if name.isdigit()]
+    except OSError:
+        return used
+    namespaces: set[str] = set()
+    for pid in pids:
+        try:
+            exe = os.readlink(os.path.join(proc_root, pid, "exe"))
+            if exe.startswith(prefix):
+                used.add(exe[len(prefix) :].split("/", 1)[0])
+        except OSError:
+            pass
+        if device is None:
+            continue
+        try:
+            namespace = os.readlink(os.path.join(proc_root, pid, "ns", "mnt"))
+        except OSError:
+            continue
+        if namespace in namespaces:
+            continue
+        try:
+            with open(os.path.join(proc_root, pid, "mountinfo")) as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue  # (e.g. it exited) another process may show the namespace
+        namespaces.add(namespace)
+        for line in lines:
+            fields = line.split()
+            if len(fields) > 4 and fields[2] == device:
+                match = mounted.search(fields[3])
+                if match:
+                    used.add(match.group(1))
+    return used
+
+
+def install_node(cfg: BootstrapConfig, *, root: Path = NODE_ROOT) -> Path:
+    """Installs node as root under root/<version> (checked against the
+    release's SHASUMS256.txt), points root/current at it and prunes old
+    versions that no process runs. Returns the node binary."""
+    log_line(cfg, f"bootstrap: installing node {cfg.node_version} under {root}")
+    prepare_root_dir(root)
+    current = root / "current"
+    selector = node_version_selector(cfg)
+    try:
+        version = resolve_node_version(cfg)
+    except Exception as exc:
+        installed = current_node_version(root)
+        if installed and node_version_matches(installed, selector):
+            log_line(
+                cfg,
+                f"bootstrap: unable to look up node releases ({exc}); keeping {installed}",
+            )
+            return current / "bin" / "node"
+        raise
+    target = root / version
+    if not node_tree_ok(target):
+        name = f"node-{version}-linux-{node_dist_arch()}.tar.xz"
+        with tempfile.TemporaryDirectory(dir=root, prefix=".install-") as tmp:
+            archive = Path(tmp) / name
+            sums = Path(tmp) / "SHASUMS256.txt"
+            download_file(cfg, f"{NODE_DIST_URL}/{version}/{name}", str(archive))
+            download_file(cfg, f"{NODE_DIST_URL}/{version}/SHASUMS256.txt", str(sums))
+            expected = next(
+                (
+                    line.split()[0]
+                    for line in sums.read_text(encoding="utf-8").splitlines()
+                    if line.split()[1:] == [name]
+                ),
+                None,
+            )
+            if not expected:
+                raise RuntimeError(f"no checksum for {name} in SHASUMS256.txt")
+            verify_sha256(cfg, str(archive), expected)
+            staging = Path(tmp) / "node"
+            staging.mkdir()
+            extract_node_archive(archive, staging)
+            if not (staging / "bin" / "node").is_file():
+                raise RuntimeError(f"{name} has no bin/node")
+            for dirpath, _dirnames, filenames in os.walk(staging):
+                for entry in [dirpath, *(os.path.join(dirpath, f) for f in filenames)]:
+                    chown_root(entry)
+            os.chmod(staging, 0o755)
+            if not root_owned_tree(staging):
+                raise RuntimeError(f"{name} did not unpack as a root-owned tree")
+            # Only now that the replacement is ready: move a tree we can't
+            # trust out of the way rather than deleting it, since project
+            # containers may have it mounted (removed once nothing uses it).
+            if target.is_symlink() or target.is_file():
+                target.unlink()
+            elif target.exists():
+                log_line(cfg, f"bootstrap: replacing {target}: not entirely root-owned")
+                os.rename(target, root / f".replaced-{version}-{time.time_ns()}")
+            os.rename(staging, target)
+    link = root / f".current-{os.getpid()}"
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    os.symlink(version, link)
+    os.replace(link, current)
+    in_use = node_versions_in_use(root) | {version}
+    versions = sorted(
+        (
+            entry.name
+            for entry in root.iterdir()
+            if entry.is_dir()
+            and not entry.is_symlink()
+            and re.fullmatch(r"v\d+\.\d+\.\d+", entry.name)
+        ),
+        key=node_version_key,
+        reverse=True,
+    )
+    for old in versions[NODE_KEEP_VERSIONS:]:
+        if old not in in_use:
+            log_line(cfg, f"bootstrap: removing node {old}")
+            shutil.rmtree(root / old, ignore_errors=True)
+    for entry in root.iterdir():
+        if entry.name.startswith(".replaced-") and entry.name not in in_use:
+            log_line(cfg, f"bootstrap: removing replaced node tree {entry.name}")
+            shutil.rmtree(entry, ignore_errors=True)
+    return current / "bin" / "node"
+
+
+def install_node_runtime_libs(
+    cfg: BootstrapConfig,
+    *,
+    root: Path = NODE_RUNTIME_LIBS_ROOT,
+    candidates: tuple[str, ...] = HOST_LIBATOMIC_CANDIDATES,
+) -> None:
+    """Publishes the host's libatomic.so.1 (node needs it in older project
+    images) as a root-owned file; project-host mounts the directory."""
+    source = next((c for c in candidates if os.path.isfile(c)), None)
+    if source is None:
+        log_line(cfg, "bootstrap: libatomic.so.1 not found; skipping node runtime libs")
+        return
+    prepare_root_dir(root)
+    target = root / "libatomic.so.1"
+    data = Path(source).read_bytes()
+    try:
+        st = os.lstat(target)
+    except OSError:
+        st = None
+    if (
+        st is not None
+        and stat.S_ISREG(st.st_mode)
+        and st.st_uid == ROOT_UID
+        and st.st_mode & 0o7777 == 0o644
+        and st.st_nlink == 1
+        and target.read_bytes() == data
+    ):
+        # Current and only ever writable by root: keep this inode. Anything
+        # else gets a new inode even with equal bytes, since a process that
+        # opened the old one for writing would keep that descriptor.
+        return
+    if target.is_dir() and not target.is_symlink():
+        shutil.rmtree(target)
+    # Never rewrite the published file in place: running processes may map
+    # it. os.replace also replaces a symlink rather than following it.
+    staged = root / f".libatomic.so.1.{os.getpid()}"
+    staged.write_bytes(data)
+    chown_root(staged)
+    os.chmod(staged, 0o644)
+    os.replace(staged, target)
+    log_line(cfg, f"bootstrap: published {source} as {target}")
 
 
 def configure_node_bind_service_capability(cfg: BootstrapConfig) -> None:
@@ -12661,26 +15859,9 @@ def configure_node_bind_service_capability(cfg: BootstrapConfig) -> None:
         raise RuntimeError(
             "setcap is required for the unprivileged project-host HTTPS listener"
         )
-    nvm_dir = Path(runtime_home(cfg)) / ".nvm"
-    result = run_cmd(
-        cfg,
-        [
-            "bash",
-            "-lc",
-            f'export NVM_DIR="{nvm_dir}"; . "$NVM_DIR/nvm.sh"; nvm which default',
-        ],
-        "resolve project-host node binary",
-        as_user=cfg.ssh_user,
-    )
-    output_lines = [line.strip() for line in (result.stdout or "").splitlines()]
-    node_path = Path(output_lines[-1]).resolve() if output_lines else None
-    versions_root = (nvm_dir / "versions" / "node").resolve()
-    if (
-        node_path is None
-        or not node_path.is_file()
-        or not node_path.is_relative_to(versions_root)
-    ):
-        raise RuntimeError("unable to resolve the project-host nvm node binary")
+    node_path = (NODE_ROOT / "current" / "bin" / "node").resolve()
+    if not node_path.is_file() or not node_path.is_relative_to(NODE_ROOT.resolve()):
+        raise RuntimeError("unable to resolve the project-host node binary")
     run_cmd(
         cfg,
         ["setcap", "cap_net_bind_service=+ep", str(node_path)],
@@ -12698,25 +15879,30 @@ def write_wrapper(cfg: BootstrapConfig) -> None:
     bundle_entry = f"{bundle_root}/bundle/index.js"
     runtime_home_dir = runtime_home(cfg)
     node_glob = f'$NVM_DIR/versions/node/v{cfg.node_version}*/bin/node'
+    root_node = NODE_ROOT / "current" / "bin" / "node"
     wrapper = f"""#!/usr/bin/env bash
 set -euo pipefail
-RUNTIME_HOME="{runtime_home_dir}"
-export NVM_DIR="$RUNTIME_HOME/.nvm"
-if [ -s "$NVM_DIR/nvm.sh" ]; then
-  . "$NVM_DIR/nvm.sh"
-  nvm use --silent default >/dev/null 2>&1 || true
-fi
-if command -v node >/dev/null 2>&1; then
-  NODE_BIN="$(command -v node)"
-else
-  shopt -s nullglob
-  NODE_CANDIDATES=( {node_glob} )
-  shopt -u nullglob
-  if [ "${{#NODE_CANDIDATES[@]}}" -gt 0 ] && [ -x "${{NODE_CANDIDATES[0]}}" ]; then
-    NODE_BIN="${{NODE_CANDIDATES[0]}}"
+# Node installed and owned by root (bootstrap); nvm only as a fallback.
+NODE_BIN="{root_node}"
+if [ ! -x "$NODE_BIN" ]; then
+  RUNTIME_HOME="{runtime_home_dir}"
+  export NVM_DIR="$RUNTIME_HOME/.nvm"
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    . "$NVM_DIR/nvm.sh"
+    nvm use --silent default >/dev/null 2>&1 || true
+  fi
+  if command -v node >/dev/null 2>&1; then
+    NODE_BIN="$(command -v node)"
   else
-    echo "node not found for project-host wrapper (looked in PATH and {node_glob})" >&2
-    exit 127
+    shopt -s nullglob
+    NODE_CANDIDATES=( {node_glob} )
+    shopt -u nullglob
+    if [ "${{#NODE_CANDIDATES[@]}}" -gt 0 ] && [ -x "${{NODE_CANDIDATES[0]}}" ]; then
+      NODE_BIN="${{NODE_CANDIDATES[0]}}"
+    else
+      echo "node not found for project-host wrapper (looked in {root_node}, PATH and {node_glob})" >&2
+      exit 127
+    fi
   fi
 fi
 # project-host serves every project's filesystem API from one process on the
@@ -14956,6 +18142,18 @@ def project_host_restart_fingerprint(cfg: BootstrapConfig) -> dict[str, str]:
                 os.path.realpath(bundle.current) if bundle.current else ""
             )
     parts["node"] = f"{cfg.node_version}"
+    # the release current points at (a selector like "26" moves with patches)
+    current_node = NODE_ROOT / "current"
+    parts["node_current"] = (
+        os.path.realpath(current_node) if os.path.lexists(current_node) else "missing"
+    )
+    # and which file it is: a reinstall of the same version (a repaired tree)
+    # is a new inode
+    try:
+        info = os.stat(current_node / "bin" / "node")
+        parts["node_binary"] = f"{info.st_dev}:{info.st_ino}:{info.st_mtime_ns}:{info.st_size}"
+    except OSError:
+        parts["node_binary"] = "missing"
     bin_dir = project_host_runtime_root(cfg) / "bin"
     try:
         for entry in sorted(bin_dir.iterdir()):
@@ -15155,6 +18353,8 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         ensure_bootstrap_paths(cfg)
         ensure_automatic_security_updates(cfg)
         configure_daily_root_cleanup(cfg)
+        configure_host_integrity_watch(cfg)
+        configure_btrfs_scrub(cfg)
         configure_kernel_module_hardening(cfg)
         configure_kernel_sysctl_hardening(cfg)
         configure_kernel_key_limits(cfg)
@@ -15185,6 +18385,7 @@ def run_reconcile(cfg: BootstrapConfig, restart_if_changed: bool = False) -> int
         install_privileged_tool_binaries(cfg, tools_bundle)
         report_bootstrap_status(cfg, "running", "Installing runtime tools")
         install_node(cfg)
+        install_node_runtime_libs(cfg)
         configure_node_bind_service_capability(cfg)
         write_wrapper(cfg)
         write_helpers(cfg)
@@ -15242,6 +18443,8 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         ensure_bootstrap_paths(cfg)
         configure_rsyslog_limits(cfg)
         configure_daily_root_cleanup(cfg)
+        configure_host_integrity_watch(cfg)
+        configure_btrfs_scrub(cfg)
         configure_kernel_sysctl_hardening(cfg)
         install_privileged_wrappers(cfg)
         install_privileged_tool_binaries(cfg)

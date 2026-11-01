@@ -155,6 +155,7 @@ const PROJECT_BUNDLE_ENTRY_CANDIDATES = [
   ["bundle", "bundle", "index.js"],
 ] as const;
 const DEFAULT_PROJECT_BUNDLES_ROOT = "/opt/cocalc/project-bundles";
+const PUBLISHED_NODE_RUNTIME_COMPAT_LIBS_ROOT = "/opt/cocalc/runtime-libs";
 const DEFAULT_NODE_RUNTIME_COMPAT_LIBS_ROOT = join(
   tmpdir(),
   "cocalc-node-runtime-libs",
@@ -1690,6 +1691,16 @@ async function findHostLibatomic(): Promise<string | undefined> {
   return undefined;
 }
 
+// True if both files exist with the same bytes (small libraries only).
+async function sameContents(a: string, b: string): Promise<boolean> {
+  try {
+    const [left, right] = await Promise.all([readFile(a), readFile(b)]);
+    return left.equals(right);
+  } catch {
+    return false;
+  }
+}
+
 async function prepareNodeRuntimeCompatLibs(): Promise<
   { source: string; target: string } | undefined
 > {
@@ -1699,6 +1710,13 @@ async function prepareNodeRuntimeCompatLibs(): Promise<
       "Node runtime compatibility library libatomic.so.1 not found on host; older project RootFS images may fail before bootstrap",
     );
     return undefined;
+  }
+  // Host bootstrap publishes a root-owned copy: use it when it is current.
+  const published =
+    `${process.env.COCALC_NODE_RUNTIME_PUBLISHED_LIBS ?? ""}`.trim() ||
+    PUBLISHED_NODE_RUNTIME_COMPAT_LIBS_ROOT;
+  if (await sameContents(libatomic, join(published, "libatomic.so.1"))) {
+    return { source: published, target: COCALC_RUNTIME_LIB };
   }
   const root =
     `${process.env.COCALC_NODE_RUNTIME_COMPAT_LIBS ?? ""}`.trim() ||

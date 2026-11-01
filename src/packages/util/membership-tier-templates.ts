@@ -35,7 +35,6 @@ const BASE_TIER_TEMPLATES = {
     features: {
       create_hosts: true,
       project_host_tier: 10,
-      private_app_hostnames_per_project: 30,
     },
     usage_limits: {
       max_projects: 1000,
@@ -161,7 +160,6 @@ const BASE_TIER_TEMPLATES = {
     features: {
       create_hosts: false,
       project_host_tier: 0,
-      private_app_hostnames_per_project: 2,
     },
     usage_limits: {
       shared_compute_priority: 1,
@@ -285,7 +283,6 @@ const BASE_TIER_TEMPLATES = {
     features: {
       create_hosts: false,
       project_host_tier: 0,
-      private_app_hostnames_per_project: 0,
     },
     usage_limits: {
       shared_compute_priority: 0,
@@ -417,7 +414,6 @@ const BASE_TIER_TEMPLATES = {
     features: {
       create_hosts: true,
       project_host_tier: 1,
-      private_app_hostnames_per_project: 5,
     },
     usage_limits: {
       shared_compute_priority: 2,
@@ -551,7 +547,6 @@ const BASE_TIER_TEMPLATES = {
     features: {
       create_hosts: true,
       project_host_tier: 1,
-      private_app_hostnames_per_project: 5,
     },
     usage_limits: {
       max_projects: 20,
@@ -671,7 +666,6 @@ const BASE_TIER_TEMPLATES = {
     features: {
       create_hosts: true,
       project_host_tier: 2,
-      private_app_hostnames_per_project: 30,
     },
     usage_limits: {
       shared_compute_priority: 4,
@@ -804,7 +798,6 @@ const BASE_TIER_TEMPLATES = {
     features: {
       create_hosts: false,
       project_host_tier: 1,
-      private_app_hostnames_per_project: 2,
     },
     usage_limits: {
       shared_compute_priority: 1,

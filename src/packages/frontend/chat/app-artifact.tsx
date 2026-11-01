@@ -19,7 +19,10 @@ import {
 } from "react";
 import type { ArtifactApp } from "@cocalc/chat";
 import type { AppSpec } from "@cocalc/conat/project/api/apps";
-import { getProjectAppOpenUrl } from "@cocalc/frontend/project/app-server-open";
+import {
+  appRunsAtRoot,
+  getProjectAppOpenUrl,
+} from "@cocalc/frontend/project/app-server-open";
 import { APP_CARD_FRAME_SANDBOX, useAppFrameSrc } from "./app-frame-src";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -78,7 +81,7 @@ export function AppArtifact(props: AppArtifactProps) {
 
 // The apps known to run, by project and app id: showing one again (another
 // tab or frame was in front) is instant, while it is checked meanwhile.
-const RUNNING = new Map<string, { url?: string }>();
+const RUNNING = new Map<string, { url?: string; root?: boolean }>();
 
 /**
  * Start the project and the app (unless the user shut it down), and say
@@ -97,7 +100,7 @@ function useRunningApp({
   isSharedBrowser: boolean;
   wantUrl: boolean;
 }) {
-  const [running, setRunning] = useState<{ url?: string }>();
+  const [running, setRunning] = useState<{ url?: string; root?: boolean }>();
   const [step, setStep] = useState<BrowserStartStep>("browser");
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
@@ -199,10 +202,11 @@ function useRunningApp({
           })) ?? undefined;
         if (!url) throw Error(`The app "${app.id}" started but has no URL.`);
       }
-      RUNNING.set(cacheKey, { url });
+      const root = appRunsAtRoot(status);
+      RUNNING.set(cacheKey, { url, root });
       if (!canceled) {
         setStep("connecting");
-        setRunning({ url });
+        setRunning({ url, root });
       }
     })().catch((err) => {
       if (!canceled) setError(`${err?.message ?? err}`);
@@ -405,6 +409,7 @@ function ProjectAppFrame({
     projectId,
     appId: app.id,
     hostUrl: run.running?.url,
+    root: run.running?.root === true,
   });
   if (run.stopped) return <Stopped title={title} onStart={run.start} />;
   if (run.error)
