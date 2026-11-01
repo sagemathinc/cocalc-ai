@@ -50,6 +50,11 @@ cocalc agent status [reviewer]                 # what peers are doing, how their
 - The message header says whether the sender is in your project. A path in a
   message from a different project names a file in that project, not yours;
   `agent destinations` shows the same thing as `same_project`.
+- `agent destinations` and `agent status` show each peer's `runtime` (Codex,
+  Claude Code, ...) and, once its host has reported them, its `model` and
+  `effort` (thinking level): what its runtime said it ran with on its latest
+  turn. They are absent when unknown; don't guess a model from a name. Your
+  own are in `agent whoami` under `runtime`.
 - These commands use the turn's runtime agent identity, never account
   credentials. If no network includes the peer, say so; agents cannot create
   networks themselves. `cocalc project chat agent ...` and
