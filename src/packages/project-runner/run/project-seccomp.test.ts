@@ -106,6 +106,13 @@ describe("project seccomp profile content", () => {
     expect(socketcall[0]).toMatchObject({ action: "SCMP_ACT_ERRNO", errnoRet: 1 });
   });
 
+  it("filters the native ABI only: 32-bit system calls hit the bad-arch action", () => {
+    for (const entry of (profile as { archMap: { subArchitectures: string[] }[] })
+      .archMap) {
+      expect(entry.subArchitectures).toEqual([]);
+    }
+  });
+
   it("does not allow io_uring", () => {
     for (const rule of rules) {
       if (rule.action === "SCMP_ACT_ALLOW") {
