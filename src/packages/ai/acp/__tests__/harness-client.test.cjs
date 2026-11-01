@@ -1884,6 +1884,18 @@ test("Claude's Agent tool calls become subagent events; subagent text stays out 
   );
 });
 
+test("a failed turn doesn't leave its Claude subagents working", async (t) => {
+  const { agent, request, events } = adapter(t);
+  await assert.rejects(agent.evaluate({ ...request, prompt: "subagent-crash" }));
+  const states = events
+    .filter((event) => event.event?.type === "subagent")
+    .map((event) => [event.event.threadId, event.event.state]);
+  assert.deepEqual(states, [
+    ["agent-crash", "running"],
+    ["agent-crash", "unknown"],
+  ]);
+});
+
 test("agent applies admitted settings and publishes controls while retaining its process", async (t) => {
   const { agent, request, events, launches } = adapter(t, ["--config-options"]);
   const runtime = {

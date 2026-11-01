@@ -382,3 +382,39 @@ test.each([true, false])(
     expect(screen.queryByLabelText("Subagent tool call")).toBeNull();
   },
 );
+
+test("a subagent's streamed text is shown with its Agent call, not dropped", async () => {
+  const tools = recordedSubagent(true);
+  const stamp = { claudeCode: { parentToolUseId: "toolu_agent" } };
+  for (const [i, text] of ["Looking at ", "the home directory."].entries())
+    expect(
+      updateHarnessTool(
+        event({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
+          _meta: stamp,
+        }),
+        tools,
+        10 + i,
+      ),
+    ).toBeUndefined();
+  // Unstamped or orphaned chunks change nothing.
+  updateHarnessTool(
+    event({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "orphan" },
+      _meta: { claudeCode: { parentToolUseId: "missing" } },
+    }),
+    tools,
+    20,
+  );
+  const agent = tools.get("toolu_agent")!;
+  expect(agent.narration).toBe("Looking at the home directory.");
+  render(<HarnessToolRow entry={agent} />);
+  await userEvent.click(screen.getByText(/List 5 largest files in home/));
+  expect(
+    screen.getByRole("region", {
+      name: "List 5 largest files in home subagent narration",
+    }).textContent,
+  ).toBe("Looking at the home directory.");
+});

@@ -12,8 +12,10 @@ export interface HarnessToolEntry {
   title: string;
   status: string;
   output: string;
-  // A Claude Agent call: the subagent's task (rawInput.description).
+  // A Claude Agent call: the subagent's task (rawInput.description), and
+  // the text the subagent streamed, if the adapter streams it.
   task?: string;
+  narration?: string;
   // A subagent's tool call: the Agent call that ran it, and its task.
   parentId?: string;
   parentTitle?: string;
@@ -109,6 +111,19 @@ export function updateHarnessTool(
 ): HarnessToolEntry | undefined {
   if (event.type !== "harness" || event.kind !== "update") return;
   const update = event.data as any;
+  if (
+    (update?.sessionUpdate === "agent_message_chunk" ||
+      update?.sessionUpdate === "agent_thought_chunk") &&
+    update.content?.type === "text"
+  ) {
+    // A subagent's own text (kept out of the reply): shown with its Agent call.
+    const parent = tools.get(update._meta?.claudeCode?.parentToolUseId);
+    if (parent && typeof update.content.text === "string")
+      parent.narration = bounded(
+        (parent.narration ?? "") + update.content.text,
+      );
+    return;
+  }
   if (
     !["tool_call", "tool_call_update"].includes(update?.sessionUpdate) ||
     typeof update.toolCallId !== "string" ||
@@ -348,6 +363,21 @@ function ToolRow({
       >
         {entry.output || "No text output reported by this harness."}
       </pre>
+      {entry.narration && (
+        <pre
+          role="region"
+          aria-label={`${entry.title || "ACP tool"} subagent narration`}
+          tabIndex={0}
+          style={{
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            maxHeight: 320,
+            overflow: "auto",
+          }}
+        >
+          {entry.narration}
+        </pre>
+      )}
     </details>
   );
 }

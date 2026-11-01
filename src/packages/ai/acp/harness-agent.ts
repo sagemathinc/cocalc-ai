@@ -137,6 +137,8 @@ export class HarnessAgent implements AcpAgent {
     // The client funding this turn (site-funded Claude), and how it ended.
     let fundedClient: AcpHarnessClient | undefined;
     let fundedEnd: HarnessFundedTurnEnd = { status: "failed" };
+    // Claude subagents seen this turn; a failed turn still ends them.
+    const subagents = new ClaudeSubagentTracker();
     try {
       await this.validateAuthority?.(this.binding);
       // The service preserves the authoritative empty reset marker. Missing
@@ -271,7 +273,6 @@ export class HarnessAgent implements AcpAgent {
       let finalResponse = "";
       let lastMessageId: string | undefined;
       let toolBoundary = false;
-      const subagents = new ClaudeSubagentTracker();
       if (this.interrupted)
         throw new HarnessError(
           "rejected",
@@ -462,6 +463,15 @@ export class HarnessAgent implements AcpAgent {
       });
       fundedEnd = { status: "committed" };
     } catch (error) {
+      // Subagents the turn started must not stay "working" after it failed.
+      for (const subagent of subagents.finish(
+        this.interrupted ? "cancelled" : undefined,
+      ))
+        try {
+          await request.stream({ type: "event", event: subagent });
+        } catch {
+          // best effort: the turn is failing anyway
+        }
       fundedEnd = this.interrupted
         ? { status: "interrupted" }
         : {

@@ -513,6 +513,24 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         update("Tool activity completed.");
         return result(message.id, { stopReason: "end_turn" });
       }
+      if (text === "subagent-crash") {
+        // An Agent call starts, then the adapter dies mid-turn.
+        send({
+          method: "session/update",
+          params: {
+            sessionId: "fixture-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "agent-crash",
+              title: "Task",
+              kind: "think",
+              status: "pending",
+              _meta: { claudeCode: { toolName: "Agent" } },
+            },
+          },
+        });
+        return setTimeout(() => process.exit(2), 50);
+      }
       if (text === "subagents") {
         // The shape claude-agent-acp 0.93 sends for an Agent (subagent) tool
         // call, recorded on staging2: the launch, its description, a child
