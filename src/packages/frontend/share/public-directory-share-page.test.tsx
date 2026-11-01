@@ -15,6 +15,7 @@ const mockUseTypedRedux = jest.fn();
 const mockProjectPage = jest.fn();
 const mockEnsureRuntime = jest.fn();
 const mockGrantAccess = jest.fn();
+const mockListDirectory = jest.fn();
 const mockRegisterRouting = jest.fn();
 const mockSetProjectState = jest.fn();
 
@@ -45,6 +46,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         publicDirectoryShares: {
           grantTemporaryViewerAccess: (...args: unknown[]) =>
             mockGrantAccess(...args),
+          listDirectory: (...args: unknown[]) => mockListDirectory(...args),
         },
       },
       registerPublicDirectoryShareRouting: (...args: unknown[]) =>
@@ -110,6 +112,9 @@ beforeEach(() => {
     path_type: "file",
     read_policy: { rules: [{ action: "include", path: "a.chat" }] },
   });
+  mockListDirectory
+    .mockReset()
+    .mockRejectedValue(new Error("ENOTDIR: not a directory"));
   mockRegisterRouting.mockReset();
   mockSetProjectState.mockReset();
   mockUseActions.mockReturnValue({
@@ -201,4 +206,92 @@ it("does not register a canceled share when runtime loading finishes", async () 
   expect(mockRegisterRouting).not.toHaveBeenCalled();
   expect(mockSetProjectState).not.toHaveBeenCalled();
   expect(mockProjectPage).not.toHaveBeenCalled();
+});
+
+describe("a migrated share whose cocalc.com link went elsewhere", () => {
+  const SOURCE = "press/book-1/code3";
+  const TARGET_SLUG = "press/book-1/code";
+  const TARGET = `${TARGET_SLUG}/chapter-03.ipynb`;
+  const grants: Record<string, object> = {
+    [SOURCE]: {
+      project_id: "source-project",
+      share_id: "source-share",
+      path: "chapter-03.ipynb",
+      path_type: "file",
+      read_policy: { rules: [] },
+      redirect_path: TARGET,
+    },
+    [TARGET_SLUG]: {
+      project_id: "target-project",
+      share_id: "target-share",
+      path: "code",
+      path_type: "directory",
+      read_policy: { rules: [] },
+    },
+  };
+
+  function grantBySlug(overrides: Record<string, object> = {}) {
+    mockGrantAccess.mockImplementation(async ({ slug }: { slug: string }) => {
+      const grant = overrides[slug] ?? grants[slug];
+      if (!grant) throw Error("public directory share not found");
+      return grant;
+    });
+  }
+
+  async function openedShare() {
+    await screen.findByRole("region", { name: "Project workspace" });
+    return mockProjectPage.mock.calls.at(-1)[0];
+  }
+
+  it("opens the redirect's path, inside the share that contains it", async () => {
+    signedInAccount();
+    grantBySlug();
+    render(<PublicDirectorySharePage slug={SOURCE} />);
+
+    const props = await openedShare();
+    expect(props.project_id).toBe("target-project");
+    expect(props.publicDirectoryShare).toEqual(
+      expect.objectContaining({ id: "target-share", slug: TARGET_SLUG }),
+    );
+    expect(props.publicDirectorySharePath).toBe("chapter-03.ipynb");
+  });
+
+  it("follows only one hop", async () => {
+    signedInAccount();
+    grantBySlug({
+      [TARGET_SLUG]: { ...grants[TARGET_SLUG], redirect_path: SOURCE },
+    });
+    render(<PublicDirectorySharePage slug={SOURCE} />);
+
+    expect((await openedShare()).project_id).toBe("target-project");
+    expect(
+      mockGrantAccess.mock.calls.filter(([{ slug }]) => slug === SOURCE),
+    ).toHaveLength(1);
+  });
+
+  it("shows the share itself when the redirect's target can't be opened", async () => {
+    signedInAccount();
+    mockGrantAccess.mockImplementation(async ({ slug }: { slug: string }) => {
+      if (slug === SOURCE) return grants[SOURCE];
+      throw Error("public directory share not found");
+    });
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    render(<PublicDirectorySharePage slug={SOURCE} />);
+
+    const props = await openedShare();
+    expect(props.project_id).toBe("source-project");
+    expect(props.publicDirectoryShare.slug).toBe(SOURCE);
+  });
+
+  it("does not redirect paths below the share", async () => {
+    signedInAccount();
+    grantBySlug({
+      [SOURCE]: { ...grants[SOURCE], path: "dir", path_type: "directory" },
+    });
+    render(<PublicDirectorySharePage slug={`${SOURCE}/notes.md`} />);
+
+    const props = await openedShare();
+    expect(props.project_id).toBe("source-project");
+    expect(props.publicDirectorySharePath).toBe("notes.md");
+  });
 });

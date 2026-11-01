@@ -124,61 +124,19 @@ describe("legacy public share redirects", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  describe("a migrated share's cocalc.com redirect", () => {
-    const SOURCE = "press/book-1/code3";
-    const TARGET = "press/book-1/code/files/chapter-03.ipynb";
-    // Like the cluster resolver: the exact share follows its redirect, a path
-    // below it does not.
-    const clusterResolve = () =>
-      jest.fn(async ({ path }: { path: string }) => {
-        const p = path.replace(/^share\//, "");
-        return p === SOURCE ? { path: TARGET, redirected: true } : { path: p };
-      });
-
-    it("redirects an exact /share/<slug> link, as old cocalc.com links arrive", async () => {
-      const resolve = clusterResolve();
-      const response = await request({
-        path: `/share/${SOURCE}?x=1`,
-        resolve,
-      });
-      expect(resolve).toHaveBeenCalledWith({ path: SOURCE });
-      expect(response.status).toBe(302);
-      expect(response.headers.get("location")).toBe(`/share/${TARGET}?x=1`);
-      expect(response.headers.get("x-cocalc-legacy-redirect")).toBe(
-        "share-redirect",
-      );
+  it("sends /legacy/share/<slug> of a migrated share to where its cocalc.com link went", async () => {
+    const resolve = jest.fn(async () => ({
+      path: "press/book-1/code/files/chapter-03.ipynb",
+      redirected: true,
+    }));
+    const response = await request({
+      path: "/legacy/share/press/book-1/code3",
+      resolve,
     });
-
-    it("leaves paths below the share and other shares to the share page", async () => {
-      for (const path of [
-        `/share/${SOURCE}/files/x.ipynb`,
-        "/share/someone/another-share",
-      ]) {
-        const response = await request({ path, resolve: clusterResolve() });
-        // no route in this test app: the request fell through
-        expect(response.status).toBe(404);
-      }
-    });
-
-    it("falls through when the lookup fails", async () => {
-      const response = await request({
-        path: `/share/${SOURCE}`,
-        resolve: jest.fn(async () => {
-          throw Error("directory unavailable");
-        }),
-      });
-      expect(response.status).toBe(404);
-    });
-
-    it("redirects the /legacy/share/<slug> form to the same place", async () => {
-      const resolve = clusterResolve();
-      const response = await request({
-        path: `/legacy/share/${SOURCE}`,
-        resolve,
-      });
-      expect(resolve).toHaveBeenCalledWith({ path: `share/${SOURCE}` });
-      expect(response.status).toBe(302);
-      expect(response.headers.get("location")).toBe(`/share/${TARGET}`);
-    });
+    expect(resolve).toHaveBeenCalledWith({ path: "share/press/book-1/code3" });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(
+      "/share/press/book-1/code/files/chapter-03.ipynb",
+    );
   });
 });

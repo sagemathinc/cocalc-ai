@@ -716,6 +716,15 @@ describe("public directory temporary viewer grants", () => {
         path: "press/book-1/code3/files/x.ipynb",
       }),
     ).resolves.toEqual({ path: "press/book-1/code3/files/x.ipynb" });
+    // the share page gets it with the share
+    await expect(
+      grantTemporaryViewerAccess({
+        account_id: ACCOUNT_ID,
+        slug: fileShare.slug,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({ redirect_path: expected.redirect_path }),
+    );
 
     // a redirect to another site, or a malformed one, is not reported
     for (const redirect of [
@@ -729,6 +738,12 @@ describe("public directory temporary viewer grants", () => {
       await expect(
         resolveLegacyPublicDirectorySharePath({ path: "press/book-1/code3" }),
       ).resolves.toEqual({ path: "press/book-1/code3" });
+      await expect(
+        grantTemporaryViewerAccess({
+          account_id: ACCOUNT_ID,
+          slug: fileShare.slug,
+        }),
+      ).resolves.toEqual(expect.objectContaining({ redirect_path: null }));
     }
   });
 

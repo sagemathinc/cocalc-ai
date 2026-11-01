@@ -366,6 +366,9 @@ export interface GrantTemporaryViewerAccessResponse {
   host_id?: string | null;
   host_connection?: ResolvedPublicDirectoryShare["host_connection"];
   owning_bay_id?: string | null;
+  // Share path named by a migrated share's cocalc.com redirect, if any; the
+  // share page follows it once when this exact share is opened.
+  redirect_path?: string | null;
 }
 
 export interface GetTemporaryViewerReadPolicyOptions {

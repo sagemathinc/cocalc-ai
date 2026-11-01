@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { NextFunction, Request, Response, Router } from "express";
+import type { Request, Response, Router } from "express";
 
 import basePath from "@cocalc/backend/base-path";
 import { getLogger } from "@cocalc/hub/logger";
@@ -48,43 +48,6 @@ export default function init(
     resolve = resolveLegacyPublicDirectorySharePath,
   }: { resolve?: LegacyPathResolver } = {},
 ): void {
-  // cocalc.com sends old share links straight to /share/<path>.  When that
-  // path is exactly a migrated share whose cocalc.com link went elsewhere,
-  // go there too; everything else is the share page as usual.
-  router.get(
-    /^\/share\/.+$/,
-    async (req: Request, res: Response, next: NextFunction) => {
-      let segments: string[];
-      try {
-        segments = decodedPathSegments(req.path.slice("/share".length));
-      } catch {
-        next();
-        return;
-      }
-      let resolved: Awaited<ReturnType<LegacyPathResolver>> = null;
-      try {
-        resolved = await resolve({ path: segments.join("/") });
-      } catch (err) {
-        logger.warn("public share redirect lookup failed", {
-          path: segments.join("/"),
-          err: `${(err as Error | undefined)?.message ?? err}`,
-        });
-      }
-      if (resolved?.redirected) {
-        res.setHeader("Cache-Control", "no-store");
-        res.setHeader("X-CoCalc-Legacy-Redirect", "share-redirect");
-        res.redirect(
-          302,
-          redirectTarget(
-            joinUrlPath("share", encodedPath(resolved.path.split("/"))),
-          ) + requestSearch(req),
-        );
-        return;
-      }
-      next();
-    },
-  );
-
   router.get(/^\/legacy(?:\/.*)?$/, async (req: Request, res: Response) => {
     const pathAfterLegacy = req.path.slice("/legacy".length);
     let segments: string[];

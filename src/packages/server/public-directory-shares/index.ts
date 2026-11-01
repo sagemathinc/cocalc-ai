@@ -1755,6 +1755,7 @@ export async function grantTemporaryViewerAccess({
     host_id: share.host_id,
     host_connection: share.host_connection,
     owning_bay_id: share.owning_bay_id,
+    redirect_path: legacyShareRedirectPath(share.redirect) ?? null,
   };
 }
 
