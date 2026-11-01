@@ -6,7 +6,6 @@
     "rootDir": "./",
     "outDir": "dist"
   },
-  "include": ["**/*", "run/seccomp/cocalc-project-seccomp.json"],
   "exclude": [
     "node_modules",
     "dist",

@@ -76,6 +76,17 @@ class GeneratorTest(unittest.TestCase):
         del expected["comment"]
         self.assertEqual(regenerated, expected)
 
+    def test_bytes_module_carries_the_exact_file_bytes(self):
+        raw = (HERE / "cocalc-project-seccomp.json").read_bytes()
+        self.assertEqual((HERE / "profile-bytes.ts").read_text(), gen.bytes_module(raw))
+        self.assertEqual(json.dumps(json.loads(raw), indent=1).encode() + b"\n", raw)
+
+    def test_profile_numbers_are_integers(self):
+        def no_float(text):
+            raise AssertionError(f"non-integer number {text} in the profile")
+        json.loads((HERE / "cocalc-project-seccomp.json").read_bytes(),
+                   parse_float=no_float, parse_constant=no_float)
+
     def test_base_fingerprint_is_enforced(self):
         gen.check_base(BASE)
         for mutate in (
