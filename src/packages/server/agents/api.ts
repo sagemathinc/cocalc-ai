@@ -226,7 +226,7 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
           await sql.query(
             `SELECT * FROM agent_identities
              WHERE project_id=$1 AND path=$2 AND thread_id=$3
-               AND disabled_at IS NULL`,
+               AND disabled_at IS NULL FOR UPDATE`,
             [opts.project_id, path, opts.thread_id],
           )
         ).rows[0];
@@ -731,14 +731,26 @@ export const reportRuntime: AgentApi["reportRuntime"] = async (opts) => {
   const db = agentStore();
   const agent = await db.find(opts.project_id, opts.path, opts.thread_id);
   if (!agent) return;
-  const runtime = mergeAgentRuntime(
-    parseAgentRuntimeSummary(agent.runtime),
-    reported,
-  );
-  if (sameAgentRuntime(agent.runtime, runtime)) return;
-  await db.query(
-    "UPDATE agent_identities SET runtime=$2::jsonb WHERE agent_id=$1",
-    [agent.agent_id, JSON.stringify(runtime)],
-  );
-  void notifyIdentityWatchers(agent.agent_id);
+  // Merged under the row lock: a host's kind-only report (made when it
+  // admits a turn) racing its first model report must not erase the model.
+  const changed = await db.transaction(async (sql) => {
+    const current = (
+      await sql.query(
+        "SELECT runtime FROM agent_identities WHERE agent_id=$1 FOR UPDATE",
+        [agent.agent_id],
+      )
+    ).rows[0];
+    if (!current) return false;
+    const runtime = mergeAgentRuntime(
+      parseAgentRuntimeSummary(current.runtime),
+      reported,
+    );
+    if (sameAgentRuntime(current.runtime, runtime)) return false;
+    await sql.query(
+      "UPDATE agent_identities SET runtime=$2::jsonb WHERE agent_id=$1",
+      [agent.agent_id, JSON.stringify(runtime)],
+    );
+    return true;
+  });
+  if (changed) void notifyIdentityWatchers(agent.agent_id);
 };

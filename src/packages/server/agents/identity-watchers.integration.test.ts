@@ -32,6 +32,7 @@ import {
   watchIdentity,
 } from "./identity-watchers";
 import { credentialUpdatedAt, reportRuntime, reportStatus } from "./api";
+import { AgentStore } from "./store";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -227,6 +228,58 @@ describeDb("agent identity watchers", () => {
     // A different runtime says nothing about the old model.
     await reportRuntime({ ...report, runtime: { kind: "codex" } });
     expect(await runtimeNow()).toEqual({ kind: "codex" });
+  });
+
+  test("a kind-only report racing the first model report never erases it", async () => {
+    const report = {
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+    };
+    const opus = { kind: "claude-code" as const, model: "opus" };
+    // The agent's first turns on this runtime: nothing known yet (it ran
+    // Codex before), so the late kind-only report would write.
+    await getPool().query(
+      "UPDATE agent_identities SET runtime=$2::jsonb WHERE agent_id=$1",
+      [agent_id, JSON.stringify({ kind: "codex", model: "gpt-6-luna" })],
+    );
+    // Force the overlap: the kind-only report has read the identity (still
+    // without a model) and is held there until the model report is stored.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let readIt!: () => void;
+    const hasRead = new Promise<void>((resolve) => (readIt = resolve));
+    const find = AgentStore.prototype.find;
+    const spy = jest
+      .spyOn(AgentStore.prototype, "find")
+      .mockImplementationOnce(async function (this: AgentStore, ...args) {
+        const found = await find.apply(this, args);
+        readIt();
+        await held;
+        return found;
+      });
+    try {
+      const kindOnly = reportRuntime({
+        ...report,
+        runtime: { kind: "claude-code" },
+      });
+      await hasRead;
+      await reportRuntime({ ...report, runtime: opus });
+      release();
+      await kindOnly;
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      (
+        await getPool().query(
+          "SELECT runtime FROM agent_identities WHERE agent_id=$1",
+          [agent_id],
+        )
+      ).rows[0].runtime,
+    ).toEqual(opus);
   });
 
   test("credentialUpdatedAt: when the account signed in again, nothing else", async () => {

@@ -95,9 +95,19 @@ export function reportAgentModelFromEvent(
   const acp = request.runtime?.kind === "acp";
   let model: Pick<AgentRuntimeSummary, "model" | "model_name" | "effort">;
   if (event.type === "config" && !acp) model = agentModelFromCodex(event);
-  else if (event.type === "harness" && event.kind === "controls" && acp)
-    model = agentModelFromHarness({ controls: event.data });
-  else return;
+  else if (event.type === "harness" && event.kind === "controls" && acp) {
+    // The harness publishes { profile, controls }; controls of another
+    // profile than this turn's runtime say nothing about it.
+    const data = event.data as { profile?: any; controls?: unknown };
+    const profile = request.runtime?.profile;
+    if (
+      !profile ||
+      data?.profile?.id !== profile.id ||
+      data?.profile?.version !== profile.version
+    )
+      return;
+    model = agentModelFromHarness({ controls: data.controls });
+  } else return;
   if (!model.model) return;
   const where = conversation(request);
   if (!where) return;

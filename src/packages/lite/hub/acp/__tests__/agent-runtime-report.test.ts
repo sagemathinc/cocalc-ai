@@ -75,30 +75,38 @@ const CLAUDE = {
   profile: { version: 2, id: "claude-code" },
 };
 
-const controls = (model: string, effort = "high") => ({
+// As the harness publishes it (ai/acp/harness-agent.ts publishControls).
+const controls = (
+  model: string,
+  effort = "high",
+  profile: any = CLAUDE.profile,
+) => ({
   type: "event",
   event: {
     type: "harness",
     source: "acp",
     kind: "controls",
     data: {
-      configOptions: [
-        {
-          id: "model",
-          name: "Model",
-          currentValue: model,
-          options: [
-            { value: "opus", name: "Opus 5.5" },
-            { value: "sonnet", name: "Sonnet 5.5" },
-          ],
-        },
-        {
-          id: "effort",
-          name: "Effort",
-          currentValue: effort,
-          options: [{ value: effort, name: effort }],
-        },
-      ],
+      profile,
+      controls: {
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            currentValue: model,
+            options: [
+              { value: "opus", name: "Opus 5.5" },
+              { value: "sonnet", name: "Sonnet 5.5" },
+            ],
+          },
+          {
+            id: "effort",
+            name: "Effort",
+            currentValue: effort,
+            options: [{ value: effort, name: effort }],
+          },
+        ],
+      },
     },
   },
 });
@@ -165,4 +173,19 @@ test("a failed model report is sent again by the next event", async () => {
   reportAgentModelFromEvent(request(CLAUDE), controls("opus") as any);
   await settle();
   expect(report).toHaveBeenCalledTimes(2);
+});
+
+test("controls of another harness profile are not reported", async () => {
+  const report = jest.fn(async () => {});
+  setAgentRuntimeReporterForTests(report);
+  reportAgentModelFromEvent(
+    request(CLAUDE),
+    controls("opus", "high", { version: 1, id: "pi" }) as any,
+  );
+  reportAgentModelFromEvent(
+    request(CLAUDE),
+    controls("opus", "high", null) as any,
+  );
+  await settle();
+  expect(report).not.toHaveBeenCalled();
 });
