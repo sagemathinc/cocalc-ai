@@ -535,6 +535,12 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           {
             sessionUpdate: "tool_call_update",
             toolCallId: "agent-1",
+            title: "Count .conf files under /etc",
+            _meta: {},
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "agent-1",
             rawInput: {
               description: "Count .conf files under /etc",
               subagent_type: "general-purpose",

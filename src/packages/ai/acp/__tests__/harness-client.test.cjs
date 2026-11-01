@@ -1854,12 +1854,13 @@ test("Claude's Agent tool calls become subagent events; subagent text stays out 
     [
       ["agent-1", "running", "spawn"],
       ["agent-1", "running", "activity"],
+      ["agent-1", "running", "activity"],
       ["agent-1", "completed", "activity"],
     ],
   );
-  assert.equal(subagents[1].task, "Count .conf files under /etc");
   assert.equal(subagents[2].task, "Count .conf files under /etc");
-  assert.equal(subagents[2].message, "There are 43.");
+  assert.equal(subagents[3].task, "Count .conf files under /etc");
+  assert.equal(subagents[3].message, "There are 43.");
   // The child tool call keeps its parent stamp for grouping in the activity.
   const child = events.find(
     (event) =>

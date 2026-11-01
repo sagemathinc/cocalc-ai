@@ -1,5 +1,6 @@
 import type { AcpStreamEvent } from "@cocalc/conat/ai/acp/types";
 import { Typography } from "antd";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { ActivityCodeBlock, stripAnsi } from "./activity-code-block";
 
@@ -11,6 +12,8 @@ export interface HarnessToolEntry {
   title: string;
   status: string;
   output: string;
+  // A Claude Agent call: the subagent's task (rawInput.description).
+  task?: string;
   // A subagent's tool call: the Agent call that ran it, and its task.
   parentId?: string;
   parentTitle?: string;
@@ -133,10 +136,14 @@ export function updateHarnessTool(
     parentId !== update.toolCallId
   ) {
     entry.parentId = parentId;
-    entry.parentTitle = tools.get(parentId)?.title;
+    const parent = tools.get(parentId);
+    entry.parentTitle = parent?.task ?? parent?.title;
   }
   if (typeof update.title === "string")
     entry.title = bounded(update.title, 512);
+  const description = jsonObject(update.rawInput)?.description;
+  if (typeof description === "string" && description.trim())
+    entry.task = bounded(description.trim(), 512);
   if (typeof update.status === "string") {
     entry.status = ["pending", "in_progress", "completed", "failed"].includes(
       update.status,
@@ -201,7 +208,11 @@ export function HarnessToolRow(props: {
   return (
     <div
       aria-label="Subagent tool call"
-      style={{ borderLeft: "2px solid #d9d9d9", paddingLeft: 10, marginLeft: 6 }}
+      style={{
+        borderLeft: `2px solid ${UI_COLORS.border}`,
+        paddingLeft: 10,
+        marginLeft: 6,
+      }}
     >
       <Typography.Text
         type="secondary"
