@@ -135,4 +135,16 @@ describe("RootFS scan maintenance", () => {
     expect(queryMock).not.toHaveBeenCalled();
     expect(runRootfsReleaseScanMock).not.toHaveBeenCalled();
   });
+
+  it("skips scheduled scans when the site never set RootFS scanning (the default)", async () => {
+    const { runScheduledOfficialRootfsScans } =
+      await import("./scan-maintenance");
+    getServerSettingsMock.mockResolvedValue({});
+
+    const result = await runScheduledOfficialRootfsScans();
+
+    expect(result).toEqual({ scanned: 0, skipped_no_host: 0, failed: 0 });
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(runRootfsReleaseScanMock).not.toHaveBeenCalled();
+  });
 });

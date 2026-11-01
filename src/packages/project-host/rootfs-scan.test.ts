@@ -8,8 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  ROOTFS_SCAN_BACKGROUND_PREPARE_ENV,
   buildRootfsTrivyPodmanArgs,
   ensureRootfsTrivyScannerPrepared,
+  getRootfsTrivyScannerProvisioningStatus,
+  rootfsScannerBackgroundPrepareEnabled,
+  startRootfsScannerBackgroundPreparation,
   runRootfsTrivyScan,
   verifyScannerImage,
   type CommandRunner,
@@ -384,5 +388,62 @@ describe("runRootfsTrivyScan", () => {
       }),
     ).rejects.toThrow("exceeds scan limit");
     expect(runner).not.toHaveBeenCalled();
+  });
+});
+
+describe("background scanner preparation", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+    delete process.env[ROOTFS_SCAN_BACKGROUND_PREPARE_ENV];
+  });
+
+  it("is off unless the host explicitly enables it", () => {
+    expect(rootfsScannerBackgroundPrepareEnabled({})).toBe(false);
+    expect(
+      rootfsScannerBackgroundPrepareEnabled({
+        [ROOTFS_SCAN_BACKGROUND_PREPARE_ENV]: "true",
+      }),
+    ).toBe(false);
+    expect(
+      rootfsScannerBackgroundPrepareEnabled({
+        [ROOTFS_SCAN_BACKGROUND_PREPARE_ENV]: "1",
+      }),
+    ).toBe(true);
+  });
+
+  it("prepares nothing at startup or on the interval when off (the default)", () => {
+    jest.useFakeTimers();
+    const prepare = jest.fn(async () => {});
+    const stop = startRootfsScannerBackgroundPreparation({
+      intervalMs: 60_000,
+      prepare,
+    });
+    jest.advanceTimersByTime(10 * 60_000);
+    expect(prepare).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("prepares at startup and on the interval only when enabled", () => {
+    jest.useFakeTimers();
+    const prepare = jest.fn(async () => {});
+    const stop = startRootfsScannerBackgroundPreparation({
+      intervalMs: 60_000,
+      enabled: true,
+      prepare,
+    });
+    expect(prepare).toHaveBeenCalledWith({ reason: "startup" });
+    jest.advanceTimersByTime(2 * 60_000);
+    expect(prepare).toHaveBeenCalledTimes(3);
+    stop();
+    jest.advanceTimersByTime(5 * 60_000);
+    expect(prepare).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports background preparation as disabled by default, with the pinned image", () => {
+    const status = getRootfsTrivyScannerProvisioningStatus();
+    expect(status.enabled).toBe(false);
+    expect(status.scanner_image).toMatch(/@sha256:[0-9a-f]{64}$/);
+    process.env[ROOTFS_SCAN_BACKGROUND_PREPARE_ENV] = "1";
+    expect(getRootfsTrivyScannerProvisioningStatus().enabled).toBe(true);
   });
 });

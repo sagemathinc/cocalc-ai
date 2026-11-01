@@ -357,6 +357,45 @@ export function defaultRootfsTrivyScannerConfig(): {
   };
 }
 
+// Background preparation (at project-host start and on an interval) pulls
+// the scanner image and fetches its database on every host, whether or not
+// the site scans anything.  It is OFF unless this host explicitly enables it;
+// scans the bay requests (only when the site enables RootFS scanning) still
+// prepare the scanner on demand, inside the scan.
+export const ROOTFS_SCAN_BACKGROUND_PREPARE_ENV =
+  "COCALC_ROOTFS_SCAN_BACKGROUND_PREPARE";
+
+export function rootfsScannerBackgroundPrepareEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env[ROOTFS_SCAN_BACKGROUND_PREPARE_ENV] === "1";
+}
+
+// Starts background preparation if it is enabled: once now and then every
+// intervalMs.  Returns a stop function; does nothing at all when disabled.
+export function startRootfsScannerBackgroundPreparation({
+  intervalMs,
+  enabled = rootfsScannerBackgroundPrepareEnabled(),
+  prepare = prepareDefaultRootfsTrivyScanner,
+}: {
+  intervalMs: number;
+  enabled?: boolean;
+  prepare?: (opts: { reason: string }) => Promise<unknown>;
+}): () => void {
+  if (!enabled) {
+    logger.info(
+      `RootFS scanner background preparation is off (${ROOTFS_SCAN_BACKGROUND_PREPARE_ENV} is not 1); scans prepare on demand`,
+    );
+    return () => {};
+  }
+  void prepare({ reason: "startup" }).catch(() => {});
+  const timer = setInterval(() => {
+    void prepare({ reason: "interval" }).catch(() => {});
+  }, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 export function getRootfsTrivyScannerProvisioningStatus(): RootfsTrivyScannerProvisioningStatus {
   const config = defaultRootfsTrivyScannerConfig();
   const cacheMetadataPath = join(
@@ -365,7 +404,9 @@ export function getRootfsTrivyScannerProvisioningStatus(): RootfsTrivyScannerPro
   );
   const cachePresent = existsSync(cacheMetadataPath);
   return {
-    enabled: true,
+    // whether this host prepares the scanner in the background (scans the
+    // bay requests still prepare it on demand)
+    enabled: rootfsScannerBackgroundPrepareEnabled(),
     scanner_image: config.scanner_image,
     trivy_cache_dir: config.trivy_cache_dir,
     cache_metadata_path: cacheMetadataPath,

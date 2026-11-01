@@ -104,7 +104,7 @@ import {
 import {
   ensureRootfsTrivyScannerPrepared,
   getRootfsTrivyScannerProvisioningStatus,
-  prepareDefaultRootfsTrivyScanner,
+  startRootfsScannerBackgroundPreparation,
   runRootfsTrivyScan,
 } from "./rootfs-scan";
 import {
@@ -2822,7 +2822,9 @@ export async function startMasterRegistration({
   } catch (err) {
     logger.warn("initial managed RootFS cache GC failed", { err });
   }
-  void prepareDefaultRootfsTrivyScanner({ reason: "startup" }).catch(() => {});
+  const stopRootfsScannerPreparation = startRootfsScannerBackgroundPreparation({
+    intervalMs: ROOTFS_SCANNER_PREPARE_MS,
+  });
   const timer = setInterval(() => void send("heartbeat"), 30_000);
   const deltaTimer = setInterval(() => {
     void syncUserDeltas("interval").catch((err) =>
@@ -2858,12 +2860,6 @@ export async function startMasterRegistration({
       .catch((err) => logger.debug("managed RootFS cache GC failed", { err }));
   }, ROOTFS_CACHE_GC_MS);
   rootfsGcTimer.unref?.();
-  const rootfsScannerPrepareTimer = setInterval(() => {
-    void prepareDefaultRootfsTrivyScanner({ reason: "interval" }).catch(
-      () => {},
-    );
-  }, ROOTFS_SCANNER_PREPARE_MS);
-  rootfsScannerPrepareTimer.unref?.();
   let tokenRotationRetryStep = 0;
   let tokenRotationTimer: NodeJS.Timeout | undefined;
   const scheduleTokenRotation = (delayMs: number) => {
@@ -2910,7 +2906,7 @@ export async function startMasterRegistration({
     clearInterval(stopPolicyReconcileTimer);
     pressureController?.stop();
     clearInterval(rootfsGcTimer);
-    clearInterval(rootfsScannerPrepareTimer);
+    stopRootfsScannerPreparation();
     clearInterval(missingTokenProbe);
     if (tokenRotationTimer) {
       clearTimeout(tokenRotationTimer);
