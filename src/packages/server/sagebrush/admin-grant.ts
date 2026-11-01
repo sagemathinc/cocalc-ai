@@ -59,6 +59,7 @@ const seconds = (d: Date | string | null | undefined): number | null =>
  * deleted or banned account is not an admin. */
 async function accountFacts(
   account_id: string,
+  requireApproval = false,
 ): Promise<{ admin: boolean; two_factor: boolean }> {
   const { rows } = await getPool().query<{
     admin: boolean;
@@ -75,8 +76,14 @@ async function accountFacts(
        FROM accounts AS a
       WHERE a.account_id = $1::UUID
         AND a.deleted IS NOT TRUE
-        AND a.banned IS NOT TRUE`,
-    [account_id],
+        AND a.banned IS NOT TRUE
+        AND (NOT $2::BOOLEAN OR (
+          EXISTS (SELECT 1 FROM oauth_client_approvals AS p
+                   WHERE p.account_id = a.account_id AND p.client_id = 'sagebrush')
+          OR EXISTS (SELECT 1 FROM sagebrush_admin_grants AS g
+                      WHERE g.account_id = a.account_id)
+        ))`,
+    [account_id, requireApproval],
   );
   return { admin: rows[0]?.admin === true, two_factor: rows[0]?.two_factor === true };
 }
@@ -169,7 +176,7 @@ export async function sagebrushAdminAnswerLocal({
   grant?: string | null;
 }): Promise<SagebrushAdminAnswer> {
   if (!isValidUUID(account_id)) return { admin: false };
-  const facts = await accountFacts(account_id);
+  const facts = await accountFacts(account_id, true);
   if (!facts.admin) return { admin: false };
   if (!facts.two_factor) return { admin: true, two_factor: false };
   const refused = { admin: true, two_factor: true } as const;

@@ -316,7 +316,7 @@ describeDb("Sagebrush's admin scope and admin check", () => {
     }
     const { g } = await granted();
     const other = await admin();
-    expect(await sagebrushAdminAnswerLocal({ account_id: other, grant: g.grant_id })).toEqual(refused);
+    expect(await sagebrushAdminAnswerLocal({ account_id: other, grant: g.grant_id })).toEqual({ admin: false });
   });
   it("a deleted admin, an absent account, a demoted one, 2FA off", async () => {
     const d = await admin({ deleted: true });
@@ -329,6 +329,19 @@ describeDb("Sagebrush's admin scope and admin check", () => {
     const t = await granted();
     await getPool().query("UPDATE account_second_factors SET disabled_at = NOW() WHERE account_id = $1", [t.a]);
     expect(await sagebrushAdminAnswerLocal({ account_id: t.a, grant: t.g.grant_id })).toEqual({ admin: true, two_factor: false });
+  });
+
+  it("hides admin and 2FA status until Sagebrush has an approval or grant", async () => {
+    const a = await admin();
+    expect(await sagebrushAdminAnswerLocal({ account_id: a })).toEqual({ admin: false });
+    await getPool().query(
+      `INSERT INTO oauth_client_approvals(account_id, client_id, first_approved, last_approved)
+       VALUES ($1, 'sagebrush', NOW(), NOW())`, [a],
+    );
+    expect(await sagebrushAdminAnswerLocal({ account_id: a })).toEqual(refused);
+    const { a: grantedAccount, g } = await granted();
+    await getPool().query("DELETE FROM oauth_client_approvals WHERE account_id = $1", [grantedAccount]);
+    expect(await sagebrushAdminAnswerLocal({ account_id: grantedAccount, grant: g.grant_id })).toMatchObject({ admin: true, factor_verified_at: expect.any(Number) });
   });
 
   // ---- routing
