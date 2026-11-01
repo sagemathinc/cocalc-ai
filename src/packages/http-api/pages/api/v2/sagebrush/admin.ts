@@ -39,9 +39,9 @@ export default async function sagebrushAdmin(req, res) {
       return;
     }
     res.json(await getSagebrushAdminAnswer({ account_id, grant: grant ?? null }));
-  } catch (err) {
+  } catch {
     // (routing or lookup failures: never an answer Sagebrush could admit on)
-    logger.warn("admin check failed", { err: `${err}` });
+    logger.warn("admin check failed");
     res.status(500).json({ error: "server_error" });
   }
 }
