@@ -93,13 +93,13 @@ _SUBARCH_NAMES = {"SCMP_ARCH_X86": "x86", "SCMP_ARCH_X32": "x32"}
 
 
 def subarches_of(profile: dict, native: bool = False) -> list[str]:
-    """The sub-architectures podman would pass for this x86_64 host: the
-    profile's archMap (none if native), unless SECCOMP_SUBARCHES overrides
-    it."""
-    if "SECCOMP_SUBARCHES" in os.environ:
-        return [a for a in os.environ["SECCOMP_SUBARCHES"].split(",") if a]
+    """The sub-architectures podman would pass for this x86_64 host: none if
+    native (always: --diff's comparison is native by definition), else
+    SECCOMP_SUBARCHES if set, else the profile's archMap."""
     if native:
         return []
+    if "SECCOMP_SUBARCHES" in os.environ:
+        return [a for a in os.environ["SECCOMP_SUBARCHES"].split(",") if a]
     for entry in profile.get("archMap") or []:
         if entry.get("architecture") == "SCMP_ARCH_X86_64":
             return [_SUBARCH_NAMES[a] for a in entry.get("subArchitectures") or []]

@@ -15,6 +15,8 @@
       python3 -I generate.py base-seccomp.json cocalc-project-seccomp.json
 
 - `generate.test.py`: unit tests (`python3 -I generate.test.py`).
+- `kernel_check.test.py`: tests for its architecture selection
+  (`python3 -I kernel_check.test.py`).
 - `kernel_check.py`: a by-hand check on a Linux host that loads the profile
   through libseccomp as crun does, issues real syscalls, and compares it
   with the base over an argument grid. See its docstring.
