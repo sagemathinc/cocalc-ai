@@ -39,7 +39,7 @@ import {
 import { request as httpsRequest } from "node:https";
 import type { IncomingHttpHeaders } from "node:http";
 import { BlockList, isIP } from "node:net";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { Readable, Transform, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
@@ -74,11 +74,27 @@ export const TRIVY_DB_LIMITS = {
   requestTimeoutMs: 60_000,
 };
 
-// The database files the cache must contain, and nothing else.
-const DB_ENTRIES: Record<string, number> = {
-  "trivy.db": TRIVY_DB_LIMITS.maxDbBytes,
-  "metadata.json": TRIVY_DB_LIMITS.maxMetadataBytes,
-};
+// The database files the cache must contain, and nothing else, with their
+// size caps.  A Map: a name from the archive must never match a property of
+// Object.prototype (constructor, __proto__, ...).
+const DB_ENTRIES = new Map<string, number>([
+  ["trivy.db", TRIVY_DB_LIMITS.maxDbBytes],
+  ["metadata.json", TRIVY_DB_LIMITS.maxMetadataBytes],
+]);
+
+// The database is refreshed when older than this (it changes upstream every
+// few hours; the background job used to refresh it daily).
+export const TRIVY_DB_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export function trivyDbIsFresh(
+  provenance: TrivyDbProvenance | undefined,
+  now: number = Date.now(),
+  maxAgeMs: number = TRIVY_DB_MAX_AGE_MS,
+): boolean {
+  if (provenance == null) return false;
+  const age = now - Date.parse(provenance.fetched_at);
+  return age >= 0 && age < maxAgeMs;
+}
 
 // Recorded next to the database; scans report it with their results.
 export const TRIVY_DB_SOURCE_FILE = "cocalc-db-source.json";
@@ -118,17 +134,68 @@ for (const [net, prefix] of [
   FORBIDDEN_ADDRESSES.addSubnet(net, prefix, "ipv6");
 }
 
+// The 16 bytes of an IPv6 address (with an optional zone, and an optional
+// dotted IPv4 tail), or undefined if it isn't one.
+export function ipv6Bytes(address: string): number[] | undefined {
+  let text = address.split("%", 1)[0];
+  if (isIP(text) !== 6) return undefined;
+  let tail: number[] = [];
+  const dotted = /:(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (dotted) {
+    tail = dotted[1].split(".").map(Number);
+    text = `${text.slice(0, dotted.index)}:0:0`;
+  }
+  const [head, rest] = text.includes("::")
+    ? text.split("::")
+    : [text, undefined];
+  const parse = (part: string) =>
+    part ? part.split(":").map((group) => parseInt(group, 16)) : [];
+  const front = parse(head);
+  const back = rest == null ? [] : parse(rest);
+  const groups =
+    rest == null
+      ? front
+      : [
+          ...front,
+          ...new Array(8 - front.length - back.length).fill(0),
+          ...back,
+        ];
+  if (groups.length !== 8 || groups.some((g) => !(g >= 0 && g <= 0xffff))) {
+    return undefined;
+  }
+  const bytes = groups.flatMap((g) => [g >> 8, g & 0xff]);
+  if (dotted) bytes.splice(12, 4, ...tail);
+  return bytes;
+}
+
+const startsWith = (bytes: number[], prefix: number[]) =>
+  prefix.every((byte, i) => bytes[i] === byte);
+
 // Whether a connection to this address is refused: loopback, link-local
-// (the metadata server), private, shared and reserved ranges.
+// (the metadata server), private, shared and reserved ranges.  IPv6 forms
+// that carry an IPv4 address (mapped, compatible, SIIT, NAT64) get the IPv4
+// rules, and IPv6 tunnels (6to4, Teredo, local NAT64) are refused outright,
+// so the result never depends on how the runtime treats them.
 export function isForbiddenAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 4) return FORBIDDEN_ADDRESSES.check(address, "ipv4");
-  if (family === 6) {
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
-    if (mapped) return FORBIDDEN_ADDRESSES.check(mapped[1], "ipv4");
-    return FORBIDDEN_ADDRESSES.check(address, "ipv6");
-  }
-  return true;
+  const bytes = ipv6Bytes(address);
+  if (bytes == null) return true;
+  const embedded = (offset: number) =>
+    isForbiddenAddress(bytes.slice(offset, offset + 4).join("."));
+  const zeros = (n: number) => new Array(n).fill(0);
+  if (startsWith(bytes, [...zeros(10), 0xff, 0xff])) return embedded(12); // ::ffff:0:0/96
+  if (startsWith(bytes, zeros(12))) return embedded(12); // ::/96 (incl. :: and ::1)
+  if (startsWith(bytes, [...zeros(8), 0xff, 0xff, 0, 0])) return embedded(12); // ::ffff:0:0:0/96
+  if (startsWith(bytes, [0, 0x64, 0xff, 0x9b, ...zeros(8)]))
+    return embedded(12); // 64:ff9b::/96
+  if (startsWith(bytes, [0, 0x64, 0xff, 0x9b, 0, 1])) return true; // 64:ff9b:1::/48
+  if (startsWith(bytes, [0x20, 0x02])) return true; // 6to4 2002::/16
+  if (startsWith(bytes, [0x20, 0x01, 0, 0])) return true; // Teredo 2001::/32
+  const canonical = [0, 2, 4, 6, 8, 10, 12, 14]
+    .map((i) => ((bytes[i] << 8) | bytes[i + 1]).toString(16))
+    .join(":");
+  return FORBIDDEN_ADDRESSES.check(canonical, "ipv6");
 }
 
 // The URL as one a request may go to, or an error: https, port 443, an
@@ -295,7 +362,7 @@ function bearerChallenge(header: string | undefined): {
   params: Record<string, string>;
 } | null {
   if (!header || !/^bearer\s/i.test(header)) return null;
-  const params: Record<string, string> = {};
+  const params: Record<string, string> = Object.create(null);
   for (const [, key, value] of header.matchAll(/(\w+)="([^"]*)"/g)) {
     params[key] = value;
   }
@@ -514,7 +581,8 @@ export async function extractTrivyDbArchive(
         `Trivy DB archive: entry '${name}' is not a regular file (type '${type === "\0" ? "\\0" : type}')`,
       );
     }
-    if (prefix || !(name in DB_ENTRIES)) {
+    const cap = DB_ENTRIES.get(name);
+    if (prefix || cap == null) {
       throw new Error(`Trivy DB archive: unexpected entry '${prefix}${name}'`);
     }
     if (seen.has(name)) {
@@ -522,10 +590,8 @@ export async function extractTrivyDbArchive(
     }
     seen.add(name);
     const size = parseOctal(header.subarray(124, 136));
-    if (size > DB_ENTRIES[name]) {
-      throw new Error(
-        `Trivy DB archive: '${name}' exceeds ${DB_ENTRIES[name]} bytes`,
-      );
+    if (size > cap) {
+      throw new Error(`Trivy DB archive: '${name}' exceeds ${cap} bytes`);
     }
     const handle = await open(join(dir, name), "wx", 0o644);
     const out = handle.createWriteStream();
@@ -623,16 +689,36 @@ export async function extractTrivyDbArchive(
     }
   }
   const final = current();
-  if (
-    final.kind !== "end" &&
-    !(final.kind === "header" && buffered.length === 0)
-  ) {
-    throw new Error("Trivy DB archive: truncated");
+  if (final.kind !== "end" || final.zeroBlocks < 2) {
+    throw new Error("Trivy DB archive: truncated (no end-of-archive marker)");
   }
-  for (const name of Object.keys(DB_ENTRIES)) {
+  if (buffered.length > 0) {
+    throw new Error("Trivy DB archive: data after the end of archive");
+  }
+  for (const name of DB_ENTRIES.keys()) {
     if (!seen.has(name)) {
       throw new Error(`Trivy DB archive: missing '${name}'`);
     }
+  }
+}
+
+// One database preparation at a time per cache directory: the db/, staging
+// and retired names are shared by every scanner image using the cache.
+const cacheLocks = new Map<string, Promise<unknown>>();
+
+export async function withTrivyCacheLock<T>(
+  trivy_cache_dir: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const key = resolvePath(trivy_cache_dir);
+  const previous = cacheLocks.get(key) ?? Promise.resolve();
+  const run = previous.catch(() => {}).then(task);
+  const settled = run.catch(() => {});
+  cacheLocks.set(key, settled);
+  try {
+    return await run;
+  } finally {
+    if (cacheLocks.get(key) === settled) cacheLocks.delete(key);
   }
 }
 
@@ -644,13 +730,18 @@ export async function fetchTrivyDb({
   sources = TRIVY_DB_SOURCES,
   transport = httpsTransport(),
   now = () => new Date(),
+  renameDir = rename,
 }: {
   trivy_cache_dir: string;
   sources?: TrivyDbSource[];
   transport?: Transport;
   now?: () => Date;
+  // (tests inject failures here)
+  renameDir?: (from: string, to: string) => Promise<void>;
 }): Promise<TrivyDbProvenance> {
   await mkdir(trivy_cache_dir, { recursive: true, mode: 0o755 });
+  const target = join(trivy_cache_dir, "db");
+  await recoverInterruptedSwap(trivy_cache_dir, target);
   // Leftovers of a fetch that was interrupted (a crash or restart) are large;
   // fetches are serialized per cache, so none of these is in use.
   for (const name of await readdir(trivy_cache_dir)) {
@@ -710,7 +801,6 @@ export async function fetchTrivyDb({
         { mode: 0o644, flag: "wx" },
       );
 
-      const target = join(trivy_cache_dir, "db");
       const retired = join(
         trivy_cache_dir,
         `.db-retired-${randomBytes(6).toString("hex")}`,
@@ -719,8 +809,14 @@ export async function fetchTrivyDb({
         () => true,
         () => false,
       );
-      if (hadOld) await rename(target, retired);
-      await rename(dbDir, target);
+      if (hadOld) await renameDir(target, retired);
+      try {
+        await renameDir(dbDir, target);
+      } catch (err) {
+        // The old database goes back where it was.
+        if (hadOld) await rename(retired, target);
+        throw err;
+      }
       if (hadOld) await rm(retired, { recursive: true, force: true });
       return provenance;
     } catch (err) {
@@ -732,12 +828,78 @@ export async function fetchTrivyDb({
   throw new Error(`Trivy DB fetch failed: ${errors.join("; ")}`);
 }
 
+// A swap interrupted between its two renames (a crash) leaves no db/ but a
+// retired one: put the newest retired database back.
+async function recoverInterruptedSwap(
+  trivy_cache_dir: string,
+  target: string,
+): Promise<void> {
+  if (
+    await stat(target).then(
+      () => true,
+      () => false,
+    )
+  )
+    return;
+  const retired: Array<{ path: string; mtimeMs: number }> = [];
+  for (const name of await readdir(trivy_cache_dir)) {
+    if (!name.startsWith(".db-retired-")) continue;
+    const path = join(trivy_cache_dir, name);
+    retired.push({ path, mtimeMs: (await stat(path)).mtimeMs });
+  }
+  retired.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  if (retired[0]) await rename(retired[0].path, target);
+}
+
+const PROVENANCE_SOURCES = new Set(
+  TRIVY_DB_SOURCES.map(
+    ({ registry, repository }) => `${registry}/${repository}:${TRIVY_DB_TAG}`,
+  ),
+);
+
+// The provenance record as written by fetchTrivyDb, or undefined if anything
+// about it is off (missing fields, unknown source, malformed digest or time).
+export function validTrivyDbProvenance(
+  value: unknown,
+): TrivyDbProvenance | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const { source, manifest_digest, layer_digest, fetched_at, integrity } =
+    record;
+  if (
+    typeof source !== "string" ||
+    !PROVENANCE_SOURCES.has(source) ||
+    typeof manifest_digest !== "string" ||
+    !DIGEST.test(manifest_digest) ||
+    typeof layer_digest !== "string" ||
+    !DIGEST.test(layer_digest) ||
+    typeof fetched_at !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(fetched_at) ||
+    !Number.isFinite(Date.parse(fetched_at)) ||
+    typeof integrity !== "string" ||
+    !integrity
+  ) {
+    return undefined;
+  }
+  return { source, manifest_digest, layer_digest, fetched_at, integrity };
+}
+
+// The provenance of the cache's database: undefined when there is none or it
+// is invalid (e.g. a database the scanner image seeded itself, before the
+// host fetched it).  Such a cache is never used.
 export async function readTrivyDbProvenance(
   trivy_cache_dir: string,
 ): Promise<TrivyDbProvenance | undefined> {
   try {
-    return JSON.parse(
-      await readFile(join(trivy_cache_dir, "db", TRIVY_DB_SOURCE_FILE), "utf8"),
+    return validTrivyDbProvenance(
+      JSON.parse(
+        await readFile(
+          join(trivy_cache_dir, "db", TRIVY_DB_SOURCE_FILE),
+          "utf8",
+        ),
+      ),
     );
   } catch {
     return undefined;

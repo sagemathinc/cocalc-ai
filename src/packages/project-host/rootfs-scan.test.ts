@@ -102,6 +102,25 @@ const OTHER_DIGEST = `sha256:${"b".repeat(64)}`;
 const IMAGE_ID = "c".repeat(64);
 const PINNED = `docker.io/aquasec/trivy:0.76.1@${DIGEST}`;
 
+// The database as the host fetcher leaves it: metadata plus valid provenance.
+async function writeFetchedDb(
+  cache: string,
+  fetched_at = new Date().toISOString(),
+): Promise<void> {
+  await mkdir(join(cache, "db"), { recursive: true });
+  await writeFile(join(cache, "db", "metadata.json"), "{}");
+  await writeFile(
+    join(cache, "db", "cocalc-db-source.json"),
+    JSON.stringify({
+      source: "mirror.gcr.io/aquasec/trivy-db:2",
+      manifest_digest: OTHER_DIGEST,
+      layer_digest: DIGEST,
+      fetched_at,
+      integrity: "test",
+    }),
+  );
+}
+
 // podman as the scanner setup and scans see it: the pinned image is present
 // with these repo digests.
 function podmanStub({
@@ -175,8 +194,7 @@ describe("ensureRootfsTrivyScannerPrepared", () => {
     const cache = join(base, "trivy-cache");
     const { runner, calls } = podmanStub({ present: false });
     const fetch_db = jest.fn(async ({ trivy_cache_dir }) => {
-      await mkdir(join(trivy_cache_dir, "db"), { recursive: true });
-      await writeFile(join(trivy_cache_dir, "db", "metadata.json"), "{}");
+      await writeFetchedDb(trivy_cache_dir);
     });
 
     await ensureRootfsTrivyScannerPrepared({
@@ -196,11 +214,10 @@ describe("ensureRootfsTrivyScannerPrepared", () => {
     expect(fetch_db).toHaveBeenCalledWith({ trivy_cache_dir: cache });
   });
 
-  it("skips the database fetch when the cache is already present", async () => {
+  it("skips the database fetch when a fresh fetched cache is present", async () => {
     const base = await mkTempDir("rootfs-scan-setup-test-");
     const cache = join(base, "trivy-cache");
-    await mkdir(join(cache, "db"), { recursive: true });
-    await writeFile(join(cache, "db", "metadata.json"), "{}");
+    await writeFetchedDb(cache);
     const { runner, calls } = podmanStub();
     const fetch_db = jest.fn();
 
@@ -221,8 +238,7 @@ describe("ensureRootfsTrivyScannerPrepared", () => {
   it("refreshes the image and the database when requested", async () => {
     const base = await mkTempDir("rootfs-scan-setup-test-");
     const cache = join(base, "trivy-cache");
-    await mkdir(join(cache, "db"), { recursive: true });
-    await writeFile(join(cache, "db", "metadata.json"), "{}");
+    await writeFetchedDb(cache);
     const { runner, calls } = podmanStub();
     const fetch_db = jest.fn(async () => {});
 
@@ -241,6 +257,93 @@ describe("ensureRootfsTrivyScannerPrepared", () => {
       ["image", "inspect"],
     ]);
     expect(fetch_db).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces a legacy cache (metadata without provenance) and a stale one", async () => {
+    for (const prepareCache of [
+      async (cache: string) => {
+        await mkdir(join(cache, "db"), { recursive: true });
+        await writeFile(join(cache, "db", "metadata.json"), "{}");
+      },
+      async (cache: string) => {
+        await writeFetchedDb(cache);
+        await writeFile(
+          join(cache, "db", "cocalc-db-source.json"),
+          "{not json",
+        );
+      },
+      async (cache: string) =>
+        await writeFetchedDb(
+          cache,
+          new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+        ),
+    ]) {
+      const base = await mkTempDir("rootfs-scan-setup-test-");
+      const cache = join(base, "trivy-cache");
+      await prepareCache(cache);
+      const { runner } = podmanStub();
+      const fetch_db = jest.fn(async ({ trivy_cache_dir }) => {
+        await writeFetchedDb(trivy_cache_dir);
+      });
+      await ensureRootfsTrivyScannerPrepared({
+        trivy_cache_dir: cache,
+        scanner_image: PINNED,
+        command_runner: runner,
+        fetch_db,
+      });
+      expect(fetch_db).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("fails when a fetch leaves no valid provenance", async () => {
+    const base = await mkTempDir("rootfs-scan-setup-test-");
+    const cache = join(base, "trivy-cache");
+    const { runner } = podmanStub();
+    await expect(
+      ensureRootfsTrivyScannerPrepared({
+        trivy_cache_dir: cache,
+        scanner_image: PINNED,
+        command_runner: runner,
+        fetch_db: async ({ trivy_cache_dir }) => {
+          await mkdir(join(trivy_cache_dir, "db"), { recursive: true });
+          await writeFile(join(trivy_cache_dir, "db", "metadata.json"), "{}");
+        },
+      }),
+    ).rejects.toThrow("provenance is missing");
+  });
+
+  it("never fetches into one cache concurrently, even for two images", async () => {
+    const base = await mkTempDir("rootfs-scan-setup-test-");
+    const cache = join(base, "trivy-cache");
+    const other = `registry.example/trivy@${DIGEST}`;
+    const { runner } = podmanStub({
+      repoDigests: [
+        `docker.io/aquasec/trivy@${DIGEST}`,
+        `registry.example/trivy@${DIGEST}`,
+      ],
+    });
+    let active = 0;
+    let maxActive = 0;
+    const fetch_db = jest.fn(async ({ trivy_cache_dir }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await writeFetchedDb(trivy_cache_dir);
+      active -= 1;
+    });
+    await Promise.all(
+      [PINNED, other].map((scanner_image) =>
+        ensureRootfsTrivyScannerPrepared({
+          trivy_cache_dir: cache,
+          scanner_image,
+          command_runner: runner,
+          refresh_db: true,
+          fetch_db,
+        }),
+      ),
+    );
+    expect(fetch_db).toHaveBeenCalledTimes(2);
+    expect(maxActive).toBe(1);
   });
 
   it("fails closed for a tag-only image before pulling anything", async () => {
@@ -284,11 +387,7 @@ describe("runRootfsTrivyScan", () => {
     const rootfs = join(base, "rootfs");
     const cache = join(base, "trivy-cache");
     await mkdir(rootfs);
-    await mkdir(join(cache, "db"), { recursive: true });
-    await writeFile(
-      join(cache, "db", "cocalc-db-source.json"),
-      JSON.stringify({ manifest_digest: OTHER_DIGEST }),
-    );
+    await writeFetchedDb(cache);
 
     let runArgs: string[] = [];
     const { runner } = podmanStub({
@@ -341,6 +440,7 @@ describe("runRootfsTrivyScan", () => {
 
   it("fails closed without running a scan when the image digest differs", async () => {
     const base = await mkTempDir("rootfs-scan-test-");
+    await writeFetchedDb(join(base, "trivy-cache"));
     const { runner, calls } = podmanStub({
       repoDigests: [`docker.io/aquasec/trivy@${OTHER_DIGEST}`],
     });
@@ -370,6 +470,26 @@ describe("runRootfsTrivyScan", () => {
         command_runner: runner,
       }),
     ).rejects.toThrow("not pinned by digest");
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses to scan with a database that has no valid provenance", async () => {
+    const base = await mkTempDir("rootfs-scan-test-");
+    const cache = join(base, "trivy-cache");
+    await mkdir(join(cache, "db"), { recursive: true });
+    await writeFile(join(cache, "db", "metadata.json"), "{}");
+    const { runner, calls } = podmanStub();
+    await expect(
+      runRootfsTrivyScan({
+        scan_run_id: "scan-1",
+        target,
+        rootfs_path: join(base, "rootfs"),
+        trivy_cache_dir: cache,
+        scanner_image: PINNED,
+        output_parent_dir: base,
+        command_runner: runner,
+      }),
+    ).rejects.toThrow("no valid provenance");
     expect(calls).toEqual([]);
   });
 
@@ -411,15 +531,32 @@ describe("background scanner preparation", () => {
     ).toBe(true);
   });
 
-  it("prepares nothing at startup or on the interval when off (the default)", () => {
+  it("prepares nothing at startup or on the interval when off (the default)", async () => {
     jest.useFakeTimers();
-    const prepare = jest.fn(async () => {});
+    // the real setup, so any call would reach podman (image exists, inspect,
+    // pull) or the database fetcher
+    const { runner, calls } = podmanStub();
+    const fetch_db = jest.fn();
+    const prepare = jest.fn(async ({ reason }: { reason: string }) => {
+      void reason;
+      await ensureRootfsTrivyScannerPrepared({
+        trivy_cache_dir: "/nonexistent/trivy-cache",
+        scanner_image: PINNED,
+        command_runner: runner,
+        refresh_image: true,
+        refresh_db: true,
+        fetch_db,
+      });
+    });
     const stop = startRootfsScannerBackgroundPreparation({
       intervalMs: 60_000,
       prepare,
     });
     jest.advanceTimersByTime(10 * 60_000);
+    await Promise.resolve();
     expect(prepare).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+    expect(fetch_db).not.toHaveBeenCalled();
     stop();
   });
 

@@ -26,6 +26,8 @@ import type { RootfsScanSummary } from "@cocalc/util/rootfs-images";
 import {
   fetchTrivyDb,
   readTrivyDbProvenance,
+  trivyDbIsFresh,
+  withTrivyCacheLock,
   type TrivyDbProvenance,
 } from "./rootfs-scan-db";
 
@@ -62,6 +64,7 @@ export type RootfsTrivyScannerSetupOptions = {
   refresh_image?: boolean;
   refresh_db?: boolean;
   fetch_db?: (opts: { trivy_cache_dir: string }) => Promise<unknown>;
+  now?: () => number;
 };
 
 export type RootfsTrivyScannerProvisioningStatus = {
@@ -284,6 +287,7 @@ export async function ensureRootfsTrivyScannerPrepared({
   refresh_image = false,
   refresh_db = false,
   fetch_db = fetchTrivyDb,
+  now = Date.now,
 }: RootfsTrivyScannerSetupOptions): Promise<void> {
   assertAbsolutePath("trivy_cache_dir", trivy_cache_dir);
   scanner_image = assertPinnedScannerImage(scanner_image);
@@ -321,19 +325,31 @@ export async function ensureRootfsTrivyScannerPrepared({
     });
 
     const metadataPath = join(trivy_cache_dir, TRIVY_DB_METADATA_RELATIVE_PATH);
-    if (!refresh_db && (await pathExists(metadataPath))) {
-      return;
-    }
+    await withTrivyCacheLock(trivy_cache_dir, async () => {
+      // A cache counts only with valid provenance and while fresh: one the
+      // scanner image seeded itself (before the host fetched databases), or
+      // an old one, is replaced.
+      if (
+        !refresh_db &&
+        (await pathExists(metadataPath)) &&
+        trivyDbIsFresh(await readTrivyDbProvenance(trivy_cache_dir), now())
+      ) {
+        return;
+      }
 
-    // The database is fetched by the host, never by the scanner image: the
-    // image runs only without a network and with a read-only cache.
-    await fetch_db({ trivy_cache_dir });
+      // The database is fetched by the host, never by the scanner image:
+      // the image runs only without a network and with a read-only cache.
+      await fetch_db({ trivy_cache_dir });
 
-    if (!(await pathExists(metadataPath))) {
-      throw new Error(
-        `Trivy database fetch completed but ${metadataPath} was not created`,
-      );
-    }
+      if (
+        !(await pathExists(metadataPath)) ||
+        (await readTrivyDbProvenance(trivy_cache_dir)) == null
+      ) {
+        throw new Error(
+          `Trivy database fetch completed but ${metadataPath} or its provenance is missing`,
+        );
+      }
+    });
   })().finally(() => {
     scannerSetupInFlight.delete(key);
   });
@@ -544,14 +560,20 @@ export async function runRootfsTrivyScan({
       `RootFS target ${target.release_id ?? target.project_id ?? target.runtime_image} is ${target.size_bytes} bytes, which exceeds scan limit ${max_target_bytes}`,
     );
   }
-  // Fails closed: an unpinned image, or one that doesn't match its digest
-  // here, is never run.
+  // Fails closed: an unpinned image, a database without valid provenance,
+  // or an image that doesn't match its digest here is never used.
+  assertPinnedScannerImage(scanner_image);
+  const trivy_db = await readTrivyDbProvenance(trivy_cache_dir);
+  if (trivy_db == null) {
+    throw new Error(
+      "RootFS scan refused: the Trivy database cache has no valid provenance (prepare the scanner first)",
+    );
+  }
   const scanner = await verifyScannerImage({
     scanner_image,
     podman_binary,
     command_runner,
   });
-  const trivy_db = await readTrivyDbProvenance(trivy_cache_dir);
   const output_dir = await mkdtemp(join(output_parent_dir, "rootfs-scan-"));
   const reportPath = join(output_dir, "report.json");
   const startedAt = Date.now();
@@ -602,7 +624,7 @@ export async function runRootfsTrivyScan({
         ...(scanner.digest ? { digest: scanner.digest } : { unpinned: true }),
         image_id: scanner.image_id,
       },
-      ...(trivy_db ? { trivy_db } : {}),
+      trivy_db,
     };
     return {
       summary,

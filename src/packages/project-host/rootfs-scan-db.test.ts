@@ -28,6 +28,9 @@ import {
   guardedLookup,
   httpsTransport,
   isForbiddenAddress,
+  trivyDbIsFresh,
+  validTrivyDbProvenance,
+  withTrivyCacheLock,
   type Transport,
 } from "./rootfs-scan-db";
 
@@ -151,6 +154,16 @@ describe("extractTrivyDbArchive", () => {
       [{ name: "metadata.json", size: TRIVY_DB_LIMITS.maxMetadataBytes + 1 }],
     ],
     ["a missing entry", [{ name: "trivy.db", content: "x" }]],
+    ...[
+      "constructor",
+      "__proto__",
+      "toString",
+      "hasOwnProperty",
+      "valueOf",
+    ].map((name): [string, Entry[]] => [
+      `an entry named ${name}`,
+      [{ name, content: "x".repeat(4096) }],
+    ]),
   ];
   for (const [what, entries] of hostile) {
     it(`refuses ${what}, writing nothing outside its directory`, async () => {
@@ -184,6 +197,33 @@ describe("extractTrivyDbArchive", () => {
     ).rejects.toThrow("after the end");
   });
 
+  it("requires a complete end-of-archive marker and nothing after it", async () => {
+    const entries = Buffer.concat([
+      tarHeader("trivy.db", 0),
+      tarHeader("metadata.json", 0),
+    ]);
+    for (const [, raw, message] of [
+      ["no terminator", entries, "truncated"],
+      [
+        "one zero block",
+        Buffer.concat([entries, Buffer.alloc(512)]),
+        "truncated",
+      ],
+      [
+        "short trailing data",
+        Buffer.concat([entries, Buffer.alloc(1024), Buffer.from("junk")]),
+        "after the end",
+      ],
+    ] as const) {
+      await expect(
+        extractTrivyDbArchive(
+          Readable.from([gzipSync(raw)]),
+          await mkTempDir(),
+        ),
+      ).rejects.toThrow(message);
+    }
+  });
+
   it("refuses a decompression bomb", async () => {
     const saved = TRIVY_DB_LIMITS.maxDecompressedBytes;
     TRIVY_DB_LIMITS.maxDecompressedBytes = 64 * 1024;
@@ -215,11 +255,26 @@ describe("network guards", () => {
       "fe80::1",
       "fd00::1",
       "::ffff:169.254.169.254",
+      "::ffff:a9fe:a9fe",
+      "0:0:0:0:0:ffff:a9fe:a9fe",
+      "::a9fe:a9fe",
+      "::169.254.169.254",
+      "::ffff:0:a9fe:a9fe",
+      "64:ff9b::a9fe:a9fe",
+      "64:ff9b:1::1",
+      "2002:a9fe:a9fe::1",
+      "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+      "fe80::1%eth0",
       "not-an-address",
     ]) {
       expect(isForbiddenAddress(address)).toBe(true);
     }
-    for (const address of ["140.82.112.34", "2607:f8b0:4004:c1b::52"]) {
+    for (const address of [
+      "140.82.112.34",
+      "2607:f8b0:4004:c1b::52",
+      "::ffff:140.82.112.34",
+      "64:ff9b::8c52:7022",
+    ]) {
       expect(isForbiddenAddress(address)).toBe(false);
     }
   });
@@ -254,13 +309,29 @@ describe("network guards", () => {
   });
 
   it("never connects when DNS points an allowlisted host at the metadata server", async () => {
-    const transport = httpsTransport({
-      resolve: (_host, _opts, cb) =>
-        cb(null, [{ address: "169.254.169.254", family: 4 }]),
+    for (const [address, family] of [
+      ["169.254.169.254", 4],
+      ["::ffff:a9fe:a9fe", 6],
+      ["::a9fe:a9fe", 6],
+      ["2002:a9fe:a9fe::1", 6],
+    ] as const) {
+      const transport = httpsTransport({
+        resolve: (_host, _opts, cb) => cb(null, [{ address, family }]),
+      });
+      await expect(
+        transport(new URL("https://ghcr.io/v2/"), {}),
+      ).rejects.toMatchObject({ code: "EFORBIDDENADDRESS" });
+    }
+  });
+
+  it("refuses IPv4-mapped and compatible forms of the metadata address in the lookup", (done) => {
+    const lookup = guardedLookup((_host, _opts, cb) =>
+      cb(null, [{ address: "::ffff:a9fe:a9fe", family: 6 }]),
+    );
+    lookup("ghcr.io", { all: true }, (err) => {
+      expect(err?.code).toBe("EFORBIDDENADDRESS");
+      done();
     });
-    await expect(
-      transport(new URL("https://ghcr.io/v2/"), {}),
-    ).rejects.toMatchObject({ code: "EFORBIDDENADDRESS" });
   });
 
   function redirecting(locations: string[]): Transport & {
@@ -457,5 +528,121 @@ describe("fetchTrivyDb", () => {
       fetchTrivyDb({ trivy_cache_dir: cache, transport }),
     ).rejects.toThrow("not a regular file");
     expect(await readdir(cache)).toEqual([]);
+  });
+
+  it("puts the old database back when the swap fails", async () => {
+    const cache = await mkTempDir();
+    await mkdir(join(cache, "db"));
+    await writeFile(join(cache, "db", "metadata.json"), "old");
+    const { transport } = fakeRegistries();
+    let calls = 0;
+    const { rename } = await import("node:fs/promises");
+    await expect(
+      fetchTrivyDb({
+        trivy_cache_dir: cache,
+        transport,
+        sources: [
+          { registry: "mirror.gcr.io", repository: "aquasec/trivy-db" },
+        ],
+        renameDir: async (from, to) => {
+          calls += 1;
+          if (calls === 2) throw new Error("injected rename failure");
+          await rename(from, to);
+        },
+      }),
+    ).rejects.toThrow("injected rename failure");
+    expect(await readFile(join(cache, "db", "metadata.json"), "utf8")).toBe(
+      "old",
+    );
+    expect(await readdir(cache)).toEqual(["db"]);
+  });
+
+  it("recovers a swap interrupted between its renames", async () => {
+    const cache = await mkTempDir();
+    // a crash left no db/, only the retired old one
+    await mkdir(join(cache, ".db-retired-abc"));
+    await writeFile(join(cache, ".db-retired-abc", "metadata.json"), "old");
+    const { transport } = fakeRegistries({ mirrorFails: true });
+    await expect(
+      fetchTrivyDb({
+        trivy_cache_dir: cache,
+        transport,
+        sources: [
+          { registry: "mirror.gcr.io", repository: "aquasec/trivy-db" },
+        ],
+      }),
+    ).rejects.toThrow("fetch failed");
+    expect(await readFile(join(cache, "db", "metadata.json"), "utf8")).toBe(
+      "old",
+    );
+    expect(await readdir(cache)).toEqual(["db"]);
+  });
+});
+
+describe("provenance", () => {
+  const valid = {
+    source: "ghcr.io/aquasecurity/trivy-db:2",
+    manifest_digest: `sha256:${"a".repeat(64)}`,
+    layer_digest: `sha256:${"b".repeat(64)}`,
+    fetched_at: "2026-11-01T22:00:00.000Z",
+    integrity: "advisory",
+  };
+
+  it("accepts exactly what the fetcher records", () => {
+    expect(validTrivyDbProvenance(valid)).toEqual(valid);
+    expect(validTrivyDbProvenance({ ...valid, extra: 1 })).toEqual(valid);
+  });
+
+  it("refuses malformed provenance", () => {
+    for (const bad of [
+      null,
+      [],
+      "x",
+      { ...valid, source: "evil.example/trivy-db:2" },
+      { ...valid, source: "ghcr.io/aquasecurity/trivy-db:latest" },
+      { ...valid, manifest_digest: "sha256:abc" },
+      { ...valid, layer_digest: `sha512:${"b".repeat(64)}` },
+      { ...valid, fetched_at: "yesterday" },
+      { ...valid, fetched_at: "2026-13-45T99:99:99Z" },
+      { ...valid, integrity: "" },
+      { ...valid, manifest_digest: undefined },
+    ]) {
+      expect(validTrivyDbProvenance(bad)).toBeUndefined();
+    }
+  });
+
+  it("is fresh for a day after the fetch", () => {
+    const fetched = Date.parse(valid.fetched_at);
+    expect(trivyDbIsFresh(valid, fetched + 60_000)).toBe(true);
+    expect(trivyDbIsFresh(valid, fetched + 25 * 60 * 60 * 1000)).toBe(false);
+    expect(trivyDbIsFresh(valid, fetched - 60_000)).toBe(false);
+    expect(trivyDbIsFresh(undefined)).toBe(false);
+  });
+});
+
+describe("withTrivyCacheLock", () => {
+  it("runs one task at a time per cache directory, also after a failure", async () => {
+    const order: string[] = [];
+    const task =
+      (name: string, fail = false) =>
+      async () => {
+        order.push(`start ${name}`);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        order.push(`end ${name}`);
+        if (fail) throw new Error(name);
+      };
+    await Promise.allSettled([
+      withTrivyCacheLock("/cache/a", task("1", true)),
+      withTrivyCacheLock("/cache/a/", task("2")),
+      withTrivyCacheLock("/cache/a", task("3")),
+    ]);
+    expect(order).toEqual([
+      "start 1",
+      "end 1",
+      "start 2",
+      "end 2",
+      "start 3",
+      "end 3",
+    ]);
   });
 });
