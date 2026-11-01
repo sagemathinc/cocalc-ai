@@ -81,7 +81,7 @@ import {
 } from "./admin-grant";
 
 const CONTRACT_SHA =
-  "30212407efe755059b4aeae9a22729a13025ddbfd928865c1657fb54113c2e4e";
+  "6635942eb7acfb2c96fc14462bd41c55791bd765f4bedc5f76323ef08c09d71e";
 const REDIRECT = "https://sagebrush.space/admin/auth/callback";
 const SECRET = "client-secret";
 const BASIC = `Basic ${Buffer.from(`sagebrush:${SECRET}`).toString("base64")}`;
@@ -258,6 +258,84 @@ describeDb("Sagebrush's admin scope and admin check", () => {
     setSagebrushAdminClock(() => T * 1000);
     await getPool().query("DELETE FROM oauth_authorization_codes");
     await getPool().query("DELETE FROM sagebrush_admin_grants");
+  });
+
+  it("refuses mint and answer while a rehome operation is running", async () => {
+    const { a, h, g, F } = await granted();
+    // Full dynamic production definition from accounts/rehome.ts; do not leave
+    // a reduced table behind in the shared integration database.
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS account_rehome_operations (
+        op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        account_id UUID NOT NULL,
+        source_bay_id TEXT NOT NULL,
+        dest_bay_id TEXT NOT NULL,
+        requested_by UUID,
+        reason TEXT,
+        campaign_id TEXT,
+        status TEXT NOT NULL DEFAULT 'running',
+        stage TEXT NOT NULL DEFAULT 'requested',
+        attempt INTEGER NOT NULL DEFAULT 0,
+        account JSONB,
+        last_error TEXT,
+        destination_accepted_at TIMESTAMPTZ,
+        source_flipped_at TIMESTAMPTZ,
+        projections_copied_at TIMESTAMPTZ,
+        directory_updated_at TIMESTAMPTZ,
+        finished_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await getPool().query(
+      "CREATE INDEX IF NOT EXISTS account_rehome_operations_account_idx ON account_rehome_operations(account_id, status)",
+    );
+    await getPool().query(
+      "CREATE INDEX IF NOT EXISTS account_rehome_operations_source_idx ON account_rehome_operations(source_bay_id, status)",
+    );
+    await getPool().query(
+      "CREATE INDEX IF NOT EXISTS account_rehome_operations_campaign_idx ON account_rehome_operations(campaign_id)",
+    );
+    const op = randomUUID();
+    await getPool().query(
+      "INSERT INTO account_rehome_operations(op_id,account_id,source_bay_id,dest_bay_id,status,stage) VALUES($1,$2,'bay-0','bay-1','running','requested')",
+      [op, a],
+    );
+    try {
+      await expect(
+        sagebrushAdminAnswerLocal({ account_id: a, grant: g.grant_id }),
+      ).rejects.toThrow(/account rehome .* is running/);
+      await expect(
+        mintFromSession({
+          account_id: a,
+          session_hash: h,
+          factor_verified_at: F,
+        }),
+      ).rejects.toThrow(/account rehome .* is running/);
+    } finally {
+      await getPool().query(
+        "DELETE FROM account_rehome_operations WHERE op_id=$1",
+        [op],
+      );
+    }
+  });
+
+  it("refuses stale local rows after the account moves to another home bay", async () => {
+    const { a, h, g } = await granted();
+    await getPool().query(
+      "UPDATE accounts SET home_bay_id='bay-1' WHERE account_id=$1",
+      [a],
+    );
+    await expect(
+      sagebrushAdminAnswerLocal({ account_id: a, grant: g.grant_id }),
+    ).rejects.toThrow(/homed on bay-1/);
+    await expect(
+      mintFromSession({
+        account_id: a,
+        session_hash: h,
+        factor_verified_at: now() - 60,
+      }),
+    ).rejects.toThrow(/homed on bay-1/);
   });
 
   it("pins the shared contract fixture (byte-identical with Sagebrush's)", () => {

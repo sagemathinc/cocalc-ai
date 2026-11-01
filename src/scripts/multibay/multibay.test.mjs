@@ -5758,7 +5758,8 @@ describe("Sagebrush admin grants across bays", () => {
           { request },
           { cookie: `remember_me=${admin.client.cookie}` },
         );
-        if (!value.token) throw new Error(value.error ?? "missing approval proof");
+        if (!value.token)
+          throw new Error(value.error ?? "missing approval proof");
         return value;
       },
       { timeoutMs: 30_000, what: "Sagebrush admin approval" },
@@ -5802,14 +5803,71 @@ describe("Sagebrush admin grants across bays", () => {
     }
     const answer = async () => {
       const response = await fetch(
-        `${cluster.url(SEED)}/api/v2/sagebrush/admin?account_id=${admin.account_id}&grant=${token.admin_grant.grant_id}`,
-        { headers: { authorization: basic } },
+        `${cluster.url(SEED)}/api/v2/sagebrush/admin`,
+        {
+          method: "POST",
+          headers: { authorization: basic, "content-type": "application/json" },
+          body: JSON.stringify({
+            account_id: admin.account_id,
+            grant: token.admin_grant.grant_id,
+          }),
+        },
       );
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("cache-control"), "no-store");
       return await response.json();
     };
     assert.equal((await answer()).expires_at, token.admin_grant.expires_at);
+
+    // A real PostgreSQL advisory lock holds both local operations until the
+    // cutover commits; neither may use the source's stale session/grant rows.
+    const serialized = await runInBay(
+      cluster,
+      ATTACHED,
+      `
+      const pool = require("@cocalc/database/pool").default();
+      const api = require("@cocalc/server/sagebrush/admin-grant");
+      const account_id = ${JSON.stringify(admin.account_id)};
+      const grant = ${JSON.stringify(token.admin_grant.grant_id)};
+      const results = [];
+      for (const kind of ["mint", "answer"]) {
+        const approval_id = require("node:crypto").randomBytes(32).toString("base64url");
+        await pool.query("INSERT INTO sagebrush_admin_approvals(approval_id,account_id,session_hash,factor_verified_at,expire) SELECT $1,account_id,session_hash,factor_verified_at,NOW()+INTERVAL '5 minutes' FROM sagebrush_admin_grants WHERE grant_id=$2", [approval_id,grant]);
+        const holder = await pool.connect();
+        let pending;
+        try {
+          await holder.query("BEGIN");
+          await holder.query("SELECT pg_advisory_xact_lock(hashtext('account-rehome'), hashtext($1::text))", [account_id]);
+          pending = (kind === "mint"
+            ? api.mintSagebrushAdminGrantLocal({ account_id, approval_id })
+            : api.sagebrushAdminAnswerLocal({ account_id, grant }))
+            .then(value => ({ value }), error => ({ error: error.message }));
+          let waiting = false;
+          for (let i=0; i<100; i++) {
+            const {rows} = await holder.query("SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND classid::bigint=(hashtext('account-rehome')::bigint & 4294967295) AND objid::bigint=(hashtext($1::text)::bigint & 4294967295)", [account_id]);
+            if (rows.length) { waiting = true; break; }
+            await new Promise(resolve => setTimeout(resolve,20));
+          }
+          if (!waiting) throw Error(kind + " did not wait for the rehome fence");
+          await holder.query("UPDATE accounts SET home_bay_id=$2 WHERE account_id=$1", [account_id,${JSON.stringify(SEED)}]);
+          await holder.query("UPDATE cluster_account_directory SET home_bay_id=$2 WHERE account_id=$1", [account_id,${JSON.stringify(SEED)}]);
+          await holder.query("COMMIT");
+          const result = await pending;
+          if (!result.error?.includes("homed on")) throw Error(kind + " admitted after cutover");
+          results.push(kind);
+        } finally {
+          await holder.query("ROLLBACK");
+          holder.release();
+          if (pending) await pending;
+          await pool.query("UPDATE accounts SET home_bay_id=$2 WHERE account_id=$1", [account_id,${JSON.stringify(ATTACHED)}]);
+          await pool.query("UPDATE cluster_account_directory SET home_bay_id=$2 WHERE account_id=$1", [account_id,${JSON.stringify(ATTACHED)}]);
+        }
+      }
+      return results;
+    `,
+    );
+    assert.deepEqual(serialized, ["mint", "answer"]);
+
     await runInBay(
       cluster,
       ATTACHED,

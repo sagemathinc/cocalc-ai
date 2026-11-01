@@ -31,11 +31,11 @@ beforeEach(() => {
   mockAuthenticate.mockResolvedValue({ client_id: "sagebrush" });
 });
 
-async function get() {
+async function post() {
   const { req, res } = createMocks({
-    method: "GET",
+    method: "POST",
     headers: { authorization: "Basic synthetic-client-secret" },
-    query: { account_id, grant: "synthetic-grant" },
+    body: { account_id, grant: "synthetic-grant" },
   });
   await handler(req, res);
   return res;
@@ -43,7 +43,7 @@ async function get() {
 
 it("refuses an authenticated client other than Sagebrush before account lookup", async () => {
   mockAuthenticate.mockResolvedValue({ client_id: "other-client" });
-  const res = await get();
+  const res = await post();
   expect(res._getStatusCode()).toBe(401);
   expect(res._getJSONData()).toEqual({ error: "invalid_client" });
   expect(mockAnswer).not.toHaveBeenCalled();
@@ -53,9 +53,41 @@ it("does not log grant, session or client values from lookup failures", async ()
   mockAnswer.mockRejectedValue(
     Error("synthetic-grant synthetic-session-hash synthetic-client-secret"),
   );
-  const res = await get();
+  const res = await post();
   expect(res._getStatusCode()).toBe(500);
   expect(res._getJSONData()).toEqual({ error: "server_error" });
   expect(mockWarn).toHaveBeenCalledWith("admin check failed");
   expect(JSON.stringify(mockWarn.mock.calls)).not.toMatch(/synthetic-/);
+});
+
+it("reads the JSON body, retains no-store, and does not read query parameters", async () => {
+  mockAnswer.mockResolvedValue({ admin: false });
+  const res = await post();
+  expect(res._getStatusCode()).toBe(200);
+  expect(res._getHeaders()["cache-control"]).toBe("no-store");
+  expect(mockAnswer).toHaveBeenCalledWith({
+    account_id,
+    grant: "synthetic-grant",
+  });
+  const { req, res: queryOnly } = createMocks({
+    method: "POST",
+    query: { account_id, grant: "query-grant" },
+    body: {},
+  });
+  await handler(req, queryOnly);
+  expect(queryOnly._getStatusCode()).toBe(400);
+  expect(mockAnswer).toHaveBeenCalledTimes(1);
+});
+
+it("refuses GET before authentication or account lookup", async () => {
+  const { req, res } = createMocks({
+    method: "GET",
+    query: { account_id, grant: "query-grant" },
+  });
+  await handler(req, res);
+  expect(res._getStatusCode()).toBe(405);
+  expect(res._getHeaders().allow).toBe("POST");
+  expect(res._getHeaders()["cache-control"]).toBe("no-store");
+  expect(mockAuthenticate).not.toHaveBeenCalled();
+  expect(mockAnswer).not.toHaveBeenCalled();
 });

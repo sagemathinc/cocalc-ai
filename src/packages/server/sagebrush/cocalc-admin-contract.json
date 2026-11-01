@@ -29,10 +29,11 @@
     }
   },
   "endpoint": {
-    "method": "GET",
+    "method": "POST",
     "path": "/api/v2/sagebrush/admin",
     "auth": "Basic sagebrush:<client secret>",
-    "query": ["account_id", "grant (optional)"],
+    "json_body": ["account_id", "grant (optional)"],
+    "get": "405 Method Not Allowed; grant identifiers never appear in the request URL",
     "headers": { "cache-control": "no-store" },
     "answers": {
       "not_admin": { "admin": false },

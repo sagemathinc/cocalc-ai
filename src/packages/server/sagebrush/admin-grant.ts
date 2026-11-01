@@ -24,7 +24,8 @@ or a non-200: nothing here fails open.
 
 import { randomBytes } from "node:crypto";
 
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export const FACTOR_SECONDS = 600;
@@ -58,10 +59,11 @@ const seconds = (d: Date | string | null | undefined): number | null =>
 /** The account's admin and 2FA facts, read on its home bay: a missing,
  * deleted or banned account is not an admin. */
 async function accountFacts(
+  db: PoolClient,
   account_id: string,
   requireApproval = false,
 ): Promise<{ admin: boolean; two_factor: boolean }> {
-  const { rows } = await getPool().query<{
+  const { rows } = await db.query<{
     admin: boolean;
     two_factor: boolean;
   }>(
@@ -117,11 +119,12 @@ type SessionRow = {
   expire: Date | null;
 };
 async function liveSession(
+  db: PoolClient,
   account_id: string,
   session_hash: string,
 ): Promise<SessionRow | undefined> {
   return (
-    await getPool().query<SessionRow>(
+    await db.query<SessionRow>(
       `SELECT factor_verified_at, fresh_auth_until, expire
          FROM account_auth_sessions
         WHERE session_hash = $1::CHAR(127)
@@ -137,24 +140,27 @@ async function liveSession(
 }
 
 /** On the home bay, at token time: a new grant, or null. */
-async function mintSagebrushAdminGrantForSession({
-  account_id,
-  session_hash,
-  factor_verified_at,
-}: {
-  account_id: string;
-  session_hash: string;
-  factor_verified_at: number;
-}): Promise<SagebrushAdminGrant | null> {
+async function mintSagebrushAdminGrantForSession(
+  db: PoolClient,
+  {
+    account_id,
+    session_hash,
+    factor_verified_at,
+  }: {
+    account_id: string;
+    session_hash: string;
+    factor_verified_at: number;
+  },
+): Promise<SagebrushAdminGrant | null> {
   if (
     !isValidUUID(account_id) ||
     !session_hash ||
     !Number.isInteger(factor_verified_at)
   )
     return null;
-  const facts = await accountFacts(account_id);
+  const facts = await accountFacts(db, account_id);
   if (!facts.admin || !facts.two_factor) return null;
-  const s = await liveSession(account_id, session_hash);
+  const s = await liveSession(db, account_id, session_hash);
   if (s == null) return null;
   const factor = seconds(s.factor_verified_at);
   if (factor !== factor_verified_at) return null;
@@ -170,10 +176,10 @@ async function mintSagebrushAdminGrantForSession({
   );
   const grant_id = randomBytes(24).toString("base64url");
   // (expired grants go a day after their expiry, here, as codes go when new ones are stored)
-  await getPool().query(
+  await db.query(
     `DELETE FROM sagebrush_admin_grants WHERE expires_at < NOW() - INTERVAL '1 day'`,
   );
-  await getPool().query(
+  await db.query(
     `INSERT INTO sagebrush_admin_grants(grant_id, account_id, session_hash, factor_verified_at, expires_at, created)
      VALUES($1, $2::UUID, $3::CHAR(127), $4, $5, NOW())`,
     [
@@ -189,16 +195,19 @@ async function mintSagebrushAdminGrantForSession({
 
 /** Consume the home-bay approval reference exactly once at token time.
  * The signed browser proof carries only this opaque id, not session facts. */
-export async function mintSagebrushAdminGrantLocal({
-  account_id,
-  approval_id,
-}: {
-  account_id: string;
-  approval_id: string;
-}): Promise<SagebrushAdminGrant | null> {
+async function mintSagebrushAdminGrantInFence(
+  db: PoolClient,
+  {
+    account_id,
+    approval_id,
+  }: {
+    account_id: string;
+    approval_id: string;
+  },
+): Promise<SagebrushAdminGrant | null> {
   if (!isValidUUID(account_id) || !/^[A-Za-z0-9_-]{43}$/.test(approval_id))
     return null;
-  const { rows } = await getPool().query<{
+  const { rows } = await db.query<{
     session_hash: string;
     factor_verified_at: Date;
   }>(
@@ -209,7 +218,7 @@ export async function mintSagebrushAdminGrantLocal({
   );
   const approval = rows[0];
   if (approval == null) return null;
-  return await mintSagebrushAdminGrantForSession({
+  return await mintSagebrushAdminGrantForSession(db, {
     account_id,
     session_hash: approval.session_hash.trim(),
     factor_verified_at: seconds(approval.factor_verified_at)!,
@@ -217,22 +226,25 @@ export async function mintSagebrushAdminGrantLocal({
 }
 
 /** On the home bay, every admin check: the contract's answer, read live. */
-export async function sagebrushAdminAnswerLocal({
-  account_id,
-  grant,
-}: {
-  account_id: string;
-  grant?: string | null;
-}): Promise<SagebrushAdminAnswer> {
+async function sagebrushAdminAnswerInFence(
+  db: PoolClient,
+  {
+    account_id,
+    grant,
+  }: {
+    account_id: string;
+    grant?: string | null;
+  },
+): Promise<SagebrushAdminAnswer> {
   if (!isValidUUID(account_id)) return { admin: false };
-  const facts = await accountFacts(account_id, true);
+  const facts = await accountFacts(db, account_id, true);
   if (!facts.admin) return { admin: false };
   if (!facts.two_factor) return { admin: true, two_factor: false };
   const refused = { admin: true, two_factor: true } as const;
   if (grant == null) return refused;
   if (!GRANT_ID.test(grant)) return refused;
   const g = (
-    await getPool().query<{
+    await db.query<{
       session_hash: string;
       factor_verified_at: Date;
       expires_at: Date;
@@ -244,7 +256,7 @@ export async function sagebrushAdminAnswerLocal({
     )
   ).rows[0];
   if (g == null) return refused;
-  const s = await liveSession(account_id, `${g.session_hash}`.trim());
+  const s = await liveSession(db, account_id, `${g.session_hash}`.trim());
   if (s == null) return refused;
   const factor = seconds(s.factor_verified_at);
   if (factor == null || factor !== seconds(g.factor_verified_at))
@@ -265,6 +277,47 @@ export async function sagebrushAdminAnswerLocal({
     factor_verified_at: factor,
     expires_at,
   };
+}
+
+// A negative-only preflight preserves the absent/deleted-account refusal in
+// single-bay deployments too. Presence never admits: the fence rechecks home
+// ownership and all account/session/grant facts before any successful result.
+async function hasLiveAccount(account_id: string): Promise<boolean> {
+  return (
+    (
+      await getPool().query(
+        "SELECT 1 FROM accounts WHERE account_id=$1 AND deleted IS NOT TRUE",
+        [account_id],
+      )
+    ).rows.length > 0
+  );
+}
+
+/** Keep every local read and write inside the same home-bay transaction fence. */
+export async function mintSagebrushAdminGrantLocal(opts: {
+  account_id: string;
+  approval_id: string;
+}): Promise<SagebrushAdminGrant | null> {
+  if (!isValidUUID(opts.account_id) || !(await hasLiveAccount(opts.account_id)))
+    return null;
+  return await withAccountRehomeWriteFence({
+    account_id: opts.account_id,
+    action: "mint a Sagebrush admin grant",
+    fn: (db) => mintSagebrushAdminGrantInFence(db, opts),
+  });
+}
+
+export async function sagebrushAdminAnswerLocal(opts: {
+  account_id: string;
+  grant?: string | null;
+}): Promise<SagebrushAdminAnswer> {
+  if (!isValidUUID(opts.account_id) || !(await hasLiveAccount(opts.account_id)))
+    return { admin: false };
+  return await withAccountRehomeWriteFence({
+    account_id: opts.account_id,
+    action: "check a Sagebrush admin grant",
+    fn: (db) => sagebrushAdminAnswerInFence(db, opts),
+  });
 }
 
 /** From any bay: the home bay mints (null: no grant). Throws when the home

@@ -5,12 +5,13 @@
 
 /*
 Whether an account may see Sagebrush's admin page, for the Sagebrush Worker,
-server to server: GET ?account_id=<uuid>[&grant=<id>] with the Sagebrush
+server to server: POST JSON {account_id, grant?} with the Sagebrush
 client's Basic credentials. The answer is the contract's
 (server/sagebrush/cocalc-admin-contract.json), read live on the account's
 home bay every call; nothing is cached. See docs/sagebrush.md.
 */
 
+import getParams from "@cocalc/http-api/lib/api/get-params";
 import getLogger from "@cocalc/backend/logger";
 import { authenticateOAuthClient } from "@cocalc/server/auth/oauth/clients";
 import { getSagebrushAdminAnswer } from "@cocalc/server/sagebrush/admin-grant";
@@ -20,8 +21,8 @@ const logger = getLogger("http-api:sagebrush-admin");
 
 export default async function sagebrushAdmin(req, res) {
   res.setHeader("Cache-Control", "no-store");
-  if (`${req.method ?? ""}`.toUpperCase() !== "GET") {
-    res.setHeader("Allow", "GET");
+  if (`${req.method ?? ""}`.toUpperCase() !== "POST") {
+    res.setHeader("Allow", "POST");
     res.status(405).json({ error: "method_not_allowed" });
     return;
   }
@@ -32,8 +33,9 @@ export default async function sagebrushAdmin(req, res) {
       res.status(401).json({ error: "invalid_client" });
       return;
     }
-    const account_id = req.query?.account_id;
-    const grant = req.query?.grant;
+    const params = getParams(req);
+    const account_id = params.account_id;
+    const grant = params.grant;
     if (
       typeof account_id !== "string" ||
       !isValidUUID(account_id) ||

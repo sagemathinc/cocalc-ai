@@ -498,15 +498,19 @@ only for the `sagebrush` client; any other scope is `invalid scope`).
   `"admin_grant": {"grant_id", "factor_verified_at", "expires_at"}` (integer
   unix seconds), minted on the account's home bay when the code is redeemed.
   `expires_at` is `floor(min(factor_verified_at + 600, the session's expiry,
-  its fresh_auth_until))`. There is no grant if any approval condition stopped
+its fresh_auth_until))`. There is no grant if any approval condition stopped
   holding since approval; the code is still used up.
 - **The check.** On every admin request the Worker asks, server to server, with
   the client's Basic credentials:
 
   ```
-  GET {COCALC_ORIGIN}/api/v2/sagebrush/admin?account_id=<uuid>&grant=<grant_id>
+  POST {COCALC_ORIGIN}/api/v2/sagebrush/admin
+  Content-Type: application/json
+
+  {"account_id": "<uuid>", "grant": "<grant_id>"}
   ```
 
+  GET returns 405; grant identifiers are never placed in the request URL.
   The home bay answers live, nothing cached: `{"admin": false}`,
   `{"admin": true, "two_factor": false}`, `{"admin": true, "two_factor": true}`
   (no valid grant), or with a valid grant also `factor_verified_at` and
