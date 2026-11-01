@@ -15,7 +15,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Flex, Typography } from "antd";
 
 import { postAuthApi, signOutAuthSession } from "@cocalc/frontend/auth/api";
-import { FreshAuthModal, useFreshAuthAction } from "@cocalc/frontend/auth/fresh-auth";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 
 export const AUTHORIZE_PARAMS = [

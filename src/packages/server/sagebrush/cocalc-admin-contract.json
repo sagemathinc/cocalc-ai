@@ -4,12 +4,34 @@
   "authorize": {
     "method": "GET",
     "path": "/auth/oauth/authorize",
-    "params": ["response_type", "client_id", "scope", "redirect_uri", "state", "code_challenge", "code_challenge_method"],
-    "fixed": { "response_type": "code", "client_id": "sagebrush", "scope": "sagebrush-admin", "code_challenge_method": "S256" },
+    "params": [
+      "response_type",
+      "client_id",
+      "scope",
+      "redirect_uri",
+      "state",
+      "code_challenge",
+      "code_challenge_method"
+    ],
+    "fixed": {
+      "response_type": "code",
+      "client_id": "sagebrush",
+      "scope": "sagebrush-admin",
+      "code_challenge_method": "S256"
+    },
     "redirect_uri": "<site origin>/admin/auth/callback",
-    "approves_only_when": ["a signed-in cocalc.ai browser session, not an impersonation", "the account exists, is not deleted and is an admin (both routing paths)", "2FA is enabled on it", "that session's factor_verified_at is within the last 600 s (else cocalc.ai's recent-2FA step first)"],
-    "records_with_the_code": ["an opaque, account-bound, single-use home-bay approval reference; the browser-readable approval proof carries only this reference, never session facts"],
-    "records_on_the_home_bay": ["the approving account, session hash and factor_verified_at remain server-side in sagebrush_admin_approvals; token exchange atomically consumes the reference on that account's home bay before rechecking live session state and minting a grant"]
+    "approves_only_when": [
+      "a signed-in cocalc.ai browser session, not an impersonation",
+      "the account exists, is not deleted and is an admin (both routing paths)",
+      "2FA is enabled on it",
+      "that session's factor_verified_at is within the last 600 s (else cocalc.ai's recent-2FA step first)"
+    ],
+    "records_with_the_code": [
+      "an opaque, account-bound, single-use home-bay approval reference; the browser-readable approval proof carries only this reference, never session facts"
+    ],
+    "records_on_the_home_bay": [
+      "the approving account, session hash and factor_verified_at remain server-side in sagebrush_admin_approvals; token exchange atomically consumes the reference on that account's home bay before rechecking live session state and minting a grant"
+    ]
   },
   "token": {
     "method": "POST",
@@ -25,7 +47,10 @@
         "factor_verified_at": "integer seconds: the approving session's",
         "expires_at": "integer seconds: floor(min(factor_verified_at + 600, the session's expire, the session's fresh_auth_until))"
       },
-      "no_grant_when": ["any approval condition no longer holds", "fresh_auth_until is NULL or <= now"]
+      "no_grant_when": [
+        "any approval condition no longer holds",
+        "fresh_auth_until is NULL or <= now"
+      ]
     }
   },
   "endpoint": {
@@ -39,9 +64,21 @@
       "not_admin": { "admin": false },
       "no_2fa": { "admin": true, "two_factor": false },
       "no_grant_asked": { "admin": true, "two_factor": true },
-      "grant": { "admin": true, "two_factor": true, "factor_verified_at": "integer seconds", "expires_at": "integer seconds: step 4's formula from the session's values now, capped at the grant's issued expires_at" },
+      "grant": {
+        "admin": true,
+        "two_factor": true,
+        "factor_verified_at": "integer seconds",
+        "expires_at": "integer seconds: step 4's formula from the session's values now, capped at the grant's issued expires_at"
+      },
       "refused_grant": { "admin": true, "two_factor": true }
     },
-    "grant_answer_only_when": ["the account is a non-deleted admin with 2FA on", "the grant exists, for that account", "its cocalc.ai session is not revoked or expired", "that session's factor_verified_at is still the granted one", "that session's fresh_auth_until is not NULL and now < fresh_auth_until", "factor_verified_at <= now < factor_verified_at + 600"]
+    "grant_answer_only_when": [
+      "the account is a non-deleted admin with 2FA on",
+      "the grant exists, for that account",
+      "its cocalc.ai session is not revoked or expired",
+      "that session's factor_verified_at is still the granted one",
+      "that session's fresh_auth_until is not NULL and now < fresh_auth_until",
+      "factor_verified_at <= now < factor_verified_at + 600"
+    ]
   }
 }

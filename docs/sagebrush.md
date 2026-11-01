@@ -497,9 +497,10 @@ only for the `sagebrush` client; any other scope is `invalid scope`).
 - **The grant.** The token response then also has
   `"admin_grant": {"grant_id", "factor_verified_at", "expires_at"}` (integer
   unix seconds), minted on the account's home bay when the code is redeemed.
-  `expires_at` is `floor(min(factor_verified_at + 600, the session's expiry,
-its fresh_auth_until))`. There is no grant if any approval condition stopped
-  holding since approval; the code is still used up.
+  `expires_at` is
+  `floor(min(factor_verified_at + 600, session expiry, fresh_auth_until))`.
+  There is no grant if any approval condition stopped holding since approval;
+  the code is still used up.
 - **The check.** On every admin request the Worker asks, server to server, with
   the client's Basic credentials:
 
@@ -516,8 +517,8 @@ its fresh_auth_until))`. There is no grant if any approval condition stopped
   (no valid grant), or with a valid grant also `factor_verified_at` and
   `expires_at`, never later than the grant's own. A grant stops being valid
   when its session is signed out or revoked, its factor changes, or the
-  account is deleted, banned, demoted or turns 2FA off. A routing or lookup failure is
-  a 500, never an answer.
+  account is deleted, banned, demoted or turns 2FA off. A routing or lookup
+  failure is a 500, never an answer.
 
 **Setup:** the admin flow redirects to `<site origin>/admin/auth/callback`.
 Each such URI must be registered in the site setting
