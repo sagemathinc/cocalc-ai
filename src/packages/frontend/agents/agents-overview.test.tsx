@@ -16,6 +16,7 @@ const project = "11111111-1111-4111-8111-111111111111";
 const listAgents = jest.fn();
 const setOrder = jest.fn();
 let order: string[] = [];
+let mockGithubConnector = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const { Map } = require("immutable");
@@ -26,9 +27,19 @@ jest.mock("@cocalc/frontend/app-framework", () => {
         ? Map({ [project]: Map({ title: "Research" }) })
         : store === "users" && field === "user_map"
           ? Map({ [bob]: Map({ first_name: "Bob", last_name: "Lee" }) })
-          : undefined,
+          : store === "customize" && field === "cli_connector_github_enabled"
+            ? mockGithubConnector
+            : undefined,
   };
 });
+jest.mock("./cli-connectors-bulk", () => ({
+  SetConnectorsModal: ({ agents, connectors }: any) => (
+    <div role="dialog" aria-label="Set connectors">
+      {agents.map((agent: any) => `@${agent.name}`).join(" ")} /{" "}
+      {connectors.join(" ")}
+    </div>
+  ),
+}));
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   TimeAgo: () => null,
@@ -379,4 +390,25 @@ test("filter and sort helpers", () => {
   expect(sortAgents(items, "recent").map((i) => i.id)).toEqual(["2", "1"]);
   expect(filterAgents(items, "@b").map((i) => i.id)).toEqual(["1"]);
   expect(filterAgents(items, "lab", () => ["Lab"]).length).toBe(2);
+});
+
+it("sets connectors for the selected agents, once the site has one", async () => {
+  const user = userEvent.setup();
+  mockGithubConnector = false;
+  const { unmount } = render(<AgentsOverview {...props()} />);
+  await user.click(screen.getByRole("checkbox", { name: "Select @alpha" }));
+  expect(screen.queryByRole("button", { name: "Set connectors…" })).toBeNull();
+  unmount();
+  mockGithubConnector = true;
+  try {
+    render(<AgentsOverview {...props()} />);
+    await user.click(screen.getByRole("checkbox", { name: "Select @alpha" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select @beta" }));
+    await user.click(screen.getByRole("button", { name: "Set connectors…" }));
+    expect(
+      screen.getByRole("dialog", { name: "Set connectors" }),
+    ).toHaveTextContent("@alpha @beta / github");
+  } finally {
+    mockGithubConnector = false;
+  }
 });

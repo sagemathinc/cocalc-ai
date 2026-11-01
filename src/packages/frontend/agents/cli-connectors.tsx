@@ -21,7 +21,7 @@ import {
   Table,
   Typography,
 } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type {
   CliConnection,
@@ -361,6 +361,22 @@ export function CliConnectorAgentModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const {
+    disconnect,
+    busy: disconnecting,
+    error: disconnectError,
+    contextHolder,
+  } = useDisconnectCliConnection(connector, data?.grants);
+  // Where the keys go once a disconnected account (and its button) leaves
+  // the list.
+  const switchRef = useRef<HTMLButtonElement>(null);
+  const [removedId, setRemovedId] = useState<string>();
+  useEffect(() => {
+    if (!removedId) return;
+    if (connections.some((c) => c.connection_id === removedId)) return;
+    setRemovedId(undefined);
+    switchRef.current?.focus();
+  });
   useEffect(() => {
     if (!open || data == null) return;
     setEnabled(grant?.enabled ?? false);
@@ -411,6 +427,7 @@ export function CliConnectorAgentModal({
         onCancel={onClose}
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >
+        {contextHolder}
         {loadError ? (
           <Alert
             type="error"
@@ -459,6 +476,7 @@ export function CliConnectorAgentModal({
             )}
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <Switch
+                ref={switchRef}
                 checked={enabled}
                 aria-label={`Use ${label}`}
                 // Turning on is pointless without internet access; turning
@@ -468,39 +486,72 @@ export function CliConnectorAgentModal({
               />
               Use {label}
             </label>
-            {enabled &&
-              (connections.length === 0 ? (
+            {connections.length === 0 ? (
+              enabled && (
                 <Typography.Paragraph type="secondary">
                   {available
                     ? `Connect a ${label} account first.`
                     : notSetUp(label)}
                 </Typography.Paragraph>
-              ) : (
-                <Radio.Group
-                  aria-label={`${label} connection`}
-                  value={connectionId}
-                  onChange={(e) => setConnectionId(e.target.value)}
-                >
-                  <Space direction="vertical">
-                    {connections.map((connection) => (
-                      <Radio
-                        key={connection.connection_id}
-                        value={connection.connection_id}
-                      >
+              )
+            ) : (
+              // Shown when off too, so an account can be removed from here.
+              <Radio.Group
+                aria-label={`${label} connection`}
+                value={connectionId}
+                disabled={!enabled}
+                onChange={(e) => setConnectionId(e.target.value)}
+              >
+                <Space direction="vertical">
+                  {connections.map((connection) => (
+                    <div
+                      key={connection.connection_id}
+                      style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    >
+                      <Radio value={connection.connection_id}>
                         <ConnectionName connection={connection} />
                       </Radio>
-                    ))}
-                  </Space>
-                </Radio.Group>
-              ))}
+                      <Button
+                        size="small"
+                        type="text"
+                        danger
+                        icon={<DeleteOutlined aria-hidden />}
+                        aria-label={`Disconnect ${connection.description}`}
+                        title={`Disconnect ${connection.description} from CoCalc (for every agent)`}
+                        loading={disconnecting === connection.connection_id}
+                        disabled={disconnecting != null || busy}
+                        onClick={() =>
+                          disconnect(connection, () => {
+                            setRemovedId(connection.connection_id);
+                            if (connectionId === connection.connection_id)
+                              setConnectionId(
+                                connections.find(
+                                  (other) =>
+                                    other.connection_id !==
+                                    connection.connection_id,
+                                )?.connection_id,
+                              );
+                          })
+                        }
+                      />
+                    </div>
+                  ))}
+                </Space>
+              </Radio.Group>
+            )}
             {enabled && available && (
               <Button size="small" onClick={() => setConnecting(true)}>
                 Connect {connections.length > 0 ? "another" : "a"} {label}{" "}
                 account
               </Button>
             )}
-            {error && (
-              <Alert role="alert" type="error" showIcon title={error} />
+            {(error || disconnectError) && (
+              <Alert
+                role="alert"
+                type="error"
+                showIcon
+                title={error || disconnectError}
+              />
             )}
           </Space>
         )}
@@ -514,6 +565,58 @@ export function CliConnectorAgentModal({
       <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
+}
+
+/**
+ * Disconnect a connection after confirming: it turns off for every agent
+ * using it, and CoCalc revokes the sign-in at the provider.
+ */
+function useDisconnectCliConnection(
+  connector: CliConnector,
+  grants: CliConnectorGrant[] | undefined,
+) {
+  const { label } = CLI_CONNECTOR_INFO[connector];
+  const [busy, setBusy] = useState<string>();
+  const [error, setError] = useState("");
+  // The caller renders contextHolder: the confirmation is then part of its
+  // tree (theme, focus given back to its trigger when cancelled).
+  const [modal, contextHolder] = Modal.useModal();
+  const disconnect = useCallback(
+    (connection: CliConnection, onDone?: () => void) => {
+      const users = (grants ?? []).filter(
+        (grant) =>
+          grant.connector === connector &&
+          grant.enabled &&
+          grant.connection_id === connection.connection_id,
+      ).length;
+      modal.confirm({
+        title: `Disconnect ${connection.description}?`,
+        content:
+          users > 0
+            ? `${users} ${users === 1 ? "agent uses" : "agents use"} it; ${label} turns off for ${users === 1 ? "it" : "them"}. ${label} turns off for agents at once, and CoCalc revokes the sign-in at ${label}. If ${label} cannot be reached, CoCalc keeps the encrypted sign-in only to retry that revocation later.`
+            : `${label} turns off for agents at once, and CoCalc revokes the sign-in at ${label}. If ${label} cannot be reached, CoCalc keeps the encrypted sign-in only to retry that revocation later.`,
+        okText: "Disconnect",
+        okButtonProps: { danger: true },
+        onOk: async () => {
+          setBusy(connection.connection_id);
+          setError("");
+          try {
+            await personalAgentApi().disconnectCliConnection({
+              connection_id: connection.connection_id,
+            });
+            refreshCliConnectors();
+            onDone?.();
+          } catch (err) {
+            setError(`${err}`);
+          } finally {
+            setBusy(undefined);
+          }
+        },
+      });
+    },
+    [grants, connector, label, modal],
+  );
+  return { disconnect, busy, error, setError, contextHolder };
 }
 
 function notSetUp(label: string): string {
@@ -560,8 +663,6 @@ export function CliConnectorSection({
   const { directory } = useNamedAgents();
   const [connecting, setConnecting] = useState(false);
   const [managing, setManaging] = useState<NamedAgent>();
-  const [busy, setBusy] = useState<string>();
-  const [actionError, setActionError] = useState("");
   const [returned, setReturned] = useState<{
     type: "success" | "error";
     message: string;
@@ -637,41 +738,17 @@ export function CliConnectorSection({
         ({ connection_id }) => connection_id === grant.connection_id,
       ),
     }));
-  const disconnect = useCallback(
-    (connection: CliConnection) => {
-      const users = rows.filter(
-        (row) => row.grant.connection_id === connection.connection_id,
-      ).length;
-      Modal.confirm({
-        title: `Disconnect ${connection.description}?`,
-        content:
-          users > 0
-            ? `${users} ${users === 1 ? "agent uses" : "agents use"} it; ${label} turns off for ${users === 1 ? "it" : "them"}. ${label} turns off for agents at once, and CoCalc revokes the sign-in at ${label}. If ${label} cannot be reached, CoCalc keeps the encrypted sign-in only to retry that revocation later.`
-            : `${label} turns off for agents at once, and CoCalc revokes the sign-in at ${label}. If ${label} cannot be reached, CoCalc keeps the encrypted sign-in only to retry that revocation later.`,
-        okText: "Disconnect",
-        okButtonProps: { danger: true },
-        onOk: async () => {
-          setBusy(connection.connection_id);
-          setActionError("");
-          try {
-            await personalAgentApi().disconnectCliConnection({
-              connection_id: connection.connection_id,
-            });
-            refreshCliConnectors();
-          } catch (err) {
-            setActionError(`${err}`);
-          } finally {
-            setBusy(undefined);
-          }
-        },
-      });
-    },
-    [rows, label],
-  );
+  const {
+    disconnect,
+    busy,
+    error: actionError,
+    contextHolder,
+  } = useDisconnectCliConnection(connector, data?.grants);
   // Nothing at all until the site sets this connector up.
   if (!enabled.includes(connector)) return null;
   return (
     <Panel header={label}>
+      {contextHolder}
       <Typography.Paragraph type="secondary">
         {SECTION_TEXT[connector]} Turn it on for an agent from the connectors
         list (+) in that agent&apos;s message box.
