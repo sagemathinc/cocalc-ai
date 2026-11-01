@@ -401,7 +401,7 @@ describe("bootstrap-host shell templates", () => {
 describe("bootstrap reconcile over ssh", () => {
   const SENTINEL = "SENTINEL-reconcile-token-4b2e8a";
 
-  function prepare(dataLogsIsFile = false) {
+  function prepare(dataLogsIsFile = false, extra = "") {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bootstrap-reconcile-"));
     const state = path.join(dir, "state");
     const dataLogs = path.join(dir, "data-logs");
@@ -410,6 +410,7 @@ describe("bootstrap reconcile over ssh", () => {
     fs.mkdirSync(shims);
     const launcher = `#!/bin/bash
 TOKEN="${SENTINEL}"
+${extra}
 echo "launcher ran scope=$COCALC_BOOTSTRAP_RECONCILE_SCOPE"
 touch "${dir}/launcher-ran"
 `;
@@ -430,7 +431,7 @@ touch "${dir}/launcher-ran"
     shim("sudo", `[ "$1" = "-n" ] && shift\nexec "$@"`);
     shim(
       "runuser",
-      `while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"`,
+      `while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\n[ -n "$STALL_COPY" ] && exec sh -c 'trap "" HUP; while :; do kill -STOP $$; done' "$SHIM_ROOT-copy"\nexec "$@"`,
     );
     shim(
       "install",
@@ -450,7 +451,7 @@ esac`,
     return { dir, state, dataLogs, shims, script };
   }
 
-  function runOverSsh(ctx: ReturnType<typeof prepare>) {
+  function runOverSsh(ctx: ReturnType<typeof prepare>, stallCopy = "") {
     // like runSshScript: the script on stdin of bash -se
     return spawnSync("bash", ["-se"], {
       input: ctx.script,
@@ -459,12 +460,20 @@ esac`,
         PATH: `${ctx.shims}:/usr/bin:/bin`,
         HOME: ctx.dir,
         SHIM_ROOT: ctx.state,
+        STALL_COPY: stallCopy,
       },
     });
   }
 
-  function waitFor(check: () => boolean) {
-    const deadline = Date.now() + 10_000;
+  // processes (of this test) whose command line names its directory
+  function leftovers(ctx: ReturnType<typeof prepare>): string[] {
+    return spawnSync("ps", ["-eo", "pid=,stat=,args="], { encoding: "utf8" })
+      .stdout.split("\n")
+      .filter((line) => line.includes(ctx.dir) && !line.includes(" ps "));
+  }
+
+  function waitFor(check: () => boolean, ms = 10_000) {
+    const deadline = Date.now() + ms;
     while (!check()) {
       if (Date.now() > deadline) throw new Error("timed out");
       spawnSync("sleep", ["0.1"]);
@@ -517,6 +526,76 @@ esac`,
     );
   });
 
+  it("leaves no follower behind once the reconcile is done", () => {
+    const ctx = prepare();
+    expect(runOverSsh(ctx).status).toBe(0);
+    waitFor(() =>
+      fs
+        .readdirSync(path.join(ctx.state, "bootstrap"))
+        .every((name) => !name.startsWith("reconcile-launcher")),
+    );
+    // tail --pid ends within about a second of the reconcile
+    waitFor(() => leftovers(ctx).length === 0, 5_000);
+    expect(
+      fs
+        .readdirSync(path.join(ctx.state, "bootstrap"))
+        .filter((name) => name.startsWith("reconcile-run")),
+    ).toEqual([]);
+  });
+
+  it("finishes the reconcile, then ends the follower, when the runtime user's copy is stopped", () => {
+    // more than a pipe buffer of output, while the copy never reads: it
+    // stops itself again whenever continued, and ignores SIGHUP (so the
+    // kernel's orphaned-group HUP+CONT doesn't end it)
+    const ctx = prepare(false, 'head -c 300000 /dev/zero | tr "\\0" x; echo');
+    const result = runOverSsh(ctx, "1");
+    expect(result.status).toBe(0);
+    waitFor(() => fs.existsSync(path.join(ctx.dir, "launcher-ran")));
+    waitFor(() =>
+      fs
+        .readdirSync(path.join(ctx.state, "bootstrap"))
+        .every((name) => !name.startsWith("reconcile-launcher")),
+    );
+    const rootLog = path.join(
+      ctx.state,
+      "bootstrap",
+      "bootstrap-reconcile.log",
+    );
+    expect(fs.statSync(rootLog).size).toBeGreaterThan(300000);
+    expect(fs.readFileSync(rootLog, "utf8")).toContain(
+      "launcher ran scope=helpers",
+    );
+    // the copy really is stopped, and holds root's follower
+    expect(leftovers(ctx).some((line) => / T/.test(line))).toBe(true);
+    // a few seconds later: TERM (+CONT) from timeout, nothing left
+    waitFor(() => leftovers(ctx).length === 0, 20_000);
+  }, 30_000);
+
+  it("copies each run's output once, even with reconciles running at once", () => {
+    const ctx = prepare(false, 'echo "run-$$"; sleep 1');
+    fs.mkdirSync(path.join(ctx.state, "bootstrap"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ctx.state, "bootstrap", "bootstrap-reconcile.log"),
+      "an earlier run\n",
+    );
+    expect(runOverSsh(ctx).status).toBe(0);
+    expect(runOverSsh(ctx).status).toBe(0);
+    const copy = path.join(ctx.dataLogs, "bootstrap-reconcile.log");
+    waitFor(
+      () =>
+        fs.existsSync(copy) &&
+        (fs.readFileSync(copy, "utf8").match(/launcher ran/g) ?? []).length ===
+          2,
+    );
+    waitFor(() => leftovers(ctx).length === 0, 5_000);
+    const text = fs.readFileSync(copy, "utf8");
+    expect(text).not.toContain("an earlier run");
+    const runs = text.match(/run-\d+/g) ?? [];
+    expect(runs).toHaveLength(2);
+    expect(new Set(runs).size).toBe(2);
+    expect(text.match(/launcher ran/g)).toHaveLength(2);
+  });
+
   it("has the ssh user write nothing: everything happens in one sudo'd root script", () => {
     const script = bootstrapHost.buildBootstrapReconcileSshScript({
       launcher: "echo hi",
@@ -532,6 +611,16 @@ esac`,
       lines.filter((line) => line === "EOF_COCALC_RECONCILE_ROOT"),
     ).toHaveLength(1);
     expect(script.trimEnd().endsWith("EOF_COCALC_RECONCILE_ROOT")).toBe(true);
+    // the reconcile writes root's log only; the copy is fed by a bounded
+    // follower, so a stalled copy can't block it
+    expect(script).toContain('(bash "$1" 2>&1 | tee -a "$2" > "$4") &');
+    expect(script).not.toContain("tee -p");
+    expect(script).toContain(
+      'timeout --kill-after=30s 1h tail -c +1 -f --pid="$pid" "$4"',
+    );
+    expect(script).toContain(
+      'exec 3> >(exec timeout --kill-after=30s 1h runuser -u "$3" --',
+    );
     expect(script).not.toContain("/mnt/cocalc/data/.host-bootstrap");
     // the data dir is only ever written by the runtime user (its log copy)
     for (const line of lines.filter((line) =>

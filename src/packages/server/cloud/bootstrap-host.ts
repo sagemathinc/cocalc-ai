@@ -1641,9 +1641,15 @@ CURL_CACERT_ARG="--cacert $BOOTSTRAP_CACERT_PATH"
 // host: root decodes the launcher into a fresh name in the root-only state
 // dir and runs it in the background. The ssh user writes nothing, and nothing
 // root opens is under a directory the runtime user owns. Root logs to the
-// state dir; the copy that "cocalc host logs" reads is written by the runtime
-// user itself (so a planted path there gains nothing), and tee -p keeps the
-// reconcile running if that copy fails.
+// state dir only (the cumulative log, and this run's own log); the copy that
+// "cocalc host logs" reads is written by the runtime user itself (so a
+// planted path there gains nothing), fed by a separate follower of this
+// run's log. The runtime user can stall or kill its copy, but that only
+// blocks the follower, never the reconcile; and both are ended a few seconds
+// after the reconcile (TERM, then KILL), or at RECONCILE_LOG_COPY_TIMEOUT.
+const RECONCILE_LOG_COPY_TIMEOUT = "1h";
+const RECONCILE_LOG_COPY_KILL_AFTER = "30s";
+
 export function buildBootstrapReconcileSshScript({
   launcher,
   scope,
@@ -1669,10 +1675,34 @@ RECONCILE_LAUNCHER="$(umask 077 && mktemp "$BOOTSTRAP_DIR/reconcile-launcher.XXX
 base64 -d > "$RECONCILE_LAUNCHER" <<'EOF_COCALC_RECONCILE_LAUNCHER'
 ${encoded}
 EOF_COCALC_RECONCILE_LAUNCHER
+RECONCILE_RUN_LOG="$(umask 077 && mktemp "$BOOTSTRAP_DIR/reconcile-run.XXXXXX")"
 nohup bash -c '
-  bash "$1" 2>&1 | tee -p -a "$2" | runuser -u "$3" -- sh -c "mkdir -p /mnt/cocalc/data/logs && cat >> /mnt/cocalc/data/logs/bootstrap-reconcile.log" >/dev/null 2>&1
+  (bash "$1" 2>&1 | tee -a "$2" > "$4") &
+  pid=$!
+  exec 3> >(exec timeout --kill-after=${RECONCILE_LOG_COPY_KILL_AFTER} ${RECONCILE_LOG_COPY_TIMEOUT} runuser -u "$3" -- sh -c "mkdir -p /mnt/cocalc/data/logs && cat >> /mnt/cocalc/data/logs/bootstrap-reconcile.log" >/dev/null 2>&1)
+  copy=$!
+  timeout --kill-after=${RECONCILE_LOG_COPY_KILL_AFTER} ${RECONCILE_LOG_COPY_TIMEOUT} tail -c +1 -f --pid="$pid" "$4" >&3 2>/dev/null &
+  follower=$!
+  exec 3>&-
+  wait "$pid"
   rm -f "$1"
-' reconcile "$RECONCILE_LAUNCHER" "$RECONCILE_LOG" ${runtimeUser} </dev/null >/dev/null 2>&1 &
+  # The follower ends by itself just after the reconcile. A copy that stopped
+  # reading would keep it (and itself) until the timeout, so after a few
+  # seconds both are ended: TERM (and CONT) from timeout, KILL 30 s later.
+  # This shell stays until they are gone: exiting at once orphans their
+  # process groups, and HUP and CONT from the kernel then race the TERM.
+  for p in "$follower" "$copy"; do
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      kill -0 "$p" 2>/dev/null || break
+      sleep 0.5
+    done
+    kill "$p" 2>/dev/null
+  done
+  for p in "$follower" "$copy"; do
+    while kill -0 "$p" 2>/dev/null; do sleep 0.5; done
+  done
+  rm -f "$4"
+' reconcile "$RECONCILE_LAUNCHER" "$RECONCILE_LOG" ${runtimeUser} "$RECONCILE_RUN_LOG" </dev/null >/dev/null 2>&1 &
 echo "started bootstrap reconcile pid=$! log=$RECONCILE_LOG"
 EOF_COCALC_RECONCILE_ROOT
 `;
