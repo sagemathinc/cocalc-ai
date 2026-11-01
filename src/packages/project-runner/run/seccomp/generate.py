@@ -1,0 +1,232 @@
+#!/usr/bin/python3 -I
+"""Derive CoCalc's project-container seccomp profile from the hosts' base
+profile (private 021, item B).
+
+The base is the hosts' /usr/share/containers/seccomp.json
+(golang-github-containers-common 0.57.4+ds1-2ubuntu0.2; sha256 cc374cf2...),
+which the bundled podman reads. The generator refuses any base whose
+socket/setsockopt/socketcall rules differ from the ones it was reviewed
+against (BASE_SOCKET_RULES and the plain-allow check), so a base change
+forces a re-review.
+
+Changes to the base, nothing else:
+
+- setsockopt: EPERM for level IPPROTO_IP (0) with optname IP_OPTIONS (4) or
+  IP_RETOPTS (7), whatever the socket family (v4-mapped IPv6 sockets
+  included). Matched on the low 32 bits, because the kernel truncates these
+  C ints: a caller can't slip 0x1_00000004 past the rule.
+- socket: EPERM for protocol IPPROTO_MPTCP (262), on the low 32 bits. The
+  base's socket semantics are otherwise kept exactly: without
+  CAP_AUDIT_WRITE, (AF_NETLINK, NETLINK_AUDIT) gives EINVAL (exact 64-bit
+  compare, as in the base); everything else is allowed.
+- socketcall (the 32-bit multiplexer, whose arguments seccomp can't see):
+  EPERM.
+
+Rules with different actions for the same syscall are DISJOINT by
+construction. libseccomp drops a conditional rule when an unconditional
+allow exists for the same syscall, evaluates overlapping conditional rules
+in insertion order, and (2.5.5 and 2.6) rejects some overlaps with EEXIST,
+which makes crun fail the container. So:
+
+- the three syscalls are removed from every base rule;
+- every ALLOW region is built from pieces that cannot meet any deny region:
+  - masked-equality "aligned cubes" on all 64 bits, which also pin the high
+    word to 0;
+  - single unsigned comparisons (LT/GT) on an argument whose deny point uses
+    exact 64-bit equality, as the base does.
+
+Allow pieces cover values below 2^16 for level, optname and protocol (all
+real ones are below 300; AF_PACKET's htons(ETH_P_*) are 16-bit). That keeps
+the BPF program small. Values with the high word set, or at or above 2^16,
+that match no deny rule fall to the profile's default action (ENOSYS)
+instead of the kernel's error. Real callers sign-extend non-negative ints,
+so they never set the high word.
+"""
+
+import copy
+import hashlib
+import json
+import sys
+
+LOW32 = 0xFFFFFFFF
+ALL64 = 0xFFFFFFFFFFFFFFFF
+EPERM = 1
+EINVAL = 22
+
+IPPROTO_IP = 0
+IP_OPTIONS = 4
+IP_RETOPTS = 7
+IPPROTO_MPTCP = 262
+AF_NETLINK = 16
+NETLINK_AUDIT = 9
+CAP_AUDIT_WRITE = "CAP_AUDIT_WRITE"
+CHANGED = ("socket", "setsockopt", "socketcall")
+ALLOW_LIMIT = 1 << 16  # allow pieces cover [0, ALLOW_LIMIT)
+
+# The base's socket rules this generator reproduces (0.57.4), normalized as
+# (action, errnoRet, [(index, op, value, valueTwo)], includes, excludes).
+_AUDIT = {"caps": [CAP_AUDIT_WRITE]}
+BASE_SOCKET_RULES = [
+    ("SCMP_ACT_ERRNO", 22, [(0, "SCMP_CMP_EQ", 16, 0), (2, "SCMP_CMP_EQ", 9, 0)], {}, _AUDIT),
+    ("SCMP_ACT_ALLOW", None, [(2, "SCMP_CMP_NE", 9, 0)], {}, _AUDIT),
+    ("SCMP_ACT_ALLOW", None, [(0, "SCMP_CMP_NE", 16, 0)], {}, _AUDIT),
+    ("SCMP_ACT_ALLOW", None, [(2, "SCMP_CMP_NE", 9, 0)], {}, _AUDIT),
+    ("SCMP_ACT_ALLOW", None, [], _AUDIT, {}),
+]
+
+
+class BaseMismatch(Exception):
+    pass
+
+
+def check_base(base: dict) -> None:
+    """The base must match what this generator was reviewed against."""
+    socket_rules = []
+    for entry in base["syscalls"]:
+        names = set(entry["names"])
+        if not names & set(CHANGED):
+            continue
+        if "socket" in names:
+            if names != {"socket"}:
+                raise BaseMismatch("socket shares a rule")
+            socket_rules.append((
+                entry["action"], entry.get("errnoRet"),
+                [(a["index"], a["op"], a["value"], a.get("valueTwo", 0)) for a in entry.get("args") or []],
+                entry.get("includes") or {}, entry.get("excludes") or {},
+            ))
+        elif (entry["action"] != "SCMP_ACT_ALLOW" or entry.get("args")
+              or entry.get("includes") or entry.get("excludes")):
+            # setsockopt/socketcall only ever as plain unconditional allows.
+            raise BaseMismatch("setsockopt/socketcall rule shape")
+    if socket_rules != BASE_SOCKET_RULES:
+        raise BaseMismatch("socket rules")
+
+
+def cubes(lo: int, hi: int) -> list[tuple[int, int]]:
+    """Aligned power-of-two blocks covering [lo, hi] (inclusive, within
+    32 bits) as (mask, value) for a masked-equality compare on all 64 bits:
+    each block also requires the high word to be 0."""
+    out = []
+    while lo <= hi:
+        size = lo & -lo if lo else 1 << 32
+        while size > hi - lo + 1:
+            size >>= 1
+        out.append((ALL64 & ~(size - 1), lo))
+        lo += size
+    return out
+
+
+def complement_cubes(points: list[int], limit: int = ALLOW_LIMIT) -> list[tuple[int, int]]:
+    """Cubes covering [0, limit) except the given points."""
+    out, start = [], 0
+    for p in sorted(set(points)):
+        if p > start:
+            out += cubes(start, p - 1)
+        start = p + 1
+    if start < limit:
+        out += cubes(start, limit - 1)
+    return out
+
+
+def arg(index: int, op: str, value: int, value_two: int = 0) -> dict:
+    return {"index": index, "value": value, "valueTwo": value_two, "op": op}
+
+
+def masked(index: int, mask: int, value: int) -> dict:
+    return arg(index, "SCMP_CMP_MASKED_EQ", mask, value)
+
+
+def rule(name: str, action: str, args: list[dict], errno: int | None = None,
+         includes: dict | None = None, excludes: dict | None = None, comment: str = "") -> dict:
+    out = {"names": [name], "action": action, "args": args, "comment": comment,
+           "includes": includes or {}, "excludes": excludes or {}}
+    if errno is not None:
+        out["errnoRet"] = errno
+    return out
+
+
+def setsockopt_rules() -> list[dict]:
+    rules = []
+    for opt in (IP_OPTIONS, IP_RETOPTS):
+        rules.append(rule("setsockopt", "SCMP_ACT_ERRNO",
+                          [masked(1, LOW32, IPPROTO_IP), masked(2, LOW32, opt)], EPERM,
+                          comment="021: IP_OPTIONS/IP_RETOPTS (low 32 bits)"))
+    # ALLOW: level != 0 ...
+    for mask, value in complement_cubes([IPPROTO_IP]):
+        rules.append(rule("setsockopt", "SCMP_ACT_ALLOW", [masked(1, mask, value)],
+                          comment="021: level != IPPROTO_IP"))
+    # ... or level == 0 with any other optname.
+    for mask, value in complement_cubes([IP_OPTIONS, IP_RETOPTS]):
+        rules.append(rule("setsockopt", "SCMP_ACT_ALLOW",
+                          [masked(1, ALL64, IPPROTO_IP), masked(2, mask, value)],
+                          comment="021: IPPROTO_IP, other optname"))
+    return rules
+
+
+def socket_rules() -> list[dict]:
+    """The base's socket semantics plus protocol 262 refused on the low 32
+    bits. Domain is compared exactly (64 bits), as in the base."""
+    rules = [rule("socket", "SCMP_ACT_ERRNO", [masked(2, LOW32, IPPROTO_MPTCP)], EPERM,
+                  comment="021: IPPROTO_MPTCP (low 32 bits)")]
+    rules.append(rule("socket", "SCMP_ACT_ERRNO",
+                      [arg(0, "SCMP_CMP_EQ", AF_NETLINK), arg(2, "SCMP_CMP_EQ", NETLINK_AUDIT)], EINVAL,
+                      excludes=_AUDIT, comment="base: NETLINK_AUDIT without CAP_AUDIT_WRITE"))
+
+    def allow(domain_args: list[dict], protos, **kw):
+        for mask, value in protos:
+            rules.append(rule("socket", "SCMP_ACT_ALLOW", [*domain_args, masked(2, mask, value)],
+                              comment="021: allowed socket", **kw))
+
+    # With CAP_AUDIT_WRITE: any domain, any protocol but MPTCP.
+    allow([], complement_cubes([IPPROTO_MPTCP]), includes=_AUDIT)
+    # Without: any domain with a protocol other than 9 and 262; protocol 9
+    # with any domain but AF_NETLINK.
+    allow([], complement_cubes([IPPROTO_MPTCP, NETLINK_AUDIT]), excludes=_AUDIT)
+    nine = [(ALL64, NETLINK_AUDIT)]
+    allow([arg(0, "SCMP_CMP_LT", AF_NETLINK)], nine, excludes=_AUDIT)
+    allow([arg(0, "SCMP_CMP_GT", AF_NETLINK)], nine, excludes=_AUDIT)
+    return rules
+
+
+def socketcall_rules() -> list[dict]:
+    return [rule("socketcall", "SCMP_ACT_ERRNO", [], EPERM,
+                 comment="021: 32-bit socketcall, whose arguments seccomp can't inspect")]
+
+
+def derive(base: dict) -> dict:
+    check_base(base)
+    profile = copy.deepcopy(base)
+    kept = []
+    for entry in profile["syscalls"]:
+        names = [n for n in entry["names"] if n not in CHANGED]
+        if not names:
+            continue  # the base's socket rules: replaced below
+        entry["names"] = names
+        kept.append(entry)
+    profile["syscalls"] = kept + socketcall_rules() + setsockopt_rules() + socket_rules()
+    return profile
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 3:
+        print("usage: generate.py <base-seccomp.json> <output.json>", file=sys.stderr)
+        return 2
+    with open(argv[1], "rb") as f:
+        raw = f.read()
+    try:
+        profile = derive(json.loads(raw))
+    except BaseMismatch as err:
+        print(f"base profile differs from the reviewed one ({err}): review generate.py", file=sys.stderr)
+        return 1
+    profile["comment"] = (
+        "Generated by generate.py from the hosts' base profile "
+        f"(sha256 {hashlib.sha256(raw).hexdigest()}). Do not edit."
+    )
+    with open(argv[2], "w", encoding="utf-8") as f:
+        json.dump(profile, f, indent=1)
+        f.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
