@@ -33,7 +33,7 @@ describe.each(["x64", "arm64"])("pinned rustic install (%s)", (arch) => {
     const src = join(dir, "src");
     execFileSync("mkdir", ["-p", src, join(dir, "fakebin")]);
     const binary = join(src, "rustic");
-    writeFileSync(binary, "#!/bin/sh\necho rustic 0.11.4-cocalc.2\n");
+    writeFileSync(binary, "#!/bin/sh\necho rustic 0.11.4-cocalc.3\n");
     chmodSync(binary, 0o755);
     const archive = join(dir, "rustic.tar.gz");
     execFileSync("tar", ["-czf", archive, "-C", src, "rustic"]);
@@ -60,9 +60,9 @@ describe.each(["x64", "arm64"])("pinned rustic install (%s)", (arch) => {
     const { SPEC } = require("./install");
     const script: string = SPEC.rustic.script();
     const releaseArch = arch === "x64" ? "x86_64" : "arm64";
-    expect(SPEC.rustic.VERSION).toBe("0.11.4-cocalc.2");
+    expect(SPEC.rustic.VERSION).toBe("0.11.4-cocalc.3");
     expect(script).toContain(
-      `https://github.com/sagemathinc/rustic/releases/download/v0.11.4-cocalc.2/rustic-v0.11.4-cocalc.2-linux-${releaseArch}.tar.gz`,
+      `https://github.com/sagemathinc/rustic/releases/download/v0.11.4-cocalc.3/rustic-v0.11.4-cocalc.3-linux-${releaseArch}.tar.gz`,
     );
     const archiveCheck = script.indexOf("sha256sum -c -");
     const extract = script.indexOf("tar -xzf");
@@ -105,7 +105,7 @@ describe.each(["x64", "arm64"])("pinned rustic install (%s)", (arch) => {
     const { SPEC, alreadyInstalled } = require("./install");
     execFileSync("mkdir", ["-p", join(dir, "bin")]);
     // Same version string as the pinned release, but not the pinned binary.
-    writeFileSync(SPEC.rustic.path, "#!/bin/sh\necho rustic 0.11.4-cocalc.2\n");
+    writeFileSync(SPEC.rustic.path, "#!/bin/sh\necho rustic 0.11.4-cocalc.3\n");
     chmodSync(SPEC.rustic.path, 0o755);
     expect(await alreadyInstalled("rustic")).toBe(false);
   });

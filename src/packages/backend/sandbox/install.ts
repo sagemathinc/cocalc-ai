@@ -198,15 +198,15 @@ function getCodexInstallScript(version: string): string {
 
 // CoCalc's rustic fork (https://github.com/sagemathinc/rustic), built by its
 // release workflow from the tagged commit. Pin the archive and the binary.
-const RUSTIC_VERSION = "0.11.4-cocalc.2";
+const RUSTIC_VERSION = "0.11.4-cocalc.3";
 const RUSTIC_SHA256 = {
   x64: {
-    archive: "9b4435371f583442826852db70fa992186c3b646d00240f484415501f270fefe",
-    binary: "b169eb956bc6bf7730c4bfeea6755112a6ba55670a75ef00d7e17a1c403e1081",
+    archive: "5de00ee802607bd04344a4522e9019ce476de7596dc102e5c003e47ef5e35654",
+    binary: "b1817c8fd11d0ef9fc5a1c5982622958eaf92a91d2cc126f43ac528846b60a44",
   },
   arm64: {
-    archive: "f4e754253a78ba26562c75b175e63647ae110a1a4a8e9b3056133d66b0f88b8e",
-    binary: "b96fa2bcd9f44604b2935701c38bfaf938e29dd2d105e195ed3c15efee2e3bd8",
+    archive: "d129e708e98597f96838f0a7c143183cdbb12a3db4616a32c65c28734f5e7740",
+    binary: "6f6c8c8685a33747de172075909427692c0147229691265936718cbfd18f4f53",
   },
 } as const;
 
