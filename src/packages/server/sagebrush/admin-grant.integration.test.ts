@@ -81,7 +81,7 @@ import {
 } from "./admin-grant";
 
 const CONTRACT_SHA =
-  "9d939a5e431925338626755a6e3fd66bc62f30e4f897603ee3917deeaa207ac5";
+  "30212407efe755059b4aeae9a22729a13025ddbfd928865c1657fb54113c2e4e";
 const REDIRECT = "https://sagebrush.space/admin/auth/callback";
 const SECRET = "client-secret";
 const BASIC = `Basic ${Buffer.from(`sagebrush:${SECRET}`).toString("base64")}`;

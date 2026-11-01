@@ -8,7 +8,8 @@
     "fixed": { "response_type": "code", "client_id": "sagebrush", "scope": "sagebrush-admin", "code_challenge_method": "S256" },
     "redirect_uri": "<site origin>/admin/auth/callback",
     "approves_only_when": ["a signed-in cocalc.ai browser session, not an impersonation", "the account exists, is not deleted and is an admin (both routing paths)", "2FA is enabled on it", "that session's factor_verified_at is within the last 600 s (else cocalc.ai's recent-2FA step first)"],
-    "records_with_the_code": ["the approving session's hash", "its factor_verified_at"]
+    "records_with_the_code": ["an opaque, account-bound, single-use home-bay approval reference; the browser-readable approval proof carries only this reference, never session facts"],
+    "records_on_the_home_bay": ["the approving account, session hash and factor_verified_at remain server-side in sagebrush_admin_approvals; token exchange atomically consumes the reference on that account's home bay before rechecking live session state and minting a grant"]
   },
   "token": {
     "method": "POST",
