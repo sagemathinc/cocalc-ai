@@ -4573,6 +4573,228 @@ class BootstrapBundleFallbackManifestTest(unittest.TestCase):
                     bootstrap.extract_bundle_unlocked(cfg, bundle)
 
 
+class NodeBindServiceCapabilityTest(unittest.TestCase):
+    """The HTTPS bind capability goes on the nvm node binary through a
+    descriptor: the runtime user owns every directory under its home, so a
+    path checked first and handed to setcap afterwards could be swapped. Any
+    failure skips only the capability, never the rest of the reconcile."""
+
+    def setup_node(self, tmpdir: str) -> Path:
+        node = Path(tmpdir) / "home" / ".nvm" / "versions" / "node" / "v20.1.0" / "bin" / "node"
+        node.parent.mkdir(parents=True)
+        node.write_text("node\n", encoding="utf-8")
+        return node
+
+    def port_cfg(self, tmpdir: str):
+        return replace(
+            make_cfg(tmpdir), env_lines=["COCALC_PROJECT_HOST_DIRECT_HTTPS_PORT=443"]
+        )
+
+    def configure(self, tmpdir: str, node_path: str, *, uid: int | None = None, on_set=None, run_cmd=None, getpwnam=None):
+        cfg = self.port_cfg(tmpdir)
+        user = pwd.struct_passwd(
+            (
+                cfg.ssh_user,
+                "x",
+                os.getuid() if uid is None else uid,
+                os.getgid(),
+                "",
+                str(Path(tmpdir) / "home"),
+                "/bin/bash",
+            )
+        )
+        commands: list[list[str]] = []
+        set_calls: list[tuple[os.stat_result, str, bytes]] = []
+        logged: list[str] = []
+
+        def fake_run_cmd(_cfg, args, _desc, **_kwargs):
+            commands.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout=f"{node_path}\n")
+
+        def fake_setxattr(fd, name, value):
+            if on_set is not None:
+                on_set()
+            set_calls.append((os.fstat(fd), name, value))
+
+        with mock.patch.object(
+            bootstrap, "run_cmd", run_cmd or fake_run_cmd
+        ), mock.patch.object(
+            bootstrap.pwd, "getpwnam", getpwnam or (lambda _name: user)
+        ), mock.patch.object(bootstrap.os, "setxattr", fake_setxattr), mock.patch.object(
+            bootstrap, "log_line", lambda _cfg, line: logged.append(line)
+        ):
+            bootstrap.configure_node_bind_service_capability(cfg)
+        return commands, set_calls, logged
+
+    def assert_skipped(self, set_calls, logged) -> None:
+        self.assertEqual(set_calls, [])
+        self.assertTrue(
+            any("refusing to set the node bind capability" in line for line in logged),
+            logged,
+        )
+
+    def test_sets_the_capability_on_the_node_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            commands, set_calls, logged = self.configure(tmpdir, str(node))
+            # only `nvm which` runs; no setcap by path
+            self.assertEqual(len(commands), 1)
+            self.assertIn("nvm which default", commands[0][-1])
+            self.assertEqual(len(set_calls), 1)
+            st, name, value = set_calls[0]
+            self.assertEqual((st.st_dev, st.st_ino), (node.stat().st_dev, node.stat().st_ino))
+            self.assertEqual(name, "security.capability")
+            # what `setcap cap_net_bind_service=+ep` writes (getfattr -e hex)
+            self.assertEqual(value.hex(), "0100000200040000" + "00" * 12)
+            self.assertFalse(any("refusing" in line for line in logged))
+
+    def test_a_path_swapped_after_the_checks_is_not_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            victim = Path(tmpdir) / "victim"
+            victim.write_text("victim\n", encoding="utf-8")
+            original = (node.stat().st_dev, node.stat().st_ino)
+
+            def swap() -> None:
+                node.rename(node.with_name("node.old"))
+                node.symlink_to(victim)
+
+            _, set_calls, _ = self.configure(tmpdir, str(node), on_set=swap)
+            self.assertEqual(len(set_calls), 1)
+            self.assertEqual((set_calls[0][0].st_dev, set_calls[0][0].st_ino), original)
+
+    def test_a_symlinked_binary_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            victim = node.with_name("node-real")
+            victim.write_text("victim\n", encoding="utf-8")
+            node.unlink()
+            node.symlink_to(victim)
+            _, set_calls, logged = self.configure(tmpdir, str(node))
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_symlinked_directory_on_the_path_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            elsewhere = Path(tmpdir) / "elsewhere"
+            node.parent.rename(elsewhere)
+            node.parent.symlink_to(elsewhere, target_is_directory=True)
+            _, set_calls, logged = self.configure(tmpdir, str(node))
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_binary_that_is_not_a_regular_file_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            node.unlink()
+            os.mkfifo(node)  # must not block on open either
+            _, set_calls, logged = self.configure(tmpdir, str(node))
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_binary_not_owned_by_the_runtime_user_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            _, set_calls, logged = self.configure(tmpdir, str(node), uid=os.getuid() + 1)
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_missing_binary_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            node.unlink()
+            _, set_calls, logged = self.configure(tmpdir, str(node))
+            self.assert_skipped(set_calls, logged)
+
+    def test_a_binary_outside_the_nvm_versions_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            for path in ("/usr/bin/ping", f"{node.parents[2]}/../../../../victim", ""):
+                with self.subTest(path=path):
+                    _, set_calls, logged = self.configure(tmpdir, path)
+                    self.assert_skipped(set_calls, logged)
+                    self.assertTrue(any("unable to resolve" in line for line in logged))
+
+    def test_a_failing_nvm_is_skipped(self) -> None:
+        def failing(_cfg, _args, desc, **_kwargs):
+            raise RuntimeError(f"{desc} failed with exit code 3")
+
+        def hanging(_cfg, args, _desc, **kwargs):
+            self.assertEqual(kwargs.get("timeout"), 120)
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for run_cmd in (failing, hanging):
+                with self.subTest(run_cmd=run_cmd.__name__):
+                    _, set_calls, logged = self.configure(tmpdir, "", run_cmd=run_cmd)
+                    self.assert_skipped(set_calls, logged)
+
+    def test_a_missing_runtime_user_is_skipped(self) -> None:
+        def missing(name):
+            raise KeyError(name)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node = self.setup_node(tmpdir)
+            with mock.patch.object(bootstrap, "runtime_home", lambda _cfg: str(Path(tmpdir) / "home")):
+                _, set_calls, logged = self.configure(tmpdir, str(node), getpwnam=missing)
+            self.assert_skipped(set_calls, logged)
+
+    def test_the_reconcile_continues_after_a_refusal(self) -> None:
+        # the steps after it (wrapper, helpers, sudoers) still run
+        steps = (
+            "ensure_runtime_user ensure_bootstrap_paths "
+            "ensure_automatic_security_updates configure_daily_root_cleanup "
+            "configure_kernel_module_hardening configure_kernel_sysctl_hardening "
+            "configure_kernel_key_limits "
+            "configure_inotify_limits configure_journald_limits "
+            "configure_rsyslog_limits install_btrfs_helper "
+            "install_privileged_wrappers reconcile_storage_and_containment "
+            "ensure_subuids ensure_runtime_user_manager configure_podman "
+            "verify_runtime_user_contract write_env configure_runtime_shell_env "
+            "setup_master_conat_token install_privileged_tool_binaries "
+            "install_node write_wrapper "
+            "write_helpers configure_runtime_sudoers verify_runtime_sudoers "
+            "configure_cloudflared_with_options "
+            "configure_critical_service_oom_protection configure_autostart "
+            "reconcile_project_network_limits "
+            "record_operation_start record_operation_success "
+            "record_operation_failure report_bootstrap_status log_line"
+        ).split()
+        called: list[str] = []
+
+        def refuse(_cfg):
+            called.append("set_node_bind_service_capability")
+            raise bootstrap.UnsafeRuntimePath("node is a symlink")
+
+        with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
+            cfg = self.port_cfg(tmpdir)
+            for name in steps:
+                stack.enter_context(
+                    mock.patch.object(
+                        bootstrap, name, lambda *a, _name=name, **k: called.append(_name)
+                    )
+                )
+            stack.enter_context(mock.patch.object(bootstrap, "set_node_bind_service_capability", refuse))
+            stack.enter_context(mock.patch.object(bootstrap, "compute_image_size", return_value=10))
+            stack.enter_context(mock.patch.object(bootstrap, "extract_bundle", return_value=None))
+            stack.enter_context(
+                mock.patch.object(bootstrap, "project_host_restart_fingerprint", return_value={})
+            )
+            stack.enter_context(mock.patch.object(bootstrap, "project_host_running", return_value=True))
+            stack.enter_context(mock.patch.object(bootstrap, "start_project_host"))
+            self.assertEqual(bootstrap.run_reconcile(cfg), 0)
+        self.assertIn("set_node_bind_service_capability", called)
+        after = called[called.index("set_node_bind_service_capability") + 1 :]
+        for name in ("write_wrapper", "write_helpers", "configure_runtime_sudoers", "verify_runtime_sudoers"):
+            self.assertIn(name, after)
+        self.assertNotIn("record_operation_failure", called)
+
+    def test_nothing_without_the_direct_https_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "run_cmd"
+        ) as run_cmd, mock.patch.object(bootstrap.os, "setxattr") as setxattr:
+            bootstrap.configure_node_bind_service_capability(make_cfg(tmpdir))
+            run_cmd.assert_not_called()
+            setxattr.assert_not_called()
+
+
 class BootstrapBundleExtractionTest(unittest.TestCase):
     """Extraction into a runtime-owned bundle root goes through descriptors."""
 

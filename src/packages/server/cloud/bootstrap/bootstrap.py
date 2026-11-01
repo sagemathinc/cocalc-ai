@@ -33,6 +33,7 @@ import signal
 import shutil
 import ssl
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -13713,6 +13714,12 @@ def install_node(cfg: BootstrapConfig) -> None:
     run_cmd(cfg, ["bash", "-lc", install_cmd], "install node", as_user=cfg.ssh_user)
 
 
+# `setcap cap_net_bind_service=+ep` as the kernel stores it (struct
+# vfs_cap_data, revision 2): the effective flag, then permitted and inheritable
+# for capabilities 0-31 and 32-63. CAP_NET_BIND_SERVICE is 10.
+NODE_BIND_SERVICE_CAPABILITY = struct.pack("<5I", 0x02000001, 1 << 10, 0, 0, 0)
+
+
 def configure_node_bind_service_capability(cfg: BootstrapConfig) -> None:
     direct_port = next(
         (
@@ -13724,10 +13731,16 @@ def configure_node_bind_service_capability(cfg: BootstrapConfig) -> None:
     )
     if not direct_port:
         return
-    if shutil.which("setcap") is None:
-        raise RuntimeError(
-            "setcap is required for the unprivileged project-host HTTPS listener"
-        )
+    # Everything this step depends on (nvm, its output, the binary) is the
+    # runtime user's, so any failure skips only the capability: the HTTPS
+    # listener then can't bind, and the rest of the reconcile still runs.
+    try:
+        set_node_bind_service_capability(cfg)
+    except Exception as err:
+        log_line(cfg, f"bootstrap: refusing to set the node bind capability: {err}")
+
+
+def set_node_bind_service_capability(cfg: BootstrapConfig) -> None:
     nvm_dir = Path(runtime_home(cfg)) / ".nvm"
     result = run_cmd(
         cfg,
@@ -13737,22 +13750,41 @@ def configure_node_bind_service_capability(cfg: BootstrapConfig) -> None:
             f'export NVM_DIR="{nvm_dir}"; . "$NVM_DIR/nvm.sh"; nvm which default',
         ],
         "resolve project-host node binary",
+        timeout=120,
         as_user=cfg.ssh_user,
     )
     output_lines = [line.strip() for line in (result.stdout or "").splitlines()]
-    node_path = Path(output_lines[-1]).resolve() if output_lines else None
-    versions_root = (nvm_dir / "versions" / "node").resolve()
-    if (
-        node_path is None
-        or not node_path.is_file()
-        or not node_path.is_relative_to(versions_root)
-    ):
+    node_path = os.path.normpath(output_lines[-1]) if output_lines else ""
+    versions_root = str(nvm_dir / "versions" / "node")
+    if not node_path.startswith(versions_root + "/"):
         raise RuntimeError("unable to resolve the project-host nvm node binary")
-    run_cmd(
-        cfg,
-        ["setcap", "cap_net_bind_service=+ep", str(node_path)],
-        "allow project-host node to bind HTTPS port 443",
-    )
+    # The runtime user owns everything under its home, so the binary is opened
+    # without following a symlink anywhere on its path, and the capability is
+    # set on that descriptor (setcap takes only a path).
+    dirfd = open_dir_nofollow(os.path.dirname(node_path))
+    try:
+        try:
+            fd = os.open(
+                os.path.basename(node_path),
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                dir_fd=dirfd,
+            )
+        except OSError as err:
+            if err.errno == errno.ELOOP:
+                raise UnsafeRuntimePath(f"{node_path} is a symlink") from err
+            raise
+    finally:
+        os.close(dirfd)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise UnsafeRuntimePath(f"{node_path} is not a regular file")
+        if st.st_uid != pwd.getpwnam(cfg.ssh_user).pw_uid:
+            raise UnsafeRuntimePath(f"{node_path} is owned by uid {st.st_uid}")
+        log_line(cfg, f"bootstrap: allow project-host node to bind HTTPS port 443: {node_path}")
+        os.setxattr(fd, "security.capability", NODE_BIND_SERVICE_CAPABILITY)
+    finally:
+        os.close(fd)
 
 
 def write_wrapper(cfg: BootstrapConfig) -> None:
