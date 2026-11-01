@@ -44,10 +44,10 @@ import urllib.request
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261101-v65"
+HELPER_SCHEMA_VERSION = "20261101-v66"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -874,6 +874,7 @@ APT_LOCK_TIMEOUT_S = 120
 APT_UPDATE_TIMEOUT_S = 180
 APT_INSTALL_TIMEOUT_S = 600
 RUNTIME_USERNS_MAP_PROBE_TIMEOUT_S = 10
+RUNTIME_TREE_REMOVE_TIMEOUT_S = 120
 APPARMOR_PROFILE_PROBE_TIMEOUT_S = 2
 PODMAN_STALE_BOOT_ERROR_PATTERNS = (
     re.compile(r"current system boot ID differs from cached boot ID", re.IGNORECASE),
@@ -2487,7 +2488,13 @@ def podman_has_stale_boot_state(proc: subprocess.CompletedProcess[str]) -> bool:
 
 
 def repair_stale_podman_boot_state(
-    cfg: BootstrapConfig, *, uid: int, gid: int, runtime_dir: str
+    cfg: BootstrapConfig,
+    *,
+    uid: int,
+    gid: int,
+    runtime_dir: str,
+    run_as_runtime_user: Callable[[list[str]], Any],
+    podman_unshare: list[str] | None = None,
 ) -> None:
     if project_host_runtime_is_active():
         raise RuntimeError(
@@ -2511,8 +2518,12 @@ def repair_stale_podman_boot_state(
             raise RuntimeError(
                 f"refusing to clear stale Podman boot state through symlink {path}"
             )
-    for path in (rootless_run, runtime_tmp):
-        remove_tree_at(path)
+    # runtime_tmp first: it holds the stale pause state, which `podman
+    # unshare` would otherwise try to join.
+    for path in (runtime_tmp, rootless_run):
+        remove_runtime_tree(
+            path, run_as_runtime_user, podman_unshare, runtime_ids=(uid, gid)
+        )
     ensure_owned_runtime_dir(rootless_run, uid, gid)
     ensure_owned_runtime_dir(expected_runtime_dir, uid, gid)
     log_line(
@@ -2578,12 +2589,21 @@ def read_current_runtime_user_contract(cfg: BootstrapConfig) -> dict[str, Any]:
         RUNTIME_USERNS_MAP_PROBE_TIMEOUT_S,
     )
     if uid_proc.returncode != 0 and podman_has_stale_boot_state(uid_proc):
+
+        def run_as_runtime_user(argv: list[str]) -> subprocess.CompletedProcess[str]:
+            return run_bounded_capture(
+                prefix + ["bash", "-lc", f'cd "$HOME" && exec {shlex.join(argv)}'],
+                RUNTIME_TREE_REMOVE_TIMEOUT_S,
+            )
+
         try:
             repair_stale_podman_boot_state(
                 cfg,
                 uid=pw.pw_uid,
                 gid=pw.pw_gid,
                 runtime_dir=runtime_dir,
+                run_as_runtime_user=run_as_runtime_user,
+                podman_unshare=[*apparmor_prefix, podman, "unshare"],
             )
             uid_proc = run_bounded_capture(
                 prefix + ["bash", "-lc", f'cd "$HOME" && exec {podman_command}'],
@@ -3998,23 +4018,87 @@ def ensure_owned_runtime_dir(path: Path, uid: int, gid: int) -> None:
         os.close(fd)
 
 
-def remove_tree_at(path: Path) -> None:
+def remove_empty_dir_at(path: Path) -> bool:
     """Removes the directory path through its parent's descriptor (no symlink
-    followed on the way; a symlink or file at path is refused)."""
+    followed on the way; a symlink or file at path is refused), but only if
+    it is empty: False if it still has entries, True once it is gone."""
     try:
         parent_fd = open_dir_nofollow(path.parent)
     except FileNotFoundError:
-        return
+        return True
     try:
         try:
             info = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
-            return
+            return True
         if not stat.S_ISDIR(info.st_mode):
             raise UnsafeRuntimePath(f"{path} is not a directory")
-        shutil.rmtree(path.name, dir_fd=parent_fd)
+        try:
+            os.rmdir(path.name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+        except OSError as err:
+            if err.errno in (errno.ENOTEMPTY, errno.EEXIST, errno.EBUSY):
+                return False
+            raise
+        return True
     finally:
         os.close(parent_fd)
+
+
+def remove_runtime_tree(
+    path: Path,
+    run_as_runtime_user: Callable[[list[str]], Any],
+    podman_unshare: list[str] | None = None,
+    *,
+    runtime_ids: tuple[int, int] | None = None,
+) -> None:
+    """Removes a directory the runtime user can write. Root never walks into
+    it, since anything inside could have been moved in from elsewhere: the
+    runtime user empties it (then, for files of its subordinate ids, through
+    `podman unshare`), and root only removes the emptied directory. Nothing
+    falls back to deleting as root."""
+    if remove_empty_dir_at(path):
+        return
+    rm = ["rm", "-rf", "--one-file-system", "--", str(path)]
+    attempts = [rm]
+    if podman_unshare:
+        attempts.append([*podman_unshare, *rm])
+    for argv in attempts:
+        run_as_runtime_user(argv)
+        if remove_empty_dir_at(path):
+            return
+    runtime = f"{runtime_ids[0]}:{runtime_ids[1]}" if runtime_ids else "unknown"
+    raise RuntimeError(
+        f"could not empty {path} as runtime uid:gid {runtime} (left: "
+        f"{runtime_tree_residue(path)}); refusing root fallback (#94)"
+    )
+
+
+def runtime_tree_residue(path: Path, limit: int = 3) -> str:
+    """At most limit top-level entries left in path, as name (uid:gid), for
+    the operator: one lazy scan, lstat only, nothing opened below path."""
+    found: list[str] = []
+    try:
+        fd = open_dir_nofollow(path)
+    except (OSError, UnsafeRuntimePath):
+        return "unknown"
+    try:
+        with os.scandir(fd) as entries:
+            for entry in entries:
+                if len(found) >= limit:
+                    break
+                try:
+                    info = os.stat(entry.name, dir_fd=fd, follow_symlinks=False)
+                    owner = f"{info.st_uid}:{info.st_gid}"
+                except OSError:
+                    owner = "?"
+                found.append(f"{ascii(entry.name[:64])} ({owner})")
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+    return ", ".join(found) or "unknown"
 
 
 def default_podman_runtime_dir(uid: int) -> str:
@@ -14603,44 +14687,67 @@ run_podman_as_runtime() {
     "${podman_prefix[@]}" podman "$@"
 }
 
+run_as_runtime_user() {
+  (cd / && sudo -n -u "${RUNTIME_USER}" -H "$@")
+}
+
 remove_runtime_path() {
-  # rm -rf --one-file-system, through descriptors and without following a
-  # symlink anywhere: parents such as /mnt/cocalc/data are the runtime
-  # user's, so a path could lead anywhere. A symlinked parent is refused
-  # (nothing removed); a symlink at the path itself is removed as a link.
-  python3 -I - "$1" <<'PY'
+  # Parents such as /mnt/cocalc/data are the runtime user's, so root never
+  # walks into a directory here: anything inside could have been moved in
+  # from elsewhere. The runtime user empties it (then, for files of its
+  # subordinate ids, through `podman unshare`); root only removes the top
+  # entry (a file, a link, or the emptied directory) through its parent's
+  # descriptor. A symlinked parent is refused (nothing removed). Nothing
+  # falls back to deleting as root.
+  local path="$1" cgroup_manager
+  remove_runtime_path_entry "${path}" && return 0
+  run_as_runtime_user rm -rf --one-file-system -- "${path}" >/dev/null 2>&1 || true
+  remove_runtime_path_entry "${path}" && return 0
+  cgroup_manager="$(read_env_value CONTAINERS_CGROUP_MANAGER)"
+  run_podman_as_runtime 60s "$(podman_runtime_dir)" "${cgroup_manager:-cgroupfs}" \\
+    unshare rm -rf --one-file-system -- "${path}" >/dev/null 2>&1 || true
+  remove_runtime_path_entry "${path}" && return 0
+  echo "could not empty ${path} as runtime uid:gid $(runtime_uid):$(runtime_gid) (left: $(remove_runtime_path_entry "${path}" residue)); refusing root fallback (#94)" >&2
+  return 1
+}
+
+remove_runtime_path_entry() {
+  # Exit 0 once the path is gone (or refused), 3 while it is a directory
+  # with entries: never recursive. With "residue", it only prints at most
+  # 3 top-level entries left, as name (uid:gid), for the operator: one lazy
+  # scan, lstat only, nothing opened below the path.
+  python3 -I - "$1" "${2:-remove}" <<'PY'
 import errno
 import os
 import stat
 import sys
 
-path = sys.argv[1]
+path, mode = sys.argv[1], sys.argv[2]
 flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 parts = [part for part in path.split("/") if part]
 if not parts:
     sys.exit("refusing to remove /")
-fd = os.open("/", flags)
 
 
-def remove(parent_fd, name, dev):
-    info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-    if not stat.S_ISDIR(info.st_mode):
-        os.unlink(name, dir_fd=parent_fd)
-        return True
-    if info.st_dev != dev:
-        return False  # another filesystem (a mount): left alone
-    child_fd = os.open(name, flags, dir_fd=parent_fd)
-    complete = True
+def residue(top_fd, limit=3):
+    found = []
     try:
-        for child in os.listdir(child_fd):
-            complete = remove(child_fd, child, dev) and complete
-    finally:
-        os.close(child_fd)
-    if complete:
-        os.rmdir(name, dir_fd=parent_fd)
-    return complete
+        with os.scandir(top_fd) as entries:
+            for entry in entries:
+                if len(found) >= limit:
+                    break
+                try:
+                    info = os.stat(entry.name, dir_fd=top_fd, follow_symlinks=False)
+                    owner = f"{info.st_uid}:{info.st_gid}"
+                except OSError:
+                    owner = "?"
+                found.append(f"{ascii(entry.name[:64])} ({owner})")
+    except OSError:
+        pass
+    return ", ".join(found) or "unknown"
 
 
+fd = os.open("/", flags)
 try:
     for part in parts[:-1]:
         try:
@@ -14654,10 +14761,30 @@ try:
             raise
         os.close(fd)
         fd = next_fd
+    name = parts[-1]
+    if mode == "residue":
+        try:
+            top_fd = os.open(name, flags, dir_fd=fd)
+        except OSError:
+            print("unknown")
+            sys.exit(0)
+        try:
+            print(residue(top_fd))
+        finally:
+            os.close(top_fd)
+        sys.exit(0)
     try:
-        remove(fd, parts[-1], os.fstat(fd).st_dev)
+        info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode):
+            os.unlink(name, dir_fd=fd)
+        else:
+            os.rmdir(name, dir_fd=fd)
     except FileNotFoundError:
         pass
+    except OSError as err:
+        if err.errno in (errno.ENOTEMPTY, errno.EEXIST, errno.EBUSY):
+            sys.exit(3)
+        raise
 finally:
     os.close(fd)
 PY

@@ -3030,18 +3030,96 @@ class RuntimeTreeWriteTest(unittest.TestCase):
             libpod = Path(tmpdir) / "runtime" / "libpod"
             libpod.mkdir(parents=True)
             (libpod / "tmp").symlink_to(victim, target_is_directory=True)
+            unused = lambda argv: self.fail(argv)
             with self.assertRaises(bootstrap.UnsafeRuntimePath):
-                bootstrap.remove_tree_at(libpod / "tmp")
+                bootstrap.remove_runtime_tree(libpod / "tmp", unused)
             self.assertTrue((victim / "keep-me").exists())
             (libpod / "tmp").unlink()
-            (libpod / "tmp" / "sub").mkdir(parents=True)
-            bootstrap.remove_tree_at(libpod / "tmp")
+            # an empty directory: root removes it, nothing else runs
+            (libpod / "tmp").mkdir()
+            bootstrap.remove_runtime_tree(libpod / "tmp", unused)
             self.assertFalse((libpod / "tmp").exists())
             # a symlinked parent: refused, nothing removed
             (Path(tmpdir) / "hop").symlink_to(victim, target_is_directory=True)
             with self.assertRaises(bootstrap.UnsafeRuntimePath):
-                bootstrap.remove_tree_at(Path(tmpdir) / "hop" / "keep-me")
+                bootstrap.remove_runtime_tree(Path(tmpdir) / "hop" / "keep-me", unused)
             self.assertTrue((victim / "keep-me").exists())
+
+    def test_the_refusal_residue_is_a_bounded_top_level_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tree = Path(tmpdir) / "tree"
+            (tree / "d" / "deep").mkdir(parents=True)
+            for i in range(1000):
+                (tree / f"f{i}").write_text("")
+            (tree / ("\x1b[31m" + "n" * 200)).write_text("")
+            statted: list[str] = []
+            real_stat = os.stat
+
+            def counting_stat(path, *args, **kwargs):
+                statted.append(str(path))
+                return real_stat(path, *args, **kwargs)
+
+            with mock.patch.object(bootstrap.os, "stat", counting_stat), mock.patch.object(
+                bootstrap.os, "listdir", lambda *_a: self.fail("listdir")
+            ), mock.patch.object(bootstrap.os, "walk", lambda *_a, **_k: self.fail("walk")):
+                residue = bootstrap.runtime_tree_residue(tree, limit=2)
+            # two entries statted, no child opened, nothing past the bound
+            self.assertEqual(len(statted), 2)
+            self.assertNotIn("deep", " ".join(statted))
+            self.assertEqual(residue.count(f"({os.getuid()}:{os.getgid()})"), 2)
+            self.assertEqual(len(bootstrap.runtime_tree_residue(tree).split(", ")), 3)
+            self.assertNotIn("\x1b", bootstrap.runtime_tree_residue(tree, limit=2000))
+            self.assertLess(len(bootstrap.runtime_tree_residue(tree, limit=2000)), 1002 * 90)
+            self.assertEqual(bootstrap.runtime_tree_residue(Path(tmpdir) / "missing"), "unknown")
+
+    def test_root_never_walks_into_a_runtime_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tree = Path(tmpdir) / "runtime" / "libpod" / "tmp"
+            (tree / "sub").mkdir(parents=True)
+            (tree / "sub" / "keep-me").write_text("x")
+            ran: list[list[str]] = []
+            # the runtime user can't empty it: nothing is removed by root
+            me = f"{os.getuid()}:{os.getgid()}"
+            with self.assertRaises(RuntimeError) as refused:
+                bootstrap.remove_runtime_tree(
+                    tree, ran.append, ["podman", "unshare"], runtime_ids=(2000, 2001)
+                )
+            self.assertEqual(
+                str(refused.exception),
+                f"could not empty {tree} as runtime uid:gid 2000:2001 (left: "
+                f"'sub' ({me})); refusing root fallback (#94)",
+            )
+            self.assertTrue((tree / "sub" / "keep-me").exists())
+            rm = ["rm", "-rf", "--one-file-system", "--", str(tree)]
+            self.assertEqual(ran, [rm, ["podman", "unshare", *rm]])
+            # without podman, only the plain attempt
+            ran.clear()
+            with self.assertRaises(RuntimeError):
+                bootstrap.remove_runtime_tree(tree, ran.append)
+            self.assertEqual(ran, [rm])
+
+            # files of subordinate ids: only `podman unshare` empties it
+            def unshare_only(argv: list[str]) -> None:
+                ran.append(argv)
+                if argv[0] == "podman":
+                    shutil.rmtree(tree / "sub")
+
+            ran.clear()
+            bootstrap.remove_runtime_tree(tree, unshare_only, ["podman", "unshare"])
+            self.assertFalse(tree.exists())
+            self.assertEqual(len(ran), 2)
+
+            # the runtime user empties it but can't remove it (a root-owned
+            # parent): root removes the empty directory
+            (tree / "sub").mkdir(parents=True)
+            ran.clear()
+            bootstrap.remove_runtime_tree(
+                tree,
+                lambda argv: (ran.append(argv), shutil.rmtree(tree / "sub")),
+                ["podman", "unshare"],
+            )
+            self.assertFalse(tree.exists())
+            self.assertEqual(ran, [rm])
 
     def test_write_env_refuses_a_symlinked_podman_runtime_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3212,19 +3290,65 @@ class RuntimeTreeWriteTest(unittest.TestCase):
             self.assertIn('if [ -L "${core_dir}" ]', handler)
             self.assertIn('head -c 32 -- "${pid_file}"', handler)
 
-    def run_remove_runtime_path(self, function: str, path: Path) -> subprocess.CompletedProcess:
+    REMOVE_RUNTIME_PATH_STUBS = """RUNTIME_USER=u
+runtime_uid() { echo 2000; }
+runtime_gid() { echo 2001; }
+read_env_value() { :; }
+podman_runtime_dir() { echo /nonexistent; }
+run_as_runtime_user() {
+  echo "user $*" >> "$LOG"
+  if [ "$RUNTIME_RM" = 1 ]; then (cd / && "$@"); fi
+}
+run_podman_as_runtime() {
+  echo "podman $*" >> "$LOG"
+  shift 3
+  if [ "$PODMAN_RM" = 1 ]; then shift; "$@"; fi
+}
+"""
+
+    def run_remove_runtime_path(
+        self,
+        functions: str,
+        path: Path,
+        *,
+        runtime_rm: bool = True,
+        podman_rm: bool = False,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess:
+        log = Path(self.remove_log)
+        log.write_text("")
         return subprocess.run(
-            ["bash", "-c", f'set -euo pipefail\n{function}\nremove_runtime_path "$1"', "bash", str(path)],
+            [
+                "bash",
+                "-c",
+                f'set -euo pipefail\n{self.REMOVE_RUNTIME_PATH_STUBS}{functions}\nremove_runtime_path "$1"',
+                "bash",
+                str(path),
+            ],
             capture_output=True,
             text=True,
-            check=True,
+            check=check,
+            env={
+                **os.environ,
+                "LOG": str(log),
+                "RUNTIME_RM": "1" if runtime_rm else "0",
+                "PODMAN_RM": "1" if podman_rm else "0",
+            },
+        )
+
+    def remove_runtime_path_functions(self, rootctl: str) -> str:
+        return "".join(
+            self.shell_function(rootctl, name)
+            for name in ("remove_runtime_path", "remove_runtime_path_entry")
         )
 
     def test_rootctl_removes_runtime_paths_without_following_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
             rootctl = self.rendered_rootctl(tmpdir, cfg)
-            function = self.shell_function(rootctl, "remove_runtime_path")
+            self.assertIn("run_as_runtime_user() {\n  (cd / && sudo -n -u \"${RUNTIME_USER}\" -H \"$@\")\n}", rootctl)
+            function = self.remove_runtime_path_functions(rootctl)
+            self.remove_log = str(Path(tmpdir) / "runtime-user.log")
             for name in ("remove_safe_runtime_dir", "cleanup_podman_runtime_state", "prepare_podman_boot"):
                 body = self.shell_function(rootctl, name)
                 self.assertNotIn("rm -rf", body, name)
@@ -3233,6 +3357,7 @@ class RuntimeTreeWriteTest(unittest.TestCase):
             data = Path(tmpdir) / "data"
             data.mkdir()
             outside = Path(tmpdir) / "outside"
+            log = Path(self.remove_log)
 
             def plant(rel: str) -> Path:
                 target = outside / rel
@@ -3246,28 +3371,83 @@ class RuntimeTreeWriteTest(unittest.TestCase):
             result = self.run_remove_runtime_path(function, data / "tmp" / "cocalc-podman-runtime-1")
             self.assertIn("refusing to remove", result.stderr)
             self.assertTrue((kept_a / "keep-me").exists())
+            self.assertEqual(log.read_text(), "")
             # (b) the legacy rootless runroot, through a symlinked containers/
             kept_b = plant("containers/rootless/u/run")
             (outside / "containers" / "runroot-migration-pending").write_text("x")
             (data / "containers").symlink_to(outside / "containers", target_is_directory=True)
             self.run_remove_runtime_path(function, data / "containers" / "rootless" / "u" / "run")
             self.assertTrue((kept_b / "keep-me").exists())
+            self.assertEqual(log.read_text(), "")
             # (c) the migration marker, through the same symlinked containers/
             self.run_remove_runtime_path(function, data / "containers" / "runroot-migration-pending")
             self.assertTrue((outside / "containers" / "runroot-migration-pending").exists())
-            # real paths: removed; a symlink at the path itself is removed as a link
+            # real paths: emptied as the runtime user; a symlink or file at the
+            # path itself is removed by root as an entry
             real = Path(tmpdir) / "real" / "run"
             (real / "sub").mkdir(parents=True)
             (real / "sub" / "f").write_text("x")
             self.run_remove_runtime_path(function, real)
             self.assertFalse(real.exists())
+            self.assertEqual(log.read_text(), f"user rm -rf --one-file-system -- {real}\n")
             link = Path(tmpdir) / "real" / "link"
             link.symlink_to(kept_b, target_is_directory=True)
             self.run_remove_runtime_path(function, link)
             self.assertFalse(link.is_symlink())
             self.assertTrue((kept_b / "keep-me").exists())
+            marker = Path(tmpdir) / "real" / "runroot-migration-pending"
+            marker.write_text("x")
+            self.run_remove_runtime_path(function, marker)
+            self.assertFalse(marker.exists())
+            self.assertEqual(log.read_text(), "")
+            # an empty directory: root removes it
+            (Path(tmpdir) / "real" / "empty").mkdir()
+            self.run_remove_runtime_path(function, Path(tmpdir) / "real" / "empty")
+            self.assertFalse((Path(tmpdir) / "real" / "empty").exists())
+            self.assertEqual(log.read_text(), "")
             # missing: nothing to do
             self.run_remove_runtime_path(function, Path(tmpdir) / "missing" / "x")
+
+    def test_rootctl_never_removes_a_runtime_tree_as_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            function = self.remove_runtime_path_functions(self.rendered_rootctl(tmpdir, cfg))
+            self.remove_log = str(Path(tmpdir) / "runtime-user.log")
+            log = Path(self.remove_log)
+            tree = Path(tmpdir) / "data" / "containers" / "rootless" / "u" / "run"
+            (tree / "sub").mkdir(parents=True)
+            (tree / "sub" / "keep-me").write_text("x")
+            # neither the runtime user nor `podman unshare` can empty it
+            result = self.run_remove_runtime_path(
+                function, tree, runtime_rm=False, check=False
+            )
+            self.assertEqual(result.returncode, 1)
+            me = f"{os.getuid()}:{os.getgid()}"
+            self.assertEqual(
+                result.stderr,
+                f"could not empty {tree} as runtime uid:gid 2000:2001 (left: "
+                f"'sub' ({me})); refusing root fallback (#94)\n",
+            )
+            # a large residue: at most 3 entries, names escaped and truncated
+            for i in range(500):
+                (tree / f"f{i}").write_text("")
+            (tree / ("x\n" * 50)).write_text("")
+            result = self.run_remove_runtime_path(
+                function, tree, runtime_rm=False, check=False
+            )
+            line = result.stderr.splitlines()
+            self.assertEqual(len(line), 1)
+            self.assertIn("refusing root fallback (#94)", line[0])
+            self.assertEqual(line[0].count(f"({me})"), 3)
+            self.assertTrue((tree / "sub" / "keep-me").exists())
+            self.assertEqual(
+                log.read_text(),
+                f"user rm -rf --one-file-system -- {tree}\n"
+                f"podman 60s /nonexistent cgroupfs unshare rm -rf --one-file-system -- {tree}\n",
+            )
+            # files of subordinate ids: `podman unshare` empties it
+            self.run_remove_runtime_path(function, tree, runtime_rm=False, podman_rm=True)
+            self.assertFalse(tree.exists())
 
     def test_the_distribution_root_podman_units_are_stopped_and_masked(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4453,14 +4633,21 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
                 kwargs
             )
             contract = bootstrap.read_current_runtime_user_contract(cfg)
+            self.assertEqual(len(calls), 3)
+            repairs[0]["run_as_runtime_user"](["rm", "-rf", "--", "/a b"])
+            self.assertEqual(
+                calls[-1][0][-3:],
+                ["bash", "-lc", 'cd "$HOME" && exec rm -rf -- \'/a b\''],
+            )
+            self.assertEqual(calls[-1][1], bootstrap.RUNTIME_TREE_REMOVE_TIMEOUT_S)
         finally:
             bootstrap.shutil.which = original_which
             bootstrap.run_bounded_capture = original_probe
             bootstrap.repair_stale_podman_boot_state = original_repair
 
-        self.assertEqual(len(calls), 3)
         self.assertEqual(len(repairs), 1)
         self.assertEqual(repairs[0]["uid"], os.getuid())
+        self.assertEqual(repairs[0]["podman_unshare"][-2:], ["/usr/bin/podman", "unshare"])
         self.assertIn("fingerprint", contract)
         self.assertNotIn("probe_error", contract)
 
@@ -4494,6 +4681,7 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
                     uid=2000,
                     gid=2000,
                     runtime_dir=bootstrap.default_podman_runtime_dir(2000),
+                    run_as_runtime_user=lambda argv: self.fail(argv),
                 )
         finally:
             bootstrap.project_host_runtime_is_active = original_active
@@ -4506,13 +4694,16 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
         original_active = bootstrap.project_host_runtime_is_active
         original_exists = Path.exists
         original_is_symlink = Path.is_symlink
-        original_remove = bootstrap.remove_tree_at
+        original_remove = bootstrap.remove_runtime_tree
         original_ensure_owned = bootstrap.ensure_owned_runtime_dir
+        runner = lambda argv: None
         try:
             bootstrap.project_host_runtime_is_active = lambda: False
             Path.exists = lambda _self: True  # type: ignore[method-assign]
             Path.is_symlink = lambda _self: False  # type: ignore[method-assign]
-            bootstrap.remove_tree_at = lambda path: removed.append(str(path))
+            bootstrap.remove_runtime_tree = lambda path, run, unshare, runtime_ids: removed.append(
+                (str(path), run, unshare, runtime_ids)
+            )
             bootstrap.ensure_owned_runtime_dir = (
                 lambda path, uid, gid: owned.append((str(path), uid, gid))
             )
@@ -4521,19 +4712,32 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
                 uid=2000,
                 gid=2000,
                 runtime_dir=bootstrap.default_podman_runtime_dir(2000),
+                run_as_runtime_user=runner,
+                podman_unshare=["podman", "unshare"],
             )
         finally:
             bootstrap.project_host_runtime_is_active = original_active
             Path.exists = original_exists  # type: ignore[method-assign]
             Path.is_symlink = original_is_symlink  # type: ignore[method-assign]
-            bootstrap.remove_tree_at = original_remove
+            bootstrap.remove_runtime_tree = original_remove
             bootstrap.ensure_owned_runtime_dir = original_ensure_owned
 
+        # the stale pause state first, so that `podman unshare` can work
         self.assertEqual(
             removed,
             [
-                "/run/cocalc/containers/rootless/cocalc-host",
-                "/mnt/cocalc/data/tmp/cocalc-podman-runtime-2000/libpod/tmp",
+                (
+                    "/mnt/cocalc/data/tmp/cocalc-podman-runtime-2000/libpod/tmp",
+                    runner,
+                    ["podman", "unshare"],
+                    (2000, 2000),
+                ),
+                (
+                    "/run/cocalc/containers/rootless/cocalc-host",
+                    runner,
+                    ["podman", "unshare"],
+                    (2000, 2000),
+                ),
             ],
         )
         self.assertEqual(
