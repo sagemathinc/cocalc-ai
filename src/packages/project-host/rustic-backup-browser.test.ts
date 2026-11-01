@@ -589,6 +589,50 @@ describe("native snapshot listing", () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  it("bounds inventory processes across projects and releases failed slots", async () => {
+    const start = jest.fn(async () => {
+      throw Error("browser must not start");
+    });
+    manager = new RusticBackupBrowserManager({ start, idleSweep: false });
+    const profilePath = await profile();
+    let finishFirst!: (value: ReturnType<typeof output>) => void;
+    let finishSecond!: (value: ReturnType<typeof output>) => void;
+    run.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    run.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishSecond = resolve;
+        }),
+    );
+    const first = manager.listBackups({ profilePath, projectId });
+    const second = manager.listBackups({
+      profilePath,
+      projectId: "other-project",
+    });
+    await expect(
+      manager.listBackups({ profilePath, projectId: "third-project" }),
+    ).rejects.toThrow("Backup listing is busy; please retry shortly");
+    expect(run).toHaveBeenCalledTimes(2);
+    const failed = expect(first).rejects.toThrow(
+      "inventory exceeded its time or output limit",
+    );
+    finishFirst({ ...output(), code: 1, truncated: true });
+    await failed;
+    run.mockResolvedValue(output());
+    await expect(
+      manager.listBackups({ profilePath, projectId }),
+    ).resolves.toHaveLength(2);
+    finishSecond(output());
+    await second;
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it("still starts the browser for file browsing with an ID from the native list", async () => {
     const listDirectory = jest.fn(async (_args: unknown) => [
       { name: "course.txt", isDir: false, mtime: 1, size: 42 },
