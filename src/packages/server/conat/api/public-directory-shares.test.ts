@@ -220,6 +220,76 @@ describe("public directory share conat API routing", () => {
     );
   });
 
+  describe("a migrated share's cocalc.com redirect", () => {
+    // bay-0 owns the single-file share that redirects; the target share's
+    // path may live on any bay.
+    const SOURCE = "press/book-1/code3";
+    const TARGET = "press/book-1/code/files/chapter-03.ipynb";
+    function localLookup(table: Record<string, any>) {
+      mockPublicDirectoryShares.resolveLegacyPublicDirectorySharePath.mockImplementation(
+        async ({ path }) => table[path] ?? null,
+      );
+    }
+    function remoteLookup(bay: string, table: Record<string, any>) {
+      mockRemoteClients[
+        bay
+      ].publicDirectoryShareResolveLegacyPath.mockImplementation(
+        async ({ path }) => table[path] ?? null,
+      );
+    }
+
+    it("follows it to a share owned by another bay", async () => {
+      localLookup({ [SOURCE]: { path: SOURCE, redirect_path: TARGET } });
+      remoteLookup("bay-1", { [TARGET]: { path: TARGET } });
+      await expect(
+        publicDirectoryShares.resolveLegacyPublicDirectorySharePath({
+          path: SOURCE,
+        }),
+      ).resolves.toEqual({ path: TARGET, redirected: true });
+    });
+
+    it("uses directory order when several bays have the target path", async () => {
+      localLookup({
+        [SOURCE]: { path: SOURCE, redirect_path: TARGET },
+        [TARGET]: { path: "press/book-1/code/files/chapter-03.ipynb" },
+      });
+      remoteLookup("bay-1", {
+        [TARGET]: { path: "PRESS/book-1/code/files/chapter-03.ipynb" },
+      });
+      await expect(
+        publicDirectoryShares.resolveLegacyPublicDirectorySharePath({
+          path: SOURCE,
+        }),
+      ).resolves.toEqual({
+        path: "press/book-1/code/files/chapter-03.ipynb",
+        redirected: true,
+      });
+    });
+
+    it("follows only one hop", async () => {
+      localLookup({ [SOURCE]: { path: SOURCE, redirect_path: TARGET } });
+      remoteLookup("bay-1", {
+        [TARGET]: { path: TARGET, redirect_path: "press/elsewhere" },
+        "press/elsewhere": { path: "press/elsewhere" },
+      });
+      await expect(
+        publicDirectoryShares.resolveLegacyPublicDirectorySharePath({
+          path: SOURCE,
+        }),
+      ).resolves.toEqual({ path: TARGET, redirected: true });
+    });
+
+    it("shows the share itself when the target is no share here", async () => {
+      localLookup({ [SOURCE]: { path: SOURCE, redirect_path: TARGET } });
+      remoteLookup("bay-1", {});
+      await expect(
+        publicDirectoryShares.resolveLegacyPublicDirectorySharePath({
+          path: SOURCE,
+        }),
+      ).resolves.toEqual({ path: SOURCE });
+    });
+  });
+
   it("continues legacy path lookup when one attached bay is unavailable", async () => {
     mockRemoteClients["bay-2"] = remoteClient();
     mockListClusterBayRegistry.mockResolvedValue([

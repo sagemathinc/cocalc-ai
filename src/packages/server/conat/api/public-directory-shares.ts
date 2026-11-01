@@ -119,6 +119,29 @@ async function resolvePublicDirectoryShareWithBay(
 export async function resolveLegacyPublicDirectorySharePath(
   opts: ResolveLegacyPublicDirectorySharePathOptions,
 ): Promise<ResolveLegacyPublicDirectorySharePathResponse | null> {
+  const found = await searchLegacyPublicDirectorySharePath(opts);
+  if (found == null) return null;
+  if (found.redirect_path) {
+    // A migrated share whose cocalc.com link went elsewhere: send visitors
+    // there when that is a share here (on any bay, in the same directory order
+    // as every lookup).  One hop: the target's own redirect is not followed.
+    try {
+      const target = await searchLegacyPublicDirectorySharePath({
+        path: found.redirect_path,
+      });
+      if (target != null) return { path: target.path, redirected: true };
+    } catch (err) {
+      log.warn("legacy public share redirect target lookup failed", {
+        err: `${(err as Error | undefined)?.message ?? err}`,
+      });
+    }
+  }
+  return { path: found.path };
+}
+
+async function searchLegacyPublicDirectorySharePath(
+  opts: ResolveLegacyPublicDirectorySharePathOptions,
+): Promise<ResolveLegacyPublicDirectorySharePathResponse | null> {
   const bayIds = await publicDirectoryShareSearchBayIds();
   // Start every lookup immediately, but consume results in directory order so
   // duplicate legacy slugs resolve exactly like ordinary public-share slugs.

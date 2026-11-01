@@ -262,7 +262,42 @@ function legacyPublicDirectorySharePathSegments(path: string): string[] {
 export async function resolveLegacyPublicDirectorySharePath(
   opts: ResolveLegacyPublicDirectorySharePathOptions,
 ): Promise<ResolveLegacyPublicDirectorySharePathResponse | null> {
-  const segments = legacyPublicDirectorySharePathSegments(opts.path);
+  return await resolveLegacyPath(opts.path);
+}
+
+const LEGACY_REDIRECT_HOSTS = new Set(["cocalc.com", "www.cocalc.com"]);
+
+// The share path of a migrated share's cocalc.com `redirect` (on cocalc.com,
+// such a share sent visitors to that URL instead of showing its own path), or
+// undefined if it isn't a cocalc.com URL.
+export function legacyShareRedirectPath(
+  redirect: string | null | undefined,
+): string | undefined {
+  if (!redirect) return;
+  let url: URL;
+  try {
+    url = new URL(redirect);
+  } catch {
+    return;
+  }
+  if (url.protocol !== "https:" || !LEGACY_REDIRECT_HOSTS.has(url.hostname)) {
+    return;
+  }
+  try {
+    return url.pathname
+      .split("/")
+      .filter(Boolean)
+      .map(decodeURIComponent)
+      .join("/");
+  } catch {
+    return;
+  }
+}
+
+async function resolveLegacyPath(
+  path: string,
+): Promise<ResolveLegacyPublicDirectorySharePathResponse | null> {
+  const segments = legacyPublicDirectorySharePathSegments(path);
   if (segments.length === 0) return null;
   const candidates: string[] = [];
   for (let i = segments.length; i >= 1; i -= 1) {
@@ -280,14 +315,17 @@ export async function resolveLegacyPublicDirectorySharePath(
   if (candidates.length === 0) return null;
 
   await ensurePublicDirectorySharesSchema();
-  const { rows } = await getPool().query<{ slug: string }>(
+  const { rows } = await getPool().query<{
+    slug: string;
+    redirect: string | null;
+  }>(
     `
       WITH candidates AS (
         SELECT slug_lower, ordinal
           FROM unnest($1::text[]) WITH ORDINALITY
             AS candidate(slug_lower, ordinal)
       )
-      SELECT slugs.slug
+      SELECT slugs.slug, shares.redirect
         FROM candidates
         JOIN public_project_path_slugs slugs
           ON slugs.slug_lower=candidates.slug_lower
@@ -304,7 +342,16 @@ export async function resolveLegacyPublicDirectorySharePath(
   const matchedSlug = rows[0]?.slug;
   if (!matchedSlug) return null;
   const suffix = segments.slice(matchedSlug.split("/").length);
-  return { path: [matchedSlug, ...suffix].join("/") };
+  const resolvedPath = [matchedSlug, ...suffix].join("/");
+  // A link to the share itself goes where it went on cocalc.com.  Only the
+  // redirect's path is reported here: the share it names may live on another
+  // bay, so the cluster-level resolver looks it up (once, without following a
+  // further redirect).
+  const redirect_path =
+    suffix.length === 0 ? legacyShareRedirectPath(rows[0].redirect) : undefined;
+  return redirect_path
+    ? { path: resolvedPath, redirect_path }
+    : { path: resolvedPath };
 }
 
 export function normalizePublicDirectorySharePath(path: string): string {
@@ -1708,6 +1755,7 @@ export async function grantTemporaryViewerAccess({
     host_id: share.host_id,
     host_connection: share.host_connection,
     owning_bay_id: share.owning_bay_id,
+    redirect_path: legacyShareRedirectPath(share.redirect) ?? null,
   };
 }
 

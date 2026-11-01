@@ -104,6 +104,12 @@ export interface ResolveLegacyPublicDirectorySharePathOptions {
 
 export interface ResolveLegacyPublicDirectorySharePathResponse {
   path: string;
+  // From a bay's own lookup: the share path a migrated share's cocalc.com
+  // redirect points to, for the cluster-level resolver to look up.
+  redirect_path?: string;
+  // From the cluster-level resolver: `path` is where that redirect led, not
+  // the requested share itself.
+  redirected?: boolean;
 }
 
 export interface ListPublicDirectorySharesOptions {
@@ -360,6 +366,9 @@ export interface GrantTemporaryViewerAccessResponse {
   host_id?: string | null;
   host_connection?: ResolvedPublicDirectoryShare["host_connection"];
   owning_bay_id?: string | null;
+  // Share path named by a migrated share's cocalc.com redirect, if any; the
+  // share page follows it once when this exact share is opened.
+  redirect_path?: string | null;
 }
 
 export interface GetTemporaryViewerReadPolicyOptions {

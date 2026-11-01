@@ -123,4 +123,20 @@ describe("legacy public share redirects", () => {
     expect(response.status).toBe(400);
     expect(resolve).not.toHaveBeenCalled();
   });
+
+  it("sends /legacy/share/<slug> of a migrated share to where its cocalc.com link went", async () => {
+    const resolve = jest.fn(async () => ({
+      path: "press/book-1/code/files/chapter-03.ipynb",
+      redirected: true,
+    }));
+    const response = await request({
+      path: "/legacy/share/press/book-1/code3",
+      resolve,
+    });
+    expect(resolve).toHaveBeenCalledWith({ path: "share/press/book-1/code3" });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(
+      "/share/press/book-1/code/files/chapter-03.ipynb",
+    );
+  });
 });

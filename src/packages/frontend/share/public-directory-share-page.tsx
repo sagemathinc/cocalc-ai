@@ -32,13 +32,18 @@ function authHref(view: "sign-in" | "sign-up"): string {
   return `${appUrl(`auth/${view}`)}?target=${encodeURIComponent(target)}`;
 }
 
-async function grantShareRoute(rawPath: string): Promise<{
+interface GrantedShareRoute {
   grant: GrantTemporaryViewerAccessResponse;
   projectId: string;
   relativePath: string;
   relativePathIsDirectory: boolean;
   slug: string;
-}> {
+}
+
+async function grantShareRoute(
+  rawPath: string,
+  { followRedirect = true }: { followRedirect?: boolean } = {},
+): Promise<GrantedShareRoute> {
   let lastError: unknown;
   for (const candidate of shareRouteCandidates(rawPath)) {
     let grant: GrantTemporaryViewerAccessResponse;
@@ -52,6 +57,20 @@ async function grantShareRoute(rawPath: string): Promise<{
     } catch (err) {
       lastError = err;
       continue;
+    }
+
+    // A migrated share whose cocalc.com redirect names another share path
+    // (e.g. a book's short link to a chapter in its full folder) opens that
+    // path, as on cocalc.com. Only the share's own URL is redirected, and only
+    // one hop; if the target can't be opened, the share itself is shown.
+    if (followRedirect && !candidate.relativePath && grant.redirect_path) {
+      try {
+        return await grantShareRoute(grant.redirect_path, {
+          followRedirect: false,
+        });
+      } catch (err) {
+        console.warn("share redirect target unavailable", err);
+      }
     }
 
     const relativePath = retainedLegacyShareRelativePath({
