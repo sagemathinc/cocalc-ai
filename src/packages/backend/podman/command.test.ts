@@ -128,6 +128,27 @@ describe("podman command wrapper", () => {
     expect(executeCodeMock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the end of long stderr and shortens long argument lists", async () => {
+    const stderr = `${"w".repeat(5000)}\nError: the real cause`;
+    executeCodeMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr,
+      exit_code: 125,
+    });
+
+    let err = "";
+    try {
+      await podman(["create", ...Array(2000).fill("-e X=1")], { timeout: 30 });
+    } catch (e) {
+      err = `${e}`;
+    }
+    expect(err).toContain("exited with nonzero code 125");
+    expect(err).toContain("Error: the real cause'");
+    expect(err).toContain(`characters omitted]`);
+    expect(err.startsWith("command ''podman' (args=create -e X=1")).toBe(true);
+    expect(err.length).toBeLessThan(10000);
+  });
+
   it("runs Podman through a pre-exec launcher when requested", async () => {
     executeCodeMock.mockResolvedValueOnce({
       stdout: "container-id\n",
