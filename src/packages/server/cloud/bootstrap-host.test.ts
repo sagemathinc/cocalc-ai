@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import * as bootstrapHost from "./bootstrap-host";
@@ -196,17 +198,19 @@ describe("bootstrap-host shell templates", () => {
     expect(source).not.toContain("tr -d '\r'");
   });
 
-  it("downloads the bootstrap payload to a separate file instead of self-overwriting", () => {
+  it("writes the bootstrap payload to a fresh name in the root-only state dir", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),
       "utf8",
     );
 
     expect(source).toContain(
-      `BOOTSTRAP_PAYLOAD="$BOOTSTRAP_DIR/bootstrap.payload.sh"`,
+      `BOOTSTRAP_PAYLOAD="$(umask 077 && mktemp "$BOOTSTRAP_DIR/bootstrap.payload.XXXXXX")"`,
     );
+    expect(source).toContain(`trap 'rm -f "$BOOTSTRAP_PAYLOAD"' EXIT`);
     expect(source).toContain(`-o "$BOOTSTRAP_PAYLOAD"`);
     expect(source).toContain(`bash "$BOOTSTRAP_PAYLOAD"`);
+    expect(source).not.toContain(`bootstrap.payload.sh`);
     expect(source).not.toContain(`-o "$BOOTSTRAP_DIR/bootstrap.sh"`);
   });
 
@@ -249,27 +253,79 @@ describe("bootstrap-host shell templates", () => {
     );
   });
 
-  it("uses a btrfs-backed bootstrap state root for reconcile when available", () => {
+  it("keeps bootstrap state in a root-only directory, never on the data disk", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),
       "utf8",
     );
 
-    expect(source).toContain(
-      `BOOTSTRAP_STATE_ROOT="/mnt/cocalc/data/.host-bootstrap"`,
+    expect(bootstrapHost.BOOTSTRAP_STATE_ROOT).toBe(
+      "/var/lib/cocalc-host-bootstrap",
     );
+    expect(source).toContain(`BOOTSTRAP_DIR="$BOOTSTRAP_STATE_ROOT/bootstrap"`);
     expect(source).toContain(`BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"`);
+    expect(source).toContain(`install -d -o root -g root -m 0700 "$dir"`);
+    expect(source).toContain(`"0:0 700 directory"`);
+    expect(source).not.toContain(`/mnt/cocalc/data/.host-bootstrap`);
   });
 
-  it("hands the bootstrap state directory back to the target user", () => {
+  it("never hands bootstrap state, bootstrap.py or the payload to another user", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).not.toContain(`"$BOOTSTRAP_STATE_ROOT" || true`);
+    expect(source).not.toMatch(/chown [^\n]*"\$BOOTSTRAP_PAYLOAD"/);
+    expect(source).not.toMatch(/chown [^\n]*"\$target"/);
+    expect(source).not.toMatch(/chown [^\n]*bootstrap\.py/);
+  });
+
+  it("decides first boot versus reconcile from root-owned markers only", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),
       "utf8",
     );
 
     expect(source).toContain(
-      `chown -R "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_STATE_ROOT" || true`,
+      `if [ -f "$BOOTSTRAP_STATE_ROOT/.bootstrap_done" ] && [ ! -L "$BOOTSTRAP_STATE_ROOT/.bootstrap_done" ]; then`,
     );
+    // /var/lib/cocalc counts only while it is root's alone (runtime-owned before r19)
+    expect(source).toContain(
+      `elif legacy_bootstrap_done_marker_is_roots; then`,
+    );
+    expect(source).toContain(
+      `ignoring a bootstrap marker that is not root's alone`,
+    );
+    expect(source).not.toMatch(/-f \/mnt\/cocalc\/data\/\.bootstrap_done/);
+    expect(source).toContain(
+      `"bootstrap_done_paths": ["\${BOOTSTRAP_STATE_ROOT}/.bootstrap_done"],`,
+    );
+  });
+
+  it("keeps the bootstrap CA certificate out of /tmp", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).not.toContain(`/tmp/cocalc-bootstrap-ca.pem`);
+    expect(source).toContain(
+      `BOOTSTRAP_CACERT_PATH="$BOOTSTRAP_STATE_ROOT/bootstrap-ca.pem"`,
+    );
+  });
+
+  it("never traces the scripts or writes the master conat token by path", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).not.toMatch(/set -[a-z]*x/);
+    expect(source).not.toContain(`set -o xtrace`);
+    expect(source).not.toContain(`bash -x`);
+    expect(source).not.toContain(`conatPasswordCommand`);
+    expect(source).not.toContain(`sudo tee /mnt/cocalc/data/secrets`);
   });
 
   it("runs explicit reconcile mode after bootstrap is already complete", () => {
@@ -279,14 +335,16 @@ describe("bootstrap-host shell templates", () => {
     );
 
     expect(source).toContain(
-      `python3 "$BOOTSTRAP_DIR/bootstrap.py" reconcile --bootstrap-dir "$BOOTSTRAP_DIR"`,
+      `python3 -I "$BOOTSTRAP_DIR/bootstrap.py" reconcile --bootstrap-dir "$BOOTSTRAP_DIR"`,
     );
     expect(source).toContain(
-      `python3 "$BOOTSTRAP_DIR/bootstrap.py" helpers --bootstrap-dir "$BOOTSTRAP_DIR"`,
+      `python3 -I "$BOOTSTRAP_DIR/bootstrap.py" helpers --bootstrap-dir "$BOOTSTRAP_DIR"`,
     );
     expect(source).toContain(
-      `python3 "$BOOTSTRAP_DIR/bootstrap.py" environment --bootstrap-dir "$BOOTSTRAP_DIR"`,
+      `python3 -I "$BOOTSTRAP_DIR/bootstrap.py" environment --bootstrap-dir "$BOOTSTRAP_DIR"`,
     );
+    // every root python run is isolated from its script dir and environment
+    expect(source).not.toMatch(/python3 (?!-I )"\$BOOTSTRAP_DIR/);
     expect(source).toContain(`COCALC_BOOTSTRAP_RECONCILE_SCOPE`);
     // Only the provider's boot-time run (no control-plane scope) keeps a
     // running stack whose software did not change.
@@ -337,5 +395,165 @@ describe("bootstrap-host shell templates", () => {
       `if ! bash "$BOOTSTRAP_PAYLOAD" 2>&1 | tee "$BOOTSTRAP_DIR/bootstrap.log"; then`,
     );
     expect(source).toContain(`bootstrap_log_tail() {`);
+  });
+});
+
+describe("bootstrap reconcile over ssh", () => {
+  const SENTINEL = "SENTINEL-reconcile-token-4b2e8a";
+
+  function prepare(dataLogsIsFile = false) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bootstrap-reconcile-"));
+    const state = path.join(dir, "state");
+    const dataLogs = path.join(dir, "data-logs");
+    if (dataLogsIsFile) fs.writeFileSync(dataLogs, "not a dir");
+    const shims = path.join(dir, "shims");
+    fs.mkdirSync(shims);
+    const launcher = `#!/bin/bash
+TOKEN="${SENTINEL}"
+echo "launcher ran scope=$COCALC_BOOTSTRAP_RECONCILE_SCOPE"
+touch "${dir}/launcher-ran"
+`;
+    const script = bootstrapHost
+      .buildBootstrapReconcileSshScript({
+        launcher,
+        scope: "helpers",
+        runtimeUser: "cocalc-host",
+      })
+      .split("/var/lib/cocalc-host-bootstrap")
+      .join(state)
+      .split("/mnt/cocalc/data/logs")
+      .join(dataLogs);
+    const shim = (name: string, body: string) =>
+      fs.writeFileSync(path.join(shims, name), `#!/bin/bash\n${body}\n`, {
+        mode: 0o755,
+      });
+    shim("sudo", `[ "$1" = "-n" ] && shift\nexec "$@"`);
+    shim(
+      "runuser",
+      `while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"`,
+    );
+    shim(
+      "install",
+      `args=()
+while [ $# -gt 0 ]; do case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac; done
+exec /usr/bin/install "\${args[@]}"`,
+    );
+    shim(
+      "stat",
+      `out="$(/usr/bin/stat "$@")" || exit $?
+case "$*" in
+  *"$SHIM_ROOT"*) printf '%s\\n' "$out" | sed -E 's/^[0-9]+:[0-9]+ /0:0 /' ;;
+  *" /var/lib") printf '%s\\n' "$out" | sed -E 's/^[0-9]+:/0:/' ;;
+  *) printf '%s\\n' "$out" ;;
+esac`,
+    );
+    return { dir, state, dataLogs, shims, script };
+  }
+
+  function runOverSsh(ctx: ReturnType<typeof prepare>) {
+    // like runSshScript: the script on stdin of bash -se
+    return spawnSync("bash", ["-se"], {
+      input: ctx.script,
+      encoding: "utf8",
+      env: {
+        PATH: `${ctx.shims}:/usr/bin:/bin`,
+        HOME: ctx.dir,
+        SHIM_ROOT: ctx.state,
+      },
+    });
+  }
+
+  function waitFor(check: () => boolean) {
+    const deadline = Date.now() + 10_000;
+    while (!check()) {
+      if (Date.now() > deadline) throw new Error("timed out");
+      spawnSync("sleep", ["0.1"]);
+    }
+  }
+
+  it("runs the launcher as root from the root-only state dir without printing the token", () => {
+    const ctx = prepare();
+    const result = runOverSsh(ctx);
+    expect(`${result.stdout}${result.stderr}`).not.toContain(SENTINEL);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("started bootstrap reconcile pid=");
+    waitFor(() => fs.existsSync(path.join(ctx.dir, "launcher-ran")));
+    const rootLog = path.join(
+      ctx.state,
+      "bootstrap",
+      "bootstrap-reconcile.log",
+    );
+    const copy = path.join(ctx.dataLogs, "bootstrap-reconcile.log");
+    waitFor(
+      () =>
+        fs.existsSync(copy) &&
+        fs.readFileSync(copy, "utf8").includes("launcher ran") &&
+        fs
+          .readdirSync(path.join(ctx.state, "bootstrap"))
+          .every((name) => !name.startsWith("reconcile-launcher")),
+    );
+    expect(fs.readFileSync(rootLog, "utf8")).toContain(
+      "launcher ran scope=helpers",
+    );
+    expect(fs.readFileSync(copy, "utf8")).toContain(
+      "launcher ran scope=helpers",
+    );
+  });
+
+  it("keeps reconciling when the runtime user's log copy cannot be written", () => {
+    const ctx = prepare(true);
+    const result = runOverSsh(ctx);
+    expect(result.status).toBe(0);
+    waitFor(() => fs.existsSync(path.join(ctx.dir, "launcher-ran")));
+    const rootLog = path.join(
+      ctx.state,
+      "bootstrap",
+      "bootstrap-reconcile.log",
+    );
+    waitFor(
+      () =>
+        fs.existsSync(rootLog) &&
+        fs.readFileSync(rootLog, "utf8").includes("launcher ran"),
+    );
+  });
+
+  it("has the ssh user write nothing: everything happens in one sudo'd root script", () => {
+    const script = bootstrapHost.buildBootstrapReconcileSshScript({
+      launcher: "echo hi",
+      scope: "full",
+      runtimeUser: "cocalc-host",
+    });
+    const lines = script.split("\n");
+    expect(lines[0]).toBe("set -euo pipefail");
+    expect(lines[1]).toBe(
+      "sudo -n env COCALC_BOOTSTRAP_RECONCILE_SCOPE=full bash -s <<'EOF_COCALC_RECONCILE_ROOT'",
+    );
+    expect(
+      lines.filter((line) => line === "EOF_COCALC_RECONCILE_ROOT"),
+    ).toHaveLength(1);
+    expect(script.trimEnd().endsWith("EOF_COCALC_RECONCILE_ROOT")).toBe(true);
+    expect(script).not.toContain("/mnt/cocalc/data/.host-bootstrap");
+    // the data dir is only ever written by the runtime user (its log copy)
+    for (const line of lines.filter((line) =>
+      line.includes("/mnt/cocalc/data/logs"),
+    )) {
+      expect(line).toContain('runuser -u "$3" --');
+    }
+  });
+
+  it("rejects an unknown scope or runtime user", () => {
+    expect(() =>
+      bootstrapHost.buildBootstrapReconcileSshScript({
+        launcher: "",
+        scope: "bogus" as any,
+      }),
+    ).toThrow(/scope/);
+    expect(() =>
+      bootstrapHost.buildBootstrapReconcileSshScript({
+        launcher: "",
+        scope: "full",
+        runtimeUser: "x; rm -rf /",
+      }),
+    ).toThrow(/runtime user/);
   });
 });

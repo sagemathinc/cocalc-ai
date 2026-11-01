@@ -47,7 +47,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20261031-v64"
+HELPER_SCHEMA_VERSION = "20261101-v65"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -898,6 +898,12 @@ GCE_UBUNTU_MIRROR_RE = re.compile(
     r"https?://[A-Za-z0-9.-]*gce(?:\.clouds)?\.archive\.ubuntu\.com/ubuntu/?"
 )
 DATA_ROOT = "/mnt/cocalc/data"
+# The bay's startup script keeps bootstrap state (this script, host facts, the
+# desired state with the bootstrap token, the log) in this root-only directory
+# and trusts only root-owned markers to skip first boot. Older scripts kept it
+# in DATA_ROOT/.host-bootstrap, which the runtime user can rename.
+BOOTSTRAP_STATE_ROOT = "/var/lib/cocalc-host-bootstrap"
+OLD_BOOTSTRAP_STATE_NAME = ".host-bootstrap"
 FINGERPRINT_MAX_FILE_BYTES = 1 << 20
 HOST_OWNED_DATA_TREE_DIRS = (
     "secrets",
@@ -4435,6 +4441,235 @@ def ensure_runtime_owned_dirs(cfg: BootstrapConfig, root: Path, children: list[s
         os.close(root_fd)
 
 
+def in_root_only_bootstrap_state(path: str | Path) -> bool:
+    root = os.path.normpath(BOOTSTRAP_STATE_ROOT)
+    path = os.path.normpath(str(path))
+    return path == root or path.startswith(root + "/")
+
+
+def ensure_root_bootstrap_done_marker(cfg: BootstrapConfig) -> None:
+    """The marker the bay's startup script trusts to skip first boot: in the
+    root-only state root, which is created root 0700 if it doesn't exist."""
+    if os.geteuid() != 0:
+        return
+    root_fd = open_dir_nofollow(BOOTSTRAP_STATE_ROOT, create=True)
+    try:
+        info = os.fstat(root_fd)
+        if (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) != (0, 0, 0o700):
+            os.fchown(root_fd, 0, 0)
+            os.fchmod(root_fd, 0o700)
+        fd = os.open(
+            ".bootstrap_done",
+            os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=root_fd,
+        )
+        os.close(fd)
+    finally:
+        os.close(root_fd)
+
+
+def mark_bootstrap_done(cfg: BootstrapConfig) -> None:
+    """After a completed first boot: only the root-only marker. The other
+    markers older scripts listed (in the runtime user's data dir, or in
+    /var/lib/cocalc, which was the runtime user's before r19) are read-only
+    transition input for the startup script and never written here: a root
+    write by path there goes wherever that user points it."""
+    ensure_root_bootstrap_done_marker(cfg)
+
+
+# What older startup scripts and bootstrap.py left in DATA_ROOT/.host-bootstrap:
+# only this tree is removed, nothing that merely looks harmless.
+OLD_BOOTSTRAP_STATE_DIRS = ("bootstrap", "tmp")
+OLD_BOOTSTRAP_STATE_FILES = frozenset(
+    {
+        "bootstrap.py",
+        "bootstrap.py.sha256",
+        "bootstrap-host-facts.json",
+        "bootstrap-desired-state.json",
+        "bootstrap-state.json",
+        "bootstrap-config.json",
+        "bootstrap.lock",
+        "bootstrap.log",
+        "bootstrap.log.1",
+        "bootstrap.payload.sh",
+        "bootstrap.sh",
+    }
+)
+# text_write_atomic's temp names, left behind by an interrupted write
+OLD_BOOTSTRAP_STATE_TEMP = re.compile(
+    r"\.bootstrap-(host-facts|desired-state|state)\.json\.[A-Za-z0-9_]{1,16}\.tmp"
+)
+
+
+def old_bootstrap_state_problem(
+    top_fd: int, runtime_uid: int, runtime_gid: int, admin_uids: set[int]
+) -> str | None:
+    """Why the tree open as top_fd isn't exactly an old bootstrap state dir
+    (None if it is), read only through top_fd. An allow-list: the top holds
+    only bootstrap/ and tmp/; bootstrap/ only the files bootstrap wrote there,
+    including bootstrap.py; tmp/ nothing. Every entry is a directory or
+    regular file of root or the bootstrap user, not in the runtime user's
+    group, on one filesystem, and no directory is writable by group or
+    others (so nothing can be added while it is removed)."""
+
+    def entry_problem(st: os.stat_result, rel: str) -> str | None:
+        if st.st_uid not in admin_uids:
+            return f"{rel} is owned by uid {st.st_uid}"
+        if st.st_uid == runtime_uid or st.st_gid == runtime_gid:
+            return f"{rel} belongs to the runtime user"
+        if st.st_dev != top.st_dev:
+            return f"{rel} is on another filesystem"
+        if stat.S_ISDIR(st.st_mode) and st.st_mode & 0o022:
+            return f"{rel} is writable by group or others"
+        return None
+
+    top = os.fstat(top_fd)
+    if not stat.S_ISDIR(top.st_mode):
+        return "not a directory"
+    if top.st_uid not in admin_uids:
+        return f"owned by uid {top.st_uid}"
+    if top.st_gid == runtime_gid:
+        return "its group is the runtime user's"
+    if top.st_mode & 0o022:
+        return "writable by group or others"
+    names = os.listdir(top_fd)
+    unexpected = sorted(set(names) - set(OLD_BOOTSTRAP_STATE_DIRS))
+    if unexpected:
+        return f"unexpected entries {unexpected[:5]}"
+    if "bootstrap" not in names:
+        return "no bootstrap/"
+    for sub in names:
+        st = os.lstat(sub, dir_fd=top_fd)
+        if not stat.S_ISDIR(st.st_mode):
+            return f"{sub} is not a directory"
+        problem = entry_problem(st, sub)
+        if problem:
+            return problem
+        sub_fd = os.open(sub, O_DIR_NOFOLLOW, dir_fd=top_fd)
+        try:
+            opened = os.fstat(sub_fd)
+            if (opened.st_dev, opened.st_ino) != (st.st_dev, st.st_ino):
+                return f"{sub} changed while being checked"
+            entries = os.listdir(sub_fd)
+            for entry in entries:
+                rel = f"{sub}/{entry}"
+                if sub == "tmp" or not (
+                    entry in OLD_BOOTSTRAP_STATE_FILES
+                    or OLD_BOOTSTRAP_STATE_TEMP.fullmatch(entry)
+                ):
+                    return f"unexpected entry {rel}"
+                est = os.lstat(entry, dir_fd=sub_fd)
+                if not stat.S_ISREG(est.st_mode):
+                    return f"{rel} is not a regular file"
+                problem = entry_problem(est, rel)
+                if problem:
+                    return problem
+            if sub == "bootstrap" and "bootstrap.py" not in entries:
+                return "no bootstrap/bootstrap.py"
+        finally:
+            os.close(sub_fd)
+    return None
+
+
+def remove_dir_contents_at(dir_fd: int, dev: int) -> None:
+    """Empties the directory open as dir_fd, through descriptors: each
+    subdirectory is opened without following a symlink and must still be the
+    entry that was listed, on the same filesystem."""
+    for entry in os.listdir(dir_fd):
+        st = os.lstat(entry, dir_fd=dir_fd)
+        if not stat.S_ISDIR(st.st_mode):
+            os.unlink(entry, dir_fd=dir_fd)
+            continue
+        if st.st_dev != dev:
+            raise UnsafeRuntimePath(f"{entry} is on another filesystem")
+        child = os.open(entry, O_DIR_NOFOLLOW, dir_fd=dir_fd)
+        try:
+            opened = os.fstat(child)
+            if (opened.st_dev, opened.st_ino) != (st.st_dev, st.st_ino):
+                raise UnsafeRuntimePath(f"{entry} changed while being removed")
+            remove_dir_contents_at(child, dev)
+        finally:
+            os.close(child)
+        os.rmdir(entry, dir_fd=dir_fd)
+
+
+def remove_old_bootstrap_state(cfg: BootstrapConfig) -> None:
+    """Retires DATA_ROOT/.host-bootstrap once this run used the root-only state
+    root: it held root's bootstrap.py and a bootstrap token, under a directory
+    the runtime user owns. The tree is opened once, checked and emptied through
+    that descriptor, and its name removed only if it still names the same
+    directory; anything else is left in place for inspection."""
+    if os.geteuid() != 0 or not in_root_only_bootstrap_state(cfg.bootstrap_dir):
+        return
+    old = f"{DATA_ROOT}/{OLD_BOOTSTRAP_STATE_NAME}"
+    try:
+        data_fd = open_dir_nofollow(DATA_ROOT)
+    except FileNotFoundError:
+        return
+    except UnsafeRuntimePath as err:
+        log_line(cfg, f"bootstrap: refusing to remove old bootstrap dir {old}: {err}")
+        return
+    top_fd = None
+    try:
+        try:
+            top_fd = os.open(OLD_BOOTSTRAP_STATE_NAME, O_DIR_NOFOLLOW, dir_fd=data_fd)
+        except FileNotFoundError:
+            return
+        except OSError as err:
+            if err.errno in (errno.ELOOP, errno.ENOTDIR):
+                log_line(cfg, f"bootstrap: refusing to remove old bootstrap dir {old}: a symlink or not a directory")
+                return
+            raise
+        runtime = runtime_file_owner(cfg)
+        admin_uids = {0}
+        try:
+            admin_uids.add(pwd.getpwnam(cfg.bootstrap_user).pw_uid)
+        except (KeyError, TypeError):
+            pass
+        problem = old_bootstrap_state_problem(
+            top_fd,
+            runtime[0] if runtime else -1,
+            runtime[1] if runtime else -1,
+            admin_uids,
+        )
+        if problem:
+            log_line(cfg, f"bootstrap: refusing to remove old bootstrap dir {old}: {problem}")
+            return
+        top = os.fstat(top_fd)
+        remove_dir_contents_at(top_fd, top.st_dev)
+        current = os.lstat(OLD_BOOTSTRAP_STATE_NAME, dir_fd=data_fd)
+        if (current.st_dev, current.st_ino) != (top.st_dev, top.st_ino):
+            log_line(
+                cfg,
+                f"bootstrap: refusing to remove old bootstrap dir {old}: it was replaced while being removed (its contents are gone; the name now holds something else)",
+            )
+            return
+        # Only an empty directory can go: rmdir by name can't take more.
+        os.rmdir(OLD_BOOTSTRAP_STATE_NAME, dir_fd=data_fd)
+        log_line(cfg, f"bootstrap: removed old bootstrap dir {old}")
+    except (OSError, UnsafeRuntimePath) as err:
+        log_line(cfg, f"bootstrap: refusing to remove old bootstrap dir {old}: {err}")
+    finally:
+        if top_fd is not None:
+            os.close(top_fd)
+        os.close(data_fd)
+
+
+def finish_successful_run(cfg: BootstrapConfig) -> None:
+    """After a successful run: the root-only marker (so the bay's script keeps
+    taking the reconcile path once it stops trusting the data disk's marker),
+    then the old state dir. Neither may fail the run."""
+    for label, step in (
+        ("root-only bootstrap marker", ensure_root_bootstrap_done_marker),
+        ("old bootstrap dir cleanup", remove_old_bootstrap_state),
+    ):
+        try:
+            step(cfg)
+        except Exception as err:
+            log_line(cfg, f"bootstrap: {label} failed (ignored): {err}")
+
+
 def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     Path(cfg.bootstrap_root).mkdir(parents=True, exist_ok=True)
     Path(cfg.bootstrap_dir).mkdir(parents=True, exist_ok=True)
@@ -4442,11 +4677,17 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     Path(cfg.log_file).parent.mkdir(parents=True, exist_ok=True)
     rotate_bootstrap_log(cfg)
     if cfg.bootstrap_user and cfg.bootstrap_user != "root":
+        # Root-only state stays root's; only older state roots are handed to
+        # the bootstrap user, as before.
         owner_paths = [
-            cfg.bootstrap_root,
-            cfg.bootstrap_dir,
-            cfg.bootstrap_tmp,
-            str(Path(cfg.log_file).parent),
+            path
+            for path in (
+                cfg.bootstrap_root,
+                cfg.bootstrap_dir,
+                cfg.bootstrap_tmp,
+                str(Path(cfg.log_file).parent),
+            )
+            if not in_root_only_bootstrap_state(path)
         ]
         chown_paths_best_effort(
             cfg,
@@ -6704,6 +6945,11 @@ def run_rustic(
         profile_arg = profile_path[: -len(".toml")]
         rustic = select_privileged_rustic_binary(rustic_candidates)
         base = [rustic, "-P", profile_arg]
+        # Root's cache is pinned twice on purpose: the flag here, and
+        # RUSTIC_CACHE_DIR below (with HOME=/root as the last fallback). The
+        # flag conflicts with --no-cache, so it is left out when that is asked.
+        if not values["no-cache"]:
+            base += ["--cache-dir", "/root/.cache/rustic"]
         env = {
             "HOME": "/root",
             "LANG": "C.UTF-8",
@@ -13446,7 +13692,11 @@ def _replace_tools_lock(dirfd: int) -> None:
 def extract_bundle_unlocked(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
     bundle = resolve_bundle_spec(cfg, bundle)
     Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
-    if cfg.bootstrap_user and cfg.bootstrap_user != "root":
+    if (
+        cfg.bootstrap_user
+        and cfg.bootstrap_user != "root"
+        and not in_root_only_bootstrap_state(cfg.bootstrap_tmp)
+    ):
         run_best_effort(
             cfg,
             ["chown", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", cfg.bootstrap_tmp],
@@ -15442,32 +15692,37 @@ esac
     rootctl_path.chmod(0o755)
     core_handler_path.chmod(0o755)
 
+    # The fetch-*.sh tools run bootstrap.py, which is root's: they are admin
+    # wrappers only (below), never runtime-owned scripts that root might run.
     bootstrap_dir = Path(cfg.bootstrap_dir)
     bootstrap_py = bootstrap_dir / "bootstrap.py"
-    fetch_project_bundle = f"""#!/usr/bin/env bash
+    fetch_scripts = {
+        f"fetch-{label}.sh": f"""#!/usr/bin/env bash
 set -euo pipefail
-exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only project_bundle
+# bootstrap.py and its state are root's: run as root
+if [ "$(id -u)" -ne 0 ]; then
+  exec sudo -n "$0" "$@"
+fi
+cd /
+exec python3 -I "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only {only}
 """
-    fetch_project_host = f"""#!/usr/bin/env bash
-set -euo pipefail
-exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only project_host_bundle
-"""
-    fetch_tools = f"""#!/usr/bin/env bash
-set -euo pipefail
-exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bundle
-"""
-    runtime_scripts.update(
-        {
-            "fetch-project-bundle.sh": fetch_project_bundle,
-            "fetch-project-host.sh": fetch_project_host,
-            "fetch-tools.sh": fetch_tools,
-        }
-    )
+        for label, only in (
+            ("project-bundle", "project_bundle"),
+            ("project-host", "project_host_bundle"),
+            ("tools", "tools_bundle"),
+        )
+    }
     owner = runtime_file_owner(cfg)
     try:
         with runtime_bin_dir(cfg) as bin_fd:
             for name, script in runtime_scripts.items():
                 write_file_at(bin_fd, name, script, 0o755, owner)
+            for name in fetch_scripts:
+                # copies from older bootstraps (runtime-owned)
+                try:
+                    os.unlink(name, dir_fd=bin_fd)
+                except FileNotFoundError:
+                    pass
     except UnsafeRuntimePath as err:
         # Skip only these writes; the running services are left alone.
         log_line(cfg, f"bootstrap: refusing to write runtime helper scripts: {err}")
@@ -15484,9 +15739,6 @@ exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bun
             "acp-logs",
             "logs-cf",
             "ctl-cf",
-            "fetch-project-bundle.sh",
-            "fetch-project-host.sh",
-            "fetch-tools.sh",
         ]:
             script = (
                 "#!/usr/bin/env bash\n"
@@ -15499,6 +15751,10 @@ exec python3 "{bootstrap_py}" --bootstrap-dir "{bootstrap_dir}" --only tools_bun
                 "cd /\n"
                 'exec sudo -n -u "$RUNTIME_USER" -H "$RUNTIME_SCRIPT" "$@"\n'
             )
+            target = admin_bin / name
+            target.write_text(script, encoding="utf-8")
+            target.chmod(0o755)
+        for name, script in fetch_scripts.items():
             target = admin_bin / name
             target.write_text(script, encoding="utf-8")
             target.chmod(0o755)
@@ -16541,7 +16797,7 @@ def run_bootstrap(cfg: BootstrapConfig) -> int:
     report_bootstrap_status(cfg, "running", "Starting project-host services")
     start_project_host(cfg)
     report_bootstrap_status(cfg, "running", "Finalizing bootstrap")
-    touch_paths(cfg.bootstrap_done_paths)
+    mark_bootstrap_done(cfg)
     write_bootstrap_state_files(cfg)
     log_line(cfg, "bootstrap: completed successfully")
     return 0
@@ -16629,19 +16885,32 @@ def main(argv: list[str]) -> int:
             with bootstrap_operation_lock(cfg):
                 cfg = load_config(bootstrap_dir)
                 if args.restart_if_changed:
-                    return run_reconcile(cfg, restart_if_changed=True)
-                return run_reconcile(cfg)
+                    rc = run_reconcile(cfg, restart_if_changed=True)
+                else:
+                    rc = run_reconcile(cfg)
+                if rc == 0:
+                    finish_successful_run(cfg)
+                return rc
         if args.mode == "helpers":
             with bootstrap_operation_lock(cfg):
                 cfg = load_config(bootstrap_dir)
-                return run_reconcile_helpers(cfg)
+                rc = run_reconcile_helpers(cfg)
+                if rc == 0:
+                    finish_successful_run(cfg)
+                return rc
         if args.mode == "environment":
             with bootstrap_operation_lock(cfg):
                 cfg = load_config(bootstrap_dir)
-                return run_reconcile_environment(cfg)
+                rc = run_reconcile_environment(cfg)
+                if rc == 0:
+                    finish_successful_run(cfg)
+                return rc
         with bootstrap_operation_lock(cfg):
             cfg = load_config(bootstrap_dir)
-            return run_bootstrap(cfg)
+            rc = run_bootstrap(cfg)
+            if rc == 0:
+                finish_successful_run(cfg)
+            return rc
     except Exception as exc:
         log_line(cfg, f"bootstrap: failed: {exc}")
         # Bootstrap may fail before the host can heartbeat its local state.

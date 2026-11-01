@@ -29,6 +29,8 @@ import bootstrap
 # Never touch a real data disk from the tests (/mnt/cocalc/data can exist on a
 # dev host): everything under DATA_ROOT goes to a throwaway dir.
 bootstrap.DATA_ROOT = tempfile.mkdtemp(prefix="bootstrap-test-data-")
+# Nor the root-only bootstrap state root (/var/lib can be writable on a dev host).
+bootstrap.BOOTSTRAP_STATE_ROOT = tempfile.mkdtemp(prefix="bootstrap-test-state-")
 # Nor the system manager of the machine running the tests (the mode tests run
 # whole reconciles): the real function is tested with systemctl stubbed.
 REAL_DISABLE_ROOT_PODMAN_UNITS = bootstrap.disable_root_podman_units
@@ -1241,6 +1243,10 @@ secret_access_key = "secret"
             self.assertEqual(lines[0], str(source))
             self.assertIn("backup", lines)
             self.assertIn("--host", lines)
+            # root's cache is pinned by the argv, not only by the env and HOME
+            self.assertEqual(
+                lines[lines.index("--cache-dir") + 1], "/root/.cache/rustic"
+            )
             self.assertEqual(list(profile_run_dir.iterdir()), [])
 
             run_rustic(
@@ -1261,6 +1267,8 @@ secret_access_key = "secret"
             restore_args = invocation.read_text(encoding="utf-8").splitlines()
             self.assertIn("restore", restore_args)
             self.assertIn("--no-cache", restore_args)
+            # rustic rejects --cache-dir together with --no-cache
+            self.assertNotIn("--cache-dir", restore_args)
             self.assertIn("backup-id:data", restore_args)
             # Existing files are read, never trusted by size and mtime.
             self.assertEqual(restore_args[restore_args.index("restore") + 1], "--verify-existing")
@@ -2209,10 +2217,449 @@ def bootstrap_runtime_helper_names() -> list[str]:
         "acp-logs",
         "logs-cf",
         "ctl-cf",
-        "fetch-project-bundle.sh",
-        "fetch-project-host.sh",
-        "fetch-tools.sh",
     ]
+
+
+
+class BootstrapStateRootTest(unittest.TestCase):
+    """Finding 017: bootstrap state is root's alone; the old state dir under
+    the runtime user's data dir is retired only if it looks untouched."""
+
+    def setUp(self) -> None:
+        self.state = tempfile.mkdtemp(prefix="bootstrap-state-test-")
+        self.data = tempfile.mkdtemp(prefix="bootstrap-data-test-")
+        self.saved = (bootstrap.BOOTSTRAP_STATE_ROOT, bootstrap.DATA_ROOT)
+        bootstrap.BOOTSTRAP_STATE_ROOT = self.state
+        bootstrap.DATA_ROOT = self.data
+        self.logged: list[str] = []
+        self.log_patch = mock.patch.object(
+            bootstrap, "log_line", lambda _cfg, line: self.logged.append(line)
+        )
+        self.log_patch.start()
+
+    def tearDown(self) -> None:
+        self.log_patch.stop()
+        bootstrap.BOOTSTRAP_STATE_ROOT, bootstrap.DATA_ROOT = self.saved
+        shutil.rmtree(self.state, ignore_errors=True)
+        shutil.rmtree(self.data, ignore_errors=True)
+
+    def cfg(self, tmpdir: str, *, new_root: bool = True):
+        cfg = make_cfg(tmpdir)
+        if new_root:
+            cfg = replace(cfg, bootstrap_dir=os.path.join(self.state, "bootstrap"))
+        return cfg
+
+    def old_tree(self) -> Path:
+        old = Path(self.data) / ".host-bootstrap"
+        (old / "bootstrap").mkdir(parents=True)
+        (old / "tmp").mkdir()
+        (old / "bootstrap" / "bootstrap.py").write_text("print()\n")
+        (old / "bootstrap" / "bootstrap-desired-state.json").write_text("{}")
+        for d in (old, old / "bootstrap", old / "tmp"):
+            d.chmod(0o755)
+        return old
+
+    def as_root(self):
+        return mock.patch.object(bootstrap.os, "geteuid", lambda: 0)
+
+    def test_root_only_state_paths(self) -> None:
+        self.assertTrue(bootstrap.in_root_only_bootstrap_state(self.state))
+        self.assertTrue(
+            bootstrap.in_root_only_bootstrap_state(os.path.join(self.state, "bootstrap"))
+        )
+        self.assertFalse(bootstrap.in_root_only_bootstrap_state(self.state + "-x"))
+        self.assertFalse(
+            bootstrap.in_root_only_bootstrap_state("/mnt/cocalc/data/.host-bootstrap")
+        )
+
+    def test_state_in_the_root_only_root_is_not_handed_to_the_bootstrap_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                self.cfg(tmpdir),
+                bootstrap_tmp=os.path.join(self.state, "tmp"),
+                log_file=os.path.join(self.state, "bootstrap", "bootstrap.log"),
+            )
+            chowned: list[list[str]] = []
+            with mock.patch.object(
+                bootstrap,
+                "chown_paths_best_effort",
+                lambda _cfg, _owner, paths, _desc, **_kw: chowned.append(list(paths)),
+            ):
+                bootstrap.ensure_bootstrap_paths(cfg)
+            self.assertEqual(chowned, [[cfg.bootstrap_root]])
+
+    def test_old_style_state_is_still_handed_over(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self.cfg(tmpdir, new_root=False)
+            chowned: list[list[str]] = []
+            with mock.patch.object(
+                bootstrap,
+                "chown_paths_best_effort",
+                lambda _cfg, _owner, paths, _desc, **_kw: chowned.append(list(paths)),
+            ):
+                bootstrap.ensure_bootstrap_paths(cfg)
+            self.assertIn(cfg.bootstrap_dir, chowned[0])
+
+    def test_writes_the_root_only_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shutil.rmtree(self.state)
+            with self.as_root(), mock.patch.object(bootstrap.os, "fchown"):
+                bootstrap.ensure_root_bootstrap_done_marker(self.cfg(tmpdir))
+            marker = Path(self.state) / ".bootstrap_done"
+            self.assertTrue(marker.is_file())
+            self.assertEqual(stat.S_IMODE(marker.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(Path(self.state).stat().st_mode), 0o700)
+
+    def test_marker_refuses_a_symlinked_state_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            elsewhere = Path(tmpdir) / "elsewhere"
+            elsewhere.mkdir()
+            shutil.rmtree(self.state)
+            os.symlink(elsewhere, self.state)
+            with self.as_root(), self.assertRaises(bootstrap.UnsafeRuntimePath):
+                bootstrap.ensure_root_bootstrap_done_marker(self.cfg(tmpdir))
+            self.assertEqual(list(elsewhere.iterdir()), [])
+            os.unlink(self.state)
+
+    def test_first_boot_writes_only_the_root_only_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy = os.path.join(tmpdir, "var-lib-cocalc", ".bootstrap_done")
+            in_data = os.path.join(self.data, ".bootstrap_done")
+            cfg = replace(self.cfg(tmpdir), bootstrap_done_paths=[in_data, legacy])
+            with mock.patch.object(bootstrap, "ensure_root_bootstrap_done_marker") as root_marker:
+                bootstrap.mark_bootstrap_done(cfg)
+            root_marker.assert_called_once()
+            self.assertFalse(os.path.exists(legacy))
+            self.assertFalse(os.path.exists(in_data))
+
+    def problem(
+        self,
+        *,
+        runtime_uid: int = -1,
+        runtime_gid: int = -1,
+        admin: set[int] | None = None,
+    ):
+        fd = os.open(
+            os.path.join(self.data, ".host-bootstrap"),
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            return bootstrap.old_bootstrap_state_problem(
+                fd,
+                runtime_uid,
+                runtime_gid,
+                admin if admin is not None else {os.getuid()},
+            )
+        finally:
+            os.close(fd)
+
+    def test_old_tree_shape(self) -> None:
+        old = self.old_tree()
+        self.assertIsNone(self.problem())
+        self.assertIn("runtime user", self.problem(runtime_uid=os.getuid()))
+        self.assertIn("owned by uid", self.problem(admin={0}))
+        # the top's own group counts, not only its children's
+        self.assertEqual(
+            self.problem(runtime_gid=os.getgid()), "its group is the runtime user's"
+        )
+        old.chmod(0o775)
+        self.assertEqual(self.problem(), "writable by group or others")
+        old.chmod(0o755)
+        (old / "tmp").chmod(0o777)
+        self.assertIn("tmp is writable by group or others", self.problem())
+        (old / "tmp").chmod(0o755)
+        (old / "bootstrap" / "json.py").write_text("x")
+        self.assertEqual(self.problem(), "unexpected entry bootstrap/json.py")
+        (old / "bootstrap" / "json.py").unlink()
+        (old / "bootstrap" / "__pycache__").mkdir()
+        self.assertEqual(self.problem(), "unexpected entry bootstrap/__pycache__")
+        (old / "bootstrap" / "__pycache__").rmdir()
+        os.symlink("/etc/hostname", old / "bootstrap" / "bootstrap.log")
+        self.assertEqual(self.problem(), "bootstrap/bootstrap.log is not a regular file")
+        (old / "bootstrap" / "bootstrap.log").unlink()
+        # an interrupted atomic write is still bootstrap's own
+        (old / "bootstrap" / ".bootstrap-state.json.ab12_xyz.tmp").write_text("{}")
+        self.assertIsNone(self.problem())
+
+    def test_the_layout_found_on_prod_passes(self) -> None:
+        # names and modes from us-south-1 (finding-008/host-bootstrap-names-20261101.txt)
+        old = Path(self.data) / ".host-bootstrap"
+        (old / "bootstrap").mkdir(parents=True)
+        (old / "tmp").mkdir()
+        for name, mode in (
+            ("bootstrap-desired-state.json", 0o644),
+            ("bootstrap-host-facts.json", 0o644),
+            ("bootstrap-state.json", 0o644),
+            ("bootstrap.lock", 0o600),
+            ("bootstrap.log", 0o644),
+            ("bootstrap.payload.sh", 0o700),
+            ("bootstrap.py", 0o755),
+            ("bootstrap.py.sha256", 0o644),
+        ):
+            (old / "bootstrap" / name).write_text("x")
+            (old / "bootstrap" / name).chmod(mode)
+        old.chmod(0o755)
+        (old / "bootstrap").chmod(0o700)
+        (old / "tmp").chmod(0o755)
+        self.assertIsNone(self.problem())
+
+    def test_only_the_old_bootstrap_layout_passes(self) -> None:
+        old = self.old_tree()
+        (old / "private-release-r1").mkdir()
+        self.assertEqual(self.problem(), "unexpected entries ['private-release-r1']")
+        (old / "private-release-r1").rmdir()
+        (old / "tmp" / "download.tar.xz").write_text("x")
+        self.assertEqual(self.problem(), "unexpected entry tmp/download.tar.xz")
+        (old / "tmp" / "download.tar.xz").unlink()
+        (old / "bootstrap" / "bootstrap.py").unlink()
+        self.assertEqual(self.problem(), "no bootstrap/bootstrap.py")
+
+    def test_a_tree_moved_in_before_the_run_is_left_intact(self) -> None:
+        # the data dir's owner moves an unrelated admin-owned tree (no runtime
+        # ids, nothing writable, no python) to the old name before the run
+        other = Path(self.data) / ".host-bootstrap"
+        (other / "docs").mkdir(parents=True)
+        (other / "docs" / "precious.txt").write_text("keep")
+        for d in (other, other / "docs"):
+            d.chmod(0o755)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.remove(self.cfg(tmpdir))
+        self.assertEqual((other / "docs" / "precious.txt").read_text(), "keep")
+        self.assertTrue(
+            any("unexpected entries ['docs']" in line for line in self.logged)
+        )
+        # also one that mimics the layout but lacks bootstrap.py
+        shutil.rmtree(other)
+        (other / "bootstrap").mkdir(parents=True)
+        (other / "bootstrap" / "bootstrap.log").write_text("keep")
+        for d in (other, other / "bootstrap"):
+            d.chmod(0o755)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.remove(self.cfg(tmpdir))
+        self.assertEqual((other / "bootstrap" / "bootstrap.log").read_text(), "keep")
+
+    def remove(self, cfg) -> None:
+        user = pwd.struct_passwd(
+            (cfg.bootstrap_user, "x", os.getuid(), os.getgid(), "", "/", "/bin/sh")
+        )
+        with self.as_root(), mock.patch.object(
+            bootstrap, "runtime_file_owner", lambda _cfg: (99999, 99999)
+        ), mock.patch.object(bootstrap.pwd, "getpwnam", lambda _name: user):
+            bootstrap.remove_old_bootstrap_state(cfg)
+
+    def test_removes_an_untouched_old_state_dir(self) -> None:
+        old = self.old_tree()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.remove(self.cfg(tmpdir))
+        self.assertFalse(old.exists())
+        self.assertTrue(any("removed old bootstrap dir" in line for line in self.logged))
+
+    def test_keeps_a_tampered_old_state_dir_and_says_so(self) -> None:
+        old = self.old_tree()
+        victim = Path(tempfile.mkdtemp()) / "victim"
+        victim.write_text("keep")
+        os.symlink(victim, old / "bootstrap" / "bootstrap.log")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.remove(self.cfg(tmpdir))
+        self.assertTrue(old.is_dir())
+        self.assertEqual(victim.read_text(), "keep")
+        self.assertTrue(
+            any("refusing to remove old bootstrap dir" in line for line in self.logged)
+        )
+
+    def test_refuses_a_symlinked_or_non_directory_old_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            elsewhere = Path(tmpdir) / "elsewhere"
+            elsewhere.mkdir()
+            (elsewhere / "precious").write_text("keep")
+            os.symlink(elsewhere, Path(self.data) / ".host-bootstrap")
+            self.remove(self.cfg(tmpdir))
+            self.assertEqual((elsewhere / "precious").read_text(), "keep")
+            os.unlink(Path(self.data) / ".host-bootstrap")
+            (Path(self.data) / ".host-bootstrap").write_text("a file")
+            self.remove(self.cfg(tmpdir))
+            self.assertTrue((Path(self.data) / ".host-bootstrap").is_file())
+        self.assertEqual(
+            sum("refusing to remove old bootstrap dir" in line for line in self.logged), 2
+        )
+
+    def test_a_swap_after_the_check_deletes_nothing_outside_the_checked_tree(self) -> None:
+        old = self.old_tree()
+        moved = Path(self.data) / "moved-aside"
+        real_check = bootstrap.old_bootstrap_state_problem
+
+        def check_then_swap(*args):
+            problem = real_check(*args)
+            # the runtime user swaps another directory in under the name
+            old.rename(moved)
+            old.mkdir()
+            (old / "precious").write_text("keep")
+            return problem
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "old_bootstrap_state_problem", check_then_swap
+        ):
+            self.remove(self.cfg(tmpdir))
+        # the swapped-in directory is untouched; only the checked tree was emptied
+        self.assertEqual((old / "precious").read_text(), "keep")
+        self.assertEqual(list(moved.iterdir()), [])
+        self.assertTrue(
+            any("replaced while being removed" in line for line in self.logged)
+        )
+
+    def test_entries_appearing_during_removal_are_unlinked_not_followed(self) -> None:
+        old = self.old_tree()
+        victim_dir = Path(tempfile.mkdtemp())
+        (victim_dir / "precious").write_text("keep")
+        real_remove = bootstrap.remove_dir_contents_at
+        injected = []
+
+        def remove_with_injection(fd, dev):
+            # after the check passed: entries appear while the tree is removed
+            if not injected:
+                injected.append(True)
+                os.symlink(victim_dir, old / "bootstrap" / "injected-link")
+                os.symlink(victim_dir / "precious", old / "tmp" / "injected-file-link")
+            return real_remove(fd, dev)
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "remove_dir_contents_at", remove_with_injection
+        ):
+            self.remove(self.cfg(tmpdir))
+        self.assertTrue(injected)
+        self.assertEqual((victim_dir / "precious").read_text(), "keep")
+        self.assertFalse(old.exists())
+
+    def test_keeps_the_old_state_dir_while_it_is_still_in_use(self) -> None:
+        old = self.old_tree()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                self.cfg(tmpdir, new_root=False),
+                bootstrap_dir=str(old / "bootstrap"),
+            )
+            self.remove(cfg)
+        self.assertTrue(old.is_dir())
+
+    def test_finish_never_fails_the_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "ensure_root_bootstrap_done_marker", side_effect=OSError("boom")
+        ), mock.patch.object(
+            bootstrap, "remove_old_bootstrap_state", side_effect=RuntimeError("bang")
+        ):
+            bootstrap.finish_successful_run(self.cfg(tmpdir))
+        self.assertEqual(
+            sum("failed (ignored)" in line for line in self.logged), 2
+        )
+
+
+class FetchToolsAreAdminOnlyTest(unittest.TestCase):
+    def test_fetch_tools_run_bootstrap_as_root_and_not_from_runtime_bin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            bin_dir = Path(tmpdir) / "runtime-root" / "bin"
+            bin_dir.mkdir(parents=True)
+            (bin_dir / "fetch-tools.sh").write_text("old runtime copy\n")
+            RuntimeTreeWriteTest().write_runtime_files(tmpdir, cfg)
+            self.assertEqual(sorted(p.name for p in bin_dir.glob("fetch-*")), [])
+            admin_bin = Path(cfg.bootstrap_root) / "bin"
+            for name, only in (
+                ("fetch-project-bundle.sh", "project_bundle"),
+                ("fetch-project-host.sh", "project_host_bundle"),
+                ("fetch-tools.sh", "tools_bundle"),
+            ):
+                script = (admin_bin / name).read_text()
+                self.assertIn('exec sudo -n "$0" "$@"', script)
+                self.assertIn(
+                    f'exec python3 -I "{cfg.bootstrap_dir}/bootstrap.py" --bootstrap-dir "{cfg.bootstrap_dir}" --only {only}',
+                    script,
+                )
+                self.assertNotIn("RUNTIME_SCRIPT", script)
+
+
+class FirstBootKeepsExistingDisksTest(unittest.TestCase):
+    """First boot is also what a host with a recreated boot disk and its old
+    data disk runs: it must not format or replace existing filesystems."""
+
+    def run_setup_btrfs(self, cfg, fstype: str, *, image_exists: bool = True):
+        commands: list[list[str]] = []
+
+        def check_output(args, **_kwargs):
+            if args[:3] == ["lsblk", "-no", "FSTYPE"]:
+                return fstype + "\n"
+            if args[0] == "blkid":
+                return "1234-uuid\n"
+            raise AssertionError(args)
+
+        with mock.patch.object(
+            bootstrap, "run_cmd", lambda _cfg, args, *_a, **_k: commands.append(args)
+        ), mock.patch.object(bootstrap, "run_best_effort", lambda *_a, **_k: None), \
+            mock.patch.object(bootstrap.subprocess, "check_output", check_output), \
+            mock.patch.object(bootstrap, "pick_data_disk", lambda _cfg, devices: devices[0] if devices else None), \
+            mock.patch.object(bootstrap, "update_fstab", lambda _line: None), \
+            mock.patch.object(bootstrap, "ensure_legacy_btrfs_link", lambda _cfg: None), \
+            mock.patch.object(bootstrap.Path, "is_mount", autospec=True, return_value=True), \
+            mock.patch.object(bootstrap.Path, "mkdir", autospec=True), \
+            mock.patch.object(bootstrap.Path, "exists", autospec=True, return_value=image_exists), \
+            mock.patch.object(bootstrap, "log_line", lambda *_a: None):
+            bootstrap.setup_btrfs(cfg, 10)
+        return commands
+
+    def test_an_existing_btrfs_data_disk_is_not_formatted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), data_disk_devices="/dev/sdb")
+            commands = self.run_setup_btrfs(cfg, "btrfs")
+            self.assertFalse(any(c[0].startswith("mkfs") for c in commands))
+
+    def test_a_data_disk_with_another_filesystem_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), data_disk_devices="/dev/sdb")
+            with self.assertRaisesRegex(RuntimeError, "refusing to format"):
+                self.run_setup_btrfs(cfg, "ext4")
+
+    def test_a_blank_data_disk_is_formatted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), data_disk_devices="/dev/sdb")
+            commands = self.run_setup_btrfs(cfg, "")
+            self.assertIn(["mkfs.btrfs", "-f", "/dev/sdb"], commands)
+
+    def test_an_existing_loop_image_is_not_recreated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), data_disk_devices="")
+            commands = self.run_setup_btrfs(cfg, "", image_exists=True)
+            self.assertFalse(
+                any(c[0] in ("truncate", "mkfs.btrfs") for c in commands), commands
+            )
+
+    def run_setup_scratch(self, tmpdir: str, fstype: str):
+        cfg = replace(
+            make_cfg(tmpdir),
+            shared_scratch_enabled=True,
+            shared_scratch_devices="/dev/sdc",
+            shared_scratch_mount=os.path.join(tmpdir, "scratch"),
+        )
+        commands: list[list[str]] = []
+        with mock.patch.object(
+            bootstrap, "run_cmd", lambda _cfg, args, *_a, **_k: commands.append(args)
+        ), mock.patch.object(
+            bootstrap, "pick_unmounted_or_target_disk", lambda *_a, **_k: "/dev/sdc"
+        ), mock.patch.object(
+            bootstrap.subprocess, "check_output", lambda *_a, **_k: fstype + "\n"
+        ), mock.patch.object(
+            bootstrap.Path, "is_mount", autospec=True, return_value=True
+        ), mock.patch.object(bootstrap, "log_line", lambda *_a: None):
+            try:
+                bootstrap.setup_shared_scratch(cfg)
+            except RuntimeError as err:
+                return commands, err
+        return commands, None
+
+    def test_existing_shared_scratch_is_not_formatted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            commands, err = self.run_setup_scratch(tmpdir, "ext4")
+            self.assertFalse(any(c[0].startswith("mkfs") for c in commands))
+            commands, err = self.run_setup_scratch(tmpdir, "xfs")
+            self.assertIsNotNone(err)
+            self.assertFalse(any(c[0].startswith("mkfs") for c in commands))
 
 
 class RuntimeTreeWriteTest(unittest.TestCase):
