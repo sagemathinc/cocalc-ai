@@ -128,27 +128,11 @@ async function getfattrRecursive(
 // keeps running in the background after afterEach, so it must not time out.
 const TEST_TIMEOUT_MS = 120_000;
 
-// Test directories whose cleanup has started.  A test body that is still
-// running (e.g. after a timeout) must not mount there any more: such a mount
-// would outlive the cleanup and leak onto the machine (a leaked mount makes
-// the CI runner's workspace cleanup fail with EBUSY for every later job).
-const closedDirs = new Set<string>();
-
-function isClosed(path: string): boolean {
-  for (const dir of closedDirs) {
-    if (path === dir || path.startsWith(`${dir}/`)) return true;
-  }
-  return false;
-}
-
 // Mount points at or below dir, deepest first (from this process's view).
+// Fails if the mount table can't be read: "no evidence" must never count as
+// "no mounts" before a recursive delete.
 function mountsUnder(dir: string): string[] {
-  let text = "";
-  try {
-    text = readFileSync("/proc/self/mountinfo", "utf8");
-  } catch {
-    return [];
-  }
+  const text = readFileSync("/proc/self/mountinfo", "utf8");
   const decode = (value: string) =>
     value.replace(/\\([0-7]{3})/g, (_, octal) =>
       String.fromCharCode(parseInt(octal, 8)),
@@ -159,6 +143,110 @@ function mountsUnder(dir: string): string[] {
     .filter((mount) => mount === dir || mount.startsWith(`${dir}/`))
     .sort((a, b) => b.length - a.length);
 }
+
+export type OverlayMountOps = {
+  mount: (merged: string, opts: string) => Promise<void>;
+  umount: (path: string) => Promise<void>;
+  list: (dir: string) => string[];
+  remove: (dir: string) => Promise<void>;
+};
+
+const isUnder = (path: string, dir: string) =>
+  path === dir || path.startsWith(`${dir}/`);
+
+// Every overlay mount of these tests goes through one tracker, so that no
+// mount can outlive its test's cleanup (a leaked mount makes the CI runner's
+// workspace cleanup fail with EBUSY for every later job):
+// - a mount attempt is registered in the same synchronous step as the check
+//   that its directory is still open, so once cleanup closes a directory no
+//   new attempt can start there;
+// - cleanup closes the directory, waits for every registered attempt under
+//   it (an attempt that completes after closing undoes itself), unmounts all
+//   that remains, verifies nothing is mounted, and only then deletes.
+export class OverlayMountTracker {
+  private closed = new Set<string>();
+  private attempts = new Map<Promise<void>, string>();
+
+  constructor(private ops: OverlayMountOps) {}
+
+  private isClosed(path: string): boolean {
+    for (const dir of this.closed) {
+      if (isUnder(path, dir)) return true;
+    }
+    return false;
+  }
+
+  // Not async: the closed check and the registration happen synchronously.
+  mount(merged: string, opts: string): Promise<void> {
+    if (this.isClosed(merged)) {
+      return Promise.reject(
+        new Error(`test cleanup already started; not mounting ${merged}`),
+      );
+    }
+    const attempt = (async () => {
+      await this.ops.mount(merged, opts);
+      if (this.isClosed(merged)) {
+        await this.ops.umount(merged);
+        throw new Error(`test cleanup already started; unmounted ${merged}`);
+      }
+    })();
+    this.attempts.set(attempt, merged);
+    attempt.then(
+      () => this.attempts.delete(attempt),
+      () => this.attempts.delete(attempt),
+    );
+    return attempt;
+  }
+
+  private async unmountAndVerify(dir: string): Promise<void> {
+    for (const mount of this.ops.list(dir)) {
+      await this.ops.umount(mount);
+    }
+    const left = this.ops.list(dir);
+    if (left.length > 0) {
+      throw new Error(`overlay mounts still present: ${left.join(", ")}`);
+    }
+  }
+
+  async cleanup(dir: string): Promise<void> {
+    this.closed.add(dir);
+    const pending = [...this.attempts]
+      .filter(([, path]) => isUnder(path, dir))
+      .map(([attempt]) => attempt);
+    await Promise.allSettled(pending);
+    await this.unmountAndVerify(dir);
+    await this.ops.remove(dir);
+  }
+
+  // A last check over every cleaned-up directory: unmount, then verify.
+  async sweep(): Promise<void> {
+    await Promise.allSettled([...this.attempts.keys()]);
+    for (const dir of this.closed) {
+      await this.unmountAndVerify(dir);
+    }
+  }
+}
+
+async function umountOverlay(path: string) {
+  try {
+    await runSudo(["umount", path]);
+  } catch {
+    await runSudo(["umount", "-l", path]).catch(() => {});
+  }
+}
+
+const mounts = new OverlayMountTracker({
+  mount: async (merged, opts) => {
+    await runSudo(["mount", "-t", "overlay", "overlay", "-o", opts, merged]);
+  },
+  umount: umountOverlay,
+  list: mountsUnder,
+  remove: async (dir) => {
+    await runSudo(["rm", "-rf", dir]).catch(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
+  },
+});
 
 async function mountOverlay({
   lower,
@@ -171,26 +259,10 @@ async function mountOverlay({
   work: string;
   merged: string;
 }) {
-  if (isClosed(merged)) {
-    throw new Error(`test cleanup already started; not mounting ${merged}`);
-  }
   const opts = OVERLAY_OPTS.replace("{lower}", lower)
     .replace("{upper}", upper)
     .replace("{work}", work);
-  await runSudo(["mount", "-t", "overlay", "overlay", "-o", opts, merged]);
-  if (isClosed(merged)) {
-    // cleanup started while mounting: undo it here
-    await umountOverlay(merged);
-    throw new Error(`test cleanup already started; unmounted ${merged}`);
-  }
-}
-
-async function umountOverlay(path: string) {
-  try {
-    await runSudo(["umount", path]);
-  } catch {
-    await runSudo(["umount", "-l", path]).catch(() => {});
-  }
+  await mounts.mount(merged, opts);
 }
 
 async function chownToCurrentUser(paths: string[]) {
@@ -244,33 +316,11 @@ describeIfOverlayMountsSupported(
     });
 
     afterEach(async () => {
-      if (!tempDir) return;
-      closedDirs.add(tempDir);
-      for (const mount of [
-        ...mountsUnder(tempDir),
-        join(tempDir, "merged"),
-        join(tempDir, "merged-restored-unpriv"),
-        join(tempDir, "merged-restored-root"),
-      ]) {
-        await umountOverlay(mount);
-      }
-      const leaked = mountsUnder(tempDir);
-      if (leaked.length > 0) {
-        // never delete through a live mount; fail loudly instead
-        throw new Error(`overlay mounts still present: ${leaked.join(", ")}`);
-      }
-      await runSudo(["rm", "-rf", tempDir]).catch(async () => {
-        await rm(tempDir, { recursive: true, force: true });
-      });
+      if (tempDir) await mounts.cleanup(tempDir);
     });
 
     afterAll(async () => {
-      // a last sweep, in case a test body mounted after its cleanup ran
-      for (const dir of closedDirs) {
-        for (const mount of mountsUnder(dir)) {
-          await umountOverlay(mount);
-        }
-      }
+      await mounts.sweep();
     });
 
     it(
@@ -388,3 +438,94 @@ describeIfOverlayMountsSupported(
     );
   },
 );
+
+// The cleanup protocol itself, with fake mounts: it runs everywhere.
+describe("OverlayMountTracker", () => {
+  function fakeOps() {
+    const mounted = new Set<string>();
+    const events: string[] = [];
+    let releaseMount: (() => void) | undefined;
+    let pauseMounts = false;
+    const ops: OverlayMountOps = {
+      mount: async (merged) => {
+        events.push(`mount start ${merged}`);
+        if (pauseMounts) {
+          await new Promise<void>((resolve) => (releaseMount = resolve));
+        }
+        mounted.add(merged);
+        events.push(`mounted ${merged}`);
+      },
+      umount: async (path) => {
+        mounted.delete(path);
+        events.push(`umount ${path}`);
+      },
+      list: (dir) => [...mounted].filter((path) => isUnder(path, dir)),
+      remove: async (dir) => {
+        events.push(`remove ${dir}`);
+      },
+    };
+    return {
+      ops,
+      mounted,
+      events,
+      pause: () => (pauseMounts = true),
+      release: () => releaseMount?.(),
+    };
+  }
+
+  it("waits for a mount in flight before it unmounts, verifies and removes", async () => {
+    const fake = fakeOps();
+    const tracker = new OverlayMountTracker(fake.ops);
+    fake.pause();
+    const attempt = tracker.mount("/t/a/merged", "opts");
+    const cleanup = tracker.cleanup("/t/a");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // cleanup is still waiting for the paused mount
+    expect(fake.events).toEqual(["mount start /t/a/merged"]);
+
+    fake.release();
+    await cleanup;
+    await expect(attempt).rejects.toThrow("cleanup already started");
+    expect(fake.mounted.size).toBe(0);
+    expect(fake.events).toEqual([
+      "mount start /t/a/merged",
+      "mounted /t/a/merged",
+      "umount /t/a/merged",
+      "remove /t/a",
+    ]);
+  });
+
+  it("never starts a mount in a directory whose cleanup started", async () => {
+    const fake = fakeOps();
+    const tracker = new OverlayMountTracker(fake.ops);
+    await tracker.cleanup("/t/a");
+    await expect(tracker.mount("/t/a/merged", "opts")).rejects.toThrow(
+      "not mounting",
+    );
+    expect(fake.events).toEqual(["remove /t/a"]);
+  });
+
+  it("refuses to remove when the mount table can't be read", async () => {
+    const fake = fakeOps();
+    const tracker = new OverlayMountTracker({
+      ...fake.ops,
+      list: () => {
+        throw new Error("EACCES /proc/self/mountinfo");
+      },
+    });
+    await expect(tracker.cleanup("/t/a")).rejects.toThrow("EACCES");
+    expect(fake.events).toEqual([]);
+  });
+
+  it("refuses to remove, and the sweep fails, while a mount can't be unmounted", async () => {
+    const fake = fakeOps();
+    const tracker = new OverlayMountTracker({
+      ...fake.ops,
+      umount: async () => {},
+    });
+    await tracker.mount("/t/a/merged", "opts");
+    await expect(tracker.cleanup("/t/a")).rejects.toThrow("still present");
+    expect(fake.events).not.toContain("remove /t/a");
+    await expect(tracker.sweep()).rejects.toThrow("still present");
+  });
+});
