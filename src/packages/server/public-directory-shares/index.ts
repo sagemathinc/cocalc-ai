@@ -262,7 +262,7 @@ function legacyPublicDirectorySharePathSegments(path: string): string[] {
 export async function resolveLegacyPublicDirectorySharePath(
   opts: ResolveLegacyPublicDirectorySharePathOptions,
 ): Promise<ResolveLegacyPublicDirectorySharePathResponse | null> {
-  return await resolveLegacyPath(opts.path, true);
+  return await resolveLegacyPath(opts.path);
 }
 
 const LEGACY_REDIRECT_HOSTS = new Set(["cocalc.com", "www.cocalc.com"]);
@@ -296,7 +296,6 @@ export function legacyShareRedirectPath(
 
 async function resolveLegacyPath(
   path: string,
-  followRedirect: boolean,
 ): Promise<ResolveLegacyPublicDirectorySharePathResponse | null> {
   const segments = legacyPublicDirectorySharePathSegments(path);
   if (segments.length === 0) return null;
@@ -343,20 +342,16 @@ async function resolveLegacyPath(
   const matchedSlug = rows[0]?.slug;
   if (!matchedSlug) return null;
   const suffix = segments.slice(matchedSlug.split("/").length);
-  if (followRedirect && suffix.length === 0) {
-    // A link to the share itself goes where it went on cocalc.com, when that
-    // place is a share here too.  Followed once, so redirects can't loop.
-    const redirectPath = legacyShareRedirectPath(rows[0].redirect);
-    if (redirectPath) {
-      try {
-        const target = await resolveLegacyPath(redirectPath, false);
-        if (target != null) return target;
-      } catch {
-        // an unusable redirect path: show the share itself
-      }
-    }
-  }
-  return { path: [matchedSlug, ...suffix].join("/") };
+  const resolvedPath = [matchedSlug, ...suffix].join("/");
+  // A link to the share itself goes where it went on cocalc.com.  Only the
+  // redirect's path is reported here: the share it names may live on another
+  // bay, so the cluster-level resolver looks it up (once, without following a
+  // further redirect).
+  const redirect_path =
+    suffix.length === 0 ? legacyShareRedirectPath(rows[0].redirect) : undefined;
+  return redirect_path
+    ? { path: resolvedPath, redirect_path }
+    : { path: resolvedPath };
 }
 
 export function normalizePublicDirectorySharePath(path: string): string {

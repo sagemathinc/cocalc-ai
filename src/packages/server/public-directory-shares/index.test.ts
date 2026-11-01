@@ -677,24 +677,15 @@ describe("public directory temporary viewer grants", () => {
     ).resolves.toBeNull();
   });
 
-  it("follows a migrated share's cocalc.com redirect to a share here", async () => {
+  it("reports a migrated share's cocalc.com redirect for the cluster resolver", async () => {
     await getPool().query(
       `INSERT INTO projects (project_id, title, users, last_edited)
        VALUES ($1, 'Legacy published project', '{}'::jsonb, NOW())
        ON CONFLICT (project_id) DO NOTHING`,
       [PROJECT_ID],
     );
-    // The whole folder, and a single-file share whose cocalc.com link went to
-    // that file inside the folder share instead.
-    await upsertMigratedLegacyPublicDirectoryShare({
-      account_id: OWNER_ID,
-      project_id: PROJECT_ID,
-      path: "book-published",
-      slug: "press/book-1/code",
-      legacy_public_path_id: "1111111111111111111111111111111111111111",
-      availability_status: "available",
-      visibility: "unlisted",
-    });
+    // A single-file share whose cocalc.com link went to that file inside a
+    // folder share instead.
     const fileShare = await upsertMigratedLegacyPublicDirectoryShare({
       account_id: OWNER_ID,
       project_id: PROJECT_ID,
@@ -706,19 +697,28 @@ describe("public directory temporary viewer grants", () => {
       redirect: "https://cocalc.com/press/book-1/code/files/chapter-03.ipynb",
     });
 
+    const expected = {
+      path: "press/book-1/code3",
+      redirect_path: "press/book-1/code/files/chapter-03.ipynb",
+    };
     await expect(
       resolveLegacyPublicDirectorySharePath({ path: "press/book-1/code3" }),
-    ).resolves.toEqual({ path: "press/book-1/code/files/chapter-03.ipynb" });
-    // a path inside the share itself is not redirected
+    ).resolves.toEqual(expected);
+    // cocalc.com's /share/... form
+    await expect(
+      resolveLegacyPublicDirectorySharePath({
+        path: "share/press/book-1/code3",
+      }),
+    ).resolves.toEqual(expected);
+    // a path below the share is never redirected
     await expect(
       resolveLegacyPublicDirectorySharePath({
         path: "press/book-1/code3/files/x.ipynb",
       }),
     ).resolves.toEqual({ path: "press/book-1/code3/files/x.ipynb" });
 
-    // a redirect to no share here, or to another site, shows the share itself
+    // a redirect to another site, or a malformed one, is not reported
     for (const redirect of [
-      "https://cocalc.com/press/no-such-book/files/x.ipynb",
       "https://example.com/press/book-1/code/files/chapter-03.ipynb",
       "not a url",
     ]) {
