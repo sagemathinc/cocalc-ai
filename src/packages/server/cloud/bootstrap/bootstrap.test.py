@@ -9987,6 +9987,15 @@ WantedBy=multi-user.target
             self.assertNotIn("--token", unit)
             self.assertNotIn("EnvironmentFile=/etc/cloudflared/token.env", unit)
             self.assertEqual(recovery_dropin, "[Service]\nTimeoutStopSec=30\n")
+            no_mptcp_dropin = next(
+                data
+                for path, data, _ in writes
+                if path
+                == "/etc/systemd/system/cocalc-cloudflared.service.d/cocalc-no-mptcp.conf"
+            )
+            self.assertEqual(
+                no_mptcp_dropin, "[Service]\nEnvironment=GODEBUG=multipathtcp=0\n"
+            )
 
     def test_configure_cloudflared_uses_token_file_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -10100,6 +10109,90 @@ WantedBy=multi-user.target
                 bootstrap.configure_cloudflared_with_options(cfg, install_package=False)
                 stored.pop(
                     "/etc/systemd/system/cocalc-cloudflared.service.d/cocalc-recovery.conf"
+                )
+                commands.clear()
+                events.clear()
+                bootstrap.configure_cloudflared_with_options(cfg, install_package=False)
+            finally:
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.log_line = original_log_line
+                bootstrap.shutil.which = original_which
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                Path.write_text = original_write_text  # type: ignore[method-assign]
+                Path.read_text = original_read_text  # type: ignore[method-assign]
+                Path.exists = original_exists  # type: ignore[method-assign]
+                bootstrap.os.chmod = original_chmod
+
+            self.assertFalse(
+                any(args[:2] == ["systemctl", "restart"] for args, _desc, _kwargs in commands)
+            )
+            self.assertTrue(
+                any(args[:2] == ["systemctl", "daemon-reload"] for args, _desc, _kwargs in commands)
+            )
+            self.assertTrue(
+                any(args[:3] == ["systemctl", "is-active", "--quiet"] for args, _desc, _kwargs in commands)
+            )
+            self.assertIn(
+                "bootstrap: cloudflared config unchanged; keeping tunnel running",
+                events,
+            )
+
+    def test_reconcile_cloudflared_keeps_active_unchanged_tunnel_running_for_the_no_mptcp_dropin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                cloudflared=bootstrap.CloudflaredSpec(
+                    True,
+                    hostname="host.example.test",
+                    port=9002,
+                    token="token",
+                    tunnel_id="tunnel-id",
+                    creds_json='{"TunnelSecret":"secret"}',
+                ),
+            )
+            stored: dict[str, str] = {}
+            commands = []
+            events = []
+
+            original_run_cmd = bootstrap.run_cmd
+            original_log_line = bootstrap.log_line
+            original_which = bootstrap.shutil.which
+            original_mkdir = Path.mkdir
+            original_write_text = Path.write_text
+            original_read_text = Path.read_text
+            original_exists = Path.exists
+            original_chmod = bootstrap.os.chmod
+            try:
+                def record_run(_cfg, args, desc, **kwargs):
+                    commands.append((args, desc, kwargs))
+                    return bootstrap.subprocess.CompletedProcess(
+                        args,
+                        0,
+                        stdout=(
+                            f"cloudflared version {bootstrap.CLOUDFLARED_VERSION}"
+                            if desc == "inspect cloudflared version"
+                            else ""
+                        ),
+                    )
+
+                def read_stored(self, encoding="utf-8"):
+                    try:
+                        return stored[str(self)]
+                    except KeyError as exc:
+                        raise FileNotFoundError(str(self)) from exc
+
+                bootstrap.run_cmd = record_run
+                bootstrap.log_line = lambda _cfg, message: events.append(message)
+                bootstrap.shutil.which = lambda _name: "/usr/bin/cloudflared"
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                Path.write_text = lambda self, text, encoding="utf-8": stored.__setitem__(str(self), text) or len(text)  # type: ignore[method-assign]
+                Path.read_text = read_stored  # type: ignore[method-assign]
+                Path.exists = lambda self: str(self) in stored or str(self) == "/etc/cloudflared/tunnel-id.json"  # type: ignore[method-assign]
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+
+                bootstrap.configure_cloudflared_with_options(cfg, install_package=False)
+                stored.pop(
+                    "/etc/systemd/system/cocalc-cloudflared.service.d/cocalc-no-mptcp.conf"
                 )
                 commands.clear()
                 events.clear()

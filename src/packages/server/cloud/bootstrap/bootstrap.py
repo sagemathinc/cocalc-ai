@@ -16200,6 +16200,9 @@ OOMScoreAdjust={HOST_CRITICAL_OOM_SCORE_ADJ}
         )
 
 
+CLOUDFLARED_NO_MPTCP_DROPIN = "[Service]\nEnvironment=GODEBUG=multipathtcp=0\n"
+
+
 def configure_cloudflared(cfg: BootstrapConfig) -> None:
     if not cfg.cloudflared.enabled:
         return
@@ -16366,8 +16369,16 @@ Type=simple
         recovery_dropin_dir / "cocalc-recovery.conf",
         "[Service]\nTimeoutStopSec=30\n",
     )
+    # cloudflared is a Go program, and Go listeners use MPTCP by default; its
+    # metrics listener is loopback-only, but MPTCP is surface it doesn't
+    # need. A drop-in of its own, and not a service change: it takes effect at
+    # the next restart instead of forcing one.
+    no_mptcp_dropin_changed = write_text_if_changed(
+        recovery_dropin_dir / "cocalc-no-mptcp.conf",
+        CLOUDFLARED_NO_MPTCP_DROPIN,
+    )
     service_changed = unit_changed or service_changed
-    if unit_changed or recovery_dropin_changed:
+    if unit_changed or recovery_dropin_changed or no_mptcp_dropin_changed:
         run_cmd(cfg, ["systemctl", "daemon-reload"], "daemon-reload", timeout=30)
     run_cmd(cfg, ["systemctl", "enable", "cocalc-cloudflared"], "enable cloudflared")
     active = run_cmd(
