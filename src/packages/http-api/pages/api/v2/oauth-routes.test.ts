@@ -191,6 +191,21 @@ describe("POST /api/v2/auth/oauth/approval-token", () => {
     expect(mockGetAccountId).not.toHaveBeenCalled();
   });
 
+  it("preserves fresh_auth_required for the browser fresh-auth action", async () => {
+    mockIsAllowedBrowserOrigin.mockResolvedValue(true);
+    mockGetAccountId.mockResolvedValue(ACCOUNT);
+    const oauth = await import("@cocalc/server/auth/oauth/authorize");
+    const remember = await import("@cocalc/server/auth/remember-me");
+    const hash = jest.spyOn(remember, "getRememberMeHash").mockReturnValue("synthetic-session");
+    const validate = jest.spyOn(oauth, "validateAuthorizeRequest").mockResolvedValue({ client: { name: "Sagebrush" }, scope: "sagebrush-admin" } as any);
+    const issue = jest.spyOn(oauth, "issueAuthorizeApprovalProof").mockRejectedValue(Object.assign(new Error("verification required"), { code: "fresh_auth_required" }));
+    try {
+      expect(await post({ "content-type": "application/json", origin: "https://bay-1.example.test" })).toEqual({ error: "verification required", code: "fresh_auth_required" });
+    } finally {
+      hash.mockRestore(); validate.mockRestore(); issue.mockRestore();
+    }
+  });
+
   it("accepts a JSON request from a bay of this site", async () => {
     mockIsAllowedBrowserOrigin.mockResolvedValue(true);
     mockGetAccountId.mockResolvedValue(undefined);

@@ -47,6 +47,8 @@ const INFO = {
 };
 
 beforeAll(() => {
+  const computedStyle = window.getComputedStyle;
+  jest.spyOn(window, "getComputedStyle").mockImplementation((element) => computedStyle(element));
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     value: () => ({
@@ -132,6 +134,33 @@ describe("PublicOAuthAuthorizeView", () => {
         approval_home_bay_id: "bay-2",
       },
     });
+  });
+
+  it("opens fresh auth for an admin approval and retries after verification", async () => {
+    let approvals = 0;
+    api.mockReset().mockImplementation(async ({ endpoint }) => {
+      switch (endpoint) {
+        case "auth/oauth/authorize-info": return INFO;
+        case "auth/oauth/approval-token":
+          if (++approvals === 1) throw Object.assign(new Error("verification required"), { code: "fresh_auth_required" });
+          return { token: "opaque-proof", home_bay_id: "bay-2" };
+        case "auth/fresh-auth-status":
+          return { enabled: true, mode: "account", methods: ["totp"], email_address: "ada@example.com" };
+        case "auth/fresh-auth": return {};
+        case "auth/oauth/approve": return { redirect_url: "https://sagebrush.space/admin/auth/callback?code=c" };
+      }
+    });
+    const navigate = renderView({ search: SEARCH + "&scope=sagebrush-admin" });
+    const allow = await screen.findByRole("button", { name: "Allow" });
+    allow.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: "Confirm security action" })).toBeTruthy();
+    expect(navigate).not.toHaveBeenCalled();
+    await userEvent.type(await screen.findByPlaceholderText("123456"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: "Verify", exact: true }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("https://sagebrush.space/admin/auth/callback?code=c"));
+    expect(approvals).toBe(2);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("sends Deny back to the client", async () => {
