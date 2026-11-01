@@ -29,6 +29,7 @@ import {
   joinTurnContext,
 } from "./harness-context";
 import { takeRateLimit } from "./harness-rate-limit";
+import { ClaudeSubagentTracker } from "./claude-subagents";
 import {
   turnFailureFromRateLimit,
   withTurnFailure,
@@ -270,6 +271,7 @@ export class HarnessAgent implements AcpAgent {
       let finalResponse = "";
       let lastMessageId: string | undefined;
       let toolBoundary = false;
+      const subagents = new ClaudeSubagentTracker();
       if (this.interrupted)
         throw new HarnessError(
           "rejected",
@@ -404,6 +406,9 @@ export class HarnessAgent implements AcpAgent {
                 data: data as Record<string, unknown>,
               },
             });
+            const subagent =
+              event.type === "update" ? subagents.observe(data) : undefined;
+            if (subagent) await request.stream({ type: "event", event: subagent });
           }
         },
         request.image_attachments ?? [],
@@ -433,6 +438,8 @@ export class HarnessAgent implements AcpAgent {
           data: { stopReason: result.stopReason },
         },
       });
+      for (const subagent of subagents.finish(result.stopReason))
+        await request.stream({ type: "event", event: subagent });
       if (result.stopReason !== "end_turn") {
         throw new HarnessError(
           "rejected",

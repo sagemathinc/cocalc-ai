@@ -17,6 +17,7 @@ import type {
   AcpChatContext,
 } from "@cocalc/conat/ai/acp/types";
 import type { AcpImageAttachment } from "./types";
+import { claudeParentToolUseId } from "./claude-subagents";
 import { harnessQuestionForm } from "./harness-questions";
 import {
   harnessHasSessionGuidance,
@@ -1186,7 +1187,11 @@ export class AcpHarnessClient {
     if (
       (update.sessionUpdate === "agent_message_chunk" ||
         update.sessionUpdate === "agent_thought_chunk") &&
-      update.content.type === "text"
+      update.content.type === "text" &&
+      // A subagent's own text belongs to its Agent call (as activity), never
+      // to the reply. claude-agent-acp keeps it inside the call for AIR
+      // clients today; this guards against adapters that stream it.
+      claudeParentToolUseId(update) === undefined
     ) {
       return this.emit({
         type:

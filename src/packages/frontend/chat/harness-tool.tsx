@@ -11,6 +11,9 @@ export interface HarnessToolEntry {
   title: string;
   status: string;
   output: string;
+  // A subagent's tool call: the Agent call that ran it, and its task.
+  parentId?: string;
+  parentTitle?: string;
   input?: { script?: string; cwd?: string; jobId?: string };
   result?: {
     stdout: string;
@@ -120,6 +123,18 @@ export function updateHarnessTool(
     status: "unknown",
     output: "",
   };
+  // Claude stamps a subagent's tool calls with the Agent call that ran them.
+  const parentId = update._meta?.claudeCode?.parentToolUseId;
+  if (
+    previous == null &&
+    typeof parentId === "string" &&
+    parentId &&
+    parentId.length <= 1024 &&
+    parentId !== update.toolCallId
+  ) {
+    entry.parentId = parentId;
+    entry.parentTitle = tools.get(parentId)?.title;
+  }
   if (typeof update.title === "string")
     entry.title = bounded(update.title, 512);
   if (typeof update.status === "string") {
@@ -176,7 +191,32 @@ export function updateHarnessTool(
   return previous ? undefined : entry;
 }
 
-export function HarnessToolRow({
+export function HarnessToolRow(props: {
+  entry: HarnessToolEntry;
+  fontSize?: number;
+  editorTheme?: string | null;
+}) {
+  const { entry, fontSize = 14 } = props;
+  if (entry.parentId == null) return <ToolRow {...props} />;
+  return (
+    <div
+      aria-label="Subagent tool call"
+      style={{ borderLeft: "2px solid #d9d9d9", paddingLeft: 10, marginLeft: 6 }}
+    >
+      <Typography.Text
+        type="secondary"
+        style={{ display: "block", fontSize: Math.max(11, fontSize - 2) }}
+      >
+        Subagent{entry.parentTitle && entry.parentTitle !== "Task"
+          ? `: ${entry.parentTitle}`
+          : ""}
+      </Typography.Text>
+      <ToolRow {...props} />
+    </div>
+  );
+}
+
+function ToolRow({
   entry,
   fontSize = 14,
   editorTheme,

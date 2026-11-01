@@ -295,3 +295,63 @@ test("expanded tool output is named and keyboard reachable", async () => {
     screen.getByRole("button", { name: "Next control" }),
   );
 });
+
+test("a Claude subagent's tool calls render under the subagent that ran them", () => {
+  const tools = new Map<string, HarnessToolEntry>();
+  updateHarnessTool(
+    event({
+      sessionUpdate: "tool_call",
+      toolCallId: "agent-1",
+      title: "Task",
+      status: "pending",
+      _meta: { claudeCode: { toolName: "Agent" } },
+    }),
+    tools,
+    1,
+  );
+  updateHarnessTool(
+    event({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "agent-1",
+      title: "Count .conf files under /etc",
+    }),
+    tools,
+    2,
+  );
+  const child = updateHarnessTool(
+    event({
+      sessionUpdate: "tool_call",
+      toolCallId: "child-1",
+      title: "find /etc -name '*.conf'",
+      status: "pending",
+      _meta: { claudeCode: { toolName: "Bash", parentToolUseId: "agent-1" } },
+    }),
+    tools,
+    3,
+  )!;
+  expect(child).toMatchObject({
+    parentId: "agent-1",
+    parentTitle: "Count .conf files under /etc",
+  });
+  // A later update can't re-parent the call.
+  updateHarnessTool(
+    event({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "child-1",
+      status: "completed",
+      _meta: { claudeCode: { parentToolUseId: "other" } },
+    }),
+    tools,
+    4,
+  );
+  expect(tools.get("child-1")!.parentId).toBe("agent-1");
+  render(<HarnessToolRow entry={child} />);
+  const group = screen.getByLabelText("Subagent tool call");
+  expect(
+    within(group).getByText("Subagent: Count .conf files under /etc"),
+  ).toBeTruthy();
+  expect(within(group).getByText(/find \/etc -name/)).toBeTruthy();
+  // The Agent call itself is an ordinary row.
+  render(<HarnessToolRow entry={tools.get("agent-1")!} />);
+  expect(screen.getAllByLabelText("Subagent tool call")).toHaveLength(1);
+});

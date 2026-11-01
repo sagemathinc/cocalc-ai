@@ -1843,6 +1843,46 @@ test("adapter preserves generic tool lifecycle updates for activity rendering", 
   );
 });
 
+test("Claude's Agent tool calls become subagent events; subagent text stays out of the reply", async (t) => {
+  const { agent, request, events } = adapter(t);
+  await agent.evaluate({ ...request, prompt: "subagents" });
+  const subagents = events
+    .filter((event) => event.event?.type === "subagent")
+    .map((event) => event.event);
+  assert.deepEqual(
+    subagents.map(({ threadId, state, tool }) => [threadId, state, tool]),
+    [
+      ["agent-1", "running", "spawn"],
+      ["agent-1", "running", "activity"],
+      ["agent-1", "completed", "activity"],
+    ],
+  );
+  assert.equal(subagents[1].task, "Count .conf files under /etc");
+  assert.equal(subagents[2].task, "Count .conf files under /etc");
+  assert.equal(subagents[2].message, "There are 43.");
+  // The child tool call keeps its parent stamp for grouping in the activity.
+  const child = events.find(
+    (event) =>
+      event.event?.kind === "update" && event.event.data.toolCallId === "child-1",
+  );
+  assert.equal(child.event.data._meta.claudeCode.parentToolUseId, "agent-1");
+  // The subagent's narration is activity, not part of Claude's reply.
+  const replies = events
+    .filter((event) => event.event?.type === "message")
+    .map((event) => event.event.text)
+    .join("");
+  assert.equal(replies, "Both subagents finished.");
+  assert.equal(events.at(-1).finalResponse, "Both subagents finished.");
+  assert.ok(
+    events.some(
+      (event) =>
+        event.event?.kind === "update" &&
+        event.event.data.sessionUpdate === "agent_message_chunk" &&
+        event.event.data.content.text === "subagent narration",
+    ),
+  );
+});
+
 test("agent applies admitted settings and publishes controls while retaining its process", async (t) => {
   const { agent, request, events, launches } = adapter(t, ["--config-options"]);
   const runtime = {

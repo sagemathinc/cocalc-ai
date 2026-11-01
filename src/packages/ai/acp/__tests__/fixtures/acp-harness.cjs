@@ -513,6 +513,71 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         update("Tool activity completed.");
         return result(message.id, { stopReason: "end_turn" });
       }
+      if (text === "subagents") {
+        // The shape claude-agent-acp 0.93 sends for an Agent (subagent) tool
+        // call, recorded on staging2: the launch, its description, a child
+        // tool call stamped with parentToolUseId, and the completion.
+        const agentMeta = {
+          claudeCode: { toolName: "Agent" },
+          jetbrains: { air: { version: 1, subagent: true } },
+        };
+        const child = { claudeCode: { toolName: "Bash", parentToolUseId: "agent-1" } };
+        for (const item of [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "agent-1",
+            title: "Task",
+            kind: "think",
+            status: "pending",
+            content: [],
+            _meta: agentMeta,
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "agent-1",
+            rawInput: {
+              description: "Count .conf files under /etc",
+              subagent_type: "general-purpose",
+              prompt: "Read-only task.",
+            },
+            _meta: {},
+          },
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "child-1",
+            title: "find /etc -name '*.conf' | wc -l",
+            kind: "execute",
+            status: "pending",
+            _meta: child,
+          },
+          {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "subagent narration" },
+            _meta: child,
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "child-1",
+            status: "completed",
+            _meta: {},
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "agent-1",
+            status: "completed",
+            content: [
+              { type: "content", content: { type: "text", text: "There are 43." } },
+            ],
+            _meta: {},
+          },
+        ])
+          send({
+            method: "session/update",
+            params: { sessionId: "fixture-session", update: item },
+          });
+        update("Both subagents finished.");
+        return result(message.id, { stopReason: "end_turn" });
+      }
       if (text === "settings") {
         update(`${selectedModel}/${selectedMode}`);
         return result(message.id, { stopReason: "end_turn" });
