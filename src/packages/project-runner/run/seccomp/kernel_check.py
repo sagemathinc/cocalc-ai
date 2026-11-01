@@ -9,8 +9,11 @@ It loads the profile through libseccomp the way crun does (non-exact
 seccomp_rule_add_array, podman's includes/excludes by capability), reports
 rule-add failures and the BPF size, then installs the filter in a forked
 child with no_new_privs and issues raw syscalls, including high-word
-truncation cases. --diff runs an argument grid under both profiles and fails
-on any difference that isn't one of the intended ones. Environment:
+truncation cases and 32-bit (int 0x80) calls. It exits 1 on any rule-add
+failure or failed case. --diff builds both profiles for the native
+architecture only and runs an argument grid of native calls under each;
+it exits 1 on any rule-add failure or any difference that isn't one of
+the intended ones. Environment:
 SECCOMP_LIB picks the libseccomp shared object (the hosts' crun uses noble's
 2.5.5); SECCOMP_SUBARCHES overrides the sub-architectures taken from the
 profile's archMap (e.g. empty to compare profiles natively).
@@ -89,20 +92,23 @@ def applies(entry: dict, caps: set[str], arch: str) -> bool:
 _SUBARCH_NAMES = {"SCMP_ARCH_X86": "x86", "SCMP_ARCH_X32": "x32"}
 
 
-def subarches_of(profile: dict) -> list[str]:
+def subarches_of(profile: dict, native: bool = False) -> list[str]:
     """The sub-architectures podman would pass for this x86_64 host: the
-    profile's archMap, unless SECCOMP_SUBARCHES overrides it."""
+    profile's archMap (none if native), unless SECCOMP_SUBARCHES overrides
+    it."""
     if "SECCOMP_SUBARCHES" in os.environ:
         return [a for a in os.environ["SECCOMP_SUBARCHES"].split(",") if a]
+    if native:
+        return []
     for entry in profile.get("archMap") or []:
         if entry.get("architecture") == "SCMP_ARCH_X86_64":
             return [_SUBARCH_NAMES[a] for a in entry.get("subArchitectures") or []]
     return []
 
 
-def build(profile: dict, caps: set[str], exact: bool):
+def build(profile: dict, caps: set[str], exact: bool = False, native: bool = False):
     ctx = lib.seccomp_init(errno_action(profile.get("defaultErrnoRet", errno.ENOSYS)))
-    for sub in subarches_of(profile):
+    for sub in subarches_of(profile, native):
         rc = lib.seccomp_arch_add(ctx, lib.seccomp_arch_resolve_name(sub.encode()))
         if rc not in (0, -errno.EEXIST):
             raise OSError(-rc, f"arch {sub}")
@@ -312,17 +318,22 @@ def run_cases(ctx, compat_filtered: bool = True) -> list[str]:
 
 
 def main(argv):
+    """One profile, loaded as crun loads it (non-exact rule adds, the
+    profile's architectures). Exit 1 on any rule-add failure or failed
+    case."""
     profile = json.load(open(argv[1]))
     caps = set(argv[2].split(",")) if len(argv) > 2 and argv[2] else set()
-    for exact in (False, True):
-        ctx, rules, failures = build(profile, caps, exact)
-        print(f"build exact={exact} rules={rules} failures={failures} bpf_instructions={bpf_size(ctx)}", flush=True)
-    ctx, _, _ = build(profile, caps, False)
+    ctx, rules, failures = build(profile, caps)
+    print(f"build arches=native{''.join('+' + a for a in subarches_of(profile))} "
+          f"rules={rules} failures={failures} bpf_instructions={bpf_size(ctx)}", flush=True)
     lines = run_cases(ctx, compat_filtered="x86" in subarches_of(profile))
     for line in lines:
         print(line)
-    print(f"summary pass={sum(l.startswith('PASS') for l in lines)} fail={sum(l.startswith('FAIL') for l in lines)}")
-    return 0
+    passed = sum(l.startswith("PASS") for l in lines)
+    failed = sum(l.startswith("FAIL") for l in lines)
+    print(f"summary pass={passed} fail={failed} rule_add_failures={failures}")
+    return 1 if failures or failed else 0
+
 
 
 
@@ -409,8 +420,19 @@ def expected_difference(case: str, base: str, gen: str) -> str | None:
 def diff_main(base_path: str, gen_path: str, caps: set[str]) -> int:
     base = json.load(open(base_path))
     gen = json.load(open(gen_path))
-    a = outcomes(build(base, caps, False)[0])
-    b = outcomes(build(gen, caps, False)[0])
+    # The grid is native x86_64 system calls, so both filters are built for
+    # the native architecture only: the comparison is about the rules, not
+    # about which ABIs each profile lists (that is the compat probes' job).
+    built = []
+    for label, profile in (("base", base), ("generated", gen)):
+        ctx, rules, failures = build(profile, caps, native=True)
+        print(f"build {label} arches=native rules={rules} failures={failures}")
+        if failures:
+            print(f"FAIL {label} profile has rule-add failures")
+            return 1
+        built.append(ctx)
+    a = outcomes(built[0])
+    b = outcomes(built[1])
     if "harness" in a or "harness" in b:
         print("FAIL harness", a.get("harness"), b.get("harness"))
         return 1
