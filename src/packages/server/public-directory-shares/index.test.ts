@@ -11,6 +11,7 @@ import {
   ensurePublicDirectorySharesSchema,
   getTemporaryViewerReadPolicy,
   grantTemporaryViewerAccess,
+  legacyShareRedirectPath,
   listDirectory,
   normalizePublicDirectorySharePath,
   normalizePublicDirectoryShareSlug,
@@ -674,6 +675,77 @@ describe("public directory temporary viewer grants", () => {
         path: "georeg/matrix-certificates/notebook",
       }),
     ).resolves.toBeNull();
+  });
+
+  it("follows a migrated share's cocalc.com redirect to a share here", async () => {
+    await getPool().query(
+      `INSERT INTO projects (project_id, title, users, last_edited)
+       VALUES ($1, 'Legacy published project', '{}'::jsonb, NOW())
+       ON CONFLICT (project_id) DO NOTHING`,
+      [PROJECT_ID],
+    );
+    // The whole folder, and a single-file share whose cocalc.com link went to
+    // that file inside the folder share instead.
+    await upsertMigratedLegacyPublicDirectoryShare({
+      account_id: OWNER_ID,
+      project_id: PROJECT_ID,
+      path: "book-published",
+      slug: "press/book-1/code",
+      legacy_public_path_id: "1111111111111111111111111111111111111111",
+      availability_status: "available",
+      visibility: "unlisted",
+    });
+    const fileShare = await upsertMigratedLegacyPublicDirectoryShare({
+      account_id: OWNER_ID,
+      project_id: PROJECT_ID,
+      path: "book/chapter-03.ipynb",
+      slug: "press/book-1/code3",
+      legacy_public_path_id: "3333333333333333333333333333333333333333",
+      availability_status: "available",
+      visibility: "unlisted",
+      redirect: "https://cocalc.com/press/book-1/code/files/chapter-03.ipynb",
+    });
+
+    await expect(
+      resolveLegacyPublicDirectorySharePath({ path: "press/book-1/code3" }),
+    ).resolves.toEqual({ path: "press/book-1/code/files/chapter-03.ipynb" });
+    // a path inside the share itself is not redirected
+    await expect(
+      resolveLegacyPublicDirectorySharePath({
+        path: "press/book-1/code3/files/x.ipynb",
+      }),
+    ).resolves.toEqual({ path: "press/book-1/code3/files/x.ipynb" });
+
+    // a redirect to no share here, or to another site, shows the share itself
+    for (const redirect of [
+      "https://cocalc.com/press/no-such-book/files/x.ipynb",
+      "https://example.com/press/book-1/code/files/chapter-03.ipynb",
+      "not a url",
+    ]) {
+      await getPool().query(
+        `UPDATE public_project_paths SET redirect=$2 WHERE id=$1`,
+        [fileShare.id, redirect],
+      );
+      await expect(
+        resolveLegacyPublicDirectorySharePath({ path: "press/book-1/code3" }),
+      ).resolves.toEqual({ path: "press/book-1/code3" });
+    }
+  });
+
+  it("parses only https cocalc.com redirects", () => {
+    expect(
+      legacyShareRedirectPath("https://cocalc.com/a/b/files/c%20d.ipynb"),
+    ).toBe("a/b/files/c d.ipynb");
+    expect(legacyShareRedirectPath("https://www.cocalc.com/a/b")).toBe("a/b");
+    expect(legacyShareRedirectPath("http://cocalc.com/a/b")).toBeUndefined();
+    expect(
+      legacyShareRedirectPath("https://cocalc.com.evil/a"),
+    ).toBeUndefined();
+    expect(legacyShareRedirectPath("https://evil.com/a")).toBeUndefined();
+    expect(legacyShareRedirectPath(null)).toBeUndefined();
+    expect(
+      legacyShareRedirectPath("https://cocalc.com/%E0%A4%A"),
+    ).toBeUndefined();
   });
 
   it("rejects unsafe legacy URL paths before querying the directory", async () => {
