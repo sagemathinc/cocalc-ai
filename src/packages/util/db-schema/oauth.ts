@@ -77,11 +77,28 @@ Table({
     pg_indexes: ["account_id", "expire"],
   },
   fields: {
-    approval_id: { type: "string", pg_type: "varchar(64)", desc: "Random opaque single-use approval reference in the signed OAuth proof." },
-    account_id: { type: "uuid", desc: "Approving account; resolved only on its home bay." },
-    session_hash: { type: "string", pg_type: "char(127)", desc: "Approving session hash, kept server-side only." },
-    factor_verified_at: { type: "timestamp", desc: "Factor time checked again when minting the grant." },
-    expire: { type: "timestamp", desc: "Approval-proof lifetime plus the one-minute code redemption window." },
+    approval_id: {
+      type: "string",
+      pg_type: "varchar(64)",
+      desc: "Random opaque single-use approval reference in the signed OAuth proof.",
+    },
+    account_id: {
+      type: "uuid",
+      desc: "Approving account; resolved only on its home bay.",
+    },
+    session_hash: {
+      type: "string",
+      pg_type: "char(127)",
+      desc: "Approving session hash, kept server-side only.",
+    },
+    factor_verified_at: {
+      type: "timestamp",
+      desc: "Factor time checked again when minting the grant.",
+    },
+    expire: {
+      type: "timestamp",
+      desc: "Approval-proof lifetime plus the one-minute code redemption window.",
+    },
   },
 });
 

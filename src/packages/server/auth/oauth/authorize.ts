@@ -154,12 +154,20 @@ export async function validateAuthorizeRequest(
   // (absent, or exactly Sagebrush's admin scope, and only for Sagebrush)
   if (
     params.scope != null &&
-    !(params.scope === SAGEBRUSH_ADMIN_SCOPE && client.client_id === "sagebrush")
+    !(
+      params.scope === SAGEBRUSH_ADMIN_SCOPE && client.client_id === "sagebrush"
+    )
   ) {
     throw new OAuthAuthorizeError("invalid scope");
   }
   const scope = params.scope == null ? undefined : SAGEBRUSH_ADMIN_SCOPE;
-  return { client, redirect_uri, state, code_challenge, ...(scope ? { scope } : {}) };
+  return {
+    client,
+    redirect_uri,
+    state,
+    code_challenge,
+    ...(scope ? { scope } : {}),
+  };
 }
 
 export function authorizeRequestInfo(
@@ -305,14 +313,24 @@ export async function issueAuthorizeApprovalProof({
       if (request.scope === SAGEBRUSH_ADMIN_SCOPE) {
         const admin = await checkAdminApproval({ db, account_id, req });
         adminApprovalId = randomBytes(32).toString("base64url");
-        await db.query(`DELETE FROM sagebrush_admin_approvals WHERE expire < NOW()`);
+        await db.query(
+          `DELETE FROM sagebrush_admin_approvals WHERE expire < NOW()`,
+        );
         await db.query(
           `INSERT INTO sagebrush_admin_approvals
              (approval_id, account_id, session_hash, factor_verified_at, expire)
            VALUES ($1, $2::UUID, $3::CHAR(127), $4, $5)`,
-          [adminApprovalId, account_id, admin.session_hash,
-           new Date(admin.factor_verified_at * 1000),
-           new Date(Date.now() + APPROVAL_PROOF_TTL_SECONDS * 1000 + AUTHORIZATION_CODE_TTL_MS)],
+          [
+            adminApprovalId,
+            account_id,
+            admin.session_hash,
+            new Date(admin.factor_verified_at * 1000),
+            new Date(
+              Date.now() +
+                APPROVAL_PROOF_TTL_SECONDS * 1000 +
+                AUTHORIZATION_CODE_TTL_MS,
+            ),
+          ],
         );
       }
       await recordOAuthClientApproval({
@@ -370,7 +388,9 @@ async function checkAdminApproval({
   ).rows[0];
   if (facts?.admin !== true) throw new Error("only an admin can approve this");
   if (facts.two_factor !== true) {
-    throw Object.assign(new Error("turn on two-factor authentication first"), { code: "two_factor_required" });
+    throw Object.assign(new Error("turn on two-factor authentication first"), {
+      code: "two_factor_required",
+    });
   }
   if (req == null) throw new Error("browser sign-in is required");
   const session = await getCurrentAuthSession({ req, account_id });
@@ -380,9 +400,12 @@ async function checkAdminApproval({
     [session.session_hash],
   );
   if (impersonation.rows.length) {
-    throw Object.assign(new Error("admin approval requires a direct browser session"), {
-      code: "impersonation_blocked",
-    });
+    throw Object.assign(
+      new Error("admin approval requires a direct browser session"),
+      {
+        code: "impersonation_blocked",
+      },
+    );
   }
   const factor =
     session.factor_verified_at == null
@@ -392,9 +415,15 @@ async function checkAdminApproval({
   if (factor == null || !(factor <= now && now < factor + FACTOR_SECONDS)) {
     // (the existing fresh-auth code: the authorize page's FreshAuthModal, which
     // requires the second factor on an account with 2FA, then retries)
-    throw Object.assign(new Error("fresh auth with your second factor is required"), { code: "fresh_auth_required" });
+    throw Object.assign(
+      new Error("fresh auth with your second factor is required"),
+      { code: "fresh_auth_required" },
+    );
   }
-  return { session_hash: `${session.session_hash}`.trim(), factor_verified_at: factor };
+  return {
+    session_hash: `${session.session_hash}`.trim(),
+    factor_verified_at: factor,
+  };
 }
 
 function checkApprovingAccount(
@@ -453,11 +482,15 @@ export async function approveAuthorizeRequest({
   await pool.query(`DELETE FROM oauth_authorization_codes WHERE expire < $1`, [
     new Date(Date.now() - CODE_RETENTION_MS),
   ]);
-  const adminApprovalId = request.scope === SAGEBRUSH_ADMIN_SCOPE
-    ? claims.oauth_admin_approval_id
-    : null;
-  if (request.scope === SAGEBRUSH_ADMIN_SCOPE &&
-      (typeof adminApprovalId !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(adminApprovalId))) {
+  const adminApprovalId =
+    request.scope === SAGEBRUSH_ADMIN_SCOPE
+      ? claims.oauth_admin_approval_id
+      : null;
+  if (
+    request.scope === SAGEBRUSH_ADMIN_SCOPE &&
+    (typeof adminApprovalId !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(adminApprovalId))
+  ) {
     throw new Error("invalid approval proof");
   }
   await pool.query(

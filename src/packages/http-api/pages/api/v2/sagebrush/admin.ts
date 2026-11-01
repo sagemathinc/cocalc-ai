@@ -34,11 +34,17 @@ export default async function sagebrushAdmin(req, res) {
     }
     const account_id = req.query?.account_id;
     const grant = req.query?.grant;
-    if (typeof account_id !== "string" || !isValidUUID(account_id) || (grant != null && typeof grant !== "string")) {
+    if (
+      typeof account_id !== "string" ||
+      !isValidUUID(account_id) ||
+      (grant != null && typeof grant !== "string")
+    ) {
       res.status(400).json({ error: "invalid_request" });
       return;
     }
-    res.json(await getSagebrushAdminAnswer({ account_id, grant: grant ?? null }));
+    res.json(
+      await getSagebrushAdminAnswer({ account_id, grant: grant ?? null }),
+    );
   } catch {
     // (routing or lookup failures: never an answer Sagebrush could admit on)
     logger.warn("admin check failed");

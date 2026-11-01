@@ -85,7 +85,10 @@ async function accountFacts(
         ))`,
     [account_id, requireApproval],
   );
-  return { admin: rows[0]?.admin === true, two_factor: rows[0]?.two_factor === true };
+  return {
+    admin: rows[0]?.admin === true,
+    two_factor: rows[0]?.two_factor === true,
+  };
 }
 
 /** The grant's expiry from a session's values now (seconds), or null when the
@@ -143,7 +146,12 @@ async function mintSagebrushAdminGrantForSession({
   session_hash: string;
   factor_verified_at: number;
 }): Promise<SagebrushAdminGrant | null> {
-  if (!isValidUUID(account_id) || !session_hash || !Number.isInteger(factor_verified_at)) return null;
+  if (
+    !isValidUUID(account_id) ||
+    !session_hash ||
+    !Number.isInteger(factor_verified_at)
+  )
+    return null;
   const facts = await accountFacts(account_id);
   if (!facts.admin || !facts.two_factor) return null;
   const s = await liveSession(account_id, session_hash);
@@ -151,18 +159,30 @@ async function mintSagebrushAdminGrantForSession({
   const factor = seconds(s.factor_verified_at);
   if (factor !== factor_verified_at) return null;
   // (the issue-time checks and formula, kept apart from the live ones below so that each has its own control)
-  const now = clock() / 1000, expire = seconds(s.expire), fresh_until = seconds(s.fresh_auth_until);
+  const now = clock() / 1000,
+    expire = seconds(s.expire),
+    fresh_until = seconds(s.fresh_auth_until);
   if (expire == null || !(now < expire)) return null;
   if (fresh_until == null || !(now < fresh_until)) return null;
   if (!(factor <= now && now < factor + FACTOR_SECONDS)) return null;
-  const expires_at = Math.floor(Math.min(factor + FACTOR_SECONDS, expire, fresh_until));
+  const expires_at = Math.floor(
+    Math.min(factor + FACTOR_SECONDS, expire, fresh_until),
+  );
   const grant_id = randomBytes(24).toString("base64url");
   // (expired grants go a day after their expiry, here, as codes go when new ones are stored)
-  await getPool().query(`DELETE FROM sagebrush_admin_grants WHERE expires_at < NOW() - INTERVAL '1 day'`);
+  await getPool().query(
+    `DELETE FROM sagebrush_admin_grants WHERE expires_at < NOW() - INTERVAL '1 day'`,
+  );
   await getPool().query(
     `INSERT INTO sagebrush_admin_grants(grant_id, account_id, session_hash, factor_verified_at, expires_at, created)
      VALUES($1, $2::UUID, $3::CHAR(127), $4, $5, NOW())`,
-    [grant_id, account_id, session_hash, new Date(factor * 1000), new Date(expires_at * 1000)],
+    [
+      grant_id,
+      account_id,
+      session_hash,
+      new Date(factor * 1000),
+      new Date(expires_at * 1000),
+    ],
   );
   return { grant_id, factor_verified_at: factor, expires_at };
 }
@@ -176,7 +196,8 @@ export async function mintSagebrushAdminGrantLocal({
   account_id: string;
   approval_id: string;
 }): Promise<SagebrushAdminGrant | null> {
-  if (!isValidUUID(account_id) || !/^[A-Za-z0-9_-]{43}$/.test(approval_id)) return null;
+  if (!isValidUUID(account_id) || !/^[A-Za-z0-9_-]{43}$/.test(approval_id))
+    return null;
   const { rows } = await getPool().query<{
     session_hash: string;
     factor_verified_at: Date;
@@ -226,7 +247,8 @@ export async function sagebrushAdminAnswerLocal({
   const s = await liveSession(account_id, `${g.session_hash}`.trim());
   if (s == null) return refused;
   const factor = seconds(s.factor_verified_at);
-  if (factor == null || factor !== seconds(g.factor_verified_at)) return refused;
+  if (factor == null || factor !== seconds(g.factor_verified_at))
+    return refused;
   const now = clock() / 1000;
   const live = liveExpiry({
     factor,
@@ -237,7 +259,12 @@ export async function sagebrushAdminAnswerLocal({
   if (live == null) return refused;
   const expires_at = Math.min(live, seconds(g.expires_at)!);
   if (!(now < expires_at)) return refused;
-  return { admin: true, two_factor: true, factor_verified_at: factor, expires_at };
+  return {
+    admin: true,
+    two_factor: true,
+    factor_verified_at: factor,
+    expires_at,
+  };
 }
 
 /** From any bay: the home bay mints (null: no grant). Throws when the home
@@ -246,17 +273,14 @@ export async function mintSagebrushAdminGrant(opts: {
   account_id: string;
   approval_id: string;
 }): Promise<SagebrushAdminGrant | null> {
-  const { remoteHomeBay, forgetAccountHomeOn409 } = await import(
-    "@cocalc/server/accounts/home-bay"
-  );
+  const { remoteHomeBay, forgetAccountHomeOn409 } =
+    await import("@cocalc/server/accounts/home-bay");
   const home = await remoteHomeBay(opts.account_id);
   if (home == null) return await mintSagebrushAdminGrantLocal(opts);
-  const { createInterBayAccountFactsClient } = await import(
-    "@cocalc/conat/inter-bay/account-facts"
-  );
-  const { getInterBayFabricClient } = await import(
-    "@cocalc/server/inter-bay/fabric"
-  );
+  const { createInterBayAccountFactsClient } =
+    await import("@cocalc/conat/inter-bay/account-facts");
+  const { getInterBayFabricClient } =
+    await import("@cocalc/server/inter-bay/fabric");
   try {
     return await createInterBayAccountFactsClient({
       client: getInterBayFabricClient(),
@@ -273,22 +297,22 @@ export async function getSagebrushAdminAnswer(opts: {
   account_id: string;
   grant?: string | null;
 }): Promise<SagebrushAdminAnswer> {
-  const { remoteHomeBay, forgetAccountHomeOn409 } = await import(
-    "@cocalc/server/accounts/home-bay"
-  );
+  const { remoteHomeBay, forgetAccountHomeOn409 } =
+    await import("@cocalc/server/accounts/home-bay");
   const home = await remoteHomeBay(opts.account_id);
   if (home == null) return await sagebrushAdminAnswerLocal(opts);
-  const { createInterBayAccountFactsClient } = await import(
-    "@cocalc/conat/inter-bay/account-facts"
-  );
-  const { getInterBayFabricClient } = await import(
-    "@cocalc/server/inter-bay/fabric"
-  );
+  const { createInterBayAccountFactsClient } =
+    await import("@cocalc/conat/inter-bay/account-facts");
+  const { getInterBayFabricClient } =
+    await import("@cocalc/server/inter-bay/fabric");
   try {
     return await createInterBayAccountFactsClient({
       client: getInterBayFabricClient(),
       bay_id: home,
-    }).sagebrushAdminAnswer({ account_id: opts.account_id, grant: opts.grant ?? null });
+    }).sagebrushAdminAnswer({
+      account_id: opts.account_id,
+      grant: opts.grant ?? null,
+    });
   } catch (err) {
     return forgetAccountHomeOn409(opts.account_id, err);
   }

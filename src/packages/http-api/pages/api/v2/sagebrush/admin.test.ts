@@ -50,7 +50,9 @@ it("refuses an authenticated client other than Sagebrush before account lookup",
 });
 
 it("does not log grant, session or client values from lookup failures", async () => {
-  mockAnswer.mockRejectedValue(Error("synthetic-grant synthetic-session-hash synthetic-client-secret"));
+  mockAnswer.mockRejectedValue(
+    Error("synthetic-grant synthetic-session-hash synthetic-client-secret"),
+  );
   const res = await get();
   expect(res._getStatusCode()).toBe(500);
   expect(res._getJSONData()).toEqual({ error: "server_error" });
