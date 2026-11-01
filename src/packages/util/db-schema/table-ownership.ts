@@ -537,6 +537,15 @@ export const TABLE_OWNERSHIP = {
     rebuild: "No rebuild: the client starts a new sign-in.",
   }),
 
+  ...entries(["sagebrush_admin_approvals", "sagebrush_admin_grants"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "rebuildable",
+    notes:
+      "Sagebrush admin-page grants, at most 10 minutes each, minted and checked on the account's home bay from its browser session. Losing rows only makes the admin confirm with 2FA again.",
+    rebuild: "No rebuild: the admin confirms with 2FA again.",
+  }),
+
   ...entries(["oauth_client_approvals"], {
     ownership: "account-home",
     authority: "account_id",

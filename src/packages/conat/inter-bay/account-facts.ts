@@ -17,6 +17,17 @@ export interface InterBayAccountFactsApi {
   isAdmin(opts: { account_id: string }): Promise<boolean>;
   /** The account's product-access trust result, as computed on its home bay. */
   productAccessTrust(opts: { account_id: string }): Promise<any>;
+  /** Sagebrush's admin page (server/sagebrush/admin-grant.ts): a grant minted
+   * from the approving session's live state, or null. */
+  sagebrushAdminMint(opts: {
+    account_id: string;
+    approval_id: string;
+  }): Promise<any>;
+  /** Sagebrush's admin check, read live on the home bay. */
+  sagebrushAdminAnswer(opts: {
+    account_id: string;
+    grant: string | null;
+  }): Promise<any>;
 }
 
 const SERVICE = "inter-bay-account-facts";

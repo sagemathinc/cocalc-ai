@@ -480,6 +480,55 @@ which could hold an address or a credential, is never kept. Logs name a
 notice's request id or a step's cycle, not the account; admin alerts name the
 account, as the purge alerts do.
 
+## 5. The admin page
+
+Sagebrush's admin page is for CoCalc admins with 2FA, after a recent second
+factor. The Worker signs the admin in with the same authorize and token flow,
+adding `scope=sagebrush-admin` to the authorize request (the only scope, and
+only for the `sagebrush` client; any other scope is `invalid scope`).
+
+- **Approval.** CoCalc approves the admin scope only for a signed-in browser
+  session (not an impersonation) of a live admin account with 2FA on, whose
+  second factor was verified at most 600 seconds ago. Otherwise the authorize
+  page asks for the second factor again first. The proof is bound to the scope,
+  so an admin approval can't approve a plain sign-in or the other way round.
+  Its browser-readable proof carries an opaque, single-use home-bay approval
+  reference; session hashes and factor times remain server-side.
+- **The grant.** The token response then also has
+  `"admin_grant": {"grant_id", "factor_verified_at", "expires_at"}` (integer
+  unix seconds), minted on the account's home bay when the code is redeemed.
+  `expires_at` is
+  `floor(min(factor_verified_at + 600, session expiry, fresh_auth_until))`.
+  There is no grant if any approval condition stopped holding since approval;
+  the code is still used up.
+- **The check.** On every admin request the Worker asks, server to server, with
+  the client's Basic credentials:
+
+  ```
+  POST {COCALC_ORIGIN}/api/v2/sagebrush/admin
+  Content-Type: application/json
+
+  {"account_id": "<uuid>", "grant": "<grant_id>"}
+  ```
+
+  GET returns 405; grant identifiers are never placed in the request URL.
+  The home bay answers live, nothing cached: `{"admin": false}`,
+  `{"admin": true, "two_factor": false}`, `{"admin": true, "two_factor": true}`
+  (no valid grant), or with a valid grant also `factor_verified_at` and
+  `expires_at`, never later than the grant's own. A grant stops being valid
+  when its session is signed out or revoked, its factor changes, or the
+  account is deleted, banned, demoted or turns 2FA off. A routing or lookup
+  failure is a 500, never an answer.
+
+**Setup:** the admin flow redirects to `<site origin>/admin/auth/callback`.
+Each such URI must be registered in the site setting
+`sagebrush_redirect_uris` (separated by spaces or commas) next to the normal
+`/auth/callback` ones, which must stay; the built-in default lists only
+`/auth/callback`, so without it every admin authorize request is refused.
+
+`src/packages/server/sagebrush/cocalc-admin-contract.json` is the exact
+contract; Sagebrush pins its sha256.
+
 ## Implementation in CoCalc
 
 - `src/packages/server/auth/oauth/clients.ts`: the client registry. Adding a
@@ -509,6 +558,9 @@ account, as the purge alerts do.
 - `src/packages/server/sagebrush/sync-retention.ts`: section 4's checks, notices
   and emails, run on the primary bay worker, and their tables,
   `sagebrush_sync_states` and `sagebrush_sync_emails`.
+- `src/packages/server/sagebrush/admin-grant.ts`: the admin grants
+  (`sagebrush_admin_grants`), minted and answered on the home bay; other bays
+  reach it through the inter-bay account facts API.
 - The deletion dialog lists the approved clients through
   `/api/v2/accounts/oauth-client-approvals`, to say their shared files are
   deleted too.

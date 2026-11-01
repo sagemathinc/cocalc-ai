@@ -56,6 +56,86 @@ Table({
       type: "timestamp",
       desc: "When the first redemption attempt used up the code.",
     },
+    scope: {
+      type: "string",
+      pg_type: "varchar(32)",
+      desc: "NULL, or sagebrush-admin: Sagebrush's admin page after a fresh 2FA (see server/sagebrush/admin-grant.ts).",
+    },
+    admin_approval_id: {
+      type: "string",
+      pg_type: "varchar(64)",
+      desc: "Admin scope only: opaque single-use home-bay approval reference. Contains no browser session facts.",
+    },
+  },
+});
+
+Table({
+  name: "sagebrush_admin_approvals",
+  rules: {
+    primary_key: "approval_id",
+    durability: "soft",
+    pg_indexes: ["account_id", "expire"],
+  },
+  fields: {
+    approval_id: {
+      type: "string",
+      pg_type: "varchar(64)",
+      desc: "Random opaque single-use approval reference in the signed OAuth proof.",
+    },
+    account_id: {
+      type: "uuid",
+      desc: "Approving account; resolved only on its home bay.",
+    },
+    session_hash: {
+      type: "string",
+      pg_type: "char(127)",
+      desc: "Approving session hash, kept server-side only.",
+    },
+    factor_verified_at: {
+      type: "timestamp",
+      desc: "Factor time checked again when minting the grant.",
+    },
+    expire: {
+      type: "timestamp",
+      desc: "Approval-proof lifetime plus the one-minute code redemption window.",
+    },
+  },
+});
+
+Table({
+  name: "sagebrush_admin_grants",
+  rules: {
+    primary_key: "grant_id",
+    durability: "soft",
+    pg_indexes: ["account_id", "expires_at"],
+  },
+  fields: {
+    grant_id: {
+      type: "string",
+      pg_type: "varchar(64)",
+      desc: "Random, opaque id Sagebrush stores with its own session; never a session hash or cookie.",
+    },
+    account_id: {
+      type: "uuid",
+      desc: "The admin the grant was minted for.",
+    },
+    session_hash: {
+      type: "string",
+      pg_type: "char(127)",
+      desc: "The cocalc.ai browser session whose second factor the grant rests on.",
+    },
+    factor_verified_at: {
+      type: "timestamp",
+      desc: "That session's factor time when the grant was minted; the grant ends if it changes.",
+    },
+    expires_at: {
+      type: "timestamp",
+      desc: "floor(min(factor + 600 s, the session's expire, its fresh_auth_until)) when minted; never extended.",
+    },
+    created: {
+      type: "timestamp",
+      desc: "When the grant was minted.",
+    },
   },
 });
 

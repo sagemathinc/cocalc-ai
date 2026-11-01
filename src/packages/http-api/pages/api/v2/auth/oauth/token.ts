@@ -51,7 +51,7 @@ export default async function oauthToken(req, res) {
       res.status(err.status).json({ error: err.error });
       return;
     }
-    logger.warn("token request failed", { err: `${err}` });
+    logger.warn("token request failed");
     res.status(500).json({ error: "server_error" });
   }
 }

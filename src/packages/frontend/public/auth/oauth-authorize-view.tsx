@@ -15,6 +15,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Flex, Typography } from "antd";
 
 import { postAuthApi, signOutAuthSession } from "@cocalc/frontend/auth/api";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 
 export const AUTHORIZE_PARAMS = [
@@ -24,6 +28,7 @@ export const AUTHORIZE_PARAMS = [
   "state",
   "code_challenge",
   "code_challenge_method",
+  "scope",
 ] as const;
 
 type AuthorizeRequest = Partial<
@@ -90,6 +95,11 @@ export function PublicOAuthAuthorizeView({
   const [needsVerification, setNeedsVerification] = useState(false);
   const [busy, setBusy] = useState<"" | "allow" | "deny" | "sign-out">("");
   const [verificationSent, setVerificationSent] = useState(false);
+  // (Sagebrush's admin scope needs a second factor verified in the last 10
+  // minutes: the approval asks for fresh auth, which this runs and retries)
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    origin: getControlPlaneOrigin(),
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -121,11 +131,18 @@ export function PublicOAuthAuthorizeView({
     setBusy("allow");
     setError("");
     try {
-      const proof = await postAuthApi<{ token: string; home_bay_id: string }>({
-        endpoint: "auth/oauth/approval-token",
-        origin: getControlPlaneOrigin(),
-        body: { request },
+      let proof: { token: string; home_bay_id: string } | undefined;
+      const done = await runFreshAuthAction(async () => {
+        proof = await postAuthApi<{ token: string; home_bay_id: string }>({
+          endpoint: "auth/oauth/approval-token",
+          origin: getControlPlaneOrigin(),
+          body: { request },
+        });
       });
+      if (!done || proof == null) {
+        setBusy("");
+        return;
+      }
       const approved = await postAuthApi<{ redirect_url: string }>({
         endpoint: "auth/oauth/approve",
         body: {
@@ -239,6 +256,15 @@ export function PublicOAuthAuthorizeView({
 
   return (
     <Flex vertical gap={16}>
+      <FreshAuthModal {...freshAuthModalProps} />
+      {request.scope === "sagebrush-admin" ? (
+        <Alert
+          showIcon
+          type="warning"
+          title={<>Confirm admin access to {info.client_name}</>}
+          description="This opens the admin page there for 10 minutes. You'll confirm with your second factor if you haven't in the last 10 minutes."
+        />
+      ) : null}
       {error ? (
         <Alert showIcon type="error" role="alert" title={error} />
       ) : null}
