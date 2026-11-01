@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import pwd
+import shlex
 import shutil
 import signal
 import stat
@@ -623,7 +624,15 @@ secret_access_key = "secret"
                 return 0
 
             with (
-                mock.patch.dict(namespace, {"run_supervised": rustic_run}),
+                # time.sleep is patched for the whole process, and the
+                # capability probe's subprocess timeout polls with it
+                mock.patch.dict(
+                    namespace,
+                    {
+                        "run_supervised": rustic_run,
+                        "rustic_capabilities": lambda *_args: {},
+                    },
+                ),
                 mock.patch.object(namespace["time"], "sleep") as sleep,
             ):
                 run_rustic(
@@ -653,7 +662,9 @@ secret_access_key = "secret"
             self.assertNotIn("--no-progress", init_call)
             sleep.assert_called_once_with(0.25)
 
-    def write_rustic_fixture(self, root: Path) -> tuple[Path, Path]:
+    def write_rustic_fixture(
+        self, root: Path, capabilities: dict | None = None
+    ) -> tuple[Path, Path]:
         (root / "profile.toml").write_text(
             """[repository]
 repository = "opendal:s3"
@@ -670,9 +681,18 @@ secret_access_key = "secret"
         )
         invocation = root / "invocation"
         fake_rustic = root / "rustic"
+        # `version --json` reports these capabilities (None: an old build
+        # without the command) and leaves the recorded invocation alone.
+        version = (
+            "exit 2"
+            if capabilities is None
+            else "printf '%s\\n' "
+            + shlex.quote(json.dumps({"schema_version": 1, "capabilities": capabilities}))
+        )
         fake_rustic.write_text(
             "#!/usr/bin/env bash\n"
             "set -euo pipefail\n"
+            f'if [ "${{1:-}}" = version ]; then {version}; exit 0; fi\n'
             f"printf '%s\\n' \"$@\" > {invocation}\n",
             encoding="utf-8",
         )
@@ -781,6 +801,147 @@ secret_access_key = "secret"
             self.assertNotIn("--exclude-larger-than", args)
             self.assertNotIn("--description", args)
             self.assertEqual(stderr.getvalue(), "")
+
+    HOLE_AWARE = {"hole_aware_backup": True, "sparse_required_restore": True}
+
+    def test_hole_aware_rustic_backs_up_sparse_files_to_the_ceiling(self) -> None:
+        namespace = self.helper_namespace()
+        run_rustic = namespace["run_rustic"]
+        ceiling = namespace["RUSTIC_BACKUP_CEILING_MAX_FILE_BYTES"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source"
+            source.mkdir()
+            limit = 1_000_000_000
+            # over the quota-derived limit, but sparse: backed up
+            make_sparse_file(source / "sparse", limit + 1)
+            # over the ceiling: still skipped and reported
+            make_sparse_file(source / "huge", ceiling + 1)
+            fake_rustic, invocation = self.write_rustic_fixture(root, self.HOLE_AWARE)
+            stderr = io.StringIO()
+            with mock.patch("sys.stderr", stderr):
+                run_rustic(
+                    self.rustic_backup_args(
+                        root, "rustic-project-backup", "--max-file-bytes", str(limit)
+                    ),
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(root / "run"),
+                    profile_run_dir_uid=os.getuid(),
+                )
+            args = invocation.read_text(encoding="utf-8").split("\n")
+            self.assertEqual(args[0], "-P")
+            self.assertEqual(
+                args[args.index("--exclude-larger-than") + 1], str(ceiling)
+            )
+            report = json.loads(stderr.getvalue().strip().partition(" ")[2])
+            self.assertEqual(report["max_file_bytes"], ceiling)
+            self.assertEqual(
+                report["files"], [{"path": "huge", "size": ceiling + 1}]
+            )
+
+    def test_backup_limit_follows_the_capability(self) -> None:
+        namespace = self.helper_namespace()
+        limit = namespace["backup_max_file_bytes"]
+        ceiling = namespace["RUSTIC_BACKUP_CEILING_MAX_FILE_BYTES"]
+        self.assertEqual(limit(5, {"hole_aware_backup": True}), ceiling)
+        self.assertEqual(limit(5, {}), 5)
+        # only an explicit true counts
+        self.assertEqual(limit(5, {"hole_aware_backup": "yes"}), 5)
+        self.assertIsNone(limit(None, {"hole_aware_backup": True}))
+
+    def test_capabilities_of_old_or_broken_builds_are_empty(self) -> None:
+        capabilities = self.helper_namespace()["rustic_capabilities"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            old, _ = self.write_rustic_fixture(root)
+            self.assertEqual(capabilities(str(old), {}), {})
+            garbage = root / "garbage"
+            garbage.write_text("#!/bin/sh\necho not-json\n", encoding="utf-8")
+            garbage.chmod(0o755)
+            self.assertEqual(capabilities(str(garbage), {}), {})
+            self.assertEqual(capabilities(str(root / "missing"), {}), {})
+            (root / "new").mkdir()
+            new, _ = self.write_rustic_fixture(root / "new", self.HOLE_AWARE)
+            self.assertEqual(capabilities(str(new), {}), self.HOLE_AWARE)
+
+    def rustic_restore(self, root: Path, capabilities: dict | None) -> list[str]:
+        (root / "dest").mkdir()
+        fake_rustic, invocation = self.write_rustic_fixture(root, capabilities)
+        self.helper_namespace()["run_rustic"](
+            [
+                "rustic-project-restore",
+                "--root", str(root),
+                "--path", "dest",
+                "--profile-root", str(root),
+                "--profile-path", "profile.toml",
+                "--snapshot", "backup-id:data",
+            ],
+            allowed_roots={str(root)},
+            rustic_candidates=[str(fake_rustic)],
+            profile_run_dir=str(root / "run"),
+            profile_run_dir_uid=os.getuid(),
+        )
+        return invocation.read_text(encoding="utf-8").split("\n")
+
+    def test_restore_is_sparse_where_rustic_supports_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = self.rustic_restore(Path(tmpdir), self.HOLE_AWARE)
+            restore = args.index("restore")
+            self.assertEqual(
+                args[restore + 1 : restore + 3], ["--sparse", "by-content-required"]
+            )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # an old build doesn't know the option: restore as before
+            args = self.rustic_restore(Path(tmpdir), None)
+            self.assertNotIn("--sparse", args)
+
+    def test_oversized_scan_uses_the_backup_limit_of_the_installed_rustic(self) -> None:
+        run = self.helper_run()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "source").mkdir()
+            limit = 1_000_000_000
+            make_sparse_file(root / "source" / "sparse", limit + 1)
+            scan = [
+                "scan-oversized-files",
+                "--root", str(root),
+                "--path", "source",
+                "--max-file-bytes", str(limit),
+            ]
+            for capabilities, count in ((None, 1), (self.HOLE_AWARE, 0)):
+                (root / "bin").mkdir(exist_ok=True)
+                fake_rustic, _ = self.write_rustic_fixture(root / "bin", capabilities)
+                stdout = io.StringIO()
+                with mock.patch("sys.stdout", stdout):
+                    run(scan, allowed_roots={str(root)}, rustic_candidates=[str(fake_rustic)])
+                self.assertEqual(json.loads(stdout.getvalue())["count"], count)
+
+    def test_preserving_copy_keeps_holes(self) -> None:
+        run = self.helper_run()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "source").mkdir()
+            (root / "dest").mkdir()
+            sparse = root / "source" / "sparse"
+            make_sparse_file(sparse, 256 * 1024**2)
+            with open(sparse, "r+b") as f:
+                f.seek(100 * 1024**2)
+                f.write(b"data")
+            run(
+                [
+                    "copy-tree-preserve",
+                    "--root", str(root),
+                    "--path", "source",
+                    "--dest-root", str(root),
+                    "--dest", "dest",
+                ],
+                allowed_roots={str(root)},
+            )
+            copy = root / "dest" / "sparse"
+            self.assertEqual(copy.read_bytes(), sparse.read_bytes())
+            # 256 MiB apparent; a dense copy would allocate all of it
+            self.assertLess(copy.stat().st_blocks * 512, 16 * 1024**2)
 
     def test_rootfs_backup_rejects_oversized_files(self) -> None:
         run_rustic = self.helper_namespace()["run_rustic"]
