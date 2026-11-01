@@ -19,6 +19,7 @@ High-level responsibilities:
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
 import grp
 import hashlib
@@ -15274,25 +15275,98 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
 
 @contextmanager
 def tools_artifact_lock(root: str):
-    """Coordinate tools extraction/activation with the project-host collector."""
+    """Coordinate tools extraction/activation with the project-host collector.
+
+    The tools directory isn't trusted, so nothing in it is opened, created
+    or changed by path: the lock is opened relative to a
+    descriptor of the root without following a symlink, and a lock file that
+    isn't bootstrap's own (root's) regular file is replaced, never followed.
+    """
     Path(root).mkdir(parents=True, exist_ok=True)
-    lock_path = Path(root) / ".artifact.lock"
-    # Keep the inode permanently: unlinking it would split the lock domain.
-    with lock_path.open("a+") as handle:
-        os.chmod(lock_path, 0o644)
-        deadline = time.monotonic() + bootstrap_lock_timeout_seconds()
-        while True:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("timed out waiting for tools artifact lock")
-                time.sleep(0.1)
+    try:
+        dirfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as err:
+        raise RuntimeError(f"tools artifact root {root} is not a directory: {err}")
+    try:
+        fd = _open_tools_lock(dirfd)
+        if fd is None:
+            _replace_tools_lock(dirfd)
+            fd = _open_tools_lock(dirfd)
+            if fd is None:
+                raise RuntimeError(
+                    f"{root}/{TOOLS_LOCK_NAME} was changed while it was being replaced; not extracting tools"
+                )
         try:
-            yield
+            # Keep the inode permanently: unlinking it would split the lock domain.
+            os.fchmod(fd, 0o644)
+            deadline = time.monotonic() + bootstrap_lock_timeout_seconds()
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("timed out waiting for tools artifact lock")
+                    time.sleep(0.1)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            os.close(fd)
+    finally:
+        os.close(dirfd)
+
+
+TOOLS_LOCK_NAME = ".artifact.lock"
+
+
+def _open_tools_lock(dirfd: int) -> int | None:
+    """The lock file in the tools root, if it is a regular file owned by
+    bootstrap's user (root), with one link and no group/other write. Opened
+    relative to the root's descriptor; a symlink is never followed."""
+    try:
+        fd = os.open(
+            TOOLS_LOCK_NAME,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o644,
+            dir_fd=dirfd,
+        )
+    except OSError as err:
+        if err.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
+            return None
+        raise
+    info = os.fstat(fd)
+    if (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.geteuid()
+        and info.st_nlink == 1
+        and not info.st_mode & 0o022
+    ):
+        return fd
+    os.close(fd)
+    return None
+
+
+def _replace_tools_lock(dirfd: int) -> None:
+    """A fresh lock file renamed over whatever has the lock's name (rename
+    replaces the entry itself, never what a symlink points at)."""
+    fresh = f"{TOOLS_LOCK_NAME}.{os.getpid()}.{os.urandom(4).hex()}"
+    fd = os.open(
+        fresh,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o644,
+        dir_fd=dirfd,
+    )
+    try:
+        os.fchmod(fd, 0o644)
+    finally:
+        os.close(fd)
+    try:
+        os.rename(fresh, TOOLS_LOCK_NAME, src_dir_fd=dirfd, dst_dir_fd=dirfd)
+    except OSError:
+        os.unlink(fresh, dir_fd=dirfd)
+        raise
 
 
 def extract_bundle_unlocked(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
