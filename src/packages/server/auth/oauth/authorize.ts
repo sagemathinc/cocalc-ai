@@ -364,6 +364,16 @@ async function checkAdminApproval({
   }
   if (req == null) throw new Error("browser sign-in is required");
   const session = await getCurrentAuthSession({ req, account_id });
+  const impersonation = await db.query(
+    `SELECT 1 FROM account_impersonation_sessions
+      WHERE session_hash = $1::CHAR(127) LIMIT 1`,
+    [session.session_hash],
+  );
+  if (impersonation.rows.length) {
+    throw Object.assign(new Error("admin approval requires a direct browser session"), {
+      code: "impersonation_blocked",
+    });
+  }
   const factor =
     session.factor_verified_at == null
       ? null

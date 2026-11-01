@@ -116,7 +116,11 @@ async function liveSession(
          FROM account_auth_sessions
         WHERE session_hash = $1::CHAR(127)
           AND account_id = $2::UUID
-          AND revoked_at IS NULL`,
+          AND revoked_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM account_impersonation_sessions AS i
+             WHERE i.session_hash = account_auth_sessions.session_hash
+          )`,
       [session_hash, account_id],
     )
   ).rows[0];

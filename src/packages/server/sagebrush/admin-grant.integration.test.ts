@@ -135,6 +135,7 @@ describeDb("Sagebrush's admin scope and admin check", () => {
     await syncSchema({
       accounts: SCHEMA.accounts,
       account_auth_sessions: SCHEMA.account_auth_sessions,
+      account_impersonation_sessions: SCHEMA.account_impersonation_sessions,
       account_second_factors: SCHEMA.account_second_factors,
       oauth_authorization_codes: SCHEMA.oauth_authorization_codes,
       oauth_client_approvals: SCHEMA.oauth_client_approvals,
@@ -197,6 +198,30 @@ describeDb("Sagebrush's admin scope and admin check", () => {
     const scoped = await validateAuthorizeRequest({ ...base, scope: "sagebrush-admin" });
     const proof = await issueAuthorizeApprovalProof({ account_id: a, request: scoped, req: {} });
     await expect(approveAuthorizeRequest({ request: plain, approval_token: proof.token, approval_home_bay_id: proof.home_bay_id })).rejects.toThrow();
+  });
+
+  async function impersonate(subject: string, hash: string) {
+    const actor = await admin();
+    await getPool().query(
+      `INSERT INTO account_impersonation_sessions
+         (session_hash, subject_account_id, actor_account_id, status, expire)
+       VALUES ($1, $2, $3, 'active', $4)`,
+      [hash, subject, actor, at(now() + 600)],
+    );
+  }
+
+  it("refuses admin-to-admin impersonation at approval and mint", async () => {
+    const a = await admin();
+    const h = await session(a, { F: now() - 60, fresh: now() + 600, expire: now() + 86400 });
+    await impersonate(a, h);
+    await expect(authorize(a, h, pkce().challenge)).rejects.toMatchObject({ code: "impersonation_blocked" });
+    expect(await mintSagebrushAdminGrantLocal({ account_id: a, session_hash: h, factor_verified_at: now() - 60 })).toBeNull();
+  });
+
+  it("refuses a grant when its session is marked as impersonation after mint", async () => {
+    const { a, h, g } = await granted();
+    await impersonate(a, h);
+    expect(await sagebrushAdminAnswerLocal({ account_id: a, grant: g.grant_id })).toEqual(refused);
   });
 
   // ---- minting at token time
