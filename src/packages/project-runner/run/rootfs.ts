@@ -391,8 +391,17 @@ export async function unmountAll(
   for (const release of releases.reverse()) {
     await release({ immediate });
   }
-  if (immediate && (await isMounted({ project_id }))) {
-    await disposeMount(project_id);
+  if (immediate) {
+    // Either way it may be mounted, e.g. an idmapped rootfs mounted before
+    // this daemon restarted (idmapUids is empty then).
+    if (await isMounted({ project_id, mountpoint: getMergedPath(project_id, -1) })) {
+      idmapUids.set(project_id, idmapUids.get(project_id) ?? -1);
+      await disposeMount(project_id);
+    }
+    if (await isMounted({ project_id, mountpoint: getMergedPath(project_id) })) {
+      idmapUids.delete(project_id);
+      await disposeMount(project_id);
+    }
   }
 }
 
