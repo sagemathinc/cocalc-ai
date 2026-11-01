@@ -167,9 +167,13 @@ export async function checkHostPreconditions(
   const failures: string[] = [];
   const expect = async (
     path: string,
-    want: { uid: number; gid?: number; mode: number },
+    want: { uid: number; gid?: number; mode: number; mayBeMissing?: boolean },
   ) => {
     const info = await host.stat(path);
+    if (info == null && want.mayBeMissing) {
+      // the helper creates it, with these ids and mode, at the first mount
+      return;
+    }
     if (info == null || !info.isDirectory) {
       failures.push(`${path} is missing`);
       return;
@@ -187,8 +191,18 @@ export async function checkHostPreconditions(
   };
   // the data root is hardened: only root and the runtime user get in
   await expect(PROJECT_DATA_ROOT, { uid: 0, gid: host.runtimeGid, mode: 0o750 });
-  await expect(PROJECT_VIEW_ROOT, { uid: 0, gid: host.runtimeGid, mode: 0o710 });
-  await expect(PROJECT_ROOTFS_ROOT, { uid: 0, gid: 0, mode: 0o711 });
+  await expect(PROJECT_VIEW_ROOT, {
+    uid: 0,
+    gid: host.runtimeGid,
+    mode: 0o710,
+    mayBeMissing: true,
+  });
+  await expect(PROJECT_ROOTFS_ROOT, {
+    uid: 0,
+    gid: 0,
+    mode: 0o711,
+    mayBeMissing: true,
+  });
   const run = await host.stat("/run/cocalc");
   if (run == null || run.uid !== 0 || (run.mode & 0o022) !== 0) {
     failures.push("/run/cocalc is not root-owned or is group/other-writable");
@@ -283,13 +297,21 @@ export async function runtimeIdentityForStart({
     const identity = resolveRuntimeIdentity({
       helperProbe,
       liveMaps,
-      hostPreconditions: async () =>
-        await checkHostPreconditions({
+      hostPreconditions: async () => {
+        // The data root's hardening comes first (idempotent, and harmless
+        // for keep-id starts), so a host can get to separate at all.
+        try {
+          await hardenProjectDataRoot();
+        } catch (err) {
+          return [`project-view harden failed: ${`${err}`.slice(0, 200)}`];
+        }
+        return await checkHostPreconditions({
           stat: statHost,
           mountinfo: async () => await readFile("/proc/self/mountinfo", "utf8"),
           runtimeGid: process.getgid?.() ?? -1,
           sharedScratch,
-        }),
+        });
+      },
     });
     cached = { at: Date.now(), key, identity };
     // a failed resolution must not stick

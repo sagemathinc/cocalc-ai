@@ -91,10 +91,19 @@ describe("runtime host", () => {
     ]);
   });
 
-  it("treats a missing dir as unsafe", async () => {
-    const failures = await checkHostPreconditions(
-      host({ stat: async (path) => (path === "/run/cocalc/project-rootfs" ? undefined : { uid: 0, gid: path === "/run/cocalc" || path.endsWith("rootfs") ? 0 : RUNTIME_GID, mode: path === "/mnt/cocalc" ? 0o750 : path === "/run/cocalc" ? 0o755 : 0o710, isDirectory: true }) }),
-    );
-    expect(failures).toEqual(["/run/cocalc/project-rootfs is missing"]);
+  it("allows the helper's dirs to be missing before the first mount, not the data root", async () => {
+    const base = host();
+    const missing = (paths: string[]): HostState => ({
+      ...base,
+      stat: async (path) => (paths.includes(path) ? undefined : await base.stat(path)),
+    });
+    expect(
+      await checkHostPreconditions(
+        missing(["/run/cocalc/project-views", "/run/cocalc/project-rootfs"]),
+      ),
+    ).toEqual([]);
+    expect(await checkHostPreconditions(missing(["/mnt/cocalc"]))).toEqual([
+      "/mnt/cocalc is missing",
+    ]);
   });
 });
