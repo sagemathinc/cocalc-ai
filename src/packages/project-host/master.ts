@@ -51,6 +51,7 @@ import {
   releaseProjectArchiveFreeze,
 } from "./file-server";
 import { getHostIntegrity, refreshHostIntegrity } from "./host-integrity";
+import { runtimeUidModeReport } from "@cocalc/project-runner/run/runtime-host";
 import { getInstalledRuntimeArtifacts, getSoftwareVersions } from "./software";
 import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
 import { upgradeSoftware } from "./upgrade";
@@ -2232,6 +2233,9 @@ export async function startMasterRegistration({
         acp_worker_health: acpWorkerHealth,
         bees: fileServerStatus?.bees,
         host_integrity: getHostIntegrity(),
+        // R1: which host uid projects run their user as (keep-id or a
+        // separate uid), why, and whether sidecars follow yet.
+        runtime_uid_mode: runtimeUidModeReport(),
         observed_components: observedComponents,
         rootfs_scanner: rootfsScanner,
         software: versions,

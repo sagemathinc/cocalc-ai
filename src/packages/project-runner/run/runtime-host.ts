@@ -25,6 +25,7 @@ import { executeCode } from "@cocalc/backend/execute-code";
 import { podman } from "@cocalc/backend/podman";
 import getLogger from "@cocalc/backend/logger";
 import {
+  parseHelperCapabilities,
   resolveRuntimeIdentity,
   type RuntimeIdentity,
   type RuntimeUidModeStatus,
@@ -228,6 +229,40 @@ let lastStatus: RuntimeUidModeStatus | undefined;
 /** The last decision, for health and the heartbeat. */
 export function runtimeUidModeStatus(): RuntimeUidModeStatus | undefined {
   return lastStatus;
+}
+
+// Sidecar launch paths (sandbox exec, browsers, ...) still run as keep-id
+// until R1 PR3; until then a separate host is only partly separate.
+const SIDECARS_SEPARATE = false;
+
+export interface RuntimeUidModeReport extends RuntimeUidModeStatus {
+  label: string;
+}
+
+/** For the heartbeat: null until the first project start decides. */
+export function runtimeUidModeReport(): RuntimeUidModeReport | null {
+  const status = lastStatus;
+  if (status == null) return null;
+  let label: string;
+  if (status.effective === "separate") {
+    label = SIDECARS_SEPARATE ? "separate" : "separate (partial)";
+  } else if (status.configured !== "keep-id") {
+    label = `keep-id (fallback: ${status.reason ?? "unknown"})`;
+  } else {
+    label = "keep-id";
+  }
+  return { ...status, label };
+}
+
+/**
+ * Unmount the views of every project not in keep (at daemon start). Skipped
+ * on helpers without project views.
+ */
+export async function gcProjectViews(keep: string[]): Promise<void> {
+  if (!parseHelperCapabilities(await helperProbe()).get("project-view")) {
+    return;
+  }
+  await storageHelper(["project-view", "gc", keep.join(",")]);
 }
 
 export function clearRuntimeIdentityCache(): void {

@@ -102,10 +102,13 @@ import {
 import { tmpdir } from "node:os";
 import { resolveSharedScratchMount } from "./shared-scratch";
 import {
+  gcProjectViews,
   hardenProjectDataRoot,
   mountProjectView,
   projectHasViews,
+  projectViewPath,
   projectViewSource,
+  PROJECT_VIEW_ROOT,
   runtimeIdentityForStart,
   umountProjectViews,
   type ProjectViewKind,
@@ -339,15 +342,39 @@ function parseProjectContainerRows(stdout?: string): PodmanProjectContainer[] {
 }
 
 function hasRuntimeProjectSecretsMount(mounts: PodmanMount[]): boolean {
-  const root = `${PROJECT_SECRETS_HOST_ROOT}/`;
+  // the secrets dir itself (keep-id) or its idmapped view (separate)
+  const roots = [`${PROJECT_SECRETS_HOST_ROOT}/`, `${PROJECT_VIEW_ROOT}/`];
   return mounts.some((mount) => {
     const source = mount.Source;
     return (
       typeof source === "string" &&
-      source.startsWith(root) &&
+      roots.some((root) => source.startsWith(root)) &&
       mount.Destination === PROJECT_SECRETS_MOUNT_PATH
     );
   });
+}
+
+/** At daemon start: views of projects that aren't running go away. */
+export async function cleanupStaleProjectViews(): Promise<void> {
+  try {
+    const { stdout } = await podman([
+      "ps",
+      "--filter",
+      "label=role=project",
+      "--format",
+      "{{.Names}}|{{.State}}",
+    ]);
+    const running: string[] = [];
+    for (const { name, state } of parseProjectContainerRows(stdout)) {
+      const project_id = name.replace(/^project-/, "");
+      if (state === "running" && isValidUUID(project_id)) {
+        running.push(project_id);
+      }
+    }
+    await gcProjectViews(running);
+  } catch (err) {
+    logger.warn("project view cleanup skipped", { err: `${err}` });
+  }
 }
 
 export async function cleanupStaleProjectContainers(): Promise<void> {
@@ -461,13 +488,20 @@ export async function refreshProjectSecretsHostPath({
       projectContainerName(project_id),
     ]);
     const mounts = JSON.parse(`${inspected.stdout ?? "[]"}`) as PodmanMount[];
-    const expectedSource = await realpath(path);
+    // The container mounts the secrets dir itself, or (separate runtime
+    // uid) the helper's view of it, which the helper pins to that dir.
+    const expectedSources = [
+      await realpath(path),
+      projectViewPath(project_id, "secrets"),
+    ];
     const mounted = mounts.find(
       ({ Destination }) => Destination === PROJECT_SECRETS_MOUNT_PATH,
     );
     if (
       !mounted?.Source ||
-      (await realpath(mounted.Source).catch(() => "")) !== expectedSource
+      !expectedSources.includes(
+        await realpath(mounted.Source).catch(() => ""),
+      )
     ) {
       throw new Error("running project secrets mount identity mismatch");
     }
@@ -2751,12 +2785,6 @@ async function startUnlocked({
     };
   } catch (err) {
     report({ type: "start-project", error: err });
-    await cleanupProjectSecretsHostPath(project_id).catch((cleanupErr) => {
-      logger.warn("start: failed to clean up project secrets after error", {
-        project_id,
-        err: `${cleanupErr}`,
-      });
-    });
     await unmountAllRootFs(project_id).catch((unmountErr) => {
       logger.warn("start: failed to unmount rootfs after startup error", {
         project_id,
@@ -2767,6 +2795,12 @@ async function startUnlocked({
       logger.warn("start: failed to unmount project views after startup error", {
         project_id,
         err: `${unmountErr}`,
+      });
+    });
+    await cleanupProjectSecretsHostPath(project_id).catch((cleanupErr) => {
+      logger.warn("start: failed to clean up project secrets after error", {
+        project_id,
+        err: `${cleanupErr}`,
       });
     });
     await cleanupProjectCgroup(project_id).catch((cleanupErr) => {
