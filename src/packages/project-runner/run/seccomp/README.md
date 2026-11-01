@@ -12,7 +12,13 @@
 - `cocalc-project-seccomp.json`: the generated profile, passed to
   `podman create` by `../project-seccomp.ts`. Don't edit it; regenerate:
 
-      python3 -I generate.py base-seccomp.json cocalc-project-seccomp.json
+      python3 -I generate.py base-seccomp.json cocalc-project-seccomp.json profile-bytes.ts
+
+  and then set `PROJECT_SECCOMP_PROFILE_SHA256` in `../project-seccomp.ts`
+  to the new file's sha256.
+- `profile-bytes.ts`: the same file's exact bytes (base64) and sha256. The
+  runtime writes these bytes; it never parses the JSON, since JavaScript
+  numbers would round the 64-bit masks.
 
 - `generate.test.py`: unit tests (`python3 -I generate.test.py`).
 - `kernel_check.test.py`: tests for its architecture selection

@@ -1,11 +1,16 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, stat, symlink, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import profile from "./seccomp/cocalc-project-seccomp.json";
 import {
   PROJECT_SECCOMP_PROFILE_SHA256,
   projectSeccompProfilePath,
 } from "./project-seccomp";
+
+// The reviewed file's bytes. Tests may parse it; the runtime never does.
+const FILE_BYTES = readFileSync(join(__dirname, "seccomp", "cocalc-project-seccomp.json"));
+const profile = JSON.parse(FILE_BYTES.toString("utf8"));
 
 type Rule = {
   names: string[];
@@ -31,7 +36,7 @@ describe("project seccomp profile file", () => {
     expect(path).toBe(
       join(dir, `cocalc-project-${PROJECT_SECCOMP_PROFILE_SHA256.slice(0, 16)}.json`),
     );
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(profile);
+    expect((await readFile(path)).equals(FILE_BYTES)).toBe(true);
     expect((await stat(dir)).mode & 0o777).toBe(0o700);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     const before = (await stat(path)).mtimeMs;
@@ -44,7 +49,31 @@ describe("project seccomp profile file", () => {
     const path = await projectSeccompProfilePath(dir);
     await writeFile(path, '{"defaultAction":"SCMP_ACT_ALLOW"}');
     expect(await projectSeccompProfilePath(dir)).toBe(path);
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(profile);
+    expect((await readFile(path)).equals(FILE_BYTES)).toBe(true);
+  });
+
+  it("names the file by the reviewed file's sha256", () => {
+    const sha = createHash("sha256").update(FILE_BYTES).digest("hex");
+    expect(PROJECT_SECCOMP_PROFILE_SHA256).toBe(sha);
+    expect(sha).toBe("9e75b898fe261435521e9f844535232850526eea178f9d3dbbe66402a7437755");
+  });
+
+  it("keeps every 64-bit argument value exactly", async () => {
+    const path = await projectSeccompProfilePath(join(root, "profiles"));
+    const written = await readFile(path, "utf8");
+    const lexemes = [
+      ...FILE_BYTES.toString("utf8").matchAll(/"(?:value|valueTwo)": (\d+)/g),
+    ].map((m) => m[1]);
+    const big = lexemes.filter((x) => BigInt(x) > 2n ** 53n);
+    expect(big).toContain("18446744073709551615");
+    // A double can't hold them: parsing the JSON in JavaScript rounds these.
+    expect(big.some((x) => BigInt(Number(x).toFixed(0)) !== BigInt(x))).toBe(true);
+    for (const x of big) {
+      expect(written).toContain(`": ${x}`);
+    }
+    expect(
+      [...written.matchAll(/"(?:value|valueTwo)": (\d+)/g)].map((m) => m[1]),
+    ).toEqual(lexemes);
   });
 
   it("refuses a directory that is a symlink", async () => {
