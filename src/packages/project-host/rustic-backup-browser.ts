@@ -16,6 +16,7 @@ import {
   attachBackupBrowserProcessToCgroup,
   removeBackupBrowserProcessCgroup,
 } from "./host-service-cgroup";
+import { listRestoreBackups } from "./restore-backup-inventory";
 import { trimTrailingSlashes } from "@cocalc/util/linear-text";
 
 const logger = getLogger("project-host:rustic-backup-browser");
@@ -1261,6 +1262,21 @@ export class RusticBackupBrowserManager {
     profilePath: string;
     projectId: string;
   }): Promise<BackupBrowserSnapshot[]> {
+    if (this.closed) throw new Error("Rustic repository browser is closed");
+    if (profilePath.endsWith(".toml")) {
+      // Listing snapshots reads only metadata; starting WebDAV first loads the
+      // entire repository index and can take minutes on large repositories.
+      // Do not cache this inventory: newly completed backups must appear even
+      // when no browser instance exists for markStale to invalidate.
+      const snapshots = await listRestoreBackups({
+        profilePath,
+        projectId,
+        timeoutMs: 20_000,
+      });
+      return snapshots.sort((a, b) => a.time.valueOf() - b.time.valueOf());
+    }
+    // Directory repositories are a development-only browser fallback; the
+    // native restore inventory deliberately requires a repository profile.
     const instance = await this.get(profilePath);
     instance.lastUsed = this.now();
     return (await instance.client.listBackups(projectId)).map(
