@@ -7783,14 +7783,23 @@ RUSTIC_OPTION_KEYS = {
     "secret_access_key",
 }
 ALLOW_LOOPBACK_RUSTIC_REST = "__ALLOW_LOOPBACK_RUSTIC_REST__" == "1"
-# Sparse files make apparent size independent of disk usage, and Rustic reads
-# every hole. Files larger than the limit are not backed up; the decision uses
-# the same apparent size as Rustic, and files exactly at the limit are kept.
-# The caller derives project limits from the disk quota; clamp them so it can
-# neither disable the limit nor make ordinary files ineligible.
+# Sparse files make apparent size independent of disk usage. Files larger
+# than the limit are not backed up; the decision uses the same apparent size
+# as Rustic, and files exactly at the limit are kept. The caller derives
+# project limits from the disk quota; clamp them so it can neither disable the
+# limit nor make ordinary files ineligible.
+#
+# A hole-aware Rustic (CoCalc builds since v0.11.4-cocalc.1, reported by
+# `version --json`) reads no holes, and its sparse restore writes none, so a
+# sparse file costs its data plus one chunk reference per 512 KiB of apparent
+# size (about 140 MB of metadata per TB). With such a binary the limit only
+# bounds that metadata, and is the ceiling whatever the caller asked for; an
+# older binary reads every hole and restores densely, so the caller's limit
+# stays (see backup_max_file_bytes).
 RUSTIC_BACKUP_DEFAULT_MAX_FILE_BYTES = 100 * 1000**3
 RUSTIC_BACKUP_MIN_MAX_FILE_BYTES = 1000**3
 RUSTIC_BACKUP_CEILING_MAX_FILE_BYTES = 1000**4
+RUSTIC_CAPABILITIES_TIMEOUT_SECONDS = 30
 OVERSIZED_FILES_MARKER = "COCALC_BACKUP_OVERSIZED_FILES"
 OVERSIZED_FILES_MAX_PATHS = 20
 OVERSIZED_FILES_MAX_RECORD_BYTES = 1024 * 1024
@@ -8154,6 +8163,52 @@ def select_privileged_rustic_binary(candidates=None):
     fail("trusted privileged Rustic binary is unavailable")
 
 
+def rustic_capabilities(rustic, env):
+    """The capabilities a CoCalc Rustic build reports with `version --json`.
+
+    Builds without that command (upstream Rustic, CoCalc's v0.11.1) report
+    none, so callers keep their previous behaviour.
+    """
+    try:
+        proc = subprocess.run(
+            [rustic, "version", "--json"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=RUSTIC_CAPABILITIES_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    try:
+        capabilities = json.loads(proc.stdout).get("capabilities")
+    except (ValueError, AttributeError):
+        return {}
+    return capabilities if isinstance(capabilities, dict) else {}
+
+
+def backup_max_file_bytes(max_file_bytes, capabilities):
+    """The apparent-size limit a backup applies (see
+    RUSTIC_BACKUP_CEILING_MAX_FILE_BYTES): the ceiling with a hole-aware
+    Rustic, otherwise the requested limit. None (no limit) stays None."""
+    if max_file_bytes is None:
+        return None
+    if capabilities.get("hole_aware_backup") is True:
+        return RUSTIC_BACKUP_CEILING_MAX_FILE_BYTES
+    return max_file_bytes
+
+
+def sparse_restore_args(capabilities):
+    """Restore holes as holes, failing rather than writing dense zeros, where
+    the Rustic build supports it; a dense restore of a sparse file can exceed
+    the project's quota or fill the host's disk."""
+    if capabilities.get("sparse_required_restore") is True:
+        return ["--sparse", "by-content-required"]
+    return []
+
+
 def raise_on_signal(signum, _frame):
     fail(f"interrupted by signal {signum}")
 
@@ -8504,7 +8559,7 @@ def run_scan_changed_since(argv, allowed_roots=ALLOWED_ROOTS):
     print(json.dumps(report, ensure_ascii=True, separators=(",", ":")))
 
 
-def run_scan_oversized_files(argv, allowed_roots=ALLOWED_ROOTS):
+def run_scan_oversized_files(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
     """Print the files a project backup would skip, as JSON on stdout.
 
     With --subpath, only those project-relative paths are scanned. Each one is
@@ -8535,7 +8590,18 @@ def run_scan_oversized_files(argv, allowed_roots=ALLOWED_ROOTS):
         fail("too many scan subpaths")
     for subpath in values["subpath"]:
         validate_relative(subpath)
-    max_file_bytes = parse_max_file_bytes(values.get("max-file-bytes"))
+    # The same limit a backup with the installed Rustic applies.
+    try:
+        rustic = select_privileged_rustic_binary(rustic_candidates)
+    except ValueError:
+        capabilities = {}
+    else:
+        capabilities = rustic_capabilities(
+            rustic, {"LANG": "C.UTF-8", "PATH": "/usr/bin:/bin"}
+        )
+    max_file_bytes = backup_max_file_bytes(
+        parse_max_file_bytes(values.get("max-file-bytes")), capabilities
+    )
     deadline = time.monotonic() + OVERSIZED_SCAN_MAX_RUNTIME_SECONDS
     report = new_oversized_report(max_file_bytes)
     rootfd = open_root(values["root"], allowed_roots)
@@ -8623,6 +8689,7 @@ def run_rustic(
             "SSL_CERT_DIR": "/etc/ssl/certs",
             "USER": "root",
         }
+        capabilities = rustic_capabilities(rustic, env)
 
         deadline = time.monotonic() + RUSTIC_MAX_RUNTIME_SECONDS
 
@@ -8651,7 +8718,9 @@ def run_rustic(
             raise subprocess.CalledProcessError(init_status or 1, base)
 
         if command.endswith("backup"):
-            max_file_bytes = values["max-file-bytes"]
+            max_file_bytes = backup_max_file_bytes(
+                values["max-file-bytes"], capabilities
+            )
             oversized = None
             if max_file_bytes is not None:
                 oversized = scan_oversized_files(
@@ -8699,7 +8768,7 @@ def run_rustic(
                 raise subprocess.CalledProcessError(status, base)
             return
 
-        restore = ["restore"]
+        restore = ["restore", *sparse_restore_args(capabilities)]
         if values["no-cache"]:
             restore.append("--no-cache")
         if values["delete"]:
@@ -9499,7 +9568,7 @@ def mount_idmapped_upper(project_id, upperfd, workfd, view_uid):
 
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
     if argv and argv[0] == "scan-oversized-files":
-        return run_scan_oversized_files(argv, allowed_roots)
+        return run_scan_oversized_files(argv, allowed_roots, rustic_candidates)
     if argv and argv[0] == "scan-changed-since":
         return run_scan_changed_since(argv, allowed_roots)
     if argv and argv[0] in RUSTIC_COMMANDS:
@@ -9567,6 +9636,9 @@ def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
                         args = [
                             "/usr/bin/rsync",
                             "-aAX",
+                            # holes stay holes, rather than becoming zeros
+                            # that count against the destination's quota
+                            "--sparse",
                             "--numeric-ids",
                             "--",
                             f"{source}/",

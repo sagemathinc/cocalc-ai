@@ -4,8 +4,22 @@ Test the rustic backup api.
 https://github.com/rustic-rs/rustic
 */
 
-import rustic, { getHost, getSnapshot } from "./rustic";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import rustic, {
+  getHost,
+  getSnapshot,
+  rusticCapabilities,
+  sparseRestoreArgs,
+} from "./rustic";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  open as openFile,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseOutput } from "./exec";
@@ -150,5 +164,84 @@ password = ""
         "utf8",
       ),
     ).resolves.toBe("legacy");
+  });
+});
+
+describe("rustic capabilities", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cocalc-rustic-caps"));
+  });
+  afterAll(async () => {
+    await rm(dir, { force: true, recursive: true });
+  });
+
+  const fake = async (name: string, script: string) => {
+    const path = join(dir, name);
+    await writeFile(path, `#!/bin/sh\n${script}\n`);
+    await chmod(path, 0o755);
+    return path;
+  };
+
+  it("a build without `version --json` has none, and restores as before", async () => {
+    const old = await fake("old", 'echo "unrecognized subcommand" >&2; exit 2');
+    expect(await rusticCapabilities(old)).toEqual({});
+    expect(await sparseRestoreArgs(old)).toEqual([]);
+  });
+
+  it("garbage or a missing binary has none", async () => {
+    expect(
+      await rusticCapabilities(await fake("garbage", "echo nope")),
+    ).toEqual({});
+    expect(await rusticCapabilities(join(dir, "missing"))).toEqual({});
+  });
+
+  it("a sparse-capable build restores holes as holes", async () => {
+    const caps = { sparse_required_restore: true, hole_aware_backup: true };
+    const current = await fake(
+      "current",
+      `echo '${JSON.stringify({ schema_version: 1, capabilities: caps })}'`,
+    );
+    expect(await rusticCapabilities(current)).toEqual(caps);
+    expect(await sparseRestoreArgs(current)).toEqual([
+      "--sparse",
+      "by-content-required",
+    ]);
+    // only an explicit true counts
+    const odd = await fake(
+      "odd",
+      `echo '{"capabilities":{"sparse_required_restore":"yes"}}'`,
+    );
+    expect(await sparseRestoreArgs(odd)).toEqual([]);
+  });
+});
+
+describeIfNotDarwin("sparse restore with the installed rustic", () => {
+  jest.setTimeout(60_000);
+
+  it("restores a sparse file without allocating its holes", async () => {
+    if ((await sparseRestoreArgs()).length == 0) {
+      // the installed rustic predates sparse restores (e.g. upstream 0.11.1)
+      return;
+    }
+    const size = 512 * 1024 * 1024;
+    const file = await openFile(join(home, "sparse.img"), "w");
+    await file.truncate(size);
+    await file.write(Buffer.from("data"), 0, 4, 100 * 1024 * 1024);
+    await file.close();
+    const { stdout } = await rustic(
+      ["backup", "--json", "sparse.img"],
+      options,
+    );
+    const { id } = JSON.parse(Buffer.from(stdout).toString());
+    const { code } = await rustic(
+      ["restore", `${id}:sparse.img`, "sparse-restore"],
+      options,
+    );
+    expect(code).toBe(0);
+    const restored = await stat(join(home, "sparse-restore"));
+    expect(restored.size).toBe(size);
+    // a dense restore would allocate all 512 MiB
+    expect(restored.blocks * 512).toBeLessThan(16 * 1024 * 1024);
   });
 });
