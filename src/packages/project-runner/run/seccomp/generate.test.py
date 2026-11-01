@@ -84,6 +84,10 @@ class GeneratorTest(unittest.TestCase):
             lambda b: b["syscalls"].append({"names": ["setsockopt"], "action": "SCMP_ACT_ALLOW",
                                             "args": [{"index": 1, "op": "SCMP_CMP_EQ", "value": 0}]}),
             lambda b: b["syscalls"].append({"names": ["socketcall"], "action": "SCMP_ACT_ERRNO"}),
+            # Removing either plain allow (or duplicating it) is drift too.
+            lambda b: next(r for r in b["syscalls"] if "setsockopt" in r["names"])["names"].remove("setsockopt"),
+            lambda b: next(r for r in b["syscalls"] if "socketcall" in r["names"])["names"].remove("socketcall"),
+            lambda b: b["syscalls"].append({"names": ["setsockopt"], "action": "SCMP_ACT_ALLOW"}),
         ):
             base = copy.deepcopy(BASE)
             mutate(base)
@@ -113,8 +117,16 @@ class GeneratorTest(unittest.TestCase):
                 stripped.append(rule)
         self.assertEqual(other(PROFILE)[:len(stripped)], stripped)
         self.assertEqual(len(other(PROFILE)), len(stripped))
-        for key in ("defaultAction", "defaultErrnoRet", "archMap"):
+        for key in ("defaultAction", "defaultErrnoRet"):
             self.assertEqual(PROFILE[key], BASE[key])
+        self.assertEqual([a["architecture"] for a in PROFILE["archMap"]],
+                         [a["architecture"] for a in BASE["archMap"]])
+
+    def test_native_abi_only(self):
+        self.assertTrue(any(a.get("subArchitectures") for a in BASE["archMap"]))
+        for entry in PROFILE["archMap"]:
+            self.assertEqual(entry["subArchitectures"], [])
+        self.assertNotIn("architectures", PROFILE)
 
     def test_no_io_uring_and_no_unconditional_socket_calls(self):
         for rule in PROFILE["syscalls"]:

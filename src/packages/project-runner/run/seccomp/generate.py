@@ -21,6 +21,15 @@ Changes to the base, nothing else:
   compare, as in the base); everything else is allowed.
 - socketcall (the 32-bit multiplexer, whose arguments seccomp can't see):
   EPERM.
+- The filter covers the native ABI only: the archMap keeps each
+  architecture and drops its sub-architectures, so x86 (int 0x80) and x32
+  system calls hit libseccomp's bad-arch action (the thread is killed with
+  SIGSYS). With the sub-architectures, libseccomp maps the base's socket
+  rules onto socketcall, whose real arguments sit behind a pointer, so a
+  32-bit caller could still create an MPTCP socket through socketcall.
+  Today's base, as the hosts load it, lets 32-bit calls through (measured
+  from inside a project). This change is deliberate and stops 32-bit
+  programs in projects.
 
 Rules with different actions for the same syscall are DISJOINT by
 construction. libseccomp drops a conditional rule when an unconditional
@@ -82,6 +91,7 @@ class BaseMismatch(Exception):
 def check_base(base: dict) -> None:
     """The base must match what this generator was reviewed against."""
     socket_rules = []
+    plain_allows = {"setsockopt": 0, "socketcall": 0}
     for entry in base["syscalls"]:
         names = set(entry["names"])
         if not names & set(CHANGED):
@@ -98,8 +108,15 @@ def check_base(base: dict) -> None:
               or entry.get("includes") or entry.get("excludes")):
             # setsockopt/socketcall only ever as plain unconditional allows.
             raise BaseMismatch("setsockopt/socketcall rule shape")
+        else:
+            for name in names & set(plain_allows):
+                plain_allows[name] += 1
     if socket_rules != BASE_SOCKET_RULES:
         raise BaseMismatch("socket rules")
+    # Both must be there, exactly once: the replacement rules are only
+    # right for a base that allowed them unconditionally.
+    if plain_allows != {"setsockopt": 1, "socketcall": 1}:
+        raise BaseMismatch("setsockopt/socketcall presence")
 
 
 def cubes(lo: int, hi: int) -> list[tuple[int, int]]:
@@ -193,9 +210,16 @@ def socketcall_rules() -> list[dict]:
                  comment="021: 32-bit socketcall, whose arguments seccomp can't inspect")]
 
 
+def native_only(arch_map: list[dict]) -> list[dict]:
+    return [dict(entry, subArchitectures=[]) for entry in arch_map]
+
+
 def derive(base: dict) -> dict:
     check_base(base)
     profile = copy.deepcopy(base)
+    profile["archMap"] = native_only(profile["archMap"])
+    if profile.get("architectures"):
+        raise BaseMismatch("explicit architectures")
     kept = []
     for entry in profile["syscalls"]:
         names = [n for n in entry["names"] if n not in CHANGED]
@@ -204,6 +228,8 @@ def derive(base: dict) -> dict:
         entry["names"] = names
         kept.append(entry)
     profile["syscalls"] = kept + socketcall_rules() + setsockopt_rules() + socket_rules()
+    if any(entry.get("subArchitectures") for entry in profile["archMap"]):
+        raise BaseMismatch("sub-architectures enabled")
     return profile
 
 

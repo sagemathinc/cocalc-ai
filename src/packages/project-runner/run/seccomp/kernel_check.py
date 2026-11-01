@@ -12,8 +12,13 @@ child with no_new_privs and issues raw syscalls, including high-word
 truncation cases. --diff runs an argument grid under both profiles and fails
 on any difference that isn't one of the intended ones. Environment:
 SECCOMP_LIB picks the libseccomp shared object (the hosts' crun uses noble's
-2.5.5); SECCOMP_SUBARCHES (default "x86,x32") lists the sub-architectures to
-add (the hosts' crun behaves as native-only: set it empty)."""
+2.5.5); SECCOMP_SUBARCHES overrides the sub-architectures taken from the
+profile's archMap (e.g. empty to compare profiles natively).
+
+    python3 -I kernel_check.py --probe-compat
+
+runs the 32-bit (int 0x80) probes under the current process's own filter
+only: run inside a project to see what projects get today."""
 
 import ctypes
 import ctypes.util
@@ -81,10 +86,23 @@ def applies(entry: dict, caps: set[str], arch: str) -> bool:
     return True
 
 
+_SUBARCH_NAMES = {"SCMP_ARCH_X86": "x86", "SCMP_ARCH_X32": "x32"}
+
+
+def subarches_of(profile: dict) -> list[str]:
+    """The sub-architectures podman would pass for this x86_64 host: the
+    profile's archMap, unless SECCOMP_SUBARCHES overrides it."""
+    if "SECCOMP_SUBARCHES" in os.environ:
+        return [a for a in os.environ["SECCOMP_SUBARCHES"].split(",") if a]
+    for entry in profile.get("archMap") or []:
+        if entry.get("architecture") == "SCMP_ARCH_X86_64":
+            return [_SUBARCH_NAMES[a] for a in entry.get("subArchitectures") or []]
+    return []
+
+
 def build(profile: dict, caps: set[str], exact: bool):
     ctx = lib.seccomp_init(errno_action(profile.get("defaultErrnoRet", errno.ENOSYS)))
-    subarches = os.environ.get("SECCOMP_SUBARCHES", "x86,x32")
-    for sub in [a for a in subarches.split(",") if a]:
+    for sub in subarches_of(profile):
         rc = lib.seccomp_arch_add(ctx, lib.seccomp_arch_resolve_name(sub.encode()))
         if rc not in (0, -errno.EEXIST):
             raise OSError(-rc, f"arch {sub}")
@@ -164,7 +182,88 @@ def setsockopt_cases(fd4: int, fd6: int):
     ]
 
 
-def run_cases(ctx) -> list[str]:
+# --- compat (i386) syscalls from this 64-bit process: int 0x80 -------------
+# A tiny x86-64 stub: int80(nr, a, b, c) -> sign-extended eax. Seccomp sees
+# these calls as AUDIT_ARCH_I386, exactly like a 32-bit program's.
+_INT80_CODE = bytes([
+    0x53,                    # push rbx
+    0x89, 0xF8,              # mov eax, edi        (nr)
+    0x89, 0xF3,              # mov ebx, esi        (a)
+    0x49, 0x89, 0xC8,        # mov r8, rcx         (c)
+    0x89, 0xD1,              # mov ecx, edx        (b)
+    0x44, 0x89, 0xC2,        # mov edx, r8d        (c)
+    0xCD, 0x80,              # int 0x80
+    0x48, 0x63, 0xC0,        # movsxd rax, eax
+    0x5B,                    # pop rbx
+    0xC3,                    # ret
+])
+I386 = {"getpid": 20, "socketcall": 102, "socket": 359, "setsockopt": 366}
+_int80 = None
+
+
+def int80(nr: int, a: int = 0, b: int = 0, c: int = 0) -> int:
+    global _int80
+    if _int80 is None:
+        import mmap
+        page = mmap.mmap(-1, mmap.PAGESIZE, prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC)
+        page.write(_INT80_CODE)
+        address = ctypes.addressof(ctypes.c_char.from_buffer(page))
+        _int80 = (ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint)
+                  (address))
+        _int80._page = page  # keep the mapping alive
+    return _int80(nr, a & 0xFFFFFFFF, b & 0xFFFFFFFF, c & 0xFFFFFFFF)
+
+
+COMPAT_CASES = [
+    # (label, call, expected): "ok", an errno name, or "kernel" (any result
+    # that isn't EPERM/ENOSYS/killed, i.e. the kernel handled it)
+    ("compat getpid", ("getpid",), "ok"),
+    ("compat socket tcp4", ("socket", 2, 1, 6), "ok"),
+    ("compat socket mptcp4", ("socket", 2, 1, 262), "EPERM"),
+    ("compat socketcall", ("socketcall", 1, 0), "EPERM"),
+    ("compat setsockopt IP_OPTIONS", ("setsockopt-v4", 0, 4), "EPERM"),
+    ("compat setsockopt IP_RETOPTS", ("setsockopt-v4", 0, 7), "EPERM"),
+    ("compat setsockopt IP_TOS", ("setsockopt-v4", 0, 1), "kernel"),
+]
+
+
+def compat_outcome(call) -> str:
+    """Runs one compat call in a forked grandchild, so a kill is observable."""
+    r, w = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(r)
+        try:
+            name = call[0]
+            if name == "setsockopt-v4":
+                fd = int80(I386["socket"], 2, 1, 0)
+                if fd < 0:
+                    raise OSError(-fd, "compat socket")
+                # NULL optval, optlen 0: only the seccomp decision matters.
+                ret = int80(I386["setsockopt"], fd, call[1], call[2])  # optval/len in later regs = 0
+            else:
+                ret = int80(I386[name], *call[1:])
+            out = "ok" if ret >= 0 else errno.errorcode.get(-ret, str(-ret))
+        except BaseException as e:  # noqa
+            out = f"harness-{type(e).__name__}"
+        os.write(w, out.encode())
+        os._exit(0)
+    os.close(w)
+    data = os.read(r, 256).decode()
+    os.close(r)
+    _, status = os.waitpid(pid, 0)
+    if os.WIFSIGNALED(status):
+        return f"killed-{os.WTERMSIG(status)}"
+    return data or "no-result"
+
+
+def compat_pass(got: str, want: str) -> bool:
+    if want == "kernel":
+        return got not in ("EPERM", "ENOSYS") and not got.startswith(("killed", "harness", "no-result"))
+    return got == want
+
+
+def run_cases(ctx, compat_filtered: bool = True) -> list[str]:
     """In a forked child: load the filter, run the cases, report lines."""
     fd4 = socket.socket(socket.AF_INET, socket.SOCK_STREAM).detach()
     fd6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM).detach()
@@ -192,6 +291,11 @@ def run_cases(ctx) -> list[str]:
             ret, err = raw(SYS["io_uring_setup"], 1, 0)
             got = "ok" if ret >= 0 else errno.errorcode.get(err, str(err))
             out.append(f"{'PASS' if got in ('ENOSYS', 'EPERM') else 'FAIL'} io_uring_setup: got={got} want=ENOSYS|EPERM")
+            for label, call, want in COMPAT_CASES:
+                if not compat_filtered:
+                    want = "killed-31"  # SIGSYS: the bad-arch action
+                got = compat_outcome(call)
+                out.append(f"{'PASS' if compat_pass(got, want) else 'FAIL'} {label}: got={got} want={want}")
         except BaseException as e:  # noqa
             out.append(f"FAIL harness: {type(e).__name__} {e}")
         os.write(w, "\n".join(out).encode())
@@ -214,7 +318,7 @@ def main(argv):
         ctx, rules, failures = build(profile, caps, exact)
         print(f"build exact={exact} rules={rules} failures={failures} bpf_instructions={bpf_size(ctx)}", flush=True)
     ctx, _, _ = build(profile, caps, False)
-    lines = run_cases(ctx)
+    lines = run_cases(ctx, compat_filtered="x86" in subarches_of(profile))
     for line in lines:
         print(line)
     print(f"summary pass={sum(l.startswith('PASS') for l in lines)} fail={sum(l.startswith('FAIL') for l in lines)}")
@@ -328,7 +432,16 @@ def diff_main(base_path: str, gen_path: str, caps: set[str]) -> int:
     return 1 if unexpected else 0
 
 
+def probe_main() -> int:
+    """Compat probes under this process's existing filter only."""
+    for label, call, _want in COMPAT_CASES:
+        print(f"{label}: {compat_outcome(call)}")
+    return 0
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--probe-compat":
+        sys.exit(probe_main())
     if len(sys.argv) > 1 and sys.argv[1] == "--diff":
         caps = set(sys.argv[4].split(",")) if len(sys.argv) > 4 and sys.argv[4] else set()
         sys.exit(diff_main(sys.argv[2], sys.argv[3], caps))
