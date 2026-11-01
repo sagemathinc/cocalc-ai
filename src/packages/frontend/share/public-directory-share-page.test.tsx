@@ -211,7 +211,8 @@ it("does not register a canceled share when runtime loading finishes", async () 
 describe("a migrated share whose cocalc.com link went elsewhere", () => {
   const SOURCE = "press/book-1/code3";
   const TARGET_SLUG = "press/book-1/code";
-  const TARGET = `${TARGET_SLUG}/chapter-03.ipynb`;
+  // as migrated cocalc.com links name a file: <folder-share>/files/<file>
+  const TARGET = `${TARGET_SLUG}/files/chapter-03.ipynb`;
   const grants: Record<string, object> = {
     [SOURCE]: {
       project_id: "source-project",
@@ -224,6 +225,7 @@ describe("a migrated share whose cocalc.com link went elsewhere", () => {
     [TARGET_SLUG]: {
       project_id: "target-project",
       share_id: "target-share",
+      legacy_public_path_id: "1111111111111111111111111111111111111111",
       path: "code",
       path_type: "directory",
       read_policy: { rules: [] },
