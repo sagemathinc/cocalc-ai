@@ -698,7 +698,7 @@ function ActivityRow({
       ).length;
       return (
         <section
-          aria-label="Codex subagent activity"
+          aria-label="Subagent activity"
           data-codex-activity-entry-index={rowIndex}
           style={{
             border: `1px solid ${UI_COLORS.border}`,
@@ -2460,7 +2460,7 @@ function activityEntriesToMarkdown(entries: ActivityEntry[]): string {
         break;
       case "harness-tool":
         lines.push(
-          `- ACP tool: ${entry.title} (${entry.status})\n\n${entry.output}`,
+          `- ${entry.parentId ? "Subagent " : ""}ACP tool: ${entry.title} (${entry.status})\n\n${entry.output}`,
         );
         break;
       case "reasoning":
