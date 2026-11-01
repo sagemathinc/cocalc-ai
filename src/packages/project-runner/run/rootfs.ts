@@ -19,6 +19,7 @@ import {
 import { lroProgress } from "@cocalc/conat/lro/progress";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { hostPathForProjectPath } from "./project-path";
+import { projectIdmappedRootfsPath } from "./runtime-host";
 
 import getLogger from "@cocalc/backend/logger";
 import { getConatClient } from "./conat-client";
@@ -51,12 +52,25 @@ function isDiskQuotaError(err: unknown): boolean {
   );
 }
 
-function getMergedPath(project_id) {
-  return join(PROJECT_ROOTS, project_id);
+// A project's rootfs is mounted in one of two places: the usual merged dir,
+// or, for a separate runtime uid, an idmapped overlay that the root helper
+// mounts at PROJECT_ROOTFS_ROOT/<id>/root (that dir is the container root's,
+// mode 0700: this daemon can't look inside, only hand it to Podman).
+// idmapUids records which projects are mounted the second way.
+const idmapUids = new Map<string, number>();
+
+function getMergedPath(project_id: string, idmapUid?: number) {
+  return idmapUid == null
+    ? join(PROJECT_ROOTS, project_id)
+    : projectIdmappedRootfsPath(project_id);
 }
 
 export function getRootfsMountpoint(project_id: string): string {
-  return getMergedPath(project_id);
+  return getMergedPath(project_id, idmapUids.get(project_id));
+}
+
+export function rootfsIdmapUid(project_id: string): number | undefined {
+  return idmapUids.get(project_id);
 }
 
 export function getImageNamePath(home): string {
@@ -119,7 +133,7 @@ async function disposeMount(project_id: string): Promise<void> {
   if (ROOTFS_MOUNT_MODE === "copy") {
     return;
   }
-  const mountpoint = getMergedPath(project_id);
+  const mountpoint = getRootfsMountpoint(project_id);
   try {
     await executeCode({
       verbose: true,
@@ -133,17 +147,21 @@ async function disposeMount(project_id: string): Promise<void> {
       return;
     }
     logger.warn("unmount failed", { project_id, error: e });
+    return;
   }
+  idmapUids.delete(project_id);
 }
 
 // isMounted -- returns true if the overlayfs for this project
-// is already mounted.
+// is already mounted (where it is now, or at mountpoint). This reads
+// mountinfo rather than the dir: an idmapped rootfs isn't readable here.
 export async function isMounted({
   project_id,
+  mountpoint = getRootfsMountpoint(project_id),
 }: {
   project_id: string;
+  mountpoint?: string;
 }): Promise<boolean> {
-  const mountpoint = getMergedPath(project_id);
   try {
     const mounts = await readFile("/proc/self/mountinfo", "utf8");
     return mounts.split("\n").some((line) => {
@@ -163,10 +181,13 @@ export async function mount({
   project_id,
   home,
   config,
+  idmapUid,
 }: {
   project_id: string;
   home: string;
   config?: Configuration;
+  // a separate runtime uid: mount the rootfs through an idmapped upper
+  idmapUid?: number;
 }) {
   const release = await leases.acquire(project_id);
   const op_id = config?.lro_op_id;
@@ -224,14 +245,18 @@ export async function mount({
       progress: 70,
       desc: "extracted base image",
     });
-    const { upperdir, workdir, merged, imageName } = getPaths({
+    const { upperdir, workdir, imageName } = getPaths({
       home,
       image,
       project_id,
     });
+    const merged = getMergedPath(project_id, idmapUid);
     await mkdir(dirname(imageName), { recursive: true });
 
     if (ROOTFS_MOUNT_MODE === "copy") {
+      if (idmapUid != null) {
+        throw new Error("a separate runtime uid needs the overlay rootfs mode");
+      }
       const currentImage = await readFile(imageName, "utf8").catch(() => "");
       if (
         currentImage.trim() === image &&
@@ -258,17 +283,39 @@ export async function mount({
     // If a delayed unmount was pending, cancel it because we're reusing the mount.
     // (handled by RefcountLeaseManager internally)
 
-    if (await isMounted({ project_id })) {
+    // The rootfs may be mounted either way (by this daemon, or by one before
+    // a restart, or before the host's runtime uid mode changed).
+    const mountedPlain = await isMounted({
+      project_id,
+      mountpoint: getMergedPath(project_id),
+    });
+    const mountedIdmap = await isMounted({
+      project_id,
+      mountpoint: getMergedPath(project_id, -1),
+    });
+    if (mountedPlain || mountedIdmap) {
       const mountedImage = await readFile(imageName, "utf8").catch(() => "");
-      if (mountedImage.trim() === image) {
+      const sameWay =
+        idmapUid == null
+          ? mountedPlain && !mountedIdmap
+          : mountedIdmap && !mountedPlain && idmapUids.get(project_id) === idmapUid;
+      if (mountedImage.trim() === image && sameWay) {
         // Already mounted against the requested lowerdir. A quick restart can
         // cancel delayed disposal and safely reuse this mount.
         addRelease(project_id, release);
         return merged;
       }
-      // Never let the restart grace period mask a RootFS change. Detach the
-      // old mount before replacing the persisted image identity below.
-      await disposeMount(project_id);
+      // Never let the restart grace period mask a RootFS change (or a change
+      // of runtime uid). Detach the old mounts before replacing the persisted
+      // image identity below.
+      if (mountedIdmap) {
+        idmapUids.set(project_id, idmapUids.get(project_id) ?? -1);
+        await disposeMount(project_id);
+      }
+      if (mountedPlain) {
+        idmapUids.delete(project_id);
+        await disposeMount(project_id);
+      }
     }
 
     try {
@@ -277,7 +324,10 @@ export async function mount({
     } catch {}
     await mkdir(upperdir, { recursive: true });
     await mkdir(workdir, { recursive: true });
-    await mkdir(merged, { recursive: true });
+    if (idmapUid == null) {
+      // the helper creates the idmapped mountpoint itself
+      await mkdir(merged, { recursive: true });
+    }
 
     // Persist image info for later lookup (e.g., ephemeral exec when the container is stopped).
     try {
@@ -296,7 +346,12 @@ export async function mount({
       progress: 80,
       desc: "created directories",
     });
-    await mountOverlayFs({ lowerdir, upperdir, workdir, merged });
+    await mountOverlayFs({ lowerdir, upperdir, workdir, merged, idmapUid });
+    if (idmapUid == null) {
+      idmapUids.delete(project_id);
+    } else {
+      idmapUids.set(project_id, idmapUid);
+    }
     report({
       type: "mount-rootfs",
       progress: 100,
@@ -341,7 +396,19 @@ export async function unmountAll(
   }
 }
 
-async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
+async function mountOverlayFs({
+  upperdir,
+  workdir,
+  merged,
+  lowerdir,
+  idmapUid,
+}: {
+  upperdir: string;
+  workdir: string;
+  merged: string;
+  lowerdir: string;
+  idmapUid?: number;
+}) {
   try {
     await executeCode({
       verbose: true,
@@ -351,6 +418,7 @@ async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
         "-n",
         STORAGE_WRAPPER,
         "mount-overlay-project",
+        ...(idmapUid == null ? [] : ["--idmap", `${idmapUid}`]),
         // CRITICAL: wrapper hardcodes the xattr-capable overlay options.
         // Backup and restore must preserve trusted.overlay.* metadata, but the
         // wrapper intentionally keeps index=off so upperdir deltas remain
