@@ -61,7 +61,6 @@ import {
   approveAuthorizeRequest,
   exchangeAuthorizationCode,
   issueAuthorizeApprovalProof,
-  OAuthAuthorizeError,
   validateAuthorizeRequest,
 } from "@cocalc/server/auth/oauth/authorize";
 import {
@@ -180,7 +179,7 @@ describeDb("Sagebrush's admin scope and admin check", () => {
 
   // ---- approval
   it("refuses a scope other than sagebrush-admin", async () => {
-    await expect(validateAuthorizeRequest({ response_type: "code", client_id: "sagebrush", redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: "S256", scope: "admin" })).rejects.toBeInstanceOf(OAuthAuthorizeError);
+    await expect(validateAuthorizeRequest({ response_type: "code", client_id: "sagebrush", redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: "S256", scope: "admin" })).rejects.toThrow("invalid scope");
   });
   it("asks for fresh auth when the factor is older than 600 s", async () => {
     const a = await admin(), h = await session(a, { F: now() - 601, fresh: now() + 600, expire: now() + 86400 });
@@ -372,6 +371,34 @@ describeDb("Sagebrush's admin scope and admin check", () => {
     const { a: grantedAccount, g } = await granted();
     await getPool().query("DELETE FROM oauth_client_approvals WHERE account_id = $1", [grantedAccount]);
     expect(await sagebrushAdminAnswerLocal({ account_id: grantedAccount, grant: g.grant_id })).toMatchObject({ admin: true, factor_verified_at: expect.any(Number) });
+  });
+
+  it.each([
+    ["demoted", "UPDATE accounts SET groups = '{}' WHERE account_id = $1", { admin: false }],
+    ["banned", "UPDATE accounts SET banned = TRUE WHERE account_id = $1", { admin: false }],
+    ["deleted", "UPDATE accounts SET deleted = TRUE WHERE account_id = $1", { admin: false }],
+    ["2FA disabled", "UPDATE account_second_factors SET disabled_at = NOW() WHERE account_id = $1", { admin: true, two_factor: false }],
+  ])("refuses a minted grant after the account is %s", async (_name, sql, expected) => {
+    const { a, g } = await granted();
+    await getPool().query(sql as string, [a]);
+    expect(await sagebrushAdminAnswerLocal({ account_id: a, grant: g.grant_id })).toEqual(expected);
+  });
+
+  it("refuses cross-account grants even when both accounts approved Sagebrush", async () => {
+    const first = await granted(), second = await granted();
+    expect(await sagebrushAdminAnswerLocal({ account_id: second.a, grant: first.g.grant_id })).toEqual(refused);
+  });
+
+  it("refuses an expired opaque approval reference", async () => {
+    const a = await admin();
+    const h = await session(a, { F: now() - 60, fresh: now() + 600, expire: now() + 86400 });
+    const approval_id = randomBytes(32).toString("base64url");
+    await getPool().query(
+      `INSERT INTO sagebrush_admin_approvals(approval_id, account_id, session_hash, factor_verified_at, expire)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [approval_id, a, h, at(now() - 60), at(now() - 1)],
+    );
+    expect(await mintSagebrushAdminGrantLocal({ account_id: a, approval_id })).toBeNull();
   });
 
   // ---- routing
