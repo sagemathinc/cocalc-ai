@@ -16,12 +16,23 @@
 // and the 64-bit masks in the rules would be rounded.
 
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROFILE_BASE64, PROFILE_SHA256 } from "./seccomp/profile-bytes";
 
-export const PROJECT_SECCOMP_HOST_ROOT = join(tmpdir(), "cocalc-project-seccomp");
+export const PROJECT_SECCOMP_HOST_ROOT = join(
+  tmpdir(),
+  "cocalc-project-seccomp",
+);
 
 // The reviewed seccomp/cocalc-project-seccomp.json. A regenerated profile
 // changes this by hand, so it can't ship without being looked at.
@@ -65,7 +76,9 @@ export async function projectSeccompProfilePath(
   await mkdir(root, { recursive: true, mode: 0o700 });
   const st = await lstat(root);
   if (!st.isDirectory() || st.uid !== ownUid()) {
-    throw Error(`project seccomp directory ${root} is not this user's directory`);
+    throw Error(
+      `project seccomp directory ${root} is not this user's directory`,
+    );
   }
   await chmod(root, 0o700);
   const path = join(

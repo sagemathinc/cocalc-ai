@@ -16,6 +16,7 @@
 
   and then set `PROJECT_SECCOMP_PROFILE_SHA256` in `../project-seccomp.ts`
   to the new file's sha256.
+
 - `profile-bytes.ts`: the same file's exact bytes (base64) and sha256. The
   runtime writes these bytes; it never parses the JSON, since JavaScript
   numbers would round the 64-bit masks.
