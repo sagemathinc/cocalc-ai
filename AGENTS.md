@@ -27,6 +27,22 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
   public report or PR. If a security issue is discovered during unrelated
   work, stop and classify its scope before disclosing details.
 
+## Review guidelines
+
+- Review correctness, meaningful tests, and the repository's conventions.
+- For a possible security weakness in new code or existing code the PR touches,
+  default to a public comment containing only the source file/function, issue
+  class (for example, "path validation" or "privilege boundary"), and severity.
+  Say: "possible security issue — maintainers: please follow up privately per
+  SECURITY.md".
+- Do not include exploit steps, payloads, concrete files or paths to abuse, or
+  proof-of-concept code in a public review comment.
+- The verified pre-merge exception in [SECURITY.md](SECURITY.md) still applies:
+  an issue introduced solely by the PR's own new, undeployed code may be
+  discussed concretely in that PR. A pre-existing issue, one affecting deployed
+  or customer-accessible code, or uncertain scope must follow the limited
+  public notice and private follow-up above.
+
 ## Preferred Commands
 
 - Run these from the repo root unless a command says otherwise.

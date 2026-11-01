@@ -30,6 +30,24 @@ request.
 We will coordinate disclosure with the reporter after a fix or mitigation is
 available. We do not offer a bug bounty program.
 
+## Guidance for automated reviewers
+
+When a PR touches or reveals a possible security weakness, in its new code or
+in existing code it touches, default to a public comment containing only the
+source file/function, the issue class (such as "path validation" or "privilege
+boundary"), and severity. Say: "possible security issue — maintainers: please
+follow up privately per SECURITY.md".
+
+Do not publish exploit steps, payloads, concrete files or paths to abuse, or
+proof-of-concept code in a public review comment. Send the details through the
+private reporting workflow above.
+
+The pre-merge exception above still applies when verified: a finding introduced
+solely by the PR's own new, undeployed code may be discussed concretely in that
+PR. It does not cover pre-existing findings or code already deployed or
+accessible to customers. When scope is uncertain, use the limited public notice
+and follow up privately.
+
 ## Maintainer Workflow
 
 ### Unreleased Pull Requests
