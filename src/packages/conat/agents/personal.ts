@@ -97,6 +97,9 @@ export interface RegisteredAgentNetworkMember {
   thread_title?: string;
   /** What it is doing, as its project host last reported. */
   status?: import("./agent-status").AgentTurnStatus;
+  /** Codex, Claude Code or a generic ACP harness, with the model and
+   * effort its runtime last said it uses (as its host reported). */
+  runtime?: AgentRuntimeSummary;
   available: boolean;
   added_at: string;
   removed_at?: string | null;

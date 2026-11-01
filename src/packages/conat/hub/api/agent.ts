@@ -642,7 +642,8 @@ export interface AgentApi {
       status: import("@cocalc/conat/agents/agent-status").AgentTurnStatus;
     },
   ): Promise<{ registered: boolean }>;
-  /** Host admitting a turn: which runtime the agent uses. */
+  /** Host admitting or running a turn: which runtime the agent uses, and
+   * the model and effort its runtime says it uses. */
   reportRuntime(
     opts: AgentHostAuth & {
       project_id: string;

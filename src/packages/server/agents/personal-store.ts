@@ -3,6 +3,7 @@ import {
   agentTurnStatusFor,
   parseAgentTurnStatus,
 } from "@cocalc/conat/agents/agent-status";
+import { parseAgentRuntimeSummary } from "@cocalc/util/ai/agent-runtime-kind";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { isActorDenial } from "./actor-denial";
@@ -86,10 +87,12 @@ const REPAIR_INTERVAL_MS = 30 * 60_000;
 const REPAIR_CONCURRENCY = 8;
 const lastRepair = new Map<string, number>();
 
-/** A named agent's status for its network peers, if it has one. */
+/** A named agent's status and runtime (with its model) for its network
+ * peers, as far as they are known. */
 function memberStatus(metadata: any) {
   const status = parseAgentTurnStatus(metadata?.status);
-  return status ? { status } : {};
+  const runtime = parseAgentRuntimeSummary(metadata?.runtime);
+  return { ...(status ? { status } : {}), ...(runtime ? { runtime } : {}) };
 }
 
 /** The identity as `account_id` sees it (its own unavailability only). */

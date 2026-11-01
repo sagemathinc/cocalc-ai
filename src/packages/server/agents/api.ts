@@ -16,6 +16,7 @@ import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-cl
 import { copyPaymentSelection } from "./payment-selections";
 import {
   agentRuntimeFromThread,
+  mergeAgentRuntime,
   parseAgentRuntimeSummary,
   sameAgentRuntime,
 } from "@cocalc/util/ai/agent-runtime-kind";
@@ -231,8 +232,17 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
         ).rows[0];
         const runtime = agentRuntimeFromThread(thread);
         if (existing) {
-          // Identities registered before runtimes were recorded.
-          if (!existing.runtime && runtime) {
+          // Identities registered before runtimes (or their models) were
+          // recorded.
+          const known = parseAgentRuntimeSummary(existing.runtime);
+          if (
+            runtime &&
+            (!known ||
+              (!known.model &&
+                runtime.model &&
+                known.kind === runtime.kind &&
+                known.name === runtime.name))
+          ) {
             const updated = (
               await sql.query(
                 "UPDATE agent_identities SET runtime=$2::jsonb WHERE agent_id=$1 RETURNING *",
@@ -716,11 +726,16 @@ export const reportRuntime: AgentApi["reportRuntime"] = async (opts) => {
     account_id: opts.account_id!,
     project_id: opts.project_id,
   });
-  const runtime = parseAgentRuntimeSummary(opts.runtime);
-  if (!runtime) throw new Error("invalid agent runtime");
+  const reported = parseAgentRuntimeSummary(opts.runtime);
+  if (!reported) throw new Error("invalid agent runtime");
   const db = agentStore();
   const agent = await db.find(opts.project_id, opts.path, opts.thread_id);
-  if (!agent || sameAgentRuntime(agent.runtime, runtime)) return;
+  if (!agent) return;
+  const runtime = mergeAgentRuntime(
+    parseAgentRuntimeSummary(agent.runtime),
+    reported,
+  );
+  if (sameAgentRuntime(agent.runtime, runtime)) return;
   await db.query(
     "UPDATE agent_identities SET runtime=$2::jsonb WHERE agent_id=$1",
     [agent.agent_id, JSON.stringify(runtime)],

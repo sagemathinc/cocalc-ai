@@ -189,6 +189,46 @@ describeDb("agent identity watchers", () => {
     ).rejects.toThrow("invalid agent runtime");
   });
 
+  test("the runtime's model is stored, and a report without one keeps it", async () => {
+    const runtimeNow = async () =>
+      (
+        await getPool().query(
+          "SELECT runtime FROM agent_identities WHERE agent_id=$1",
+          [agent_id],
+        )
+      ).rows[0].runtime;
+    const report = {
+      host_id: randomUUID(),
+      account_id: alice,
+      project_id,
+      path: "/home/user/a.chat",
+      thread_id: "t1",
+    };
+    const opus = {
+      kind: "claude-code" as const,
+      model: "opus",
+      model_name: "Opus 5.5",
+      effort: "high",
+    };
+    await reportRuntime({ ...report, runtime: opus });
+    expect(await runtimeNow()).toEqual(opus);
+    // An older host, or the report made when admitting a turn: no model.
+    await reportRuntime({ ...report, runtime: { kind: "claude-code" } });
+    expect(await runtimeNow()).toEqual(opus);
+    await reportRuntime({
+      ...report,
+      runtime: { kind: "claude-code", model: "sonnet", effort: "low" },
+    });
+    expect(await runtimeNow()).toEqual({
+      kind: "claude-code",
+      model: "sonnet",
+      effort: "low",
+    });
+    // A different runtime says nothing about the old model.
+    await reportRuntime({ ...report, runtime: { kind: "codex" } });
+    expect(await runtimeNow()).toEqual({ kind: "codex" });
+  });
+
   test("credentialUpdatedAt: when the account signed in again, nothing else", async () => {
     const at = (iso: string) => new Date(iso);
     const credential = (id: string, extra = {}) => ({
