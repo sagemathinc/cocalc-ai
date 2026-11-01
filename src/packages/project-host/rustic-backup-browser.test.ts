@@ -1,11 +1,22 @@
+jest.mock("@cocalc/backend/sandbox/rustic", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
+
+import type { ChildProcess } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import rustic from "@cocalc/backend/sandbox/rustic";
 import { createServer, type Server } from "node:http";
 
-import { afterEach, describe, expect, it } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
 import {
   __test__,
   parseDavEntries,
   repositoryIdentityFromProfile,
+  RusticBackupBrowserManager,
   RusticFindOutputParser,
   RusticWebDavClient,
 } from "./rustic-backup-browser";
@@ -466,6 +477,191 @@ describe("RusticWebDavClient", () => {
     expect(result).toMatchObject({
       truncated: true,
       truncationReason: "results",
+    });
+  });
+});
+
+describe("native snapshot listing", () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const older = {
+    id: "a".repeat(64),
+    hostname: `project-${projectId}`,
+    time: "2026-08-10T05:32:14Z",
+  };
+  const newer = { ...older, id: "b".repeat(64), time: "2026-08-11T05:32:14Z" };
+  const run = jest.mocked(rustic);
+  let directory: string | undefined;
+  let manager: RusticBackupBrowserManager | undefined;
+
+  afterEach(async () => {
+    manager?.close();
+    manager = undefined;
+    if (directory) await rm(directory, { recursive: true, force: true });
+    directory = undefined;
+    run.mockReset();
+  });
+
+  async function profile(): Promise<string> {
+    directory = await mkdtemp(join(tmpdir(), "backup-list-"));
+    const profilePath = join(directory, "repo.toml");
+    await writeFile(
+      profilePath,
+      '[repository]\nrepository = "/synthetic/repo"\n',
+    );
+    return profilePath;
+  }
+
+  function output(snapshots = [newer, older]) {
+    return {
+      code: 0,
+      stdout: JSON.stringify([{ snapshots }]),
+      stderr: "",
+      truncated: false,
+    };
+  }
+
+  it("returns oldest-first full IDs from snapshot JSON without starting WebDAV", async () => {
+    const start = jest.fn(async () => {
+      throw Error("browser must not start");
+    });
+    manager = new RusticBackupBrowserManager({ start, idleSweep: false });
+    run.mockResolvedValue(output());
+    const backups = await manager.listBackups({
+      profilePath: await profile(),
+      projectId,
+    });
+    expect(backups).toEqual(
+      [older, newer].map(({ id, time }) => ({
+        id,
+        time: new Date(time),
+        summary: {},
+      })),
+    );
+    expect(start).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith(
+      ["snapshots", "--json"],
+      expect.objectContaining({
+        host: older.hostname,
+        timeout: expect.any(Number),
+      }),
+    );
+    expect(run.mock.calls[0][1].timeout).toBeGreaterThan(0);
+    expect(run.mock.calls[0][1].timeout).toBeLessThanOrEqual(20_000);
+    // The browser's timestamp/long_id path template resolves the same IDs
+    // supplied directly to restore (including Rustic's wrapped ID spelling).
+    for (const backup of backups) {
+      const date = backup.time.toISOString().replace(/[-:]/g, "").slice(0, 15);
+      for (const id of [backup.id, `SnapshotId(${backup.id})`]) {
+        expect(__test__.parseSnapshotSegment(`${date}+0000--${id}`)?.id).toBe(
+          backup.id,
+        );
+      }
+    }
+  });
+
+  it("sees new snapshots after markStale even when no browser was started", async () => {
+    const start = jest.fn(async () => {
+      throw Error("browser must not start");
+    });
+    manager = new RusticBackupBrowserManager({ start, idleSweep: false });
+    const profilePath = await profile();
+    run.mockResolvedValueOnce(output([older])).mockResolvedValueOnce(output());
+    expect(await manager.listBackups({ profilePath, projectId })).toHaveLength(
+      1,
+    );
+    await manager.markStale(profilePath);
+    expect(await manager.listBackups({ profilePath, projectId })).toHaveLength(
+      2,
+    );
+    expect(start).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a bounded inventory failure without falling back to WebDAV", async () => {
+    const start = jest.fn(async () => {
+      throw Error("browser must not start");
+    });
+    manager = new RusticBackupBrowserManager({ start, idleSweep: false });
+    run.mockResolvedValue({ ...output(), code: 1, truncated: true });
+    await expect(
+      manager.listBackups({ profilePath: await profile(), projectId }),
+    ).rejects.toThrow("inventory exceeded its time or output limit");
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("bounds inventory processes across projects and releases failed slots", async () => {
+    const start = jest.fn(async () => {
+      throw Error("browser must not start");
+    });
+    manager = new RusticBackupBrowserManager({ start, idleSweep: false });
+    const profilePath = await profile();
+    let finishFirst!: (value: ReturnType<typeof output>) => void;
+    let finishSecond!: (value: ReturnType<typeof output>) => void;
+    run.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    run.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishSecond = resolve;
+        }),
+    );
+    const first = manager.listBackups({ profilePath, projectId });
+    const second = manager.listBackups({
+      profilePath,
+      projectId: "other-project",
+    });
+    await expect(
+      manager.listBackups({ profilePath, projectId: "third-project" }),
+    ).rejects.toThrow("Backup listing is busy; please retry shortly");
+    expect(run).toHaveBeenCalledTimes(2);
+    const failed = expect(first).rejects.toThrow(
+      "inventory exceeded its time or output limit",
+    );
+    finishFirst({ ...output(), code: 1, truncated: true });
+    await failed;
+    run.mockResolvedValue(output());
+    await expect(
+      manager.listBackups({ profilePath, projectId }),
+    ).resolves.toHaveLength(2);
+    finishSecond(output());
+    await second;
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("still starts the browser for file browsing with an ID from the native list", async () => {
+    const listDirectory = jest.fn(async (_args: unknown) => [
+      { name: "course.txt", isDir: false, mtime: 1, size: 42 },
+    ]);
+    const start = jest.fn(async (descriptor: any) => ({
+      descriptor,
+      child: { exitCode: 0, kill: jest.fn() } as unknown as ChildProcess,
+      client: { listDirectory } as unknown as RusticWebDavClient,
+      startedAt: Date.now(),
+      log: () => "",
+    }));
+    manager = new RusticBackupBrowserManager({ start, idleSweep: false });
+    const profilePath = await profile();
+    run.mockResolvedValue(output([older]));
+    const [backup] = await manager.listBackups({ profilePath, projectId });
+    expect(start).not.toHaveBeenCalled();
+    expect(
+      await manager.listDirectory({
+        profilePath,
+        projectId,
+        id: backup.id,
+        path: "docs",
+      }),
+    ).toHaveLength(1);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(listDirectory).toHaveBeenCalledWith({
+      projectId,
+      id: older.id,
+      path: "docs",
     });
   });
 });
