@@ -36,7 +36,18 @@ test("an exit watcher's command reports its output and exit code, and the watche
     process.env.HOME = previousHome;
   }
   const env = { ...process.env, HOME: home };
-  const ran = spawnSync("bash", args, { env, encoding: "utf8" });
+  // With the default 30 s heartbeat: it returns as soon as the command
+  // exits (the heartbeat's sleep must not hold the output pipe open).
+  const started = Date.now();
+  const ran = spawnSync("bash", args, {
+    env,
+    encoding: "utf8",
+    timeout: 20_000,
+  });
+  assert.ok(
+    Date.now() - started < 10_000,
+    `returned after ${Date.now() - started} ms`,
+  );
   assert.match(ran.stdout, /it's done: 2/);
   assert.match(ran.stdout, /\[exit 3\]/);
   const dir = join(home, ".local/share/cocalc/sensors/exits");

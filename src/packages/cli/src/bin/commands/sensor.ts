@@ -219,11 +219,13 @@ export function exitWatcherArgs(
   const script = [
     'mkdir -p -- "$2"',
     'touch -- "$5"',
-    // (Joined by "; ", so the & ends its own command here.)
-    '( while kill -0 "$$" 2>/dev/null; do touch -- "$5"; sleep "$6"; done ) & beat=$!',
+    // (Joined by "; ", so the & ends its own command here.) Its sleep runs
+    // in the background so TERM interrupts the wait at once; with /dev/null
+    // for its stdio, neither it nor its sleep holds the terminal or the pipe.
+    `( trap 'kill "$s" 2>/dev/null; exit 0' TERM; while kill -0 "$$" 2>/dev/null; do touch -- "$5"; sleep "$6" & s=$!; wait "$s"; done ) </dev/null >/dev/null 2>&1 & beat=$!`,
     'bash -lc "$1" 2>&1 | tee -- "$3"',
     "code=${PIPESTATUS[0]}",
-    'kill "$beat" 2>/dev/null',
+    'kill "$beat" 2>/dev/null; wait "$beat" 2>/dev/null',
     `printf '{"exit_code": %d}\\n' "$code" > "$4.tmp" && mv -- "$4.tmp" "$4"`,
     'echo "[exit $code]"',
   ].join("; ");
