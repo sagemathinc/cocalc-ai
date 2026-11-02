@@ -55,5 +55,9 @@ Table({
       type: "string",
       desc: "Blocked reason or internal diagnostic for this attempt.",
     },
+    source: {
+      type: "string",
+      desc: "Rate-limit namespace chosen by the server: NULL for CoCalc's own support form, 'sagebrush-intake' for the Sagebrush intake route. Rules count only attempts of the same namespace.",
+    },
   },
 });

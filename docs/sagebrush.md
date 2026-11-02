@@ -5,7 +5,7 @@ lets people share collections of notebooks, boards and data. Its accounts are
 CoCalc accounts. This document is the contract between CoCalc and the Sagebrush
 Cloudflare Worker, and it describes how CoCalc implements its side.
 
-There are four interfaces:
+There are four interfaces, plus support requests (section 6):
 
 1. **Sign in with CoCalc.** OAuth 2 authorization code with PKCE. CoCalc is the
    authorization server and the Sagebrush Worker is the only registered client.
@@ -22,14 +22,15 @@ the dev server's origin for development.
 
 ## Secrets
 
-There are two secrets, and a third for sync. William sets them on both sides,
-and they are never committed.
+There are two secrets, a third for sync and a fourth for support requests.
+William sets them on both sides, and they are never committed.
 
-| Secret        | CoCalc site setting       | Used for                              |
-| ------------- | ------------------------- | ------------------------------------- |
-| client secret | `sagebrush_client_secret` | the token exchange and the limits API |
-| purge key     | `sagebrush_purge_secret`  | signing the deletion requests         |
-| limits key    | `sagebrush_limits_secret` | signing the sync notices (section 4)  |
+| Secret        | CoCalc site setting            | Used for                              |
+| ------------- | ------------------------------ | ------------------------------------- |
+| client secret | `sagebrush_client_secret`      | the token exchange and the limits API |
+| purge key     | `sagebrush_purge_secret`       | signing the deletion requests         |
+| limits key    | `sagebrush_limits_secret`      | signing the sync notices (section 4)  |
+| intake key    | `sagebrush_support_intake_key` | support requests (section 6)          |
 
 A blank client secret turns off sign-in: the authorize page refuses the client
 and the token and limits endpoints answer `401 invalid_client`. It does not
@@ -529,6 +530,56 @@ Each such URI must be registered in the site setting
 `src/packages/server/sagebrush/cocalc-admin-contract.json` is the exact
 contract; Sagebrush pins its sha256.
 
+## 6. Support requests
+
+Sagebrush's "Report an issue / request support" page posts to its own support
+Worker, which checks a Turnstile challenge and its own limits and then sends
+one request, server to server:
+
+```
+POST {COCALC_ORIGIN}/api/v2/support/sagebrush-intake
+Content-Type: application/json
+Content-Length: <at most 131072>
+X-Sagebrush-Intake-Key: <key>
+X-Sagebrush-Client-IP: <the client's IP literal, from CF-Connecting-IP>
+
+{"submission_id": "<uuid v4>", "kind": "bug|pkg|feat|book|other",
+ "title": "<5-180>", "description": "<10-19000>", "email": "<optional>"}
+```
+
+CoCalc creates the Zendesk ticket exactly as its own support form does
+(`createTicket`: the requester, the name lookup, the logging), with the subject
+`[sagebrush] <kind>: <title>` and the tags `sagebrush` and `sb-kind-<kind>`.
+The answer is only `{"ok": true}` or `{"error": "<code>"}` (400, 401, 405, 411,
+413, 415, 429 or 503), always `Cache-Control: no-store`; the ticket URL is never
+returned.
+
+- **The key.** `sagebrush_support_intake_key` holds one key, or two different
+  keys separated by a comma with no spaces while rotating. Each is 43
+  characters of base64url (32 random bytes). Any other value turns the route
+  off (503, logged as `intake-key-config-invalid`). The header is compared by
+  sha256 against every configured key, with no early exit. To rotate: add the
+  new key next to the old one, deploy the Worker with the new key, then remove
+  the old one.
+- **The client IP** is read only after the key is valid, only from
+  `X-Sagebrush-Client-IP`, and must be a single IP literal. It is the rate
+  limit's IP, kept 8 days in `support_ticket_attempts`, as for CoCalc's form.
+- **The body.** The route reads its own body (the API router skips its parsers
+  for this path) up to Content-Length, at most 131,072 bytes, and parses one
+  flat object of strings with exactly these keys; duplicates, unknown keys and
+  anything else are a 400, before any quota is charged.
+- **Rate limits.** CoCalc's rules and numbers (per email 3 an hour and 6 a day,
+  per IP 10 an hour and 30 a day, per email and IP 2 per 10 minutes and 4 an
+  hour), counted in their own namespace: these attempts are recorded with
+  `source = 'sagebrush-intake'` and count only each other, never CoCalc's own
+  form (`source` NULL). A refusal is a 429; a database failure is a 503 and no
+  ticket.
+- **No email.** A request without an email uses `sagebrush_support_default_email`
+  (a no-reply address; blank means such requests are a 400). Only then are the
+  email rules skipped (the IP rules still apply) and the ticket tagged
+  `sb-no-email`, so Zendesk triggers can skip the acknowledgement. A typed
+  address, even the default one, keeps the email rules.
+
 ## Implementation in CoCalc
 
 - `src/packages/server/auth/oauth/clients.ts`: the client registry. Adding a
@@ -564,3 +615,7 @@ contract; Sagebrush pins its sha256.
 - The deletion dialog lists the approved clients through
   `/api/v2/accounts/oauth-client-approvals`, to say their shared files are
   deleted too.
+- `src/packages/http-api/pages/api/v2/support/sagebrush-intake.ts`: section 6's
+  route. Its policy (source, email rules, tags) reaches `createTicket` in a
+  separate internal argument that the public support route never passes, so
+  nothing in a request body can set it.

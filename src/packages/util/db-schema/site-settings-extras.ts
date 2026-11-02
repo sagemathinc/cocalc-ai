@@ -368,6 +368,8 @@ export type SiteSettingsExtrasKeys =
   | "sagebrush_purge_secret"
   | "sagebrush_purge_obligation"
   | "sagebrush_limits_secret"
+  | "sagebrush_support_intake_key"
+  | "sagebrush_support_default_email"
   | "prometheus_metrics"
   | "prometheus_metrics_allowlist"
   | "pay_as_you_go_section"
@@ -1066,6 +1068,20 @@ export const EXTRAS: SettingsExtras = {
     desc: "HMAC-SHA256 key shared with the Sagebrush Worker (its LIMITS_KEY) for the sync notices: CoCalc tells Sagebrush when a membership starts or stops including sync, reads when synced data will be deleted, and emails the user. Blank turns these notices and emails off. See docs/sagebrush.md.",
     password: true,
   }),
+  sagebrush_support_intake_key: sagebrushSetting(
+    "Sagebrush Support Intake Key",
+    {
+      desc: "Key shared with the Sagebrush support Worker (its COCALC_INTAKE_KEY) for /api/v2/support/sagebrush-intake. One key, or two separated by a comma with no spaces while rotating; each is 43 characters of base64url (32 random bytes). Blank or any other value turns the intake route off.",
+      password: true,
+    },
+  ),
+  sagebrush_support_default_email: sagebrushSetting(
+    "Sagebrush Support Default Email",
+    {
+      desc: "Requester email for Sagebrush support requests sent without an email (a no-reply address). Blank: such requests are refused.",
+      valid: (value: string) => !value?.trim() || is_valid_email_address(value),
+    },
+  ),
   sagebrush_purge_obligation: sagebrushSetting("Sagebrush Purge Obligation", {
     desc: "Set automatically the first time Sagebrush is configured. While set, every deleted account is purged from Sagebrush, even if the secrets above are blank. Clear it only to decommission Sagebrush, after it confirms it holds no data of this site's accounts.",
   }),
