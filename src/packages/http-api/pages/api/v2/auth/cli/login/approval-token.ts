@@ -15,6 +15,7 @@ import {
 import { issueHomeBayRetryToken } from "@cocalc/server/auth/home-bay-retry-token";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import { parseFreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 export default async function cliLoginApprovalToken(req, res) {
   if (!isPost(req, res)) {
@@ -37,7 +38,7 @@ export default async function cliLoginApprovalToken(req, res) {
     }
     const elevatedLogin = elevated_login === true || elevated_login === "true";
     const requestedDuration: FreshAuthDuration =
-      requested_duration === "extended" ? "extended" : "default";
+      parseFreshAuthDuration(requested_duration);
     const factor_level = session.factor_level ?? "none";
     const fresh_auth_until = session.fresh_auth_until
       ? new Date(session.fresh_auth_until)

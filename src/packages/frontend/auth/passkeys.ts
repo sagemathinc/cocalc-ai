@@ -15,6 +15,7 @@ import type {
 } from "@simplewebauthn/browser";
 
 import { postAuthApi } from "@cocalc/frontend/auth/api";
+import type { FreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 type PasskeySetupStart = {
   challenge_id: string;
@@ -108,7 +109,7 @@ export async function freshAuthWithPasskey({
   origin,
 }: {
   current_password?: string;
-  duration?: "default" | "extended";
+  duration?: FreshAuthDuration;
   origin?: string;
 }): Promise<PasskeyFreshAuthResult> {
   const unavailable = webAuthnUnavailableMessage();

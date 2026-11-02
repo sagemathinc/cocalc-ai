@@ -24,6 +24,10 @@ import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import {
+  formatFreshAuthDuration,
+  freshAuthDurationNeedsStrongFactor,
+} from "@cocalc/util/auth/fresh-auth-duration";
+import {
   getImpersonationBootstrapInfo,
   getCurrentImpersonationSession,
   setImpersonationActorFreshAuth,
@@ -443,13 +447,13 @@ function assertFreshAuthDurationMethodCompatible({
   duration?: FreshAuthDuration;
   method?: string;
 }): void {
-  if (duration !== "extended") {
+  if (!freshAuthDurationNeedsStrongFactor(duration)) {
     return;
   }
   const normalizedMethod = `${method ?? ""}`.trim();
   if (!normalizedMethod || normalizedMethod === "recovery_code") {
     throw new Error(
-      "extended fresh auth requires a TOTP or passkey verification in this browser session",
+      `${duration === "extended" ? "extended" : `a ${formatFreshAuthDuration(duration)}`} fresh auth requires a TOTP or passkey verification in this browser session`,
     );
   }
   if (normalizedMethod !== "totp" && normalizedMethod !== "passkey") {
