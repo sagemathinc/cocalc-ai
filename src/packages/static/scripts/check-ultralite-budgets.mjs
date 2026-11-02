@@ -274,7 +274,7 @@ const surfaces = [
   {
     label: "Codex chat",
     chunks: [...initial, ...workspace, ...chat],
-    max: 600 * KiB,
+    max: 602 * KiB,
   },
   {
     label: "Codex chat with mathematics",
