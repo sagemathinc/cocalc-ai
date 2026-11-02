@@ -4,7 +4,7 @@
  */
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   postAuthApi,
@@ -25,7 +25,6 @@ import { COLORS } from "@cocalc/util/theme";
 import { ExternalAgentApproval } from "./external-agent-approval";
 import {
   formatFreshAuthDuration,
-  freshAuthDurationNeedsStrongFactor,
   isLongFreshAuthDuration,
   parseFreshAuthDuration,
   type FreshAuthDuration,
@@ -38,6 +37,43 @@ function safeDuration(value: unknown): FreshAuthDuration {
   } catch {
     return "default";
   }
+}
+
+// " for 72 hours" for a requested duration other than the default, so the
+// approve button itself says what is being approved.
+function forDurationSuffix(value: unknown): string {
+  const duration = safeDuration(value);
+  return duration === "default"
+    ? ""
+    : ` for ${formatFreshAuthDuration(duration)}`;
+}
+
+// A verification longer than 8 hours that an agent or a CLI asked for is
+// never preselected or approved by default: the owner confirms it explicitly.
+function LongDurationConfirm({
+  value,
+  checked,
+  onChange,
+}: {
+  value: unknown;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const duration = safeDuration(value);
+  if (!isLongFreshAuthDuration(duration)) return null;
+  return (
+    <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>
+        Yes, this request asks for {formatFreshAuthDuration(duration)}, and I
+        want the terminal to stay elevated that long.
+      </span>
+    </label>
+  );
 }
 
 function elevatedForText(value: unknown, subject: string): string {
@@ -309,10 +345,16 @@ export function PublicCliLoginApprovalView({
   const [error, setError] = useState("");
   const [signingOut, setSigningOut] = useState(false);
   const authOrigin = getControlPlaneOrigin();
+  const [longConfirmed, setLongConfirmed] = useState(false);
+  const requestedDuration = safeDuration(info?.requested_duration);
+  const needsLongConfirm =
+    info?.elevated_login === true && isLongFreshAuthDuration(requestedDuration);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    // A long request is never preselected; the owner confirms it above and
+    // then picks it in the verification dialog.
     defaultDuration:
-      info?.elevated_login === true
-        ? safeDuration(info?.requested_duration)
+      info?.elevated_login === true && !needsLongConfirm
+        ? requestedDuration
         : undefined,
     origin: authOrigin,
   });
@@ -480,12 +522,28 @@ export function PublicCliLoginApprovalView({
           {loginHintLabel(info)}
         </Alert>
       )}
+      {!approved && needsLongConfirm ? (
+        <>
+          <LongDurationConfirm
+            value={requestedDuration}
+            checked={longConfirmed}
+            onChange={setLongConfirmed}
+          />
+          <div>
+            In the verification dialog, choose{" "}
+            {formatFreshAuthDuration(requestedDuration)}.
+          </div>
+        </>
+      ) : undefined}
       {!approved ? (
-        <ActionButton disabled={approving} onClick={approve}>
+        <ActionButton
+          disabled={approving || (needsLongConfirm && !longConfirmed)}
+          onClick={approve}
+        >
           {approving
             ? "Approving..."
             : info?.elevated_login
-              ? "Approve Elevated CLI Login"
+              ? `Approve Elevated CLI Login${forDurationSuffix(requestedDuration)}`
               : isMobileLogin(info)
                 ? "Approve Mobile App Login"
                 : "Approve CLI Login"}
@@ -513,6 +571,7 @@ export function PublicCliElevateApprovalView({
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState("");
   const [signingOut, setSigningOut] = useState(false);
+  const [longConfirmed, setLongConfirmed] = useState(false);
   const methods = freshAuthStatus?.methods ?? [];
   const requiresPassword = freshAuthStatus?.enabled === false;
   const passwordUnavailable =
@@ -556,15 +615,6 @@ export function PublicCliElevateApprovalView({
       cancelled = true;
     };
   }, [challengeId]);
-
-  const allowExtended = useMemo(
-    () =>
-      freshAuthDurationNeedsStrongFactor(
-        safeDuration(info?.requested_duration),
-      ) &&
-      (usePasskey || inferredMethod === "totp"),
-    [info?.requested_duration, inferredMethod, usePasskey],
-  );
 
   async function approve() {
     setSaving(true);
@@ -649,8 +699,8 @@ export function PublicCliElevateApprovalView({
       ) : (
         <Alert kind="info">
           Verify a CLI security action for {requestedAccountLabel(info)}.
-          {allowExtended
-            ? elevatedForText(info?.requested_duration, "This terminal session")
+          {info
+            ? elevatedForText(info.requested_duration, "This terminal session")
             : ""}
         </Alert>
       )}
@@ -729,8 +779,25 @@ export function PublicCliElevateApprovalView({
               )}
             </div>
           ) : undefined}
-          <ActionButton disabled={saving || !canApprove} onClick={approve}>
-            {saving ? "Verifying..." : "Approve CLI Elevation"}
+          <LongDurationConfirm
+            value={info?.requested_duration}
+            checked={longConfirmed}
+            onChange={setLongConfirmed}
+          />
+          <ActionButton
+            disabled={
+              saving ||
+              !canApprove ||
+              (isLongFreshAuthDuration(
+                safeDuration(info?.requested_duration),
+              ) &&
+                !longConfirmed)
+            }
+            onClick={approve}
+          >
+            {saving
+              ? "Verifying..."
+              : `Approve CLI Elevation${forDurationSuffix(info?.requested_duration)}`}
           </ActionButton>
         </>
       ) : undefined}

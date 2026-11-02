@@ -432,6 +432,20 @@ export async function setSessionFreshAuth({
         account_id,
         action: "set fresh auth",
       });
+      const impersonation = await db.query(
+        "SELECT 1 FROM account_impersonation_sessions WHERE session_hash = $1::CHAR(127) LIMIT 1",
+        [cleanedSessionHash],
+      );
+      const isImpersonation = impersonation.rows.length > 0;
+      // The verifications longer than 8 hours are for an account owner's own
+      // sessions, never for an admin acting as someone else.
+      if (
+        isImpersonation &&
+        fresh_auth_until.valueOf() >
+          Date.now() + FRESH_AUTH_EXTENDED_MS + 60_000
+      ) {
+        throw new Error("an impersonation verification lasts at most 8 hours");
+      }
       const { rows, rowCount } = await db.query(
         `
           UPDATE account_auth_sessions
@@ -479,11 +493,7 @@ export async function setSessionFreshAuth({
       // lifetime for this session, so an active person is never forced to
       // sign in again mid-use. An impersonation session keeps its own short
       // lifetime.
-      const impersonation = await db.query(
-        "SELECT 1 FROM account_impersonation_sessions WHERE session_hash = $1::CHAR(127) LIMIT 1",
-        [cleanedSessionHash],
-      );
-      if (impersonation.rows.length === 0) {
+      if (!isImpersonation) {
         await renewSessionLifetime({
           db,
           hash: cleanedSessionHash,
@@ -493,18 +503,22 @@ export async function setSessionFreshAuth({
     },
   });
   if (fresh_auth_until.valueOf() - Date.now() > FRESH_AUTH_EXTENDED_MS) {
-    // Loaded only here: the email code pulls in much of the server, and many
-    // modules import this one only for its session helpers.
-    const { isLongFreshAuthUntil, sendLongFreshAuthNotice } =
-      await import("@cocalc/server/auth/fresh-auth-notice");
-    if (!isLongFreshAuthUntil(fresh_auth_until)) return;
-    await sendLongFreshAuthNotice({
-      account_id,
-      fresh_auth_until,
-      factor_level,
-      ip_address: client.ip_address,
-      user_agent: client.user_agent,
-    });
+    // Not awaited: a slow mail backend must not slow the verification, and a
+    // failure is logged there, never undoing it. Loaded only here: the email
+    // code pulls in much of the server, and many modules import this one only
+    // for its session helpers.
+    void import("@cocalc/server/auth/fresh-auth-notice")
+      .then(async ({ isLongFreshAuthUntil, sendLongFreshAuthNotice }) => {
+        if (!isLongFreshAuthUntil(fresh_auth_until)) return;
+        await sendLongFreshAuthNotice({
+          account_id,
+          fresh_auth_until,
+          factor_level,
+          ip_address: client.ip_address,
+          user_agent: client.user_agent,
+        });
+      })
+      .catch(() => {});
   }
 }
 
