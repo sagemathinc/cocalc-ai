@@ -71,6 +71,7 @@ import {
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { parseFreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 const logger = getLogger("server:conat:api:notifications");
 
@@ -808,7 +809,7 @@ export async function startCodexFreshAuthAction(
     started = await startCodexFreshAuthChallengeLocal({
       account_id,
       session_hash,
-      duration: opts.duration,
+      duration: parseFreshAuthDuration(opts.duration),
       context,
     });
   } else {
@@ -818,7 +819,7 @@ export async function startCodexFreshAuthAction(
     }).startCodexFreshAuth({
       account_id,
       browser_id,
-      duration: opts.duration,
+      duration: parseFreshAuthDuration(opts.duration),
       context,
     });
   }

@@ -1516,7 +1516,7 @@ export interface AccountLocalCodexFreshAuthContext {
 export interface AccountLocalStartCodexFreshAuthRequest {
   account_id: string;
   browser_id: string;
-  duration?: "default" | "extended";
+  duration?: FreshAuthDuration;
   context: AccountLocalCodexFreshAuthContext;
 }
 
@@ -4064,6 +4064,7 @@ export interface InterBayComputeFundingApi extends MonthlyCollectionApi {
 }
 
 import type { InterBayCreditTransferApi } from "./credit-transfers";
+import type { FreshAuthDuration } from "@cocalc/util/auth/fresh-auth-duration";
 
 export interface InterBayAccountLocalApi
   extends InterBayComputeFundingApi, InterBayCreditTransferApi {

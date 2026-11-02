@@ -23,6 +23,33 @@ import {
 } from "@cocalc/frontend/auth/second-factor-input";
 import { COLORS } from "@cocalc/util/theme";
 import { ExternalAgentApproval } from "./external-agent-approval";
+import {
+  formatFreshAuthDuration,
+  freshAuthDurationNeedsStrongFactor,
+  isLongFreshAuthDuration,
+  parseFreshAuthDuration,
+  type FreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
+
+// The duration a CLI asked for, or "default" if it is not one we know.
+function safeDuration(value: unknown): FreshAuthDuration {
+  try {
+    return parseFreshAuthDuration(value);
+  } catch {
+    return "default";
+  }
+}
+
+function elevatedForText(value: unknown, subject: string): string {
+  const duration = safeDuration(value);
+  if (duration === "default") return "";
+  let text = ` ${subject} will stay elevated for ${formatFreshAuthDuration(duration)}.`;
+  if (isLongFreshAuthDuration(duration)) {
+    text +=
+      " We will email you about it, and you can end it any time in Account Settings, Profile, Security.";
+  }
+  return text;
+}
 
 const STACK_STYLE: CSSProperties = {
   display: "flex",
@@ -91,7 +118,7 @@ type ChallengeInfo = {
   current_email_address?: string | null;
   current_display_name?: string | null;
   current_matches_account?: boolean | null;
-  requested_duration?: "default" | "extended" | null;
+  requested_duration?: FreshAuthDuration | null;
   elevated_login?: boolean;
   auth_client?: "cli" | "mobile";
   state: "pending" | "approved" | "redeemed" | "canceled";
@@ -283,8 +310,10 @@ export function PublicCliLoginApprovalView({
   const [signingOut, setSigningOut] = useState(false);
   const authOrigin = getControlPlaneOrigin();
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    defaultExtended:
-      info?.elevated_login === true && info?.requested_duration === "extended",
+    defaultDuration:
+      info?.elevated_login === true
+        ? safeDuration(info?.requested_duration)
+        : undefined,
     origin: authOrigin,
   });
 
@@ -445,8 +474,8 @@ export function PublicCliLoginApprovalView({
               CLI session and does not reuse your browser session.
             </>
           )}
-          {info?.elevated_login && info.requested_duration === "extended"
-            ? " The terminal session will stay elevated for 8 hours."
+          {info?.elevated_login
+            ? elevatedForText(info.requested_duration, "The terminal session")
             : ""}
           {loginHintLabel(info)}
         </Alert>
@@ -530,7 +559,9 @@ export function PublicCliElevateApprovalView({
 
   const allowExtended = useMemo(
     () =>
-      info?.requested_duration === "extended" &&
+      freshAuthDurationNeedsStrongFactor(
+        safeDuration(info?.requested_duration),
+      ) &&
       (usePasskey || inferredMethod === "totp"),
     [info?.requested_duration, inferredMethod, usePasskey],
   );
@@ -619,7 +650,7 @@ export function PublicCliElevateApprovalView({
         <Alert kind="info">
           Verify a CLI security action for {requestedAccountLabel(info)}.
           {allowExtended
-            ? " This terminal session will stay elevated for 8 hours."
+            ? elevatedForText(info?.requested_duration, "This terminal session")
             : ""}
         </Alert>
       )}
