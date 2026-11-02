@@ -19,6 +19,7 @@ import { agentTurnStatusText } from "@cocalc/conat/agents/agent-status";
 import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import {
   parseSensorWake,
+  SENSOR_LIMITS,
   SENSOR_WATCH_AGENT_UNTIL,
   sensorExitPaths,
   sensorInterpreterArgv,
@@ -201,16 +202,28 @@ export function watchedPath(path: string, cwd = process.cwd()): string {
 /**
  * The command an exit watcher waits for, as a terminal runs it: its output
  * goes to the log (and the terminal), then its exit code to the status file.
- * The command is an argument, never spliced into the script.
+ * The command is an argument, never spliced into the script. While it runs,
+ * a loop touches the heartbeat file, and stops once this shell is gone: if
+ * the terminal ends first (the project restarts, the terminal is closed or
+ * killed), the heartbeat goes stale with no exit code, and the watcher wakes
+ * saying so instead of waiting until it gives up.
  */
-export function exitWatcherArgs(command: string, id: string): string[] {
+export function exitWatcherArgs(
+  command: string,
+  id: string,
+  heartbeatSeconds: number = SENSOR_LIMITS.exitHeartbeatSeconds,
+): string[] {
   const home = homedir();
   const abs = (path: string) => path.replace(/^~/, home);
   const paths = sensorExitPaths(id);
   const script = [
     'mkdir -p -- "$2"',
+    'touch -- "$5"',
+    // (Joined by "; ", so the & ends its own command here.)
+    '( while kill -0 "$$" 2>/dev/null; do touch -- "$5"; sleep "$6"; done ) & beat=$!',
     'bash -lc "$1" 2>&1 | tee -- "$3"',
     "code=${PIPESTATUS[0]}",
+    'kill "$beat" 2>/dev/null',
     `printf '{"exit_code": %d}\\n' "$code" > "$4.tmp" && mv -- "$4.tmp" "$4"`,
     'echo "[exit $code]"',
   ].join("; ");
@@ -222,6 +235,8 @@ export function exitWatcherArgs(command: string, id: string): string[] {
     abs(paths.dir),
     abs(paths.log),
     abs(paths.status),
+    abs(paths.beat),
+    `${Math.max(1, Math.round(heartbeatSeconds))}`,
   ];
 }
 
@@ -503,7 +518,7 @@ export function registerSensorCommand(
   watch
     .command("exit")
     .description(
-      "run a command in a project terminal (it keeps running after your turn) and wake once when it exits, with its exit code and the end of its output",
+      "run a command in a project terminal (it keeps running after your turn) and wake once when it exits, with its exit code and the end of its output; if the terminal ends first (the project restarts, or the terminal is closed or killed), wake within minutes with exit_code null and reason terminal-ended, so you can run it again",
     )
     .argument("<command...>", "the command and its arguments, after --")
     .option("--cwd <path>", "working directory in the project")
@@ -553,7 +568,7 @@ export function registerSensorCommand(
           ...set,
           terminal_id,
           output_file: sensorExitPaths(id).log,
-          message: `Running in project terminal ${terminal_id}. You will get one [Sensor wake] turn when it exits, with its exit code and the end of its output. You can end your turn now.`,
+          message: `Running in project terminal ${terminal_id}. You will get one [Sensor wake] turn when it exits, with its exit code and the end of its output (or, if the terminal ends first, for example because the project restarted, a wake saying it stopped without an exit code). You can end your turn now.`,
         };
       }),
     );

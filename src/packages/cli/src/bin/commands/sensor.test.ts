@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  utimesSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   parseSensorWake,
+  SENSOR_LIMITS,
   sensorWatchScript,
 } from "@cocalc/conat/agents/sensors";
 import {
@@ -36,6 +43,7 @@ test("an exit watcher's command reports its output and exit code, and the watche
   assert.deepEqual(JSON.parse(readFileSync(join(dir, `${id}.json`), "utf8")), {
     exit_code: 3,
   });
+  assert.ok(existsSync(join(dir, `${id}.beat`)), "it had a heartbeat");
   const script = sensorWatchScript({ type: "exit", id, command: "make" })!;
   const out = execFileSync("python3", ["-c", script], {
     cwd: home,
@@ -46,6 +54,55 @@ test("an exit watcher's command reports its output and exit code, and the watche
   assert.equal(wake.summary, '"make" exited with code 3');
   assert.equal((wake.data as any).exit_code, 3);
   assert.match((wake.data as any).output_tail, /it's done: 2/);
+});
+
+test("killed before its command exits, it stops its heartbeat, and the watcher wakes saying so", async () => {
+  const home = mkdtempSync(join(tmpdir(), "sensor-exit-killed-"));
+  const id = "0b7d2e4f-8a61-4c3e-b2d9-5e7f1a3c6b80";
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  let args: string[];
+  try {
+    args = exitWatcherArgs("echo started; sleep 60", id, 1);
+  } finally {
+    process.env.HOME = previousHome;
+  }
+  const env = { ...process.env, HOME: home };
+  const dir = join(home, ".local/share/cocalc/sensors/exits");
+  const beat = join(dir, `${id}.beat`);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // Its own process group, so the test can clean up the command after.
+  const child = spawn("bash", args, { env, detached: true, stdio: "ignore" });
+  try {
+    for (let i = 0; i < 50 && !existsSync(beat); i++) await sleep(100);
+    assert.ok(existsSync(beat), "the wrapper touches its heartbeat");
+    // Only the wrapper is killed (an OOM kill, say): the heartbeat loop must
+    // notice and stop, or a lost command would look alive forever.
+    process.kill(child.pid!, "SIGKILL");
+    await sleep(2500);
+    const before = statSync(beat).mtimeMs;
+    await sleep(2500);
+    assert.equal(statSync(beat).mtimeMs, before, "the heartbeat stopped");
+  } finally {
+    try {
+      process.kill(-child.pid!, "SIGKILL");
+    } catch {}
+  }
+  assert.equal(existsSync(join(dir, `${id}.json`)), false);
+  const old = Date.now() / 1000 - SENSOR_LIMITS.exitLostAfterSeconds - 10;
+  utimesSync(beat, old, old);
+  const script = sensorWatchScript({ type: "exit", id, command: "make" })!;
+  const wake = parseSensorWake(
+    execFileSync("python3", ["-c", script], {
+      cwd: home,
+      env,
+      encoding: "utf8",
+    }),
+  )!;
+  assert.match(wake.summary, /stopped without an exit code/);
+  assert.equal((wake.data as any).exit_code, null);
+  assert.equal((wake.data as any).reason, "terminal-ended");
+  assert.match((wake.data as any).output_tail, /started/);
 });
 
 test("a file watcher's relative path means where the agent ran the command", () => {
