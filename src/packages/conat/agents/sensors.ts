@@ -62,6 +62,11 @@ export const SENSOR_LIMITS = {
   maxWatchFileBytes: 1_000_000,
   /** How much of the end of a command's output an exit watcher reports. */
   maxExitLogBytes: 4_000,
+  /** How often an exit watcher's command marks itself alive while it runs. */
+  exitHeartbeatSeconds: 30,
+  /** No exit code and no mark for this long: its terminal ended (the
+   * project restarted, or the terminal was closed or killed). */
+  exitLostAfterSeconds: 120,
   /** Wakes held while an earlier one is queued, combined into the next. */
   maxCoalescedWakes: 20,
   /** A queued wake older than this no longer holds back later ones. */
@@ -188,15 +193,26 @@ export type SensorWatch =
 export const SENSOR_WATCH_AGENT_UNTIL = ["ended", "failed", "idle"] as const;
 export type SensorWatchAgentUntil = (typeof SENSOR_WATCH_AGENT_UNTIL)[number];
 
-/** Where an exit watcher's command records its output and exit code. */
+/**
+ * Where an exit watcher's command records its output and exit code, and
+ * the file it touches while it runs (its heartbeat: the watcher's check
+ * runs in a container of its own, which cannot see the terminal's
+ * processes).
+ */
 export function sensorExitPaths(id: string): {
   dir: string;
   status: string;
   log: string;
+  beat: string;
 } {
   if (!isValidUUID(id)) throw new Error("exit watcher id must be a UUID");
   const dir = "~/.local/share/cocalc/sensors/exits";
-  return { dir, status: `${dir}/${id}.json`, log: `${dir}/${id}.log` };
+  return {
+    dir,
+    status: `${dir}/${id}.json`,
+    log: `${dir}/${id}.log`,
+    beat: `${dir}/${id}.beat`,
+  };
 }
 
 /** A built-in, one-shot watcher; CoCalc writes its code. */
@@ -749,7 +765,7 @@ export function validateSensorWatch(
 
 /** The script a ci, file or exit watcher runs; parameters are embedded as JSON. */
 export function sensorWatchScript(watch: SensorWatch): string | undefined {
-  const params = `import json, os, re, subprocess, sys\nP = json.loads(${JSON.stringify(JSON.stringify(watch))})\n`;
+  const params = `import json, os, re, subprocess, sys, time\nP = json.loads(${JSON.stringify(JSON.stringify(watch))})\n`;
   if (watch.type === "ci")
     return (
       params +
@@ -884,21 +900,38 @@ print(json.dumps({"wake": True, "summary": summary[:500], "data": data}))
       params +
       `status = os.path.expanduser(${JSON.stringify(paths.status)})
 log = os.path.expanduser(${JSON.stringify(paths.log)})
-try:
-    with open(status) as f:
-        code = json.load(f).get("exit_code")
-except (OSError, ValueError, AttributeError):
+beat = os.path.expanduser(${JSON.stringify(paths.beat)})
+def exit_code():
+    try:
+        with open(status) as f:
+            return True, json.load(f).get("exit_code")
+    except (OSError, ValueError, AttributeError):
+        return False, None
+def output_tail():
+    try:
+        size = os.path.getsize(log)
+        with open(log, "rb") as f:
+            if size > ${SENSOR_LIMITS.maxExitLogBytes}:
+                f.seek(size - ${SENSOR_LIMITS.maxExitLogBytes})
+            return f.read(${SENSOR_LIMITS.maxExitLogBytes}).decode("utf-8", "replace")
+    except OSError:
+        return ""
+done, code = exit_code()
+if not done:
+    # Still running while its heartbeat is fresh. No heartbeat at all: not
+    # started yet (or a command started before heartbeats existed).
+    try:
+        age = time.time() - os.path.getmtime(beat)
+    except OSError:
+        sys.exit(0)
+    if age < ${SENSOR_LIMITS.exitLostAfterSeconds}:
+        sys.exit(0)
+    # It may have finished just now, after the first look.
+    done, code = exit_code()
+if not done:
+    print(json.dumps({"wake": True, "summary": "%s stopped without an exit code: its terminal ended before it finished (the project restarted, or the terminal was closed or killed). Run it again if it still matters." % json.dumps(P["command"]), "data": {"exit_code": None, "reason": "terminal-ended", "output_file": ${JSON.stringify(paths.log)}, "output_tail": output_tail()}}))
     sys.exit(0)
-tail = ""
-try:
-    size = os.path.getsize(log)
-    with open(log, "rb") as f:
-        if size > ${SENSOR_LIMITS.maxExitLogBytes}:
-            f.seek(size - ${SENSOR_LIMITS.maxExitLogBytes})
-        tail = f.read(${SENSOR_LIMITS.maxExitLogBytes}).decode("utf-8", "replace")
-except OSError:
-    pass
-print(json.dumps({"wake": True, "summary": "%s exited with code %s" % (json.dumps(P["command"]), code), "data": {"exit_code": code, "output_file": ${JSON.stringify(paths.log)}, "output_tail": tail}}))
+print(json.dumps({"wake": True, "summary": "%s exited with code %s" % (json.dumps(P["command"]), code), "data": {"exit_code": code, "output_file": ${JSON.stringify(paths.log)}, "output_tail": output_tail()}}))
 `
     );
   }
