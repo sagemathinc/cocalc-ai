@@ -860,7 +860,9 @@ export function registerProjectJupyterCommands(
 
   jupyter
     .command("trust")
-    .description("show or update notebook trust metadata")
+    .description(
+      "show or update notebook trust metadata (kept in the .ipynb only: CoCalc renders every notebook the same whether or not it is trusted)",
+    )
     .requiredOption("--path <path>", "notebook path inside the project")
     .option("-w, --project <project>", "project id or name")
     .option("--trusted", "mark the notebook trusted")
@@ -879,12 +881,16 @@ export function registerProjectJupyterCommands(
           if (opts.trusted && opts.untrusted) {
             throw new Error("choose at most one of --trusted or --untrusted");
           }
-          return await projectJupyterTrustData({
+          const data = await projectJupyterTrustData({
             ctx,
             projectIdentifier: opts.project,
             path: normalizePath(opts.path),
             trust: opts.trusted ? true : opts.untrusted ? false : undefined,
           });
+          return {
+            ...data,
+            note: "Notebook trust no longer changes anything in CoCalc: outputs always render through their isolated paths. The flag is kept only as .ipynb metadata.",
+          };
         });
       },
     );

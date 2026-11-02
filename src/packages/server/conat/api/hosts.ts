@@ -2585,12 +2585,14 @@ export async function issueProjectAppUrl({
   project_id,
   path,
   app_id,
+  root,
 }: {
   account_id?: string;
   session_hash?: string;
   project_id: string;
   path: string;
   app_id?: string;
+  root?: boolean;
 }): Promise<ProjectContentUrl> {
   const owner = requireAccount(account_id);
   const browser_session_exp_s = await restrictedBrowserSessionExpiration({
@@ -2603,6 +2605,7 @@ export async function issueProjectAppUrl({
     path,
     app_id,
     browser_session_exp_s,
+    root: root === true,
   });
 }
 
@@ -2612,12 +2615,14 @@ export async function issueProjectAppFrameUrl({
   project_id,
   path,
   app_id,
+  root,
 }: {
   account_id?: string;
   session_hash?: string;
   project_id: string;
   path: string;
   app_id?: string;
+  root?: boolean;
 }): Promise<ProjectContentUrl> {
   const owner = requireAccount(account_id);
   const browser_session_exp_s = await restrictedBrowserSessionExpiration({
@@ -2630,6 +2635,7 @@ export async function issueProjectAppFrameUrl({
     path,
     app_id,
     browser_session_exp_s,
+    root: root === true,
     frame: true,
   });
 }

@@ -20,9 +20,12 @@ const ALLOWED_OPENAI_HOSTS = new Set([
 
 export type RestrictedCodexEgressProxySession = RestrictedEgressProxySession;
 
+// The proxy URL's user name; its password is the session token.
+export const CODEX_EGRESS_PROXY_USERNAME = "cocalc-codex";
+
 const proxy = new RestrictedEgressProxy({
   name: "Codex",
-  username: "cocalc-codex",
+  username: CODEX_EGRESS_PROXY_USERNAME,
   allowedHosts: ALLOWED_OPENAI_HOSTS,
 });
 

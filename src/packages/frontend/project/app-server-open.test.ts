@@ -8,14 +8,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
           issueProjectAppUrl: (...args: any[]) =>
             mockIssueProjectAppUrl(...args),
         },
-        system: {
-          inspectProjectAppPrivateHostname: jest.fn(
-            async ({ app_id }: { app_id: string }) =>
-              app_id === "cocalc-dev-main"
-                ? { url: "https://dev-example.cocalc.ai" }
-                : undefined,
-          ),
-        },
       },
     },
   },
@@ -28,78 +20,13 @@ jest.mock("./host-url", () => ({
 
 import type { AppSpec, ManagedAppStatus } from "@cocalc/conat/project/api/apps";
 import {
-  buildPrivateHostnameOpenUrl,
-  getPrivateProjectAppOpenUrl,
   appOpenURL,
+  appRunsAtRoot,
   getProjectAppOpenUrl,
   openProjectAppStatus,
 } from "./app-server-open";
 
 describe("getProjectAppOpenUrl", () => {
-  it("prefers a reserved private hostname root for proxy-mode apps", async () => {
-    const status: ManagedAppStatus = {
-      id: "cocalc-dev-main",
-      kind: "service",
-      state: "running",
-      url: "/project-1/proxy/23454/",
-    };
-
-    await expect(
-      getProjectAppOpenUrl({
-        privateHostname: {
-          project_id: "project-1",
-          app_id: "cocalc-dev-main",
-          label: "dev-example",
-          hostname: "dev-example.cocalc.ai",
-          base_path: "/apps/cocalc-dev-main",
-          url: "https://dev-example.cocalc.ai",
-          created_by: "account-1",
-          created_at: "2026-07-28T00:00:00.000Z",
-          updated_at: "2026-07-28T00:00:00.000Z",
-        },
-        project_id: "project-1",
-        status,
-      }),
-    ).resolves.toBe("https://dev-example.cocalc.ai");
-  });
-
-  it("preserves the runtime base path for private port-mode apps", async () => {
-    const spec: AppSpec = {
-      version: 1,
-      id: "jupyterlab",
-      kind: "service",
-      proxy: {
-        base_path: "/apps/jupyterlab",
-        open_mode: "port",
-      },
-    };
-    const status: ManagedAppStatus = {
-      id: "jupyterlab",
-      kind: "service",
-      state: "running",
-      url: "/project-1/proxy/6002/",
-    };
-
-    await expect(
-      getProjectAppOpenUrl({
-        privateHostname: {
-          project_id: "project-1",
-          app_id: "jupyterlab",
-          label: "dev-jupyter",
-          hostname: "dev-jupyter.cocalc.ai",
-          base_path: "/apps/jupyterlab",
-          url: "https://dev-jupyter.cocalc.ai",
-          created_by: "account-1",
-          created_at: "2026-07-28T00:00:00.000Z",
-          updated_at: "2026-07-28T00:00:00.000Z",
-        },
-        project_id: "project-1",
-        spec,
-        status,
-      }),
-    ).resolves.toBe("https://dev-jupyter.cocalc.ai/project-1/port/6002/");
-  });
-
   it("opens port-mode service apps at the translated port URL", async () => {
     const spec: AppSpec = {
       version: 1,
@@ -204,65 +131,6 @@ describe("getProjectAppOpenUrl", () => {
   });
 });
 
-describe("buildPrivateHostnameOpenUrl", () => {
-  const status: ManagedAppStatus = {
-    id: "app",
-    kind: "service",
-    state: "running",
-    url: "/project-1/proxy/6002/",
-  };
-
-  it("keeps proxy-mode apps at the private hostname root", () => {
-    expect(
-      buildPrivateHostnameOpenUrl({
-        privateHostnameUrl: "https://dev-app.cocalc.ai",
-        spec: {
-          version: 1,
-          id: "app",
-          kind: "service",
-          proxy: { open_mode: "proxy" },
-        },
-        status,
-      }),
-    ).toBe("https://dev-app.cocalc.ai");
-  });
-
-  it("rebases port-mode paths onto the private hostname", () => {
-    expect(
-      buildPrivateHostnameOpenUrl({
-        privateHostnameUrl: "https://dev-app.cocalc.ai",
-        spec: {
-          version: 1,
-          id: "app",
-          kind: "service",
-          proxy: { open_mode: "port" },
-        },
-        status,
-      }),
-    ).toBe("https://dev-app.cocalc.ai/project-1/port/6002/");
-  });
-});
-
-describe("getPrivateProjectAppOpenUrl", () => {
-  it("adds current collaborator authentication to the private hostname", async () => {
-    await expect(
-      getPrivateProjectAppOpenUrl({
-        project_id: "project-1",
-        app_id: "cocalc-dev-main",
-      }),
-    ).resolves.toBe("https://dev-example.cocalc.ai");
-  });
-
-  it("rejects an app without a reserved private hostname", async () => {
-    await expect(
-      getPrivateProjectAppOpenUrl({
-        project_id: "project-1",
-        app_id: "missing",
-      }),
-    ).rejects.toThrow("is not reserved");
-  });
-});
-
 describe("openProjectAppStatus", () => {
   const PROJECT = "11111111-1111-4111-8111-111111111111";
   const status: ManagedAppStatus = {
@@ -288,7 +156,7 @@ describe("openProjectAppStatus", () => {
     expect(open).toHaveBeenCalledWith("", "_blank");
     expect(tab.opener).toBeNull();
     resolve({
-      url: "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
+      url: "https://ap8000-x.h-y.content.test/.cocalc/a/CAP?next=%2F",
       expires_at: 0,
     });
     await pending;
@@ -296,9 +164,10 @@ describe("openProjectAppStatus", () => {
       project_id: PROJECT,
       path: `/${PROJECT}/proxy/8000/`,
       app_id: "my-server",
+      root: false,
     });
     expect(tab.location.href).toBe(
-      "https://ap8000-x.h-y.content.test/_a/CAP?next=%2F",
+      "https://ap8000-x.h-y.content.test/.cocalc/a/CAP?next=%2F",
     );
   });
 
@@ -337,14 +206,51 @@ describe("appOpenURL", () => {
       `/app-open/${P}/port/8000/a?b=1`,
     );
     expect(appOpenURL(P, `/${P}/myapp/`, "my app")).toBe(
-      `/app-open/${P}/myapp/?app=my%20app`,
+      `/app-open/${P}/myapp/?cocalc_app=my%20app`,
     );
     expect(appOpenURL(P, `/${P}/x/?q=1`, "a")).toBe(
-      `/app-open/${P}/x/?q=1&app=a`,
+      `/app-open/${P}/x/?q=1&cocalc_app=a`,
     );
   });
   it("is undefined for anything else", () => {
     expect(appOpenURL(P, "/other/port/8000/")).toBeUndefined();
     expect(appOpenURL(P, "https://h.example/x")).toBeUndefined();
+  });
+});
+
+describe("root mode (phase 7c)", () => {
+  const P = "11111111-1111-4111-8111-111111111111";
+  it("opens apps that run without a base URL at the root of their origin", async () => {
+    expect(appOpenURL(P, `/${P}/proxy/8000/`, "a", { root: true })).toBe(
+      `/app-open/${P}/proxy/8000/?cocalc_app=a&cocalc_root=1`,
+    );
+    expect(appRunsAtRoot({ base_url: "/" })).toBe(true);
+    expect(appRunsAtRoot({ base_url: `/${P}/proxy/8000/` })).toBe(false);
+    expect(appRunsAtRoot(undefined)).toBe(false);
+    mockIssueProjectAppUrl.mockReset();
+    mockIssueProjectAppUrl.mockResolvedValue({
+      url: "https://x/.cocalc/a/C",
+      expires_at: 0,
+    });
+    const tab: any = {
+      opener: window,
+      location: { href: "" },
+      close: jest.fn(),
+    };
+    const open = jest.spyOn(window, "open").mockImplementation(() => tab);
+    await openProjectAppStatus({
+      project_id: P,
+      status: {
+        id: "s",
+        kind: "service",
+        state: "running",
+        url: `/${P}/proxy/8000/`,
+        base_url: "/",
+      },
+    });
+    expect(mockIssueProjectAppUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ root: true }),
+    );
+    open.mockRestore();
   });
 });

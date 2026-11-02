@@ -2,13 +2,18 @@
 The main hub express app.
 */
 
+import {
+  setStaticFontCorsHeaders,
+  setWidgetHostHeaders,
+  WIDGET_HOST_FILENAME,
+} from "@cocalc/util/jupyter/widget-host";
 import cookieParser from "cookie-parser";
 import compression from "compression";
 import express from "express";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import ms from "ms";
-import { join } from "path";
+import { basename, join } from "path";
 import { parse as parseURL } from "url";
 import { path as WEBAPP_PATH } from "@cocalc/assets";
 import { path as CDN_PATH } from "@cocalc/cdn/path";
@@ -510,6 +515,16 @@ async function initStatic(router) {
     });
   });
   router.use(
+    `/static/${WIDGET_HOST_FILENAME}`,
+    staticCompression,
+    express.static(join(staticPath, WIDGET_HOST_FILENAME), {
+      setHeaders: (res) => {
+        setApplicationShellCacheHeaders(res);
+        setWidgetHostHeaders(res);
+      },
+    }),
+  );
+  router.use(
     "/static/app.html",
     staticCompression,
     express.static(join(staticPath, "app.html"), {
@@ -557,7 +572,17 @@ async function initStatic(router) {
   router.use(
     "/static",
     staticCompression,
-    express.static(staticPath, { setHeaders: cacheLongTerm }),
+    express.static(staticPath, {
+      setHeaders: (res, path) => {
+        cacheLongTerm(res);
+        setStaticFontCorsHeaders(res, path);
+        // Any other spelling of the widget host's path (the route above
+        // serves the exact one) gets its headers too.
+        if (basename(path) === WIDGET_HOST_FILENAME) {
+          setWidgetHostHeaders(res);
+        }
+      },
+    }),
   );
 
   // Also, immediately 404 if anything else under static is requested

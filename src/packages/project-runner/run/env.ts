@@ -1,4 +1,5 @@
 import { conatServer } from "@cocalc/backend/data";
+import { normalizeContentDomain } from "@cocalc/util/project-content-origin";
 import { join } from "node:path";
 import base_path from "@cocalc/backend/base-path";
 import { COCALC_SRC, COCALC_BIN, COCALC_BIN2 } from "./mounts";
@@ -183,6 +184,11 @@ export async function getEnvironment({
     DEBIAN_FRONTEND: "noninteractive",
     COCALC_PROXY_HOST: "0.0.0.0",
     COCALC_PROXY_PORT: DEFAULT_PROJECT_PROXY_PORT,
+    // With app origins (a content domain), apps run at the root of their own
+    // origin, without a base URL (trust-free step 6, phase 7c).
+    ...(normalizeContentDomain(process.env.COCALC_PROJECT_CONTENT_DOMAIN)
+      ? { COCALC_PROJECT_APPS_AT_ROOT: "1" }
+      : {}),
     ...(cloudProvider ? { COCALC_CLOUD_PROVIDER: cloudProvider } : {}),
     ...(cloudRegion ? { COCALC_CLOUD_REGION: cloudRegion } : {}),
     ...(cloudZone ? { COCALC_CLOUD_ZONE: cloudZone } : {}),

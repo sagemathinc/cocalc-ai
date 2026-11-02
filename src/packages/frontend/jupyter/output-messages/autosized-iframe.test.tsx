@@ -16,7 +16,6 @@ const PROFILES: IframeProfile[] = [
   "passive",
   "opaque-scripts",
   "opaque-legacy",
-  "trusted-same-origin",
 ];
 
 function frame(profile: IframeProfile) {
@@ -35,21 +34,18 @@ describe("AutosizedIframe profiles", () => {
     expect(frame("opaque-legacy").getAttribute("sandbox")).toBe(
       "allow-forms allow-scripts allow-presentation",
     );
-    expect(frame("trusted-same-origin").hasAttribute("sandbox")).toBe(false);
   });
 
-  it("never combines scripts with same-origin", () => {
+  it("never combines scripts with same-origin, and every frame is sandboxed", () => {
     for (const profile of PROFILES) {
-      expect(iframeSandbox(profile) ?? "").not.toContain("allow-same-origin");
+      expect(iframeSandbox(profile)).not.toContain("allow-same-origin");
+      expect(frame(profile).hasAttribute("sandbox")).toBe(true);
     }
   });
 
   it("sends no referrer from untrusted frames", () => {
     expect(frame("opaque-scripts").getAttribute("referrerpolicy")).toBe(
       "no-referrer",
-    );
-    expect(frame("trusted-same-origin").hasAttribute("referrerpolicy")).toBe(
-      false,
     );
   });
 

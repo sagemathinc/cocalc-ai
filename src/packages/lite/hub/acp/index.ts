@@ -33,6 +33,7 @@ import { agentRpcReportCapabilityExpiresAt } from "@cocalc/conat/agents/rpc-repo
 import { SENSOR_WAKE_CLAIM_LEASE_MS } from "@cocalc/conat/agents/sensors";
 import { toolUseTracker } from "./tool-use";
 import { sweepAgentStatus } from "./agent-status-report";
+import { reportAgentModelFromEvent } from "./agent-runtime-report";
 import {
   rpcOutcome,
   type AgentRpcAttempt,
@@ -8516,6 +8517,7 @@ async function executeAcpRequest({
       }
       wrappedStream = async (payload?: AcpStreamPayload | null) => {
         captureRecoveryCode(payload);
+        reportAgentModelFromEvent(request, payload);
         try {
           await chatWriter.handle(payload);
         } catch (err) {
@@ -8531,6 +8533,7 @@ async function executeAcpRequest({
     } else {
       wrappedStream = async (payload?: AcpStreamPayload | null) => {
         captureRecoveryCode(payload);
+        reportAgentModelFromEvent(request, payload);
         await stream(payload);
       };
     }

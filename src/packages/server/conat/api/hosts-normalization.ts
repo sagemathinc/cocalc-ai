@@ -27,6 +27,7 @@ import type {
   Host,
   HostBackupStatus,
   HostBeesStatus,
+  HostIntegrityStatus,
   HostBillingEnforcement,
   HostBillingEnforcementState,
   HostBillingRecoveryAction,
@@ -96,6 +97,21 @@ const MANAGED_COMPONENT_KINDS = new Set<ManagedComponentKind>([
   "conat-persist",
   "acp-worker",
 ]);
+
+function normalizeHostIntegrity(
+  value: unknown,
+): HostIntegrityStatus | undefined {
+  if (
+    value == null ||
+    typeof value !== "object" ||
+    !["running", "stale", "missing", "unreadable"].includes(
+      `${(value as any).watcher}`,
+    )
+  ) {
+    return undefined;
+  }
+  return value as HostIntegrityStatus;
+}
 
 function normalizeBeesStatus(value: unknown): HostBeesStatus | undefined {
   if (
@@ -1558,6 +1574,7 @@ export function parseRow(
     host_session_started_at: metadata.host_session_started_at,
     public_route_probe: normalizePublicRouteProbe(metadata.public_route_probe),
     bees: normalizeBeesStatus(metadata.bees),
+    host_integrity: normalizeHostIntegrity(metadata.host_integrity),
     metrics:
       currentMetrics || opts.metrics_history
         ? {

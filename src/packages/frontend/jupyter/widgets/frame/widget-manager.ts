@@ -12,79 +12,61 @@ import type {
   JSONValue,
   JSONObject,
 } from "@cocalc/widgets";
-import {
-  IpywidgetsState,
-  SerializedModelState,
-} from "@cocalc/sync/editor/generic/ipywidgets-state";
 import { once } from "@cocalc/util/async-utils";
 import { is_array, is_object, len, uuid } from "@cocalc/util/misc";
-import { fromJS } from "immutable";
-import { CellOutputMessage } from "@cocalc/frontend/jupyter/output-messages/message";
-import React from "react";
-import ReactDOM from "react-dom/client";
-import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
-import { FileContext } from "@cocalc/frontend/lib/file-context";
-import { FrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
-
 import { delay } from "awaiting";
-import {
-  assertAllowedWidgetModule,
-  inlineSanitize,
-  safeWidgetClass,
-} from "./safety";
+import type { WidgetState } from "./remote-state";
 
 const K3D_DELAY_MS = 25;
 
 type DeserializedModelState = { [key: string]: any };
+type SerializedModelState = { [key: string]: any };
 
 export type SendCommFunction = (string, data) => string;
 
 //const log = console.log;
 const log = (..._args) => {};
 
+/*
+The widget manager of one widget frame (see host.ts).  It runs only in the
+frame, never in the app page: the frame's opaque origin, not this code, is
+what keeps widget code and markup away from the page and the session.
+*/
+
+export interface WidgetManagerHost {
+  // A widget comm message to the notebook's kernel.
+  sendCommMessageToKernel: (opts: {
+    msg_id: string;
+    comm_id: string;
+    target_name: string;
+    data: unknown;
+    buffers?: ArrayBuffer[] | ArrayBufferView[];
+  }) => void;
+  // Render one output message of an Output widget into destination.
+  renderOutput: (output: any, destination: Element) => void;
+}
+
 export class WidgetManager {
-  public ipywidgets_state: IpywidgetsState;
-  public actions: JupyterActions;
+  public ipywidgets_state: WidgetState;
   public manager;
+  public host: WidgetManagerHost;
   private last_changed: { [model_id: string]: { [key: string]: any } } = {};
   private state_lock: Set<string> = new Set();
   private watching: Set<string> = new Set();
   public k3dObjectIds = new Set<number>();
   private closed = false;
-  // React roots of nested Output widget content and their containers,
-  // unmounted on close() or once their container has left the page.
-  public outputRoots = new Map<ReactDOM.Root, Element>();
-
-  addOutputRoot = (root: ReactDOM.Root, container: Element): void => {
-    for (const [old, div] of this.outputRoots) {
-      if (!div.isConnected) {
-        try {
-          old.unmount();
-        } catch {}
-        this.outputRoots.delete(old);
-      }
-    }
-    this.outputRoots.set(root, container);
-  };
 
   constructor({
     ipywidgets_state,
-    actions,
+    host,
   }: {
-    ipywidgets_state: IpywidgetsState;
-    actions: JupyterActions;
+    ipywidgets_state: WidgetState;
+    host: WidgetManagerHost;
   }) {
     this.ipywidgets_state = ipywidgets_state;
-    this.actions = actions;
-    if (this.ipywidgets_state.get_state() == "closed") {
-      throw Error("ipywidgets_state must not be closed");
-    }
+    this.host = host;
     const provider = new Environment(this);
     this.manager = createWidgetManager(provider);
-    this.restrictWidgetCode();
-    this.guardCodeActivation();
-
     this.initAllModels();
     this.ipywidgets_state.on("change", this.handleStateChange);
   }
@@ -99,95 +81,18 @@ export class WidgetManager {
 
   isClosed = (): boolean => this.closed;
 
-  // Widget state is shared with every collaborator, so it must not choose
-  // code or markup that runs in this page (see safety.ts): only allowed
-  // modules load, the HTML views are inert, HTML descriptions are text.
-  private restrictWidgetCode = (): void => {
-    const manager = this.manager as any;
-    const loadClass = manager?.loadClass;
-    if (typeof loadClass == "function") {
-      manager.loadClass = async (
-        className: string,
-        moduleName: string,
-        moduleVersion: string,
-      ) => {
-        assertAllowedWidgetModule(moduleName, moduleVersion);
-        const cls = await loadClass.call(
-          manager,
-          className,
-          moduleName,
-          moduleVersion,
-        );
-        return safeWidgetClass(className, moduleName, cls);
-      };
-    }
-    if (manager != null) manager.inline_sanitize = inlineSanitize;
-  };
-
-  // Every model and view class the widget library uses is loaded through
-  // loadClass, and every model and view is created through new_model,
-  // create_view or render. Refuse these once closed, and recheck after a
-  // class finishes loading, so no widget code (module, constructor,
-  // deserializer, view.render) starts after close(). Constructing a model or
-  // view happens synchronously right after its class resolves.
-  private guardCodeActivation = (): void => {
-    const manager = this.manager as any;
-    const guard = (name: string, recheckAfter: boolean) => {
-      const original = manager?.[name];
-      if (typeof original != "function") return;
-      manager[name] = async (...args) => {
-        this.assertOpen();
-        const result = await original.apply(manager, args);
-        if (recheckAfter) this.assertOpen();
-        return result;
-      };
-    };
-    guard("loadClass", true);
-    guard("new_model", false);
-    guard("create_view", false);
-    guard("render", false);
-  };
-
-  // Stop all widget activity: no more state updates are applied, no messages
-  // go to the kernel, and every model is closed (which removes its views).
-  // Used when the notebook stops being trusted. The shared ipywidgets_state
-  // itself belongs to the syncdb and stays open.
+  // Stop applying state and sending messages (the frame is going away).
   close = (): void => {
     if (this.closed) return;
     this.closed = true;
     this.ipywidgets_state.removeListener("change", this.handleStateChange);
-    const closeModel = (promise) => {
-      Promise.resolve(promise)
-        .then((model) => {
-          // comm_closed=true: our comm's close() is not implemented.
-          model?.close?.(true);
-        })
-        .catch(() => {});
-    };
-    const manager = this.manager as any;
-    for (const id of Object.keys(manager?._models ?? {})) {
-      closeModel(manager._models[id]);
-    }
-    for (const root of this.outputRoots.keys()) {
-      try {
-        root.unmount();
-      } catch {}
-    }
-    this.outputRoots.clear();
-    // Work that started before close() (e.g. a model whose state was still
-    // loading) may register a model afterwards: close those as they appear.
-    if (manager != null) {
-      manager.register_model = (_model_id: string, promise) => {
-        closeModel(promise);
-      };
-    }
   };
 
   // Every await in the widget code paths can cross a close(): check again
   // before doing anything with the result.
   assertOpen = (): void => {
     if (this.closed) {
-      throw Error("widgets are disabled because the notebook is not trusted");
+      throw Error("widgets are closed");
     }
   };
 
@@ -677,7 +582,7 @@ VBox([s1, s2])
     // Opening the comm is the last step before a model (and possibly its
     // custom module) is created, so refuse it once closed.
     this.assertOpen();
-    const { sendCommMessageToKernel } = this.actions;
+    const { sendCommMessageToKernel } = this.host;
     const isClosed = this.isClosed;
 
     // TODO: we do not currently have anything at all that
@@ -709,9 +614,7 @@ VBox([s1, s2])
       ): string {
         log("comm.send", { data, buffers, metadata, callbacks });
         if (isClosed()) {
-          throw Error(
-            "widgets are disabled because the notebook is not trusted",
-          );
+          throw Error("widgets are closed");
         }
         const msg_id = uuid();
         sendCommMessageToKernel({
@@ -865,46 +768,7 @@ class Environment implements WidgetEnvironment {
     if (outputItem == null || this.manager.isClosed()) {
       return;
     }
-    const message = fromJS(outputItem);
-    const myDiv = document.createElement("div");
-    destination.appendChild(myDiv);
-    const { actions } = this.manager;
-    const { project_id, path } = actions;
-    // NOTE: we are NOT caching iframes here, so iframes in output
-    // widgets will refresh if you scroll them off the screen and back.
-    const trust = actions.store.get("trust");
-    const component = React.createElement(
-      FrameContext.Provider,
-      {
-        // @ts-ignore -- we aren't filling in all the standard stuff
-        // also we just always put isVisible true, since the output widget itself
-        // (which has proper context) gets not rendered and that contains this.
-        value: { isVisible: true, project_id, path },
-      },
-      React.createElement(
-        FileContext.Provider,
-        {
-          value: {
-            // Widget state is shared with every collaborator: what an
-            // Output widget shows is sanitized like untrusted content (HTML
-            // and JavaScript outputs are framed either way).
-            noSanitize: false,
-            project_id,
-            path,
-            // see https://github.com/sagemathinc/cocalc/issues/5258
-            AnchorTagComponent: getAnchorTagComponent({ project_id, path }),
-          },
-        },
-        React.createElement(
-          CellOutputMessage,
-          { message, actions, project_id, trust },
-          null,
-        ),
-      ),
-    );
-    const root = ReactDOM.createRoot(myDiv);
-    this.manager.addOutputRoot(root, myDiv);
-    root.render(component);
+    this.manager.host.renderOutput(outputItem, destination);
   }
 }
 

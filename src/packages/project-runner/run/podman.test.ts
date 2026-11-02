@@ -693,6 +693,45 @@ describe("project-runner podman orphan fallback", () => {
     });
   });
 
+  it("mounts the root-owned node runtime library that bootstrap published", async () => {
+    mockProjectStartPodman(project1);
+    const libatomic = `/tmp/cocalc-test-libatomic-pub-${project1}`;
+    const published = `/tmp/cocalc-test-runtime-libs-pub-${project1}`;
+    const compatLibs = `/tmp/cocalc-test-runtime-libs-own-${project1}`;
+    await writeFile(libatomic, "host-libatomic");
+    await mkdir(published, { recursive: true });
+    await writeFile(`${published}/libatomic.so.1`, "host-libatomic");
+    process.env.COCALC_NODE_RUNTIME_LIBATOMIC = libatomic;
+    process.env.COCALC_NODE_RUNTIME_PUBLISHED_LIBS = published;
+    process.env.COCALC_NODE_RUNTIME_COMPAT_LIBS = compatLibs;
+    try {
+      await start({
+        project_id: project1,
+        localPath: async () => ({ home: `/tmp/project-${project1}` }),
+        config: { image: "docker.io/library/ubuntu:latest" },
+      });
+      // the published copy serves; no copy of its own
+      await expect(stat(compatLibs)).rejects.toThrow();
+      // an outdated published copy is not used
+      await writeFile(`${published}/libatomic.so.1`, "older-libatomic");
+      await start({
+        project_id: project1,
+        localPath: async () => ({ home: `/tmp/project-${project1}` }),
+        config: { image: "docker.io/library/ubuntu:latest" },
+      });
+      expect(await readFile(`${compatLibs}/libatomic.so.1`, "utf8")).toBe(
+        "host-libatomic",
+      );
+    } finally {
+      delete process.env.COCALC_NODE_RUNTIME_LIBATOMIC;
+      delete process.env.COCALC_NODE_RUNTIME_PUBLISHED_LIBS;
+      delete process.env.COCALC_NODE_RUNTIME_COMPAT_LIBS;
+      await rm(libatomic, { force: true }).catch(() => {});
+      await rm(published, { force: true, recursive: true }).catch(() => {});
+      await rm(compatLibs, { force: true, recursive: true }).catch(() => {});
+    }
+  });
+
   it("uses caller-provided host ports when starting a project", async () => {
     mockProjectStartPodman(project1);
     const libatomic = `/tmp/cocalc-test-libatomic-${project1}`;

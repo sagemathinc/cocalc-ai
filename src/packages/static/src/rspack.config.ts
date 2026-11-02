@@ -258,6 +258,10 @@ export default function getConfig(): Configuration {
       ultralite: {
         import: [resolve("dist-ts/src/webapp-ultralite.js")],
       },
+      // Standalone: a Jupyter widget frame loads nothing of the app.
+      "widget-host": {
+        import: [resolve("dist-ts/src/webapp-widget-host.js")],
+      },
     },
     // The filename must include the final emitted bytes, including numeric
     // module ids assigned late in the build. chunkhash can remain unchanged

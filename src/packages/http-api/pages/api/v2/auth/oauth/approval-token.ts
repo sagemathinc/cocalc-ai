@@ -44,7 +44,7 @@ export default async function oauthApprovalToken(req, res) {
       account_id,
       action: `sign in to ${request.client.name}`,
     });
-    res.json(await issueAuthorizeApprovalProof({ account_id, request }));
+    res.json(await issueAuthorizeApprovalProof({ account_id, request, req }));
   } catch (err) {
     res.json({
       error: err instanceof Error ? err.message : `${err}`,

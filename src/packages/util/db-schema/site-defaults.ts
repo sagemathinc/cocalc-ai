@@ -186,9 +186,6 @@ export type SiteSettingsKeys =
   | "project_hosts_gcp_surcharge_percent"
   | "project_hosts_nebius_surcharge_percent"
   | "cloudflare_mode"
-  | "project_hosts_app_private_hostnames_enabled"
-  | "project_hosts_app_private_hostname_domain"
-  | "project_hosts_app_private_hostname_bay_limit"
   | "automatic_project_archiving_enabled"
   | "automatic_project_archiving_report_only"
   | "free_project_archive_after_days"
@@ -424,9 +421,7 @@ const PROJECT_HOSTS_FUNDING_MODES = [
   "site-funded",
 ] as const;
 export type ProjectHostsFundingMode =
-  | "account-prepaid"
-  | "account-postpaid"
-  | "site-funded";
+  "account-prepaid" | "account-postpaid" | "site-funded";
 
 const project_hosts_funding_mode_to_val: ToValFunc<ProjectHostsFundingMode> = (
   val?,
@@ -1918,43 +1913,6 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Project Hosts", "Cloud", "Nebius", "Commercialization"],
     group: "Compute / Project Hosts",
     subgroup: "Billing",
-  },
-  project_hosts_app_private_hostnames_enabled: {
-    name: "Project Hosts: Private App Hostnames",
-    desc: "Enable authenticated, server-generated dev-* hostnames for private project apps. This requires Cloudflare DNS automation, direct project-host routes, and compatible wildcard TLS on project hosts.",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-    tags: ["Project Hosts", "Cloud", "Cloudflare"],
-    group: "Compute / Project Hosts",
-    subgroup: "Domain",
-    show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
-  },
-  project_hosts_app_private_hostname_domain: {
-    name: "Project Hosts: Private App Hostname Domain",
-    desc: "DNS domain under which one-level private app hostnames are created, e.g. cocalc.ai. Leave blank to use the public site hostname. The domain must have Cloudflare edge and project-host origin TLS coverage.",
-    default: "",
-    valid: valid_dns_name_or_empty,
-    to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Cloud", "Cloudflare"],
-    group: "Compute / Project Hosts",
-    subgroup: "Domain",
-    show: (conf) =>
-      (conf.cloudflare_mode ?? "none") === "self" &&
-      to_bool(conf.project_hosts_app_private_hostnames_enabled),
-  },
-  project_hosts_app_private_hostname_bay_limit: {
-    name: "Project Hosts: Private App Hostname Per-Bay Limit",
-    desc: "Safety ceiling for platform-managed private app DNS records in this bay. Keep this below the Cloudflare zone record quota. This is not a cluster-wide counter in multibay deployments and becomes unnecessary when private app routing uses a wildcard edge route.",
-    default: "3000",
-    valid: only_nonneg_int,
-    to_val: to_int,
-    tags: ["Project Hosts", "Cloud", "Cloudflare"],
-    group: "Compute / Project Hosts",
-    subgroup: "Domain",
-    show: (conf) =>
-      (conf.cloudflare_mode ?? "none") === "self" &&
-      to_bool(conf.project_hosts_app_private_hostnames_enabled),
   },
   launcher_default_quick_create: {
     name: "Launcher: Quick Create",
