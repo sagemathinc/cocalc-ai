@@ -502,8 +502,8 @@ describe("the body (direct-to-CoCalc ingress)", () => {
   it("a duplicate key gives 400, also when one copy is escaped", async () => {
     const body = validBody();
     for (const dup of [
-      body.replace("{", '{"title":"Another title here",'),
-      body.replace("{", '{"\\u0074itle":"Another title here",'),
+      '{"title":"Another title here",' + body.slice(1),
+      '{"\\u0074itle":"Another title here",' + body.slice(1),
     ]) {
       expect((await run(makeReq({ body: dup }))).status).toBe(400);
     }
