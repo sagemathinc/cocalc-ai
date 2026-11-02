@@ -26,6 +26,7 @@ import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import {
   formatFreshAuthDuration,
   freshAuthDurationNeedsStrongFactor,
+  isLongFreshAuthDuration,
 } from "@cocalc/util/auth/fresh-auth-duration";
 import {
   getImpersonationBootstrapInfo,
@@ -1248,6 +1249,9 @@ export async function freshAuthSession({
     const session_hash = getRememberMeHash(req);
     if (!session_hash) {
       throw new Error("browser sign-in is required");
+    }
+    if (isLongFreshAuthDuration(duration)) {
+      throw new Error("an impersonation verification lasts at most 8 hours");
     }
     const factor_level = await verifyFreshAuthCredentialsForAccount({
       account_id: impersonation.actor_account_id,

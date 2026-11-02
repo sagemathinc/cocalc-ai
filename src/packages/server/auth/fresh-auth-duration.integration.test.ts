@@ -20,6 +20,7 @@ import {
   resolveFreshAuthDurationMs,
   setSessionFreshAuth,
 } from "./auth-sessions";
+import { setImpersonationActorFreshAuth } from "./impersonation";
 import { createRememberMeCookie } from "./remember-me";
 
 const HOUR = 3600_000;
@@ -88,12 +89,23 @@ it("a 72 hour fresh auth needs a TOTP, passkey or Google verification", () => {
   ).toThrow(/invalid fresh auth duration/);
 });
 
+// The email is sent without delaying the verification: wait until the
+// expected number arrived (or, for none, give a stray one time to show up).
+async function emailsSettle(expected = 0): Promise<void> {
+  const deadline = Date.now() + (expected > 0 ? 15_000 : 1_000);
+  while (Date.now() < deadline && testEmails.length < Math.max(expected, 1)) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 it("emails the account when a fresh auth longer than 8 hours starts", async () => {
   const account_id = await newAccount();
   const hash = await session(account_id);
   await freshFor(account_id, hash, 8 * HOUR);
+  await emailsSettle();
   expect(testEmails).toHaveLength(0);
   await freshFor(account_id, hash, 72 * HOUR);
+  await emailsSettle(1);
   expect(testEmails).toHaveLength(1);
   expect(testEmails[0].to).toBe(`${account_id}@example.test`);
   expect(testEmails[0].subject).toMatch(/72 hours/);
@@ -169,4 +181,31 @@ it("refuses to end without a well-formed id or all", async () => {
   await expect(
     endFreshAuth({ account_id: "not-a-uuid", all: true }),
   ).rejects.toThrow(/account_id/);
+});
+
+it("an admin acting as someone else gets at most 8 hours", async () => {
+  const subject = await newAccount();
+  const actor = await newAccount();
+  const hash = await session(subject);
+  await getPool().query(
+    `INSERT INTO account_impersonation_sessions
+       (session_hash, subject_account_id, actor_account_id, created, updated, expire)
+     VALUES ($1::CHAR(127), $2, $3, NOW(), NOW(), NOW() + INTERVAL '1 hour')`,
+    [hash, subject, actor],
+  );
+  await expect(freshFor(subject, hash, 72 * HOUR)).rejects.toThrow(
+    /at most 8 hours/,
+  );
+  expect((await row(hash)).fresh_auth_until).toBeNull();
+  await expect(
+    setImpersonationActorFreshAuth({
+      subject_account_id: subject,
+      session_hash: hash,
+      factor_level: "totp",
+      fresh_auth_until: new Date(Date.now() + 72 * HOUR),
+    }),
+  ).rejects.toThrow(/at most 8 hours/);
+  await freshFor(subject, hash, 8 * HOUR);
+  await emailsSettle();
+  expect(testEmails).toHaveLength(0);
 });

@@ -49,7 +49,11 @@ describe("auth session ownership writes", () => {
   });
 
   it("rejects fresh-auth promotion when the session is not owned by the account", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    queryMock.mockImplementation(async (sql: string) =>
+      `${sql}`.includes("UPDATE account_auth_sessions")
+        ? { rows: [], rowCount: 0 }
+        : { rows: [], rowCount: 1 },
+    );
     const { setSessionFreshAuth } = await import("./auth-sessions");
 
     await expect(
