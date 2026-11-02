@@ -6,9 +6,8 @@
 import { endOtherSessionsOrExplain } from "@cocalc/server/accounts/revocation";
 import { v4 as uuid } from "uuid";
 
-import passwordHash, {
-  verifyPassword,
-} from "@cocalc/backend/auth/password-hash";
+import { checkPassword } from "@cocalc/backend/auth/password-hash";
+import { newPasswordHash } from "@cocalc/database/settings/password-kdf";
 import getCustomize from "@cocalc/database/settings/customize";
 import {
   decryptSecretStorageValue,
@@ -336,11 +335,15 @@ async function issueRecoveryCodesWithDb({
   factor_id: string;
 }): Promise<string[]> {
   const codes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
+  // Hash before writing: the KDF is slow, and db may be a transaction.
+  const code_hashes = await Promise.all(
+    codes.map((code) => newPasswordHash(normalizeRecoveryCode(code))),
+  );
   await db.query(
     "DELETE FROM account_second_factor_recovery_codes WHERE account_id = $1::UUID",
     [account_id],
   );
-  for (const code of codes) {
+  for (const code_hash of code_hashes) {
     await db.query(
       `
         INSERT INTO account_second_factor_recovery_codes(
@@ -349,13 +352,7 @@ async function issueRecoveryCodesWithDb({
           $1::UUID, $2::UUID, $3::UUID, $4::VARCHAR(173), NULL, NOW(), $5::JSONB
         )
       `,
-      [
-        uuid(),
-        account_id,
-        factor_id,
-        passwordHash(normalizeRecoveryCode(code)),
-        "{}",
-      ],
+      [uuid(), account_id, factor_id, code_hash, "{}"],
     );
   }
   return codes;
@@ -393,7 +390,7 @@ async function consumeRecoveryCodeWithDb({
     )
   ).rows;
   for (const row of rows) {
-    if (!verifyPassword(normalized, row.code_hash)) {
+    if (!(await checkPassword(normalized, row.code_hash))) {
       continue;
     }
     const update = await db.query(
@@ -513,7 +510,7 @@ async function verifyFreshAuthInputs({
       account_id,
     });
     const ok =
-      !!password_hash && verifyPassword(current_password, password_hash);
+      !!password_hash && (await checkPassword(current_password, password_hash));
     if (!ok) {
       throw new Error(
         password_hash

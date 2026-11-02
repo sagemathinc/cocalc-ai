@@ -8,9 +8,8 @@ jest.mock("@cocalc/database/pool", () => ({
   default: jest.fn(() => ({ query: queryMock })),
 }));
 
-jest.mock("@cocalc/backend/auth/password-hash", () => ({
-  __esModule: true,
-  default: (...args: any[]) => passwordHashMock(...args),
+jest.mock("@cocalc/database/settings/password-kdf", () => ({
+  newPasswordHash: async (...args: any[]) => passwordHashMock(...args),
 }));
 
 describe("accounts.createAccount", () => {
