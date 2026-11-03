@@ -557,3 +557,40 @@ describe("a CLI elevation longer than 8 hours needs its duration confirmed", () 
     expect(startFreshAuthPasskeyAuthentication).not.toHaveBeenCalled();
   });
 });
+
+describe("the dev CLI fresh-auth helper keeps its 8 hour maximum", () => {
+  const account_id = "00000000-1000-4000-8000-000000000001";
+
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  it("refuses more than 8 hours, before touching any session", async () => {
+    const { approveDevCliElevate } = await import("./cli-auth");
+    const { setSessionFreshAuth } =
+      await import("@cocalc/server/auth/auth-sessions");
+    for (const duration of ["9h", "24h", "72h"] as const) {
+      await expect(
+        approveDevCliElevate({
+          account_id,
+          session_hash: "session-hash",
+          hub_password: "dev-password",
+          duration,
+        }),
+      ).rejects.toThrow("dev CLI fresh auth lasts at most 8 hours");
+    }
+    expect(setSessionFreshAuth).not.toHaveBeenCalled();
+  });
+
+  it("still grants up to 8 hours", async () => {
+    const { approveDevCliElevate } = await import("./cli-auth");
+    await expect(
+      approveDevCliElevate({
+        account_id,
+        session_hash: "session-hash",
+        hub_password: "dev-password",
+        duration: "extended",
+      }),
+    ).resolves.toMatchObject({ approved: true, dev: true });
+  });
+});
