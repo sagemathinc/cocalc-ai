@@ -455,6 +455,17 @@ function isBeforeLoadedRange(
   );
 }
 
+// The client that wrote a patch, or undefined if that is not known (a
+// malformed id, or a legacy id: those all share one client id).
+export function patchClientId(time: string): string | undefined {
+  try {
+    const { clientId } = decodePatchId(time);
+    return clientId === "legacy" ? undefined : clientId;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface LoadedStartSnapshot {
   // patch times proven to be ancestors of the loaded snapshot's patch;
   // undefined for a snapshot written before snapshot_ancestors
@@ -4193,11 +4204,13 @@ export class SyncDoc extends EventEmitter {
   };
 
   private loadHistoryForExactValue = reuseInFlight(async (): Promise<void> => {
+    const dbg = this.dbg("loadHistoryForExactValue");
     const needsMore = () =>
       !this.isClosed() &&
       this.patchflowSession != null &&
       !this.hasFullHistory() &&
-      !!(this.patchflowSession as any).needsMoreHistory?.();
+      !!(this.patchflowSession as any).needsMoreHistory?.() &&
+      !this.waitsOnPatchMissingFromStream();
     try {
       // Normally one step back (to the previous snapshot) is enough.
       for (let i = 0; i < 3 && needsMore(); i++) {
@@ -4206,10 +4219,57 @@ export class SyncDoc extends EventEmitter {
       if (needsMore()) {
         await this.loadMoreHistory({ all: true });
       }
+      if (this.waitsOnPatchMissingFromStream()) {
+        dbg(
+          "a loaded patch builds on a patch that is not in the stream; older history cannot supply it",
+        );
+      }
     } catch (err) {
-      this.dbg("loadHistoryForExactValue")(`failed: ${err}`);
+      dbg(`failed: ${err}`);
     }
   });
+
+  // Whether a loaded patch has a parent that is not in the stream at all, so
+  // loading older history cannot make the value exact (e.g., the parent
+  // reached its child's author live but was never persisted). A client
+  // appends its own patches in order, so a parent whose author has an older
+  // patch in the loaded history would be in the loaded history if it were in
+  // the stream. Loading everything would only add the cost of the whole
+  // history (minutes for a long-lived document) to every cold open.
+  private waitsOnPatchMissingFromStream = (): boolean => {
+    let patches: Patch[];
+    try {
+      patches = this.get_patches();
+    } catch {
+      return false;
+    }
+    const loaded = new Set<string>();
+    // oldest loaded patch of each client
+    const oldest = new globalThis.Map<string, string>();
+    for (const p of patches) {
+      const time = `${p.time}`;
+      loaded.add(time);
+      if (p.is_snapshot && p.patch == null) continue;
+      const client = patchClientId(time);
+      if (client == null) continue;
+      const prev = oldest.get(client);
+      if (prev == null || comparePatchId(time, prev) < 0) {
+        oldest.set(client, time);
+      }
+    }
+    for (const p of patches) {
+      for (const parent of p.parents ?? []) {
+        const id = `${parent}`;
+        if (loaded.has(id)) continue;
+        const client = patchClientId(id);
+        const first = client == null ? undefined : oldest.get(client);
+        if (first != null && comparePatchId(first, id) < 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
 
   private applyPatchflowRemoteBatch = (envs: PatchEnvelope[]): boolean => {
     if (this.patchflowSession == null) {
