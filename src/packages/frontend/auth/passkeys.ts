@@ -139,9 +139,12 @@ export async function freshAuthWithPasskey({
 export async function approveCliElevationWithPasskey({
   challenge_id,
   current_password,
+  confirmed_duration,
 }: {
   challenge_id: string;
   current_password: string;
+  // Required by the server for a request longer than 8 hours.
+  confirmed_duration?: FreshAuthDuration;
 }): Promise<any> {
   const unavailable = webAuthnUnavailableMessage();
   if (unavailable) {
@@ -152,6 +155,7 @@ export async function approveCliElevationWithPasskey({
     body: {
       challenge_id,
       current_password,
+      ...(confirmed_duration ? { confirmed_duration } : {}),
     },
   });
   const response: AuthenticationResponseJSON = await startAuthentication({

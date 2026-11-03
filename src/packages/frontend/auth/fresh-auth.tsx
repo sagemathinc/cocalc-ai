@@ -222,6 +222,12 @@ export function FreshAuthModal({
     }
   }, [canUseExtended]);
 
+  // Each opening starts from this action's own duration: a longer one chosen
+  // earlier (then canceled, or for another action) never carries over.
+  useEffect(() => {
+    setDuration("default");
+  }, [open, initialDuration]);
+
   useEffect(() => {
     if (open && initialDuration !== "default" && canUseExtended) {
       setDuration(initialDuration);

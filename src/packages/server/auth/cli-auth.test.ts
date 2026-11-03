@@ -473,3 +473,87 @@ describe("Codex fresh-auth attention status", () => {
     ).resolves.toMatchObject({ state: "approved" });
   });
 });
+
+describe("a CLI elevation longer than 8 hours needs its duration confirmed", () => {
+  const account_id = "00000000-1000-4000-8000-000000000001";
+  const challenge_id = "00000000-3000-4000-8000-000000000003";
+
+  beforeEach(() => {
+    jest.resetModules();
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          id: challenge_id,
+          account_id,
+          kind: "elevate",
+          status: "pending",
+          poll_token_hash: hashToken("poll-token"),
+          target_session_hash: "session-hash",
+          requested_duration: "72h",
+          expire: new Date("2099-09-02T01:00:00.000Z"),
+          created: new Date("2099-09-02T00:00:00.000Z"),
+          metadata: {},
+        },
+      ],
+    }));
+  });
+
+  it("accepts only the exact requested duration", async () => {
+    const { assertLongDurationConfirmed } = await import("./cli-auth");
+    expect(() =>
+      assertLongDurationConfirmed({ requested_duration: "72h" }),
+    ).toThrow("confirm the requested 72 hours elevation");
+    expect(() =>
+      assertLongDurationConfirmed({
+        requested_duration: "72h",
+        confirmed_duration: "24h",
+      }),
+    ).toThrow("confirm the requested 72 hours elevation");
+    expect(() =>
+      assertLongDurationConfirmed({
+        requested_duration: "72h",
+        confirmed_duration: "nonsense",
+      }),
+    ).toThrow("confirm the requested 72 hours elevation");
+    expect(() =>
+      assertLongDurationConfirmed({
+        requested_duration: "72h",
+        confirmed_duration: "72h",
+      }),
+    ).not.toThrow();
+    // Up to 8 hours needs no extra confirmation.
+    for (const requested_duration of ["default", "extended", "8h", null]) {
+      expect(() =>
+        assertLongDurationConfirmed({ requested_duration }),
+      ).not.toThrow();
+    }
+  });
+
+  it("refuses an unconfirmed approval before checking any credential", async () => {
+    const { approveCliElevateChallenge, startCliElevatePasskeyChallenge } =
+      await import("./cli-auth");
+    const { verifyFreshAuthCredentials } =
+      await import("@cocalc/server/auth/two-factor");
+    const { startFreshAuthPasskeyAuthentication } =
+      await import("@cocalc/server/auth/passkeys");
+    await expect(
+      approveCliElevateChallenge({
+        challenge_id,
+        account_id,
+        current_password: "",
+        method: "totp",
+        code: "123456",
+      }),
+    ).rejects.toThrow("confirm the requested 72 hours elevation");
+    expect(verifyFreshAuthCredentials).not.toHaveBeenCalled();
+    await expect(
+      startCliElevatePasskeyChallenge({
+        req: {},
+        challenge_id,
+        account_id,
+        current_password: "",
+      }),
+    ).rejects.toThrow("confirm the requested 72 hours elevation");
+    expect(startFreshAuthPasskeyAuthentication).not.toHaveBeenCalled();
+  });
+});

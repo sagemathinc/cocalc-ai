@@ -35,6 +35,12 @@ import {
   getClusterAccountById,
 } from "@cocalc/server/inter-bay/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  formatFreshAuthDuration,
+  isLongFreshAuthDuration,
+  parseFreshAuthDuration,
+  type FreshAuthDuration as SharedFreshAuthDuration,
+} from "@cocalc/util/auth/fresh-auth-duration";
 import { validateExternalAgentLabel } from "@cocalc/conat/agents/external";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 
@@ -1081,16 +1087,52 @@ export async function getCliAuthApprovalInfo({
   };
 }
 
+// A CLI (often driven by an agent) may ask for more than 8 hours. The owner
+// must then confirm that exact duration with the approval itself, so no
+// browser path (a button, the Enter key, a future view) can approve it by
+// accident. confirmed_duration must equal the challenge's requested duration.
+export function assertLongDurationConfirmed({
+  requested_duration,
+  confirmed_duration,
+}: {
+  requested_duration?: SharedFreshAuthDuration | string | null;
+  confirmed_duration?: unknown;
+}): void {
+  let requested: SharedFreshAuthDuration;
+  try {
+    requested = parseFreshAuthDuration(requested_duration);
+  } catch {
+    throw new Error("cli auth challenge has an invalid requested duration");
+  }
+  if (!isLongFreshAuthDuration(requested)) return;
+  let confirmed: SharedFreshAuthDuration | undefined;
+  try {
+    confirmed = parseFreshAuthDuration(confirmed_duration);
+  } catch {
+    confirmed = undefined;
+  }
+  if (confirmed !== requested) {
+    throw Object.assign(
+      new Error(
+        `confirm the requested ${formatFreshAuthDuration(requested)} elevation to approve it`,
+      ),
+      { code: "long_duration_unconfirmed" },
+    );
+  }
+}
+
 export async function approveCliLoginChallenge({
   challenge_id,
   account_id,
   factor_level,
   fresh_auth_until,
+  confirmed_duration,
 }: {
   challenge_id: string;
   account_id: string;
   factor_level?: AuthSessionFactorLevel | null;
   fresh_auth_until?: Date | string | null;
+  confirmed_duration?: unknown;
 }): Promise<{ approved: true }> {
   const row = await getChallengeRow(cleanChallengeId(challenge_id));
   if (!row || row.kind !== "login") {
@@ -1112,6 +1154,12 @@ export async function approveCliLoginChallenge({
       : undefined;
   const redeem_token = existingRedeemToken ?? createOpaqueToken();
   const elevatedLogin = row.metadata?.elevated_login === true;
+  if (elevatedLogin) {
+    assertLongDurationConfirmed({
+      requested_duration: row.requested_duration,
+      confirmed_duration,
+    });
+  }
   const approvedFactorLevel = elevatedLogin
     ? cleanFactorLevel(factor_level)
     : "none";
@@ -1148,12 +1196,14 @@ export async function approveCliElevateChallenge({
   current_password,
   method,
   code,
+  confirmed_duration,
 }: {
   challenge_id: string;
   account_id: string;
   current_password: string;
   method?: string;
   code?: string;
+  confirmed_duration?: unknown;
 }): Promise<{
   approved: true;
   factor_level: AuthSessionFactorLevel;
@@ -1163,6 +1213,10 @@ export async function approveCliElevateChallenge({
     challenge_id,
     account_id,
     expected_kind: "elevate",
+  });
+  assertLongDurationConfirmed({
+    requested_duration: row.requested_duration,
+    confirmed_duration,
   });
   const target_session_hash = cleanSessionHash(
     `${row.target_session_hash ?? ""}`,
@@ -1260,11 +1314,13 @@ export async function startCliElevatePasskeyChallenge({
   challenge_id,
   account_id,
   current_password,
+  confirmed_duration,
 }: {
   req: any;
   challenge_id: string;
   account_id: string;
   current_password: string;
+  confirmed_duration?: unknown;
 }): Promise<PasskeyFreshAuthStart> {
   const row = await ensureChallengeOwnedByAccount({
     challenge_id,
@@ -1274,6 +1330,11 @@ export async function startCliElevatePasskeyChallenge({
   if (row.status !== "pending") {
     throw new Error("cli auth challenge is not pending");
   }
+  // The passkey finish step uses the duration fixed here, at the start.
+  assertLongDurationConfirmed({
+    requested_duration: row.requested_duration,
+    confirmed_duration,
+  });
   const target_session_hash = cleanSessionHash(
     `${row.target_session_hash ?? ""}`,
   );

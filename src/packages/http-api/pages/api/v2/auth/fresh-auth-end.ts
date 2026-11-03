@@ -13,10 +13,7 @@ auth itself.
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import isPost from "@cocalc/http-api/lib/api/is-post";
-import {
-  endFreshAuth,
-  freshAuthSessionId,
-} from "@cocalc/server/auth/auth-sessions";
+import { endFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 
 export default async function endFreshAuthApi(req, res) {
@@ -40,11 +37,11 @@ export default async function endFreshAuthApi(req, res) {
       await endFreshAuth({
         account_id,
         all: endAll,
-        id: endAll
-          ? undefined
+        ...(endAll
+          ? {}
           : endCurrent
-            ? freshAuthSessionId(session_hash)
-            : `${id ?? ""}`,
+            ? { session_hash }
+            : { id: `${id ?? ""}` }),
       }),
     );
   } catch (err) {
