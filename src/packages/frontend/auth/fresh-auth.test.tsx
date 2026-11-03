@@ -275,6 +275,38 @@ describe("FreshAuthModal", () => {
     });
   });
 
+  it("does not carry a longer duration over to the next opening", async () => {
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/fresh-auth-status") {
+        return { mode: "account", enabled: true, methods: ["totp"] };
+      }
+      return {};
+    });
+    const props = {
+      onCancel: jest.fn(),
+      onSuccess: jest.fn(async () => undefined),
+    };
+    const { rerender } = render(<FreshAuthModal open {...props} />);
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("123456")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByLabelText("72 hours"));
+    expect(
+      (screen.getByLabelText("72 hours") as HTMLInputElement).checked,
+    ).toBe(true);
+    rerender(<FreshAuthModal open={false} {...props} />);
+    rerender(<FreshAuthModal open {...props} />);
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("123456")).toBeTruthy();
+    });
+    expect(
+      (screen.getByLabelText("15 minutes") as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("72 hours") as HTMLInputElement).checked,
+    ).toBe(false);
+  });
+
   it("starts on the duration a CLI asked for", async () => {
     jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
       if (endpoint === "auth/fresh-auth-status") {

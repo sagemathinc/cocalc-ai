@@ -14,7 +14,6 @@ import { after, before } from "@cocalc/server/test";
 
 import {
   endFreshAuth,
-  freshAuthSessionId,
   listActiveFreshAuthSessions,
   recordNewAuthSession,
   resolveFreshAuthDurationMs,
@@ -53,6 +52,15 @@ async function freshFor(account_id: string, session_hash: string, ms: number) {
     factor_level: "totp",
     fresh_auth_until: new Date(Date.now() + ms),
   });
+}
+
+// The public id of a session, as the server derives it (in SQL).
+async function idOf(session_hash: string): Promise<string> {
+  const { rows } = await getPool().query(
+    "SELECT left(encode(sha256(convert_to('fresh-auth-session:' || rtrim($1::TEXT), 'UTF8')), 'hex'), 32) AS id",
+    [session_hash],
+  );
+  return rows[0].id;
 }
 
 async function row(session_hash: string) {
@@ -127,17 +135,14 @@ it("lists the active fresh auths of an account, marking the current one", async 
     account_id,
     current_session_hash: b,
   });
-  expect(list.map((s) => s.id)).toEqual([
-    freshAuthSessionId(a),
-    freshAuthSessionId(b),
-  ]);
+  expect(list.map((s) => s.id)).toEqual([await idOf(a), await idOf(b)]);
   expect(list.map((s) => s.current)).toEqual([false, true]);
   expect(list[0].fresh_auth_until.valueOf()).toBeGreaterThan(
     Date.now() + 71 * HOUR,
   );
   // The session hash itself never leaves the server.
   expect(JSON.stringify(list)).not.toContain(a.trim());
-  expect(list.map((s) => s.id)).not.toContain(freshAuthSessionId(none));
+  expect(list.map((s) => s.id)).not.toContain(await idOf(none));
 });
 
 it("ends one fresh auth, or all of them, and keeps the sessions signed in", async () => {
@@ -150,17 +155,17 @@ it("ends one fresh auth, or all of them, and keeps the sessions signed in", asyn
   const theirs = await session(other);
   await freshFor(other, theirs, 72 * HOUR);
 
-  expect(await endFreshAuth({ account_id, id: freshAuthSessionId(a) })).toEqual(
-    { ended: 1 },
-  );
+  expect(await endFreshAuth({ account_id, id: await idOf(a) })).toEqual({
+    ended: 1,
+  });
   expect((await row(a)).fresh_auth_until).toBeNull();
   expect((await row(a)).revoked_at).toBeNull();
   expect((await row(b)).fresh_auth_until).not.toBeNull();
 
   // Another account's session id ends nothing here.
-  expect(
-    await endFreshAuth({ account_id, id: freshAuthSessionId(theirs) }),
-  ).toEqual({ ended: 0 });
+  expect(await endFreshAuth({ account_id, id: await idOf(theirs) })).toEqual({
+    ended: 0,
+  });
   expect((await row(theirs)).fresh_auth_until).not.toBeNull();
 
   expect(await endFreshAuth({ account_id, all: true })).toEqual({ ended: 2 });
@@ -208,4 +213,38 @@ it("an admin acting as someone else gets at most 8 hours", async () => {
   await freshFor(subject, hash, 8 * HOUR);
   await emailsSettle();
   expect(testEmails).toHaveLength(0);
+});
+
+it("ending all is not bounded by the 200 sessions the browser lists", async () => {
+  const account_id = await newAccount();
+  const n = 205;
+  await getPool().query(
+    `INSERT INTO account_auth_sessions
+       (session_hash, account_id, created, updated, expire, authenticated_at,
+        fresh_auth_until, factor_level)
+     SELECT 'bulk-' || md5(random()::TEXT || g::TEXT), $1::UUID, NOW(), NOW(),
+            NOW() + INTERVAL '1 day', NOW(), NOW() + INTERVAL '72 hours', 'totp'
+       FROM generate_series(1, $2::INT) AS g`,
+    [account_id, n],
+  );
+  expect(await listActiveFreshAuthSessions({ account_id })).toHaveLength(200);
+  expect(await endFreshAuth({ account_id, all: true })).toEqual({ ended: n });
+  const { rows } = await getPool().query(
+    "SELECT count(*)::INT AS n FROM account_auth_sessions WHERE account_id = $1 AND fresh_auth_until IS NOT NULL",
+    [account_id],
+  );
+  expect(rows[0].n).toBe(0);
+});
+
+it("ends the caller's own fresh auth by its session hash", async () => {
+  const account_id = await newAccount();
+  const a = await session(account_id);
+  const b = await session(account_id);
+  await freshFor(account_id, a, HOUR);
+  await freshFor(account_id, b, HOUR);
+  expect(await endFreshAuth({ account_id, session_hash: a })).toEqual({
+    ended: 1,
+  });
+  expect((await row(a)).fresh_auth_until).toBeNull();
+  expect((await row(b)).fresh_auth_until).not.toBeNull();
 });

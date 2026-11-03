@@ -2469,13 +2469,33 @@ describe("PublicAuthApp", () => {
       name: "Approve CLI Elevation for 72 hours",
     });
     expect(approve).toBeDisabled();
+    // Enter in the code field does not skip the confirmation.
+    fireEvent.keyDown(screen.getByPlaceholderText("123456"), {
+      key: "Enter",
+      code: "Enter",
+    });
+    expect(
+      await screen.findByText(
+        /Confirm that the terminal should stay elevated for 72 hours/,
+      ),
+    ).not.toBeNull();
+    expect(mockedPostAuthApi).not.toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "auth/cli/elevate/approve" }),
+    );
     fireEvent.click(screen.getByRole("checkbox"));
     expect(approve).not.toBeDisabled();
     fireEvent.click(approve);
     await waitFor(() =>
-      expect(mockedPostAuthApi).toHaveBeenCalledWith(
-        expect.objectContaining({ endpoint: "auth/cli/elevate/approve" }),
-      ),
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "auth/cli/elevate/approve",
+        body: {
+          challenge_id: "challenge-2",
+          current_password: "",
+          method: "totp",
+          code: "123456",
+          confirmed_duration: "72h",
+        },
+      }),
     );
   });
 

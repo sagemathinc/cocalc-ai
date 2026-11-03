@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { createHash } from "node:crypto";
 import type { Request } from "express";
 
 import getPool from "@cocalc/database/pool";
@@ -522,15 +521,12 @@ export async function setSessionFreshAuth({
   }
 }
 
-// The id under which the browser sees a session with an active fresh auth.
-// The session hash itself is what a cookie is looked up by, so it never
-// leaves the server.
-export function freshAuthSessionId(session_hash: string): string {
-  return createHash("sha256")
-    .update(`fresh-auth-session:${`${session_hash ?? ""}`.trim()}`, "utf8")
-    .digest("hex")
-    .slice(0, 32);
-}
+// The id under which the browser sees a session with an active fresh auth: a
+// public, non-secret label derived from the session hash, so the hash itself
+// (what a cookie is looked up by) never leaves the server. It is computed in
+// SQL, the same way for listing and ending. The session hash is already the
+// stored hash of a random token, so this is not password hashing.
+const FRESH_AUTH_SESSION_ID_SQL = `left(encode(sha256(convert_to('fresh-auth-session:' || rtrim(session_hash), 'UTF8')), 'hex'), 32)`;
 
 export interface ActiveFreshAuthSession {
   id: string;
@@ -542,28 +538,13 @@ export interface ActiveFreshAuthSession {
   user_agent: string | null;
 }
 
-const ACTIVE_FRESH_AUTH_LIMIT = 200;
+// Only for the list shown in the browser; ending is never bounded by it.
+const ACTIVE_FRESH_AUTH_LIST_LIMIT = 200;
 
-async function activeFreshAuthRows(
-  db: Queryable,
-  account_id: string,
-): Promise<AccountAuthSessionRow[]> {
-  const { rows } = await db.query<AccountAuthSessionRow>(
-    `
-      SELECT session_hash, created, fresh_auth_until, factor_level,
-             ip_address, user_agent
-        FROM account_auth_sessions
-       WHERE account_id = $1::UUID
+const ACTIVE_FRESH_AUTH_WHERE = `account_id = $1::UUID
          AND revoked_at IS NULL
          AND expire > NOW()
-         AND fresh_auth_until > NOW()
-       ORDER BY fresh_auth_until DESC
-       LIMIT ${ACTIVE_FRESH_AUTH_LIMIT}
-    `,
-    [account_id],
-  );
-  return rows;
-}
+         AND fresh_auth_until > NOW()`;
 
 // Every sign-in session (browser or CLI) of this account whose fresh auth is
 // still active, longest first.
@@ -576,11 +557,22 @@ export async function listActiveFreshAuthSessions({
 }): Promise<ActiveFreshAuthSession[]> {
   if (!isValidUUID(account_id)) throw new Error("invalid account_id");
   const current = `${current_session_hash ?? ""}`.trim();
-  const rows = await activeFreshAuthRows(getPool(), account_id);
+  const { rows } = await getPool().query(
+    `
+      SELECT ${FRESH_AUTH_SESSION_ID_SQL} AS id,
+             (rtrim(session_hash) = $2::TEXT) AS current,
+             created, fresh_auth_until, factor_level, ip_address, user_agent
+        FROM account_auth_sessions
+       WHERE ${ACTIVE_FRESH_AUTH_WHERE}
+       ORDER BY fresh_auth_until DESC
+       LIMIT ${ACTIVE_FRESH_AUTH_LIST_LIMIT}
+    `,
+    [account_id, current],
+  );
   return rows.map((row) => ({
-    id: freshAuthSessionId(row.session_hash),
-    current: current.length > 0 && row.session_hash.trim() === current,
-    fresh_auth_until: new Date(row.fresh_auth_until as Date),
+    id: row.id,
+    current: current.length > 0 && row.current === true,
+    fresh_auth_until: new Date(row.fresh_auth_until),
     factor_level: row.factor_level ?? null,
     created: row.created ? new Date(row.created) : null,
     ip_address: row.ip_address ?? null,
@@ -588,22 +580,36 @@ export async function listActiveFreshAuthSessions({
   }));
 }
 
-// End the fresh auth of one session (by its id from
-// listActiveFreshAuthSessions) or of all of them. The sessions stay signed
-// in; their next security action asks for verification again. Ending only
-// takes a privilege away, so it needs no fresh auth itself.
+// End the fresh auth of one session (its id from listActiveFreshAuthSessions),
+// of the session with this hash (the caller's own), or of every session of the
+// account. The sessions stay signed in; their next security action asks for
+// verification again. Ending only takes a privilege away, so it needs no fresh
+// auth itself.
 export async function endFreshAuth({
   account_id,
   id,
+  session_hash,
   all = false,
 }: {
   account_id: string;
   id?: string | null;
+  session_hash?: string | null;
   all?: boolean;
 }): Promise<{ ended: number }> {
   if (!isValidUUID(account_id)) throw new Error("invalid account_id");
   const wanted = `${id ?? ""}`.trim().toLowerCase();
-  if (!all && !/^[0-9a-f]{32}$/.test(wanted)) {
+  const hash = `${session_hash ?? ""}`.trim();
+  let match: string;
+  const params: unknown[] = [account_id];
+  if (all) {
+    match = "";
+  } else if (hash) {
+    params.push(hash);
+    match = "AND rtrim(session_hash) = $2::TEXT";
+  } else if (/^[0-9a-f]{32}$/.test(wanted)) {
+    params.push(wanted);
+    match = `AND ${FRESH_AUTH_SESSION_ID_SQL} = $2::TEXT`;
+  } else {
     throw new Error("a session id or all is required");
   }
   let ended = 0;
@@ -616,20 +622,16 @@ export async function endFreshAuth({
         account_id,
         action: "end fresh auth",
       });
-      const hashes = (await activeFreshAuthRows(db, account_id))
-        .map((row) => row.session_hash)
-        .filter((hash) => all || freshAuthSessionId(hash) === wanted);
-      if (hashes.length === 0) return;
       const result = await db.query(
         `
           UPDATE account_auth_sessions
              SET updated = NOW(), fresh_auth_until = NULL
-           WHERE account_id = $1::UUID
-             AND session_hash = ANY($2::CHAR(127)[])
+           WHERE ${ACTIVE_FRESH_AUTH_WHERE}
+             ${match}
         `,
-        [account_id, hashes],
+        params,
       );
-      ended = result.rowCount ?? hashes.length;
+      ended = result.rowCount ?? 0;
     },
   });
   return { ended };
