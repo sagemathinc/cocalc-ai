@@ -543,7 +543,8 @@ export function PublicCliLoginApprovalView({
           {approving
             ? "Approving..."
             : info?.elevated_login
-              ? `Approve Elevated CLI Login${forDurationSuffix(requestedDuration)}`
+              ? "Approve Elevated CLI Login" +
+                forDurationSuffix(requestedDuration)
               : isMobileLogin(info)
                 ? "Approve Mobile App Login"
                 : "Approve CLI Login"}
@@ -797,7 +798,8 @@ export function PublicCliElevateApprovalView({
           >
             {saving
               ? "Verifying..."
-              : `Approve CLI Elevation${forDurationSuffix(info?.requested_duration)}`}
+              : "Approve CLI Elevation" +
+                forDurationSuffix(info?.requested_duration)}
           </ActionButton>
         </>
       ) : undefined}
