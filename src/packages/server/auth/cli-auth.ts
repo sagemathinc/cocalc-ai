@@ -1278,6 +1278,11 @@ export async function approveDevCliElevate({
   fresh_auth_until: Date;
 }> {
   assertDevCliFreshAuthAllowed(hub_password);
+  // The dev helper keeps its 8-hour maximum: the longer verifications are only
+  // for an owner who confirms them in the browser.
+  if (isLongFreshAuthDuration(parseFreshAuthDuration(duration))) {
+    throw new Error("dev CLI fresh auth lasts at most 8 hours");
+  }
   const target_session_hash = cleanSessionHash(session_hash);
   await getCurrentAuthSessionForSessionHash({
     account_id,
