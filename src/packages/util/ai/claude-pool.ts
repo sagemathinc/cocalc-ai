@@ -24,6 +24,10 @@ export const CLAUDE_TURN_COSTS_METADATA_KEY = "claude_turn_costs";
  * { [turn]: { amount, expires } } (expires in ms). */
 export const CLAUDE_POOL_RESERVATIONS_METADATA_KEY = "claude_pool_reservations";
 const MAX_RESERVATIONS = 100;
+/** Credential metadata: recent weekly-usage readings, oldest first:
+ * [{ at (ms), week (utilization), resets_at (s) }], so the forecast can use
+ * the recent rate. Appended by Auto's picks, which see every member. */
+export const CLAUDE_USAGE_HISTORY_METADATA_KEY = "claude_usage_history";
 
 const HOUR_MS = 3600_000;
 const FIVE_HOURS_MS = 5 * HOUR_MS;
@@ -36,8 +40,11 @@ export const DEFAULT_HEAVY_TURN_COST = 0.1;
 const MIN_TURN_COST_SAMPLES = 5;
 const MAX_TURN_COST = 0.5;
 // Keep the thread's subscription unless another scores this much better:
-// moving makes the next turn reread the whole conversation uncached.
-const STICKY_FACTOR = 1.5;
+// moving makes the next turn reread the whole conversation uncached (Claude's
+// prompt cache is per account), which costs agents that take many small
+// turns far more than spreading usage gains. A subscription that can no
+// longer take a turn is left regardless.
+const STICKY_FACTOR = 3;
 // Running turns count against a subscription for at most this long.
 export const CLAUDE_POOL_RESERVATION_MS = 10 * 60_000;
 
@@ -104,6 +111,71 @@ export function claudePoolReservedAmount(
   return Object.values(reservations).reduce((sum, r) => sum + r.amount, 0);
 }
 
+export interface ClaudeUsageReading {
+  at: number;
+  week: number;
+  resets_at: number;
+}
+
+// At most one reading per this long, kept this long (about 5 KB).
+const USAGE_HISTORY_SPACING_MS = 30 * 60_000;
+const USAGE_HISTORY_KEEP_MS = 48 * HOUR_MS;
+const MAX_USAGE_HISTORY = 120;
+
+export function parseClaudeUsageHistory(value: unknown): ClaudeUsageReading[] {
+  if (!Array.isArray(value)) return [];
+  const ok = (x: unknown) => typeof x === "number" && Number.isFinite(x);
+  return value
+    .filter(
+      (r) =>
+        r &&
+        ok(r.at) &&
+        r.at > 0 &&
+        ok(r.week) &&
+        r.week >= 0 &&
+        r.week <= 2 &&
+        ok(r.resets_at) &&
+        r.resets_at > 0,
+    )
+    .map(({ at, week, resets_at }) => ({ at, week, resets_at }))
+    .sort((a, b) => a.at - b.at)
+    .slice(-MAX_USAGE_HISTORY);
+}
+
+/**
+ * The history with the latest weekly reading added (when it is newer than
+ * the last one and far enough from it, or the week reset) and old readings
+ * dropped; undefined when that changes nothing.
+ */
+export function appendClaudeUsageHistory(
+  stored: unknown,
+  usage: ClaudeRateLimitSnapshot | undefined,
+  now = Date.now(),
+): ClaudeUsageReading[] | undefined {
+  const parsed = parseClaudeUsageHistory(stored);
+  const history = parsed.filter((r) => r.at > now - USAGE_HISTORY_KEEP_MS);
+  const week = usage?.windows.seven_day;
+  const at = usage ? Date.parse(usage.observed_at) : NaN;
+  const last = history[history.length - 1];
+  if (
+    week &&
+    Number.isFinite(at) &&
+    at <= now + 60_000 &&
+    at > now - USAGE_HISTORY_KEEP_MS &&
+    (!last ||
+      (at > last.at &&
+        (at - last.at >= USAGE_HISTORY_SPACING_MS ||
+          week.resets_at !== last.resets_at)))
+  ) {
+    history.push({ at, week: week.utilization, resets_at: week.resets_at });
+  }
+  const next = history.slice(-MAX_USAGE_HISTORY);
+  if (next.length === 0 && stored == null) return undefined;
+  return JSON.stringify(next) === JSON.stringify(stored ?? null)
+    ? undefined
+    : next;
+}
+
 export interface ClaudeTurnCostEstimate {
   /** Average share of a 5-hour limit one turn uses: what a turn reserves. */
   typical: number;
@@ -147,6 +219,8 @@ export interface ClaudePoolMember {
   limited_until?: number;
   /** Usage reserved by turns running on it now. */
   reserved?: number;
+  /** Recent weekly readings (CLAUDE_USAGE_HISTORY_METADATA_KEY). */
+  history?: ClaudeUsageReading[];
 }
 
 /** A member as stored on its credential. */
@@ -164,10 +238,14 @@ export function claudePoolMemberFromMetadata(
     | undefined;
   const until =
     typeof limited?.until === "string" ? Date.parse(limited.until) : NaN;
+  const history = parseClaudeUsageHistory(
+    metadata?.[CLAUDE_USAGE_HISTORY_METADATA_KEY],
+  );
   return {
     credential_id,
     ...(usage ? { usage } : {}),
     ...(Number.isFinite(until) && until > now ? { limited_until: until } : {}),
+    ...(history.length ? { history } : {}),
   };
 }
 
@@ -287,8 +365,12 @@ export interface ClaudePoolForecast {
   members: number;
   /** Weekly limits left, summed (1 = one subscription's whole week). */
   remaining: number;
-  /** Weekly limits used per hour, at the rate of each current week. */
+  /** Weekly limits used per hour: over the recent readings (`recent`), or
+   * before there are enough of them, each current week's average (`week`,
+   * which overstates it when weeks are staggered and turns concentrate on
+   * a few subscriptions). */
   ratePerHour: number;
+  rateFrom?: "recent" | "week";
   /** When every subscription would be at its weekly limit at that rate;
    * absent if not within a week. */
   runsOutAt?: number;
@@ -296,6 +378,69 @@ export interface ClaudePoolForecast {
 
 // A week's rate means little before this much of it has passed.
 const MIN_RATE_ELAPSED_MS = 12 * HOUR_MS;
+// The recent rate: weekly usage over this much time, once readings cover at
+// least the minimum.
+const RECENT_RATE_MS = 24 * HOUR_MS;
+const MIN_RECENT_RATE_MS = 2 * HOUR_MS;
+
+/**
+ * Weekly limits used per hour across the members over a common recent
+ * window: the last RECENT_RATE_MS, or less when some member's readings
+ * (with its latest report) start later, since its usage before them is
+ * unknown. Each member's increases from the window's start are added (a
+ * week that reset counts from zero; the reading interval across the start
+ * counts in proportion). Members with a single reading say nothing and are
+ * left out. Undefined until the window covers MIN_RECENT_RATE_MS.
+ */
+export function claudePoolRecentRate(
+  members: ClaudePoolMember[],
+  now = Date.now(),
+): { ratePerHour: number; hours: number } | undefined {
+  const series: ClaudeUsageReading[][] = [];
+  for (const member of members) {
+    const points = [...(member.history ?? [])];
+    const week = member.usage?.windows.seven_day;
+    const observed = member.usage ? Date.parse(member.usage.observed_at) : NaN;
+    if (
+      week &&
+      Number.isFinite(observed) &&
+      observed <= now &&
+      (points.length === 0 || observed > points[points.length - 1].at)
+    )
+      points.push({
+        at: observed,
+        week: week.utilization,
+        resets_at: week.resets_at,
+      });
+    if (points.length >= 2) series.push(points);
+  }
+  if (series.length === 0) return;
+  const from = Math.max(
+    now - RECENT_RATE_MS,
+    ...series.map((points) => points[0].at),
+  );
+  const span = now - from;
+  if (!(span >= MIN_RECENT_RATE_MS)) return;
+  let used = 0;
+  for (const points of series) {
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      if (b.at <= from) continue;
+      const reset = a.resets_at !== b.resets_at;
+      const added = reset ? b.week : Math.max(0, b.week - a.week);
+      // Only the part of this interval inside the window. After a reset,
+      // the new week's usage accrued from the reset on.
+      const accrual = reset
+        ? Math.min(b.at, Math.max(a.at, a.resets_at * 1000))
+        : a.at;
+      const share =
+        accrual >= from ? 1 : (b.at - from) / Math.max(1, b.at - accrual);
+      used += added * share;
+    }
+  }
+  return { ratePerHour: used / (span / HOUR_MS), hours: span / HOUR_MS };
+}
 
 /**
  * When the pool runs out at the recent rate: turns spend the capacity that
@@ -306,11 +451,12 @@ export function claudePoolForecast(
   members: ClaudePoolMember[],
   now = Date.now(),
 ): ClaudePoolForecast {
+  const recent = claudePoolRecentRate(members, now);
   let ratePerHour = 0;
   const state = members.map((member) => {
     const w = claudePoolWindows(member, now);
     const week = member.usage?.windows.seven_day;
-    if (w.weekResetsAt && week) {
+    if (!recent && w.weekResetsAt && week) {
       const observed = Date.parse(member.usage!.observed_at);
       const elapsed = observed - (w.weekResetsAt - WEEK_MS);
       ratePerHour +=
@@ -319,10 +465,12 @@ export function claudePoolForecast(
     return { left: 1 - w.week, resetsAt: w.weekResetsAt };
   });
   const remaining = state.reduce((sum, s) => sum + s.left, 0);
+  if (recent) ratePerHour = recent.ratePerHour;
   const result: ClaudePoolForecast = {
     members: members.length,
     remaining,
     ratePerHour,
+    ...(members.length ? { rateFrom: recent ? "recent" : "week" } : {}),
   };
   if (!(ratePerHour > 0) || members.length === 0) return result;
   const rate = ratePerHour / HOUR_MS;

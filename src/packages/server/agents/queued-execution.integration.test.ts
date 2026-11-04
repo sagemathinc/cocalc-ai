@@ -87,6 +87,9 @@ describeDb("accepted queued work outlives the sending run", () => {
   );
   const tables = [
     "agent_identities",
+    "artifact_catalog",
+    "artifact_catalog_project_state",
+    "artifact_catalog_changes",
     "agent_identity_runs",
     "agent_personal_controls",
     "agent_personal_names",
@@ -111,7 +114,7 @@ describeDb("accepted queued work outlives the sending run", () => {
 
   beforeAll(async () => {
     await db.query(
-      "CREATE TABLE IF NOT EXISTS projects(project_id uuid PRIMARY KEY, users jsonb)",
+      "CREATE TABLE IF NOT EXISTS projects(project_id uuid PRIMARY KEY, users jsonb, owning_bay_id text, deleted boolean)",
     );
     await syncSchema(
       Object.fromEntries(tables.map((name) => [name, SCHEMA[name]])),

@@ -5770,12 +5770,44 @@ describe("Sagebrush admin grants across bays", () => {
     assert.equal(claims.session_hash, undefined);
     assert.equal(claims.factor_verified_at, undefined);
     assert.match(claims.oauth_admin_approval_id, /^[A-Za-z0-9_-]{43}$/);
-    const approved = await post(SEED, "auth/oauth/approve", {
-      request,
-      approval_token: proof.token,
-      approval_home_bay_id: proof.home_bay_id,
-    });
-    assert.ok(approved.redirect_url, JSON.stringify(approved));
+    // The fixture writes the client settings straight into each bay's
+    // database, and a serving hub caches server settings for up to 15 s, so
+    // the seed may not know the client yet. Wait only for that exact answer
+    // (it is rejected before the approval is used); any other result fails
+    // at once below.
+    const attempt = await eventually(
+      async () => {
+        try {
+          const response = await fetch(
+            `${cluster.url(SEED)}/api/v2/auth/oauth/approve`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                origin: cluster.url(SEED),
+              },
+              body: JSON.stringify({
+                request,
+                approval_token: proof.token,
+                approval_home_bay_id: proof.home_bay_id,
+              }),
+            },
+          );
+          const body = await response.json().catch(() => null);
+          if (response.status === 200 && body?.error === "unknown client") {
+            return false;
+          }
+          return { status: response.status, body };
+        } catch (err) {
+          return { err };
+        }
+      },
+      { timeoutMs: 30_000, what: "the Sagebrush client on the seed" },
+    );
+    if (attempt.err) throw attempt.err;
+    assert.equal(attempt.status, 200);
+    const approved = attempt.body;
+    assert.ok(approved?.redirect_url, JSON.stringify(approved));
     const basic = `Basic ${Buffer.from(`sagebrush:${secret}`).toString("base64")}`;
     const token = await post(
       SEED,

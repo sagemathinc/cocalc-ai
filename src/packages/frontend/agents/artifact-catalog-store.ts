@@ -26,7 +26,9 @@ export const CATALOG_LIMITS = {
   entries: 10_000,
   // Bound retained UTF-16 metadata as well as row count (roughly 16 MiB).
   characters: 8_000_000,
-  refreshMs: 10_000,
+  // Each refresh re-reads every page of every project, so it can be several
+  // MB; poll only while someone is looking (see setPolling).
+  refreshMs: 60_000,
   timeoutMs: 20_000,
 };
 
@@ -56,6 +58,11 @@ export class ArtifactCatalogStore {
   private generation = 0;
   private mounted = false;
   private running = false;
+  private pollingWanted = false;
+  // start() while a previous request still holds the RPC slot: load once it
+  // settles, since nothing else may refresh while polling is paused.
+  private restartPending = false;
+  private lastRefreshMs = 0;
   private interval?: ReturnType<typeof setInterval>;
   private timeout?: ReturnType<typeof setTimeout>;
   private appearanceUpdates = new Map<
@@ -85,22 +92,58 @@ export class ArtifactCatalogStore {
     for (const listener of this.listeners) listener();
   }
 
+  /** Loads the catalog once; periodic refresh only runs while setPolling(true)
+   * and the browser tab is visible. */
   start(projects: string[]) {
     this.stop();
     if (!this.accountId) return;
     this.projects = [...new Set(projects)].sort();
     this.mounted = true;
-    void this.refresh();
-    this.interval = setInterval(
-      () => void this.refresh(),
-      CATALOG_LIMITS.refreshMs,
-    );
+    if (this.running) {
+      this.restartPending = true;
+    } else {
+      void this.refresh();
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.updatePolling);
+    }
   }
+
+  /** Pause or resume periodic refresh; the last snapshot stays available to
+   * every consumer either way. */
+  setPolling = (wanted: boolean) => {
+    this.pollingWanted = wanted;
+    this.updatePolling();
+  };
+
+  private updatePolling = () => {
+    const visible =
+      typeof document === "undefined" || document.visibilityState !== "hidden";
+    if (this.mounted && this.pollingWanted && visible) {
+      if (this.interval != null) return;
+      if (Date.now() - this.lastRefreshMs >= CATALOG_LIMITS.refreshMs) {
+        void this.refresh();
+      }
+      this.interval = setInterval(
+        () => void this.refresh(),
+        CATALOG_LIMITS.refreshMs,
+      );
+    } else {
+      clearInterval(this.interval);
+      this.interval = undefined;
+    }
+  };
 
   stop = () => {
     this.mounted = false;
+    this.pollingWanted = false;
+    this.restartPending = false;
     this.generation++;
     clearInterval(this.interval);
+    this.interval = undefined;
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.updatePolling);
+    }
     clearTimeout(this.timeout);
     this.projects = [];
     this.appearanceUpdates.clear();
@@ -135,6 +178,7 @@ export class ArtifactCatalogStore {
   refresh = async () => {
     if (!this.mounted || this.running) return;
     this.running = true;
+    this.lastRefreshMs = Date.now();
     const generation = ++this.generation;
     const current = () => this.mounted && generation === this.generation;
     const projects = this.projects.slice(0, CATALOG_LIMITS.projects);
@@ -241,6 +285,10 @@ export class ArtifactCatalogStore {
     } finally {
       if (current()) clearTimeout(this.timeout);
       this.running = false;
+      if (this.restartPending && this.mounted) {
+        this.restartPending = false;
+        void this.refresh();
+      }
     }
   };
 }

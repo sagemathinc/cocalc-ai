@@ -174,6 +174,11 @@ function AccountArtifactBrowser({
     catalog.start(JSON.parse(projectKey));
     return catalog.stop;
   }, [catalog, projectKey]);
+  // The browser stays mounted while hidden; keep refreshing only while it is
+  // the active view (the store also pauses while the tab is hidden).
+  useEffect(() => {
+    catalog.setPolling(!!active);
+  }, [catalog, projectKey, active]);
 
   const ordered = catalogResults(metadata.entries, agents, {
     query,

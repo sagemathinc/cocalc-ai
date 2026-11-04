@@ -226,6 +226,11 @@ test("fresh preparation precedes database locking and retries do not switch twic
     return { ok: true, successor_thread_id: successor };
   });
   query.mockImplementation(async (sql, params) => {
+    // The live project row (FOR SHARE) and the catalog version bump.
+    if (sql.includes("FROM projects") && sql.includes("FOR SHARE"))
+      return { rows: [{ project_id }] };
+    if (sql.startsWith("INSERT INTO artifact_catalog_project_state"))
+      return { rows: [{ seq: 1 }] };
     if (sql.startsWith("SELECT * FROM agent_identities"))
       return { rows: [identity] };
     if (sql.startsWith("UPDATE agent_identities SET thread_id")) {
@@ -249,6 +254,31 @@ test("fresh preparation precedes database locking and retries do not switch twic
   expect(
     query.mock.calls.some(([sql]) =>
       sql.startsWith("UPDATE agent_identity_runs"),
+    ),
+  ).toBe(true);
+  // Lock order: live project row, then the catalog lock, then the identity
+  // lock; the rebind records a catalog reset.
+  const calls = query.mock.calls.map(([sql, params]) => [
+    `${sql}`,
+    `${params?.[0] ?? ""}`,
+  ]);
+  const at = (match: (sql: string, param: string) => boolean) =>
+    calls.findIndex(([sql, param]) => match(sql, param));
+  const projectRow = at(
+    (sql) => sql.includes("FROM projects") && sql.includes("FOR SHARE"),
+  );
+  const catalogLock = at((_sql, param) =>
+    param.startsWith("artifact-project:"),
+  );
+  const identityLock = at((_sql, param) =>
+    param.startsWith("agent-identities:"),
+  );
+  expect(projectRow).toBeGreaterThanOrEqual(0);
+  expect(projectRow).toBeLessThan(catalogLock);
+  expect(catalogLock).toBeLessThan(identityLock);
+  expect(
+    calls.some(([sql]) =>
+      sql.startsWith("INSERT INTO artifact_catalog_changes"),
     ),
   ).toBe(true);
   get.mockResolvedValue(next);

@@ -61,6 +61,8 @@ import {
   stopAcpFenceResumesForThread,
   setAcpJobState,
   removeRetiredAutomationJobs,
+  previousThreadSubscriptionCredentialId,
+  setAcpJobHarnessCredential,
 } from "../../sqlite/acp-jobs";
 
 const FENCE_LIST = {
@@ -114,6 +116,87 @@ beforeEach(() => {
 
 afterAll(() => {
   closeAcpDatabase();
+});
+
+describe("the subscription a conversation's previous turn ran on", () => {
+  const sub = (credentialId: string) => ({
+    version: 1,
+    provider: "anthropic",
+    mode: "account-subscription",
+    credentialId,
+  });
+  const turn = (n: number, credential?: object) =>
+    enqueueAcpJob({
+      ...makeRequest({
+        userMessageId: `human-${n}`,
+        assistantMessageId: `assistant-${n}`,
+        assistantDate: `2026-01-01T00:00:0${n}.000Z`,
+      }),
+      ...(credential ? { harness_credential: credential } : {}),
+    } as any);
+  const start = (op_id: string, at: number) =>
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET started_at = ? WHERE op_id = ?")
+      .run(at, op_id);
+  const where = {
+    project_id: "00000000-1000-4000-8000-000000000000",
+    account_id: "00000000-1000-4000-8000-000000000001",
+    path: "/tmp/acp-jobs-order.chat",
+    thread_id: "thread-1",
+  };
+
+  it("is the latest started turn's subscription, never this turn's own", () => {
+    const one = turn(1, sub("A"));
+    const two = turn(2, sub("B"));
+    const three = turn(3, sub("C"));
+    // Only turns that started count (two is still queued).
+    start(one.op_id, 1000);
+    expect(
+      previousThreadSubscriptionCredentialId({
+        ...where,
+        exclude_op_id: three.op_id,
+      }),
+    ).toBe("A");
+    start(two.op_id, 2000);
+    expect(
+      previousThreadSubscriptionCredentialId({
+        ...where,
+        exclude_op_id: three.op_id,
+      }),
+    ).toBe("B");
+    expect(
+      previousThreadSubscriptionCredentialId({
+        ...where,
+        exclude_op_id: two.op_id,
+      }),
+    ).toBe("A");
+    // Another account's turns are not this account's subscriptions.
+    expect(
+      previousThreadSubscriptionCredentialId({
+        ...where,
+        account_id: "00000000-1000-4000-8000-000000000002",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("skips turns that ran some other way, and records where one ran", () => {
+    const one = turn(1, sub("A"));
+    const two = turn(2, {
+      version: 1,
+      provider: "anthropic",
+      mode: "project-secret",
+    });
+    start(one.op_id, 1000);
+    start(two.op_id, 2000);
+    expect(previousThreadSubscriptionCredentialId(where)).toBe("A");
+    const before = getAcpJobByOpId(one.op_id)!;
+    expect(setAcpJobHarnessCredential(one.op_id, sub("D"))).toBe(true);
+    const after = getAcpJobByOpId(one.op_id)!;
+    expect(decodeAcpJobRequest(after).harness_credential).toEqual(sub("D"));
+    expect(after.updated_at).toBe(before.updated_at);
+    expect(previousThreadSubscriptionCredentialId(where)).toBe("D");
+    expect(setAcpJobHarnessCredential("missing", sub("E"))).toBe(false);
+  });
 });
 
 describe("retired thread automations", () => {
