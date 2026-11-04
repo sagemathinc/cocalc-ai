@@ -365,7 +365,11 @@ test("single-project isolation, canonical source validation, API envelope and pr
     for (const suffix of ["-wal", "-shm"])
       expect(statSync(filename + suffix).mode & 0o077).toBe(0);
   const api = liteArtifactCatalogReadApi(catalog, "local-account");
-  expect(Object.keys(api).sort()).toEqual(["getEntry", "listProject"]);
+  expect(Object.keys(api).sort()).toEqual([
+    "getEntries",
+    "getEntry",
+    "listProject",
+  ]);
   await expect(api.listProject(source)).rejects.toThrow("local Lite account");
   await expect(
     api.listProject({ ...source, account_id: "other" }),
@@ -408,4 +412,54 @@ test("direct Lite reads validate IDs and use the same account and project bounda
   await expect(
     catalog.getEntry({ ...request, project_id: undefined! }),
   ).rejects.toThrow("not available");
+});
+
+test("batch lookups are bounded, all-or-nothing for other projects, and use the local account", async () => {
+  await catalog.ingest({
+    ...source,
+    snapshot: snapshot(1, [item("a"), item("b")]),
+  });
+  const page = await catalog.listProject({ project_id: source.project_id });
+  const [a, b] = page.entries.map((entry) => entry.entry_id);
+  const found = await catalog.getEntries({
+    items: [
+      { project_id: source.project_id, entry_id: a },
+      { project_id: source.project_id, entry_id: a },
+      { project_id: source.project_id, entry_id: b },
+      { project_id: source.project_id, entry_id: "0".repeat(64) },
+    ],
+  });
+  expect(found.map((entry) => entry.entry_id).sort()).toEqual([a, b].sort());
+  await expect(
+    catalog.getEntries({
+      items: [
+        { project_id: source.project_id, entry_id: a },
+        { project_id: otherProject, entry_id: a },
+      ],
+    }),
+  ).rejects.toThrow("not found or not permitted");
+  for (const items of [
+    [],
+    [{ project_id: source.project_id, entry_id: "" }],
+    Array.from({ length: 101 }, () => ({
+      project_id: source.project_id,
+      entry_id: a,
+    })),
+  ])
+    await expect(catalog.getEntries({ items })).rejects.toThrow(
+      "invalid catalog entry list",
+    );
+  const api = liteArtifactCatalogReadApi(catalog, "local-account");
+  await expect(
+    api.getEntries({
+      account_id: "someone-else",
+      items: [{ project_id: source.project_id, entry_id: a }],
+    }),
+  ).rejects.toThrow("local Lite account");
+  await expect(
+    api.getEntries({
+      account_id: "local-account",
+      items: [{ project_id: source.project_id, entry_id: b }],
+    }),
+  ).resolves.toHaveLength(1);
 });

@@ -20,6 +20,11 @@ export interface CatalogEntryRequest {
   entry_id: string;
   account_id?: string;
 }
+export interface CatalogEntriesRequest {
+  /** Up to 100 {project_id, entry_id} pairs; all-or-nothing authorization. */
+  items: { project_id: string; entry_id: string }[];
+  account_id?: string;
+}
 export interface CatalogSourcePageRequest {
   project_id: string;
   host_id?: string;
@@ -59,6 +64,8 @@ export interface ArtifactCatalogApi {
   listProject(opts: CatalogProjectRequest): Promise<CatalogPage>;
   /** Metadata-only lookup; absent or tombstoned entries return null. */
   getEntry(opts: CatalogEntryRequest): Promise<CatalogEntry | null>;
+  /** Batch point lookup; absent entries are omitted. */
+  getEntries(opts: CatalogEntriesRequest): Promise<CatalogEntry[]>;
   writerState(opts: CatalogSourceRequest): Promise<CatalogWriterState | null>;
   registerSource(opts: CatalogRegistrationRequest): Promise<{ epoch: string }>;
   ingest(
@@ -69,6 +76,7 @@ export const artifactCatalog = {
   sourcePage: authFirstRequireHost,
   listProject: authFirstRequireAccount,
   getEntry: authFirstRequireAccount,
+  getEntries: authFirstRequireAccount,
   writerState: authFirstRequireHost,
   registerSource: authFirstRequireHost,
   ingest: authFirstRequireHost,

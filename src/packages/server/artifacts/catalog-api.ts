@@ -26,6 +26,18 @@ import {
 } from "@cocalc/database/postgres/artifact-catalog";
 import { validateArtifactCatalogSnapshot } from "@cocalc/util/artifact-catalog";
 import { assertActor } from "@cocalc/server/agents/access";
+import {
+  ARTIFACT_CATALOG_NOT_PERMITTED,
+  authorizedArtifactCatalogProjects,
+  readArtifactCatalogEntriesForAccountLocal,
+} from "@cocalc/database/postgres/artifact-catalog-read";
+import getPool from "@cocalc/database/pool";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
+import { withArtifactCatalogReadLimit } from "./catalog-read-limits";
+import { isValidUUID } from "@cocalc/util/misc";
 
 function source(opts: CatalogSourceRequest) {
   requireUuid(opts.host_id, "authenticated host_id");
@@ -118,6 +130,58 @@ export const getEntry: ArtifactCatalogApi["getEntry"] = async (opts) => {
       entry_id: opts.entry_id,
       route,
     }),
+  );
+};
+
+/** Fails closed with the uniform error for a banned account. */
+async function assertReaderNotBanned(account_id: string): Promise<void> {
+  await ensureAccountSecurityStateReady();
+  if (isAccountBannedCached(account_id))
+    throw Error(ARTIFACT_CATALOG_NOT_PERMITTED);
+}
+
+/**
+ * Batch point lookup (pins, names, the open artifact): up to 100 entries.
+ * Each distinct project is routed to its owning bay, which authorizes every
+ * one of its projects before reading; any refusal fails the whole request
+ * with one uniform error.
+ */
+export const getEntries: ArtifactCatalogApi["getEntries"] = async (opts) => {
+  requireUuid(opts.account_id, "account_id");
+  const account_id = opts.account_id!;
+  return await withArtifactCatalogReadLimit(
+    account_id,
+    "getEntries",
+    async () => {
+      await assertReaderNotBanned(account_id);
+      const items = Array.isArray(opts.items) ? opts.items : [];
+      const byBay = new Map<string, typeof items>();
+      for (const project_id of new Set(
+        items.map((item) => `${item?.project_id ?? ""}`),
+      )) {
+        // Malformed input is rejected by the owner bay's validation.
+        const owner = isValidUUID(project_id)
+          ? await resolveProjectBay(project_id)
+          : { bay_id: getConfiguredBayId(), epoch: 0 };
+        if (!owner) throw Error(ARTIFACT_CATALOG_NOT_PERMITTED);
+        const list = byBay.get(owner.bay_id) ?? [];
+        list.push(...items.filter((item) => item?.project_id === project_id));
+        byBay.set(owner.bay_id, list);
+      }
+      if (byBay.size === 0) byBay.set(getConfiguredBayId(), items);
+      const results = await Promise.all(
+        [...byBay].map(([bay_id, subset]) =>
+          (bay_id === getConfiguredBayId()
+            ? catalogOwnerControl
+            : createInterBayArtifactCatalogClient({
+                client: getInterBayFabricClient(),
+                bay_id,
+              })
+          ).getEntries({ account_id, items: subset }),
+        ),
+      );
+      return results.flat();
+    },
   );
 };
 
@@ -220,6 +284,33 @@ export const catalogOwnerControl: InterBayArtifactCatalogApi = {
     return ownedRead(opts, () =>
       readArtifactCatalogEntry(opts.project_id, opts.entry_id),
     );
+  },
+  getEntries: async (opts) => {
+    requireUuid(opts.account_id, "account_id");
+    const account_id = opts.account_id!;
+    await assertReaderNotBanned(account_id);
+    const owning_bay_id = getConfiguredBayId();
+    const entries = await readArtifactCatalogEntriesForAccountLocal({
+      account_id,
+      owning_bay_id,
+      items: opts.items,
+    });
+    // Re-check after the read with the same predicate: access revoked while
+    // reading returns nothing rather than the rows just read.
+    const projects = [
+      ...new Set(
+        (opts.items as { project_id: string }[]).map((i) => i.project_id),
+      ),
+    ];
+    const allowed = await authorizedArtifactCatalogProjects(getPool(), {
+      account_id,
+      owning_bay_id,
+      project_ids: projects,
+    });
+    if (projects.some((project_id) => !allowed.has(project_id)))
+      throw Error(ARTIFACT_CATALOG_NOT_PERMITTED);
+    await assertReaderNotBanned(account_id);
+    return entries;
   },
   writerState: (opts) =>
     owned(opts, (authority) =>

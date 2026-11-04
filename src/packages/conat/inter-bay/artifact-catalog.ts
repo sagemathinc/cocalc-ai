@@ -15,6 +15,7 @@ import type {
   CatalogIngestRequest,
   CatalogProjectRequest,
   CatalogEntryRequest,
+  CatalogEntriesRequest,
   CatalogSourcePageRequest,
 } from "@cocalc/conat/hub/api/artifact-catalog";
 
@@ -32,6 +33,10 @@ export interface InterBayArtifactCatalogApi {
   getEntry(
     opts: CatalogEntryRequest & { route: CatalogOwnerRoute },
   ): ReturnType<ArtifactCatalogApi["getEntry"]>;
+  /** The owner bay authorizes every project itself from account_id. */
+  getEntries(
+    opts: CatalogEntriesRequest,
+  ): ReturnType<ArtifactCatalogApi["getEntries"]>;
   writerState(
     opts: CatalogSourceRequest & { route: CatalogOwnerRoute },
   ): ReturnType<ArtifactCatalogApi["writerState"]>;

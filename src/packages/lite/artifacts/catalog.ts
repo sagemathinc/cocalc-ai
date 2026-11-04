@@ -9,6 +9,7 @@ import type {
   ArtifactCatalogApi,
   CatalogEntry,
   CatalogEntryRequest,
+  CatalogEntriesRequest,
   CatalogIngestRequest,
   CatalogPage,
   CatalogProjectRequest,
@@ -379,6 +380,45 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
       : null;
   }
 
+  /**
+   * Batch point lookup (up to 100). Lite holds one project: any other project
+   * fails the whole request with the same uniform error the hub uses.
+   */
+  async getEntries({ items }: CatalogEntriesRequest): Promise<CatalogEntry[]> {
+    if (!Array.isArray(items) || items.length < 1 || items.length > 100)
+      throw Error("invalid catalog entry list");
+    const ids = new Set<string>();
+    let foreign = false;
+    for (const item of items) {
+      const project_id = (item as any)?.project_id;
+      const entry_id = (item as any)?.entry_id;
+      if (
+        typeof project_id !== "string" ||
+        !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(project_id) ||
+        typeof entry_id !== "string" ||
+        !/^[a-f0-9]{64}$/.test(entry_id)
+      )
+        throw Error("invalid catalog entry list");
+      if (project_id !== this.options.project_id) foreign = true;
+      ids.add(entry_id);
+    }
+    if (foreign) throw Error("not found or not permitted");
+    const list = [...ids];
+    const rows = this.db
+      .prepare(
+        `SELECT entry_id,chat_path,metadata FROM lite_artifact_entries
+        WHERE deleted=0 AND entry_id IN (${list.map(() => "?").join(",")})
+        ORDER BY entry_id`,
+      )
+      .all(...list);
+    return rows.map((row) => ({
+      entry_id: row.entry_id as string,
+      project_id: this.options.project_id,
+      chat_path: row.chat_path as string,
+      item: JSON.parse(row.metadata as string) as ArtifactCatalogItem,
+    }));
+  }
+
   async listProject({
     project_id,
     after = "",
@@ -438,13 +478,18 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
 export function liteArtifactCatalogReadApi(
   catalog: LiteArtifactCatalog,
   account_id: string,
-): Pick<ArtifactCatalogApi, "listProject" | "getEntry"> {
+): Pick<ArtifactCatalogApi, "listProject" | "getEntry" | "getEntries"> {
   if (!account_id) throw Error("Lite catalog account is required");
   return {
     async getEntry(request) {
       if (request.account_id !== account_id)
         throw Error("artifact catalog requires the local Lite account");
       return catalog.getEntry(request);
+    },
+    async getEntries(request) {
+      if (request.account_id !== account_id)
+        throw Error("artifact catalog requires the local Lite account");
+      return catalog.getEntries(request);
     },
     async listProject(request) {
       if (request.account_id !== account_id)

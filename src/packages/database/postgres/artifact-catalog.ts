@@ -73,6 +73,17 @@ async function lockProjectCatalog(db: Queryable, project_id: string) {
 }
 
 /**
+ * The one predicate for "project row is live on this bay" used by every new
+ * catalog version writer and count. A missing owning bay counts as this bay,
+ * as for other single-bay-compatible project routing.
+ */
+export function liveOnBay(alias: string, bayParam: string): string {
+  const p = alias ? `${alias}.` : "";
+  return `COALESCE(NULLIF(BTRIM(${p}owning_bay_id),''),${bayParam})=${bayParam}
+       AND NOT COALESCE(${p}deleted,FALSE)`;
+}
+
+/**
  * For writers outside ingest that change what a catalog reader may see (agent
  * identity changes). In their transaction, before any other lock, this takes
  * the same locks in the same order as ingest: the live project row owned by
@@ -87,8 +98,7 @@ export async function lockArtifactCatalogProject(
 ): Promise<void> {
   const { rows } = await db.query(
     `SELECT project_id FROM projects
-     WHERE project_id=$1 AND COALESCE(NULLIF(BTRIM(owning_bay_id),''),$2)=$2
-       AND NOT COALESCE(deleted,FALSE) FOR SHARE`,
+     WHERE project_id=$1 AND ${liveOnBay("", "$2")} FOR SHARE`,
     [project_id, owning_bay_id],
   );
   if (!rows.length)
@@ -145,7 +155,7 @@ export async function backfillArtifactCatalogProjectState({
   const { rows } = await getPool().query(
     `SELECT DISTINCT s.project_id FROM artifact_catalog_sources s
      JOIN projects p ON p.project_id=s.project_id
-     WHERE p.owning_bay_id=$1 AND NOT COALESCE(p.deleted,FALSE)
+     WHERE ${liveOnBay("p", "$1")}
        AND NOT EXISTS (SELECT 1 FROM artifact_catalog_project_state st
          WHERE st.project_id=s.project_id)
      ORDER BY s.project_id LIMIT $2`,
@@ -157,8 +167,7 @@ export async function backfillArtifactCatalogProjectState({
     const inserted = await transaction(async (db) => {
       const live = await db.query(
         `SELECT project_id FROM projects
-         WHERE project_id=$1 AND owning_bay_id=$2
-           AND NOT COALESCE(deleted,FALSE) FOR SHARE`,
+         WHERE project_id=$1 AND ${liveOnBay("", "$2")} FOR SHARE`,
         [row.project_id, owning_bay_id],
       );
       if (!live.rows.length) return false;
@@ -189,7 +198,7 @@ export async function artifactCatalogStateBackfillRemaining(
   const { rows } = await getPool().query(
     `SELECT count(DISTINCT s.project_id) AS n FROM artifact_catalog_sources s
      JOIN projects p ON p.project_id=s.project_id
-     WHERE p.owning_bay_id=$1 AND NOT COALESCE(p.deleted,FALSE)
+     WHERE ${liveOnBay("p", "$1")}
        AND NOT EXISTS (SELECT 1 FROM artifact_catalog_project_state st
          WHERE st.project_id=s.project_id)`,
     [owning_bay_id],
