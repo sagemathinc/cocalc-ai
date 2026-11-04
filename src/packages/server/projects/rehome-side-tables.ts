@@ -74,6 +74,18 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Artifact metadata is derived from project chat files, but rehome needs an explicit rescan and reconciliation before the destination catalog can serve it.",
   },
+  artifact_catalog_changes: {
+    table: "artifact_catalog_changes",
+    status: "not-portable",
+    reason:
+      "The change log is ordered by the source bay's per-project sequence; the destination starts a new version epoch, so readers reload instead of replaying copied changes.",
+  },
+  artifact_catalog_project_state: {
+    table: "artifact_catalog_project_state",
+    status: "not-portable",
+    reason:
+      "Catalog versions are owner-issued fences; the destination creates a new epoch on its first catalog write so every reader reloads.",
+  },
   artifact_catalog_project_budget: {
     table: "artifact_catalog_project_budget",
     status: "not-portable",

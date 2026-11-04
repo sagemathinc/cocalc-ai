@@ -664,7 +664,9 @@ export const TABLE_OWNERSHIP = {
   ...entries(
     [
       "artifact_catalog",
+      "artifact_catalog_changes",
       "artifact_catalog_project_budget",
+      "artifact_catalog_project_state",
       "artifact_catalog_sources",
       "bookmarks",
       "blobs",
