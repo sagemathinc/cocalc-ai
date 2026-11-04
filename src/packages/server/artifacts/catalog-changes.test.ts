@@ -5,8 +5,10 @@ import {
   deliverArtifactCatalogHint,
   listChanges,
   listChangesOwnedControl,
+  startArtifactCatalogHintDrainer,
   type HintDeps,
 } from "./catalog-changes";
+import { nudgeArtifactCatalogHints } from "./catalog-readiness";
 import { resetArtifactCatalogReadLimitsForTests } from "./catalog-read-limits";
 
 const NOT_PERMITTED = "not found or not permitted";
@@ -15,6 +17,7 @@ let validated = true;
 const resolveProjectBay = jest.fn();
 const authorized = jest.fn();
 const read = jest.fn();
+const hintsDue = jest.fn();
 const remote = { listChanges: jest.fn() };
 const mockUndeliverable = { inc: jest.fn() };
 
@@ -56,11 +59,11 @@ jest.mock("@cocalc/database/postgres/artifact-catalog-read", () => ({
 jest.mock("@cocalc/database/postgres/artifact-catalog-changes", () => ({
   ...jest.requireActual("@cocalc/database/postgres/artifact-catalog-changes"),
   readArtifactCatalogChangesForAccount: (...a) => read(...a),
+  artifactCatalogHintsDue: (...a) => hintsDue(...a),
 }));
 jest.mock("./catalog-readiness", () => ({
+  ...jest.requireActual("./catalog-readiness"),
   artifactCatalogDeltasReady: async () => validated,
-  artifactCatalogHintsRunning: () => true,
-  setArtifactCatalogHintsRunning: () => {},
 }));
 
 const account_id = randomUUID();
@@ -288,5 +291,61 @@ describe("hint delivery", () => {
     expect(artifactCatalogHintBackoffMs(20, () => 0.5)).toBe(300_000);
     expect(artifactCatalogHintBackoffMs(2, () => 0)).toBe(3200);
     expect(artifactCatalogHintBackoffMs(2, () => 1)).toBe(4800);
+  });
+});
+
+describe("the drainer (R3)", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+    delete process.env.COCALC_ARTIFACT_CATALOG_HINTS;
+  });
+
+  test("a change whose nudge was lost (made by another worker) is found by the scan", async () => {
+    jest.useFakeTimers();
+    hintsDue.mockResolvedValue([project_id]);
+    const deliver = jest.fn(async () => "delivered" as const);
+    const stop = startArtifactCatalogHintDrainer(deliver);
+    try {
+      await jest.advanceTimersByTimeAsync(4_000);
+      expect(deliver).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(hintsDue).toHaveBeenCalledWith({
+        owning_bay_id: "here",
+        limit: 100,
+      });
+      expect(deliver).toHaveBeenCalledWith(project_id);
+    } finally {
+      stop();
+    }
+  });
+
+  test("a nudge after a commit on this worker delivers at once", async () => {
+    jest.useFakeTimers();
+    hintsDue.mockResolvedValue([project_id]);
+    const deliver = jest.fn(async () => "delivered" as const);
+    const stop = startArtifactCatalogHintDrainer(deliver);
+    try {
+      nudgeArtifactCatalogHints();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(deliver).toHaveBeenCalledWith(project_id);
+    } finally {
+      stop();
+    }
+    // Stopped: a later nudge does nothing.
+    deliver.mockClear();
+    nudgeArtifactCatalogHints();
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  test("hints off on the bay: no drainer", async () => {
+    jest.useFakeTimers();
+    process.env.COCALC_ARTIFACT_CATALOG_HINTS = "off";
+    const deliver = jest.fn();
+    startArtifactCatalogHintDrainer(deliver);
+    nudgeArtifactCatalogHints();
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(hintsDue).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
   });
 });

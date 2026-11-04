@@ -421,6 +421,120 @@ describe("change rows are counted exactly (C2)", () => {
   });
 });
 
+describe("C2 under concurrent writers", () => {
+  // Every change-row writer (append, prune batch, backfill measurement)
+  // holds the project catalog lock for its whole transaction, so they
+  // serialize: the only interleavings are at transaction boundaries. The
+  // first test proves the prune batch holds the lock; the second runs an
+  // append and a backfill at every boundary of a multi-batch prune.
+  async function aged(owner: string) {
+    const p = await project({ [owner]: "owner" });
+    for (let i = 0; i < 4; i++) await snapshot(p, items(3, `r${i}-`));
+    await getPool().query(
+      `UPDATE artifact_catalog_changes SET created_at=now()-interval '30 days' WHERE project_id=$1`,
+      [p],
+    );
+    await getPool().query(
+      `UPDATE artifact_catalog_project_state SET seq=seq+20000 WHERE project_id=$1`,
+      [p],
+    );
+    return p;
+  }
+  const rows = async (p: string) =>
+    Number(
+      (
+        await getPool().query(
+          "SELECT count(*) AS n FROM artifact_catalog_changes WHERE project_id=$1",
+          [p],
+        )
+      ).rows[0].n,
+    );
+
+  test("each prune batch holds the project's catalog lock", async () => {
+    const p = await aged(randomUUID());
+    let checked = 0;
+    await pruneArtifactCatalogChanges({
+      batchRows: 4,
+      inBatch: async (db, project_id) => {
+        if (project_id !== p) return;
+        const { rows } = await db.query(
+          `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory'
+             AND granted AND objsubid=1
+             AND ((classid::bigint << 32) | objid::bigint)
+               = hashtextextended($1,0)) AS held`,
+          [`artifact-project:${p}`],
+        );
+        expect(rows[0].held).toBe(true);
+        checked++;
+      },
+    });
+    expect(checked).toBeGreaterThan(1);
+  });
+
+  // Needs two real database sessions: pglite runs every client in one
+  // shared session, where a lock cannot make another client wait. Run with
+  // a real PostgreSQL (pnpm test:psql).
+  const realSessions = process.env.COCALC_TEST_USE_PGLITE ? test.skip : test;
+  realSessions(
+    "a backfill started while a prune batch is in flight waits for it and counts exactly",
+    async () => {
+      const p = await aged(randomUUID());
+      await getPool().query(
+        "UPDATE artifact_catalog_project_state SET change_rows=NULL WHERE project_id=$1",
+        [p],
+      );
+      let backfill: Promise<unknown> | undefined;
+      let settled = false;
+      await pruneArtifactCatalogChanges({
+        batchRows: 4,
+        inBatch: async (_db, project_id) => {
+          if (project_id !== p || backfill) return;
+          // This batch has deleted rows and is not committed yet. Without the
+          // project lock, the backfill's count would see the deleted rows and
+          // overwrite the batch's decrement after it commits.
+          backfill = backfillArtifactCatalogChangeRows({
+            maxProjects: 10_000,
+          }).finally(() => {
+            settled = true;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          expect(settled).toBe(false);
+        },
+      });
+      expect(backfill).toBeDefined();
+      await backfill;
+      expect(Number((await state(p)).change_rows)).toBe(await rows(p));
+    },
+    30_000,
+  );
+
+  test("appends and backfill measurements between prune batches keep the count exact", async () => {
+    const p = await aged(randomUUID());
+    let boundary = 0;
+    await pruneArtifactCatalogChanges({
+      batchRows: 4,
+      betweenBatches: async (project_id) => {
+        if (project_id !== p) return;
+        boundary++;
+        if (boundary % 2) {
+          // A catalog change commits between two batches.
+          await snapshot(p, items(boundary + 1, `x${boundary}-`));
+        } else {
+          // The count is re-measured between two batches.
+          await getPool().query(
+            "UPDATE artifact_catalog_project_state SET change_rows=NULL WHERE project_id=$1",
+            [p],
+          );
+          await backfillArtifactCatalogChangeRows({ maxProjects: 10_000 });
+        }
+        expect(Number((await state(p)).change_rows)).toBe(await rows(p));
+      },
+    });
+    expect(boundary).toBeGreaterThan(2);
+    expect(Number((await state(p)).change_rows)).toBe(await rows(p));
+  });
+});
+
 describe("the reset-sentinel constraint (N-b, C3)", () => {
   test("enforced, added NOT VALID, and validated only without violators", async () => {
     const db = getPool();

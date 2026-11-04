@@ -268,10 +268,16 @@ export async function pruneArtifactCatalogChanges({
   maxProjects = 32,
   batchRows = 1000,
   maxRowsPerProject = 10_000,
+  betweenBatches,
+  inBatch,
 }: {
   maxProjects?: number;
   batchRows?: number;
   maxRowsPerProject?: number;
+  /** Test hook: runs before each batch transaction. */
+  betweenBatches?: (project_id: string) => Promise<void>;
+  /** Test hook: runs inside each batch transaction, just before commit. */
+  inBatch?: (db: Queryable, project_id: string) => Promise<void>;
 } = {}): Promise<{ projects: number; deleted: number }> {
   const cutoff = new Date(Date.now() - ARTIFACT_CATALOG_CHANGE_RETENTION_MS);
   const { rows } = await getPool().query(
@@ -301,6 +307,7 @@ export async function pruneArtifactCatalogChanges({
     });
     let projectDeleted = 0;
     while (projectDeleted < maxRowsPerProject) {
+      await betweenBatches?.(row.project_id);
       // Each batch and its change-row count move together, under the project
       // catalog lock (as every other change-row writer), so the count stays
       // exact against a concurrent backfill measurement.
@@ -319,6 +326,7 @@ export async function pruneArtifactCatalogChanges({
              SET change_rows=change_rows-$2 WHERE project_id=$1`,
             [row.project_id, deleted],
           );
+        await inBatch?.(db, row.project_id);
         return deleted;
       });
       projectDeleted += count;

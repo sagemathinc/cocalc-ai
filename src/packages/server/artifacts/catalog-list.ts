@@ -57,7 +57,7 @@ import {
 import { withArtifactCatalogReadLimit } from "./catalog-read-limits";
 import {
   artifactCatalogDeltasReady,
-  artifactCatalogHintsRunning,
+  artifactCatalogHintsEnabled,
 } from "./catalog-readiness";
 
 /**
@@ -534,7 +534,8 @@ export const capabilities: ArtifactCatalogApi["capabilities"] = async (
   return {
     list,
     deltas: list && (await artifactCatalogDeltasReady()) ? 1 : 0,
-    // Hints only reduce latency; readers repair from versions regardless.
-    hints: list && artifactCatalogHintsRunning() ? 1 : 0,
+    // A bay-wide setting (every worker runs a drainer). Hints only reduce
+    // latency; readers repair from versions regardless.
+    hints: list && artifactCatalogHintsEnabled() ? 1 : 0,
   };
 };

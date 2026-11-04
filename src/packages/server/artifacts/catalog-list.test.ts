@@ -80,10 +80,10 @@ jest.mock("@cocalc/database/postgres/artifact-catalog-list", () => ({
   listArtifactCatalogForAccountLocal: (...a) => ownerRead(...a),
 }));
 let mockDeltasReady = false;
-let mockHintsRunning = false;
+let mockHintsEnabled = false;
 jest.mock("./catalog-readiness", () => ({
   artifactCatalogDeltasReady: async () => mockDeltasReady,
-  artifactCatalogHintsRunning: () => mockHintsRunning,
+  artifactCatalogHintsEnabled: () => mockHintsEnabled,
 }));
 jest.mock("@cocalc/database/postgres/artifact-catalog-read", () => ({
   ARTIFACT_CATALOG_NOT_PERMITTED: "not found or not permitted",
@@ -459,7 +459,7 @@ describe("capabilities", () => {
 
   test("deltas and hints only alongside list, and only when this bay serves them", async () => {
     mockDeltasReady = true;
-    mockHintsRunning = true;
+    mockHintsEnabled = true;
     backfillRemaining.mockResolvedValue(3);
     expect(await capabilities({ account_id })).toEqual({
       list: 0,
@@ -474,7 +474,7 @@ describe("capabilities", () => {
       hints: 1,
     });
     mockDeltasReady = false;
-    mockHintsRunning = false;
+    mockHintsEnabled = false;
     expect(await capabilities({ account_id })).toEqual({
       list: 1,
       deltas: 0,

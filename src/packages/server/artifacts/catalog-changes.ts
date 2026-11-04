@@ -57,7 +57,8 @@ import { assertArtifactCatalogReaderNotBanned } from "./catalog-list";
 import { withArtifactCatalogReadLimit } from "./catalog-read-limits";
 import {
   artifactCatalogDeltasReady,
-  setArtifactCatalogHintsRunning,
+  artifactCatalogHintsEnabled,
+  registerArtifactCatalogHintNudge,
 } from "./catalog-readiness";
 
 const log = getLogger("artifacts:catalog-changes");
@@ -304,19 +305,19 @@ export async function deliverArtifactCatalogHint(
 }
 
 let stopDrainer: (() => void) | undefined;
-let nudged: (() => void) | undefined;
-
-/** Asks the drainer to look for due hints now (after a committed change). */
-export function nudgeArtifactCatalogHints(): void {
-  nudged?.();
-}
 
 /**
- * Runs on each bay: delivers due hints after a nudge, and scans for due
- * hints every few seconds (a lost nudge, a retry that came due).
+ * Runs on every bay worker (claims make concurrent drainers safe): delivers
+ * due hints when this worker commits a change (a nudge), and scans for due
+ * hints every few seconds (a change made by another worker, a lost nudge, a
+ * retry that came due). Off when hints are disabled on the bay.
  */
-export function startArtifactCatalogHintDrainer(): () => void {
+export function startArtifactCatalogHintDrainer(
+  deliver: (project_id: string) => Promise<HintOutcome> = (project_id) =>
+    deliverArtifactCatalogHint(project_id),
+): () => void {
   if (stopDrainer) return stopDrainer;
+  if (!artifactCatalogHintsEnabled()) return () => {};
   let stopped = false;
   let running = false;
   let again = false;
@@ -338,7 +339,7 @@ export function startArtifactCatalogHintDrainer(): () => void {
         });
         for (const project_id of due) {
           if (stopped) break;
-          await deliverArtifactCatalogHint(project_id).catch((error) =>
+          await deliver(project_id).catch((error) =>
             log.warn("artifact hint delivery failed", { error: `${error}` }),
           );
         }
@@ -353,16 +354,14 @@ export function startArtifactCatalogHintDrainer(): () => void {
       }
     }
   };
-  nudged = () => void tick();
+  registerArtifactCatalogHintNudge(() => void tick());
   timer = setTimeout(() => void tick(), SCAN_INTERVAL_MS);
   timer.unref?.();
-  setArtifactCatalogHintsRunning(true);
   stopDrainer = () => {
     stopped = true;
     clearTimeout(timer);
-    nudged = undefined;
+    registerArtifactCatalogHintNudge(undefined);
     stopDrainer = undefined;
-    setArtifactCatalogHintsRunning(false);
   };
   return stopDrainer;
 }

@@ -156,9 +156,10 @@ export function startConatApiBackgroundWorkers(): void {
   startProjectApiKeyRevocationMaintenance();
   startApiKeyActionMaintenance();
   startRestoreLroWorker();
+  // On every worker: a change committed by any worker wakes its own drainer.
+  startArtifactCatalogHintDrainer();
   if (isPrimaryBayWorker()) {
     startArtifactCatalogMaintenance();
-    startArtifactCatalogHintDrainer();
     startLegacyMigrationProjectRestoreWorker();
     startLegacyMigrationArtifactRefreshMaintenance();
   } else {

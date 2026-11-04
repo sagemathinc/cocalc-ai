@@ -43,10 +43,8 @@ import {
   listAccountOwnedControl,
 } from "./catalog-list";
 
-import {
-  listChangesOwnedControl,
-  nudgeArtifactCatalogHints,
-} from "./catalog-changes";
+import { listChangesOwnedControl } from "./catalog-changes";
+import { nudgeArtifactCatalogHints } from "./catalog-readiness";
 
 export { listAccount, capabilities } from "./catalog-list";
 export { listChanges } from "./catalog-changes";
