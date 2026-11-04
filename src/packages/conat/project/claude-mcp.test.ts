@@ -173,6 +173,28 @@ describe("claude mcp project service", () => {
     }
   });
 
+  it("lists the configured servers without starting any", async () => {
+    const { rt, spawned } = runtime({
+      [`${cwd}/.mcp.json`]: { mcpServers: { repo: { command: "x" } } },
+    });
+    const socket = new FakeSocket();
+    serveClaudeMcpSocket(socket as any, rt, () => () => {});
+    socket.emit("data", JSON.stringify({ list: true, cwd }));
+    await settle();
+    expect(spawned).toEqual([]);
+    expect(socket.written[0].headers.list).toEqual({
+      servers: [{ name: "echo", scope: "user", digest: server.digest }],
+      skipped: [
+        {
+          name: "repo",
+          scope: "project",
+          reason: expect.stringMatching(/not approved/),
+        },
+      ],
+    });
+    expect(socket.closed).toBe(true);
+  });
+
   it("resolves only well-formed setups", async () => {
     const { rt } = runtime();
     expect(

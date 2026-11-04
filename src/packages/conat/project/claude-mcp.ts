@@ -99,6 +99,37 @@ export function claudeMcpBaseEnv(
   return env;
 }
 
+/** The servers configured for an agent working in `cwd` (for its session's
+ * list), and those skipped, with why. */
+export async function listClaudeMcpConfig(
+  runtime: Pick<ClaudeMcpRuntime, "home" | "readJson">,
+  cwd: unknown,
+): Promise<
+  | {
+      servers: { name: string; scope: string; digest: string }[];
+      skipped: { name: string; scope: string; reason: string }[];
+    }
+  | { error: string }
+> {
+  if (typeof cwd !== "string" || !cwd.startsWith("/"))
+    return { error: "invalid MCP setup" };
+  const [claudeJson, userSettings, mcpJson] = await Promise.all([
+    runtime.readJson(`${runtime.home}/.claude.json`),
+    runtime.readJson(`${runtime.home}/.claude/settings.json`),
+    runtime.readJson(`${cwd.replace(/\/+$/, "")}/.mcp.json`),
+  ]);
+  const { servers, skipped } = claudeMcpServers({
+    claudeJson,
+    userSettings,
+    mcpJson,
+    cwd,
+  });
+  return {
+    servers: servers.map(({ name, scope, digest }) => ({ name, scope, digest })),
+    skipped,
+  };
+}
+
 /** The server a setup names, if the project's config still has it. */
 export async function resolveClaudeMcpServer(
   runtime: Pick<ClaudeMcpRuntime, "home" | "readJson">,
@@ -202,12 +233,17 @@ export function serveClaudeMcpSocket(
     }
     started = true;
     void (async () => {
-      let setup: ClaudeMcpSetup;
+      let setup: ClaudeMcpSetup & { list?: boolean };
       try {
         setup = typeof data === "string" ? JSON.parse(data) : data;
       } catch {
         send("", { error: "invalid MCP setup" });
         return end("invalid setup");
+      }
+      if (setup?.list === true) {
+        // Only the list: nothing starts.
+        send("", { list: await listClaudeMcpConfig(runtime, setup.cwd) });
+        return end("listed");
       }
       const server = await resolveClaudeMcpServer(runtime, setup);
       if (ended) return;
