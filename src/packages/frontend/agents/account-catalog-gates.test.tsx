@@ -375,12 +375,30 @@ test("keyboard focus stays on Load more and Refresh while they load; presses mea
   expect(mockHub.listAccount.mock.calls.length).toBe(calls);
   await act(async () => release());
   await waitFor(() => expect(more).toHaveAttribute("aria-busy", "false"));
+  expect(more).toHaveAttribute("aria-disabled", "false");
   expect(more).toHaveFocus();
   await user.click(
     screen.getByRole("button", { name: "Filters & organization" }),
   );
   const refresh = screen.getByRole("button", { name: "Refresh" });
+  let releaseRefresh!: () => void;
+  mockHub.listAccount.mockImplementationOnce(
+    (opts) =>
+      new Promise((resolve) => {
+        releaseRefresh = () => resolve(served(opts));
+      }),
+  );
   refresh.focus();
+  const before = mockHub.listAccount.mock.calls.length;
   await user.keyboard("{Enter}");
+  await waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "true"));
+  expect(mockHub.listAccount.mock.calls.length).toBe(before + 1);
   expect(refresh).toHaveFocus();
-});
+  expect(refresh).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Enter}");
+  expect(mockHub.listAccount.mock.calls.length).toBe(before + 1);
+  await act(async () => releaseRefresh());
+  await waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(refresh).toHaveAttribute("aria-disabled", "false");
+  expect(refresh).toHaveFocus();
+}, 20_000);
