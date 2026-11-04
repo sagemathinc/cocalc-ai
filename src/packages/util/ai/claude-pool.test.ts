@@ -2,8 +2,12 @@ import {
   CLAUDE_POOL_RESERVATION_MS,
   DEFAULT_HEAVY_TURN_COST,
   DEFAULT_TURN_COST,
+  appendClaudeUsageHistory,
   appendTurnCostSamples,
   claudePoolForecast,
+  claudePoolRecentRate,
+  CLAUDE_USAGE_HISTORY_METADATA_KEY,
+  parseClaudeUsageHistory,
   claudePoolMemberFromMetadata,
   claudePoolWindows,
   claudeTurnCostEstimate,
@@ -265,6 +269,162 @@ describe("forecast", () => {
     );
     expect(forecast.ratePerHour).toBeGreaterThan(0);
     expect(forecast.runsOutAt).toBeUndefined();
+  });
+});
+
+describe("usage history", () => {
+  const reading = (agoHours: number, week: number, resetsIn = 72 * HOUR) => ({
+    at: now - agoHours * HOUR,
+    week,
+    resets_at: sec(now + resetsIn),
+  });
+  const usage = (week: number, observedAgo = 0, resetsIn = 72 * HOUR) =>
+    member("x", { week, observedAgo, weekResetsIn: resetsIn }).usage;
+
+  it("adds a newer reading at most every half hour, or when the week resets", () => {
+    expect(appendClaudeUsageHistory(undefined, undefined, now)).toBeUndefined();
+    const first = appendClaudeUsageHistory(undefined, usage(0.1), now)!;
+    expect(first).toEqual([reading(0, 0.1)]);
+    // The same report, or one 10 minutes later: nothing to add.
+    expect(appendClaudeUsageHistory(first, usage(0.1), now)).toBeUndefined();
+    const later = now + HOUR / 6;
+    expect(
+      appendClaudeUsageHistory(first, usage(0.12, -HOUR / 6), later),
+    ).toBeUndefined();
+    // Half an hour later: added.
+    const half = now + HOUR / 2;
+    expect(
+      appendClaudeUsageHistory(first, usage(0.15, -HOUR / 2), half),
+    ).toHaveLength(2);
+    // A reset is added at once.
+    expect(
+      appendClaudeUsageHistory(
+        first,
+        usage(0.01, -HOUR / 6, 7 * 24 * HOUR),
+        later,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("drops readings older than two days and bad entries", () => {
+    const stored = [
+      reading(50, 0.1),
+      reading(10, 0.2),
+      { at: "x", week: 0.3, resets_at: 1 },
+    ];
+    expect(parseClaudeUsageHistory(stored)).toHaveLength(2);
+    expect(
+      appendClaudeUsageHistory(stored, usage(0.2, 10 * HOUR), now),
+    ).toEqual([reading(10, 0.2)]);
+  });
+
+  it("is read from credential metadata", () => {
+    const history = [reading(3, 0.1)];
+    expect(
+      claudePoolMemberFromMetadata(
+        "a",
+        { [CLAUDE_USAGE_HISTORY_METADATA_KEY]: history },
+        now,
+      ).history,
+    ).toEqual(history);
+  });
+});
+
+describe("recent rate", () => {
+  const at = (agoHours: number, week: number, resetsIn = 72 * HOUR) => ({
+    at: now - agoHours * HOUR,
+    week,
+    resets_at: sec(now + resetsIn),
+  });
+
+  it("is unknown until the readings cover two hours", () => {
+    expect(
+      claudePoolRecentRate([member("a", { week: 0.5 })], now),
+    ).toBeUndefined();
+    expect(
+      claudePoolRecentRate(
+        [member("a", { week: 0.5, history: [at(1, 0.4)] })],
+        now,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("counts what was used in the last day, wherever it was used", () => {
+    // Turns concentrated on one subscription at a time, weeks staggered:
+    // a used 0.3 in the first half of the day, then b 0.3. The pool used 0.6
+    // in 24 hours, whatever each week's average says.
+    const a = member("a", {
+      week: 0.9,
+      weekResetsIn: 24 * HOUR,
+      history: [at(24, 0.6, 24 * HOUR), at(12, 0.9, 24 * HOUR)],
+    });
+    const b = member("b", {
+      week: 0.35,
+      weekResetsIn: 160 * HOUR,
+      observedAgo: 0,
+      history: [at(24, 0.05, 160 * HOUR), at(12, 0.05, 160 * HOUR)],
+    });
+    const rate = claudePoolRecentRate([a, b], now)!;
+    expect(rate.hours).toBeCloseTo(24);
+    expect(rate.ratePerHour * 24).toBeCloseTo(0.3 + 0.3);
+    const forecast = claudePoolForecast([a, b], now);
+    expect(forecast.rateFrom).toBe("recent");
+    expect(forecast.ratePerHour).toBeCloseTo(0.6 / 24);
+    // The week averages would claim far more: b alone used 0.3 of its week
+    // in 8 hours, counted over 12.
+    expect(
+      claudePoolForecast(
+        [
+          { ...a, history: undefined },
+          { ...b, history: undefined },
+        ],
+        now,
+      ).ratePerHour,
+    ).toBeGreaterThan(0.6 / 24);
+  });
+
+  it("uses the window every member's readings cover", () => {
+    // a has readings for a day (0.24 used evenly); b only for 3 hours, in
+    // which it used 0.3. Over the last 3 hours the pool used 0.3 plus a's
+    // share of its last 12-hour interval (0.12 * 3/12).
+    const a = member("a", {
+      week: 0.34,
+      history: [at(24, 0.1), at(12, 0.22)],
+    });
+    const b = member("b", { week: 0.4, history: [at(3, 0.1)] });
+    const rate = claudePoolRecentRate([a, b], now)!;
+    expect(rate.hours).toBeCloseTo(3);
+    expect(rate.ratePerHour).toBeCloseTo((0.3 + 0.03) / 3);
+    // A member with a single reading says nothing about the rate.
+    const c = member("c", { week: 0.9 });
+    expect(claudePoolRecentRate([a, b, c], now)!.ratePerHour).toBeCloseTo(
+      (0.3 + 0.03) / 3,
+    );
+  });
+
+  it("counts a new week's usage from its reset, inside the window", () => {
+    // a: readings a day ago and now; its week reset an hour ago. b limits the
+    // window to the last 3 hours. All of a's 0.2 accrued after the reset,
+    // inside the window.
+    const a = member("a", {
+      week: 0.2,
+      weekResetsIn: 7 * 24 * HOUR - HOUR,
+      history: [at(24, 0.9, -HOUR)],
+    });
+    const b = member("b", { week: 0.1, history: [at(3, 0.1)] });
+    const rate = claudePoolRecentRate([a, b], now)!;
+    expect(rate.hours).toBeCloseTo(3);
+    expect(rate.ratePerHour * 3).toBeCloseTo(0.2);
+  });
+
+  it("counts a week that reset from zero", () => {
+    const a = member("a", {
+      week: 0.1,
+      weekResetsIn: 7 * 24 * HOUR - 2 * HOUR,
+      history: [at(6, 0.8, 4 * HOUR - 7 * 24 * HOUR + 7 * 24 * HOUR)],
+    });
+    const rate = claudePoolRecentRate([a], now)!;
+    expect(rate.ratePerHour * rate.hours).toBeCloseTo(0.1);
   });
 });
 

@@ -19,6 +19,12 @@ import type {
   ClaudePoolPickResult,
 } from "@cocalc/conat/inter-bay/agent-payment-selections";
 import {
+  CLAUDE_USAGE_METADATA_KEY,
+  parseClaudeRateLimitSnapshot,
+} from "@cocalc/util/ai/claude-usage";
+import {
+  appendClaudeUsageHistory,
+  CLAUDE_USAGE_HISTORY_METADATA_KEY,
   CLAUDE_POOL_EXCLUDED_METADATA_KEY,
   CLAUDE_POOL_LIMITED_METADATA_KEY,
   CLAUDE_POOL_RESERVATION_MS,
@@ -175,6 +181,19 @@ export async function pickClaudePool(
     }
 
     const pool = claudePoolCredentials(rows);
+    // Each member's latest weekly reading, for the forecast's recent rate
+    // (under the same lock as everything else here).
+    for (const row of pool) {
+      const history = appendClaudeUsageHistory(
+        row.metadata?.[CLAUDE_USAGE_HISTORY_METADATA_KEY],
+        parseClaudeRateLimitSnapshot(
+          row.metadata?.[CLAUDE_USAGE_METADATA_KEY],
+          t,
+        ),
+        t,
+      );
+      if (history) set(row.id, CLAUDE_USAGE_HISTORY_METADATA_KEY, history);
+    }
     const current_label =
       opts.current_credential_id != null
         ? label(byId.get(opts.current_credential_id))
