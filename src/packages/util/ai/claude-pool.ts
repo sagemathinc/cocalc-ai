@@ -36,8 +36,11 @@ export const DEFAULT_HEAVY_TURN_COST = 0.1;
 const MIN_TURN_COST_SAMPLES = 5;
 const MAX_TURN_COST = 0.5;
 // Keep the thread's subscription unless another scores this much better:
-// moving makes the next turn reread the whole conversation uncached.
-const STICKY_FACTOR = 1.5;
+// moving makes the next turn reread the whole conversation uncached (Claude's
+// prompt cache is per account), which costs agents that take many small
+// turns far more than spreading usage gains. A subscription that can no
+// longer take a turn is left regardless.
+const STICKY_FACTOR = 3;
 // Running turns count against a subscription for at most this long.
 export const CLAUDE_POOL_RESERVATION_MS = 10 * 60_000;
 
