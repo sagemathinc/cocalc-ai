@@ -111,6 +111,8 @@ export type ArtifactCatalogChangeOp = "upsert" | "remove" | "reset";
 // Changes newer than both bounds are kept; older readers must reload.
 export const ARTIFACT_CATALOG_CHANGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const ARTIFACT_CATALOG_CHANGE_RETENTION_SEQS = 10_000;
+// A project retaining more change rows than this is reported (counts only).
+export const ARTIFACT_CATALOG_CHANGE_ROWS_REPORT = 10_000;
 
 /**
  * Creates the version baseline for a project whose catalog predates versions:
@@ -124,9 +126,9 @@ async function ensureCatalogProjectState(
 ): Promise<boolean> {
   const { rows } = await db.query(
     `INSERT INTO artifact_catalog_project_state
-       (project_id,epoch,seq,latest_created_at,updated_at)
+       (project_id,epoch,seq,latest_created_at,published_seq,change_rows,updated_at)
      VALUES($1,$2,0,(SELECT max(created_at) FROM artifact_catalog
-       WHERE project_id=$1 AND NOT deleted),now())
+       WHERE project_id=$1 AND NOT deleted),0,0,now())
      ON CONFLICT(project_id) DO NOTHING
      RETURNING project_id`,
     [project_id, randomUUID()],
@@ -206,7 +208,13 @@ export async function artifactCatalogStateBackfillRemaining(
   return Number(rows[0].n);
 }
 
-/** Caller holds the project catalog lock inside its transaction. */
+/**
+ * Caller holds the project catalog lock inside its transaction. Besides the
+ * seq, this keeps the exact retained change-row count, and owes readers a
+ * change hint: a catalog with no hint baseline yet (published_seq NULL, from
+ * before hints existed) gets the seq before this change as its baseline, so
+ * exactly this change is hinted.
+ */
 async function appendCatalogChanges(
   db: Queryable,
   project_id: string,
@@ -214,15 +222,18 @@ async function appendCatalogChanges(
 ): Promise<number> {
   const { rows } = await db.query(
     `INSERT INTO artifact_catalog_project_state
-       (project_id,epoch,seq,latest_created_at,updated_at)
+       (project_id,epoch,seq,latest_created_at,published_seq,change_rows,updated_at)
      VALUES($1,$2,1,(SELECT max(created_at) FROM artifact_catalog
-       WHERE project_id=$1 AND NOT deleted),now())
+       WHERE project_id=$1 AND NOT deleted),0,$3,now())
      ON CONFLICT(project_id) DO UPDATE SET
        seq=artifact_catalog_project_state.seq+1,
        latest_created_at=excluded.latest_created_at,
+       published_seq=COALESCE(artifact_catalog_project_state.published_seq,
+         artifact_catalog_project_state.seq),
+       change_rows=artifact_catalog_project_state.change_rows+$3,
        updated_at=now()
      RETURNING seq`,
-    [project_id, randomUUID()],
+    [project_id, randomUUID(), changes.length],
   );
   const seq = Number(rows[0].seq);
   await db.query(
@@ -290,19 +301,85 @@ export async function pruneArtifactCatalogChanges({
     });
     let projectDeleted = 0;
     while (projectDeleted < maxRowsPerProject) {
-      const result = await getPool().query(
-        `DELETE FROM artifact_catalog_changes WHERE ctid IN (
-           SELECT ctid FROM artifact_catalog_changes
-           WHERE project_id=$1 AND seq<=$2 LIMIT $3)`,
-        [row.project_id, floor, batchRows],
-      );
-      const count = result.rowCount ?? 0;
+      // Each batch and its change-row count move together.
+      const count = await transaction(async (db) => {
+        const result = await db.query(
+          `DELETE FROM artifact_catalog_changes WHERE ctid IN (
+             SELECT ctid FROM artifact_catalog_changes
+             WHERE project_id=$1 AND seq<=$2 LIMIT $3)`,
+          [row.project_id, floor, batchRows],
+        );
+        const deleted = result.rowCount ?? 0;
+        if (deleted > 0)
+          await db.query(
+            `UPDATE artifact_catalog_project_state
+             SET change_rows=change_rows-$2 WHERE project_id=$1`,
+            [row.project_id, deleted],
+          );
+        return deleted;
+      });
       projectDeleted += count;
       if (count < batchRows) break;
     }
     deleted += projectDeleted;
   }
   return { projects: rows.length, deleted };
+}
+
+/**
+ * Measures the exact retained change-row count of catalogs that predate the
+ * counter (NULL), in small batches, each under the project catalog lock so
+ * no concurrent change is counted twice or missed. Restart-safe.
+ */
+export async function backfillArtifactCatalogChangeRows({
+  maxProjects = 100,
+}: { maxProjects?: number } = {}): Promise<{
+  measured: number;
+  remaining: number;
+}> {
+  const { rows } = await getPool().query(
+    `SELECT project_id FROM artifact_catalog_project_state
+     WHERE change_rows IS NULL ORDER BY project_id LIMIT $1`,
+    [maxProjects],
+  );
+  let measured = 0;
+  for (const row of rows) {
+    const updated = await transaction(async (db) => {
+      await lockProjectCatalog(db, row.project_id);
+      const result = await db.query(
+        `UPDATE artifact_catalog_project_state SET change_rows=(
+           SELECT count(*) FROM artifact_catalog_changes WHERE project_id=$1)
+         WHERE project_id=$1 AND change_rows IS NULL`,
+        [row.project_id],
+      );
+      return result.rowCount ?? 0;
+    });
+    measured += updated;
+  }
+  const { rows: left } = await getPool().query(
+    "SELECT count(*) AS n FROM artifact_catalog_project_state WHERE change_rows IS NULL",
+  );
+  return { measured, remaining: Number(left[0].n) };
+}
+
+/** Change-log size, counts only, from the state table (one row a project). */
+export async function artifactCatalogChangeRowGauges(): Promise<{
+  max_change_rows: number;
+  projects_over_retention: number;
+  projects_unmeasured: number;
+}> {
+  const { rows } = await getPool().query(
+    `SELECT COALESCE(max(change_rows),0) AS max_rows,
+       count(*) FILTER (WHERE change_rows > $1) AS over,
+       count(*) FILTER (WHERE change_rows IS NULL) AS unmeasured
+     FROM artifact_catalog_project_state`,
+    [ARTIFACT_CATALOG_CHANGE_ROWS_REPORT],
+  );
+  return {
+    max_change_rows: Number(rows[0].max_rows),
+    projects_over_retention: Number(rows[0].over),
+    projects_unmeasured: Number(rows[0].unmeasured),
+  };
 }
 
 async function chargeProjectWork(

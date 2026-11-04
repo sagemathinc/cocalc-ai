@@ -94,6 +94,7 @@ export function createLiteArtifactCatalog({
     ...liteArtifactCatalogReadApi(catalog, account_id),
     // capabilities() reports list: 0, so clients do not call this in Lite.
     listAccount: () => catalog.listAccount(),
+    listChanges: () => catalog.listChanges(),
     sourcePage: localOnly,
     writerState: localOnly,
     registerSource: localOnly,

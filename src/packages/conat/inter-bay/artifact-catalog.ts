@@ -22,6 +22,8 @@ import type {
   CatalogEntry,
   CatalogProjectVersion,
   CatalogView,
+  CatalogChangesRequest,
+  CatalogChangesPage,
 } from "@cocalc/conat/hub/api/artifact-catalog";
 
 export interface CatalogOwnerRoute {
@@ -78,6 +80,10 @@ export interface InterBayArtifactCatalogApi {
   listAccountOwned(
     opts: CatalogOwnedListRequest,
   ): Promise<CatalogOwnedListReply>;
+  /** On the project's owner bay, which authorizes it from account_id. */
+  listChanges(
+    opts: CatalogChangesRequest & { account_id: string },
+  ): Promise<CatalogChangesPage>;
   writerState(
     opts: CatalogSourceRequest & { route: CatalogOwnerRoute },
   ): ReturnType<ArtifactCatalogApi["writerState"]>;
