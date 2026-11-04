@@ -43,7 +43,11 @@ import {
   listAccountOwnedControl,
 } from "./catalog-list";
 
+import { listChangesOwnedControl } from "./catalog-changes";
+import { nudgeArtifactCatalogHints } from "./catalog-readiness";
+
 export { listAccount, capabilities } from "./catalog-list";
+export { listChanges } from "./catalog-changes";
 
 function source(opts: CatalogSourceRequest) {
   requireUuid(opts.host_id, "authenticated host_id");
@@ -314,6 +318,7 @@ export const catalogOwnerControl: InterBayArtifactCatalogApi = {
   },
   listAccountHome: (opts) => listAccountHomeControl(opts),
   listAccountOwned: (opts) => listAccountOwnedControl(opts),
+  listChanges: (opts) => listChangesOwnedControl(opts),
   writerState: (opts) =>
     owned(opts, (authority) =>
       getArtifactCatalogWriterState(source(opts), authority),
@@ -340,6 +345,10 @@ export const catalogOwnerControl: InterBayArtifactCatalogApi = {
         snapshot.chat_path !== opts.chat_path
       )
         throw Error("artifact catalog snapshot source mismatch");
-      return applyArtifactCatalogSnapshot(snapshot, authority);
+      const result = await applyArtifactCatalogSnapshot(snapshot, authority);
+      // A committed change may owe readers a hint; the drainer's scan
+      // covers a lost nudge.
+      if (!result.replayed) nudgeArtifactCatalogHints();
+      return result;
     }),
 };

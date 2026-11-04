@@ -55,6 +55,10 @@ import {
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
 import { withArtifactCatalogReadLimit } from "./catalog-read-limits";
+import {
+  artifactCatalogDeltasReady,
+  artifactCatalogHintsEnabled,
+} from "./catalog-readiness";
 
 /**
  * The view used when a request names none. This is the one place that
@@ -526,5 +530,12 @@ export const capabilities: ArtifactCatalogApi["capabilities"] = async (
       at: now,
     };
   }
-  return { list: readiness.ready ? 1 : 0, deltas: 0, hints: 0 };
+  const list = readiness.ready ? 1 : 0;
+  return {
+    list,
+    deltas: list && (await artifactCatalogDeltasReady()) ? 1 : 0,
+    // A bay-wide setting (every worker runs a drainer). Hints only reduce
+    // latency; readers repair from versions regardless.
+    hints: list && artifactCatalogHintsEnabled() ? 1 : 0,
+  };
 };

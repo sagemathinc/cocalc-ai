@@ -430,6 +430,10 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
     throw Error("account-wide catalog pages are not supported in Lite");
   }
 
+  async listChanges(): Promise<never> {
+    throw Error("catalog changes are not supported in Lite");
+  }
+
   async listProject({
     project_id,
     after = "",

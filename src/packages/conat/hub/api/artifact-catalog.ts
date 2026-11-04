@@ -61,6 +61,28 @@ export interface CatalogAccountPage {
   /** A filter list was larger than its bound, so results may be missing. */
   limited?: { named_agents?: true; aliases?: true };
 }
+export interface CatalogChangesRequest {
+  account_id?: string;
+  project_id: string;
+  /** The version the reader has applied. */
+  from: { epoch: string; seq: number };
+  /** Fixed by the first page's reply; echoed on later pages. */
+  through_seq?: number;
+  /** Continuation within the range (from a reply's next_entry). */
+  after_entry?: string;
+}
+export type CatalogChangesPage =
+  | { reset: true; current?: CatalogProjectVersion }
+  | {
+      from_seq: number;
+      through_seq: number;
+      current: CatalogProjectVersion;
+      /** Current state of each changed entry that exists. */
+      upserts: CatalogEntry[];
+      /** Changed entries that no longer exist. */
+      removes: string[];
+      next_entry?: string;
+    };
 export interface CatalogCapabilities {
   list: 0 | 1;
   deltas: 0 | 1;
@@ -109,6 +131,8 @@ export interface ArtifactCatalogApi {
   getEntries(opts: CatalogEntriesRequest): Promise<CatalogEntry[]>;
   /** Account-wide recent-first pages and search over readable projects. */
   listAccount(opts: CatalogAccountListRequest): Promise<CatalogAccountPage>;
+  /** The changes to one project's catalog since a version. */
+  listChanges(opts: CatalogChangesRequest): Promise<CatalogChangesPage>;
   /** Which account-wide reads this deployment serves. */
   capabilities(opts: { account_id?: string }): Promise<CatalogCapabilities>;
   writerState(opts: CatalogSourceRequest): Promise<CatalogWriterState | null>;
@@ -123,6 +147,7 @@ export const artifactCatalog = {
   getEntry: authFirstRequireAccount,
   getEntries: authFirstRequireAccount,
   listAccount: authFirstRequireAccount,
+  listChanges: authFirstRequireAccount,
   capabilities: authFirstRequireAccount,
   writerState: authFirstRequireHost,
   registerSource: authFirstRequireHost,

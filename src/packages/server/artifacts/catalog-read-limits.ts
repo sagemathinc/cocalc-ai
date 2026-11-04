@@ -9,10 +9,7 @@
 // hub processes the effective bound is these values times the hub count.
 
 export type ArtifactCatalogReadKind =
-  | "getEntries"
-  | "listAccount"
-  | "listAccountProbe"
-  | "search";
+  "getEntries" | "listAccount" | "listAccountProbe" | "search" | "listChanges";
 
 interface Rule {
   concurrent: number;
@@ -30,6 +27,7 @@ export const ARTIFACT_CATALOG_READ_LIMITS: Record<
   listAccountProbe: { concurrent: 2, perWindow: 6, windowMs: 60_000 },
   // Any request with a query, in addition to its page or probe limit.
   search: { concurrent: 2, perWindow: 10, windowMs: 10_000 },
+  listChanges: { concurrent: 4, perWindow: 60, windowMs: 10_000 },
 };
 
 export const ARTIFACT_CATALOG_READ_LIMITED =
