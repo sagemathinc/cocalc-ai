@@ -529,7 +529,8 @@ test("a failed ingest leaves no change records or version bump", async () => {
     );
   }
   expect(await changeLog()).toEqual([]);
-  expect(await projectState()).toBeUndefined();
+  // Only the baseline created at source registration remains.
+  expect(await projectState()).toMatchObject({ seq: 0 });
 });
 
 test("more than one page of changes in one snapshot share a single seq", async () => {
@@ -550,7 +551,7 @@ test("visibility resets advance the same sequence under the catalog lock", async
   const db = await getPool().connect();
   try {
     await db.query("BEGIN");
-    await lockArtifactCatalogProject(db, project_id);
+    await lockArtifactCatalogProject(db, project_id, authority.owning_bay_id);
     expect(await appendArtifactCatalogReset(db, project_id)).toBe(2);
     await db.query("COMMIT");
   } finally {
@@ -561,17 +562,148 @@ test("visibility resets advance the same sequence under the catalog lock", async
     entry_id: "",
     op: "reset",
   });
-  // A reset on a project with no catalog rows creates its version.
+  // A reset on a live project with no catalog rows creates its version.
   const other = randomUUID();
+  await getPool().query(
+    `INSERT INTO projects(project_id,host_id,owning_bay_id,users)
+    VALUES($1,$2,$3,'{}'::jsonb)`,
+    [other, host_id, authority.owning_bay_id],
+  );
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    await lockArtifactCatalogProject(client, other);
+    await lockArtifactCatalogProject(client, other, authority.owning_bay_id);
     expect(await appendArtifactCatalogReset(client, other)).toBe(1);
     await client.query("ROLLBACK");
   } finally {
     client.release();
   }
+});
+
+// Lifecycle: no version or change row may outlive (or be created for) a
+// project that is deleted, missing or owned by another bay.
+
+const rowsFor = async (id: string) => {
+  const counts = {};
+  for (const table of [
+    "artifact_catalog",
+    "artifact_catalog_sources",
+    "artifact_catalog_project_state",
+    "artifact_catalog_changes",
+  ]) {
+    counts[table] = Number(
+      (
+        await getPool().query(
+          `SELECT count(*) AS n FROM ${table} WHERE project_id=$1`,
+          [id],
+        )
+      ).rows[0].n,
+    );
+  }
+  return counts;
+};
+const hardDelete = async (id: string) => {
+  // What project hard delete does: lock the project row, delete its rows.
+  const db = await getPool().connect();
+  try {
+    await db.query("BEGIN");
+    await db.query(
+      "SELECT project_id FROM projects WHERE project_id=$1 FOR UPDATE",
+      [id],
+    );
+    for (const table of [
+      "artifact_catalog",
+      "artifact_catalog_changes",
+      "artifact_catalog_project_state",
+      "artifact_catalog_sources",
+    ])
+      await db.query(`DELETE FROM ${table} WHERE project_id=$1`, [id]);
+    await db.query("DELETE FROM projects WHERE project_id=$1", [id]);
+    await db.query("COMMIT");
+  } finally {
+    db.release();
+  }
+};
+const none = {
+  artifact_catalog: 0,
+  artifact_catalog_sources: 0,
+  artifact_catalog_project_state: 0,
+  artifact_catalog_changes: 0,
+};
+
+test("a reset for a deleted, hard-deleted or foreign project is refused and writes nothing", async () => {
+  await applyArtifactCatalogSnapshot(snapshot(1), authority);
+  const tryReset = async (bay = authority.owning_bay_id) => {
+    const db = await getPool().connect();
+    try {
+      await db.query("BEGIN");
+      await lockArtifactCatalogProject(db, project_id, bay);
+      await appendArtifactCatalogReset(db, project_id);
+      await db.query("COMMIT");
+    } catch (err) {
+      await db.query("ROLLBACK");
+      throw err;
+    } finally {
+      db.release();
+    }
+  };
+  await expect(tryReset("other-bay")).rejects.toThrow("not live on this bay");
+  await getPool().query(
+    "UPDATE projects SET deleted=TRUE WHERE project_id=$1",
+    [project_id],
+  );
+  await expect(tryReset()).rejects.toThrow("not live on this bay");
+  expect((await projectState())?.seq).toBe(1);
+  await getPool().query(
+    "UPDATE projects SET deleted=FALSE WHERE project_id=$1",
+    [project_id],
+  );
+  await hardDelete(project_id);
+  await expect(tryReset()).rejects.toThrow("not live on this bay");
+  expect(await rowsFor(project_id)).toEqual(none);
+});
+
+test("a project hard-deleted after backfill selected it gets no resurrected state", async () => {
+  await applyArtifactCatalogSnapshot(snapshot(1), authority);
+  await forgetVersions();
+  expect(
+    await artifactCatalogStateBackfillRemaining(authority.owning_bay_id),
+  ).toBe(1);
+  const result = await backfillArtifactCatalogProjectState({
+    owning_bay_id: authority.owning_bay_id,
+    // Runs after the backfill selected the project, before its locks.
+    beforeProject: async (id) => await hardDelete(id),
+  });
+  expect(result).toEqual({ created: 0, remaining: 0 });
+  expect(await rowsFor(project_id)).toEqual(none);
+});
+
+test("backfill and its remaining count ignore projects owned by other bays", async () => {
+  await applyArtifactCatalogSnapshot(snapshot(1), authority);
+  await forgetVersions();
+  // The project moved away; its stale source rows here are not authoritative.
+  await getPool().query(
+    "UPDATE projects SET owning_bay_id='other-bay' WHERE project_id=$1",
+    [project_id],
+  );
+  expect(
+    await artifactCatalogStateBackfillRemaining(authority.owning_bay_id),
+  ).toBe(0);
+  expect(
+    await backfillArtifactCatalogProjectState({
+      owning_bay_id: authority.owning_bay_id,
+    }),
+  ).toEqual({ created: 0, remaining: 0 });
+  expect(await projectState()).toBeUndefined();
+});
+
+test("registering a source creates the baseline before any ingest", async () => {
+  // beforeEach registered a source: the project is versioned already.
+  expect(await projectState()).toMatchObject({ seq: 0, floor: 0 });
+  expect(await changeLog()).toEqual([]);
+  expect(
+    await artifactCatalogStateBackfillRemaining(authority.owning_bay_id),
+  ).toBe(0);
 });
 
 test("latest_created_at follows removals", async () => {
@@ -715,19 +847,27 @@ test("dormant pre-version catalogs are backfilled in bounded, idempotent batches
   );
   await forgetVersions();
   const before = await catalogRows();
-  expect(await artifactCatalogStateBackfillRemaining()).toBe(2);
-  expect(await backfillArtifactCatalogProjectState({ maxProjects: 1 })).toEqual(
-    {
-      created: 1,
-      remaining: 1,
-    },
-  );
-  expect(await backfillArtifactCatalogProjectState({ maxProjects: 1 })).toEqual(
-    {
-      created: 1,
-      remaining: 0,
-    },
-  );
+  expect(
+    await artifactCatalogStateBackfillRemaining(authority.owning_bay_id),
+  ).toBe(2);
+  expect(
+    await backfillArtifactCatalogProjectState({
+      owning_bay_id: authority.owning_bay_id,
+      maxProjects: 1,
+    }),
+  ).toEqual({
+    created: 1,
+    remaining: 1,
+  });
+  expect(
+    await backfillArtifactCatalogProjectState({
+      owning_bay_id: authority.owning_bay_id,
+      maxProjects: 1,
+    }),
+  ).toEqual({
+    created: 1,
+    remaining: 0,
+  });
   const state = await projectState();
   expect(state).toMatchObject({ seq: 0, floor: 0, latest: 7000 });
   const otherState = (
@@ -739,7 +879,11 @@ test("dormant pre-version catalogs are backfilled in bounded, idempotent batches
   expect(Number(otherState.seq)).toBe(0);
   expect(otherState.latest_created_at).toBeNull();
   // Rerunning changes nothing: same epoch, no history, same catalog.
-  expect(await backfillArtifactCatalogProjectState()).toEqual({
+  expect(
+    await backfillArtifactCatalogProjectState({
+      owning_bay_id: authority.owning_bay_id,
+    }),
+  ).toEqual({
     created: 0,
     remaining: 0,
   });

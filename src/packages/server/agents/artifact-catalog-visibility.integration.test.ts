@@ -42,7 +42,7 @@ describeDb("agent identity changes reset artifact catalog visibility", () => {
   beforeAll(async () => {
     const db = getPool();
     await db.query(
-      "CREATE TABLE IF NOT EXISTS projects(project_id uuid PRIMARY KEY, users jsonb)",
+      "CREATE TABLE IF NOT EXISTS projects(project_id uuid PRIMARY KEY, users jsonb, owning_bay_id text, deleted boolean)",
     );
     await syncSchema(
       Object.fromEntries(
@@ -97,5 +97,43 @@ describeDb("agent identity changes reset artifact catalog visibility", () => {
     ]);
     await disableIdentity(request);
     expect(await changes()).toHaveLength(2);
+  });
+
+  test("a deleted project refuses the change and writes no catalog rows", async () => {
+    const agent = await registerIdentityLocal({
+      account_id,
+      project_id,
+      path: "/home/user/other.chat",
+      thread_id: "other",
+    });
+    expect(await changes()).toHaveLength(3);
+    await getPool().query(
+      "UPDATE projects SET deleted=TRUE WHERE project_id=$1",
+      [project_id],
+    );
+    try {
+      await expect(
+        disableIdentity({
+          account_id,
+          agent_id: agent.agent_id,
+          session_hash: "session",
+        } as any),
+      ).rejects.toThrow("not live on this bay");
+      // The whole transaction rolled back: still active, nothing recorded.
+      expect(await changes()).toHaveLength(3);
+      expect(
+        (
+          await getPool().query(
+            "SELECT disabled_at FROM agent_identities WHERE agent_id=$1",
+            [agent.agent_id],
+          )
+        ).rows[0].disabled_at,
+      ).toBeNull();
+    } finally {
+      await getPool().query(
+        "UPDATE projects SET deleted=FALSE WHERE project_id=$1",
+        [project_id],
+      );
+    }
   });
 });

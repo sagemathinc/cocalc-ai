@@ -11,6 +11,7 @@ import {
   appendArtifactCatalogReset,
   lockArtifactCatalogProject,
 } from "@cocalc/database/postgres/artifact-catalog";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { agentStore, agentMessagingEnabled, normalizeAgentPath } from "./store";
 import { assertLocalAgentProject, assertActor, assertAgent } from "./access";
 import { withAgentChat } from "./chat";
@@ -124,7 +125,11 @@ export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
     requireUuid(prepared.successor_thread_id, "successor_thread_id");
     await assertActor(opts.account_id, opts.project_id);
     const fresh = await db.transaction(async (sql) => {
-      await lockArtifactCatalogProject(sql, opts.project_id);
+      await lockArtifactCatalogProject(
+        sql,
+        opts.project_id,
+        getConfiguredBayId(),
+      );
       await sql.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `agent-identities:${opts.project_id}`,
       ]);
@@ -226,7 +231,11 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
       // Loading the live chat may wait on routing or synchronization.
       await assertActor(account_id, opts.project_id);
       return db.transaction(async (sql) => {
-        await lockArtifactCatalogProject(sql, opts.project_id);
+        await lockArtifactCatalogProject(
+          sql,
+          opts.project_id,
+          getConfiguredBayId(),
+        );
         await sql.query(
           "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
           [`agent-identities:${opts.project_id}`],
@@ -384,14 +393,18 @@ export const disableIdentity: AgentApi["disableIdentity"] = async (opts) => {
   if (agent.created_by !== account_id)
     throw new Error("only the registrant may disable this agent");
   await db.transaction(async (sql) => {
-    await lockArtifactCatalogProject(sql, agent.project_id);
-    const wasActive =
-      (
-        await sql.query(
-          "SELECT disabled_at FROM agent_identities WHERE agent_id=$1 FOR UPDATE",
-          [opts.agent_id],
-        )
-      ).rows[0]?.disabled_at == null;
+    await lockArtifactCatalogProject(
+      sql,
+      agent.project_id,
+      getConfiguredBayId(),
+    );
+    const current = (
+      await sql.query(
+        "SELECT disabled_at FROM agent_identities WHERE agent_id=$1 FOR UPDATE",
+        [opts.agent_id],
+      )
+    ).rows[0];
+    const wasActive = current != null && current.disabled_at == null;
     await sql.query(
       "UPDATE agent_identities SET disabled_at=COALESCE(disabled_at,now()),disabled_by=$2 WHERE agent_id=$1",
       [opts.agent_id, account_id],
@@ -457,7 +470,11 @@ export const recoverIdentityLocal: AgentApi["recoverIdentity"] = async (
     async (_chat, thread) => {
       await assertIdentityRecoveryOwner(opts.account_id!, opts.project_id);
       return db.transaction(async (sql) => {
-        await lockArtifactCatalogProject(sql, opts.project_id);
+        await lockArtifactCatalogProject(
+          sql,
+          opts.project_id,
+          getConfiguredBayId(),
+        );
         await sql.query(
           "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
           [`agent-identities:${opts.project_id}`],

@@ -4,6 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   backfillArtifactCatalogProjectState,
   pruneArtifactCatalogChanges,
@@ -29,7 +30,9 @@ export function startArtifactCatalogMaintenance(): () => void {
   const tick = async () => {
     let delay = 10 * 60_000;
     try {
-      const backfill = await backfillArtifactCatalogProjectState();
+      const backfill = await backfillArtifactCatalogProjectState({
+        owning_bay_id: getConfiguredBayId(),
+      });
       if (backfill.created > 0 || backfill.remaining > 0) {
         log.info("artifact catalog version backfill", backfill);
       }

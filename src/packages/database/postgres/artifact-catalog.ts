@@ -73,14 +73,26 @@ async function lockProjectCatalog(db: Queryable, project_id: string) {
 }
 
 /**
- * Serializes with catalog ingest for one project. Writers that change what a
- * catalog reader may see take this lock first, before any other lock, in the
- * same transaction as their change.
+ * For writers outside ingest that change what a catalog reader may see (agent
+ * identity changes). In their transaction, before any other lock, this takes
+ * the same locks in the same order as ingest: the live project row owned by
+ * this bay FOR SHARE (which serializes with project hard delete, so no version
+ * or change row can outlive the project), then the project catalog lock.
+ * Throws if the project is not live on this bay.
  */
 export async function lockArtifactCatalogProject(
   db: Queryable,
   project_id: string,
+  owning_bay_id: string,
 ): Promise<void> {
+  const { rows } = await db.query(
+    `SELECT project_id FROM projects
+     WHERE project_id=$1 AND COALESCE(NULLIF(BTRIM(owning_bay_id),''),$2)=$2
+       AND NOT COALESCE(deleted,FALSE) FOR SHARE`,
+    [project_id, owning_bay_id],
+  );
+  if (!rows.length)
+    throw Error("artifact catalog project is not live on this bay");
   await lockProjectCatalog(db, project_id);
 }
 
@@ -94,60 +106,93 @@ export const ARTIFACT_CATALOG_CHANGE_RETENTION_SEQS = 10_000;
  * Creates the version baseline for a project whose catalog predates versions:
  * a fresh epoch at seq 0 with no change history. Readers treat seq 0 as "load
  * the current catalog"; nothing is fabricated or removed. Idempotent; caller
- * holds the project catalog lock.
+ * holds the project row (owner check) and the project catalog lock.
  */
 async function ensureCatalogProjectState(
   db: Queryable,
   project_id: string,
-): Promise<void> {
-  await db.query(
+): Promise<boolean> {
+  const { rows } = await db.query(
     `INSERT INTO artifact_catalog_project_state
        (project_id,epoch,seq,latest_created_at,updated_at)
      VALUES($1,$2,0,(SELECT max(created_at) FROM artifact_catalog
        WHERE project_id=$1 AND NOT deleted),now())
-     ON CONFLICT(project_id) DO NOTHING`,
+     ON CONFLICT(project_id) DO NOTHING
+     RETURNING project_id`,
     [project_id, randomUUID()],
   );
+  return rows.length > 0;
 }
 
 /**
- * Bounded, restart-safe backfill of version baselines for catalogs that have
- * not been written since versions were introduced (dormant projects). Each
- * project is handled under its catalog lock; rerunning is harmless.
+ * Bounded, restart-safe backfill of version baselines for catalogs on this
+ * bay that have not been written since versions were introduced (dormant
+ * projects). Each project is revalidated under the same locks, in the same
+ * order, as ingest: the live project row owned by this bay (which serializes
+ * with project hard delete), then the catalog lock, then its sources. A
+ * project deleted or moved meanwhile is skipped; rerunning is harmless.
  */
 export async function backfillArtifactCatalogProjectState({
+  owning_bay_id,
   maxProjects = 100,
-}: { maxProjects?: number } = {}): Promise<{
-  created: number;
-  remaining: number;
-}> {
+  beforeProject,
+}: {
+  owning_bay_id: string;
+  maxProjects?: number;
+  /** Test hook: runs after selection, before the project's locks. */
+  beforeProject?: (project_id: string) => Promise<void>;
+}): Promise<{ created: number; remaining: number }> {
   const { rows } = await getPool().query(
     `SELECT DISTINCT s.project_id FROM artifact_catalog_sources s
-     WHERE NOT EXISTS (SELECT 1 FROM artifact_catalog_project_state p
-       WHERE p.project_id=s.project_id)
-     ORDER BY s.project_id LIMIT $1`,
-    [maxProjects],
+     JOIN projects p ON p.project_id=s.project_id
+     WHERE p.owning_bay_id=$1 AND NOT COALESCE(p.deleted,FALSE)
+       AND NOT EXISTS (SELECT 1 FROM artifact_catalog_project_state st
+         WHERE st.project_id=s.project_id)
+     ORDER BY s.project_id LIMIT $2`,
+    [owning_bay_id, maxProjects],
   );
   let created = 0;
   for (const row of rows) {
-    await transaction(async (db) => {
+    await beforeProject?.(row.project_id);
+    const inserted = await transaction(async (db) => {
+      const live = await db.query(
+        `SELECT project_id FROM projects
+         WHERE project_id=$1 AND owning_bay_id=$2
+           AND NOT COALESCE(deleted,FALSE) FOR SHARE`,
+        [row.project_id, owning_bay_id],
+      );
+      if (!live.rows.length) return false;
       await lockProjectCatalog(db, row.project_id);
-      await ensureCatalogProjectState(db, row.project_id);
+      const source = await db.query(
+        "SELECT 1 FROM artifact_catalog_sources WHERE project_id=$1 LIMIT 1",
+        [row.project_id],
+      );
+      if (!source.rows.length) return false;
+      return await ensureCatalogProjectState(db, row.project_id);
     });
-    created++;
+    if (inserted) created++;
   }
-  return { created, remaining: await artifactCatalogStateBackfillRemaining() };
+  return {
+    created,
+    remaining: await artifactCatalogStateBackfillRemaining(owning_bay_id),
+  };
 }
 
 /**
- * Projects with catalog sources but no version baseline. Reads that rely on
- * versions must not be advertised on this bay until this is zero.
+ * Live projects owned by this bay that have catalog sources but no version
+ * baseline. Reads that rely on versions must not be advertised on this bay
+ * until this is zero.
  */
-export async function artifactCatalogStateBackfillRemaining(): Promise<number> {
+export async function artifactCatalogStateBackfillRemaining(
+  owning_bay_id: string,
+): Promise<number> {
   const { rows } = await getPool().query(
     `SELECT count(DISTINCT s.project_id) AS n FROM artifact_catalog_sources s
-     WHERE NOT EXISTS (SELECT 1 FROM artifact_catalog_project_state p
-       WHERE p.project_id=s.project_id)`,
+     JOIN projects p ON p.project_id=s.project_id
+     WHERE p.owning_bay_id=$1 AND NOT COALESCE(p.deleted,FALSE)
+       AND NOT EXISTS (SELECT 1 FROM artifact_catalog_project_state st
+         WHERE st.project_id=s.project_id)`,
+    [owning_bay_id],
   );
   return Number(rows[0].n);
 }
@@ -182,8 +227,8 @@ async function appendCatalogChanges(
 
 /**
  * Records that catalog visibility may have changed for the whole project (an
- * agent identity was registered, disabled, replaced or rebound). Caller holds
- * the project catalog lock in the same transaction as that change.
+ * agent identity was registered, disabled, replaced or rebound). Caller has
+ * called lockArtifactCatalogProject in the same transaction as that change.
  */
 export async function appendArtifactCatalogReset(
   db: Queryable,
@@ -378,6 +423,8 @@ export async function registerArtifactCatalogSource(
   return transaction(async (db) => {
     await assertOwner(db, source.project_id, authority);
     await lockProjectCatalog(db, source.project_id);
+    // A newly registered source is versioned before its first ingest.
+    await ensureCatalogProjectState(db, source.project_id);
     const source_id = artifactCatalogSourceId(source);
     await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
       `artifact-source:${source_id}`,
