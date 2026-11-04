@@ -13,6 +13,7 @@ import { init as initProjectStatus } from "@cocalc/project/project-status/server
 import { init as initUsageInfo } from "@cocalc/project/usage-info";
 import { init as initJupyter } from "./jupyter";
 import { init as initTerminalServer } from "./terminal-server";
+import { init as initClaudeMcp } from "./claude-mcp";
 import { getIdentity } from "./connection";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import { init as initExecStream } from "@cocalc/project/exec-stream";
@@ -36,6 +37,7 @@ export default async function init(opts?: {
 
   startProjectConatAdmissionSettingsRefresh();
   initTerminalServer(opts);
+  initClaudeMcp(opts);
   await initAPI(opts);
   await initJupyter(opts);
   initWebsocketApi(opts);
