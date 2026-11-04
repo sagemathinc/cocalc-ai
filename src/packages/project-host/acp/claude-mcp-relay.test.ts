@@ -29,6 +29,13 @@ class FakeController extends EventEmitter {
     this.ended = true;
   };
   destroy = () => {};
+  paused = false;
+  pause = () => {
+    this.paused = true;
+  };
+  resume = () => {
+    this.paused = false;
+  };
 }
 
 const server = { name: "files", scope: "user", digest: "d".repeat(64) };
@@ -133,6 +140,23 @@ describe("relayClaudeMcp", () => {
     controller.writableLength = MAX_CLAUDE_MCP_QUEUED_BYTES + 1;
     project.emit("data", line({ id: 1, result: {} }) + "\n");
     expect(ends).toEqual(["Claude is not reading the MCP server's output"]);
+  });
+
+  it("pauses Claude while the project is behind, and resumes on drain", () => {
+    const { project, controller } = start();
+    project.emit("data", "", { ready: true });
+    const big = "x".repeat(1_000_000);
+    for (let i = 0; i < 5; i++) controller.emit("data", big + "\n");
+    expect(controller.paused).toBe(true);
+    project.emit("drain");
+    expect(controller.paused).toBe(false);
+  });
+
+  it("bounds what is held before the server is ready, in bytes", () => {
+    const { controller, ends } = start();
+    const big = "x".repeat(1_000_000);
+    for (let i = 0; i < 5; i++) controller.emit("data", big + "\n");
+    expect(ends).toEqual(["too much sent before the server was ready"]);
   });
 
   it("ends on an oversized message either way", () => {

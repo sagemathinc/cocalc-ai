@@ -64,10 +64,11 @@ export function claudeMcpServerLine(line: string): ServerLineVerdict {
   if (!message || typeof message !== "object" || Array.isArray(message))
     // Batches are not part of current MCP; refuse rather than inspect.
     return { drop: true };
+  // A request is a method with an id member, whatever its value (even null):
+  // the sender waits for an answer.
   const isRequest =
     typeof message.method === "string" &&
-    message.id !== undefined &&
-    message.id !== null;
+    Object.prototype.hasOwnProperty.call(message, "id");
   if (isRequest && !ALLOWED_SERVER_REQUESTS.has(message.method))
     return {
       answer: JSON.stringify({

@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import {
+  MAX_CLAUDE_MCP_QUEUED_BYTES,
   claudeMcpBaseEnv,
   resolveClaudeMcpServer,
   serveClaudeMcpSocket,
@@ -92,10 +93,63 @@ describe("claude mcp project service", () => {
     expect(Buffer.from(socket.written[1].data).toString()).toContain(
       '"result"',
     );
-    // the agent side closes: the whole process group is stopped
+    // the agent side closes: the whole process group is stopped, and the
+    // slot is held until it has exited
     socket.emit("closed");
     expect(kills).toEqual([[4242, "SIGTERM"]]);
+    expect([admitted, released]).toEqual([1, 0]);
+    children[0].emit("exit", null);
     expect([admitted, released]).toEqual([1, 1]);
+    // what remains of its group goes at once; no delayed kill afterwards
+    expect(kills).toEqual([
+      [4242, "SIGTERM"],
+      [4242, "SIGKILL"],
+    ]);
+  });
+
+  it("never kills a group after its leader exited", async () => {
+    jest.useFakeTimers();
+    try {
+      const { rt, kills, children } = runtime();
+      const socket = new FakeSocket();
+      serveClaudeMcpSocket(socket as any, rt, () => () => {});
+      socket.emit("data", JSON.stringify(setup));
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      socket.emit("closed");
+      children[0].emit("exit", 0);
+      const before = kills.length;
+      jest.advanceTimersByTime(60_000);
+      expect(kills.length).toBe(before);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("pauses the server's output while the agent is behind, and resumes on drain", async () => {
+    const { rt, children } = runtime();
+    const socket = new FakeSocket();
+    serveClaudeMcpSocket(socket as any, rt, () => () => {});
+    socket.emit("data", JSON.stringify(setup));
+    await settle();
+    const stdout = children[0].stdout;
+    stdout.write(Buffer.alloc(MAX_CLAUDE_MCP_QUEUED_BYTES + 1));
+    await settle();
+    expect(stdout.isPaused()).toBe(true);
+    socket.emit("drain");
+    expect(stdout.isPaused()).toBe(false);
+  });
+
+  it("ends when the server stops reading its input", async () => {
+    const { rt, children } = runtime();
+    const socket = new FakeSocket();
+    serveClaudeMcpSocket(socket as any, rt, () => () => {});
+    socket.emit("data", JSON.stringify(setup));
+    await settle();
+    Object.defineProperty(children[0].stdin, "writableLength", {
+      value: MAX_CLAUDE_MCP_QUEUED_BYTES + 1,
+    });
+    socket.emit("data", "{}\n");
+    expect(socket.closed).toBe(true);
   });
 
   it("refuses a server whose definition changed since the session started", async () => {

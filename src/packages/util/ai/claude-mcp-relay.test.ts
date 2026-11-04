@@ -59,6 +59,16 @@ describe("claudeMcpServerLine", () => {
     }
   });
 
+  it("refuses a request whose id is null too", () => {
+    const verdict = claudeMcpServerLine(
+      line({ jsonrpc: "2.0", id: null, method: "sampling/createMessage" }),
+    );
+    expect(JSON.parse((verdict as any).answer)).toMatchObject({
+      id: null,
+      error: { code: -32601 },
+    });
+  });
+
   it("drops what isn't a JSON-RPC message", () => {
     expect(claudeMcpServerLine("starting server...")).toEqual({ drop: true });
     expect(claudeMcpServerLine("[1,2]")).toEqual({ drop: true });

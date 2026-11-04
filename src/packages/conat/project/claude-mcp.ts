@@ -22,7 +22,7 @@ too, like terminals: they can already start any process in the project, and
 it only ever starts servers named in the project's own config.
 */
 
-import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import type { Client as ConatClient, Headers } from "@cocalc/conat/core/client";
 import type { ConatSocketServer, ServerSocket } from "@cocalc/conat/socket";
 import { getLogger } from "@cocalc/conat/logger";
 import {
@@ -125,7 +125,11 @@ export async function listClaudeMcpConfig(
     cwd,
   });
   return {
-    servers: servers.map(({ name, scope, digest }) => ({ name, scope, digest })),
+    servers: servers.map(({ name, scope, digest }) => ({
+      name,
+      scope,
+      digest,
+    })),
     skipped,
   };
 }
@@ -167,9 +171,16 @@ export async function resolveClaudeMcpServer(
   return server;
 }
 
+/** Bytes sent toward the agent and not yet acknowledged, or waiting in the
+ * server's stdin, before the relay pauses or gives up. */
+export const MAX_CLAUDE_MCP_QUEUED_BYTES = 4 * 1024 * 1024;
+/** How long output may stay paused for the agent before the relay ends. */
+const STALL_MS = 30_000;
+
 /**
  * Serve one relay: resolve, start, pipe, and stop the server's whole
- * process group when the relay ends.
+ * process group when the relay ends. The process slot is held until the
+ * server has exited.
  */
 export function serveClaudeMcpSocket(
   socket: Pick<ServerSocket, "on" | "write" | "close">,
@@ -180,55 +191,95 @@ export function serveClaudeMcpSocket(
   let child: ClaudeMcpProcess | undefined;
   let release: (() => void) | undefined;
   let ended = false;
+  let exited = false;
   let stderr = "";
   let idle: ReturnType<typeof setTimeout> | undefined;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  let stall: ReturnType<typeof setTimeout> | undefined;
+  let inFlight = 0;
+  const unref = (timer: any) => timer?.unref?.();
+  const releaseSlot = () => {
+    const r = release;
+    release = undefined;
+    r?.();
+  };
   const touch = () => {
     clearTimeout(idle);
     idle = setTimeout(() => end("idle"), idleMs);
-    (idle as any).unref?.();
+    unref(idle);
   };
   const end = (why: string) => {
     if (ended) return;
     ended = true;
     clearTimeout(idle);
+    clearTimeout(stall);
     const pid = child?.pid;
-    if (pid) {
+    if (pid && !exited) {
       try {
         runtime.killGroup(pid, "SIGTERM");
       } catch {}
-      const kill = setTimeout(() => {
+      killTimer = setTimeout(() => {
+        if (exited) return;
         try {
           runtime.killGroup(pid, "SIGKILL");
         } catch {}
       }, KILL_GRACE_MS);
-      (kill as any).unref?.();
+      unref(killTimer);
+      // The slot is released when it exits (see the exit handler).
+    } else {
+      releaseSlot();
     }
-    release?.();
     logger.debug("claude mcp relay ended", { why });
     try {
       socket.close();
     } catch {}
   };
-  const send = (data: Buffer | string, headers?: Record<string, unknown>) => {
+  const send = (data: Buffer | string, headers?: Headers) => {
+    if (ended) return;
     try {
       socket.write(data, headers ? { headers } : undefined);
       touch();
     } catch {
-      // ENOBUFS (the agent side isn't reading) or EPIPE: give up on it.
+      // EPIPE, or ENOBUFS: the agent side isn't reading.
       end("write failed");
     }
   };
+  // Output to the agent: pause the server's stdout while too much is
+  // unacknowledged, resume when the socket drains.
+  const sendOutput = (chunk: Buffer) => {
+    send(chunk);
+    inFlight += chunk.length;
+    if (inFlight > MAX_CLAUDE_MCP_QUEUED_BYTES && child && !stall) {
+      child.stdout.pause?.();
+      stall = setTimeout(() => end("the agent stopped reading"), STALL_MS);
+      unref(stall);
+    }
+  };
+  socket.on("drain" as any, () => {
+    inFlight = 0;
+    if (stall) {
+      clearTimeout(stall);
+      stall = undefined;
+      child?.stdout.resume?.();
+    }
+  });
   socket.on("closed", () => end("socket closed"));
   let started = false;
   socket.on("data", (data: any) => {
     if (ended) return;
     if (started) {
       touch();
+      if (!child) return; // still resolving: the host waits for ready
       try {
-        child?.stdin.write(typeof data === "string" ? data : Buffer.from(data));
+        child.stdin.write(typeof data === "string" ? data : Buffer.from(data));
       } catch {
-        end("server stdin failed");
+        return end("server stdin failed");
       }
+      // A server that doesn't read its input must not buffer without bound.
+      if (
+        ((child.stdin as any).writableLength ?? 0) > MAX_CLAUDE_MCP_QUEUED_BYTES
+      )
+        end("the MCP server stopped reading");
       return;
     }
     started = true;
@@ -242,7 +293,8 @@ export function serveClaudeMcpSocket(
       }
       if (setup?.list === true) {
         // Only the list: nothing starts.
-        send("", { list: await listClaudeMcpConfig(runtime, setup.cwd) });
+        const list = await listClaudeMcpConfig(runtime, setup.cwd);
+        send("", { list: list as unknown as Headers[string] });
         return end("listed");
       }
       const server = await resolveClaudeMcpServer(runtime, setup);
@@ -260,8 +312,9 @@ export function serveClaudeMcpSocket(
       }
       const env = { ...runtime.baseEnv(), ...server.env };
       const expand = (value: string) => expandClaudeMcpVariables(value, env);
+      let started: ClaudeMcpProcess;
       try {
-        child = runtime.spawn({
+        started = runtime.spawn({
           command: expand(server.command),
           args: server.args.map(expand),
           cwd: setup.cwd,
@@ -273,23 +326,40 @@ export function serveClaudeMcpSocket(
         send("", { error: `could not start MCP server: ${error}` });
         return end("spawn failed");
       }
+      child = started;
       // A stream error (EPIPE once the server died) must never reach the
       // project daemon as an unhandled error.
-      child.stdin.on("error", () => end("server stdin closed"));
-      child.stdout.on("error", () => end("server stdout failed"));
-      child.stderr.on("error", () => {});
-      child.on("error", (error) => {
+      started.stdin.on("error", () => end("server stdin closed"));
+      started.stdout.on("error", () => end("server stdout failed"));
+      started.stderr.on("error", () => {});
+      started.on("error", (error) => {
         send("", { error: `MCP server failed: ${error.message}` });
+        if (!started.pid) {
+          // It never started: nothing will exit.
+          exited = true;
+          releaseSlot();
+        }
         end("process error");
       });
-      child.on("exit", (code) => {
+      started.on("exit", (code) => {
+        exited = true;
+        clearTimeout(killTimer);
+        // Anything it started in its group goes too, now, while the group
+        // is still the one it led.
+        if (started.pid) {
+          try {
+            runtime.killGroup(started.pid, "SIGKILL");
+          } catch {}
+        }
+        releaseSlot();
         send("", { exit: code, stderr: stderr.slice(-4000) });
         end("exited");
       });
-      child.stdout.on("data", (chunk: Buffer) => send(chunk));
-      child.stderr.on("data", (chunk: Buffer) => {
+      started.stdout.on("data", (chunk: Buffer) => sendOutput(chunk));
+      started.stderr.on("data", (chunk: Buffer) => {
         stderr = (stderr + chunk.toString("utf8")).slice(-MAX_STDERR);
       });
+      if (ended) return;
       send("", { ready: true });
       touch();
     })().catch((error) => {

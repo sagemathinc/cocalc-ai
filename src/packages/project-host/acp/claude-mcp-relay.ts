@@ -23,8 +23,12 @@ const logger = getLogger("project-host:acp:claude-mcp-relay");
 
 /** Queued for the controller before the relay gives up on it. */
 export const MAX_CLAUDE_MCP_QUEUED_BYTES = 4 * 1024 * 1024;
-/** Lines from Claude held until the server is ready. */
+/** Lines from Claude held until the server is ready, and their bytes. */
 const MAX_PENDING_LINES = 64;
+/** Toward the project: sent and not yet acknowledged before reading from
+ * Claude pauses, and how long it may stay paused. */
+const MAX_IN_FLIGHT_BYTES = 4 * 1024 * 1024;
+const STALL_MS = 30_000;
 const LIST_TIMEOUT_MS = 15_000;
 const READY_TIMEOUT_MS = 60_000;
 
@@ -33,6 +37,7 @@ export interface ProjectMcpSocket {
   write(data: string | Buffer): void;
   on(event: "data", listener: (data: any, headers?: any) => void): unknown;
   on(event: "closed", listener: () => void): unknown;
+  on(event: "drain", listener: () => void): unknown;
   close(): void;
 }
 export type ConnectProjectMcp = (subject: string) => ProjectMcpSocket;
@@ -102,7 +107,7 @@ export function relayClaudeMcp({
 }: {
   controller: Pick<
     Socket,
-    "write" | "on" | "destroy" | "end" | "writableLength"
+    "write" | "on" | "destroy" | "end" | "writableLength" | "pause" | "resume"
   >;
   /** What the controller already sent after its first line. */
   leftover: string;
@@ -117,6 +122,9 @@ export function relayClaudeMcp({
   let ended = false;
   let ready = false;
   const pending: string[] = [];
+  let pendingBytes = 0;
+  let inFlight = 0;
+  let stall: ReturnType<typeof setTimeout> | undefined;
   const fromClaude = new McpLineSplitter();
   const fromServer = new McpLineSplitter();
   // A character may span two chunks.
@@ -125,6 +133,7 @@ export function relayClaudeMcp({
     if (ended) return;
     ended = true;
     clearTimeout(readyTimer);
+    clearTimeout(stall);
     try {
       project.close();
     } catch {}
@@ -143,7 +152,17 @@ export function relayClaudeMcp({
     try {
       project.write(line + "\n");
     } catch {
-      end("project write failed");
+      return end("project write failed");
+    }
+    // Bound what waits unacknowledged: stop reading from Claude until the
+    // project catches up.
+    inFlight += Buffer.byteLength(line) + 1;
+    if (inFlight > MAX_IN_FLIGHT_BYTES && !stall) {
+      controller.pause();
+      stall = setTimeout(
+        () => end("the project stopped reading the MCP relay"),
+        STALL_MS,
+      );
     }
   };
   const fromController = (chunk: string) => {
@@ -155,8 +174,15 @@ export function relayClaudeMcp({
     }
     for (const line of lines) {
       if (ready) toProject(line);
-      else if (pending.length < MAX_PENDING_LINES) pending.push(line);
-      else return end("too many messages before the server was ready");
+      else {
+        pendingBytes += Buffer.byteLength(line);
+        if (
+          pending.length >= MAX_PENDING_LINES ||
+          pendingBytes > MAX_IN_FLIGHT_BYTES
+        )
+          return end("too much sent before the server was ready");
+        pending.push(line);
+      }
     }
   };
   const toController = (line: string) => {
@@ -198,6 +224,14 @@ export function relayClaudeMcp({
     }
   });
   project.on("closed", () => end("the project closed the MCP relay"));
+  project.on("drain", () => {
+    inFlight = 0;
+    if (stall) {
+      clearTimeout(stall);
+      stall = undefined;
+      controller.resume();
+    }
+  });
   controller.on("data", (chunk: Buffer | string) =>
     fromController(typeof chunk === "string" ? chunk : chunk.toString("utf8")),
   );
