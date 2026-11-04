@@ -176,7 +176,7 @@ test("active alone shows all agents and reuses the warm cache and search", async
   expect(listProject).toHaveBeenCalledTimes(2);
 });
 
-test("catalog continues refreshing while inactive", async () => {
+test("catalog does not poll while inactive and refreshes on activation when stale", async () => {
   jest.useFakeTimers();
   try {
     const props = {
@@ -188,14 +188,19 @@ test("catalog continues refreshing while inactive", async () => {
     await act(async () => {});
     expect(listProject).toHaveBeenCalledTimes(2);
     await act(async () => {
-      jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs);
+      jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs * 3);
     });
-    expect(listProject).toHaveBeenCalledTimes(4);
+    expect(listProject).toHaveBeenCalledTimes(2);
     view.rerender(<AgentArtifactBrowser {...props} active />);
+    await act(async () => {});
     expect(
       screen.getByRole("button", { name: "Open Result two from two" }),
     ).toBeVisible();
     expect(listProject).toHaveBeenCalledTimes(4);
+    await act(async () => {
+      jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs);
+    });
+    expect(listProject).toHaveBeenCalledTimes(6);
     view.unmount();
   } finally {
     jest.useRealTimers();
