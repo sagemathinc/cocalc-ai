@@ -4,13 +4,20 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
-import { pruneArtifactCatalogChanges } from "@cocalc/database/postgres/artifact-catalog";
+import {
+  backfillArtifactCatalogProjectState,
+  pruneArtifactCatalogChanges,
+} from "@cocalc/database/postgres/artifact-catalog";
 
 const log = getLogger("artifacts:catalog-maintenance");
 
 let stopRunning: (() => void) | undefined;
 
-/** Prunes the artifact catalog change log in small batches on this bay. */
+/**
+ * On this bay: gives every existing catalog a version baseline (catalogs
+ * written before versions existed), then prunes the change log, both in
+ * small batches.
+ */
 export function startArtifactCatalogMaintenance(): () => void {
   if (stopRunning) return stopRunning;
   let stopped = false;
@@ -22,11 +29,15 @@ export function startArtifactCatalogMaintenance(): () => void {
   const tick = async () => {
     let delay = 10 * 60_000;
     try {
-      const result = await pruneArtifactCatalogChanges();
-      // More projects may be waiting; continue soon, still in small batches.
-      if (result.projects > 0) delay = 5_000;
+      const backfill = await backfillArtifactCatalogProjectState();
+      if (backfill.created > 0 || backfill.remaining > 0) {
+        log.info("artifact catalog version backfill", backfill);
+      }
+      const pruned = await pruneArtifactCatalogChanges();
+      // More work may be waiting; continue soon, still in small batches.
+      if (backfill.remaining > 0 || pruned.projects > 0) delay = 5_000;
     } catch (error) {
-      log.warn("artifact catalog change pruning failed", { error });
+      log.warn("artifact catalog maintenance failed", { error });
     }
     if (!stopped) schedule(delay);
   };

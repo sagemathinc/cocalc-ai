@@ -90,6 +90,68 @@ export type ArtifactCatalogChangeOp = "upsert" | "remove" | "reset";
 export const ARTIFACT_CATALOG_CHANGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const ARTIFACT_CATALOG_CHANGE_RETENTION_SEQS = 10_000;
 
+/**
+ * Creates the version baseline for a project whose catalog predates versions:
+ * a fresh epoch at seq 0 with no change history. Readers treat seq 0 as "load
+ * the current catalog"; nothing is fabricated or removed. Idempotent; caller
+ * holds the project catalog lock.
+ */
+async function ensureCatalogProjectState(
+  db: Queryable,
+  project_id: string,
+): Promise<void> {
+  await db.query(
+    `INSERT INTO artifact_catalog_project_state
+       (project_id,epoch,seq,latest_created_at,updated_at)
+     VALUES($1,$2,0,(SELECT max(created_at) FROM artifact_catalog
+       WHERE project_id=$1 AND NOT deleted),now())
+     ON CONFLICT(project_id) DO NOTHING`,
+    [project_id, randomUUID()],
+  );
+}
+
+/**
+ * Bounded, restart-safe backfill of version baselines for catalogs that have
+ * not been written since versions were introduced (dormant projects). Each
+ * project is handled under its catalog lock; rerunning is harmless.
+ */
+export async function backfillArtifactCatalogProjectState({
+  maxProjects = 100,
+}: { maxProjects?: number } = {}): Promise<{
+  created: number;
+  remaining: number;
+}> {
+  const { rows } = await getPool().query(
+    `SELECT DISTINCT s.project_id FROM artifact_catalog_sources s
+     WHERE NOT EXISTS (SELECT 1 FROM artifact_catalog_project_state p
+       WHERE p.project_id=s.project_id)
+     ORDER BY s.project_id LIMIT $1`,
+    [maxProjects],
+  );
+  let created = 0;
+  for (const row of rows) {
+    await transaction(async (db) => {
+      await lockProjectCatalog(db, row.project_id);
+      await ensureCatalogProjectState(db, row.project_id);
+    });
+    created++;
+  }
+  return { created, remaining: await artifactCatalogStateBackfillRemaining() };
+}
+
+/**
+ * Projects with catalog sources but no version baseline. Reads that rely on
+ * versions must not be advertised on this bay until this is zero.
+ */
+export async function artifactCatalogStateBackfillRemaining(): Promise<number> {
+  const { rows } = await getPool().query(
+    `SELECT count(DISTINCT s.project_id) AS n FROM artifact_catalog_sources s
+     WHERE NOT EXISTS (SELECT 1 FROM artifact_catalog_project_state p
+       WHERE p.project_id=s.project_id)`,
+  );
+  return Number(rows[0].n);
+}
+
 /** Caller holds the project catalog lock inside its transaction. */
 async function appendCatalogChanges(
   db: Queryable,
@@ -427,6 +489,10 @@ export async function applyArtifactCatalogSnapshot(
     ) {
       throw Error("stale artifact catalog writer epoch");
     }
+    // Catalogs written before versions existed have no state row. Create the
+    // baseline on every accepted delivery, including the unchanged-metadata
+    // and replay paths below, so no catalog stays unversioned.
+    await ensureCatalogProjectState(db, snapshot.project_id);
     const sequence = Number(current.source_sequence);
     const revision = Number(current.catalog_revision);
     if (sequence > snapshot.sequence)

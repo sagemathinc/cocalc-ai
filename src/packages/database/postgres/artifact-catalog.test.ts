@@ -5,6 +5,8 @@ import type { ArtifactCatalogSnapshot } from "@cocalc/util/artifact-catalog";
 import {
   ARTIFACT_CATALOG_CHANGE_RETENTION_SEQS,
   appendArtifactCatalogReset,
+  artifactCatalogStateBackfillRemaining,
+  backfillArtifactCatalogProjectState,
   applyArtifactCatalogSnapshot,
   lockArtifactCatalogProject,
   pruneArtifactCatalogChanges,
@@ -625,4 +627,123 @@ test("pruning moves the retention floor before deleting, in bounded batches", as
     projects: 0,
     deleted: 0,
   });
+});
+
+// Upgrade: catalogs written before versions existed have sources, rows and a
+// metadata hash, but no state row.
+
+const forgetVersions = async () => {
+  await getPool().query("DELETE FROM artifact_catalog_project_state");
+  await getPool().query("DELETE FROM artifact_catalog_changes");
+};
+const catalogRows = async () =>
+  (
+    await getPool().query(
+      "SELECT entry_id,metadata,created_at FROM artifact_catalog ORDER BY entry_id",
+    )
+  ).rows;
+
+test("an unchanged delivery to a pre-version catalog creates a seq-0 baseline and nothing else", async () => {
+  await applyArtifactCatalogSnapshot(snapshot(1), authority);
+  await forgetVersions();
+  const before = await catalogRows();
+  // Same metadata: the unchanged-metadata fast path.
+  expect(await applyArtifactCatalogSnapshot(snapshot(2), authority)).toEqual({
+    revision: 1,
+    replayed: true,
+  });
+  expect(await projectState()).toMatchObject({
+    seq: 0,
+    floor: 0,
+    latest: 1000,
+  });
+  expect(await changeLog()).toEqual([]);
+  expect(await catalogRows()).toEqual(before);
+  // An exact replay also lands on the baseline.
+  await forgetVersions();
+  await applyArtifactCatalogSnapshot(snapshot(2), authority);
+  expect((await projectState())?.seq).toBe(0);
+  expect(await changeLog()).toEqual([]);
+});
+
+test("re-registration then an identical snapshot also gets the baseline", async () => {
+  await applyArtifactCatalogSnapshot(snapshot(1), authority);
+  await forgetVersions();
+  const before = await catalogRows();
+  const next = await registerArtifactCatalogSource(
+    source,
+    authority,
+    epoch,
+    randomUUID(),
+  );
+  await applyArtifactCatalogSnapshot(
+    { ...snapshot(1), epoch: next },
+    authority,
+  );
+  expect(await projectState()).toMatchObject({ seq: 0, latest: 1000 });
+  expect(await changeLog()).toEqual([]);
+  expect(await catalogRows()).toEqual(before);
+  // A later real change starts the history at seq 1 in the same epoch.
+  const baseline = (await projectState())?.epoch;
+  await applyArtifactCatalogSnapshot(
+    { ...snapshot(2), epoch: next, items: items(["artifact", "more"]) },
+    authority,
+  );
+  expect(await projectState()).toMatchObject({ seq: 1, epoch: baseline });
+  expect((await changeLog()).map((c) => [c.seq, c.op])).toEqual([
+    [1, "upsert"],
+  ]);
+});
+
+test("dormant pre-version catalogs are backfilled in bounded, idempotent batches", async () => {
+  await applyArtifactCatalogSnapshot(
+    { ...snapshot(1), items: [{ ...items(["a"])[0], created_at: 7000 }] },
+    authority,
+  );
+  // A second dormant project that only ever registered a source.
+  const other = randomUUID();
+  await getPool().query(
+    `INSERT INTO projects(project_id,host_id,owning_bay_id,users)
+    VALUES($1,$2,$3,'{}'::jsonb)`,
+    [other, host_id, authority.owning_bay_id],
+  );
+  await registerArtifactCatalogSource(
+    { project_id: other, chat_path: "/home/user/other.chat" },
+    authority,
+    null,
+    randomUUID(),
+  );
+  await forgetVersions();
+  const before = await catalogRows();
+  expect(await artifactCatalogStateBackfillRemaining()).toBe(2);
+  expect(await backfillArtifactCatalogProjectState({ maxProjects: 1 })).toEqual(
+    {
+      created: 1,
+      remaining: 1,
+    },
+  );
+  expect(await backfillArtifactCatalogProjectState({ maxProjects: 1 })).toEqual(
+    {
+      created: 1,
+      remaining: 0,
+    },
+  );
+  const state = await projectState();
+  expect(state).toMatchObject({ seq: 0, floor: 0, latest: 7000 });
+  const otherState = (
+    await getPool().query(
+      "SELECT seq,latest_created_at FROM artifact_catalog_project_state WHERE project_id=$1",
+      [other],
+    )
+  ).rows[0];
+  expect(Number(otherState.seq)).toBe(0);
+  expect(otherState.latest_created_at).toBeNull();
+  // Rerunning changes nothing: same epoch, no history, same catalog.
+  expect(await backfillArtifactCatalogProjectState()).toEqual({
+    created: 0,
+    remaining: 0,
+  });
+  expect((await projectState())?.epoch).toBe(state?.epoch);
+  expect(await changeLog()).toEqual([]);
+  expect(await catalogRows()).toEqual(before);
 });
