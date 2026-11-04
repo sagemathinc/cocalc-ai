@@ -181,6 +181,17 @@ describe("pick", () => {
         current: "a",
         now,
       }),
+    ).toEqual({ credential_id: "a" }); // 2.5 times better: not enough
+    expect(
+      pickClaudePoolCredential({
+        members: [
+          members[0],
+          member("b", { week: 0.5, weekResetsIn: 15 * HOUR }),
+        ],
+        cost,
+        current: "a",
+        now,
+      }),
     ).toEqual({ credential_id: "b" });
   });
 

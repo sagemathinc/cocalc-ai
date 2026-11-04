@@ -677,6 +677,61 @@ export function listHeldAcpJobs(
     .all(recovery_reason, now, limit) as AcpJobRow[];
 }
 
+/**
+ * The Claude subscription this account's latest started turn in the thread
+ * (other than `exclude_op_id`) ran on: Auto keeps a conversation there, so
+ * Claude's prompt cache (per account) stays warm. Recent turns only.
+ */
+export function previousThreadSubscriptionCredentialId({
+  project_id,
+  account_id,
+  path,
+  thread_id,
+  exclude_op_id,
+}: {
+  project_id: string;
+  account_id: string;
+  path: string;
+  thread_id: string;
+  exclude_op_id?: string;
+}): string | undefined {
+  ensureInit();
+  const row = getAcpDatabase()
+    .prepare(
+      `SELECT json_extract(request_json, '$.harness_credential.credentialId') AS id
+       FROM (
+         SELECT request_json FROM ${TABLE}
+         WHERE project_id = ? AND account_id = ? AND path = ? AND thread_id = ?
+           AND op_id <> ? AND started_at IS NOT NULL
+         ORDER BY started_at DESC, rowid DESC LIMIT 20
+       )
+       WHERE json_extract(request_json, '$.harness_credential.mode') = 'account-subscription'
+       LIMIT 1`,
+    )
+    .get(project_id, account_id, path, thread_id, exclude_op_id ?? "") as
+    | { id?: unknown }
+    | undefined;
+  return typeof row?.id === "string" && row.id ? row.id : undefined;
+}
+
+/** Record the credential a job actually runs on (Auto may pick another one
+ * when it starts than when it was queued). */
+export function setAcpJobHarnessCredential(
+  op_id: string,
+  credential: unknown,
+): boolean {
+  ensureInit();
+  // Not a state change: updated_at (which progress checks read) is kept.
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET request_json = json_set(request_json, '$.harness_credential', json(?))
+       WHERE op_id = ?`,
+    )
+    .run(JSON.stringify(credential), op_id);
+  return Number(result?.changes ?? 0) === 1;
+}
+
 /** Replace a queued job's request (e.g. to pin a replacement credential
  * before a held turn runs). */
 export function setQueuedAcpJobRequest(

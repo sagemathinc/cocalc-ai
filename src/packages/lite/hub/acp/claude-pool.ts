@@ -15,7 +15,12 @@ import type {
 } from "@cocalc/conat/inter-bay/agent-payment-selections";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
+import getLogger from "@cocalc/backend/logger";
 import { hubApi } from "../api";
+import {
+  previousThreadSubscriptionCredentialId,
+  setAcpJobHarnessCredential,
+} from "../sqlite/acp-jobs";
 import {
   resetClaudePoolUsage,
   restoreTurnCosts,
@@ -74,15 +79,45 @@ export function poolCredential(
   };
 }
 
+const logger = getLogger("lite:hub:acp:claude-pool");
+
+function requestSubscription(request: AcpRequest): string | undefined {
+  return request.harness_credential?.mode === "account-subscription"
+    ? request.harness_credential.credentialId
+    : undefined;
+}
+
+/**
+ * The subscription the conversation's previous turn ran on. Claude's prompt
+ * cache belongs to one account: a turn on another subscription reads the
+ * whole conversation again at the full price, so Auto keeps a conversation
+ * where it is unless another subscription is clearly better.
+ */
+function previousSubscription(request: AcpRequest): string | undefined {
+  const chat = request.chat;
+  if (!chat?.path || !chat.thread_id) return;
+  try {
+    return previousThreadSubscriptionCredentialId({
+      project_id: chat.project_id ?? request.project_id,
+      account_id: request.account_id,
+      path: chat.path,
+      thread_id: chat.thread_id,
+      exclude_op_id: chat.message_id,
+    });
+  } catch (err) {
+    logger.warn("could not read the conversation's previous subscription", {
+      err: `${err}`,
+    });
+    return;
+  }
+}
+
 async function pick(
   request: AcpRequest,
   extra: Pick<ClaudePoolPickRequest, "limited"> = {},
+  current: string | undefined = requestSubscription(request),
 ): Promise<ClaudePoolPickResult> {
   const turn_costs = takeTurnCosts(request.account_id);
-  const current =
-    request.harness_credential?.mode === "account-subscription"
-      ? request.harness_credential.credentialId
-      : undefined;
   try {
     return await picker({
       account_id: request.account_id,
@@ -106,7 +141,11 @@ export async function admitClaudePoolTurn<T extends AcpRequest>(
   request: T,
   pool: ClaudePoolMarker,
 ): Promise<T> {
-  const result = await pick({ ...request, harness_pool: pool });
+  const result = await pick(
+    { ...request, harness_pool: pool },
+    {},
+    previousSubscription(request) ?? requestSubscription(request),
+  );
   if (result.empty) throw new ClaudePoolEmptyError();
   // Nothing has room now: admit on the current subscription, else the one
   // with room first; dispatch then holds the turn until one has.
@@ -141,10 +180,19 @@ export async function dispatchClaudePoolTurn<T extends AcpRequest>(
 ): Promise<ClaudePoolDispatch<T>> {
   const pool = request.harness_pool;
   if (!pool || !request.chat?.thread_id) return { request };
+  // The conversation's previous turn, else the pick made when this one was
+  // queued.
+  const previous = previousSubscription(request);
   let result: ClaudePoolPickResult;
   try {
-    result = await pick(request);
-  } catch {
+    result = await pick(request, {}, previous ?? requestSubscription(request));
+  } catch (err) {
+    // It runs on the subscription picked when it was queued (from this
+    // pool, checked for room then): never another way of paying.
+    logger.warn("Auto could not pick a subscription as the turn started", {
+      err: `${err}`,
+      credential_id: requestSubscription(request),
+    });
     return { request };
   }
   if (result.empty) throw new ClaudePoolEmptyError();
@@ -161,15 +209,22 @@ export async function dispatchClaudePoolTurn<T extends AcpRequest>(
       },
     };
   }
-  const previous =
-    request.harness_credential?.mode === "account-subscription"
-      ? request.harness_credential.credentialId
-      : undefined;
   const moved = previous != null && previous !== result.credential_id;
+  const harness_credential = poolCredential(result.credential_id, pool);
+  // So the next turn knows where this one ran.
+  if (request.chat?.message_id) {
+    try {
+      setAcpJobHarnessCredential(request.chat.message_id, harness_credential);
+    } catch (err) {
+      logger.warn("could not record the subscription a turn runs on", {
+        err: `${err}`,
+      });
+    }
+  }
   return {
     request: {
       ...request,
-      harness_credential: poolCredential(result.credential_id, pool),
+      harness_credential,
     },
     event: {
       type: "payment",
