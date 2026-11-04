@@ -42,6 +42,39 @@ export const ACCOUNT_CATALOG = {
 // The server's uniform refusal (and an old hub's missing method).
 const NOT_PERMITTED = "not found or not permitted";
 const UNKNOWN_FUNCTION = "unknown function";
+const MALFORMED = "malformed artifact catalog reply";
+
+function errorMessage(err: unknown): string {
+  const message =
+    err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return message.trim().replace(/^Error:\s*/, "");
+}
+
+/** Exactly the server's uniform refusal, nothing that merely mentions it. */
+export function isNotPermitted(err: unknown): boolean {
+  return errorMessage(err) === NOT_PERMITTED;
+}
+
+/** Every accepted reply must say which projects it covers (R5): a reply
+ * without valid versions is malformed and shows nothing. */
+function checkedPage(page: CatalogAccountPage): CatalogAccountPage & {
+  versions: Versions;
+} {
+  const versions = page?.versions;
+  if (
+    !page ||
+    !Array.isArray(page.entries) ||
+    versions == null ||
+    typeof versions !== "object" ||
+    Array.isArray(versions) ||
+    Object.values(versions).some(
+      (v) =>
+        v == null || typeof v.epoch !== "string" || typeof v.seq !== "number",
+    )
+  )
+    throw Error(MALFORMED);
+  return page as CatalogAccountPage & { versions: Versions };
+}
 
 export interface AccountCatalogHub {
   capabilities?: (opts: object) => Promise<CatalogCapabilities>;
@@ -201,11 +234,13 @@ export class CatalogListSession extends Emitter<CatalogListState> {
     this.loadingMore = false;
     this.publish({ ...this.state, loading: true, error: undefined });
     try {
-      const page = await this.catalog.list({
-        ...this.request,
-        limit,
-        versions: true,
-      });
+      const page = checkedPage(
+        await this.catalog.list({
+          ...this.request,
+          limit,
+          versions: true,
+        }),
+      );
       if (generation !== this.generation) return;
       this.loadedAt = this.catalog.now();
       this.publish({
@@ -231,15 +266,17 @@ export class CatalogListSession extends Emitter<CatalogListState> {
     const generation = this.generation;
     this.publish({ ...this.state, loading: true });
     try {
-      const page = await this.catalog.list({
-        ...this.request,
-        limit: this.limit,
-        before,
-        versions: true,
-      });
+      const page = checkedPage(
+        await this.catalog.list({
+          ...this.request,
+          limit: this.limit,
+          before,
+          versions: true,
+        }),
+      );
       if (generation !== this.generation) return;
       const previous = this.state.versions ?? {};
-      const versions = page.versions ?? {};
+      const versions = page.versions;
       if (versionsChanged(previous, versions)) {
         // Different snapshots: reload the rows shown so far (and the next
         // page) from one snapshot rather than appending.
@@ -268,7 +305,10 @@ export class CatalogListSession extends Emitter<CatalogListState> {
     } catch (err) {
       if (generation !== this.generation) return;
       this.loadingMore = false;
-      this.publish({ ...this.state, loading: false, error: `${err}` });
+      if (errorMessage(err) === MALFORMED) {
+        // A reply that does not say what it covers: show nothing.
+        this.publish({ ...emptyList(), loaded: true, error: `${err}` });
+      } else this.publish({ ...this.state, loading: false, error: `${err}` });
     }
   }
 
@@ -383,8 +423,15 @@ export class CatalogPins extends Emitter<PinsState> {
     }
     const finish = (error?: string) => {
       if (generation !== this.generation) return;
-      for (const key of [...pins.keys()])
+      for (const key of [...pins.keys()]) {
         if (!this.keys.includes(key)) pins.delete(key);
+        // Membership may have changed while this load was in flight: a
+        // reply authorized before then never re-shows a now-unreadable pin.
+        else if (!this.allowed(key)) {
+          pins.set(key, "unavailable");
+          this.hidden.add(key);
+        }
+      }
       this.publish({ pins, loading: false, ...(error ? { error } : {}) });
     };
     if (!refs.size) return finish();
@@ -408,7 +455,7 @@ export class CatalogPins extends Emitter<PinsState> {
       apply([...refs.keys()], await this.catalog.entries([...refs.values()]));
     } catch (err) {
       if (generation !== this.generation) return;
-      if (!`${err}`.includes(NOT_PERMITTED)) {
+      if (!isNotPermitted(err)) {
         // Keep what was shown; no fan-out on rate limits or timeouts.
         return finish(`${err}`);
       }
@@ -434,7 +481,7 @@ export class CatalogPins extends Emitter<PinsState> {
         } catch (err) {
           if (generation !== this.generation) return;
           // Keep what was shown; stop without asking further projects.
-          if (!`${err}`.includes(NOT_PERMITTED)) return finish(`${err}`);
+          if (!isNotPermitted(err)) return finish(`${err}`);
           apply(batch, "unavailable");
         }
       }
@@ -477,8 +524,10 @@ export class AccountArtifactCatalog {
   readMode(): Promise<CatalogReadMode> {
     this.mode ??= (async (): Promise<CatalogReadMode> => {
       const hub = this.hub();
+      // No client yet: cannot tell (asked again later), never the old walk.
+      if (hub == null) return "unavailable";
       if (
-        typeof hub?.capabilities !== "function" ||
+        typeof hub.capabilities !== "function" ||
         typeof hub.listAccount !== "function" ||
         typeof hub.getEntries !== "function"
       )

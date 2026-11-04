@@ -292,3 +292,56 @@ test("S1: hostile metadata renders as inert text", async () => {
     expect(a.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
   expect((window as any).__pwned).toBeUndefined();
 });
+
+test("rows of a project the browser sees as unreadable are not shown (N1)", async () => {
+  const P2 = "22222222-2222-4222-8222-222222222222";
+  const library = "/home/user/.local/share/cocalc/artifacts.chat";
+  mockHub.listAccount.mockResolvedValue({
+    entries: [
+      {
+        ...entry(5),
+        project_id: P2,
+        chat_path: library,
+        item: { ...entry(5).item, title: "Not mine anymore" },
+      },
+      {
+        ...entry(4),
+        chat_path: library,
+        item: { ...entry(4).item, title: "Still mine" },
+      },
+    ],
+    view: "mine",
+    versions: { [P1]: { epoch: "e", seq: 1 }, [P2]: { epoch: "e", seq: 1 } },
+  });
+  render(
+    <AgentArtifactBrowser
+      accountId={ME}
+      agents={agents}
+      active
+      onSelect={async () => {}}
+    />,
+  );
+  expect(await screen.findByText("Still mine")).toBeInTheDocument();
+  expect(screen.queryByText("Not mine anymore")).toBeNull();
+});
+
+test("R6: Refresh on the server path reloads the list and every pin, never the old catalog", async () => {
+  render(
+    <AgentArtifactBrowser
+      accountId={ME}
+      agents={agents}
+      active
+      onSelect={async () => {}}
+    />,
+  );
+  await screen.findByRole("button", { name: "Load more" });
+  const before = calls();
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "Filters & organization" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(calls().listAccount).toBe(before.listAccount + 1));
+  expect(calls().getEntries).toBe(before.getEntries + 1);
+  expect(calls().listProject).toBe(0);
+});

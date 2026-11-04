@@ -28,6 +28,7 @@ import {
   accountCatalogFor,
   useCatalogList,
   useCatalogReadMode,
+  useLegacyCatalogHold,
   usePinnedEntries,
   useReadableProjects,
 } from "@cocalc/frontend/agents/use-account-catalog";
@@ -170,6 +171,7 @@ export function useWorkspaceCandidates(
   // Only while Quick Navigation is open: the pins and one recent page.
   const mode = useCatalogReadMode(accountId, enabled);
   const server = mode === "server" && !!accountId;
+  useLegacyCatalogHold(accountId, agents, mode === "legacy" && enabled);
   const account = accountId ? accountCatalogFor(accountId) : undefined;
   const readable = useReadableProjects(accountId);
   const pinState = usePinnedEntries(
@@ -178,7 +180,12 @@ export function useWorkspaceCandidates(
     pins.pins,
     readable,
   );
-  const recent = useCatalogList(account?.recent, server && enabled);
+  const recent = useCatalogList(
+    account?.recent,
+    server && enabled,
+    {},
+    readable,
+  );
   const metadata = server
     ? {
         entries: [

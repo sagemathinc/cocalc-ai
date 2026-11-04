@@ -27,6 +27,8 @@ import {
   accountCatalogFor,
   useCatalogList,
   useCatalogReadMode,
+  useLegacyCatalogHold,
+  useReadableProjects,
 } from "@cocalc/frontend/agents/use-account-catalog";
 import {
   agentHistory,
@@ -467,8 +469,15 @@ function ArtifactsSection({
   // The server searches one page (the old catalog is filtered here).
   const mode = useCatalogReadMode(accountId, true);
   const server = mode === "server";
+  useLegacyCatalogHold(accountId, agents, mode === "legacy");
   const [session] = useState(() => accountCatalogFor(accountId).session());
-  const found = useCatalogList(session, server && !!query.trim(), { query });
+  const readable = useReadableProjects(accountId);
+  const found = useCatalogList(
+    session,
+    server && !!query.trim(),
+    { query },
+    readable,
+  );
   const metadata = server
     ? { entries: found.entries, loading: found.loading }
     : mode === "legacy"

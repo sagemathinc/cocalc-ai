@@ -34,6 +34,7 @@ import {
   accountCatalogFor,
   useCatalogList,
   useCatalogReadMode,
+  useLegacyCatalogHold,
   usePinnedEntries,
   useReadableProjects,
 } from "./use-account-catalog";
@@ -78,16 +79,25 @@ export function LibrarySidebar({
     webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
   );
   const legacyState = useSyncExternalStore(legacy.subscribe, legacy.get);
+  useLegacyCatalogHold(accountId, agents, mode === "legacy" && !onlyCurrent);
   const catalog = accountCatalogFor(accountId);
   const [searchSession] = useState(() => catalog.session(MATCHES));
   const active = server && !onlyCurrent;
   const searching = !!search.trim();
   const readable = useReadableProjects(accountId);
   const pinState = usePinnedEntries(catalog, active, pins.pins, readable);
-  const recent = useCatalogList(catalog.recent, active && !searching);
-  const found = useCatalogList(searchSession, active && searching, {
-    query: search,
-  });
+  const recent = useCatalogList(
+    catalog.recent,
+    active && !searching,
+    {},
+    readable,
+  );
+  const found = useCatalogList(
+    searchSession,
+    active && searching,
+    { query: search },
+    readable,
+  );
   const serverEntries: CatalogEntry[] = searching
     ? found.entries
     : [

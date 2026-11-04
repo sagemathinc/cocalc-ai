@@ -40,6 +40,7 @@ import {
   accountCatalogFor,
   useCatalogList,
   useCatalogReadMode,
+  useLegacyCatalogHold,
   usePinnedEntries,
   useReadableProjects,
 } from "./use-account-catalog";
@@ -185,11 +186,10 @@ function AccountArtifactBrowser({
   // An older hub: the per-project catalog, once some visible consumer found
   // that out (never on workspace mount itself).
   const legacy = mode === "legacy";
-  useEffect(() => {
-    if (!legacy) return;
-    catalog.start(JSON.parse(projectKey));
-    return catalog.stop;
-  }, [catalog, projectKey, legacy]);
+  // Once shown, the page keeps its warm catalog while mounted.
+  const [everShown, setEverShown] = useState(active);
+  if (active && !everShown) setEverShown(true);
+  useLegacyCatalogHold(accountId, agents, legacy && everShown);
   // The browser stays mounted while hidden; keep refreshing only while it is
   // the active view (the store also pauses while the tab is hidden).
   useEffect(() => {
@@ -202,10 +202,12 @@ function AccountArtifactBrowser({
     pins.pins,
     readable,
   );
-  const list = useCatalogList(accountCatalog.library, server && active, {
-    query,
-    project_id: project,
-  });
+  const list = useCatalogList(
+    accountCatalog.library,
+    server && active,
+    { query, project_id: project },
+    readable,
+  );
   const narrowed = !!query.trim() || !!project;
   const unavailablePins = [...pinState.pins.values()].filter(
     (value) => value === "unavailable",
@@ -670,7 +672,13 @@ function AccountArtifactBrowser({
             </Checkbox>
             <Button
               disabled={metadata.loading}
-              onClick={() => void catalog.refresh()}
+              aria-busy={metadata.loading}
+              onClick={() => {
+                if (server) {
+                  void accountCatalog.library.refresh();
+                  accountCatalog.pins.refresh();
+                } else void catalog.refresh();
+              }}
             >
               Refresh
             </Button>

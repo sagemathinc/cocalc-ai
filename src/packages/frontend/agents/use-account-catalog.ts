@@ -17,6 +17,8 @@ import {
 } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import { sharedArtifactCatalog } from "./artifact-catalog-store";
 import {
   sharedAccountCatalog,
   type AccountArtifactCatalog,
@@ -71,6 +73,32 @@ export function useCatalogReadMode(
   return known ?? (unavailable ? "unavailable" : "pending");
 }
 
+/** The older hubs' per-project catalog, for legacy mode. */
+export function legacyCatalogFor(accountId: string) {
+  return sharedArtifactCatalog(accountId, (opts) =>
+    webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
+  );
+}
+
+/**
+ * Holds the older hubs' catalog while `hold` is true (a visible consumer in
+ * legacy mode), over the named agents' projects. Any visible consumer can
+ * start it, with or without the Library page mounted.
+ */
+export function useLegacyCatalogHold(
+  accountId: string | undefined,
+  agents: NamedAgent[],
+  hold: boolean,
+) {
+  const key = JSON.stringify(
+    [...new Set(agents.map((agent) => agent.endpoint.project_id))].sort(),
+  );
+  useEffect(() => {
+    if (!accountId || !hold) return;
+    return legacyCatalogFor(accountId).acquire(JSON.parse(key));
+  }, [accountId, key, hold]);
+}
+
 /** Calls `ensure` when the tab becomes visible again (stale parts reload). */
 function useOnVisible(enabled: boolean, ensure: () => void) {
   useEffect(() => {
@@ -88,8 +116,9 @@ export function useCatalogList(
   session: CatalogListSession | undefined,
   enabled: boolean,
   request: { query?: string; project_id?: string } = {},
+  readable?: (project_id: string) => boolean,
 ) {
-  const state = useSyncExternalStore(
+  const raw = useSyncExternalStore(
     session?.subscribe ?? NEVER,
     session?.get ?? emptyGet,
   );
@@ -103,7 +132,18 @@ export function useCatalogList(
   }, [session, enabled, query, project_id]);
   const ensure = useCallback(() => session?.ensure(), [session]);
   useOnVisible(!!session && enabled, ensure);
-  return state;
+  // The server authorizes every row; this also drops rows of a project the
+  // browser has just seen become unreadable, as for pins.
+  return useMemo(
+    () =>
+      readable
+        ? {
+            ...raw,
+            entries: raw.entries.filter((entry) => readable(entry.project_id)),
+          }
+        : raw,
+    [raw, readable],
+  );
 }
 
 const EMPTY_LIST = { entries: [], loading: false, loaded: false };

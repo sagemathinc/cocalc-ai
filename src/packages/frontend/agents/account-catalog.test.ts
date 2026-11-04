@@ -71,6 +71,24 @@ describe("read mode (R1)", () => {
     ).toBe("legacy");
   });
 
+  test("no hub client yet is not an answer: asked again, never the old walk", async () => {
+    let hub: AccountCatalogHub | undefined;
+    const catalog = new AccountArtifactCatalog(
+      "acct",
+      () => hub,
+      () => clock,
+    );
+    expect(await catalog.readMode()).toBe("unavailable");
+    await flush();
+    expect(catalog.knownMode).toBeUndefined();
+    hub = {
+      capabilities: async () => ({ list: 1, deltas: 0, hints: 0 }),
+      listAccount: jest.fn(),
+      getEntries: jest.fn(),
+    };
+    expect(await catalog.readMode()).toBe("server");
+  });
+
   test("a timeout or malformed reply never switches to the old full walk", async () => {
     let fail = true;
     const capabilities = jest.fn(async () => {
@@ -259,6 +277,32 @@ describe("list sessions (R2, R4)", () => {
     }
   });
 
+  test("a reply without valid versions is malformed and shows nothing (R8)", async () => {
+    const replies: any[] = [
+      { entries: [entry(P1, 1)] },
+      { entries: [entry(P1, 1)], versions: { [P1]: { epoch: 1 } } },
+      {
+        entries: [entry(P1, 9)],
+        next: `9:${hex(9)}`,
+        versions: versions({ [P1]: 1 }),
+      },
+      { entries: [entry(P1, 8)] },
+    ];
+    const listAccount = jest.fn(async () => replies.shift());
+    const session = setup({ listAccount }).session();
+    await session.refresh();
+    expect(session.get()).toMatchObject({ entries: [] });
+    expect(session.get().error).toContain("malformed");
+    await session.refresh();
+    expect(session.get().entries).toEqual([]);
+    expect(session.get().error).toContain("malformed");
+    await session.refresh();
+    expect(session.get().entries).toHaveLength(1);
+    await session.loadMore();
+    expect(session.get().entries).toEqual([]);
+    expect(session.get().error).toContain("malformed");
+  });
+
   test("an error shows nothing stale", async () => {
     let fail = false;
     const listAccount = jest.fn(async () => {
@@ -324,6 +368,35 @@ describe("pins (R3, R4, S2)", () => {
     expect(catalog.pins.get().pins.get(keys[1])).not.toBe("unavailable");
   });
 
+  test("revoked while a load is in flight: the earlier reply never re-shows the pin", async () => {
+    const replies: ((v: any) => void)[] = [];
+    const getEntries = jest.fn(
+      () => new Promise<any>((resolve) => replies.push(resolve)),
+    );
+    const catalog = setup({ getEntries });
+    const key = pinKey(P2, 2);
+    const reply = () => [
+      { ...entry(P2, 0), entry_id: pinEntryId(key).entry_id },
+    ];
+    catalog.pins.set([key], readableAll);
+    replies[0](reply());
+    await flush();
+    // A Refresh is in flight when the project stops being readable.
+    catalog.pins.refresh();
+    expect(getEntries).toHaveBeenCalledTimes(2);
+    catalog.pins.set([key], (p) => p !== P2);
+    expect(catalog.pins.get().pins.get(key)).toBe("unavailable");
+    expect(getEntries).toHaveBeenCalledTimes(2);
+    replies[1](reply());
+    await flush();
+    expect(catalog.pins.get().pins.get(key)).toBe("unavailable");
+    // Readable again: asked again, and shown.
+    catalog.pins.set([key], readableAll);
+    replies[2](reply());
+    await flush();
+    expect(catalog.pins.get().pins.get(key)).not.toBe("unavailable");
+  });
+
   test("a refused batch: at most 8 projects asked once each; the rest unavailable", async () => {
     const keys = Array.from({ length: 100 }, (_, i) =>
       pinKey(`${String(i).padStart(8, "0")}-1111-4111-8111-111111111111`, i),
@@ -368,6 +441,35 @@ describe("pins (R3, R4, S2)", () => {
     expect(getEntries).toHaveBeenCalledTimes(2);
     expect(catalog.pins.get().error).toContain("rate limit");
     expect(catalog.pins.get().pins.get(keys[0])).not.toBe("unavailable");
+  });
+
+  test("only the exact uniform refusal fans out (R9)", async () => {
+    for (const message of [
+      "not found or not permitted; timeout",
+      "upstream: not found or not permitted",
+      "Not found or not permitted",
+    ]) {
+      const getEntries = jest.fn(async () => {
+        throw Error(message);
+      });
+      const catalog = setup({ getEntries });
+      catalog.pins.set([pinKey(P1, 1), pinKey(P2, 2)], readableAll);
+      await flush();
+      expect(getEntries).toHaveBeenCalledTimes(1);
+    }
+    // The exact refusal, with or without the "Error: " prefix, does.
+    for (const message of [
+      "not found or not permitted",
+      "Error: not found or not permitted",
+    ]) {
+      const getEntries = jest.fn(async () => {
+        throw Error(message);
+      });
+      const catalog = setup({ getEntries });
+      catalog.pins.set([pinKey(P1, 1), pinKey(P2, 2)], readableAll);
+      await flush();
+      expect(getEntries).toHaveBeenCalledTimes(3);
+    }
   });
 
   test("a late reply after a newer request is ignored", async () => {
