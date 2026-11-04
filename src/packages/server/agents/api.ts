@@ -7,6 +7,10 @@ import {
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
+import {
+  appendArtifactCatalogReset,
+  lockArtifactCatalogProject,
+} from "@cocalc/database/postgres/artifact-catalog";
 import { agentStore, agentMessagingEnabled, normalizeAgentPath } from "./store";
 import { assertLocalAgentProject, assertActor, assertAgent } from "./access";
 import { withAgentChat } from "./chat";
@@ -120,6 +124,7 @@ export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
     requireUuid(prepared.successor_thread_id, "successor_thread_id");
     await assertActor(opts.account_id, opts.project_id);
     const fresh = await db.transaction(async (sql) => {
+      await lockArtifactCatalogProject(sql, opts.project_id);
       await sql.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `agent-identities:${opts.project_id}`,
       ]);
@@ -146,7 +151,7 @@ export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
         "UPDATE agent_identity_runs SET ended_at=COALESCE(ended_at,now()) WHERE agent_id=$1",
         [opts.agent_id],
       );
-      return (
+      const rebound = (
         await sql.query(
           `UPDATE agent_identities SET thread_id=$2,conversation_history=$3::jsonb
       WHERE agent_id=$1 RETURNING *`,
@@ -157,6 +162,9 @@ export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
           ],
         )
       ).rows[0];
+      // The visible thread changed, so catalog readers reload this project.
+      await appendArtifactCatalogReset(sql, opts.project_id);
+      return rebound;
     });
     // Everyone who named the agent sees its new conversation.
     void notifyIdentityWatchers(opts.agent_id);
@@ -218,6 +226,7 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
       // Loading the live chat may wait on routing or synchronization.
       await assertActor(account_id, opts.project_id);
       return db.transaction(async (sql) => {
+        await lockArtifactCatalogProject(sql, opts.project_id);
         await sql.query(
           "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
           [`agent-identities:${opts.project_id}`],
@@ -262,7 +271,7 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
         ).rows[0];
         if (+count.count >= 10_000)
           throw new Error("agent_identity_project_capacity");
-        return (
+        const inserted = (
           await sql.query(
             `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,runtime)
              VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)
@@ -279,6 +288,9 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
             ],
           )
         ).rows[0];
+        // A newly active identity makes its thread's artifacts visible.
+        if (inserted) await appendArtifactCatalogReset(sql, opts.project_id);
+        return inserted;
       });
     },
   );
@@ -371,10 +383,22 @@ export const disableIdentity: AgentApi["disableIdentity"] = async (opts) => {
   await assertActor(account_id, agent.project_id);
   if (agent.created_by !== account_id)
     throw new Error("only the registrant may disable this agent");
-  await db.query(
-    "UPDATE agent_identities SET disabled_at=COALESCE(disabled_at,now()),disabled_by=$2 WHERE agent_id=$1",
-    [opts.agent_id, account_id],
-  );
+  await db.transaction(async (sql) => {
+    await lockArtifactCatalogProject(sql, agent.project_id);
+    const wasActive =
+      (
+        await sql.query(
+          "SELECT disabled_at FROM agent_identities WHERE agent_id=$1 FOR UPDATE",
+          [opts.agent_id],
+        )
+      ).rows[0]?.disabled_at == null;
+    await sql.query(
+      "UPDATE agent_identities SET disabled_at=COALESCE(disabled_at,now()),disabled_by=$2 WHERE agent_id=$1",
+      [opts.agent_id, account_id],
+    );
+    // Its thread's artifacts are no longer visible.
+    if (wasActive) await appendArtifactCatalogReset(sql, agent.project_id);
+  });
   void notifyIdentityWatchers(opts.agent_id);
 };
 
@@ -433,6 +457,7 @@ export const recoverIdentityLocal: AgentApi["recoverIdentity"] = async (
     async (_chat, thread) => {
       await assertIdentityRecoveryOwner(opts.account_id!, opts.project_id);
       return db.transaction(async (sql) => {
+        await lockArtifactCatalogProject(sql, opts.project_id);
         await sql.query(
           "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
           [`agent-identities:${opts.project_id}`],
@@ -490,6 +515,7 @@ export const recoverIdentityLocal: AgentApi["recoverIdentity"] = async (
           "UPDATE agent_identities SET replaced_by=$2 WHERE agent_id=$1",
           [previous.agent_id, replacement.agent_id],
         );
+        await appendArtifactCatalogReset(sql, opts.project_id);
         return replacement;
       });
     },

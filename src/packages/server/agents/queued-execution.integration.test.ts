@@ -87,6 +87,9 @@ describeDb("accepted queued work outlives the sending run", () => {
   );
   const tables = [
     "agent_identities",
+    "artifact_catalog",
+    "artifact_catalog_project_state",
+    "artifact_catalog_changes",
     "agent_identity_runs",
     "agent_personal_controls",
     "agent_personal_names",

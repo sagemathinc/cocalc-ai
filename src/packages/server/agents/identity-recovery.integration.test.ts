@@ -37,6 +37,9 @@ describeDb("native identity recovery", () => {
       Object.fromEntries(
         [
           "agent_identities",
+          "artifact_catalog",
+          "artifact_catalog_project_state",
+          "artifact_catalog_changes",
           "agent_identity_runs",
           "agent_personal_names",
           "agent_networks",
@@ -138,5 +141,17 @@ describeDb("native identity recovery", () => {
         )
       ).rows[0].registered_agent_id,
     ).toBe(oldAgent);
+    // Recovery re-activates the thread under a new identity: catalog readers
+    // must reload the project.
+    expect(
+      (
+        await db.query(
+          `SELECT c.op, s.seq FROM artifact_catalog_changes c
+           JOIN artifact_catalog_project_state s USING(project_id)
+           WHERE c.project_id=$1`,
+          [project],
+        )
+      ).rows.map((row) => ({ op: row.op, seq: Number(row.seq) })),
+    ).toEqual([{ op: "reset", seq: 1 }]);
   });
 });

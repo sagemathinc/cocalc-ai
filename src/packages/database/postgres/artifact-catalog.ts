@@ -64,10 +64,129 @@ async function assertOwner(
     );
 }
 
-async function lockProjectCatalog(db: PoolClient, project_id: string) {
+type Queryable = Pick<PoolClient, "query">;
+
+async function lockProjectCatalog(db: Queryable, project_id: string) {
   await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
     `artifact-project:${project_id}`,
   ]);
+}
+
+/**
+ * Serializes with catalog ingest for one project. Writers that change what a
+ * catalog reader may see take this lock first, before any other lock, in the
+ * same transaction as their change.
+ */
+export async function lockArtifactCatalogProject(
+  db: Queryable,
+  project_id: string,
+): Promise<void> {
+  await lockProjectCatalog(db, project_id);
+}
+
+export type ArtifactCatalogChangeOp = "upsert" | "remove" | "reset";
+
+// Changes newer than both bounds are kept; older readers must reload.
+export const ARTIFACT_CATALOG_CHANGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const ARTIFACT_CATALOG_CHANGE_RETENTION_SEQS = 10_000;
+
+/** Caller holds the project catalog lock inside its transaction. */
+async function appendCatalogChanges(
+  db: Queryable,
+  project_id: string,
+  changes: { entry_id: string; op: ArtifactCatalogChangeOp }[],
+): Promise<number> {
+  const { rows } = await db.query(
+    `INSERT INTO artifact_catalog_project_state
+       (project_id,epoch,seq,latest_created_at,updated_at)
+     VALUES($1,$2,1,(SELECT max(created_at) FROM artifact_catalog
+       WHERE project_id=$1 AND NOT deleted),now())
+     ON CONFLICT(project_id) DO UPDATE SET
+       seq=artifact_catalog_project_state.seq+1,
+       latest_created_at=excluded.latest_created_at,
+       updated_at=now()
+     RETURNING seq`,
+    [project_id, randomUUID()],
+  );
+  const seq = Number(rows[0].seq);
+  await db.query(
+    `INSERT INTO artifact_catalog_changes(project_id,seq,entry_id,op,created_at)
+     SELECT $1,$2,c.entry_id,c.op,now()
+     FROM jsonb_to_recordset($3::jsonb) AS c(entry_id text,op text)`,
+    [project_id, seq, JSON.stringify(changes)],
+  );
+  return seq;
+}
+
+/**
+ * Records that catalog visibility may have changed for the whole project (an
+ * agent identity was registered, disabled, replaced or rebound). Caller holds
+ * the project catalog lock in the same transaction as that change.
+ */
+export async function appendArtifactCatalogReset(
+  db: Queryable,
+  project_id: string,
+): Promise<number> {
+  return await appendCatalogChanges(db, project_id, [
+    { entry_id: "", op: "reset" },
+  ]);
+}
+
+/**
+ * Prunes old change records in bounded batches. The retention floor moves
+ * first, under the project lock, so a reader older than the floor reloads
+ * instead of applying an incomplete delta while rows are being deleted.
+ */
+export async function pruneArtifactCatalogChanges({
+  maxProjects = 32,
+  batchRows = 1000,
+  maxRowsPerProject = 10_000,
+}: {
+  maxProjects?: number;
+  batchRows?: number;
+  maxRowsPerProject?: number;
+} = {}): Promise<{ projects: number; deleted: number }> {
+  const cutoff = new Date(Date.now() - ARTIFACT_CATALOG_CHANGE_RETENTION_MS);
+  const { rows } = await getPool().query(
+    `SELECT s.project_id,
+       (SELECT max(c.seq) FROM artifact_catalog_changes c
+        WHERE c.project_id=s.project_id AND c.created_at<$1
+          AND c.seq<=s.seq-$2) AS floor
+     FROM artifact_catalog_project_state s
+     WHERE EXISTS (SELECT 1 FROM artifact_catalog_changes c
+       WHERE c.project_id=s.project_id AND c.created_at<$1
+         AND c.seq<=s.seq-$2)
+     LIMIT $3`,
+    [cutoff, ARTIFACT_CATALOG_CHANGE_RETENTION_SEQS, maxProjects],
+  );
+  let deleted = 0;
+  for (const row of rows) {
+    const floor = Number(row.floor);
+    if (!Number.isSafeInteger(floor) || floor < 1) continue;
+    await transaction(async (db) => {
+      await lockProjectCatalog(db, row.project_id);
+      await db.query(
+        `UPDATE artifact_catalog_project_state
+         SET retention_floor_seq=GREATEST(retention_floor_seq,$2)
+         WHERE project_id=$1`,
+        [row.project_id, floor],
+      );
+    });
+    let projectDeleted = 0;
+    while (projectDeleted < maxRowsPerProject) {
+      const result = await getPool().query(
+        `DELETE FROM artifact_catalog_changes WHERE ctid IN (
+           SELECT ctid FROM artifact_catalog_changes
+           WHERE project_id=$1 AND seq<=$2 LIMIT $3)`,
+        [row.project_id, floor, batchRows],
+      );
+      const count = result.rowCount ?? 0;
+      projectDeleted += count;
+      if (count < batchRows) break;
+    }
+    deleted += projectDeleted;
+  }
+  return { projects: rows.length, deleted };
 }
 
 async function chargeProjectWork(
@@ -350,22 +469,43 @@ export async function applyArtifactCatalogSnapshot(
       "DELETE FROM artifact_catalog WHERE project_id=$1 AND deleted",
       [snapshot.project_id],
     );
-    await db.query(
+    // Only inserted or actually changed rows are returned: an update is skipped
+    // when the value it would write (incoming metadata with the retained
+    // creation time) equals what is stored.
+    const upserted = await db.query(
       `INSERT INTO artifact_catalog
       (entry_id,source_id,project_id,thread_id,artifact_id,metadata,created_at,revision,deleted)
       SELECT e.entry_id,$1,$2,e.thread_id,e.artifact_id,e.metadata,e.created_at,$3,FALSE
       FROM jsonb_to_recordset($4::jsonb) AS e(entry_id text,thread_id text,artifact_id text,metadata jsonb,created_at timestamptz)
       ON CONFLICT(entry_id) DO UPDATE SET metadata=jsonb_set(excluded.metadata,'{created_at}',
         to_jsonb((extract(epoch FROM artifact_catalog.created_at)*1000)::bigint)),
-      revision=excluded.revision,deleted=FALSE`,
+      revision=excluded.revision,deleted=FALSE
+      WHERE artifact_catalog.deleted
+        OR artifact_catalog.metadata IS DISTINCT FROM jsonb_set(excluded.metadata,'{created_at}',
+          to_jsonb((extract(epoch FROM artifact_catalog.created_at)*1000)::bigint))
+      RETURNING entry_id`,
       [source_id, snapshot.project_id, next, JSON.stringify(entries)],
     );
-    await db.query(
+    const removed = await db.query(
       `DELETE FROM artifact_catalog
-      WHERE source_id=$1 AND NOT (entry_id=ANY($2::text[]))`,
+      WHERE source_id=$1 AND NOT (entry_id=ANY($2::text[]))
+      RETURNING entry_id`,
       [source_id, entries.map((entry) => entry.entry_id)],
     );
     await assertProjectCatalogSize(db, snapshot.project_id);
+    const changes = [
+      ...upserted.rows.map((row) => ({
+        entry_id: row.entry_id as string,
+        op: "upsert" as const,
+      })),
+      ...removed.rows.map((row) => ({
+        entry_id: row.entry_id as string,
+        op: "remove" as const,
+      })),
+    ];
+    if (changes.length > 0) {
+      await appendCatalogChanges(db, snapshot.project_id, changes);
+    }
     await db.query(
       `UPDATE artifact_catalog_sources SET source_sequence=$2,
       catalog_revision=$3,payload_hash=$4,metadata_hash=$5,updated_at=now() WHERE source_id=$1`,
