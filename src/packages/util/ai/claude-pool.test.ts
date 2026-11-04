@@ -391,6 +391,21 @@ describe("recent rate", () => {
     );
   });
 
+  it("counts a new week's usage from its reset, inside the window", () => {
+    // a: readings a day ago and now; its week reset an hour ago. b limits the
+    // window to the last 3 hours. All of a's 0.2 accrued after the reset,
+    // inside the window.
+    const a = member("a", {
+      week: 0.2,
+      weekResetsIn: 7 * 24 * HOUR - HOUR,
+      history: [at(24, 0.9, -HOUR)],
+    });
+    const b = member("b", { week: 0.1, history: [at(3, 0.1)] });
+    const rate = claudePoolRecentRate([a, b], now)!;
+    expect(rate.hours).toBeCloseTo(3);
+    expect(rate.ratePerHour * 3).toBeCloseTo(0.2);
+  });
+
   it("counts a week that reset from zero", () => {
     const a = member("a", {
       week: 0.1,

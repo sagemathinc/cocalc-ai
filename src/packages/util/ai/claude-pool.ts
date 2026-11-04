@@ -424,10 +424,15 @@ export function claudePoolRecentRate(
       const a = points[i - 1];
       const b = points[i];
       if (b.at <= from) continue;
-      const added =
-        a.resets_at === b.resets_at ? Math.max(0, b.week - a.week) : b.week;
-      // Only the part of this interval inside the window.
-      const share = a.at >= from ? 1 : (b.at - from) / Math.max(1, b.at - a.at);
+      const reset = a.resets_at !== b.resets_at;
+      const added = reset ? b.week : Math.max(0, b.week - a.week);
+      // Only the part of this interval inside the window. After a reset,
+      // the new week's usage accrued from the reset on.
+      const accrual = reset
+        ? Math.min(b.at, Math.max(a.at, a.resets_at * 1000))
+        : a.at;
+      const share =
+        accrual >= from ? 1 : (b.at - from) / Math.max(1, b.at - accrual);
       used += added * share;
     }
   }
