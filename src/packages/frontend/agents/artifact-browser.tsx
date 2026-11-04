@@ -35,6 +35,14 @@ import {
   catalogResults,
   CATALOG_LIMITS,
 } from "./artifact-catalog-store";
+import type { CatalogEntry } from "./artifact-catalog-store";
+import {
+  accountCatalogFor,
+  useCatalogList,
+  useCatalogReadMode,
+  usePinnedEntries,
+  useReadableProjects,
+} from "./use-account-catalog";
 
 const LibraryAppearanceEditor = lazy(() =>
   import("./library-appearance-editor").then(({ LibraryAppearanceEditor }) => ({
@@ -117,7 +125,11 @@ function AccountArtifactBrowser({
       webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
     ),
   );
-  const metadata = useSyncExternalStore(catalog.subscribe, catalog.get);
+  const legacyState = useSyncExternalStore(catalog.subscribe, catalog.get);
+  // Nothing is asked until the page is shown (not on workspace mount).
+  const mode = useCatalogReadMode(accountId, active);
+  const server = mode === "server";
+  const accountCatalog = accountCatalogFor(accountId);
   const [openError, setOpenError] = useState("");
   const [appearanceTarget, setAppearanceTarget] = useState<
     ForeignArtifactTarget & { entryId: string }
@@ -170,18 +182,77 @@ function AccountArtifactBrowser({
     ...new Set(agents.map((agent) => agent.endpoint.project_id)),
   ].sort();
   const projectKey = JSON.stringify(projects);
+  // An older hub: the per-project catalog, once some visible consumer found
+  // that out (never on workspace mount itself).
+  const legacy = mode === "legacy";
   useEffect(() => {
+    if (!legacy) return;
     catalog.start(JSON.parse(projectKey));
     return catalog.stop;
-  }, [catalog, projectKey]);
+  }, [catalog, projectKey, legacy]);
   // The browser stays mounted while hidden; keep refreshing only while it is
   // the active view (the store also pauses while the tab is hidden).
   useEffect(() => {
-    catalog.setPolling(!!active);
-  }, [catalog, projectKey, active]);
+    if (legacy) catalog.setPolling(!!active);
+  }, [catalog, projectKey, active, legacy]);
+  const readable = useReadableProjects(accountId);
+  const pinState = usePinnedEntries(
+    accountCatalog,
+    server && active,
+    pins.pins,
+    readable,
+  );
+  const list = useCatalogList(accountCatalog.library, server && active, {
+    query,
+    project_id: project,
+  });
+  const narrowed = !!query.trim() || !!project;
+  const unavailablePins = [...pinState.pins.values()].filter(
+    (value) => value === "unavailable",
+  ).length;
+  const metadata: {
+    entries: CatalogEntry[];
+    loading: boolean;
+    error?: string;
+    limited: boolean;
+    indexedSources: number;
+    checkedProjects: number;
+  } = server
+    ? {
+        // Pins have their own section; with a search or project filter only
+        // the server's matches are listed (pinned ones among them).
+        entries: narrowed
+          ? list.entries
+          : [
+              ...[...pinState.pins.values()].filter(
+                (value): value is CatalogEntry => value !== "unavailable",
+              ),
+              ...list.entries,
+            ],
+        loading: list.loading || pinState.loading,
+        error: list.error,
+        limited: false,
+        indexedSources: 0,
+        checkedProjects: 0,
+      }
+    : legacy
+      ? legacyState
+      : {
+          entries: [] as CatalogEntry[],
+          loading: mode === "pending",
+          error:
+            mode === "unavailable"
+              ? "Artifacts are unavailable right now. They load again when you come back to this tab."
+              : undefined,
+          limited: false,
+          indexedSources: 0,
+          checkedProjects: 0,
+        };
 
   const ordered = catalogResults(metadata.entries, agents, {
-    query,
+    // The server already searched and filtered; the old catalog is filtered
+    // here.
+    query: server ? "" : query,
     project,
     sort,
     // Pins have their own section; the sort orders everything else.
@@ -197,8 +268,9 @@ function AccountArtifactBrowser({
   const projectTitle = (id: string) =>
     agents.find((agent) => agent.endpoint.project_id === id)?.project_title ||
     id;
-  // Bound the total rendered rows, not each project independently.
-  const shown = ordered.slice(0, 200);
+  // Bound the total rendered rows (the old catalog holds everything; server
+  // lists grow only by Load more).
+  const shown = server ? ordered : ordered.slice(0, 200);
   async function openResult(result: AgentSearchHit, conversation = false) {
     lastArtifact.current = identity(result);
     setOpening(true);
@@ -501,6 +573,7 @@ function AccountArtifactBrowser({
             <span role="status" aria-atomic="true">
               {" · "}
               {ordered.length} {ordered.length === 1 ? "artifact" : "artifacts"}
+              {server && list.next ? " loaded" : ""}
               {metadata.loading
                 ? ordered.length
                   ? " · Refreshing..."
@@ -606,25 +679,36 @@ function AccountArtifactBrowser({
             style={{ color: UI_COLORS.secondary, fontSize: 12, marginTop: 16 }}
           >
             <summary>About this library</summary>
-            <p>
-              Metadata from current agent conversations refreshes in the
-              background about every 10 seconds, without scanning files or
-              starting projects. Search and filters use cached metadata; sources
-              may still be indexing.
-            </p>
+            {server ? (
+              <p>
+                Artifacts from your agents' conversations and from Library
+                conversations, newest first. Search covers titles, descriptions,
+                kinds, files, repositories and names. Lists load a page at a
+                time; Refresh reloads them.
+              </p>
+            ) : (
+              <>
+                <p>
+                  Metadata from current agent conversations refreshes in the
+                  background while this page is shown, without scanning files or
+                  starting projects. Search and filters use cached metadata;
+                  sources may still be indexing.
+                </p>
+                <p>
+                  {metadata.indexedSources} indexed sources reported; this is
+                  not a completeness count. {metadata.checkedProjects} project
+                  listings read to the end. Coverage may still be partial.
+                </p>
+                <p>
+                  Preview limits: {CATALOG_LIMITS.projects} projects,{" "}
+                  {CATALOG_LIMITS.pages} pages, {CATALOG_LIMITS.entries} entries
+                  and approximately 16 MiB of metadata per refresh.
+                </p>
+              </>
+            )}
             <p>
               Pinned artifacts have their own section at the top. Drag them, or
               focus a handle and use Space and the arrow keys, to reorder.
-            </p>
-            <p>
-              {metadata.indexedSources} indexed sources reported; this is not a
-              completeness count. {metadata.checkedProjects} project listings
-              read to the end. Coverage may still be partial.
-            </p>
-            <p>
-              Preview limits: {CATALOG_LIMITS.projects} projects,{" "}
-              {CATALOG_LIMITS.pages} pages, {CATALOG_LIMITS.entries} entries and
-              approximately 16 MiB of metadata per refresh.
             </p>
           </details>
         </div>
@@ -634,6 +718,27 @@ function AccountArtifactBrowser({
             title="Artifact metadata unavailable"
             description={metadata.error}
           />
+        )}
+        {server && (list.incomplete || list.limited || unavailablePins > 0) && (
+          <div
+            role="status"
+            style={{
+              color: UI_COLORS.secondary,
+              fontSize: 13,
+              marginBottom: 8,
+            }}
+          >
+            {list.incomplete?.unavailable_bays || list.incomplete?.not_ready
+              ? "Some projects couldn't be loaded right now. "
+              : ""}
+            {list.incomplete?.too_many_projects
+              ? "Showing artifacts from your most recently active projects; choose a project to see others. "
+              : ""}
+            {list.limited ? "Some results may be missing. " : ""}
+            {unavailablePins > 0
+              ? `${unavailablePins} pinned ${unavailablePins === 1 ? "artifact is" : "artifacts are"} unavailable.`
+              : ""}
+          </div>
         )}
         {pins.error && <div role="alert">{pins.error}</div>}
         {openError && <div role="alert">{openError}</div>}
@@ -665,7 +770,20 @@ function AccountArtifactBrowser({
             renderItem={renderRow}
           />
         </div>
-        {ordered.length > 200 && (
+        {server && list.next && (
+          <div
+            style={{ display: "flex", justifyContent: "center", margin: 16 }}
+          >
+            <Button
+              disabled={list.loading}
+              aria-busy={list.loading}
+              onClick={() => void accountCatalog.library.loadMore()}
+            >
+              {list.loading ? "Loading..." : "Load more"}
+            </Button>
+          </div>
+        )}
+        {!server && ordered.length > 200 && (
           <p role="status">
             Showing the first 200 of {ordered.length} matches. Narrow the search
             or project filter to see other cached artifacts.
@@ -678,26 +796,27 @@ function AccountArtifactBrowser({
             <LibraryAppearanceEditor
               target={appearanceTarget}
               onClose={() => setAppearanceTarget(undefined)}
-              onSaved={(theme, artifactTitle) =>
-                catalog.updateAppearance(
-                  appearanceTarget.projectId,
-                  appearanceTarget.entryId,
-                  {
-                    title: theme.title || artifactTitle,
-                    description: theme.description,
-                    appearance: {
-                      ...(theme.color ? { color: theme.color } : {}),
-                      ...(theme.accent_color
-                        ? { accent_color: theme.accent_color }
-                        : {}),
-                      ...(theme.icon ? { icon: theme.icon } : {}),
-                      ...(theme.image_blob
-                        ? { image_blob: theme.image_blob }
-                        : {}),
-                    },
+              onSaved={(theme, artifactTitle) => {
+                const update = {
+                  title: theme.title || artifactTitle,
+                  description: theme.description,
+                  appearance: {
+                    ...(theme.color ? { color: theme.color } : {}),
+                    ...(theme.accent_color
+                      ? { accent_color: theme.accent_color }
+                      : {}),
+                    ...(theme.icon ? { icon: theme.icon } : {}),
+                    ...(theme.image_blob
+                      ? { image_blob: theme.image_blob }
+                      : {}),
                   },
-                )
-              }
+                };
+                const { projectId, entryId } = appearanceTarget;
+                if (server) {
+                  accountCatalog.updateAppearance(projectId, entryId, update);
+                  accountCatalog.changed();
+                } else catalog.updateAppearance(projectId, entryId, update);
+              }}
             />
           </Suspense>
         )}

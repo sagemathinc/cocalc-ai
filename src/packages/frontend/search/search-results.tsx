@@ -24,6 +24,11 @@ import {
 } from "@cocalc/frontend/agents/artifact-catalog-store";
 import { useArtifactNames } from "@cocalc/frontend/agents/artifact-names";
 import {
+  accountCatalogFor,
+  useCatalogList,
+  useCatalogReadMode,
+} from "@cocalc/frontend/agents/use-account-catalog";
+import {
   agentHistory,
   searchAgentThread,
 } from "@cocalc/frontend/agents/message-search";
@@ -456,11 +461,21 @@ function ArtifactsSection({
   const catalog = sharedArtifactCatalog(accountId, (opts) =>
     webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
   );
-  const [metadata, setMetadata] = useState(catalog.get());
-  useEffect(() => catalog.subscribe(() => setMetadata(catalog.get())), []);
+  const [legacy, setLegacy] = useState(catalog.get());
+  useEffect(() => catalog.subscribe(() => setLegacy(catalog.get())), []);
   const { names } = useArtifactNames();
+  // The server searches one page (the old catalog is filtered here).
+  const mode = useCatalogReadMode(accountId, true);
+  const server = mode === "server";
+  const [session] = useState(() => accountCatalogFor(accountId).session());
+  const found = useCatalogList(session, server && !!query.trim(), { query });
+  const metadata = server
+    ? { entries: found.entries, loading: found.loading }
+    : mode === "legacy"
+      ? legacy
+      : { entries: [], loading: mode === "pending" };
   const hits = catalogResults(metadata.entries, agents, {
-    query,
+    query: server ? "" : query,
     sort: "recent",
     pins: [],
     aliases: names,
