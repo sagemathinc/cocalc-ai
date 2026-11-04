@@ -74,6 +74,33 @@ The session's `mcpServers` gets, per configured server:
 - The config is read at session open. A change takes effect at the next session; it doesn't restart a running one. The new tool list costs one prompt-cache miss, then caching resumes.
 - A server that fails to start or dies is reported in the turn's activity ("MCP server X: failed to start: ..."). The tool simply errors, and the turn never fails because of it.
 
+## Design review (@lite1-review, Nov 4): resolutions
+
+1. **Bind name, scope and config digest (approval and TOCTOU).**
+   - At session open the host builds the server list. Each entry is `{name, scope, digest}`, where `digest` is the SHA-256 of the canonical entry: scope, command, args, env, url, headers.
+   - The bridge `--mcp` entry carries only `name`. The host relay sends `{name, scope, digest}` to the project service.
+   - The project service re-reads the config and spawns only if the same name and scope still hash to that digest. Otherwise the server is refused ("MCP server X changed since the session started").
+   - So a config swapped between approval or session open and spawn never runs.
+2. **Authority throughout long-lived relays.**
+   - Each relay registers with the bridge's existing authority loop: a recheck every 30 s while any relay is open, plus a check at open.
+   - A failed check, cancel, fence or close destroys every relay. That kills the project process (see 3).
+   - Relays opened before a cancel are not resumed. Claude reconnects at the next session.
+3. **Limits and cleanup.**
+   - Per project: at most 8 running MCP server processes, enforced in the project service. Per session: at most 8 relays.
+   - Lines at most 1.2 MB.
+   - Queued bytes per direction at most 4 MB. Above that, the relay pauses the reading side (backpressure); if it is still over the limit after 30 s, it closes the relay.
+   - The server is spawned detached in its own process group. On close the whole group gets SIGTERM, then SIGKILL after 5 s.
+   - Idle timeout: 30 minutes without traffic closes the relay.
+   - stderr is kept in a bounded ring (64 KB) for diagnostics.
+4. **Server-initiated sampling and elicitation are refused.**
+   - The relay inspects server→client JSON-RPC requests. It allows only `ping` and `roots/list`. It answers `sampling/createMessage`, `elicitation/create` and any other request with error -32601, without forwarding to Claude.
+   - So a server can never spend the subscription or prompt the user.
+   - Notifications and responses pass through.
+5. **Who can reach the project service.** It is a conat service on the project's subject, so the project's collaborators can reach it too, like terminals. This is explicitly accepted: collaborators can already start any process in the project. Admission limits apply (3), and the service spawns only servers named in the project's own config, never a command from the caller.
+6. **`.mcp.json` approval stays** (Claude Code's `enabledMcpjsonServers` / `enableAllProjectMcpServers` in `~/.claude.json`).
+   - Documented: in CoCalc, `~/.claude.json` is **shared project-home state**. Every collaborator's Claude agents in that project use its MCP servers, and anyone who can edit project files can change it.
+   - William (Nov 3) on approval: it "does seem reasonable to have an approval step".
+
 ## Phases
 
 - **1a (this PR):** stdio servers from user and local scope, plus approved project scope. Project MCP socket service, bridge `--mcp` pass-through, host relay, config reader, activity notes. Tests: config parsing; relay framing and limits; an end-to-end test with a tiny echo MCP server through the host relay and a fake project service; authority close and cancel.
