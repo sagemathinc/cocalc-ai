@@ -57,7 +57,10 @@ export interface CatalogEntryRef {
   entry_id: string;
 }
 
-function validateEntryRefs(items: unknown): CatalogEntryRef[] {
+/** Pure validation and de-duplication of a lookup request (1..100 refs). */
+export function validateArtifactCatalogEntryRefs(
+  items: unknown,
+): CatalogEntryRef[] {
   if (
     !Array.isArray(items) ||
     items.length < 1 ||
@@ -98,7 +101,7 @@ export async function readArtifactCatalogEntriesForAccount(
     items,
   }: { account_id: string; owning_bay_id: string; items: unknown },
 ): Promise<CatalogEntry[]> {
-  const refs = validateEntryRefs(items);
+  const refs = validateArtifactCatalogEntryRefs(items);
   const projects = [...new Set(refs.map((ref) => ref.project_id))];
   const allowed = await authorizedArtifactCatalogProjects(db, {
     account_id,

@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { getEntries } from "./catalog-api";
 import {
   ARTIFACT_CATALOG_READ_LIMITED,
+  artifactCatalogReadLimitEntries,
   resetArtifactCatalogReadLimitsForTests,
+  withArtifactCatalogReadLimit,
 } from "./catalog-read-limits";
 
 const NOT_PERMITTED = "not found or not permitted";
@@ -16,8 +18,15 @@ const remoteClient = jest.fn((_opts?: any) => remote);
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "here",
 }));
+const resolveBays = jest.fn(async (project_ids: string[]) => {
+  const owners = new Map();
+  for (const project_id of project_ids)
+    owners.set(project_id, await ownerOf(project_id));
+  return owners;
+});
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveProjectBay: (...a) => ownerOf(...a),
+  resolveProjectBays: (ids) => resolveBays(ids),
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => "trusted-fabric",
@@ -35,6 +44,11 @@ jest.mock("@cocalc/database/pool", () => ({
 }));
 jest.mock("@cocalc/database/postgres/artifact-catalog-read", () => ({
   ARTIFACT_CATALOG_NOT_PERMITTED: "not found or not permitted",
+  // The real, pure validator: the home bay must bound the whole request.
+  validateArtifactCatalogEntryRefs: (items) =>
+    jest
+      .requireActual("@cocalc/database/postgres/artifact-catalog-read")
+      .validateArtifactCatalogEntryRefs(items),
   readArtifactCatalogEntriesForAccountLocal: (...a) => read(...a),
   authorizedArtifactCatalogProjects: (...a) => authorized(...a),
 }));
@@ -129,4 +143,63 @@ test("per-account rate limit", async () => {
   await expect(
     getEntries({ account_id: randomUUID(), items: [entry(local)] }),
   ).resolves.toHaveLength(1);
+});
+
+test("the whole request is validated and bounded on the home bay before any routing", async () => {
+  // 101 distinct valid refs, split across two owning bays (each half <= 100).
+  const items = Array.from({ length: 101 }, (_, i) => ({
+    project_id: i % 2 ? far : local,
+    entry_id: i.toString(16).padStart(64, "0"),
+  }));
+  await expect(getEntries({ account_id, items })).rejects.toThrow(
+    "invalid catalog entry list",
+  );
+  for (const bad of [
+    [],
+    [{ project_id: "not-a-uuid", entry_id: "a".repeat(64) }],
+    [{ project_id: local, entry_id: "" }],
+    "x" as any,
+  ])
+    await expect(getEntries({ account_id, items: bad })).rejects.toThrow(
+      "invalid catalog entry list",
+    );
+  expect(resolveBays).not.toHaveBeenCalled();
+  expect(ownerOf).not.toHaveBeenCalled();
+  expect(remoteClient).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
+  // Duplicates are folded before routing: one batch lookup, one owner call.
+  await getEntries({
+    account_id,
+    items: [entry(local), entry(local), entry(local)],
+  });
+  expect(resolveBays).toHaveBeenCalledTimes(1);
+  expect(resolveBays).toHaveBeenCalledWith([local]);
+  expect(read).toHaveBeenCalledWith(
+    expect.objectContaining({ items: [entry(local)] }),
+  );
+});
+
+test("the rate limiter forgets idle callers", async () => {
+  let t = 0;
+  const now = () => t;
+  for (let i = 0; i < 1500; i++)
+    await withArtifactCatalogReadLimit(
+      randomUUID(),
+      "getEntries",
+      async () => 0,
+      now,
+    );
+  // The sweep at the 1000th call found nothing expired yet.
+  expect(artifactCatalogReadLimitEntries()).toBe(1500);
+  t = 60_000;
+  for (let i = 0; i < 1000; i++)
+    await withArtifactCatalogReadLimit(
+      randomUUID(),
+      "getEntries",
+      async () => 0,
+      now,
+    );
+  // The next sweep (500 calls into this batch, at t=60s) dropped all 1500
+  // expired callers; only this batch's 1000 remain, not 2500.
+  expect(artifactCatalogReadLimitEntries()).toBe(1000);
 });

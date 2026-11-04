@@ -31,6 +31,19 @@ interface State {
 }
 
 const states = new Map<string, State>();
+let callsSinceSweep = 0;
+const SWEEP_EVERY_CALLS = 1000;
+
+// Drop accounts with nothing in flight and no starts left in their window,
+// so the map holds only recently active callers.
+function sweep(t: number): void {
+  for (const [key, state] of states) {
+    const rule = ARTIFACT_CATALOG_READ_LIMITS[key.split(":")[0]];
+    const windowMs = rule?.windowMs ?? 0;
+    state.started = state.started.filter((at) => t - at < windowMs);
+    if (state.active === 0 && state.started.length === 0) states.delete(key);
+  }
+}
 
 export async function withArtifactCatalogReadLimit<T>(
   account_id: string,
@@ -40,8 +53,12 @@ export async function withArtifactCatalogReadLimit<T>(
 ): Promise<T> {
   const rule = ARTIFACT_CATALOG_READ_LIMITS[kind];
   const key = `${kind}:${account_id}`;
-  const state = states.get(key) ?? { active: 0, started: [] };
   const t = now();
+  if (++callsSinceSweep >= SWEEP_EVERY_CALLS) {
+    callsSinceSweep = 0;
+    sweep(t);
+  }
+  const state = states.get(key) ?? { active: 0, started: [] };
   state.started = state.started.filter((at) => t - at < rule.windowMs);
   if (state.active >= rule.concurrent || state.started.length >= rule.perWindow)
     throw Error(ARTIFACT_CATALOG_READ_LIMITED);
@@ -52,10 +69,15 @@ export async function withArtifactCatalogReadLimit<T>(
     return await fn();
   } finally {
     state.active--;
-    if (state.active === 0 && state.started.length === 0) states.delete(key);
   }
+}
+
+/** Number of tracked callers (tests and diagnostics). */
+export function artifactCatalogReadLimitEntries(): number {
+  return states.size;
 }
 
 export function resetArtifactCatalogReadLimitsForTests(): void {
   states.clear();
+  callsSinceSweep = 0;
 }
