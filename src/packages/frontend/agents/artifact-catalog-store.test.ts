@@ -49,6 +49,7 @@ test("sequential pages, deduplicated projects, atomic background refresh and rem
     .mockReturnValueOnce(later.promise);
   const store = new ArtifactCatalogStore("a", list);
   store.start(["p", "p"]);
+  store.setPolling(true);
   await flush();
   expect(list).toHaveBeenCalledTimes(1);
   expect(store.get().entries[0].entry_id).toBe("old");
@@ -149,6 +150,7 @@ test("all RPC errors purge cached metadata and periodic retry rechecks access", 
     .mockResolvedValue(page([entry("allowed")]));
   const store = new ArtifactCatalogStore("a", list);
   store.start(["p"]);
+  store.setPolling(true);
   await flush();
   await store.refresh();
   expect(store.get()).toMatchObject({ entries: [], incomplete: true });
@@ -184,6 +186,7 @@ test("project changes fence stale loads, timeout keeps one outstanding slot", as
   const store = new ArtifactCatalogStore("a", list);
   store.start(["p"]);
   store.start(["new-project"]);
+  store.setPolling(true);
   pending.resolve(page([entry("stale")]));
   await flush();
   expect(store.get().entries).toEqual([]);
@@ -260,4 +263,89 @@ test("artifacts in a project's Library conversation are listed as from @artifact
   expect(results.map((r) => r.hit.artifact_title)).toEqual(["hand-made"]);
   expect(results[0].agent.name).toBe("artifacts");
   expect(results[0].agent.endpoint.agent_id).toBe("library:p");
+});
+
+const setVisibility = (state: "visible" | "hidden") => {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => state,
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+};
+
+test("loads once on start but polls only while polling is wanted", async () => {
+  const list = jest.fn().mockResolvedValue(page([entry("x")]));
+  const store = new ArtifactCatalogStore("a", list);
+  store.start(["p"]);
+  await flush();
+  expect(list).toHaveBeenCalledTimes(1);
+  store.setPolling(true);
+  await flush();
+  // The snapshot is fresh, so resuming does not refetch immediately.
+  expect(list).toHaveBeenCalledTimes(1);
+  jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs);
+  await flush();
+  expect(list).toHaveBeenCalledTimes(2);
+  store.setPolling(false);
+  jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs * 5);
+  await flush();
+  expect(list).toHaveBeenCalledTimes(2);
+  // Pausing keeps the last snapshot for the sidebar, search and navigation.
+  expect(store.get().entries[0].entry_id).toBe("x");
+  // A stale snapshot is refreshed as soon as polling resumes.
+  store.setPolling(true);
+  await flush();
+  expect(list).toHaveBeenCalledTimes(3);
+  store.stop();
+});
+
+test("without polling, the catalog is loaded only once", async () => {
+  const list = jest.fn().mockResolvedValue(page([entry("x")]));
+  const store = new ArtifactCatalogStore("a", list);
+  store.start(["p"]);
+  await flush();
+  jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs * 5);
+  await flush();
+  expect(list).toHaveBeenCalledTimes(1);
+  store.stop();
+});
+
+test("a hidden browser tab pauses polling; becoming visible resumes it", async () => {
+  const list = jest.fn().mockResolvedValue(page([entry("x")]));
+  const store = new ArtifactCatalogStore("a", list);
+  try {
+    store.start(["p"]);
+    store.setPolling(true);
+    await flush();
+    expect(list).toHaveBeenCalledTimes(1);
+    setVisibility("hidden");
+    jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs * 5);
+    await flush();
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(store.get().entries[0].entry_id).toBe("x");
+    setVisibility("visible");
+    await flush();
+    expect(list).toHaveBeenCalledTimes(2);
+    jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs);
+    await flush();
+    expect(list).toHaveBeenCalledTimes(3);
+  } finally {
+    setVisibility("visible");
+    store.stop();
+  }
+});
+
+test("stop removes the visibility listener and the interval", async () => {
+  const list = jest.fn().mockResolvedValue(page([entry("x")]));
+  const store = new ArtifactCatalogStore("a", list);
+  store.start(["p"]);
+  store.setPolling(true);
+  await flush();
+  store.stop();
+  setVisibility("hidden");
+  setVisibility("visible");
+  jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs * 5);
+  await flush();
+  expect(list).toHaveBeenCalledTimes(1);
+  expect(store.get().entries).toEqual([]);
 });
