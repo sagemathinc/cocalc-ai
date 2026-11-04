@@ -382,18 +382,18 @@ const MIN_RECENT_RATE_MS = 2 * HOUR_MS;
 
 /**
  * Weekly limits used per hour across the members over a common recent
- * window: each member's readings (and its latest report) are walked from
- * the last one at or before the window's start, adding each increase (a
- * week that reset counts from zero). Undefined until readings cover
- * MIN_RECENT_RATE_MS.
+ * window: the last RECENT_RATE_MS, or less when some member's readings
+ * (with its latest report) start later, since its usage before them is
+ * unknown. Each member's increases from the window's start are added (a
+ * week that reset counts from zero; the reading interval across the start
+ * counts in proportion). Members with a single reading say nothing and are
+ * left out. Undefined until the window covers MIN_RECENT_RATE_MS.
  */
 export function claudePoolRecentRate(
   members: ClaudePoolMember[],
   now = Date.now(),
 ): { ratePerHour: number; hours: number } | undefined {
-  const start = now - RECENT_RATE_MS;
-  let used = 0;
-  let from = Infinity;
+  const series: ClaudeUsageReading[][] = [];
   for (const member of members) {
     const points = [...(member.history ?? [])];
     const week = member.usage?.windows.seven_day;
@@ -409,19 +409,28 @@ export function claudePoolRecentRate(
         week: week.utilization,
         resets_at: week.resets_at,
       });
-    if (points.length === 0) continue;
-    let base = 0;
-    for (let i = 0; i < points.length; i++) if (points[i].at <= start) base = i;
-    from = Math.min(from, Math.max(start, points[base].at));
-    for (let i = base + 1; i < points.length; i++) {
-      const a = points[i - 1];
-      const b = points[i];
-      used +=
-        a.resets_at === b.resets_at ? Math.max(0, b.week - a.week) : b.week;
-    }
+    if (points.length >= 2) series.push(points);
   }
+  if (series.length === 0) return;
+  const from = Math.max(
+    now - RECENT_RATE_MS,
+    ...series.map((points) => points[0].at),
+  );
   const span = now - from;
   if (!(span >= MIN_RECENT_RATE_MS)) return;
+  let used = 0;
+  for (const points of series) {
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      if (b.at <= from) continue;
+      const added =
+        a.resets_at === b.resets_at ? Math.max(0, b.week - a.week) : b.week;
+      // Only the part of this interval inside the window.
+      const share = a.at >= from ? 1 : (b.at - from) / Math.max(1, b.at - a.at);
+      used += added * share;
+    }
+  }
   return { ratePerHour: used / (span / HOUR_MS), hours: span / HOUR_MS };
 }
 

@@ -345,21 +345,16 @@ describe("recent rate", () => {
     const a = member("a", {
       week: 0.9,
       weekResetsIn: 24 * HOUR,
-      history: [
-        at(30, 0.6, 24 * HOUR),
-        at(20, 0.75, 24 * HOUR),
-        at(12, 0.9, 24 * HOUR),
-      ],
+      history: [at(24, 0.6, 24 * HOUR), at(12, 0.9, 24 * HOUR)],
     });
     const b = member("b", {
       week: 0.35,
       weekResetsIn: 160 * HOUR,
       observedAgo: 0,
-      history: [at(30, 0.05, 160 * HOUR), at(12, 0.05, 160 * HOUR)],
+      history: [at(24, 0.05, 160 * HOUR), at(12, 0.05, 160 * HOUR)],
     });
     const rate = claudePoolRecentRate([a, b], now)!;
     expect(rate.hours).toBeCloseTo(24);
-    // a: 0.6 -> 0.9 from its reading before the window (30 h ago).
     expect(rate.ratePerHour * 24).toBeCloseTo(0.3 + 0.3);
     const forecast = claudePoolForecast([a, b], now);
     expect(forecast.rateFrom).toBe("recent");
@@ -375,6 +370,25 @@ describe("recent rate", () => {
         now,
       ).ratePerHour,
     ).toBeGreaterThan(0.6 / 24);
+  });
+
+  it("uses the window every member's readings cover", () => {
+    // a has readings for a day (0.24 used evenly); b only for 3 hours, in
+    // which it used 0.3. Over the last 3 hours the pool used 0.3 plus a's
+    // share of its last 12-hour interval (0.12 * 3/12).
+    const a = member("a", {
+      week: 0.34,
+      history: [at(24, 0.1), at(12, 0.22)],
+    });
+    const b = member("b", { week: 0.4, history: [at(3, 0.1)] });
+    const rate = claudePoolRecentRate([a, b], now)!;
+    expect(rate.hours).toBeCloseTo(3);
+    expect(rate.ratePerHour).toBeCloseTo((0.3 + 0.03) / 3);
+    // A member with a single reading says nothing about the rate.
+    const c = member("c", { week: 0.9 });
+    expect(claudePoolRecentRate([a, b, c], now)!.ratePerHour).toBeCloseTo(
+      (0.3 + 0.03) / 3,
+    );
   });
 
   it("counts a week that reset from zero", () => {
