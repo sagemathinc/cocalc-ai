@@ -697,6 +697,29 @@ test("backfill and its remaining count ignore projects owned by other bays", asy
   expect(await projectState()).toBeUndefined();
 });
 
+test("a project with no owning bay is live here for the lock, backfill and count alike", async () => {
+  await applyArtifactCatalogSnapshot(snapshot(1), authority);
+  await forgetVersions();
+  await getPool().query(
+    "UPDATE projects SET owning_bay_id=NULL WHERE project_id=$1",
+    [project_id],
+  );
+  const bay = authority.owning_bay_id;
+  expect(await artifactCatalogStateBackfillRemaining(bay)).toBe(1);
+  expect(
+    await backfillArtifactCatalogProjectState({ owning_bay_id: bay }),
+  ).toEqual({ created: 1, remaining: 0 });
+  const db = await getPool().connect();
+  try {
+    await db.query("BEGIN");
+    await lockArtifactCatalogProject(db, project_id, bay);
+    expect(await appendArtifactCatalogReset(db, project_id)).toBe(1);
+    await db.query("ROLLBACK");
+  } finally {
+    db.release();
+  }
+});
+
 test("registering a source creates the baseline before any ingest", async () => {
   // beforeEach registered a source: the project is versioned already.
   expect(await projectState()).toMatchObject({ seq: 0, floor: 0 });

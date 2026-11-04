@@ -14,7 +14,10 @@ import {
   type InterBayArtifactCatalogApi,
 } from "@cocalc/conat/inter-bay/artifact-catalog";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveProjectBay,
+  resolveProjectBays,
+} from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   applyArtifactCatalogSnapshot,
@@ -26,6 +29,18 @@ import {
 } from "@cocalc/database/postgres/artifact-catalog";
 import { validateArtifactCatalogSnapshot } from "@cocalc/util/artifact-catalog";
 import { assertActor } from "@cocalc/server/agents/access";
+import {
+  ARTIFACT_CATALOG_NOT_PERMITTED,
+  authorizedArtifactCatalogProjects,
+  readArtifactCatalogEntriesForAccountLocal,
+  validateArtifactCatalogEntryRefs,
+} from "@cocalc/database/postgres/artifact-catalog-read";
+import getPool from "@cocalc/database/pool";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
+import { withArtifactCatalogReadLimit } from "./catalog-read-limits";
 
 function source(opts: CatalogSourceRequest) {
   requireUuid(opts.host_id, "authenticated host_id");
@@ -118,6 +133,57 @@ export const getEntry: ArtifactCatalogApi["getEntry"] = async (opts) => {
       entry_id: opts.entry_id,
       route,
     }),
+  );
+};
+
+/** Fails closed with the uniform error for a banned account. */
+async function assertReaderNotBanned(account_id: string): Promise<void> {
+  await ensureAccountSecurityStateReady();
+  if (isAccountBannedCached(account_id))
+    throw Error(ARTIFACT_CATALOG_NOT_PERMITTED);
+}
+
+/**
+ * Batch point lookup (pins, names, the open artifact): up to 100 entries.
+ * Each distinct project is routed to its owning bay, which authorizes every
+ * one of its projects before reading; any refusal fails the whole request
+ * with one uniform error.
+ */
+export const getEntries: ArtifactCatalogApi["getEntries"] = async (opts) => {
+  requireUuid(opts.account_id, "account_id");
+  const account_id = opts.account_id!;
+  return await withArtifactCatalogReadLimit(
+    account_id,
+    "getEntries",
+    async () => {
+      await assertReaderNotBanned(account_id);
+      // Validate and bound the WHOLE request before any routing work; each
+      // owning bay validates its part again.
+      const refs = validateArtifactCatalogEntryRefs(opts.items);
+      const owners = await resolveProjectBays(
+        refs.map((ref) => ref.project_id),
+      );
+      const byBay = new Map<string, typeof refs>();
+      for (const ref of refs) {
+        const owner = owners.get(ref.project_id);
+        if (!owner) throw Error(ARTIFACT_CATALOG_NOT_PERMITTED);
+        const list = byBay.get(owner.bay_id);
+        if (list) list.push(ref);
+        else byBay.set(owner.bay_id, [ref]);
+      }
+      const results = await Promise.all(
+        [...byBay].map(([bay_id, items]) =>
+          (bay_id === getConfiguredBayId()
+            ? catalogOwnerControl
+            : createInterBayArtifactCatalogClient({
+                client: getInterBayFabricClient(),
+                bay_id,
+              })
+          ).getEntries({ account_id, items }),
+        ),
+      );
+      return results.flat();
+    },
   );
 };
 
@@ -220,6 +286,35 @@ export const catalogOwnerControl: InterBayArtifactCatalogApi = {
     return ownedRead(opts, () =>
       readArtifactCatalogEntry(opts.project_id, opts.entry_id),
     );
+  },
+  getEntries: async (opts) => {
+    requireUuid(opts.account_id, "account_id");
+    const account_id = opts.account_id!;
+    await assertReaderNotBanned(account_id);
+    const owning_bay_id = getConfiguredBayId();
+    const entries = await readArtifactCatalogEntriesForAccountLocal({
+      account_id,
+      owning_bay_id,
+      items: opts.items,
+    });
+    // Re-check after the read with the same predicate: access revoked while
+    // reading returns nothing rather than the rows just read.
+    const projects = [
+      ...new Set(
+        validateArtifactCatalogEntryRefs(opts.items).map(
+          (ref) => ref.project_id,
+        ),
+      ),
+    ];
+    const allowed = await authorizedArtifactCatalogProjects(getPool(), {
+      account_id,
+      owning_bay_id,
+      project_ids: projects,
+    });
+    if (projects.some((project_id) => !allowed.has(project_id)))
+      throw Error(ARTIFACT_CATALOG_NOT_PERMITTED);
+    await assertReaderNotBanned(account_id);
+    return entries;
   },
   writerState: (opts) =>
     owned(opts, (authority) =>

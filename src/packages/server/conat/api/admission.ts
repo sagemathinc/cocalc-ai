@@ -22,6 +22,7 @@ const LOW_PRIORITY_METHODS = new Set([
   "artifactCatalog.ingest",
   "artifactCatalog.sourcePage",
   "artifactCatalog.listProject",
+  "artifactCatalog.getEntries",
   "compute.getCatalog",
   "compute.listAgentGrants",
   "compute.listVms",
