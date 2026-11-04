@@ -109,6 +109,34 @@ export class ArtifactCatalogStore {
     }
   }
 
+  private holders = new Map<number, string[]>();
+  private nextHolder = 0;
+
+  /**
+   * Shared use by several visible consumers: the catalog runs while anyone
+   * holds it, over the union of their projects, and stops with the last
+   * release. Holders never start or stop it under each other.
+   */
+  acquire(projects: string[]): () => void {
+    const id = this.nextHolder++;
+    this.holders.set(id, projects);
+    this.startForHolders();
+    return () => {
+      if (!this.holders.delete(id)) return;
+      if (this.holders.size === 0) this.stop();
+      else this.startForHolders();
+    };
+  }
+
+  private startForHolders() {
+    const union = [...new Set([...this.holders.values()].flat())].sort();
+    if (this.mounted && JSON.stringify(union) === JSON.stringify(this.projects))
+      return;
+    const polling = this.pollingWanted;
+    this.start(union);
+    if (polling) this.setPolling(true);
+  }
+
   /** Pause or resume periodic refresh; the last snapshot stays available to
    * every consumer either way. */
   setPolling = (wanted: boolean) => {
