@@ -301,8 +301,11 @@ export async function pruneArtifactCatalogChanges({
     });
     let projectDeleted = 0;
     while (projectDeleted < maxRowsPerProject) {
-      // Each batch and its change-row count move together.
+      // Each batch and its change-row count move together, under the project
+      // catalog lock (as every other change-row writer), so the count stays
+      // exact against a concurrent backfill measurement.
       const count = await transaction(async (db) => {
+        await lockProjectCatalog(db, row.project_id);
         const result = await db.query(
           `DELETE FROM artifact_catalog_changes WHERE ctid IN (
              SELECT ctid FROM artifact_catalog_changes
