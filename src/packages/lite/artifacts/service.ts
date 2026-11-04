@@ -92,6 +92,8 @@ export function createLiteArtifactCatalog({
   };
   const api = {
     ...liteArtifactCatalogReadApi(catalog, account_id),
+    // capabilities() reports list: 0, so clients do not call this in Lite.
+    listAccount: () => catalog.listAccount(),
     sourcePage: localOnly,
     writerState: localOnly,
     registerSource: localOnly,

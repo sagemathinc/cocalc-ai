@@ -25,6 +25,47 @@ export interface CatalogEntriesRequest {
   items: { project_id: string; entry_id: string }[];
   account_id?: string;
 }
+export type CatalogView = "mine" | "all";
+export interface CatalogAccountListRequest {
+  account_id?: string;
+  /** 0..200, default 50; 0 returns only the versions map. */
+  limit?: number;
+  /** Opaque keyset cursor from a previous reply's `next`. */
+  before?: string;
+  /** Search text, at most 200 characters. */
+  query?: string;
+  /** Only this project (looked up through the account's own project list). */
+  project_id?: string;
+  /** Omitted: the server's default view. */
+  view?: CatalogView;
+  /** Include the versions map (always included when limit is 0). */
+  versions?: boolean;
+}
+export interface CatalogProjectVersion {
+  epoch: string;
+  seq: number;
+}
+export interface CatalogAccountPage {
+  /** Newest first. */
+  entries: CatalogEntry[];
+  next?: string;
+  view: CatalogView;
+  /** Every project in scope; rows of projects outside it must be hidden. */
+  versions?: Record<string, CatalogProjectVersion>;
+  /** Some projects are outside the scope; it says why (counts only). */
+  incomplete?: {
+    too_many_projects?: number;
+    unavailable_bays?: number;
+    not_ready?: number;
+  };
+  /** A filter list was larger than its bound, so results may be missing. */
+  limited?: { named_agents?: true; aliases?: true };
+}
+export interface CatalogCapabilities {
+  list: 0 | 1;
+  deltas: 0 | 1;
+  hints: 0 | 1;
+}
 export interface CatalogSourcePageRequest {
   project_id: string;
   host_id?: string;
@@ -66,6 +107,10 @@ export interface ArtifactCatalogApi {
   getEntry(opts: CatalogEntryRequest): Promise<CatalogEntry | null>;
   /** Batch point lookup; absent entries are omitted. */
   getEntries(opts: CatalogEntriesRequest): Promise<CatalogEntry[]>;
+  /** Account-wide recent-first pages and search over readable projects. */
+  listAccount(opts: CatalogAccountListRequest): Promise<CatalogAccountPage>;
+  /** Which account-wide reads this deployment serves. */
+  capabilities(opts: { account_id?: string }): Promise<CatalogCapabilities>;
   writerState(opts: CatalogSourceRequest): Promise<CatalogWriterState | null>;
   registerSource(opts: CatalogRegistrationRequest): Promise<{ epoch: string }>;
   ingest(
@@ -77,6 +122,8 @@ export const artifactCatalog = {
   listProject: authFirstRequireAccount,
   getEntry: authFirstRequireAccount,
   getEntries: authFirstRequireAccount,
+  listAccount: authFirstRequireAccount,
+  capabilities: authFirstRequireAccount,
   writerState: authFirstRequireHost,
   registerSource: authFirstRequireHost,
   ingest: authFirstRequireHost,
