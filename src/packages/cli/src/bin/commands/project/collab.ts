@@ -65,9 +65,12 @@ export function registerProjectCollabCommands(
       return await resolveProjectFromArgOrContext(ctx, identifier);
     } catch (err) {
       const value = `${identifier ?? ""}`.trim();
-      const notFound = `${(err as Error | undefined)?.message ?? err}`.includes(
-        `project '${value}' not found`,
-      );
+      // Only the resolver's own not-found for this uuid, bare or as reported
+      // by the hub call; a message that merely contains it is rethrown.
+      const message = `${(err as Error | undefined)?.message ?? err}`;
+      const base = `project '${value}' not found`;
+      const notFound =
+        message === base || message.startsWith(`${base} - callHub:`);
       if (!direct || !isValidUUID(value) || !notFound) {
         throw err;
       }

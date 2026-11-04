@@ -268,6 +268,13 @@ test("project collab add only falls through for --direct, a uuid and a not-found
     [INVISIBLE, ["--direct"], notFound(TARGET)],
     // any other lookup error is not a not-found
     [INVISIBLE, ["--direct"], new Error("rpc timeout")],
+    // nor is one that merely contains the not-found text
+    [
+      INVISIBLE,
+      ["--direct"],
+      new Error(`bay unavailable: ${notFound(INVISIBLE).message}`),
+    ],
+    [INVISIBLE, ["--direct"], new Error(`project '${INVISIBLE}' not found.`)],
   ] as const) {
     let called = false;
     const { deps } = collabAddDeps({
