@@ -366,10 +366,19 @@ test("single-project isolation, canonical source validation, API envelope and pr
       expect(statSync(filename + suffix).mode & 0o077).toBe(0);
   const api = liteArtifactCatalogReadApi(catalog, "local-account");
   expect(Object.keys(api).sort()).toEqual([
+    "capabilities",
     "getEntries",
     "getEntry",
     "listProject",
   ]);
+  // Account-wide pages are not served in Lite yet; clients keep listProject.
+  expect(await api.capabilities({ account_id: "local-account" })).toEqual({
+    list: 0,
+    deltas: 0,
+    hints: 0,
+  });
+  await expect(api.capabilities({})).rejects.toThrow("local Lite account");
+  await expect(catalog.listAccount()).rejects.toThrow("not supported");
   await expect(api.listProject(source)).rejects.toThrow("local Lite account");
   await expect(
     api.listProject({ ...source, account_id: "other" }),

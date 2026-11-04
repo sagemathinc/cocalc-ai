@@ -17,11 +17,44 @@ import type {
   CatalogEntryRequest,
   CatalogEntriesRequest,
   CatalogSourcePageRequest,
+  CatalogAccountListRequest,
+  CatalogAccountPage,
+  CatalogEntry,
+  CatalogProjectVersion,
+  CatalogView,
 } from "@cocalc/conat/hub/api/artifact-catalog";
 
 export interface CatalogOwnerRoute {
   bay_id: string;
   epoch: number;
+}
+/**
+ * One owner bay's part of an account-wide page. The filter lists come from
+ * the account's home bay and only narrow what the owner bay authorizes.
+ */
+export interface CatalogOwnedListRequest {
+  account_id: string;
+  limit: number;
+  before?: string;
+  project_id?: string;
+  view: CatalogView;
+  mine?: { source_ids: string[]; thread_ids: string[] };
+  query?: string;
+  name_hits?: { source_ids: string[]; thread_ids: string[] };
+  alias_hits?: { project_ids: string[]; entry_ids: string[] };
+  library_name_hit?: boolean;
+  versions?: boolean;
+}
+export interface CatalogOwnedListReply {
+  entries: CatalogEntry[];
+  /** Keyset position of each entry, aligned with entries. */
+  keys: string[];
+  more: boolean;
+  versions?: Record<string, CatalogProjectVersion>;
+  /** Readable projects on this bay, with or without a catalog (counts only). */
+  authorized: number;
+  too_many_projects: number;
+  not_ready: number;
 }
 export interface InterBayArtifactCatalogApi {
   sourcePage(
@@ -37,6 +70,14 @@ export interface InterBayArtifactCatalogApi {
   getEntries(
     opts: CatalogEntriesRequest,
   ): ReturnType<ArtifactCatalogApi["getEntries"]>;
+  /** On the account's home bay: assemble the page from the owner bays. */
+  listAccountHome(
+    opts: CatalogAccountListRequest & { home_bay_id: string },
+  ): Promise<CatalogAccountPage>;
+  /** On an owner bay: it authorizes every project itself from account_id. */
+  listAccountOwned(
+    opts: CatalogOwnedListRequest,
+  ): Promise<CatalogOwnedListReply>;
   writerState(
     opts: CatalogSourceRequest & { route: CatalogOwnerRoute },
   ): ReturnType<ArtifactCatalogApi["writerState"]>;

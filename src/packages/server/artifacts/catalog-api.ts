@@ -36,11 +36,14 @@ import {
   validateArtifactCatalogEntryRefs,
 } from "@cocalc/database/postgres/artifact-catalog-read";
 import getPool from "@cocalc/database/pool";
-import {
-  ensureAccountSecurityStateReady,
-  isAccountBannedCached,
-} from "@cocalc/server/accounts/security-state";
 import { withArtifactCatalogReadLimit } from "./catalog-read-limits";
+import {
+  assertArtifactCatalogReaderNotBanned as assertReaderNotBanned,
+  listAccountHomeControl,
+  listAccountOwnedControl,
+} from "./catalog-list";
+
+export { listAccount, capabilities } from "./catalog-list";
 
 function source(opts: CatalogSourceRequest) {
   requireUuid(opts.host_id, "authenticated host_id");
@@ -135,13 +138,6 @@ export const getEntry: ArtifactCatalogApi["getEntry"] = async (opts) => {
     }),
   );
 };
-
-/** Fails closed with the uniform error for a banned account. */
-async function assertReaderNotBanned(account_id: string): Promise<void> {
-  await ensureAccountSecurityStateReady();
-  if (isAccountBannedCached(account_id))
-    throw Error(ARTIFACT_CATALOG_NOT_PERMITTED);
-}
 
 /**
  * Batch point lookup (pins, names, the open artifact): up to 100 entries.
@@ -316,6 +312,8 @@ export const catalogOwnerControl: InterBayArtifactCatalogApi = {
     await assertReaderNotBanned(account_id);
     return entries;
   },
+  listAccountHome: (opts) => listAccountHomeControl(opts),
+  listAccountOwned: (opts) => listAccountOwnedControl(opts),
   writerState: (opts) =>
     owned(opts, (authority) =>
       getArtifactCatalogWriterState(source(opts), authority),

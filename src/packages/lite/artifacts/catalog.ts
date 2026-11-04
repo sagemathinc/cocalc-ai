@@ -7,6 +7,8 @@ import { chmodSync, closeSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type {
   ArtifactCatalogApi,
+  CatalogAccountPage,
+  CatalogCapabilities,
   CatalogEntry,
   CatalogEntryRequest,
   CatalogEntriesRequest,
@@ -419,6 +421,15 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
     }));
   }
 
+  /** Lite does not serve account-wide pages yet; readers use listProject. */
+  async capabilities(): Promise<CatalogCapabilities> {
+    return { list: 0, deltas: 0, hints: 0 };
+  }
+
+  async listAccount(): Promise<CatalogAccountPage> {
+    throw Error("account-wide catalog pages are not supported in Lite");
+  }
+
   async listProject({
     project_id,
     after = "",
@@ -478,7 +489,10 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
 export function liteArtifactCatalogReadApi(
   catalog: LiteArtifactCatalog,
   account_id: string,
-): Pick<ArtifactCatalogApi, "listProject" | "getEntry" | "getEntries"> {
+): Pick<
+  ArtifactCatalogApi,
+  "listProject" | "getEntry" | "getEntries" | "capabilities"
+> {
   if (!account_id) throw Error("Lite catalog account is required");
   return {
     async getEntry(request) {
@@ -490,6 +504,11 @@ export function liteArtifactCatalogReadApi(
       if (request.account_id !== account_id)
         throw Error("artifact catalog requires the local Lite account");
       return catalog.getEntries(request);
+    },
+    async capabilities(request) {
+      if (request.account_id !== account_id)
+        throw Error("artifact catalog requires the local Lite account");
+      return catalog.capabilities();
     },
     async listProject(request) {
       if (request.account_id !== account_id)

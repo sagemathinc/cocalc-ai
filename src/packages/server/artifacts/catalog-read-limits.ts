@@ -5,9 +5,14 @@
 
 // Per-account bounds on artifact catalog reads, in this hub process: at most
 // `concurrent` reads in flight and `perWindow` started per window. They cap
-// abuse and runaway clients; they are not a fairness scheduler.
+// abuse and runaway clients; they are not a fairness scheduler. With several
+// hub processes the effective bound is these values times the hub count.
 
-export type ArtifactCatalogReadKind = "getEntries";
+export type ArtifactCatalogReadKind =
+  | "getEntries"
+  | "listAccount"
+  | "listAccountProbe"
+  | "search";
 
 interface Rule {
   concurrent: number;
@@ -20,6 +25,11 @@ export const ARTIFACT_CATALOG_READ_LIMITS: Record<
   Rule
 > = {
   getEntries: { concurrent: 4, perWindow: 10, windowMs: 10_000 },
+  listAccount: { concurrent: 2, perWindow: 20, windowMs: 10_000 },
+  // limit: 0 version probes (repair and the visible-only safety probe).
+  listAccountProbe: { concurrent: 2, perWindow: 6, windowMs: 60_000 },
+  // Any request with a query, in addition to its page or probe limit.
+  search: { concurrent: 2, perWindow: 10, windowMs: 10_000 },
 };
 
 export const ARTIFACT_CATALOG_READ_LIMITED =
