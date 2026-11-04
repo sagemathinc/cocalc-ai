@@ -345,3 +345,42 @@ test("R6: Refresh on the server path reloads the list and every pin, never the o
   expect(calls().getEntries).toBe(before.getEntries + 1);
   expect(calls().listProject).toBe(0);
 });
+
+test("keyboard focus stays on Load more and Refresh while they load; presses meanwhile are ignored", async () => {
+  render(
+    <AgentArtifactBrowser
+      accountId={ME}
+      agents={agents}
+      active
+      onSelect={async () => {}}
+    />,
+  );
+  const more = await screen.findByRole("button", { name: "Load more" });
+  let release!: () => void;
+  const served = mockHub.listAccount.getMockImplementation()!;
+  mockHub.listAccount.mockImplementationOnce(
+    (opts) =>
+      new Promise((resolve) => {
+        release = () => resolve(served(opts));
+      }),
+  );
+  more.focus();
+  const user = userEvent.setup();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(more).toHaveAttribute("aria-busy", "true"));
+  expect(more).toHaveFocus();
+  expect(more).toHaveAttribute("aria-disabled", "true");
+  const calls = mockHub.listAccount.mock.calls.length;
+  await user.keyboard("{Enter}");
+  expect(mockHub.listAccount.mock.calls.length).toBe(calls);
+  await act(async () => release());
+  await waitFor(() => expect(more).toHaveAttribute("aria-busy", "false"));
+  expect(more).toHaveFocus();
+  await user.click(
+    screen.getByRole("button", { name: "Filters & organization" }),
+  );
+  const refresh = screen.getByRole("button", { name: "Refresh" });
+  refresh.focus();
+  await user.keyboard("{Enter}");
+  expect(refresh).toHaveFocus();
+});

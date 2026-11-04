@@ -671,9 +671,12 @@ function AccountArtifactBrowser({
               Group by project
             </Checkbox>
             <Button
-              disabled={metadata.loading}
+              // Not disabled while loading: a disabled button drops keyboard
+              // focus. It reports busy and ignores presses instead.
+              aria-disabled={metadata.loading}
               aria-busy={metadata.loading}
               onClick={() => {
+                if (metadata.loading) return;
                 if (server) {
                   void accountCatalog.library.refresh();
                   accountCatalog.pins.refresh();
@@ -783,11 +786,15 @@ function AccountArtifactBrowser({
             style={{ display: "flex", justifyContent: "center", margin: 16 }}
           >
             <Button
-              disabled={list.loading}
+              // Focus stays on the button while the next page loads (a
+              // disabled button would drop it); presses meanwhile are ignored.
+              aria-disabled={list.loading}
               aria-busy={list.loading}
-              onClick={() => void accountCatalog.library.loadMore()}
+              onClick={() => {
+                if (!list.loading) void accountCatalog.library.loadMore();
+              }}
             >
-              {list.loading ? "Loading..." : "Load more"}
+              Load more
             </Button>
           </div>
         )}
