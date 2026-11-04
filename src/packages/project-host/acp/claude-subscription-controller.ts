@@ -44,9 +44,11 @@ import { getClaudeSubscriptionCredential } from "./claude-subscription-registry"
 import { restoreClaudeSubscriptionHome } from "./claude-subscription-home";
 import { claudeSubscriptionToken } from "./claude-subscription-token";
 import { createClaudeCredentialSync } from "./claude-credential-sync";
+import { listProjectClaudeMcpServers } from "./claude-mcp-relay";
 import {
   CLAUDE_PROJECT_TOOL_MOUNT,
   createClaudeProjectToolBridge,
+  defaultConnectProjectMcp as connectProjectMcp,
   type ClaudeProjectToolBridge,
 } from "./claude-project-tool-bridge";
 import {
@@ -698,6 +700,26 @@ ${skill}
         set: setSessionInstructionsVersion,
       },
       projectToolServerName: CLAUDE_PROJECT_MCP_NAME,
+      listMcpServers: toolBridge
+        ? async () => {
+            // Claude Code's own config in the project, read there.
+            const list = await listProjectClaudeMcpServers(
+              connectProjectMcp,
+              projectId,
+              binding.profile.cwd,
+            );
+            toolBridge!.setMcpServers(binding.profile.cwd, list.servers);
+            if (list.skipped.length)
+              logger.info("Claude MCP servers skipped", {
+                projectId,
+                skipped: list.skipped,
+              });
+            return {
+              names: list.servers.map((s) => s.name),
+              skipped: list.skipped,
+            };
+          }
+        : undefined,
       releaseToolWaits: toolBridge
         ? () => toolBridge!.releaseWaits()
         : undefined,

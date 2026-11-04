@@ -14,3 +14,9 @@ export const CLAUDE_PROJECT_MCP_SOURCE = fs.readFileSync(
 // A schema change gets a new MCP namespace, including in resumed transcripts
 // whose deferred-tool cache may still contain the old project_exec definition.
 export const CLAUDE_PROJECT_MCP_NAME = `cocalc_project_${createHash("sha256").update(CLAUDE_PROJECT_MCP_SOURCE).digest("hex").slice(0, 12)}`;
+// The pass-through for the user's own MCP servers (see claude-mcp-relay.ts).
+// A separate file, so adding it leaves the CoCalc tool server's name alone.
+export const CLAUDE_PROJECT_MCP_RELAY_SOURCE = fs.readFileSync(
+  __dirname + "/claude-project-mcp-relay.cjs",
+  "utf8",
+);

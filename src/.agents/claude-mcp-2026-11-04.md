@@ -14,6 +14,7 @@ William (Nov 3): "A big missing thing with claude agents in cocalc-ai right now 
 ## Constraint found: no stdin into contained commands
 
 Agent commands run through the contained path:
+
 - `runContainedSandboxCommand` starts the root helper (`cocalc-runtime-storage supervise-project-job`).
 - The helper starts `podman exec` with the in-project supervisor.
 - The helper **consumes its own stdin as the lease**, and writes its own `.` heartbeats into the container.
@@ -31,6 +32,7 @@ At session open, the host reads the following inside the project (`sandboxExec`,
 - `<cwd>/.mcp.json` `mcpServers` (project scope, as checked into a repo). See approval below.
 
 Entries are parsed and validated:
+
 - `name` must match `^[A-Za-z0-9_-]{1,64}$` and can't collide with the CoCalc tool server's name.
 - stdio entries: `command`, `args`, `env`.
 - http and sse entries: `url`, `headers`.
@@ -100,6 +102,16 @@ The session's `mcpServers` gets, per configured server:
 6. **`.mcp.json` approval stays** (Claude Code's `enabledMcpjsonServers` / `enableAllProjectMcpServers` in `~/.claude.json`).
    - Documented: in CoCalc, `~/.claude.json` is **shared project-home state**. Every collaborator's Claude agents in that project use its MCP servers, and anyone who can edit project files can change it.
    - William (Nov 3) on approval: it "does seem reasonable to have an approval step".
+
+## Implementation notes (1a)
+
+- The bridge entry is a separate script, `relay.cjs`, rather than a mode of `bridge.cjs`. The CoCalc tool server's name is a hash of `bridge.cjs`, so changing that file would rename the server and cost every Claude agent one prompt-cache miss.
+- The session's list comes from the project service itself, via `{list: true, cwd}`, so Claude's config is parsed in one place, inside the project.
+- Relays belong to the session, not a turn:
+  - A cancelled turn (`cancel()`) stops project jobs but leaves relays open. Claude Code would not reconnect a server it saw disconnect.
+  - A failed authority check, a fence or `close()` ends them.
+  - Relays are rechecked every 30 s with `authorize()` directly, paused or not, and checked when they open.
+- Policy (refusing sampling and elicitation) is applied on the host, not in the project service: that runs as the same user as the server.
 
 ## Phases
 

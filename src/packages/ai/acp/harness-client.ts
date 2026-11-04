@@ -94,6 +94,14 @@ export interface HarnessProcess {
     set(sessionId: string, version: string): void | Promise<void>;
   };
   projectToolServerName?: string;
+  /**
+   * The user's own MCP servers (from Claude Code's config in the project),
+   * each relayed to a process in the project. Read at session open.
+   */
+  listMcpServers?(): Promise<{
+    names: string[];
+    skipped: { name: string; scope: string; reason: string }[];
+  }>;
   stdout: Readable;
   stdin: Writable;
   stderr: Readable;
@@ -246,7 +254,7 @@ ${instructions}
 
 export function claudeSubscriptionSessionMeta(
   systemPromptAppend?: string,
-  options: { projectToolServerName?: string } = {},
+  options: { projectToolServerName?: string; userMcpServers?: string[] } = {},
 ): Record<string, unknown> {
   return {
     ...(systemPromptAppend
@@ -263,6 +271,9 @@ export function claudeSubscriptionSessionMeta(
           ...(options.projectToolServerName
             ? [`mcp__${options.projectToolServerName}`]
             : []),
+          // Servers the user configured themselves (user and local scope,
+          // or .mcp.json ones they approved): their tools need no prompt.
+          ...(options.userMcpServers ?? []).map((name) => `mcp__${name}`),
         ],
         settingSources: [],
         skills: [],
@@ -880,6 +891,16 @@ export class AcpHarnessClient {
               .join("\n\n")
           : "";
       this.instructionsUpdate = undefined;
+      // The user's own MCP servers: a failure to list them never stops the
+      // session (it just has none).
+      const userMcpServers =
+        this.sessionPolicy === "claude-subscription-controller" &&
+        this.process.listMcpServers
+          ? await this.process.listMcpServers().then(
+              (list) => list.names,
+              () => [] as string[],
+            )
+          : [];
       const params = {
         cwd:
           this.sessionPolicy === "claude-subscription-controller"
@@ -894,12 +915,19 @@ export class AcpHarnessClient {
                   args: ["/run/cocalc/agent-tools/bridge.cjs"],
                   env: [],
                 },
+                ...userMcpServers.map((name) => ({
+                  name,
+                  command: "/opt/cocalc/bin/node",
+                  args: ["/run/cocalc/agent-tools/relay.cjs", name],
+                  env: [],
+                })),
               ]
             : [],
         ...(this.sessionPolicy === "claude-subscription-controller"
           ? {
               _meta: claudeSubscriptionSessionMeta(instructions, {
                 projectToolServerName,
+                userMcpServers,
               }),
             }
           : this.binding.credential.mode === "account-api-key"

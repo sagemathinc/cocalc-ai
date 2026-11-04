@@ -3,7 +3,10 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { CLAUDE_PROJECT_MCP_SOURCE } from "./claude-project-tool-source";
+import {
+  CLAUDE_PROJECT_MCP_RELAY_SOURCE,
+  CLAUDE_PROJECT_MCP_SOURCE,
+} from "./claude-project-tool-source";
 import type { HarnessProcess } from "@cocalc/ai/acp/harness";
 import { randomBytes } from "node:crypto";
 import { createServer, type Socket } from "node:net";
@@ -24,6 +27,12 @@ import {
   writeProjectFile,
 } from "./claude-project-file-tools";
 import {
+  relayClaudeMcp,
+  type ClaudeMcpServerRef,
+  type ConnectProjectMcp,
+} from "./claude-mcp-relay";
+import { getProjectHostConatClient } from "../runtime-client";
+import {
   parseMemoryExpiry,
   parseMemoryRef,
   validateMemoryRevision,
@@ -34,6 +43,11 @@ import {
 const MAX_REQUEST_BYTES = 2_500_000;
 const MAX_CONCURRENT_TOOLS = 8;
 const MAX_OPEN_CONNECTIONS = 16;
+// The user's own MCP servers relayed at once for one controller.
+export const MAX_CLAUDE_MCP_RELAYS = 8;
+
+export const defaultConnectProjectMcp: ConnectProjectMcp = (subject) =>
+  getProjectHostConatClient().socket.connect(subject) as any;
 export const CLAUDE_PROJECT_TOOL_MOUNT = "/run/cocalc/agent-tools";
 // Base64 of this must fit the MCP transport's 1.2 MB response limit.
 export const MAX_PROJECT_IMAGE_BYTES = 800_000;
@@ -177,6 +191,8 @@ export interface ClaudeProjectToolBridge {
   setAsyncQuestionHandler: NonNullable<
     HarnessProcess["setAsyncQuestionHandler"]
   >;
+  /** The user's MCP servers this session may relay, for an agent in `cwd`. */
+  setMcpServers(cwd: string, servers: ClaudeMcpServerRef[]): void;
 }
 
 export async function createClaudeProjectToolBridge(
@@ -190,6 +206,7 @@ export async function createClaudeProjectToolBridge(
       ...options,
     }),
   authorize: () => Promise<void> = async () => {},
+  connectProjectMcp: ConnectProjectMcp = defaultConnectProjectMcp,
 ): Promise<ClaudeProjectToolBridge> {
   const directory = await mkdtemp(join(tmpdir(), "cocalc-claude-tools-"));
   const token = randomBytes(32).toString("hex");
@@ -203,6 +220,16 @@ export async function createClaudeProjectToolBridge(
     | Parameters<ClaudeProjectToolBridge["setAsyncQuestionHandler"]>[0]
     | undefined;
   let generation = new AbortController();
+  // The user's MCP servers this session may relay (set at session open),
+  // and the relays open now. They belong to the session, not a turn: a
+  // cancelled turn leaves them, a failed authority check or close ends them.
+  let mcp:
+    | { cwd: string; servers: Map<string, ClaudeMcpServerRef> }
+    | undefined;
+  const relays = new Set<() => void>();
+  const closeRelays = () => {
+    for (const close of [...relays]) close();
+  };
   const jobs = new ClaudeProjectJobs(execute, {
     // A call that waited out a cleanup fence checks authority again first.
     reauthorize: async () => (await checkAuthority()).throwIfAborted(),
@@ -218,6 +245,7 @@ export async function createClaudeProjectToolBridge(
       try {
         await authorize();
       } catch (error) {
+        closeRelays();
         if (generation === current && !fenced && !paused) {
           current.abort();
           await jobs.cancelAll();
@@ -236,7 +264,10 @@ export async function createClaudeProjectToolBridge(
     }));
   // Long jobs must not retain execution authority indefinitely between tool calls.
   const authorityTimer = setInterval(() => {
-    if (!jobs.running || authorityCheck || fenced || paused) return;
+    if (fenced) return;
+    // Relays are rechecked on their own, paused or not.
+    if (relays.size > 0) void authorize().catch(() => closeRelays());
+    if (!jobs.running || authorityCheck || paused) return;
     void checkAuthority().catch(() => {});
   }, 30_000);
   authorityTimer.unref();
@@ -268,6 +299,43 @@ export async function createClaudeProjectToolBridge(
       const newline = input.indexOf("\n");
       if (newline < 0) return;
       socket.removeAllListeners("data");
+      let first: any;
+      try {
+        first = JSON.parse(input.slice(0, newline));
+      } catch {}
+      if (first?.mcp !== undefined) {
+        // A relay to one of the user's MCP servers: long-lived.
+        const server =
+          first.token === token && typeof first.mcp === "string"
+            ? mcp?.servers.get(first.mcp)
+            : undefined;
+        if (!server || !mcp || fenced || relays.size >= MAX_CLAUDE_MCP_RELAYS) {
+          socket.destroy();
+          return;
+        }
+        const { cwd } = mcp;
+        socket.setTimeout(0);
+        void authorize().then(
+          () => {
+            if (fenced || socket.destroyed) return socket.destroy();
+            let close: (() => void) | undefined;
+            close = relayClaudeMcp({
+              controller: socket,
+              leftover: input.slice(newline + 1),
+              connect: connectProjectMcp,
+              projectId,
+              server,
+              cwd,
+              onEnd: () => {
+                if (close) relays.delete(close);
+              },
+            });
+            relays.add(close);
+          },
+          () => socket.destroy(),
+        );
+        return;
+      }
       if (active >= MAX_CONCURRENT_TOOLS) {
         socket.end(JSON.stringify({ error: "Project tool is busy" }) + "\n");
         return;
@@ -335,6 +403,11 @@ export async function createClaudeProjectToolBridge(
     await writeFile(join(directory, "bridge.cjs"), CLAUDE_PROJECT_MCP_SOURCE, {
       mode: 0o600,
     });
+    await writeFile(
+      join(directory, "relay.cjs"),
+      CLAUDE_PROJECT_MCP_RELAY_SOURCE,
+      { mode: 0o600 },
+    );
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(socketPath, () => {
@@ -346,6 +419,9 @@ export async function createClaudeProjectToolBridge(
       directory,
       setAsyncQuestionHandler: (handler) => {
         asyncQuestion = handler;
+      },
+      setMcpServers: (cwd: string, servers: ClaudeMcpServerRef[]) => {
+        mcp = { cwd, servers: new Map(servers.map((s) => [s.name, s])) };
       },
       releaseWaits: () => jobs.releaseWaits(),
       resume: () => {
@@ -367,6 +443,7 @@ export async function createClaudeProjectToolBridge(
         (closed ??= (async () => {
           fenced = true;
           clearInterval(authorityTimer);
+          closeRelays();
           generation.abort();
           for (const socket of sockets) socket.destroy();
           await new Promise<void>((resolve) => server.close(() => resolve()));
