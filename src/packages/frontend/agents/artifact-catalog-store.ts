@@ -59,6 +59,9 @@ export class ArtifactCatalogStore {
   private mounted = false;
   private running = false;
   private pollingWanted = false;
+  // start() while a previous request still holds the RPC slot: load once it
+  // settles, since nothing else may refresh while polling is paused.
+  private restartPending = false;
   private lastRefreshMs = 0;
   private interval?: ReturnType<typeof setInterval>;
   private timeout?: ReturnType<typeof setTimeout>;
@@ -96,7 +99,11 @@ export class ArtifactCatalogStore {
     if (!this.accountId) return;
     this.projects = [...new Set(projects)].sort();
     this.mounted = true;
-    void this.refresh();
+    if (this.running) {
+      this.restartPending = true;
+    } else {
+      void this.refresh();
+    }
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", this.updatePolling);
     }
@@ -130,6 +137,7 @@ export class ArtifactCatalogStore {
   stop = () => {
     this.mounted = false;
     this.pollingWanted = false;
+    this.restartPending = false;
     this.generation++;
     clearInterval(this.interval);
     this.interval = undefined;
@@ -277,6 +285,10 @@ export class ArtifactCatalogStore {
     } finally {
       if (current()) clearTimeout(this.timeout);
       this.running = false;
+      if (this.restartPending && this.mounted) {
+        this.restartPending = false;
+        void this.refresh();
+      }
     }
   };
 }

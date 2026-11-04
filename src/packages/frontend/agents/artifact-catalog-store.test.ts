@@ -189,10 +189,7 @@ test("project changes fence stale loads, timeout keeps one outstanding slot", as
   store.setPolling(true);
   pending.resolve(page([entry("stale")]));
   await flush();
-  expect(store.get().entries).toEqual([]);
-  jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs);
-  await flush();
-  expect(store.get().entries[0].entry_id).toBe("new");
+  expect(store.get().entries.map((e) => e.entry_id)).toEqual(["new"]);
   const stuck = deferred();
   list.mockReturnValue(stuck.promise);
   void store.refresh();
@@ -205,6 +202,42 @@ test("project changes fence stale loads, timeout keeps one outstanding slot", as
   await flush();
   expect(store.get().entries).toEqual([]);
   store.stop();
+});
+
+test("restart during an in-flight load still loads the new projects without polling", async () => {
+  const old = deferred();
+  const list = jest
+    .fn()
+    .mockReturnValueOnce(old.promise)
+    .mockResolvedValue(page([entry("new", "new-project")]));
+  const store = new ArtifactCatalogStore("a", list);
+  store.start(["p"]);
+  store.start(["new-project"]);
+  expect(list).toHaveBeenCalledTimes(1);
+  old.resolve(page([entry("stale")]));
+  await flush();
+  expect(list).toHaveBeenCalledTimes(2);
+  expect(list).toHaveBeenLastCalledWith({ project_id: "new-project" });
+  expect(store.get().entries.map((e) => e.entry_id)).toEqual(["new"]);
+  store.stop();
+});
+
+test("stop after a queued restart load runs nothing after unmount", async () => {
+  const old = deferred();
+  const list = jest
+    .fn()
+    .mockReturnValueOnce(old.promise)
+    .mockResolvedValue(page([entry("new", "new-project")]));
+  const store = new ArtifactCatalogStore("a", list);
+  store.start(["p"]);
+  store.start(["new-project"]);
+  store.stop();
+  old.resolve(page([entry("stale")]));
+  await flush();
+  jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs * 3);
+  await flush();
+  expect(list).toHaveBeenCalledTimes(1);
+  expect(store.get().entries).toEqual([]);
 });
 
 test("empty account never reads metadata", async () => {
