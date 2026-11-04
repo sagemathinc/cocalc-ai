@@ -42,14 +42,35 @@ function setup(rows: { id: string; metadata: Record<string, any> }[]) {
   return writes;
 }
 
-const without = (writes: { key: string }[], key: string) =>
-  writes.filter((w) => w.key !== key);
+const without = (writes: { key: string }[], ...keys: string[]) =>
+  writes.filter((w) => !keys.includes(w.key));
 
 const target = (thread_id: string) => ({ project_id, thread_id });
 
 afterEach(() => setClaudePoolStoreForTests());
 
 describe("pickClaudePool", () => {
+  it("records each member's weekly reading for the forecast, once per report", async () => {
+    const writes = setup([
+      { id: A, metadata: { claude_usage: usage(0, 0.2, 100 * HOUR) } },
+      { id: B, metadata: { claude_pool_excluded: true } },
+    ]);
+    await pickClaudePool({ account_id, target: target("t1") }, () => now);
+    const history = writes.filter((w) => w.key === "claude_usage_history");
+    expect(history).toEqual([
+      {
+        id: A,
+        key: "claude_usage_history",
+        value: [{ at: now, week: 0.2, resets_at: sec(now + 100 * HOUR) }],
+      },
+    ]);
+    // The same report again: nothing more to record.
+    await pickClaudePool({ account_id, target: target("t2") }, () => now);
+    expect(writes.filter((w) => w.key === "claude_usage_history")).toHaveLength(
+      1,
+    );
+  });
+
   it("picks the subscription whose week expires soonest, with labels", async () => {
     setup([
       {
@@ -98,7 +119,9 @@ describe("pickClaudePool", () => {
       () => now,
     );
     expect(result.credential_id).toBe(B);
-    expect(without(writes, "claude_pool_reservations")).toEqual([
+    expect(
+      without(writes, "claude_pool_reservations", "claude_usage_history"),
+    ).toEqual([
       {
         id: A,
         key: "claude_pool_limited",
@@ -167,7 +190,9 @@ describe("pickClaudePool", () => {
       },
       () => now,
     );
-    expect(without(writes, "claude_pool_reservations")).toEqual([
+    expect(
+      without(writes, "claude_pool_reservations", "claude_usage_history"),
+    ).toEqual([
       { id: A, key: "claude_turn_costs", value: { samples: [0.04] } },
     ]);
   });
