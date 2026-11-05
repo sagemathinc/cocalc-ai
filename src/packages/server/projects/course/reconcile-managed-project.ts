@@ -26,6 +26,7 @@ import {
 import { normalizeCoursePath } from "@cocalc/util/course-path";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
+  PROJECT_MEMBERSHIP_AUDIT_RETENTION,
   PROJECT_MEMBERSHIP_REMOVED_EVENT,
   setProjectMembershipAuditContext,
 } from "@cocalc/database/postgres/schema/project-membership-audit";
@@ -98,24 +99,38 @@ async function updatePendingCourseEmailInvitePolicy(
   );
 }
 
-// A student who already accepted a course invite for this project consented
-// to joining it. If they are missing anyway (e.g., an acceptance that recorded
-// the course binding but not the membership grant, before acceptance became
-// atomic), restore their access instead of sending another invite: that
-// invite goes to the bound account and needs a second acceptance the student
-// may never see. A later removal by the student themselves or by a project
-// member is deliberate, so it falls back to an invite.
-async function hasAcceptedCourseStudentInvite(
+// Course reconciliation's own removals (delete, then undelete restores the
+// student) are the only removals that don't withdraw an earlier acceptance.
+const COURSE_RECONCILE_VIA = "course-reconcile";
+
+// Before email-invite acceptance became atomic, an acceptance could record
+// the course binding and mark the invite accepted without granting membership
+// in the student project. Reconciliation then kept sending a new invite to
+// the bound account, which needs a second acceptance students may never see.
+// Restore such a student directly, once, when:
+//   - the acceptance predates the durable membership_granted marker (newer
+//     acceptances granted access atomically, so a missing student was removed);
+//   - it was not already used for a restore (restored_at makes this one-shot);
+//   - it is recent enough that any later removal is still in the membership
+//     audit, and no removal after it was made by anything other than course
+//     reconciliation (self, other members, admins, unattributed).
+// Returns the invite to mark as consumed, locked after the project row (the
+// same order as invite acceptance).
+export async function acceptedLegacyCourseStudentInviteToRestore(
   db: Pick<PoolClient, "query">,
   { project_id, account_id }: { project_id: string; account_id: string },
-): Promise<boolean> {
-  const { rows } = await db.query(
-    `SELECT 1
+): Promise<string | undefined> {
+  const { rows } = await db.query<{ invite_id: string }>(
+    `SELECT i.invite_id::text AS invite_id
        FROM project_collab_invites i
       WHERE i.project_id=$1
         AND i.scope='course_student'
+        AND i.invite_source IN ('email', 'course_email')
         AND i.status='accepted'
-        AND COALESCE(i.accepted_account_id, i.invitee_account_id)=$2
+        AND i.accepted_account_id=$2
+        AND NOT (COALESCE(i.context, '{}'::jsonb) ? 'membership_granted')
+        AND NOT (COALESCE(i.context, '{}'::jsonb) ? 'restored_at')
+        AND COALESCE(i.responded, i.updated) > NOW() - $4::interval
         AND NOT EXISTS (
           SELECT 1
             FROM central_log c
@@ -123,12 +138,20 @@ async function hasAcceptedCourseStudentInvite(
              AND c.time >= COALESCE(i.responded, i.updated)
              AND c.value ->> 'project_id' = $1::text
              AND c.value -> 'removed_account_ids' ? $2::text
-             AND c.value ->> 'via' IN ('self', 'collaborator')
+             AND c.value ->> 'via' IS DISTINCT FROM $5
         )
-      LIMIT 1`,
-    [project_id, account_id, PROJECT_MEMBERSHIP_REMOVED_EVENT],
+      ORDER BY COALESCE(i.responded, i.updated) DESC
+      LIMIT 1
+      FOR UPDATE OF i`,
+    [
+      project_id,
+      account_id,
+      PROJECT_MEMBERSHIP_REMOVED_EVENT,
+      PROJECT_MEMBERSHIP_AUDIT_RETENTION,
+      COURSE_RECONCILE_VIA,
+    ],
   );
-  return rows.length > 0;
+  return rows[0]?.invite_id;
 }
 
 function uniqueAccountIds(ids: string[], name: string): string[] {
@@ -417,7 +440,7 @@ export async function reconcileCourseManagedProjectLocal(
     await client.query("BEGIN");
     await setProjectMembershipAuditContext(client, {
       actor_account_id: account_id,
-      via: "course-reconcile",
+      via: COURSE_RECONCILE_VIA,
     });
     await assertProjectNotRehoming({
       db: client,
@@ -439,17 +462,32 @@ export async function reconcileCourseManagedProjectLocal(
     const plan = planCourseManagedProjectReconciliation(request, row);
     previousCourse = row.course ?? null;
     let restoredStudentAccountId: string | undefined;
+    let restoreInviteId: string | undefined;
     const studentAccountId = plan.resolvedStudentAccountId;
     if (
       request.type === "student" &&
       request.student_deleted !== true &&
       studentAccountId &&
-      plan.missingDesiredAccountIds.includes(studentAccountId) &&
-      (await hasAcceptedCourseStudentInvite(client, {
-        project_id,
-        account_id: studentAccountId,
-      }))
+      plan.missingDesiredAccountIds.includes(studentAccountId)
     ) {
+      restoreInviteId = await acceptedLegacyCourseStudentInviteToRestore(
+        client,
+        { project_id, account_id: studentAccountId },
+      );
+    }
+    if (studentAccountId && restoreInviteId) {
+      await client.query(
+        `UPDATE project_collab_invites
+            SET context=jsonb_set(
+                  COALESCE(context, '{}'::jsonb),
+                  '{restored_at}',
+                  to_jsonb(NOW()),
+                  true
+                ),
+                updated=NOW()
+          WHERE invite_id=$1`,
+        [restoreInviteId],
+      );
       plan.users[studentAccountId] = { group: "collaborator" };
       plan.usersChanged = true;
       plan.missingDesiredAccountIds = plan.missingDesiredAccountIds.filter(
@@ -466,7 +504,7 @@ export async function reconcileCourseManagedProjectLocal(
       // the membership audit records them with the reconcile request.
       await setProjectMembershipAuditContext(client, {
         actor_account_id: account_id,
-        via: "course-reconcile",
+        via: COURSE_RECONCILE_VIA,
         details: {
           course_project_id: request.course_project_id,
           type: request.type,

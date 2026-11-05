@@ -74,6 +74,7 @@ describe("course managed project reconciliation", () => {
   const EXTRA = "55555555-5555-4555-8555-555555555555";
   const COURSE = "66666666-6666-4666-8666-666666666666";
   const PROJECT = "77777777-7777-4777-8777-777777777777";
+  const INVITE = "99999999-9999-4999-8999-999999999999";
 
   function request(overrides: Record<string, unknown> = {}) {
     return {
@@ -474,7 +475,7 @@ describe("course managed project reconciliation", () => {
   }
 
   it("restores a bound student who accepted a course invite but is missing", async () => {
-    queryMock = boundStudentMissingQuery([{ "?column?": 1 }]);
+    queryMock = boundStudentMissingQuery([{ invite_id: INVITE }]);
     const { reconcileCourseManagedProjectLocal } =
       await import("./reconcile-managed-project");
 
@@ -487,7 +488,17 @@ describe("course managed project reconciliation", () => {
       PROJECT,
       STUDENT,
       "project_collaborator_removed",
+      "13 months",
+      "course-reconcile",
     ]);
+    // The acceptance is consumed, so it can restore access only once.
+    const consumed = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("'{restored_at}'"),
+    );
+    expect(consumed[1]).toEqual([INVITE]);
+    expect(queryMock.mock.calls.indexOf(consumed)).toBeLessThan(
+      queryMock.mock.calls.findIndex(([sql]) => sql === "COMMIT"),
+    );
     const update = queryMock.mock.calls.find(([sql]) =>
       sql.includes("UPDATE projects"),
     );
@@ -503,7 +514,8 @@ describe("course managed project reconciliation", () => {
   });
 
   it("invites a missing bound student without a standing acceptance", async () => {
-    // No accepted invite, or a deliberate removal after accepting it.
+    // No restorable legacy acceptance (see the integration test for the
+    // predicate itself).
     queryMock = boundStudentMissingQuery([]);
     const { reconcileCourseManagedProjectLocal } =
       await import("./reconcile-managed-project");
@@ -512,6 +524,9 @@ describe("course managed project reconciliation", () => {
 
     expect(
       queryMock.mock.calls.some(([sql]) => sql.includes("UPDATE projects")),
+    ).toBe(false);
+    expect(
+      queryMock.mock.calls.some(([sql]) => sql.includes("'{restored_at}'")),
     ).toBe(false);
     expect(inviteCollaboratorMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -525,7 +540,7 @@ describe("course managed project reconciliation", () => {
   });
 
   it("does not restore access for a deleted student", async () => {
-    queryMock = boundStudentMissingQuery([{ "?column?": 1 }]);
+    queryMock = boundStudentMissingQuery([{ invite_id: INVITE }]);
     const { reconcileCourseManagedProjectLocal } =
       await import("./reconcile-managed-project");
 
