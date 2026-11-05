@@ -141,6 +141,9 @@ export interface StorageAdmissionController {
   backgroundDeferralReason: (request?: {
     allow_starvation_override?: boolean;
   }) => string | undefined;
+  /** Why background work would be refused now, from the last sample (no
+   * I/O); undefined when it would be admitted. */
+  currentBackgroundReason: () => string | undefined;
   getStatus: () => HostStorageAdmissionMetrics;
 }
 
@@ -1070,7 +1073,14 @@ export function createStorageAdmissionController(
   };
 
   sample();
-  return { sample, admit, backgroundDeferralReason, getStatus: status };
+  return {
+    sample,
+    admit,
+    backgroundDeferralReason,
+    currentBackgroundReason: () =>
+      mode === "enforce" ? backgroundReason(status()) : undefined,
+    getStatus: status,
+  };
 }
 
 let activeController: StorageAdmissionController | undefined;
@@ -1166,6 +1176,26 @@ export function admitStorageOperation(
   request: StorageAdmissionRequest,
 ): StorageAdmissionTicket {
   return controller().admit(request);
+}
+
+// Refusals that hold every scheduled snapshot alike, with no override: while
+// one holds, the snapshot lane parks instead of refusing item after item.
+// Contended and recovery are not here: starvation overrides and the recovery
+// pace admit some snapshots there.
+export const SNAPSHOT_LANE_PARK_REASONS: ReadonlySet<string> = new Set([
+  "lifecycle_active",
+  "lifecycle_settle",
+  "io_pressure_emergency",
+  "io_pressure_unavailable",
+]);
+
+/** The fixed reason the snapshot lane should park for now, if any (enforce
+ * mode only; from the last sample, no I/O). */
+export function snapshotLaneParkReason(): string | undefined {
+  const reason = activeController?.currentBackgroundReason();
+  return reason != null && SNAPSHOT_LANE_PARK_REASONS.has(reason)
+    ? reason
+    : undefined;
 }
 
 export function getStorageAdmissionStatus():

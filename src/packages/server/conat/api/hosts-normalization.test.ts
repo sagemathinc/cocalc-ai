@@ -162,6 +162,59 @@ describe("parseRow host metrics normalization", () => {
     });
   });
 
+  describe("snapshot lane metrics", () => {
+    const lane = {
+      pending: 51,
+      active: 1,
+      parked: true,
+      park_reason: "lifecycle_active",
+      parked_ms_total: 1_234,
+      requeued_total: { lifecycle_active: 3, io_pressure_emergency: 1 },
+      oldest_pending_due_ms: 1_793_900_000_000,
+      completed_10m: { succeeded: 90, deferred: 4 },
+    };
+    const parse = (snapshot_lane: unknown) =>
+      parseRow({
+        id: "host-1",
+        name: "host-1",
+        status: "running",
+        metadata: { metrics: { current: { snapshot_lane } } },
+      }).metrics?.current?.snapshot_lane;
+
+    it("preserves validated counts and fixed tokens", () => {
+      expect(parse(lane)).toEqual(lane);
+      const { park_reason: _, oldest_pending_due_ms: __, ...idle } = lane;
+      expect(parse({ ...idle, parked: false })).toEqual({
+        ...idle,
+        parked: false,
+      });
+    });
+
+    it.each([
+      ["a free-text park reason", { park_reason: "start of project 1/2" }],
+      [
+        "an id-shaped reason key",
+        { requeued_total: { "00000000-1000-4000-8000-000000000001": 1 } },
+      ],
+      ["an unknown outcome", { completed_10m: { exploded: 1 } }],
+      ["a negative count", { pending: -1 }],
+      ["a fractional count", { requeued_total: { lifecycle_active: 1.5 } }],
+      ["a string count", { active: "1" }],
+      ["a non-boolean parked flag", { parked: "yes" }],
+      [
+        "too many reasons",
+        {
+          requeued_total: Object.fromEntries(
+            Array.from({ length: 17 }, (_, i) => [`reason_${i}`, 1]),
+          ),
+        },
+      ],
+      ["a bad oldest due time", { oldest_pending_due_ms: "soon" }],
+    ])("drops the whole block for %s", (_label, change) => {
+      expect(parse({ ...lane, ...change })).toBeUndefined();
+    });
+  });
+
   it("preserves a verified isolated Bees pressure attribution", () => {
     const checked_at = new Date().toISOString();
     const host = parseRow({

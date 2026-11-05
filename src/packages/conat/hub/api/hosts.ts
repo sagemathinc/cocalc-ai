@@ -1142,6 +1142,26 @@ export interface HostCurrentMetrics {
     pressure_attribution?: "bees_cgroup";
   };
   conat_persist?: HostConatPersistMetrics;
+  snapshot_lane?: HostSnapshotLaneMetrics;
+}
+
+/** The host's scheduled-snapshot lane: queue depth, parking and recent
+ * outcomes. Counts, durations and fixed reason tokens only. */
+export interface HostSnapshotLaneMetrics {
+  pending: number;
+  active: number;
+  parked: boolean;
+  /** Why the lane is parked (a fixed token such as lifecycle_active). */
+  park_reason?: string;
+  parked_ms_total: number;
+  /** Operations put back in their place, by park reason. */
+  requeued_total: Record<string, number>;
+  /** The earliest due time (ms since the epoch) among pending items. */
+  oldest_pending_due_ms?: number;
+  /** Attempts in the last 10 minutes, by outcome. */
+  completed_10m: Partial<
+    Record<"succeeded" | "skipped" | "deferred" | "failed", number>
+  >;
 }
 
 export type HostPressureZone = "normal" | "observe" | "pressure" | "emergency";
