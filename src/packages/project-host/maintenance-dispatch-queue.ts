@@ -56,6 +56,15 @@ export interface MaintenanceDispatchQueueOptions {
   parkCheck?: () => string | undefined;
   /** How often a parked lane checks again. */
   parkPollMs?: number;
+  /** Max-age promotion: within its class (paying, or the rest), pending work
+   * due at least this long ago goes first, oldest due first, regardless of
+   * account turns. The paid/free interleave is unchanged, so promoted paying
+   * work still leaves a free dispatch in every PAID_PER_FREE + 1. Off unless
+   * set. */
+  promoteAfterMs?: { paying: number; free: number };
+  /** Whether this work may be promoted at all (e.g. not while it is in
+   * failure backoff, whose retry time decides when it runs). */
+  promotable?: (row: Row) => boolean;
   now?: () => number;
 }
 
@@ -69,6 +78,12 @@ export interface MaintenanceDispatchQueueStatus {
   requeued_total: Record<string, number>;
   /** The earliest due time (ms) among pending work, if any is pending. */
   oldest_pending_due_ms?: number;
+  /** Pending work past its class's promote age (with promotion on). */
+  promoted_pending: number;
+  /** The most promoted pending items that belong to one account. */
+  promoted_largest_account_count: number;
+  /** Dispatches that went first by promotion, by class (refused ones too). */
+  promoted_dispatched_total: { paying: number; free: number };
 }
 
 // One queue per host/lane. Arrivals join between operations, never by starting
@@ -93,10 +108,15 @@ export class MaintenanceDispatchQueue {
   private parkTimer?: ReturnType<typeof setInterval>;
   private parkedMsTotal = 0;
   private readonly requeuedTotal: Record<string, number> = {};
+  private readonly promoteAfterMs?: { paying: number; free: number };
+  private readonly promotable?: (row: Row) => boolean;
+  private readonly promotedDispatched = { paying: 0, free: 0 };
 
   constructor(options: MaintenanceDispatchQueueOptions = {}) {
     this.parkCheck = options.parkCheck;
     this.parkPollMs = options.parkPollMs ?? DEFAULT_PARK_POLL_MS;
+    this.promoteAfterMs = options.promoteAfterMs;
+    this.promotable = options.promotable;
     this.now = options.now ?? Date.now;
   }
 
@@ -117,11 +137,22 @@ export class MaintenanceDispatchQueue {
   }
 
   status(): MaintenanceDispatchQueueStatus {
+    const now = this.now();
     let oldest: number | undefined;
+    let promotedPending = 0;
+    const promotedByAccount = new Map<string, number>();
     for (const work of this.pending.values()) {
-      const due = Date.parse(work.due(work.row) ?? "");
+      const due = this.dueMs(work);
       if (Number.isFinite(due) && (oldest == null || due < oldest)) {
         oldest = due;
+      }
+      if (this.promoted(work, now)) {
+        promotedPending += 1;
+        const account = this.account(work);
+        promotedByAccount.set(
+          account,
+          (promotedByAccount.get(account) ?? 0) + 1,
+        );
       }
     }
     return {
@@ -134,6 +165,12 @@ export class MaintenanceDispatchQueue {
         (this.parked ? Math.max(0, this.now() - this.parked.since) : 0),
       requeued_total: { ...this.requeuedTotal },
       ...(oldest != null ? { oldest_pending_due_ms: oldest } : {}),
+      promoted_pending: promotedPending,
+      promoted_largest_account_count: Math.max(
+        0,
+        ...promotedByAccount.values(),
+      ),
+      promoted_dispatched_total: { ...this.promotedDispatched },
     };
   }
 
@@ -223,36 +260,74 @@ export class MaintenanceDispatchQueue {
     return this.dispatches.length < DISPATCH_RING ? count : PAID_PER_FREE;
   }
 
+  private dueMs(work: Work): number {
+    const value = Date.parse(work.due(work.row) ?? "");
+    return Number.isFinite(value) ? value : Infinity;
+  }
+
+  private isPaying(work: Work): boolean {
+    return work.row.storage_service_class === "paying";
+  }
+
+  // Past its class's promote age, and allowed to be promoted.
+  private promoted(work: Work, now: number): boolean {
+    if (!this.promoteAfterMs) return false;
+    const due = this.dueMs(work);
+    if (!Number.isFinite(due)) return false;
+    const after = this.isPaying(work)
+      ? this.promoteAfterMs.paying
+      : this.promoteAfterMs.free;
+    return now - due >= after && (this.promotable?.(work.row) ?? true);
+  }
+
   private next(): Work | undefined {
+    const now = this.now();
     let paying: Work | undefined;
     let free: Work | undefined;
-    const earlier = (a: Work, b: Work): boolean => {
-      const aTurn = this.accountTurn(this.account(a));
-      const bTurn = this.accountTurn(this.account(b));
-      if (aTurn !== bTurn) return aTurn < bTurn;
-      const time = (work: Work) => {
-        const value = Date.parse(work.due(work.row) ?? "");
-        return Number.isFinite(value) ? value : Infinity;
-      };
+    let payingPromoted: Work | undefined;
+    let freePromoted: Work | undefined;
+    const byDue = (a: Work, b: Work): boolean => {
+      const aDue = this.dueMs(a);
+      const bDue = this.dueMs(b);
       return (
-        time(a) < time(b) ||
-        (time(a) === time(b) &&
+        aDue < bDue ||
+        (aDue === bDue &&
           ((a.row.storage_priority ?? 0) > (b.row.storage_priority ?? 0) ||
             ((a.row.storage_priority ?? 0) === (b.row.storage_priority ?? 0) &&
               a.row.project_id < b.row.project_id)))
       );
     };
+    const earlier = (a: Work, b: Work): boolean => {
+      const aTurn = this.accountTurn(this.account(a));
+      const bTurn = this.accountTurn(this.account(b));
+      if (aTurn !== bTurn) return aTurn < bTurn;
+      return byDue(a, b);
+    };
     for (const work of this.pending.values()) {
       if (this.active.has(work.row.project_id)) continue;
-      if (work.row.storage_service_class === "paying") {
+      // Promoted work ignores account turns: the oldest due goes first, so
+      // its wait is bounded by how many promoted items are older.
+      if (this.promoted(work, now)) {
+        if (this.isPaying(work)) {
+          if (!payingPromoted || byDue(work, payingPromoted)) {
+            payingPromoted = work;
+          }
+        } else if (!freePromoted || byDue(work, freePromoted)) {
+          freePromoted = work;
+        }
+      } else if (this.isPaying(work)) {
         if (!paying || earlier(work, paying)) paying = work;
       } else if (!free || earlier(work, free)) free = work;
     }
+    paying = payingPromoted ?? paying;
+    free = freePromoted ?? free;
     const next =
       free && (!paying || this.paidSinceFree() >= PAID_PER_FREE)
         ? free
         : (paying ?? free);
     if (next) {
+      if (next === payingPromoted) this.promotedDispatched.paying += 1;
+      else if (next === freePromoted) this.promotedDispatched.free += 1;
       const account = this.account(next);
       const dispatch: Dispatch = { paying: next === paying, given_back: false };
       this.dispatches.push(dispatch);

@@ -793,3 +793,259 @@ describe("requeue and parking", () => {
     expect(queue.status().parked_ms_total).toBeGreaterThan(0);
   });
 });
+
+describe("max-age promotion", () => {
+  const NOW = Date.parse("2026-11-05T12:00:00Z");
+  const PROMOTE = { paying: 60 * 60_000, free: 4 * 60 * 60_000 };
+  const aged = (
+    project_id: string,
+    service: "paying" | "free",
+    account: string,
+    ageMin: number,
+    failures = 0,
+  ): HostProjectMaintenanceSchedule => ({
+    ...row(project_id, service, account),
+    backup_due_since: new Date(NOW - ageMin * 60_000).toISOString(),
+    snapshot_failures: failures,
+  });
+  const idle = async (queue: MaintenanceDispatchQueue) => {
+    for (let i = 0; i < 10_000; i++) {
+      const status = queue.status();
+      if (status.pending === 0 && status.active === 0) return;
+      await flush();
+    }
+    throw Error("the queue did not drain");
+  };
+  // Runs the rows one at a time; arrive(n) gives the rows submitted when the
+  // n-th dispatch starts.
+  const dispatchOrder = async (
+    options: ConstructorParameters<typeof MaintenanceDispatchQueue>[0],
+    initial: HostProjectMaintenanceSchedule[],
+    arrive?: (n: number) => HostProjectMaintenanceSchedule[],
+  ) => {
+    const queue = new MaintenanceDispatchQueue({ now: () => NOW, ...options });
+    const order: string[] = [];
+    const run = async (r: HostProjectMaintenanceSchedule) => {
+      order.push(r.project_id);
+      const rows = arrive?.(order.length) ?? [];
+      if (rows.length) {
+        void queue.submit({
+          rows,
+          observedAt: order.length + 1,
+          parallelism: 1,
+          due,
+          run,
+          detach: true,
+        });
+      }
+    };
+    void queue.submit({
+      rows: initial,
+      observedAt: 1,
+      parallelism: 1,
+      due,
+      run,
+      detach: true,
+    });
+    await idle(queue);
+    return { order, queue };
+  };
+  const fiveOfA = () =>
+    Array.from({ length: 5 }, (_, i) => aged(`A-${i}`, "paying", "A", 120));
+  // A new single-project account at every dispatch, for 30 dispatches.
+  const newAccounts = (n: number) =>
+    n <= 30 ? [aged(`new-${n}`, "paying", `acct-${n}`, 1)] : [];
+
+  it("without promotion, an account's later projects wait out a stream of new accounts", async () => {
+    const { order } = await dispatchOrder({}, fiveOfA(), newAccounts);
+    expect(order[0]).toBe("A-0");
+    // served only once the arrivals stop
+    expect(order.indexOf("A-1")).toBe(31);
+  });
+
+  it("serves an account's overdue projects by the promote age, ahead of new accounts", async () => {
+    const { order, queue } = await dispatchOrder(
+      { promoteAfterMs: PROMOTE },
+      fiveOfA(),
+      newAccounts,
+    );
+    expect(order.slice(0, 5)).toEqual(["A-0", "A-1", "A-2", "A-3", "A-4"]);
+    expect(queue.status().promoted_dispatched_total).toEqual({
+      paying: 5,
+      free: 0,
+    });
+  });
+
+  it("a promoted dispatch takes its account's turn", async () => {
+    const { order } = await dispatchOrder({ promoteAfterMs: PROMOTE }, [
+      aged("A-old", "paying", "A", 120),
+      aged("A-young", "paying", "A", 1),
+      aged("B-young", "paying", "B", 1),
+    ]);
+    // Without the turn, A-young would go first (same due, lower id).
+    expect(order).toEqual(["A-old", "B-young", "A-young"]);
+  });
+
+  it("a promoted free snapshot waits at most nine paying selections, even behind endless promoted paying work", async () => {
+    const { order, queue } = await dispatchOrder(
+      { promoteAfterMs: PROMOTE },
+      [aged("F", "free", "f", 300), aged("P-0", "paying", "p0", 120)],
+      (n) => (n <= 40 ? [aged(`P-${n}`, "paying", `p${n}`, 90)] : []),
+    );
+    expect(order.indexOf("F")).toBe(9);
+    expect(order.slice(0, 9).every((id) => id.startsWith("P-"))).toBe(true);
+    expect(queue.status().promoted_dispatched_total.free).toBe(1);
+  });
+
+  it("a promoted paying snapshot is never passed by younger arrivals, promoted or not", async () => {
+    const initial = () => [
+      aged("S", "paying", "x", 241),
+      aged("Q", "paying", "x", 240),
+      aged("P", "paying", "x", 180),
+    ];
+    const arrivals = (n: number) =>
+      n <= 20
+        ? [
+            aged(`old-${n}`, "paying", `o${n}`, 120),
+            aged(`young-${n}`, "paying", `y${n}`, 1),
+          ]
+        : [];
+    const promoted = await dispatchOrder(
+      { promoteAfterMs: PROMOTE },
+      initial(),
+      arrivals,
+    );
+    expect(promoted.order.slice(0, 3)).toEqual(["S", "Q", "P"]);
+    // Without promotion the new accounts pass them.
+    const plain = await dispatchOrder({}, initial(), arrivals);
+    expect(plain.order.indexOf("Q")).toBeGreaterThan(3);
+  });
+
+  it("below the promote ages, the order is exactly today's", async () => {
+    const rows = () => {
+      const out: HostProjectMaintenanceSchedule[] = [];
+      for (let i = 0; i < 24; i++) {
+        const paying = i % 3 !== 0;
+        out.push(
+          aged(
+            `r-${String(i).padStart(2, "0")}`,
+            paying ? "paying" : "free",
+            `acct-${i % 4}`,
+            paying ? (i * 7) % 59 : (i * 37) % 239,
+          ),
+        );
+      }
+      return out;
+    };
+    const arrivals = (n: number) =>
+      n <= 10
+        ? [aged(`n-${n}`, n % 2 ? "paying" : "free", `acct-${n % 5}`, n)]
+        : [];
+    const today = await dispatchOrder({}, rows(), arrivals);
+    const promoted = await dispatchOrder(
+      { promoteAfterMs: PROMOTE },
+      rows(),
+      arrivals,
+    );
+    expect(promoted.order).toEqual(today.order);
+    expect(promoted.queue.status().promoted_dispatched_total).toEqual({
+      paying: 0,
+      free: 0,
+    });
+  });
+
+  it("never promotes work its promotable check refuses (failure backoff)", async () => {
+    const promotable = (r: HostProjectMaintenanceSchedule) =>
+      (r.snapshot_failures ?? 0) === 0;
+    const order = async (failures: number) =>
+      (
+        await dispatchOrder({ promoteAfterMs: PROMOTE, promotable }, [
+          aged("S", "paying", "a", 200),
+          aged("F", "paying", "a", 180, failures),
+          aged("B", "paying", "b", 1),
+        ])
+      ).order;
+    // F's account was just served: unpromoted, B goes first.
+    expect(await order(2)).toEqual(["S", "B", "F"]);
+    // The control: without failures, F is promoted past B.
+    expect(await order(0)).toEqual(["S", "F", "B"]);
+  });
+
+  it("serves one account's 20 promoted snapshots and the others' strictly by due, and reports them", async () => {
+    const rows = [
+      ...Array.from({ length: 20 }, (_, i) =>
+        aged(`A-${String(i).padStart(2, "0")}`, "paying", "A", 200 - i),
+      ),
+      aged("B-0", "paying", "B", 195.5),
+      aged("B-1", "paying", "B", 185.5),
+      aged("C-0", "paying", "C", 190.5),
+      aged("C-1", "paying", "C", 182.5),
+    ];
+    const queue = new MaintenanceDispatchQueue({
+      now: () => NOW,
+      promoteAfterMs: PROMOTE,
+    });
+    const held = gate();
+    const order: string[] = [];
+    const done = queue.submit({
+      rows,
+      observedAt: 1,
+      parallelism: 1,
+      due,
+      run: async (r) => {
+        order.push(r.project_id);
+        if (order.length === 1) await held.promise;
+      },
+    });
+    await flush();
+    // A-00, the oldest, runs; the other 23 wait, 19 of them A's.
+    expect(queue.status()).toMatchObject({
+      pending: 23,
+      active: 1,
+      promoted_pending: 23,
+      promoted_largest_account_count: 19,
+    });
+    held.release();
+    await done;
+    const byAge = [...rows]
+      .sort(
+        (a, b) =>
+          Date.parse(a.backup_due_since!) - Date.parse(b.backup_due_since!),
+      )
+      .map((r) => r.project_id);
+    expect(order).toEqual(byAge);
+    // Each other account's project goes at its own oldest-due position:
+    // B-0 after the five older A projects, and so on.
+    expect(order.indexOf("B-0")).toBe(5);
+    expect(order.indexOf("C-0")).toBe(11);
+    // A's share of the first ten dispatches.
+    expect(order.slice(0, 10).filter((id) => id.startsWith("A-"))).toHaveLength(
+      9,
+    );
+    expect(queue.status()).toMatchObject({
+      promoted_pending: 0,
+      promoted_largest_account_count: 0,
+      promoted_dispatched_total: { paying: 24, free: 0 },
+    });
+  });
+
+  it("promotes nothing unless configured", async () => {
+    const queue = new MaintenanceDispatchQueue({ now: () => NOW });
+    const held = gate();
+    const done = queue.submit({
+      rows: [aged("A", "paying", "a", 600), aged("B", "paying", "b", 600)],
+      observedAt: 1,
+      parallelism: 1,
+      due,
+      run: async () => held.promise,
+    });
+    await flush();
+    expect(queue.status()).toMatchObject({
+      promoted_pending: 0,
+      promoted_largest_account_count: 0,
+      promoted_dispatched_total: { paying: 0, free: 0 },
+    });
+    held.release();
+    await done;
+  });
+});

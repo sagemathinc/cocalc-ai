@@ -1171,6 +1171,14 @@ export interface HostSnapshotLaneMetrics {
     accepted_r2: number;
     refused: number;
   };
+  /** Pending snapshots past their class's promote age (60 min paying, 4 h
+   * free), which go first, oldest due first. */
+  promoted_pending?: number;
+  /** The most promoted pending snapshots that belong to one account. */
+  promoted_largest_account_count?: number;
+  /** Dispatches that went first by promotion, by class, since project-host
+   * start. */
+  promoted_dispatched_total?: { paying: number; free: number };
 }
 
 export type HostPressureZone = "normal" | "observe" | "pressure" | "emergency";
