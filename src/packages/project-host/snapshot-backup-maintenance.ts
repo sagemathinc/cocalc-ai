@@ -135,7 +135,14 @@ function queuesForHost(hostId: string) {
       // Parks while every scheduled snapshot would be refused alike (a
       // project start, emergency I/O), instead of refusing item after item.
       snapshot: new MaintenanceDispatchQueue({
-        parkCheck: () => snapshotLaneParkReason(),
+        parkCheck: () => {
+          const reason = snapshotLaneParkReason();
+          // Snapshots waiting in a parked lane keep their place as the
+          // recovery head (no attempt refreshes it while parked), so the
+          // longest waiting still goes first when the lane resumes.
+          if (reason) touchParkedRecoveryWaiting(hostId);
+          return reason;
+        },
         parkPollMs: parsePositiveInteger(
           process.env.COCALC_PROJECT_HOST_SNAPSHOT_LANE_PARK_POLL_MS,
           5_000,
@@ -232,6 +239,14 @@ const RECOVERY_HEAD_STALE_MS = 2 * 60_000;
 // work or a lifecycle gate: check again after about one pace.
 const RECOVERY_BLOCKED_RETRY_MS = 20_000;
 let recoveryHead: { projectId: string; since: number } | undefined;
+
+function touchParkedRecoveryWaiting(hostId: string, now = Date.now()): void {
+  const snapshot = dispatchQueues.get(hostId)?.snapshot;
+  if (!snapshot) return;
+  for (const [projectId, entry] of recoveryWaiting) {
+    if (snapshot.has(projectId) === "pending") entry.seenAt = now;
+  }
+}
 
 function recoveryWaitingHead(now = Date.now()): string | undefined {
   while (true) {
@@ -1635,8 +1650,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     row: HostProjectMaintenanceSchedule,
     { afterRunning }: { afterRunning: boolean },
   ) => {
+    // Under the ownership lease (a bay outage) there is no fresh row: work
+    // that must read its row afresh (requeued, or queued behind a run of the
+    // same project) runs nothing rather than its old row.
     const refreshed = await (usedOwnershipLease
-      ? Promise.resolve(row)
+      ? Promise.resolve(afterRunning ? undefined : row)
       : queues.refresh.get({
           row,
           // Queued behind this project's previous operation: the cached row
@@ -1789,6 +1807,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         result.reason != null &&
         SNAPSHOT_LANE_PARK_REASONS.has(result.reason)
       ) {
+        // Still the longest waiting, if it was: it keeps its place as the
+        // recovery head for when the lane resumes (with more than one slot,
+        // two popped snapshots must not race for one recovery slot).
+        if (dueAt != null) {
+          recoveryWaiting.set(project_id, { dueAt, seenAt: Date.now() });
+        }
         return { requeue: result.reason };
       }
       const changedAt = parseTimestampMs(row.last_changed ?? row.last_edited);

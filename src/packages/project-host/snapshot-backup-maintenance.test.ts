@@ -398,6 +398,91 @@ describe("snapshot-backup-maintenance", () => {
       });
     });
 
+    it("runs nothing for a requeued snapshot under the ownership lease (no fresh row)", async () => {
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_LANE_PARK_POLL_MS = "10";
+      listProjectMaintenanceSchedulesMock.mockRejectedValue(
+        new Error("bay unavailable"),
+      );
+      listLeasedMaintenanceSchedulesMock.mockReturnValue([
+        {
+          project_id: "proj-1",
+          last_edited: "2026-04-10T22:00:00.000Z",
+          snapshots: { daily: 5 },
+          backups: { disabled: true },
+          max_snapshots_per_project: 8,
+        },
+      ]);
+      let refused = false;
+      admitStorageOperationMock.mockImplementation(
+        ({ operation_kind, project_id }) => {
+          const refuse = operation_kind === "scheduled_snapshot" && !refused;
+          if (refuse) refused = true;
+          return {
+            admitted: !refuse,
+            would_defer: refuse,
+            starvation_override: false,
+            ...(refuse ? { reason: "lifecycle_active" } : {}),
+            operation_id: `${operation_kind}:${project_id}`,
+            release: releaseStorageOperationMock,
+          };
+        },
+      );
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      await settle();
+      expect(getSnapshotLaneStatus()?.requeued_total).toEqual({
+        lifecycle_active: 1,
+      });
+      snapshotLaneParkReasonMock.mockReturnValue(undefined);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await settle();
+      // The leased row is the dispatched one: not a fresh read, so nothing runs.
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: false,
+        pending: 0,
+      });
+    });
+
+    it("lets repeated changed-project drains finish while the lane is parked", async () => {
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      // The first one parks the lane before it pops anything.
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      await settle();
+      expect(getSnapshotLaneStatus()?.parked).toBe(true);
+      // Then a drain every 15 s, each awaiting its (non-detached) lanes.
+      const drains = Array.from({ length: 20 }, () =>
+        runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+          projectIds: ["proj-1"],
+        }),
+      );
+      const outcome = await Promise.race([
+        Promise.all(drains).then(() => "finished"),
+        new Promise((resolve) => setTimeout(() => resolve("held"), 1_000)),
+      ]);
+      expect(outcome).toBe("finished");
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: true,
+        pending: 1,
+      });
+    });
+
     it("reports, never requeues, a refusal after a mutation", async () => {
       const { BtrfsMutationDeferredError } =
         await import("@cocalc/file-server/btrfs/operation-cache");
@@ -2261,6 +2346,39 @@ describe("snapshot-backup-maintenance", () => {
       expect(snapshotOrder()).toEqual(
         [...projects].reverse().map((p) => `snapshot:${p}`),
       );
+    });
+
+    it("keeps the longest waiting first after a park, even when it is slower to reach admission", async () => {
+      // As above, but the head's fresh read is slow, so with two lane slots
+      // the next project reaches admission first. Only the head may take the
+      // recovery slot (it kept that place while the lane was parked).
+      const projects = Array.from({ length: 4 }, (_, i) => `p${i}`);
+      const { lifecycle, stop } = await startRecoveryDaemon({ projects });
+      const listing =
+        listProjectMaintenanceSchedulesMock.getMockImplementation()!;
+      listProjectMaintenanceSchedulesMock.mockImplementation(async (opts) => {
+        if (opts.project_ids?.length === 1 && opts.project_ids[0] === "p2") {
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+        }
+        return await listing(opts);
+      });
+      try {
+        await jest.advanceTimersByTimeAsync(5_000);
+        expect(snapshotOrder()).toEqual(["snapshot:p3"]);
+        // Parked longer than the 2-minute stale-head bound.
+        lifecycle.starting = 1;
+        await jest.advanceTimersByTimeAsync(180_000);
+        lifecycle.starting = 0;
+        await jest.advanceTimersByTimeAsync(120_000);
+      } finally {
+        stop();
+      }
+      expect(snapshotOrder()).toEqual([
+        "snapshot:p3",
+        "snapshot:p2",
+        "snapshot:p1",
+        "snapshot:p0",
+      ]);
     });
 
     it.each([

@@ -229,6 +229,12 @@ function normalizeSnapshotBackupMaintenanceGate(
 // Reasons and outcomes are fixed tokens from the host's code; anything else
 // (free text, ids) drops the block rather than being stored.
 const SNAPSHOT_LANE_TOKEN = /^[a-z0-9_]{1,48}$/;
+// Valid tokens, but object keys with special meaning: never used as keys.
+const SNAPSHOT_LANE_RESERVED = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
 const SNAPSHOT_LANE_OUTCOMES = new Set([
   "succeeded",
   "skipped",
@@ -281,8 +287,9 @@ function normalizeSnapshotLaneMetrics(
     }
     return out;
   };
-  const requeued = counts(lane.requeued_total, (key) =>
-    SNAPSHOT_LANE_TOKEN.test(key),
+  const requeued = counts(
+    lane.requeued_total,
+    (key) => SNAPSHOT_LANE_TOKEN.test(key) && !SNAPSHOT_LANE_RESERVED.has(key),
   );
   const completed = counts(lane.completed_10m, (key) =>
     SNAPSHOT_LANE_OUTCOMES.has(key),

@@ -185,7 +185,9 @@ export class MaintenanceDispatchQueue {
         });
       }
     };
-    if (detach) {
+    // While parked, nothing here can finish soon: queue the rows without a
+    // waiter, so repeated submissions during a long park hold nothing.
+    if (detach || this.parked) {
       for (const row of rows) enqueue(row);
       this.pump();
       return Promise.resolve();

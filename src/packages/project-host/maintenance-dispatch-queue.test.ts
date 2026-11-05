@@ -728,6 +728,42 @@ describe("requeue and parking", () => {
     await started;
   });
 
+  it("holds no waiters for submissions made while parked", async () => {
+    let blocked: string | undefined = "lifecycle_active";
+    const queue = new MaintenanceDispatchQueue({
+      parkCheck: () => blocked,
+      parkPollMs: 2,
+    });
+    const run = jest.fn(async () => {});
+    // The lane parks on its first look at the queue.
+    await queue.submit({
+      rows: [row("a")],
+      observedAt: 0,
+      parallelism: 1,
+      due,
+      run,
+      detach: true,
+    });
+    expect(queue.status().parked).toBe(true);
+    // e.g. a changed-project drain every 15 s during a long storm
+    const submissions = Array.from({ length: 50 }, (_, i) =>
+      queue.submit({
+        rows: [row("a")],
+        observedAt: i + 1,
+        parallelism: 1,
+        due,
+        run,
+      }),
+    );
+    await flush();
+    await Promise.all(submissions);
+    expect(internal(queue).pending.get("a")?.waiters).toEqual([]);
+    expect(internal(queue).pending.get("a")?.observedAt).toBe(50);
+    expect(run).not.toHaveBeenCalled();
+    blocked = undefined;
+    await until(() => run.mock.calls.length === 1);
+  });
+
   it("never pops while the check is blocked before any dispatch", async () => {
     let blocked: string | undefined = "lifecycle_active";
     const queue = new MaintenanceDispatchQueue({

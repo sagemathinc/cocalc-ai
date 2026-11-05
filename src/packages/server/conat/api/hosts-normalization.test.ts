@@ -197,6 +197,11 @@ describe("parseRow host metrics normalization", () => {
         { requeued_total: { "00000000-1000-4000-8000-000000000001": 1 } },
       ],
       ["an unknown outcome", { completed_10m: { exploded: 1 } }],
+      [
+        "a reserved reason key",
+        { requeued_total: JSON.parse('{"__proto__": 1}') },
+      ],
+      ["a constructor reason key", { requeued_total: { constructor: 1 } }],
       ["a negative count", { pending: -1 }],
       ["a fractional count", { requeued_total: { lifecycle_active: 1.5 } }],
       ["a string count", { active: "1" }],
