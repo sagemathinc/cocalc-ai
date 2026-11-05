@@ -448,6 +448,10 @@ stage_release() {
       "${REPORT_DIR}/bay-runtime-manifest.json" 2>/dev/null || true
   fi
 
+  # Checked again here: a bundle build since main's check can take minutes.
+  # Before REMOTE_WORK_DIR is set, so a refusal leaves cleanup nothing to do
+  # on the bay.
+  check_remote_deployable
   REMOTE_WORK_DIR="/tmp/cocalc-bay-upgrade-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   local bundle_name
   if [[ -n "$BUNDLE_URL" ]]; then
@@ -459,7 +463,6 @@ stage_release() {
   REMOTE_BUNDLE="${REMOTE_WORK_DIR}/${bundle_name}"
   REMOTE_SCRIPT_DIR="${REMOTE_WORK_DIR}/bay-systemd"
 
-  check_remote_deployable
   remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_SCRIPT_DIR")"
   if [[ "$STATIC_ONLY" -eq 1 || "$HUB_ONLY" -eq 1 ]]; then
     log "Upload bay partial deploy helper to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
@@ -1049,6 +1052,9 @@ main() {
     require_cmd pnpm
   fi
   mkdir -p "$REPORT_DIR"
+  # Before anything touches the bay, the CLI-auth preflight's temporary
+  # login cookie (a row written to the bay's database) included.
+  check_remote_deployable
   preflight_cli_auth
 
   if [[ "$BUILD_BUNDLE" -eq 1 ]]; then
