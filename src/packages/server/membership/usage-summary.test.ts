@@ -15,6 +15,7 @@ describe("membershipUsageSummary", () => {
           total_storage_soft_bytes: 1024,
           egress_policy: "metered-shared-hosts",
           invite_email_allow_urls: false,
+          ...({ future_secret_limit: "secret" } as any),
         },
         expires: new Date("2027-01-01T00:00:00Z"),
         subscription_id: 1234,
@@ -62,7 +63,12 @@ describe("membershipUsageSummary", () => {
           } as any,
         ],
         managed_cpu_recent_events: [{ project_title: "Secret cpu" } as any],
-        ...({ account_id: "acct-secret" } as any),
+        // Fields not (yet) reviewed stay out, whatever their shape.
+        ...({
+          account_id: "acct-secret",
+          future_owner_name: "Secret future",
+          future_counts: { secret: 1 },
+        } as any),
       },
     });
 
