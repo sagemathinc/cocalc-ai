@@ -51,6 +51,7 @@ import {
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
+export * from "@cocalc/server/conat/api/project-schedules";
 export * from "@cocalc/server/conat/api/project-persist-storage";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";

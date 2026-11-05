@@ -50,6 +50,17 @@ describe("hub API routes", () => {
         { project_id: PROJECT, timeout: 30000 },
       ]),
     ).toBe(PROJECT);
+    // automatic snapshot/backup schedules are stored with the project
+    for (const name of [
+      "projects.setProjectSnapshotSchedule",
+      "projects.setProjectBackupSchedule",
+    ]) {
+      expect(
+        hubApiRouteKey(getHubApiRoute(name)!, [
+          { project_id: PROJECT, schedule: { disabled: true } },
+        ]),
+      ).toBe(PROJECT);
+    }
     // a document's edit history lives with its project
     for (const name of ["sync.history", "sync.purgeHistory"]) {
       expect(

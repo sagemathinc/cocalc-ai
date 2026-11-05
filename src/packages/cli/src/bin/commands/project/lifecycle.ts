@@ -14,6 +14,12 @@ import {
 
 import type { ProjectCommandDeps } from "../project";
 import { selectSnapshotsToDelete } from "../../core/snapshot-delete";
+import {
+  scheduleReport,
+  scheduleUpdateFromOptions,
+  type ScheduleKind,
+  type ScheduleOptions,
+} from "../../core/project-schedule";
 import { apiKeyForProject } from "../../core/managed-connector-auth";
 import { requestScopedProjectProxy } from "../../core/scoped-project-proxy";
 
@@ -114,6 +120,97 @@ async function hostIsDeprovisioned(
   }
 }
 
+// `<snapshot|backup> schedule get|set`: the automatic schedule, read through
+// the same API as the web app's dialog; `set` needs fresh auth (`cocalc auth
+// elevate`) and reads the stored schedule back.
+function registerScheduleCommands(
+  parent: Command,
+  kind: ScheduleKind,
+  deps: Pick<
+    ProjectCommandDeps,
+    "withContext" | "resolveProjectFromArgOrContext"
+  >,
+): void {
+  const { withContext, resolveProjectFromArgOrContext } = deps;
+  const noun = kind === "snapshots" ? "snapshot" : "backup";
+  const read = async (ctx: any, project_id: string) =>
+    kind === "snapshots"
+      ? await ctx.hub.projects.getProjectSnapshotSchedule({ project_id })
+      : await ctx.hub.projects.getProjectBackupSchedule({ project_id });
+  const schedule = parent
+    .command("schedule")
+    .description(`automatic ${noun} schedule`);
+
+  schedule
+    .command("get")
+    .description(`show the automatic ${noun} schedule (defaults to context)`)
+    .option("-w, --project <project>", "project id or name")
+    .action(async (opts: { project?: string }, command: Command) => {
+      await withContext(
+        command,
+        `project ${noun} schedule get`,
+        async (ctx) => {
+          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          return scheduleReport({
+            project_id: ws.project_id,
+            kind,
+            stored: await read(ctx, ws.project_id),
+          });
+        },
+      );
+    });
+
+  const set = schedule
+    .command("set")
+    .description(
+      `change the automatic ${noun} schedule; fields not given keep their value (requires fresh auth)`,
+    )
+    .option("-w, --project <project>", "project id or name")
+    .option("--enabled", `turn automatic ${kind} on`)
+    .option("--disabled", `turn automatic ${kind} off`);
+  if (kind === "snapshots") {
+    set.option("--frequent <n>", "frequent snapshots to keep");
+  }
+  set
+    .option("--daily <n>", `daily ${kind} to keep`)
+    .option("--weekly <n>", `weekly ${kind} to keep`)
+    .option("--monthly <n>", `monthly ${kind} to keep`)
+    .action(
+      async (
+        opts: ScheduleOptions & { project?: string },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          `project ${noun} schedule set`,
+          async (ctx) => {
+            const update = scheduleUpdateFromOptions(kind, opts);
+            const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+            const args = { project_id: ws.project_id, schedule: update };
+            if (kind === "snapshots") {
+              await ctx.hub.projects.setProjectSnapshotSchedule(args);
+            } else {
+              await ctx.hub.projects.setProjectBackupSchedule(args);
+            }
+            const stored = await read(ctx, ws.project_id);
+            for (const [field, value] of Object.entries(update)) {
+              const actual =
+                field === "disabled"
+                  ? stored?.disabled === true
+                  : stored?.[field];
+              if (actual !== value) {
+                throw new Error(
+                  `${noun} schedule was not stored as requested: ${field} is ${actual}, expected ${value}`,
+                );
+              }
+            }
+            return scheduleReport({ project_id: ws.project_id, kind, stored });
+          },
+        );
+      },
+    );
+}
+
 export function registerProjectLifecycleCommands(
   project: Command,
   deps: ProjectCommandDeps,
@@ -136,6 +233,77 @@ export function registerProjectLifecycleCommands(
   } = deps;
 
   const backup = project.command("backup").description("project backups");
+  registerScheduleCommands(backup, "backups", deps);
+
+  backup
+    .command("delete")
+    .description("delete project backups (requires fresh auth)")
+    .option("-w, --project <project>", "project id or name")
+    .option(
+      "--id <backup-id>",
+      "backup to delete (repeatable)",
+      (value: string, prev: string[] = []) => [...prev, value],
+    )
+    .option(
+      "--all-except <backup-id>",
+      "delete every backup except this one (repeatable)",
+      (value: string, prev: string[] = []) => [...prev, value],
+    )
+    .option("--all", "delete every backup of the project")
+    .option("--dry-run", "only list the backups that would be deleted")
+    .action(
+      async (
+        opts: {
+          project?: string;
+          id?: string[];
+          allExcept?: string[];
+          all?: boolean;
+          dryRun?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project backup delete", async (ctx) => {
+          const { project, client } = await resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
+          const backups = ((await archiveInfo.getBackups({
+            client,
+            project_id: project.project_id,
+          })) ?? []) as Array<{ id: string }>;
+          const existing = backups.map((b) => b.id);
+          if (opts.all && (opts.id?.length || opts.allExcept?.length)) {
+            throw new Error("use --all alone, without --id or --all-except");
+          }
+          const targets = opts.all
+            ? existing
+            : selectSnapshotsToDelete({
+                existing,
+                names: opts.id,
+                allExcept: opts.allExcept,
+                noun: "backup",
+                nameFlag: "--id",
+              });
+          const deleted: string[] = [];
+          if (!opts.dryRun) {
+            for (const id of targets) {
+              await ctx.hub.projects.deleteBackup({
+                project_id: project.project_id,
+                id,
+              });
+              deleted.push(id);
+            }
+          }
+          return {
+            project_id: project.project_id,
+            dry_run: !!opts.dryRun,
+            deleted: opts.dryRun ? [] : deleted,
+            would_delete: opts.dryRun ? targets : undefined,
+            kept: existing.filter((id) => !targets.includes(id)),
+          };
+        });
+      },
+    );
 
   backup
     .command("create")
@@ -569,6 +737,7 @@ export function registerProjectLifecycleCommands(
     );
 
   const snapshot = project.command("snapshot").description("project snapshots");
+  registerScheduleCommands(snapshot, "snapshots", deps);
 
   snapshot
     .command("create")

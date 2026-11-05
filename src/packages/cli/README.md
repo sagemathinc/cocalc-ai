@@ -694,6 +694,11 @@ messages for the record of what happened and the card notice for current status.
 - `project snapshot create`
 - `project snapshot list`
 - `project snapshot restore`
+- `project snapshot schedule get`
+- `project snapshot schedule set` (fresh auth)
+- `project backup schedule get`
+- `project backup schedule set` (fresh auth)
+- `project backup delete` (fresh auth)
 - `host resolve-connection`
 - `host issue-http-token`
 - `admin search`
