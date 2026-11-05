@@ -38,9 +38,24 @@ import {
   releaseChatSyncDB,
   type ImmerDB,
 } from "@cocalc/chat/server";
+import {
+  LAUNCH_TIMEOUT_TEXT,
+  casLaunchReceipt,
+  isPendingLaunch,
+  slowLaunchReceipt,
+  unknownLaunchReceipt,
+} from "./agent-rpc-slow-receipts";
+import {
+  deleteSlowReceipt,
+  recordSlowReceipt,
+  type SlowReceiptBinding,
+} from "../sqlite/agent-rpc-slow-receipts";
 
 type Prepared = ReturnType<typeof prepareChatSend>;
-type ChatDB = Pick<ImmerDB, "get" | "set" | "commit" | "save" | "save_to_disk">;
+type ChatDB = Pick<
+  ImmerDB,
+  "get" | "get_one" | "set" | "commit" | "save" | "save_to_disk"
+>;
 const logger = getLogger("lite:acp:agent-rpc-service");
 
 // Receipts are visible to chat collaborators. Do not persist arbitrary backend
@@ -51,7 +66,7 @@ function launchFailureSummary(error: unknown): string {
     return "The recipient agent has no payment method recorded for this account. Open the recipient agent and send it one message to choose how its turns are paid.";
   }
   if (/timeout|timed out|deadline/i.test(text)) {
-    return "The agent launch acknowledgment timed out.";
+    return LAUNCH_TIMEOUT_TEXT;
   }
   if (/unauthoriz|permission|forbidden|revoked|access denied/i.test(text)) {
     return "Agent launch authorization failed. Check the recipient and Agent Network permissions.";
@@ -88,6 +103,12 @@ export interface AgentRpcExecutionAdapter {
     accountId: string,
   ): Promise<AgentRpcOutcome>;
   admit(prepared: Prepared): Promise<void>;
+  /** Durable rows for slow launch receipts (agent-rpc-slow-receipts);
+   * without them a timed-out acknowledgment is plain unknown. */
+  slowReceipts?: {
+    record(binding: SlowReceiptBinding): "recorded" | "full" | "conflict";
+    delete(binding: SlowReceiptBinding): void;
+  };
 }
 
 class StartupDeadline extends Error {}
@@ -188,6 +209,80 @@ export function createAgentRpcService(
       }
     },
   );
+  // The acknowledgment timed out after admission started, so the turn may
+  // well be queued: the receipt says "slow to confirm" (no Resubmit) and the
+  // reconcile poll settles it. Its row goes first, so a crash before the
+  // receipt leaves a row for the pending receipt, never a slow receipt
+  // without one. Both receipt writes here only replace this attempt's own
+  // pending receipt: a late accept, a rejection or a newer attempt wins.
+  const persistTimedOutReceipt = async (
+    e: AgentRpcEnvelope,
+    message: Prepared["message"],
+  ) => {
+    const key = {
+      date: new Date(message.date as any),
+      sender_id: message.sender_id,
+      message_id: message.message_id!,
+    };
+    const binding: SlowReceiptBinding = {
+      attempt_id: e.attempt_id,
+      agent_network_id: e.agent_network_id,
+      source: e.source,
+      target: e.target,
+      // The authorized principal, as for the turn itself.
+      account_id: e.account_id,
+      project_id: e.target.project_id,
+      path: e.path,
+      message_date: key.date.toISOString(),
+      sender_id: key.sender_id,
+      message_id: key.message_id,
+    };
+    let recorded = false;
+    if (deps.slowReceipts) {
+      try {
+        // Not "recorded" when full, or when this attempt id has a row
+        // about another message: then the receipt is plain unknown.
+        recorded = deps.slowReceipts.record(binding) === "recorded";
+      } catch {
+        logger.warn("could not record slow agent launch receipt", {
+          attempt_id: e.attempt_id,
+        });
+      }
+    }
+    let result: ReturnType<typeof casLaunchReceipt>;
+    try {
+      result = await deps.withChat(e, async (db) => {
+        const result = casLaunchReceipt(
+          db,
+          key,
+          e,
+          isPendingLaunch,
+          recorded ? slowLaunchReceipt() : unknownLaunchReceipt(),
+        );
+        if (result === "written") {
+          await db.save();
+          await db.save_to_disk();
+        }
+        return result;
+      });
+    } catch {
+      // A row, if recorded, stays: the reconcile poll settles the receipt.
+      logger.warn("could not persist agent launch failure", {
+        attempt_id: e.attempt_id,
+      });
+      return;
+    }
+    if (recorded && result !== "written") {
+      // Settled meanwhile, or the message is gone: nothing to look for.
+      try {
+        deps.slowReceipts!.delete(binding);
+      } catch {
+        logger.warn("could not remove slow agent launch receipt", {
+          attempt_id: e.attempt_id,
+        });
+      }
+    }
+  };
   const execute = async (
     e: AgentRpcEnvelope,
     staged?: StagedAgentAttachments,
@@ -421,7 +516,14 @@ export function createAgentRpcService(
               ? { reason: `${(error as Error)?.message ?? error}` }
               : {}),
           });
-          if (savedMessage) {
+          if (
+            savedMessage?.message_id &&
+            admissionStarted &&
+            !setup &&
+            detail === LAUNCH_TIMEOUT_TEXT
+          ) {
+            await persistTimedOutReceipt(e, savedMessage);
+          } else if (savedMessage) {
             const message = savedMessage;
             try {
               await deps.withChat(e, async (db) => {
@@ -731,6 +833,12 @@ export function createLocalAgentRpcService(
       },
       admit: async (prepared) => {
         await admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 });
+      },
+      slowReceipts: {
+        record: (binding) => recordSlowReceipt(binding),
+        delete: (binding) => {
+          deleteSlowReceipt(binding);
+        },
       },
     },
     attempts,

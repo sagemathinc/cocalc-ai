@@ -6,6 +6,9 @@ interface LaunchReceipt {
   state: "pending" | "accepted" | "unknown" | "rejected";
   updated_at: number;
   error?: string;
+  // The acknowledgment was slow; the host is still looking for the turn and
+  // replaces this receipt when it finds it (or gives up).
+  slow?: boolean;
   // Set when admission refused the turn because this agent cannot pay for it.
   needs?: "codex-connection" | "human-turn";
 }
@@ -43,19 +46,23 @@ export function AgentLaunchStatus({
     return null;
   const pending =
     launch.state === "pending" && now < launch.updated_at + 30_000;
+  // Nothing to resubmit yet: the turn is probably queued.
+  const slow = launch.state === "unknown" && launch.slow === true;
   const needs = launch.state === "rejected" ? launch.needs : undefined;
   return (
     <Alert
-      type={pending ? "info" : "warning"}
+      type={pending || slow ? "info" : "warning"}
       role="status"
       title={
         pending
           ? "Message saved; requesting agent launch"
-          : needs === "codex-connection"
-            ? "Message saved; this agent needs a ChatGPT plan or API key"
-            : needs
-              ? "Message saved; this agent has not been set up yet"
-              : "Message saved; agent launch not confirmed"
+          : slow
+            ? "Message saved; the agent is slow to confirm it"
+            : needs === "codex-connection"
+              ? "Message saved; this agent needs a ChatGPT plan or API key"
+              : needs
+                ? "Message saved; this agent has not been set up yet"
+                : "Message saved; agent launch not confirmed"
       }
       description={
         <div>
@@ -71,6 +78,11 @@ export function AgentLaunchStatus({
               yourself so it has a confirmed payment method, then resubmit. The
               sending agent was told why.
             </p>
+          ) : slow ? (
+            <p>
+              The recipient's host is busy. This notice clears itself once the
+              agent's turn is found.
+            </p>
           ) : (
             !pending && (
               <p>
@@ -79,7 +91,7 @@ export function AgentLaunchStatus({
               </p>
             )
           )}
-          {!pending && !needs && (
+          {!pending && !slow && !needs && (
             <p>
               A missing acknowledgment does not prove the turn failed.
               Resubmission checks the existing job first.
@@ -92,7 +104,7 @@ export function AgentLaunchStatus({
               </Button>
             </Space>
           )}
-          {!pending && onResubmit && (
+          {!pending && !slow && onResubmit && (
             <Button
               loading={busy}
               disabled={busy}
