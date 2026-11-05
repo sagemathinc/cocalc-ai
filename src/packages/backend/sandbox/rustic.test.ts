@@ -140,12 +140,15 @@ password = ""
   });
 
   it("reports any other rustic failure as the real error, not a missing snapshot", async () => {
-    const lookup = getSnapshot({
-      id: latestSnapshotId,
-      repo: join(home, "no-such-repo"),
-      timeout: 30_000,
-    });
-    await expect(lookup).rejects.toThrow(/lookup .* failed \(exit [1-9]/);
+    const repo = join(home, "no-such-repo");
+    const lookup = getSnapshot({ id: latestSnapshotId, repo, timeout: 30_000 });
+    // rustic's stderr names the repo path; the thrown message must not
+    await expect(lookup).rejects.toThrow(
+      new RegExp(
+        `^rustic snapshot lookup for ${latestSnapshotId} failed \\(exit [1-9][0-9]*\\)$`,
+      ),
+    );
+    await expect(lookup).rejects.not.toThrow(repo);
     await expect(lookup).rejects.not.toThrow(/no snapshot with id/);
   });
 

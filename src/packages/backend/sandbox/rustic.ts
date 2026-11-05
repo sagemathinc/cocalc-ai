@@ -539,9 +539,14 @@ export async function getSnapshot({
     if (isMissingSnapshotFileError(text, id)) {
       throw Error(`no snapshot with id ${id}`);
     }
-    throw Error(
-      `rustic snapshot lookup for ${id} failed (exit ${code}): ${rusticErrorMessage(text)}`,
-    );
+    // rustic's message can name host paths, the repo and its endpoint: log it
+    // here, and give callers (which may be project-facing) only a fixed text.
+    logger.warn("rustic snapshot lookup failed", {
+      id,
+      code,
+      message: rusticErrorMessage(text),
+    });
+    throw Error(`rustic snapshot lookup for ${id} failed (exit ${code})`);
   }
   if (!stdout) {
     throw Error(`no snapshot with id ${id}`);
