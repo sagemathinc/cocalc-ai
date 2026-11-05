@@ -27,6 +27,22 @@ export interface SqlStatsReport {
 }
 
 export const OTHER_SQL = "(other)";
+// Every db.exec, whatever its text.
+export const EXEC_SQL = "(exec)";
+
+/**
+ * The key a statement's time is counted under: a prepared statement's SQL
+ * (with ? placeholders; callers interpolate only identifiers), and one fixed
+ * key for every exec, whose text can hold literals such as a file name.
+ */
+export function statementStatsKey(
+  op: "exec" | "run" | "all" | "get",
+  sql: string,
+): string {
+  return op === "exec"
+    ? EXEC_SQL
+    : sql.replace(/\s+/g, " ").trim().slice(0, 200);
+}
 
 export class SqlStatementStats {
   private stats = new Map<string, SqlStatementStat>();

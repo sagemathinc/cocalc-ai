@@ -8,7 +8,7 @@ import {
   deferWalCheckpoints,
   forgetWalCheckpoints,
 } from "@cocalc/backend/sqlite-checkpoint";
-import { SqlStatementStats } from "./acp-sql-stats";
+import { SqlStatementStats, statementStatsKey } from "./acp-sql-stats";
 
 type Statement = {
   run: (...args: any[]) => any;
@@ -41,7 +41,16 @@ const ACP_SQLITE_STATS_MS = Math.max(
   Number(process.env.COCALC_ACP_SQLITE_STATS_MS ?? 60_000) || 0,
 );
 const sqlStats = new SqlStatementStats(
-  { windowMs: ACP_SQLITE_STATS_MS, minTotalMs: 1_000, maxKeys: 200, top: 5 },
+  {
+    windowMs: ACP_SQLITE_STATS_MS,
+    // A window is reported only if it spent this long in sqlite.
+    minTotalMs: Math.max(
+      0,
+      Number(process.env.COCALC_ACP_SQLITE_STATS_MIN_MS ?? 1_000) || 0,
+    ),
+    maxKeys: 200,
+    top: 5,
+  },
   performance.now(),
 );
 
@@ -183,7 +192,7 @@ function logSlowOperationIfNeeded({
     logSlowOperation({ filename, op, sql, elapsedMs });
   }
   if (sqlStats.enabled) {
-    const report = sqlStats.record(summarizeSql(sql), elapsedMs, now);
+    const report = sqlStats.record(statementStatsKey(op, sql), elapsedMs, now);
     if (report) {
       logger.warn("acp sqlite time by statement", {
         ...report,
