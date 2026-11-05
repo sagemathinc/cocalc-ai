@@ -435,6 +435,112 @@ describe("course managed project reconciliation", () => {
     expect(centralLogMock).not.toHaveBeenCalled();
   });
 
+  function boundStudentMissingQuery(consentRows: unknown[]) {
+    return jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT users, course")) {
+        const { [STUDENT]: _student, ...users } = matchingState().users;
+        return {
+          rows: [
+            matchingState({
+              users,
+              course: {
+                datastore: false,
+                path: "classes/main.course",
+                project_id: COURSE,
+                type: "student",
+                account_id: STUDENT,
+              },
+            }),
+          ],
+        };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return { rows: consentRows };
+      }
+      return { rows: [] };
+    });
+  }
+
+  function boundStudentRequest() {
+    return request({
+      course: {
+        type: "student",
+        project_id: COURSE,
+        path: "classes/main.course",
+        datastore: false,
+        account_id: STUDENT,
+      },
+    });
+  }
+
+  it("restores a bound student who accepted a course invite but is missing", async () => {
+    queryMock = boundStudentMissingQuery([{ "?column?": 1 }]);
+    const { reconcileCourseManagedProjectLocal } =
+      await import("./reconcile-managed-project");
+
+    await reconcileCourseManagedProjectLocal(boundStudentRequest());
+
+    const consent = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("FROM project_collab_invites i"),
+    );
+    expect(consent[1]).toEqual([
+      PROJECT,
+      STUDENT,
+      "project_collaborator_removed",
+    ]);
+    const update = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("UPDATE projects"),
+    );
+    const users = JSON.parse(update[1][1]);
+    expect(users[STUDENT]).toEqual({ group: "collaborator" });
+    expect(reconcileAuditDetails().restored_accepted_student_account_id).toBe(
+      STUDENT,
+    );
+    expect(inviteCollaboratorMock).not.toHaveBeenCalled();
+    expect(syncProjectUsersOnHostMock).toHaveBeenCalledWith({
+      project_id: PROJECT,
+    });
+  });
+
+  it("invites a missing bound student without a standing acceptance", async () => {
+    // No accepted invite, or a deliberate removal after accepting it.
+    queryMock = boundStudentMissingQuery([]);
+    const { reconcileCourseManagedProjectLocal } =
+      await import("./reconcile-managed-project");
+
+    await reconcileCourseManagedProjectLocal(boundStudentRequest());
+
+    expect(
+      queryMock.mock.calls.some(([sql]) => sql.includes("UPDATE projects")),
+    ).toBe(false);
+    expect(inviteCollaboratorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opts: expect.objectContaining({
+          project_id: PROJECT,
+          account_id: STUDENT,
+          invite_scope: "course_student",
+        }),
+      }),
+    );
+  });
+
+  it("does not restore access for a deleted student", async () => {
+    queryMock = boundStudentMissingQuery([{ "?column?": 1 }]);
+    const { reconcileCourseManagedProjectLocal } =
+      await import("./reconcile-managed-project");
+
+    await reconcileCourseManagedProjectLocal(
+      request({ desired_account_ids: [], student_deleted: true }),
+    );
+
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        sql.includes("FROM project_collab_invites i"),
+      ),
+    ).toBe(false);
+    expect(inviteCollaboratorMock).not.toHaveBeenCalled();
+  });
+
   it("rejects assigning a course manager as a student", async () => {
     const { reconcileCourseManagedProjectLocal } =
       await import("./reconcile-managed-project");
