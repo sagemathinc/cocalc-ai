@@ -16,6 +16,9 @@ const runningChangeCache = new TTL<string, true>({
 const pendingProjectTouches = new Set<string>();
 const pendingProjectTouchAccounts = new Map<string, Set<string>>();
 const pendingProjectChanges = new Map<string, number | null>();
+// Agent-turn activity (agent-turn-activity.ts): last_edited only, and
+// whether to also queue the project's summary event.
+const pendingActivityTouches = new Map<string, boolean>();
 const runningGeneration = new Map<string, number>();
 const projectChangeReportedListeners = new Set<(project_id: string) => void>();
 
@@ -53,6 +56,17 @@ export async function touchProjectLastEdited(
   }
 }
 
+/** A running agent turn: moves last_edited only (see hosts.touchProjectActivity). */
+export function touchProjectActivity(
+  project_id: string,
+  opts: { summary?: boolean } = {},
+): void {
+  pendingActivityTouches.set(
+    project_id,
+    pendingActivityTouches.get(project_id) === true || opts.summary === true,
+  );
+}
+
 export async function reportPendingProjectTouches(): Promise<void> {
   const client = getMasterConatClient();
   const host_id = getLocalHostId();
@@ -60,9 +74,11 @@ export async function reportPendingProjectTouches(): Promise<void> {
     logger.debug("project touch flush skipped (missing client/host)", {
       pending: pendingProjectTouches.size,
       pendingChanges: pendingProjectChanges.size,
+      pendingActivity: pendingActivityTouches.size,
     });
     return;
   }
+  const touched = new Set<string>();
   for (const project_id of Array.from(pendingProjectTouches)) {
     const account_ids = Array.from(
       pendingProjectTouchAccounts.get(project_id) ?? [],
@@ -86,6 +102,7 @@ export async function reportPendingProjectTouches(): Promise<void> {
       });
       pendingProjectTouches.delete(project_id);
       pendingProjectTouchAccounts.delete(project_id);
+      touched.add(project_id);
     } catch (err) {
       recordProjectHostRpcTraffic({
         channel: "hub-api",
@@ -95,6 +112,47 @@ export async function reportPendingProjectTouches(): Promise<void> {
         duration_ms: Date.now() - started,
       });
       logger.debug("touchProjectLastEdited flush failed", {
+        project_id,
+        err: `${err}`,
+      });
+    }
+  }
+  for (const [project_id, summary] of Array.from(pendingActivityTouches)) {
+    // A real touch for the project wins: it moves last_edited too and always
+    // queues the summary event.
+    if (touched.has(project_id) || pendingProjectTouches.has(project_id)) {
+      pendingActivityTouches.delete(project_id);
+      continue;
+    }
+    const request = { project_id, summary };
+    const started = Date.now();
+    try {
+      await callHub({
+        client,
+        host_id,
+        name: "hosts.touchProjectActivity",
+        args: [request],
+        timeout: 5000,
+      });
+      recordProjectHostRpcTraffic({
+        channel: "hub-api",
+        method: "hosts.touchProjectActivity",
+        args: [request],
+        duration_ms: Date.now() - started,
+      });
+      // Keep a summary that was requested while this one was in flight.
+      if (pendingActivityTouches.get(project_id) === summary) {
+        pendingActivityTouches.delete(project_id);
+      }
+    } catch (err) {
+      recordProjectHostRpcTraffic({
+        channel: "hub-api",
+        method: "hosts.touchProjectActivity",
+        args: [request],
+        error: true,
+        duration_ms: Date.now() - started,
+      });
+      logger.debug("touchProjectActivity flush failed", {
         project_id,
         err: `${err}`,
       });

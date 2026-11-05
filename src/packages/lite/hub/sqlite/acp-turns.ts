@@ -315,6 +315,58 @@ export function countRunningAcpTurnLeasesForWorker(
   return Number(row?.count ?? 0) || 0;
 }
 
+/**
+ * The leases a project-host reads to protect projects with a running agent
+ * turn: running leases whose heartbeat is in [heartbeat_since, now], and,
+ * when ended_after is given, leases that ended in (ended_after, now], oldest
+ * first and at most ended_limit of them (ended_truncated says the limit was
+ * reached, so the caller advances its cursor only to the last row).
+ */
+export function listAcpTurnLeasesForProtection({
+  now,
+  heartbeat_since,
+  ended_after,
+  ended_limit = 5_000,
+}: {
+  now: number;
+  heartbeat_since: number;
+  ended_after?: number;
+  ended_limit?: number;
+}): {
+  running: AcpTurnLeaseRow[];
+  ended: AcpTurnLeaseRow[];
+  ended_truncated: boolean;
+} {
+  ensureInit();
+  const db = getAcpDatabase();
+  const running = db
+    .prepare(
+      selectLeaseByWhere(
+        `WHERE state = 'running'
+           AND heartbeat_at >= ?
+           AND heartbeat_at <= ?`,
+      ),
+    )
+    .all(heartbeat_since, now) as AcpTurnLeaseRow[];
+  if (ended_after == null) {
+    return { running, ended: [], ended_truncated: false };
+  }
+  const limit = Math.max(1, Math.floor(ended_limit));
+  const ended = db
+    .prepare(
+      selectLeaseByWhere(
+        `WHERE state IN ('completed', 'error', 'aborted')
+           AND ended_at IS NOT NULL
+           AND ended_at > ?
+           AND ended_at <= ?
+         ORDER BY ended_at ASC
+         LIMIT ?`,
+      ),
+    )
+    .all(ended_after, now, limit) as AcpTurnLeaseRow[];
+  return { running, ended, ended_truncated: ended.length >= limit };
+}
+
 export function listRecentTerminalAcpTurnLeases({
   sinceMs,
   limit,

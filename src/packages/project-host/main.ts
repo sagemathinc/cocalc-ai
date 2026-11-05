@@ -157,6 +157,7 @@ import {
   startBrowserIdleStopMaintenance,
   startBrowserRuntimePresenceService,
 } from "./browser-runtime";
+import { startAgentTurnActivity } from "./agent-turn-activity";
 import {
   assertLocalBindOrInsecure,
   assertSecureUrlOrLocal,
@@ -1555,6 +1556,8 @@ export async function main(
       });
     },
   });
+  // Running agent turns keep their projects' last_edited current.
+  const agentTurnActivity = startAgentTurnActivity();
   startExamWatchdog();
   const stopRawNetworkEgressLoop = startManagedRawNetworkEgressLoop({
     runnerApi,
@@ -1746,6 +1749,7 @@ export async function main(
     stopStoppedVolumePreparationMaintenance();
     stopBrowserRuntimePresenceService();
     stopBrowserIdleStopMaintenance();
+    agentTurnActivity.stop();
     stopEventLoopStallMonitor?.();
     stopGcpPreemptionWatcher();
     stopConatRevocationKickLoop?.();

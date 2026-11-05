@@ -2187,6 +2187,63 @@ export async function touchProject({
   });
 }
 
+// An agent turn is running on the project's host. Unlike touchProject this
+// moves last_edited only: a running turn is activity, not a content change
+// (last_changed drives backups) and not any account's own activity
+// (last_active). With summary, the project's summary event is queued in the
+// same transaction, so collaborators' project lists (fed by the outbox, not
+// by this table) get the new last_edited; the host sends it at the start and
+// end of a turn and at most every 30 minutes in between.
+export async function touchProjectActivity({
+  host_id,
+  project_id,
+  summary,
+}: {
+  host_id?: string;
+  project_id: string;
+  summary?: boolean;
+}): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!isValidUUID(project_id)) {
+    throw new Error("project_id must be a valid uuid");
+  }
+  // Routed to the project's owning bay (see @cocalc/conat/hub/api/routes).
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rowCount } = await client.query(
+      `UPDATE projects
+          SET last_edited=NOW()
+        WHERE project_id=$1
+          AND host_id=$2
+          AND deleted IS NOT true`,
+      [project_id, host_id],
+    );
+    if (rowCount && summary === true) {
+      await appendProjectOutboxEventForProject({
+        db: client,
+        event_type: "project.summary_changed",
+        project_id,
+        default_bay_id: getConfiguredBayId(),
+      });
+    }
+    await client.query("COMMIT");
+    if (!rowCount) {
+      logger.debug("touchProjectActivity ignored (host mismatch)", {
+        host_id,
+        project_id,
+      });
+    }
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function markProjectChanged({
   host_id,
   project_id,
