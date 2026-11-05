@@ -1,4 +1,5 @@
 import {
+  CLAUDE_USAGE_HISTORY_METADATA_KEY,
   CLAUDE_POOL_EXCLUDED_METADATA_KEY,
   CLAUDE_POOL_LIMITED_METADATA_KEY,
   CLAUDE_POOL_RESERVATIONS_METADATA_KEY,
@@ -158,6 +159,41 @@ describe("aiSubscriptionStatus", () => {
     expect(status.claude.auto.members).toBe(1);
     expect(status.claude.auto.weekly_limits_left).toBe(0.5);
     expect(status.codex.subscriptions).toEqual([]);
+  });
+
+  it("reports how fast each subscription's week is being used", () => {
+    const resets = s(now + 72 * HOUR);
+    // 1% every 30 minutes for the last 15 hours: 48% a day.
+    const history = Array.from({ length: 31 }, (_, i) => ({
+      at: now - (30 - i) * 30 * 60_000,
+      week: 0.2 + i * 0.01,
+      resets_at: resets,
+    }));
+    const current = usage(0.1, 0.5, now);
+    current.windows.seven_day.resets_at = resets;
+    const [a, b] = aiSubscriptionStatus(
+      [
+        claude("a", {
+          [CLAUDE_USAGE_METADATA_KEY]: current,
+          [CLAUDE_USAGE_HISTORY_METADATA_KEY]: history,
+        }),
+        claude("b", { [CLAUDE_USAGE_METADATA_KEY]: usage(0.1, 0.5) }),
+      ],
+      now,
+    ).claude.subscriptions;
+    expect(a.week_percent_per_day).toBeCloseTo(48, 0);
+    expect(a.week_history!.length).toBeLessThanOrEqual(12);
+    // Oldest first, ending with the newest reading.
+    expect(a.week_history!.at(-1)).toEqual({
+      at: new Date(now).toISOString(),
+      used_percent: 50,
+      resets_at: new Date(resets * 1000).toISOString(),
+    });
+    const times = a.week_history!.map((r) => Date.parse(r.at));
+    expect([...times].sort((x, y) => x - y)).toEqual(times);
+    // Without readings over time, no rate is claimed.
+    expect(b.week_percent_per_day).toBeUndefined();
+    expect(b.week_history).toBeUndefined();
   });
 
   it("says when the pool has room again", () => {

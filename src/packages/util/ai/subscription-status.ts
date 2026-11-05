@@ -16,11 +16,13 @@ import {
   claudePoolAvailableAt,
   claudePoolForecast,
   claudePoolMemberFromMetadata,
+  claudePoolRecentRate,
   claudePoolWindows,
   claudePoolReservedAmount,
   claudeTurnCostEstimate,
   parseClaudePoolReservations,
   parseTurnCostSamples,
+  type ClaudePoolMember,
 } from "./claude-pool";
 import {
   ANTHROPIC_API_PROVIDER,
@@ -60,6 +62,12 @@ export interface ClaudeSubscriptionStatus {
   limited_until?: string;
   /** Turns running on it now. */
   running_turns: number;
+  /** Its weekly limit used per day recently (percent), from the readings
+   * below; absent until they span a couple of hours. */
+  week_percent_per_day?: number;
+  /** Recent weekly readings (up to 48 hours, at most a dozen, oldest
+   * first): how it has been used, not only where it is. */
+  week_history?: { at: string; used_percent: number; resets_at: string }[];
   /** It could take a large turn now. */
   available_now: boolean;
   /** When it could, if not now (ISO). */
@@ -121,6 +129,33 @@ const text = (value: unknown, max = 200) =>
     : undefined;
 
 const percent = (fraction: number) => Math.round(fraction * 1000) / 10;
+
+const MAX_HISTORY_POINTS = 12;
+
+function weekHistory(
+  member: ClaudePoolMember,
+  now: number,
+): Pick<ClaudeSubscriptionStatus, "week_percent_per_day" | "week_history"> {
+  const readings = member.history ?? [];
+  const rate = claudePoolRecentRate([member], now);
+  // Evenly thinned, always keeping the newest.
+  const step = Math.ceil(readings.length / MAX_HISTORY_POINTS);
+  const kept = readings.filter(
+    (_, i) => (readings.length - 1 - i) % step === 0,
+  );
+  return {
+    ...(rate ? { week_percent_per_day: percent(rate.ratePerHour * 24) } : {}),
+    ...(kept.length
+      ? {
+          week_history: kept.map((r) => ({
+            at: iso(r.at)!,
+            used_percent: percent(r.week),
+            resets_at: iso(r.resets_at * 1000)!,
+          })),
+        }
+      : {}),
+  };
+}
 
 export function aiSubscriptionStatus(
   rows: AiSubscriptionCredentialRow[],
@@ -190,6 +225,7 @@ export function aiSubscriptionStatus(
       ...(week ? { week } : {}),
       ...(m.limited_until ? { limited_until: iso(m.limited_until) } : {}),
       running_turns: running,
+      ...weekHistory(m, now),
       available_now: availableAt <= now,
       ...(availableAt > now ? { available_at: iso(availableAt) } : {}),
       ...(isoOf(row.last_used) ? { last_used: isoOf(row.last_used) } : {}),

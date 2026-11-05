@@ -32,9 +32,12 @@ export const EMPTY_API_KEY_SCOPE: ApiKeyScope = {
   projects: [],
 };
 
+// soloProject: for an agent's key, only while the agent's project has no
+// other collaborators (server/api/solo-project-capabilities.ts).
 const ACCOUNT_OPTIONS: Array<{
   capability: ApiKeyCapability;
   label: string;
+  soloProject?: boolean;
 }> = [
   { capability: "account:read", label: "Read basic account information" },
   { capability: "project:list", label: "List my projects" },
@@ -46,14 +49,17 @@ const ACCOUNT_OPTIONS: Array<{
   {
     capability: "notifications:manage",
     label: "Read and manage my notifications",
+    soloProject: true,
   },
   {
     capability: "usage:read",
     label: "Read my membership usage and limits",
+    soloProject: true,
   },
   {
     capability: "ai-subscriptions:read",
     label: "Read the usage of my AI subscriptions (Claude, Codex)",
+    soloProject: true,
   },
 ];
 
@@ -138,12 +144,15 @@ export function ApiKeyScopeEditor({
   projectTitle,
   excludeProjectIds = [],
   disabled = false,
+  agentKey = false,
 }: {
   value: ApiKeyScope;
   onChange: (scope: ApiKeyScope) => void;
   projectTitle?: (project_id: string) => string | undefined;
   excludeProjectIds?: string[];
   disabled?: boolean;
+  /** An agent's CoCalc access: say which privileges need a solo project. */
+  agentKey?: boolean;
 }) {
   const updateGrant = (project_id: string, next: ApiKeyProjectGrant) => {
     onChange({
@@ -159,7 +168,7 @@ export function ApiKeyScopeEditor({
       <div>
         <Text strong>Account privileges</Text>
         <div>
-          {ACCOUNT_OPTIONS.map(({ capability, label }) => (
+          {ACCOUNT_OPTIONS.map(({ capability, label, soloProject }) => (
             <div key={capability}>
               <Checkbox
                 disabled={disabled}
@@ -174,6 +183,12 @@ export function ApiKeyScopeEditor({
                 }
               >
                 {label}
+                {agentKey && soloProject && (
+                  <Text type="secondary">
+                    {" "}
+                    (only while this agent's project has no other collaborators)
+                  </Text>
+                )}
               </Checkbox>
             </div>
           ))}

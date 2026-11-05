@@ -280,6 +280,7 @@ export function CocalcConnector({
                 value={scope}
                 onChange={setScope}
                 excludeProjectIds={[agent.endpoint.project_id]}
+                agentKey
               />
               <Alert
                 type="warning"
