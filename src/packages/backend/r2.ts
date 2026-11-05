@@ -26,7 +26,7 @@ export interface R2ObjectStoreAuth {
   region?: string;
 }
 
-export type R2RequestMethod = "GET" | "PUT" | "POST" | "DELETE";
+export type R2RequestMethod = "GET" | "HEAD" | "PUT" | "POST" | "DELETE";
 
 type R2QueryValue = string | number | boolean | undefined;
 
@@ -295,6 +295,9 @@ async function sendRequest({
           },
         );
         req.on("error", reject);
+        // Keepalive probes keep a quiet connection (a server-side copy) alive
+        // through NAT and idle timeouts.
+        req.on("socket", (socket) => socket.setKeepAlive(true, 15_000));
         if (body != null) {
           req.end(body);
           return;
@@ -621,28 +624,186 @@ export async function getR2ObjectBuffer({
   return response.body;
 }
 
+/** Size and ETag of an object, or undefined if it does not exist. */
+export async function headR2Object({
+  auth,
+  key,
+}: {
+  auth: R2ObjectStoreAuth;
+  key: string;
+}): Promise<{ size: number; etag?: string } | undefined> {
+  const response = await sendR2Request({
+    auth,
+    method: "HEAD",
+    key,
+    payloadSha256: sha256Hex(""),
+    label: `R2 HEAD ${key}`,
+  });
+  if (response.statusCode === 404) {
+    return undefined;
+  }
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw createHttpStatusError(response.statusCode, response.body);
+  }
+  const size = Number(headerValue(response.headers["content-length"]));
+  if (!Number.isSafeInteger(size) || size < 0) {
+    throw new Error(`R2 HEAD ${key} returned no valid content-length`);
+  }
+  return { size, etag: headerValue(response.headers.etag) };
+}
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+// A single CopyObject of a large object (the ~330 MB tools tarballs) can keep
+// the connection silent until R2 finishes the copy, and it timed out
+// (ETIMEDOUT) on every attempt in the r23 release. Larger objects are copied
+// in parts (UploadPartCopy), so each request is short.
+export const R2_COPY_PART_SIZE_BYTES = 64 * 1024 * 1024;
+
 export async function copyR2Object({
   auth,
   sourceKey,
   destKey,
+  partSizeBytes = R2_COPY_PART_SIZE_BYTES,
 }: {
   auth: R2ObjectStoreAuth;
   sourceKey: string;
   destKey: string;
+  partSizeBytes?: number;
 }): Promise<void> {
-  const response = await sendR2Request({
+  const source = await headR2Object({ auth, key: sourceKey });
+  if (source == null) {
+    throw new Error(`R2 COPY source does not exist: ${sourceKey}`);
+  }
+  if (source.size > partSizeBytes) {
+    await copyR2ObjectInParts({
+      auth,
+      sourceKey,
+      destKey,
+      size: source.size,
+      partSizeBytes,
+    });
+  } else {
+    const response = await sendR2Request({
+      auth,
+      method: "PUT",
+      key: destKey,
+      payload: "",
+      extraHeaders: {
+        "x-amz-copy-source": canonicalizePath(auth.bucket, sourceKey),
+        "content-length": 0,
+      },
+      label: `R2 COPY ${sourceKey} -> ${destKey}`,
+    });
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw createHttpStatusError(response.statusCode, response.body);
+    }
+  }
+  const dest = await headR2Object({ auth, key: destKey });
+  if (dest?.size !== source.size) {
+    throw new Error(
+      `R2 COPY ${sourceKey} -> ${destKey}: destination size ${dest?.size} != source size ${source.size}`,
+    );
+  }
+}
+
+async function copyR2ObjectInParts({
+  auth,
+  sourceKey,
+  destKey,
+  size,
+  partSizeBytes,
+}: {
+  auth: R2ObjectStoreAuth;
+  sourceKey: string;
+  destKey: string;
+  size: number;
+  partSizeBytes: number;
+}): Promise<void> {
+  const label = `R2 COPY (parts) ${sourceKey} -> ${destKey}`;
+  const begin = await sendR2Request({
     auth,
-    method: "PUT",
+    method: "POST",
     key: destKey,
+    query: { uploads: "" },
     payload: "",
-    extraHeaders: {
-      "x-amz-copy-source": canonicalizePath(auth.bucket, sourceKey),
-      "content-length": 0,
-    },
-    label: `R2 COPY ${sourceKey} -> ${destKey}`,
+    extraHeaders: { "content-length": 0 },
+    label: `${label}: begin`,
   });
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw createHttpStatusError(response.statusCode, response.body);
+  if (begin.statusCode < 200 || begin.statusCode >= 300) {
+    throw createHttpStatusError(begin.statusCode, begin.body);
+  }
+  const uploadId = extractXmlTag(begin.body.toString("utf8"), "UploadId");
+  if (!uploadId) {
+    throw new Error(`${label}: the begin response has no UploadId`);
+  }
+  try {
+    const parts: { partNumber: number; etag: string }[] = [];
+    for (let start = 0; start < size; start += partSizeBytes) {
+      const partNumber = parts.length + 1;
+      const end = Math.min(start + partSizeBytes, size) - 1;
+      const response = await sendR2Request({
+        auth,
+        method: "PUT",
+        key: destKey,
+        query: { partNumber, uploadId },
+        payload: "",
+        extraHeaders: {
+          "x-amz-copy-source": canonicalizePath(auth.bucket, sourceKey),
+          "x-amz-copy-source-range": `bytes=${start}-${end}`,
+          "content-length": 0,
+        },
+        label: `${label}: part ${partNumber}`,
+      });
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw createHttpStatusError(response.statusCode, response.body);
+      }
+      const etag = extractXmlTag(response.body.toString("utf8"), "ETag");
+      if (!etag) {
+        throw new Error(`${label}: part ${partNumber} returned no ETag`);
+      }
+      parts.push({ partNumber, etag: etag.replace(/^"+|"+$/g, "") });
+    }
+    const xml = [
+      "<CompleteMultipartUpload>",
+      ...parts.map(
+        ({ partNumber, etag }) =>
+          `<Part><PartNumber>${partNumber}</PartNumber><ETag>"${etag}"</ETag></Part>`,
+      ),
+      "</CompleteMultipartUpload>",
+    ].join("");
+    const complete = await sendR2Request({
+      auth,
+      method: "POST",
+      key: destKey,
+      query: { uploadId },
+      payload: xml,
+      extraHeaders: {
+        "content-type": "application/xml",
+        "content-length": Buffer.byteLength(xml),
+      },
+      label: `${label}: complete`,
+    });
+    // S3 can report a failed completion as 200 with an <Error> body.
+    if (
+      complete.statusCode < 200 ||
+      complete.statusCode >= 300 ||
+      complete.body.toString("utf8").includes("<Error>")
+    ) {
+      throw createHttpStatusError(complete.statusCode, complete.body);
+    }
+  } catch (err) {
+    await sendR2Request({
+      auth,
+      method: "DELETE",
+      key: destKey,
+      query: { uploadId },
+      payload: "",
+      label: `${label}: abort`,
+    }).catch(() => undefined);
+    throw err;
   }
 }
 
