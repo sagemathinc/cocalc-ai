@@ -126,6 +126,12 @@ password = ""
     ).resolves.toBe("my-host");
   });
 
+  it("reports a timed-out snapshot lookup as a timeout, not a missing snapshot", async () => {
+    await expect(
+      getSnapshot({ id: latestSnapshotId, repo: options.repo, timeout: 1 }),
+    ).rejects.toThrow(/timed out/);
+  });
+
   it("can restore legacy project-migration snapshots without the local cache", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     await writeFile(join(home, "legacy-migration.txt"), "legacy");

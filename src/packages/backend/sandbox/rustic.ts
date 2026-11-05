@@ -189,7 +189,7 @@ export default async function rustic(
         throw Error("safeAbsPath must be specified when restoring");
       }
       const snapshot = args.slice(-2)[0]; // <SNAPSHOT[:PATH]>
-      await assertValidSnapshot({ snapshot, host, repo });
+      await assertValidSnapshot({ snapshot, host, repo, timeout });
       const destination = await safeAbsPath(args.slice(-1)[0]); // <destination>
       const options = parseAndValidateOptions(
         args.slice(1, -2),
@@ -205,7 +205,7 @@ export default async function rustic(
       ) {
         // Delete one or more exact snapshot ids.
         for (const snapshot of snapshots) {
-          await assertValidSnapshot({ snapshot, host, repo });
+          await assertValidSnapshot({ snapshot, host, repo, timeout });
         }
         return await runWithTomlInitFallback(snapshots);
       }
@@ -403,13 +403,25 @@ function isMissingTomlRepositoryError(err: unknown): boolean {
   );
 }
 
-async function assertValidSnapshot({ snapshot, host, repo }) {
+async function assertValidSnapshot({
+  snapshot,
+  host,
+  repo,
+  timeout,
+}: {
+  snapshot: string;
+  host: string;
+  repo: string;
+  timeout?: number;
+}) {
   const id = snapshot.split(":")[0];
   if (id == "latest") {
     // possible race condition so do not allow
     throw Error("latest is not allowed");
   }
-  const actualHost = await getHost({ id, repo });
+  // The lookup gets the caller's timeout: on a large repo it can take far
+  // longer than exec's 3 s default (hard-delete purges failed that way).
+  const actualHost = await getHost({ id, repo, timeout });
   const allowedHosts = allowedSnapshotHosts(host);
   if (!allowedHosts.includes(actualHost)) {
     throw Error(
@@ -485,11 +497,18 @@ export async function getSnapshot({
   timeout?: number;
 }) {
   const common = getCommonArgs(repo);
-  const { stdout } = await exec({
+  const { stdout, truncated } = await exec({
     cmd: rusticPath,
     safety: [...common, "snapshots", "--json", id],
     timeout,
   });
+  // A lookup killed by the timeout (or the output cap) is not "no snapshot":
+  // callers such as the hard-delete purge must not mistake it for one.
+  if (truncated) {
+    throw Error(
+      `rustic snapshot lookup for ${id} timed out or its output was too large`,
+    );
+  }
   if (!stdout) {
     throw Error(`no snapshot with id ${id}`);
   }
