@@ -273,6 +273,17 @@ describe("copyR2Object", () => {
     expect(calls.some((c) => c.query.has("uploads"))).toBe(false);
   });
 
+  it.each([10, 5])(
+    "refuses partSizeBytes %p above the maximum part size before any request",
+    async (partSizeBytes) => {
+      objects.set("src/big", Buffer.from("0123456789"));
+      R2_COPY_LIMITS.maxPartSizeBytes = 4;
+      await expect(copyBig(partSizeBytes)).rejects.toThrow(/above the maximum/);
+      expect(calls).toHaveLength(0);
+      expect(objects.has("dst/big")).toBe(false);
+    },
+  );
+
   it("keeps the production limits valid for R2", () => {
     expect(limits).toEqual({
       minPartSizeBytes: 5 * 1024 * 1024,

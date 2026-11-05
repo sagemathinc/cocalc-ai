@@ -699,6 +699,13 @@ export async function copyR2Object({
       `R2 COPY: partSizeBytes must be a positive integer, not ${partSizeBytes}`,
     );
   }
+  // Objects up to partSizeBytes take a single CopyObject, so it must not be
+  // above what one part (and one CopyObject) may be.
+  if (partSizeBytes > R2_COPY_LIMITS.maxPartSizeBytes) {
+    throw new Error(
+      `R2 COPY: partSizeBytes ${partSizeBytes} is above the maximum ${R2_COPY_LIMITS.maxPartSizeBytes}`,
+    );
+  }
   const source = await headR2Object({ auth, key: sourceKey });
   if (source == null) {
     throw new Error(`R2 COPY source does not exist: ${sourceKey}`);
