@@ -474,7 +474,13 @@ export function ChatRoomComposer({
     }),
   });
   const pendingPreparation = useRef<
-    | { reference?: AgentMentionReference; value?: string; immediate?: boolean }
+    | {
+        reference?: AgentMentionReference;
+        value?: string;
+        // What was typed, before its names were bound (resolveTypedNames).
+        typed?: string;
+        immediate?: boolean;
+      }
     | undefined
   >(undefined);
   const [nameAfterPreparation, setNameAfterPreparation] = useState(false);
@@ -556,7 +562,11 @@ export function ChatRoomComposer({
     setNameAfterPreparation(false);
     if (pending.reference) agentMentions.context.onSelect(pending.reference);
     else if (pending.value)
-      void sendChecked(pending.value, pending.immediate === true);
+      void sendChecked(
+        pending.value,
+        pending.immediate === true,
+        pending.typed ?? pending.value,
+      );
   }, [
     selectedThread?.key,
     agentMentions.context.onSelect,
@@ -584,7 +594,7 @@ export function ChatRoomComposer({
       if (!typed || !typed.trim()) return;
       const effective = resolveTypedNames(typed);
       if (needsAgentThread(effective)) {
-        void prepareAgentThread({ value: effective });
+        void prepareAgentThread({ value: effective, typed });
         return;
       }
       void sendChecked(effective, false, typed);
@@ -620,7 +630,7 @@ export function ChatRoomComposer({
       if (!typed || !typed.trim()) return;
       const effective = resolveTypedNames(typed);
       if (needsAgentThread(effective)) {
-        void prepareAgentThread({ value: effective, immediate: true });
+        void prepareAgentThread({ value: effective, typed, immediate: true });
         return;
       }
       void sendChecked(effective, true, typed);

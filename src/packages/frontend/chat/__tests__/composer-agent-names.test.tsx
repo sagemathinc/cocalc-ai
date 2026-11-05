@@ -153,34 +153,37 @@ function agent(name: string, n: number) {
   };
 }
 
-function renderComposer(draft: string) {
+function renderComposer(
+  draft: string,
+  overrides: Partial<React.ComponentProps<typeof ChatRoomComposer>> = {},
+) {
   const setInput = jest.fn();
   const on_send = jest.fn();
-  render(
+  const props: React.ComponentProps<typeof ChatRoomComposer> = {
+    actions: {
+      syncdb: {},
+      getThreadMetadata: () => ({ agent_kind: "acp" }),
+      isCodexThread: () => true,
+    } as any,
+    project_id: "project-1",
+    path: "chat/test.chat",
+    fontSize: 14,
+    composerDraftKey: 1,
+    composerSession: 1,
+    input: draft,
+    setInput,
+    on_send,
+    submitMentionsRef: { current: undefined },
+    hasInput: true,
+    isSelectedThreadAI: true,
+    selectedThread: { key: "thread-1", label: "T", isAI: true } as any,
+    threads: [],
+    onComposerFocusChange: jest.fn(),
+    ...overrides,
+  };
+  const view = render(
     <ChatEmbeddingOptionsProvider value={{}}>
-      <ChatRoomComposer
-        actions={
-          {
-            syncdb: {},
-            getThreadMetadata: () => ({ agent_kind: "acp" }),
-            isCodexThread: () => true,
-          } as any
-        }
-        project_id="project-1"
-        path="chat/test.chat"
-        fontSize={14}
-        composerDraftKey={1}
-        composerSession={1}
-        input={draft}
-        setInput={setInput}
-        on_send={on_send}
-        submitMentionsRef={{ current: undefined }}
-        hasInput
-        isSelectedThreadAI
-        selectedThread={{ key: "thread-1", label: "T", isAI: true } as any}
-        threads={[]}
-        onComposerFocusChange={jest.fn()}
-      />
+      <ChatRoomComposer {...props} />
     </ChatEmbeddingOptionsProvider>,
   );
   // The editor still shows what was pasted when the check runs.
@@ -190,7 +193,7 @@ function renderComposer(draft: string) {
     captureSelection: () => null,
     insertText: () => true,
   };
-  return { setInput, on_send };
+  return { setInput, on_send, view, props };
 }
 
 const BOUND =
@@ -218,6 +221,40 @@ describe("ChatRoomComposer pasted agent names", () => {
     // shows it.
     expect(mockMentionPreflight.mock.calls[0][0]).toMatch(BOUND);
     expect(setInput).toHaveBeenCalledWith(sent, 1);
+  });
+
+  it("a first message prepares its agent, then sends the bound draft while the editor still shows the pasted one", async () => {
+    mockAgents = [agent("ops2", 1)];
+    const draft = "@ops2 estimates about 1,600 lines.";
+    const prepare = jest.fn(async () => "prepared-thread");
+    const { on_send, view, props } = renderComposer(draft, {
+      isNewThreadCodex: true,
+      selectedThread: undefined,
+      isSelectedThreadAI: false,
+      onPrepareAgentThread: prepare,
+    });
+    await act(async () => {
+      lastChatInputProps.on_send(draft);
+    });
+    // A bound reference needs the agent first.
+    expect(prepare).toHaveBeenCalledWith(expect.stringMatching(BOUND));
+    expect(on_send).not.toHaveBeenCalled();
+    await act(async () => {
+      view.rerender(
+        <ChatEmbeddingOptionsProvider value={{}}>
+          <ChatRoomComposer
+            {...props}
+            selectedThread={
+              { key: "prepared-thread", label: "New", isAI: true } as any
+            }
+            isSelectedThreadAI
+          />
+        </ChatEmbeddingOptionsProvider>,
+      );
+    });
+    // The editor has not rendered the bound draft yet: still sent.
+    await waitFor(() => expect(on_send).toHaveBeenCalledTimes(1));
+    expect(on_send.mock.calls[0][0]).toMatch(BOUND);
   });
 
   it("still asks which agent a shared name means", async () => {
