@@ -398,6 +398,36 @@ EOF
   exit 1
 }
 
+# Both probes fail closed: only an answer from the bay itself lets the deploy
+# go on. ssh exits 255 for its own failures (host key, network, auth), which
+# says nothing about the fence or the lock.
+check_remote_deployable() {
+  # A fenced bay is being restored or rebuilt (RESTORE.md): none of its units
+  # start, so a deploy would only appear to restart it.
+  local rc=0
+  remote_exec "test -e /etc/cocalc/bay-restore-fence" || rc=$?
+  case "$rc" in
+    0)
+      die "${REMOTE} is fenced for a restore (/etc/cocalc/bay-restore-fence); finish the restore (bay-restore cutover) before deploying" ;;
+    1) ;;
+    255)
+      die "could not check ${REMOTE} for a restore fence: ssh failed (rc=255); not deploying" ;;
+    *)
+      die "could not check ${REMOTE} for a restore fence: unknown (ssh rc=${rc}); not deploying" ;;
+  esac
+  rc=0
+  remote_exec "sudo flock -n -E 75 /etc/cocalc/bay-deploy.lock true" || rc=$?
+  case "$rc" in
+    0) ;;
+    75)
+      die "a bay restore or another deploy is running on ${REMOTE} (it holds /etc/cocalc/bay-deploy.lock)" ;;
+    255)
+      die "could not check ${REMOTE}'s deploy lock: ssh failed (rc=255); not deploying" ;;
+    *)
+      die "could not check ${REMOTE}'s deploy lock: unknown (ssh rc=${rc}); not deploying" ;;
+  esac
+}
+
 stage_release() {
   if [[ -z "$BUNDLE_URL" ]]; then
     [[ -f "$BUNDLE_PATH" ]] || die "bundle not found: $BUNDLE_PATH"
@@ -429,14 +459,7 @@ stage_release() {
   REMOTE_BUNDLE="${REMOTE_WORK_DIR}/${bundle_name}"
   REMOTE_SCRIPT_DIR="${REMOTE_WORK_DIR}/bay-systemd"
 
-  # A fenced bay is being restored or rebuilt (RESTORE.md): none of its units
-  # start, so a deploy would only appear to restart it.
-  if remote_exec "test -e /etc/cocalc/bay-restore-fence"; then
-    die "${REMOTE} is fenced for a restore (/etc/cocalc/bay-restore-fence); finish the restore (bay-restore cutover) before deploying"
-  fi
-  if ! remote_exec "sudo flock -n /etc/cocalc/bay-deploy.lock true"; then
-    die "a bay restore or another deploy is running on ${REMOTE} (it holds /etc/cocalc/bay-deploy.lock)"
-  fi
+  check_remote_deployable
   remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR") && mkdir -p $(q "$REMOTE_SCRIPT_DIR")"
   if [[ "$STATIC_ONLY" -eq 1 || "$HUB_ONLY" -eq 1 ]]; then
     log "Upload bay partial deploy helper to ${REMOTE}:${REMOTE_SCRIPT_DIR}"
@@ -563,6 +586,7 @@ EOF
 REMOTE_LOCKED_BASH="flock -n -o -E 75 /etc/cocalc/bay-deploy.lock bash -s"
 restart_section_failed() {
   [[ "$1" != 75 ]] || die "a bay restore holds /etc/cocalc/bay-deploy.lock on ${REMOTE}; not restarting the bay"
+  [[ "$1" != 255 ]] || die "the restart on ${REMOTE} ended with rc=255 (ssh failed, or the remote section exited 255); check the bay's state before retrying"
   exit "$1"
 }
 
@@ -1063,4 +1087,6 @@ EOF
   echo "report_dir=${REPORT_DIR}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
