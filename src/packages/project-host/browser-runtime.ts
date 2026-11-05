@@ -9,7 +9,6 @@ import {
   BROWSER_RUNTIME_PRESENCE_WILDCARD,
   parseBrowserRuntimePresenceSubject,
 } from "@cocalc/conat/project-host/browser-runtime-presence";
-import type { AgentTurnRead } from "./agent-turns";
 import type { ProjectRow } from "./sqlite/projects";
 import { listProjectsByStates } from "./sqlite/projects";
 import type { ProjectStopStateRow } from "./sqlite/stop-policy";
@@ -96,14 +95,10 @@ export function startBrowserIdleStopMaintenance({
     DEFAULT_SWEEP_INTERVAL_MS,
   ),
   now = Date.now,
-  readAgentTurns,
 }: {
   stopProject: (project_id: string) => Promise<void>;
   interval_ms?: number;
   now?: () => number;
-  // The projects with a running agent turn (agent-turns.ts readAgentTurns):
-  // never stopped for browser idleness (William, 2026-11-04).
-  readAgentTurns?: (opts: { now: number }) => AgentTurnRead;
 }): () => void {
   let closed = false;
   let sweepRunning = false;
@@ -114,7 +109,7 @@ export function startBrowserIdleStopMaintenance({
     sweepRunning = true;
     try {
       const sweepNow = now();
-      let due = listProjectsByStates(["running"]).flatMap((project) => {
+      const due = listProjectsByStates(["running"]).flatMap((project) => {
         const deadline = browserIdleStopDeadline({
           project,
           stopState: getProjectStopState(project.project_id),
@@ -123,29 +118,6 @@ export function startBrowserIdleStopMaintenance({
           ? [{ project, deadline }]
           : [];
       });
-      if (due.length > 0 && readAgentTurns != null) {
-        const turns = readAgentTurns({ now: sweepNow });
-        if (!turns.ok) {
-          // Unsure which projects run an agent turn: stop none this sweep
-          // (browser idleness is not a safety path).
-          logger.warn("browser-idle sweep: agent turns unknown; not stopping", {
-            due: due.length,
-          });
-          return;
-        }
-        const before = due.length;
-        due = due.filter(
-          ({ project }) => !turns.projects.has(project.project_id),
-        );
-        if (due.length < before) {
-          logger.debug(
-            "browser-idle sweep: skipped projects with agent turns",
-            {
-              agent_turn_browser_idle_skipped: before - due.length,
-            },
-          );
-        }
-      }
       let next = 0;
       const worker = async () => {
         while (!closed) {

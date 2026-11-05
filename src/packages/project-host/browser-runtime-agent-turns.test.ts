@@ -3,11 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Browser-idle stops never stop a project with a running agent turn
-// (William, 2026-11-04), and stop nothing when the turns can't be read.
+// The plan's browser-idle limit still applies to a project with a running
+// agent turn (William, 2026-11-05: "No, the plan's browser-idle limit still
+// applies to projects with a running turn"). The turn's last_edited touches
+// (agent-turn-activity.ts) must not move that clock: the deadline depends on
+// the runtime state change, the last start and browser presence only.
 
-import type { AgentTurnRead } from "./agent-turns";
-import { startBrowserIdleStopMaintenance } from "./browser-runtime";
+import {
+  browserIdleStopDeadline,
+  startBrowserIdleStopMaintenance,
+} from "./browser-runtime";
 import { listProjectsByStates } from "./sqlite/projects";
 import { getProjectStopState } from "./sqlite/stop-policy";
 
@@ -20,74 +25,50 @@ jest.mock("./sqlite/stop-policy", () => ({
 const now = Date.parse("2026-11-05T12:00:00Z");
 const minute = 60_000;
 
-function idleProjects(...ids: string[]) {
-  jest.mocked(listProjectsByStates).mockReturnValue(
-    ids.map((project_id) => ({
-      project_id,
-      state: "running",
-      // 30 min timeout, last activity 2 h ago: past the deadline.
-      run_quota: { browser_idle_timeout: 1800 },
-      state_updated_at: now - 120 * minute,
-    })) as any,
-  );
-}
+// 30 min plan limit; the runtime state last changed 2 h ago, but the row was
+// refreshed just now (as a bay sync after an activity touch would).
+const project = (project_id: string) =>
+  ({
+    project_id,
+    state: "running",
+    run_quota: { browser_idle_timeout: 1800 },
+    state_updated_at: now - 120 * minute,
+    updated_at: now,
+    last_seen: now,
+  }) as any;
 
-function turns(...ids: string[]): AgentTurnRead {
-  return {
-    ok: true,
-    projects: new Map(ids.map((id) => [id, { started_at: now, leases: 1 }])),
-    ended: new Set(),
-    ended_cursor: now,
-    invalid: 0,
-  };
-}
-
-async function sweep(readAgentTurns?: () => AgentTurnRead) {
-  const stopProject = jest.fn(async (_project_id: string) => {});
-  const stop = startBrowserIdleStopMaintenance({
-    stopProject,
-    interval_ms: 60 * minute,
-    now: () => now,
-    readAgentTurns,
-  });
-  await jest.advanceTimersByTimeAsync(0);
-  stop();
-  return stopProject.mock.calls.map(([project_id]) => project_id).sort();
-}
-
-describe("browser-idle maintenance and running agent turns", () => {
+describe("browser-idle limit with running agent turns", () => {
   beforeEach(() => {
     jest.useFakeTimers({ now });
     jest.clearAllMocks();
-    jest.mocked(getProjectStopState).mockReturnValue(undefined);
+    // A fresh authoritative last_edited, as the activity touch produces.
+    jest.mocked(getProjectStopState).mockReturnValue({
+      project_id: "turn",
+      authoritative_last_edited_ms: now,
+    } as any);
   });
 
   afterEach(() => jest.useRealTimers());
 
-  it("a project with a running turn is not stopped at its deadline; others are", async () => {
-    idleProjects("turn", "plain");
-    expect(await sweep(() => turns("turn"))).toEqual(["plain"]);
+  it("a fresh last_edited or row refresh does not move the deadline", () => {
+    expect(
+      browserIdleStopDeadline({
+        project: project("turn"),
+        stopState: getProjectStopState("turn"),
+      }),
+    ).toBe(now - 120 * minute + 30 * minute);
   });
 
-  it("without a running turn (it ended or went stale), the project is stopped", async () => {
-    idleProjects("turn", "plain");
-    expect(await sweep(() => turns())).toEqual(["plain", "turn"]);
-  });
-
-  it("an unreadable lease set stops nothing that sweep", async () => {
-    idleProjects("turn", "plain");
-    expect(await sweep(() => ({ ok: false }))).toEqual([]);
-  });
-
-  it("the leases are not read when nothing is due", async () => {
-    jest.mocked(listProjectsByStates).mockReturnValue([]);
-    const read = jest.fn(() => turns());
-    expect(await sweep(read)).toEqual([]);
-    expect(read).not.toHaveBeenCalled();
-  });
-
-  it("without a reader, today's behaviour is unchanged", async () => {
-    idleProjects("turn", "plain");
-    expect(await sweep()).toEqual(["plain", "turn"]);
+  it("the sweep stops a project at its plan limit even while an agent turn runs", async () => {
+    jest.mocked(listProjectsByStates).mockReturnValue([project("turn")]);
+    const stopProject = jest.fn(async (_project_id: string) => {});
+    const stop = startBrowserIdleStopMaintenance({
+      stopProject,
+      interval_ms: 60 * minute,
+      now: () => now,
+    });
+    await jest.advanceTimersByTimeAsync(0);
+    stop();
+    expect(stopProject).toHaveBeenCalledWith("turn");
   });
 });
