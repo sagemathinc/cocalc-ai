@@ -8,6 +8,7 @@ import {
   deferWalCheckpoints,
   forgetWalCheckpoints,
 } from "@cocalc/backend/sqlite-checkpoint";
+import { SqlStatementStats } from "./acp-sql-stats";
 
 type Statement = {
   run: (...args: any[]) => any;
@@ -32,6 +33,16 @@ const MIGRATION_META_TABLE = "acp_migration_meta";
 const ACP_SQLITE_SLOW_MS = Math.max(
   0,
   Number(process.env.COCALC_ACP_SQLITE_SLOW_MS ?? 250) || 250,
+);
+// Every this many ms, log which statements took the most time in total
+// (0 disables). SQL text with placeholders and counts only.
+const ACP_SQLITE_STATS_MS = Math.max(
+  0,
+  Number(process.env.COCALC_ACP_SQLITE_STATS_MS ?? 60_000) || 0,
+);
+const sqlStats = new SqlStatementStats(
+  { windowMs: ACP_SQLITE_STATS_MS, minTotalMs: 1_000, maxKeys: 200, top: 5 },
+  performance.now(),
 );
 
 let db: SqliteDatabase | undefined;
@@ -166,9 +177,20 @@ function logSlowOperationIfNeeded({
   sql: string;
   startedAt: number;
 }): void {
-  const elapsedMs = performance.now() - startedAt;
+  const now = performance.now();
+  const elapsedMs = now - startedAt;
   if (elapsedMs >= ACP_SQLITE_SLOW_MS) {
     logSlowOperation({ filename, op, sql, elapsedMs });
+  }
+  if (sqlStats.enabled) {
+    const report = sqlStats.record(summarizeSql(sql), elapsedMs, now);
+    if (report) {
+      logger.warn("acp sqlite time by statement", {
+        ...report,
+        filename,
+        pid: process.pid,
+      });
+    }
   }
 }
 

@@ -5,7 +5,12 @@ import {
   codexModelRecoveryConfig,
   unavailableChatGptCodexModel,
 } from "@cocalc/util/ai/codex-model-recovery";
-import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
+import getLogger from "@cocalc/backend/logger";
+import {
+  ensureAcpTableMigrated,
+  getAcpDatabase,
+  type SqliteDatabase,
+} from "./acp-database";
 import { upsertAcpSessionFromJob } from "./acp-sessions";
 
 import { installThreadSuccessorFence } from "./acp-thread-successors";
@@ -101,6 +106,90 @@ type EnqueueAcpJobOptions = {
   require_parent_fence_intent?: string;
 };
 
+const logger = getLogger("lite:hub:sqlite:acp-jobs");
+
+// A job's agent-RPC attempt id, and the finished jobs of a thread: the
+// expressions and conditions of the partial indexes below. Queries that use
+// these indexes repeat them exactly (SQLite uses a partial index only when
+// the query's WHERE implies the index's).
+const ATTEMPT_ID_EXPR =
+  "json_extract(request_json, '$.chat.agent_rpc_execution.attempt_id')";
+const ATTEMPT_ID_INDEXED = `json_valid(request_json) AND ${ATTEMPT_ID_EXPR} IS NOT NULL`;
+const FINISHED_JOB = `finished_at IS NOT NULL AND state IN ('completed', 'error', 'canceled', 'interrupted')`;
+
+const ATTEMPT_LOOKUP_SQL = `SELECT * FROM ${TABLE}
+  WHERE account_id = ? AND json_valid(request_json) AND ${ATTEMPT_ID_EXPR} = ?
+  ORDER BY created_at ASC, op_id ASC`;
+// Only running and queued rows count, so only those are read (not every job
+// the thread ever had).
+const THREAD_ACTIVE_COUNTS_SQL = `SELECT SUM(state = 'running') AS running,
+    SUM(state = 'queued') AS queued,
+    MIN(CASE WHEN state = 'running' THEN started_at END) AS running_since
+  FROM ${TABLE} WHERE project_id = ? AND path = ? AND thread_id = ?
+    AND state IN ('running', 'queued')`;
+const THREAD_LAST_FINISHED_SQL = `SELECT * FROM ${TABLE}
+  WHERE project_id = ? AND path = ? AND thread_id = ? AND ${FINISHED_JOB}
+  ORDER BY finished_at DESC, rowid DESC LIMIT 1`;
+const THREAD_LATEST_FINISHED_BY_ACCOUNT_SQL = `SELECT account_id,
+    MAX(finished_at) AS latest_finished_at FROM ${TABLE}
+  WHERE project_id = ? AND path = ? AND thread_id = ? AND ${FINISHED_JOB}
+    AND account_id IS NOT NULL
+  GROUP BY account_id ORDER BY account_id LIMIT 100`;
+const THREAD_ACCOUNT_LAST_FINISHED_SQL = `SELECT * FROM ${TABLE}
+  WHERE project_id = ? AND path = ? AND thread_id = ? AND ${FINISHED_JOB}
+    AND account_id = ? AND finished_at = ?
+  ORDER BY rowid DESC LIMIT 1`;
+
+/** For tests: the hot-path statements, to check their query plans. */
+export const __acpJobsHotPathSqlForTests = {
+  attemptLookup: ATTEMPT_LOOKUP_SQL,
+  threadActiveCounts: THREAD_ACTIVE_COUNTS_SQL,
+  threadLastFinished: THREAD_LAST_FINISHED_SQL,
+  threadLatestFinishedByAccount: THREAD_LATEST_FINISHED_BY_ACCOUNT_SQL,
+  threadAccountLastFinished: THREAD_ACCOUNT_LAST_FINISHED_SQL,
+};
+
+/** Creates an index if it is missing, and logs how long a new one took. */
+function ensureIndex(db: SqliteDatabase, name: string, definition: string) {
+  const exists = db
+    .prepare(
+      "SELECT 1 AS found FROM sqlite_master WHERE type = 'index' AND name = ?",
+    )
+    .get(name);
+  if (exists) return;
+  const started = Date.now();
+  db.exec(`CREATE INDEX IF NOT EXISTS ${name} ${definition}`);
+  logger.info("created acp_jobs index", {
+    index: name,
+    elapsed_ms: Date.now() - started,
+  });
+}
+
+/** The indexes of the per-delivery and per-sweep lookups (see below). */
+export function ensureAcpJobsHotPathIndexes(db: SqliteDatabase): void {
+  // Delivering, inspecting and withdrawing an agent message look up its
+  // turn's jobs by attempt id (listAcpJobsForAgentRpcAttempt). Rows whose
+  // request_json is not valid JSON are left out of the index.
+  ensureIndex(
+    db,
+    "acp_jobs_agent_rpc_attempt_idx",
+    `ON ${TABLE}(account_id, ${ATTEMPT_ID_EXPR}) WHERE ${ATTEMPT_ID_INDEXED}`,
+  );
+  // The status sweep reads each changed thread's latest finished jobs, in
+  // all and per account (acpThreadJobSummary). state is in the key so that
+  // these reads need no table rows to check it.
+  ensureIndex(
+    db,
+    "acp_jobs_thread_finished_idx",
+    `ON ${TABLE}(project_id, path, thread_id, finished_at, state) WHERE ${FINISHED_JOB}`,
+  );
+  ensureIndex(
+    db,
+    "acp_jobs_thread_finished_account_idx",
+    `ON ${TABLE}(project_id, path, thread_id, account_id, finished_at, state) WHERE ${FINISHED_JOB}`,
+  );
+}
+
 function init(): void {
   const db = getAcpDatabase();
   db.exec(`
@@ -195,6 +284,7 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_updated_idx ON ${TABLE}(updated_at)`,
   );
+  ensureAcpJobsHotPathIndexes(db);
   ensureAcpTableMigrated(TABLE);
   installThreadSuccessorFence(TABLE);
   removeRetiredAutomationJobs(db);
@@ -555,40 +645,33 @@ export function acpThreadJobSummary({
   ensureInit();
   const db = getAcpDatabase();
   const counts = db
-    .prepare(
-      `SELECT SUM(state = 'running') AS running, SUM(state = 'queued') AS queued,
-              MIN(CASE WHEN state = 'running' THEN started_at END) AS running_since
-       FROM ${TABLE} WHERE project_id = ? AND path = ? AND thread_id = ?`,
-    )
+    .prepare(THREAD_ACTIVE_COUNTS_SQL)
     .get(project_id, path, thread_id) as {
     running?: number | null;
     queued?: number | null;
     running_since?: number | null;
   };
   const last = db
-    .prepare(
-      `SELECT * FROM ${TABLE}
-       WHERE project_id = ? AND path = ? AND thread_id = ?
-         AND state IN ('completed', 'error', 'canceled', 'interrupted')
-         AND finished_at IS NOT NULL
-       ORDER BY finished_at DESC, rowid DESC LIMIT 1`,
-    )
+    .prepare(THREAD_LAST_FINISHED_SQL)
     .get(project_id, path, thread_id) as AcpJobRow | undefined;
-  // SQLite returns the row holding MAX(finished_at) for each account.
+  // Each account's latest finished time from the index alone, then that one
+  // row per account (the newest one on a tie, as for `last`).
   const lastByAccount: Record<string, AcpJobRow> = {};
-  for (const row of db
-    .prepare(
-      `SELECT *, MAX(finished_at) AS latest_finished_at FROM ${TABLE}
-       WHERE project_id = ? AND path = ? AND thread_id = ?
-         AND state IN ('completed', 'error', 'canceled', 'interrupted')
-         AND finished_at IS NOT NULL AND account_id IS NOT NULL
-       GROUP BY account_id LIMIT 100`,
-    )
-    .all(project_id, path, thread_id) as (AcpJobRow & {
-    latest_finished_at?: number;
-  })[]) {
-    const { latest_finished_at: _l, ...job } = row;
-    lastByAccount[`${job.account_id}`] = job as AcpJobRow;
+  const latestRow = db.prepare(THREAD_ACCOUNT_LAST_FINISHED_SQL);
+  for (const { account_id, latest_finished_at } of db
+    .prepare(THREAD_LATEST_FINISHED_BY_ACCOUNT_SQL)
+    .all(project_id, path, thread_id) as {
+    account_id: string;
+    latest_finished_at: number;
+  }[]) {
+    const job = latestRow.get(
+      project_id,
+      path,
+      thread_id,
+      account_id,
+      latest_finished_at,
+    ) as AcpJobRow | undefined;
+    if (job) lastByAccount[account_id] = job;
   }
   const runningByAccount: Record<string, number> = {};
   for (const row of db
@@ -624,12 +707,7 @@ export function listAcpJobsForAgentRpcAttempt({
 }): AcpJobRow[] {
   ensureInit();
   return getAcpDatabase()
-    .prepare(
-      `SELECT * FROM ${TABLE}
-       WHERE account_id = ?
-         AND json_extract(request_json, '$.chat.agent_rpc_execution.attempt_id') = ?
-       ORDER BY created_at ASC, op_id ASC`,
-    )
+    .prepare(ATTEMPT_LOOKUP_SQL)
     .all(account_id, attempt_id) as AcpJobRow[];
 }
 
