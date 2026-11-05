@@ -52,7 +52,7 @@ export function initDatabase(options: DatabaseOptions = {}): SqliteDatabase {
   db.exec("PRAGMA synchronous=NORMAL");
   db.exec("PRAGMA busy_timeout=5000");
   // Checkpoints fsync; keep them off the event loop.
-  if (deferWalCheckpoints(db, filename)) {
+  if (deferWalCheckpoints(db, filename, { label: "lite-hub" })) {
     dbFilename = filename;
   }
   db.exec(`

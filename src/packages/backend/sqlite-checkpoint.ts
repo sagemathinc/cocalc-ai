@@ -17,11 +17,19 @@ project-host process (every project start on the host) stood still.
 deferWalCheckpoints(db, file) turns automatic checkpoints off on that
 connection and lets one worker thread checkpoint the registered files
 instead, with its own connections (wal_checkpoint(PASSIVE): it never
-blocks writers or readers). If the worker stops succeeding and a WAL grows
-past maxWalBytes (64 MiB), the connections go back to SQLite's old
+blocks writers or readers). If the worker stops succeeding and the live WAL
+grows past maxWalBytes (64 MiB), the connections go back to SQLite's old
 best-effort automatic checkpoints until the worker recovers. That is a
 trigger, not a hard cap: a long reader that pins the WAL stops inline
 checkpoints too, and the WAL keeps growing until it lets go.
+
+The live WAL is what the worker's latest checkpoint reports (its frames
+times the page size), not the WAL file's size: SQLite reuses a WAL file
+from the start after a complete checkpoint, so the file only shows the
+largest the WAL has ever been. journal_size_limit (maxWalBytes too) lets
+SQLite truncate the file to that size when it resets the WAL; it does not
+bound a live WAL. Without a recent result from the worker (dead, hung, or
+not started), the file's size is all there is, and is used.
 
 Durability is unchanged: a checkpoint only copies committed pages from the
 WAL into the database file. What a crash can lose depends on the
@@ -48,6 +56,9 @@ interface ExecDatabase {
 // checkpoints is tracked, and the worker checkpoints the file once.
 interface Registration {
   file: string;
+  // A fixed name of the kind of database, for logs and metrics (never its
+  // path or file name).
+  label: string;
   dbs: Set<ExecDatabase>;
   maxWalBytes: number;
   // Last complete checkpoint: every WAL frame copied into the database.
@@ -59,6 +70,8 @@ interface Registration {
   incompleteSince?: number;
   // The last failure logged, to log a repeating one only now and then.
   lastFailureLogged?: { error: string; at: number };
+  // The WAL file's size at the last pass.
+  walFileBytes?: number;
 }
 
 // SQLITE_READONLY: the worker's own connection cannot write the file.
@@ -80,6 +93,7 @@ export interface CheckpointResult {
   busy?: number;
   log?: number;
   checkpointed?: number;
+  page_size?: number;
 }
 
 const WORKER_SOURCE = `
@@ -101,10 +115,16 @@ parentPort.on("message", (msg) => {
       if (db == null) {
         db = new DatabaseSync(file);
         db.exec("PRAGMA synchronous=NORMAL");
+        // Only a whole number of bytes (or -1, no limit) goes into the pragma.
+        const limit = msg.journalSizeLimit?.[file];
+        if (typeof limit === "number" && Number.isFinite(limit) && limit >= -1) {
+          db.exec("PRAGMA journal_size_limit=" + Math.floor(limit));
+        }
+        db.pageSize = Number(db.prepare("PRAGMA page_size").get().page_size);
         connections.set(file, db);
       }
       const row = db.prepare("PRAGMA wal_checkpoint(PASSIVE)").get();
-      parentPort.postMessage({ file, at, busy: row.busy, log: row.log, checkpointed: row.checkpointed });
+      parentPort.postMessage({ file, at, busy: row.busy, log: row.log, checkpointed: row.checkpointed, page_size: db.pageSize });
     } catch (err) {
       const db = connections.get(file);
       connections.delete(file);
@@ -211,6 +231,17 @@ function setAutocheckpoint(
   }
 }
 
+function setJournalSizeLimit(reg: Registration, db: ExecDatabase): void {
+  try {
+    db.exec(`PRAGMA journal_size_limit=${Math.floor(reg.maxWalBytes)}`);
+  } catch (err) {
+    logger.warn("unable to set sqlite journal_size_limit", {
+      label: reg.label,
+      err: `${err}`,
+    });
+  }
+}
+
 function setInlineFallback(reg: Registration, on: boolean): void {
   for (const db of reg.dbs) {
     setAutocheckpoint(reg, db, on);
@@ -240,12 +271,127 @@ function returnToInlineCheckpoints(reg: Registration, error?: string): void {
   );
 }
 
+/** The live WAL according to a checkpoint result: header plus frames. */
+export function liveWalBytes(result: CheckpointResult): number | undefined {
+  const frames = Number(result.log);
+  const pageSize = Number(result.page_size);
+  if (
+    result.error != null ||
+    !Number.isSafeInteger(frames) ||
+    frames < 0 ||
+    !Number.isSafeInteger(pageSize) ||
+    pageSize <= 0
+  ) {
+    return undefined;
+  }
+  return frames === 0 ? 0 : 32 + frames * (pageSize + 24);
+}
+
+/** The live WAL from this file's own latest result, if it is recent. */
+function freshLiveWalBytes(reg: Registration, now: number): number | undefined {
+  const result = reg.lastResult;
+  if (result == null || now - result.at > 3 * intervalMs) return undefined;
+  return liveWalBytes(result);
+}
+
 async function walBytes(file: string): Promise<number> {
   try {
     return (await stat(`${file}-wal`)).size;
   } catch {
     return 0;
   }
+}
+
+// WAL status, counts and ages only (no paths, no SQL): a line per file
+// every minute, at info when something is off and debug otherwise, and one
+// summary over all files every ten minutes.
+const WAL_REPORT_MS = 60_000;
+const WAL_SUMMARY_MS = 10 * 60_000;
+let lastWalReportAt = 0;
+let lastWalSummaryAt = 0;
+
+export interface WalStatus {
+  label: string;
+  wal_file_bytes: number;
+  live_wal_bytes?: number;
+  live_frames?: number;
+  backfilled_frames?: number;
+  page_size?: number;
+  busy?: number;
+  last_complete_age_ms: number;
+  incomplete_for_ms?: number;
+  inline_fallback: boolean;
+  connections: number;
+  // Something is off: in fallback, no complete checkpoint for a while, or
+  // the live WAL or its file over the limit.
+  off: boolean;
+}
+
+export function walStatus(now = Date.now()): WalStatus[] {
+  return [...registrations.values()].map((reg) => {
+    const result = reg.lastResult;
+    const live = result != null ? liveWalBytes(result) : undefined;
+    const wal_file_bytes = reg.walFileBytes ?? 0;
+    const last_complete_age_ms = Math.max(0, now - reg.lastSuccessAt);
+    return {
+      label: reg.label,
+      wal_file_bytes,
+      ...(live != null ? { live_wal_bytes: live } : {}),
+      ...(result?.log != null ? { live_frames: Number(result.log) } : {}),
+      ...(result?.checkpointed != null
+        ? { backfilled_frames: Number(result.checkpointed) }
+        : {}),
+      ...(result?.page_size != null
+        ? { page_size: Number(result.page_size) }
+        : {}),
+      ...(result?.busy != null ? { busy: Number(result.busy) } : {}),
+      last_complete_age_ms,
+      ...(reg.incompleteSince != null
+        ? { incomplete_for_ms: Math.max(0, now - reg.incompleteSince) }
+        : {}),
+      inline_fallback: reg.inlineFallback,
+      connections: reg.dbs.size,
+      off:
+        reg.inlineFallback ||
+        last_complete_age_ms > 3 * intervalMs ||
+        (live ?? 0) > reg.maxWalBytes ||
+        wal_file_bytes > reg.maxWalBytes,
+    };
+  });
+}
+
+function maybeReportWalStatus(now: number): void {
+  if (now - lastWalReportAt < WAL_REPORT_MS) return;
+  lastWalReportAt = now;
+  const statuses = walStatus(now);
+  for (const status of statuses) {
+    if (status.off) logger.info("sqlite WAL status", status);
+    else logger.debug("sqlite WAL status", status);
+  }
+  if (now - lastWalSummaryAt < WAL_SUMMARY_MS) return;
+  lastWalSummaryAt = now;
+  const by_label: Record<string, number> = {};
+  for (const status of statuses) {
+    by_label[status.label] = (by_label[status.label] ?? 0) + 1;
+  }
+  logger.info("sqlite WAL summary", {
+    files: statuses.length,
+    by_label,
+    off: statuses.filter((status) => status.off).length,
+    inline_fallback: statuses.filter((status) => status.inline_fallback).length,
+    max_live_wal_bytes: Math.max(
+      0,
+      ...statuses.map((status) => status.live_wal_bytes ?? 0),
+    ),
+    max_wal_file_bytes: Math.max(
+      0,
+      ...statuses.map((status) => status.wal_file_bytes),
+    ),
+    oldest_complete_age_ms: Math.max(
+      0,
+      ...statuses.map((status) => status.last_complete_age_ms),
+    ),
+  });
 }
 
 export async function runCheckpointPass(now = Date.now()): Promise<void> {
@@ -256,6 +402,9 @@ export async function runCheckpointPass(now = Date.now()): Promise<void> {
       ensureWorker().postMessage({
         type: "checkpoint",
         files: [...registrations.keys()],
+        journalSizeLimit: Object.fromEntries(
+          [...registrations.values()].map((reg) => [reg.file, reg.maxWalBytes]),
+        ),
       });
     } catch (err) {
       // No worker this time: the fallback checks below still have to run, or
@@ -265,12 +414,18 @@ export async function runCheckpointPass(now = Date.now()): Promise<void> {
       });
     }
     for (const reg of registrations.values()) {
+      reg.walFileBytes = await walBytes(reg.file);
       if (reg.inlineFallback) continue;
       const stale = now - reg.lastSuccessAt > 3 * intervalMs;
-      if (stale && (await walBytes(reg.file)) > reg.maxWalBytes) {
+      if (!stale) continue;
+      // The live WAL if the worker reported on this file recently, else (no
+      // worker to rely on) the file's size.
+      const bytes = freshLiveWalBytes(reg, now) ?? reg.walFileBytes;
+      if (bytes > reg.maxWalBytes) {
         setInlineFallback(reg, true);
       }
     }
+    maybeReportWalStatus(now);
   } finally {
     checking = false;
   }
@@ -297,7 +452,8 @@ export function deferWalCheckpoints(
   {
     maxWalBytes = DEFAULT_MAX_WAL_BYTES,
     enableInTests = false,
-  }: { maxWalBytes?: number; enableInTests?: boolean } = {},
+    label = "sqlite",
+  }: { maxWalBytes?: number; enableInTests?: boolean; label?: string } = {},
 ): boolean {
   if (!file || file === ":memory:" || file.startsWith("file::memory:")) {
     return false;
@@ -305,10 +461,20 @@ export function deferWalCheckpoints(
   if (process.env.COCALC_SQLITE_INLINE_CHECKPOINTS === "1") return false;
   if (isTestRuntime() && !enableInTests) return false;
   if (inlineOnly.has(file)) return false;
+  // It bounds the WAL and sets journal_size_limit: a positive byte count.
+  if (!Number.isFinite(maxWalBytes) || maxWalBytes < 1) {
+    logger.warn("invalid maxWalBytes; keeping inline checkpoints", {
+      label,
+      max_wal_bytes: `${maxWalBytes}`,
+    });
+    return false;
+  }
+  maxWalBytes = Math.floor(maxWalBytes);
   let reg = registrations.get(file);
   if (reg == null) {
     reg = {
       file,
+      label,
       dbs: new Set(),
       maxWalBytes,
       lastSuccessAt: Date.now(),
@@ -321,6 +487,9 @@ export function deferWalCheckpoints(
   reg.dbs.add(db);
   // A connection joining while the file is in fallback checkpoints inline too.
   setAutocheckpoint(reg, db, reg.inlineFallback);
+  // When a writer resets the WAL after a complete checkpoint, the file is
+  // truncated to this size (it does not bound a live WAL).
+  setJournalSizeLimit(reg, db);
   ensureTimer();
   return true;
 }

@@ -33,7 +33,16 @@ function assertLocalProject(project_id: string) {
     throw Error("artifact catalog project is not available locally");
 }
 
-async function call<K extends keyof ArtifactCatalogApi>(
+// The project-scoped writer methods a project host calls on the catalog owner.
+// Account-scoped reads (listProject, getEntry, getEntries) are browser calls,
+// never made by a host.
+export type HostArtifactCatalogMethod =
+  | "writerState"
+  | "registerSource"
+  | "ingest"
+  | "sourcePage";
+
+async function call<K extends HostArtifactCatalogMethod>(
   name: K,
   opts: Parameters<ArtifactCatalogApi[K]>[0],
 ): Promise<Awaited<ReturnType<ArtifactCatalogApi[K]>>> {

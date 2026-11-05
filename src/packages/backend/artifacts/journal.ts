@@ -78,7 +78,7 @@ export class ArtifactCatalogJournal {
       );
     `);
     // Commits stay synchronous=FULL; only checkpoints move off the event loop.
-    deferWalCheckpoints(this.db, filename);
+    deferWalCheckpoints(this.db, filename, { label: "artifacts-journal" });
   }
 
   close() {

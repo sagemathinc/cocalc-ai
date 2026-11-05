@@ -41,6 +41,7 @@ import {
   type AgentRpcSource,
 } from "@cocalc/conat/agents/rpc";
 import { agentRpcTurnState, agentRpcWithdrawable } from "./agent-rpc-turn";
+import { reconcileSlowAgentRpcReceiptsOnce } from "./agent-rpc-slow-receipts";
 import {
   authorizeAgentDeliveryExecution,
   redactChatForLog,
@@ -13228,6 +13229,15 @@ function startCodexActionReconcilePoller(client: ConatClient): void {
     if (ticks % 6 === 3)
       void releaseRenewedSignInHolds().catch((err) =>
         logger.debug("sign-in hold release failed", { err: `${err}` }),
+      );
+    // Agent messages slow to confirm: their turn, once found (every 30 s).
+    if (ticks % 3 === 1)
+      void reconcileSlowAgentRpcReceiptsOnce({
+        withChat: (project_id, path, fn) =>
+          withChatSyncDB({ client, project_id, path, fn: fn as any }),
+        turnState: agentRpcTurnState,
+      }).catch((err) =>
+        logger.debug("slow receipt reconcile failed", { err: `${err}` }),
       );
     // What each agent here is doing, for its peers and lists.
     void sweepAgentStatus().catch((err) =>

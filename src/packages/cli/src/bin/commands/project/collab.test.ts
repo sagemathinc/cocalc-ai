@@ -178,3 +178,116 @@ test("project invite copy-link forwards project context", async () => {
   });
   assert.equal(result.invite_url.includes("token=t"), true);
 });
+
+function collabAddDeps({
+  resolveError,
+  createCollabInvite,
+}: {
+  resolveError?: Error;
+  createCollabInvite: (opts: any) => Promise<any>;
+}) {
+  const result: { value?: any } = {};
+  const deps = {
+    withContext: async (_command, _label, fn) => {
+      result.value = await fn({
+        hub: { projects: { createCollabInvite } },
+      });
+    },
+    resolveProjectFromArgOrContext: async (_ctx, project) => {
+      if (resolveError) throw resolveError;
+      return { project_id: project, title: "Visible" };
+    },
+    serializeInviteRow: (row) => row,
+    normalizeUserSearchName: () => "User",
+    resolveAccountByIdentifier: async (_ctx, user) => ({ account_id: user }),
+  };
+  return { deps, result };
+}
+
+const INVISIBLE = "33333333-3333-4333-8333-333333333333";
+const TARGET = "44444444-4444-4444-8444-444444444444";
+const addArgs = (project: string, ...extra: string[]) => [
+  "node",
+  "cocalc",
+  "project",
+  "collab",
+  "add",
+  "--project",
+  project,
+  "--user",
+  TARGET,
+  ...extra,
+];
+const notFound = (id: string) =>
+  new Error(
+    `project '${id}' not found - callHub: subject='hub.account.x.api', name='system.getProjectBay', code='unknown'`,
+  );
+
+test("project collab add --direct passes an invisible project uuid to the server", async () => {
+  const calls: any[] = [];
+  const { deps, result } = collabAddDeps({
+    resolveError: notFound(INVISIBLE),
+    createCollabInvite: async (opts) => {
+      calls.push(opts);
+      return { created: true, invite: { invite_id: "i" } };
+    },
+  });
+  await makeProgram(deps).parseAsync(addArgs(INVISIBLE, "--direct"));
+  assert.deepEqual(calls, [
+    {
+      project_id: INVISIBLE,
+      invitee_account_id: TARGET,
+      message: undefined,
+      direct: true,
+    },
+  ]);
+  assert.equal(result.value.project_id, INVISIBLE);
+  assert.equal(result.value.target_account_id, TARGET);
+});
+
+test("project collab add --direct surfaces the server's refusal for a non-admin", async () => {
+  const { deps } = collabAddDeps({
+    resolveError: notFound(INVISIBLE),
+    createCollabInvite: async () => {
+      throw new Error("direct collaborator add requires admin privileges");
+    },
+  });
+  await assert.rejects(
+    makeProgram(deps).parseAsync(addArgs(INVISIBLE, "--direct")),
+    /requires admin privileges/,
+  );
+});
+
+test("project collab add only falls through for --direct, a uuid and a not-found lookup", async () => {
+  for (const [project, extra, error] of [
+    // not --direct: a normal invite still needs a visible project
+    [INVISIBLE, [], notFound(INVISIBLE)],
+    // a name or slug never falls through
+    ["Some Project", ["--direct"], notFound("Some Project")],
+    // another project's not-found does not count
+    [INVISIBLE, ["--direct"], notFound(TARGET)],
+    // any other lookup error is not a not-found
+    [INVISIBLE, ["--direct"], new Error("rpc timeout")],
+    // nor is one that merely contains the not-found text
+    [
+      INVISIBLE,
+      ["--direct"],
+      new Error(`bay unavailable: ${notFound(INVISIBLE).message}`),
+    ],
+    [INVISIBLE, ["--direct"], new Error(`project '${INVISIBLE}' not found.`)],
+  ] as const) {
+    let called = false;
+    const { deps } = collabAddDeps({
+      resolveError: error,
+      createCollabInvite: async () => {
+        called = true;
+        return { created: true, invite: {} };
+      },
+    });
+    await assert.rejects(
+      makeProgram(deps).parseAsync(addArgs(project, ...extra)),
+      (err: Error) => err === error,
+    );
+    assert.equal(called, false, `${project} ${extra.join(" ")}`);
+  }
+});

@@ -71,6 +71,7 @@ import { startUsageRetentionMaintenance } from "@cocalc/server/membership/usage-
 import { startProjectApiKeyRevocationMaintenance } from "@cocalc/server/api/project-membership-maintenance";
 import { startApiKeyActionMaintenance } from "@cocalc/server/api/key-action-maintenance";
 import { startArtifactCatalogMaintenance } from "@cocalc/server/artifacts/catalog-maintenance";
+import { startArtifactCatalogHintDrainer } from "@cocalc/server/artifacts/catalog-changes";
 import { startApiRelayQuotaMaintenance } from "@cocalc/server/membership/api-relay-maintenance";
 import initDeletedAccountRetention from "@cocalc/server/accounts/deleted-account-retention";
 import { initPasswordHashMigration } from "@cocalc/server/auth/password-hash-migration";
@@ -156,6 +157,8 @@ export function startConatApiBackgroundWorkers(): void {
   startProjectApiKeyRevocationMaintenance();
   startApiKeyActionMaintenance();
   startRestoreLroWorker();
+  // On every worker: a change committed by any worker wakes its own drainer.
+  startArtifactCatalogHintDrainer();
   if (isPrimaryBayWorker()) {
     startArtifactCatalogMaintenance();
     startLegacyMigrationProjectRestoreWorker();

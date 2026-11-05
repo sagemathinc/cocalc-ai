@@ -16,6 +16,8 @@ import {
 import { touchSubscriptionCacheUsage } from "./codex-subscription-cache-gc";
 import { spawnCodexInProjectContainer } from "./codex-project";
 import { PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME } from "./codex-runtime-paths";
+import { projectNetworkPolicyFromRunQuota } from "../network-policy-quota";
+import { getProject } from "../sqlite/projects";
 
 const logger = getLogger("project-host:codex-device-auth");
 
@@ -125,6 +127,23 @@ function classifyDeviceAuthFailure(
   return `codex login exited with code=${code} signal=null`;
 }
 
+export const CODEX_DEVICE_AUTH_NO_INTERNET_ERROR =
+  "This project has no internet access, which ChatGPT sign-in needs: Codex " +
+  "must reach OpenAI from the project. Upgrade your membership to one that " +
+  "includes internet access, restart the project, and sign in again.";
+
+// Device login runs inside the project container and must reach OpenAI, so it
+// cannot succeed in a project without internet access; it would only time out
+// with a bare exit code. Only a known run quota counts: an unknown project is
+// left to the normal path.
+function projectHasNoInternet(projectId: string): boolean {
+  const runQuota = getProject(projectId)?.run_quota;
+  return (
+    runQuota != null &&
+    projectNetworkPolicyFromRunQuota(runQuota) === "disabled"
+  );
+}
+
 function stripAnsi(text: string): string {
   // Remove ANSI CSI/OSC escapes so parsed URLs/codes are clean for UI display.
   return text
@@ -212,6 +231,10 @@ export async function startCodexDeviceAuth(
     throw new Error(
       "A ChatGPT sign-in is already in progress for this CoCalc account.",
     );
+  }
+
+  if (projectHasNoInternet(projectId)) {
+    throw new Error(CODEX_DEVICE_AUTH_NO_INTERNET_ERROR);
   }
 
   const id = randomUUID();

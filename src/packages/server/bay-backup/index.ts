@@ -114,6 +114,7 @@ import {
 } from "@cocalc/util/consts";
 import {
   createTemporaryR2ReadCredentials,
+  disposableRestoreCandidateZones,
   disposableRestoreInstanceName,
   isRetryableDisposablePitrWalFailure,
   newDisposableRestoreWorkerIdentity,
@@ -4224,7 +4225,11 @@ function mapRestoreReadiness({
   const last_pitr_test_remote_only = state.last_pitr_test_remote_only ?? null;
 
   let latest_backup_restore_test_status:
-    "no-backup" | "not-run" | "stale" | "passed" | "failed";
+    | "no-backup"
+    | "not-run"
+    | "stale"
+    | "passed"
+    | "failed";
   let latest_backup_pitr_test_status:
     | "no-backup"
     | "not-recovery-ready"
@@ -6070,6 +6075,8 @@ async function runPgBackRestDisposableGcpRestoreTest({
   let workerRun: DisposableGcpRestoreResult | null = null;
   const workerAttempts: DisposableGcpRestoreResult[] = [];
   let pitrRun: PitrRestoreSentinel | null = null;
+  // the zone of the current worker, after any capacity fallback
+  let activeWorkerZone: string | undefined;
   let currentWorkerIdentity: ReturnType<
     typeof newDisposableRestoreWorkerIdentity
   > | null = null;
@@ -6112,27 +6119,35 @@ async function runPgBackRestDisposableGcpRestoreTest({
     for (let attempt = 1; attempt <= maxWorkerAttempts; attempt++) {
       const identity = newDisposableRestoreWorkerIdentity();
       currentWorkerIdentity = identity;
-      await writeJson(statusPath, {
-        level: "running",
-        run_id: restoreTestRunId,
-        started_at,
-        backup_label: postgresBackup.label,
-        sqlite_snapshot_id: sqliteSnapshotId,
-        pitr_target_time: pitrRun.target_time,
-        pitr_run_id: pitrRun.run_id,
-        attempt,
-        max_attempts: maxWorkerAttempts,
-        worker: workerRun,
-        worker_attempts: workerAttempts,
-        current_worker_run_id: identity.run_id,
-        current_worker_instance_name: disposableRestoreInstanceName(
-          identity.run_id,
-        ),
-        current_worker_zone: zone,
-      });
+      const writeRunningStatus = async (workerZone: string) => {
+        activeWorkerZone = workerZone;
+        await writeJson(statusPath, {
+          level: "running",
+          run_id: restoreTestRunId,
+          started_at,
+          backup_label: postgresBackup.label,
+          sqlite_snapshot_id: sqliteSnapshotId,
+          pitr_target_time: pitrRun!.target_time,
+          pitr_run_id: pitrRun!.run_id,
+          attempt,
+          max_attempts: maxWorkerAttempts,
+          worker: workerRun,
+          worker_attempts: workerAttempts,
+          current_worker_run_id: identity.run_id,
+          current_worker_instance_name: disposableRestoreInstanceName(
+            identity.run_id,
+          ),
+          current_worker_zone: workerZone,
+        });
+      };
+      await writeRunningStatus(zone);
       workerRun = await runDisposableGcpRestoreWorker({
         service_account_json: serviceAccountJson,
         zone,
+        // A zone without capacity for the worker moves the drill to another
+        // zone in the region (the status file records the zone in use).
+        zones: disposableRestoreCandidateZones(zone),
+        onZone: writeRunningStatus,
         machine_type: machineType,
         // Balanced PD performance scales with disk size. Production WAL replay
         // is random-I/O heavy, so a space-only disk can make a valid drill time
@@ -6288,7 +6303,7 @@ async function runPgBackRestDisposableGcpRestoreTest({
         (currentWorkerIdentity
           ? disposableRestoreInstanceName(currentWorkerIdentity.run_id)
           : null),
-      current_worker_zone: workerRun?.zone ?? zone,
+      current_worker_zone: workerRun?.zone ?? activeWorkerZone ?? zone,
     });
     throw err;
   }
@@ -6380,6 +6395,7 @@ async function runDisposableGcpBayRestoreTest({
     workerRun = await runDisposableGcpRestoreWorker({
       service_account_json: serviceAccountJson,
       zone,
+      zones: disposableRestoreCandidateZones(zone),
       machine_type: machineType,
       boot_disk_gb: sizing.boot_disk_gb,
       timeout_ms: timeoutMs,

@@ -135,6 +135,7 @@ import {
 } from "./exam/controller";
 import { upsertProjectStopPolicy } from "./sqlite/stop-policy";
 import { querySqlite } from "./sqlite/admin-query";
+import { readAgentTurns } from "./agent-turns";
 import { startHostPressureController } from "./host-pressure";
 import { redactRuntimeLogText } from "./runtime-diagnostics-redaction";
 import {
@@ -2168,6 +2169,7 @@ export async function startMasterRegistration({
       refreshMetrics: hostMetrics.refresh,
       getCurrentMetrics: hostMetrics.getCurrentSnapshot,
       stopProject: stopProjectForPressure,
+      readAgentTurns: ({ now }) => readAgentTurns({ now }),
       reportPressureAction: async (opts) => {
         await registry.reportProjectPressureAction({
           host_id: id,

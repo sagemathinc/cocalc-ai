@@ -94,6 +94,39 @@ describe("hub API argument transforms", () => {
     }
   });
 
+  it("binds agent-turn activity touches to the authenticated host only", async () => {
+    const name = "hosts.touchProjectActivity";
+    const args = await transformArgs({
+      name,
+      args: [
+        { host_id: "victim-host", project_id: "project-1", summary: true },
+      ],
+      host_id: "caller-host",
+    });
+    expect(args[0]).toEqual({
+      host_id: "caller-host",
+      project_id: "project-1",
+      summary: true,
+    });
+    await expect(
+      transformArgs({
+        name,
+        args: [{ project_id: "project-1" }],
+        account_id: "account-1",
+      }),
+    ).rejects.toThrow("must be a host");
+    await expect(
+      transformArgs({
+        name,
+        args: [{ project_id: "project-1" }],
+        host_id: "caller-host",
+        account_id: "agent",
+        auth_actor: "agent",
+      }),
+    ).rejects.toThrow("must be a host");
+    expect(getHubApiAccountTargetMethods()).not.toContain(name);
+  });
+
   it("binds catalog reads to a human account", async () => {
     const name = "artifactCatalog.listProject";
     expect(

@@ -282,6 +282,7 @@ const HUB_API_ROUTES: Record<string, HubApiRoute> = {
   "hosts.deleteProjectBackupIndex": projectFromOpts,
   "hosts.markProjectChanged": projectFromOpts,
   "hosts.touchProject": projectFromOpts,
+  "hosts.touchProjectActivity": projectFromOpts,
   "hosts.getProjectStartMetadata": projectFromOpts,
 };
 

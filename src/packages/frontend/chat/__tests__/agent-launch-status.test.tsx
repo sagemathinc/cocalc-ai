@@ -92,3 +92,46 @@ it("offers Connect when the agent could not run because nothing pays for it", as
     screen.getByRole("button", { name: "Resubmit to Agent" }),
   ).toBeTruthy();
 });
+
+it("a slow receipt is an info notice without resubmission, until the host replaces it", () => {
+  const onResubmit = jest.fn();
+  const { rerender } = render(
+    <AgentLaunchStatus
+      receipt={
+        fromJS({
+          state: "unknown",
+          slow: true,
+          error: "The agent is slow to confirm this message; checking.",
+          updated_at: 1,
+        }) as any
+      }
+      onResubmit={onResubmit}
+    />,
+  );
+  const status = screen.getByRole("status");
+  expect(status.textContent).toContain("slow to confirm it");
+  expect(status.className).toContain("info");
+  expect(screen.queryByRole("button")).toBeNull();
+  // The host found the turn.
+  rerender(
+    <AgentLaunchStatus
+      receipt={{ state: "accepted", updated_at: 2 }}
+      onResubmit={onResubmit}
+    />,
+  );
+  expect(screen.queryByRole("status")).toBeNull();
+  // Or gave up: today's notice, with Resubmit.
+  rerender(
+    <AgentLaunchStatus
+      receipt={{ state: "unknown", updated_at: 3 }}
+      onResubmit={onResubmit}
+    />,
+  );
+  expect(screen.getByRole("status").textContent).toContain(
+    "launch not confirmed",
+  );
+  expect(
+    screen.getByRole("button", { name: "Resubmit to Agent" }),
+  ).toBeTruthy();
+  expect(onResubmit).not.toHaveBeenCalled();
+});

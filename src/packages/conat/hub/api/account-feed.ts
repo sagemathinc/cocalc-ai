@@ -141,9 +141,7 @@ export interface AccountFeedAccountUpsertEvent {
   account_id: string;
   account: AccountFeedAccountRow;
   reason:
-    | "balance_updated"
-    | "user_query_set"
-    | "messages_unread_count_updated";
+    "balance_updated" | "user_query_set" | "messages_unread_count_updated";
 }
 
 export interface AccountFeedProjectUpsertEvent {
@@ -190,6 +188,20 @@ export interface AccountFeedProjectDetailInvalidateEvent {
   fields: string[];
 }
 
+/**
+ * A project's artifact catalog reached this version. A wake-up only: it
+ * carries no metadata, and readers pull the changes through an authorized
+ * read (artifactCatalog.listChanges).
+ */
+export interface AccountFeedArtifactChangedEvent {
+  type: "artifact.changed";
+  ts: number;
+  account_id: string;
+  project_id: string;
+  epoch: string;
+  seq: number;
+}
+
 export interface AccountFeedLroSummaryEvent {
   type: "lro.summary";
   ts: number;
@@ -226,7 +238,8 @@ export type AccountFeedEvent =
   | AccountFeedProjectDetailInvalidateEvent
   | AccountFeedLroSummaryEvent
   | AccountFeedAgentUpsertEvent
-  | AccountFeedAgentRemoveEvent;
+  | AccountFeedAgentRemoveEvent
+  | AccountFeedArtifactChangedEvent;
 
 export function accountFeedStreamName(): string {
   return "account-feed";

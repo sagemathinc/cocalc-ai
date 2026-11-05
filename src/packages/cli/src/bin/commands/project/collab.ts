@@ -51,6 +51,33 @@ export function registerProjectCollabCommands(
     .command("collab")
     .description("project collaborator operations");
 
+  // An admin's direct add usually targets a project the admin is not on, which
+  // the account's own project lookup cannot see. For --direct with an explicit
+  // project uuid, that lookup's "not found" falls through to the server, which
+  // alone decides: it allows a direct add only for an admin (with fresh auth)
+  // and audits it. Names and other errors are never passed through.
+  async function resolveProjectForCollabAdd(
+    ctx,
+    identifier: string,
+    direct: boolean,
+  ): Promise<{ project_id: string; title?: string }> {
+    try {
+      return await resolveProjectFromArgOrContext(ctx, identifier);
+    } catch (err) {
+      const value = `${identifier ?? ""}`.trim();
+      // Only the resolver's own not-found for this uuid, bare or as reported
+      // by the hub call; a message that merely contains it is rethrown.
+      const message = `${(err as Error | undefined)?.message ?? err}`;
+      const base = `project '${value}' not found`;
+      const notFound =
+        message === base || message.startsWith(`${base} - callHub:`);
+      if (!direct || !isValidUUID(value) || !notFound) {
+        throw err;
+      }
+      return { project_id: value };
+    }
+  }
+
   project
     .command("transfer-ownership")
     .description(
@@ -190,9 +217,10 @@ export function registerProjectCollabCommands(
         command: Command,
       ) => {
         await withContext(command, "project collab add", async (ctx) => {
-          const project = await resolveProjectFromArgOrContext(
+          const project = await resolveProjectForCollabAdd(
             ctx,
             opts.project,
+            !!opts.direct,
           );
           const target = await resolveAccountByIdentifier(ctx, opts.user);
           const result = (await ctx.hub.projects.createCollabInvite({

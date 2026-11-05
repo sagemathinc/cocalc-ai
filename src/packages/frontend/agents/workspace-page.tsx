@@ -176,6 +176,7 @@ import { LibrarySidebar } from "./library-sidebar";
 import { isLibraryChatAgent } from "./library-chat";
 import { NewArtifactDialog } from "./new-artifact-dialog";
 import { sharedArtifactCatalog } from "./artifact-catalog-store";
+import { accountCatalogFor } from "./use-account-catalog";
 import { PeopleSidebar } from "@cocalc/frontend/people/people-sidebar";
 import { PeopleUnreadBadge } from "@cocalc/frontend/people/unread-badge";
 import {
@@ -1332,8 +1333,7 @@ function NewAgentPanel({
           project_title:
             projectTitleOverride ??
             (projectMap?.getIn([created.projectId, "title"]) as
-              | string
-              | undefined),
+              string | undefined),
           thread_title: candidate,
         });
       };
@@ -3759,8 +3759,7 @@ export function MyAgentsWorkspacePage({
   const { directory: networkDirectory, error: networkError } =
     useAgentNetworks();
   const accountId = useTypedRedux("account", "account_id") as
-    | string
-    | undefined;
+    string | undefined;
   const searchNavigation = useNavigationIntent(
     active && !contentOpen,
     accountId,
@@ -3845,8 +3844,7 @@ export function MyAgentsWorkspacePage({
     setMobileList(false);
   }
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
-    | string
-    | undefined;
+    string | undefined;
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -4718,8 +4716,7 @@ export function MyAgentsWorkspacePage({
     const projectTitle = agentProjectTitle(
       agent,
       liveProjects?.getIn([agent.endpoint.project_id, "title"]) as
-        | string
-        | undefined,
+        string | undefined,
     );
     // Only one sidebar entry is current: Projects, the Library or an agent.
     const active =
@@ -5769,12 +5766,16 @@ export function MyAgentsWorkspacePage({
             void antdMessage.success(
               "Added to Artifacts; it appears there in a few seconds.",
             );
-            if (accountId)
+            if (accountId) {
+              // Reload only what is already shown (no work otherwise).
+              accountCatalogFor(accountId).changed();
+              // The old catalog reloads only if it is running.
               void sharedArtifactCatalog(accountId, (opts) =>
                 webapp_client.conat_client.hub.artifactCatalog.listProject(
                   opts,
                 ),
               ).refresh();
+            }
           }}
         />
         {accountId && (

@@ -382,3 +382,31 @@ test("stop removes the visibility listener and the interval", async () => {
   expect(list).toHaveBeenCalledTimes(1);
   expect(store.get().entries).toEqual([]);
 });
+
+test("shared holders: runs while anyone holds it, over the union, and never restarts under a holder", async () => {
+  jest.useRealTimers();
+  const listProject = jest.fn(async ({ project_id }) =>
+    page([entry(`e-${project_id}`, project_id)]),
+  );
+  const store = new ArtifactCatalogStore("acct-holders", listProject);
+  const releaseA = store.acquire(["p1"]);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(listProject).toHaveBeenCalledTimes(1);
+  // The same projects: no restart.
+  const releaseB = store.acquire(["p1"]);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(listProject).toHaveBeenCalledTimes(1);
+  releaseA();
+  expect(store.get().entries).toHaveLength(1);
+  // A wider union reloads once; the last release stops and clears it.
+  const releaseC = store.acquire(["p2"]);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(listProject.mock.calls.map((c) => c[0].project_id).slice(1)).toEqual([
+    "p1",
+    "p2",
+  ]);
+  releaseB();
+  releaseB();
+  releaseC();
+  expect(store.get().entries).toEqual([]);
+});

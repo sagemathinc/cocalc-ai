@@ -4,6 +4,7 @@ const pushSubscriptionAuthToRegistryMock = jest.fn();
 const acquireCodexDeviceAuthLeaseMock = jest.fn();
 const releaseCodexDeviceAuthLeaseMock = jest.fn();
 const spawnCodexInProjectContainerMock = jest.fn();
+const getProjectMock = jest.fn();
 const resolveSubscriptionStagingHomeMock = jest.fn(
   (accountId: string, sessionId: string) =>
     `/tmp/codex-${accountId}/.pending/${sessionId}`,
@@ -45,6 +46,10 @@ jest.mock("./codex/codex-auth", () => ({
   }),
 }));
 
+jest.mock("./sqlite/projects", () => ({
+  getProject: (...args) => getProjectMock(...args),
+}));
+
 jest.mock("./codex/codex-project", () => ({
   spawnCodexInProjectContainer: (...args) =>
     spawnCodexInProjectContainerMock(...args),
@@ -74,6 +79,33 @@ describe("codex device auth", () => {
     releaseCodexDeviceAuthLeaseMock.mockReset().mockResolvedValue(undefined);
     resolveSubscriptionStagingHomeMock.mockClear();
     spawnCodexInProjectContainerMock.mockReset();
+    getProjectMock.mockReset().mockReturnValue(undefined);
+  });
+
+  it("refuses device login in a project without internet access", async () => {
+    getProjectMock.mockReturnValue({ run_quota: { network: false } });
+    const { startCodexDeviceAuth, CODEX_DEVICE_AUTH_NO_INTERNET_ERROR } =
+      await import("./codex/codex-device-auth");
+
+    await expect(
+      startCodexDeviceAuth("project-1", "account-1"),
+    ).rejects.toThrow(CODEX_DEVICE_AUTH_NO_INTERNET_ERROR);
+    expect(getProjectMock).toHaveBeenCalledWith("project-1");
+    expect(acquireCodexDeviceAuthLeaseMock).not.toHaveBeenCalled();
+    expect(spawnCodexInProjectContainerMock).not.toHaveBeenCalled();
+  });
+
+  it("starts device login in a project with internet access", async () => {
+    getProjectMock.mockReturnValue({ run_quota: { network: true } });
+    spawnCodexInProjectContainerMock.mockResolvedValue({
+      proc: new FakeProc(),
+    });
+    const { startCodexDeviceAuth } = await import("./codex/codex-device-auth");
+
+    const session = await startCodexDeviceAuth("project-1", "account-1");
+
+    expect(session.state).toBe("pending");
+    expect(spawnCodexInProjectContainerMock).toHaveBeenCalledTimes(1);
   });
 
   it("stages reconnect login outside the permanent credential cache", async () => {

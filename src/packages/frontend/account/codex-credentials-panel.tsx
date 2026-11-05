@@ -47,6 +47,10 @@ import {
   type UsageWindowMeter,
 } from "@cocalc/frontend/account/usage-window-meters";
 import { lite } from "@cocalc/frontend/lite";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { networkAccessDisabledFromRunQuota } from "@cocalc/frontend/project/page/network-disabled-badge";
+import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { formatCodexErrorForDisplay } from "@cocalc/frontend/chat/codex-error-presentation";
@@ -486,6 +490,15 @@ function CodexCredentialsPanelBody({
   }, [projectMap]);
 
   const authProjectId = selectedProjectId.trim() || recentProjectId;
+  // ChatGPT sign-in and subscription use run in this project and must reach
+  // OpenAI, which a project without internet access (free plan) cannot.
+  const { runQuota: authProjectRunQuota } = useProjectRunQuota(authProjectId, {
+    enabled: !lite && !!authProjectId,
+  });
+  const authProjectNetworkDisabled =
+    !lite &&
+    !!authProjectId &&
+    networkAccessDisabledFromRunQuota(authProjectRunQuota);
 
   useEffect(() => {
     setSelectedProjectId(defaultProjectId ?? "");
@@ -965,6 +978,26 @@ function CodexCredentialsPanelBody({
     }
   };
 
+  const renderNoInternetNotice = () =>
+    authProjectNetworkDisabled ? (
+      <Alert
+        type="warning"
+        showIcon
+        title="This project has no internet access"
+        description={
+          <>
+            Signing in with ChatGPT and using Codex with your ChatGPT plan need
+            to reach OpenAI from the project, so they can't work here.{" "}
+            <a href={joinUrlPath(appBasePath, "settings", "membership")}>
+              Upgrade your membership
+            </a>{" "}
+            to one that includes internet access, then restart the project and
+            sign in again.
+          </>
+        }
+      />
+    ) : null;
+
   const renderDeviceAuthLogin = () => {
     if (!deviceAuth && !deviceAuthError && !deviceAuthActionPending) {
       return null;
@@ -1363,7 +1396,9 @@ function CodexCredentialsPanelBody({
                       ? "CoCalc is using your ChatGPT subscription for Codex. Usage for each configured payment source is shown below."
                       : codexConnectionChecking
                         ? "CoCalc found a stored ChatGPT credential and is checking whether Codex can use it."
-                        : "CoCalc found a stored ChatGPT credential, but the live check did not confirm that Codex can use it. Refresh usage or sign in again."}
+                        : authProjectNetworkDisabled
+                          ? "CoCalc found a stored ChatGPT credential, but this project has no internet access, so Codex cannot reach OpenAI to use it (see below)."
+                          : "CoCalc found a stored ChatGPT credential, but the live check did not confirm that Codex can use it. Refresh usage or sign in again."}
               </Text>
               {!codexUsageProjectStartBlocked && (
                 <Space wrap>
@@ -1427,6 +1462,7 @@ function CodexCredentialsPanelBody({
           )}
         </Space>
       </div>
+      {renderNoInternetNotice()}
       {renderDeviceAuthLogin()}
       {loading && <Loading />}
       {!loading && error && <Alert type="error" title={error} />}

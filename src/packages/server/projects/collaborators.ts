@@ -4187,11 +4187,21 @@ async function acceptEmailInviteAtomically({
         [project_id, account_id],
       );
     }
+    // membership_granted durably records that this acceptance granted access
+    // in the same transaction. Course reconciliation only restores access
+    // for older acceptances without it, which could record the course binding
+    // without the grant (see reconcile-managed-project.ts).
     await client.query(
       `UPDATE project_collab_invites
           SET status='accepted',
               responder_action='accept',
               accepted_account_id=$2,
+              context=jsonb_set(
+                COALESCE(context, '{}'::jsonb),
+                '{membership_granted}',
+                'true'::jsonb,
+                true
+              ),
               responded=NOW(),
               updated=NOW()
         WHERE invite_id=$1`,

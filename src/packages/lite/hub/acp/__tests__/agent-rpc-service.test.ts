@@ -40,6 +40,14 @@ function fixture() {
   ];
   const db = {
     get: () => rows,
+    get_one: (where: any) =>
+      rows.find(
+        (row) =>
+          row.event === where.event &&
+          row.sender_id === where.sender_id &&
+          row.message_id === where.message_id &&
+          new Date(row.date).valueOf() === new Date(where.date).valueOf(),
+      ),
     set: jest.fn((row) => {
       const existing = rows.find(
         (value) =>

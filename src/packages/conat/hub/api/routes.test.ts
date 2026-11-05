@@ -26,6 +26,14 @@ describe("hub API routes", () => {
   });
 
   it("finds each routed method's owning project", () => {
+    // Agent-turn activity touches run on the project's owning bay, as host
+    // calls (the host is bound from the authenticated context).
+    expect(getHubApiPrincipalPolicy("hosts.touchProjectActivity")).toBe("host");
+    expect(
+      hubApiRouteKey(getHubApiRoute("hosts.touchProjectActivity")!, [
+        { project_id: PROJECT, summary: true },
+      ]),
+    ).toBe(PROJECT);
     expect(
       hubApiRouteKey(getHubApiRoute("projects.setProjectMetadata")!, [
         { project_id: PROJECT },

@@ -373,6 +373,50 @@ async function waitForOperation({
   }
 }
 
+// GCP reports a zone without capacity for the machine type this way; no VM
+// exists then, so the drill can try another zone.
+export function isGcpZoneCapacityError(err: unknown): boolean {
+  const value = err as any;
+  return /ZONE_RESOURCE_POOL_EXHAUSTED|does not have enough resources available/i.test(
+    `${value?.message ?? value ?? ""}`,
+  );
+}
+
+/**
+ * The zones to try, in order: the primary zone, then the configured fallbacks
+ * (default: the region's -a, -b and -c zones). Only zones in the primary's
+ * region are used, because the worker's subnetwork is regional.
+ */
+// primary first, then the zones of the same region, validated and deduplicated
+function sameRegionZones(primary: string, zones: string[]): string[] {
+  const region = primary.replace(/-[a-z]$/, "");
+  return [
+    ...new Set([
+      primary,
+      ...zones.filter(
+        (zone) =>
+          /^[a-z][a-z0-9-]+-[a-z]$/.test(zone) &&
+          zone.replace(/-[a-z]$/, "") === region,
+      ),
+    ]),
+  ];
+}
+
+export function disposableRestoreCandidateZones(
+  primary: string,
+  fallback = `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_FALLBACK_ZONES ?? ""}`,
+): string[] {
+  const region = primary.replace(/-[a-z]$/, "");
+  const configured = fallback
+    .split(",")
+    .map((zone) => zone.trim())
+    .filter(Boolean);
+  const candidates = configured.length
+    ? configured
+    : ["a", "b", "c"].map((suffix) => `${region}-${suffix}`);
+  return sameRegionZones(primary, candidates);
+}
+
 function isNotFound(err: unknown): boolean {
   const value = err as any;
   return (
@@ -417,7 +461,9 @@ function defaultClients(auth: GcpAuth): GcpClients {
 
 export async function runDisposableGcpRestoreWorker({
   service_account_json,
-  zone,
+  zone: primaryZone,
+  zones,
+  onZone,
   machine_type = "n2-standard-4",
   boot_disk_gb,
   config,
@@ -427,6 +473,10 @@ export async function runDisposableGcpRestoreWorker({
 }: {
   service_account_json: string;
   zone: string;
+  /** Zones to try in order when a zone has no capacity (default: [zone]). */
+  zones?: string[];
+  /** Called before the worker is created in each zone. */
+  onZone?: (zone: string) => Promise<void> | void;
   machine_type?: string;
   boot_disk_gb: number;
   config: DisposableRestoreWorkerConfig;
@@ -437,7 +487,8 @@ export async function runDisposableGcpRestoreWorker({
   const auth = parseGcpServiceAccount(service_account_json);
   const clients = providedClients ?? defaultClients(auth);
   const instance_name = disposableRestoreInstanceName(config.run_id);
-  const region = zone.replace(/-[a-z]$/, "");
+  const candidateZones = sameRegionZones(primaryZone, zones ?? []);
+  let zone = candidateZones[0];
   const startupScript = buildDisposableRestoreStartupScript({
     ...config,
     worker_timeout_seconds: Math.ceil(timeout_ms / 1000),
@@ -450,75 +501,123 @@ export async function runDisposableGcpRestoreWorker({
   try {
     // The insert may succeed server-side even if the client times out. From this
     // point onward, always attempt deletion by the deterministic instance name.
-    created = true;
-    const [insertResponse] = await clients.instances.insert({
-      project: auth.projectId,
-      zone,
-      instanceResource: {
-        name: instance_name,
-        machineType: `zones/${zone}/machineTypes/${machine_type}`,
-        canIpForward: false,
-        deletionProtection: false,
-        disks: [
-          {
-            autoDelete: true,
-            boot: true,
-            initializeParams: {
-              diskSizeGb: `${boot_disk_gb}`,
-              diskType: `projects/${auth.projectId}/zones/${zone}/diskTypes/pd-balanced`,
-              sourceImage:
-                "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64",
+    for (let i = 0; ; i++) {
+      zone = candidateZones[i];
+      const region = zone.replace(/-[a-z]$/, "");
+      await onZone?.(zone);
+      created = true;
+      try {
+        const [insertResponse] = await clients.instances.insert({
+          project: auth.projectId,
+          zone,
+          instanceResource: {
+            name: instance_name,
+            machineType: `zones/${zone}/machineTypes/${machine_type}`,
+            canIpForward: false,
+            deletionProtection: false,
+            disks: [
+              {
+                autoDelete: true,
+                boot: true,
+                initializeParams: {
+                  diskSizeGb: `${boot_disk_gb}`,
+                  diskType: `projects/${auth.projectId}/zones/${zone}/diskTypes/pd-balanced`,
+                  sourceImage:
+                    "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64",
+                },
+              },
+            ],
+            // Deployment default labels (COCALC_GCP_DEFAULT_LABELS) apply to this
+            // VM too, so a restore drill or a real disaster restore carries the
+            // same compliance labels as every other CoCalc-created VM.
+            labels: withDefaultGcpLabels({
+              "cocalc-role": "bay-restore-drill",
+              application: "bay-restore-drill",
+              "cocalc-bay": config.bay_id
+                .toLowerCase()
+                .replace(/[^a-z0-9_-]/g, "-")
+                .slice(0, 63),
+            }),
+            metadata: {
+              items: [
+                { key: "startup-script", value: startupScript },
+                { key: "serial-port-enable", value: "TRUE" },
+                { key: "block-project-ssh-keys", value: "TRUE" },
+                { key: "enable-oslogin", value: "FALSE" },
+              ],
+            },
+            networkInterfaces: [
+              {
+                accessConfigs: [
+                  { name: "External NAT", networkTier: "STANDARD" },
+                ],
+                stackType: "IPV4_ONLY",
+                subnetwork: `projects/${auth.projectId}/regions/${region}/subnetworks/default`,
+              },
+            ],
+            scheduling: {
+              automaticRestart: false,
+              onHostMaintenance: "TERMINATE",
+              preemptible: false,
+              provisioningModel: "STANDARD",
+              maxRunDuration: { seconds: `${timeoutSeconds}` },
+              instanceTerminationAction: "DELETE",
+            },
+            serviceAccounts: [],
+            shieldedInstanceConfig: {
+              enableIntegrityMonitoring: true,
+              enableSecureBoot: true,
+              enableVtpm: true,
             },
           },
-        ],
-        // Deployment default labels (COCALC_GCP_DEFAULT_LABELS) apply to this
-        // VM too, so a restore drill or a real disaster restore carries the
-        // same compliance labels as every other CoCalc-created VM.
-        labels: withDefaultGcpLabels({
-          "cocalc-role": "bay-restore-drill",
-          application: "bay-restore-drill",
-          "cocalc-bay": config.bay_id
-            .toLowerCase()
-            .replace(/[^a-z0-9_-]/g, "-")
-            .slice(0, 63),
-        }),
-        metadata: {
-          items: [
-            { key: "startup-script", value: startupScript },
-            { key: "serial-port-enable", value: "TRUE" },
-            { key: "block-project-ssh-keys", value: "TRUE" },
-            { key: "enable-oslogin", value: "FALSE" },
-          ],
-        },
-        networkInterfaces: [
+        } as any);
+        await waitForOperation({
+          response: insertResponse,
+          project: auth.projectId,
+          zone,
+          operations: clients.operations,
+        });
+        break;
+      } catch (err) {
+        if (!isGcpZoneCapacityError(err) || i === candidateZones.length - 1) {
+          throw err;
+        }
+        // The capacity error can come from the insert operation, so a VM may
+        // (partly) exist. Delete it conclusively before this run stops owning
+        // the zone; if that fails, keep ownership (the final cleanup retries
+        // this zone) and report the original error.
+        try {
+          const [deleteResponse] = await clients.instances.delete({
+            project: auth.projectId,
+            zone,
+            instance: instance_name,
+          });
+          await waitForOperation({
+            response: deleteResponse,
+            project: auth.projectId,
+            zone,
+            operations: clients.operations,
+          });
+        } catch (cleanupErr) {
+          if (!isNotFound(cleanupErr)) {
+            logger.error(
+              "could not clean up the restore drill worker in a zone without capacity",
+              { zone, instance_name, err: cleanupErr },
+            );
+            throw err;
+          }
+        }
+        created = false;
+        logger.warn(
+          "GCP zone has no capacity for the restore drill worker; trying the next zone",
           {
-            accessConfigs: [{ name: "External NAT", networkTier: "STANDARD" }],
-            stackType: "IPV4_ONLY",
-            subnetwork: `projects/${auth.projectId}/regions/${region}/subnetworks/default`,
+            zone,
+            next_zone: candidateZones[i + 1],
+            machine_type,
           },
-        ],
-        scheduling: {
-          automaticRestart: false,
-          onHostMaintenance: "TERMINATE",
-          preemptible: false,
-          provisioningModel: "STANDARD",
-          maxRunDuration: { seconds: `${timeoutSeconds}` },
-          instanceTerminationAction: "DELETE",
-        },
-        serviceAccounts: [],
-        shieldedInstanceConfig: {
-          enableIntegrityMonitoring: true,
-          enableSecureBoot: true,
-          enableVtpm: true,
-        },
-      },
-    } as any);
-    await waitForOperation({
-      response: insertResponse,
-      project: auth.projectId,
-      zone,
-      operations: clients.operations,
-    });
+        );
+      }
+    }
     logger.info("created disposable GCP restore drill worker", {
       instance_name,
       project_id: auth.projectId,

@@ -4,10 +4,13 @@
  */
 
 // The workspace sidebar on the Library (sidebar navigation): pinned
-// artifacts (the Library's pins, drag to reorder) and recent ones, from the
-// same catalog the Library page keeps refreshed.
+// artifacts (the Library's pins, drag to reorder) and recent ones. With the
+// server's account-wide reads that is one pinned lookup and one recent page
+// (or one search page), whatever the catalog's size; an older hub uses the
+// shared per-project catalog instead. A collapsed section (onlyCurrent) asks
+// for nothing itself and shows only what is already loaded.
 
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, isIconName } from "@cocalc/frontend/components";
@@ -26,6 +29,15 @@ import {
   sharedArtifactCatalog,
 } from "./artifact-catalog-store";
 import type { AgentSearchHit } from "./search-runner";
+import type { CatalogEntry } from "./artifact-catalog-store";
+import {
+  accountCatalogFor,
+  useCatalogList,
+  useCatalogReadMode,
+  useLegacyCatalogHold,
+  usePinnedEntries,
+  useReadableProjects,
+} from "./use-account-catalog";
 
 const RECENT = 15;
 const MATCHES = 50;
@@ -60,11 +72,48 @@ export function LibrarySidebar({
   onAll: () => void;
   onNew?: () => void;
 }) {
-  const catalog = sharedArtifactCatalog(accountId, (opts) =>
+  const pins = useArtifactPins();
+  const mode = useCatalogReadMode(accountId, !onlyCurrent);
+  const server = mode === "server";
+  const legacy = sharedArtifactCatalog(accountId, (opts) =>
     webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
   );
-  const metadata = useSyncExternalStore(catalog.subscribe, catalog.get);
-  const pins = useArtifactPins();
+  const legacyState = useSyncExternalStore(legacy.subscribe, legacy.get);
+  useLegacyCatalogHold(accountId, agents, mode === "legacy" && !onlyCurrent);
+  const catalog = accountCatalogFor(accountId);
+  const [searchSession] = useState(() => catalog.session(MATCHES));
+  const active = server && !onlyCurrent;
+  const searching = !!search.trim();
+  const readable = useReadableProjects(accountId);
+  const pinState = usePinnedEntries(catalog, active, pins.pins, readable);
+  const recent = useCatalogList(
+    catalog.recent,
+    active && !searching,
+    {},
+    readable,
+  );
+  const found = useCatalogList(
+    searchSession,
+    active && searching,
+    { query: search },
+    readable,
+  );
+  const serverEntries: CatalogEntry[] = searching
+    ? found.entries
+    : [
+        ...[...pinState.pins.values()].filter(
+          (value): value is CatalogEntry => value !== "unavailable",
+        ),
+        ...recent.entries,
+      ];
+  const metadata = server
+    ? {
+        entries: serverEntries,
+        loading: searching ? found.loading : recent.loading || pinState.loading,
+      }
+    : mode === "legacy"
+      ? legacyState
+      : { entries: [] as CatalogEntry[], loading: !onlyCurrent };
   const { names } = useArtifactNames();
   const routeProject = useTypedRedux("page", "library_project_id");
   const routeEntry = useTypedRedux("page", "library_entry_id");
@@ -88,7 +137,8 @@ export function LibrarySidebar({
   const openProject = (routeOpen ?? lastOpenArtifact)?.project;
   const openEntry = (routeOpen ?? lastOpenArtifact)?.entry;
   const results = catalogResults(metadata.entries, agents, {
-    query: search,
+    // The server already searched; the old catalog is filtered here.
+    query: server ? "" : search,
     sort: "recent",
     pins: [],
     aliases: names,
@@ -163,7 +213,17 @@ export function LibrarySidebar({
       onPin={(id, pin) => pins.setPinned(id, pin)}
       onMovePin={(visible, id, index) => pins.move(visible, id, index)}
       onAll={onAll}
-      emptyText={metadata.loading ? "Loading library..." : "No artifacts yet."}
+      emptyText={
+        metadata.loading
+          ? "Loading library..."
+          : server && (searching ? found.error : recent.error)
+            ? "Artifacts are unavailable right now."
+            : mode === "unavailable"
+              ? "Artifacts are unavailable right now."
+              : searching
+                ? "No matching artifacts."
+                : "No artifacts yet."
+      }
     />
   );
 }

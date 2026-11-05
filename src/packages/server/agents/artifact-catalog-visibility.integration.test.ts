@@ -20,6 +20,17 @@ jest.mock("./chat", () => ({
 jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
   requireDangerousSessionAuth: async () => {},
 }));
+// Records when catalog readers would be told (after the reset committed).
+let mockNudges = 0;
+jest.mock("@cocalc/server/artifacts/catalog-readiness", () => ({
+  nudgeArtifactCatalogHints: () => {
+    mockNudges++;
+  },
+  afterCatalogCommit: (value) => {
+    mockNudges++;
+    return value;
+  },
+}));
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -71,9 +82,12 @@ describeDb("agent identity changes reset artifact catalog visibility", () => {
       path: "/home/user/work.chat",
       thread_id: "thread",
     };
+    const before = mockNudges;
     const agent = await registerIdentityLocal(request);
     expect(agent.thread_id).toBe("thread");
     expect(await changes()).toEqual([{ op: "reset", seq: 1 }]);
+    // Readers are told after the transaction that wrote the reset resolved.
+    expect(mockNudges).toBe(before + 1);
     await registerIdentityLocal(request);
     expect(await changes()).toEqual([{ op: "reset", seq: 1 }]);
   });
@@ -90,11 +104,13 @@ describeDb("agent identity changes reset artifact catalog visibility", () => {
       agent_id: agent.agent_id,
       session_hash: "session",
     } as any;
+    const before = mockNudges;
     await disableIdentity(request);
     expect(await changes()).toEqual([
       { op: "reset", seq: 1 },
       { op: "reset", seq: 2 },
     ]);
+    expect(mockNudges).toBe(before + 1);
     await disableIdentity(request);
     expect(await changes()).toHaveLength(2);
   });

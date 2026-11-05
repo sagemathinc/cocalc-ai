@@ -24,6 +24,14 @@ import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import type { ListedConversation } from "@cocalc/util/people";
 import type { Candidate, WorkspaceAction } from "./model";
 import { AGENT_SIDEBAR_HIDDEN_STORAGE_KEY } from "@cocalc/frontend/agents/sidebar-storage";
+import {
+  accountCatalogFor,
+  useCatalogList,
+  useCatalogReadMode,
+  useLegacyCatalogHold,
+  usePinnedEntries,
+  useReadableProjects,
+} from "@cocalc/frontend/agents/use-account-catalog";
 
 const MAX_ARTIFACTS = 200;
 const MAX_CONVERSATIONS = 200;
@@ -147,8 +155,7 @@ export function useWorkspaceCandidates(
   enabled: boolean,
 ): Candidate[] {
   const accountId = useTypedRedux("account", "account_id") as
-    | string
-    | undefined;
+    string | undefined;
   const project_map = useTypedRedux("projects", "project_map");
   const user_map = useTypedRedux("users", "user_map");
   const catalog = accountId
@@ -156,11 +163,41 @@ export function useWorkspaceCandidates(
         webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
       )
     : undefined;
-  const metadata = useSyncExternalStore(
+  const legacy = useSyncExternalStore(
     catalog?.subscribe ?? (() => () => {}),
     catalog?.get ?? (() => EMPTY_CATALOG as any),
   );
   const pins = useArtifactPins();
+  // Only while Quick Navigation is open: the pins and one recent page.
+  const mode = useCatalogReadMode(accountId, enabled);
+  const server = mode === "server" && !!accountId;
+  useLegacyCatalogHold(accountId, agents, mode === "legacy" && enabled);
+  const account = accountId ? accountCatalogFor(accountId) : undefined;
+  const readable = useReadableProjects(accountId);
+  const pinState = usePinnedEntries(
+    account,
+    server && enabled,
+    pins.pins,
+    readable,
+  );
+  const recent = useCatalogList(
+    account?.recent,
+    server && enabled,
+    {},
+    readable,
+  );
+  const metadata = server
+    ? {
+        entries: [
+          ...[...pinState.pins.values()].filter(
+            (value): value is CatalogEntry => value !== "unavailable",
+          ),
+          ...recent.entries,
+        ],
+      }
+    : mode === "legacy"
+      ? legacy
+      : EMPTY_CATALOG;
   const conversations = useConversations(enabled);
   if (!enabled) return [];
   const people: { account_id: string; name: string }[] = [];

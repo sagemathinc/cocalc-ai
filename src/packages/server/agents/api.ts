@@ -26,6 +26,10 @@ import {
   sameAgentRuntime,
 } from "@cocalc/util/ai/agent-runtime-kind";
 import { notifyIdentityWatchers } from "./identity-watchers";
+import {
+  afterCatalogCommit,
+  nudgeArtifactCatalogHints,
+} from "@cocalc/server/artifacts/catalog-readiness";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("server:agents:api");
@@ -171,6 +175,8 @@ export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
       await appendArtifactCatalogReset(sql, opts.project_id);
       return rebound;
     });
+    // Committed: readers may be told now.
+    nudgeArtifactCatalogHints();
     // Everyone who named the agent sees its new conversation.
     void notifyIdentityWatchers(opts.agent_id);
     return fresh;
@@ -230,77 +236,79 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
     async (_db, thread) => {
       // Loading the live chat may wait on routing or synchronization.
       await assertActor(account_id, opts.project_id);
-      return db.transaction(async (sql) => {
-        await lockArtifactCatalogProject(
-          sql,
-          opts.project_id,
-          getConfiguredBayId(),
-        );
-        await sql.query(
-          "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
-          [`agent-identities:${opts.project_id}`],
-        );
-        const existing = (
+      return db
+        .transaction(async (sql) => {
+          await lockArtifactCatalogProject(
+            sql,
+            opts.project_id,
+            getConfiguredBayId(),
+          );
           await sql.query(
-            `SELECT * FROM agent_identities
+            "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+            [`agent-identities:${opts.project_id}`],
+          );
+          const existing = (
+            await sql.query(
+              `SELECT * FROM agent_identities
              WHERE project_id=$1 AND path=$2 AND thread_id=$3
                AND disabled_at IS NULL FOR UPDATE`,
-            [opts.project_id, path, opts.thread_id],
-          )
-        ).rows[0];
-        const runtime = agentRuntimeFromThread(thread);
-        if (existing) {
-          // Identities registered before runtimes (or their models) were
-          // recorded.
-          const known = parseAgentRuntimeSummary(existing.runtime);
-          if (
-            runtime &&
-            (!known ||
-              (!known.model &&
-                runtime.model &&
-                known.kind === runtime.kind &&
-                known.name === runtime.name))
-          ) {
-            const updated = (
-              await sql.query(
-                "UPDATE agent_identities SET runtime=$2::jsonb WHERE agent_id=$1 RETURNING *",
-                [existing.agent_id, JSON.stringify(runtime)],
-              )
-            ).rows[0];
-            void notifyIdentityWatchers(existing.agent_id);
-            return updated;
+              [opts.project_id, path, opts.thread_id],
+            )
+          ).rows[0];
+          const runtime = agentRuntimeFromThread(thread);
+          if (existing) {
+            // Identities registered before runtimes (or their models) were
+            // recorded.
+            const known = parseAgentRuntimeSummary(existing.runtime);
+            if (
+              runtime &&
+              (!known ||
+                (!known.model &&
+                  runtime.model &&
+                  known.kind === runtime.kind &&
+                  known.name === runtime.name))
+            ) {
+              const updated = (
+                await sql.query(
+                  "UPDATE agent_identities SET runtime=$2::jsonb WHERE agent_id=$1 RETURNING *",
+                  [existing.agent_id, JSON.stringify(runtime)],
+                )
+              ).rows[0];
+              void notifyIdentityWatchers(existing.agent_id);
+              return updated;
+            }
+            return existing;
           }
-          return existing;
-        }
-        const count = (
-          await sql.query(
-            "SELECT count(*) AS count FROM agent_identities WHERE project_id=$1",
-            [opts.project_id],
-          )
-        ).rows[0];
-        if (+count.count >= 10_000)
-          throw new Error("agent_identity_project_capacity");
-        const inserted = (
-          await sql.query(
-            `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,runtime)
+          const count = (
+            await sql.query(
+              "SELECT count(*) AS count FROM agent_identities WHERE project_id=$1",
+              [opts.project_id],
+            )
+          ).rows[0];
+          if (+count.count >= 10_000)
+            throw new Error("agent_identity_project_capacity");
+          const inserted = (
+            await sql.query(
+              `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,runtime)
              VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)
              ON CONFLICT(project_id,path,thread_id) WHERE disabled_at IS NULL
              DO NOTHING RETURNING *`,
-            [
-              randomUUID(),
-              opts.project_id,
-              path,
-              opts.thread_id,
-              thread.name || opts.thread_id,
-              account_id,
-              runtime ? JSON.stringify(runtime) : null,
-            ],
-          )
-        ).rows[0];
-        // A newly active identity makes its thread's artifacts visible.
-        if (inserted) await appendArtifactCatalogReset(sql, opts.project_id);
-        return inserted;
-      });
+              [
+                randomUUID(),
+                opts.project_id,
+                path,
+                opts.thread_id,
+                thread.name || opts.thread_id,
+                account_id,
+                runtime ? JSON.stringify(runtime) : null,
+              ],
+            )
+          ).rows[0];
+          // A newly active identity makes its thread's artifacts visible.
+          if (inserted) await appendArtifactCatalogReset(sql, opts.project_id);
+          return inserted;
+        })
+        .then(afterCatalogCommit);
     },
   );
 };
@@ -412,6 +420,7 @@ export const disableIdentity: AgentApi["disableIdentity"] = async (opts) => {
     // Its thread's artifacts are no longer visible.
     if (wasActive) await appendArtifactCatalogReset(sql, agent.project_id);
   });
+  nudgeArtifactCatalogHints();
   void notifyIdentityWatchers(opts.agent_id);
 };
 
@@ -469,72 +478,74 @@ export const recoverIdentityLocal: AgentApi["recoverIdentity"] = async (
     { ...previous, created_by: routingAccount },
     async (_chat, thread) => {
       await assertIdentityRecoveryOwner(opts.account_id!, opts.project_id);
-      return db.transaction(async (sql) => {
-        await lockArtifactCatalogProject(
-          sql,
-          opts.project_id,
-          getConfiguredBayId(),
-        );
-        await sql.query(
-          "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
-          [`agent-identities:${opts.project_id}`],
-        );
-        const active = (
+      return db
+        .transaction(async (sql) => {
+          await lockArtifactCatalogProject(
+            sql,
+            opts.project_id,
+            getConfiguredBayId(),
+          );
           await sql.query(
-            `SELECT agent_id FROM agent_identities
+            "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+            [`agent-identities:${opts.project_id}`],
+          );
+          const active = (
+            await sql.query(
+              `SELECT agent_id FROM agent_identities
              WHERE project_id=$1 AND path=$2 AND thread_id=$3
                AND disabled_at IS NULL AND agent_id<>$4 FOR UPDATE`,
-            [
-              previous.project_id,
-              previous.path,
-              previous.thread_id,
-              previous.agent_id,
-            ],
-          )
-        ).rows[0];
-        if (active) throw new Error("thread already has an active identity");
-        const count = (
+              [
+                previous.project_id,
+                previous.path,
+                previous.thread_id,
+                previous.agent_id,
+              ],
+            )
+          ).rows[0];
+          if (active) throw new Error("thread already has an active identity");
+          const count = (
+            await sql.query(
+              "SELECT count(*) AS count FROM agent_identities WHERE project_id=$1",
+              [opts.project_id],
+            )
+          ).rows[0];
+          if (+count.count >= 10_000)
+            throw new Error("agent_identity_project_capacity");
           await sql.query(
-            "SELECT count(*) AS count FROM agent_identities WHERE project_id=$1",
-            [opts.project_id],
-          )
-        ).rows[0];
-        if (+count.count >= 10_000)
-          throw new Error("agent_identity_project_capacity");
-        await sql.query(
-          `UPDATE agent_identities SET disabled_at=COALESCE(disabled_at,now()),
+            `UPDATE agent_identities SET disabled_at=COALESCE(disabled_at,now()),
              disabled_by=COALESCE(disabled_by,$2)
            WHERE agent_id=$1`,
-          [previous.agent_id, opts.account_id],
-        );
-        await sql.query(
-          "UPDATE agent_identity_runs SET ended_at=COALESCE(ended_at,now()) WHERE agent_id=$1",
-          [previous.agent_id],
-        );
-        const replacement = (
+            [previous.agent_id, opts.account_id],
+          );
           await sql.query(
-            `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,runtime)
+            "UPDATE agent_identity_runs SET ended_at=COALESCE(ended_at,now()) WHERE agent_id=$1",
+            [previous.agent_id],
+          );
+          const replacement = (
+            await sql.query(
+              `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,runtime)
              VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING *`,
-            [
-              randomUUID(),
-              previous.project_id,
-              previous.path,
-              previous.thread_id,
-              thread.name || previous.name,
-              opts.account_id,
-              JSON.stringify(
-                agentRuntimeFromThread(thread) ?? previous.runtime ?? null,
-              ),
-            ],
-          )
-        ).rows[0];
-        await sql.query(
-          "UPDATE agent_identities SET replaced_by=$2 WHERE agent_id=$1",
-          [previous.agent_id, replacement.agent_id],
-        );
-        await appendArtifactCatalogReset(sql, opts.project_id);
-        return replacement;
-      });
+              [
+                randomUUID(),
+                previous.project_id,
+                previous.path,
+                previous.thread_id,
+                thread.name || previous.name,
+                opts.account_id,
+                JSON.stringify(
+                  agentRuntimeFromThread(thread) ?? previous.runtime ?? null,
+                ),
+              ],
+            )
+          ).rows[0];
+          await sql.query(
+            "UPDATE agent_identities SET replaced_by=$2 WHERE agent_id=$1",
+            [previous.agent_id, replacement.agent_id],
+          );
+          await appendArtifactCatalogReset(sql, opts.project_id);
+          return replacement;
+        })
+        .then(afterCatalogCommit);
     },
   ).then((replacement) => {
     void notifyIdentityWatchers(previous.agent_id);
