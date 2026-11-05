@@ -196,6 +196,37 @@ describe("aiSubscriptionStatus", () => {
     expect(b.week_history).toBeUndefined();
   });
 
+  it("skips stored readings with unrepresentable or future times", () => {
+    const resets = s(now + 72 * HOUR);
+    const good = [
+      { at: now - 4 * HOUR, week: 0.2, resets_at: resets },
+      { at: now - 2 * HOUR, week: 0.3, resets_at: resets },
+    ];
+    const current = usage(0.1, 0.4, now - HOUR);
+    current.windows.seven_day.resets_at = resets;
+    const [a] = aiSubscriptionStatus(
+      [
+        claude("a", {
+          [CLAUDE_USAGE_METADATA_KEY]: current,
+          [CLAUDE_USAGE_HISTORY_METADATA_KEY]: [
+            { at: 1e20, week: 0.5, resets_at: resets },
+            good[0],
+            { at: now - 3 * HOUR, week: 0.25, resets_at: 1e20 },
+            good[1],
+            { at: now + HOUR, week: 0.9, resets_at: resets },
+          ],
+        }),
+      ],
+      now,
+    ).claude.subscriptions;
+    expect(a.week_history!.map((r) => r.used_percent)).toEqual([20, 30]);
+    for (const r of a.week_history!) {
+      expect(typeof r.at).toBe("string");
+      expect(typeof r.resets_at).toBe("string");
+    }
+    expect(a.week_percent_per_day).toBeGreaterThan(0);
+  });
+
   it("says when the pool has room again", () => {
     const status = aiSubscriptionStatus(
       [claude("a", { [CLAUDE_USAGE_METADATA_KEY]: usage(0.99, 0.2) })],

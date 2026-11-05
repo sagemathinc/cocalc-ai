@@ -114,8 +114,13 @@ export interface AiSubscriptionStatus {
   };
 }
 
-const iso = (ms: number | undefined) =>
-  ms != null && Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+// Undefined for a time a Date cannot represent (stored data may be odd):
+// toISOString would throw.
+const iso = (ms: number | undefined) => {
+  if (ms == null) return undefined;
+  const date = new Date(ms);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+};
 
 const isoOf = (value: Date | string | null | undefined) => {
   if (value == null) return undefined;
@@ -136,8 +141,11 @@ function weekHistory(
   member: ClaudePoolMember,
   now: number,
 ): Pick<ClaudeSubscriptionStatus, "week_percent_per_day" | "week_history"> {
-  const readings = member.history ?? [];
-  const rate = claudePoolRecentRate([member], now);
+  // Only readings with representable times, none in the future.
+  const readings = (member.history ?? []).filter(
+    (r) => r.at <= now && iso(r.at) && iso(r.resets_at * 1000),
+  );
+  const rate = claudePoolRecentRate([{ ...member, history: readings }], now);
   // Evenly thinned, always keeping the newest.
   const step = Math.ceil(readings.length / MAX_HISTORY_POINTS);
   const kept = readings.filter(
