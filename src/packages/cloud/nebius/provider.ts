@@ -12,6 +12,16 @@ import {
 import getLogger from "@cocalc/backend/logger";
 import { NebiusClient, type NebiusCreds } from "./client";
 import {
+  assertNebiusSpotStartable,
+  ensureNebiusSpotPricingPolicy,
+  getNebiusSpotPolicyStatus,
+  NebiusSpotPriceAboveCapError,
+  nebiusSpotPriceStopCap,
+  quoteNebiusSpotPrice,
+  type NebiusSpotQuote,
+} from "./spot";
+import { nebiusSpotPolicyName } from "@cocalc/util/nebius-spot-pricing";
+import {
   AttachedDiskSpec,
   AttachedDiskSpec_AttachMode,
   CreateDiskRequest,
@@ -36,6 +46,7 @@ import {
   ResourcesSpec,
   SecurityGroup,
   SourceImageFamily,
+  SpotPricingPolicySpec,
   StartInstanceRequest,
   StopInstanceRequest,
   UpdateDiskRequest,
@@ -121,18 +132,56 @@ function hasProvisionalInstanceId(runtime: HostRuntime): boolean {
 // An existing preemptible instance has no pricing option either, so while
 // Nebius Spot is off (#684) it is not started or restarted, except for a
 // billing rescue's final backups.
+// Once Spot is offered, a preemptible instance starts only under its pricing
+// policy, and only while Nebius's live price is within its cap (#684).
 async function assertPreemptibleStartAllowed(
   client: NebiusClient,
   runtime: HostRuntime,
   opts?: { allow_preemptible?: boolean },
 ): Promise<void> {
-  if (NEBIUS_SPOT_OFFERED || opts?.allow_preemptible) return;
+  if (opts?.allow_preemptible) return;
   const instance = await client.instances.get(
     GetInstanceRequest.create({ id: runtime.instance_id }),
   );
-  if (instanceIsPreemptible(instance as any)) {
-    assertNebiusSpotOffered("nebius", "spot");
+  if (!instanceIsPreemptible(instance as any)) return;
+  assertNebiusSpotOffered("nebius", "spot");
+  const policyId = instanceSpotPolicyId(instance as any);
+  if (!policyId) {
+    throw new Error(
+      `Nebius Spot instance '${runtime.instance_id}' has no pricing policy; recreate it`,
+    );
   }
+  const region = `${runtime.zone ?? ""}`.trim();
+  if (!region) {
+    throw new Error(`Nebius Spot instance '${runtime.instance_id}' has no region`);
+  }
+  await assertNebiusSpotStartable(client, { policy_id: policyId, region });
+}
+
+function instanceSpotPolicyId(instance: {
+  spec?: { pricingModel?: { $case?: string; spotPricingPolicy?: { id?: string } } };
+}): string | undefined {
+  const model = instance.spec?.pricingModel;
+  if (model?.$case !== "spotPricingPolicy") return undefined;
+  const id = `${model.spotPricingPolicy?.id ?? ""}`.trim();
+  return id || undefined;
+}
+
+/** A Spot spec's per-GPU cap, validated before any Nebius call. Specs without
+ * one (project hosts, old callers) are refused: max-price mode only, never a
+ * price-taker. */
+function requireSpotMaxPrice(spec: HostSpec): string {
+  const maxPrice = `${spec.metadata?.spot_max_price_per_gpu_hour ?? ""}`.trim();
+  const platform = `${spec.metadata?.platform ?? ""}`.trim();
+  if (!maxPrice) {
+    throw new Error("Nebius Spot requires a max price per GPU-hour");
+  }
+  if (!(Number(spec.gpu?.count ?? 0) > 0)) {
+    throw new Error("Nebius Spot is offered for GPU machines only");
+  }
+  // validates the platform and the canonical 3-decimal cap
+  nebiusSpotPolicyName(platform, maxPrice);
+  return maxPrice;
 }
 
 function instanceIsPreemptible(instance: {
@@ -1005,6 +1054,8 @@ export class NebiusProvider implements CloudProvider {
     // The execution boundary for every caller (API, workers, spot probes and
     // returns): no preemptible instance without a pricing option (#684).
     assertNebiusSpotOffered("nebius", spec.pricing_model);
+    const spotMaxPrice =
+      spec.pricing_model === "spot" ? requireSpotMaxPrice(spec) : undefined;
     await using client = new NebiusClient(creds);
     const parentId = creds.parentId;
     if (!parentId) {
@@ -1077,7 +1128,10 @@ export class NebiusProvider implements CloudProvider {
         );
       }
       const requestedPreemptible = spec.pricing_model === "spot";
-      if (instanceIsPreemptible(existing) !== requestedPreemptible) {
+      if (
+        instanceIsPreemptible(existing) !== requestedPreemptible ||
+        (requestedPreemptible && !instanceSpotPolicyId(existing as any))
+      ) {
         throw new Error(
           `existing Nebius instance '${name}' has an unexpected pricing model`,
         );
@@ -1114,6 +1168,20 @@ export class NebiusProvider implements CloudProvider {
           subnetId: nic?.subnetId,
         },
       };
+    }
+    // Before any disk is created: the cap's policy must exist and Nebius's
+    // price must be within it, or the instance would never be scheduled.
+    let spotPolicyId: string | undefined;
+    if (spotMaxPrice) {
+      spotPolicyId = await ensureNebiusSpotPricingPolicy(client, {
+        parentId,
+        platform: `${spec.metadata?.platform}`.trim(),
+        max_price_per_gpu_hour: spotMaxPrice,
+      });
+      const status = await getNebiusSpotPolicyStatus(client, spotPolicyId);
+      if (status.scheduling === "blocked") {
+        throw new NebiusSpotPriceAboveCapError(spotMaxPrice);
+      }
     }
     const serviceAccountId =
       spec.metadata?.disable_service_account === true
@@ -1404,6 +1472,16 @@ export class NebiusProvider implements CloudProvider {
                   onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
                 })
               : undefined,
+          ...(spotPolicyId
+            ? {
+                pricingModel: {
+                  $case: "spotPricingPolicy" as const,
+                  spotPricingPolicy: SpotPricingPolicySpec.create({
+                    id: spotPolicyId,
+                  }),
+                },
+              }
+            : {}),
           hostname: name,
         }),
       }),
@@ -1427,9 +1505,46 @@ export class NebiusProvider implements CloudProvider {
             }
           : {}),
         subnetId,
+        ...(spotPolicyId
+          ? {
+              spot_pricing_policy_id: spotPolicyId,
+              spot_max_price_per_gpu_hour: spotMaxPrice,
+            }
+          : {}),
       },
     };
     return runtime;
+  }
+
+  /** Nebius's live spot price for a new Spot VM's cap (#684). */
+  async quoteSpotPrice(
+    creds: NebiusProviderCreds,
+    opts: { region: string; platform: string },
+  ): Promise<NebiusSpotQuote> {
+    await using client = new NebiusClient(creds);
+    return await quoteNebiusSpotPrice(client, opts);
+  }
+
+  /** For a Spot instance Nebius stopped: its cap when the stop was for price,
+   * else undefined. A missing instance or policy is not a price stop. */
+  async spotPriceStopCap(
+    runtime: HostRuntime,
+    creds: NebiusProviderCreds,
+  ): Promise<string | undefined> {
+    if (hasProvisionalInstanceId(runtime)) return undefined;
+    await using client = new NebiusClient(creds);
+    let instance;
+    try {
+      instance = await client.instances.get(
+        GetInstanceRequest.create({ id: runtime.instance_id }),
+      );
+    } catch (err) {
+      if (isNotFoundError(err)) return undefined;
+      throw err;
+    }
+    const policyId = instanceSpotPolicyId(instance as any);
+    if (!policyId) return undefined;
+    return await nebiusSpotPriceStopCap(client, policyId);
   }
 
   async startHost(

@@ -12,6 +12,9 @@ export const NEBIUS_SPOT_OFFERED = false;
 export const NEBIUS_SPOT_UNAVAILABLE_MESSAGE =
   "Nebius Spot is unavailable until spot pricing support lands; use Standard pricing";
 
+export const NEBIUS_PROJECT_HOST_SPOT_MESSAGE =
+  "Nebius Spot is offered for dedicated VMs only; project hosts use Standard pricing";
+
 /** Refuses Nebius Spot (for dedicated VMs and project hosts alike) while it
  * is not offered; anything else passes. */
 export function assertNebiusSpotOffered(
@@ -22,4 +25,17 @@ export function assertNebiusSpotOffered(
   if (`${provider ?? ""}`.toLowerCase() !== "nebius") return;
   if (pricingModel !== "spot") return;
   throw new Error(NEBIUS_SPOT_UNAVAILABLE_MESSAGE);
+}
+
+/** Project hosts never run on Nebius Spot, even once dedicated VMs may (#684):
+ * a host has no per-VM price cap, and a price stop would stop every project
+ * on it. */
+export function assertNebiusProjectHostSpotRefused(
+  provider: unknown,
+  pricingModel: unknown,
+): void {
+  assertNebiusSpotOffered(provider, pricingModel);
+  if (`${provider ?? ""}`.toLowerCase() !== "nebius") return;
+  if (pricingModel !== "spot") return;
+  throw new Error(NEBIUS_PROJECT_HOST_SPOT_MESSAGE);
 }
