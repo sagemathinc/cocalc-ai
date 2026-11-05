@@ -3,6 +3,8 @@ import {
   aiSubscriptionStatus,
   type AiSubscriptionStatus,
 } from "@cocalc/util/ai/subscription-status";
+import type { MembershipUsage } from "@cocalc/conat/hub/api/purchases";
+import { membershipUsageSummary } from "@cocalc/server/membership/usage-summary";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
@@ -7268,6 +7270,22 @@ export async function getAiSubscriptionStatus({
     includeRevoked: false,
   });
   return aiSubscriptionStatus(rows);
+}
+
+export async function getMembershipUsage({
+  account_id,
+  refresh_usage_status,
+}: {
+  account_id?: string;
+  refresh_usage_status?: boolean;
+} = {}): Promise<MembershipUsage> {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const { getMembershipDetails } = await import("./purchases");
+  return membershipUsageSummary(
+    await getMembershipDetails({ account_id, refresh_usage_status }),
+  );
 }
 
 export async function revokeExternalCredential({

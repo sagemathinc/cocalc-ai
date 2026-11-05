@@ -40,6 +40,7 @@ const LOW_PRIORITY_METHODS = new Set([
   "personalLibrary.name",
   "personalLibrary.setPinned",
   "personalLibrary.movePinned",
+  "system.getMembershipUsage",
   "system.listNews",
   "system.recordUxLatencyEvent",
   "system.removeBrowserSession",

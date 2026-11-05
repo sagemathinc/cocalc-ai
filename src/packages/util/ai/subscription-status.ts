@@ -22,12 +22,16 @@ import {
   parseClaudePoolReservations,
   parseTurnCostSamples,
 } from "./claude-pool";
-import { CLAUDE_SUBSCRIPTION_KIND } from "./external-credential-profiles";
+import {
+  ANTHROPIC_API_PROVIDER,
+  CLAUDE_SUBSCRIPTION_KIND,
+} from "./external-credential-profiles";
 
 export interface AiSubscriptionCredentialRow {
   id: string;
   provider: string;
   kind: string;
+  scope?: string;
   metadata?: Record<string, any> | null;
   last_used?: Date | string | null;
   revoked?: Date | string | null;
@@ -122,9 +126,12 @@ export function aiSubscriptionStatus(
   rows: AiSubscriptionCredentialRow[],
   now = Date.now(),
 ): AiSubscriptionStatus {
-  const live = rows.filter((row) => !row.revoked);
+  // The account's own subscriptions, exactly as Auto selects them.
+  const live = rows.filter((row) => !row.revoked && row.scope === "account");
   const claudeRows = live.filter(
-    (row) => row.kind === CLAUDE_SUBSCRIPTION_KIND,
+    (row) =>
+      row.provider === ANTHROPIC_API_PROVIDER &&
+      row.kind === CLAUDE_SUBSCRIPTION_KIND,
   );
   const pool = claudeRows.filter(
     (row) => row.metadata?.[CLAUDE_POOL_EXCLUDED_METADATA_KEY] !== true,
@@ -216,7 +223,11 @@ export function aiSubscriptionStatus(
     },
     codex: {
       subscriptions: live
-        .filter((row) => row.kind === CODEX_SUBSCRIPTION_CREDENTIAL_KIND)
+        .filter(
+          (row) =>
+            row.provider === "openai" &&
+            row.kind === CODEX_SUBSCRIPTION_CREDENTIAL_KIND,
+        )
         .map((row) => ({
           id: row.id,
           ...(text(row.metadata?.label)

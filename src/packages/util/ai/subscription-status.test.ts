@@ -22,6 +22,7 @@ const claude = (id: string, metadata: Record<string, unknown>) => ({
   id,
   provider: "anthropic",
   kind: "claude-subscription-home-v1",
+  scope: "account",
   metadata,
   last_used: new Date(now - HOUR),
 });
@@ -54,6 +55,7 @@ describe("aiSubscriptionStatus", () => {
           id: "x",
           provider: "openai",
           kind: "codex-subscription-auth-json",
+          scope: "account",
           metadata: {
             label: "Work",
             email: "w@example.com",
@@ -118,6 +120,44 @@ describe("aiSubscriptionStatus", () => {
         default: true,
       },
     ]);
+  });
+
+  it("uses only the account's own subscriptions, as Auto selects them", () => {
+    const decoy = (over: Record<string, string>) => ({
+      ...claude("decoy", {
+        label: "decoy",
+        [CLAUDE_USAGE_METADATA_KEY]: usage(0.99, 0.99),
+      }),
+      ...over,
+    });
+    const status = aiSubscriptionStatus(
+      [
+        claude("a", { [CLAUDE_USAGE_METADATA_KEY]: usage(0.2, 0.5) }),
+        decoy({ provider: "openai" }),
+        decoy({ scope: "project" }),
+        decoy({ kind: "anthropic-api-key" }),
+        {
+          id: "codex-decoy",
+          provider: "anthropic",
+          kind: "codex-subscription-auth-json",
+          scope: "account",
+          metadata: { label: "decoy" },
+        },
+        {
+          id: "codex-project",
+          provider: "openai",
+          kind: "codex-subscription-auth-json",
+          scope: "project",
+          metadata: { label: "decoy" },
+        },
+      ],
+      now,
+    );
+    expect(JSON.stringify(status)).not.toMatch(/decoy/);
+    expect(status.claude.subscriptions.map((x) => x.id)).toEqual(["a"]);
+    expect(status.claude.auto.members).toBe(1);
+    expect(status.claude.auto.weekly_limits_left).toBe(0.5);
+    expect(status.codex.subscriptions).toEqual([]);
   });
 
   it("says when the pool has room again", () => {

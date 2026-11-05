@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { readFile } from "node:fs/promises";
-import { FALLBACK_ACCOUNT_UUID, humanSize } from "@cocalc/util/misc";
+import { humanSize } from "@cocalc/util/misc";
 import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
 import { normalizeApiKeyActionReview } from "@cocalc/util/api-key-management";
 import { apiKeyForProject } from "../core/managed-connector-auth";
@@ -130,7 +130,7 @@ export function managedEgressWarnings({
 
 function serializeMembershipDetails(
   details: MembershipDetails,
-  account_id: string | null,
+  account_id: string,
   toIso: AccountCommandDeps["toIso"],
 ) {
   const usageLimits =
@@ -291,23 +291,9 @@ export function registerAccountCommand(
     )
     .action(async (accountIdentifier: string | undefined, command: Command) => {
       await withContext(command, "account membership", async (ctx) => {
-        if (!accountIdentifier?.trim()) {
-          // One's own: no account to name, which a scoped API key (an agent's
-          // "Read my membership usage and limits") may not do; its context
-          // may not even know the account id.
-          const details = await ctx.hub.purchases.getMembershipDetails({
-            refresh_usage_status: true,
-          });
-          const own =
-            ctx.accountId && ctx.accountId !== FALLBACK_ACCOUNT_UUID
-              ? ctx.accountId
-              : null;
-          return serializeMembershipDetails(details, own, toIso);
-        }
-        const target = await resolveAccountByIdentifier(
-          ctx,
-          accountIdentifier.trim(),
-        );
+        const target = accountIdentifier?.trim()
+          ? await resolveAccountByIdentifier(ctx, accountIdentifier.trim())
+          : { account_id: ctx.accountId };
         const account_id = `${target.account_id ?? ""}`.trim();
         if (!account_id) {
           throw new Error("unable to resolve target account");
@@ -317,6 +303,19 @@ export function registerAccountCommand(
           refresh_usage_status: true,
         });
         return serializeMembershipDetails(details, account_id, toIso);
+      });
+    });
+
+  account
+    .command("usage")
+    .description(
+      "show your membership's limits and current usage (what Usage and limits shows); works with a scoped API key that may read usage",
+    )
+    .action(async (command: Command) => {
+      await withContext(command, "account usage", async (ctx) => {
+        return await ctx.hub.system.getMembershipUsage({
+          refresh_usage_status: true,
+        });
       });
     });
 

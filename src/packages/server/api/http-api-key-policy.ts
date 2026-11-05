@@ -20,15 +20,10 @@ const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "notifications.markRead": "notifications:manage",
   "notifications.save": "notifications:manage",
   "notifications.archive": "notifications:manage",
-  // "Usage and limits": the account's own membership only (see below).
-  "purchases.getMembershipDetails": "usage:read",
+  // Curated for keys: limits and usage numbers of the key's own account,
+  // not the raw membership details (purchases, grants, licenses, events).
+  "system.getMembershipUsage": "usage:read",
   "system.getAiSubscriptionStatus": "ai-subscriptions:read",
-};
-
-// Arguments that would act on another account (an admin's lookup): a key
-// reads its own account only.
-const OTHER_ACCOUNT_ARGS: Record<string, string[]> = {
-  "purchases.getMembershipDetails": ["user_account_id"],
 };
 
 const HUB_API_KEY_HELLO_WORLD = new Set(["system.ping"]);
@@ -91,15 +86,6 @@ export async function assertHttpHubApiKeyAllowed({
   if (capability) {
     try {
       requireApiKeyCapability(principal, capability);
-      for (const key of OTHER_ACCOUNT_ARGS[name] ?? []) {
-        const value = args?.[0]?.[key];
-        if (value != null && value !== principal.account_id) {
-          throw Object.assign(
-            new Error(`API keys may not set '${key}' for '${name}'`),
-            { code: "api_key_other_account" },
-          );
-        }
-      }
       if (SOLO_PROJECT_ACCOUNT_CAPABILITIES.has(capability)) {
         const { assertSoloProjectCapabilityInContext } =
           await import("@cocalc/server/agents/cocalc-connector-scope");

@@ -165,6 +165,7 @@ export const system = {
   manageSiteFundedClaudeKeys: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
   getAiSubscriptionStatus: authFirstRequireAccount,
+  getMembershipUsage: authFirstRequireAccount,
   getFrontendSourceFingerprint: authFirstRequireAccount,
   getRootfsCatalog: authFirstRequireAccount,
   getRootfsCatalogPage: authFirstRequireAccount,
@@ -3027,6 +3028,13 @@ export interface System {
   // one's limits as last reported and Auto's view of the pool. No secrets.
   getAiSubscriptionStatus: (opts?: {
     account_id?: string;
+
+  // The account's own membership limits and usage ("Usage and limits"),
+  // curated: see MembershipUsage.
+  getMembershipUsage: (opts?: {
+    account_id?: string;
+    refresh_usage_status?: boolean;
+  }) => Promise<import("./purchases").MembershipUsage>;
   }) => Promise<
     import("@cocalc/util/ai/subscription-status").AiSubscriptionStatus
   >;

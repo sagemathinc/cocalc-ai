@@ -348,6 +348,17 @@ export interface MembershipAdminOverrideSummary {
   updated_at: Date | string;
 }
 
+export type MembershipUsageValue = number | boolean | string;
+
+/** What "Usage and limits" shows, for API keys and agents (usage:read):
+ * the effective limits and current usage, never which purchase, grant,
+ * license or override provides them, nor per-event details. */
+export interface MembershipUsage {
+  membership: { class: MembershipClass; source: string; expires?: string };
+  limits: Record<string, MembershipUsageValue | Record<string, number>>;
+  usage: Record<string, MembershipUsageValue | Record<string, number>> | null;
+}
+
 export interface MembershipDetails {
   selected: MembershipResolution;
   candidates: MembershipCandidate[];

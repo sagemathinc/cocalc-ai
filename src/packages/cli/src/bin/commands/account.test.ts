@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Command } from "commander";
-import { FALLBACK_ACCOUNT_UUID } from "@cocalc/util/misc";
 
 import { managedEgressWarnings, registerAccountCommand } from "./account";
 
@@ -221,7 +220,6 @@ test("account where resolves an explicit account identifier", async () => {
 
 test("account membership defaults to the current account", async () => {
   let captured: any;
-  let capturedArgs: any;
   const program = new Command();
   registerAccountCommand(program, {
     withContext: async (_command, _label, fn) => {
@@ -264,11 +262,6 @@ test("account membership defaults to the current account", async () => {
           },
         },
       };
-      const get = ctx.hub.purchases.getMembershipDetails;
-      ctx.hub.purchases.getMembershipDetails = async (opts?: any) => {
-        capturedArgs = opts;
-        return await get();
-      };
       captured = await fn(ctx);
     },
     toIso: (value) => value,
@@ -279,8 +272,6 @@ test("account membership defaults to the current account", async () => {
 
   await program.parseAsync(["node", "test", "account", "membership"]);
 
-  // One's own needs no account named, which a scoped key may not do.
-  assert.deepEqual(capturedArgs, { refresh_usage_status: true });
   assert.equal(captured?.account_id, "11111111-1111-1111-1111-111111111111");
   assert.equal(captured?.membership_class, "pro");
   assert.equal(captured?.total_storage_soft_bytes, 1024);
@@ -292,53 +283,21 @@ test("account membership defaults to the current account", async () => {
   });
 });
 
-test("account membership in an agent turn does not report a placeholder account", async () => {
-  let captured: any;
+test("account usage and subscriptions call their curated RPCs", async () => {
+  const calls: any[] = [];
   const program = new Command();
   registerAccountCommand(program, {
     withContext: async (_command, _label, fn) => {
-      captured = await fn({
-        accountId: FALLBACK_ACCOUNT_UUID,
-        hub: {
-          purchases: {
-            getMembershipDetails: async () => ({
-              selected: {
-                class: "pro",
-                source: "subscription",
-                entitlements: { usage_limits: {} },
-              },
-              candidates: [],
-            }),
+      calls.push(
+        await fn({
+          hub: {
+            system: {
+              getMembershipUsage: async (opts) => ({ usage: opts }),
+              getAiSubscriptionStatus: async () => ({ claude: {} }),
+            },
           },
-        },
-      });
-    },
-    toIso: (value) => value,
-    resolveAccountByIdentifier: async () => {
-      throw new Error("should not resolve an explicit account");
-    },
-  } as any);
-
-  await program.parseAsync(["node", "test", "account", "membership"]);
-
-  assert.equal(captured?.account_id, null);
-  assert.equal(captured?.membership_class, "pro");
-});
-
-test("account subscriptions reports the AI subscription status", async () => {
-  let captured: any;
-  const status = {
-    checked_at: "2026-11-05T00:00:00.000Z",
-    claude: {},
-    codex: {},
-  };
-  const program = new Command();
-  registerAccountCommand(program, {
-    withContext: async (_command, _label, fn) => {
-      captured = await fn({
-        accountId: FALLBACK_ACCOUNT_UUID,
-        hub: { system: { getAiSubscriptionStatus: async () => status } },
-      });
+        }),
+      );
     },
     toIso: (value) => value,
     resolveAccountByIdentifier: async () => {
@@ -346,9 +305,13 @@ test("account subscriptions reports the AI subscription status", async () => {
     },
   } as any);
 
+  await program.parseAsync(["node", "test", "account", "usage"]);
   await program.parseAsync(["node", "test", "account", "subscriptions"]);
 
-  assert.equal(captured, status);
+  assert.deepEqual(calls, [
+    { usage: { refresh_usage_status: true } },
+    { claude: {} },
+  ]);
 });
 
 test("account membership resolves an explicit account identifier", async () => {

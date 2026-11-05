@@ -1899,7 +1899,7 @@ async function hubCallByName<T>(
       "notifications.markRead",
       "notifications.save",
       "notifications.archive",
-      "purchases.getMembershipDetails",
+      "system.getMembershipUsage",
       "system.getAiSubscriptionStatus",
     ].includes(name)
   ) {
