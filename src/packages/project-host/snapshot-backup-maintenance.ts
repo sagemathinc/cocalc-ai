@@ -44,16 +44,23 @@ import {
 import {
   admitStorageOperation,
   getStorageAdmissionStatus,
+  SNAPSHOT_LANE_PARK_REASONS,
+  snapshotLaneParkReason,
 } from "./storage-admission";
 import type { StorageAdmissionTicket } from "./storage-admission";
 import type { StorageOperationKind } from "./storage-operation-registry";
 import { orderProjectMaintenance } from "./maintenance-priority";
-import { MaintenanceDispatchQueue } from "./maintenance-dispatch-queue";
+import {
+  MaintenanceDispatchQueue,
+  type MaintenanceDispatchQueueStatus,
+  type MaintenanceRequeue,
+} from "./maintenance-dispatch-queue";
 import { MaintenanceScheduleRefresh } from "./maintenance-schedule-refresh";
 import { createMaintenanceStarvationQueue } from "./maintenance-starvation";
 import type { StarvedMaintenance } from "./maintenance-starvation";
 import { recoveryFailureReason } from "./recovery-failure-reason";
 import { setSnapshotBackupMaintenanceGate } from "./snapshot-backup-gate";
+import { setSnapshotLaneStatusProvider } from "./snapshot-lane-status";
 import { markProjectLastChanged, onProjectChangeReported } from "./last-edited";
 import {
   listLeasedMaintenanceSchedules,
@@ -125,7 +132,22 @@ function queuesForHost(hostId: string) {
   let queues = dispatchQueues.get(hostId);
   if (!queues) {
     queues = {
-      snapshot: new MaintenanceDispatchQueue(),
+      // Parks while every scheduled snapshot would be refused alike (a
+      // project start, emergency I/O), instead of refusing item after item.
+      snapshot: new MaintenanceDispatchQueue({
+        parkCheck: () => {
+          const reason = snapshotLaneParkReason();
+          // Snapshots waiting in a parked lane keep their place as the
+          // recovery head (no attempt refreshes it while parked), so the
+          // longest waiting still goes first when the lane resumes.
+          if (reason) touchParkedRecoveryWaiting(hostId);
+          return reason;
+        },
+        parkPollMs: parsePositiveInteger(
+          process.env.COCALC_PROJECT_HOST_SNAPSHOT_LANE_PARK_POLL_MS,
+          5_000,
+        ),
+      }),
       backup: new MaintenanceDispatchQueue(),
       reobserve: new MaintenanceDispatchQueue(),
       refresh: new MaintenanceScheduleRefresh(),
@@ -137,6 +159,71 @@ function queuesForHost(hostId: string) {
 let scheduleListing: Promise<HostProjectMaintenanceSchedule[]> | undefined;
 let inventoryVersion = 0;
 let starvationQueue = createMaintenanceStarvationQueue(() => Date.now());
+
+// Outcomes of the snapshot lane's attempts over the last 10 minutes, for
+// host metrics (outcome tokens and counts only).
+const SNAPSHOT_LANE_WINDOW_MS = 10 * 60_000;
+const SNAPSHOT_LANE_MAX_OUTCOMES = 10_000;
+type SnapshotLaneOutcome = "succeeded" | "skipped" | "deferred" | "failed";
+let snapshotLaneOutcomes: { at: number; outcome: SnapshotLaneOutcome }[] = [];
+
+function noteSnapshotLaneOutcome(outcome: SnapshotLaneOutcome): void {
+  const now = Date.now();
+  snapshotLaneOutcomes.push({ at: now, outcome });
+  if (
+    snapshotLaneOutcomes.length > SNAPSHOT_LANE_MAX_OUTCOMES ||
+    snapshotLaneOutcomes[0].at < now - SNAPSHOT_LANE_WINDOW_MS
+  ) {
+    snapshotLaneOutcomes = snapshotLaneOutcomes
+      .filter(({ at }) => at >= now - SNAPSHOT_LANE_WINDOW_MS)
+      .slice(-SNAPSHOT_LANE_MAX_OUTCOMES);
+  }
+}
+
+export interface SnapshotLaneStatus extends MaintenanceDispatchQueueStatus {
+  completed_10m: Partial<Record<SnapshotLaneOutcome, number>>;
+}
+
+/** The snapshot lane of this host (all of its queues, normally one): queue
+ * depth, parking and recent outcomes, as counts and durations only. */
+export function getSnapshotLaneStatus(
+  now = Date.now(),
+): SnapshotLaneStatus | undefined {
+  const statuses = [...dispatchQueues.values()].map(({ snapshot }) =>
+    snapshot.status(),
+  );
+  if (!statuses.length) return undefined;
+  const requeued_total: Record<string, number> = {};
+  for (const status of statuses) {
+    for (const [reason, n] of Object.entries(status.requeued_total)) {
+      requeued_total[reason] = (requeued_total[reason] ?? 0) + n;
+    }
+  }
+  const parked = statuses.find((status) => status.parked);
+  const oldest = statuses
+    .map((status) => status.oldest_pending_due_ms)
+    .filter((at): at is number => at != null);
+  const completed_10m: SnapshotLaneStatus["completed_10m"] = {};
+  for (const { at, outcome } of snapshotLaneOutcomes) {
+    if (at < now - SNAPSHOT_LANE_WINDOW_MS) continue;
+    completed_10m[outcome] = (completed_10m[outcome] ?? 0) + 1;
+  }
+  return {
+    pending: statuses.reduce((total, status) => total + status.pending, 0),
+    active: statuses.reduce((total, status) => total + status.active, 0),
+    parked: parked != null,
+    ...(parked?.park_reason ? { park_reason: parked.park_reason } : {}),
+    parked_ms_total: statuses.reduce(
+      (total, status) => total + status.parked_ms_total,
+      0,
+    ),
+    requeued_total,
+    ...(oldest.length ? { oldest_pending_due_ms: Math.min(...oldest) } : {}),
+    completed_10m,
+  };
+}
+
+setSnapshotLaneStatusProvider(() => getSnapshotLaneStatus());
 // Snapshots deferred while storage is in recovery. Only the oldest due one,
 // the head, may take a recovery slot, and it is woken for each slot instead
 // of waiting out its 48-72 s deferral backoff; the rest keep that backoff, so
@@ -152,6 +239,14 @@ const RECOVERY_HEAD_STALE_MS = 2 * 60_000;
 // work or a lifecycle gate: check again after about one pace.
 const RECOVERY_BLOCKED_RETRY_MS = 20_000;
 let recoveryHead: { projectId: string; since: number } | undefined;
+
+function touchParkedRecoveryWaiting(hostId: string, now = Date.now()): void {
+  const snapshot = dispatchQueues.get(hostId)?.snapshot;
+  if (!snapshot) return;
+  for (const [projectId, entry] of recoveryWaiting) {
+    if (snapshot.has(projectId) === "pending") entry.seenAt = now;
+  }
+}
 
 function recoveryWaitingHead(now = Date.now()): string | undefined {
   while (true) {
@@ -1555,8 +1650,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     row: HostProjectMaintenanceSchedule,
     { afterRunning }: { afterRunning: boolean },
   ) => {
+    // Under the ownership lease (a bay outage) there is no fresh row: work
+    // that must read its row afresh (requeued, or queued behind a run of the
+    // same project) runs nothing rather than its old row.
     const refreshed = await (usedOwnershipLease
-      ? Promise.resolve(row)
+      ? Promise.resolve(afterRunning ? undefined : row)
       : queues.refresh.get({
           row,
           // Queued behind this project's previous operation: the cached row
@@ -1604,7 +1702,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   const runSnapshot = async (
     candidate: HostProjectMaintenanceSchedule,
     opts: { afterRunning: boolean },
-  ): Promise<"deferred" | undefined> => {
+  ): Promise<"deferred" | MaintenanceRequeue | undefined> => {
     const row = await refreshQueuedRow(candidate, opts);
     if (!row) {
       // Gone from this host: it must not hold the recovery head.
@@ -1697,6 +1795,26 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           }
         },
       });
+      // Refused before anything changed (admission, or the first mutation
+      // boundary with nothing mutated yet), for a reason that holds every
+      // snapshot alike: back to its place in the queue, which parks. No
+      // report: the sweep's "queued" status for it stands. A requeued run
+      // starts over, taking the lifecycle lock and admission again.
+      if (
+        !result.ran &&
+        result.admissionDeferred === true &&
+        result.mutated !== true &&
+        result.reason != null &&
+        SNAPSHOT_LANE_PARK_REASONS.has(result.reason)
+      ) {
+        // Still the longest waiting, if it was: it keeps its place as the
+        // recovery head for when the lane resumes (with more than one slot,
+        // two popped snapshots must not race for one recovery slot).
+        if (dueAt != null) {
+          recoveryWaiting.set(project_id, { dueAt, seenAt: Date.now() });
+        }
+        return { requeue: result.reason };
+      }
       const changedAt = parseTimestampMs(row.last_changed ?? row.last_edited);
       const latestSnapshotAt = parseTimestampMs(latest_snapshot_at);
       const confirmedRecoveryPoint =
@@ -1730,6 +1848,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               : changed === false || intervalWaiting
                 ? "skipped"
                 : "deferred";
+      noteSnapshotLaneOutcome(outcome);
       const reason =
         result.reason ??
         (limitPruneDeferred ? "snapshot_prune_deferred" : undefined) ??
@@ -1818,6 +1937,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         logger.warn("snapshot status report failed", { project_id, err }),
       );
     } catch (err) {
+      noteSnapshotLaneOutcome("failed");
       logger.warn("scheduled snapshot maintenance failed", {
         hostId,
         project_id,
@@ -2566,6 +2686,13 @@ export const _test = {
   maintenanceMemoryDecision,
   resetStarvationQueue: () => {
     starvationQueue = createMaintenanceStarvationQueue(() => Date.now());
+    for (const queues of dispatchQueues.values()) {
+      queues.snapshot.close();
+      queues.backup.close();
+      queues.reobserve.close();
+    }
+    dispatchQueues.clear();
+    snapshotLaneOutcomes = [];
     recoveryWaiting.clear();
     recoveryHead = undefined;
   },

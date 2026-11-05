@@ -49,6 +49,7 @@ import type {
   HostSpotRecoveryPolicy,
   HostSpotRecoveryState,
   HostStatus,
+  HostSnapshotLaneMetrics,
   HostStorageAdmissionMetrics,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -222,6 +223,94 @@ function normalizeSnapshotBackupMaintenanceGate(
     ...(gate.pressure_attribution === "bees_cgroup"
       ? { pressure_attribution: "bees_cgroup" as const }
       : {}),
+  };
+}
+
+// Reasons and outcomes are fixed tokens from the host's code; anything else
+// (free text, ids) drops the block rather than being stored.
+const SNAPSHOT_LANE_TOKEN = /^[a-z0-9_]{1,48}$/;
+// Valid tokens, but object keys with special meaning: never used as keys.
+const SNAPSHOT_LANE_RESERVED = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+const SNAPSHOT_LANE_OUTCOMES = new Set([
+  "succeeded",
+  "skipped",
+  "deferred",
+  "failed",
+]);
+const SNAPSHOT_LANE_MAX_REASONS = 16;
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function normalizeSnapshotLaneMetrics(
+  value: unknown,
+): HostSnapshotLaneMetrics | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const lane = value as Record<string, unknown>;
+  const pending = nonNegativeInteger(lane.pending);
+  const active = nonNegativeInteger(lane.active);
+  const parkedMs = nonNegativeInteger(lane.parked_ms_total);
+  if (
+    pending == null ||
+    active == null ||
+    parkedMs == null ||
+    typeof lane.parked !== "boolean" ||
+    (lane.park_reason != null &&
+      (typeof lane.park_reason !== "string" ||
+        !SNAPSHOT_LANE_TOKEN.test(lane.park_reason)))
+  ) {
+    return undefined;
+  }
+  const counts = (
+    raw: unknown,
+    allowed: (key: string) => boolean,
+  ): Record<string, number> | undefined => {
+    if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+      return undefined;
+    }
+    const entries = Object.entries(raw as Record<string, unknown>);
+    if (entries.length > SNAPSHOT_LANE_MAX_REASONS) return undefined;
+    const out: Record<string, number> = {};
+    for (const [key, n] of entries) {
+      const count = nonNegativeInteger(n);
+      if (!allowed(key) || count == null) return undefined;
+      out[key] = count;
+    }
+    return out;
+  };
+  const requeued = counts(
+    lane.requeued_total,
+    (key) => SNAPSHOT_LANE_TOKEN.test(key) && !SNAPSHOT_LANE_RESERVED.has(key),
+  );
+  const completed = counts(lane.completed_10m, (key) =>
+    SNAPSHOT_LANE_OUTCOMES.has(key),
+  );
+  if (!requeued || !completed) return undefined;
+  const oldest =
+    lane.oldest_pending_due_ms == null
+      ? undefined
+      : nonNegativeInteger(lane.oldest_pending_due_ms);
+  if (lane.oldest_pending_due_ms != null && oldest == null) return undefined;
+  return {
+    pending,
+    active,
+    parked: lane.parked,
+    ...(typeof lane.park_reason === "string"
+      ? { park_reason: lane.park_reason }
+      : {}),
+    parked_ms_total: parkedMs,
+    requeued_total: requeued,
+    ...(oldest != null ? { oldest_pending_due_ms: oldest } : {}),
+    completed_10m: completed,
   };
 }
 
@@ -1046,6 +1135,9 @@ export function parseRow(
   const snapshotBackupMaintenanceGate = normalizeSnapshotBackupMaintenanceGate(
     rawCurrentMetrics?.snapshot_backup_maintenance_gate,
   );
+  const snapshotLaneMetrics = normalizeSnapshotLaneMetrics(
+    rawCurrentMetrics?.snapshot_lane,
+  );
   const currentMetrics: HostCurrentMetrics | undefined =
     rawCurrentMetrics && typeof rawCurrentMetrics === "object"
       ? {
@@ -1345,6 +1437,9 @@ export function parseRow(
             ? {
                 snapshot_backup_maintenance_gate: snapshotBackupMaintenanceGate,
               }
+            : {}),
+          ...(snapshotLaneMetrics != null
+            ? { snapshot_lane: snapshotLaneMetrics }
             : {}),
         }
       : undefined;

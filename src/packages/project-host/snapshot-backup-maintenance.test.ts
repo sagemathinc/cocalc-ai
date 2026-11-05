@@ -10,6 +10,7 @@ const runScheduledBackupMaintenanceMock = jest.fn();
 const listProjectBackupIdsMock = jest.fn();
 const admitStorageOperationMock = jest.fn();
 const getStorageAdmissionStatusMock = jest.fn();
+const snapshotLaneParkReasonMock = jest.fn((): string | undefined => undefined);
 const releaseStorageOperationMock = jest.fn();
 const reportProjectMaintenanceMock = jest.fn();
 const listPendingMaintenanceReportsMock = jest.fn();
@@ -91,6 +92,14 @@ jest.mock("./storage-admission", () => ({
   admitStorageOperation: (...args: any[]) => admitStorageOperationMock(...args),
   getStorageAdmissionStatus: (...args: any[]) =>
     getStorageAdmissionStatusMock(...args),
+  snapshotLaneParkReason: (...args: any[]) =>
+    snapshotLaneParkReasonMock(...args),
+  SNAPSHOT_LANE_PARK_REASONS: new Set([
+    "lifecycle_active",
+    "lifecycle_settle",
+    "io_pressure_emergency",
+    "io_pressure_unavailable",
+  ]),
 }));
 
 jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
@@ -116,6 +125,7 @@ describe("snapshot-backup-maintenance", () => {
     getMasterConatClientMock.mockReturnValue({ id: "master-client" });
     confirmProjectMaintenanceAssignmentMock.mockResolvedValue({ valid: true });
     getStorageAdmissionStatusMock.mockReturnValue(undefined);
+    snapshotLaneParkReasonMock.mockReturnValue(undefined);
     listProjectMaintenanceSchedulesMock.mockResolvedValue([
       {
         project_id: "proj-1",
@@ -197,6 +207,8 @@ describe("snapshot-backup-maintenance", () => {
       lifecycle_active: 0,
       pressure_state: "emergency",
     });
+    // The snapshot lane sees the same refusal locally and parks.
+    snapshotLaneParkReasonMock.mockReturnValue("io_pressure_emergency");
     admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
       admitted: false,
       would_defer: true,
@@ -205,10 +217,18 @@ describe("snapshot-backup-maintenance", () => {
       operation_id: operation_kind,
       release: releaseStorageOperationMock,
     }));
-    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
-      await import("./snapshot-backup-maintenance");
+    const {
+      runProjectSnapshotBackupMaintenanceSweepOnce,
+      getSnapshotLaneStatus,
+    } = await import("./snapshot-backup-maintenance");
 
-    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    await runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "host-1",
+      detach: true,
+    });
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
 
     expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith({
       host_id: "host-1",
@@ -217,14 +237,32 @@ describe("snapshot-backup-maintenance", () => {
     });
     expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
     expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+    // The snapshot debt is published as queued; the parked lane neither
+    // admits it nor reports a refusal for it.
     expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "proj-1",
         kind: "snapshot",
         outcome: "deferred",
+        reason: "queued",
+      }),
+    );
+    expect(reportProjectMaintenanceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "snapshot",
         reason: "io_pressure_emergency",
       }),
     );
+    expect(admitStorageOperationMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ operation_kind: "scheduled_snapshot" }),
+    );
+    expect(getSnapshotLaneStatus()).toMatchObject({
+      pending: 1,
+      parked: true,
+      park_reason: "io_pressure_emergency",
+    });
+    // Backups don't park: their refusal is reported as before.
     expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "proj-2",
@@ -233,6 +271,320 @@ describe("snapshot-backup-maintenance", () => {
         reason: "io_pressure_emergency",
       }),
     );
+  });
+
+  describe("the snapshot lane's requeue", () => {
+    const settle = async () => {
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
+    const snapshotReports = () =>
+      reportProjectMaintenanceMock.mock.calls
+        .map(([value]) => value)
+        .filter((value) => value.kind === "snapshot");
+    // (the backup lane runs alongside: take the snapshot's own context)
+    const snapshotContext = () =>
+      mutationContextMock.mock.calls
+        .map(([context]) => context)
+        .filter((context) => context.operation_class === "scheduled_snapshot")
+        .at(-1);
+
+    it("requeues a snapshot refused for a lane-wide reason, without a report", async () => {
+      // A start began after the last sample: the lane's local check can't
+      // see it yet, but admission refuses.
+      admitStorageOperationMock.mockImplementation(
+        ({ operation_kind, project_id }) =>
+          operation_kind === "scheduled_snapshot"
+            ? {
+                admitted: false,
+                would_defer: true,
+                starvation_override: false,
+                reason: "lifecycle_active",
+                operation_id: `${operation_kind}:${project_id}`,
+                release: releaseStorageOperationMock,
+              }
+            : {
+                admitted: true,
+                would_defer: false,
+                starvation_override: false,
+                operation_id: `${operation_kind}:${project_id}`,
+                release: releaseStorageOperationMock,
+              },
+      );
+      admitStorageOperationMock.mockClear();
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      // From the next sample on, the local check sees it too.
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      await settle();
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(
+        snapshotReports().filter((report) => report.reason !== "queued"),
+      ).toEqual([]);
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        pending: 1,
+        active: 0,
+        parked: true,
+        park_reason: "lifecycle_active",
+        requeued_total: { lifecycle_active: 1 },
+      });
+    });
+
+    it("reads a requeued item's row afresh before it runs again", async () => {
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_LANE_PARK_POLL_MS = "10";
+      let refused = false;
+      admitStorageOperationMock.mockImplementation(
+        ({ operation_kind, project_id }) => {
+          const refuse = operation_kind === "scheduled_snapshot" && !refused;
+          if (refuse) refused = true;
+          return refuse
+            ? {
+                admitted: false,
+                would_defer: true,
+                starvation_override: false,
+                reason: "lifecycle_active",
+                operation_id: `${operation_kind}:${project_id}`,
+                release: releaseStorageOperationMock,
+              }
+            : {
+                admitted: true,
+                would_defer: false,
+                starvation_override: false,
+                operation_id: `${operation_kind}:${project_id}`,
+                release: releaseStorageOperationMock,
+              };
+        },
+      );
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      await settle();
+      expect(getSnapshotLaneStatus()?.requeued_total).toEqual({
+        lifecycle_active: 1,
+      });
+      // While it waited, its snapshots were disabled.
+      const listed =
+        listProjectMaintenanceSchedulesMock.getMockImplementation();
+      listProjectMaintenanceSchedulesMock.mockImplementation(async (opts) =>
+        ((await listed!(opts)) as any[]).map((row: any) =>
+          row.project_id === "proj-1"
+            ? { ...row, snapshots: { disabled: true } }
+            : row,
+        ),
+      );
+      snapshotLaneParkReasonMock.mockReturnValue(undefined);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await settle();
+      expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith(
+        expect.objectContaining({ project_ids: ["proj-1"] }),
+      );
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: false,
+        pending: 0,
+      });
+    });
+
+    it("runs nothing for a requeued snapshot under the ownership lease (no fresh row)", async () => {
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_LANE_PARK_POLL_MS = "10";
+      listProjectMaintenanceSchedulesMock.mockRejectedValue(
+        new Error("bay unavailable"),
+      );
+      listLeasedMaintenanceSchedulesMock.mockReturnValue([
+        {
+          project_id: "proj-1",
+          last_edited: "2026-04-10T22:00:00.000Z",
+          snapshots: { daily: 5 },
+          backups: { disabled: true },
+          max_snapshots_per_project: 8,
+        },
+      ]);
+      let refused = false;
+      admitStorageOperationMock.mockImplementation(
+        ({ operation_kind, project_id }) => {
+          const refuse = operation_kind === "scheduled_snapshot" && !refused;
+          if (refuse) refused = true;
+          return {
+            admitted: !refuse,
+            would_defer: refuse,
+            starvation_override: false,
+            ...(refuse ? { reason: "lifecycle_active" } : {}),
+            operation_id: `${operation_kind}:${project_id}`,
+            release: releaseStorageOperationMock,
+          };
+        },
+      );
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      await settle();
+      expect(getSnapshotLaneStatus()?.requeued_total).toEqual({
+        lifecycle_active: 1,
+      });
+      snapshotLaneParkReasonMock.mockReturnValue(undefined);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await settle();
+      // The leased row is the dispatched one: not a fresh read, so nothing runs.
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: false,
+        pending: 0,
+      });
+    });
+
+    it("lets repeated changed-project drains finish while the lane is parked", async () => {
+      snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      // The first one parks the lane before it pops anything.
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      await settle();
+      expect(getSnapshotLaneStatus()?.parked).toBe(true);
+      // Then a drain every 15 s, each awaiting its (non-detached) lanes.
+      const drains = Array.from({ length: 20 }, () =>
+        runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+          projectIds: ["proj-1"],
+        }),
+      );
+      const outcome = await Promise.race([
+        Promise.all(drains).then(() => "finished"),
+        new Promise((resolve) => setTimeout(() => resolve("held"), 1_000)),
+      ]);
+      expect(outcome).toBe("finished");
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: true,
+        pending: 1,
+      });
+    });
+
+    it("reports, never requeues, a refusal after a mutation", async () => {
+      const { BtrfsMutationDeferredError } =
+        await import("@cocalc/file-server/btrfs/operation-cache");
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => {
+        snapshotContext().mutations.count += 1;
+        throw Object.assign(
+          new (BtrfsMutationDeferredError as any)("lifecycle_active"),
+          { reason: "lifecycle_active" },
+        );
+      });
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(snapshotReports()).toContainEqual(
+        expect.objectContaining({
+          project_id: "proj-1",
+          outcome: "deferred",
+          reason: "lifecycle_active",
+        }),
+      );
+      expect(getSnapshotLaneStatus()?.requeued_total).toEqual({});
+    });
+
+    it("requeues a refusal at the first mutation boundary with nothing mutated", async () => {
+      const { BtrfsMutationDeferredError } =
+        await import("@cocalc/file-server/btrfs/operation-cache");
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => {
+        snapshotLaneParkReasonMock.mockReturnValue("lifecycle_active");
+        throw Object.assign(
+          new (BtrfsMutationDeferredError as any)("lifecycle_active"),
+          { reason: "lifecycle_active" },
+        );
+      });
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        detach: true,
+      });
+      await settle();
+      expect(
+        snapshotReports().filter((report) => report.reason !== "queued"),
+      ).toEqual([]);
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        pending: 1,
+        parked: true,
+        requeued_total: { lifecycle_active: 1 },
+      });
+    });
+
+    it("fails, never requeues, a throw inside the first mutation", async () => {
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => {
+        // counted before the mutating call starts, as withBtrfsMutationLock
+        // and noteBtrfsMutation do
+        snapshotContext().mutations.count += 1;
+        throw new Error("btrfs subvolume snapshot failed");
+      });
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(snapshotReports()).toContainEqual(
+        expect.objectContaining({ project_id: "proj-1", outcome: "failed" }),
+      );
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: false,
+        requeued_total: {},
+        completed_10m: { failed: 1 },
+      });
+    });
+
+    it("keeps today's path for contended pressure (overrides stay possible)", async () => {
+      admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
+        admitted: false,
+        would_defer: true,
+        starvation_override: false,
+        reason: "io_pressure_contended",
+        operation_id: operation_kind,
+        release: releaseStorageOperationMock,
+      }));
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(snapshotReports()).toContainEqual(
+        expect.objectContaining({
+          project_id: "proj-1",
+          outcome: "deferred",
+          reason: "io_pressure_contended",
+        }),
+      );
+      expect(getSnapshotLaneStatus()).toMatchObject({
+        parked: false,
+        requeued_total: {},
+      });
+    });
   });
 
   it("publishes queued debt before starting a slow backup", async () => {
@@ -1682,6 +2034,30 @@ describe("snapshot-backup-maintenance", () => {
   });
 
   describe("paced starvation progress", () => {
+    // As in production: the snapshot lane parks on the controller's own
+    // lane-wide refusals, and the controller samples every 5 s.
+    const PARK = new Set([
+      "lifecycle_active",
+      "lifecycle_settle",
+      "io_pressure_emergency",
+      "io_pressure_unavailable",
+    ]);
+    let sampler: ReturnType<typeof setInterval> | undefined;
+    const wireLane = (controller: {
+      currentBackgroundReason: () => string | undefined;
+      sample: () => unknown;
+    }) => {
+      snapshotLaneParkReasonMock.mockImplementation(() => {
+        const reason = controller.currentBackgroundReason();
+        return reason != null && PARK.has(reason) ? reason : undefined;
+      });
+      clearInterval(sampler);
+      sampler = setInterval(() => controller.sample(), 5_000);
+    };
+    afterEach(() => {
+      clearInterval(sampler);
+      sampler = undefined;
+    });
     // Overrides are paced per kind: a snapshot every minute, a backup every
     // five minutes, one override in flight at a time.
     const snapshotInterval = 60_000;
@@ -1743,6 +2119,7 @@ describe("snapshot-backup-maintenance", () => {
       });
       full = 2.3;
       controller.sample();
+      wireLane(controller);
       getStorageAdmissionStatusMock.mockImplementation(() =>
         controller.getStatus(),
       );
@@ -1846,6 +2223,7 @@ describe("snapshot-backup-maintenance", () => {
       });
       full = 3.5;
       controller.sample();
+      wireLane(controller);
       getStorageAdmissionStatusMock.mockImplementation(() =>
         controller.getStatus(),
       );
@@ -1970,6 +2348,39 @@ describe("snapshot-backup-maintenance", () => {
       );
     });
 
+    it("keeps the longest waiting first after a park, even when it is slower to reach admission", async () => {
+      // As above, but the head's fresh read is slow, so with two lane slots
+      // the next project reaches admission first. Only the head may take the
+      // recovery slot (it kept that place while the lane was parked).
+      const projects = Array.from({ length: 4 }, (_, i) => `p${i}`);
+      const { lifecycle, stop } = await startRecoveryDaemon({ projects });
+      const listing =
+        listProjectMaintenanceSchedulesMock.getMockImplementation()!;
+      listProjectMaintenanceSchedulesMock.mockImplementation(async (opts) => {
+        if (opts.project_ids?.length === 1 && opts.project_ids[0] === "p2") {
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+        }
+        return await listing(opts);
+      });
+      try {
+        await jest.advanceTimersByTimeAsync(5_000);
+        expect(snapshotOrder()).toEqual(["snapshot:p3"]);
+        // Parked longer than the 2-minute stale-head bound.
+        lifecycle.starting = 1;
+        await jest.advanceTimersByTimeAsync(180_000);
+        lifecycle.starting = 0;
+        await jest.advanceTimersByTimeAsync(120_000);
+      } finally {
+        stop();
+      }
+      expect(snapshotOrder()).toEqual([
+        "snapshot:p3",
+        "snapshot:p2",
+        "snapshot:p1",
+        "snapshot:p0",
+      ]);
+    });
+
     it.each([
       [
         "moves to another host",
@@ -2050,15 +2461,21 @@ describe("snapshot-backup-maintenance", () => {
       const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
         await import("./snapshot-backup-maintenance");
       // The sweep's cached status is still recovery; admission must resample.
+      // (Detached: a snapshot refused for emergency waits parked in the lane
+      // instead of completing as a refusal.)
       full = 10;
       for (let i = 0; i < 3; i++) {
-        await sweep({ hostId: "host-1" });
+        await sweep({ hostId: "host-1", detach: true });
         await jest.advanceTimersByTimeAsync(backupInterval);
       }
       expect(attempts).toEqual([]);
       full = 2.3;
-      await sweep({ hostId: "host-1" });
-      await sweep({ hostId: "host-1" });
+      // The controller's next sample ends the emergency; the lane resumes.
+      await jest.advanceTimersByTimeAsync(10_000);
+      await sweep({ hostId: "host-1", detach: true });
+      await jest.advanceTimersByTimeAsync(1_000);
+      await sweep({ hostId: "host-1", detach: true });
+      await jest.advanceTimersByTimeAsync(1_000);
       // Nothing was charged by the refusals: both kinds start with project a.
       expect(attempts).toContain("snapshot:a");
       expect(attempts.every((a) => a.endsWith(":a"))).toBe(true);

@@ -9,6 +9,7 @@ import {
   beginStartPreparation,
   createStorageAdmissionController,
   lifecycleActiveNow,
+  SNAPSHOT_LANE_PARK_REASONS,
   preparingStartCount,
 } from "./storage-admission";
 
@@ -70,6 +71,52 @@ describe("storage admission controller", () => {
     hostUnavailable = false;
     starting = 0;
     stopping = 0;
+  });
+
+  describe("the snapshot lane's park reason", () => {
+    it("reads the last sample without sampling, and only in enforce mode", () => {
+      const controller = create();
+      starting = 1;
+      controller.sample();
+      starting = 0;
+      // No new sample: the reason stays what the last sample saw.
+      expect(controller.currentBackgroundReason()).toBe("lifecycle_active");
+      now += 1_000;
+      controller.sample();
+      expect(controller.currentBackgroundReason()).toBe("lifecycle_settle");
+      now += 5_000;
+      expect(controller.currentBackgroundReason()).toBeUndefined();
+      for (const mode of ["observe", "disabled"] as const) {
+        const other = create(mode);
+        starting = 1;
+        other.sample();
+        expect(other.currentBackgroundReason()).toBeUndefined();
+        starting = 0;
+      }
+    });
+
+    it("parks only on refusals no override can pass", () => {
+      expect([...SNAPSHOT_LANE_PARK_REASONS].sort()).toEqual([
+        "io_pressure_emergency",
+        "io_pressure_unavailable",
+        "lifecycle_active",
+        "lifecycle_settle",
+      ]);
+      // Contended and recovery admit starvation overrides and the recovery
+      // pace, so the lane keeps offering work there.
+      const controller = create();
+      full = 5;
+      controller.sample();
+      expect(controller.currentBackgroundReason()).toBe(
+        "io_pressure_contended",
+      );
+      expect(SNAPSHOT_LANE_PARK_REASONS.has("io_pressure_contended")).toBe(
+        false,
+      );
+      expect(SNAPSHOT_LANE_PARK_REASONS.has("io_pressure_recovery")).toBe(
+        false,
+      );
+    });
   });
 
   it("classifies pressure into contended and emergency", () => {
