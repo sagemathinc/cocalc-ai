@@ -387,6 +387,21 @@ export function isGcpZoneCapacityError(err: unknown): boolean {
  * (default: the region's -a, -b and -c zones). Only zones in the primary's
  * region are used, because the worker's subnetwork is regional.
  */
+// primary first, then the zones of the same region, validated and deduplicated
+function sameRegionZones(primary: string, zones: string[]): string[] {
+  const region = primary.replace(/-[a-z]$/, "");
+  return [
+    ...new Set([
+      primary,
+      ...zones.filter(
+        (zone) =>
+          /^[a-z][a-z0-9-]+-[a-z]$/.test(zone) &&
+          zone.replace(/-[a-z]$/, "") === region,
+      ),
+    ]),
+  ];
+}
+
 export function disposableRestoreCandidateZones(
   primary: string,
   fallback = `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_FALLBACK_ZONES ?? ""}`,
@@ -399,16 +414,7 @@ export function disposableRestoreCandidateZones(
   const candidates = configured.length
     ? configured
     : ["a", "b", "c"].map((suffix) => `${region}-${suffix}`);
-  return [
-    ...new Set([
-      primary,
-      ...candidates.filter(
-        (zone) =>
-          /^[a-z][a-z0-9-]+-[a-z]$/.test(zone) &&
-          zone.replace(/-[a-z]$/, "") === region,
-      ),
-    ]),
-  ];
+  return sameRegionZones(primary, candidates);
 }
 
 function isNotFound(err: unknown): boolean {
@@ -481,7 +487,7 @@ export async function runDisposableGcpRestoreWorker({
   const auth = parseGcpServiceAccount(service_account_json);
   const clients = providedClients ?? defaultClients(auth);
   const instance_name = disposableRestoreInstanceName(config.run_id);
-  const candidateZones = zones?.length ? zones : [primaryZone];
+  const candidateZones = sameRegionZones(primaryZone, zones ?? []);
   let zone = candidateZones[0];
   const startupScript = buildDisposableRestoreStartupScript({
     ...config,
@@ -576,10 +582,31 @@ export async function runDisposableGcpRestoreWorker({
         if (!isGcpZoneCapacityError(err) || i === candidateZones.length - 1) {
           throw err;
         }
-        // No VM was created in a zone without capacity; make sure, then try the next zone.
-        await clients.instances
-          .delete({ project: auth.projectId, zone, instance: instance_name })
-          .catch(() => undefined);
+        // The capacity error can come from the insert operation, so a VM may
+        // (partly) exist. Delete it conclusively before this run stops owning
+        // the zone; if that fails, keep ownership (the final cleanup retries
+        // this zone) and report the original error.
+        try {
+          const [deleteResponse] = await clients.instances.delete({
+            project: auth.projectId,
+            zone,
+            instance: instance_name,
+          });
+          await waitForOperation({
+            response: deleteResponse,
+            project: auth.projectId,
+            zone,
+            operations: clients.operations,
+          });
+        } catch (cleanupErr) {
+          if (!isNotFound(cleanupErr)) {
+            logger.error(
+              "could not clean up the restore drill worker in a zone without capacity",
+              { zone, instance_name, err: cleanupErr },
+            );
+            throw err;
+          }
+        }
         created = false;
         logger.warn(
           "GCP zone has no capacity for the restore drill worker; trying the next zone",

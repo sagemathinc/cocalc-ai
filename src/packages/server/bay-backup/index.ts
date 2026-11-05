@@ -6075,6 +6075,8 @@ async function runPgBackRestDisposableGcpRestoreTest({
   let workerRun: DisposableGcpRestoreResult | null = null;
   const workerAttempts: DisposableGcpRestoreResult[] = [];
   let pitrRun: PitrRestoreSentinel | null = null;
+  // the zone of the current worker, after any capacity fallback
+  let activeWorkerZone: string | undefined;
   let currentWorkerIdentity: ReturnType<
     typeof newDisposableRestoreWorkerIdentity
   > | null = null;
@@ -6117,7 +6119,8 @@ async function runPgBackRestDisposableGcpRestoreTest({
     for (let attempt = 1; attempt <= maxWorkerAttempts; attempt++) {
       const identity = newDisposableRestoreWorkerIdentity();
       currentWorkerIdentity = identity;
-      const writeRunningStatus = async (workerZone: string) =>
+      const writeRunningStatus = async (workerZone: string) => {
+        activeWorkerZone = workerZone;
         await writeJson(statusPath, {
           level: "running",
           run_id: restoreTestRunId,
@@ -6136,6 +6139,7 @@ async function runPgBackRestDisposableGcpRestoreTest({
           ),
           current_worker_zone: workerZone,
         });
+      };
       await writeRunningStatus(zone);
       workerRun = await runDisposableGcpRestoreWorker({
         service_account_json: serviceAccountJson,
@@ -6299,7 +6303,7 @@ async function runPgBackRestDisposableGcpRestoreTest({
         (currentWorkerIdentity
           ? disposableRestoreInstanceName(currentWorkerIdentity.run_id)
           : null),
-      current_worker_zone: workerRun?.zone ?? zone,
+      current_worker_zone: workerRun?.zone ?? activeWorkerZone ?? zone,
     });
     throw err;
   }
