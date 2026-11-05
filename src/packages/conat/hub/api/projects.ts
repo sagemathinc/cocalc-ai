@@ -1322,8 +1322,9 @@ export const projects = {
   getCoursePaymentOverview: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
-  setProjectSnapshotSchedule: authFirstRequireAccount,
-  setProjectBackupSchedule: authFirstRequireAccount,
+  // Fresh-auth gated: bind the caller's own session.
+  setProjectSnapshotSchedule: authFirstRequireAccountWithBoundSession,
+  setProjectBackupSchedule: authFirstRequireAccountWithBoundSession,
   getProjectRunQuota: authFirstRequireAccount,
   setProjectDeletionProtection: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
