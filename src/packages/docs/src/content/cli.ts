@@ -394,7 +394,8 @@ with \`--help\` for its arguments, selectors, defaults, and examples.
 | Work with a persistent terminal session | \`cocalc project terminal --help\` |
 | Inspect, edit, run, and save live notebooks | \`cocalc project jupyter --help\` |
 | Build supported documents | \`cocalc project build --help\` |
-| Work with project chats and scheduled agent tasks | \`cocalc project chat --help\` |
+| Work with project chats | \`cocalc project chat --help\` |
+| Propose scheduled scripts and prompts | \`cocalc sensor --help\` |
 | Find, copy, and manage named agents | \`cocalc agent --help\` |
 | Start project Codex work | \`cocalc project codex --help\` |
 | Inspect and control active Codex sessions | \`cocalc codex --help\` |
