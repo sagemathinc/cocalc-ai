@@ -189,7 +189,7 @@ export default async function rustic(
         throw Error("safeAbsPath must be specified when restoring");
       }
       const snapshot = args.slice(-2)[0]; // <SNAPSHOT[:PATH]>
-      await assertValidSnapshot({ snapshot, host, repo });
+      await assertValidSnapshot({ snapshot, host, repo, timeout });
       const destination = await safeAbsPath(args.slice(-1)[0]); // <destination>
       const options = parseAndValidateOptions(
         args.slice(1, -2),
@@ -205,7 +205,7 @@ export default async function rustic(
       ) {
         // Delete one or more exact snapshot ids.
         for (const snapshot of snapshots) {
-          await assertValidSnapshot({ snapshot, host, repo });
+          await assertValidSnapshot({ snapshot, host, repo, timeout });
         }
         return await runWithTomlInitFallback(snapshots);
       }
@@ -403,13 +403,25 @@ function isMissingTomlRepositoryError(err: unknown): boolean {
   );
 }
 
-async function assertValidSnapshot({ snapshot, host, repo }) {
+async function assertValidSnapshot({
+  snapshot,
+  host,
+  repo,
+  timeout,
+}: {
+  snapshot: string;
+  host: string;
+  repo: string;
+  timeout?: number;
+}) {
   const id = snapshot.split(":")[0];
   if (id == "latest") {
     // possible race condition so do not allow
     throw Error("latest is not allowed");
   }
-  const actualHost = await getHost({ id, repo });
+  // The lookup gets the caller's timeout: on a large repo it can take far
+  // longer than exec's 3 s default (hard-delete purges failed that way).
+  const actualHost = await getHost({ id, repo, timeout });
   const allowedHosts = allowedSnapshotHosts(host);
   if (!allowedHosts.includes(actualHost)) {
     throw Error(
@@ -475,6 +487,29 @@ function flattenSnapshotGroups(groups: any): any[] {
   return snapshots;
 }
 
+// rustic reports a missing snapshot id as a failed read of
+// snapshots/<id> whose cause is "not found" (local: os error 2; object
+// stores: NotFound).
+function isMissingSnapshotFileError(stderr: string, id: string): boolean {
+  return (
+    stderr.includes("Failed to read the contents of the file") &&
+    stderr.includes(`snapshots/${id}`) &&
+    /No such file or directory|NotFound|not found/i.test(stderr)
+  );
+}
+
+// The "Message:" paragraph of a rustic error, else its first lines.
+function rusticErrorMessage(stderr: string): string {
+  const lines = stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("[INFO]"));
+  const i = lines.indexOf("Message:");
+  return (i >= 0 ? lines.slice(i + 1, i + 2) : lines.slice(0, 3))
+    .join(" ")
+    .slice(0, 500);
+}
+
 export async function getSnapshot({
   id,
   repo = rusticRepo,
@@ -485,11 +520,34 @@ export async function getSnapshot({
   timeout?: number;
 }) {
   const common = getCommonArgs(repo);
-  const { stdout } = await exec({
+  const { stdout, stderr, code, truncated } = await exec({
     cmd: rusticPath,
     safety: [...common, "snapshots", "--json", id],
     timeout,
   });
+  // Only a snapshot that is really missing is "no snapshot": callers such as
+  // the hard-delete purge and pending copies treat that as gone. A lookup
+  // killed by the timeout (or the output cap), or any other rustic failure
+  // (backend, credentials, configuration), is reported as what it is.
+  if (truncated) {
+    throw Error(
+      `rustic snapshot lookup for ${id} timed out or its output was too large`,
+    );
+  }
+  if (code) {
+    const text = stderr.toString().replace(/\x1b\[[0-9;]*m/g, "");
+    if (isMissingSnapshotFileError(text, id)) {
+      throw Error(`no snapshot with id ${id}`);
+    }
+    // rustic's message can name host paths, the repo and its endpoint: log it
+    // here, and give callers (which may be project-facing) only a fixed text.
+    logger.warn("rustic snapshot lookup failed", {
+      id,
+      code,
+      message: rusticErrorMessage(text),
+    });
+    throw Error(`rustic snapshot lookup for ${id} failed (exit ${code})`);
+  }
   if (!stdout) {
     throw Error(`no snapshot with id ${id}`);
   }
