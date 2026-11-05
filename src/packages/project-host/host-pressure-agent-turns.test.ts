@@ -65,8 +65,11 @@ function projects(rows: [string, number, number][]) {
 function controller(
   metrics: () => HostCurrentMetrics,
   readAgentTurns: () => AgentTurnRead,
+  failing: ReadonlySet<string> = new Set(),
 ) {
-  const stopProject = jest.fn(async (_opts: { project_id: string }) => {});
+  const stopProject = jest.fn(async (opts: { project_id: string }) => {
+    if (failing.has(opts.project_id)) throw Error("stop failed");
+  });
   const handle = startHostPressureController({
     refreshMetrics: async () => metrics(),
     getCurrentMetrics: () => metrics(),
@@ -212,6 +215,80 @@ describe("host pressure and running agent turns", () => {
     }
   });
 
+  it("memory emergency: another candidate whose stop keeps failing does not block the last resort (S1b)", async () => {
+    projects([
+      ["turn-a", 0, 600],
+      ["plain", 0, 1],
+    ]);
+    const c = controller(
+      () => ({ memory_used_percent: 91 }),
+      () => turns("turn-a"),
+      new Set(["plain"]),
+    );
+    try {
+      // First evaluation: only the other candidate is tried; it fails.
+      await jest.advanceTimersByTimeAsync(0);
+      expect(c.stopped()).toEqual(["plain"]);
+      // Next evaluation, still a memory emergency: the failed stop freed
+      // nothing, so the turn project is the last resort.
+      await jest.advanceTimersByTimeAsync(10_000);
+      expect(c.stopped()).toEqual(["plain", "turn-a"]);
+    } finally {
+      c.handle.stop();
+    }
+  });
+
+  it("an emergency that is not about memory (sustained storage I/O) keeps the idle protection", async () => {
+    const storage = (state_since: number) => ({
+      schema_version: 1 as const,
+      collected_at: new Date(now).toISOString(),
+      mode: "enforce" as const,
+      pressure_state: "emergency" as const,
+      state_since: new Date(state_since).toISOString(),
+      effective_io_full_avg10: 25,
+      uncontained_io_full_avg10: 25,
+      lifecycle_active: 0,
+      starting_projects: 0,
+      stopping_projects: 0,
+      active_by_priority: {
+        lifecycle: 0,
+        interactive: 0,
+        scheduled: 0,
+        scavenger: 0,
+      },
+      btrfs_mutation_locks: 0,
+      btrfs_mutation_waiters: 0,
+      admitted_total: 0,
+      deferred_total: 0,
+      observed_deferral_total: 0,
+      transition_count: 1,
+    });
+    projects([
+      ["turn-idle", 0, 600],
+      ["plain-idle", 0, 120],
+    ]);
+    const metrics = {
+      memory_used_percent: 20,
+      memory_available_bytes: 32 * 1024 ** 3,
+      storage_admission: storage(now - 11 * minute),
+    } as any;
+    const c = controller(
+      () => metrics,
+      () => turns("turn-idle"),
+    );
+    try {
+      await jest.advanceTimersByTimeAsync(0);
+      expect(c.handle.getCurrentState()).toMatchObject({ zone: "emergency" });
+      expect(c.stopped()).toEqual(["plain-idle"]);
+      // Only turn-idle left: no last resort outside a memory emergency.
+      projects([["turn-idle", 0, 600]]);
+      await jest.advanceTimersByTimeAsync(30_000);
+      expect(c.stopped()).toEqual(["plain-idle"]);
+    } finally {
+      c.handle.stop();
+    }
+  });
+
   it("a running turn protects however long it has run (no age limit)", async () => {
     projects([["turn-old", 0, 24 * 60]]);
     const old: AgentTurnRead = {
@@ -287,10 +364,11 @@ describe("buildStopCandidates with running agent turns", () => {
     expect(stats.agent_turn_protected).toBe(1);
   });
 
-  it("emergency: turn projects, offenders included, sort after every other candidate", () => {
+  it("memory emergency: turn projects, offenders included, sort after every other candidate", () => {
     const candidates = _test.buildStopCandidates({
       ...base,
       zone: "emergency",
+      agentTurnLastResort: true,
     });
     expect(candidates.map((c) => [c.project_id, c.agent_turn])).toEqual([
       ["plain-idle", false],
@@ -298,6 +376,21 @@ describe("buildStopCandidates with running agent turns", () => {
       ["turn-idle", true],
     ]);
     expect(candidates[1].explanation).toContain("agent_turn");
+  });
+
+  it("an emergency that is not about memory: idle turn projects are left out; an offender with a turn keeps its rank", () => {
+    const stats = { agent_turn_protected: 0 };
+    const candidates = _test.buildStopCandidates({
+      ...base,
+      zone: "emergency",
+      agentTurnLastResort: false,
+      stats,
+    });
+    expect(candidates.map((c) => c.project_id)).toEqual([
+      "turn-offender",
+      "plain-idle",
+    ]);
+    expect(stats.agent_turn_protected).toBe(1);
   });
 
   it("without agent turn data, today's order is unchanged", () => {

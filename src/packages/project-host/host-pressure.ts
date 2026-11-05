@@ -117,6 +117,14 @@ const EMERGENCY_SETTLE_MS = Math.max(
   0,
   Number(process.env.COCALC_PROJECT_HOST_EMERGENCY_SETTLE_MS ?? 5_000),
 );
+// In a memory emergency, another candidate whose stop failed this recently
+// does not hold back the last-resort stop of a project with an agent turn.
+const LAST_RESORT_FAILED_STOP_MS = Math.max(
+  0,
+  Number(
+    process.env.COCALC_PROJECT_HOST_LAST_RESORT_FAILED_STOP_MS ?? 2 * 60_000,
+  ),
+);
 const PRESSURE_MAX_STOPS_PER_CYCLE = clampIntegerRange(
   process.env.COCALC_PROJECT_HOST_PRESSURE_MAX_STOPS_PER_CYCLE,
   4,
@@ -895,6 +903,7 @@ export function buildStopCandidates({
   preserveEmergencyProtections = false,
   workloadProtectedProjects,
   agentTurnProjects,
+  agentTurnLastResort = false,
   stats,
 }: {
   projects: ProjectRow[];
@@ -909,6 +918,10 @@ export function buildStopCandidates({
   workloadProtectedProjects?: ReadonlySet<string>;
   // Projects with a running agent turn (agent-turns.ts).
   agentTurnProjects?: ReadonlySet<string>;
+  // A memory emergency: projects with a running agent turn are then
+  // candidates of last resort. Otherwise (pressure, or an emergency that is
+  // not about memory) only a direct offender among them is a candidate.
+  agentTurnLastResort?: boolean;
   stats?: { agent_turn_protected: number };
 }): StopCandidate[] {
   const candidates: StopCandidate[] = [];
@@ -950,12 +963,12 @@ export function buildStopCandidates({
       continue;
     }
     // A project with a running agent turn is never stopped as idle (William,
-    // 2026-11-04: "never stop a project with an agent turn running"). Outside
-    // an emergency it is stopped only for its own excessive usage (2026-11-05:
-    // "Yes, an offender may still be stopped"); in an emergency it is a last
-    // resort (see the stop loop).
+    // 2026-11-04: "never stop a project with an agent turn running"). It is
+    // stopped for its own excessive usage (2026-11-05: "Yes, an offender may
+    // still be stopped"), and in a memory emergency as a last resort ("if
+    // nothing else frees enough memory"; see the stop loop).
     const agentTurn = agentTurnProjects?.has(project_id) ?? false;
-    if (agentTurn && zone !== "emergency" && !directResourceOffender) {
+    if (agentTurn && !agentTurnLastResort && !directResourceOffender) {
       if (stats) stats.agent_turn_protected += 1;
       continue;
     }
@@ -1051,10 +1064,10 @@ export function buildStopCandidates({
     });
   }
   candidates.sort((left, right) => {
-    // In an emergency, projects with a running agent turn come after every
-    // other candidate, offenders included (2026-11-05: "Yes, same answer for
-    // offenders").
-    if (zone === "emergency" && left.agent_turn !== right.agent_turn) {
+    // In a memory emergency, projects with a running agent turn come after
+    // every other candidate, offenders included (2026-11-05: "Yes, same
+    // answer for offenders").
+    if (agentTurnLastResort && left.agent_turn !== right.agent_turn) {
       return left.agent_turn ? 1 : -1;
     }
     if (left.direct_resource_score !== right.direct_resource_score) {
@@ -1129,6 +1142,10 @@ export function startHostPressureController({
   // This evaluation's agent-turn counts, for the published state.
   let agentTurnProtectedCount: number | undefined;
   let agentTurnsUnknown = false;
+  // When each project's last pressure stop failed (cleared when one works).
+  // A failed stop frees nothing, so in a memory emergency such a candidate
+  // does not hold back the last resort.
+  const stopFailedAtMs = new Map<string, number>();
   let timer: NodeJS.Timeout | undefined;
   let running = false;
   let pressureSinceMs: number | undefined;
@@ -1315,11 +1332,17 @@ export function startHostPressureController({
     for (const [projectId, offender] of ioOffenders ?? []) {
       stopOffenders.set(projectId, offender);
     }
+    // The only emergency in which a running agent turn may be stopped:
+    // memory itself is at the emergency level (the emergency reason lists
+    // only the emergency causes).
+    const memoryEmergency =
+      classified.zone === "emergency" &&
+      hasMemoryPressureReason(classified.reason);
     // One read of the running agent turns for this whole evaluation.
     const agentTurns = readAgentTurns?.({ now });
     agentTurnsUnknown = agentTurns != null && !agentTurns.ok;
     const agentTurnStats = { agent_turn_protected: 0 };
-    const candidates = buildStopCandidates({
+    let candidates = buildStopCandidates({
       projects,
       policies,
       getStopState: (project_id) => getProjectStopState(project_id),
@@ -1329,6 +1352,7 @@ export function startHostPressureController({
       agentTurnProjects: agentTurns?.ok
         ? new Set(agentTurns.projects.keys())
         : undefined,
+      agentTurnLastResort: memoryEmergency,
       stats: agentTurnStats,
       // Ordinary memory pressure needs evidence of idleness too. A true
       // emergency can still stop recent/unknown activity; direct offenders
@@ -1349,27 +1373,25 @@ export function startHostPressureController({
           : {}),
     });
     agentTurnProtectedCount = agentTurnStats.agent_turn_protected;
+    if (agentTurnsUnknown && !memoryEmergency) {
+      // Unsure which projects run an agent turn: stop only direct offenders,
+      // which are stoppable with or without a turn. A memory emergency still
+      // acts on every candidate (without that protection), so a persistent
+      // read failure cannot let the host run out of memory.
+      const before = candidates.length;
+      candidates = candidates.filter(
+        (candidate) => candidate.direct_resource_score > 0,
+      );
+      logger.warn("host pressure: agent turns unknown; only offenders", {
+        zone: classified.zone,
+        skipped: before - candidates.length,
+      });
+    }
     for (const candidate of candidates) {
       upsertProjectStopState({
         project_id: candidate.project_id,
         last_ranked_ms: now,
       });
-    }
-    if (agentTurnsUnknown && classified.zone !== "emergency") {
-      // Unsure which projects run an agent turn: stop nothing outside an
-      // emergency. An emergency still acts (without that protection), so a
-      // persistent read failure cannot let the host run out of memory.
-      logger.warn("host pressure: agent turns unknown; not stopping", {
-        zone: classified.zone,
-        candidate_count: candidates.length,
-      });
-      publishState({
-        zone: classified.zone,
-        reason: classified.reason,
-        evaluated_at_ms: now,
-        candidate_count: candidates.length,
-      });
-      return;
     }
     if (classified.zone === "observe") {
       publishState({
@@ -1408,18 +1430,28 @@ export function startHostPressureController({
       });
       return;
     }
-    // In an emergency a project with a running agent turn is stopped only "if
-    // nothing else frees enough memory" (William, 2026-11-05): never in the
-    // same batch as other candidates, but only in an evaluation (a fresh
-    // measurement, taken after earlier stops settled) that is still an
-    // emergency with no other candidate left, and one at a time.
+    // In a memory emergency a project with a running agent turn is stopped
+    // only "if nothing else frees enough memory" (William, 2026-11-05): never
+    // in the same batch as other candidates, but only in an evaluation (a
+    // fresh measurement, taken after earlier stops settled) that is still a
+    // memory emergency with no other candidate left, and one at a time.
+    // Another candidate whose stop failed recently frees nothing, so it does
+    // not count as one.
+    for (const [project_id, failedAt] of stopFailedAtMs) {
+      if (now - failedAt > LAST_RESORT_FAILED_STOP_MS) {
+        stopFailedAtMs.delete(project_id);
+      }
+    }
+    const others = candidates.filter((candidate) => !candidate.agent_turn);
     const lastResort =
-      classified.zone === "emergency" &&
-      candidates.every((candidate) => candidate.agent_turn);
-    const batch =
-      classified.zone === "emergency" && !lastResort
-        ? candidates.filter((candidate) => !candidate.agent_turn)
-        : candidates;
+      memoryEmergency &&
+      others.length < candidates.length &&
+      others.every((candidate) => stopFailedAtMs.has(candidate.project_id));
+    const batch = !memoryEmergency
+      ? candidates
+      : lastResort
+        ? candidates.filter((candidate) => candidate.agent_turn)
+        : others;
     const maxStops = lastResort
       ? 1
       : ioOnlyPressure
@@ -1455,6 +1487,7 @@ export function startHostPressureController({
             zone: classified.zone,
           }),
         });
+        stopFailedAtMs.delete(candidate.project_id);
         recentPressureStopsMs.push(now);
         stoppedCount += 1;
         lastActionAtMs = now;
@@ -1503,6 +1536,7 @@ export function startHostPressureController({
           break;
         }
       } catch (err) {
+        stopFailedAtMs.set(candidate.project_id, now);
         lastActionAtMs = now;
         lastActionProjectId = candidate.project_id;
         lastActionStatus = "stop_failed";
