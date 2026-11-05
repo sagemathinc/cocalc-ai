@@ -157,6 +157,8 @@ import {
   startBrowserIdleStopMaintenance,
   startBrowserRuntimePresenceService,
 } from "./browser-runtime";
+import { readAgentTurns } from "./agent-turns";
+import { startAgentTurnActivity } from "./agent-turn-activity";
 import {
   assertLocalBindOrInsecure,
   assertSecureUrlOrLocal,
@@ -342,7 +344,8 @@ async function startHttpListener(
   tls: TlsConfig,
 ) {
   let httpServer:
-    ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>;
+    | ReturnType<typeof createHttpServer>
+    | ReturnType<typeof createHttpsServer>;
   if (tls.enabled) {
     const { key, cert, keyPath, certPath } = getOrCreateSelfSigned(
       tls.hostname,
@@ -1554,7 +1557,10 @@ export async function main(
         runtime_exit_reason: "browser_idle_timeout",
       });
     },
+    readAgentTurns: ({ now }) => readAgentTurns({ now }),
   });
+  // Running agent turns keep their projects' last_edited current.
+  const agentTurnActivity = startAgentTurnActivity();
   startExamWatchdog();
   const stopRawNetworkEgressLoop = startManagedRawNetworkEgressLoop({
     runnerApi,
@@ -1746,6 +1752,7 @@ export async function main(
     stopStoppedVolumePreparationMaintenance();
     stopBrowserRuntimePresenceService();
     stopBrowserIdleStopMaintenance();
+    agentTurnActivity.stop();
     stopEventLoopStallMonitor?.();
     stopGcpPreemptionWatcher();
     stopConatRevocationKickLoop?.();

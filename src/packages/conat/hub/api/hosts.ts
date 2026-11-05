@@ -1158,6 +1158,10 @@ export interface HostPressureState {
   last_action_project_id?: string;
   last_action_status?: "stopped" | "stop_failed" | "cooldown" | "no_candidates";
   last_action_reason?: string;
+  // Running agent turns (counts only): projects left alone in this
+  // evaluation, and whether the turn leases could not be read.
+  agent_turn_protected_count?: number;
+  agent_turns_unknown?: boolean;
 }
 
 export interface HostMetricsHistoryPoint extends HostCurrentMetrics {
@@ -1959,6 +1963,7 @@ export const hosts = {
   syncProjectBackupIndexes: authFirstRequireHost,
   deleteProjectBackupIndex: authFirstRequireHost,
   touchProject: authFirstRequireHostWithAccountTarget,
+  touchProjectActivity: authFirstRequireHost,
   markProjectChanged: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   getProjectStartMetadata: authFirstRequireHost,
@@ -2375,6 +2380,14 @@ export interface Hosts {
     project_id: string;
     account_id?: string;
     account_ids?: string[];
+  }) => Promise<void>;
+  // An agent turn is running on the host: moves last_edited only (not
+  // last_changed or last_active). With summary, the project's summary event
+  // is queued in the same transaction so project lists see the new time.
+  touchProjectActivity: (opts: {
+    host_id?: string;
+    project_id: string;
+    summary?: boolean;
   }) => Promise<void>;
   markProjectChanged: (opts: {
     host_id?: string;
