@@ -442,7 +442,7 @@ export function initAcpDatabase(
   db.exec("PRAGMA synchronous=NORMAL");
   db.exec("PRAGMA busy_timeout=5000");
   // Checkpoints fsync; keep them off the event loop.
-  deferWalCheckpoints(db, filename);
+  deferWalCheckpoints(db, filename, { label: "acp" });
   return db;
 }
 

@@ -147,7 +147,7 @@ function ensureSqlite(): DatabaseSync {
   sqliteDb.exec("PRAGMA synchronous=NORMAL");
   sqliteDb.exec("PRAGMA busy_timeout=5000");
   // Checkpoints fsync; keep them off the event loop.
-  deferWalCheckpoints(sqliteDb, filename);
+  deferWalCheckpoints(sqliteDb, filename, { label: "quota-queue" });
   return sqliteDb;
 }
 
