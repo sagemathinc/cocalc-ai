@@ -487,6 +487,29 @@ function flattenSnapshotGroups(groups: any): any[] {
   return snapshots;
 }
 
+// rustic reports a missing snapshot id as a failed read of
+// snapshots/<id> whose cause is "not found" (local: os error 2; object
+// stores: NotFound).
+function isMissingSnapshotFileError(stderr: string, id: string): boolean {
+  return (
+    stderr.includes("Failed to read the contents of the file") &&
+    stderr.includes(`snapshots/${id}`) &&
+    /No such file or directory|NotFound|not found/i.test(stderr)
+  );
+}
+
+// The "Message:" paragraph of a rustic error, else its first lines.
+function rusticErrorMessage(stderr: string): string {
+  const lines = stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("[INFO]"));
+  const i = lines.indexOf("Message:");
+  return (i >= 0 ? lines.slice(i + 1, i + 2) : lines.slice(0, 3))
+    .join(" ")
+    .slice(0, 500);
+}
+
 export async function getSnapshot({
   id,
   repo = rusticRepo,
@@ -497,16 +520,27 @@ export async function getSnapshot({
   timeout?: number;
 }) {
   const common = getCommonArgs(repo);
-  const { stdout, truncated } = await exec({
+  const { stdout, stderr, code, truncated } = await exec({
     cmd: rusticPath,
     safety: [...common, "snapshots", "--json", id],
     timeout,
   });
-  // A lookup killed by the timeout (or the output cap) is not "no snapshot":
-  // callers such as the hard-delete purge must not mistake it for one.
+  // Only a snapshot that is really missing is "no snapshot": callers such as
+  // the hard-delete purge and pending copies treat that as gone. A lookup
+  // killed by the timeout (or the output cap), or any other rustic failure
+  // (backend, credentials, configuration), is reported as what it is.
   if (truncated) {
     throw Error(
       `rustic snapshot lookup for ${id} timed out or its output was too large`,
+    );
+  }
+  if (code) {
+    const text = stderr.toString().replace(/\x1b\[[0-9;]*m/g, "");
+    if (isMissingSnapshotFileError(text, id)) {
+      throw Error(`no snapshot with id ${id}`);
+    }
+    throw Error(
+      `rustic snapshot lookup for ${id} failed (exit ${code}): ${rusticErrorMessage(text)}`,
     );
   }
   if (!stdout) {
