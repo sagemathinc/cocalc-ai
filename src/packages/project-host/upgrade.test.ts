@@ -696,6 +696,81 @@ describe("project host upgrade installer", () => {
     }
   });
 
+  it("removes the downloaded archive once it is extracted", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
+    const archivePath = createArchive(base);
+    const served = await serveFile(archivePath);
+    try {
+      process.env.COCALC_DATA = path.join(base, "data");
+      const downloads = path.join(base, "data", "cache", "software-downloads");
+      const bundlesRoot = path.join(base, "project-host-bundles");
+      fs.mkdirSync(bundlesRoot, { recursive: true });
+      const versionDir = path.join(bundlesRoot, "v1");
+      await __test__.downloadAndInstall({
+        artifact: "project-host",
+        canonicalArtifact: "project-host",
+        version: "v1",
+        url: served.url,
+        stripComponents: 1,
+        root: bundlesRoot,
+        versionDir,
+        currentLink: path.join(bundlesRoot, "current"),
+      } as any);
+      expect(fs.readFileSync(path.join(versionDir, "README.txt"), "utf8")).toBe(
+        "project-host bundle\n",
+      );
+      expect(fs.readdirSync(downloads)).toEqual([]);
+
+      // A failed install does not leave its archive behind either.
+      await expect(
+        __test__.downloadAndInstall({
+          artifact: "project-host",
+          canonicalArtifact: "project-host",
+          version: "v2",
+          url: served.url,
+          sha256: "0".repeat(64),
+          stripComponents: 1,
+          root: bundlesRoot,
+          versionDir: path.join(bundlesRoot, "v2"),
+          currentLink: path.join(bundlesRoot, "current"),
+        } as any),
+      ).rejects.toThrow("sha256 mismatch");
+      expect(fs.readdirSync(downloads)).toEqual([]);
+    } finally {
+      await served.close();
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("sweeps archives left by earlier installs, sparing recent ones", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-downloads-"));
+    try {
+      const now = Date.now();
+      const write = (name: string, ageMs: number) => {
+        const file = path.join(root, name);
+        fs.writeFileSync(file, "x");
+        const t = new Date(now - ageMs);
+        fs.utimesSync(file, t, t);
+      };
+      write("tools-old.tar.xz", 30 * 24 * 3600_000);
+      write("project-old.tar.xz", 7 * 3600_000);
+      write("tools-downloading-now.tar.xz", 60_000);
+      write("notes.txt", 30 * 24 * 3600_000);
+      fs.mkdirSync(path.join(root, "dir.tar.xz"));
+      expect(await __test__.removeStaleDownloads(root, now)).toBe(2);
+      expect(fs.readdirSync(root).sort()).toEqual([
+        "dir.tar.xz",
+        "notes.txt",
+        "tools-downloading-now.tar.xz",
+      ]);
+      expect(
+        await __test__.removeStaleDownloads(path.join(root, "missing"), now),
+      ).toBe(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("respects env-configured project-host retention counts", async () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
     const archivePath = createArchive(base);
