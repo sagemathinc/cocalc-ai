@@ -271,8 +271,16 @@ export async function recordProjectMaintenanceStatus(
   ) {
     throw new Error("snapshot success requires a confirmed snapshot time");
   }
-  const reconciledChange = validDate(report.reconciled_change_at);
+  // Only a no-change skip claims "nothing changed up to here"; any other
+  // report, also the first one for a project (the INSERT below), stores no
+  // reconciliation, as the update below already enforces.
+  const reconciles =
+    report.outcome === "skipped" && report.reason === "no_content_change";
+  const reconciledChange = reconciles
+    ? validDate(report.reconciled_change_at)
+    : null;
   const scheduleRevision =
+    reconciles &&
     typeof report.schedule_revision === "string" &&
     report.schedule_revision.length <= 256
       ? report.schedule_revision

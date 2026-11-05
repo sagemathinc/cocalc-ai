@@ -300,6 +300,24 @@ function normalizeSnapshotLaneMetrics(
       ? undefined
       : nonNegativeInteger(lane.oldest_pending_due_ms);
   if (lane.oldest_pending_due_ms != null && oldest == null) return undefined;
+  let generationMoved: HostSnapshotLaneMetrics["generation_moved"];
+  if (lane.generation_moved != null) {
+    const raw = lane.generation_moved;
+    if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const moved = raw as Record<string, unknown>;
+    const keys = Object.keys(moved);
+    const accepted_r1 = nonNegativeInteger(moved.accepted_r1);
+    const accepted_r2 = nonNegativeInteger(moved.accepted_r2);
+    const refused = nonNegativeInteger(moved.refused);
+    if (
+      keys.length !== 3 ||
+      accepted_r1 == null ||
+      accepted_r2 == null ||
+      refused == null
+    )
+      return undefined;
+    generationMoved = { accepted_r1, accepted_r2, refused };
+  }
   return {
     pending,
     active,
@@ -311,6 +329,7 @@ function normalizeSnapshotLaneMetrics(
     requeued_total: requeued,
     ...(oldest != null ? { oldest_pending_due_ms: oldest } : {}),
     completed_10m: completed,
+    ...(generationMoved ? { generation_moved: generationMoved } : {}),
   };
 }
 

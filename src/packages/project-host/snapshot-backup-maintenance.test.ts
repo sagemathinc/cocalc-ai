@@ -273,6 +273,316 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
+  describe("a moved content generation (a busy project)", () => {
+    const STALE = "2026-04-10T22:00:00.000Z";
+    const CURRENT = "2026-04-10T22:30:00.000Z";
+    const staleRow = {
+      project_id: "proj-1",
+      last_edited: STALE,
+      snapshots: { daily: 5 },
+      backups: { disabled: true },
+      max_snapshots_per_project: 8,
+    };
+    let freshRow: Record<string, unknown> | undefined;
+    let freshError: Error | undefined;
+    const snapshotReports = () =>
+      reportProjectMaintenanceMock.mock.calls
+        .map(([value]) => value)
+        .filter(
+          (value) => value.kind === "snapshot" && value.reason !== "queued",
+        );
+    const snapshotChecks = () =>
+      confirmProjectMaintenanceAssignmentMock.mock.calls
+        .map(([value]) => value)
+        .filter((value) => value.kind === "snapshot");
+    const moved = () => ({
+      valid: false,
+      reason: "change_generation_changed",
+    });
+
+    beforeEach(() => {
+      freshRow = {
+        ...staleRow,
+        last_edited: CURRENT,
+        max_snapshots_per_project: 12,
+      };
+      freshError = undefined;
+      listProjectMaintenanceSchedulesMock.mockImplementation(
+        async ({ project_ids }) => {
+          if (!project_ids) return [staleRow];
+          if (freshError) throw freshError;
+          return freshRow ? [freshRow] : [];
+        },
+      );
+      // The bay's generation is CURRENT: the queued row's is not.
+      confirmProjectMaintenanceAssignmentMock.mockImplementation(
+        async ({ observed_change_at }) =>
+          observed_change_at === CURRENT ? { valid: true } : moved(),
+      );
+      runScheduledSnapshotMaintenanceMock.mockImplementation(async () => ({
+        changed: true,
+        created_snapshot_at: "2026-04-10T22:31:00.000Z",
+        latest_snapshot_at: "2026-04-10T22:31:00.000Z",
+      }));
+    });
+
+    it("runs from this dispatch's own fresh row with its current limit (stale N, current N+k)", async () => {
+      const {
+        runProjectSnapshotBackupMaintenanceSweepOnce,
+        getSnapshotLaneStatus,
+      } = await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith({
+        host_id: "host-1",
+        project_ids: ["proj-1"],
+        limit: 1,
+      });
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+      expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id: "proj-1", limit: 12 }),
+      );
+      // R2 confirms the fresh row's generation (one row for run, check, claim).
+      expect(snapshotChecks().map((check) => check.observed_change_at)).toEqual(
+        [STALE, CURRENT],
+      );
+      expect(snapshotReports()).toEqual([
+        expect.objectContaining({ project_id: "proj-1", outcome: "succeeded" }),
+      ]);
+      expect(getSnapshotLaneStatus()?.generation_moved).toEqual({
+        accepted_r1: 1,
+        accepted_r2: 0,
+        refused: 0,
+      });
+    });
+
+    it.each([
+      ["null", null],
+      ["absent", undefined],
+      ["zero", 0],
+      ["fractional", 2.5],
+      ["a string", "12"],
+    ])(
+      "never runs when the fresh limit is %s (no default limit)",
+      async (_label, limit) => {
+        freshRow = { ...freshRow, max_snapshots_per_project: limit };
+        if (limit === undefined) delete freshRow.max_snapshots_per_project;
+        const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+          await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+        });
+        expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+        expect(snapshotReports()).toEqual([
+          expect.objectContaining({
+            outcome: "deferred",
+            reason: "change_generation_changed",
+          }),
+        ]);
+      },
+    );
+
+    it.each([
+      [
+        "the project left this host",
+        () => (freshRow = undefined),
+        "assignment_changed",
+      ],
+      [
+        "its schedule changed",
+        () => (freshRow = { ...freshRow, snapshots: { daily: 2 } }),
+        "schedule_changed",
+      ],
+      [
+        "the fresh read fails",
+        () => (freshError = new Error("bay unavailable")),
+        "change_generation_changed",
+      ],
+    ])("never runs when %s", async (_label, change, reason) => {
+      change();
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      expect(snapshotReports()).toEqual([
+        expect.objectContaining({ outcome: "deferred", reason }),
+      ]);
+    });
+
+    it("never runs on a leased row during a bay outage", async () => {
+      listProjectMaintenanceSchedulesMock.mockRejectedValue(
+        new Error("bay down"),
+      );
+      listLeasedMaintenanceSchedulesMock.mockReturnValue([staleRow]);
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+      // no targeted read either: a lease is never a fresh row
+      expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ project_ids: ["proj-1"] }),
+      );
+    });
+
+    describe("the check after the work", () => {
+      // The queued row is current at R1; the project changes during the pass.
+      beforeEach(() => {
+        let checks = 0;
+        listProjectMaintenanceSchedulesMock.mockResolvedValue([
+          { ...staleRow, last_edited: CURRENT },
+        ]);
+        confirmProjectMaintenanceAssignmentMock.mockImplementation(async () =>
+          ++checks === 1 ? { valid: true } : moved(),
+        );
+      });
+
+      it("publishes a created snapshot, due again one interval after it, with no reconciliation", async () => {
+        const {
+          runProjectSnapshotBackupMaintenanceSweepOnce,
+          getSnapshotLaneStatus,
+        } = await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+        });
+        expect(snapshotReports()).toEqual([
+          expect.objectContaining({
+            outcome: "succeeded",
+            latest_snapshot_at: "2026-04-10T22:31:00.000Z",
+            reconciled_change_at: null,
+            schedule_revision: null,
+            // the 15 min frequent interval (enabled by default)
+            due_at: "2026-04-10T22:46:00.000Z",
+          }),
+        ]);
+        expect(getSnapshotLaneStatus()?.generation_moved).toEqual({
+          accepted_r1: 0,
+          accepted_r2: 1,
+          refused: 0,
+        });
+      });
+
+      it("publishes an interval wait", async () => {
+        const latest = new Date(Date.now() - 60_000).toISOString();
+        runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+          changed: true,
+          created_snapshot_at: null,
+          latest_snapshot_at: latest,
+        });
+        listProjectMaintenanceSchedulesMock.mockResolvedValue([
+          { ...staleRow, last_edited: new Date().toISOString() },
+        ]);
+        const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+          await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+        });
+        expect(snapshotReports()).toEqual([
+          expect.objectContaining({
+            outcome: "skipped",
+            reason: "snapshot_interval_wait",
+            latest_snapshot_at: latest,
+          }),
+        ]);
+      });
+
+      it.each([
+        [
+          "no change found (the fenced claim)",
+          {
+            changed: false,
+            latest_snapshot_at: "2026-04-10T22:20:00.000Z",
+            created_snapshot_at: null,
+          },
+        ],
+        [
+          "disabled maintenance",
+          {
+            changed: null,
+            disabled: true,
+            latest_snapshot_at: null,
+            created_snapshot_at: null,
+          },
+        ],
+        [
+          "a lifecycle skip",
+          {
+            changed: null,
+            skipped_reason: "project_volume_lifecycle_changed",
+            latest_snapshot_at: null,
+            created_snapshot_at: null,
+          },
+        ],
+        [
+          "an unavailable volume",
+          {
+            changed: null,
+            skipped_reason: "project_volume_unavailable",
+            latest_snapshot_at: null,
+            created_snapshot_at: null,
+          },
+        ],
+        ["no update at all", undefined],
+        [
+          "nothing created, no interval wait",
+          {
+            changed: true,
+            latest_snapshot_at: null,
+            created_snapshot_at: null,
+          },
+        ],
+      ])("refuses %s, publishing nothing", async (_label, updated) => {
+        runScheduledSnapshotMaintenanceMock.mockResolvedValue(updated);
+        const {
+          runProjectSnapshotBackupMaintenanceSweepOnce,
+          getSnapshotLaneStatus,
+        } = await import("./snapshot-backup-maintenance");
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+        });
+        expect(snapshotReports()).toEqual([
+          expect.objectContaining({
+            outcome: "deferred",
+            reason: "change_generation_changed",
+            latest_snapshot_at: null,
+            reconciled_change_at: null,
+          }),
+        ]);
+        expect(getSnapshotLaneStatus()?.generation_moved).toEqual({
+          accepted_r1: 0,
+          accepted_r2: 0,
+          refused: 1,
+        });
+      });
+    });
+
+    it("comes due from the bay's later change after such a success (the listed row)", async () => {
+      const { _test } = await import("./snapshot-backup-maintenance");
+      const latest = "2026-04-10T22:31:00.000Z";
+      // The row the bay lists after the success (server's integration test):
+      // the new snapshot, a later change, no reconciliation.
+      for (const changed of [
+        "2026-04-10T22:40:00.000Z",
+        "2026-04-10T23:10:00.000Z",
+      ]) {
+        const row = {
+          ...staleRow,
+          last_edited: changed,
+          last_snapshot: latest,
+          snapshot_reconciled_change_at: null,
+        };
+        const due = _test.snapshotDueAt(
+          row as any,
+          {
+            ...{ frequent: 4, daily: 7, weekly: 4, monthly: 2 },
+            daily: 5,
+          } as any,
+        );
+        expect(due).toBe(
+          Math.max(Date.parse(changed), Date.parse(latest) + 15 * 60_000),
+        );
+      }
+    });
+  });
+
   describe("the snapshot lane's requeue", () => {
     const settle = async () => {
       for (let i = 0; i < 20; i++) {
@@ -3069,7 +3379,7 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
-  it("keeps assignment fencing for stale candidates outside the refresh budget", async () => {
+  it("runs a stale candidate outside the refresh budget only from a fresh row whose owner and schedule still hold", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-09-30T16:00:00Z"));
     const rows = Array.from({ length: 201 }, (_, i) => ({
@@ -3077,14 +3387,29 @@ describe("snapshot-backup-maintenance", () => {
       last_changed: "2026-09-29T14:00:00Z",
       snapshots: { daily: 1 },
       backups: { disabled: true },
+      max_snapshots_per_project: 8,
     }));
     const changedAt = "2026-09-30T15:59:00Z";
+    const moved = rows[199].project_id;
+    const rescheduled = rows[200].project_id;
+    // The bay's current rows: changed content; one project moved away, one
+    // with a new schedule.
     listProjectMaintenanceSchedulesMock.mockImplementation(
       async ({ project_ids }) =>
         project_ids
           ? rows
-              .filter((row) => project_ids.includes(row.project_id))
-              .map((row) => ({ ...row, last_changed: changedAt }))
+              .filter(
+                (row) =>
+                  project_ids.includes(row.project_id) &&
+                  row.project_id !== moved,
+              )
+              .map((row) => ({
+                ...row,
+                last_changed: changedAt,
+                ...(row.project_id === rescheduled
+                  ? { snapshots: { daily: 2 } }
+                  : {}),
+              }))
           : rows,
     );
     confirmProjectMaintenanceAssignmentMock.mockImplementation(
@@ -3116,18 +3441,23 @@ describe("snapshot-backup-maintenance", () => {
     jest.setSystemTime(Date.now() + 60_001);
     release();
     await sweep;
-    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(2);
-    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(101);
-    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ project_id: rows[200].project_id }),
-    );
-    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project_id: rows[200].project_id,
-        outcome: "deferred",
-        reason: "change_generation_changed",
-      }),
-    );
+    // The full listing, the one batch refresh (100 rows), and one targeted
+    // fresh read for each of the 100 stale rows beyond it.
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(102);
+    // A moved generation alone no longer stops a stale row: 199 run...
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(199);
+    // ...but a stale row whose owner or schedule changed still never does.
+    for (const [project_id, reason] of [
+      [moved, "assignment_changed"],
+      [rescheduled, "schedule_changed"],
+    ]) {
+      expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ project_id }),
+      );
+      expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id, outcome: "deferred", reason }),
+      );
+    }
   });
 
   it("continues discovering changed projects while an earlier event batch waits", async () => {

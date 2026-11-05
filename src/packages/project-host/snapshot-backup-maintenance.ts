@@ -180,8 +180,14 @@ function noteSnapshotLaneOutcome(outcome: SnapshotLaneOutcome): void {
   }
 }
 
+// Assignment checks that found only the content generation moved (a busy
+// project): accepted before the work (from a fresh row), accepted after it
+// (a created snapshot or an interval wait), or refused after it.
+const generationMoved = { accepted_r1: 0, accepted_r2: 0, refused: 0 };
+
 export interface SnapshotLaneStatus extends MaintenanceDispatchQueueStatus {
   completed_10m: Partial<Record<SnapshotLaneOutcome, number>>;
+  generation_moved: typeof generationMoved;
 }
 
 /** The snapshot lane of this host (all of its queues, normally one): queue
@@ -220,6 +226,7 @@ export function getSnapshotLaneStatus(
     requeued_total,
     ...(oldest.length ? { oldest_pending_due_ms: Math.min(...oldest) } : {}),
     completed_10m,
+    generation_moved: { ...generationMoved },
   };
 }
 
@@ -676,7 +683,9 @@ async function runScheduledStorageOperation({
   allowStarvationOverride?: boolean;
   starvationIntervalMs?: number;
   allowRecoveryPace?: boolean;
-  validate: () => Promise<string | undefined>;
+  /** The assignment check, before the work and again before its result is
+   * published. */
+  validate: (phase: "before" | "after") => Promise<string | undefined>;
   run: (admission: { starvationOverride: boolean }) => Promise<void>;
 }): Promise<{
   ran: boolean;
@@ -780,7 +789,7 @@ async function runScheduledStorageOperation({
             validationReason = memory.reason;
             return;
           }
-          validationReason = await validate();
+          validationReason = await validate("before");
           if (validationReason) return;
           await run({ starvationOverride: ticket.starvation_override });
         },
@@ -794,7 +803,7 @@ async function runScheduledStorageOperation({
       }
       // A move, edit, or schedule update during a long backup invalidates the
       // old assignment before its result is published as current protection.
-      validationReason = await validate();
+      validationReason = await validate("after");
       if (validationReason) {
         return {
           ran: false,
@@ -826,6 +835,22 @@ async function runScheduledStorageOperation({
     ticket.release();
     releaseReservation?.(ticket.starvation_override);
   }
+}
+
+// The latest snapshot plus the shortest enabled interval: when the project is
+// due again at the earliest. Null without a snapshot or an enabled interval.
+function intervalFloor(
+  latest: string | null,
+  schedule: SnapshotSchedule,
+): string | null {
+  const at = parseTimestampMs(latest);
+  const intervals = (
+    Object.keys(SNAPSHOT_INTERVALS_MS) as Array<keyof SnapshotCounts>
+  )
+    .filter((kind) => schedule[kind] > 0)
+    .map((kind) => SNAPSHOT_INTERVALS_MS[kind]);
+  if (at == null || !intervals.length) return null;
+  return new Date(at + Math.min(...intervals)).toISOString();
 }
 
 function scheduleRevision(schedule: SnapshotSchedule | null): string {
@@ -1392,6 +1417,40 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       return "assignment_unverified";
     }
   };
+  // This project's row read afresh, for a dispatch whose assignment check
+  // found only the content generation moved: this read's own reply (never a
+  // cached or leased row), the same schedule, and a known limit. Otherwise
+  // the refusal reason: nothing runs.
+  const freshSnapshotRow = async (
+    stale: HostProjectMaintenanceSchedule,
+  ): Promise<HostProjectMaintenanceSchedule | string> => {
+    if (usedOwnershipLease) return "change_generation_changed";
+    let rows: HostProjectMaintenanceSchedule[];
+    try {
+      rows = await statusClient.listProjectMaintenanceSchedules({
+        host_id: hostId,
+        project_ids: [stale.project_id],
+        limit: 1,
+      });
+    } catch (err) {
+      logger.warn("fresh maintenance row read failed", {
+        hostId,
+        project_id: stale.project_id,
+        err: `${err}`,
+      });
+      return "change_generation_changed";
+    }
+    const fresh = rows.find((row) => row.project_id === stale.project_id);
+    if (!fresh) return "assignment_changed";
+    if (scheduleRevision(fresh.snapshots) !== scheduleRevision(stale.snapshots))
+      return "schedule_changed";
+    const limit = fresh.max_snapshots_per_project;
+    // Never fall back to a default limit: it could delete snapshots the
+    // owner's current entitlement keeps.
+    if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit <= 0)
+      return "change_generation_changed";
+    return fresh;
+  };
   if (usedOwnershipLease) {
     logger.info("maintenance dispatch using bounded cached assignment", {
       hostId,
@@ -1703,14 +1762,16 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     candidate: HostProjectMaintenanceSchedule,
     opts: { afterRunning: boolean },
   ): Promise<"deferred" | MaintenanceRequeue | undefined> => {
-    const row = await refreshQueuedRow(candidate, opts);
-    if (!row) {
+    const queued = await refreshQueuedRow(candidate, opts);
+    if (!queued) {
       // Gone from this host: it must not hold the recovery head.
       dropRecoveryWaiting([candidate.project_id]);
       return;
     }
+    // (replaced by a fresh row when the content generation moved; see below)
+    let row: HostProjectMaintenanceSchedule = queued;
     const project_id = row.project_id;
-    const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
+    let schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
     const dueAt = snapshotDueAt(row, schedule);
     const notDue = snapshotNotDue(row, Date.now());
     if (notDue) dropRecoveryWaiting([project_id]);
@@ -1748,6 +1809,23 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       // whole update is retried in about a minute, within the gate's
       // bound, whether or not a snapshot was just created.
       let limitPruneDeferred = false;
+      // A busy project's content generation moves between the row's read and
+      // the bay's check. Owner and schedule still hold then (the bay checks
+      // them first), so the snapshot may run, from a row read afresh in this
+      // dispatch: its current limit and counts, never the queued row's.
+      let freshRow = false;
+      // The check after the work found only the generation moved, and the
+      // result (a created snapshot, an interval wait) was published anyway.
+      let movedAtPublish = false;
+      const intervalWait = () => {
+        if (changed !== true || created_snapshot_at != null) return false;
+        if (latest_snapshot_at == null) return false;
+        const next = snapshotDueAt(
+          { ...row, last_snapshot: latest_snapshot_at },
+          schedule,
+        );
+        return next != null && next > Date.now();
+      };
       const result = await runScheduledStorageOperation({
         hostId,
         project_id,
@@ -1755,13 +1833,37 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         allowStarvationOverride: starvationOverrideEligible,
         starvationIntervalMs: snapshotStarvationIntervalMs,
         allowRecoveryPace,
-        validate: () => validateAssignment(row, "snapshot"),
+        validate: async (phase) => {
+          const reason = await validateAssignment(row, "snapshot");
+          if (reason !== "change_generation_changed") return reason;
+          if (phase === "before") {
+            const fresh = await freshSnapshotRow(row);
+            if (typeof fresh === "string") return fresh;
+            row = fresh;
+            schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, fresh.snapshots);
+            freshRow = true;
+            generationMoved.accepted_r1 += 1;
+            return undefined;
+          }
+          // Only results that claim nothing about content after their own
+          // time: never a "no change" claim against a moved generation.
+          if (created_snapshot_at != null || intervalWait()) {
+            movedAtPublish = true;
+            generationMoved.accepted_r2 += 1;
+            return undefined;
+          }
+          generationMoved.refused += 1;
+          return reason;
+        },
         run: async () => {
           started = true;
           const updated = await runScheduledSnapshotMaintenance({
             project_id,
             counts: scheduleToCounts(schedule),
-            limit: row.max_snapshots_per_project ?? undefined,
+            // (a fresh row's limit was checked to be a positive integer)
+            limit: freshRow
+              ? row.max_snapshots_per_project!
+              : (row.max_snapshots_per_project ?? undefined),
             stage_durations_ms: stageDurations,
           });
           latest_snapshot_at = updated?.latest_snapshot_at ?? null;
@@ -1914,15 +2016,20 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         // a limit deferral stays due, so the retry runs the update
         due_at: limitPruneDeferred
           ? new Date().toISOString()
-          : result.ran
-            ? reason === "no_content_change"
-              ? null
-              : nextSnapshotDueAt == null
+          : movedAtPublish && created_snapshot_at != null
+            ? // The content moved during the pass: due again one interval
+              // after the new snapshot (a floor; the bay's due follows the
+              // project's current change).
+              intervalFloor(latest_snapshot_at ?? created_snapshot_at, schedule)
+            : result.ran
+              ? reason === "no_content_change"
                 ? null
-                : new Date(nextSnapshotDueAt).toISOString()
-            : dueAt == null
-              ? null
-              : new Date(dueAt).toISOString(),
+                : nextSnapshotDueAt == null
+                  ? null
+                  : new Date(nextSnapshotDueAt).toISOString()
+              : dueAt == null
+                ? null
+                : new Date(dueAt).toISOString(),
         attempt_due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
         duration_ms: Date.now() - startedAt,
         stage_durations_ms: {
@@ -2693,6 +2800,9 @@ export const _test = {
     }
     dispatchQueues.clear();
     snapshotLaneOutcomes = [];
+    generationMoved.accepted_r1 = 0;
+    generationMoved.accepted_r2 = 0;
+    generationMoved.refused = 0;
     recoveryWaiting.clear();
     recoveryHead = undefined;
   },

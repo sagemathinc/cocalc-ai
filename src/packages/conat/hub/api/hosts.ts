@@ -1162,6 +1162,15 @@ export interface HostSnapshotLaneMetrics {
   completed_10m: Partial<
     Record<"succeeded" | "skipped" | "deferred" | "failed", number>
   >;
+  /** Assignment checks that found only the content generation moved (a busy
+   * project): accepted before the work from a fresh row, accepted after it
+   * (a created snapshot or an interval wait), or refused after it. Since
+   * project-host start. */
+  generation_moved?: {
+    accepted_r1: number;
+    accepted_r2: number;
+    refused: number;
+  };
 }
 
 export type HostPressureZone = "normal" | "observe" | "pressure" | "emergency";
