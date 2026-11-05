@@ -172,6 +172,7 @@ describe("parseRow host metrics normalization", () => {
       requeued_total: { lifecycle_active: 3, io_pressure_emergency: 1 },
       oldest_pending_due_ms: 1_793_900_000_000,
       completed_10m: { succeeded: 90, deferred: 4 },
+      generation_moved: { accepted_r1: 7, accepted_r2: 5, refused: 1 },
     };
     const parse = (snapshot_lane: unknown) =>
       parseRow({
@@ -215,6 +216,21 @@ describe("parseRow host metrics normalization", () => {
         },
       ],
       ["a bad oldest due time", { oldest_pending_due_ms: "soon" }],
+      [
+        "an extra generation counter",
+        {
+          generation_moved: {
+            accepted_r1: 1,
+            accepted_r2: 1,
+            refused: 0,
+            project: 1,
+          },
+        },
+      ],
+      [
+        "a negative generation counter",
+        { generation_moved: { accepted_r1: -1, accepted_r2: 0, refused: 0 } },
+      ],
     ])("drops the whole block for %s", (_label, change) => {
       expect(parse({ ...lane, ...change })).toBeUndefined();
     });
