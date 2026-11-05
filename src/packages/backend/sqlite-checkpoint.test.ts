@@ -426,6 +426,50 @@ describe("the live WAL, not the file", () => {
     db.close();
   }, 30_000);
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 0, -1, -5])(
+    "an invalid maxWalBytes (%s) is refused: SQLite keeps checkpointing inline",
+    (maxWalBytes) => {
+      const file = join(dir, "invalid.db");
+      const db = openDb(file);
+      expect(
+        deferWalCheckpoints(db, file, { enableInTests: true, maxWalBytes }),
+      ).toBe(false);
+      expect(autocheckpoint(db)).toBe(1000);
+      expect(
+        Number(
+          (db.prepare("PRAGMA journal_size_limit").get() as any)
+            .journal_size_limit,
+        ),
+      ).toBe(-1);
+      expect(walCheckpointStatus(file)).toBeUndefined();
+      db.close();
+    },
+  );
+
+  it("a fractional maxWalBytes is a whole number of bytes, also for the worker", async () => {
+    const file = join(dir, "fraction.db");
+    const db = openDb(file);
+    expect(
+      deferWalCheckpoints(db, file, {
+        enableInTests: true,
+        maxWalBytes: 256 * 1024 + 0.5,
+      }),
+    ).toBe(true);
+    expect(walCheckpointStatus(file)?.maxWalBytes).toBe(256 * 1024);
+    expect(
+      Number(
+        (db.prepare("PRAGMA journal_size_limit").get() as any)
+          .journal_size_limit,
+      ),
+    ).toBe(256 * 1024);
+    writeMany(db, 10);
+    // The worker opened its connection with the same limit, without error.
+    const result = await freshResult(file);
+    expect(result.error).toBeUndefined();
+    forgetWalCheckpoints(file, db);
+    db.close();
+  }, 30_000);
+
   it("the WAL status is counts and ages with the caller's label, never a path", async () => {
     const { file, db, reader } = staleHighWater("status.db");
     deferWalCheckpoints(db, file, {

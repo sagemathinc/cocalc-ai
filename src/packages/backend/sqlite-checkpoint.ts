@@ -115,8 +115,10 @@ parentPort.on("message", (msg) => {
       if (db == null) {
         db = new DatabaseSync(file);
         db.exec("PRAGMA synchronous=NORMAL");
-        if (msg.journalSizeLimit?.[file] != null) {
-          db.exec("PRAGMA journal_size_limit=" + Number(msg.journalSizeLimit[file]));
+        // Only a whole number of bytes (or -1, no limit) goes into the pragma.
+        const limit = msg.journalSizeLimit?.[file];
+        if (typeof limit === "number" && Number.isFinite(limit) && limit >= -1) {
+          db.exec("PRAGMA journal_size_limit=" + Math.floor(limit));
         }
         db.pageSize = Number(db.prepare("PRAGMA page_size").get().page_size);
         connections.set(file, db);
@@ -459,6 +461,15 @@ export function deferWalCheckpoints(
   if (process.env.COCALC_SQLITE_INLINE_CHECKPOINTS === "1") return false;
   if (isTestRuntime() && !enableInTests) return false;
   if (inlineOnly.has(file)) return false;
+  // It bounds the WAL and sets journal_size_limit: a positive byte count.
+  if (!Number.isFinite(maxWalBytes) || maxWalBytes < 1) {
+    logger.warn("invalid maxWalBytes; keeping inline checkpoints", {
+      label,
+      max_wal_bytes: `${maxWalBytes}`,
+    });
+    return false;
+  }
+  maxWalBytes = Math.floor(maxWalBytes);
   let reg = registrations.get(file);
   if (reg == null) {
     reg = {
