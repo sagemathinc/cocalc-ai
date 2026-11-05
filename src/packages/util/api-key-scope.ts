@@ -31,6 +31,8 @@ const ACCOUNT_CAPABILITIES = new Set<ApiKeyCapability>([
   "account:read",
   "api-key:revoke:request",
   "notifications:manage",
+  "usage:read",
+  "ai-subscriptions:read",
   "project:create",
   "project:list",
 ]);

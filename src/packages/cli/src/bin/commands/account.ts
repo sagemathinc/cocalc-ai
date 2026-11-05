@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { readFile } from "node:fs/promises";
-import { humanSize } from "@cocalc/util/misc";
+import { FALLBACK_ACCOUNT_UUID, humanSize } from "@cocalc/util/misc";
 import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
 import { normalizeApiKeyActionReview } from "@cocalc/util/api-key-management";
 import { apiKeyForProject } from "../core/managed-connector-auth";
@@ -130,7 +130,7 @@ export function managedEgressWarnings({
 
 function serializeMembershipDetails(
   details: MembershipDetails,
-  account_id: string,
+  account_id: string | null,
   toIso: AccountCommandDeps["toIso"],
 ) {
   const usageLimits =
@@ -291,9 +291,23 @@ export function registerAccountCommand(
     )
     .action(async (accountIdentifier: string | undefined, command: Command) => {
       await withContext(command, "account membership", async (ctx) => {
-        const target = accountIdentifier?.trim()
-          ? await resolveAccountByIdentifier(ctx, accountIdentifier.trim())
-          : { account_id: ctx.accountId };
+        if (!accountIdentifier?.trim()) {
+          // One's own: no account to name, which a scoped API key (an agent's
+          // "Read my membership usage and limits") may not do; its context
+          // may not even know the account id.
+          const details = await ctx.hub.purchases.getMembershipDetails({
+            refresh_usage_status: true,
+          });
+          const own =
+            ctx.accountId && ctx.accountId !== FALLBACK_ACCOUNT_UUID
+              ? ctx.accountId
+              : null;
+          return serializeMembershipDetails(details, own, toIso);
+        }
+        const target = await resolveAccountByIdentifier(
+          ctx,
+          accountIdentifier.trim(),
+        );
         const account_id = `${target.account_id ?? ""}`.trim();
         if (!account_id) {
           throw new Error("unable to resolve target account");
@@ -303,6 +317,17 @@ export function registerAccountCommand(
           refresh_usage_status: true,
         });
         return serializeMembershipDetails(details, account_id, toIso);
+      });
+    });
+
+  account
+    .command("subscriptions")
+    .description(
+      "show what is known about your Claude and Codex subscriptions: each one's limits as last reported, and how long Auto's pool lasts",
+    )
+    .action(async (command: Command) => {
+      await withContext(command, "account subscriptions", async (ctx) => {
+        return await ctx.hub.system.getAiSubscriptionStatus({});
       });
     });
 

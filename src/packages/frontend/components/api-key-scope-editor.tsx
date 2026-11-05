@@ -47,6 +47,14 @@ const ACCOUNT_OPTIONS: Array<{
     capability: "notifications:manage",
     label: "Read and manage my notifications",
   },
+  {
+    capability: "usage:read",
+    label: "Read my membership usage and limits",
+  },
+  {
+    capability: "ai-subscriptions:read",
+    label: "Read the usage of my AI subscriptions (Claude, Codex)",
+  },
 ];
 
 function sameCapabilities(

@@ -101,6 +101,72 @@ describe("HTTP API key policy audit", () => {
     }
   });
 
+  it("lets usage:read and ai-subscriptions:read read the key's own account only", async () => {
+    const reader = {
+      ...principal,
+      capabilities: ["usage:read" as const, "ai-subscriptions:read" as const],
+    };
+    for (const args of [
+      [{}],
+      [{ refresh_usage_status: true }],
+      [{ user_account_id: "acc-1" }],
+    ]) {
+      await expect(
+        assertHttpHubApiKeyAllowed({
+          principal: reader,
+          name: "purchases.getMembershipDetails",
+          args,
+        }),
+      ).resolves.toBeUndefined();
+    }
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: reader,
+        name: "system.getAiSubscriptionStatus",
+        args: [{}],
+      }),
+    ).resolves.toBeUndefined();
+    // Both are solo-project privileges for an agent's key.
+    expect(mockSoloCheck).toHaveBeenCalledTimes(4);
+    // An admin's key may not look up another account's membership.
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: reader,
+        name: "purchases.getMembershipDetails",
+        args: [{ user_account_id: "acc-2" }],
+      }),
+    ).rejects.toThrow("may not set 'user_account_id'");
+    expect(mockRecordApiKeyAuditEventSoon).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "api_key_denied",
+        value: expect.objectContaining({ code: "api_key_other_account" }),
+      }),
+    );
+    // Each needs its own capability.
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: { ...principal, capabilities: ["usage:read"] },
+        name: "system.getAiSubscriptionStatus",
+        args: [{}],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: { ...principal, capabilities: ["ai-subscriptions:read"] },
+        name: "purchases.getMembershipDetails",
+        args: [{}],
+      }),
+    ).rejects.toThrow();
+    // Listing the credentials themselves is not part of it.
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: reader,
+        name: "system.listExternalCredentials",
+        args: [{}],
+      }),
+    ).rejects.toThrow("API keys are not allowed");
+  });
+
   it("audits unreviewed hub RPC denials", async () => {
     await expect(
       assertHttpHubApiKeyAllowed({

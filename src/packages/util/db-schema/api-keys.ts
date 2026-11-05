@@ -7,6 +7,8 @@ export const API_KEY_CAPABILITIES = [
   "account:read",
   "api-key:revoke:request",
   "notifications:manage",
+  "usage:read",
+  "ai-subscriptions:read",
   "project:create",
   "project:list",
   "project:read",

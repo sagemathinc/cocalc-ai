@@ -1,4 +1,8 @@
 import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
+import {
+  aiSubscriptionStatus,
+  type AiSubscriptionStatus,
+} from "@cocalc/util/ai/subscription-status";
 import { isCliConnectorCredentialKind } from "@cocalc/util/ai/cli-connectors";
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
@@ -7249,6 +7253,21 @@ export async function listExternalCredentials({
       includeRevoked: !!include_revoked,
     })
   ).filter((credential) => !isCliConnectorCredentialKind(credential.kind));
+}
+
+export async function getAiSubscriptionStatus({
+  account_id,
+}: {
+  account_id?: string;
+} = {}): Promise<AiSubscriptionStatus> {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const rows = await listAccountExternalCredentialsRouted({
+    owner_account_id: account_id,
+    includeRevoked: false,
+  });
+  return aiSubscriptionStatus(rows);
 }
 
 export async function revokeExternalCredential({
