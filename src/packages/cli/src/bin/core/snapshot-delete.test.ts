@@ -48,3 +48,25 @@ test("refuses unknown names, a mistyped kept name, and ambiguous selectors", () 
   );
   assert.throws(() => selectSnapshotsToDelete({ existing }), /specify --name/);
 });
+
+test("names backups and their flag in errors when selecting backups", () => {
+  assert.throws(
+    () =>
+      selectSnapshotsToDelete({
+        existing: ["b1"],
+        names: ["b2"],
+        noun: "backup",
+        nameFlag: "--id",
+      }),
+    /no such backup: b2/,
+  );
+  assert.throws(
+    () =>
+      selectSnapshotsToDelete({
+        existing: ["b1"],
+        noun: "backup",
+        nameFlag: "--id",
+      }),
+    /specify --id <backup> or --all-except <backup>/,
+  );
+});

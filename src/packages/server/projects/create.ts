@@ -79,6 +79,10 @@ import {
   isWorkspaceProjectRuntime,
 } from "@cocalc/server/launchpad/project-runtime";
 import { normalizeCoursePath } from "@cocalc/util/course-path";
+import {
+  DEFAULT_BACKUP_COUNTS,
+  DEFAULT_SNAPSHOT_COUNTS,
+} from "@cocalc/util/consts/snapshots";
 import { PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME } from "@cocalc/util/project-secrets";
 import { recordServerGrowthEvent } from "@cocalc/server/growth-analytics/server-events";
 import type { ProjectControlCreateRequest } from "@cocalc/conat/inter-bay/api";
@@ -91,6 +95,23 @@ import {
 } from "./create-request";
 
 const log = getLogger("server:projects:create");
+
+// The initial projects.snapshots / projects.backups value: NULL (the
+// defaults, enabled) unless the creator asked for the schedule to start
+// disabled. Stored in the creating INSERT, so no scheduler sees it enabled.
+export function initialScheduleJson(
+  kind: "snapshots" | "backups",
+  disabled: boolean | undefined,
+): string | null {
+  if (disabled == null || disabled === false) return null;
+  if (disabled !== true) {
+    throw Error(`disable_auto_${kind} must be a boolean`);
+  }
+  const defaults =
+    kind === "snapshots" ? DEFAULT_SNAPSHOT_COUNTS : DEFAULT_BACKUP_COUNTS;
+  return JSON.stringify({ ...defaults, disabled: true });
+}
+
 // Project placement must react quickly to dead hosts; do not use UI heartbeat
 // grace windows here.
 const HOST_OPERATIONAL_HEARTBEAT_WINDOW_MS = 2 * 60 * 1000;
@@ -436,6 +457,9 @@ async function createProjectImpl(
     host_id: requested_host_id,
     region: requested_region_raw_input,
   } = opts;
+  // Refuse a malformed schedule option before anything is placed or stored.
+  initialScheduleJson("snapshots", opts.disable_auto_snapshots);
+  initialScheduleJson("backups", opts.disable_auto_backups);
   if (requested_host_id) {
     assertProjectRuntimeCapability("host_placement");
   }
@@ -815,7 +839,7 @@ async function createProjectImpl(
       await assertHostAcceptsProjectInTransaction(client, host_id);
     }
     await client.query(
-      "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region, owning_bay_id, course) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9, $10, $11)",
+      "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region, owning_bay_id, course, snapshots, backups) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9, $10, $11, $12::JSONB, $13::JSONB)",
       [
         project_id,
         title ?? "No Title",
@@ -828,6 +852,8 @@ async function createProjectImpl(
         projectRegion,
         projectOwningBayId,
         course,
+        initialScheduleJson("snapshots", opts.disable_auto_snapshots),
+        initialScheduleJson("backups", opts.disable_auto_backups),
       ],
     );
     if (creationRequest) {

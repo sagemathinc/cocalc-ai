@@ -574,6 +574,81 @@ describe("projects.createProject clone routing", () => {
     );
   });
 
+  it("stores disabled automatic schedules in the creating insert", async () => {
+    const { createProjectOnOwningBay } = await import("./create");
+    const request = creationRequest();
+    await createProjectOnOwningBay({
+      ...request,
+      options: {
+        ...request.options,
+        disable_auto_snapshots: true,
+        disable_auto_backups: true,
+      },
+    });
+    const insert = queryMock.mock.calls.find(([sql]) =>
+      sql.startsWith("INSERT INTO projects "),
+    );
+    expect(insert[0]).toContain("snapshots, backups");
+    expect(JSON.parse(insert[1][11])).toEqual({
+      frequent: 4,
+      daily: 7,
+      weekly: 4,
+      monthly: 2,
+      disabled: true,
+    });
+    expect(JSON.parse(insert[1][12])).toEqual({
+      frequent: 0,
+      daily: 1,
+      weekly: 3,
+      monthly: 4,
+      disabled: true,
+    });
+  });
+
+  it("leaves the automatic schedules unset (defaults) unless asked", async () => {
+    const { createProjectOnOwningBay } = await import("./create");
+    await createProjectOnOwningBay(creationRequest());
+    const insert = queryMock.mock.calls.find(([sql]) =>
+      sql.startsWith("INSERT INTO projects "),
+    );
+    expect(insert[1][11]).toBeNull();
+    expect(insert[1][12]).toBeNull();
+  });
+
+  it("forwards the schedule options with a creation on another bay", async () => {
+    selectActiveHostMock.mockResolvedValue({ id: HOST_ID, bay_id: "bay-7" });
+    resolveHostBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 1 });
+    const { createProjectWithBootstrap } = await import("./create");
+    await createProjectWithBootstrap({
+      account_id: ACCOUNT_ID,
+      title: "Staging",
+      start: false,
+      disable_auto_snapshots: true,
+      disable_auto_backups: true,
+    });
+    expect(remoteCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          disable_auto_snapshots: true,
+          disable_auto_backups: true,
+        }),
+      }),
+    );
+  });
+
+  it("refuses a malformed schedule option before placement", async () => {
+    const { createProjectWithBootstrap } = await import("./create");
+    await expect(
+      createProjectWithBootstrap({
+        account_id: ACCOUNT_ID,
+        title: "Bad",
+        disable_auto_backups: "yes" as any,
+      }),
+    ).rejects.toThrow("disable_auto_backups must be a boolean");
+    expect(selectActiveHostMock).not.toHaveBeenCalled();
+    expect(poolConnectMock).not.toHaveBeenCalled();
+  });
+
   it("fails before insertion when there is no eligible host", async () => {
     selectActiveHostMock.mockResolvedValue(undefined);
     const createProject = (await import("./create")).default;

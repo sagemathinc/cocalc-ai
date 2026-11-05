@@ -444,6 +444,14 @@ export function registerProjectBasicCommands(
       "managed RootFS catalog entry id to record on the project",
     )
     .option("--start", "start the project after creating it")
+    .option(
+      "--no-auto-snapshots",
+      "create the project with automatic snapshots disabled (set at creation, before the first scheduled snapshot)",
+    )
+    .option(
+      "--no-auto-backups",
+      "create the project with automatic backups disabled (set at creation, before the first scheduled backup)",
+    )
     .action(
       async (
         name: string | undefined,
@@ -453,6 +461,8 @@ export function registerProjectBasicCommands(
           rootfsImage?: string;
           rootfsImageId?: string;
           start?: boolean;
+          autoSnapshots?: boolean;
+          autoBackups?: boolean;
         },
         command: Command,
       ) => {
@@ -471,7 +481,33 @@ export function registerProjectBasicCommands(
             rootfs_image,
             rootfs_image_id,
             start: !!opts.start,
+            ...(opts.autoSnapshots === false
+              ? { disable_auto_snapshots: true }
+              : {}),
+            ...(opts.autoBackups === false
+              ? { disable_auto_backups: true }
+              : {}),
           });
+          // Read back what was stored for any schedule the caller turned off.
+          const schedules: Record<string, boolean> = {};
+          if (opts.autoSnapshots === false) {
+            const stored = await ctx.hub.projects.getProjectSnapshotSchedule({
+              project_id: projectId,
+            });
+            schedules.auto_snapshots = stored?.disabled !== true;
+          }
+          if (opts.autoBackups === false) {
+            const stored = await ctx.hub.projects.getProjectBackupSchedule({
+              project_id: projectId,
+            });
+            schedules.auto_backups = stored?.disabled !== true;
+          }
+          const enabled = Object.keys(schedules).filter((k) => schedules[k]);
+          if (enabled.length > 0) {
+            throw new Error(
+              `project ${projectId} was created, but ${enabled.join(" and ")} did not read back as disabled`,
+            );
+          }
           return {
             project_id: projectId,
             title: name ?? "New Project",
@@ -479,6 +515,7 @@ export function registerProjectBasicCommands(
             rootfs_image: rootfs_image ?? null,
             rootfs_image_id: rootfs_image_id ?? null,
             started: !!opts.start,
+            ...schedules,
           };
         });
       },
