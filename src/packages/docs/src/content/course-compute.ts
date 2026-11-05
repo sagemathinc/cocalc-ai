@@ -9,8 +9,10 @@ export const COURSE_COMPUTE_BODY = String.raw`
 Course-sponsored compute lets an instructor pay for student-owned dedicated VMs
 from a shared, bounded budget. It is separate from course membership or student
 project subscriptions. **This feature is new and still in beta.** It is
-available on cocalc.ai; on other sites, an administrator must enable course
-sponsorship first. Please report problems or confusing steps to support.
+available on cocalc.ai. On other sites, an administrator must deploy and verify
+the course-funding prerequisites, then enable course sponsorship and
+course-funded VM admission. Please report problems or confusing steps to
+support.
 
 Each student owns and operates their VM. Paying for it does not give the
 instructor new SSH, filesystem, or administrative access to that VM. Course
