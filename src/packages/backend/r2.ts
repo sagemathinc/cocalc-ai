@@ -662,6 +662,27 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 // in parts (UploadPartCopy), so each request is short.
 export const R2_COPY_PART_SIZE_BYTES = 64 * 1024 * 1024;
 
+// R2's multipart contract: non-final parts of 5 MiB to 5 GiB, at most 10,000
+// parts. (Mutable only so tests can copy tiny objects in parts.)
+export const R2_COPY_LIMITS = {
+  minPartSizeBytes: 5 * 1024 * 1024,
+  maxPartSizeBytes: 5 * 1024 * 1024 * 1024,
+  maxParts: 10_000,
+};
+
+/** The part size to use for `size` bytes; throws if no valid one exists. */
+function copyPartSize(size: number, partSizeBytes: number): number {
+  const { minPartSizeBytes, maxPartSizeBytes, maxParts } = R2_COPY_LIMITS;
+  // Fewer, larger parts if the requested size would need too many.
+  const partSize = Math.max(partSizeBytes, Math.ceil(size / maxParts));
+  if (partSize < minPartSizeBytes || partSize > maxPartSizeBytes) {
+    throw new Error(
+      `R2 COPY: a ${size}-byte object cannot be copied in parts of ${partSize} bytes (allowed ${minPartSizeBytes}..${maxPartSizeBytes}, at most ${maxParts} parts)`,
+    );
+  }
+  return partSize;
+}
+
 export async function copyR2Object({
   auth,
   sourceKey,
@@ -673,6 +694,11 @@ export async function copyR2Object({
   destKey: string;
   partSizeBytes?: number;
 }): Promise<void> {
+  if (!Number.isSafeInteger(partSizeBytes) || partSizeBytes <= 0) {
+    throw new Error(
+      `R2 COPY: partSizeBytes must be a positive integer, not ${partSizeBytes}`,
+    );
+  }
   const source = await headR2Object({ auth, key: sourceKey });
   if (source == null) {
     throw new Error(`R2 COPY source does not exist: ${sourceKey}`);
@@ -683,7 +709,8 @@ export async function copyR2Object({
       sourceKey,
       destKey,
       size: source.size,
-      partSizeBytes,
+      // validated before the upload begins
+      partSizeBytes: copyPartSize(source.size, partSizeBytes),
     });
   } else {
     const response = await sendR2Request({
@@ -761,10 +788,12 @@ async function copyR2ObjectInParts({
         throw createHttpStatusError(response.statusCode, response.body);
       }
       const etag = extractXmlTag(response.body.toString("utf8"), "ETag");
-      if (!etag) {
-        throw new Error(`${label}: part ${partNumber} returned no ETag`);
+      const bare = etag?.replace(/^"+|"+$/g, "");
+      // Checked so it can go into the completion XML as is.
+      if (!bare || !/^[0-9a-fA-F-]+$/.test(bare)) {
+        throw new Error(`${label}: part ${partNumber} returned no valid ETag`);
       }
-      parts.push({ partNumber, etag: etag.replace(/^"+|"+$/g, "") });
+      parts.push({ partNumber, etag: bare });
     }
     const xml = [
       "<CompleteMultipartUpload>",

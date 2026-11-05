@@ -14,6 +14,9 @@ const objects = new Map<string, Buffer>();
 const uploads = new Map<string, { key: string; parts: Map<number, Buffer> }>();
 const calls: Call[] = [];
 let failPart: number | undefined;
+let completeError = false;
+let shortComplete = false;
+let badEtag = false;
 let keepAlive = 0;
 
 function respond(
@@ -47,6 +50,12 @@ function respond(
   if (method === "PUT" && query.has("partNumber")) {
     const n = Number(query.get("partNumber"));
     if (n === failPart) return { status: 403, body: "<Error>denied</Error>" };
+    if (badEtag) {
+      return {
+        status: 200,
+        body: "<CopyPartResult><ETag>&quot;a&lt;b&quot;</ETag></CopyPartResult>",
+      };
+    }
     const range = /^bytes=(\d+)-(\d+)$/.exec(
       headers["x-amz-copy-source-range"],
     );
@@ -56,20 +65,25 @@ function respond(
       .parts.set(n, source.subarray(Number(range[1]), Number(range[2]) + 1));
     return {
       status: 200,
-      body: `<CopyPartResult><ETag>&quot;etag-${n}&quot;</ETag></CopyPartResult>`,
+      body: `<CopyPartResult><ETag>&quot;${n.toString(16).padStart(8, "0")}&quot;</ETag></CopyPartResult>`,
     };
   }
   if (method === "POST" && query.has("uploadId")) {
+    if (completeError) {
+      return { status: 200, body: "<Error><Code>InternalError</Code></Error>" };
+    }
     const upload = uploads.get(query.get("uploadId")!)!;
     const numbers = [
       ...body
         .toString()
-        .matchAll(/<PartNumber>(\d+)<\/PartNumber><ETag>"etag-(\d+)"<\/ETag>/g),
+        .matchAll(
+          /<PartNumber>(\d+)<\/PartNumber><ETag>"([0-9a-f]+)"<\/ETag>/g,
+        ),
     ];
-    objects.set(
-      upload.key,
-      Buffer.concat(numbers.map((m) => upload.parts.get(Number(m[1]))!)),
+    const joined = Buffer.concat(
+      numbers.map((m) => upload.parts.get(Number(m[1]))!),
     );
+    objects.set(upload.key, shortComplete ? joined.subarray(1) : joined);
     uploads.delete(query.get("uploadId")!);
     return { status: 200, body: "<CompleteMultipartUploadResult/>" };
   }
@@ -124,7 +138,7 @@ jest.mock("node:https", () => ({
   },
 }));
 
-import { copyR2Object } from "./r2";
+import { copyR2Object, R2_COPY_LIMITS } from "./r2";
 
 const auth = {
   endpoint: "https://r2.example.com",
@@ -132,13 +146,29 @@ const auth = {
   secretKey: "s",
   bucket: "bucket",
 };
+const limits = { ...R2_COPY_LIMITS };
 
 beforeEach(() => {
   objects.clear();
   uploads.clear();
   calls.length = 0;
   failPart = undefined;
+  completeError = false;
+  shortComplete = false;
+  badEtag = false;
+  // tiny test objects are copied in tiny parts
+  Object.assign(R2_COPY_LIMITS, limits, { minPartSizeBytes: 1 });
 });
+
+afterAll(() => Object.assign(R2_COPY_LIMITS, limits));
+
+const copyBig = (partSizeBytes: number) =>
+  copyR2Object({
+    auth,
+    sourceKey: "src/big",
+    destKey: "dst/big",
+    partSizeBytes,
+  });
 
 describe("copyR2Object", () => {
   it("copies a small object with one CopyObject", async () => {
@@ -183,6 +213,72 @@ describe("copyR2Object", () => {
       calls.some((c) => c.method === "DELETE" && c.query.has("uploadId")),
     ).toBe(true);
     expect(uploads.size).toBe(0);
+  });
+
+  it("rejects a completion reported as 200 with an <Error> body, and aborts", async () => {
+    objects.set("src/big", Buffer.from("0123456789"));
+    completeError = true;
+    await expect(copyBig(4)).rejects.toThrow(/InternalError/);
+    expect(objects.has("dst/big")).toBe(false);
+    expect(
+      calls.some((c) => c.method === "DELETE" && c.query.has("uploadId")),
+    ).toBe(true);
+  });
+
+  it("rejects a part ETag that is not hex, and aborts", async () => {
+    objects.set("src/big", Buffer.from("0123456789"));
+    badEtag = true;
+    await expect(copyBig(4)).rejects.toThrow(/no valid ETag/);
+    expect(
+      calls.some((c) => c.method === "DELETE" && c.query.has("uploadId")),
+    ).toBe(true);
+  });
+
+  it("rejects when the destination size differs from the source", async () => {
+    objects.set("src/big", Buffer.from("0123456789"));
+    shortComplete = true;
+    await expect(copyBig(4)).rejects.toThrow(
+      /destination size 9 != source size 10/,
+    );
+  });
+
+  it.each([0, -4, NaN, Infinity, 2.5])(
+    "refuses partSizeBytes %p before any request",
+    async (partSizeBytes) => {
+      objects.set("src/big", Buffer.from("0123456789"));
+      await expect(copyBig(partSizeBytes)).rejects.toThrow(/positive integer/);
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it("refuses parts below the minimum before beginning an upload", async () => {
+    objects.set("src/big", Buffer.from("0123456789"));
+    R2_COPY_LIMITS.minPartSizeBytes = 5;
+    await expect(copyBig(4)).rejects.toThrow(/cannot be copied in parts/);
+    expect(calls.some((c) => c.query.has("uploads"))).toBe(false);
+  });
+
+  it("uses larger parts when the requested size would need too many", async () => {
+    objects.set("src/big", Buffer.from("0123456789"));
+    R2_COPY_LIMITS.maxParts = 2;
+    await copyBig(3);
+    expect(objects.get("dst/big")?.toString()).toBe("0123456789");
+    expect(calls.filter((c) => c.query.has("partNumber"))).toHaveLength(2);
+  });
+
+  it("refuses an object that needs parts above the maximum", async () => {
+    objects.set("src/big", Buffer.from("0123456789"));
+    Object.assign(R2_COPY_LIMITS, { maxParts: 2, maxPartSizeBytes: 4 });
+    await expect(copyBig(3)).rejects.toThrow(/cannot be copied in parts/);
+    expect(calls.some((c) => c.query.has("uploads"))).toBe(false);
+  });
+
+  it("keeps the production limits valid for R2", () => {
+    expect(limits).toEqual({
+      minPartSizeBytes: 5 * 1024 * 1024,
+      maxPartSizeBytes: 5 * 1024 * 1024 * 1024,
+      maxParts: 10_000,
+    });
   });
 
   it("refuses a missing source", async () => {
