@@ -360,6 +360,162 @@ describe("RootfsAgentClient", () => {
     expect(t.client.inFlight().bufferedBytes).toBe(8);
     c.emit("exit", 0);
     await expect(w3).rejects.toMatchObject({ name: "AgentUnavailableError" });
+    // it was sent: never marked otherwise (N1)
+    expect((await w3.catch((e) => e)).unsent).toBeUndefined();
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
+  });
+
+  // a stat reply the tests answer with
+  const STAT_OK = (req: any) => ({
+    id: req.id,
+    ok: true,
+    result: {
+      type: "file",
+      mode: 0,
+      uid: 0,
+      gid: 0,
+      size: 0,
+      nlink: 1,
+      ino: 1,
+      mtimeMs: 0,
+      atimeMs: 0,
+      ctimeMs: 0,
+    },
+  });
+
+  it("leaks no budget when the generation changes before a write is sent (B4)", async () => {
+    const t = setup();
+    const first = t.client.request("stat", { path: "/x" });
+    await t.answer(STAT_OK);
+    await first;
+    const host0 = hostBufferedBytes();
+    t.state.gen = { ...GEN, containerId: "d".repeat(64) };
+    await expect(
+      t.client.request("writeFile", { path: "/a" }, Buffer.alloc(8)),
+    ).rejects.toMatchObject({ name: "AgentUnavailableError" });
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
+    expect(hostBufferedBytes()).toBe(host0);
+  });
+
+  it("leaks no budget when the generation check throws before a write is sent (B4)", async () => {
+    let fail = false;
+    const t = setup({
+      generation: async () => {
+        if (fail) throw new Error("podman inspect failed");
+        return { ...GEN };
+      },
+    });
+    const first = t.client.request("stat", { path: "/x" });
+    await t.answer(STAT_OK);
+    await first;
+    const host0 = hostBufferedBytes();
+    fail = true;
+    await expect(
+      t.client.request("writeFile", { path: "/a" }, Buffer.alloc(8)),
+    ).rejects.toThrow("podman inspect failed");
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
+    expect(hostBufferedBytes()).toBe(host0);
+  });
+
+  it("rejects promptly, leaking nothing, when the agent exits during the generation check (E1)", async () => {
+    let gate: Promise<void> | undefined;
+    let release!: () => void;
+    let entered = false;
+    const t = setup({
+      generation: async () => {
+        if (gate) {
+          entered = true;
+          await gate;
+        }
+        return { ...GEN };
+      },
+    });
+    const first = t.client.request("stat", { path: "/x" });
+    const c = await t.child();
+    await t.answer(STAT_OK);
+    await first;
+    gate = new Promise<void>((r) => (release = r));
+    const host0 = hostBufferedBytes();
+    const done = t.client.request("writeFile", { path: "/a" }, Buffer.alloc(8));
+    while (!entered) await t.tick();
+    c.emit("exit", 0);
+    release();
+    let hung: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race([
+      done.then(
+        () => "resolved",
+        (err) => `rejected:${err.name}:${err.message}`,
+      ),
+      new Promise((r) => {
+        hung = setTimeout(() => r("hung"), 2000);
+      }),
+    ]);
+    clearTimeout(hung);
+    // refused by the child check, before any frame or reservation
+    expect(outcome).toBe(
+      "rejected:AgentUnavailableError:the rootfs agent went away",
+    );
+    expect(c.received).toHaveLength(1);
+    // marked as never sent, for a caller counting changes (N1)
+    expect((await done.catch((e) => e)).unsent).toBe(true);
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
+    expect(hostBufferedBytes()).toBe(host0);
+  });
+
+  it("counts a read whose chunks are still coming against the outstanding bound (B4b)", async () => {
+    LIMITS.maxOutstanding = 1;
+    const t = setup();
+    const read = t.client.request("readFile", { path: "/r" });
+    const c = await t.child();
+    // its reply announces 1 byte; the chunk hasn't come
+    await t.answer((req) => ({ id: req.id, ok: true, result: { size: 1 } }));
+    await expect(
+      t.client.request("stat", { path: "/x" }),
+    ).rejects.toMatchObject({ code: "EAGAIN" });
+    c.raw(encodeChunkFrame(c.received[0].id, Buffer.from("z")));
+    expect((await read).data!.toString()).toBe("z");
+    // now there is room
+    const st = t.client.request("stat", { path: "/x" });
+    await t.answer(STAT_OK, 1);
+    await st;
+  });
+
+  it("leaks no budget when a write is refused for too many outstanding requests (B4)", async () => {
+    LIMITS.maxOutstanding = 1;
+    const t = setup();
+    const first = t.client.request("stat", { path: "/x" });
+    const c = await t.child();
+    while (c.received.length < 1) await t.tick();
+    const host0 = hostBufferedBytes();
+    await expect(
+      t.client.request("writeFile", { path: "/a" }, Buffer.alloc(8)),
+    ).rejects.toMatchObject({ code: "EAGAIN" });
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 1 });
+    expect(hostBufferedBytes()).toBe(host0);
+    c.say(STAT_OK(c.received[0]));
+    await first;
+    // the slot came back, and a write now goes through
+    const w = t.client.request("writeFile", { path: "/b" }, Buffer.alloc(8));
+    while (c.received.length < 2) await t.tick();
+    c.say({ id: c.received[1].id, ok: true, result: null });
+    await w;
+    expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
+  });
+
+  it("gives back its request slot when a write is refused for its size (B4)", async () => {
+    LIMITS.maxOutstanding = 1;
+    LIMITS.maxProjectBufferedBytes = 4;
+    const t = setup();
+    const first = t.client.request("stat", { path: "/x" });
+    await t.answer(STAT_OK);
+    await first;
+    await expect(
+      t.client.request("writeFile", { path: "/a" }, Buffer.alloc(8)),
+    ).rejects.toMatchObject({ code: "EAGAIN" });
+    // the one slot is free again
+    const st = t.client.request("stat", { path: "/y" });
+    await t.answer(STAT_OK, 1);
+    await st;
     expect(t.client.inFlight()).toEqual({ bufferedBytes: 0, pending: 0 });
   });
 

@@ -338,25 +338,45 @@ export class RootfsAgentClient {
     args: Record<string, unknown>,
     data?: Buffer,
   ): Promise<{ result: unknown; data?: Buffer }> {
-    await this.ensureReady();
-    if (this.child == null) {
-      throw new AgentUnavailableError("the rootfs agent went away", true);
+    let id: number;
+    let reserved: number;
+    try {
+      await this.ensureReady();
+      const gen = await this.deps.generation();
+      if (!sameGeneration(gen, this.gen)) {
+        this.dispose("the project's container changed");
+        throw new AgentUnavailableError(
+          "the project's container changed; try again",
+          true,
+        );
+      }
+      if (this.child == null) {
+        throw new AgentUnavailableError("the rootfs agent went away", true);
+      }
+      // a read stays pending after its reply (its chunks still coming) though
+      // its reply slot is closed: the pending count is bounded too (@review)
+      if (this.pending.size >= LIMITS.maxOutstanding) {
+        throw codedError("EAGAIN", "the rootfs agent is busy; try again");
+      }
+      // may refuse (too many outstanding): nothing is reserved yet
+      id = this.tracker.open();
+      // a write's data counts until its request ends (its queued pipe bytes
+      // included, so stdin can't hold more than the budget). Reserved only
+      // now and registered below with no await in between, so every later
+      // end releases it through finish() (@review: no path may leak it)
+      reserved = data?.length ?? 0;
+      if (!this.reserve(reserved)) {
+        this.tracker.abandon(id);
+        throw codedError("EAGAIN", "the rootfs agent is busy; try again");
+      }
+    } catch (err) {
+      // refused before its frame was written: the agent never saw it, so a
+      // caller counting what may have changed can leave it out (N1)
+      if (err != null && typeof err === "object") {
+        (err as { unsent?: boolean }).unsent = true;
+      }
+      throw err;
     }
-    // a write's data counts until its request ends (its queued pipe bytes
-    // included, so stdin can't hold more than the budget)
-    const reserved = data?.length ?? 0;
-    if (!this.reserve(reserved)) {
-      throw codedError("EAGAIN", "the rootfs agent is busy; try again");
-    }
-    const gen = await this.deps.generation();
-    if (!sameGeneration(gen, this.gen)) {
-      this.dispose("the project's container changed");
-      throw new AgentUnavailableError(
-        "the project's container changed; try again",
-        true,
-      );
-    }
-    const id = this.tracker.open();
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.violation(`request ${op} timed out`);

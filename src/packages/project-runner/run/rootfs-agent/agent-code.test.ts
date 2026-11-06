@@ -421,6 +421,22 @@ describe("rootfs agent code, statically", () => {
     expect(Buffer.byteLength(ROOTFS_AGENT_CODE)).toBeLessThan(32 * 1024);
   });
 
+  it("makes every symlink and every installed file only relative to a verified directory fd (V4)", () => {
+    // a call with a path string would follow a directory swapped after
+    // openParent returned; only at(fd, name) names are anchored
+    const calls =
+      ROOTFS_AGENT_CODE.match(/fsp\.(symlink|link|rename)\([^;]*\)/g) ?? [];
+    const anchored = (call: string) =>
+      call.startsWith("fsp.rename(checkPath")
+        ? true // the plain rename op: the user's own request, by path
+        : /\bat\(/.test(call.split(",").slice(1).join(","));
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls.filter((c) => c.startsWith("fsp.symlink"))) {
+      expect(call).toMatch(/,\s*at\(/);
+    }
+    for (const call of calls) expect(anchored(call)).toBe(true);
+  });
+
   it("is one static string: the same for every project, with no per-call data (E4)", () => {
     const base = {
       nodePath: "/opt/cocalc/bin/node",

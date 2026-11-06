@@ -486,7 +486,7 @@ describe("project-host pending copies", () => {
       await rm(container, { recursive: true, force: true });
     });
 
-    const rootfsRow = (copy_id: string, exact = false) => {
+    const rootfsRow = (copy_id: string, exact = false, extra = {}) => {
       mockCallHub = jest.fn(async ({ name, args }) => {
         if (name === "hosts.claimPendingCopies") {
           return [
@@ -499,6 +499,7 @@ describe("project-host pending copies", () => {
               snapshot_id: "snap-1",
               options: { force: true },
               exact,
+              ...extra,
             },
           ];
         }
@@ -551,11 +552,13 @@ describe("project-host pending copies", () => {
       mockAgentDest = jest.fn(() => undefined);
       rootfsRow("copy-n");
       await applyPendingCopies({ limit: 1 });
+      // as the client refuses it: before anything is sent
       const gone = {
         call: async () => {
           throw Object.assign(new Error("the rootfs agent went away"), {
             name: "AgentUnavailableError",
             retryable: true,
+            unsent: true,
           });
         },
       };
@@ -570,6 +573,93 @@ describe("project-host pending copies", () => {
         ["copy-g", "queued"],
       ]);
       expect(mockResolveAnchored).not.toHaveBeenCalled();
+    });
+
+    const wentAway = (unsent: boolean) =>
+      Object.assign(new Error("the rootfs agent went away"), {
+        name: "AgentUnavailableError",
+        retryable: true,
+        ...(unsent ? { unsent } : {}),
+      });
+
+    it("fails, never re-queues, a copy whose changes may have reached the destination (N1)", async () => {
+      const { applyPendingCopies } = await import("./pending-copies");
+      const { agent, calls } = fsAgent();
+      // the agent takes its first change, then goes before it answers
+      const lost = {
+        call: async (op: string, a: any, data?: Buffer) => {
+          if (op !== "lstat") {
+            await agent.call(op, a, data);
+            throw wentAway(false);
+          }
+          return await agent.call(op, a, data);
+        },
+      };
+      mockAgentDest = jest.fn(() => ({
+        agent: lost,
+        containerPath: "/etc/foo",
+      }));
+      rootfsRow("copy-p");
+      await applyPendingCopies({ limit: 1 });
+      // exactly one change was sent, and it was never answered
+      expect(calls.filter((c) => !c.startsWith("lstat "))).toHaveLength(1);
+      expect(mockStatusUpdates).toEqual([
+        expect.objectContaining({ copy_id: "copy-p", status: "failed" }),
+      ]);
+      expect(mockStatusUpdates[0].last_error).toMatch(
+        /changes were sent to the destination/,
+      );
+    });
+
+    it("re-queues a copy whose every change was refused before it was sent (N1)", async () => {
+      const { applyPendingCopies } = await import("./pending-copies");
+      const { agent } = fsAgent();
+      const refusing = {
+        call: async (op: string, a: any, data?: Buffer) => {
+          if (op === "lstat") return await agent.call(op, a, data);
+          throw wentAway(true);
+        },
+      };
+      mockAgentDest = jest.fn(() => ({
+        agent: refusing,
+        containerPath: "/etc/foo",
+      }));
+      rootfsRow("copy-u");
+      await applyPendingCopies({ limit: 1 });
+      expect(mockStatusUpdates).toEqual([
+        expect.objectContaining({ copy_id: "copy-u", status: "queued" }),
+      ]);
+      expect(await readdir(path.join(container, "etc"))).toEqual([]);
+    });
+
+    it("fails a copy deferred too long or too often, with the reason (N1)", async () => {
+      readiness = "defer";
+      mockAgentDest = jest.fn(() => undefined);
+      const { applyPendingCopies, DEFER_LIMITS } =
+        await import("./pending-copies");
+      const now = Date.now();
+      rootfsRow("copy-fresh", false, {
+        attempt: DEFER_LIMITS.maxAttempts - 1,
+        created_at: new Date(now - DEFER_LIMITS.maxAgeMs + 60_000),
+      });
+      await applyPendingCopies({ limit: 1 });
+      rootfsRow("copy-often", false, {
+        attempt: DEFER_LIMITS.maxAttempts,
+        created_at: new Date(now),
+      });
+      await applyPendingCopies({ limit: 1 });
+      rootfsRow("copy-old", false, {
+        attempt: 1,
+        created_at: new Date(now - DEFER_LIMITS.maxAgeMs - 1),
+      });
+      await applyPendingCopies({ limit: 1 });
+      expect(mockStatusUpdates.map((u) => [u.copy_id, u.status])).toEqual([
+        ["copy-fresh", "queued"],
+        ["copy-often", "failed"],
+        ["copy-old", "failed"],
+      ]);
+      expect(mockStatusUpdates[1].last_error).toMatch(/could not run in time/);
+      expect(mockRustic).not.toHaveBeenCalled();
     });
 
     it("keeps HOME copies as before, whatever the rootfs readiness (B5)", async () => {

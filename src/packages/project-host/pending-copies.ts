@@ -27,7 +27,7 @@ import {
 } from "@cocalc/util/project-runtime";
 import { installPathFromStaging } from "./path-copy-archive";
 import { beneathRelative, kindBeneath } from "./beneath-copy";
-import { installThroughAgent } from "./agent-copy";
+import { installThroughAgent, type AgentLike } from "./agent-copy";
 
 const logger = getLogger("project-host:pending-copies");
 
@@ -144,6 +144,57 @@ class DeferredCopy extends Error {}
 // for tests
 export const copyDeps = { rootfsCopyReadiness };
 
+// N1: a row is queued again only while it may still run: within a day of its
+// creation and a bounded number of attempts (the worker ticks every 30s);
+// after that it fails, with the reason, instead of waiting until it expires
+export const DEFER_LIMITS = {
+  maxAgeMs: 24 * 60 * 60 * 1000,
+  maxAttempts: 3000,
+};
+
+// The agent's operations that change the destination: once one has been
+// sent, the copy may be partly placed and is never queued again (N1).
+const MUTATING_AGENT_OPS = new Set([
+  "writeFile",
+  "mkdir",
+  "symlink",
+  "unlink",
+  "rm",
+  "rename",
+  "chmod",
+  "utimes",
+]);
+
+function countingAgent(agent: AgentLike): {
+  agent: AgentLike;
+  changes: () => number;
+} {
+  let changes = 0;
+  return {
+    agent: {
+      call: async (op, args, data) => {
+        // counted unless refused before it was sent, not only when answered:
+        // the agent may have acted on a request whose reply never came
+        const mutating = MUTATING_AGENT_OPS.has(op);
+        try {
+          const reply = await agent.call(op, args, data);
+          if (mutating) changes += 1;
+          return reply;
+        } catch (err) {
+          if (mutating && (err as { unsent?: boolean })?.unsent !== true) {
+            changes += 1;
+          }
+          throw err;
+        }
+      },
+    },
+    changes: () => changes,
+  };
+}
+
+// thrown for a retryable agent failure after the copy changed something
+class PartlyPlacedCopy extends Error {}
+
 function isRetryableAgentError(err: unknown): boolean {
   return (
     (err as { name?: string })?.name === "AgentUnavailableError" &&
@@ -172,9 +223,10 @@ async function applyCopyRow(
   const volume = await getVolume(row.dest_project_id);
   const projectRoot = volume.path;
 
+  const scratch = getScratchMountpoint(row.dest_project_id);
   const destFs = new SandboxedFilesystem(projectRoot, {
     ...rootfsSandboxOptions(row.dest_project_id),
-    scratch: getScratchMountpoint(row.dest_project_id),
+    scratch,
     homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
   // A separate-uid project's rootfs is written only by its rootfs agent,
@@ -187,7 +239,8 @@ async function applyCopyRow(
   const intoRootfs =
     rootfsContainerPath(destPath, {
       homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
-      hasScratch: true,
+      // N2: the same classifier destFs routes by
+      hasScratch: !!scratch,
       hasSharedScratch: false,
       containerHome: "/home/user",
     }) != null;
@@ -287,26 +340,47 @@ async function applyCopyRow(
     };
     // S2: the agent's answers decide only this row's outcome; the staging is
     // removed below by the host's own bookkeeping, whatever they say.
-    const installed = viaAgent
-      ? await installThroughAgent({
+    let installed: boolean;
+    if (viaAgent) {
+      const counted = countingAgent(viaAgent.agent);
+      try {
+        installed = await installThroughAgent({
           src: path.join(stagingRoot, stagingRel),
-          agent: viaAgent.agent,
+          agent: counted.agent,
           dest: viaAgent.containerPath,
           exact: row.exact,
           options,
-        })
-      : await installPathFromStaging({
-          source: { root: stagingRoot, path: stagingRel },
-          destination: destination!,
-          exact: row.exact,
-          options,
         });
+      } catch (err) {
+        if (isRetryableAgentError(err) && counted.changes() > 0) {
+          throw new PartlyPlacedCopy(
+            `the copy stopped after ${counted.changes()} changes were sent to the destination: ${err}`,
+          );
+        }
+        throw err;
+      }
+    } else {
+      installed = await installPathFromStaging({
+        source: { root: stagingRoot, path: stagingRel },
+        destination: destination!,
+        exact: row.exact,
+        options,
+      });
+    }
     if (installed) {
       void touchProjectLastEdited(row.dest_project_id, "pending-copy");
     }
   } finally {
     await rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+function deferredTooLong(row: ProjectCopyRow): boolean {
+  const created = new Date(row.created_at).getTime();
+  return (
+    (row.attempt ?? 0) >= DEFER_LIMITS.maxAttempts ||
+    (Number.isFinite(created) && Date.now() - created >= DEFER_LIMITS.maxAgeMs)
+  );
 }
 
 async function reportCopyStatus(
@@ -384,7 +458,22 @@ export async function applyPendingCopies({
       await applyCopyRow(row, deadline);
       await reportCopyStatus(row, "done");
     } catch (err) {
-      if (err instanceof DeferredCopy || isRetryableAgentError(err)) {
+      // a PartlyPlacedCopy is neither: it fails (N1)
+      const deferrable =
+        err instanceof DeferredCopy || isRetryableAgentError(err);
+      if (deferrable && deferredTooLong(row)) {
+        logger.warn("pending copy deferred too long", {
+          dest_project_id: row.dest_project_id,
+          attempt: row.attempt,
+        });
+        await reportCopyStatus(
+          row,
+          "failed",
+          `the copy could not run in time (${row.attempt} attempts): ${err}`,
+        );
+        continue;
+      }
+      if (deferrable) {
         // nothing of it was placed: queued again, never "done" or "failed"
         logger.debug("pending copy deferred", {
           dest_project_id: row.dest_project_id,
