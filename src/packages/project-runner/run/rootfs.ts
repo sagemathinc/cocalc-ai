@@ -533,6 +533,13 @@ export async function unmountAll(
     // disposer); this waits behind them under the same lock, and resolves
     // only once the rootfs is detached, or rejects.
     await withRootfsLock(project_id, async () => {
+      // A mount queued on this lock meanwhile (a start, a sidecar) holds it
+      // now: never detach from under a newer holder.
+      if (leases.getCount(project_id) > 0) {
+        throw new Error(
+          "this project's RootFS is in use by a newer holder; not unmounting it",
+        );
+      }
       await detachBothWays(project_id);
     });
   }

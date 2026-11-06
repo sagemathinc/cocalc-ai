@@ -235,13 +235,26 @@ describe("mount() with a rootfs that is already mounted", () => {
     expect(helperCalls("umount-overlay-project")).toHaveLength(0);
   });
 
-  it("doesn't deadlock when a stop's immediate release races a mount", async () => {
+  it("doesn't deadlock when a stop's immediate release races a mount, and never detaches the newer mount", async () => {
     const { mount, unmountAll } = await import("./rootfs");
-    trackMounts();
+    const plainPath = join(dir, "roots", PROJECT);
+    const mounted = trackMounts();
     await mount({ project_id: PROJECT, home });
+    // the mount gets the lock while the stop is releasing
     const stop = unmountAll(PROJECT, { immediate: true });
     const again = mount({ project_id: PROJECT, home });
-    await settles(Promise.all([stop, again]));
+    const [stopped, remounted] = await settles(
+      Promise.allSettled([stop, again]),
+    );
+    expect(remounted).toEqual({ status: "fulfilled", value: plainPath });
+    expect(stopped.status).toBe("rejected");
+    expect(`${(stopped as PromiseRejectedResult).reason}`).toContain(
+      "in use by a newer holder",
+    );
+    // the newer holder keeps its rootfs, also once queued disposals ran
+    await sleep(3 * DELAY_MS);
+    expect([...mounted]).toEqual([plainPath]);
+    expect(helperCalls("umount-overlay-project")).toHaveLength(0);
   });
 
   it("resolves an immediate unmountAll only once the rootfs is detached, and rejects if it isn't", async () => {
