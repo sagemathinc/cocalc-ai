@@ -53,6 +53,16 @@ test("the page on Claude subscriptions in the project states the code's limits, 
     entry.body,
     /every turn gets a new|new token every turn/i,
   );
+  // only what the code shows: the headers it drops, and that it does not
+  // check the source project (not that it cannot tell)
+  assert.doesNotMatch(entry.body, /any credential header/i);
+  assert.doesNotMatch(entry.body, /cannot tell/i);
+  assert.doesNotMatch(entry.body, /clears any/i);
+  assert.match(entry.body, /does not check which project/);
+  assert.match(
+    entry.body,
+    /Authorization, X-Api-Key and Proxy-Authorization headers are dropped/,
+  );
   // the collaborator warning, as approved
   assert.match(entry.body, /CoCalc cannot protect you from a\s+collaborator/);
   assert.match(entry.body, /violates Anthropic's terms of service/);

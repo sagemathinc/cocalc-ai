@@ -32,9 +32,9 @@ Your Claude subscription credential never enters the project. Instead:
    minute old, so within about a minute of disconnecting it, requests stop
    working.
 
-Before starting Claude Code, CoCalc also clears any Anthropic API key variables
-from its environment, and turns off Claude Code's non-essential network
-traffic.
+Before starting Claude Code, CoCalc also clears the ANTHROPIC_API_KEY and
+ANTHROPIC_AUTH_TOKEN variables from its environment, and turns off Claude
+Code's non-essential network traffic.
 
 ## What the relay accepts
 
@@ -45,8 +45,8 @@ The relay passes on only what Claude Code needs to run models:
   host;
 - the request path is checked exactly as it was sent, before it is
   interpreted, and any encoded or backslash path separator or dot is refused;
-- only the relay's own credential is sent to Anthropic, never any credential
-  header the caller adds.
+- only the relay's own credential is sent to Anthropic: the caller's
+  Authorization, X-Api-Key and Proxy-Authorization headers are dropped.
 
 Anything else is refused. If Claude Code ever needs another endpoint, that
 request fails visibly rather than going through.
@@ -91,9 +91,9 @@ cannot read them. A banner stays in the agent panel while it applies.
 - **Codex** subscriptions work differently and are not described here.
 - Not yet confirmed in a live session: that stopping a project always ends
   its agent at once, and that Claude Code needs only the two endpoints above.
-- The relay cannot tell which project a request comes from. A relay token
-  copied out of your project therefore works from another project on the same
-  host as well, for as long as it works at all.
+- The relay does not check which project a request comes from, so a relay
+  token copied out of your project also works from another project on the
+  same host, for as long as it works at all.
 
 See also [Claude Code in CoCalc](/docs/ai/claude-code).
 `;
