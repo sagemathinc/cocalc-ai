@@ -88,8 +88,8 @@ The cocalc.com site now redirects to cocalc.ai. If you used cocalc.com, see
 - For prices, limits, and what each membership includes, see
   [Pricing](/pricing).
 - Codex can use a membership's included AI allowance when the site and your
-  account provide one. Claude Code works with your personal Claude Pro or Max
-  subscription and does not use the membership allowance.
+  account provide one. Claude Code can use your personal Claude Pro or Max
+  subscription, or a membership-funded option where the site offers one.
 
 ## Find a page by task
 
