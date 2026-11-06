@@ -4712,7 +4712,9 @@ export function ProjectComputeVms({
                         content:
                           vm.desired_pricing_model === "spot"
                             ? "The next start uses more reliable Standard capacity at the displayed Standard rate."
-                            : "The next start uses interruptible Spot capacity, which may be unavailable or stop at any time.",
+                            : vm.provider === "nebius"
+                              ? "The next start uses interruptible Spot capacity, which may be unavailable or stop at any time. Its price is capped at Nebius's live spot price plus some headroom and billed at the cap; Nebius stops it if its price rises above the cap."
+                              : "The next start uses interruptible Spot capacity, which may be unavailable or stop at any time.",
                         okText: "Change pricing",
                         onOk: () => changeVmPricing(vm),
                       });

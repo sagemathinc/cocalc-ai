@@ -79,6 +79,8 @@ export interface DedicatedHostRateEstimateInput {
   pricing_model?: "on_demand" | "spot" | null;
   billing_state?: DedicatedHostBillingState;
   operating_system?: "linux" | "windows" | null;
+  /** Nebius Spot max-price mode (#684): bill the instance at this cap. */
+  nebius_spot_max_price_per_gpu_hour?: string | null;
 }
 
 export interface DedicatedHostRateEstimate {
@@ -1323,6 +1325,7 @@ async function estimateNebiusRateBreakdown(
     shared_disk_type: input.shared_disk_type,
     shared_disk_gb: input.shared_disk_gb,
     storage_mode: input.storage_mode,
+    spot_max_price_per_gpu_hour: input.nebius_spot_max_price_per_gpu_hour,
   });
   return hostPriceBreakdownForBillingState(
     applyDedicatedHostSurchargeToBreakdown(

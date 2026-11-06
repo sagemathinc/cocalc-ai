@@ -20,15 +20,19 @@ export function NebiusCapacityPicker({
   catalog,
   selection,
   disabled,
+  spotAllowed = true,
   onPricingModelChange,
   onSelect,
 }: {
   catalog?: HostCatalog;
   selection: ProviderSelection;
   disabled?: boolean;
+  /** false for project hosts: Nebius Spot is for dedicated VMs only (#684) */
+  spotAllowed?: boolean;
   onPricingModelChange: (value: "spot" | "on_demand") => void;
   onSelect: (option: NebiusPlacementOption) => void;
 }) {
+  const spotOffered = NEBIUS_SPOT_OFFERED && spotAllowed;
   const pricingModel =
     selection.pricing_model === "spot" ? "spot" : "on_demand";
   const currentGpuOptions = getNebiusPlacementOptions(
@@ -88,10 +92,10 @@ export function NebiusCapacityPicker({
 
   // a selection made before Spot became unavailable moves to Standard
   useEffect(() => {
-    if (!NEBIUS_SPOT_OFFERED && pricingModel === "spot") {
+    if (!spotOffered && pricingModel === "spot") {
       onPricingModelChange("on_demand");
     }
-  }, [onPricingModelChange, pricingModel]);
+  }, [onPricingModelChange, pricingModel, spotOffered]);
 
   useEffect(() => {
     if (selected) {
@@ -142,7 +146,7 @@ export function NebiusCapacityPicker({
             onPricingModelChange(next);
           }}
         >
-          <Radio.Button value="spot" disabled={!NEBIUS_SPOT_OFFERED}>
+          <Radio.Button value="spot" disabled={!spotOffered}>
             Spot
           </Radio.Button>
           <Radio.Button value="on_demand">Standard</Radio.Button>
@@ -161,11 +165,20 @@ export function NebiusCapacityPicker({
           </Radio.Button>
         </Radio.Group>
         {pricingModel === "spot" && (
-          <Text type="secondary">Nebius Spot capacity is GPU-only.</Text>
+          <Text type="secondary">
+            Nebius Spot is GPU-only. Its price is capped at Nebius's live spot
+            price plus some headroom and billed at the cap; Nebius stops the VM
+            if its price rises above the cap.
+          </Text>
         )}
         {!NEBIUS_SPOT_OFFERED && (
           <Text type="secondary">
             Nebius Spot is unavailable for now; Standard only.
+          </Text>
+        )}
+        {NEBIUS_SPOT_OFFERED && !spotAllowed && (
+          <Text type="secondary">
+            Project hosts use Standard pricing on Nebius.
           </Text>
         )}
         <Switch

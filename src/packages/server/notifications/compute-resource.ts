@@ -19,7 +19,11 @@ export async function receiveComputeResourceNotice(
     typeof notice.resource_name !== "string" ||
     notice.resource_name.length > 200 ||
     !Number.isFinite(Date.parse(notice.observed_at)) ||
-    (notice.resource_kind === "volume" && notice.action === "stop")
+    (notice.resource_kind === "volume" && notice.action === "stop") ||
+    (notice.reason != null &&
+      (notice.reason !== "spot_price_above_max" ||
+        notice.resource_kind !== "vm" ||
+        notice.action !== "stop"))
   )
     throw Error("Invalid resource notice");
   await withAccountRehomeWriteFence({
@@ -48,9 +52,13 @@ export async function receiveComputeResourceNotice(
           : completed
             ? "deleted"
             : "deletion requested";
+      const reason =
+        notice.reason === "spot_price_above_max"
+          ? "Nebius's spot price rose above this Spot VM's price cap, so Nebius stopped it. Start it again when the price is back under the cap, or switch it to Standard (never stopped for price). "
+          : "";
       const detail =
         notice.action === "stop"
-          ? "Compute charges end after the provider confirms the stop. Storage can still incur charges until deletion."
+          ? `${reason}Compute charges end after the provider confirms the stop. Storage can still incur charges until deletion.`
           : notice.resource_kind === "vm"
             ? "The VM's boot disk, installed software, and data on that disk are removed on deletion. A separate home volume has its own retention and funding policy."
             : "Data on this home volume is removed on deletion. There is no automatic VM or volume backup.";

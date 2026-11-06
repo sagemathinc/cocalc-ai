@@ -12,18 +12,29 @@
  * - release({ immediate: true }) disposes immediately when the refcount hits
  *   zero instead of scheduling delayed cleanup.
  * - All operations are serialized per key to avoid races.
+ * - maxIdle (optional) bounds how many resources wait for their delayed
+ *   disposal at once: beyond it the longest idle one is disposed right away.
  */
 export class RefcountLeaseManager<K> {
   private readonly delayMs: number;
   private readonly disposer: (key: K) => Promise<void>;
+  private readonly maxIdle?: number;
   private closed = false;
   private counts = new Map<K, number>();
   private timers = new Map<K, NodeJS.Timeout>();
   private locks = new Map<K, Promise<void>>();
 
-  constructor(opts: { delayMs?: number; disposer: (key: K) => Promise<void> }) {
+  constructor(opts: {
+    delayMs?: number;
+    disposer: (key: K) => Promise<void>;
+    maxIdle?: number;
+  }) {
     this.delayMs = opts.delayMs ?? 30_000;
     this.disposer = opts.disposer;
+    if (opts.maxIdle != null && !(opts.maxIdle >= 1)) {
+      throw new Error("maxIdle must be at least 1");
+    }
+    this.maxIdle = opts.maxIdle;
   }
 
   /**
@@ -73,11 +84,16 @@ export class RefcountLeaseManager<K> {
         // Schedule disposer after delay; if a new acquire happens before it fires, it will be cancelled.
         const timer = setTimeout(() => {
           void this.withLock(key, async () => {
+            // Only the key's current timer disposes (an acquire and release
+            // meanwhile replaced or cancelled this one), and it leaves the
+            // pending disposals before disposing, so maxIdle cannot pick a key
+            // that is already being disposed.
+            if (this.timers.get(key) !== timer) return;
+            this.timers.delete(key);
             if ((this.counts.get(key) ?? 0) > 0) return;
             try {
               await this.disposer(key);
             } finally {
-              this.timers.delete(key);
               // Only clear count entry if still zero.
               if ((this.counts.get(key) ?? 0) === 0) {
                 this.counts.delete(key);
@@ -87,8 +103,33 @@ export class RefcountLeaseManager<K> {
         }, this.delayMs);
         timer.unref?.();
         this.timers.set(key, timer);
+        this.disposeExcessIdle(key);
       });
     };
+  }
+
+  // Pending disposals are in this.timers in the order they became idle (an
+  // acquire removes a key, a release adds it back at the end), so the first
+  // is the longest idle.
+  private disposeExcessIdle(newest: K): void {
+    if (this.maxIdle == null) return;
+    while (this.timers.size > this.maxIdle) {
+      const oldest = this.timers.keys().next().value as K;
+      if (oldest === newest) return;
+      clearTimeout(this.timers.get(oldest));
+      this.timers.delete(oldest);
+      void this.withLock(oldest, async () => {
+        // reacquired meanwhile
+        if ((this.counts.get(oldest) ?? 0) > 0) return;
+        try {
+          await this.disposer(oldest);
+        } finally {
+          if ((this.counts.get(oldest) ?? 0) === 0) {
+            this.counts.delete(oldest);
+          }
+        }
+      });
+    }
   }
 
   getCount(key: K): number {

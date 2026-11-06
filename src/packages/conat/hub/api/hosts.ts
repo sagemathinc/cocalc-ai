@@ -1142,7 +1142,87 @@ export interface HostCurrentMetrics {
     pressure_attribution?: "bees_cgroup";
   };
   conat_persist?: HostConatPersistMetrics;
+  snapshot_lane?: HostSnapshotLaneMetrics;
 }
+
+/** The host's scheduled-snapshot lane: queue depth, parking and recent
+ * outcomes. Counts, durations and fixed reason tokens only. */
+export interface HostSnapshotLaneMetrics {
+  pending: number;
+  active: number;
+  parked: boolean;
+  /** Why the lane is parked (a fixed token such as lifecycle_active). */
+  park_reason?: string;
+  parked_ms_total: number;
+  /** Operations put back in their place, by park reason. */
+  requeued_total: Record<string, number>;
+  /** The earliest due time (ms since the epoch) among pending items. */
+  oldest_pending_due_ms?: number;
+  /** Attempts in the last 10 minutes, by outcome. */
+  completed_10m: Partial<
+    Record<"succeeded" | "skipped" | "deferred" | "failed", number>
+  >;
+  /** Assignment checks that found only the content generation moved (a busy
+   * project): accepted before the work from a fresh row, accepted after it
+   * (a created snapshot or an interval wait), or refused after it. Since
+   * project-host start. */
+  generation_moved?: {
+    accepted_r1: number;
+    accepted_r2: number;
+    refused: number;
+  };
+  /** Pending snapshots past their class's promote age (60 min paying, 4 h
+   * free), which go first, oldest due first. */
+  promoted_pending?: number;
+  /** The most promoted pending snapshots that belong to one account. */
+  promoted_largest_account_count?: number;
+  /** Dispatches that went first by promotion, by class, since project-host
+   * start. */
+  promoted_dispatched_total?: { paying: number; free: number };
+  /** Why each snapshot that was overdue in the host's last full inventory
+   * still waits, by class (free: everything not paying). Absent until the
+   * first full inventory. */
+  waiting?: {
+    /** How long ago that inventory was taken. */
+    inventory_age_ms: number;
+    paying: SnapshotLaneWaiting;
+    free: SnapshotLaneWaiting;
+  };
+}
+
+/** Why an overdue scheduled snapshot waits:
+ * - running: its snapshot runs now;
+ * - queued / queued_promoted: in the lane's queue (promoted: past the
+ *   promote age, so it goes first in its class);
+ * - parked: in the queue of a parked lane;
+ * - deferred_retry: refused or put off, waiting for its retry;
+ * - failure_backoff: failed, waiting out the failure backoff;
+ * - limit_prune_deferred: at its snapshot limit, waiting for the prune;
+ * - generation_moved: refused because the project kept changing;
+ * - memory_gate: the host's memory gate holds all maintenance;
+ * - not_dispatched: none of these (should be 0). */
+export const SNAPSHOT_LANE_WAIT_CAUSES = [
+  "running",
+  "queued",
+  "queued_promoted",
+  "parked",
+  "deferred_retry",
+  "failure_backoff",
+  "limit_prune_deferred",
+  "generation_moved",
+  "memory_gate",
+  "not_dispatched",
+] as const;
+export type SnapshotLaneWaitCause = (typeof SNAPSHOT_LANE_WAIT_CAUSES)[number];
+
+/** Per cause: how many, the oldest overdue age, and for failure_backoff the
+ * most consecutive failures. */
+export type SnapshotLaneWaiting = Partial<
+  Record<
+    SnapshotLaneWaitCause,
+    { count: number; oldest_age_ms: number; max_failures?: number }
+  >
+>;
 
 export type HostPressureZone = "normal" | "observe" | "pressure" | "emergency";
 

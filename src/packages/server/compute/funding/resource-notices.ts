@@ -39,6 +39,7 @@ export async function deliverComputeResourceNotices(): Promise<void> {
     WHERE COALESCE(v.owning_bay_id,d.owning_bay_id)=$1 AND w.id>$2
       AND w.action IN ('stop','delete','delete_volume')
       AND (w.idempotency_key LIKE 'course-%' OR w.idempotency_key LIKE 'volume-funding-stop:%'
+        OR (w.action='stop' AND w.idempotency_key LIKE 'spot-price-stop:%')
         OR COALESCE(v.metadata#>'{billing,course_funding}',d.metadata#>'{billing,course_funding}') IS NOT NULL)
       AND CASE WHEN w.state='done' THEN w.payload->>'funding_notice_completed' IS DISTINCT FROM 'true'
         ELSE w.payload->>'funding_notice_requested' IS DISTINCT FROM 'true' END
@@ -84,6 +85,10 @@ export async function deliverComputeResourceNotices(): Promise<void> {
         resource_name: row.resource_name.slice(0, 200),
         action: row.action === "stop" ? "stop" : "delete",
         phase,
+        ...(row.action === "stop" &&
+        row.idempotency_key.startsWith("spot-price-stop:")
+          ? { reason: "spot_price_above_max" as const }
+          : {}),
         observed_at: (phase === "completed"
           ? row.completed_at!
           : row.created_at

@@ -153,7 +153,7 @@ import {
 } from "@cocalc/server/cloud/providers";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { getNebiusComputeCapacityAdvice } from "@cocalc/server/compute/provider";
-import { assertNebiusSpotOffered } from "@cocalc/util/consts/nebius-spot";
+import { assertNebiusProjectHostSpotRefused } from "@cocalc/util/consts/nebius-spot";
 import { assertProjectHostProviderOffered } from "@cocalc/server/cloud/project-host-provider-offered";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
@@ -7846,7 +7846,7 @@ async function updateHostMachineLocked({
   }
   const nextPricingModel = requestedPricingModel ?? currentPricingModel;
   if (requestedPricingModel || requestedCloud) {
-    assertNebiusSpotOffered(effectiveFundingCloud, nextPricingModel);
+    assertNebiusProjectHostSpotRefused(effectiveFundingCloud, nextPricingModel);
   }
   const currentInterruptionRestorePolicy =
     normalizeHostInterruptionRestorePolicy(

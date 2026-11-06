@@ -162,6 +162,238 @@ describe("parseRow host metrics normalization", () => {
     });
   });
 
+  describe("snapshot lane metrics", () => {
+    const lane = {
+      pending: 51,
+      active: 1,
+      parked: true,
+      park_reason: "lifecycle_active",
+      parked_ms_total: 1_234,
+      requeued_total: { lifecycle_active: 3, io_pressure_emergency: 1 },
+      oldest_pending_due_ms: 1_793_900_000_000,
+      completed_10m: { succeeded: 90, deferred: 4 },
+      generation_moved: { accepted_r1: 7, accepted_r2: 5, refused: 1 },
+      promoted_pending: 24,
+      promoted_largest_account_count: 20,
+      promoted_dispatched_total: { paying: 31, free: 2 },
+      waiting: {
+        inventory_age_ms: 120_000,
+        paying: {
+          running: { count: 1, oldest_age_ms: 9_000_000 },
+          queued_promoted: { count: 12, oldest_age_ms: 10_860_000 },
+          failure_backoff: {
+            count: 2,
+            oldest_age_ms: 4_000_000,
+            max_failures: 5,
+          },
+          not_dispatched: { count: 0, oldest_age_ms: 0 },
+        },
+        free: {},
+      },
+    };
+    const parse = (snapshot_lane: unknown) =>
+      parseRow({
+        id: "host-1",
+        name: "host-1",
+        status: "running",
+        metadata: { metrics: { current: { snapshot_lane } } },
+      }).metrics?.current?.snapshot_lane;
+
+    it("preserves validated counts and fixed tokens", () => {
+      expect(parse(lane)).toEqual(lane);
+      // From a project-host without promotion metrics.
+      const {
+        promoted_pending: _p,
+        promoted_largest_account_count: _l,
+        promoted_dispatched_total: _d,
+        waiting: _w,
+        ...older
+      } = lane;
+      expect(parse(older)).toEqual(older);
+      const { park_reason: _, oldest_pending_due_ms: __, ...idle } = lane;
+      expect(parse({ ...idle, parked: false })).toEqual({
+        ...idle,
+        parked: false,
+      });
+    });
+
+    it.each([
+      ["a free-text park reason", { park_reason: "start of project 1/2" }],
+      [
+        "an id-shaped reason key",
+        { requeued_total: { "00000000-1000-4000-8000-000000000001": 1 } },
+      ],
+      ["an unknown outcome", { completed_10m: { exploded: 1 } }],
+      [
+        "a reserved reason key",
+        { requeued_total: JSON.parse('{"__proto__": 1}') },
+      ],
+      ["a constructor reason key", { requeued_total: { constructor: 1 } }],
+      ["a negative count", { pending: -1 }],
+      ["a fractional count", { requeued_total: { lifecycle_active: 1.5 } }],
+      ["a string count", { active: "1" }],
+      ["a non-boolean parked flag", { parked: "yes" }],
+      [
+        "too many reasons",
+        {
+          requeued_total: Object.fromEntries(
+            Array.from({ length: 17 }, (_, i) => [`reason_${i}`, 1]),
+          ),
+        },
+      ],
+      ["a bad oldest due time", { oldest_pending_due_ms: "soon" }],
+      [
+        "an extra generation counter",
+        {
+          generation_moved: {
+            accepted_r1: 1,
+            accepted_r2: 1,
+            refused: 0,
+            project: 1,
+          },
+        },
+      ],
+      [
+        "a negative generation counter",
+        { generation_moved: { accepted_r1: -1, accepted_r2: 0, refused: 0 } },
+      ],
+      ["a negative promoted count", { promoted_pending: -1 }],
+      [
+        "a fractional largest account count",
+        { promoted_largest_account_count: 2.5 },
+      ],
+      ["a string promoted count", { promoted_pending: "24" }],
+      [
+        "an extra promoted class",
+        { promoted_dispatched_total: { paying: 1, free: 0, unclassified: 1 } },
+      ],
+      [
+        "a missing promoted class",
+        { promoted_dispatched_total: { paying: 1 } },
+      ],
+      ["promoted dispatches as a number", { promoted_dispatched_total: 3 }],
+      [
+        "an unknown wait cause",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: { stuck: { count: 1, oldest_age_ms: 1 } },
+            free: {},
+          },
+        },
+      ],
+      [
+        "an id-shaped wait cause",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {
+              "00000000-1000-4000-8000-000000000001": {
+                count: 1,
+                oldest_age_ms: 1,
+              },
+            },
+            free: {},
+          },
+        },
+      ],
+      [
+        "a reserved wait cause key",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: JSON.parse(
+              '{"__proto__": {"count": 1, "oldest_age_ms": 1}}',
+            ),
+            free: {},
+          },
+        },
+      ],
+      [
+        "an extra field in a wait count",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {
+              queued: { count: 1, oldest_age_ms: 1, project_id: "x" },
+            },
+            free: {},
+          },
+        },
+      ],
+      [
+        "a negative wait age",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: { queued: { count: 1, oldest_age_ms: -5 } },
+            free: {},
+          },
+        },
+      ],
+      [
+        "a fractional max failures",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {
+              failure_backoff: {
+                count: 1,
+                oldest_age_ms: 1,
+                max_failures: 1.5,
+              },
+            },
+            free: {},
+          },
+        },
+      ],
+      [
+        "max failures on a cause other than failure backoff",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {
+              queued: { count: 1, oldest_age_ms: 1, max_failures: 2 },
+            },
+            free: {},
+          },
+        },
+      ],
+      [
+        "failure backoff without max failures",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: { failure_backoff: { count: 1, oldest_age_ms: 1 } },
+            free: {},
+          },
+        },
+      ],
+      [
+        "a missing wait class",
+        { waiting: { inventory_age_ms: 1, paying: {} } },
+      ],
+      [
+        "an extra wait class",
+        {
+          waiting: {
+            inventory_age_ms: 1,
+            paying: {},
+            free: {},
+            unclassified: {},
+          },
+        },
+      ],
+      [
+        "a bad inventory age",
+        { waiting: { inventory_age_ms: "old", paying: {}, free: {} } },
+      ],
+      ["waiting as an array", { waiting: [] }],
+    ])("drops the whole block for %s", (_label, change) => {
+      expect(parse({ ...lane, ...change })).toBeUndefined();
+    });
+  });
+
   it("preserves a verified isolated Bees pressure attribution", () => {
     const checked_at = new Date().toISOString();
     const host = parseRow({

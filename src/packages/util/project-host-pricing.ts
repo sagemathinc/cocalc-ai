@@ -718,12 +718,31 @@ export function estimateNebiusCatalogRateBreakdown(opts: {
   shared_disk_type?: string | null;
   shared_disk_gb?: number | null;
   storage_mode?: string | null;
+  /** A Nebius Spot VM's per-GPU cap (#684). A GPU preset's preemptible price
+   * covers its vCPUs and RAM, so the instance item is the cap times the GPU
+   * count, never the daily catalog's spot price. */
+  spot_max_price_per_gpu_hour?: string | null;
 }): HostPriceBreakdown | undefined {
   const region = `${opts.region ?? ""}`.trim();
   const instance = opts.instance ?? undefined;
   if (!region) return undefined;
   const items: HostPriceBreakdownItem[] = [];
-  if (instance) {
+  if (
+    opts.pricing_model === "spot" &&
+    opts.spot_max_price_per_gpu_hour != null
+  ) {
+    const cap = Number(opts.spot_max_price_per_gpu_hour);
+    const gpuCount = Number(instance?.gpus ?? 0);
+    if (!instance || !(gpuCount > 0) || !isFinitePositiveNumber(cap)) {
+      return undefined;
+    }
+    items.push({
+      key: "gpu",
+      label: "GPU instance (Spot cap)",
+      usd_per_hour: cap * gpuCount,
+      billing_states: ["running"],
+    });
+  } else if (instance) {
     const family = selectNebiusFamilyRate({
       prices: opts.prices,
       region,

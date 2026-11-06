@@ -13,6 +13,8 @@ import {
 } from "@nebius/js-sdk/api/nebius/vpc/v1/index";
 import { ResourceAdviceService } from "@nebius/js-sdk/api/nebius/capacity/v1/index";
 import { ProjectService } from "@nebius/js-sdk/api/nebius/iam/v2/index";
+import { PricingPolicyService } from "@nebius/js-sdk/api/nebius/billing/v1/index";
+import { SpotPriceService } from "@nebius/js-sdk/api/nebius/billing/v1alpha1/index";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("cloud:nebius:client");
@@ -63,6 +65,8 @@ export class NebiusClient {
   readonly subnets: SubnetService;
   readonly resourceAdvice: ResourceAdviceService;
   readonly projects: ProjectService;
+  readonly pricingPolicies: PricingPolicyService;
+  readonly spotPrices: SpotPriceService;
 
   constructor(creds: NebiusCreds) {
     installNebiusUnhandledRejectionHandler();
@@ -84,6 +88,8 @@ export class NebiusClient {
     this.subnets = new SubnetService(this.sdk);
     this.resourceAdvice = new ResourceAdviceService(this.sdk);
     this.projects = new ProjectService(this.sdk);
+    this.pricingPolicies = new PricingPolicyService(this.sdk);
+    this.spotPrices = new SpotPriceService(this.sdk);
   }
 
   parentId(): string | undefined {
