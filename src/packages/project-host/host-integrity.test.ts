@@ -226,6 +226,12 @@ describe("host integrity for the heartbeat", () => {
             }),
             // an older watcher: neither field
             finding({ exe: "/usr/bin/old" }),
+            finding({ exe: "mode", affected: 12 }),
+            // more names than it passes on
+            finding({
+              exe: "/usr/bin/many",
+              unreadable: Array.from({ length: 12 }, () => "cgroup"),
+            }),
           ],
         }),
       ),
@@ -240,7 +246,10 @@ describe("host integrity for the heartbeat", () => {
     expect(byExe["/usr/bin/dash"].unreadable).toEqual(["cgroup", "root"]);
     expect(byExe["/usr/bin/other"].uid_class).toBeUndefined();
     expect(byExe["/usr/bin/other"].unreadable).toEqual(["mntns"]);
+    expect(byExe["/usr/bin/many"].unreadable).toHaveLength(8);
     expect("uid_class" in byExe["/usr/bin/old"]).toBe(false);
+    expect(byExe["mode"].affected).toBe(12);
+    expect("affected" in byExe["/usr/bin/old"]).toBe(false);
     expect("unreadable" in byExe["/usr/bin/old"]).toBe(false);
   });
 
@@ -256,7 +265,12 @@ describe("host integrity for the heartbeat", () => {
             marked: 42,
             lost_events: 2,
             malformed_records: 1,
-            unattributed: { "/usr/bin/a": 3, "/usr/bin/b": 1 },
+            unattributed: {
+              "/usr/bin/a": 3,
+              "/usr/bin/b": 1,
+              "relative/path": 5,
+              "/usr/bin/x; y": 2,
+            },
             truncated_mounts: ["/"],
           },
           ranges_state: "stale",
@@ -277,7 +291,14 @@ describe("host integrity for the heartbeat", () => {
     expect(result.detection).toEqual({
       runtime_uid_mode: "separate",
       runtime_user_in_container: "partial",
-      exec_monitor: { state: "degraded", marked: 42, lost: 3, unattributed: 4 },
+      exec_monitor: {
+        state: "degraded",
+        marked: 42,
+        lost: 3,
+        unattributed: 11,
+        // absolute plain paths only, the most frequent first
+        unattributed_programs: { "/usr/bin/a": 3, "/usr/bin/b": 1 },
+      },
       ranges_state: "stale",
       layout_problems: 13,
     });

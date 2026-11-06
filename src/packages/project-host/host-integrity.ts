@@ -38,6 +38,19 @@ function iso(value: unknown): string | undefined {
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1 };
 const MAX_UNREADABLE = 8;
+const MAX_PROGRAMS = 10;
+
+// Program paths from the watcher's counts: absolute, plain characters only.
+function programCounts(value: unknown): Record<string, number> | undefined {
+  if (value == null || typeof value !== "object") return undefined;
+  const entries = Object.entries(value)
+    .filter(([path]) => /^\/[A-Za-z0-9/_.+-]{1,127}$/.test(path))
+    .map(([path, n]) => [path, Number(n) || 0] as [string, number])
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, MAX_PROGRAMS);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
 
 // A short label from the watcher (a state, mode or class), or undefined.
 function word(value: unknown): string | undefined {
@@ -79,6 +92,9 @@ function detection(raw: any): HostIntegrityDetection | undefined {
             (Number(rule3.lost_events) || 0) +
             (Number(rule3.malformed_records) || 0),
           unattributed: total(rule3.unattributed),
+          ...(programCounts(rule3.unattributed)
+            ? { unattributed_programs: programCounts(rule3.unattributed) }
+            : {}),
         }
       : undefined,
     ranges_state: word(raw?.ranges_state),
@@ -166,6 +182,7 @@ export async function readHostIntegrity({
               .slice(0, MAX_UNREADABLE),
           }
         : {}),
+      ...(Number(f?.affected) > 0 ? { affected: Number(f.affected) } : {}),
     })),
     finding_count: findings.length,
     config_changes: changes.slice(0, MAX_CONFIG_CHANGES).map((c: any) => ({

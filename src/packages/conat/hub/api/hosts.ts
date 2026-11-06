@@ -1346,6 +1346,8 @@ export interface HostIntegrityFinding {
   uid_class?: string;
   // placement facts the watcher could not read (names only)
   unreadable?: string[];
+  // for a project data layout finding: how many dirs it applies to
+  affected?: number;
 }
 
 // What the integrity watcher checks on the host, as configured there.
@@ -1363,6 +1365,8 @@ export interface HostIntegrityDetection {
     marked: number;
     lost: number;
     unattributed: number;
+    // execs it could not attribute, by program (the most frequent first)
+    unattributed_programs?: Record<string, number>;
   };
   // the subordinate uid ranges it reads: ok, stale or unavailable
   ranges_state?: string;

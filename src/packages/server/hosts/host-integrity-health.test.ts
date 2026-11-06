@@ -284,6 +284,9 @@ describe("project runtime uid mode health", () => {
       detection: {
         runtime_uid_mode:
           mode?.effective === "separate" ? "separate" : "keep-id",
+        runtime_user_in_container:
+          mode?.effective === "separate" ? "partial" : "keep-id",
+        ranges_state: "ok",
         exec_monitor: {
           state: "available",
           marked: 1,
@@ -600,8 +603,16 @@ describe("integrity watcher detection settings", () => {
     layout_problems: 0,
     ...extra,
   });
-  const row = (id: string, mode: any, det: any): HostIntegrityRow => ({
-    ...host(id, det === undefined ? {} : { detection: det }),
+  const row = (
+    id: string,
+    mode: any,
+    det: any,
+    started_at = ago(5 * 60_000),
+  ): HostIntegrityRow => ({
+    ...host(id, {
+      started_at,
+      ...(det === undefined ? {} : { detection: det }),
+    }),
     runtime_uid_mode: mode,
   });
   const watcherMode = (rows: HostIntegrityRow[]) =>
@@ -724,6 +735,100 @@ describe("integrity watcher detection settings", () => {
     ).toEqual([]);
   });
 
+  it("raises it when the exec monitor stays starting long after the watcher started", () => {
+    const starting = detection({
+      exec_monitor: { state: "starting", marked: 0, lost: 0, unattributed: 0 },
+    });
+    expect(watcherMode([row("a", modeReport(), starting)])).toEqual([]);
+    const stuck = watcherMode([
+      row("a", modeReport(), starting, ago(2 * 60 * 60_000)),
+    ]);
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0].facts[0]).toContain("exec monitor is starting");
+    // no start time at all: not given the benefit of the doubt
+    expect(watcherMode([row("a", modeReport(), starting, "")])).toHaveLength(1);
+  });
+
+  it("raises it when the runtime user check in containers is weaker than separate", () => {
+    for (const value of ["keep-id", undefined]) {
+      const found = watcherMode([
+        row("a", modeReport(), detection({ runtime_user_in_container: value })),
+      ]);
+      expect(found).toHaveLength(1);
+      expect(found[0].facts[0]).toContain(
+        `runtime user check in containers is ${value ?? "unreported"}`,
+      );
+    }
+    // control: strict is fine too
+    expect(
+      watcherMode([
+        row(
+          "a",
+          modeReport(),
+          detection({ runtime_user_in_container: "strict" }),
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("raises it when the subordinate ranges are stale or unavailable", () => {
+    for (const value of ["unavailable", "stale", undefined]) {
+      const found = watcherMode([
+        row("a", modeReport(), detection({ ranges_state: value })),
+      ]);
+      expect(found).toHaveLength(1);
+      expect(found[0].facts[0]).toContain(
+        `subordinate uid ranges are ${value ?? "unreported"}`,
+      );
+      expect(found[0].details[0]).toContain(
+        `subordinate ranges: ${value ?? "unreported"}`,
+      );
+    }
+  });
+
+  it("shows a partial runtime user check in the details without raising it", () => {
+    const found = watcherMode([
+      row(
+        "a",
+        modeReport(),
+        detection({
+          exec_monitor: {
+            state: "degraded",
+            marked: 1,
+            lost: 1,
+            unattributed: 0,
+          },
+        }),
+      ),
+    ]);
+    expect(found).toHaveLength(1);
+    expect(found[0].facts.join("\n")).not.toContain("runtime user check");
+    expect(found[0].details[0]).toContain(
+      "runtime user in containers: partial",
+    );
+  });
+
+  it("compares only a running watcher's report", () => {
+    // a watcher whose status stopped updating: its last word doesn't count,
+    // so a watcher-mode alert can't clear on it (the watcher alert covers it)
+    const stale = {
+      ...row("a", modeReport(), detection()),
+    };
+    stale.integrity = { ...stale.integrity!, watcher: "stale" } as any;
+    const summary = summarizeHostIntegrity([stale], NOW);
+    expect(summary.reporting_subjects).not.toContain(
+      "Host integrity: a: integrity watcher mode differs",
+    );
+    expect(summary.conditions.map((c) => c.kind)).toEqual(["watcher"]);
+    const keepId = {
+      ...row("b", modeReport(), detection({ runtime_uid_mode: "keep-id" })),
+    };
+    keepId.integrity = { ...keepId.integrity!, watcher: "stale" } as any;
+    expect(
+      summarizeHostIntegrity([keepId], NOW).conditions.map((c) => c.kind),
+    ).toEqual(["watcher"]);
+  });
+
   it("raises it for a keep-id configuration with a separate watcher, decided or not", () => {
     // undecided, configured keep-id, but the watcher runs separate: still a
     // mismatch of configuration
@@ -839,5 +944,117 @@ describe("integrity watcher detection settings", () => {
         (d) => d.startsWith("Exec monitor"),
       ),
     ).toBe(false);
+  });
+});
+
+describe("project data layout and the watcher's own checks", () => {
+  const layoutFinding = (extra: any = {}) =>
+    finding({
+      rule: "hardening-project-homes",
+      severity: "high",
+      comm: "project-homes",
+      exe: "mode",
+      uids: [],
+      userns: "host",
+      parents: [],
+      affected: 12,
+      ...extra,
+    });
+
+  it("reports layout findings as their own kind, with check, problem and count", () => {
+    const summary = summarizeHostIntegrity(
+      [host("a", { findings: [layoutFinding(), finding()] })],
+      NOW,
+    );
+    const kinds = summary.conditions.map((c) => c.kind).sort();
+    expect(kinds).toEqual(["hardening", "processes"]);
+    const layout = summary.conditions.find((c) => c.kind === "hardening")!;
+    expect(layout.subject).toBe("Host integrity: a: project data layout");
+    expect(layout.level).toBe("warning");
+    expect(layout.facts).toEqual([
+      "host-a (a): project-homes: mode (12 affected)",
+    ]);
+    expect(layout.facts[0]).not.toContain("uid");
+    expect(layout.facts[0]).not.toContain("parents");
+    // never under process placement
+    const processes = summary.conditions.find((c) => c.kind === "processes")!;
+    expect(processes.facts.join("\n")).not.toContain("hardening");
+    expect(summary.reporting_subjects).toContain(
+      "Host integrity: a: project data layout",
+    );
+  });
+
+  it("takes the layout condition's level from the findings' severity", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        host("a", {
+          findings: [
+            layoutFinding({
+              rule: "hardening-daemon-state",
+              comm: "daemon-state",
+              severity: "critical",
+              affected: undefined,
+            }),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    expect(summary.conditions[0].kind).toBe("hardening");
+    expect(summary.conditions[0].level).toBe("critical");
+    expect(summary.conditions[0].facts[0]).toBe(
+      "host-a (a): daemon-state: mode",
+    );
+  });
+
+  it("describes the watcher's own checks without process fields", () => {
+    const summary = summarizeHostIntegrity(
+      [
+        host("a", {
+          findings: [
+            finding({
+              rule: "subuid-ranges-stale",
+              severity: "high",
+              comm: "subuid",
+              exe: "malformed",
+              uids: [],
+              parents: [],
+            }),
+          ],
+        }),
+      ],
+      NOW,
+    );
+    expect(summary.conditions[0].facts).toEqual([
+      "host-a (a): subuid-ranges-stale: malformed",
+    ]);
+  });
+
+  it("shows execs the monitors could not attribute, by program, over all hosts", () => {
+    const det = (programs: any) => ({
+      runtime_uid_mode: "separate",
+      exec_monitor: {
+        state: "available",
+        marked: 3,
+        lost: 0,
+        unattributed: 0,
+        unattributed_programs: programs,
+      },
+    });
+    const summary = summarizeHostIntegrity(
+      [
+        host("a", { detection: det({ "/usr/bin/a": 3, "/usr/bin/b": 1 }) }),
+        host("b", { detection: det({ "/usr/bin/a": 2 }) }),
+      ],
+      NOW,
+    );
+    expect(summary.exec_unattributed).toEqual({
+      "/usr/bin/a": 5,
+      "/usr/bin/b": 1,
+    });
+    const health = hostIntegrityHealth({ status: "fulfilled", value: summary });
+    expect(health.details).toContain(
+      "Exec monitor, execs it could not attribute: 5 /usr/bin/a, 1 /usr/bin/b",
+    );
   });
 });
