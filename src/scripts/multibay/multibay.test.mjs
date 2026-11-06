@@ -5911,3 +5911,77 @@ describe("Sagebrush admin grants across bays", () => {
     assert.deepEqual(await answer(), { admin: true, two_factor: true });
   });
 });
+
+describe("an attached bay's backup deletion configuration comes from the seed", () => {
+  it("is built from the seed's repositories by id, fails closed, and assigns nothing", async () => {
+    const project_id = randomUUID();
+    const unknownRepo = randomUUID();
+    const repoWithoutBucketRow = randomUUID();
+    const repoWithoutCredentials = randomUUID();
+    const bucketWithoutCredentials = randomUUID();
+    // The seed owns the repositories: one whose bucket row is gone, one whose
+    // bucket has no credentials (and the cluster has no R2 settings).
+    await runInBay(
+      cluster,
+      SEED,
+      `const pb = require("@cocalc/server/project-backup");
+       // creates the repository tables, if needed
+       await pb.getSeedProjectBackupConfigForDeletion({
+         project_id: ${JSON.stringify(project_id)},
+         backup_repo_id: ${JSON.stringify(unknownRepo)},
+         source_bay_id: ${JSON.stringify(ATTACHED)},
+       });
+       const getPool = require("@cocalc/database/pool").default;
+       await getPool().query(
+         "INSERT INTO buckets (id, name, provider, purpose, region, location, status) VALUES ($1, $2, 'r2', 'project-backups', 'wnam', 'wnam', 'active')",
+         [${JSON.stringify(bucketWithoutCredentials)}, "multibay-deletion-bucket"]);
+       await getPool().query(
+         "INSERT INTO project_backup_repos (id, region, bucket_id, root, secret) VALUES ($1, 'wnam', $2, 'rustic/a', 'unused'), ($3, 'wnam', $4, 'rustic/b', 'unused')",
+         [${JSON.stringify(repoWithoutBucketRow)}, ${JSON.stringify(randomUUID())},
+          ${JSON.stringify(repoWithoutCredentials)}, ${JSON.stringify(bucketWithoutCredentials)}]);`,
+    );
+    const answers = await runInBay(
+      cluster,
+      ATTACHED,
+      `const pb = require("@cocalc/server/project-backup");
+       const out = {};
+       for (const [name, backup_repo_id] of Object.entries({
+         unknown: ${JSON.stringify(unknownRepo)},
+         without_bucket_row: ${JSON.stringify(repoWithoutBucketRow)},
+         without_credentials: ${JSON.stringify(repoWithoutCredentials)},
+         none_recorded: null,
+       })) {
+         out[name] = await pb.getDeletedProjectBackupConfigForDeletion({
+           project_id: ${JSON.stringify(project_id)},
+           host_id: null,
+           backup_repo_id,
+         });
+       }
+       return out;`,
+    );
+    // The seed's own reasons, not "seed unavailable": the call reached the
+    // seed and it read its own rows.
+    assert.deepEqual(answers, {
+      unknown: { toml: "", empty: "repo_missing" },
+      without_bucket_row: { toml: "", empty: "bucket_missing" },
+      without_credentials: { toml: "", empty: "credentials_missing" },
+      none_recorded: { toml: "", empty: "no_backup_repo" },
+    });
+    // Deletion never assigns a repository, on either bay.
+    for (const bay of [SEED, ATTACHED]) {
+      const assigned = await runInBay(
+        cluster,
+        bay,
+        `const getPool = require("@cocalc/database/pool").default;
+         const { rows } = await getPool().query(
+           "SELECT to_regclass('project_backup_repo_assignments') IS NOT NULL AS has_table");
+         if (!rows[0].has_table) return 0;
+         const r = await getPool().query(
+           "SELECT count(*)::int AS n FROM project_backup_repo_assignments WHERE project_id=$1",
+           [${JSON.stringify(project_id)}]);
+         return r.rows[0].n;`,
+      );
+      assert.equal(assigned, 0, `${bay} assigned a repository`);
+    }
+  });
+});

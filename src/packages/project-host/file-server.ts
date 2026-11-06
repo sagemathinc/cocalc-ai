@@ -105,6 +105,7 @@ import {
   type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
+import { BackupConfigs } from "./backup-profile";
 import {
   authorizedKeysContainAnyFingerprint,
   matchingAuthorizedKeyFingerprint,
@@ -1854,36 +1855,25 @@ async function assertBackupSnapshotExists({
   }
 }
 
-const backupConfigCache = new Map<
-  string,
-  {
-    toml: string;
-    expiresAt: number;
-    path: string;
-    index_store?: ProjectBackupIndexStoreConfig | null;
-  }
->();
-let backupConfigInvalidationSub: any = null;
-const BACKUP_CONFIG_FETCH_RETRY_MS = 5000;
-const BACKUP_CONFIG_FETCH_TIMEOUT_MS = 2 * 60 * 1000;
+// Fetched, published and cached backup configurations; an invalidation also
+// stops a fetch already in flight (see BackupConfigs and BackupProfiles).
+const backupConfigs = new BackupConfigs({
+  fetch: (project_id) => fetchBackupConfig(project_id),
+  profilePath: (project_id) =>
+    join(secrets, "rustic", `project-${project_id}.toml`),
+  onRetry: (info) => logger.warn("backup config fetch failed; retrying", info),
+  onRemovalFailed: (info) => logger.warn("backup profile removal failed", info),
+});
 
+let backupConfigInvalidationSub: any = null;
+
+// For one project, also reports its cached backup profile: removed, absent
+// (none existed) or failed (see BackupConfigs.invalidate). Passed through as
+// is: what the hub is told is decided by invalidateBackupConfigReply.
 export async function invalidateBackupConfig(
   project_id?: string,
-): Promise<void> {
-  if (!project_id) {
-    backupConfigCache.clear();
-    return;
-  }
-  backupConfigCache.delete(project_id);
-  const profilePath = join(secrets, "rustic", `project-${project_id}.toml`);
-  try {
-    await rm(profilePath, { force: true });
-  } catch (err) {
-    logger.debug("backup profile removal failed (ignored)", {
-      project_id,
-      err: `${err}`,
-    });
-  }
+): Promise<{ profile?: "removed" | "absent" | "failed"; error?: unknown }> {
+  return await backupConfigs.invalidate(project_id);
 }
 
 async function withBackupConfigRefreshOnMissingBucket<T>({
@@ -2016,69 +2006,18 @@ async function deleteRemoteProjectBackupIndex({
 
 async function ensureBackupConfig(project_id: string): Promise<string | null> {
   logger.debug("ensureBackupConfig", { project_id });
-  const profilePath = join(secrets, "rustic", `project-${project_id}.toml`);
-  const profileDir = path.dirname(profilePath);
-  const now = Date.now();
-  const cached = backupConfigCache.get(project_id);
-  if (cached && now < cached.expiresAt) {
-    return cached.path;
-  }
-  const deadline = Date.now() + BACKUP_CONFIG_FETCH_TIMEOUT_MS;
-  let attempt = 0;
-  while (true) {
-    attempt += 1;
-    try {
-      const remoteConfig = await fetchBackupConfig(project_id);
-      const toml = remoteConfig?.toml;
-      if (!toml) return null;
-      const ttlSeconds = remoteConfig?.ttl_seconds ?? 0;
-      const fetchedAt = Date.now();
-      backupConfigCache.set(project_id, {
-        toml,
-        expiresAt:
-          ttlSeconds > 0
-            ? fetchedAt + ttlSeconds * 1000
-            : fetchedAt + 3600 * 1000,
-        path: profilePath,
-        index_store: remoteConfig?.index_store,
-      });
-      await mkdir(profileDir, { recursive: true });
-      await writeFile(profilePath, toml, "utf8");
-      await chmod(profilePath, 0o600);
-      return profilePath;
-    } catch (err) {
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) {
-        throw new Error(
-          `backup config fetch failed after ${attempt} attempt(s): ${err}`,
-        );
-      }
-      logger.warn("backup config fetch failed; retrying", {
-        project_id,
-        attempt,
-        remaining_ms: remainingMs,
-        err: `${err}`,
-      });
-      await new Promise((resolve) =>
-        setTimeout(
-          resolve,
-          Math.min(BACKUP_CONFIG_FETCH_RETRY_MS, remainingMs),
-        ),
-      );
-    }
-  }
+  return await backupConfigs.ensure(project_id);
 }
 
 async function getBackupIndexStoreConfig(
   project_id: string,
 ): Promise<ProjectBackupIndexStoreConfig | null> {
-  const now = Date.now();
-  const cached = backupConfigCache.get(project_id);
-  if (cached && now < cached.expiresAt) {
+  const cached = backupConfigs.cached(project_id);
+  if (cached) {
     return cached.index_store ?? null;
   }
   await ensureBackupConfig(project_id);
-  return backupConfigCache.get(project_id)?.index_store ?? null;
+  return backupConfigs.cached(project_id)?.index_store ?? null;
 }
 
 export async function resolveRusticRepo(project_id?: string): Promise<string> {
