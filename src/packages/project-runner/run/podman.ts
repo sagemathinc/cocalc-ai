@@ -58,7 +58,11 @@ import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
 import { type RestoreMode } from "@cocalc/conat/files/file-server";
 import { basename, join, relative, isAbsolute } from "node:path";
-import { mount as mountRootFs, unmountAll as unmountAllRootFs } from "./rootfs";
+import {
+  detachLeftovers as detachRootfsLeftovers,
+  mount as mountRootFs,
+  unmountAll as unmountAllRootFs,
+} from "./rootfs";
 import { type ProjectState } from "@cocalc/conat/project/runner/state";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -92,11 +96,7 @@ import getLogger from "@cocalc/backend/logger";
 import { writeStartupScripts } from "./startup-scripts";
 import { podman } from "@cocalc/backend/podman";
 import getPort from "@cocalc/backend/get-port";
-import {
-  DEFAULT_PROJECT_RUNTIME_GID,
-  DEFAULT_PROJECT_RUNTIME_HOME,
-  DEFAULT_PROJECT_RUNTIME_UID,
-} from "@cocalc/util/project-runtime";
+import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { PROJECT_STARTUP_SCRIPT_PATH } from "@cocalc/util/project-startup-script";
 import { getConatClient } from "./conat-client";
 import {
@@ -105,6 +105,22 @@ import {
 } from "@cocalc/util/project-secrets";
 import { tmpdir } from "node:os";
 import { resolveSharedScratchMount } from "./shared-scratch";
+import {
+  gcProjectViews,
+  hardenProjectDataRoot,
+  mountProjectView,
+  noteRuntimeUidModeStatus,
+  projectHasViews,
+  projectViewPath,
+  projectViewSource,
+  PROJECT_VIEW_ROOT,
+  readMountinfo,
+  runtimeIdentityForStart,
+  umountProjectViews,
+  viewSourceMountFailures,
+  type ProjectViewKind,
+} from "./runtime-host";
+import { keepIdUsernsArgs, type RuntimeIdentity } from "./runtime-identity";
 import { projectPoolCgroupPath } from "./project-pool-cgroup";
 
 export { resolveSharedScratchMount } from "./shared-scratch";
@@ -333,15 +349,39 @@ function parseProjectContainerRows(stdout?: string): PodmanProjectContainer[] {
 }
 
 function hasRuntimeProjectSecretsMount(mounts: PodmanMount[]): boolean {
-  const root = `${PROJECT_SECRETS_HOST_ROOT}/`;
+  // the secrets dir itself (keep-id) or its idmapped view (separate)
+  const roots = [`${PROJECT_SECRETS_HOST_ROOT}/`, `${PROJECT_VIEW_ROOT}/`];
   return mounts.some((mount) => {
     const source = mount.Source;
     return (
       typeof source === "string" &&
-      source.startsWith(root) &&
+      roots.some((root) => source.startsWith(root)) &&
       mount.Destination === PROJECT_SECRETS_MOUNT_PATH
     );
   });
+}
+
+/** At daemon start: views of projects that aren't running go away. */
+export async function cleanupStaleProjectViews(): Promise<void> {
+  try {
+    const { stdout } = await podman([
+      "ps",
+      "--filter",
+      "label=role=project",
+      "--format",
+      "{{.Names}}|{{.State}}",
+    ]);
+    const running: string[] = [];
+    for (const { name, state } of parseProjectContainerRows(stdout)) {
+      const project_id = name.replace(/^project-/, "");
+      if (state === "running" && isValidUUID(project_id)) {
+        running.push(project_id);
+      }
+    }
+    await gcProjectViews(running);
+  } catch (err) {
+    logger.warn("project view cleanup skipped", { err: `${err}` });
+  }
 }
 
 export async function cleanupStaleProjectContainers(): Promise<void> {
@@ -455,13 +495,18 @@ export async function refreshProjectSecretsHostPath({
       projectContainerName(project_id),
     ]);
     const mounts = JSON.parse(`${inspected.stdout ?? "[]"}`) as PodmanMount[];
-    const expectedSource = await realpath(path);
+    // The container mounts the secrets dir itself, or (separate runtime
+    // uid) the helper's view of it, which the helper pins to that dir.
+    const expectedSources = [
+      await realpath(path),
+      projectViewPath(project_id, "secrets"),
+    ];
     const mounted = mounts.find(
       ({ Destination }) => Destination === PROJECT_SECRETS_MOUNT_PATH,
     );
     if (
       !mounted?.Source ||
-      (await realpath(mounted.Source).catch(() => "")) !== expectedSource
+      !expectedSources.includes(await realpath(mounted.Source).catch(() => ""))
     ) {
       throw new Error("running project secrets mount identity mismatch");
     }
@@ -2034,6 +2079,129 @@ export async function start(opts: StartOptions): Promise<StartResult> {
   });
 }
 
+// Container states that hold no mount in use.
+const CONTAINER_STATES_AT_REST = new Set([
+  "configured",
+  "created",
+  "exited",
+  "stopped",
+]);
+
+/**
+ * Whether no container of the project is alive: neither the project's own
+ * nor a sidecar's (every one has the project id in its name), as Podman and
+ * conmon see them. Any doubt answers false. Only the project's start may use
+ * this to replace its rootfs mount.
+ */
+export async function projectContainersGone(
+  project_id: string,
+): Promise<boolean> {
+  if (!isValidUUID(project_id)) return false;
+  const { stdout } = await podman(
+    ["ps", "-a", "--format", "{{.Names}}|{{.State}}"],
+    { timeout: 30 },
+  );
+  for (const line of `${stdout ?? ""}`.split("\n")) {
+    const [name, state] = line.trim().split("|");
+    if (!name?.includes(project_id)) continue;
+    if (!CONTAINER_STATES_AT_REST.has(`${state ?? ""}`.trim().toLowerCase())) {
+      return false;
+    }
+  }
+  for (const [name, proc] of await getConmonContainerProcesses()) {
+    if (name.includes(project_id) || proc.project_id === project_id) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function umountViewsIfAny(project_id: string): Promise<void> {
+  if (await projectHasViews(project_id)) {
+    await umountProjectViews(project_id);
+  }
+}
+
+/**
+ * The start's runtime identity. Separate only if, beyond the host-wide gates
+ * (runtime-host.ts), this project's dirs are where the root helper accepts
+ * view sources; otherwise keep-id, with the reason.
+ */
+async function separateIdentityForStart({
+  project_id,
+  home,
+  scratch,
+  sharedScratch,
+}: {
+  project_id: string;
+  home: string;
+  scratch?: string;
+  sharedScratch?: string;
+}): Promise<RuntimeIdentity> {
+  const identity = await runtimeIdentityForStart({ sharedScratch });
+  if (identity.mode !== "separate") return identity;
+  const wrong: string[] = [];
+  const sources: string[] = [];
+  const check = (kind: ProjectViewKind, path: string) => {
+    sources.push(path);
+    if (path !== projectViewSource(project_id, kind)) {
+      wrong.push(
+        `${kind} ${path} is not ${projectViewSource(project_id, kind)}`,
+      );
+    }
+  };
+  check("home", home);
+  if (scratch) check("scratch", scratch);
+  check("secrets", projectSecretsHostPath(project_id));
+  check("browser-run", projectBrowserRunHostPath(project_id));
+  // the views keep their sources' mount flags: no setuid files, no devices
+  try {
+    wrong.push(...viewSourceMountFailures(await readMountinfo(), sources));
+  } catch (err) {
+    wrong.push(`cannot read mountinfo: ${err}`.slice(0, 200));
+  }
+  if (wrong.length === 0) return identity;
+  const status = {
+    configured: identity.status.configured,
+    effective: "keep-id" as const,
+    reason: "host-unsafe" as const,
+    detail: wrong.join("; ").slice(0, 500),
+  };
+  logger.warn("separate runtime uid not used for this start", {
+    project_id,
+    ...status,
+  });
+  // health shows what this start did, not the host-wide decision
+  noteRuntimeUidModeStatus(status);
+  return {
+    mode: "keep-id",
+    usernsArgs: keepIdUsernsArgs(),
+    status,
+  };
+}
+
+async function projectMountSources({
+  project_id,
+  separate,
+  sources,
+}: {
+  project_id: string;
+  separate?: { uid: number };
+  sources: Partial<Record<ProjectViewKind, string>>;
+}): Promise<Partial<Record<ProjectViewKind, string>>> {
+  if (separate == null) return sources;
+  const views: Partial<Record<ProjectViewKind, string>> = {};
+  for (const kind of Object.keys(sources) as ProjectViewKind[]) {
+    if (sources[kind] == null) continue;
+    views[kind] = await mountProjectView({
+      project_id,
+      kind,
+      uid: separate.uid,
+    });
+  }
+  return views;
+}
+
 async function startUnlocked({
   project_id,
   config = {},
@@ -2055,6 +2223,7 @@ async function startUnlocked({
     reportProgress({ project_id, op_id: lro_op_id, event });
   const timings = createPhaseTimingRecorder();
   const totalStarted = Date.now();
+  const mountedHere = { rootfs: false, views: false };
   try {
     starting.add(project_id);
     report({ type: "start-project", progress: 0 });
@@ -2147,6 +2316,36 @@ async function startUnlocked({
     ));
 
     const image = getImage(config);
+    const sharedScratchMount = await timings.measure(
+      "resolve_shared_scratch",
+      async () => await resolveSharedScratchMount(),
+    );
+    const identity = await timings.measure(
+      "resolve_runtime_identity",
+      async () =>
+        await separateIdentityForStart({
+          project_id,
+          home,
+          scratch,
+          sharedScratch: sharedScratchMount?.source,
+        }),
+    );
+    const separate = identity.mode === "separate" ? identity : undefined;
+    if (separate != null) {
+      await timings.measure("prepare_separate_runtime", async () => {
+        // Every separate start re-applies the data root's hardening, and
+        // takes down views a crashed earlier start may have left behind
+        // (with the rootfs, whose idmapped upper is one of them).
+        await hardenProjectDataRoot();
+        if (await projectHasViews(project_id)) {
+          // proof and detach in one step under the rootfs lock
+          await detachRootfsLeftovers(project_id, {
+            proveUnused: async () => await projectContainersGone(project_id),
+            alsoDetach: async () => await umountProjectViews(project_id),
+          });
+        }
+      });
+    }
     report({
       type: "start-project",
       progress: 20,
@@ -2155,8 +2354,17 @@ async function startUnlocked({
 
     const rootfs = await timings.measure(
       "mount_rootfs",
-      async () => await mountRootFs({ project_id, home, config }),
+      async () =>
+        await mountRootFs({
+          project_id,
+          home,
+          config,
+          idmapUid: separate?.uid,
+          // only the start may replace a mount that differs from this one
+          proveUnused: async () => await projectContainersGone(project_id),
+        }),
     );
+    mountedHere.rootfs = true;
     report({
       type: "start-project",
       progress: 40,
@@ -2312,13 +2520,27 @@ async function startUnlocked({
           secrets: config?.secrets,
         }),
     );
-    const sharedScratchMount = await timings.measure(
-      "resolve_shared_scratch",
-      async () => await resolveSharedScratchMount(),
-    );
     const browserRunPath = await timings.measure(
       "prepare_browser_run_dir",
       async () => await prepareProjectBrowserRunHostPath(project_id),
+    );
+    // The container's view of each dir: the dir itself (keep-id), or its
+    // idmapped view (separate), so files on disk keep the runtime user as
+    // owner while the project user is a different host uid.
+    mountedHere.views = separate != null;
+    const views = await timings.measure(
+      "mount_project_views",
+      async () =>
+        await projectMountSources({
+          project_id,
+          separate,
+          sources: {
+            home,
+            scratch: scratch || undefined,
+            secrets: projectSecretsPath,
+            "browser-run": browserRunPath,
+          },
+        }),
     );
     const configuredSshPort =
       Number.isInteger(config?.ssh_port) && (config?.ssh_port ?? 0) > 0
@@ -2355,9 +2577,7 @@ async function startUnlocked({
     args.push("--cgroups=disabled");
     // Leave setuid/setgid working inside the project so passwordless sudo can
     // elevate to container root under the rootless user namespace.
-    args.push(
-      `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
-    );
+    args.push(...identity.usernsArgs);
     args.push("--user", "0:0");
     args.push("--label", `project_id=${project_id}`, "--label", `role=project`);
     args.push("--replace");
@@ -2475,16 +2695,16 @@ async function startUnlocked({
         mountArg({ source: path, target: mounts[path], readOnly: true }),
       );
     }
-    args.push(mountArg({ source: home, target: env.HOME }));
+    args.push(mountArg({ source: views.home!, target: env.HOME }));
     if (scratch) {
-      args.push(mountArg({ source: scratch, target: "/tmp" }));
+      args.push(mountArg({ source: views.scratch!, target: "/tmp" }));
     } else if (config.tmp) {
       args.push(
         "--mount",
         `type=tmpfs,tmpfs-size=${config.tmp},tmpfs-mode=1777,destination=/tmp`,
       );
     }
-    if (sharedScratchMount) {
+    if (sharedScratchMount && separate == null) {
       args.push(
         mountArg({
           source: sharedScratchMount.source,
@@ -2494,13 +2714,16 @@ async function startUnlocked({
     }
     args.push(
       mountArg({
-        source: projectSecretsPath,
+        source: views.secrets!,
         target: PROJECT_SECRETS_MOUNT_PATH,
         readOnly: true,
       }),
     );
     args.push(
-      mountArg({ source: browserRunPath, target: SHARED_BROWSER_RUN_DIR }),
+      mountArg({
+        source: views["browser-run"]!,
+        target: SHARED_BROWSER_RUN_DIR,
+      }),
     );
 
     for (const key in env) {
@@ -2627,16 +2850,31 @@ async function startUnlocked({
     };
   } catch (err) {
     report({ type: "start-project", error: err });
+    // Undo only what this start mounted: a start refused because the rootfs
+    // or the views may still be in use must not take them down itself.
+    if (mountedHere.rootfs) {
+      await unmountAllRootFs(project_id).catch((unmountErr) => {
+        logger.warn("start: failed to unmount rootfs after startup error", {
+          project_id,
+          err: `${unmountErr}`,
+        });
+      });
+    }
+    if (mountedHere.views) {
+      await umountViewsIfAny(project_id).catch((unmountErr) => {
+        logger.warn(
+          "start: failed to unmount project views after startup error",
+          {
+            project_id,
+            err: `${unmountErr}`,
+          },
+        );
+      });
+    }
     await cleanupProjectSecretsHostPath(project_id).catch((cleanupErr) => {
       logger.warn("start: failed to clean up project secrets after error", {
         project_id,
         err: `${cleanupErr}`,
-      });
-    });
-    await unmountAllRootFs(project_id).catch((unmountErr) => {
-      logger.warn("start: failed to unmount rootfs after startup error", {
-        project_id,
-        err: `${unmountErr}`,
       });
     });
     await cleanupProjectCgroup(project_id).catch((cleanupErr) => {
@@ -2742,7 +2980,15 @@ async function stopUnlocked({ project_id }: { project_id: string }) {
       // unmount while holding the project lifecycle lock. A quick restart can
       // cancel the delayed disposal and reuse the image-validated mount;
       // otherwise the lease manager detaches it after its grace period.
-      await unmountAllRootFs(project_id, { immediate: false });
+      if (await projectHasViews(project_id)) {
+        // Separate runtime uid: the rootfs's idmapped upper is one of the
+        // project's views, so the rootfs goes now (no quick-restart reuse),
+        // then the views, before their sources are removed below.
+        await unmountAllRootFs(project_id, { immediate: true });
+        await umountProjectViews(project_id);
+      } else {
+        await unmountAllRootFs(project_id, { immediate: false });
+      }
       await cleanupProjectSecretsHostPath(project_id);
       await cleanupProjectBrowserRunHostPath(project_id);
       await cleanupProjectCgroup(project_id);
