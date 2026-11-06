@@ -466,6 +466,171 @@ export function patchClientId(time: string): string | undefined {
   }
 }
 
+// How long snapshots must have been held back for more history (measured from
+// when this client first held one back) before it loads the whole history to
+// settle whether any history can supply what is needed; and the most patches
+// it loads for that (beyond this it stays as it is, and logs why).
+let snapshotsBlockedBoundMs = 10 * 60_000;
+let snapshotsBlockedLoadCap = 200_000;
+let snapshotsBlockedByteCap = 512 * 1024 * 1024;
+
+// for tests
+export function setSnapshotsBlockedLimits({
+  boundMs,
+  loadCap,
+  byteCap,
+}: {
+  boundMs?: number;
+  loadCap?: number;
+  byteCap?: number;
+}): void {
+  if (boundMs != null) snapshotsBlockedBoundMs = boundMs;
+  if (loadCap != null) snapshotsBlockedLoadCap = loadCap;
+  if (byteCap != null) snapshotsBlockedByteCap = byteCap;
+}
+
+export interface HistoryGap {
+  // parents that no loaded patch supplies: the first HISTORY_GAP_MISSING_IDS
+  // distinct ones, and how many parent references name a missing patch (a
+  // patch missing from several children counts once per reference; counting
+  // distinct ids exactly would need memory for all of them)
+  missing: string[];
+  missingCount: number;
+  // patches without parents other than the oldest one (a document has one
+  // start; another parentless patch was not made on the document)
+  extraRoots: number;
+  // patches that build on a missing parent or an extra root, directly or
+  // through other patches, counting the extra roots themselves
+  affected: number;
+  // the work limit was reached; then every patch counts as affected
+  truncated?: boolean;
+}
+
+const HISTORY_GAP_MISSING_IDS = 20;
+// ids are chosen by whoever wrote a patch: report at most this much of each
+const HISTORY_GAP_ID_CHARS = 64;
+const reportedId = (id: string): string =>
+  id.length > HISTORY_GAP_ID_CHARS
+    ? `${id.slice(0, HISTORY_GAP_ID_CHARS)}…(${id.length} chars)`
+    : id;
+
+// With the whole history loaded: what a value without the patches that wait
+// on history leaves out. Patch ids and parents are chosen by whoever wrote a
+// patch, so this assumes nothing about them: a cycle counts as affected, and
+// every patch and every parent reference is charged to one work limit.
+export function historyGap(
+  patches: {
+    time: unknown;
+    parents?: unknown[];
+    is_snapshot?: boolean;
+    patch?: unknown;
+  }[],
+  maxWork: number = 8 * patches.length + 10_000,
+): HistoryGap {
+  let work = 0;
+  const missingIds: string[] = [];
+  let missingCount = 0;
+  const truncated = (): HistoryGap => ({
+    missing: missingIds,
+    missingCount,
+    extraRoots: 0,
+    affected: patches.length,
+    truncated: true,
+  });
+  const parentsOf = new globalThis.Map<string, string[]>();
+  for (const p of patches) {
+    const raw = Array.isArray(p.parents) ? p.parents : [];
+    work += 1 + raw.length;
+    if (work > maxWork) return truncated();
+    const time = `${p.time}`;
+    const parents = raw.map((x) => `${x}`);
+    const prev = parentsOf.get(time);
+    // a snapshot record and its patch share a time: keep the patch's parents
+    if (prev == null || (prev.length === 0 && parents.length > 0)) {
+      parentsOf.set(time, parents);
+    }
+  }
+  // only the reported ids are kept (at most HISTORY_GAP_MISSING_IDS)
+  const reported = new Set<string>();
+  for (const parents of parentsOf.values()) {
+    work += 1 + parents.length;
+    if (work > maxWork) return truncated();
+    for (const parent of parents) {
+      if (parentsOf.has(parent)) continue;
+      missingCount += 1;
+      if (
+        missingIds.length < HISTORY_GAP_MISSING_IDS &&
+        !reported.has(parent)
+      ) {
+        reported.add(parent);
+        missingIds.push(reportedId(parent));
+      }
+    }
+  }
+  // parentless patches (not snapshot records): all but the oldest are extra
+  const roots = patches
+    .filter(
+      (p) =>
+        !(p.is_snapshot && p.patch == null) &&
+        (parentsOf.get(`${p.time}`) ?? []).length === 0,
+    )
+    .map((p) => `${p.time}`)
+    .sort(comparePatchId);
+  const extra = new Set(roots.slice(1));
+  // 0: not seen, 1: on the walk's stack, 2: done
+  const state = new globalThis.Map<string, number>();
+  const affected = new globalThis.Map<string, boolean>();
+  for (const start of parentsOf.keys()) {
+    if (state.get(start) === 2) continue;
+    const stack: string[] = [start];
+    while (stack.length > 0) {
+      const t = stack[stack.length - 1];
+      if (state.get(t) === 2) {
+        stack.pop();
+        work += 1;
+        if (work > maxWork) return truncated();
+        continue;
+      }
+      state.set(t, 1);
+      const parents = parentsOf.get(t) ?? [];
+      work += 1 + parents.length;
+      if (work > maxWork) return truncated();
+      let result = extra.has(t);
+      let pending = false;
+      for (const parent of parents) {
+        if (!parentsOf.has(parent)) {
+          // missing
+          result = true;
+        } else {
+          const st = state.get(parent) ?? 0;
+          if (st === 1) {
+            // a cycle: not a history any client made; count it
+            result = true;
+          } else if (st === 2) {
+            if (affected.get(parent)) result = true;
+          } else {
+            stack.push(parent);
+            pending = true;
+          }
+        }
+      }
+      if (!pending) {
+        affected.set(t, result);
+        state.set(t, 2);
+        stack.pop();
+      }
+    }
+  }
+  let count = 0;
+  for (const a of affected.values()) if (a) count++;
+  return {
+    missing: missingIds,
+    missingCount,
+    extraRoots: extra.size,
+    affected: count,
+  };
+}
+
 export interface LoadedStartSnapshot {
   // patch times proven to be ancestors of the loaded snapshot's patch;
   // undefined for a snapshot written before snapshot_ancestors
@@ -3568,7 +3733,7 @@ export class SyncDoc extends EventEmitter {
      putting old data into history, this can fail. However, in the usual
      case we should never record a snapshot with this bad property.
   */
-  private snapshot = reuseInFlight(async (time: PatchId): Promise<void> => {
+  private snapshot = reuseInFlight(async (time: PatchId): Promise<boolean> => {
     let user_id = this.my_user_id ?? 0;
     let snapshot: string | undefined;
     if (!this.patchflowReady() || this.patchflowSession == null) {
@@ -3579,7 +3744,7 @@ export class SyncDoc extends EventEmitter {
       throw Error(`no patch at time ${time}`);
     }
     if (p.isSnapshot && p.snapshot != null) {
-      return;
+      return false;
     }
     user_id = p.userId ?? user_id;
     // Never pass on a value that differs from what the patch's author
@@ -3621,7 +3786,7 @@ export class SyncDoc extends EventEmitter {
     this.patches_table.set(obj);
     await this.patches_table.save();
     if (!this.isReady()) {
-      return;
+      return true;
     }
 
     const last_seq = seq_info.seq;
@@ -3634,7 +3799,125 @@ export class SyncDoc extends EventEmitter {
         data: { patchId: time },
       },
     });
+    return true;
   });
+
+  // When this client first held back a snapshot because more history was
+  // needed, while that has been so ever since.
+  private snapshotsBlockedSince?: number;
+
+  // Snapshots wait while more history is needed for exact values. If what is
+  // needed never arrives (a patch that is not in the stream at all), the
+  // document would never get another snapshot, and every open would load all
+  // the patches since the last one. So once snapshots have been held back for
+  // a while, load the whole history (once, if the stream is within the
+  // limits); if more history is still needed then, no history can ever supply
+  // it, and every client shows the same value without it: snapshot that. This
+  // writes nothing but a snapshot, and each such snapshot is logged with what
+  // it leaves out (see reportHistoryGap).
+  private snapshotDespiteMissingHistory = async (): Promise<boolean> => {
+    const now = Date.now();
+    this.snapshotsBlockedSince ??= now;
+    if (now - this.snapshotsBlockedSince < snapshotsBlockedBoundMs) {
+      return false;
+    }
+    if (!this.wholeHistoryLoadedWithinLimits) {
+      await this.loadWholeHistoryOnce();
+      if (this.isClosed() || !this.wholeHistoryLoadedWithinLimits) {
+        return false;
+      }
+    }
+    return !!(this.patchflowSession as any)?.needsMoreHistory?.();
+  };
+
+  // Loads the whole history once per instance, only if the stream (as the
+  // persist server counts it, before anything is loaded) is within
+  // snapshotsBlockedLoadCap messages and snapshotsBlockedByteCap bytes, and
+  // checks the count again afterwards.
+  private loadWholeHistoryOnce = reuseInFlight(async (): Promise<void> => {
+    if (this.wholeHistoryLoadAttempted) return;
+    this.wholeHistoryLoadAttempted = true;
+    const where = { project_id: this.project_id, path: this.path };
+    try {
+      const inventory = await (this.dstream() as any)?.stream?.inventory?.();
+      if (
+        inventory == null ||
+        !Number.isSafeInteger(inventory.count) ||
+        !Number.isSafeInteger(inventory.bytes) ||
+        inventory.count < 0 ||
+        inventory.bytes < 0
+      ) {
+        logger.warn(
+          "not loading the whole history to settle held-back snapshots: stream size unknown",
+          where,
+        );
+        return;
+      }
+      if (
+        inventory.count > snapshotsBlockedLoadCap ||
+        inventory.bytes > snapshotsBlockedByteCap
+      ) {
+        logger.warn(
+          "not loading the whole history to settle held-back snapshots: stream too large",
+          {
+            ...where,
+            count: inventory.count,
+            bytes: inventory.bytes,
+            countCap: snapshotsBlockedLoadCap,
+            byteCap: snapshotsBlockedByteCap,
+          },
+        );
+        return;
+      }
+      // Ask the stream for everything it keeps, whatever hasFullHistory()
+      // says: that flag is inferred from the loaded patches (e.g., a
+      // parentless one), which their writers choose.
+      const stream = this.dstream() as any;
+      await stream.load({ start_seq: 0 });
+      if (this.isClosed()) return;
+      this.markPatchflowFullHistory();
+      const loaded = this.get_patches().length;
+      if (loaded > snapshotsBlockedLoadCap) {
+        logger.warn(
+          "loaded more history than the limit while settling held-back snapshots; not snapshotting past it",
+          { ...where, loaded, countCap: snapshotsBlockedLoadCap },
+        );
+        return;
+      }
+      this.wholeHistoryLoadedWithinLimits = true;
+    } catch (err) {
+      logger.warn(
+        "failed to load the whole history to settle held-back snapshots",
+        { ...where, err: `${err}` },
+      );
+    }
+  });
+  private wholeHistoryLoadAttempted = false;
+  private wholeHistoryLoadedWithinLimits = false;
+
+  // Logs what a snapshot that was made while more history was still needed
+  // leaves out (the durable record of it), and emits it as "history-gap".
+  private reportHistoryGap = (time: PatchId): void => {
+    let gap: HistoryGap | undefined;
+    try {
+      gap = historyGap(this.get_patches());
+    } catch {}
+    const info = {
+      project_id: this.project_id,
+      path: this.path,
+      snapshot: `${time}`,
+      missing: gap?.missing,
+      missingCount: gap?.missingCount,
+      extraRoots: gap?.extraRoots,
+      affected: gap?.affected,
+      truncated: gap?.truncated,
+    };
+    logger.warn(
+      "made a snapshot without patches that wait on history that is not in the stream",
+      info,
+    );
+    this.emit("history-gap", info);
+  };
 
   // Have a snapshot every this.snapshot_interval patches, except
   // for the very last interval.  Throttle so we don't try to make
@@ -3652,12 +3935,21 @@ export class SyncDoc extends EventEmitter {
     if (!this.patchflowReady()) {
       return;
     }
-    if ((this.patchflowSession as any).needsMoreHistory?.()) {
+    const withoutMissingHistory = !!(
+      this.patchflowSession as any
+    ).needsMoreHistory?.();
+    if (
+      withoutMissingHistory &&
+      !(await this.snapshotDespiteMissingHistory())
+    ) {
       // Values may be approximations until more history is loaded (see
       // loadHistoryIfNeeded), and a snapshot would pass an approximation on to
       // every client that opens the document later.
       dbg("not making a snapshot: more history is needed for exact values");
       return;
+    }
+    if (!(this.patchflowSession as any).needsMoreHistory?.()) {
+      this.snapshotsBlockedSince = undefined;
     }
     const candidate = this.patchflowSnapshotCandidate(interval, max_size);
     const time =
@@ -3673,7 +3965,10 @@ export class SyncDoc extends EventEmitter {
     if (time != null) {
       dbg("yes, try to make a snapshot at time", time);
       try {
-        await this.snapshot(time);
+        const saved = await this.snapshot(time);
+        if (saved && withoutMissingHistory) {
+          this.reportHistoryGap(time);
+        }
       } catch (err) {
         // this is expected to happen sometimes, e.g., when sufficient information
         // isn't known about the stream of patches.
