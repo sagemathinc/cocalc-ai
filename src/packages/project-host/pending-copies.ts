@@ -23,6 +23,7 @@ import {
 } from "@cocalc/util/project-runtime";
 import { installPathFromStaging } from "./path-copy-archive";
 import { beneathRelative, kindBeneath } from "./beneath-copy";
+import { installThroughAgent } from "./agent-copy";
 
 const logger = getLogger("project-host:pending-copies");
 
@@ -158,18 +159,34 @@ async function applyCopyRow(
     scratch: getScratchMountpoint(row.dest_project_id),
     homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
-  // The destination project's user can plant symlinks anywhere in its tree:
-  // the install below is anchored beneath its root and refuses them.
-  const destination = await destFs.resolveAnchoredPath(destPath);
-  if (!destination.path) {
+  // A separate-uid project's rootfs is written only by its rootfs agent,
+  // inside its container (R1 PR3b): the host keeps its staging and sends the
+  // tree. Otherwise the destination project's user can plant symlinks
+  // anywhere in its tree: the install below is anchored beneath its root
+  // and refuses them.
+  const viaAgent = destFs.rootfsAgentDestination(destPath);
+  const destination = viaAgent
+    ? undefined
+    : await destFs.resolveAnchoredPath(destPath);
+  if (destination != null && !destination.path) {
     throw new Error("dest_path cannot be project root");
   }
+  const destExists = async (): Promise<boolean> => {
+    if (viaAgent == null) {
+      return (
+        (await kindBeneath(destination!.root, destination!.path)) !== "missing"
+      );
+    }
+    try {
+      await viaAgent.agent.call("lstat", { path: viaAgent.containerPath });
+      return true;
+    } catch (err) {
+      if ((err as { code?: string })?.code === "ENOENT") return false;
+      throw err;
+    }
+  };
 
-  if (
-    row.exact &&
-    !(row.options?.force ?? true) &&
-    (await kindBeneath(destination.root, destination.path)) !== "missing"
-  ) {
+  if (row.exact && !(row.options?.force ?? true) && (await destExists())) {
     if (row.options?.errorOnExist) {
       const err = new Error(
         "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
@@ -192,7 +209,10 @@ async function applyCopyRow(
     path.join(tmpdir(), "cocalc-pending-copy-"),
   );
   const stagingRel = beneathRelative(
-    path.posix.join("restore", destination.path),
+    path.posix.join(
+      "restore",
+      viaAgent ? viaAgent.containerPath.replace(/^\/+/, "") : destination!.path,
+    ),
   );
 
   const repo = await resolveRusticRepo(row.src_project_id);
@@ -212,22 +232,33 @@ async function applyCopyRow(
     if ((await kindBeneath(stagingRoot, stagingRel)) === "missing") {
       throw new Error(`restore produced no data at ${stagingRel}`);
     }
-    const installed = await installPathFromStaging({
-      source: { root: stagingRoot, path: stagingRel },
-      destination,
-      exact: row.exact,
-      options: {
-        force: row.options?.force,
-        errorOnExist: row.options?.errorOnExist,
-        preserveTimestamps: row.options?.preserveTimestamps,
-        recursive: row.options?.recursive ?? true,
-        dereference: row.options?.dereference,
-        // Stop between files once the claim's budget is spent.
-        checkpoint: () => {
-          remainingMs(deadline);
-        },
+    const options = {
+      force: row.options?.force,
+      errorOnExist: row.options?.errorOnExist,
+      preserveTimestamps: row.options?.preserveTimestamps,
+      recursive: row.options?.recursive ?? true,
+      dereference: row.options?.dereference,
+      // Stop between files once the claim's budget is spent.
+      checkpoint: () => {
+        remainingMs(deadline);
       },
-    });
+    };
+    // S2: the agent's answers decide only this row's outcome; the staging is
+    // removed below by the host's own bookkeeping, whatever they say.
+    const installed = viaAgent
+      ? await installThroughAgent({
+          src: path.join(stagingRoot, stagingRel),
+          agent: viaAgent.agent,
+          dest: viaAgent.containerPath,
+          exact: row.exact,
+          options,
+        })
+      : await installPathFromStaging({
+          source: { root: stagingRoot, path: stagingRel },
+          destination: destination!,
+          exact: row.exact,
+          options,
+        });
     if (installed) {
       void touchProjectLastEdited(row.dest_project_id, "pending-copy");
     }

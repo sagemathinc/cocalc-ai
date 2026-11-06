@@ -21,7 +21,7 @@ the payload; a chunk's payload starts with its request's 4-byte id. The
 agent exits when its stdin ends, and on any protocol error.
 */
 
-export const ROOTFS_AGENT_VERSION = 1;
+export const ROOTFS_AGENT_VERSION = 2;
 
 export const ROOTFS_AGENT_CODE = String.raw`"use strict";
 const fs = require("node:fs");
@@ -97,6 +97,12 @@ function direntKind(d) {
 function int(v, name) {
   if (!Number.isSafeInteger(v) || v < 0) throw fail("EINVAL", "bad " + name);
   return v;
+}
+function linkTarget(t) {
+  if (typeof t !== "string" || t === "" || t.includes("\0") || Buffer.byteLength(t) > MAX_PATH) {
+    throw fail("EINVAL", "bad link target");
+  }
+  return t;
 }
 
 // Removes a tree without following symlinks, bounded in entries.
@@ -180,6 +186,31 @@ async function handle(req) {
         int(req.mtime, "mtime"),
       );
       return null;
+    case "symlink": {
+      // a symlink named exactly path (never through a symlink on the way);
+      // noReplace: only if nothing is there (symlink() never replaces)
+      const p = checkPath(req.path);
+      if (p === "/") throw fail("EEXIST");
+      const target = linkTarget(req.target);
+      const parent = await openParent(p);
+      try {
+        if (req.noReplace === true) {
+          await fsp.symlink(target, at(parent.dir.fd, parent.name));
+        } else {
+          const tmp = ".cocalc-link-" + process.pid + "-" + id;
+          await fsp.symlink(target, at(parent.dir.fd, tmp));
+          try {
+            await fsp.rename(at(parent.dir.fd, tmp), at(parent.dir.fd, parent.name));
+          } catch (err) {
+            await fsp.unlink(at(parent.dir.fd, tmp)).catch(() => {});
+            throw err;
+          }
+        }
+      } finally {
+        await parent.dir.close().catch(() => {});
+      }
+      return null;
+    }
     case "readFile": {
       const fh = await fsp.open(checkPath(req.path), "r");
       try {
@@ -245,8 +276,17 @@ function startWrite(req) {
     return reply(id, fail("EFBIG", "bad size"));
   }
   const w = { left: size, failed: null, fh: null, tmp: null, dir: null, name: null };
+  // noReplace: placed only if nothing is at the name (link, then unlink the
+  // temp: link() never replaces); times: set on the open file before placing
+  w.noReplace = req.noReplace === true;
+  try {
+    w.times = req.mtime == null ? null : { atime: int(req.atime, "atime"), mtime: int(req.mtime, "mtime") };
+  } catch (err) {
+    w.failed = err;
+  }
   writes.set(id, w);
   w.chain = (async () => {
+    if (w.failed) return;
     const p = checkPath(req.path);
     if (p === "/") throw fail("EISDIR");
     const parent = await openParent(p);
@@ -271,11 +311,17 @@ async function finishWrite(id, w) {
   writes.delete(id);
   try {
     if (w.failed) throw w.failed;
+    if (w.times) await w.fh.utimes(w.times.atime, w.times.mtime);
     await w.fh.close();
     w.fh = null;
-    // both names under the verified directory's fd: renameat
-    await fsp.rename(at(w.dir.fd, w.tmp), at(w.dir.fd, w.name));
-    w.tmp = null;
+    if (w.noReplace) {
+      // linkat under the verified directory's fd: EEXIST if anything is there
+      await fsp.link(at(w.dir.fd, w.tmp), at(w.dir.fd, w.name));
+    } else {
+      // both names under the verified directory's fd: renameat
+      await fsp.rename(at(w.dir.fd, w.tmp), at(w.dir.fd, w.name));
+      w.tmp = null;
+    }
     send({ id: id, ok: true, result: null });
   } catch (err) {
     reply(id, err);

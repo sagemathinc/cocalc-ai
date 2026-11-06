@@ -347,6 +347,7 @@ const NOT_THROUGH_AGENT = Symbol("not through the rootfs agent");
 
 const INTERNAL_METHODS = new Set([
   "rootfsAgent",
+  "rootfsAgentDestination",
   "rootfsAgentHome",
   "throughRootfsAgent",
   "currentRootfsAgent",
@@ -1641,6 +1642,27 @@ export class SandboxedFilesystem {
       absoluteTempAlias,
       compareBasePath: compareBase,
     });
+  };
+
+  // For host code that installs into a separate-uid project's rootfs (pending
+  // copies): the project's rootfs agent and the path as its container sees
+  // it, when `path` is a rootfs path and an agent serves this project;
+  // undefined otherwise (then resolveAnchoredPath applies, and refuses a
+  // rootfs path it can't reach).
+  rootfsAgentDestination = (
+    path: string,
+  ): { agent: RootfsAgentOps; containerPath: string } | undefined => {
+    const agent = this.currentRootfsAgent();
+    if (agent == null) return undefined;
+    const containerPath = rootfsContainerPath(path, {
+      homeAliases: this.homeAliases,
+      hasScratch: !!this.scratch,
+      hasSharedScratch: !!this.sharedScratch,
+      containerHome: this.rootfsAgentHome,
+    });
+    if (containerPath == null) return undefined;
+    this.assertWritable(path);
+    return { agent, containerPath };
   };
 
   // The trusted base directory (home, rootfs or scratch) that `path` belongs

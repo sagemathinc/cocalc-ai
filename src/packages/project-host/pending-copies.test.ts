@@ -16,6 +16,8 @@ let mockCallHub: jest.Mock;
 let mockRustic: jest.Mock;
 let mockStatusUpdates: any[];
 let mockExact: boolean;
+let mockAgentDest: jest.Mock;
+let mockResolveAnchored: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => {
   const logger = {
@@ -43,7 +45,12 @@ jest.mock("@cocalc/backend/sandbox", () => ({
       return path.join(this.root, p.replace(/^\/+/, ""));
     }
 
+    rootfsAgentDestination(p: string) {
+      return mockAgentDest(p);
+    }
+
     async resolveAnchoredPath(p: string) {
+      mockResolveAnchored(p);
       return { root: this.root, path: p.replace(/^\/+/, "") };
     }
 
@@ -92,6 +99,8 @@ describe("project-host pending copies", () => {
     projectRoot = await mkdtemp(path.join(os.tmpdir(), "cocalc-copy-test-"));
     mockStatusUpdates = [];
     mockExact = true;
+    mockAgentDest = jest.fn(() => undefined);
+    mockResolveAnchored = jest.fn();
     mockCallHub = jest.fn(async ({ name, args }) => {
       if (name === "hosts.claimPendingCopies") {
         return [
@@ -388,5 +397,214 @@ describe("project-host pending copies", () => {
     await expect(
       readFile(path.join(destination, "lecture notes", "new.txt"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  describe("into a separate-uid project's rootfs (through its agent)", () => {
+    // stands for the container: container paths map into this dir
+    let container: string;
+    const fsAgent = () => {
+      const at = (p: string) => path.join(container, p);
+      const coded = (code: string) => Object.assign(new Error(code), { code });
+      const calls: string[] = [];
+      const call = async (op: string, a: any, data?: Buffer) => {
+        calls.push(`${op} ${a.path}`);
+        const {
+          lstat: lst,
+          mkdir: mk,
+          writeFile: wf,
+          chmod: ch,
+          rename: rn,
+          rm: rmx,
+          symlink: sl,
+          unlink: ul,
+          utimes: ut,
+        } = await import("node:fs/promises");
+        try {
+          switch (op) {
+            case "lstat": {
+              const st = await lst(at(a.path));
+              return {
+                result: {
+                  type: st.isDirectory()
+                    ? "dir"
+                    : st.isSymbolicLink()
+                      ? "symlink"
+                      : "file",
+                },
+              };
+            }
+            case "mkdir":
+              await mk(at(a.path), { recursive: !!a.recursive, mode: a.mode });
+              return { result: null };
+            case "writeFile":
+              await wf(at(a.path), data!, {
+                mode: a.mode,
+                flag: a.noReplace ? "wx" : "w",
+              });
+              return { result: null };
+            case "chmod":
+              await ch(at(a.path), a.mode);
+              return { result: null };
+            case "rename":
+              await rn(at(a.path), at(a.dest));
+              return { result: null };
+            case "rm":
+              await rmx(at(a.path), {
+                recursive: !!a.recursive,
+                force: !!a.force,
+              });
+              return { result: null };
+            case "symlink":
+              await sl(a.target, at(a.path));
+              return { result: null };
+            case "unlink":
+              await ul(at(a.path));
+              return { result: null };
+            case "utimes":
+              await ut(at(a.path), a.atime, a.mtime);
+              return { result: null };
+          }
+        } catch (err: any) {
+          throw coded(err.code ?? "EIO");
+        }
+        throw coded("ENOSYS");
+      };
+      return { agent: { call }, calls };
+    };
+
+    beforeEach(async () => {
+      container = await mkdtemp(
+        path.join(os.tmpdir(), "cocalc-copy-container-"),
+      );
+      await mkdir(path.join(container, "etc"));
+    });
+    afterEach(async () => {
+      await rm(container, { recursive: true, force: true });
+    });
+
+    it("installs through the agent, never on the host, and removes the staging", async () => {
+      const { agent } = fsAgent();
+      mockAgentDest = jest.fn((p: string) =>
+        p === "/etc/foo" ? { agent, containerPath: "/etc/foo" } : undefined,
+      );
+      mockCallHub = jest.fn(async ({ name, args }) => {
+        if (name === "hosts.claimPendingCopies") {
+          return [
+            {
+              copy_id: "copy-r",
+              src_project_id: "src-project",
+              src_path: "test.ipynb",
+              dest_project_id: "dest-project",
+              dest_path: "/etc/foo",
+              snapshot_id: "snap-1",
+              options: { force: true },
+              exact: true,
+            },
+          ];
+        }
+        if (name === "hosts.updateCopyStatus")
+          return void mockStatusUpdates.push(args[0]);
+        throw new Error(`unexpected ${name}`);
+      });
+      const { applyPendingCopies } = await import("./pending-copies");
+      await applyPendingCopies({ limit: 1 });
+      expect(mockStatusUpdates).toEqual([
+        expect.objectContaining({ copy_id: "copy-r", status: "done" }),
+      ]);
+      expect(await readFile(path.join(container, "etc", "foo"), "utf8")).toBe(
+        "notebook payload",
+      );
+      // nothing resolved or written on the host's side of the project
+      expect(mockResolveAnchored).not.toHaveBeenCalled();
+      expect(await readdir(projectRoot)).toEqual([]);
+      const [, restoreRoot] = mockRustic.mock.calls[0];
+      await expect(stat(restoreRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      // no hidden siblings left in the container
+      expect(await readdir(path.join(container, "etc"))).toEqual(["foo"]);
+    });
+
+    it("S2: a lying agent closes only this copy's own row, and the host's staging still goes", async () => {
+      const lies: string[] = [];
+      const agent = {
+        call: async (op: string) => {
+          lies.push(op);
+          if (op === "lstat")
+            throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+          return { result: null };
+        },
+      };
+      mockAgentDest = jest.fn(() => ({ agent, containerPath: "/etc/foo" }));
+      mockCallHub = jest.fn(async ({ name, args }) => {
+        if (name === "hosts.claimPendingCopies") {
+          return [
+            {
+              copy_id: "copy-lie",
+              src_project_id: "src-project",
+              src_path: "test.ipynb",
+              dest_project_id: "dest-project",
+              dest_path: "/etc/foo",
+              snapshot_id: "snap-1",
+              options: { force: true },
+              exact: false,
+            },
+          ];
+        }
+        if (name === "hosts.updateCopyStatus")
+          return void mockStatusUpdates.push(args[0]);
+        throw new Error(`unexpected ${name}`);
+      });
+      const { applyPendingCopies } = await import("./pending-copies");
+      await applyPendingCopies({ limit: 1 });
+      // the only effects: this row's status, and the host's own cleanup
+      expect(mockStatusUpdates).toEqual([
+        expect.objectContaining({ copy_id: "copy-lie", status: "done" }),
+      ]);
+      expect(mockCallHub.mock.calls.map(([c]) => c.name)).toEqual([
+        "hosts.claimPendingCopies",
+        "hosts.updateCopyStatus",
+      ]);
+      const [, restoreRoot] = mockRustic.mock.calls[0];
+      await expect(stat(restoreRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readdir(projectRoot)).toEqual([]);
+      expect(lies.length).toBeGreaterThan(0);
+    });
+
+    it("an agent error fails only this row, and the staging still goes", async () => {
+      const agent = {
+        call: async () => {
+          throw Object.assign(
+            new Error("the project isn't running with a separate runtime uid"),
+            { code: "EUNAVAIL" },
+          );
+        },
+      };
+      mockAgentDest = jest.fn(() => ({ agent, containerPath: "/etc/foo" }));
+      mockCallHub = jest.fn(async ({ name, args }) => {
+        if (name === "hosts.claimPendingCopies") {
+          return [
+            {
+              copy_id: "copy-e",
+              src_project_id: "src-project",
+              src_path: "test.ipynb",
+              dest_project_id: "dest-project",
+              dest_path: "/etc/foo",
+              snapshot_id: "snap-1",
+              options: { force: true },
+              exact: false,
+            },
+          ];
+        }
+        if (name === "hosts.updateCopyStatus")
+          return void mockStatusUpdates.push(args[0]);
+        throw new Error(`unexpected ${name}`);
+      });
+      const { applyPendingCopies } = await import("./pending-copies");
+      await applyPendingCopies({ limit: 1 });
+      expect(mockStatusUpdates).toEqual([
+        expect.objectContaining({ copy_id: "copy-e", status: "failed" }),
+      ]);
+      const [, restoreRoot] = mockRustic.mock.calls[0];
+      await expect(stat(restoreRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    });
   });
 });

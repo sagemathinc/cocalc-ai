@@ -235,6 +235,7 @@ export function checkResult(op: string, result: unknown): unknown {
     case "chmod":
     case "utimes":
     case "writeFile":
+    case "symlink":
       if (result !== null) bad();
       return null;
     default:

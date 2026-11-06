@@ -114,6 +114,25 @@ describe("SandboxedFilesystem with a rootfs agent", () => {
       ...over,
     });
 
+  it("names the agent and the container path for a rootfs install destination, nothing else", async () => {
+    const sfs = fs();
+    const d = sfs.rootfsAgentDestination("/etc/./foo/../bar");
+    expect(d?.containerPath).toBe("/etc/bar");
+    expect(d?.agent).toBe(agent);
+    // HOME (relative or by alias) and /tmp are not the rootfs
+    expect(sfs.rootfsAgentDestination("foo")).toBeUndefined();
+    expect(sfs.rootfsAgentDestination("/home/user/foo")).toBeUndefined();
+    // no agent (keep-id, or the project not running separate): undefined
+    expect(
+      fs({ rootfsAgent: () => undefined }).rootfsAgentDestination("/etc/x"),
+    ).toBeUndefined();
+    // a read-only sandbox refuses before anything is sent
+    expect(() =>
+      fs({ readonly: true }).rootfsAgentDestination("/etc/x"),
+    ).toThrow();
+    expect(calls).toEqual([]);
+  });
+
   it("sends rootfs operations to the agent, with container paths", async () => {
     const sfs = fs();
     const st: any = await sfs.stat("/etc/os-release");

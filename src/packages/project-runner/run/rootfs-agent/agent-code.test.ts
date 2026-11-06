@@ -70,10 +70,16 @@ class Agent {
     return reply;
   }
 
-  async write(path: string, data: Buffer, chunkSize = 3) {
+  async write(path: string, data: Buffer, chunkSize = 3, extra: object = {}) {
     const id = ++this.id;
     this.send(
-      encodeJsonFrame({ id, op: "writeFile", path, size: data.length }),
+      encodeJsonFrame({
+        id,
+        op: "writeFile",
+        path,
+        size: data.length,
+        ...extra,
+      }),
     );
     for (let i = 0; i < data.length; i += chunkSize) {
       this.send(encodeChunkFrame(id, data.subarray(i, i + chunkSize)));
@@ -264,6 +270,91 @@ describe("rootfs agent code", () => {
     expect(reply).toMatchObject({ id, ok: true });
     expect(await readdir(`${dir}/outside`)).toEqual([]);
     expect(await readFile(`${dir}/a/b-real/f`, "utf8")).toBe("abcdef");
+  });
+
+  it("installs without replacing when asked (noReplace), leaving no temp", async () => {
+    await agent.json();
+    await writeFile(`${dir}/f`, "old");
+    const r1 = await agent.write(`${dir}/f`, Buffer.from("new"), 3, {
+      noReplace: true,
+    });
+    expect(r1.error.code).toBe("EEXIST");
+    expect(await readFile(`${dir}/f`, "utf8")).toBe("old");
+    const r2 = await agent.write(`${dir}/g`, Buffer.from("new"), 3, {
+      noReplace: true,
+    });
+    expect(r2.ok).toBe(true);
+    expect(await readFile(`${dir}/g`, "utf8")).toBe("new");
+    expect((await readdir(dir)).sort()).toEqual(["f", "g"]);
+    // without noReplace, the same write replaces
+    expect((await agent.write(`${dir}/f`, Buffer.from("new"))).ok).toBe(true);
+    expect(await readFile(`${dir}/f`, "utf8")).toBe("new");
+  });
+
+  it("sets the times it was given on the installed file", async () => {
+    await agent.json();
+    const reply = await agent.write(`${dir}/t`, Buffer.from("x"), 3, {
+      atime: 1000000000,
+      mtime: 1100000000,
+    });
+    expect(reply.ok).toBe(true);
+    const st = await lstat(`${dir}/t`);
+    expect(Math.floor(st.mtimeMs / 1000)).toBe(1100000000);
+    expect(Math.floor(st.atimeMs / 1000)).toBe(1000000000);
+    // bad times are refused, nothing installed
+    const bad = await agent.write(`${dir}/u`, Buffer.from("x"), 3, {
+      atime: -1,
+      mtime: 5,
+    });
+    expect(bad.error.code).toBe("EINVAL");
+    await expect(lstat(`${dir}/u`)).rejects.toThrow();
+  });
+
+  it("makes symlinks exactly at the path, never through one on the way", async () => {
+    await agent.json();
+    expect(
+      (
+        await agent.call("symlink", {
+          path: `${dir}/l`,
+          target: "../somewhere",
+        })
+      ).ok,
+    ).toBe(true);
+    const { readlink } = await import("node:fs/promises");
+    expect(await readlink(`${dir}/l`)).toBe("../somewhere");
+    // noReplace on something there: EEXIST, untouched
+    await writeFile(`${dir}/f`, "keep");
+    expect(
+      (
+        await agent.call("symlink", {
+          path: `${dir}/f`,
+          target: "x",
+          noReplace: true,
+        })
+      ).error.code,
+    ).toBe("EEXIST");
+    expect(await readFile(`${dir}/f`, "utf8")).toBe("keep");
+    // without it, a file is replaced by the link, and no temp is left
+    expect(
+      (await agent.call("symlink", { path: `${dir}/f`, target: "y" })).ok,
+    ).toBe(true);
+    expect(await readlink(`${dir}/f`)).toBe("y");
+    expect((await readdir(dir)).sort()).toEqual(["f", "l"]);
+    // never through a symlinked directory
+    await mkdir(`${dir}/outside`);
+    await symlink(`${dir}/outside`, `${dir}/via`);
+    const r = await agent.call("symlink", {
+      path: `${dir}/via/l`,
+      target: "z",
+    });
+    expect(["ELOOP", "ENOTDIR"]).toContain(r.error.code);
+    expect(await readdir(`${dir}/outside`)).toEqual([]);
+    // bad targets
+    for (const target of ["", "a\0b", 5]) {
+      expect(
+        (await agent.call("symlink", { path: `${dir}/b`, target })).error.code,
+      ).toBe("EINVAL");
+    }
   });
 
   it("dies on a protocol error, cleaning up its writes", async () => {
