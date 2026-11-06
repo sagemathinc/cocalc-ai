@@ -344,6 +344,21 @@ describe("runtime identity for a start", () => {
     expect(counts).toEqual({ probe: 1, maps: 1, harden: 2 });
   });
 
+  it("falls back when the data root can't be hardened", async () => {
+    const { inputs } = startInputs({ mountinfo: MOUNTINFO });
+    inputs.harden = async () => {
+      throw new Error("sudo: a password is required");
+    };
+    const identity = await runtimeIdentityForStart({ inputs });
+    expect(identity.mode).toBe("keep-id");
+    expect(identity.status).toMatchObject({
+      configured: "separate",
+      effective: "keep-id",
+      reason: "host-unsafe",
+      detail: expect.stringContaining("project-view harden failed"),
+    });
+  });
+
   it("refuses a configured shared scratch on a later start", async () => {
     const { inputs } = startInputs({ mountinfo: MOUNTINFO });
     expect((await runtimeIdentityForStart({ inputs })).mode).toBe("separate");

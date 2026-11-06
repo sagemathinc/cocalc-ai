@@ -107,9 +107,38 @@ export function getPaths({ home, image, project_id }): {
 
 // Track mount reference counts so multiple users (e.g., project container +
 // sandboxExec sidecars) can share the same overlay mount safely.
+// Every decision about a project's rootfs mount (read what is mounted, decide,
+// prove it unused, detach, mount, record the way, publish the lease) runs
+// under this per-project lock, as does every detach. Without it a mount
+// could be reused or acquired between another caller's check and its
+// detach.
+const projectLocks = new Map<string, Promise<void>>();
+
+export async function withRootfsLock<T>(
+  project_id: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previous = projectLocks.get(project_id) ?? Promise.resolve();
+  let unlock!: () => void;
+  const mine = new Promise<void>((resolve) => (unlock = resolve));
+  const tail = previous.then(() => mine);
+  projectLocks.set(project_id, tail);
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    unlock();
+    if (projectLocks.get(project_id) === tail) projectLocks.delete(project_id);
+  }
+}
+
 const leases = new RefcountLeaseManager<string>({
   delayMs: UNMOUNT_DELAY_MS,
-  disposer: disposeMount,
+  disposer: async (project_id: string) =>
+    await withRootfsLock(
+      project_id,
+      async () => await disposeMount(project_id),
+    ),
 });
 // Track release functions for each active lease so unmount can drop one ref.
 const leaseReleases: Map<
@@ -179,14 +208,18 @@ export async function isMounted({
 
 /**
  * What mount() does with a rootfs that may already be mounted, either way:
- * - reuse: mounted the requested way, against the requested image;
- * - replace: detach what's there (if anything) and mount afresh;
- * - refuse: it's mounted the other way (plain vs. idmapped) and others still
- *   hold it, e.g. a sidecar asking for a plain rootfs while the project runs
- *   with a separate runtime uid. Detaching it would pull the rootfs out from
- *   under them; only the project's own start may switch the way, once nothing
- *   holds it.
+ * - reuse: mounted the requested way (plain, or idmapped for the same uid)
+ *   against the requested image;
+ * - replace: nothing is mounted; or the mount differs, nothing in this daemon
+ *   holds it, and the caller has proven that nothing else uses it either
+ *   (authorized: only the project's own start, after finding none of the
+ *   project's containers alive; a lease count alone proves nothing after a
+ *   daemon restart);
+ * - refuse: any other difference (image, way, uid, or both ways after a
+ *   crash). Replacing it could pull the rootfs out from under its users.
  */
+export type RootfsMountMismatch = "way" | "uid" | "image" | "both";
+
 export function rootfsMountAction({
   mountedPlain,
   mountedIdmap,
@@ -194,6 +227,7 @@ export function rootfsMountAction({
   currentIdmapUid,
   sameImage,
   holders,
+  authorized,
 }: {
   mountedPlain: boolean;
   mountedIdmap: boolean;
@@ -201,15 +235,33 @@ export function rootfsMountAction({
   currentIdmapUid?: number;
   sameImage: boolean;
   holders: number;
-}): "reuse" | "replace" | "refuse" {
-  if (!mountedPlain && !mountedIdmap) return "replace";
-  const sameWay =
-    idmapUid == null
-      ? mountedPlain && !mountedIdmap
-      : mountedIdmap && !mountedPlain && currentIdmapUid === idmapUid;
-  if (sameWay) return sameImage ? "reuse" : "replace";
-  return holders > 0 ? "refuse" : "replace";
+  authorized: boolean;
+}):
+  | { action: "reuse" | "replace" }
+  | { action: "refuse"; mismatch: RootfsMountMismatch } {
+  if (!mountedPlain && !mountedIdmap) return { action: "replace" };
+  let mismatch: RootfsMountMismatch | undefined;
+  if (mountedPlain && mountedIdmap) {
+    mismatch = "both";
+  } else if (mountedIdmap !== (idmapUid != null)) {
+    mismatch = "way";
+  } else if (idmapUid != null && currentIdmapUid !== idmapUid) {
+    mismatch = "uid";
+  } else if (!sameImage) {
+    mismatch = "image";
+  }
+  if (mismatch == null) return { action: "reuse" };
+  return holders === 0 && authorized
+    ? { action: "replace" }
+    : { action: "refuse", mismatch };
 }
+
+const MISMATCH_TEXT: Record<RootfsMountMismatch, string> = {
+  way: "is mounted for the other runtime uid mode",
+  uid: "is mounted for another runtime uid",
+  image: "is mounted with another image",
+  both: "is mounted both ways (left over from a failure)",
+};
 
 // mount the project -- this is idempotent, so can be called even if already mounted.
 export async function mount({
@@ -217,201 +269,225 @@ export async function mount({
   home,
   config,
   idmapUid,
+  proveUnused,
 }: {
   project_id: string;
   home: string;
   config?: Configuration;
   // a separate runtime uid: mount the rootfs through an idmapped upper
   idmapUid?: number;
+  // Only the project's own start passes this: resolves true once it has
+  // found that nothing (no container of the project) uses the rootfs, which
+  // allows replacing a mount that differs from the one requested.
+  proveUnused?: () => Promise<boolean>;
 }) {
-  const release = await leases.acquire(project_id);
-  const op_id = config?.lro_op_id;
-  const report = (event: {
-    type: string;
-    progress?: number;
-    min?: number;
-    max?: number;
-    desc?: string;
-    error?: unknown;
-    elapsed?: number;
-    speed?: string;
-    eta?: number;
-  }) => {
-    void lroProgress({
-      project_id,
-      op_id,
-      client: getConatClient(),
-      phase: event.type,
-      message: event.desc,
-      progress: event.progress,
-      min: event.min,
-      max: event.max,
-      error: event.error,
-      elapsed: event.elapsed,
-      speed: event.speed,
-      eta: event.eta,
-    });
-  };
-  try {
-    // release will be kept for caller to drop later via unmount.
-    report({
-      type: "mount-rootfs",
-      progress: 0,
-      desc: "",
-    });
-
-    const image = getImage(config);
-    logger.debug("mount", { project_id, home, image });
-
-    registerProgress(image, ({ progress, desc }) => {
+  return await withRootfsLock(project_id, async () => {
+    const release = await leases.acquire(project_id);
+    const op_id = config?.lro_op_id;
+    const report = (event: {
+      type: string;
+      progress?: number;
+      min?: number;
+      max?: number;
+      desc?: string;
+      error?: unknown;
+      elapsed?: number;
+      speed?: string;
+      eta?: number;
+    }) => {
+      void lroProgress({
+        project_id,
+        op_id,
+        client: getConatClient(),
+        phase: event.type,
+        message: event.desc,
+        progress: event.progress,
+        min: event.min,
+        max: event.max,
+        error: event.error,
+        elapsed: event.elapsed,
+        speed: event.speed,
+        eta: event.eta,
+      });
+    };
+    try {
+      // release will be kept for caller to drop later via unmount.
       report({
         type: "mount-rootfs",
-        progress,
-        max: 70,
-        desc,
+        progress: 0,
+        desc: "",
       });
-    });
 
-    // uses the above registerProgress
-    const lowerdir = await extractBaseImage(image);
+      const image = getImage(config);
+      logger.debug("mount", { project_id, home, image });
 
-    report({
-      type: "mount-rootfs",
-      progress: 70,
-      desc: "extracted base image",
-    });
-    const { upperdir, workdir, imageName } = getPaths({
-      home,
-      image,
-      project_id,
-    });
-    const merged = getMergedPath(project_id, idmapUid);
-    await mkdir(dirname(imageName), { recursive: true });
+      registerProgress(image, ({ progress, desc }) => {
+        report({
+          type: "mount-rootfs",
+          progress,
+          max: 70,
+          desc,
+        });
+      });
 
-    if (ROOTFS_MOUNT_MODE === "copy") {
-      if (idmapUid != null) {
-        throw new Error("a separate runtime uid needs the overlay rootfs mode");
-      }
-      const currentImage = await readFile(imageName, "utf8").catch(() => "");
-      if (
-        currentImage.trim() === image &&
-        (await stat(join(merged, "bin"))
-          .then((info) => info.isDirectory() || info.isSymbolicLink())
-          .catch(() => false))
-      ) {
+      // uses the above registerProgress
+      const lowerdir = await extractBaseImage(image);
+
+      report({
+        type: "mount-rootfs",
+        progress: 70,
+        desc: "extracted base image",
+      });
+      const { upperdir, workdir, imageName } = getPaths({
+        home,
+        image,
+        project_id,
+      });
+      const merged = getMergedPath(project_id, idmapUid);
+      await mkdir(dirname(imageName), { recursive: true });
+
+      if (ROOTFS_MOUNT_MODE === "copy") {
+        if (idmapUid != null) {
+          throw new Error(
+            "a separate runtime uid needs the overlay rootfs mode",
+          );
+        }
+        const currentImage = await readFile(imageName, "utf8").catch(() => "");
+        if (
+          currentImage.trim() === image &&
+          (await stat(join(merged, "bin"))
+            .then((info) => info.isDirectory() || info.isSymbolicLink())
+            .catch(() => false))
+        ) {
+          addRelease(project_id, release);
+          return merged;
+        }
+        await rm(merged, { recursive: true, force: true });
+        await mkdir(merged, { recursive: true });
+        await executeCode({
+          verbose: true,
+          err_on_exit: true,
+          command: "sudo",
+          args: ["-n", STORAGE_WRAPPER, "copy-tree-reflink", lowerdir, merged],
+        });
+        await writeFile(imageName, image);
         addRelease(project_id, release);
         return merged;
       }
-      await rm(merged, { recursive: true, force: true });
-      await mkdir(merged, { recursive: true });
-      await executeCode({
-        verbose: true,
-        err_on_exit: true,
-        command: "sudo",
-        args: ["-n", STORAGE_WRAPPER, "copy-tree-reflink", lowerdir, merged],
+
+      // If a delayed unmount was pending, cancel it because we're reusing the mount.
+      // (handled by RefcountLeaseManager internally)
+
+      // The rootfs may be mounted either way (by this daemon, or by one before
+      // a restart, or before the host's runtime uid mode changed).
+      const mountedPlain = await isMounted({
+        project_id,
+        mountpoint: getMergedPath(project_id),
       });
-      await writeFile(imageName, image);
+      const mountedIdmap = await isMounted({
+        project_id,
+        mountpoint: getMergedPath(project_id, -1),
+      });
+      if (mountedPlain || mountedIdmap) {
+        const mountedImage = await readFile(imageName, "utf8").catch(() => "");
+        const state = {
+          mountedPlain,
+          mountedIdmap,
+          idmapUid,
+          currentIdmapUid: idmapUids.get(project_id),
+          sameImage: mountedImage.trim() === image,
+          holders: leaseReleases.get(project_id)?.length ?? 0,
+        };
+        let decision = rootfsMountAction({ ...state, authorized: false });
+        if (
+          decision.action === "refuse" &&
+          state.holders === 0 &&
+          proveUnused != null
+        ) {
+          let unused = false;
+          try {
+            unused = await proveUnused();
+          } catch (err) {
+            logger.warn("could not prove the rootfs unused", {
+              project_id,
+              err: `${err}`,
+            });
+          }
+          decision = rootfsMountAction({ ...state, authorized: unused });
+        }
+        if (decision.action === "reuse") {
+          // Already mounted against the requested lowerdir. A quick restart can
+          // cancel delayed disposal and safely reuse this mount.
+          addRelease(project_id, release);
+          return merged;
+        }
+        if (decision.action === "refuse") {
+          throw new Error(
+            `this project's RootFS ${MISMATCH_TEXT[decision.mismatch]} and may still be in use; stop what uses it (the project and its sidecars) and try again`,
+          );
+        }
+        // Never let the restart grace period mask a RootFS change (or a change
+        // of runtime uid). Detach the old mounts before replacing the persisted
+        // image identity below.
+        if (mountedIdmap) {
+          idmapUids.set(project_id, idmapUids.get(project_id) ?? -1);
+          await disposeMount(project_id);
+        }
+        if (mountedPlain) {
+          idmapUids.delete(project_id);
+          await disposeMount(project_id);
+        }
+      }
+
+      try {
+        // workdir must be empty when mount happens -- it is scratch space
+        await rm(workdir, { recursive: true, force: true });
+      } catch {}
+      await mkdir(upperdir, { recursive: true });
+      await mkdir(workdir, { recursive: true });
+      if (idmapUid == null) {
+        // the helper creates the idmapped mountpoint itself
+        await mkdir(merged, { recursive: true });
+      }
+
+      // Persist image info for later lookup (e.g., ephemeral exec when the container is stopped).
+      try {
+        await writeFile(imageName, image);
+      } catch (err) {
+        if (isDiskQuotaError(err)) {
+          throw new Error(
+            "project disk quota is full while recording the RootFS image; free space or increase the project's disk quota, then start it again",
+          );
+        }
+        throw err;
+      }
+
+      report({
+        type: "mount-rootfs",
+        progress: 80,
+        desc: "created directories",
+      });
+      await mountOverlayFs({ lowerdir, upperdir, workdir, merged, idmapUid });
+      if (idmapUid == null) {
+        idmapUids.delete(project_id);
+      } else {
+        idmapUids.set(project_id, idmapUid);
+      }
+      report({
+        type: "mount-rootfs",
+        progress: 100,
+        desc: "mounted",
+      });
+
+      // Successful mount keeps the lease alive; caller now owns one ref.
       addRelease(project_id, release);
       return merged;
-    }
-
-    // If a delayed unmount was pending, cancel it because we're reusing the mount.
-    // (handled by RefcountLeaseManager internally)
-
-    // The rootfs may be mounted either way (by this daemon, or by one before
-    // a restart, or before the host's runtime uid mode changed).
-    const mountedPlain = await isMounted({
-      project_id,
-      mountpoint: getMergedPath(project_id),
-    });
-    const mountedIdmap = await isMounted({
-      project_id,
-      mountpoint: getMergedPath(project_id, -1),
-    });
-    if (mountedPlain || mountedIdmap) {
-      const mountedImage = await readFile(imageName, "utf8").catch(() => "");
-      const action = rootfsMountAction({
-        mountedPlain,
-        mountedIdmap,
-        idmapUid,
-        currentIdmapUid: idmapUids.get(project_id),
-        sameImage: mountedImage.trim() === image,
-        holders: leaseReleases.get(project_id)?.length ?? 0,
-      });
-      if (action === "reuse") {
-        // Already mounted against the requested lowerdir. A quick restart can
-        // cancel delayed disposal and safely reuse this mount.
-        addRelease(project_id, release);
-        return merged;
-      }
-      if (action === "refuse") {
-        throw new Error(
-          idmapUid == null
-            ? "this project's RootFS is in use with a separate runtime uid, which this does not support yet"
-            : "this project's RootFS is still in use without a separate runtime uid; stop what uses it and try again",
-        );
-      }
-      // Never let the restart grace period mask a RootFS change (or a change
-      // of runtime uid). Detach the old mounts before replacing the persisted
-      // image identity below.
-      if (mountedIdmap) {
-        idmapUids.set(project_id, idmapUids.get(project_id) ?? -1);
-        await disposeMount(project_id);
-      }
-      if (mountedPlain) {
-        idmapUids.delete(project_id);
-        await disposeMount(project_id);
-      }
-    }
-
-    try {
-      // workdir must be empty when mount happens -- it is scratch space
-      await rm(workdir, { recursive: true, force: true });
-    } catch {}
-    await mkdir(upperdir, { recursive: true });
-    await mkdir(workdir, { recursive: true });
-    if (idmapUid == null) {
-      // the helper creates the idmapped mountpoint itself
-      await mkdir(merged, { recursive: true });
-    }
-
-    // Persist image info for later lookup (e.g., ephemeral exec when the container is stopped).
-    try {
-      await writeFile(imageName, image);
     } catch (err) {
-      if (isDiskQuotaError(err)) {
-        throw new Error(
-          "project disk quota is full while recording the RootFS image; free space or increase the project's disk quota, then start it again",
-        );
-      }
+      // If something failed, drop the lease immediately.
+      await release();
       throw err;
     }
-
-    report({
-      type: "mount-rootfs",
-      progress: 80,
-      desc: "created directories",
-    });
-    await mountOverlayFs({ lowerdir, upperdir, workdir, merged, idmapUid });
-    if (idmapUid == null) {
-      idmapUids.delete(project_id);
-    } else {
-      idmapUids.set(project_id, idmapUid);
-    }
-    report({
-      type: "mount-rootfs",
-      progress: 100,
-      desc: "mounted",
-    });
-
-    // Successful mount keeps the lease alive; caller now owns one ref.
-    addRelease(project_id, release);
-    return merged;
-  } catch (err) {
-    // If something failed, drop the lease immediately.
-    await release();
-    throw err;
-  }
+  });
 }
 
 export async function unmount(
@@ -438,20 +514,24 @@ export async function unmountAll(
     await release({ immediate });
   }
   if (immediate) {
-    // Either way it may be mounted, e.g. an idmapped rootfs mounted before
-    // this daemon restarted (idmapUids is empty then).
-    if (
-      await isMounted({ project_id, mountpoint: getMergedPath(project_id, -1) })
-    ) {
-      idmapUids.set(project_id, idmapUids.get(project_id) ?? -1);
-      await disposeMount(project_id);
-    }
-    if (
-      await isMounted({ project_id, mountpoint: getMergedPath(project_id) })
-    ) {
-      idmapUids.delete(project_id);
-      await disposeMount(project_id);
-    }
+    await withRootfsLock(project_id, async () => {
+      await detachBothWays(project_id);
+    });
+  }
+}
+
+async function detachBothWays(project_id: string): Promise<void> {
+  // Either way it may be mounted, e.g. an idmapped rootfs mounted before
+  // this daemon restarted (idmapUids is empty then).
+  if (
+    await isMounted({ project_id, mountpoint: getMergedPath(project_id, -1) })
+  ) {
+    idmapUids.set(project_id, idmapUids.get(project_id) ?? -1);
+    await disposeMount(project_id);
+  }
+  if (await isMounted({ project_id, mountpoint: getMergedPath(project_id) })) {
+    idmapUids.delete(project_id);
+    await disposeMount(project_id);
   }
 }
 

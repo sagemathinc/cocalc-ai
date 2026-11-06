@@ -168,6 +168,7 @@ import {
   resolveHostContainersInternalAddress,
   podmanRuntimeArgs,
   projectBrowserRunHostPath,
+  projectContainersGone,
   redactConfigurationForLog,
   start,
   state,
@@ -1303,6 +1304,11 @@ describe("project-runner podman orphan fallback", () => {
       mockRuntimeIdentity = undefined;
       mockViewSources = undefined;
       mockMountinfo = undefined;
+      // no test here may leave a failing podman or conmon behind
+      mockPodman.mockReset();
+      mockPodman.mockResolvedValue({ stdout: "" });
+      mockGetConmonContainerProcesses.mockReset();
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
     });
 
     const startProject = async () => {
@@ -1385,6 +1391,80 @@ describe("project-runner podman orphan fallback", () => {
         reason: "host-unsafe",
         detail: expect.stringContaining("not mounted nosuid"),
       });
+    });
+
+    it("proves the rootfs unused only when none of the project's containers is alive", async () => {
+      const ps = (rows: string[]) =>
+        mockPodman.mockImplementation(async (args: string[]) =>
+          args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
+            ? { stdout: rows.join("\n") }
+            : { stdout: "" },
+        );
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+      const other = "22222222-2222-4222-8222-222222222222";
+
+      ps([`project-${project1}|exited`, `project-${other}|running`]);
+      expect(await projectContainersGone(project1)).toBe(true);
+      // a sidecar still running (e.g. after a daemon restart)
+      for (const name of [
+        `codex-${project1}-0123456789ab`,
+        `sandbox-${project1}-1-ab`,
+        `acp-${project1}-x`,
+        `cocalc-browser-${project1}-app`,
+        `project-${project1}`,
+      ]) {
+        ps([`${name}|running`]);
+        expect(await projectContainersGone(project1)).toBe(false);
+      }
+      ps([`codex-${project1}-0123456789ab|paused`]);
+      expect(await projectContainersGone(project1)).toBe(false);
+      ps([`codex-${project1}-0123456789ab|some-new-state`]);
+      expect(await projectContainersGone(project1)).toBe(false);
+      // conmon still sees one that Podman doesn't
+      ps([]);
+      mockGetConmonContainerProcesses.mockResolvedValue(
+        new Map([[`project-${project1}`, { project_id: project1 }]]),
+      );
+      expect(await projectContainersGone(project1)).toBe(false);
+      // podman failing is not a proof
+      mockPodman.mockRejectedValue(new Error("podman failed"));
+      await expect(projectContainersGone(project1)).rejects.toThrow();
+    });
+
+    it("won't take down leftover views while a container of the project may use them", async () => {
+      mockProjectHasViews.mockResolvedValue(true);
+      mockProjectStartPodman(project1);
+      const base = mockPodman.getMockImplementation()!;
+      mockPodman.mockImplementation(async (args: string[]) =>
+        args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
+          ? { stdout: `sandbox-${project1}-1-ab|running\n` }
+          : await base(args),
+      );
+      await expect(
+        start({
+          project_id: project1,
+          localPath: async () => ({ home }),
+          config: { image: "docker.io/library/ubuntu:latest" },
+        }),
+      ).rejects.toThrow("may still be in use");
+      expect(mockUmountProjectViews).not.toHaveBeenCalled();
+      expect(mockUnmountAll).not.toHaveBeenCalledWith(project1, {
+        immediate: true,
+      });
+    });
+
+    it("lets only the start prove the rootfs unused, by its containers", async () => {
+      await startProject();
+      const [opts] = (mountRootFs as jest.Mock).mock.calls.at(-1)!;
+      mockGetConmonContainerProcesses.mockResolvedValue(new Map());
+      mockPodman.mockImplementation(async (args: string[]) =>
+        args[0] === "ps" && args.includes("{{.Names}}|{{.State}}")
+          ? { stdout: `codex-${project1}-0123456789ab|running\n` }
+          : { stdout: "" },
+      );
+      expect(await opts.proveUnused()).toBe(false);
+      mockPodman.mockImplementation(async () => ({ stdout: "" }));
+      expect(await opts.proveUnused()).toBe(true);
     });
 
     it("takes the views and the idmapped rootfs down at stop", async () => {

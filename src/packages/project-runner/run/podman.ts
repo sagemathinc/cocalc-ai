@@ -2075,6 +2075,43 @@ export async function start(opts: StartOptions): Promise<StartResult> {
   });
 }
 
+// Container states that hold no mount in use.
+const CONTAINER_STATES_AT_REST = new Set([
+  "configured",
+  "created",
+  "exited",
+  "stopped",
+]);
+
+/**
+ * Whether no container of the project is alive: neither the project's own
+ * nor a sidecar's (every one has the project id in its name), as Podman and
+ * conmon see them. Any doubt answers false. Only the project's start may use
+ * this to replace its rootfs mount.
+ */
+export async function projectContainersGone(
+  project_id: string,
+): Promise<boolean> {
+  if (!isValidUUID(project_id)) return false;
+  const { stdout } = await podman(
+    ["ps", "-a", "--format", "{{.Names}}|{{.State}}"],
+    { timeout: 30 },
+  );
+  for (const line of `${stdout ?? ""}`.split("\n")) {
+    const [name, state] = line.trim().split("|");
+    if (!name?.includes(project_id)) continue;
+    if (!CONTAINER_STATES_AT_REST.has(`${state ?? ""}`.trim().toLowerCase())) {
+      return false;
+    }
+  }
+  for (const [name, proc] of await getConmonContainerProcesses()) {
+    if (name.includes(project_id) || proc.project_id === project_id) {
+      return false;
+    }
+  }
+  return true;
+}
+
 async function umountViewsIfAny(project_id: string): Promise<void> {
   if (await projectHasViews(project_id)) {
     await umountProjectViews(project_id);
@@ -2182,6 +2219,7 @@ async function startUnlocked({
     reportProgress({ project_id, op_id: lro_op_id, event });
   const timings = createPhaseTimingRecorder();
   const totalStarted = Date.now();
+  const mountedHere = { rootfs: false, views: false };
   try {
     starting.add(project_id);
     report({ type: "start-project", progress: 0 });
@@ -2296,6 +2334,11 @@ async function startUnlocked({
         // (with the rootfs, whose idmapped upper is one of them).
         await hardenProjectDataRoot();
         if (await projectHasViews(project_id)) {
+          if (!(await projectContainersGone(project_id).catch(() => false))) {
+            throw new Error(
+              "this project's earlier views and RootFS may still be in use; stop what uses them (the project and its sidecars) and try again",
+            );
+          }
           await unmountAllRootFs(project_id, { immediate: true });
           await umountProjectViews(project_id);
         }
@@ -2315,8 +2358,11 @@ async function startUnlocked({
           home,
           config,
           idmapUid: separate?.uid,
+          // only the start may replace a mount that differs from this one
+          proveUnused: async () => await projectContainersGone(project_id),
         }),
     );
+    mountedHere.rootfs = true;
     report({
       type: "start-project",
       progress: 40,
@@ -2479,6 +2525,7 @@ async function startUnlocked({
     // The container's view of each dir: the dir itself (keep-id), or its
     // idmapped view (separate), so files on disk keep the runtime user as
     // owner while the project user is a different host uid.
+    mountedHere.views = separate != null;
     const views = await timings.measure(
       "mount_project_views",
       async () =>
@@ -2801,21 +2848,27 @@ async function startUnlocked({
     };
   } catch (err) {
     report({ type: "start-project", error: err });
-    await unmountAllRootFs(project_id).catch((unmountErr) => {
-      logger.warn("start: failed to unmount rootfs after startup error", {
-        project_id,
-        err: `${unmountErr}`,
-      });
-    });
-    await umountViewsIfAny(project_id).catch((unmountErr) => {
-      logger.warn(
-        "start: failed to unmount project views after startup error",
-        {
+    // Undo only what this start mounted: a start refused because the rootfs
+    // or the views may still be in use must not take them down itself.
+    if (mountedHere.rootfs) {
+      await unmountAllRootFs(project_id).catch((unmountErr) => {
+        logger.warn("start: failed to unmount rootfs after startup error", {
           project_id,
           err: `${unmountErr}`,
-        },
-      );
-    });
+        });
+      });
+    }
+    if (mountedHere.views) {
+      await umountViewsIfAny(project_id).catch((unmountErr) => {
+        logger.warn(
+          "start: failed to unmount project views after startup error",
+          {
+            project_id,
+            err: `${unmountErr}`,
+          },
+        );
+      });
+    }
     await cleanupProjectSecretsHostPath(project_id).catch((cleanupErr) => {
       logger.warn("start: failed to clean up project secrets after error", {
         project_id,
