@@ -530,6 +530,15 @@ setInterval(() => {}, 1000);
     it("finds a running job, also once reparented, and none when they end", async () => {
       const { pidFile, pids, cleanup, run: runId } = await start();
       try {
+        // the precondition this test relies on: an own process whose
+        // environment the probe can read, carrying this run's marker (if it
+        // were unreadable, a probe counting own processes would go unseen)
+        const ownEnv = (
+          await readFile(`/proc/${pids.ownSleep}/environ`, "utf8")
+        )
+          .split("\0")
+          .filter((entry) => entry.startsWith("COCALC_AGENT_RUN="));
+        expect(ownEnv).toEqual([`COCALC_AGENT_RUN=${runId}`]);
         expect(await probe(pidFile, runId)).toBe("busy");
         // another run's marker is not this one's
         expect(
