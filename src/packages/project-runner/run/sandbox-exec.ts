@@ -254,6 +254,9 @@ export async function sandboxExec({
   let separateHandle: SeparateRuntimeHandle | undefined;
   // The one-off container's name, to remove it if its run is killed.
   let containerName: string | undefined;
+  // A separate run's container from its create on, until proven removed:
+  // its holder is released only then (C1).
+  let createdSeparate: string | undefined;
   try {
     if (useEphemeral) {
       const { home, scratch } = await localPath({
@@ -423,17 +426,15 @@ export async function sandboxExec({
     let result: Awaited<ReturnType<typeof runPodman>>;
     if (separateHandle != null && containerName != null) {
       // C1: reserved (never droppable), created, marked launched (droppable
-      // only by a stop's proof begun after this), then started. A step
-      // refused (the holder dropped, or the project stopping) starts
-      // nothing, and what was created is removed before the release below.
+      // only by a stop's proof begun after this), then started. Whatever
+      // happens from the create on (a refused step, a start that fails or
+      // never runs), the container is removed, and proven gone, before the
+      // holder's release below.
       await separateHandle.reserve(containerName);
-      try {
-        await createContainer(args, launcher);
-        await separateHandle.markLaunched();
-      } catch (err) {
-        await removeContainer(containerName);
-        throw err;
-      }
+      // a create that fails may still have created it
+      createdSeparate = containerName;
+      await createContainer(args, launcher);
+      await separateHandle.markLaunched();
       result = await runPodman(
         ["start", "--attach", "--interactive", containerName],
         launcher,
@@ -445,6 +446,22 @@ export async function sandboxExec({
     return result;
   } finally {
     if (separateHandle != null) {
+      if (
+        createdSeparate != null &&
+        !(await removeConfirmed(createdSeparate))
+      ) {
+        // Never release beneath a container that may still start: the
+        // holder stays, and the project's stop removes the container,
+        // proves it gone and drops the holder.
+        logger.warn("could not remove a separate sandbox container", {
+          project_id,
+          name: createdSeparate,
+        });
+        // eslint-disable-next-line no-unsafe-finally
+        throw new Error(
+          "could not remove this run's container; the project's files stay held until the project is stopped",
+        );
+      }
       // only this run's holder; the last holder detaches, awaited
       await separateHandle.release();
     } else if (rootfs) {
@@ -475,6 +492,36 @@ async function createContainer(
           : resolve(),
     ),
   );
+}
+
+/**
+ * Removes a container and proves it gone: true only if `podman rm` succeeded
+ * (an absent one is fine) and `podman container exists` then answers "no"
+ * (exit 1). Any doubt answers false.
+ */
+async function removeConfirmed(name: string): Promise<boolean> {
+  const podmanCode = (args: string[]) =>
+    new Promise<number | null>((resolve) =>
+      execFile(
+        "podman",
+        args,
+        { cwd: "/", timeout: 30_000, env: podmanEnv() },
+        (error) =>
+          resolve(
+            error == null
+              ? 0
+              : typeof (error as { code?: unknown }).code === "number"
+                ? (error as { code: number }).code
+                : null,
+          ),
+      ),
+    );
+  if (
+    (await podmanCode(["rm", "--force", "--ignore", "--time", "0", name])) !== 0
+  ) {
+    return false;
+  }
+  return (await podmanCode(["container", "exists", name])) === 1;
 }
 
 /** Best effort: a killed run's container is removed, never left behind. */

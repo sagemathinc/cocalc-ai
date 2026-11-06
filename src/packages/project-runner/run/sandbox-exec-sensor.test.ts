@@ -245,12 +245,39 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
   const reserveMock = jest.fn(async (_name: string) => {});
   const markLaunchedMock = jest.fn(async () => {});
 
+  // podman as the separate path sees it: `container exists` answers exit 1
+  // (absent) once the container was removed
+  const fakePodman = ({
+    startFails = false,
+    rmFails = false,
+    stillThere = false,
+    onCreate,
+  }: {
+    startFails?: boolean;
+    rmFails?: boolean;
+    stillThere?: boolean;
+    onCreate?: () => void;
+  } = {}) =>
+    execFileMock.mockImplementation((_c, args: string[], _o, callback) => {
+      const fail = (code: number) =>
+        callback(Object.assign(new Error(`exit ${code}`), { code }), "", "");
+      if (args.includes("create")) onCreate?.();
+      if (args.includes("start") && startFails) return fail(125);
+      if (args.includes("rm") && rmFails) return fail(125);
+      if (args.includes("exists"))
+        return stillThere ? callback(undefined, "", "") : fail(1);
+      return callback(undefined, "ok\n", "");
+    });
+  const verbs = () =>
+    execFileMock.mock.calls.map(([, args]) =>
+      (args as string[]).find((a) =>
+        ["create", "start", "rm", "exists", "run"].includes(a),
+      ),
+    );
+
   beforeEach(() => {
-    execFileMock
-      .mockReset()
-      .mockImplementation((_c, _a, _o, callback) =>
-        callback(undefined, "ok\n", ""),
-      );
+    execFileMock.mockReset();
+    fakePodman();
     mountRootFsMock.mockClear();
     releaseMock.mockReset();
     releaseMock.mockResolvedValue(undefined);
@@ -311,7 +338,11 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
   it("reserves, creates, marks launched, then starts its container (C1)", async () => {
     await run();
     const calls = execFileMock.mock.calls.map(([, args]) => args as string[]);
-    expect(calls).toHaveLength(2);
+    // then removed and proven gone, before the release
+    expect(verbs()).toEqual(["create", "start", "rm", "exists"]);
+    expect(execFileMock.mock.invocationCallOrder[3]).toBeLessThan(
+      releaseMock.mock.invocationCallOrder[0],
+    );
     expect(calls[0]).toContain("create");
     expect(calls[0]).not.toContain("run");
     const name = calls[0][calls[0].indexOf("--name") + 1];
@@ -332,6 +363,24 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
+  it("never runs a streaming command ephemerally: no holder, nothing created", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    await expect(
+      sandboxExec({
+        project_id: PROJECT,
+        script: "true",
+        useEphemeral: true,
+        signal: abort.signal,
+        onOutput: () => {},
+      } as any),
+    ).rejects.toThrow(
+      "Managed commands require the existing project container",
+    );
+    expect(acquireSeparateMock).not.toHaveBeenCalled();
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
   it("creates nothing when reserving is refused (C1)", async () => {
     reserveMock.mockRejectedValueOnce(
       new Error("the project is being stopped; not launching"),
@@ -346,16 +395,64 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
       new Error("this holder of the project's runtime was released"),
     );
     await expect(run()).rejects.toThrow("was released");
-    const calls = execFileMock.mock.calls.map(([, args]) => args as string[]);
-    expect(
-      calls.map((args) =>
-        args.find((a) => a === "create" || a === "start" || a === "rm"),
-      ),
-    ).toEqual(["create", "rm"]);
-    expect(execFileMock.mock.invocationCallOrder[1]).toBeLessThan(
+    expect(verbs()).toEqual(["create", "rm", "exists"]);
+    expect(execFileMock.mock.invocationCallOrder[2]).toBeLessThan(
       releaseMock.mock.invocationCallOrder[0],
     );
   });
+
+  it("removes its container before the release when the start fails (C1)", async () => {
+    fakePodman({ startFails: true });
+    await run();
+    expect(verbs()).toEqual(["create", "start", "rm", "exists"]);
+    expect(execFileMock.mock.invocationCallOrder[3]).toBeLessThan(
+      releaseMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("removes its container before the release when aborted between create and start (C1)", async () => {
+    const abort = new AbortController();
+    fakePodman({ onCreate: () => abort.abort() });
+    await sandboxExec({
+      project_id: PROJECT,
+      script: "true",
+      useEphemeral: true,
+      signal: abort.signal,
+    }).catch(() => {});
+    expect(verbs()).toEqual(["create", "start", "rm", "exists"]);
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+    expect(execFileMock.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      releaseMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("removes what a failed create may have left before the release (C1)", async () => {
+    execFileMock.mockImplementation((_c, args: string[], _o, callback) =>
+      args.includes("create")
+        ? callback(Object.assign(new Error("exit 125"), { code: 125 }), "", "")
+        : args.includes("exists")
+          ? callback(Object.assign(new Error("exit 1"), { code: 1 }), "", "")
+          : callback(undefined, "", ""),
+    );
+    await expect(run()).rejects.toThrow("could not create");
+    expect(verbs()).toEqual(["create", "rm", "exists"]);
+    expect(markLaunchedMock).not.toHaveBeenCalled();
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["its removal fails", { rmFails: true }],
+    ["it is still there after removal", { stillThere: true }],
+  ])(
+    "keeps the holder (no release, no detach) when %s (C1)",
+    async (_why, opts) => {
+      fakePodman(opts);
+      await expect(run()).rejects.toThrow(
+        "could not remove this run's container",
+      );
+      expect(releaseMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses, never the raw dir, when its handle lacks a view", async () => {
     acquireSeparateMock.mockResolvedValue({
@@ -372,8 +469,11 @@ describe("sandboxExec for a project with a separate runtime uid", () => {
   });
 
   it("releases its holder after a failed run too", async () => {
-    execFileMock.mockImplementation((_c, _a, _o, callback) =>
-      callback(Object.assign(new Error("exit 1"), { code: 1 }), "", "boom"),
+    // the command exits 1; its container is removed
+    execFileMock.mockImplementation((_c, args: string[], _o, callback) =>
+      args.includes("start") || args.includes("exists")
+        ? callback(Object.assign(new Error("exit 1"), { code: 1 }), "", "boom")
+        : callback(undefined, "", ""),
     );
     await run().catch(() => {});
     expect(releaseMock).toHaveBeenCalledTimes(1);

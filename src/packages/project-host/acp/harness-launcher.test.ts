@@ -707,6 +707,18 @@ describe("for a project with a separate runtime uid", () => {
     );
   });
 
+  test("keeps the holder when its container can't be removed (C1)", async () => {
+    const handle = await launchHarnessInProject(binding);
+    mockExec.mockImplementation((_cmd, args: string[], _opts, cb) =>
+      args.includes("rm") ? cb(new Error("podman rm failed")) : cb(null),
+    );
+    await expect(handle.stop()).rejects.toThrow(
+      "ACP container operation failed",
+    );
+    expect(mockHandleRelease).not.toHaveBeenCalled();
+    mockExec.mockImplementation((_cmd, _args, _opts, cb) => cb(null));
+  });
+
   test("stays on keep-id while the project runs keep-id", async () => {
     mockSidecarRuntime.mockResolvedValue(KEEP_ID);
     const handle = await launchHarnessInProject(binding);
