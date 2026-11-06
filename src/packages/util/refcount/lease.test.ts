@@ -204,6 +204,44 @@ describe("RefcountLeaseManager", () => {
       await mgr.close();
     });
 
+    test("never picks a key whose delayed disposal is still running", async () => {
+      const disposed: string[] = [];
+      let unblock!: () => void;
+      const blocked = new Promise<void>((r) => (unblock = r));
+      const mgr = new RefcountLeaseManager<string>({
+        delayMs: 5,
+        maxIdle: 1,
+        disposer: async (key) => {
+          disposed.push(key);
+          if (key === "a") await blocked;
+        },
+      });
+      await (
+        await mgr.acquire("a")
+      )();
+      // a's timer fires and its disposer blocks
+      await new Promise((r) => setTimeout(r, 30));
+      expect(disposed).toEqual(["a"]);
+      // b goes idle while a is still being disposed: a is not idle any more
+      await (
+        await mgr.acquire("b")
+      )();
+      unblock();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(disposed.filter((k) => k === "a")).toEqual(["a"]);
+      await mgr.close();
+    });
+
+    test("rejects a maxIdle below 1", () => {
+      expect(
+        () =>
+          new RefcountLeaseManager<string>({
+            maxIdle: 0,
+            disposer: async () => {},
+          }),
+      ).toThrow("maxIdle must be at least 1");
+    });
+
     test("without maxIdle nothing is disposed before the delay", async () => {
       const disposed: string[] = [];
       const mgr = new RefcountLeaseManager<string>({

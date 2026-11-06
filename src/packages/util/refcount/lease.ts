@@ -31,6 +31,9 @@ export class RefcountLeaseManager<K> {
   }) {
     this.delayMs = opts.delayMs ?? 30_000;
     this.disposer = opts.disposer;
+    if (opts.maxIdle != null && !(opts.maxIdle >= 1)) {
+      throw new Error("maxIdle must be at least 1");
+    }
     this.maxIdle = opts.maxIdle;
   }
 
@@ -81,11 +84,16 @@ export class RefcountLeaseManager<K> {
         // Schedule disposer after delay; if a new acquire happens before it fires, it will be cancelled.
         const timer = setTimeout(() => {
           void this.withLock(key, async () => {
+            // Only the key's current timer disposes (an acquire and release
+            // meanwhile replaced or cancelled this one), and it leaves the
+            // pending disposals before disposing, so maxIdle cannot pick a key
+            // that is already being disposed.
+            if (this.timers.get(key) !== timer) return;
+            this.timers.delete(key);
             if ((this.counts.get(key) ?? 0) > 0) return;
             try {
               await this.disposer(key);
             } finally {
-              this.timers.delete(key);
               // Only clear count entry if still zero.
               if ((this.counts.get(key) ?? 0) === 0) {
                 this.counts.delete(key);
@@ -105,7 +113,7 @@ export class RefcountLeaseManager<K> {
   // is the longest idle.
   private disposeExcessIdle(newest: K): void {
     if (this.maxIdle == null) return;
-    while (this.timers.size > Math.max(0, this.maxIdle)) {
+    while (this.timers.size > this.maxIdle) {
       const oldest = this.timers.keys().next().value as K;
       if (oldest === newest) return;
       clearTimeout(this.timers.get(oldest));
