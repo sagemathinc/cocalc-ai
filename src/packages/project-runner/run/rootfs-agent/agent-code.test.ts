@@ -213,6 +213,10 @@ describe("rootfs agent code", () => {
       encodeJsonFrame({ id, op: "writeFile", path: `${dir}/f`, size: 10 }),
     );
     agent.send(encodeChunkFrame(id, Buffer.from("new")));
+    // the temp file exists before stdin ends
+    while (!(await readdir(dir)).some((n) => n.startsWith(".cocalc-write-"))) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     agent.close();
     expect(await agent.exited).toBe(0);
     expect(await readFile(`${dir}/f`, "utf8")).toBe("old");
