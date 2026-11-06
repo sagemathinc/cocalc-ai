@@ -227,6 +227,8 @@ describe("host integrity for the heartbeat", () => {
             // an older watcher: neither field
             finding({ exe: "/usr/bin/old" }),
             finding({ exe: "mode", affected: 12 }),
+            finding({ exe: "zero", affected: 0 }),
+            finding({ exe: "negative", affected: -3 }),
             // more names than it passes on
             finding({
               exe: "/usr/bin/many",
@@ -249,6 +251,8 @@ describe("host integrity for the heartbeat", () => {
     expect(byExe["/usr/bin/many"].unreadable).toHaveLength(8);
     expect("uid_class" in byExe["/usr/bin/old"]).toBe(false);
     expect(byExe["mode"].affected).toBe(12);
+    expect("affected" in byExe["zero"]).toBe(false);
+    expect("affected" in byExe["negative"]).toBe(false);
     expect("affected" in byExe["/usr/bin/old"]).toBe(false);
     expect("unreadable" in byExe["/usr/bin/old"]).toBe(false);
   });
@@ -310,6 +314,59 @@ describe("host integrity for the heartbeat", () => {
       now,
     });
     expect("detection" in old).toBe(false);
+    // program counts: positive only, at most 10, the most frequent first
+    await writeFile(
+      join(dir, "many.json"),
+      JSON.stringify(
+        status({
+          rule3: {
+            state: "available",
+            unattributed: {
+              ...Object.fromEntries(
+                Array.from({ length: 12 }, (_, i) => [`/usr/bin/p${i}`, i + 1]),
+              ),
+              "/usr/bin/zero": 0,
+              "/usr/bin/negative": -4,
+            },
+          },
+        }),
+      ),
+    );
+    const many = await readHostIntegrity({
+      statusPath: join(dir, "many.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    const programs = many.detection!.exec_monitor!.unattributed_programs!;
+    expect(Object.keys(programs)).toHaveLength(10);
+    expect(Object.keys(programs)[0]).toBe("/usr/bin/p11");
+    expect(programs["/usr/bin/zero"]).toBeUndefined();
+    expect(programs["/usr/bin/negative"]).toBeUndefined();
+    expect(programs["/usr/bin/p0"]).toBeUndefined();
+    // and without the cap in play: zero and negative counts are dropped
+    await writeFile(
+      join(dir, "few.json"),
+      JSON.stringify(
+        status({
+          rule3: {
+            state: "available",
+            unattributed: {
+              "/usr/bin/a": 2,
+              "/usr/bin/zero": 0,
+              "/usr/bin/neg": -1,
+            },
+          },
+        }),
+      ),
+    );
+    const few = await readHostIntegrity({
+      statusPath: join(dir, "few.json"),
+      rebootPath: join(dir, "none"),
+      now,
+    });
+    expect(few.detection!.exec_monitor!.unattributed_programs).toEqual({
+      "/usr/bin/a": 2,
+    });
     // values that aren't labels are dropped, never passed on as text
     await writeFile(
       join(dir, "odd.json"),
