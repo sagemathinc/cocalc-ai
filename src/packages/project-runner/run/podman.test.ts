@@ -182,6 +182,7 @@ import {
   projectBrowserRunHostPath,
   projectContainersGone,
   redactConfigurationForLog,
+  sidecarRuntimeFor,
   stopSeparateRuntime,
   start,
   state,
@@ -1568,6 +1569,29 @@ describe("project-runner podman orphan fallback", () => {
       await startProject();
       expect(mockDetachLeftovers).not.toHaveBeenCalled();
       expect(mockAcquireSeparate).toHaveBeenCalled();
+    });
+
+    it("gives a sidecar the project's own identity while it runs separate, and the host's decision while it's stopped", async () => {
+      // stopped (no container): the host's decision now, with this
+      // project's checks
+      mockPodman.mockImplementation(async () => ({ stdout: "" }));
+      mockGetConmonContainerProcessLists.mockResolvedValue(new Map());
+      expect(
+        (await sidecarRuntimeFor({ project_id: project1, home })).mode,
+      ).toBe("separate");
+      // running separate: the start's own record
+      await startProject();
+      const running = await sidecarRuntimeFor({ project_id: project1, home });
+      expect(running).toBe(separate);
+      // the host changed its mind meanwhile: the running project's record wins
+      mockRuntimeIdentity = {
+        mode: "keep-id",
+        usernsArgs: ["--userns=keep-id"],
+        status: { configured: "keep-id", effective: "keep-id" },
+      };
+      expect(await sidecarRuntimeFor({ project_id: project1, home })).toBe(
+        separate,
+      );
     });
 
     describe("stopping the separate runtime", () => {

@@ -12,6 +12,16 @@ import { sandboxExec } from "./sandbox-exec";
 const execFileMock = jest.fn();
 const mountRootFsMock = jest.fn(async () => "/roots/project");
 const readImageMock = jest.fn(async () => "image-file-in-home:latest");
+const KEEP_ID = {
+  mode: "keep-id",
+  usernsArgs: ["--userns=keep-id:uid=2001,gid=2001"],
+  status: { configured: "keep-id", effective: "keep-id" },
+};
+const sidecarRuntimeMock = jest.fn(
+  async (..._args: any[]): Promise<any> => KEEP_ID,
+);
+const acquireSeparateMock = jest.fn();
+const releaseMock = jest.fn(async () => {});
 
 jest.mock("node:child_process", () => ({
   ...jest.requireActual("node:child_process"),
@@ -33,6 +43,7 @@ jest.mock("./env", () => ({
 }));
 jest.mock("./mounts", () => ({ getCoCalcMounts: () => ({}) }));
 jest.mock("./rootfs", () => ({
+  acquireSeparateRuntime: (...args: any[]) => acquireSeparateMock(...args),
   getImageNamePath: () => "/projects/p/home/current-image.txt",
   mount: (...args: any[]) => (mountRootFsMock as any)(...args),
   unmount: async () => {},
@@ -46,6 +57,7 @@ jest.mock("./podman", () => ({
   },
   podmanRuntimeArgs: async () => [],
   projectPoolPodmanLauncher: () => undefined,
+  sidecarRuntimeFor: (...args: any[]) => sidecarRuntimeMock(...args),
 }));
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
@@ -213,5 +225,102 @@ describe("sandboxExec for sensors", () => {
       argv: ["/bin/true"],
     });
     expect(execFileMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sandboxExec for a project with a separate runtime uid", () => {
+  const P = 1073741824;
+  const SEPARATE = {
+    mode: "separate",
+    uid: P,
+    gid: P,
+    usernsArgs: ["--uidmap=0:1:2001", "--uidmap=2001:4194305:1"],
+    status: { configured: "separate", effective: "separate" },
+  };
+  const VIEWS = {
+    home: `/run/cocalc/project-views/${PROJECT}/home`,
+    scratch: `/run/cocalc/project-views/${PROJECT}/scratch`,
+  };
+  const ROOTFS = `/run/cocalc/project-rootfs/${PROJECT}/root`;
+
+  beforeEach(() => {
+    execFileMock
+      .mockReset()
+      .mockImplementation((_c, _a, _o, callback) =>
+        callback(undefined, "ok\n", ""),
+      );
+    mountRootFsMock.mockClear();
+    releaseMock.mockReset();
+    releaseMock.mockResolvedValue(undefined);
+    sidecarRuntimeMock.mockReset();
+    sidecarRuntimeMock.mockResolvedValue(SEPARATE);
+    acquireSeparateMock.mockReset();
+    acquireSeparateMock.mockResolvedValue({
+      rootfs: ROOTFS,
+      views: VIEWS,
+      mountViews: async () => {},
+      release: releaseMock,
+    });
+  });
+
+  afterAll(() => {
+    sidecarRuntimeMock.mockReset();
+    sidecarRuntimeMock.mockResolvedValue(KEEP_ID);
+  });
+
+  const run = async () =>
+    await sandboxExec({
+      project_id: PROJECT,
+      script: "",
+      useEphemeral: true,
+      argv: ["/bin/bash", "-lc", "true"],
+    });
+
+  it("runs as the project user's separate uid, on its views and idmapped rootfs, as its own holder", async () => {
+    await run();
+    expect(acquireSeparateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: PROJECT,
+        idmapUid: P,
+        kinds: ["home", "scratch"],
+        holder: "sandbox",
+      }),
+    );
+    expect(mountRootFsMock).not.toHaveBeenCalled();
+    const args: string[] = execFileMock.mock.calls[0][1];
+    const joined = args.join(" ");
+    expect(args).toEqual(expect.arrayContaining(SEPARATE.usernsArgs));
+    expect(joined).not.toContain("--userns=keep-id");
+    expect(joined).toContain(VIEWS.home);
+    expect(joined).toContain(VIEWS.scratch);
+    // no raw project dir reaches the container
+    expect(joined).not.toContain("/projects/p/home");
+    expect(joined).not.toContain("/scratch/p");
+    expect(args[args.indexOf("--rootfs") + 1]).toBe(ROOTFS);
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases its holder after a failed run too", async () => {
+    execFileMock.mockImplementation((_c, _a, _o, callback) =>
+      callback(Object.assign(new Error("exit 1"), { code: 1 }), "", "boom"),
+    );
+    await run().catch(() => {});
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a failed release reach the caller (L1)", async () => {
+    releaseMock.mockRejectedValueOnce(
+      new Error("could not unmount this project's RootFS"),
+    );
+    await expect(run()).rejects.toThrow("could not unmount");
+  });
+
+  it("stays on keep-id while the project runs keep-id", async () => {
+    sidecarRuntimeMock.mockResolvedValue(KEEP_ID);
+    await run();
+    expect(acquireSeparateMock).not.toHaveBeenCalled();
+    expect(mountRootFsMock).toHaveBeenCalled();
+    const joined = execFileMock.mock.calls[0][1].join(" ");
+    expect(joined).toContain("--userns=keep-id");
   });
 });

@@ -2183,6 +2183,49 @@ async function separateIdentityForStart({
 // A separate-uid project's own holder of its runtime (R1 PR3a §1a): taken
 // by its start, released by its stop.
 const projectSeparateHandles = new Map<string, SeparateRuntimeHandle>();
+// and the identity its start used, which its sidecars use too
+const projectSeparateIdentities = new Map<
+  string,
+  Extract<RuntimeIdentity, { mode: "separate" }>
+>();
+
+/**
+ * The runtime identity a sidecar of the project uses (R1 PR3a §1): the
+ * project's own while it runs separate; keep-id while it runs keep-id; the
+ * host's decision now, with this project's checks, while it's stopped.
+ */
+export async function sidecarRuntimeFor({
+  project_id,
+  home,
+  scratch,
+}: {
+  project_id: string;
+  home: string;
+  scratch?: string;
+}): Promise<RuntimeIdentity> {
+  const recorded = projectSeparateIdentities.get(project_id);
+  if (recorded != null && projectSeparateHandles.has(project_id)) {
+    return recorded;
+  }
+  const current = await state(project_id);
+  if (current === "starting" || current === "stopping") {
+    throw new Error(`the project is ${current}; try again`);
+  }
+  if (current === "running") {
+    return {
+      mode: "keep-id",
+      usernsArgs: keepIdUsernsArgs(),
+      status: { configured: "keep-id", effective: "keep-id" },
+    };
+  }
+  const sharedScratchMount = await resolveSharedScratchMount();
+  return await separateIdentityForStart({
+    project_id,
+    home,
+    scratch,
+    sharedScratch: sharedScratchMount?.source,
+  });
+}
 const SIDECAR_RELEASE_WAIT_MS = 10_000;
 const SIDECAR_HOLDERS: SeparateHolderKind[] = [
   "sandbox",
@@ -2269,6 +2312,7 @@ export async function stopSeparateRuntime(
         // a failed release leaves the mounts; the next stop or start takes
         // the verified path for what it finds
         projectSeparateHandles.delete(project_id);
+        projectSeparateIdentities.delete(project_id);
       }
     } else {
       // no holder in this daemon (it restarted): the verified detach
@@ -2934,6 +2978,7 @@ async function startUnlocked({
 
     if (separateHandle != null) {
       projectSeparateHandles.set(project_id, separateHandle);
+      projectSeparateIdentities.set(project_id, separate!);
     }
     return {
       state: "running",

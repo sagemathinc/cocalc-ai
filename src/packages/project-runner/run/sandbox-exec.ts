@@ -3,7 +3,13 @@ import { randomBytes } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
 import { localPath } from "./filesystem";
-import { getImageNamePath, mount as mountRootFs, unmount } from "./rootfs";
+import {
+  acquireSeparateRuntime,
+  getImageNamePath,
+  mount as mountRootFs,
+  unmount,
+  type SeparateRuntimeHandle,
+} from "./rootfs";
 import { readFile } from "fs/promises";
 import {
   containerConatHostArgs,
@@ -11,6 +17,7 @@ import {
   networkArgument,
   podmanRuntimeArgs,
   projectPoolPodmanLauncher,
+  sidecarRuntimeFor,
 } from "./podman";
 import { mountArg } from "@cocalc/backend/podman";
 import { podmanEnv } from "@cocalc/backend/podman/env";
@@ -243,6 +250,8 @@ export async function sandboxExec({
   };
 
   let rootfs: string | undefined;
+  // a separate-uid project: this run's own holder of the project's runtime
+  let separateHandle: SeparateRuntimeHandle | undefined;
   // The one-off container's name, to remove it if its run is killed.
   let containerName: string | undefined;
   try {
@@ -261,6 +270,20 @@ export async function sandboxExec({
         HOME,
         image,
       });
+      // The project's runtime uid: its own while it runs, the host's now
+      // while it doesn't (R1 PR3a).
+      const runtime = await sidecarRuntimeFor({ project_id, home, scratch });
+      const useScratch = !!scratch && !tmpfs?.includes("/tmp");
+      if (runtime.mode === "separate") {
+        separateHandle = await acquireSeparateRuntime({
+          project_id,
+          home,
+          config: { image },
+          idmapUid: runtime.uid,
+          kinds: useScratch ? ["home", "scratch"] : ["home"],
+          holder: "sandbox",
+        });
+      }
 
       // Build a one-off container run.
       args.push(
@@ -272,9 +295,7 @@ export async function sandboxExec({
       );
       // Match the main project runtime so sudo and setuid helpers behave the
       // same way in ephemeral sidecars.
-      args.push(
-        `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,
-      );
+      args.push(...runtime.usernsArgs);
       args.push(
         "--user",
         `${DEFAULT_PROJECT_RUNTIME_UID}:${DEFAULT_PROJECT_RUNTIME_GID}`,
@@ -300,9 +321,16 @@ export async function sandboxExec({
         args.push("-e", `${key}=${value}`);
       }
 
-      args.push(mountArg({ source: home, target: HOME }));
-      if (scratch && !tmpfs?.includes("/tmp")) {
-        args.push(mountArg({ source: scratch, target: "/tmp" }));
+      args.push(
+        mountArg({ source: separateHandle?.views.home ?? home, target: HOME }),
+      );
+      if (useScratch) {
+        args.push(
+          mountArg({
+            source: separateHandle?.views.scratch ?? scratch!,
+            target: "/tmp",
+          }),
+        );
       }
       for (const path of tmpfs ?? []) {
         if (!path.startsWith("/") || /[,:\s]/.test(path))
@@ -332,7 +360,9 @@ export async function sandboxExec({
       containerName = `sandbox-${project_id}-${Date.now()}-${randomBytes(4).toString("hex")}`;
       args.push("--name", containerName);
 
-      rootfs = await mountRootFs({ project_id, home, config: { image } });
+      rootfs =
+        separateHandle?.rootfs ??
+        (await mountRootFs({ project_id, home, config: { image } }));
       args.push("--rootfs", rootfs);
       args.push(
         ...(argv
@@ -390,7 +420,10 @@ export async function sandboxExec({
     if (containerName && clientKilled) await removeContainer(containerName);
     return result;
   } finally {
-    if (rootfs) {
+    if (separateHandle != null) {
+      // only this run's holder; the last holder detaches, awaited
+      await separateHandle.release();
+    } else if (rootfs) {
       // Decrement overlay mount refcount; actual unmount happens only when
       // no other users (e.g., the main project container) are using it.
       await unmount(project_id);
